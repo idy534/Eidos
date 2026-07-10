@@ -23,20 +23,25 @@ MVP 会优先打通这一条闭环：
 
 ## 文档
 
-- [PRD：Agent Runtime MVP 需求文档](docs/agent_runtime_mvp_prd.md)
-- [TDD：Agent Runtime MVP 技术设计文档](docs/agent_runtime_mvp_tdd.md)
+- [文档总索引](docs/README.md)
+- [PRD：Agent Runtime MVP](docs/prd/README.md)
+- [TDD：Agent Runtime MVP](docs/tdd/README.md)
+- [Q1-Q40 设计决策](docs/decisions.md)
 
 ## MVP 边界
 
 P0 只覆盖能让 Eidos 真正跑起来的能力：
 
-- Agent / Session / Run 管理
+- macOS 桌面端、Agent / Session / Run 管理
+- 多 Run 持久化 FIFO 队列与全局单执行器
 - ReAct-style Agent Loop
-- `list_files` / `read_file` / `write_file` / `run_shell`
-- workspace 文件隔离
-- shell 和中高风险工具审批
+- 只读工具批次与逐文件 `write_file` / `apply_patch` / `delete_file`
+- 显式 `publish_artifact` 与不可变 Artifact 快照
+- macOS Seatbelt `workspace_write` Shell
+- 文件、敏感路径、网络、localhost 和环境隔离
+- 文件写入和 Shell 审批、版本复检与事实确认屏障
 - approve / reject 后恢复执行
 - SSE 实时事件和持久化 Run Timeline
-- cancel、错误记录、基础测试
+- Execution Segment、Run 硬上限、cancel、崩溃恢复和基础测试
 
-MVP 暂不做知识库、长期记忆、多 Agent、MCP 插件市场、浏览器自动化、企业权限和分布式调度。
+MVP 暂不做内嵌 Terminal、持久服务、跨平台、知识库、长期记忆、多 Agent、MCP 插件市场、浏览器自动化、企业权限和分布式调度。

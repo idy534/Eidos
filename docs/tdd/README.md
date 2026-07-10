@@ -1,0 +1,26 @@
+# Eidos Agent Runtime MVP TDD
+
+版本：v0.4
+
+## 文档目录
+
+1. [总体架构](01-architecture.md)
+2. [Runtime、队列与状态机](02-runtime-state-machine.md)
+3. [工具、审批与沙箱](03-tools-approval-sandbox.md)
+4. [模型、上下文与流式输出](04-model-context-streaming.md)
+5. [API、事件与存储](05-api-events-storage.md)
+6. [桌面端安全与生命周期](06-desktop-security-lifecycle.md)
+7. [测试与里程碑](07-testing-and-milestones.md)
+
+## 实现原则
+
+- 安全边界故障时 fail closed，不允许降级为无沙箱 Shell。
+- 规范化业务表是当前状态来源，Events 是同事务写入的追加式 Timeline/Outbox。
+- 多个 Run 可以存在，但模型调用和工具执行由一个持久化 FIFO 执行器串行调度。
+- 对有副作用操作不做自动重放；失败后先确认事实，再允许下一次变更。
+- 当前仓库尚无实现代码，本 TDD 是后续实现契约，不代表能力已经落地。
+
+## 待确认事项
+
+- Q41：模型原始推理内容的存储与展示边界。
+
