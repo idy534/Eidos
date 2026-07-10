@@ -16,6 +16,10 @@
 - `../`、绝对路径、前缀碰撞和 symlink 逃逸。
 - 普通文件、目录、symlink、FIFO、device 的类型检查。
 - `.env`、密钥、凭证文件拒绝；`.env.example` 名称例外仍扫描内容。
+- 固定向量的 `deny`/`redact`/`allow_with_audit`、ruleset version、rule id/version 和重叠规则排序完全确定。
+- 通用高熵代码常量、哈希和压缩数据不被误判为硬拒绝。
+- 占位符幂等；不保留原值长度、前后缀、摘要、哈希或稳定关联 ID。
+- 结构化字符串叶子替换不改变 schema；字段名/枚举/ID 命中时整个 payload 拒绝。
 - `.git` read-only carve-out。
 - 脱敏 exact API key 与 pattern rule；数据库不含原文。
 
@@ -63,6 +67,9 @@
 - assistant_progress/final_answer 分类正确，reasoning usage 只保存数值元数据。
 - 模型认证、模型不存在和确定性 invalid request 不重试、不 Finalize，Run 直接 failed。
 - 空/畸形/未知工具/非法批次响应连续两次后暂停，合法响应清零协议错误计数。
+- 模型 content 跨 chunk 凭证先脱敏后展示/落盘；扫描失败不 flush 保留窗口。
+- 敏感 ToolCall 零 ToolCall row/零 Approval；两次后 `repeated_sensitive_tool_input`，不影响协议错误计数。
+- 任一合法无敏感 ToolCall 响应清零敏感 ToolCall 计数。
 
 ## 3. Seatbelt 集成测试
 
@@ -99,6 +106,15 @@
 - 副作用 intent 已提交但结果未提交时，重启只对账不重放。
 - file/artifact 根据 hash 补记结果；Shell 标记 interrupted/side_effects_may_exist。
 - SSE after_event_id 回放和去重。
+- Create Run/user-input 敏感命中时零 Message/Run/Segment 变更，Create Run 不占用 idempotency key。
+- approve/reject feedback 敏感命中时 Approval 保持 pending，决策与 feedback 都零落库。
+- read/range 在请求区间外命中 `deny` 时也零正文；search 跳过整个敏感文件但继续其他文件。
+- 单文件 32 MiB、搜索 256 MiB/15 秒和规则 8 KiB 边界值，以及超限/编码异常/扫描失败的 fail-closed 路径。
+- 写/Patch/Shell 参数和 Artifact 源文件敏感命中时零审批、零执行、零静默改写。
+- 升级后恢复 waiting/queued Run 先记录 ruleset 变更，再使用新规则入队。
+- 新规则对旧 Message/Event/Tool log/Artifact 的读时 deny/redact 生效，但不改写原始历史记录。
+- Event 读时脱敏/整体安全替换仍保留 id/type，SSE reducer 可连续推进且无原 payload 泄露。
+- 以更低 ruleset generation 启动时内容通路 fail closed；携带相同或更高 generation 的回滚构建可正常启动。
 
 ## 5. Desktop 集成测试
 
@@ -124,6 +140,9 @@
 - config 权限 0700/0600；权限过宽拒绝密钥。
 - SQLite、日志和 Event 中不存在测试 API Key 原文。
 - Proxy audit 只含 host/port/decision/bytes，不含 URL、Header、Body 或 TLS 明文。
+- 对 Message、Model response、Tool args/result/log、Event、错误和结构化日志执行原始凭证全库断言。
+- redaction audit 只含 ruleset/rule/action、命中数和安全位置，不含原值可派生数据。
+- Redaction Service 自检失败时内容 API fail closed，不影响 health/安全诊断。
 
 ## 7. 风险优先里程碑
 
@@ -134,6 +153,7 @@
 - 敏感和 `.git` carve-out。
 - managed proxy、域名策略、localhost 独立权限。
 - fail-closed 自检与集成测试。
+- 版本化敏感规则、全入口扫描管线、跨 chunk 脱敏和 fail-closed 自检。
 
 M0 未通过前，不进入 Agent Shell 主链路实现。
 
@@ -173,5 +193,5 @@ M0 未通过前，不进入 Agent Shell 主链路实现。
 ## 8. 文档完成标准
 
 - PRD 每个 P0 要求在 TDD 和测试中有对应落点。
-- Q1-Q50 决策不得出现相反规则。
+- Q1-Q60 决策不得出现相反规则。
 - 实现开始前冻结 v0.4 API schema、状态 enum 和 Tool schema。

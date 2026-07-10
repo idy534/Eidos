@@ -98,14 +98,19 @@ Sidecar 是受信任 Runtime，但 Agent 输入、模型输出和 ToolCall 参�
 Main generate runtime token
   -> spawn sidecar with token
   -> sidecar verify ~/.eidos permissions and migrate DB
+  -> sidecar load and self-test Redaction ruleset
   -> sidecar run Seatbelt self-test
   -> sidecar bind 127.0.0.1:random_port
-  -> stdout {"event":"ready","port":12345,"shell_available":true|false}
+  -> stdout {"event":"ready","port":12345,"shell_available":true|false,"redaction_available":true|false}
   -> Main starts API/SSE proxy
   -> sidecar reconciles interrupted state and restores FIFO queue
 ```
 
 Seatbelt 自检失败不阻止只读文件工具和模型回复，但 `run_shell` 必须报告 unavailable。
+
+Redaction 规则 schema、重叠顺序、最大匹配长度或测试向量自检失败时，所有可能把不可信内容发送给模型/UI 或写入持久化的 API 不可用；只保留 health 和安全配置诊断能力，不存在未扫描回退。
+
+MVP 只从随应用发布的只读资源加载一个规则集，不从网络、Workspace 或用户配置加载规则。
 
 ## 6. Eidos Home
 
@@ -160,4 +165,3 @@ Eidos/
 ```
 
 Seatbelt profile 作为只读资源随 sidecar 打包。策略模板、参数绑定和 Shell 启动必须集中在 `sandbox/`，禁止业务代码自行 spawn Agent 命令。
-

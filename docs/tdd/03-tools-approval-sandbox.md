@@ -30,7 +30,7 @@ class ToolContext(BaseModel):
     local_network: bool = False
 ```
 
-Tool arguments must be validated before a ToolCall row becomes executable. Tool result content passes through Redaction Service before model observation and persistence.
+Tool arguments must be schema-validated and sensitive-scanned before a ToolCall row is created. Tool result content passes through Redaction Service before truncation, model observation, UI delivery and persistence.
 
 ## 2. 工具注册表
 
@@ -74,11 +74,11 @@ Tool arguments must be validated before a ToolCall row becomes executable. Tool 
 | 512KB..2MB | head+tail，`truncated=true` |
 | > 2MB | 拒绝，要求 read_file_range |
 
-二进制和敏感文件直接拒绝。
+二进制直接拒绝。文本文件在返回任何正文前执行最多 32 MiB 的全文件流式敏感扫描；任意位置命中 `deny` 时整次读取拒绝，只命中 `redact` 时替换对应片段后返回其余内容。
 
 ### 4.3 read_file_range
 
-参数：`path, start_line, end_line`。返回实际范围、总行数、文件大小和截断状态；同样执行敏感扫描和结果上限。
+参数：`path, start_line, end_line`。返回实际范围、总行数、文件大小和截断状态。即使只返回局部行，也必须先完成同一上限下的全文件扫描；不能只扫描请求范围。
 
 ### 4.4 search_text
 
@@ -87,6 +87,10 @@ Tool arguments must be validated before a ToolCall row becomes executable. Tool 
 - 必须提供受上限约束的 `max_results`。
 - 排除依赖、构建、lock、二进制和敏感路径。
 - 返回 path/line/column/preview；preview 先脱敏。
+- 每个候选文件完成全文件扫描后才能返回该文件的结果；`deny` 命中的文件零结果，只命中 `redact` 时 preview 脱敏后返回，并继续搜索其他文件。
+- 单次最多扫描 256 MiB 或 15 秒；达限只返回已完成整文件扫描的结果，并设置 `truncated=true, stop_reason=scan_budget_exceeded`。
+
+文件与搜索扫描共用工具的单一 deadline，扫描时间计入现有 10–15 秒 Tool timeout，不创建可无限延长的隐藏扫描阶段。
 
 ## 5. 文件写工具
 
@@ -99,6 +103,7 @@ Tool arguments must be validated before a ToolCall row becomes executable. Tool 
 - 使用同目录临时文件、fsync 和原子 replace；commit 区不可取消。
 - 已有目标必须满足 `st_nlink == 1`；多链接文件返回 `hardlink_not_allowed`。
 - 修改已有文件时，临时文件必须复制并验证 POSIX mode、ACL 和 extended attributes；失败时返回 `file_metadata_preservation_failed`，不进入 replace。
+- 完整 content/patch 在创建 ToolCall/Approval 前扫描；`deny` 或 `redact` 命中时不保存原参数，也不使用占位符内容继续执行。
 
 ### 5.1 write_file
 
@@ -143,6 +148,7 @@ summary
 - 复制前后校验源文件 stat/hash；变化则失败，不发布不一致快照。
 - 保存 source_path、source_sha256、snapshot_sha256、size、mime、version。
 - 同一源路径再次发布创建新 Artifact id/version，不覆盖旧快照。
+- 复制前对源文件执行全文件敏感扫描；`deny` 或 `redact` 都拒绝发布，不创建经脱敏改写的快照。
 
 ## 7. run_shell 契约
 
@@ -164,6 +170,7 @@ summary
 ```
 
 - command 是完整字符串，审批卡原样展示。
+- command 在创建 ToolCall/Approval 前扫描；敏感命中时 UI 不得接收原 command。
 - Runtime 不自动包裹、追加或改写命令。
 - Writable Shell 启动前扫描 active root 中普通文件的 link count；存在 `st_nlink > 1` 时返回 `hardlink_not_allowed` 并拒绝启动。
 - APFS clone/copy-on-write 不按 hardlink 处理。
@@ -174,6 +181,7 @@ summary
 输出限制：
 
 - stdout 768KB，stderr 512KB，合计 1MB。
+- stdout/stderr 的 `deny` 和 `redact` 命中都以统一占位符替换后继续；不因高置信度命中停止已获批 Shell，但原文不得进入任何下游。
 - 超限保留 head+tail，标记 truncated，不因此终止命令。
 - 模型 observation 最多 32KB，并在返回模型前脱敏。
 - 保存 exit_code、duration、sizes、termination_reason 和 `side_effects_may_exist`。
@@ -235,20 +243,37 @@ Proxy 审计只记录 tool_call_id、host、port、allow/deny、decision_rule、
 
 ## 11. 敏感规则与脱敏
 
-敏感路径 deny 至少覆盖 `.env`、私钥、凭证、token 文件；`.env.example` 仅作为名称例外，仍扫描内容。
+敏感路径 deny 至少覆盖 `.env`、私钥、凭证、token 文件；`.env.example` 仅作为名称例外，仍扫描内容。路径 deny 和内容 `deny` 都不可审批绕过。
 
-脱敏顺序：
+规则集是随应用发布的只读版本化资源，带单调递增的 `ruleset_generation` 和可读 `ruleset_version`；每条规则包含 `rule_id, rule_version, action, matcher, test_vectors`：
+
+- `deny`：已配置 API Key 精确匹配、私钥正文和结构完整且可校验的已知凭证。
+- `redact`：形态像凭证但不能验证真实性的 token、密码赋值或特定凭证规则辅助的高熵串。
+- `allow_with_audit`：变量名、注释、明显占位符、测试夹具和文档示例。
+
+MVP 不使用模型或通用熵阈值判定敏感性。已配置 API Key 作为内存动态规则 `configured_api_key`，不持久化值、摘要或哈希。
+
+管线顺序：
 
 ```text
-raw tool/model data
-  -> configured API key exact-match redaction
-  -> credential pattern redaction
-  -> model observation
+raw input/output
+  -> path hard deny
+  -> configured API key exact match
+  -> versioned credential rules
+  -> deny/redact/allow decision
+  -> truncation or summary
+  -> model/UI delivery
   -> persistence redaction pass
   -> Event/DB/log
 ```
 
-命中后保存 `[REDACTED:<rule_id>]`，不保存命中原文。
+文件使用全文件流式扫描。Shell 和模型输出使用带保留窗口的增量扫描，安全窗口确认前不向下游释放；单条规则跨 chunk 最大匹配长度为 8 KiB，超限规则在加载时拒绝。
+
+占位符固定为 `[REDACTED:<rule_id>]`，替换完整命中且不保留前后缀、长度、摘要、哈希或跨记录关联 ID。重叠规则按处理等级、更长匹配、`rule_id` 的顺序决定唯一结果；合法占位符排除于再次匹配，保证幂等。
+
+结构化 payload 只允许替换字符串叶子值；字段名和其他结构 token 仍需检查但不可改写。命中字段名、枚举、ID 或其他无法安全替换的结构位置时，整个 payload 以 `sensitive_structured_payload_rejected` 拒绝。审计只保存 ruleset version、rule id/version/action、字段路径或文件行号和命中数。
+
+任何扫描超限、超时、编码异常或扫描器失败都返回结构化错误并 fail closed，不释放未完成扫描的正文。
 
 ## 12. Fail Closed 与自检
 
@@ -261,5 +286,7 @@ raw tool/model data
 - `.git` 不可写。
 - 多链接普通文件使 writable Shell 自检/前置检查失败。
 - 默认外网/loopback/Unix Socket 不可用。
+
+Redaction Service 同时校验规则 schema、唯一 rule id、重叠排序、8 KiB 长度上限、幂等性和全部 test vectors。自检失败时所有内容通路 unavailable，不仅限于 Shell。
 
 `sandbox-exec` 缺失、策略生成/编译失败或自检失败时，Shell capability 为 unavailable，审批和 API 都不能绕过。

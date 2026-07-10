@@ -81,6 +81,7 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - macOS Seatbelt `run_shell`。
 - `publish_artifact` 与不可变 Artifact 快照。
 - Approval、Reject、版本冲突、事实确认屏障、取消与崩溃恢复。
+- 确定性敏感规则、分级拒绝/脱敏与全入口扫描。
 - SSE 实时 Execution Feed 与持久化 Timeline。
 - Run 预算、Tool timeout、有限重试和 Finalization Call。
 
@@ -98,5 +99,5 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - 用户可配置的运行预算和工具 timeout。
 - 智能摘要式上下文 compaction。
 - Keychain 密钥存储；MVP 接受受限权限下的 `config.toml` 明文配置。
+- 敏感规则远程更新、用户自定义、历史数据追溯重扫和 Secret 注入。
 - Git commit、checkout、reset、stash 等修改 `.git` 的操作。
-

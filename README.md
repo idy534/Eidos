@@ -26,7 +26,7 @@ MVP 会优先打通这一条闭环：
 - [文档总索引](docs/README.md)
 - [PRD：Agent Runtime MVP](docs/prd/README.md)
 - [TDD：Agent Runtime MVP](docs/tdd/README.md)
-- [Q1-Q50 设计决策](docs/decisions.md)
+- [Q1-Q60 设计决策](docs/decisions.md)
 
 ## MVP 边界
 

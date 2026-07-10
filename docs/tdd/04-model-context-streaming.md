@@ -45,11 +45,14 @@ class ModelGateway(Protocol):
 
 ## 3. 流式事件
 
-- delta 到达后立即通过内部 EventBus 推送给 SSE。
+- delta 到达后先进入增量敏感扫描器，只有已确认安全或已脱敏的文本才通过内部 EventBus 推送给 SSE。
+- `tool_call_delta` 在完整解析和参数扫描前只存在于短暂内存，不对 UI 流式展示、不持久化原始片段；通过后只生成受控的 ToolCall 摘要事件。
 - 按 100ms 或累计 4KB 合并为一个持久化 chunk，任一阈值先到即 flush。
-- 完成时保存完整最终响应和 usage。
+- 完成时保存经增量扫描后合并的完整最终响应和 usage；Provider 原始响应不落盘。
 - 崩溃恢复以最后一个已提交 chunk 为准。
 - UI delta 是临时视图；数据库 committed Event 是断线回放边界。
+- `deny`/`redact` 命中的普通 content delta 统一替换后继续；不因普通文本单次命中终止 Run。
+- 扫描器失败后不 flush 保留窗口，丢弃未完整解析的 ToolCall，Run 进入 `waiting_user_input/sensitive_scan_failed`。
 
 ## 4. ToolCall 解析和组合校验
 
@@ -60,6 +63,8 @@ Model Gateway 输出完整 ToolCall list 后，Runtime：
 3. 校验整个批次组合。
 4. 非法时创建 `model_protocol_error`，零 ToolCall 执行。
 5. 合法时按声明顺序创建 ToolCall。
+
+组合与 schema 合法后、创建 ToolCall 之前，Runtime 对完整参数执行敏感扫描。命中 `deny`/`redact` 时按 `sensitive_tool_input` 处理，不创建 ToolCall，也不增加协议错误计数。连续两次命中后暂停，任一完整合法且无敏感 ToolCall 的响应清零该计数。
 
 模型必须在读取结果进入下一轮上下文后，才能提出基于结果的变更。一次响应中的只读 ToolCall 彼此不能依赖运行结果。
 
@@ -82,6 +87,8 @@ Model Gateway 输出完整 ToolCall list 后，Runtime：
 ```
 
 所有注入项必须有单项上限和总 token 预算。
+
+从 SQLite、Tool log 或 Artifact 读取的历史正文在进入 Context Builder 前按当前 `ruleset_version` 再扫描。读时 `deny` 不注入正文，`redact` 只注入脱敏版本；不修改原始 Timeline 或 Artifact 快照。
 
 ## 6. P0 确定性裁剪
 
@@ -145,3 +152,11 @@ Finalization 使用原 Run 模型快照，但：
 - `assistant_progress` 可以实时展示和按普通文本规则持久化，但不得命名为思维链或内部思考。
 - reasoning token 数量、耗时和费用可以保存在 usage metadata 中，不能反推出内容。
 - ToolCall 参数解析不依赖 reasoning 内容。
+
+## 10. 规则版本
+
+- Sidecar 生命周期中只使用启动自检通过的单一 `ruleset_version`，不热加载。
+- Sidecar 将已成功使用的最高 `ruleset_generation` 保存在 security metadata。当前应用携带的 generation 更低时 Redaction Service 不可用；回滚构建必须携带不低于已生效 generation 的规则资源。
+- Run 创建时把当前版本写入快照；每个扫描结果记录实际版本。
+- 应用升级重启后，queued/waiting Run 使用新版本继续，并在恢复前追加 `redaction_ruleset_changed` Event。安全规则不因 Run 的旧快照而降级。
+- MVP 不远程下载、不允许 Workspace/用户覆盖，也不对旧数据执行升级后的全量追溯重扫；历史数据安全迁移属于 P1。

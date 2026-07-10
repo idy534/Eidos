@@ -134,6 +134,18 @@ create step
 - 每个无效响应各计一个 Step，但一个 ToolCall 都不创建或执行。
 - 任一合法模型响应将 `consecutive_protocol_errors` 清零。
 
+### 5.1 敏感 ToolCall
+
+完整解析后、创建 ToolCall row 与 Approval 之前，Runtime 在短暂内存中扫描所有字符串参数：
+
+- `deny` 或 `redact` 命中：整个模型 ToolCall 拒绝，不创建 ToolCall/Approval，只持久化无原文的 `sensitive_tool_input_rejected` Event。
+- 第一次连续命中：`consecutive_sensitive_tool_inputs += 1`，当前 Step 失败并将结构化安全错误反馈给下一 Step。
+- 连续第二次命中：Run 进入 waiting_user_input，`pause_reason=repeated_sensitive_tool_input`。
+- 任一不含敏感 ToolCall 的合法完整响应清零该计数。
+- 每次被拒绝的模型响应计一个 Step，但不增加 `consecutive_protocol_errors`。
+
+若响应同时包含普通文本和敏感 ToolCall，已脱敏的文本保留为 `assistant_progress`，不得升级为 `final_answer`。
+
 ## 6. Approval 状态机
 
 ToolCall：
@@ -241,6 +253,7 @@ applied | not_applied | outcome_unknown
 - API Key 无效、模型不存在、Base URL 或请求参数确定性错误使 Run 直接进入 failed。
 - 该终态失败不执行 Finalization Call，不允许替换 Run 的模型快照后恢复。
 - 已有 Timeline 和 Artifact 保留；用户修复或更换 Profile 后创建新 Run。
+- 模型流敏感扫描器失败时，未确认安全的文本和 ToolCall 丢弃，Step 标记 `sensitive_scan_failed`，Run 进入 waiting_user_input。
 
 ## 10. Cancel
 

@@ -54,6 +54,7 @@ webSecurity: true
 - 外部链接只允许用户点击后通过系统浏览器打开，并显示目标域名。
 - 文件预览不允许执行脚本、宏或任意本地 URL。
 - Sidecar 错误响应经 Main 字段白名单后返回 Renderer。
+- 敏感错误卡只显示 ruleset version、rule id/version、action、命中数和安全字段路径/行号；不显示原值、长度、摘要或哈希。
 
 ## 4. Sidecar 启动与认证
 
@@ -156,3 +157,12 @@ Renderer 不实现 raw reasoning 专用 UI；只渲染 `assistant_progress`、`f
 模型认证或确定性配置错误时，Renderer 显示 failed 错误卡和“更换/修复 Model Profile 后创建新 Run”，不提供恢复原 Run 的按钮。
 
 瞬时模型故障重试耗尽或连续两次模型协议错误时，Renderer 显示对应 pause reason，并允许用户稍后继续、补充指令或取消。
+
+敏感内容 UI 契约：
+
+- Create Run 和 user-input 在提交失败时保留本地编辑态，但不将原文写入 Renderer 持久化缓存、遥测或 Main 日志。
+- 敏感 ToolCall 不渲染 Approval 卡，只渲染安全拒绝 Event。
+- 连续两次敏感 ToolCall 后显示 `repeated_sensitive_tool_input`，用户可补充无敏感指令后创建新 Segment。
+- `sensitive_scan_limit_exceeded`、`sensitive_scan_incomplete` 和 `sensitive_scan_failed` 必须区分于文件本身敏感，不得统一显示为“权限拒绝”。
+- Reducer 必须接受保留 event id/type 的 `content_unavailable` 安全载荷，继续推进回放水位而不尝试渲染原 payload。
+- Redaction Service unavailable 时禁用新 Run、用户补充、工具详情和 Artifact 内容读取，只显示诊断和安全恢复提示。

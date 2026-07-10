@@ -37,7 +37,7 @@
 | F029 | Execution Feed | 展示消息、工具、审批、状态、错误和 Artifact |
 | F030 | Event Timeline | 所有关键事件与状态变更同事务持久化 |
 | F031 | Context Budget | P0 提供确定性的有界上下文裁剪 |
-| F032 | Redaction | 返回模型前与持久化前按规则脱敏 |
+| F032 | Redaction | 截断、展示、返回模型与持久化前按确定性规则分级处理 |
 | F033 | 有限重试 | 模型首 delta 前最多 2 次；只读瞬时错误 1 次 |
 | F034 | Finalization | 硬停止前一次最长 60 秒、无工具的收尾调用 |
 | F035 | 系统 Terminal | Workspace 中只提供用户点击打开系统 Terminal |
@@ -50,6 +50,11 @@
 | F042 | Host 校验 | 精确 host/port、解析 IP 校验、拒绝通配符和跨 host redirect |
 | F043 | Hardlink 防护 | 写工具拒绝多链接文件；Writable Shell 前置扫描 fail closed |
 | F044 | 文件元数据 | 修改已有文件保留 mode、ACL、xattr；新文件默认 0644 |
+| F045 | 敏感规则 | 版本化 `deny`/`redact`/`allow_with_audit`；MVP 不使用模型判断 |
+| F046 | 入口扫描 | 用户输入、文件/搜索、Shell/模型输出和持久化入口统一扫描 |
+| F047 | 副作用阻断 | 写/Patch/Shell/Artifact 敏感命中整个拒绝，不静默改写后执行 |
+| F048 | 扫描失败关闭 | 扫描失败、超时、超限或编码无法安全处理时不释放正文 |
+| F049 | 敏感重试暂停 | 模型连续两次提出敏感 ToolCall 后等待用户输入 |
 
 ## 2. ToolCall 组合规则
 
@@ -78,6 +83,8 @@
 | Finalization Call | 60 秒 | 无工具 |
 | run_shell | 120 秒 | 单次最大 600 秒 |
 | 文件/搜索工具 | 10–15 秒 | 工具固定上限 |
+| 单文件敏感扫描 | 32 MiB | 超限不返回正文 |
+| 单次搜索扫描 | 256 MiB / 15 秒 | 可返回已完成整文件扫描的安全结果 |
 | 模型重试 | 2 次 | 仅首个 delta 前的瞬时错误 |
 | 只读工具重试 | 1 次 | 仅瞬时错误 |
 | 写/Shell 重试 | 0 | 必须先确认事实 |
@@ -96,6 +103,7 @@
 | P1 | Regex Search |
 | P1 | macOS Keychain 密钥存储 |
 | P1 | Artifact/Session 数据管理与自动清理策略 |
+| P1 | 敏感规则升级后的历史数据重扫、Artifact 隔离与安全迁移 |
 | P2 | Windows/Linux 支持 |
 | P2 | 后台执行、tray 和通知 |
 | P2 | 多 Agent、多执行器和并行工具 |

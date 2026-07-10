@@ -93,3 +93,18 @@
 | A068 | Host 防绕过 | 通配符、私网解析、非批准端口和跨 host redirect 均被拒绝 |
 | A069 | Hardlink 防护 | 文件工具拒绝 `st_nlink>1`；Writable Shell 在存在多链接文件时不可执行 |
 | A070 | 元数据保留 | 修改保留 mode/ACL/xattr；元数据失败零替换；新文件为 0644 |
+
+## 8. 敏感内容边界
+
+| 编号 | 验收项 | 标准 |
+|---|---|---|
+| A071 | 分级规则 | 固定输入在各入口一致得到 `deny`/`redact`/`allow_with_audit`、rule id/version 及 ruleset version |
+| A072 | 全文件拒绝 | 文件任意位置命中 `deny` 时 read/range/search 不返回该文件任何正文 |
+| A073 | 输入阻断 | 任务/补充命中时不落库、不发模型、不创建/恢复 Run 且不占用 idempotency key；审批 feedback 命中时决策保持 pending |
+| A074 | 副作用阻断 | 敏感写/Patch/Shell/Artifact 零执行、零 Approval，不以脱敏内容代替执行 |
+| A075 | 跨块脱敏 | 跨 output chunk 的凭证不会在 UI、模型观察、Event、SQLite 或日志泄露 |
+| A076 | 扫描顺序 | 原始内容先扫描再截断/摘要；扫描失败或超限不释放未确认正文 |
+| A077 | 占位符 | 脱敏统一为 `[REDACTED:<rule_id>]`，无原值长度、摘要、哈希或跨记录关联标识 |
+| A078 | 敏感重试 | 模型连续两次生成敏感 ToolCall 后 waiting_user_input，且不增加协议错误计数 |
+| A079 | 规则集失效 | 规则自检失败时不存在未扫描降级通道；用户无法热加载、白名单或审批绕过 |
+| A080 | 规则版本变更 | 升级后恢复旧 Run 使用新规则并记录版本变更；旧内容读取时按当前规则扫描；旧应用不能降级已生效规则 |
