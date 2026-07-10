@@ -26,6 +26,7 @@ Step 记录
 ToolCall 执行
 Approval 审批
 审批恢复
+waiting_user_input 恢复
 Workspace 文件隔离
 Execution Feed
 Artifacts
@@ -41,6 +42,7 @@ Artifacts
 6. 第一版不做分布式，单进程即可。
 7. 第一版必须把审批恢复作为核心路径，而不是附属流程。
 8. Eidos 是前台执行型 Agent，不作为后台 daemon 常驻。
+9. 写操作和 shell 执行都必须审批；读取和搜索默认不审批，但受安全策略约束。
 
 ---
 
@@ -110,7 +112,8 @@ Electron Main
   ├── proxy HTTP API
   ├── proxy SSE events
   ├── choose workspace folder
-  └── open file / folder
+  ├── open file / folder
+  └── manage Workspace Terminal PTY
   │
   │ HTTP / SSE with token
   ▼
@@ -201,14 +204,18 @@ state_root = ~/.eidos/workspaces/{workspace_id}/sessions/{session_id}
 |---|---|
 | list_files | 自动 |
 | read_file | 自动，敏感文件仍禁止 |
-| write_file | 审批 |
+| read_file_range | 自动，敏感文件仍禁止 |
+| search_text | 自动，敏感文件不参与搜索 |
+| write_file | 审批，展示 diff |
+| apply_patch | 审批，展示 diff |
 | run_shell | 审批 |
 
 UI：
 
 - 右栏显示文件树。
 - 支持只读文件预览。
-- 可展示 Artifacts、Workspace Terminal、日志。
+- 可展示 Artifacts、Workspace Terminal、Diff、日志。
+- 每个 Workspace 只维护一个 Workspace Terminal 实例。
 - Workspace Terminal 基于当前工作目录打开，不绑定 Session、Run、Step 或 ToolCall。
 
 ### 5.2 Public Mode
@@ -226,8 +233,11 @@ state_root = ~/.eidos/public/sessions/{session_id}
 | 工具 | 策略 |
 |---|---|
 | list_files | 自动，但仅供 Agent 内部使用 |
-| read_file | 自动 |
-| write_file | 自动 |
+| read_file | 自动，敏感文件仍禁止 |
+| read_file_range | 自动，敏感文件仍禁止 |
+| search_text | 自动，仅供 Agent 内部使用 |
+| write_file | 审批，展示 diff |
+| apply_patch | 审批，展示 diff |
 | run_shell | 审批 |
 
 UI：
@@ -340,9 +350,13 @@ Workspace Terminal 是桌面端右栏的 Workspace 级交互式终端。
 
 - Terminal 由 Electron Main 管理 PTY 进程，Renderer 只负责渲染和输入输出转发。
 - Terminal 基于当前 Workspace 的 root path 打开，类似 IDE 内置终端。
+- 每个 Workspace 只维护一个 Terminal 实例。
+- 切换 Session 不重启 Terminal；切换 Workspace 时切换到对应 Workspace Terminal。
 - Terminal 不经过 Python sidecar，不进入 Runtime Engine。
 - Terminal 不绑定 Session、Run、Step 或 ToolCall。
 - 用户在 Terminal 中手动输入的命令不进入 `tool_calls`、`approvals` 或 `events` 表。
+- Terminal 不进入 Execution Feed，不触发审批，不自动进入 Agent 上下文。
+- MVP 不围绕 Terminal 设计复杂交互。
 - Agent 通过 `run_shell` 执行的命令仍由 Runtime Engine 作为 ToolCall 执行，并展示在中栏 Execution Feed。
 - Public Mode 不创建 Workspace Terminal。
 
@@ -358,14 +372,14 @@ Eidos MVP 采用三栏 Agent Workbench。
 ├──────────────┼──────────────────────────────┼──────────────────────┤
 │ 会话          │ 对话                          │ 文件树 / Artifacts      │
 │ 工作区        │ Execution Feed                 │ Terminal                │
-│ 模型          │ 审批卡片                       │ Diff 预留 / 预览         │
+│ 模型          │ 审批卡片                       │ Diff / 预览              │
 │ 设置          │ 输入框                         │ 日志                    │
 └──────────────┴──────────────────────────────┴──────────────────────┘
 ```
 
 中栏把对话、执行流和时间线合并为 Execution Feed。
 
-右栏在 MVP 中提供预览、Artifacts、Workspace Terminal 和日志；Diff 只预留入口，完整 Diff 展示放到 P1。
+右栏在 MVP 中提供预览、Artifacts、Workspace Terminal、Diff 和日志。写操作审批必须展示 diff。
 
 Execution Feed event card 类型：
 
@@ -376,6 +390,8 @@ Execution Feed event card 类型：
 - approval_request
 - approval_result
 - tool_result
+- shell_output_summary
+- waiting_user_input
 - artifact_created
 - error
 - final_answer
@@ -443,8 +459,11 @@ GET    /api/v1/runs/{run_id}
 GET    /api/v1/runs/{run_id}/steps
 GET    /api/v1/runs/{run_id}/events
 POST   /api/v1/runs/{run_id}/cancel
+POST   /api/v1/runs/{run_id}/user-input
 POST   /api/v1/approvals/{approval_id}/approve
 POST   /api/v1/approvals/{approval_id}/reject
+GET    /api/v1/tool-calls/{tool_call_id}
+GET    /api/v1/tool-calls/{tool_call_id}/logs
 GET    /api/v1/workspaces/{workspace_id}/files
 GET    /api/v1/workspaces/{workspace_id}/files/content
 GET    /api/v1/artifacts
@@ -474,7 +493,7 @@ GET    /api/v1/model-profiles
 - 执行工具。
 - 保存工具结果。
 - 持久化并推送事件。
-- 处理失败、取消、超时。
+- 处理失败、取消、超时和 waiting_user_input。
 
 核心流程：
 
@@ -487,6 +506,7 @@ resume_loop(run_id, start_step_index = next_step_index)
   ↓
 while step_count < max_steps:
   if canceled: finish canceled
+  if run_effective_time >= run_timeout: mark waiting_user_input; return
   build_context
   call_model with run snapshot
   if final_answer: finish succeeded
@@ -503,6 +523,9 @@ while step_count < max_steps:
       save result
   mark step succeeded
   continue
+if step_count >= max_steps:
+  mark run waiting_user_input
+  return
 ```
 
 审批恢复：
@@ -520,6 +543,21 @@ apply approve or reject
   ↓
 continue with original run.model_config_snapshot
 ```
+
+Reject 规则：
+
+- Reject 后把拒绝原因作为该 ToolCall 的工具结果返回给 Agent。
+- Agent 自动继续规划一次。
+- 同一个 Run 连续 Reject 2 次后，Run 进入 `waiting_user_input`。
+- 用户补充下一步指令后继续同一个 Run，不创建新 Run。
+
+运行限制：
+
+- `max_steps = 20`，MVP 固定不开放 UI 配置。
+- 默认 `run_timeout_seconds = 1800`。
+- 系统硬上限 `max_run_timeout_seconds = 7200`。
+- `waiting_approval` 和 `waiting_user_input` 的等待时间不计入有效运行时间。
+- 达到 `run_timeout` 或 `max_steps` 后进入 `waiting_user_input`，而不是直接 failed。
 
 ---
 
@@ -595,7 +633,7 @@ class ToolDefinition(BaseModel):
     description: str
     input_schema: dict
     risk_level: str
-    timeout_seconds: int = 30
+    default_timeout_seconds: int
 
 class ToolContext(BaseModel):
     run_id: UUID
@@ -603,14 +641,20 @@ class ToolContext(BaseModel):
     mode: str
     active_root: Path
     state_root: Path
-    output_limit: int = 20000
-    shell_timeout_seconds: int = 30
+    run_remaining_seconds: int
+    tool_timeout_seconds: int
+    observation_limit_bytes: int = 32768
+    stdout_limit_bytes: int = 786432
+    stderr_limit_bytes: int = 524288
+    combined_output_limit_bytes: int = 1048576
 
     class Config:
         arbitrary_types_allowed = True
 
 class ToolResult(BaseModel):
     content: str
+    status: str = "succeeded"
+    truncated: bool = False
     metadata: dict = Field(default_factory=dict)
 
 class ToolExecutor(Protocol):
@@ -629,42 +673,110 @@ class ToolExecutor(Protocol):
 
 用途：查看 active root 文件结构。
 风险：low。
+默认 timeout：10s。
 
 限制：
 
 - 只能列出 active root 内文件。
 - Workspace Mode 中用于 UI 文件树和模型工具调用。
 - Public Mode 中只供 Agent 内部使用，UI 不展示文件树。
-- 默认忽略 `.git`、`__pycache__`、`node_modules`、`.venv`、`.runtime`。
+- 默认忽略 `.git`、`__pycache__`、`node_modules`、`.venv`、`.runtime`、构建产物和二进制文件。
+- 不需要审批。
 
 ### 14.2 read_file
 
 用途：读取 active root 内文件。
 风险：low。
+默认 timeout：10s。
 
 限制：
 
 - 禁止读取 active root 外路径。
-- 禁止读取 `.env`、`.ssh` 等敏感文件。
-- 单次最大读取 20000 字符。
+- 二进制、密钥、敏感文件默认拒绝普通读取。
+- `<= 512KB` 完整读取。
+- `512KB ~ 2MB` 返回 head + tail 裁剪内容，并标记 `truncated=true`。
+- `> 2MB` 拒绝整文件读取，提示使用 `read_file_range`。
+- 单次返回内容最多 256KB。
+- 不需要审批。
 
-### 14.3 write_file
+### 14.3 read_file_range
 
-用途：写入 active root 内文件。
-风险：medium。
+用途：按行号范围读取 active root 内文件。
+风险：low。
+默认 timeout：10s。
+
+参数：
+
+```text
+path
+start_line
+end_line
+```
 
 限制：
 
-- Workspace Mode 默认需要审批。
-- Public Mode 默认自动执行。
+- 禁止读取 active root 外路径。
+- 二进制、密钥、敏感文件默认拒绝普通读取。
+- 按行号范围返回内容。
+- 返回实际行号范围、是否截断、文件大小和总行数等元信息。
+- 不需要审批。
+
+### 14.4 search_text
+
+用途：Workspace 内受控文本搜索。
+风险：low。
+默认 timeout：10s。
+
+限制：
+
+- 使用 literal text search。
+- 默认大小写不敏感。
+- 参数可预留 `use_regex`，但 MVP 固定关闭或拒绝 `use_regex=true`。
+- 默认限制在 active root / workspace 内。
+- 默认排除依赖目录、构建产物、lock 文件和二进制文件。
+- 敏感文件不参与搜索。
+- 疑似敏感命中内容必须脱敏。
+- 返回路径、行号、列号、命中行预览和少量上下文。
+- 必须设置 `max_results`。
+- 不需要审批。
+
+### 14.5 write_file
+
+用途：写入 active root 内文件。
+风险：medium。
+默认 timeout：10s。
+
+限制：
+
+- Public Mode 和 Workspace Mode 都必须审批。
+- 用于创建新文件或生成完整文件。
+- 写操作审批必须展示 diff。
+- Agent 不允许在未读取原文件的情况下覆盖已有文件。
 - MVP 不做写入前快照。
 - 写入行为必须记录 tool_call 参数、目标路径、写入模式、内容摘要和 event。
 - 禁止写 active root 外路径。
 
-### 14.4 run_shell
+### 14.6 apply_patch
+
+用途：对已有文件做局部 patch，是修改已有文件的默认方式。
+风险：medium。
+默认 timeout：15s。
+
+限制：
+
+- Public Mode 和 Workspace Mode 都必须审批。
+- 写操作审批必须展示 diff。
+- Patch 只能作用于 active root 内文件。
+- Patch 目标文件必须已读取或可验证 base 内容。
+- Patch 应记录目标路径、patch 摘要、diff 和 event。
+- MVP 不支持 Edit then Approve。
+
+### 14.7 run_shell
 
 用途：执行受控 shell 命令。
 风险：high。
+默认 timeout：120s。
+最大 timeout：600s。
 
 `run_shell` 是 Agent 工具调用，不复用右栏 Workspace Terminal。它的命令、参数、审批、输出和结果仍然作为 ToolCall 进入 Execution Feed。
 
@@ -672,9 +784,17 @@ class ToolExecutor(Protocol):
 
 - Public Mode 和 Workspace Mode 都必须审批。
 - cwd 必须在 active root 内。
-- 默认超时 30 秒。
-- 输出最多 20000 字符。
-- MVP 默认禁用交互式命令。
+- 允许 Agent 请求自定义 `timeout_seconds`。
+- 请求不超过 300s 时正常处理。
+- 请求 301~600s 时视为长时间命令，审批卡片高亮展示。
+- 超过 600s 直接拒绝，要求 Agent 缩短 timeout 或拆分任务。
+- 最终实际 timeout 还必须受 Run 剩余时间预算约束。
+- 允许执行长驻服务类命令，但 Runtime 只负责短期观测命令输出。
+- 如果命令连续 3 个 30 秒窗口没有 stdout/stderr 输出，Runtime 自动终止进程。
+- stdout 最多保存 768KB，stderr 最多保存 512KB，二者合计最多 1MB。
+- 输出超限不终止命令，采用 head + tail 裁剪并标记 `truncated=true`。
+- 返回给 Agent 的 observation 最多 32KB。
+- Execution Feed 展示可更新 ToolCall 卡片，不直接实时刷完整 stdout/stderr。
 - 黑名单只作为额外保护，不作为唯一安全边界。
 - 超时或 cancel 时必须终止进程组。
 
@@ -704,10 +824,35 @@ def resolve_active_path(active_root: Path, user_path: str) -> Path:
 .env.*
 *.pem
 *.key
+*.p12
 id_rsa
 id_ed25519
 .ssh/*
+~/.aws/credentials
+kubeconfig
+docker config
+.npmrc
+.pypirc
+.netrc
+*secret*
+*token*
+*credentials*
 ```
+
+内容扫描规则：
+
+- 疑似 private key。
+- 疑似 api key。
+- 疑似 access token。
+- 疑似 password。
+
+处理策略：
+
+- 敏感文件默认直接拒绝读取，不提供审批后读取能力。
+- 被拒绝时返回 `sensitive_file` 错误。
+- Runtime 提示用户手动提供脱敏后的必要片段。
+- 命中内容不写入数据库或日志，只记录拒绝原因、路径、规则 ID 和时间。
+- Workspace 文件树不做额外隐藏，保护边界放在读取和进入 Agent 上下文。
 
 ---
 
@@ -725,11 +870,16 @@ model_delta
 tool_call_created
 tool_call_waiting_approval
 tool_call_started
+tool_call_output_delta
+tool_call_output_summary
 tool_call_succeeded
 tool_call_failed
+tool_call_timeout
 approval_created
 approval_approved
 approval_rejected
+run_waiting_user_input
+user_input_added
 artifact_created
 step_succeeded
 step_failed
@@ -754,6 +904,14 @@ GET /api/v1/runs/{run_id}/events?after_event_id=1024
 
 Renderer 看到的是 Main 转换后的 Execution Feed item，而不是 raw event 的唯一展示方式。
 
+`run_shell` 输出处理：
+
+- Runtime 实时采集 stdout/stderr，并通过 `tool_call_output_delta` / `tool_call_output_summary` 事件传递。
+- Execution Feed 展示可更新的 `run_shell` ToolCall 卡片。
+- 卡片字段包括 command、status、运行时长、最近输出摘要、stdout/stderr 大小、终止原因和 exit code。
+- 完整 stdout/stderr 默认折叠，在 ToolCall Detail / Logs 中查看。
+- 命令结束后，Runtime 将结构化结果和最多 32KB observation 返回给 Agent。
+
 ---
 
 ## 17. 状态机设计
@@ -764,10 +922,10 @@ Renderer 看到的是 Main 转换后的 Execution Feed item，而不是 raw even
 created
 running
 waiting_approval
+waiting_user_input
 succeeded
 failed
 canceled
-expired
 ```
 
 状态流转：
@@ -776,12 +934,14 @@ expired
 created -> running
 running -> waiting_approval
 waiting_approval -> running
+running -> waiting_user_input
+waiting_approval -> waiting_user_input
+waiting_user_input -> running
 running -> succeeded
 running -> failed
 running -> canceled
+waiting_user_input -> canceled
 waiting_approval -> canceled
-running -> expired
-waiting_approval -> expired
 ```
 
 ### 17.2 Step 状态
@@ -790,12 +950,13 @@ waiting_approval -> expired
 created
 running
 waiting_approval
+waiting_user_input
 succeeded
 failed
 skipped
 ```
 
-当某个 tool call 需要审批时，当前 step 进入 `waiting_approval`，恢复后继续完成同一个 step。
+当某个 tool call 需要审批时，当前 step 进入 `waiting_approval`，恢复后继续完成同一个 step。当 Run 因连续 Reject、`max_steps` 或 `run_timeout` 进入 `waiting_user_input` 时，用户补充指令后从下一 Step 继续。
 
 ### 17.3 ToolCall 状态
 
@@ -823,7 +984,9 @@ expired
 
 - approve 只允许 `approval.status = pending` 且 `run.status = waiting_approval` 时成功。
 - reject 只允许 `approval.status = pending` 且 `run.status = waiting_approval` 时成功。
-- cancel 只允许 `run.status = running` 时成功。
+- reject 后作为工具结果返回给 Agent；同一 Run 连续 Reject 2 次后进入 `waiting_user_input`。
+- cancel 允许 `run.status in (running, waiting_approval, waiting_user_input)` 时成功。
+- user-input 只允许 `run.status = waiting_user_input` 时成功，并继续同一个 Run。
 - 所有状态转换使用事务和条件更新。
 - 对同一 run 的 resume 必须串行执行。
 - resume 必须继续使用原 Run 的 `model_config_snapshot`。
@@ -844,6 +1007,7 @@ expired
 | runs | 一次任务执行 |
 | run_steps | 执行步骤 |
 | tool_calls | 工具调用 |
+| tool_call_logs | 大输出工具的日志片段 |
 | approvals | 审批记录 |
 | artifacts | 任务产物 |
 | events | 运行事件，MVP 必须持久化 |
@@ -912,6 +1076,10 @@ CREATE TABLE runs (
     status                  TEXT NOT NULL,
     current_step_id         TEXT,
     max_steps               INTEGER NOT NULL DEFAULT 20,
+    run_timeout_seconds     INTEGER NOT NULL DEFAULT 1800,
+    max_run_timeout_seconds INTEGER NOT NULL DEFAULT 7200,
+    effective_elapsed_ms    INTEGER NOT NULL DEFAULT 0,
+    consecutive_rejects     INTEGER NOT NULL DEFAULT 0,
     model_profile_id        TEXT,
     model_config_snapshot   TEXT NOT NULL,
     error_message           TEXT,
@@ -943,14 +1111,33 @@ CREATE TABLE tool_calls (
     tool_name       TEXT NOT NULL,
     arguments_json  TEXT NOT NULL,
     result_text     TEXT,
+    result_json      TEXT NOT NULL DEFAULT '{}',
     status          TEXT NOT NULL,
     risk_level      TEXT NOT NULL,
     approval_id     TEXT,
+    timeout_seconds INTEGER,
+    stdout_size     INTEGER NOT NULL DEFAULT 0,
+    stderr_size     INTEGER NOT NULL DEFAULT 0,
+    stdout_truncated INTEGER NOT NULL DEFAULT 0,
+    stderr_truncated INTEGER NOT NULL DEFAULT 0,
+    exit_code       INTEGER,
+    termination_reason TEXT,
     error_message   TEXT,
     started_at      TEXT,
     finished_at     TEXT,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
+);
+
+CREATE TABLE tool_call_logs (
+    id              TEXT PRIMARY KEY,
+    tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id),
+    stream          TEXT NOT NULL,
+    chunk_index     INTEGER NOT NULL,
+    content         TEXT NOT NULL,
+    truncated       INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL,
+    UNIQUE(tool_call_id, stream, chunk_index)
 );
 
 CREATE TABLE approvals (
@@ -994,6 +1181,7 @@ CREATE INDEX idx_runs_status ON runs(status);
 CREATE INDEX idx_run_steps_run_id ON run_steps(run_id);
 CREATE INDEX idx_tool_calls_run_id ON tool_calls(run_id);
 CREATE INDEX idx_tool_calls_step_id ON tool_calls(step_id);
+CREATE INDEX idx_tool_call_logs_tool_call_id ON tool_call_logs(tool_call_id);
 CREATE INDEX idx_approvals_run_id ON approvals(run_id);
 CREATE INDEX idx_approvals_status ON approvals(status);
 CREATE INDEX idx_events_run_id_id ON events(run_id, id);
@@ -1010,6 +1198,7 @@ CREATE INDEX idx_events_run_id_id ON events(run_id, id);
 - 没有 running Run 时，Main 正常停止 sidecar。
 - 有 running Run 时，Renderer 弹窗要求用户选择等待完成或取消任务并退出。
 - waiting_approval Run 可以持久化；下次启动后仍显示 waiting_approval，用户可继续 approve / reject。
+- waiting_user_input Run 可以持久化；下次启动后仍显示等待用户补充指令。
 - sidecar 不作为后台 daemon 存活。
 
 启动恢复：
@@ -1023,7 +1212,7 @@ load ~/.eidos/eidos.db
   ↓
 restore latest active session
   ↓
-show waiting_approval runs if any
+show waiting_approval / waiting_user_input runs if any
 ```
 
 ---
@@ -1076,6 +1265,9 @@ Eidos/
       test_runtime_state.py
       test_approval_resume.py
       test_event_replay.py
+      test_file_read_limits.py
+      test_search_text.py
+      test_tool_timeouts.py
 ```
 
 ---
@@ -1090,21 +1282,29 @@ Eidos/
 | workspace prefix escape | `/tmp/work` 不能误放行 `/tmp/work2` |
 | workspace symlink escape | workspace 内 symlink 指向外部时不可逃逸 |
 | sensitive file block | `.env`、`.ssh` 不可读 |
-| approval policy | 不同 mode / 风险等级是否触发审批 |
+| sensitive content no log | 命中疑似密钥时不记录命中内容 |
+| approval policy | 写操作和 shell 是否触发审批 |
 | run state transition | 状态流转合法 |
 | approval idempotency | approve / reject 重复请求不会重复执行 |
+| waiting user input | 连续 Reject / max_steps / run_timeout 进入 waiting_user_input |
 | model snapshot | Run 创建时固化模型配置 |
-| shell forbidden command | 危险命令被拒绝 |
+| read file limits | 小文件完整读、中大文件裁剪、超大文件拒绝 |
+| search text literal | literal search、case insensitive、max_results |
+| shell timeout | run_shell timeout 后终止进程并保存输出 |
+| shell output limits | stdout/stderr 超限 head+tail 裁剪 |
 
 ### 21.2 Runtime 集成测试
 
 | 测试 | 说明 |
 |---|---|
 | public run without tool | Public Mode 模型直接回复 |
-| public write_file | Public Mode 自动写入并登记 artifact |
+| public write_file approval | Public Mode 写入触发审批并登记 artifact |
 | workspace write_file approval | Workspace Mode 写入触发审批 |
+| apply_patch approval | 修改已有文件触发审批并展示 diff |
 | approve shell | 审批后执行原 tool call 并从下一 step 继续 |
-| reject shell | 拒绝后模型继续 |
+| reject shell | 拒绝后模型继续，连续 2 次进入 waiting_user_input |
+| resume user input | waiting_user_input 后用户补充指令继续同一个 Run |
+| long running shell | 长驻命令按 idle window / timeout 终止 |
 | cancel running run | running 任务可取消 |
 | event replay | SSE 可以从指定 event id 回放 |
 
@@ -1116,9 +1316,10 @@ Eidos/
 | renderer isolation | Renderer 拿不到 token 和 port |
 | api proxy | Renderer 通过 IPC 调 Main，Main 代理 sidecar |
 | sse proxy | Main 转发 run events 给 Renderer |
-| workspace terminal | Main 管理 PTY，Renderer 只渲染，不写入 Runtime events |
+| workspace terminal | 每个 Workspace 一个 PTY，Renderer 只渲染，不写入 Runtime events |
+| shell card update | Execution Feed 更新 run_shell ToolCall 卡片摘要 |
 | quit with running run | running Run 关闭窗口时要求取消或等待 |
-| restore session | 启动恢复最近 active session |
+| restore session | 启动恢复最近 active session、waiting_approval 和 waiting_user_input |
 
 ---
 
@@ -1149,14 +1350,17 @@ Eidos/
 - Event Store
 - Main 代理 SSE
 - Execution Feed
+- waiting_user_input API
 
 ### M4：Runtime Loop + 工具
 
 - Context Builder
 - Model Gateway
 - Runtime Engine
-- list_files / read_file / write_file / run_shell
+- list_files / read_file / read_file_range / search_text / write_file / apply_patch / run_shell
 - Workspace Guard
+- Tool timeout / run_timeout
+- run_shell output limits
 
 ### M5：审批恢复 + 生命周期
 
@@ -1164,9 +1368,10 @@ Eidos/
 - approve
 - reject
 - resume_after_approval
+- resume_after_user_input
 - cancel run
 - 关闭窗口 running Run 处理
-- waiting_approval 启动恢复
+- waiting_approval / waiting_user_input 启动恢复
 
 ### M6：Workbench 体验
 
@@ -1174,6 +1379,8 @@ Eidos/
 - Workspace 文件树和只读预览
 - Public Artifacts
 - Workspace Terminal / 日志
+- Diff 审批
+- run_shell ToolCall 卡片
 - 基础错误展示
 
 ---
@@ -1182,9 +1389,10 @@ Eidos/
 
 | 扩展 | 预留点 |
 |---|---|
-| apply_patch | ToolExecutor 可新增 patch 工具 |
-| Diff | Artifacts / ToolCall 可补 diff view |
+| Edit then Approve | Approval UI 可加入 patch / command 编辑器 |
 | 写入快照 | state_root 下新增 snapshots |
+| Regex Search | 开启 search_text.use_regex 或新增 search_regex |
+| Timeout 配置 UI | Settings / Session 暴露运行限制配置 |
 | MCP | ToolExecutor 抽象可以映射 MCP tool |
 | Skill | Context Builder 增加 skill recall |
 | Memory | Context Builder 增加 memory recall |
