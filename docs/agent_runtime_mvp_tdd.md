@@ -1,21 +1,25 @@
 # Eidos Agent Runtime MVP 技术设计文档 TDD
 
-版本：v0.2  
-语言：Python  
-Web 框架：FastAPI  
-数据库：PostgreSQL 16  
-ORM：SQLAlchemy 2.x  
-迁移工具：Alembic  
-部署方式：本地 Docker Compose + Python 服务  
+版本：v0.3
+桌面端：Electron + React
+本地 Runtime：Python FastAPI sidecar
+数据库：SQLite
+ORM：SQLAlchemy 2.x
+迁移工具：Alembic
+数据根目录：`~/.eidos`
 
 ---
 
 ## 1. 设计目标
 
-构建一个本地可部署的 Eidos Agent Runtime MVP，支持：
+构建一个本地桌面端 Eidos Agent Runtime MVP，支持：
 
 ```text
-Agent 配置
+Electron 桌面端
+Python FastAPI sidecar
+SQLite 状态持久化
+Eidos Home (~/.eidos)
+Workspace Mode / Public Mode
 Session 管理
 Run 执行
 Step 记录
@@ -23,123 +27,399 @@ ToolCall 执行
 Approval 审批
 审批恢复
 Workspace 文件隔离
-SSE 事件流
-Run Timeline 持久化
-PostgreSQL 状态持久化
+Execution Feed
+Artifacts
 ```
 
 核心原则：
 
 1. Runtime 主流程稳定，工具可插拔。
 2. 所有状态可持久化、可追踪、可恢复。
-3. 文件和命令执行必须受 workspace 约束。
+3. 文件和命令执行必须受 active root 约束。
 4. 中高风险工具调用必须审批。
 5. 第一版不做复杂 Planner，采用 ReAct-style loop。
 6. 第一版不做分布式，单进程即可。
 7. 第一版必须把审批恢复作为核心路径，而不是附属流程。
+8. Eidos 是前台执行型 Agent，不作为后台 daemon 常驻。
 
 ---
 
 ## 2. 技术选型
 
-### 2.1 后端语言：Python
+### 2.1 桌面端：Electron + React
 
-选择 Python 的原因：
+选择 Electron + React 的原因：
+
+- Electron Main 适合管理本地进程、文件夹选择、打开文件和应用生命周期。
+- React 适合构建 Execution Feed、Artifacts、Approval、文件树等复杂状态 UI。
+- Web UI 生态适合 Markdown、代码预览、日志、终端输出等桌面工作台能力。
+- MVP 阶段比 Tauri / Flutter / Qt 更快打通产品闭环。
+
+### 2.2 Runtime：Python FastAPI sidecar
+
+选择 Python sidecar 的原因：
 
 - LLM SDK、工具生态、Agent 原型开发效率高。
-- FastAPI + Pydantic 适合快速构建 API 和 schema。
+- FastAPI + Pydantic 适合快速构建内部 API 和 schema。
 - 后续接 LangGraph、MCP、Jupyter、文件处理工具更顺滑。
+- 与 Electron 解耦，Runtime 可以独立测试。
 
-### 2.2 Web 框架：FastAPI
+### 2.3 数据库：SQLite
 
-| 能力 | 说明 |
-|---|---|
-| 类型友好 | Pydantic schema 直接作为接口定义 |
-| OpenAPI | 自动生成 API 文档 |
-| async 支持 | 适合 SSE、模型流式调用、工具执行 |
-| 生态成熟 | 部署、鉴权、中间件丰富 |
-
-### 2.3 数据库：PostgreSQL
-
-选择 PostgreSQL，不选择 SQLite。
+MVP 选择 SQLite，不选择 PostgreSQL。
 
 原因：
 
-1. Agent Runtime 是状态密集型系统。
-2. Run / Step / ToolCall / Approval / Event 需要事务一致性。
-3. Tool arguments、metadata、event payload 适合 JSONB。
-4. 后续可平滑扩展到多 worker、多用户、多租户。
-5. 本地 Docker 部署成本低。
+1. Eidos 是个人桌面端应用，用户不应该为了启动应用安装 Docker。
+2. MVP 是单用户、单机、单进程 Runtime，SQLite 足够。
+3. `~/.eidos/eidos.db` 符合桌面应用的数据管理习惯。
+4. Run / Step / ToolCall / Approval / Event / Artifact 都可以落 SQLite。
+
+PostgreSQL 作为后续服务化、多用户、多 worker 部署选项，不进入 MVP。
 
 ### 2.4 暂不引入 Redis
 
-MVP 阶段不强依赖 Redis。实时推送使用进程内 EventBus，但所有关键事件必须先持久化到 `events` 表，再推送给 SSE 订阅者。
+MVP 阶段不强依赖 Redis。实时事件由 sidecar 写入 SQLite `events` 表，再由 Electron Main 通过 SSE 连接接收并转发给 Renderer。
 
 ```text
 Runtime Engine
   ↓ persist event
-PostgreSQL events
-  ↓ publish event id
-InMemory EventBus
-  ↓
-SSE Response
+SQLite events
+  ↓ stream event
+FastAPI SSE
+  ↓ token-authenticated request
+Electron Main
+  ↓ IPC
+React Renderer
 ```
-
-后续如果要多进程、多 worker，再引入 Redis Pub/Sub 或 NATS。
 
 ---
 
 ## 3. 总体架构
 
 ```text
-Client / Web UI / CLI
-        │
-        ▼
-FastAPI Server
-        │
-        ├── Agent API
-        ├── Session API
-        ├── Run API
-        ├── Approval API
-        ├── Workspace API
-        └── SSE Event API
-        │
-        ▼
-Runtime Engine
-        │
-        ├── Context Builder
-        ├── Model Gateway
-        ├── Tool Registry
-        ├── Tool Executor
-        ├── Approval Manager
-        ├── Resume Coordinator
-        ├── Workspace Manager
-        └── Event Store / Event Bus
-        │
-        ├── PostgreSQL
-        └── Local Workspace FS
+React Renderer
+  │
+  │ IPC invoke / subscribe
+  ▼
+Electron Main
+  │
+  ├── generate runtime token
+  ├── start/stop Python sidecar
+  ├── read sidecar stdout port
+  ├── proxy HTTP API
+  ├── proxy SSE events
+  ├── choose workspace folder
+  └── open file / folder
+  │
+  │ HTTP / SSE with token
+  ▼
+Python FastAPI Sidecar (127.0.0.1:random_port)
+  │
+  ├── Runtime Engine
+  ├── Context Builder
+  ├── Model Gateway
+  ├── Tool Registry
+  ├── Tool Executor
+  ├── Approval Manager
+  ├── Resume Coordinator
+  ├── Workspace Manager
+  └── Event Store
+  │
+  ├── ~/.eidos/eidos.db
+  └── Local File System
+```
+
+安全边界：
+
+- Renderer 不知道 sidecar port。
+- Renderer 不持有 runtime token。
+- Renderer 不直接访问 sidecar。
+- Electron Main 代理所有 API 和 SSE。
+- sidecar 只监听 `127.0.0.1` 随机端口。
+- sidecar token 由 Electron Main 生成，通过 env 注入。
+- sidecar stdout 只输出 port / ready 信息，不输出 token。
+
+---
+
+## 4. Eidos Home 目录
+
+MVP 使用用户级 `~/.eidos` 作为应用数据根目录。
+
+```text
+~/.eidos/
+  eidos.db
+  config.toml
+  agents/
+  model_profiles/
+  public/
+    sessions/
+      {session_id}/
+        files/
+        artifacts/
+        runs/
+        events/
+  workspaces/
+    {workspace_id}/
+      workspace.toml
+      sessions/
+        {session_id}/
+          artifacts/
+          runs/
+          events/
+  logs/
+  cache/
+```
+
+规则：
+
+- Public Mode 的 `files/` 是内部执行空间，Renderer 不展示文件树。
+- Public Mode 用户只通过 Artifacts 看到产物。
+- Workspace Mode 的真实业务文件仍在用户选择的项目目录中。
+- Workspace Mode 的运行记录、events、artifacts 索引保存在 `~/.eidos/workspaces/{workspace_id}/`。
+- MVP 不主动清理 Public Mode 产物、Artifacts、Events 或 Logs。
+- MVP 不在用户项目目录默认写 `.eidos/`。
+
+---
+
+## 5. 运行模式
+
+### 5.1 Workspace Mode
+
+Session 绑定用户选择的真实项目目录。
+
+```text
+session.mode = "workspace"
+workspace.root_path = 用户选择的文件夹
+active_root = workspace.root_path
+state_root = ~/.eidos/workspaces/{workspace_id}/sessions/{session_id}
+```
+
+工具策略：
+
+| 工具 | 策略 |
+|---|---|
+| list_files | 自动 |
+| read_file | 自动，敏感文件仍禁止 |
+| write_file | 审批 |
+| run_shell | 审批 |
+
+UI：
+
+- 右栏显示文件树。
+- 支持只读文件预览。
+- 可展示 Artifacts、终端输出、日志。
+
+### 5.2 Public Mode
+
+Session 不绑定用户项目目录，使用 Eidos 公共空间。
+
+```text
+session.mode = "public"
+active_root = ~/.eidos/public/sessions/{session_id}/files
+state_root = ~/.eidos/public/sessions/{session_id}
+```
+
+工具策略：
+
+| 工具 | 策略 |
+|---|---|
+| list_files | 自动，但仅供 Agent 内部使用 |
+| read_file | 自动 |
+| write_file | 自动 |
+| run_shell | 审批 |
+
+UI：
+
+- 不显示文件树。
+- 不展示底层 `files/`。
+- 只展示 Artifacts、预览、终端输出、日志。
+
+---
+
+## 6. Electron 设计
+
+### 6.1 Electron Main
+
+职责：
+
+- 启动 / 停止 Python sidecar。
+- 生成一次性 runtime token。
+- 通过 env 将 token 传给 sidecar。
+- 读取 sidecar stdout 获取 port。
+- 代理 Renderer 的 HTTP API 请求。
+- 代理 sidecar SSE，并通过 IPC 转发 event。
+- 调用系统文件夹选择器。
+- 打开文件和文件夹。
+- 处理应用关闭生命周期。
+
+sidecar 启动流程：
+
+```text
+Electron Main generate token
+  ↓
+spawn Python sidecar with EIDOS_RUNTIME_TOKEN env
+  ↓
+sidecar binds 127.0.0.1:random_port
+  ↓
+sidecar stdout: {"event":"ready","port":12345}
+  ↓
+Main stores port in memory
+  ↓
+Renderer can use IPC APIs
+```
+
+### 6.2 Renderer
+
+职责：
+
+- 展示三栏 Agent Workbench。
+- 通过 preload 暴露的最小 IPC API 调用 Main。
+- 订阅 Main 转发的 run events。
+- 不持有 token。
+- 不直接访问 sidecar。
+
+Electron 安全约束：
+
+```text
+contextIsolation: true
+nodeIntegration: false
+sandbox: true
+preload 暴露最小 API
+不向 Renderer 暴露 sidecar port/token
+```
+
+### 6.3 API 代理
+
+Renderer 调用：
+
+```ts
+window.eidos.invoke("runs:create", payload)
+window.eidos.subscribeRunEvents(runId, handler)
+```
+
+Main 内部代理：
+
+```text
+IPC request
+  ↓
+Main adds Authorization: Bearer {token}
+  ↓
+HTTP request to http://127.0.0.1:{port}/api/v1/...
+  ↓
+sidecar response
+  ↓
+Main returns sanitized response to Renderer
+```
+
+### 6.4 SSE 代理
+
+```text
+Python sidecar
+  -> SSE /api/v1/runs/{run_id}/events
+
+Electron Main
+  -> 持有 token
+  -> 建立 SSE 连接
+  -> 接收 runtime event
+  -> 通过 IPC 推送给 Renderer
+
+Renderer
+  -> 只订阅 Main 转发的 run events
 ```
 
 ---
 
-## 4. 模块设计
+## 7. UI 信息架构
 
-### 4.1 API Layer
+Eidos MVP 采用三栏 Agent Workbench。
 
-职责：
+```text
+┌──────────────┬──────────────────────────────┬──────────────────────┐
+│ 导航区        │ 核心交互区                    │ 上下文与产物区          │
+├──────────────┼──────────────────────────────┼──────────────────────┤
+│ 会话          │ 对话                          │ 文件树 / Artifacts      │
+│ 工作区        │ Execution Feed                 │ 终端输出                │
+│ 模型          │ 审批卡片                       │ Diff 预留 / 预览         │
+│ 设置          │ 输入框                         │ 日志                    │
+└──────────────┴──────────────────────────────┴──────────────────────┘
+```
 
-- 接收 HTTP 请求。
-- 参数校验。
-- 调用 Application Service。
-- 返回标准响应。
-- 提供 SSE 事件流。
+中栏把对话、执行流和时间线合并为 Execution Feed。
+
+右栏在 MVP 中提供预览、Artifacts、终端输出和日志；Diff 只预留入口，完整 Diff 展示放到 P1。
+
+Execution Feed event card 类型：
+
+- user_message
+- assistant_message
+- model_step
+- tool_call
+- approval_request
+- approval_result
+- tool_result
+- artifact_created
+- error
+- final_answer
+
+---
+
+## 8. Model Profile 设计
+
+MVP 支持多个 OpenAI-compatible model profile。DeepSeek 等兼容 OpenAI 协议的模型通过用户配置 `base_url / api_key / model` 接入，不做特殊 provider 分支。
+
+规则：
+
+- 每个 Session 可以选择一个 model profile。
+- 切换 Session 模型时提示：只影响后续 Run，不影响历史 Run 和正在运行的 Run。
+- Run 创建时固化 `model_config_snapshot`。
+- running / waiting_approval / canceling 状态的 Run 不允许切换模型。
+- approval resume 必须继续使用原 Run 的模型快照。
+- `model_config_snapshot` 不保存明文 API key。
+
+配置存储：
+
+```text
+model_profiles 表:
+  id
+  name
+  base_url
+  model
+  api_key_ref
+  parameters_json
+  created_at
+  updated_at
+```
+
+MVP 中 `api_key_ref` 可以指向 `~/.eidos/config.toml` 中的本地加密或明文配置；后续可迁移到系统 Keychain。
+
+Run 快照：
+
+```json
+{
+  "profile_name": "DeepSeek V4 Pro",
+  "base_url": "https://api.deepseek.com",
+  "model": "deepseek-v4-pro",
+  "parameters": {
+    "temperature": 0.2
+  }
+}
+```
+
+---
+
+## 9. API Layer
+
+sidecar API 仅供 Electron Main 内部调用。
 
 主要接口：
 
 ```text
-POST   /api/v1/agents
-GET    /api/v1/agents/{agent_id}
-POST   /api/v1/agents/{agent_id}/sessions
+GET    /internal/health
+POST   /api/v1/sessions
+GET    /api/v1/sessions
+GET    /api/v1/sessions/{session_id}
+PATCH  /api/v1/sessions/{session_id}/model
 POST   /api/v1/sessions/{session_id}/runs
 GET    /api/v1/runs/{run_id}
 GET    /api/v1/runs/{run_id}/steps
@@ -147,11 +427,23 @@ GET    /api/v1/runs/{run_id}/events
 POST   /api/v1/runs/{run_id}/cancel
 POST   /api/v1/approvals/{approval_id}/approve
 POST   /api/v1/approvals/{approval_id}/reject
-GET    /api/v1/sessions/{session_id}/workspace/files
-GET    /api/v1/sessions/{session_id}/workspace/files/content
+GET    /api/v1/workspaces/{workspace_id}/files
+GET    /api/v1/workspaces/{workspace_id}/files/content
+GET    /api/v1/artifacts
+GET    /api/v1/artifacts/{artifact_id}
+POST   /api/v1/model-profiles
+GET    /api/v1/model-profiles
 ```
 
-### 4.2 Runtime Engine
+认证：
+
+- 所有 API 除 health 外都要求 `Authorization: Bearer {runtime_token}`。
+- token 来自 env `EIDOS_RUNTIME_TOKEN`。
+- token 不写入日志、磁盘或 stdout。
+
+---
+
+## 10. Runtime Engine
 
 职责：
 
@@ -171,17 +463,19 @@ GET    /api/v1/sessions/{session_id}/workspace/files/content
 ```text
 start_run(run_id)
   ↓
+load run.model_config_snapshot
+  ↓
 resume_loop(run_id, start_step_index = next_step_index)
   ↓
 while step_count < max_steps:
   if canceled: finish canceled
   build_context
-  call_model
+  call_model with run snapshot
   if final_answer: finish succeeded
   if tool_calls:
     for each tool_call:
       create tool_call
-      check approval
+      check approval by session mode and tool risk
       if need approval:
         create approval
         mark tool_call pending_approval
@@ -193,48 +487,63 @@ while step_count < max_steps:
   continue
 ```
 
-### 4.3 Context Builder
+审批恢复：
 
-职责：构造每次模型调用的上下文。
+```text
+resume_after_approval(run_id, approval_id)
+  ↓
+lock run / approval / tool_call
+  ↓
+verify run.status = waiting_approval
+  ↓
+verify approval.status = pending
+  ↓
+apply approve or reject
+  ↓
+continue with original run.model_config_snapshot
+```
+
+---
+
+## 11. Context Builder
 
 上下文顺序：
 
 ```text
-1. System Prompt
+1. 内置 system prompt（不暴露给用户）
 2. Eidos Runtime 行为规则
-3. 权限和安全规则
-4. 当前 workspace 信息
-5. 可用工具定义
-6. 历史摘要，可选
-7. 最近消息
-8. 最近 Step / ToolCall / Approval 结果
-9. 用户当前任务
+3. 当前 session mode
+4. active root 信息
+5. 权限和安全规则
+6. 可用工具定义
+7. 历史摘要，可选
+8. 最近消息
+9. 最近 Step / ToolCall / Approval 结果
+10. 用户当前任务
 ```
 
 设计原则：
 
+- system prompt 是内部运行协议，不提供查看或编辑入口。
 - 静态内容放前面。
 - 高频变化内容放后面。
 - 工具列表顺序固定，避免上下文不稳定。
 - tool result 过长时裁剪。
 - 后续支持 compaction。
 
-### 4.4 Model Gateway
+---
 
-职责：屏蔽不同模型 SDK 差异。
+## 12. Model Gateway
+
+MVP 实现一个 OpenAI-compatible gateway。
 
 ```python
 from typing import Protocol
 
 class ModelGateway(Protocol):
-    async def stream_response(self, request: "ModelRequest") -> "ModelStream":
-        ...
-
     async def create_response(self, request: "ModelRequest") -> "ModelResponse":
         ...
 ```
-
-MVP 建议只实现一个 provider，例如 OpenAI-compatible API。
 
 模型输出统一为：
 
@@ -251,9 +560,11 @@ class ModelResponse(BaseModel):
     finish_reason: str | None = None
 ```
 
-### 4.5 Tool Registry 和 ToolContext
+---
 
-工具定义不绑定具体 session；执行时通过 `ToolContext` 注入当前 run/session/workspace/limits。
+## 13. Tool Registry 和 ToolContext
+
+工具定义不绑定具体 session；执行时通过 `ToolContext` 注入当前 run/session/active_root/limits。
 
 ```python
 from pathlib import Path
@@ -271,7 +582,9 @@ class ToolDefinition(BaseModel):
 class ToolContext(BaseModel):
     run_id: UUID
     session_id: UUID
-    workspace_root: Path
+    mode: str
+    active_root: Path
+    state_root: Path
     output_limit: int = 20000
     shell_timeout_seconds: int = 30
 
@@ -290,168 +603,77 @@ class ToolExecutor(Protocol):
         ...
 ```
 
-Registry：
+---
 
-```python
-class ToolRegistry:
-    def __init__(self) -> None:
-        self._tools: dict[str, ToolExecutor] = {}
+## 14. 内置工具设计
 
-    def register(self, tool: ToolExecutor) -> None:
-        name = tool.definition().name
-        self._tools[name] = tool
+### 14.1 list_files
 
-    def get(self, name: str) -> ToolExecutor:
-        return self._tools[name]
-
-    def list_definitions(self) -> list[ToolDefinition]:
-        return [tool.definition() for tool in self._tools.values()]
-```
-
-### 4.6 内置工具设计
-
-#### 4.6.1 list_files
-
-用途：查看 workspace 文件结构。  
+用途：查看 active root 文件结构。
 风险：low。
-
-参数：
-
-```json
-{
-  "path": ".",
-  "max_depth": 3
-}
-```
 
 限制：
 
-- 只能列出 workspace 内文件。
+- 只能列出 active root 内文件。
+- Workspace Mode 中用于 UI 文件树和模型工具调用。
+- Public Mode 中只供 Agent 内部使用，UI 不展示文件树。
 - 默认忽略 `.git`、`__pycache__`、`node_modules`、`.venv`、`.runtime`。
 
-#### 4.6.2 read_file
+### 14.2 read_file
 
-用途：读取 workspace 文件。  
+用途：读取 active root 内文件。
 风险：low。
-
-参数：
-
-```json
-{
-  "path": "main.py",
-  "start_line": 1,
-  "end_line": 200
-}
-```
 
 限制：
 
-- 禁止读取 workspace 外路径。
+- 禁止读取 active root 外路径。
 - 禁止读取 `.env`、`.ssh` 等敏感文件。
 - 单次最大读取 20000 字符。
 
-#### 4.6.3 write_file
+### 14.3 write_file
 
-用途：写入 workspace 文件。  
+用途：写入 active root 内文件。
 风险：medium。
 
-参数：
-
-```json
-{
-  "path": "main.py",
-  "content": "print('hello')",
-  "mode": "overwrite"
-}
-```
-
 限制：
 
-- safe 模式下需要审批。
-- 写入前保存旧内容快照。
-- 禁止写 workspace 外路径。
+- Workspace Mode 默认需要审批。
+- Public Mode 默认自动执行。
+- MVP 不做写入前快照。
+- 写入行为必须记录 tool_call 参数、目标路径、写入模式、内容摘要和 event。
+- 禁止写 active root 外路径。
 
-#### 4.6.4 run_shell
+### 14.4 run_shell
 
-用途：执行受控 shell 命令。  
+用途：执行受控 shell 命令。
 风险：high。
 
-参数：
-
-```json
-{
-  "command": "python -m py_compile main.py",
-  "cwd": ".",
-  "reason": "检查 Python 文件是否有语法错误"
-}
-```
-
 限制：
 
-- 必须审批。
-- cwd 必须在 workspace 内。
+- Public Mode 和 Workspace Mode 都必须审批。
+- cwd 必须在 active root 内。
 - 默认超时 30 秒。
 - 输出最多 20000 字符。
 - MVP 默认禁用交互式命令。
 - 黑名单只作为额外保护，不作为唯一安全边界。
 - 超时或 cancel 时必须终止进程组。
 
-### 4.7 Approval Manager
+---
 
-职责：根据工具风险和策略判断是否需要人工审批。
+## 15. Workspace Guard
 
-审批模式：
-
-| 模式 | 说明 |
-|---|---|
-| auto | 低/中风险自动，高风险审批 |
-| safe | 低风险自动，中/高风险审批，默认 |
-| manual | 所有工具调用都审批 |
-
-审批动作：
-
-| 动作 | 说明 |
-|---|---|
-| approve | 原参数执行 |
-| edit | 修改参数后执行，P1 可做 |
-| reject | 拒绝执行，并把反馈返回模型 |
-
-MVP 先实现 approve / reject。
-
-### 4.8 Workspace Manager
-
-职责：
-
-- 创建 session workspace。
-- 校验文件路径。
-- 阻止路径逃逸。
-- 读写文件。
-- 保存 artifact。
-
-目录结构：
-
-```text
-.runtime/
-  workspaces/
-    {session_id}/
-      files/
-      artifacts/
-      snapshots/
-      logs/
-```
-
-路径校验逻辑必须使用 `relative_to` / `is_relative_to`，不能使用字符串 `startswith`。
+路径校验必须使用 `relative_to` / `is_relative_to`，不能使用字符串 `startswith`。
 
 ```python
 from pathlib import Path
 
-def resolve_workspace_path(workspace_root: Path, user_path: str) -> Path:
-    root = workspace_root.resolve()
+def resolve_active_path(active_root: Path, user_path: str) -> Path:
+    root = active_root.resolve()
     target = (root / user_path).resolve()
     try:
         target.relative_to(root)
     except ValueError as exc:
-        raise PermissionError("path escapes workspace") from exc
+        raise PermissionError("path escapes active root") from exc
     return target
 ```
 
@@ -467,9 +689,11 @@ id_ed25519
 .ssh/*
 ```
 
-### 4.9 Event Store / Event Bus / SSE
+---
 
-MVP 使用 PostgreSQL `events` 表作为事实来源，进程内 EventBus 只负责实时通知。
+## 16. Event Store / Execution Feed
+
+MVP 使用 SQLite `events` 表作为事实来源。Electron Main 通过 SSE 读取事件并转发给 Renderer。
 
 事件类型：
 
@@ -486,6 +710,7 @@ tool_call_failed
 approval_created
 approval_approved
 approval_rejected
+artifact_created
 step_succeeded
 step_failed
 run_succeeded
@@ -501,17 +726,19 @@ event: tool_call_created
 data: {"run_id":"...","tool_name":"read_file","args":{...}}
 ```
 
-SSE 需要支持断线回放：
+SSE 支持断线回放：
 
 ```text
 GET /api/v1/runs/{run_id}/events?after_event_id=1024
 ```
 
+Renderer 看到的是 Main 转换后的 Execution Feed item，而不是 raw event 的唯一展示方式。
+
 ---
 
-## 5. 状态机设计
+## 17. 状态机设计
 
-### 5.1 Run 状态
+### 17.1 Run 状态
 
 ```text
 created
@@ -537,7 +764,7 @@ running -> expired
 waiting_approval -> expired
 ```
 
-### 5.2 Step 状态
+### 17.2 Step 状态
 
 ```text
 created
@@ -550,7 +777,7 @@ skipped
 
 当某个 tool call 需要审批时，当前 step 进入 `waiting_approval`，恢复后继续完成同一个 step。
 
-### 5.3 ToolCall 状态
+### 17.3 ToolCall 状态
 
 ```text
 created
@@ -563,7 +790,7 @@ failed
 timeout
 ```
 
-### 5.4 Approval 状态
+### 17.4 Approval 状态
 
 ```text
 pending
@@ -572,24 +799,27 @@ rejected
 expired
 ```
 
-### 5.5 幂等与并发规则
+### 17.5 幂等与并发规则
 
 - approve 只允许 `approval.status = pending` 且 `run.status = waiting_approval` 时成功。
 - reject 只允许 `approval.status = pending` 且 `run.status = waiting_approval` 时成功。
-- cancel 只允许 `run.status in (running, waiting_approval)` 时成功。
+- cancel 只允许 `run.status = running` 时成功。
 - 所有状态转换使用事务和条件更新。
 - 对同一 run 的 resume 必须串行执行。
+- resume 必须继续使用原 Run 的 `model_config_snapshot`。
 
 ---
 
-## 6. 数据库设计
+## 18. 数据库设计
 
-### 6.1 表清单
+### 18.1 表清单
 
 | 表 | 说明 |
 |---|---|
-| agents | Agent 配置 |
-| sessions | 会话和 workspace |
+| agents | Agent 配置，MVP 只有默认 Eidos |
+| model_profiles | OpenAI-compatible 模型配置 |
+| workspaces | Workspace Mode 的真实项目目录记录 |
+| sessions | 会话和 mode |
 | messages | 用户和助手消息 |
 | runs | 一次任务执行 |
 | run_steps | 执行步骤 |
@@ -598,125 +828,147 @@ expired
 | artifacts | 任务产物 |
 | events | 运行事件，MVP 必须持久化 |
 
-### 6.2 DDL
+### 18.2 DDL 草案
 
 ```sql
 CREATE TABLE agents (
-    id              UUID PRIMARY KEY,
-    name            VARCHAR(128) NOT NULL,
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
     description     TEXT,
-    system_prompt   TEXT NOT NULL,
-    model           VARCHAR(128) NOT NULL,
-    temperature     NUMERIC(3,2) NOT NULL DEFAULT 0.20,
-    max_steps       INTEGER NOT NULL DEFAULT 20,
-    approval_mode   VARCHAR(32) NOT NULL DEFAULT 'safe',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+
+CREATE TABLE model_profiles (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    base_url        TEXT NOT NULL,
+    model           TEXT NOT NULL,
+    api_key_ref     TEXT NOT NULL,
+    parameters_json TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+
+CREATE TABLE workspaces (
+    id              TEXT PRIMARY KEY,
+    name            TEXT,
+    root_path       TEXT NOT NULL,
+    state_path      TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
 );
 
 CREATE TABLE sessions (
-    id              UUID PRIMARY KEY,
-    agent_id        UUID NOT NULL REFERENCES agents(id),
-    title           VARCHAR(256),
-    workspace_path  TEXT NOT NULL,
-    status          VARCHAR(32) NOT NULL DEFAULT 'active',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                  TEXT PRIMARY KEY,
+    agent_id            TEXT NOT NULL REFERENCES agents(id),
+    model_profile_id    TEXT REFERENCES model_profiles(id),
+    workspace_id        TEXT REFERENCES workspaces(id),
+    mode                TEXT NOT NULL,
+    title               TEXT,
+    active_root_path    TEXT NOT NULL,
+    state_root_path     TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'active',
+    last_active_at      TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
 );
 
 CREATE TABLE messages (
-    id              UUID PRIMARY KEY,
-    session_id      UUID NOT NULL REFERENCES sessions(id),
-    run_id          UUID,
-    role            VARCHAR(32) NOT NULL,
+    id              TEXT PRIMARY KEY,
+    session_id      TEXT NOT NULL REFERENCES sessions(id),
+    run_id          TEXT,
+    role            TEXT NOT NULL,
     content         TEXT NOT NULL,
-    metadata        JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    metadata_json   TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL
 );
 
 CREATE TABLE runs (
-    id              UUID PRIMARY KEY,
-    session_id      UUID NOT NULL REFERENCES sessions(id),
-    agent_id        UUID NOT NULL REFERENCES agents(id),
-    user_input      TEXT NOT NULL,
-    status          VARCHAR(32) NOT NULL,
-    current_step_id UUID,
-    max_steps       INTEGER NOT NULL DEFAULT 20,
-    error_message   TEXT,
-    started_at      TIMESTAMPTZ,
-    finished_at     TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                      TEXT PRIMARY KEY,
+    session_id              TEXT NOT NULL REFERENCES sessions(id),
+    agent_id                TEXT NOT NULL REFERENCES agents(id),
+    user_input              TEXT NOT NULL,
+    status                  TEXT NOT NULL,
+    current_step_id         TEXT,
+    max_steps               INTEGER NOT NULL DEFAULT 20,
+    model_profile_id        TEXT,
+    model_config_snapshot   TEXT NOT NULL,
+    error_message           TEXT,
+    started_at              TEXT,
+    finished_at             TEXT,
+    created_at              TEXT NOT NULL,
+    updated_at              TEXT NOT NULL
 );
 
 CREATE TABLE run_steps (
-    id              UUID PRIMARY KEY,
-    run_id          UUID NOT NULL REFERENCES runs(id),
+    id              TEXT PRIMARY KEY,
+    run_id          TEXT NOT NULL REFERENCES runs(id),
     step_index      INTEGER NOT NULL,
-    step_type       VARCHAR(32) NOT NULL,
-    status          VARCHAR(32) NOT NULL,
+    step_type       TEXT NOT NULL,
+    status          TEXT NOT NULL,
     model_input     TEXT,
     model_output    TEXT,
     error_message   TEXT,
-    started_at      TIMESTAMPTZ,
-    finished_at     TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at      TEXT,
+    finished_at     TEXT,
+    created_at      TEXT NOT NULL,
     UNIQUE(run_id, step_index)
 );
 
 CREATE TABLE tool_calls (
-    id              UUID PRIMARY KEY,
-    run_id          UUID NOT NULL REFERENCES runs(id),
-    step_id         UUID NOT NULL REFERENCES run_steps(id),
-    tool_name       VARCHAR(128) NOT NULL,
-    arguments_json  JSONB NOT NULL,
+    id              TEXT PRIMARY KEY,
+    run_id          TEXT NOT NULL REFERENCES runs(id),
+    step_id         TEXT NOT NULL REFERENCES run_steps(id),
+    tool_name       TEXT NOT NULL,
+    arguments_json  TEXT NOT NULL,
     result_text     TEXT,
-    status          VARCHAR(32) NOT NULL,
-    risk_level      VARCHAR(32) NOT NULL,
-    approval_id     UUID,
+    status          TEXT NOT NULL,
+    risk_level      TEXT NOT NULL,
+    approval_id     TEXT,
     error_message   TEXT,
-    started_at      TIMESTAMPTZ,
-    finished_at     TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    started_at      TEXT,
+    finished_at     TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
 );
 
 CREATE TABLE approvals (
-    id              UUID PRIMARY KEY,
-    run_id          UUID NOT NULL REFERENCES runs(id),
-    tool_call_id    UUID NOT NULL REFERENCES tool_calls(id),
-    status          VARCHAR(32) NOT NULL,
+    id              TEXT PRIMARY KEY,
+    run_id          TEXT NOT NULL REFERENCES runs(id),
+    tool_call_id    TEXT NOT NULL REFERENCES tool_calls(id),
+    status          TEXT NOT NULL,
     reason          TEXT,
-    requested_args  JSONB NOT NULL,
-    approved_args   JSONB,
+    requested_args  TEXT NOT NULL,
+    approved_args   TEXT,
     user_feedback   TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    decided_at      TIMESTAMPTZ,
+    created_at      TEXT NOT NULL,
+    decided_at      TEXT,
     UNIQUE(tool_call_id)
 );
 
 CREATE TABLE artifacts (
-    id              UUID PRIMARY KEY,
-    run_id          UUID NOT NULL REFERENCES runs(id),
-    session_id      UUID NOT NULL REFERENCES sessions(id),
-    name            VARCHAR(256) NOT NULL,
-    artifact_type   VARCHAR(64) NOT NULL,
+    id              TEXT PRIMARY KEY,
+    run_id          TEXT NOT NULL REFERENCES runs(id),
+    session_id      TEXT NOT NULL REFERENCES sessions(id),
+    name            TEXT NOT NULL,
+    artifact_type   TEXT NOT NULL,
     path            TEXT NOT NULL,
     summary         TEXT,
-    metadata        JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    metadata_json   TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL
 );
 
 CREATE TABLE events (
-    id              BIGSERIAL PRIMARY KEY,
-    run_id          UUID NOT NULL REFERENCES runs(id),
-    event_type      VARCHAR(128) NOT NULL,
-    payload         JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id          TEXT NOT NULL REFERENCES runs(id),
+    event_type      TEXT NOT NULL,
+    payload_json    TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL
 );
 
-CREATE INDEX idx_sessions_agent_id ON sessions(agent_id);
-CREATE INDEX idx_messages_session_id ON messages(session_id);
+CREATE INDEX idx_sessions_mode ON sessions(mode);
+CREATE INDEX idx_sessions_last_active_at ON sessions(last_active_at);
 CREATE INDEX idx_runs_session_id ON runs(session_id);
 CREATE INDEX idx_runs_status ON runs(status);
 CREATE INDEX idx_run_steps_run_id ON run_steps(run_id);
@@ -729,666 +981,88 @@ CREATE INDEX idx_events_run_id_id ON events(run_id, id);
 
 ---
 
-## 7. API 设计
+## 19. 前台生命周期
 
-### 7.1 创建 Agent
+规则：
 
-```http
-POST /api/v1/agents
-```
+- Electron Main 是 sidecar 的父进程。
+- 窗口关闭即准备退出 Runtime。
+- 没有 running Run 时，Main 正常停止 sidecar。
+- 有 running Run 时，Renderer 弹窗要求用户选择等待完成或取消任务并退出。
+- waiting_approval Run 可以持久化；下次启动后仍显示 waiting_approval，用户可继续 approve / reject。
+- sidecar 不作为后台 daemon 存活。
 
-请求：
+启动恢复：
 
-```json
-{
-  "name": "Eidos",
-  "description": "让想法拥有可执行的形态。",
-  "system_prompt": "你是 Eidos，一个本地任务执行 Agent。你需要理解用户任务，在当前 workspace 内读取和写入文件，并在执行中高风险操作前请求审批。你必须保留清晰、可追踪的执行过程。",
-  "model": "gpt-5.5",
-  "temperature": 0.2,
-  "max_steps": 20,
-  "approval_mode": "safe"
-}
-```
-
-### 7.2 创建 Session
-
-```http
-POST /api/v1/agents/{agent_id}/sessions
-```
-
-请求：
-
-```json
-{
-  "title": "FastAPI demo task"
-}
-```
-
-响应：
-
-```json
-{
-  "id": "...",
-  "agent_id": "...",
-  "workspace_path": ".runtime/workspaces/{session_id}/files"
-}
-```
-
-### 7.3 创建 Run
-
-```http
-POST /api/v1/sessions/{session_id}/runs
-```
-
-请求：
-
-```json
-{
-  "input": "帮我创建一个 FastAPI demo，包含 /health 接口和 README。",
-  "stream": true
-}
-```
-
-响应：
-
-```json
-{
-  "run_id": "...",
-  "status": "created",
-  "events_url": "/api/v1/runs/{run_id}/events"
-}
-```
-
-### 7.4 SSE 事件
-
-```http
-GET /api/v1/runs/{run_id}/events?after_event_id=0
-```
-
-### 7.5 审批通过
-
-```http
-POST /api/v1/approvals/{approval_id}/approve
-```
-
-请求：
-
-```json
-{
-  "approved_args": null
-}
-```
-
-`approved_args = null` 表示使用原始参数。
-
-### 7.6 审批拒绝
-
-```http
-POST /api/v1/approvals/{approval_id}/reject
-```
-
-请求：
-
-```json
-{
-  "feedback": "不要执行命令，直接告诉我手动验证方式。"
-}
-```
-
-### 7.7 取消 Run
-
-```http
-POST /api/v1/runs/{run_id}/cancel
+```text
+start app
+  ↓
+start sidecar
+  ↓
+load ~/.eidos/eidos.db
+  ↓
+restore latest active session
+  ↓
+show waiting_approval runs if any
 ```
 
 ---
 
-## 8. 代码目录结构
+## 20. 代码目录结构
 
 ```text
 Eidos/
+  package.json
   pyproject.toml
   README.md
-  docker-compose.yml
-  .env.example
 
-  app/
-    main.py
+  desktop/
+    main/
+      index.ts
+      sidecar.ts
+      ipc.ts
+      file-dialog.ts
+    preload/
+      index.ts
+    renderer/
+      src/
+        App.tsx
+        components/
+        features/
+        styles/
 
-    api/
-      routes_agents.py
-      routes_sessions.py
-      routes_runs.py
-      routes_approvals.py
-      routes_workspace.py
-
-    core/
-      config.py
-      logging.py
-      errors.py
-
-    db/
-      base.py
-      session.py
-      models.py
-      migrations/
-
-    schemas/
-      agent.py
-      session.py
-      run.py
-      step.py
-      tool.py
-      approval.py
-      event.py
-
-    runtime/
-      engine.py
-      loop.py
-      context_builder.py
-      state.py
-      event_store.py
-      event_bus.py
-      resume.py
-      compactor.py
-
-    model/
-      gateway.py
-      openai_compatible.py
-      types.py
-
-    tools/
-      base.py
-      registry.py
-      list_files.py
-      read_file.py
-      write_file.py
-      run_shell.py
-
-    workspace/
-      manager.py
-      guard.py
-      snapshots.py
-
-    approval/
-      manager.py
-      policy.py
-
-    services/
-      agent_service.py
-      session_service.py
-      run_service.py
-      approval_service.py
+  runtime/
+    app/
+      main.py
+      api/
+      core/
+      db/
+      schemas/
+      runtime/
+      model/
+      tools/
+      workspace/
+      approval/
+      services/
 
   docs/
     agent_runtime_mvp_prd.md
     agent_runtime_mvp_tdd.md
 
   tests/
-    test_workspace_guard.py
-    test_approval_policy.py
-    test_runtime_state.py
-    test_approval_resume.py
-    test_event_replay.py
+    runtime/
+      test_workspace_guard.py
+      test_approval_policy.py
+      test_runtime_state.py
+      test_approval_resume.py
+      test_event_replay.py
 ```
 
 ---
 
-## 9. 核心代码骨架
+## 21. 测试设计
 
-### 9.1 Runtime Engine
-
-```python
-import logging
-from uuid import UUID
-
-logger = logging.getLogger(__name__)
-
-class RuntimeEngine:
-    def __init__(
-        self,
-        store,
-        context_builder,
-        model_gateway,
-        tool_registry,
-        approval_manager,
-        event_store,
-        tool_context_factory,
-    ):
-        self.store = store
-        self.context_builder = context_builder
-        self.model_gateway = model_gateway
-        self.tool_registry = tool_registry
-        self.approval_manager = approval_manager
-        self.event_store = event_store
-        self.tool_context_factory = tool_context_factory
-
-    async def run(self, run_id: UUID) -> None:
-        run = await self.store.get_run_for_update(run_id)
-        start_step_index = await self.store.next_step_index(run_id)
-        await self.store.update_run_status(run_id, "running")
-        await self.event_store.publish(run_id, "run_started", {"run_id": str(run_id)})
-        await self._run_loop(run_id, start_step_index)
-
-    async def resume_after_approval(self, run_id: UUID, approval_id: UUID) -> None:
-        approval = await self.store.get_pending_approval_for_update(approval_id)
-        run = await self.store.get_run_for_update(run_id)
-
-        if run.status != "waiting_approval":
-            return
-
-        tool_call = await self.store.get_tool_call_for_update(approval.tool_call_id)
-
-        if approval.status == "approved":
-            await self.store.update_tool_call_status(tool_call.id, "approved")
-            tool = self.tool_registry.get(tool_call.tool_name)
-            args = approval.approved_args or approval.requested_args
-            await self._execute_tool(run_id, tool_call.step_id, tool_call.id, tool, args)
-
-        elif approval.status == "rejected":
-            rejected = "User rejected this tool call."
-            if approval.user_feedback:
-                rejected = f"{rejected} Feedback: {approval.user_feedback}"
-            await self.store.save_tool_result(tool_call.id, rejected, None)
-            await self.store.update_tool_call_status(tool_call.id, "rejected")
-            await self.event_store.publish(run_id, "approval_rejected", {
-                "approval_id": str(approval.id),
-                "tool_call_id": str(tool_call.id),
-            })
-
-        await self.store.update_step_status(tool_call.step_id, "succeeded")
-        await self.store.update_run_status(run_id, "running")
-        next_step_index = await self.store.next_step_index(run_id)
-        await self._run_loop(run_id, next_step_index)
-
-    async def _run_loop(self, run_id: UUID, start_step_index: int) -> None:
-        run = await self.store.get_run(run_id)
-
-        try:
-            for step_index in range(start_step_index, run.max_steps):
-                if await self.store.is_run_canceled(run_id):
-                    await self.store.update_run_status(run_id, "canceled")
-                    await self.event_store.publish(run_id, "run_canceled", {})
-                    return
-
-                step = await self.store.create_step(
-                    run_id=run_id,
-                    step_index=step_index,
-                    step_type="model",
-                    status="running",
-                )
-
-                await self.event_store.publish(run_id, "step_started", {
-                    "step_id": str(step.id),
-                    "step_index": step_index,
-                })
-
-                model_request = await self.context_builder.build(run_id)
-                model_response = await self.model_gateway.create_response(model_request)
-                await self.store.save_step_model_output(step.id, model_response.model_dump_json())
-
-                if model_response.content and not model_response.tool_calls:
-                    await self.store.save_assistant_message(run.session_id, run_id, model_response.content)
-                    await self.store.update_step_status(step.id, "succeeded")
-                    await self.store.update_run_status(run_id, "succeeded")
-                    await self.event_store.publish(run_id, "run_succeeded", {})
-                    return
-
-                for call in model_response.tool_calls:
-                    tool = self.tool_registry.get(call.name)
-                    definition = tool.definition()
-                    tool_call = await self.store.create_tool_call(
-                        run_id=run_id,
-                        step_id=step.id,
-                        tool_name=call.name,
-                        arguments_json=call.arguments,
-                        risk_level=definition.risk_level,
-                        status="created",
-                    )
-
-                    await self.event_store.publish(run_id, "tool_call_created", {
-                        "tool_call_id": str(tool_call.id),
-                        "tool_name": call.name,
-                        "arguments": call.arguments,
-                    })
-
-                    decision = await self.approval_manager.check(run, definition, call.arguments)
-                    if decision.need_approval:
-                        approval = await self.store.create_approval(
-                            run_id=run_id,
-                            tool_call_id=tool_call.id,
-                            requested_args=call.arguments,
-                            reason=decision.reason,
-                        )
-                        await self.store.link_tool_call_approval(tool_call.id, approval.id)
-                        await self.store.update_tool_call_status(tool_call.id, "pending_approval")
-                        await self.store.update_step_status(step.id, "waiting_approval")
-                        await self.store.update_run_status(run_id, "waiting_approval")
-                        await self.event_store.publish(run_id, "approval_created", {
-                            "approval_id": str(approval.id),
-                            "tool_call_id": str(tool_call.id),
-                            "reason": decision.reason,
-                        })
-                        return
-
-                    await self._execute_tool(run_id, step.id, tool_call.id, tool, call.arguments)
-
-                await self.store.update_step_status(step.id, "succeeded")
-
-            await self.store.update_run_status(run_id, "failed", error_message="exceeded max steps")
-            await self.event_store.publish(run_id, "run_failed", {"error": "exceeded max steps"})
-
-        except Exception as exc:
-            logger.exception("agent run failed", extra={"run_id": str(run_id)})
-            await self.store.update_run_status(run_id, "failed", error_message=str(exc))
-            await self.event_store.publish(run_id, "run_failed", {"error": str(exc)})
-
-    async def _execute_tool(self, run_id, step_id, tool_call_id, tool, arguments):
-        await self.store.update_tool_call_status(tool_call_id, "running")
-        await self.event_store.publish(run_id, "tool_call_started", {
-            "tool_call_id": str(tool_call_id),
-        })
-
-        ctx = await self.tool_context_factory.create(run_id)
-        try:
-            result = await tool.execute(ctx, arguments)
-            await self.store.save_tool_result(tool_call_id, result.content, None)
-            await self.store.update_tool_call_status(tool_call_id, "succeeded")
-            await self.event_store.publish(run_id, "tool_call_succeeded", {
-                "tool_call_id": str(tool_call_id),
-                "result": result.content[:2000],
-            })
-        except Exception as exc:
-            logger.exception("tool execution failed", extra={"tool_call_id": str(tool_call_id)})
-            await self.store.save_tool_result(tool_call_id, "", str(exc))
-            await self.store.update_tool_call_status(tool_call_id, "failed")
-            await self.event_store.publish(run_id, "tool_call_failed", {
-                "tool_call_id": str(tool_call_id),
-                "error": str(exc),
-            })
-```
-
-### 9.2 Workspace Guard
-
-```python
-from pathlib import Path
-
-SENSITIVE_NAMES = {
-    ".env",
-    "id_rsa",
-    "id_ed25519",
-}
-
-SENSITIVE_SUFFIXES = {
-    ".pem",
-    ".key",
-}
-
-class WorkspaceGuard:
-    def __init__(self, workspace_root: Path):
-        self.workspace_root = workspace_root.resolve()
-
-    def resolve(self, user_path: str) -> Path:
-        target = (self.workspace_root / user_path).resolve()
-        try:
-            target.relative_to(self.workspace_root)
-        except ValueError as exc:
-            raise PermissionError(f"path escapes workspace: {user_path}") from exc
-
-        self._check_sensitive_path(target)
-        return target
-
-    def _check_sensitive_path(self, path: Path) -> None:
-        parts = set(path.parts)
-        if ".ssh" in parts:
-            raise PermissionError("access to .ssh is forbidden")
-
-        if path.name in SENSITIVE_NAMES:
-            raise PermissionError(f"access to sensitive file is forbidden: {path.name}")
-
-        if path.suffix in SENSITIVE_SUFFIXES:
-            raise PermissionError(f"access to sensitive suffix is forbidden: {path.suffix}")
-```
-
-### 9.3 run_shell 工具
-
-```python
-import asyncio
-import logging
-import os
-import signal
-
-logger = logging.getLogger(__name__)
-
-FORBIDDEN_PATTERNS = [
-    "sudo",
-    "su ",
-    "rm -rf /",
-    "rm -rf ~",
-    "mkfs",
-    "dd ",
-    "shutdown",
-    "reboot",
-    "chmod -R 777",
-    "chown -R",
-    "curl | sh",
-    "wget | sh",
-]
-
-SAFE_ENV_KEYS = {
-    "HOME",
-    "PATH",
-    "LANG",
-    "LC_ALL",
-    "PYTHONPATH",
-}
-
-class RunShellTool:
-    def definition(self):
-        return ToolDefinition(
-            name="run_shell",
-            description="在当前 workspace 内执行受控 shell 命令。高风险操作，必须审批。",
-            risk_level="high",
-            timeout_seconds=30,
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "command": {"type": "string"},
-                    "cwd": {"type": "string", "default": "."},
-                    "reason": {"type": "string"},
-                },
-                "required": ["command", "reason"],
-            },
-        )
-
-    async def execute(self, ctx: ToolContext, args: dict) -> ToolResult:
-        command = args["command"].strip()
-        cwd = args.get("cwd", ".")
-
-        self._validate_command(command)
-        resolved_cwd = WorkspaceGuard(ctx.workspace_root).resolve(cwd)
-        env = {key: value for key, value in os.environ.items() if key in SAFE_ENV_KEYS}
-
-        logger.info("executing shell command", extra={
-            "run_id": str(ctx.run_id),
-            "command": command,
-            "cwd": str(resolved_cwd),
-        })
-
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            cwd=str(resolved_cwd),
-            env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,
-        )
-
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=ctx.shell_timeout_seconds)
-        except asyncio.TimeoutError:
-            os.killpg(proc.pid, signal.SIGKILL)
-            raise TimeoutError(f"shell command timeout after {ctx.shell_timeout_seconds} seconds")
-
-        output = (
-            f"exit_code: {proc.returncode}\n"
-            f"stdout:\n{stdout.decode(errors='replace')}\n"
-            f"stderr:\n{stderr.decode(errors='replace')}"
-        )
-
-        return ToolResult(content=output[:ctx.output_limit], metadata={"exit_code": proc.returncode})
-
-    def _validate_command(self, command: str) -> None:
-        lowered = command.lower()
-        for pattern in FORBIDDEN_PATTERNS:
-            if pattern in lowered:
-                raise PermissionError(f"forbidden shell command pattern: {pattern}")
-```
-
----
-
-## 10. 审批恢复设计
-
-### 10.1 approve 流程
-
-```text
-POST /approvals/{id}/approve
-  ↓
-事务锁定 approval / run / tool_call
-  ↓
-仅当 approval=pending 且 run=waiting_approval 时继续
-  ↓
-更新 approval = approved
-  ↓
-更新 tool_call = approved
-  ↓
-执行原 tool_call 或 approved_args
-  ↓
-保存 tool result
-  ↓
-更新原 step = succeeded
-  ↓
-更新 run = running
-  ↓
-RuntimeEngine._run_loop(run_id, next_step_index)
-```
-
-### 10.2 reject 流程
-
-```text
-POST /approvals/{id}/reject
-  ↓
-事务锁定 approval / run / tool_call
-  ↓
-仅当 approval=pending 且 run=waiting_approval 时继续
-  ↓
-更新 approval = rejected
-  ↓
-更新 tool_call = rejected
-  ↓
-把 rejection feedback 写入 tool result
-  ↓
-更新原 step = succeeded
-  ↓
-更新 run = running
-  ↓
-RuntimeEngine._run_loop(run_id, next_step_index)
-```
-
-拒绝后的 tool result 示例：
-
-```json
-{
-  "content": "User rejected this tool call. Feedback: 不要执行命令，直接给我手动验证方式。"
-}
-```
-
-模型看到这个结果后，应重新选择方案。
-
----
-
-## 11. 本地部署设计
-
-### 11.1 docker-compose.yml
-
-```yaml
-services:
-  postgres:
-    image: postgres:16
-    container_name: eidos-postgres
-    environment:
-      POSTGRES_USER: eidos
-      POSTGRES_PASSWORD: eidos123
-      POSTGRES_DB: eidos
-    ports:
-      - "5432:5432"
-    volumes:
-      - ./data/postgres:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U eidos -d eidos"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-```
-
-### 11.2 .env.example
-
-```env
-APP_NAME=Eidos
-APP_ENV=local
-DATABASE_URL=postgresql+asyncpg://eidos:eidos123@localhost:5432/eidos
-WORKSPACE_ROOT=.runtime/workspaces
-MODEL_PROVIDER=openai_compatible
-MODEL_BASE_URL=https://api.openai.com/v1
-MODEL_API_KEY=replace_me
-MODEL_NAME=gpt-5.5
-DEFAULT_APPROVAL_MODE=safe
-DEFAULT_MAX_STEPS=20
-SHELL_TIMEOUT_SECONDS=30
-TOOL_OUTPUT_LIMIT=20000
-```
-
-### 11.3 启动流程
-
-```bash
-# 1. 启动 PostgreSQL
-docker compose up -d postgres
-
-# 2. 安装依赖
-uv sync
-
-# 3. 执行迁移
-alembic upgrade head
-
-# 4. 启动服务
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
----
-
-## 12. 日志设计
-
-日志必须包含：
-
-```text
-run_id
-session_id
-step_id
-tool_call_id
-approval_id
-event_id
-event_type
-status
-latency_ms
-error
-```
-
----
-
-## 13. 测试设计
-
-### 13.1 单元测试
+### 21.1 Runtime 单元测试
 
 | 测试 | 说明 |
 |---|---|
@@ -1396,113 +1070,133 @@ error
 | workspace prefix escape | `/tmp/work` 不能误放行 `/tmp/work2` |
 | workspace symlink escape | workspace 内 symlink 指向外部时不可逃逸 |
 | sensitive file block | `.env`、`.ssh` 不可读 |
-| approval policy | 不同风险等级是否触发审批 |
+| approval policy | 不同 mode / 风险等级是否触发审批 |
 | run state transition | 状态流转合法 |
 | approval idempotency | approve / reject 重复请求不会重复执行 |
+| model snapshot | Run 创建时固化模型配置 |
 | shell forbidden command | 危险命令被拒绝 |
 
-### 13.2 集成测试
+### 21.2 Runtime 集成测试
 
 | 测试 | 说明 |
 |---|---|
-| create run without tool | 模型直接回复 |
-| create run with read_file | 工具自动执行 |
-| create run with write_file | safe 模式触发审批 |
+| public run without tool | Public Mode 模型直接回复 |
+| public write_file | Public Mode 自动写入并登记 artifact |
+| workspace write_file approval | Workspace Mode 写入触发审批 |
 | approve shell | 审批后执行原 tool call 并从下一 step 继续 |
 | reject shell | 拒绝后模型继续 |
-| cancel running run | 任务可取消 |
+| cancel running run | running 任务可取消 |
 | event replay | SSE 可以从指定 event id 回放 |
+
+### 21.3 Desktop 集成测试
+
+| 测试 | 说明 |
+|---|---|
+| sidecar startup | Main 生成 token、env 注入、读取 port |
+| renderer isolation | Renderer 拿不到 token 和 port |
+| api proxy | Renderer 通过 IPC 调 Main，Main 代理 sidecar |
+| sse proxy | Main 转发 run events 给 Renderer |
+| quit with running run | running Run 关闭窗口时要求取消或等待 |
+| restore session | 启动恢复最近 active session |
 
 ---
 
-## 14. MVP 里程碑
+## 22. MVP 里程碑
 
-### M1：基础 API + DB
+### M1：桌面壳 + sidecar
 
-- FastAPI 项目骨架
-- PostgreSQL docker-compose
+- Electron 项目骨架
+- React Renderer
+- Python FastAPI sidecar
+- Main 启停 sidecar
+- token env 注入
+- IPC API proxy
+
+### M2：SQLite + Eidos Home
+
+- `~/.eidos` 初始化
+- SQLite schema
 - SQLAlchemy models
 - Alembic migrations
-- Agent / Session / Run API
+- 默认 Eidos Agent
+- model profiles
 
-### M2：Runtime Loop
+### M3：Session / Run / Event
+
+- Workspace Mode / Public Mode Session
+- Run API
+- Event Store
+- Main 代理 SSE
+- Execution Feed
+
+### M4：Runtime Loop + 工具
 
 - Context Builder
 - Model Gateway
 - Runtime Engine
-- Step / ToolCall 持久化
-- Event Store / SSE 事件流
+- list_files / read_file / write_file / run_shell
+- Workspace Guard
 
-### M3：内置工具
-
-- list_files
-- read_file
-- write_file
-- run_shell
-- workspace guard
-
-### M4：审批恢复
+### M5：审批恢复 + 生命周期
 
 - approval create
 - approve
 - reject
 - resume_after_approval
 - cancel run
-- 幂等和并发状态转换
+- 关闭窗口 running Run 处理
+- waiting_approval 启动恢复
 
-### M5：体验补齐
+### M6：Workbench 体验
 
-- Run Timeline API
-- Workspace 文件查看 API
-- Artifact 保存
-- 错误展示
-- 基础测试用例
+- 三栏布局
+- Workspace 文件树和只读预览
+- Public Artifacts
+- 终端输出 / 日志
+- 基础错误展示
 
 ---
 
-## 15. 后续扩展预留
+## 23. 后续扩展预留
 
 | 扩展 | 预留点 |
 |---|---|
+| apply_patch | ToolExecutor 可新增 patch 工具 |
+| Diff | Artifacts / ToolCall 可补 diff view |
+| 写入快照 | state_root 下新增 snapshots |
 | MCP | ToolExecutor 抽象可以映射 MCP tool |
 | Skill | Context Builder 增加 skill recall |
 | Memory | Context Builder 增加 memory recall |
-| 多模型 | ModelGateway 支持 provider registry |
-| 多 worker | EventBus 替换为 Redis/NATS |
+| 多 Agent | agents 表已保留 |
+| 多 worker | EventBus / DB 层可替换 |
+| PostgreSQL | SQLAlchemy + Alembic 保留迁移空间 |
 | Docker Sandbox | run_shell 从本机 shell 替换为容器执行 |
-| Web UI | 复用 SSE + Timeline API |
-| 平台资源 | 新增 KnowledgeTool / DatabaseTool 等工具 |
+| 后台执行 | Electron tray / notification / daemon 生命周期 |
 
 ---
 
-## 16. 关键设计取舍
+## 24. 关键设计取舍
 
-### 16.1 为什么不用复杂工作流
+### 24.1 为什么用 Electron + React
 
-MVP 的重点是 Runtime 稳定，不是编排复杂度。ReAct-style loop 更适合第一版验证。
+MVP 的重点是先做出完整 Agent Workbench。Electron + React 在桌面能力、复杂 UI、日志/代码/Markdown 展示、进程管理上更快。
 
-### 16.2 为什么先不用 LangGraph
+### 24.2 为什么 Python sidecar
 
-可以参考 LangGraph 的持久化和 human-in-the-loop 思想，但 MVP 自研 Runtime 更利于掌握状态机、审批、工具执行和 workspace 这些底层能力。
+Python 更适合快速构建 Agent Runtime、模型调用、工具执行和后续 LangGraph / MCP 集成。
 
-后续可以选择：
+### 24.3 为什么 SQLite
 
-- 继续自研 Runtime。
-- 把 Engine 替换为 LangGraph。
-- 只在复杂任务里引入 LangGraph。
+Eidos 是个人桌面端应用，SQLite 减少本地部署阻力；PostgreSQL 留作服务化演进。
 
-### 16.3 为什么 shell 必须审批
+### 24.4 为什么 Renderer 不直连 sidecar
 
-Shell 是高风险工具，可能修改文件、访问网络、泄漏敏感信息或执行破坏性命令。MVP 阶段不应该追求完全自动执行。
+token 不进入 Renderer，减少攻击面。所有 sidecar API 和 SSE 都经 Electron Main 代理。
 
-### 16.4 为什么选择 PostgreSQL
+### 24.5 为什么不做后台执行
 
-Agent Runtime 的核心资产是状态轨迹。PostgreSQL 能更好地承载状态持久化、JSONB、事务、索引和后续扩展。
+Eidos MVP 是前台执行型 Agent，不是任务守护器。后台执行会引入 tray、通知、任务守护、崩溃恢复等复杂度。
 
----
+### 24.6 为什么 MVP 不做写入快照
 
-## 17. 参考设计来源
-
-- OpenAI Codex CLI：本地运行的 coding agent。
-- OpenAI Codex Agent Loop：sandbox、approval mode、cwd、工具列表、prompt caching、context compaction。
-- LangChain / LangGraph Human-in-the-Loop：工具调用审批、中断、持久化恢复、approve / edit / reject / respond。
+先降低复杂度，验证可执行 Agent 主路径。MVP 的可恢复只指审批恢复和 Run 状态恢复，文件级恢复放后续。
