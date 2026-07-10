@@ -64,6 +64,7 @@ Eidos 是一个本地桌面端、可执行、可审批、可追踪、可恢复�
 - 用户可以按 Session 选择模型；Run 创建后固化模型配置快照。
 - 所有 Eidos 自身数据统一保存在用户级 `~/.eidos`，不默认污染用户项目目录。
 - Public Mode 的底层 files 不作为 UI 暴露对象，用户只看到 Artifacts。
+- 右栏 Terminal 是 Workspace 级交互式终端，不绑定 Session、Run、Step 或 ToolCall。
 
 ### 3.3 MVP 不解决的问题
 
@@ -127,6 +128,7 @@ Agent 在该文件夹内读写文件和执行命令
 - 用户项目目录不默认写入 `.eidos/`。
 - Eidos 运行记录、events、artifacts 索引统一保存在 `~/.eidos/workspaces/{workspace_id}/`。
 - UI 显示项目文件树和只读预览。
+- UI 提供基于当前工作目录打开的 Workspace 级交互式 Terminal，类似 IDE 内置终端。
 - `write_file` 默认需要审批。
 - `run_shell` 必须审批。
 
@@ -178,7 +180,7 @@ Eidos MVP 采用三栏 Agent Workbench 布局。
 │ 导航区        │ 核心交互区                    │ 上下文与产物区          │
 ├──────────────┼──────────────────────────────┼──────────────────────┤
 │ 会话          │ 对话                          │ 文件树 / Artifacts      │
-│ 工作区        │ 执行流                        │ 终端输出                │
+│ 工作区        │ 执行流                        │ Terminal                │
 │ 模型          │ 时间线事件摘要                  │ Diff 预留 / 预览         │
 │ 设置          │ 审批卡片                       │ 日志                    │
 └──────────────┴──────────────────────────────┴──────────────────────┘
@@ -188,7 +190,7 @@ Eidos MVP 采用三栏 Agent Workbench 布局。
 
 中栏是核心交互区，承载对话、执行流、时间线和审批。MVP 中“执行流”和“时间线”合并为一个 Execution Feed，不单独做复杂 Timeline 页面。
 
-右栏是上下文与产物区，承载文件树、产物、终端、预览和日志；Diff 在 MVP 中只预留入口，完整 Diff 展示放到 P1。
+右栏是上下文与产物区，承载文件树、产物、Workspace 级交互式 Terminal、预览和日志；Diff 在 MVP 中只预留入口，完整 Diff 展示放到 P1。
 
 ### 6.2 模式差异
 
@@ -196,11 +198,23 @@ Eidos MVP 采用三栏 Agent Workbench 布局。
 |---|---|---|
 | 左栏 | 会话、工作区、模型、设置 | 会话、公共空间、模型、设置 |
 | 中栏 | 对话、Execution Feed、审批 | 对话、Execution Feed、审批 |
-| 右栏 | 文件树、预览、终端输出、Artifacts、日志 | Artifacts、预览、终端输出、日志 |
+| 右栏 | 文件树、预览、Workspace Terminal、Artifacts、日志 | Artifacts、预览、日志 |
 
 Public Mode 不展示文件树，也不展示 `~/.eidos/public/.../files` 底层目录。
 
-### 6.3 Execution Feed
+### 6.3 Workspace Terminal
+
+Workspace Terminal 是右栏的 Workspace 级交互式终端。
+
+规则：
+
+- Terminal 基于当前 Workspace 工作目录打开，体验类似 IDE 内置终端。
+- Terminal 不绑定 Session、Run、Step 或 ToolCall。
+- Terminal 中用户手动输入的命令不进入 Agent Loop，也不作为 ToolCall。
+- Agent 通过 `run_shell` 执行的命令仍然作为 ToolCall 展示在中栏 Execution Feed 中。
+- Public Mode 不展示 Workspace Terminal。
+
+### 6.4 Execution Feed
 
 Execution Feed 中穿插展示：
 
@@ -309,9 +323,10 @@ Eidos 应该：
 | F019 | Event 持久化 | 所有关键 runtime event 必须写入数据库 | P0 |
 | F020 | Artifacts | Public Mode 只展示 Artifacts；Workspace Mode 也可展示 Artifacts | P0 |
 | F021 | Workspace 文件树 | 仅 Workspace Mode 显示文件树和只读预览 | P0 |
-| F022 | Cancel Run | 用户可以取消 running 状态任务 | P0 |
-| F023 | 前台生命周期 | 关闭窗口时 running Run 必须取消或等待完成 | P0 |
-| F024 | 启动恢复 | 启动时恢复最近 active session，并显示 waiting_approval Run | P0 |
+| F022 | Workspace Terminal | Workspace Mode 右栏提供交互式终端，不绑定 Agent Run | P0 |
+| F023 | Cancel Run | 用户可以取消 running 状态任务 | P0 |
+| F024 | 前台生命周期 | 关闭窗口时 running Run 必须取消或等待完成 | P0 |
+| F025 | 启动恢复 | 启动时恢复最近 active session，并显示 waiting_approval Run | P0 |
 
 ### 8.2 P1/P2 功能
 
@@ -537,8 +552,10 @@ PostgreSQL 作为后续服务化、多用户、多 worker 部署选项，不进�
 | A016 | 启动恢复 | 下次打开恢复最近 active session 和 waiting_approval Run |
 | A017 | Public Artifacts | Public Mode 只展示 Artifacts，不展示底层 files |
 | A018 | Workspace 文件树 | Workspace Mode 显示文件树和只读预览 |
-| A019 | 前台生命周期 | 关闭窗口时 running Run 必须取消或等待完成 |
-| A020 | 错误可见 | 失败原因保存并可查询 |
+| A019 | Workspace Terminal | Workspace Mode 右栏提供基于当前工作目录的交互式 Terminal |
+| A020 | ToolCall 命令展示 | Agent `run_shell` 命令仍作为 ToolCall 展示在 Execution Feed |
+| A021 | 前台生命周期 | 关闭窗口时 running Run 必须取消或等待完成 |
+| A022 | 错误可见 | 失败原因保存并可查询 |
 
 ---
 
@@ -554,6 +571,7 @@ PostgreSQL 作为后续服务化、多用户、多 worker 部署选项，不进�
 | Runtime Engine | Agent Loop + 状态机 |
 | Approval Resume | approve / reject 后可恢复执行 |
 | Execution Feed | 对话、工具、审批、结果的统一执行流 |
+| Workspace Terminal | Workspace 级交互式终端，不绑定 Agent Run |
 | Artifacts | Public Mode 和 Workspace Mode 的产物展示 |
 | API 文档 | 本地 sidecar OpenAPI，仅作为内部调试 |
 | 示例任务 | 代码生成、文件修改、命令执行审批、公共空间产物生成 |

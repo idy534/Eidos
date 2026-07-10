@@ -208,7 +208,8 @@ UI：
 
 - 右栏显示文件树。
 - 支持只读文件预览。
-- 可展示 Artifacts、终端输出、日志。
+- 可展示 Artifacts、Workspace Terminal、日志。
+- Workspace Terminal 基于当前工作目录打开，不绑定 Session、Run、Step 或 ToolCall。
 
 ### 5.2 Public Mode
 
@@ -233,7 +234,8 @@ UI：
 
 - 不显示文件树。
 - 不展示底层 `files/`。
-- 只展示 Artifacts、预览、终端输出、日志。
+- 只展示 Artifacts、预览、日志。
+- 不展示 Workspace Terminal。
 
 ---
 
@@ -251,6 +253,7 @@ UI：
 - 代理 sidecar SSE，并通过 IPC 转发 event。
 - 调用系统文件夹选择器。
 - 打开文件和文件夹。
+- 管理 Workspace Terminal 的本地 PTY 进程。
 - 处理应用关闭生命周期。
 
 sidecar 启动流程：
@@ -274,6 +277,7 @@ Renderer can use IPC APIs
 职责：
 
 - 展示三栏 Agent Workbench。
+- 使用 xterm.js 渲染 Workspace Terminal。
 - 通过 preload 暴露的最小 IPC API 调用 Main。
 - 订阅 Main 转发的 run events。
 - 不持有 token。
@@ -328,6 +332,20 @@ Renderer
   -> 只订阅 Main 转发的 run events
 ```
 
+### 6.5 Workspace Terminal
+
+Workspace Terminal 是桌面端右栏的 Workspace 级交互式终端。
+
+技术边界：
+
+- Terminal 由 Electron Main 管理 PTY 进程，Renderer 只负责渲染和输入输出转发。
+- Terminal 基于当前 Workspace 的 root path 打开，类似 IDE 内置终端。
+- Terminal 不经过 Python sidecar，不进入 Runtime Engine。
+- Terminal 不绑定 Session、Run、Step 或 ToolCall。
+- 用户在 Terminal 中手动输入的命令不进入 `tool_calls`、`approvals` 或 `events` 表。
+- Agent 通过 `run_shell` 执行的命令仍由 Runtime Engine 作为 ToolCall 执行，并展示在中栏 Execution Feed。
+- Public Mode 不创建 Workspace Terminal。
+
 ---
 
 ## 7. UI 信息架构
@@ -339,7 +357,7 @@ Eidos MVP 采用三栏 Agent Workbench。
 │ 导航区        │ 核心交互区                    │ 上下文与产物区          │
 ├──────────────┼──────────────────────────────┼──────────────────────┤
 │ 会话          │ 对话                          │ 文件树 / Artifacts      │
-│ 工作区        │ Execution Feed                 │ 终端输出                │
+│ 工作区        │ Execution Feed                 │ Terminal                │
 │ 模型          │ 审批卡片                       │ Diff 预留 / 预览         │
 │ 设置          │ 输入框                         │ 日志                    │
 └──────────────┴──────────────────────────────┴──────────────────────┘
@@ -347,7 +365,7 @@ Eidos MVP 采用三栏 Agent Workbench。
 
 中栏把对话、执行流和时间线合并为 Execution Feed。
 
-右栏在 MVP 中提供预览、Artifacts、终端输出和日志；Diff 只预留入口，完整 Diff 展示放到 P1。
+右栏在 MVP 中提供预览、Artifacts、Workspace Terminal 和日志；Diff 只预留入口，完整 Diff 展示放到 P1。
 
 Execution Feed event card 类型：
 
@@ -647,6 +665,8 @@ class ToolExecutor(Protocol):
 
 用途：执行受控 shell 命令。
 风险：high。
+
+`run_shell` 是 Agent 工具调用，不复用右栏 Workspace Terminal。它的命令、参数、审批、输出和结果仍然作为 ToolCall 进入 Execution Feed。
 
 限制：
 
@@ -1096,6 +1116,7 @@ Eidos/
 | renderer isolation | Renderer 拿不到 token 和 port |
 | api proxy | Renderer 通过 IPC 调 Main，Main 代理 sidecar |
 | sse proxy | Main 转发 run events 给 Renderer |
+| workspace terminal | Main 管理 PTY，Renderer 只渲染，不写入 Runtime events |
 | quit with running run | running Run 关闭窗口时要求取消或等待 |
 | restore session | 启动恢复最近 active session |
 
@@ -1152,7 +1173,7 @@ Eidos/
 - 三栏布局
 - Workspace 文件树和只读预览
 - Public Artifacts
-- 终端输出 / 日志
+- Workspace Terminal / 日志
 - 基础错误展示
 
 ---
