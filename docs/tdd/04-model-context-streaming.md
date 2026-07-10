@@ -63,6 +63,8 @@ Model Gateway 输出完整 ToolCall list 后，Runtime：
 
 模型必须在读取结果进入下一轮上下文后，才能提出基于结果的变更。一次响应中的只读 ToolCall 彼此不能依赖运行结果。
 
+空响应、无法解析的 ToolCall、未知工具、参数 schema 错误和非法批次统一视为模型协议错误。Runtime 允许下一 Step 自动纠正一次；连续第二次错误后进入 waiting_user_input。每次无效响应计一个 Step，合法响应清零连续计数。
+
 ## 5. Context Builder
 
 稳定顺序：
@@ -111,8 +113,17 @@ input_budget = context_window_tokens - max_output_tokens - safety_margin
 每次网络尝试写入 ModelAttempt：
 
 - 首个 delta 前遇到网络失败、429、5xx：最多 2 次重试，指数退避并尊重 Retry-After。
-- 收到 delta 后失败：本 Attempt failed，不透明重试。
+- 重试耗尽后 Step 标记 `model_temporarily_unavailable`，Run 进入 waiting_user_input。
+- 同一 Step 的多个 ModelAttempt 只占一个 Step 预算；用户继续时创建新 Segment。
+- 收到 delta 后失败：本 Attempt 与 Step 标记 `model_stream_interrupted`，不透明重试。
+- 已提交 content chunk 保留为 `assistant_progress/incomplete`，不得升级为 final_answer。
+- 部分 tool_call_delta 丢弃，不创建 ToolCall row。
+- Run 进入 waiting_user_input；用户继续时创建新 Segment。
+- 失败 Step 计入 Run 的 80 Steps 硬上限。
 - Provider validation/auth 错误不重试。
+- `401/403` 认证错误、确定性的 model not found、invalid request 或不支持参数直接终止 Run。
+- 终止时保存结构化 `model_auth_failed|model_not_found|model_invalid_request`，不调用 Finalization。
+- Run 的 Model Profile snapshot 不可修改；修复配置后只能创建新 Run。
 - 用户取消会关闭流并结束 Step。
 
 ## 8. Finalization Call
@@ -125,7 +136,12 @@ Finalization 使用原 Run 模型快照，但：
 - 不允许重试产生的内容覆盖已有 Artifact。
 - 调用失败由 Runtime 生成固定格式摘要。
 
-## 9. 待确认 Q41
+## 9. Reasoning 内容边界
 
-尚未决定模型原始 reasoning 内容是否保存或展示。实现前必须完成 Q41；当前 schema 不应预设持久化 raw reasoning。
-
+- Provider 返回的 raw reasoning/reasoning tokens 内容不写 Message、Event、日志或上下文回放。
+- Provider 支持关闭 reasoning 内容返回时，Gateway 应关闭；无法关闭时消费后立即丢弃内容。
+- 有 ToolCall 的普通 content delta 标记为 `assistant_progress`。
+- 无 ToolCall 且响应 completed 的普通 content 标记为 `final_answer`。
+- `assistant_progress` 可以实时展示和按普通文本规则持久化，但不得命名为思维链或内部思考。
+- reasoning token 数量、耗时和费用可以保存在 usage metadata 中，不能反推出内容。
+- ToolCall 参数解析不依赖 reasoning 内容。

@@ -11,6 +11,6 @@ PRD 已按职责拆分，请从 [PRD 索引](prd/README.md) 开始阅读。
 - [功能需求](prd/03-functional-requirements.md)
 - [安全与非功能需求](prd/04-security-and-nfr.md)
 - [验收标准](prd/05-acceptance-criteria.md)
-- [Q1-Q40 设计决策](decisions.md)
+- [Q1-Q50 设计决策](decisions.md)
 
 本文件只作为旧链接兼容入口，不再维护重复正文。

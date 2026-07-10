@@ -1,7 +1,7 @@
 # Eidos MVP 设计决策记录
 
 版本：v0.4
-范围：Grilling Q1-Q40
+范围：Grilling Q1-Q50
 
 本文件记录已经由产品与技术共同确认的结论。PRD 描述产品承诺，TDD 描述实现约束；若正文与本文件冲突，应先停止实现并统一文档。
 
@@ -47,8 +47,29 @@
 | Q38 | 写或 Shell 失败后强制事实确认屏障；完成只读核验前不能再次执行有副作用工具。 | TDD Runtime 状态机 |
 | Q39 | localhost 默认禁止；`local_network=true` 需单次审批；Unix Socket 在 MVP 中始终禁止。 | PRD 安全；TDD 网络策略 |
 | Q40 | 只读工具可批量；写、删除、Shell 独占且审批；`publish_artifact` 独占但自动执行。 | TDD 工具分类 |
+| Q41 | 不保存、不展示 raw reasoning；只展示 `assistant_progress` 和 `final_answer`，可保存 reasoning token 用量。 | PRD Feed；TDD 模型流与 Desktop |
+| Q42 | 首个 delta 后模型流中断不自动重试；Run 进入 waiting_user_input，部分文本标记未完成，未解析 ToolCall 丢弃。 | PRD 恢复；TDD 模型流与状态机 |
+| Q43 | 模型认证、模型不存在和确定性请求配置错误直接使 Run failed；不暂停、不 Finalize、不修改原 Run 快照。 | PRD 错误；TDD 模型与状态机 |
+| Q44 | 首个 delta 前瞬时模型错误重试耗尽后暂停 Run；多个 Attempt 只计一个失败 Step。 | PRD 恢复；TDD 模型重试 |
+| Q45 | 无效模型协议响应允许纠正一次；连续两次后 waiting_user_input，合法响应清零计数。 | PRD Agent Loop；TDD 协议状态 |
+| Q46 | 副作用工具先持久化 durable intent，再执行并保存结果；崩溃后只对账、不重放。 | PRD 可靠性；TDD 状态与存储 |
+| Q47 | 网络代理只记录 host/port/decision/bytes 等审计元数据，不记录 URL、Header、Body，不做 TLS MITM。 | PRD 隐私；TDD 网络代理 |
+| Q48 | 网络白名单只接受精确 host 与显式端口，并校验解析 IP；拒绝通配符、私网映射和跨 host redirect。 | PRD 网络；TDD 代理策略 |
+| Q49 | Writable Workspace 禁止多链接普通文件；文件工具要求 `st_nlink=1`，Shell 前置检查失败则不可用。 | PRD 文件边界；TDD Workspace Guard |
+| Q50 | 修改已有文件必须保留 mode、ACL 和 extended attributes；复制验证失败则不替换，新文件默认 0644。 | PRD 写入；TDD 文件提交 |
 
-## 尚未确认
+## 待续问题
 
-- Q41：Execution Feed 是否保存或展示模型的原始推理内容。
+### Q51：敏感内容扫描的分级处理
 
+状态：待确认，尚未形成设计决策，不得作为已批准规则写入 PRD/TDD。
+
+问题：内容扫描发现疑似凭证时，是拒绝整个文件，还是按置信度对命中片段进行脱敏？
+
+当前推荐答案：
+
+- 高置信度真实凭证：拒绝整个文件。
+- 中置信度疑似凭证：脱敏命中片段，其余内容正常返回。
+- 低置信度变量名、注释和占位符：允许读取，仅记录命中计数。
+- 文件名硬拒绝规则继续不可审批绕过。
+- 同一规则用于文件读取、搜索、Shell 输出和持久化数据。

@@ -122,6 +122,12 @@ runtime_interrupted
 reconciliation_required
 context_budget_exceeded
 model_auth_failed
+model_not_found
+model_invalid_request
+model_temporarily_unavailable
+model_protocol_error
+hardlink_not_allowed
+file_metadata_preservation_failed
 ```
 
 ## 5. SSE 契约
@@ -156,9 +162,12 @@ segment_paused
 step_started
 model_attempt_started
 model_output_chunk
+model_stream_interrupted
 model_attempt_failed
 model_response_completed
+model_protocol_error
 tool_batch_rejected
+tool_call_intent_committed
 tool_call_created
 tool_call_waiting_approval
 tool_call_started
@@ -175,6 +184,7 @@ reconciliation_required
 reconciliation_completed
 user_input_added
 artifact_published
+network_policy_decision
 finalization_started
 finalization_completed
 run_succeeded
@@ -184,6 +194,8 @@ run_canceled
 ```
 
 每个 payload 带 `schema_version`。Event payload 在写入前脱敏；大正文保存在对应 message/tool log 表，Event 只包含有界摘要和引用 id。
+
+`model_output_chunk` 必须携带 `content_kind=assistant_progress|final_answer` 和 `incomplete`；raw reasoning 不生成 Event。流中断后追加 `model_stream_interrupted`，已提交 progress chunk 保持可回放。网络 Event 只含域名级审计元数据。
 
 ## 7. 状态表与 Events 的关系
 
@@ -201,6 +213,8 @@ notify in-memory SSE publisher with committed max event id
 ```
 
 Event insert 失败时状态事务回滚。SSE publisher 崩溃不丢 Event，重启后从 SQLite 读取。
+
+文件系统与 SQLite 不能组成单一事务。副作用执行前先提交 `tool_call_intent_committed`；执行后再提交结果。恢复时依据 execution nonce 和后置条件对账，禁止自动重放。
 
 ## 8. SQLite 配置
 
@@ -229,7 +243,7 @@ PRAGMA busy_timeout = 5000;
 | model_profiles | name unique, base_url, model, api_key_ref, parameters, context/max output |
 | workspaces | canonical_root_path unique, state_path, status |
 | sessions | agent_id, model_profile_id, mode, workspace_id, active/state roots；mode/workspace CHECK |
-| messages | session_id, run_id nullable, role, content, metadata, created_at |
+| messages | session_id, run_id nullable, role, content_kind, content, metadata, created_at；禁止 raw reasoning kind |
 
 Session 约束：
 
@@ -247,7 +261,7 @@ id, session_id, agent_id, status
 idempotency_key, enqueued_at, executor_lease_id
 current_segment_id, total_steps, effective_elapsed_ms
 max_total_steps=80, max_total_effective_seconds=7200
-consecutive_rejects, reconciliation_required
+consecutive_rejects, consecutive_protocol_errors, reconciliation_required
 pause_reason, stop_reason, error_code, error_message
 model_profile_id, model_config_snapshot
 started_at, finished_at, created_at, updated_at
@@ -291,8 +305,8 @@ UNIQUE(step_id, attempt_index)
 ```text
 id, run_id, step_id, batch_order
 tool_name, side_effect, arguments_json, arguments_hash
-status, risk_level, timeout_seconds
-preconditions_json, result_json, result_text
+status, risk_level, timeout_seconds, execution_nonce
+preconditions_json, expected_postconditions_json, result_json, result_text
 side_effects_may_exist, stdout/stderr sizes and truncation
 exit_code, termination_reason, error_code, error_message
 started_at, finished_at, created_at, updated_at
@@ -314,6 +328,8 @@ ToolCall 不反向保存 approval_id，避免双向可空外键；通过 approva
 ### 9.4 日志、Artifact 与 Event
 
 `tool_call_logs`：`tool_call_id, stream, chunk_index, redacted_content, truncated`，组合唯一。
+
+`network_audit_logs`：`tool_call_id, host, port, decision, decision_rule, bytes_sent, bytes_received, started_at, finished_at`。禁止 URL、Header、Body 和 TLS 明文列。
 
 `artifacts`：
 

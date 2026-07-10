@@ -35,11 +35,18 @@ Execution Feed 合并对话、执行流和 Timeline，至少展示：
 - ToolCall 状态、参数摘要和结果摘要。
 - Approval 请求、决定、拒绝原因和版本冲突。
 - Shell 运行状态、最近输出、输出大小、退出码和终止原因。
+- 中断的模型流保留已显示进度文本，并明确标记“输出未完成”。
 - Run 排队、运行、暂停、停止、失败、取消与完成状态。
 - Artifact 发布与版本。
 - 安全拒绝、事实确认屏障和降级摘要。
+- 模型认证或配置错误的终态失败，以及更换 Profile 后创建新 Run 的操作入口。
 
-Q41 尚未确认模型原始推理内容的存储与展示边界；在该决策完成前，UI 不应把“模型文本”解释为原始思维链。
+Execution Feed 不保存或展示模型供应商的 raw reasoning：
+
+- 有 ToolCall 的普通文本展示为 `assistant_progress`。
+- 无 ToolCall 且响应完成的普通文本展示为 `final_answer`。
+- reasoning token 数量可以作为用量元数据展示，但 reasoning 内容不进入消息、Timeline 或回放。
+- UI 不使用“思维链”“内部思考”等表述。
 
 ## 3. Workspace 主流程
 
@@ -111,6 +118,9 @@ Q41 尚未确认模型原始推理内容的存储与展示边界；在该决策�
 - 连续 Reject 2 次。
 - 单个 Execution Segment 达到 20 Steps 或 30 分钟。
 - Runtime 意外中断。
+- 模型在首个 delta 后流式中断。
+- 首个 delta 前的瞬时模型故障在自动重试耗尽后仍不可用。
+- 模型连续两次返回无效协议响应。
 - 执行结果无法确认，需要用户判断。
 
 用户补充信息后，同一 Run 创建新 Execution Segment 并重新进入 FIFO 队列。
@@ -133,4 +143,3 @@ Run 达到 80 Steps 或 120 分钟有效执行时间后进入 `stopped`，不能
 - 有运行中 Run 时，用户选择等待完成或取消后退出。
 - 排队、waiting_approval 和 waiting_user_input Run 持久化，下一次启动恢复。
 - 意外中断的运行中 Run 不自动重放工具，改为等待用户确认。
-

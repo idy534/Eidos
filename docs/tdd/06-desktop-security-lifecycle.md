@@ -149,4 +149,10 @@ runtime_disconnected
 - 请求创建时间和当前文件版本状态。
 - Approve/Reject，不提供 Edit then Approve。
 
-Q41 未确认前，不实现 raw reasoning 专用 UI。
+Renderer 不实现 raw reasoning 专用 UI；只渲染 `assistant_progress`、`final_answer` 和 reasoning token 用量元数据。
+
+模型流中断时，已显示的 assistant_progress 保留并显示“输出未完成”；Renderer 不把它并入最终回答，也不渲染部分 ToolCall 参数。
+
+模型认证或确定性配置错误时，Renderer 显示 failed 错误卡和“更换/修复 Model Profile 后创建新 Run”，不提供恢复原 Run 的按钮。
+
+瞬时模型故障重试耗尽或连续两次模型协议错误时，Renderer 显示对应 pause reason，并允许用户稍后继续、补充指令或取消。

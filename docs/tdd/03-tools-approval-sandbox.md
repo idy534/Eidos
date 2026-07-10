@@ -97,10 +97,13 @@ Tool arguments must be validated before a ToolCall row becomes executable. Tool 
 - 审批卡展示路径、理由、diff 和版本前置条件。
 - 批准后执行前重新校验。
 - 使用同目录临时文件、fsync 和原子 replace；commit 区不可取消。
+- 已有目标必须满足 `st_nlink == 1`；多链接文件返回 `hardlink_not_allowed`。
+- 修改已有文件时，临时文件必须复制并验证 POSIX mode、ACL 和 extended attributes；失败时返回 `file_metadata_preservation_failed`，不进入 replace。
 
 ### 5.1 write_file
 
 - 创建新文件：`expected_absent=true`。
+- 新文件使用独占创建并固定 mode `0644`，不自动设置 executable bit。
 - 完整覆盖已有文件：必须已经读取并携带 `base_sha256`。
 - 已有文件默认优先使用 apply_patch。
 
@@ -109,12 +112,14 @@ Tool arguments must be validated before a ToolCall row becomes executable. Tool 
 - 只修改一个已存在普通文件。
 - patch 必须基于已读取内容并携带 `base_sha256`。
 - 应用前先在内存副本验证 patch 完整成功，再进入 commit。
+- 使用保留原 mode、ACL 和 xattr 的临时副本完成原子替换；不要求保留 inode number。
 
 ### 5.3 delete_file
 
 - 只删除一个已存在普通文件。
 - 禁止目录、递归、通配符、批量和 symlink 本体/目标混淆。
 - 审批绑定 path、file_type、base_sha256。
+- 执行前验证 `st_nlink == 1`。
 - 明确删除任务的 Agent 策略必须优先调用 delete_file。
 
 `run_shell` 中的间接删除不构成沙箱违规；明显 `rm` 可在审批卡警告，但命令识别不是安全边界。
@@ -160,6 +165,8 @@ summary
 
 - command 是完整字符串，审批卡原样展示。
 - Runtime 不自动包裹、追加或改写命令。
+- Writable Shell 启动前扫描 active root 中普通文件的 link count；存在 `st_nlink > 1` 时返回 `hardlink_not_allowed` 并拒绝启动。
+- APFS clone/copy-on-write 不按 hardlink 处理。
 - 默认 timeout 120 秒，最大 600 秒，并受 Run 剩余预算限制。
 - 不支持持久服务；取消或 timeout 终止整个进程组。
 - 删除原“静默 90 秒终止”规则。
@@ -209,17 +216,22 @@ HTTP_PROXY/HTTPS_PROXY=<managed proxy when approved>
 
 外网批准：
 
-1. ToolCall 声明 `allowed_hosts`。
-2. 审批卡展示域名列表。
-3. Seatbelt 只允许连接 Eidos loopback proxy 端口。
-4. Proxy 只放行批准 host；重定向到新 host 时拒绝。
-5. 不提供 unrestricted 模式。
+1. ToolCall 声明精确 `allowed_hosts` 和非默认端口。
+2. Host 统一小写、去除尾部点并规范化 IDN；拒绝通配符。
+3. 审批卡展示规范化域名和端口列表。
+4. Seatbelt 只允许连接 Eidos loopback proxy 端口。
+5. Proxy 校验每个 DNS 结果，拒绝 loopback、私网、link-local、multicast 和 metadata 地址。
+6. Proxy 只放行批准 host/port；重定向到新 host 时拒绝。
+7. 不提供 unrestricted 模式。
 
 localhost 批准：
 
 - `local_network=true` 单独显示和审批。
 - 只在本 ToolCall 生命周期允许 loopback bind/outbound。
 - 不隐含外网或 Unix Socket 权限。
+- 外部域名解析到本机地址不能借用 local_network 权限。
+
+Proxy 审计只记录 tool_call_id、host、port、allow/deny、decision_rule、时间和收发字节数。禁止记录 URL path/query、Header、Cookie、Authorization、Body 或 TLS 明文；HTTPS 使用 CONNECT，不安装根证书或执行 MITM。
 
 ## 11. 敏感规则与脱敏
 
@@ -247,7 +259,7 @@ raw tool/model data
 - 外部用户文件不可读写。
 - 敏感 carve-out 不可读。
 - `.git` 不可写。
+- 多链接普通文件使 writable Shell 自检/前置检查失败。
 - 默认外网/loopback/Unix Socket 不可用。
 
 `sandbox-exec` 缺失、策略生成/编译失败或自检失败时，Shell capability 为 unavailable，审批和 API 都不能绕过。
-

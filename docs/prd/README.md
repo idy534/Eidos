@@ -16,7 +16,4 @@ Eidos MVP 是仅面向 macOS 的本地前台执行型 Agent Runtime。它通过�
 
 内嵌 Workspace Terminal、后台服务、跨平台支持、文件快照恢复、智能上下文摘要、多 Agent 和企业能力不进入 MVP。
 
-## 待确认事项
-
-- Q41：Execution Feed 是否保存或展示模型原始推理内容。
-
+模型原始推理内容不保存、不展示；Execution Feed 只呈现模型主动输出的进度说明和最终回答。

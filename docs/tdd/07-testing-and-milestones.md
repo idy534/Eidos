@@ -32,6 +32,9 @@
 - write expected_absent。
 - apply base_sha256。
 - delete 路径、类型和 hash。
+- write/apply/delete 对 `st_nlink>1` 返回 hardlink_not_allowed。
+- 修改已有文件保留 mode、ACL、xattr；复制失败时原文件不变。
+- 新文件 mode 为 0644，脚本不会自动获得 executable bit。
 - 审批期间文件变化导致 approval invalidated/file_version_conflict。
 - 临时文件 + 原子 replace；取消不能截断 commit。
 - 每个 ToolCall 拒绝多个文件、目录、glob 和递归删除。
@@ -49,10 +52,17 @@
 ### 2.5 重试与上下文
 
 - 模型首 delta 前瞬时错误最多 2 次。
+- 瞬时错误重试耗尽后 waiting_user_input，多个 Attempt 只计一个 Step。
 - 首 delta 后不透明重试被禁止。
+- 首 delta 后中断会保留 incomplete progress、丢弃部分 ToolCall，并进入 waiting_user_input。
+- 模型流中断的失败 Step 计入 Segment 和 Run Step 预算。
 - 只读瞬时错误最多 1 次；确定错误不重试。
 - 写/Shell/Artifact 零自动重试。
 - 上下文裁剪顺序、不可裁剪项和 token 硬上限。
+- Provider raw reasoning 内容不会进入 Message、Event、日志或后续上下文。
+- assistant_progress/final_answer 分类正确，reasoning usage 只保存数值元数据。
+- 模型认证、模型不存在和确定性 invalid request 不重试、不 Finalize，Run 直接 failed。
+- 空/畸形/未知工具/非法批次响应连续两次后暂停，合法响应清零协议错误计数。
 
 ## 3. Seatbelt 集成测试
 
@@ -67,8 +77,10 @@
 - `.git` 可读不可写。
 - 默认外网、localhost、bind 和 Unix Socket 失败。
 - 只允许连接 managed proxy port。
-- 批准域名通过，未批准/redirect 新域名失败。
+- 精确批准 host/port 通过，通配符、未批准 host、私网解析和 redirect 新 host 失败。
 - `local_network=true` 仅本次调用允许 loopback。
+- 外部域名不能借 local_network 映射到本机地址。
+- Writable Shell 遇到多链接普通文件 fail closed；APFS clone 不误判。
 - sandbox-exec 缺失/策略失败时 Shell unavailable，无回退。
 
 ## 4. Runtime 集成测试
@@ -84,6 +96,8 @@
 - queued Run 取消。
 - 崩溃恢复不重放副作用。
 - Event 与状态同事务；模拟 Event insert 失败回滚状态。
+- 副作用 intent 已提交但结果未提交时，重启只对账不重放。
+- file/artifact 根据 hash 补记结果；Shell 标记 interrupted/side_effects_may_exist。
 - SSE after_event_id 回放和去重。
 
 ## 5. Desktop 集成测试
@@ -109,6 +123,7 @@
 - Artifact snapshot/source hash 和版本唯一性。
 - config 权限 0700/0600；权限过宽拒绝密钥。
 - SQLite、日志和 Event 中不存在测试 API Key 原文。
+- Proxy audit 只含 host/port/decision/bytes，不含 URL、Header、Body 或 TLS 明文。
 
 ## 7. 风险优先里程碑
 
@@ -158,7 +173,5 @@ M0 未通过前，不进入 Agent Shell 主链路实现。
 ## 8. 文档完成标准
 
 - PRD 每个 P0 要求在 TDD 和测试中有对应落点。
-- Q1-Q40 决策不得出现相反规则。
-- Q41 完成后补齐模型推理内容的技术与验收约束。
+- Q1-Q50 决策不得出现相反规则。
 - 实现开始前冻结 v0.4 API schema、状态 enum 和 Tool schema。
-

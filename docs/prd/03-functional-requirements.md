@@ -41,6 +41,15 @@
 | F033 | 有限重试 | 模型首 delta 前最多 2 次；只读瞬时错误 1 次 |
 | F034 | Finalization | 硬停止前一次最长 60 秒、无工具的收尾调用 |
 | F035 | 系统 Terminal | Workspace 中只提供用户点击打开系统 Terminal |
+| F036 | 模型流中断恢复 | 首 delta 后中断不重试，保留未完成进度并等待用户输入 |
+| F037 | 模型配置错误 | 认证、模型不存在和确定性请求错误直接终止 Run |
+| F038 | 模型瞬时故障 | 首 delta 前重试耗尽后暂停，同一 Step 内 Attempt 不重复计步 |
+| F039 | 模型协议纠正 | 连续两次无效响应后暂停；合法响应清零连续错误计数 |
+| F040 | Durable Intent | 副作用执行前持久化意图，恢复时对账而不重放 |
+| F041 | 代理审计 | 只记录域名级元数据，不记录请求内容或解密 TLS |
+| F042 | Host 校验 | 精确 host/port、解析 IP 校验、拒绝通配符和跨 host redirect |
+| F043 | Hardlink 防护 | 写工具拒绝多链接文件；Writable Shell 前置扫描 fail closed |
+| F044 | 文件元数据 | 修改已有文件保留 mode、ACL、xattr；新文件默认 0644 |
 
 ## 2. ToolCall 组合规则
 
@@ -91,4 +100,3 @@
 | P2 | 后台执行、tray 和通知 |
 | P2 | 多 Agent、多执行器和并行工具 |
 | P2 | PostgreSQL 与服务化部署 |
-

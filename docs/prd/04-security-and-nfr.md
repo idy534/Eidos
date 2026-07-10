@@ -49,9 +49,14 @@ Shell 输出在返回模型前必须脱敏；模型、工具、Event 和日志�
 - 默认禁止外网和 localhost。
 - 外网访问必须声明域名白名单并经过本次 Shell 审批。
 - Shell 只能连接 Eidos 本地受控代理，由代理执行域名策略。
+- 白名单只接受规范化精确 host；非默认端口必须显式审批，不支持通配符。
+- Proxy 对每个解析 IP 拒绝 loopback、私网、link-local、multicast 和 metadata 地址。
+- Redirect 到新 host 时阻断并要求重新审批。
 - `local_network=true` 是独立的单次审批能力，允许绑定和访问 loopback。
+- `local_network=true` 不允许外部域名映射到本机地址。
 - 外网域名权限不隐含 localhost 权限，localhost 权限不隐含外网权限。
 - ToolCall 完成后立即撤销网络权限。
+- Proxy 只保存 host、port、allow/deny、规则、时间和流量大小；不保存 URL、Header、Body，也不做 TLS MITM。
 
 ## 6. 写入一致性
 
@@ -61,6 +66,10 @@ Shell 输出在返回模型前必须脱敏；模型、工具、Event 和日志�
 - 执行前重新校验；不一致时审批失效并返回 `file_version_conflict`。
 - 文件落盘采用临时文件和原子替换。
 - 一次文件工具只操作一个普通文件。
+- 写入、修改和删除已有文件要求 `st_nlink=1`；多链接目标返回 `hardlink_not_allowed`。
+- Writable Shell 执行前发现 active root 中存在多链接普通文件时 fail closed。
+- 修改已有文件必须保留 POSIX mode、ACL 和 extended attributes；元数据复制或验证失败时原文件不变。
+- 新文件默认 mode 为 `0644`；设置 executable bit 必须另行审批 Shell。
 
 ## 7. API Key MVP 风险接受
 
@@ -84,6 +93,8 @@ MVP 为尽快打通 Agent 主链路，允许 API Key 明文存放在 `~/.eidos/c
 
 - 状态变更与 Event 在同一 SQLite 事务中提交。
 - 有副作用 ToolCall 不自动重放。
+- 有副作用 ToolCall 执行前必须先提交 execution intent、nonce、前置条件和预期后置条件。
+- 执行结果提交失败或进程崩溃后，只能根据 hash/快照对账，不能重新执行原副作用。
 - 崩溃后将运行中的 ToolCall 标记为 `interrupted`，Run 等待用户确认。
 - 文件提交关键区不可被取消打断。
 - Shell timeout 或取消必须终止整个进程组。
@@ -96,4 +107,3 @@ MVP 为尽快打通 Agent 主链路，允许 API Key 明文存放在 `~/.eidos/c
 - 返回模型的 Shell observation 最多 32KB。
 - 文件读取和搜索结果必须有单次大小、命中数和上下文预算上限。
 - P1 增加数据管理、存储统计和清理策略；MVP 至少展示数据根目录和占用错误。
-

@@ -70,6 +70,8 @@
 | A055 | 配置权限 | `.eidos`/`config.toml` 权限不合规时拒绝加载 API Key |
 | A056 | 密钥不落库 | SQLite、Event、日志和 Run 快照中不出现已配置 API Key |
 | A057 | 统一脱敏 | 模型可见 Shell 结果及所有持久化 payload 均通过脱敏层 |
+| A058 | 模型流中断 | 首 delta 后中断时无 ToolCall 执行；未完成进度可见，Run 等待用户输入 |
+| A059 | 模型配置错误 | 认证、模型不存在或确定性请求错误直接 failed，不执行 Finalization，可用新 Profile 创建新 Run |
 
 ## 6. Desktop
 
@@ -78,8 +80,16 @@
 | A060 | Renderer 隔离 | Renderer 无法读取 sidecar port/token 或调用未列入白名单的 IPC |
 | A061 | 无内嵌 Terminal | MVP 不启动 PTY；用户按钮可打开系统 Terminal |
 | A062 | 前台退出 | 运行中 Run 退出前要求等待或取消；等待/排队状态可恢复 |
+| A063 | 推理内容边界 | Feed、SQLite、Event 和日志中没有 raw reasoning；只展示 progress/final answer，可保存 token 用量 |
 
-## 7. 待补充验收
+## 7. 可靠性与边界补充
 
-- Q41 决策完成后，补充模型原始推理内容的存储与展示验收项。
-
+| 编号 | 验收项 | 标准 |
+|---|---|---|
+| A064 | 瞬时模型故障 | 首 delta 前重试耗尽后 waiting_user_input；多个 Attempt 只计一个 Step |
+| A065 | 模型协议错误 | 无效响应零工具执行；连续两次后暂停，合法响应清零计数 |
+| A066 | Durable Intent | 副作用前意图已持久化；模拟结果提交失败时恢复只对账不重放 |
+| A067 | 代理零内容 | 代理审计中没有 URL、Header、Body 或 TLS 明文 |
+| A068 | Host 防绕过 | 通配符、私网解析、非批准端口和跨 host redirect 均被拒绝 |
+| A069 | Hardlink 防护 | 文件工具拒绝 `st_nlink>1`；Writable Shell 在存在多链接文件时不可执行 |
+| A070 | 元数据保留 | 修改保留 mode/ACL/xattr；元数据失败零替换；新文件为 0644 |
