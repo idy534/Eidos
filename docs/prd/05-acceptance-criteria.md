@@ -185,3 +185,63 @@
 | A130 | 完成判定 | Responses completed 与 Chat finish/usage/[DONE] 条件严格；EOF、length、filter 和未知终态分别正确映射 |
 | A131 | Stateless | Responses store=false 且无 previous response；Chat 发送本地完整消息；重启、轮换密钥和传输降级不依赖 Provider history |
 | A132 | 输出字段 | Responses 使用 max_output_tokens；Chat 探测并固化 max_completion_tokens 或 max_tokens，运行期不切换 |
+
+## 14. 工具请求与结果契约
+
+| 编号 | 验收项 | 标准 |
+|---|---|---|
+| A133 | 工具控制 | 非空工具集的普通/纠正请求固定 auto+parallel，空集固定 none 且省略 parallel；probe 单工具 required/non-parallel 后以 none 完成 ToolResult 续接；Finalization 无工具 |
+| A134 | 非 strict 边界 | 两 wire 均显式 strict=false；即使 Provider 接受，本地 schema 与安全校验仍全部执行 |
+| A135 | 封闭 schema | 根/嵌套/数组 object 的未知字段均被拒绝，零 ToolCall/审批/副作用；错误不回显值 |
+| A136 | Effective arguments | 静态默认值仅对缺失可选字段生效；null/required 语义正确；hash、审批、存储与执行的参数完全一致 |
+| A137 | Tool contract 恢复 | 旧 Run 使用固化契约且不降级当前安全底线；版本不可用时零模型/工具执行并失效待处理审批 |
+| A138 | Schema Dialect | 内置 schema 只使用 Dialect v1；静态自检与代表性 probe 覆盖允许结构；Dialect 扩展使 Profile 失效并要求重测 |
+| A139 | Available tool set | 每 Step 工具集只受固定可审计状态影响；工具定义 hash 与名称可追溯；同一逻辑请求的 Attempt 不变 |
+| A140 | 可用性 race | 未暴露工具调用进入 Q45；已暴露工具后续不可用返回零副作用 unavailable 结果，不计协议错误 |
+| A141 | ToolResult envelope | 每个进入后续上下文的已创建 ToolCall 恰好一个 canonical envelope；outcome/code/data 与数据库终态正确映射 |
+| A142 | 结果关联与安全 | 两 wire 使用相同 canonical JSON；Provider ID 只用于 wire 关联；无自由文本旁路；结果扫描后才进入预算和上下文 |
+| A143 | 结果版本与字节 | schema_version、递归 key 排序、数组保序、UTF-8/无 BOM/无空白及非法数字/重复键规则可用固定向量复现 |
+| A144 | Summary | summary 只由 contract/tool/outcome/code 决定，单行且 <=1,024 bytes；任何调用级动态值均不进入 |
+| A145 | Code registry | success code 为 null；其余 code 必填且闭合；Provider/OS 原始 code 被安全映射，消费者只精确匹配 |
+| A146 | Result data | data 始终为按 contract/tool/outcome/code 选择的递归闭合 object；未知/动态 key、非法 null 和无界字段拒绝 |
+| A147 | 结果故障隔离 | projector/schema/serializer 故障不发送 fallback；Run failed、真实副作用保留、Profile 不失效且 quarantine 跨重启 |
+| A148 | Base 与 projection | base envelope/hash 不可变；Step projection/hash 可重建、同 Attempt 一致、只减少声明字段且记录省略量 |
+| A149 | List result | entries 稳定有界；max_entries 截断与 Context 裁剪分离；根变化失败、子树变化仅标非快照；敏感项零计数 |
+| A150 | Read result | 完整/head-tail/空文件 segments、脱敏后字节、源省略字节、行号与 evidence ranges 按固定规则一致 |
+| A151 | Range result | complete 恒 false；空范围省略 actual/next；行数/字节双上限、stop reason 和 next line 可确定复现 |
+| A152 | Search result | 稳定 matches、扫描计数、提前停止、Workspace 变化和长匹配 preview 均可复现；敏感文件不进入计数 |
+| A153 | 文件变更 success | write/apply/delete 只在提交后复检通过时 success；返回安全相对路径、操作及前后版本事实，不返回内部审批/意图/OS 详情 |
+| A154 | No-op result | 已存在目标的候选字节相同时返回 skipped/no_changes 与 path/base hash；新建空文件不是 no-op，竞态返回 conflict |
+| A155 | Artifact success | 发布后稳定源与重开快照 hash/逻辑字节一致；结果可用稳定 id/version 引用且无 snapshot 路径或 URL |
+| A156 | Shell terminal data | 已启动结果含确定进程终态、脱敏双流 observation 与安全 Workspace 变化；raw 字节、完整 manifest 和敏感路径不进入模型 |
+| A157 | Shell outcome/code | exit、timeout、limit、signal、interrupt、capture 和 manifest 故障按固定映射与优先级产生唯一结果；安全变化不篡改进程事实 |
+| A158 | 副作用标志 | 只读、未启动、no-op、verified success/not_applied 为 false；未知 commit 与已启动 Shell 为 true；屏障不能只由该布尔值推导 |
+| A159 | 共享非成功 data | Reject 原因可选、已扫描且 <=4,096 UTF-8 bytes；unavailable 与默认 interrupted 为最小 data，已启动 Shell 保留专属事实 |
+| A160 | Error data 分层 | ToolResult error 无通用 details/message/cause；API Error 不进入模型且按 code 闭合；内部错误不保存未扫描原文 |
+| A161 | 只读 error data | 超大文件返回 actual/max size，超长行返回唯一 line/max；其他错误为零正文、零 evidence/matches/entries |
+| A162 | 变更 error data | Patch hunk/reason、Diff actual/max 与候选 actual/max 可复现；版本冲突和 Artifact 错误不返回当前 hash、格式详情或内部路径 |
+
+## 15. Runtime 启动、一致性与恢复
+
+| 编号 | 验收项 | 标准 |
+|---|---|---|
+| A163 | ToolResult 数值 | safe integer 边界两侧、负零、指数和小数形式按固定规则接受或拒绝；真实测量溢出产生安全闭合错误且不失真 |
+| A164 | Canonical Unicode | 补充平面字符、BMP/补充字符 key 排序、NFC/NFD、控制字符、U+2028/U+2029、孤立 surrogate 和递归重复 key 固定向量在 Python/JS 完全一致 |
+| A165 | SQLite 迁移 | 迁移前一致备份、hash/manifest、受限事务、revision 与完整性复检全部通过才 ready；任一步失败保留原库和备份并保持 health-only |
+| A166 | Shell guardian | nohup、background、double-fork、setsid、忽略 TERM 和 Main+sidecar 强杀向量均触发 guardian 有界清理；guardian 能力不可用时 Shell 不可用 |
+| A167 | Ready gate | business API/SSE 和调度在 ready 前不可达；启动恢复和必需安全自检完成后只发布一次 ready，局部 capability 降级被明确报告 |
+| A168 | RunSnapshot 水位 | snapshot 与 through_event_id 来自同一读事务；原子安装后从水位续接无缺口，未知 schema 按规定 resnapshot 或兼容失败 |
+| A169 | Workspace 身份 | 同路径替换、同身份移动、卸载重挂、卷身份缺失和显式恢复分别按身份与路径边界处理；旧 Approval 不复活 |
+| A170 | 唯一 Runtime | 第二 UI 实例只激活已有窗口；第二 sidecar 无法取得状态目录 OS lock，不能删锁、按 PID 抢占或并行恢复 |
+| A171 | Allowed actions | 每种 Run status、pause reason、Workspace/Approval 状态返回稳定闭合动作；所有写 API 在事务内重算并正确处理幂等与竞态 |
+| A172 | Reconciliation epoch | 失败/中断/空 ToolCall 不解除屏障；正常只读 Step 的至少一个 success 可按匹配 epoch 清除，合法空结果可计，旧 Step 不能清除新 episode |
+
+## 16. API、时间与存储故障
+
+| 编号 | 验收项 | 标准 |
+|---|---|---|
+| A173 | Operation 幂等 | 同 operation ID/hash 重放原 status/body 且零重复状态/Event，不同 envelope 冲突；敏感拒绝不占 key，重放前重新鉴权，外部不确定操作不自动重发 |
+| A174 | DTO 与分页 | request/response/error/IPC 递归闭合并由同源 validator 验证；cursor 绑定规范化 scope/filter/order，keyset+high-water 排除新增项且不使用 offset |
+| A175 | Event contract | envelope/per-type payload 固定向量通过；重复、跳号、未知可忽略 type、已知未知 version、敏感替代和 resnapshot 防循环分别符合契约 |
+| A176 | 时间与时钟 | 所有业务时间为 UTC Unix ms safe integer、duration 为 monotonic ms；同 boot 以 continuous deadline 延续，boot/timebase 不可证明或回拨时失效 timed approved Shell，重启不重置 TTL |
+| A177 | Storage fail closed | state full/quota/I/O/corruption 与 Workspace 各提交阶段正确分类；reserve 仅在空间耗尽释放，恢复先 WAL/integrity/FK/intent 对账，零自动清理和副作用重放 |

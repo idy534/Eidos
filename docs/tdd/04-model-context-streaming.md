@@ -47,11 +47,13 @@ updated_at
 
 `Test Connection` 是用户显式触发的 Model Profile 操作，不创建 Session、Message、Run、Step 或 ToolCall：
 
-1. Gateway 只使用 Profile 配置、固定的 Eidos probe system/user 文本和固定无副作用 probe tool schema 构造请求。
+1. Gateway 只使用 Profile 配置、固定的 Eidos probe system/user 文本和固定无副作用 probe tool schema 构造请求。Probe schema 覆盖 `Eidos Tool Schema Dialect v1` 的所有允许结构/关键字，但不包含真实工具数据。
 2. 请求不得读取或携带用户任务、Session 消息、Workspace、Artifact、Timeline 或 ToolResult 内容。
-3. 探测只使用所选 wire API，依次验证认证、模型存在、Provider 接受配置的输出 token 上限、streaming terminal、分片 ToolCall 与 ToolResult 关联、stateless continuation 和最终 usage 字段；probe ToolCall 只用于协议验证，永不进入 Tool Executor。短探测不声明已证明完整 context window。HTTP(S) streaming 是必需项；仅 Responses 额外探测 WebSocket 为 `supported|unsupported|unknown`，Chat 固定 `unsupported`。短探测使用 `request_max_output_tokens=min(profile.max_output_tokens,512)`，另一个无任务数据的参数校验请求验证 Provider 接受 Profile 声明的输出上限字段。
-4. 只有全部必需检查通过才创建 `passed` capability snapshot；部分通过仍保存 `failed` snapshot 和安全分类结果，但 Profile 不可选择。
-5. 每次探测都按 Profile 内单调递增 `snapshot_version` 创建新记录，绑定 `configuration_hash`、Gateway contract version 和探测时间，不覆盖历史结果。
+3. 探测只使用所选 wire API，依次验证认证、模型存在、Provider 接受配置的输出 token 上限、streaming terminal、工具控制/Schema Dialect、ToolCall 与 ToolResult 关联、stateless continuation 和最终 usage 字段。参数接受请求验证具工具请求可以显式发送 `strict=false, tool_choice=auto, parallel_tool_calls=true`，但不要求生成多调用。
+4. 关联 probe 严格分两阶段：第一阶段只提供单一固定工具，发送 `strict=false, tool_choice=required, parallel_tool_calls=false`，必须得到恰好一个合法 ToolCall；Gateway 不执行，只生成固定 ToolResult。第二阶段回传该 ToolCall/ToolResult，移除 tools 并发送 `tool_choice=none`，必须返回固定确认文本和完整 usage。Probe ToolCall 永不进入 Tool Executor。
+5. 短探测不声明已证明完整 context window。HTTP(S) streaming 是必需项；仅 Responses 额外探测 WebSocket 为 `supported|unsupported|unknown`，Chat 固定 `unsupported`。短探测使用 `request_max_output_tokens=min(profile.max_output_tokens,512)`，另一个无任务数据的参数校验请求验证 Provider 接受 Profile 声明的输出上限字段。
+6. 只有全部必需检查通过才创建 `passed` capability snapshot；部分通过仍保存 `failed` snapshot 和安全分类结果，但 Profile 不可选择。
+7. 每次探测都按 Profile 内单调递增 `snapshot_version` 创建新记录，绑定 `configuration_hash`、Gateway contract version 和探测时间，不覆盖历史结果。
 
 Provider 返回的 context/output 元数据只作为安全提示字段返回 UI，不写回 Profile，也不参与 selectable 计算。
 
@@ -64,12 +66,15 @@ snapshot_version
 configuration_hash
 gateway_contract_version
 model_request_contract_version
+tool_schema_dialect_version
 probe_status = passed|failed
 valid = true|false
 authentication = passed|failed
 model_exists = passed|failed
 streaming = passed|failed
 tool_call = passed|failed
+tool_control = passed|failed
+tool_schema = passed|failed
 usage = passed|failed
 websocket_transport = supported|unsupported|unknown
 output_token_parameter = max_output_tokens|max_completion_tokens|max_tokens
@@ -82,7 +87,7 @@ invalidated_at nullable
 
 Profile 只有在未 Archive、当前 `configuration_hash`、Gateway contract version 与 model request contract version 下最新一次探测 `probe_status=passed` 且 `valid=true` 时才 `selectable=true`。Run 创建时把该 snapshot 的 ID、版本和完整能力字段复制进不可变 `model_config_snapshot`；后续探测不改变既有 Run。
 
-正常运行中若 Provider 不再满足固化 snapshot 已通过的 streaming、ToolCall 或 usage 契约，Gateway 返回 `model_capability_drift`。若 Provider 明确返回 context-length exceeded，则映射为 `model_context_limit_mismatch`。两者都属于确定性模型兼容性错误：Run 直接 `failed`，不重试、不 Finalize、不修改 Run 快照；Runtime 同时使 Profile 当前 capability snapshot 失效，阻止新 Session/Run，直到用户编辑并重新测试。
+正常运行中若 Provider 不再满足固化 snapshot 已通过的 streaming、工具控制、Tool Schema Dialect、ToolCall/ToolResult 关联或 usage 契约，Gateway 返回 `model_capability_drift`。若 Provider 明确返回 context-length exceeded，则映射为 `model_context_limit_mismatch`。两者都属于确定性模型兼容性错误：Run 直接 `failed`，不重试、不 Finalize、不修改 Run 快照；Runtime 同时使 Profile 当前 capability snapshot 失效，阻止新 Session/Run，直到用户编辑并重新测试。
 
 WebSocket 不属于 selectable 的必需能力。瞬时 WebSocket 故障不使 capability snapshot 失效；明确的 Upgrade 拒绝、426 或协议不支持会在独立 transport health 记录中为当前 `(profile_id, configuration_hash, snapshot_version)` 设置 `ws_disabled=true`。该记录无 TTL、无后台探测，新 snapshot 自动使用新 key；HTTP(S) streaming 的确定性漂移仍按上段失效。
 
@@ -101,7 +106,7 @@ WebSocket 不属于 selectable 的必需能力。瞬时 WebSocket 故障不使 c
 ### 1.4 Provider 扩展参数
 
 - `parameters_json` 使用标准 JSON，UTF-8 编码后最大 32 KiB、最大嵌套深度 8、容器成员合计最大 256；禁止 NaN、Infinity、二进制值和敏感内容。
-- Runtime 保留并拒绝用户提供 `model`、`messages|input|instructions`、`tools`、`tool_choice`、`stream`、`stream_options`、`store`、`previous_response_id`、`conversation|conversation_id|thread|thread_id`、`max_output_tokens`、`max_tokens`、`max_completion_tokens`、认证/Header、URL、代理、TLS 和其他传输层字段。
+- Runtime 保留并拒绝用户提供 `model`、`messages|input|instructions`、`tools`、`tool_choice`、`parallel_tool_calls`、`stream`、`stream_options`、`store`、`previous_response_id`、`conversation|conversation_id|thread|thread_id`、`max_output_tokens`、`max_tokens`、`max_completion_tokens`、认证/Header、URL、代理、TLS 和其他传输层字段。
 - 其他字段原样透传并纳入 `configuration_hash`；Runtime 构造核心请求后再合并扩展字段，遇到保留键整次返回 `model_profile_reserved_parameter`。
 - Test Connection 必须使用 Profile 的实际扩展参数。Provider 确定性拒绝参数时 snapshot 为 failed，错误分类为 `model_invalid_request`。
 
@@ -111,6 +116,13 @@ WebSocket 不属于 selectable 的必需能力。瞬时 WebSocket 故障不使 c
 - Chat 在 Test Connection 中先使用 `max_completion_tokens`。只有 Provider 明确返回该字段未知/不支持的确定性错误时，才以相同固定 probe 尝试 `max_tokens`；认证、网络、429、5xx、timeout 或含糊 invalid request 不触发切换。
 - 两者都拒绝时探测失败 `model_output_limit_parameter_unsupported`；两者都接受时固定选择 `max_completion_tokens`。
 - `output_token_parameter` 固化到 capability/Run snapshot；正常 Run 只使用该字段。后来被拒绝时是 `model_capability_drift`，不得运行时尝试另一字段。
+
+### 1.6 工具请求控制
+
+- 工具非空的普通和协议纠正请求在两种 wire API 中都固定 `tool_choice=auto, parallel_tool_calls=true`。Parallel 只影响模型能否在同响应提出多调用；Tool Executor 仍按 Q9 串行处理。
+- 工具集为空的普通/纠正请求移除 `tools`，固定 `tool_choice=none`，不发 `parallel_tool_calls`。
+- 所有 function tool 定义显式 `strict=false`；Profile 无法覆盖 `tools|tool_choice|parallel_tool_calls|strict`。
+- 探测中对 `parallel_tool_calls=true`的确定性拒绝 -> `model_parallel_tool_calls_unsupported`；对 `required|none|parallel_tool_calls=false` 的确定性拒绝 -> `model_tool_control_unsupported`；对 `strict=false` 的确定性拒绝 -> `model_tool_schema_mode_unsupported`。运行时后续违反已通过契约为 `model_capability_drift`。
 
 ## 2. Model Gateway 流协议
 
@@ -208,13 +220,18 @@ json_container_members = 2_048
 
 Model Gateway 输出完整 ToolCall list 后，Runtime：
 
-1. 按工具 schema 校验名称和参数。
-2. 计算每个工具 side_effect 分类。
-3. 校验整个批次组合。
-4. 非法时创建 `model_protocol_error`，零 ToolCall 执行。
-5. 合法时按声明顺序创建 ToolCall。
+1. 校验工具名属于本 Step 首次 Attempt 冻结的 available tool set。
+2. 按 Run 的 `tool_contract_version` 和 Tool Schema Dialect v1 解析参数 object；只对缺失的 optional 字段应用 schema 声明的静态默认值，生成唯一 effective arguments。
+3. 对 effective arguments 执行完整 schema 校验，并计算每个工具的 side_effect 分类。
+4. 校验整个批次组合。
+5. 对整批 effective arguments 执行敏感扫描。
+6. 全部合法时按模型声明顺序创建 ToolCall；后续只持久化和执行 effective arguments。
 
-组合与 schema 合法后、创建 ToolCall 之前，Runtime 对完整参数执行敏感扫描。命中 `deny`/`redact` 时按 `sensitive_tool_input` 处理，不创建 ToolCall，也不增加协议错误计数。连续两次命中后暂停，任一完整合法且无敏感 ToolCall 的响应清零该计数。
+未知字段、缺失 required、非法 null、schema 错误、未在冻结集合中暴露的工具和非法批次统一创建 `model_protocol_error`，零 ToolCall row、零 Approval、零执行；未知字段不得忽略、透传或由 Runtime 猜测修正。默认值只能是 Tool Schema 中的静态 JSON literal，不得读取当前时间、环境变量、Workspace 或其他运行时状态；同一 Run 内按固化 tool contract 保持稳定。可选审计字段 `defaulted_field_paths` 只保存 JSON Pointer 路径，不保存第二份参数值。
+
+组合与 schema 合法后、创建 ToolCall 之前，Runtime 对完整 effective arguments 执行敏感扫描。命中 `deny`/`redact` 时按 `sensitive_tool_input` 处理，不创建 ToolCall，也不增加协议错误计数。连续两次命中后暂停，任一完整合法且无敏感 ToolCall 的响应清零该计数。
+
+若工具已在冻结集合中暴露，但在收到 ToolCall 后因 Shell 能力、reconciliation 或其他当前执行状态变化而不可执行，Runtime 创建该合法 ToolCall 的终态 `unavailable/tool_unavailable` 和 canonical ToolResult，保证零副作用；这不是模型协议错误。Redaction、Workspace Guard、Seatbelt 等全局安全组件故障仍按既有规则 fail closed，不降级成普通 `tool_unavailable`。
 
 模型必须在读取结果进入下一轮上下文后，才能提出基于结果的变更。一次响应中的只读 ToolCall 彼此不能依赖运行结果。
 
@@ -228,7 +245,7 @@ Model Gateway 输出完整 ToolCall list 后，Runtime：
 1. 内置 system prompt
 2. Runtime 和 ToolCall 组合协议
 3. Session mode / active root /安全边界
-4. 工具 schema
+4. 当步冻结的 available tool definitions
 5. 原始任务和后续用户输入
 6. 当前 Segment 状态与剩余预算
 7. 未解决审批、冲突、reconciliation 状态
@@ -238,13 +255,45 @@ Model Gateway 输出完整 ToolCall list 后，Runtime：
 
 所有注入项必须有单项上限和总 token 预算。
 
-`read_file`/`read_file_range` ToolResult 包含 `read_result_id, path, base_sha256, complete, content_redacted, evidence_ranges, encoding, bom`，供后续 write/apply 引用。`evidence_ranges` 已扣除发生脱敏的整行。Context Builder 可裁剪已读正文，但不会改变 Runtime 存储的证据范围；若证据 ID 也不再可见，模型应重新读取，不得自行构造。
+每个 Step 的 available tool set 只由 Run `tool_contract_version`、请求种类、工具声明的 mode applicability、reconciliation 等持久 Runtime gate，以及单工具 capability health 决定；不得读取任务文本、目标路径是否存在、上下文预算或工具常用程度做启发式筛选。集合按工具名稳定排序。首次 Attempt 前持久化工具名列表，并对完整 model-visible definitions 的 canonical serialization 计算 `tool_set_hash`；同一 Step 的所有传输重试/重放使用完全相同的集合与 hash，下一普通或协议纠正 Step 重新计算。
 
-list/search 不注入“Workspace snapshot”结论。`workspace_changed=true` 和 `changed_during_scan_count` 始终保留；搜索项带自己 `file_sha256`，不与其他文件 hash 合并。
+非空集合发送 `tools`、`tool_choice=auto`、`parallel_tool_calls=true`；空集合省略 `tools`，显式发送 `tool_choice=none`，并省略 `parallel_tool_calls`。Finalization 始终使用空集合。隐藏工具只是减少无效 ToolCall，不构成安全边界；Runtime 仍独立执行 schema、组合、审批和沙箱校验。
 
-`skipped/no_changes` ToolResult 包含 path/base hash 和“零文件接触”，模型可直接继续，不得解读为获批写入。
+每个已创建 ToolCall 到达终态后恰好生成一个协议无关、不可变的 base ToolResult JSON：`schema_version,tool_name,outcome,code,summary,data,model_content_truncated,side_effects_may_exist`。`schema_version=1`；`outcome` 固定为 `success|error|skipped|rejected|interrupted|unavailable`；`data` 必须符合 `(tool_contract_version,tool_name,outcome,code)` 的闭合 schema。Base 按 ToolResult canonical JSON v1 序列化并保存 hash，`model_content_truncated=false`；只有 Run 继续时才生成并发送 Step projection。
 
-Shell ToolResult 的模型部分只包含 32 KiB 受控 stdout/stderr observation、exit/resource/termination 元数据、manifest 分类计数、前 50 个安全路径和完整性标志。完整 manifest、Toolchain 内部文件列表和 protected path 不进入模型上下文。
+Context Builder 不修改 base，而为每个 Step 生成 model-visible projection：
+
+1. 先按当前 `ruleset_version` 重扫 base；只允许拒绝注入或加强脱敏，不回写 base。
+2. 只裁剪 tool contract 明确标记为 truncatable 的 data 字段。Projection schema 必须预先声明 `omitted_count|omitted_bytes` 等字段；Context Builder 不得临时增加 key。
+3. 永远保留 `schema_version,tool_name,outcome,code,summary,side_effects_may_exist` 和工具声明的 core count/status。发生裁剪时设置 `model_content_truncated=true`，但不修改工具级 `complete|truncated|stop_reason`。
+4. 后续 Step 对每个可裁剪字段只能保持相同确定性范围或进一步减少/脱敏，不得换一批等量条目重新显露。
+5. 第一个实际 Attempt 前冻结 projection bytes/hash、引用的 base hash 和完整 canonical model payload hash；同一 Step 的所有 Attempt 和传输使用相同投影。
+
+MVP projection schema 与裁剪单元固定如下：
+
+| ToolResult | 可裁剪字段 | 保留规则 | Projection 省略字段 |
+|---|---|---|---|
+| `list_files` success | `data.entries` | 只保留 base 稳定顺序的前 N 项，N 只能跨 Step 不增 | `context_omitted_entry_count` |
+| `search_text` success | `data.matches` | 只保留 base 稳定顺序的前 N 项，N 只能跨 Step 不增 | `context_omitted_match_count` |
+| `read_file`/`read_file_range` success | `segments[].content` | 一次删除该结果全部 segment content；不修改 segment 行界 | `context_omitted_content_bytes` |
+| `read_file`/`read_file_range` success | `evidence_ranges` | 只保留行序前 N 段，N 只能跨 Step 不增 | `context_omitted_evidence_range_count` |
+| `run_shell` success/error/interrupted | `data.stdout_head,data.stdout_tail,data.stderr_head,data.stderr_tail` | 优先保留 stderr、再分配 stdout；流内按固定 head/tail 算法缩短 | `context_omitted_output_bytes` |
+
+上述 `context_omitted_*` 是 projection schema 预声明的非负整数字段：仅值大于 0 时存在；按 base model-visible 内容计算，不与工具执行自身的 `omitted_source_bytes|omitted_evidence_range_count|truncated` 合并。Read/range 先整体删除 segment content，再裁 evidence_ranges 尾部；list/search 只删 array 尾部。所有其他 ToolResult data 在 MVP 中不可字段级裁剪，只能按 P0 历史项优先级整体不注入；若协议关联要求该 ToolResult，则整体不注入不可用，必须继续裁更低优先级内容或触发 `context_input_too_large`。
+
+Shell projection 的目标 observation 正文字节预算 `B` 由 Context Builder 给出，范围为 0 到 base 四个 observation string 的 UTF-8 字节合计。先令 `stderr_budget=min(B,base_stderr_bytes)`，再令 `stdout_budget=min(B-stderr_budget,base_stdout_bytes)`，因此收缩时先移除 stdout、后移除 stderr。每个流令 `head_budget=CEIL(stream_budget/2),tail_budget=FLOOR(stream_budget/2)`；分别保留 base head 的最长合法 UTF-8 前缀和 base tail 的最长合法 UTF-8 后缀，不拆 Unicode scalar 或完整脱敏占位符，也不把边界舍入后的余额转给另一段/流。零长度 string 字段省略；非 observation 的 exit/resource/termination/manifest core 字段保持不变。`context_omitted_output_bytes=base_model_output_bytes-projected_model_output_bytes`，其中两者只统计四个模型可见 string，不使用工具级 `*_observation_bytes` 完整流计数；由此可唯一重建任一预算下的 projection。
+
+`model_content_truncated=true` 当且仅当任一 `context_omitted_* > 0` 或当前规则重扫比 base 产生更严格脱敏。每个 projection 生成后必须重新通过对应闭合 projection schema 和 canonical serializer。跨 Step 单调性按 base hash 下的 entries/matches/evidence prefix 长度和 segment content present/absent 逐字段比较。
+
+Adapter 将该 Step 冻结的同一 projection JSON 编码为 Responses `function_call_output.output` 或 Chat `role=tool` content，不得另建模型可见自由文本结果通道。只读批次按 `batch_order` 每个调用各有一个 base 和对应投影。非法/敏感/非法组合响应因未创建 ToolCall，不生成 synthetic ToolResult；已创建调用的 rejected、no-op/skipped、unavailable 和 interrupted 结果若模型仍继续则必须进入上下文。终止或已取消 Run 无须再发给 Provider，但内部状态仍需如实持久化。
+
+`read_file`/`read_file_range` ToolResult 包含 `read_result_id,path,base_sha256,complete,content_redacted,segments,evidence_ranges,omitted_evidence_range_count,encoding,bom`，供后续 write/apply 引用。Evidence 只覆盖已返回且整行未脱敏的范围；Context Builder 可裁剪 segments 正文，但不会扩大 Runtime 证据。若 read_result_id 也不再可见，模型应重新读取，不得自行构造。
+
+list/search 不注入“Workspace snapshot”结论。工具级 `workspace_changed`、`changed_during_scan_count`、计数和 stop_reason 始终保留；Context projection 只保留 entries/matches 的确定性前缀并记录省略量，不改写工具级 truncated。搜索项带自己的 `file_sha256`，不与其他文件 hash 合并。
+
+`skipped/no_changes` ToolResult data 恰为 `{path,base_sha256}`，模型可直接继续；该 outcome 固定表示零 Approval、零 intent、零文件接触，不得解读为获批写入。
+
+已启动 Shell ToolResult 的模型部分只包含 32 KiB 受控 stdout/stderr observation、exit/resource/termination 元数据、manifest 分类计数、前 50 个安全路径和完整性标志。`*_observation_bytes` 使用脱敏后、工具容量裁剪前口径；raw pipe bytes、完整 manifest、Toolchain 内部文件列表和 protected path 不进入 ToolResult、Event 或模型上下文。Context projection 只裁四个 observation string 并记录 `context_omitted_output_bytes`，不修改工具级 observation/returned/truncated 计数。
 
 从 SQLite、Tool log 或 Artifact 读取的历史正文在进入 Context Builder 前按当前 `ruleset_version` 再扫描。读时 `deny` 不注入正文，`redact` 只注入脱敏版本；不修改原始 Timeline 或 Artifact 快照。
 
@@ -305,7 +354,7 @@ estimated_input_tokens <= usable_input_budget
 3. 最旧普通模型进度文本。
 4. 更早 Step 的完整结果。
 
-裁剪后保留 path、hash、状态、size、摘要和 `content_omitted=true`，Agent 可以重新读取。MVP 不调用模型生成 compaction summary。
+字段级裁剪严格使用第 5 节预声明的 `context_omitted_*` projection schema，保留对应工具的 path/hash/core status/count；不得临时增加 `content_omitted` 或其他 key。不可字段级裁剪且协议要求关联的 ToolResult 必须整体保留；预算仍不足时进入 `context_input_too_large`。Agent 可根据保留事实重新读取，MVP 不调用模型生成 compaction summary。
 
 裁剪后若不可裁剪内容仍使 `estimated_input_tokens > usable_input_budget`，Gateway 零网络请求且不创建 started ModelAttempt；当前 Step 若已存在则标记 `failed/context_input_too_large`，Run 直接 `failed`、不 Finalize、capability snapshot 保持有效。保存并向 UI 返回 `estimated_required_tokens, usable_input_budget, request_max_output_tokens, safety_margin_tokens`，不包含原始 payload。只有本地预算通过后 Provider 明确返回 context-length exceeded 才是 `model_context_limit_mismatch`。
 
@@ -334,7 +383,7 @@ estimated_input_tokens <= usable_input_budget
 - `401/403` 认证错误、确定性的 model not found、invalid request 或不支持参数直接终止 Run。
 - TLS 证书/主机名/信任链错误不重试，保存 `model_tls_validation_failed`；不存在关闭校验后继续的分支。
 - 当前凭证槽缺失、不可读或与 Run 固化 auth mode 不兼容时不回退到旧密钥，保存 `model_credential_unavailable` 并直接 failed；Provider 401/403 仍为 `model_auth_failed`。
-- 明确的 context-length exceeded 保存 `model_context_limit_mismatch`；wire terminal、streaming/ToolCall/usage/stateless continuation/固化输出字段与 snapshot 不符保存 `model_capability_drift`。两者在 Run failed 事务中使 Profile 当前 snapshot 失效。
+- 明确的 context-length exceeded 保存 `model_context_limit_mismatch`；wire terminal、streaming、工具控制、Tool Schema Dialect、ToolCall/ToolResult 关联、usage、stateless continuation 或固化输出字段与 snapshot 不符保存 `model_capability_drift`。两者在 Run failed 事务中使 Profile 当前 snapshot 失效。
 - 终止时保存结构化 `model_credential_unavailable|model_auth_failed|model_not_found|model_invalid_request|model_tls_validation_failed|context_input_too_large|model_context_limit_mismatch|model_capability_drift`，不调用 Finalization。
 - Run 的 Model Profile snapshot 不可修改；修复配置后只能创建新 Run。
 - 用户取消会关闭流并结束 Step。
@@ -346,6 +395,7 @@ usage 按 Attempt 保存：Provider 明确报告的 usage 逐份计入 `reported
 Finalization 使用原 Run 模型快照，但：
 
 - 无工具 schema。
+- 显式发送 `tool_choice=none`，省略 `parallel_tool_calls`。
 - timeout 60 秒。
 - `request_max_output_tokens=min(profile.max_output_tokens,4_096)`。
 - 使用 Run snapshot 固化的 wire API 与 `output_token_parameter`，保持 stateless；不重新协商字段。

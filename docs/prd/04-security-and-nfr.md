@@ -125,6 +125,8 @@ MVP 为尽快打通 Agent 主链路，允许 API Key 明文存放在 `~/.eidos/c
 
 ## 9. 可恢复性与可靠性
 
+- Runtime 完成状态目录校验、唯一执行权、数据库 revision/完整性、契约和安全自检、崩溃对账与 FIFO 恢复后才开放业务 API 和调度；失败时只保留最小安全诊断。
+- SQLite 只允许向前迁移；迁移前创建一致、可验证且不自动覆盖的备份。未知或更高 schema、备份失败、迁移失败或完整性失败均不得继续执行业务。
 - 状态变更与 Event 在同一 SQLite 事务中提交。
 - 有副作用 ToolCall 不自动重放。
 - 有副作用 ToolCall 执行前必须先提交 execution intent、nonce、前置条件和预期后置条件。
@@ -132,7 +134,20 @@ MVP 为尽快打通 Agent 主链路，允许 API Key 明文存放在 `~/.eidos/c
 - 崩溃后将运行中的 ToolCall 标记为 `interrupted`，Run 等待用户确认。
 - 文件提交关键区不可被取消打断。
 - Shell timeout 或取消必须终止整个进程组。
+- 每个 Agent Shell 由最小生命周期 guardian 托管；Main/sidecar 失联、deadline 或取消时清理受控进程组和已识别后代。MVP 不把该能力描述为 macOS 上任意进程树的绝对证明。
 - 达到 Run 硬上限后安全停止并保留已有 Artifact 与 Timeline。
+- Workspace 授权同时绑定用户选择路径和跨重启持久目录身份；身份缺失、移动或替换时 fail closed，不自动 rebind，也不复活旧 Approval。
+- 同一状态目录的 OS 独占锁是唯一执行权依据；PID、锁文件内容和进程 nonce 仅用于诊断，不能用于抢占。
+- Renderer 发起的持久化写操作使用跨重启 operation idempotency；它只防止本地状态重复提交，不承诺 Provider、Shell 或文件系统 exactly-once。
+- 当前状态只能来自规范化表/详情 API；Event 是可回放增量，新增可忽略类型不能成为旧客户端恢复正确状态所必需的唯一事实。
+
+### 9.1 时间与存储故障
+
+- DB/API/Event 的业务时间统一为 UTC Unix epoch milliseconds 的 JSON safe integer；持续时间、预算和进程内 deadline 使用 monotonic clock，UI 才转换本地时区。
+- 系统时钟回拨不得延长已有有期限授权；Shell Approval 绑定可验证的 boot-session/continuous-monotonic deadline，同 boot 重启延续原期限，boot/timebase 不可证明或检测到回拨时在开放业务前失效。sleep/停机时间计入原 TTL，时钟前跳可以安全地提前失效。
+- SQLite/state root 无法可靠提交时，Runtime 停止调度和业务写入，进入 health-only。未提交结果不能仅凭内存向 UI 声称成功。
+- MVP 可保留同卷、有界、真实分配的 emergency reserve 辅助空间耗尽后的 rollback/诊断，但不承诺足以完成任意 WAL/事务；I/O 或损坏故障不得通过释放 reserve 假装修复。
+- 恢复必须先满足空间、WAL、integrity、foreign key 和 durable intent 对账，再重新 ready。Eidos 不自动删除 Event、Artifact、日志、backup 或用户文件来腾空间，也不自动覆盖当前数据库。
 
 ## 10. 数据与容量
 
@@ -167,3 +182,22 @@ MVP 为尽快打通 Agent 主链路，允许 API Key 明文存放在 `~/.eidos/c
 - Eidos 不主动请求 Provider 保存会话：Responses 使用 `store=false`，Chat 每次发送本地重建的消息。该设置不构成第三方零留存保证，UI 必须提示实际保留仍受 Provider 条款约束。
 - Provider response/conversation ID 只可作为审计元数据，不得成为恢复、ToolResult 续接或传输降级的唯一状态来源。
 - 模型流在协议解码后执行单 Event、总 payload、可见文本、reasoning 和 ToolCall 参数多层容量检查；超限内容不得进入 Event、日志、数据库或审批。
+
+## 13. 工具输入与结果边界
+
+- Provider 返回的 ToolCall 参数不因 `strict` 声明而受信；未通过本地封闭 schema、组合、敏感扫描和当前状态复检时零执行。
+- 默认值只能是随工具契约发布的静态 JSON literal，不得从时间、Workspace、环境或隐藏状态派生。审批所见参数必须与最终执行参数相同。
+- 工具可用性裁剪只能依赖固化契约与可审计 Runtime 状态；不得根据任务文本、常用程度或模型输出猜测。
+- ToolResult 的模型可见内容只来自封闭 envelope 及按 contract/tool/outcome/code 定义的 data schema；summary 必须有界、固定模板化且已扫描，不提供另一条任意文本旁路。
+- ToolResult integer 必须在跨 Python/JavaScript 精确可表达的 safe integer 范围内；真实工具测量溢出时返回固定安全错误，不允许四舍五入、字符串替代或失真发送。
+- Eidos Canonical JSON v1 保留 Unicode code point 原样，不做 NFC/NFD 规范化；非法 surrogate、递归重复 key 和非规范整数拒绝，Python 与 JavaScript 必须产生相同 UTF-8 bytes。
+- Provider、OS、异常类型和用户反馈原文不得进入 ToolResult code 或 summary；动态内容只能进入明确有界、递归封闭且重新扫描的 data 字段。
+- ToolResult base 是不可变事实。Context 投影只能按版本化规则删除或加强脱敏已声明可裁剪字段，并保存省略量；不得改变 outcome、code、工具级截断或副作用状态，也不得在后续 Step 重新显露另一批等量内容。
+- 敏感隐藏文件既不进入 list/search 项目，也不进入模型可见聚合计数；避免通过多次差分推断受保护路径。
+- ToolResult schema、投影或序列化 invariant 失败时不得返回自由文本 fallback。Runtime 保留真实副作用事实、终止当前 Run，并隔离故障工具或整个结果能力，直到受验证的新实现解除。
+- ToolResult error 不提供通用 `details/message/cause` 或任意 map；只有按工具与 code 声明的有界字段可进入模型。API Error 是独立的 Renderer/HTTP 契约，也必须按 code 闭合并安全化。
+- Reject feedback 是唯一共享 rejection data 的可选用户原文：必须先扫描、不得截断，且不得进入 summary。Provider/OS 动态错误、stack、errno 和内部诊断不能因只用于审计而绕过扫描与最小化。
+- 模型可见 Shell 字节计数只使用脱敏后的 observation 口径；原始 pipe 字节数、完整 manifest、敏感路径和真实 snapshot 路径不得进入 ToolResult、Event 或模型上下文。
+- `side_effects_may_exist=true` 不得单独自动推导事实确认；但任何 `reconciliation_required=true` 的工具结果都必须同时标记可能存在未确认副作用。
+- 每次新的副作用不确定性形成独立、持久化的确认 episode；只有之后正常完成的只读 Step 至少提交一个成功观察，才允许下一 Step 重新获得副作用工具。合法空观察可作为事实，旧观察不能清除更新的 episode。
+- 旧 `tool_contract_version` 不得降级当前 Redaction、Workspace Guard、Seatbelt、网络和全局资源底线；无法安全兼容时停止执行而不是恢复旧安全语义。

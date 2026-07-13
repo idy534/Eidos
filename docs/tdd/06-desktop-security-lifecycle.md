@@ -7,6 +7,7 @@
 职责：
 
 - 生成 runtime token，启动和停止 Python sidecar。
+- 启动最早阶段取得 Electron single-instance lock；第二实例只激活已有窗口，不启动第二 sidecar。
 - 读取唯一 ready JSON 行并保存随机端口。
 - 代理 Renderer 的 HTTP API 和 SSE。
 - 调用 macOS 文件夹选择器。
@@ -29,7 +30,9 @@ window.eidos.invoke(channel: string, payload: unknown)
 window.eidos.sessions.create(input)
 window.eidos.runs.create(sessionId, input)
 window.eidos.runs.cancel(runId)
+window.eidos.runs.getSnapshot(runId)
 window.eidos.runs.addUserInput(runId, input)
+window.eidos.approvals.get(approvalId)
 window.eidos.approvals.approve(approvalId, input)
 window.eidos.approvals.reject(approvalId, input)
 window.eidos.events.subscribe(runId, handler)
@@ -49,6 +52,10 @@ window.eidos.toolchains.disable(profileId, userGestureNonce)
 ```
 
 每个方法固定 IPC channel、请求 schema 和响应 schema。Main 再次验证所有 Renderer 参数，不能信任 TypeScript 类型。
+
+所有修改 sidecar 持久状态的方法额外接收由 Renderer 为单次用户意图生成的 `operationId`，Main 映射为 HTTP `Idempotency-Key`；断线重试只能复用同一方法/参数/operationId，新的用户手势必须新建 ID。decision nonce、expected version 和 user gesture nonce 仍分别传递。GET/SSE、folder picker 与 open Terminal 不持久化 operation，Main 不自动重放后两者。
+
+OpenAPI 生成 Preload/Renderer type 与 runtime validator。Main 必须验证 sidecar 的 closed success/error DTO，分页 cursor 只允许原样透传；`runtime_contract_mismatch` 时停止对应流，不把未知字段或原 payload交给 Renderer。
 
 ## 3. Renderer 安全
 
@@ -71,39 +78,47 @@ webSecurity: true
 
 Main：
 
-1. 生成高熵 token。
-2. 以 `EIDOS_RUNTIME_TOKEN` 注入 sidecar。
-3. 等待带 schema 的 ready 行，其他 stdout 作为日志处理。
-4. 验证 port 为本地有效端口。
+1. 取得 Electron single-instance lock，再生成高熵 token。
+2. 以 `EIDOS_RUNTIME_TOKEN` 和专用生命周期控制 pipe 注入 sidecar。
+3. 接受当前 child 的 `listening` 后只代理最小 health；等待唯一、带 schema 的 ready，其他 stdout 作为日志处理。
+4. 验证 port 为本地有效端口、ready 属于当前 child，且 API/Event contract version 与当前 Main/Renderer registry 兼容，才开放业务 IPC/API/SSE。
 5. 所有后续请求添加 Bearer token。
 
 Sidecar：
 
+- 在打开 DB 前验证状态目录并取得 `runtime.lock` 的独占 OS advisory lock，持有至进程退出。lock fd 在 open 时使用 `O_CLOEXEC` 并复检 `FD_CLOEXEC`，不得通过 spawn file actions、fd duplication 或显式传递进入 guardian、sandbox-exec、Shell 或其他子进程。锁内容的 PID/start identity/instance nonce/protocol version 只用于诊断；不得删锁文件、按 PID 抢占或接管旧 runtime token。
 - 只 bind `127.0.0.1`，不 bind `0.0.0.0` 或 `::`。
-- 除 `/internal/health` 外都验证固定时间 token compare。
+- ready 前只有 `/internal/health` 可到达；gate 必须在路由匹配/body parsing 前拒绝其他请求。ready 后除 health 外都验证固定时间 token compare。
 - CORS 不作为认证手段；Renderer 不直连。
 - 日志 formatter 必须删除 Authorization header。
+
+Main 异常关闭控制 pipe 后，sidecar 立即停止接收新业务，提交可恢复中断事实、驱动 guardian 清理并退出，由 OS 释放 lock。新 Main 发现 lock 仍占用只做有界等待，随后报告 `runtime_already_active`；锁释放后只能启动新 sidecar并执行完整恢复，不能 attach 旧 sidecar。
 
 ## 5. SSE 代理
 
 ```text
 sidecar committed Events
-  -> Main authenticated SSE connection
+  -> same-transaction RunSnapshot + through_event_id
+  -> Renderer atomically installs snapshot
+  -> Main authenticated SSE connection after watermark
   -> IPC event stream
   -> Renderer per-run reducer
 ```
 
 - Main 为每个活跃 Run 维护至多一个 sidecar SSE 连接。
-- Renderer 重载后按最后 event id 恢复。
+- Renderer 首次加载/重载都从 RunSnapshot 的 `through_event_id` 恢复；本地缓存水位不能替代权威 snapshot。
 - IPC listener 必须在组件卸载时释放。
 - Main 可批量转发高频 model/tool chunks，避免压垮 Renderer。
+- Main 对未知但 contract 声明可忽略的 event type 丢弃原 payload，只发送闭合 unsupported-event 占位并推进 id；已知 type 未知 version/非法 payload 停流并触发一次 snapshot 恢复。snapshot 仍未覆盖时显示 contract mismatch，禁止循环。
 
 ## 6. Workspace 选择
 
 - 只接受用户通过系统文件夹选择器返回的目录。
-- 保存 canonical path 和设备/文件标识元数据，用于检测目录移动或替换。
-- 每次 Session/Run 启动前确认 root 存在且仍是目录。
-- Root 不可用时 Workspace 标记 unavailable，不自动选择相似路径。
+- Main 以 `O_DIRECTORY|O_NOFOLLOW` 打开 root，sidecar 通过 fd `fstat` 与 volume resource metadata 保存 `canonical_root_path,volume_uuid,inode,birthtime_ns,last_seen_dev`。`fileResourceIdentifier`/`fileIdentifier` 只能作进程内补充，不能作为跨重启持久身份。
+- volume UUID 或可靠 birthtime 不可用时拒绝选择 `workspace_volume_identity_unsupported`。`last_seen_dev` 只用于当前挂载期辅助判断。
+- 创建/恢复 Run 和每次工具调用前都重新以 fd 验证路径、目录类型、volume UUID、inode 与 birthtime。消失、权限丢失、symlink、类型或身份变化时 Workspace -> unavailable，所有 pending/approved Approval 永久 invalidated，非终态 Run -> `waiting_user_input/workspace_unavailable`，零模型/工具续接。
+- 同路径新身份创建新 Workspace ID；同身份换路径也创建新 Workspace ID，不自动 rebind 或迁移历史。旧身份在原路径精确重现时，只能由用户显式重新选择恢复旧 Workspace；旧 Approval 不复活，Run 仍需显式继续。
+- 数据库同时保证 available canonical path 唯一和 available persistent identity 唯一；不可用历史仍可只读查看。
 - active root 传给 sidecar 后仍由 Workspace Guard 和 Seatbelt 二次校验。
 
 ## 7. 打开系统 Terminal
@@ -136,6 +151,8 @@ Main：
 
 Sidecar 重启后执行崩溃恢复：running -> waiting_user_input/runtime_interrupted；finalizing 使用结构化降级摘要进入 stopped；两者都不自动重放工具。
 
+每个已启动 Shell 另由 Q144 guardian 持有绝对 deadline、双控制通道和进程身份 lease。Main/sidecar EOF、取消或 deadline 触发 TERM -> 2 秒 -> KILL 的受控 PGID/已识别后代清理；UI 不显示“后台仍在运行”。若 guardian 自检失败，Shell capability unavailable，但模型/只读文件工具可按 ready capability 状态继续。
+
 ## 10. UI 状态要求
 
 Renderer 必须明确区分：
@@ -152,6 +169,12 @@ stopped
 canceled
 runtime_disconnected
 ```
+
+Renderer 只能从 snapshot 的稳定排序 `allowed_actions` 渲染 Continue/Cancel/Approve/Reject；不能仅凭 `waiting_user_input` 或本地 Event 猜测。提交后若服务端返回状态竞态，立即重新获取 snapshot。终态 snapshot 不订阅 SSE；未知 snapshot schema 显示兼容错误，未知 Event schema 先停止 reducer 再 resnapshot。
+
+所有 `*_at` 作为 UTC Unix 毫秒 ApiTimestampV1 接收，Renderer 只负责本地化展示。Approval 倒计时以服务端 `approval_expires_at` 展示，但授权判断只在 Runtime；客户端墙钟、休眠或回拨不能延长授权。
+
+`storage_unavailable` 时 Main 关闭业务 IPC 并显示 health-only 诊断：安全 reason、Eidos 数据根、释放空间和“重新检查/重启”入口。重新检查是用户手势触发的新 sidecar 恢复流程，不是重试原写操作；UI 不提供自动删除、自动恢复 backup 或“忽略后继续”。
 
 审批卡必须展示：
 
@@ -174,13 +197,17 @@ Shell 卡额外展示：
 
 `tool_call_skipped/no_changes` 渲染为非审批信息卡，不渲染空 Diff。`workspace_changed`/`changed_during_scan_count` 显示为“结果可能不是 Workspace 快照”，不将跳过变化文件显示为零匹配。
 
-Shell 输出视图按 `chunk_index` 处理 stdout/stderr 交错，识别中间省略和 `tail_replay`，不在 Renderer 端重新计算截断。Workspace change 卡展示分类计数、manifest 完整性和前 200 个安全路径，文案始终使用“执行窗口内观察到”。
+write/apply/delete success 卡只从闭合 data 展示提交后 path/change/hash/size/postcondition；不得显示 Approval、intent、临时路径或 OS metadata。Artifact success 卡通过 canonical artifact_id 调用受控 open API，不接受 ToolResult 提供 URL，也不显示 snapshot_path。
+
+Shell 输出视图按 `chunk_index` 处理 stdout/stderr 交错，识别中间省略和 `tail_replay`，不在 Renderer 端重新计算截断。Workspace change 卡展示分类计数、manifest 完整性和前 200 个安全路径，文案始终使用“执行窗口内观察到”。模型结果只使用脱敏 observation bytes；Renderer 不把内部 raw byte counts、完整 manifest 或敏感路径拼入 ToolResult 详情。
+
+ToolResult error 卡按 outcome/code 和 code 专属 data 本地化；不能渲染 generic message/details/cause。Reject 卡可显示已扫描的可选 user_feedback；unavailable 和未启动 interrupted 不伪造 retry 建议。`side_effects_may_exist` 只显示“可能有未确认副作用”，事实确认按钮与 gate 必须读取 Run 的 reconciliation_required，不能直接由该 flag 推导。
 
 Artifact UI 在 MVP 只接受 text/markdown/json/csv/html/code；不支持格式显示安全拒绝而不创建卡片。快照 hash 失配时标记 corrupted 并禁用正文预览。
 
 Renderer 不实现 raw reasoning 专用 UI；只渲染 `assistant_progress`、`final_answer` 和 reasoning token 用量元数据。
 
-Model Profile UI 必须区分未测试、测试中、已通过、已失效、失败和 Archived 状态。用户必须显式选择 Responses 或 Chat Completions。Test Connection 只能由用户手势触发，不接受任务或自定义 probe 文本；结果展示 snapshot/request contract version、认证、模型、HTTP(S) streaming、ToolCall 分片/续接、usage、stateless continuation、output token parameter、可选 WebSocket 的 supported/unsupported/unknown 和安全错误分类。WebSocket unsupported/unknown 不阻止选择；任一必需能力未通过、失效或 Archived Profile 禁用 Session 选择和新 Run 创建，既有 Run 仍展示其固化 snapshot。
+Model Profile UI 必须区分未测试、测试中、已通过、已失效、失败和 Archived 状态。用户必须显式选择 Responses 或 Chat Completions。Test Connection 只能由用户手势触发，不接受任务或自定义 probe 文本；结果展示 snapshot/Gateway/model request/Tool Schema Dialect version、认证、模型、HTTP(S) streaming、`tool_choice`/`parallel_tool_calls` 控制、`strict=false` schema 模式、ToolCall/ToolResult 分片与无状态续接、usage、output token parameter、可选 WebSocket 的 supported/unsupported/unknown 和安全错误分类。WebSocket unsupported/unknown 不阻止选择；任一必需能力未通过、失效或 Archived Profile 禁用 Session 选择和新 Run 创建，既有 Run 仍展示其固化 snapshot。
 
 Profile 编辑表单不回显 API Key，只提供保持、替换或在 `none` 认证下清除。连接/协议字段修改前提示“保存后需要重新 Test Connection”；纯名称修改不显示失效提示。Archive 使用确认卡且无 Delete 操作，恢复后根据 snapshot 有效性决定是否可选。
 
@@ -196,13 +223,19 @@ Run 用量区域分别显示 Provider 已报告 usage、总 Attempt 数和 usage
 
 `context_input_too_large` 错误卡显示 estimated required、usable input budget、request output reserve 和 safety margin，引导缩短任务或选择更大上下文 Profile 后创建新 Run；不提供恢复当前 Run 的入口，也不把 Profile 标为失效。
 
-`model_output_truncated|model_output_blocked|model_output_limit_exceeded` 分别显示“达到模型输出上限”“Provider 内容过滤”“Eidos 输出资源上限”；只保留 incomplete progress，不渲染或审批该响应 ToolCall。`runtime_contract_unsupported` 只允许取消或复制原任务创建新 Run。
+`model_output_truncated|model_output_blocked|model_output_limit_exceeded` 分别显示“达到模型输出上限”“Provider 内容过滤”“Eidos 输出资源上限”；只保留 incomplete progress，不渲染或审批该响应 ToolCall。`runtime_contract_unsupported` 同时覆盖旧 model request/tool contract 不可安全恢复，只允许取消或复制原任务创建新 Run。
 
 Model Profile 页面说明 Eidos 使用 stateless 请求且 Responses 设置 `store=false`，但不承诺第三方零留存；链接到用户所选 Provider 的隐私条款由用户自行确认，Eidos 不抓取或声称验证其政策。
 
 模型认证或确定性配置错误时，Renderer 显示 failed 错误卡和“更换/修复 Model Profile 后创建新 Run”，不提供恢复原 Run 的按钮。
 
 瞬时模型故障重试耗尽或连续两次模型协议错误时，Renderer 显示对应 pause reason，并允许用户稍后继续、补充指令或取消。
+
+ToolCall 已在当步暴露但执行前能力退化时，Execution Feed 渲染非审批的 `unavailable/tool_unavailable` 结果卡，并明确“未执行、零副作用”；不得把它显示成模型调用了未知工具。ToolResult UI 从 canonical envelope 的 `outcome/code/summary/data` 白名单读取，不能使用内部 `result_text` 拼接另一份模型或用户结论。
+
+`tool_result_contract_violation` 使用独立 Runtime 故障卡：展示安全的 scope=tool|global、tool name（若有）、contract/build version、真实 ToolCall 终态和 `side_effects_may_exist`，不显示 projector 原始异常或 result_text。该 Run 没有继续入口；若可能存在副作用，引导复制任务创建新 Run并先做只读核验。Settings/health 展示 active quarantine；普通重启不提供“清除并继续”按钮。
+
+Execution Feed 的工具结果状态只来自 immutable base envelope；Renderer 可按 outcome/code 本地化。`summary` 仅作模型提示，不作为 UI 状态源。Context projection 的 `model_content_truncated` 与 omitted metadata 可以显示“模型上下文已省略部分结果”，但不得覆盖工具自身 complete/truncated/stop_reason。
 
 敏感内容 UI 契约：
 

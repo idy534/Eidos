@@ -6,7 +6,7 @@
 
 1. [PRD 索引](prd/README.md)
 2. [TDD 索引](tdd/README.md)
-3. [设计决策记录 Q1-Q110](decisions.md)
+3. [设计决策记录 Q1-Q155](decisions.md)
 
 ## 文档职责
 

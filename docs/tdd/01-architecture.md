@@ -50,7 +50,7 @@ Python FastAPI Sidecar
   ├── Runtime Engine / Context Builder
   ├── Model Gateway / Responses + Chat Adapters / Transport Controller
   ├── Model Profile / Capability Registry
-  ├── Tool Registry / Tool Executor
+  ├── Versioned Tool Contract Registry / Tool Executor
   ├── Approval / Resume / Recovery
   ├── Seatbelt Policy Builder
   ├── Toolchain Profile Registry
@@ -60,6 +60,7 @@ Python FastAPI Sidecar
   ├── Redaction Service
   └── Repository / Event Outbox
   │
+  ├── signed minimal Shell guardian per active Shell
   ├── ~/.eidos/eidos.db
   ├── ~/.eidos/config.toml
   ├── workspace/public files
@@ -82,7 +83,7 @@ Renderer 处理模型生成的 Markdown、代码和链接，属于不可信展�
 Main 是 Desktop 权限边界：
 
 - 生成每次 sidecar 生命周期独立的 runtime token。
-- 通过环境变量把 token 传给 sidecar；stdout 只读取 ready/port。
+- 通过环境变量把 token 传给 sidecar；stdout 只把当前 child 的类型化 `listening`/`ready` 行作为控制消息，其他内容按安全日志处理。
 - 为 API/SSE 请求附加 token，并对响应做字段白名单转换。
 - 用户点击时调用文件夹选择器或打开系统 Terminal。
 - 不执行 Agent Shell。
@@ -91,7 +92,9 @@ Main 是 Desktop 权限边界：
 
 Sidecar 是受信任 Runtime，但 Agent 输入、模型输出和 ToolCall 参数均不可信：
 
-- 所有 ToolCall 先通过 schema、组合和权限校验。
+- Tool Registry 以独立 `tool_contract_version` 固化模型可见定义、Tool Schema Dialect v1、effective arguments 归一化、ToolResult schema、mode applicability 和执行语义；Run 创建时固定版本，Step 再冻结确定性的 available tool set。
+- Provider 对工具参数的约束不是授权边界。所有 ToolCall 都由本地 Runtime 递归闭合 schema、组合、敏感、审批和权限校验；wire 请求显式使用 `strict=false`。
+- Tool Executor 只消费 effective arguments；ToolCall 保存唯一 immutable base ToolResult，Context Builder 生成冻结的有界 projection，两种 Adapter 只编码同一 Step projection，不生成额外自由文本结果。
 - 两种 wire Adapter 只负责确定性协议编解码；Provider conversation/response 状态不作为 Runtime 事实来源，stream/event/ToolCall assembler 在进入业务状态前执行硬容量限制。
 - 文件工具经 Workspace Guard。
 - Shell 只通过 Seatbelt 执行；沙箱不可用时 fail closed。
@@ -100,34 +103,56 @@ Sidecar 是受信任 Runtime，但 Agent 输入、模型输出和 ToolCall 参�
 ## 5. 启动流程
 
 ```text
-Main generate runtime token
+Main acquire Electron single-instance lock
+  -> Main generate runtime token
   -> spawn sidecar with token
-  -> sidecar verify ~/.eidos permissions and migrate DB
+  -> sidecar verify/create ~/.eidos owner, symlink, mode and parent identity
+  -> sidecar acquire full-lifetime exclusive OS lock
+  -> sidecar bind 127.0.0.1:random_port and emit listening
+  -> health-only router gate
+  -> sidecar verify same-filesystem allocated emergency reserve and storage headroom
+  -> sidecar validate DB revision, backup/migrate if needed, and verify integrity
+  -> sidecar validate boot/continuous timebase and apply timed-Approval invalidation before accepting commands
   -> sidecar reconcile profile credential revisions and invalidate stale Gateway capability snapshots
+  -> sidecar load/self-test current Tool Contract and Tool Schema Dialect
+  -> sidecar load ToolResult quarantine and run build-specific projector/serializer regression self-tests
   -> sidecar load and self-test Redaction ruleset
   -> sidecar run Seatbelt self-test
   -> sidecar discover/validate Toolchain Profiles
-  -> sidecar self-test Shell limits, manifest monitor and output capture
-  -> sidecar bind 127.0.0.1:random_port
-  -> stdout {"event":"ready","port":12345,"shell_available":true|false,"redaction_available":true|false}
+  -> sidecar self-test Shell guardian, limits, manifest monitor and output capture
+  -> sidecar reconcile guardian/intents/running state and rebuild FIFO
+  -> atomically flush unique ready {port, event/API contract versions, capability states}
+  -> release scheduler ready latch
   -> Main starts API/SSE proxy
-  -> sidecar reconciles interrupted state and restores FIFO queue
 ```
+
+`listening` 只表示 loopback socket 已绑定，不表示 Runtime 可用。ready 前的路由 gate 必须早于业务路由匹配和 request body 解析：除固定、内存安全的 `/internal/health` 外，所有 API/SSE 固定返回 `503 runtime_not_ready`，不读取业务表、不占 idempotency key、不创建 Event。Main 只接受当前 child 的单个、匹配 schema 的 ready，之后才开放业务 IPC；scheduler 在同一 ready latch 释放前不得认领 Run。
+
+可以在 ready 中降级的 capability 只有彼此隔离且不破坏安全主链路的能力：Shell guardian/Seatbelt/资源监控失败使 `run_shell` unavailable；单个 Toolchain/Profile 失败只禁用该项；per-tool/global ToolResult quarantine 分别禁用对应工具/全部工具；已安全持久化的未知 Shell 后置事实使相关 Run/Workspace 保持 reconciliation。状态目录/独占锁、storage reserve/headroom、DB revision/迁移/完整性/恢复、API/Event contract 握手、Redaction 核心自检、当前 Tool Registry/Schema Dialect/shared serializer 安全自检或 running/FIFO 对账不一致时保持 health-only，禁止发布 ready。
+
+health 只返回闭合的 `phase,stage,reason_code,capabilities`；不得包含异常正文、SQL、用户路径内容、凭证或 stack。
 
 Seatbelt 自检失败不阻止只读文件工具和模型回复，但 `run_shell` 必须报告 unavailable。
 
 Redaction 规则 schema、重叠顺序、最大匹配长度或测试向量自检失败时，所有可能把不可信内容发送给模型/UI 或写入持久化的 API 不可用；只保留 health 和安全配置诊断能力，不存在未扫描回退。
 
+当前 Tool Contract、任一 input/result schema、静态 default 或 Dialect v1 固定 probe 自检失败时 Runtime 不进入 ready。升级后若非终态 Run 的旧 `tool_contract_version` 实现不存在或不再满足当前安全底线，该 Run 零模型/工具执行并进入 `waiting_user_input/runtime_contract_unsupported`；只能取消或创建新 Run。
+
+ToolResult quarantine 普通重启后仍有效。新 build 只可在对应 top-level serializer/shared mapping 或 per-tool projector 的确定性失败向量全部通过后清除相应 scope；未清除的 tool scope 从 available tool set 排除，global scope 禁止全部工具循环。
+
 MVP 只从随应用发布的只读资源加载一个规则集，不从网络、Workspace 或用户配置加载规则。
 
-Shell 限制、Workspace manifest/磁盘增长监控或输出捕获任一自检失败时，与 Seatbelt 失败相同：只使 `run_shell` unavailable，不降级为无监控 Shell。
+Shell guardian、限制、Workspace manifest/磁盘增长监控或输出捕获任一自检失败时，与 Seatbelt 失败相同：只使 `run_shell` unavailable，不降级为无监控 Shell。
 
 ## 6. Eidos Home
 
 ```text
 ~/.eidos/                         mode 0700
   eidos.db
+  runtime.lock                    OS lock authority; file content is diagnostic only
   config.toml                     mode 0600
+  emergency.reserve              mode 0600; >=16 MiB allocated, same filesystem as DB
+  backups/                        mode 0700; migration backups and manifests
   public/sessions/{session_id}/
     files/
     artifacts/{artifact_id}/
@@ -140,6 +165,7 @@ Shell 限制、Workspace manifest/磁盘增长监控或输出捕获任一自检�
     tmp/{tool_call_id}/
     cache/{tool_call_id}/
     manifests/{tool_call_id}/{execution_nonce}/
+    guardian-leases/{tool_call_id}/{execution_nonce}.json
   logs/
 ```
 

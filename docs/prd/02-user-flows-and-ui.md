@@ -57,7 +57,7 @@ Execution Feed 不保存或展示模型供应商的 raw reasoning：
 
 - 创建 Profile 只保存 OpenAI-compatible 连接配置和显式 `responses|chat_completions` wire API，不会自动使其可用于 Session。
 - 用户必须显式执行 Test Connection；探测不携带用户任务、Session 消息、Workspace 内容或 Artifact 正文。
-- 探测必须验证认证、模型存在、streaming、ToolCall 和 usage 契约，并生成版本化 capability snapshot。
+- 探测必须验证认证、模型存在、streaming、ToolCall 和 usage 契约，并生成版本化 capability snapshot。ToolCall 探测使用一个固定无副作用工具完成受控调用与 ToolResult 续接，不执行真实工具。
 - 只有最近一次能力探测成功且存在有效 snapshot 的 Profile 才能被 Session 选择或用于创建新 Run；失败项显示安全的分类结果，不回显 API Key。
 - Run 始终使用创建时固化的 Profile 与 capability snapshot。运行期间发现能力漂移时显示结构化模型错误，不静默修改原 Run 或切换 Profile。
 - Snapshot 不按时间自动过期，也不在后台自动探测；连接/协议配置变化、Gateway 契约升级或运行中确认能力漂移时失效，重新使用前必须由用户再次 Test Connection。
@@ -72,7 +72,7 @@ Execution Feed 不保存或展示模型供应商的 raw reasoning：
 - Provider 扩展参数可以透传，但不能覆盖 Runtime 管理的模型、消息、工具、streaming、认证、传输或输出上限字段。
 - `context_window_tokens` 与 `max_output_tokens` 由用户显式填写，Eidos 不按模型名称自动推断；明确的上下文上限不匹配会使 Run 失败并要求修改 Profile 后重新测试。
 - HTTP(S) streaming 是必需能力；WebSocket 是可选优化。已确认不支持 WebSocket 的 Profile 仍可通过原 endpoint 的 HTTP(S) 使用，不会因此变为不可选。
-- Test Connection 分别展示 usage、ToolCall 分片关联、无状态 ToolResult 续接和输出 token 字段结果；Chat 只在显式测试中协商兼容字段，Run 不临时试错。
+- Test Connection 分别展示 usage、ToolCall 分片关联、工具控制/Schema Dialect、无状态 ToolResult 续接和输出 token 字段结果；Chat 只在显式测试中协商兼容字段，Run 不临时试错。
 
 ## 4. Workspace 主流程
 
@@ -99,6 +99,13 @@ Execution Feed 不保存或展示模型供应商的 raw reasoning：
 - 覆盖已有文件必须先完整读取；Patch 只能修改 Agent 已读取的行区间。
 - 审批通过后、执行前必须重新验证文件版本。
 - `file_version_conflict` 不执行原写入，由 Agent 重新读取并重新申请。
+- 每个 Step 的模型请求只包含当时合法可用的工具；事实确认屏障期不暴露副作用工具，Shell capability 不可用时不暴露 `run_shell`。
+- 所有继续进入模型上下文的工具结果使用同一结构化 envelope，明确区分成功、错误、跳过、拒绝、中断和不可用。
+- Execution Feed 与模型上下文共享同一结果事实，但分别使用安全字段白名单与有界投影；上下文裁剪不会改变工具实际是否完成、工具自身是否截断或是否可能产生副作用。
+- Runtime 无法形成合法结构化工具结果时，Run 直接失败并展示 Runtime 契约故障；不发送自由文本替代结果，也不把故障误报为 Provider 或用户输入问题。
+- 文件变更成功卡只展示提交后复检的路径、操作和版本事实；no-op 卡明确未审批、未接触文件。Artifact 卡通过稳定 Artifact id 打开，不展示内部 snapshot 路径或模型生成的 URL。
+- Shell 结果卡分开展示进程终态、脱敏输出和“执行窗口内观察到”的 Workspace 变化；原始输出长度、完整 manifest、受保护路径名称和 OS 原始错误不进入模型结果。
+- `side_effects_may_exist` 表示结果存在未确认副作用，不等于“工具可写”；是否进入事实确认以 outcome/code、对账完整性和安全异常共同决定。
 
 ## 5. Public Mode 主流程
 
@@ -137,7 +144,7 @@ Shell 审批卡必须说明命令作用于执行时的当前 Workspace，并展�
 
 ### 6.3 Reject
 
-- Reject 原因作为 ToolCall 结果返回 Agent。
+- Reject 原因通过扫描且不超过容量边界后，作为封闭 ToolCall data 返回 Agent；未提供原因时不伪造文案。
 - 连续 Reject 达到 2 次后，Run 进入 `waiting_user_input`。
 - 获批状态变更成功或用户补充新指令后，Reject 计数清零。
 - 只读调用、模型重规划和失败写入不清零。
@@ -170,9 +177,12 @@ Shell 审批卡必须说明命令作用于执行时的当前 Workspace，并展�
 - 模型输出被 token 上限、Provider 内容过滤或 Eidos 流式资源上限终止。
 - 流式敏感扫描器故障，且存在未确认安全的模型输出。
 - Run 固化的 model request contract 实现已不可用；此时原 Run 只能取消或复制原任务创建新 Run。
+- Workspace 消失、被替换或身份无法验证；恢复前只能取消，用户显式重新选择并验证原身份后才可继续，旧审批不会恢复。
 - 执行结果无法确认，需要用户判断。
 
 用户补充信息后，同一 Run 创建新 Execution Segment 并重新进入 FIFO 队列。
+
+“继续、取消、Approve、Reject”只按 Runtime 返回的当前 `allowed_actions` 渲染。它是界面提示而不是授权；提交时服务端仍以最新状态重新判断。不可恢复的 waiting 原因不显示继续入口，未知原因默认不允许继续。
 
 模型重连期间，Execution Feed 显示有界重试进度和 WebSocket 到 HTTP(S) streaming 的降级；首个 delta 后不显示“正在重连”，而是保留未完成进度并暂停。瞬时错误耗尽终止当前模型请求周期，不直接终止 Run。
 
@@ -207,3 +217,12 @@ Run 达到 80 Steps 或 120 分钟有效执行时间后进入 `stopped`，不能
 - 有运行中 Run 时，用户选择等待完成或取消后退出。
 - 排队、waiting_approval 和 waiting_user_input Run 持久化，下一次启动恢复。
 - 意外中断的运行中 Run 不自动重放工具，改为等待用户确认。
+
+## 11. 启动与页面恢复
+
+- 应用启动时先显示 Runtime 初始化/诊断状态；数据库迁移、契约和安全自检、崩溃对账与队列恢复完成前，不能创建、恢复或审批 Run。
+- 同一用户数据目录只允许一个 Eidos Runtime 执行；重复启动激活已有窗口，旧 sidecar 仍在退出时显示有界等待或 `runtime_already_active`，不强制接管。
+- Workbench 首次打开或重载时先原子安装当前 RunSnapshot，再从其 Event 水位续接；不得仅靠历史 Event 猜测当前审批和状态。
+- pending Approval 摘要必须绑定当前 nonce；完整命令、Diff 和前置条件从权威详情读取，详情过期或被替换时禁用 Approve。
+- 列表翻页只透传 Runtime cursor；cursor 失效时从第一页重取，不猜 offset 或排序。旧 UI 遇到明确可忽略的新 Timeline 类型显示安全占位，遇到状态语义不兼容则停止增量并提示升级/重启。
+- 存储不可用时 Workbench 进入 Runtime 诊断态，显示安全故障类别和数据目录，允许用户释放空间后显式重新检查；不提供“自动删除旧记录后继续”。

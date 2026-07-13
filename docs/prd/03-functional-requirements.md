@@ -100,6 +100,51 @@
 | F092 | 完成语义 | 仅完整协议终态可完成；token 截断和内容过滤不执行 ToolCall并进入 waiting_user_input |
 | F093 | 无状态模型请求 | 每个 Step 从本地状态重建上下文；不依赖 Provider conversation、previous response 或服务端 history |
 | F094 | 输出字段协商 | Responses 固定字段；Chat 只在 Test Connection 有界协商并把结果固化到 snapshot |
+| F095 | 工具控制字段 | 工具集非空的普通/纠正请求固定 auto + parallel，空集固定 none；probe 两阶段受控；Finalization 固定无工具 |
+| F096 | 非 strict 生成 | 两种 wire 显式 `strict=false`；Provider strict 不替代 Runtime 本地校验 |
+| F097 | 封闭工具输入 | 根/嵌套/数组 object 递归禁止未知字段；MVP 无自由 map |
+| F098 | 生效参数 | Runtime 只补齐 schema 静态默认值，生成唯一 effective arguments 用于审批、审计和执行 |
+| F099 | 工具契约版本 | Run 固化可观察工具语义；升级不静默改写旧 Run，也不能降低当前安全底线 |
+| F100 | Tool Schema Dialect | 内置 function tool 只使用固定受控 JSON Schema 子集；Dialect 扩展后 Profile 必须重测 |
+| F101 | 当步工具集 | 每个 Step 确定性生成 available tool set；同一逻辑请求的重试完全一致 |
+| F102 | 工具可用性复检 | 调用未暴露工具是协议错误；已暴露工具后续不可用返回零副作用 observation |
+| F103 | Canonical ToolResult | 进入后续模型上下文的已创建 ToolCall 恰好有一个版本化、协议无关的结果 envelope |
+| F104 | ToolResult 关联 | 内部 UUID 不进入模型内容；Adapter 只以 Provider call ID 关联相同 canonical JSON 结果 |
+| F105 | 结果序列化 | ToolResult 顶层 schema 与 canonical UTF-8 JSON 版本化；双 Adapter 和重放使用确定字节规则 |
+| F106 | 安全摘要 | summary 只使用有界固定模板，不携带路径、输出、用户反馈或原始错误 |
+| F107 | 结果 code | success 使用 null；其他 outcome 使用按工具契约封闭的稳定 code，不透传 Provider/OS 原值 |
+| F108 | 封闭结果 data | data 始终是按 contract/tool/outcome/code 选择的递归封闭 object；字段容量和顺序明确 |
+| F109 | 结果契约故障 | 无法生成合法 ToolResult 时零 fallback、零模型续接，Run 失败并隔离故障能力 |
+| F110 | 结果事实与投影 | ToolCall 保存唯一不可变 base result；每 Step 冻结只会减少内容的有界投影 |
+| F111 | 文件树结果 | list_files 使用稳定闭合条目、计数和明确工具截断语义；敏感隐藏项不进入计数 |
+| F112 | 文件读取结果 | read_file 分离完整性、脱敏、源字节省略、读取证据和上下文投影状态 |
+| F113 | 范围读取结果 | read_file_range 永不授予完整读取资格；空结果、截断原因和下一行语义确定 |
+| F114 | 搜索结果 | search_text 使用稳定有界 matches、资源计数和长匹配 preview 裁剪；敏感文件不进入计数 |
+| F115 | 文件变更结果 | write/apply/delete 成功只返回提交后复检的目标事实；内部审批、意图和临时文件不进入模型结果 |
+| F116 | No-op 结果 | 相同候选字节返回最小 skipped/no_changes 结果，明确零审批、零意图、零文件接触 |
+| F117 | Artifact 发布结果 | 发布成功返回稳定 Artifact 身份、版本和快照事实，不暴露内部快照路径或不稳定 URL |
+| F118 | Shell 终态结果 | 已启动 Shell 返回有界进程终态、脱敏双流 observation 和安全 Workspace 对账；完整日志与 manifest 留在审计层 |
+| F119 | Shell 错误映射 | 退出、超时、资源限制、中断、输出和 manifest 故障使用固定 outcome/code 与确定优先级 |
+| F120 | 副作用不确定性 | side_effects_may_exist 只表示结果尚未完整确认的物质性副作用；事实确认由状态机结合结果判定 |
+| F121 | 共享非成功结果 | Reject 可把已扫描、有界的用户原因返回 Agent；不可用和未启动中断不附加内部恢复细节 |
+| F122 | ToolResult 错误边界 | 模型错误结果不提供通用 details/message/cause，只允许 code 专属的封闭安全字段 |
+| F123 | 只读错误事实 | 文件或单行容量超限返回恢复必需的安全边界；其他只读错误不返回正文、证据或动态内部详情 |
+| F124 | 变更错误事实 | Patch/Diff/候选容量错误只返回必要有界事实；版本冲突与 Artifact 错误不把动态 hash 当作读取证据 |
+| F125 | 结果数值兼容 | ToolResult 整数跨 Python/JavaScript 精确一致；超出可表达范围时安全失败，不发送失真结果 |
+| F126 | Canonical Unicode | ToolResult 使用版本化、跨实现一致的 Unicode 与转义规则，不静默规范化用户内容 |
+| F127 | 安全迁移 | 数据库只向前迁移；迁移前保留一致可验证备份，失败时不进入业务 Runtime |
+| F128 | Shell 异常清理 | Main 或 sidecar 异常退出后，有界清理受控 Shell 进程组和已识别后代，不把 Agent Shell 留作后台服务 |
+| F129 | Ready 屏障 | Runtime 完成状态、契约、安全自检与恢复后才开放业务 API 和调度；此前仅提供安全 health |
+| F130 | Workbench 一致启动 | Run 页面从同一事实快照与 Event 水位启动，重载不漏状态或把旧审批当作当前事实 |
+| F131 | Workspace 持久身份 | Workspace 移动、替换或身份不可验证时不继承旧授权；恢复必须由用户显式选择 |
+| F132 | 唯一执行权 | 同一用户状态目录任一时刻只有一个 sidecar 可以迁移、恢复、调度或执行 |
+| F133 | 服务端可执行动作 | UI 操作由服务端当前状态事实决定；不可恢复 Run 不显示或接受继续操作 |
+| F134 | 事实确认 episode | 每次新副作用不确定性都要求之后至少一次成功只读观察，旧观察不能解除新的确认屏障 |
+| F135 | 写 API 幂等 | Renderer 写操作在断线、超时和重启重试时返回原提交结果或明确不确定，不重复产生领域状态或 Event |
+| F136 | 闭合 API/IPC | HTTP、Preload 与 Renderer 使用同源闭合 DTO；未知字段、非法分页和 Runtime 契约不匹配安全失败 |
+| F137 | Event 前向兼容 | Timeline 新增可忽略事件不阻断旧 UI；状态语义不兼容时由版本握手和 snapshot 恢复阻断误解释 |
+| F138 | 统一时间 | 持久化/API 时间统一 UTC 毫秒，运行时预算和 deadline 不受系统墙钟回拨延长 |
+| F139 | 存储故障恢复 | 状态无法可靠提交时停止业务且不虚报成功；释放空间后先校验、对账再 ready，不自动删除或重放副作用 |
 
 ## 2. ToolCall 组合规则
 

@@ -1,7 +1,7 @@
 # Eidos MVP 设计决策记录
 
 版本：v0.4
-范围：Grilling Q1-Q110
+范围：Grilling Q1-Q155
 
 本文件记录已经由产品与技术共同确认的结论。PRD 描述产品承诺，TDD 描述实现约束；若正文与本文件冲突，应先停止实现并统一文档。
 
@@ -117,6 +117,51 @@
 | Q108 | Responses 只以 `response.completed` 完成；Chat 必须有合法 finish reason、完整分片、usage 和 `[DONE]`；截断/过滤暂停 Run，不执行任何 ToolCall。 | PRD 输出状态；TDD 完成判定 |
 | Q109 | MVP 固定语义无状态模型请求：Responses `store=false`，不依赖 previous response/conversation；每个 Step 从本地状态重建完整上下文。 | PRD 隐私/可恢复性；TDD Context Adapter |
 | Q110 | Responses 固定 `max_output_tokens`；Chat 仅在 Test Connection 中按确定性错误协商 `max_completion_tokens`/`max_tokens` 并把结果固化到 snapshot。 | PRD 兼容性；TDD 参数协商 |
+| Q111 | 工具集非空的普通/协议纠正请求在两种 wire API 中固定 `parallel_tool_calls=true`；这只允许模型同响应提出多调用，Runtime 仍串行执行并强制批次规则。 | PRD 工具效率；TDD 请求控制 |
+| Q112 | Test Connection 使用严格两阶段 ToolCall/ToolResult probe：首阶段单一工具 `required` 且禁止 parallel，次阶段回传固定结果并使用 `tool_choice=none`。 | PRD 能力测试；TDD probe 协议 |
+| Q113 | 工具集非空的普通/纠正请求固定 `tool_choice=auto`；空工具集与 Finalization 不发 tools、固定 `tool_choice=none` 且不发 `parallel_tool_calls`；Profile 不得覆盖。 | PRD Agent Loop；TDD 请求构造 |
+| Q114 | 两种 wire API 的 function tool 定义都显式发送 `strict=false`；Provider strict 不是安全边界，Runtime 本地 schema 校验始终是执行授权依据。 | PRD 兼容性；TDD Tool schema |
+| Q115 | 所有 function tool 输入 schema 递归封闭 object/array object，显式 `additionalProperties=false`；MVP 无自由 map，未知字段按 Q45 整批零执行。 | PRD 工具可预期性；TDD 参数校验 |
+| Q116 | ToolCall 只产生一套 effective arguments；Runtime 补齐 schema 静态默认值后完成校验、组合与敏感扫描，再用于 hash、审批、持久化和执行。 | PRD 审批一致性；TDD 参数归一化 |
+| Q117 | MVP 引入独立 `tool_contract_version` 固化 Run 的可观察工具语义；旧契约不得降级当前安全底线，缺失或不再安全时原 Run 暂停且不执行。 | PRD 升级可恢复性；TDD 工具版本路由 |
+| Q118 | MVP 固定 `Eidos Tool Schema Dialect v1`，只允许内置工具使用受控 JSON Schema 子集；Dialect 是 Gateway capability contract 子版本，扩展时 Profile 必须重测。 | PRD 兼容性；TDD schema dialect/probe |
+| Q119 | 每个 Step 按固化工具契约与可审计 Runtime 门限生成 available tool set，同一逻辑请求的 Attempt 不变；隐藏工具不替代收到 ToolCall 后的安全复检。 | PRD 工具可用性；TDD Context Builder |
+| Q120 | 所有会进入后续模型上下文的已创建 ToolCall 都生成恰好一个版本化、协议无关的 canonical ToolResult envelope，两种 Adapter 只负责 Provider call ID 关联。 | PRD 工具恢复；TDD ToolResult/Context |
+| Q121 | ToolResult 顶层 `schema_version=1`；仅顶层不兼容变化递增。Canonical JSON 使用稳定紧凑 UTF-8、递归 key 排序和数组保序，字节规则变化同时递增 model request contract。 | PRD 可恢复性；TDD 序列化/版本 |
+| Q122 | ToolResult `summary` 只允许由 contract/tool/outcome/code 唯一决定的单行固定模板，最大 1,024 UTF-8 bytes，不携带调用级动态内容。 | PRD 结果安全；TDD 结果投影 |
+| Q123 | `success` 的 ToolResult code 必须为 null；其他 outcome 使用闭合 snake_case 枚举，Provider/OS 原始错误必须先映射且不得直接进入模型。 | PRD 错误一致性；TDD code registry |
+| Q124 | ToolResult data 始终是按 contract/tool/outcome/code 选择的递归闭合 object；可选字段省略而非 null，数组具有容量和确定顺序。 | PRD 结果可预期性；TDD result schema |
+| Q125 | 无法构造合法 ToolResult 时禁止 fallback：Run 以 `tool_result_contract_violation` failed，保留真实副作用状态并持久隔离对应工具或整个 ToolResult capability。 | PRD 失败体验；TDD quarantine/状态机 |
+| Q126 | `list_files` success data 使用闭合稳定条目与计数；工具截断、Context 投影裁剪和 Workspace 非快照状态严格分离，敏感隐藏项不返回条目或计数。 | PRD 文件树；TDD list result schema |
+| Q127 | 每个 ToolCall 有唯一 immutable base ToolResult；Context Builder 每 Step 只生成冻结、可审计且单调减少的预算 projection，不产生第二个业务结果。 | PRD 上下文一致性；TDD projection/storage |
+| Q128 | `read_file` success data 使用有界 segments 与精确读取证据；完整性、脱敏、源字节省略和 Context 投影分别表达，行号按固定 LF 规则计算。 | PRD 文件读取；TDD read result schema |
+| Q129 | `read_file_range` 永远 `complete=false`；空范围、省略字段、截断原因、下一完整行和双上限优先级采用确定契约。 | PRD 范围读取；TDD range result schema |
+| Q130 | `search_text` success data 使用稳定有界 matches、资源计数与明确截断语义；敏感文件不进入计数，长匹配 preview 按固定规则裁剪。 | PRD 搜索；TDD search result schema |
+| Q131 | write/apply/delete success data 只返回提交后复检的安全文件事实；读取证据失效和 Approval/intent/OS 详情留在 Runtime。 | PRD 写入结果；TDD file result schema |
+| Q132 | write/apply 的 no-op 固定为 `skipped/no_changes` 与 `{path,base_sha256}`；零 Approval、零 intent、零文件接触且不失效读取证据。 | PRD no-op；TDD skipped result |
+| Q133 | `publish_artifact` success 返回稳定 Artifact 身份、源相对路径、展示信息、版本、快照 hash 与逻辑字节数，不暴露内部路径或 URL。 | PRD Artifact；TDD artifact result schema |
+| Q134 | 已启动 Shell 的终态结果使用闭合进程、脱敏双流 observation 与 Workspace 对账字段；原始流字节和完整 manifest 不进入模型。 | PRD Shell 结果；TDD shell result schema |
+| Q135 | Shell 进程终态、Runtime 中断、输出/manifest 故障映射为固定 outcome/code 与优先级；`.git`/protected 变化只触发事实确认，不篡改进程结果。 | PRD Shell 恢复；TDD code mapping |
+| Q136 | `side_effects_may_exist` 表示结果尚未完整确认的物质性副作用，不表示工具类别；它与 `reconciliation_required` 相关但不互相等价。 | PRD 恢复；TDD 状态机 |
+| Q137 | 共享非成功 data 默认最小；Reject 可选返回已扫描有界反馈，已启动 Shell 的 interrupted 仍保留工具专属终态事实。 | PRD Reject/恢复；TDD result schema |
+| Q138 | ToolResult error 禁止通用 details/message/cause；仅 code 专属闭合 schema 可携带恢复必需事实，API Error 与之独立。 | PRD 错误安全；TDD error registry |
+| Q139 | 只读错误仅在文件/行容量超限时返回必要的安全数值；其他错误使用 code 与原调用恢复，始终零正文和零证据。 | PRD 读取错误；TDD read error schema |
+| Q140 | 写/Patch 错误只返回 Diff、hunk 或候选容量的必要有界事实；版本冲突和 Artifact 错误不返回动态 hash、路径或格式详情。 | PRD 写入错误；TDD write error schema |
+| Q141 | ToolResult 的所有 JSON integer 限于 JavaScript safe integer；canonical 整数只用十进制、无指数/小数点/负零，真实测量溢出映射为 `tool_result_numeric_limit_exceeded`。 | PRD 结果兼容；TDD serializer/code registry |
+| Q142 | MVP 使用 Eidos Canonical JSON v1 而非 JCS：Unicode scalar 原样保留、key 按未转义 UTF-8 bytes 排序、固定转义且拒绝孤立 surrogate 与递归重复 key。 | PRD 可恢复性；TDD canonical serializer |
+| Q143 | SQLite 迁移只向前；启动时独占锁、先做一致备份与 manifest，再以受限事务迁移并校验，未知/更新 revision、备份或迁移失败均保持 health-only。 | PRD 数据安全；TDD migration/recovery |
+| Q144 | 每个 Shell 由最小原生 guardian 直接托管；Main/sidecar 失联、deadline 或取消时按进程身份有界清理受控进程组与已识别后代，不承诺抵御三进程同时被强杀。 | PRD Shell 生命周期；TDD guardian |
+| Q145 | Runtime 只在状态目录、独占锁、DB、配置、契约、自检和恢复完成后发布一次 ready；此前仅开放 health，安全核心失败保持诊断态，局部 capability 可降级。 | PRD 启动体验；TDD ready gate |
+| Q146 | Workbench 以同一 SQLite 读事务取得闭合 RunSnapshot v1 与 `through_event_id`，原子安装后从水位订阅 SSE；审批详情通过独立权威 API 按 nonce 复检。 | PRD Workbench 一致性；TDD snapshot/API |
+| Q147 | Workspace 持久身份为 volume UUID、inode 与 birthtime，路径也是授权边界；身份不可用时 fail closed，移动/替换不自动 rebind，旧 Approval 永久失效。 | PRD Workspace 安全；TDD identity/lifecycle |
+| Q148 | Electron 单实例锁约束 UI；sidecar 在任何 DB 操作前取得并全生命周期持有状态目录独占 OS lock，禁止删锁、按 PID 抢占或接管旧 token。 | PRD 单实例；TDD execution ownership |
+| Q149 | `allowed_actions` 是服务端计算的闭合状态机提示；可恢复性由 status、pause reason、Workspace 和 Approval 事实共同决定，所有写 API 在事务内重算。 | PRD 状态操作；TDD API/state matrix |
+| Q150 | 事实确认使用持久化递增 epoch；只有 epoch 后正常完成的只读 Step 至少提交一个 success 才按 epoch 清除，新的不确定副作用不能被旧观察误清除。 | PRD 事实确认；TDD state/audit |
+| Q151 | 所有 Renderer 发起的持久化写 API 使用全局 operation ID 与绑定 method/route/scope/body 的 canonical hash；重放前重新鉴权，保留 nonce/version/gesture guard，外部不确定操作不自动重放。 | PRD 写操作可靠性；TDD idempotency |
+| Q152 | API/IPC DTO 递归闭合并由同一 schema 生成验证器；分页使用 endpoint-bound opaque keyset cursor 与服务端单调集合水位，不使用 offset、时间或 UUID 推断稳定顺序。 | PRD 接口一致性；TDD DTO/pagination |
+| Q153 | Event 使用闭合 envelope 与 per-type payload schema；仅兼容 contract 中明确可忽略的未知 type 可安全占位推进，已知语义版本不匹配必须 snapshot 恢复或阻断。 | PRD Timeline 兼容；TDD Event/reducer |
+| Q154 | DB/API/Event 时间统一为 UTC Unix 毫秒 safe integer；duration 使用 monotonic clock，Shell 授权另持久化 boot-session/continuous deadline，同 boot 延续、时基不可证明时失效，墙钟变化不得延长授权。 | PRD 时间可靠性；TDD TimeProvider |
+| Q155 | SQLite/state storage 不可可靠提交时 Runtime 进入 health-only；有界应急 reserve 仅辅助空间耗尽恢复，Workspace 写失败按提交阶段对账，任何副作用均不自动重放或自动删数据。 | PRD 存储故障；TDD storage recovery |
 
 ## 文件契约统一收敛
 

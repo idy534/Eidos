@@ -42,6 +42,9 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - Model Profile 显式选择 Responses 或 Chat Completions；Eidos 不按厂商、模型名或错误响应猜测协议，也不在 Run 中跨协议回退。
 - 模型调用优先使用已验证的 WebSocket，必要时有界降级到原 endpoint 的 HTTP(S) streaming；传输恢复不会改变模型、输入、参数或 Run 的非密钥快照。
 - 模型请求语义由本地 Timeline 与 Context Builder 重建，不依赖 Provider 保存会话或 previous response。
+- Provider 生成的工具参数始终不可信；Eidos 本地封闭 schema、安全规则与执行前复检是唯一授权依据。
+- 持久化 Run 固化工具契约；每个 Step 只向模型暴露当时可用的确定性工具子集，但隐藏不是安全边界。
+- 每个已创建 ToolCall 只有一个不可变结构化结果事实；Context Builder 只能生成有界、可审计的模型投影，不得把裁剪或脱敏后的视图变成第二个业务结果。
 - 多个 Run 可以创建和保留，但任意时刻最多只有一个 Run 调用模型或执行工具。
 - 所有有副作用操作都必须显式建模；审批不能突破沙箱边界。
 - Eidos 自身数据保存在 `~/.eidos`，不默认向用户项目写入 `.eidos/`。
@@ -78,7 +81,7 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - Electron + React 桌面应用与 Python FastAPI sidecar。
 - `~/.eidos` 初始化、SQLite 状态持久化，以及可编辑、可 Archive、显式能力验证的 Model Profile。
 - Workspace/Public Session 与持久化 FIFO Run 队列。
-- ReAct-style Runtime Loop、Execution Segment、版本化模型请求契约、上下文预算和有界裁剪。
+- ReAct-style Runtime Loop、Execution Segment、版本化模型/工具请求契约、canonical ToolResult、上下文预算和确定性有界投影。
 - `list_files`、`read_file`、`read_file_range`、`search_text`。
 - `write_file`、`apply_patch`、`delete_file`。
 - 固定文件遍历排除、单文件一致读取和严格 UTF-8 文本契约。
@@ -86,8 +89,11 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - Shell Toolchain Profile、资源上限、Workspace 变化 manifest 和有界输出流。
 - `publish_artifact` 与不可变 Artifact 快照。
 - Approval、Reject、版本冲突、事实确认屏障、取消与崩溃恢复。
+- 单实例执行权、启动 ready 屏障、安全数据库迁移、Workbench 一致快照和持久 Workspace 身份。
+- Shell guardian 在前台 Runtime 异常退出后有界清理受控进程；不承诺无法被系统同时强杀时的绝对零遗留。
 - 确定性敏感规则、分级拒绝/脱敏与全入口扫描。
 - SSE 实时 Execution Feed 与持久化 Timeline。
+- 闭合且可跨重启幂等的本地 API/IPC、稳定分页与版本化 Event 兼容。
 - Run 预算、模型传输降级、Tool timeout、有限重试和 Finalization Call。
 
 ## 6. MVP 非目标
@@ -96,7 +102,9 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - 内嵌 Workspace Terminal。
 - 后台 daemon、tray、通知和持久服务管理。
 - 长期运行的 Agent Shell 服务进程。
-- 多 Agent 与并行工具调用。
+- 自动接管另一路 Runtime、强制抢占状态目录锁或在 Workspace 移动后静默迁移旧授权。
+- 自动清理用户数据、自动覆盖数据库备份，或在存储故障后自动重放副作用。
+- 多 Agent 与并行工具执行。
 - MCP 插件市场、浏览器自动化、Skill 自动生成和长期记忆。
 - 平台知识库、术语库、Text2SQL、本体和企业资源接入。
 - 文件写入前快照、一键回滚、跨文件原子事务和完整 diff 编辑器。
@@ -111,3 +119,4 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - Model Profile 物理删除、共享凭证、任意自定义 Header、TLS 校验绕过、定时自动能力探测和按模型名自动推断上下文容量。
 - 依赖厂商专有幂等 Header、精确 tokenizer 或把 usage 未知的失败请求按零计费。
 - Provider 托管 conversation/thread、跨 wire API 自动兼容、厂商专用 Adapter 和依赖服务端 response history 的恢复。
+- Provider strict function calling、自由形态工具 map、用户自定义工具 schema 和基于任务文本的启发式工具裁剪。

@@ -21,6 +21,11 @@
 - 所有不可信内容在截断、展示、模型观察和持久化之前经过同一版本化敏感规则。
 - 文件读取证据、完整 Diff、真实路径身份和元数据复检共同约束逐文件修改；Shell 由固定 Toolchain、前后 Manifest、资源监控和有界双流输出共同约束。
 - Model Profile 的编辑/Archive、独占凭证、Responses/Chat 双 Adapter、Endpoint/TLS/认证/参数校验、显式能力探测、WebSocket 到 HTTP(S) 的有界降级、无状态上下文、流容量、上下文预算和 snapshot 失效由 Gateway、API 与存储共同约束。
+- 工具能力由独立 `tool_contract_version`、递归闭合的 Tool Schema Dialect v1、本地 effective arguments 校验、确定性 Step tool set 和协议无关 canonical ToolResult 共同约束；Provider `strict=false` 不替代 Runtime 授权。
+- ToolResult 使用版本化 deterministic JSON、唯一 immutable base、每 Step 冻结 projection 和跨重启故障 quarantine；list/read/range/search、文件变更、Artifact 与 Shell 的模型结果均有闭合字段、容量、排序和错误映射契约。
+- Q131-Q140 固定副作用工具 success/no-op、Shell observation/outcome、`side_effects_may_exist`、Reject feedback 以及 code 专属 error data；API Error 与模型 ToolResult Error 分层。
+- Q141-Q150 固定 ToolResult 数值与 Unicode canonical 规则、SQLite 迁移、Shell guardian、ready gate、RunSnapshot、水位续接、Workspace 持久身份、唯一执行权、allowed actions 与 reconciliation epoch。
+- Q151-Q155 固定持久化 operation 幂等、闭合 API/IPC DTO 与水位 keyset、Event contract、Unix 毫秒/monotonic 时间和 storage fail-closed 恢复。
 - 当前仓库尚无实现代码，本 TDD 是后续实现契约，不代表能力已经落地。
 
 模型原始 reasoning 内容不进入持久化或 UI；模型文本按 `assistant_progress` 与 `final_answer` 分类。

@@ -102,6 +102,8 @@ max_total_effective_seconds = 7200
 - waiting_approval
 - waiting_user_input
 
+有效执行区间只用 TimeProvider monotonic clock 累计；区间结束时一次性向上取整为毫秒并持久化。wall `started_at/finished_at` 只用于审计和展示，不可相减驱动预算。
+
 Segment 到限时进入 `waiting_user_input`，`pause_reason=segment_step_limit|segment_time_limit`。Run 到硬上限时进入 Finalization，随后 `stopped`。
 
 ## 5. Step 与 ToolCall 批次
@@ -110,9 +112,10 @@ Step 流程：
 
 ```text
 create step
+  -> freeze deterministic available tool set
   -> stream model response
   -> parse complete response
-  -> validate entire ToolCall batch
+  -> normalize effective arguments and validate entire ToolCall batch
   -> execute allowed batch serially OR create one approval
   -> persist observations
   -> complete step
@@ -127,7 +130,7 @@ create step
 
 只读批次单项失败不阻断后续调用；取消、硬预算、安全异常终止剩余调用。
 
-模型协议错误包括空响应、ToolCall ID/index/JSON 归并失败、ToolCall 流资源超限、未知工具、参数 schema 错误和非法批次。处理规则：
+模型协议错误包括空响应、ToolCall ID/index/JSON 归并失败、ToolCall 流资源超限、调用未在本 Step 冻结集合中暴露的工具、未知字段、缺失 required、非法 null、其他参数 schema 错误和非法批次。处理规则：
 
 - 第一次错误：`consecutive_protocol_errors += 1`，记录失败 Step，把具体错误反馈给下一 Step 的模型。
 - 连续第二次错误：Run 进入 waiting_user_input，`pause_reason=model_protocol_error`。
@@ -152,10 +155,13 @@ ToolCall：
 
 ```text
 created -> skipped
+created -> unavailable
 created -> pending_approval -> approved -> running -> succeeded|failed|timeout|interrupted
                          └── rejected
                          └── invalidated
 ```
+
+`unavailable` 只用于工具已在本 Step 冻结集合中暴露、ToolCall 已通过 schema/组合/敏感校验，但执行前 Runtime gate 或单工具 capability health 发生变化的竞态；错误码固定 `tool_unavailable`，零副作用，并生成 canonical ToolResult。未暴露工具仍是模型协议错误。每个已创建 ToolCall 的数据库终态按 `tool_contract_version` 投影为唯一 `success|error|skipped|rejected|interrupted|unavailable` ToolResult outcome；Run 已终止时可以不再发送给 Provider，但内部结果必须持久化。
 
 Approval：
 
@@ -169,7 +175,7 @@ pending -> approved|rejected|invalidated|canceled
 - 请求参数 hash 必须与审批创建时一致。
 - cancel 与 approve/reject 使用条件更新，只能一个事务成功。
 - approve 只改变审批和排队状态；真正执行由单执行器完成。
-- Shell approve 设置 `approval_expires_at=approved_at+300s`。执行器开始 ToolCall 前以数据库时间复检；超时原子转为 Approval invalidated/ToolCall failed(`approval_expired`)，不启动进程。
+- Shell approve 设置 `approval_expires_at=approved_at+300000ms`、当前 boot-session identity 和 continuous-monotonic deadline。执行器开始 ToolCall 前取 continuous deadline 或 wall expiry 任一先到；超时原子转为 Approval invalidated/ToolCall failed(`approval_expired`)，不启动进程。同 boot sidecar 重启沿用原 continuous deadline；boot/timebase 不匹配或时钟回拨按 Q154 启动 invalidation，均不重置 TTL。
 
 Reject 计数：
 
@@ -179,6 +185,7 @@ Reject 计数：
 - 只读调用、重规划和失败副作用不清零。
 - `skipped/no_changes` 不是“获批的状态变更成功”，不清零。
 - 达到 2：进入 waiting_user_input，不再自动提出第三次变更。
+- 达到 2 时固定 `pause_reason=repeated_approval_rejection`；它属于可恢复 pause，用户后续输入按新 Segment 重新入队。
 
 ## 7. 写入版本冲突
 
@@ -232,12 +239,25 @@ COMMIT
 - Shell 非零退出、timeout 或 interrupted，且可能已经有副作用。
 - Shell resource_limit、output_capture_failed、change_manifest_incomplete、git_boundary_change_detected 或 protected_path_change_count>0。
 
+`side_effects_may_exist` 只表示 canonical ToolResult 尚未完整确认的物质性副作用，不能单独驱动屏障。只读、rejected/unavailable、明确未启动、no_changes、verified not_applied 与 verified file/Artifact success 为 false；outcome_unknown 与任一已启动 Shell 终态为 true。所有 reconciliation_required 结果必须为 true，但反向不成立：Shell exit 0、完整 manifest 且无 `.git`/protected 异常时保持 success、side effects=true 并允许模型继续。
+
+Shell code 按 `interrupted > workspace_change_manifest_incomplete > output_capture_failed > shell_resource_limit_exceeded > tool_timeout > shell_process_signaled > shell_exit_nonzero > success` 选择；低优先级进程事实仍保留在 ToolResult data。`.git`/protected 变化只增加事实确认，不把 exit 0 改写为 error。
+
 屏障期间，下一模型响应只能：
 
 - 调用只读工具确认现状；或
 - 输出最终说明。
 
-副作用 ToolCall 会被整批拒绝。完成至少一个只读 Step 后解除屏障；仍无法判断时进入 waiting_user_input。
+副作用 ToolCall 会被整批拒绝。事实确认不是“整个 Workspace 已被证明一致”的声明，而是强制在再次变更前发生一个成功、可审计的只读观察：
+
+- 每次产生新的不确定副作用时，即使 `reconciliation_required` 已为 true，也原子递增 `reconciliation_epoch`，持久化触发 ToolCall/reason/Step 的 episode。
+- 每个 Step 创建时冻结 `observed_reconciliation_epoch` 和只读 available tool set；本 Step 中途不得因读取成功而加入副作用工具。
+- 只有该 Step 正常 completed、至少一个只读 ToolCall 的 canonical outcome 为 `success` 且结果/Events 已提交时，才可用 `WHERE reconciliation_epoch=:observed_epoch` 条件更新清除 flag，并记录 clearing Step/ToolCalls。cancel、interrupted、Runtime 安全故障导致的不完整 Step 不计。
+- 同一 Step 部分读取失败但至少一个成功可以清除；`truncated=true`、`workspace_changed=true`、空文件、完整空目录和零匹配仍是合法的局部 success。error/skipped/rejected/interrupted/unavailable、无 ToolCall 文本或路径不存在错误不计。
+- CAS 失败表示出现更新 episode；旧 Step 不得清除它。屏障只对下一 Step 重新计算工具集。
+- 未出现 qualifying success 时模型可直接输出 final；Run 可终止，但保留 `reconciliation_required=true`、epoch 与未清除 episode 供审计，不伪造已对账。
+
+仍无法判断且模型不选择 final 时进入 waiting_user_input；用户输入可创建新的只读验证 Segment，但不能直接清除屏障。
 
 文件工具失败后 Runtime 先执行内部 postcondition 检查，返回：
 
@@ -264,11 +284,12 @@ applied | not_applied | outcome_unknown
 - API Key 无效、模型不存在、Base URL 或请求参数确定性错误使 Run 直接进入 failed。
 - 本地预算发现不可裁剪输入超限时零模型发送，Step/Run 以 `context_input_too_large` failed，不使 capability snapshot 失效。
 - 每次请求读取 Profile 当前凭证；凭证槽缺失或不可读时不使用 Run 创建时旧密钥，Run 直接 failed。
-- TLS 校验失败、明确的 context-length exceeded 或 Provider 违反固化的 streaming/ToolCall/usage 契约同样直接 failed；后两类还在终态事务中使 Profile 当前 capability snapshot 失效。
+- TLS 校验失败、明确的 context-length exceeded 或 Provider 违反固化的 streaming、工具控制、Tool Schema Dialect、ToolCall/ToolResult 关联或 usage 契约同样直接 failed；后两类还在终态事务中使 Profile 当前 capability snapshot 失效。
 - 该终态失败不执行 Finalization Call，不允许替换 Run 的模型快照后恢复。
 - 已有 Timeline 和 Artifact 保留；用户修复或更换 Profile 后创建新 Run。
 - 模型流敏感扫描器失败时，未确认安全的文本和 ToolCall 丢弃，Step 标记 `sensitive_scan_failed`，Run 进入 waiting_user_input。
-- Run 固化的 model request contract 实现不可用时不创建 Step/Attempt，Run 进入 `waiting_user_input/runtime_contract_unsupported`；不能用新版本继续原 Run。
+- Run 固化的 model request contract 或 tool contract 实现不可用/不再满足当前安全底线时不创建 Step/Attempt，不执行工具，并使 pending/approved Approval invalidated；Run 进入 `waiting_user_input/runtime_contract_unsupported`，不能用新版本继续原 Run。
+- ToolCall 已形成真实终态但 base ToolResult/projector/schema/canonical serializer invariant 失败时，原子保存实际副作用和 quarantine；Run 直接 `failed/tool_result_contract_violation`，零工具重试、零模型续接、零 Finalization，且不失效 Model Profile snapshot。用户输入不能恢复该 Run。
 
 ## 10. Cancel
 
@@ -286,7 +307,7 @@ applied | not_applied | outcome_unknown
 - waiting_approval/waiting_user_input 保持原状态。
 - running Run -> waiting_user_input，`pause_reason=runtime_interrupted`。
 - finalizing Run 不重新调用模型；Runtime 根据已提交事件生成降级摘要并进入 stopped。
-- running ToolCall -> interrupted，`side_effects_may_exist=true`。
+- running ToolCall -> interrupted；只读或明确尚未启动副作用执行时 `side_effects_may_exist=false`，已进入 commit 的文件/Artifact 和任一已启动 Shell 为 true。
 - 不自动重放 ModelAttempt、文件工具、Artifact 或 Shell。
 - 仅清理名称、tool_call_id/execution_nonce、inode 和父目录身份与 durable intent 全部匹配的 Runtime 临时文件。
 - running Shell 存在 baseline manifest 时先保留文件并尝试后置对账；完整结果事务成功后才清理 manifest。

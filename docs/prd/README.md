@@ -20,4 +20,4 @@ Eidos MVP 是仅面向 macOS 的本地前台执行型 Agent Runtime。它通过�
 
 用户输入、工具参数、文件、输出和持久化数据统一经过版本化敏感规则；硬拒绝不可审批绕过，有副作用内容不会被静默脱敏后执行。
 
-Model Profile 支持编辑和 Archive/恢复，通过用户显式 Test Connection 后才能使用；凭证按 Profile 隔离，HTTP(S)/TLS、认证、双 wire API、扩展参数、传输降级、无状态上下文和输出容量遵循 Q81-Q110 的固定边界，既有 Run 保持创建时的非密钥配置与能力快照。
+Model Profile 支持编辑和 Archive/恢复，通过用户显式 Test Connection 后才能使用；凭证按 Profile 隔离，HTTP(S)/TLS、认证、双 wire API、扩展参数、传输降级、无状态上下文和输出容量遵循 Q81-Q110 的固定边界，既有 Run 保持创建时的非密钥配置与能力快照。工具控制、封闭 schema、静态默认值、版本化工具契约、当步可用工具集与 canonical ToolResult 遵循 Q111-Q120；结果序列化、安全模板、immutable base、Context projection 及 list/read/range/search 结果契约遵循 Q121-Q130；文件变更、Artifact、Shell、共享非成功与错误 data 契约遵循 Q131-Q140；数值与 Unicode canonical 规则、迁移与启动、Shell guardian、Workbench snapshot、Workspace 身份、单实例、可执行动作和事实确认遵循 Q141-Q150；写 API 幂等、闭合 DTO/分页、Event 兼容、统一时间和存储故障恢复遵循 Q151-Q155。
