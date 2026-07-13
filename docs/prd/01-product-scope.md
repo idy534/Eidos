@@ -78,7 +78,9 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - ReAct-style Runtime Loop、Execution Segment 和有界上下文裁剪。
 - `list_files`、`read_file`、`read_file_range`、`search_text`。
 - `write_file`、`apply_patch`、`delete_file`。
+- 固定文件遍历排除、单文件一致读取和严格 UTF-8 文本契约。
 - macOS Seatbelt `run_shell`。
+- Shell Toolchain Profile、资源上限、Workspace 变化 manifest 和有界输出流。
 - `publish_artifact` 与不可变 Artifact 快照。
 - Approval、Reject、版本冲突、事实确认屏障、取消与崩溃恢复。
 - 确定性敏感规则、分级拒绝/脱敏与全入口扫描。
@@ -100,4 +102,6 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - 智能摘要式上下文 compaction。
 - Keychain 密钥存储；MVP 接受受限权限下的 `config.toml` 明文配置。
 - 敏感规则远程更新、用户自定义、历史数据追溯重扫和 Secret 注入。
+- `.gitignore`/用户自定义文件遍历排除、Workspace 读取快照和文件变更自动回滚。
+- 二进制/压缩/加密 Artifact 发布与需格式解析的内容扫描。
 - Git commit、checkout、reset、stash 等修改 `.git` 的操作。

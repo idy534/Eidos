@@ -21,6 +21,8 @@
 
 文件工具与 Shell 必须拒绝路径穿越、绝对路径逃逸、前缀碰撞和符号链接逃逸。
 
+路径验证使用文件系统实际目录项身份，不通过小写化、Unicode 规范化或字符串前缀推测目标。文件工具只修改当前用户所有的普通文件；其他所有者或 immutable/append-only flags 文件拒绝。
+
 ## 3. 敏感文件
 
 以下文件不能通过审批绕过：
@@ -85,6 +87,23 @@
 - Writable Shell 执行前发现 active root 中存在多链接普通文件时 fail closed。
 - 修改已有文件必须保留 POSIX mode、ACL 和 extended attributes；元数据复制或验证失败时原文件不变。
 - 新文件默认 mode 为 `0644`；设置 executable bit 必须另行审批 Shell。
+- 文件工具只处理严格 UTF-8 普通文件；已有 UTF-8 BOM 在修改时保留，新文件无 BOM。
+- NUL、已知二进制 magic 和超阈值控制字节使文件按二进制拒绝；严格 UTF-8 失败使用不同错误。
+- 修改已有文件还必须保留 gid 和可保留 file flags；新文件归当前用户，gid 按父目录/系统语义创建。
+- 候选文件必须在审批前完成编码、敏感内容、类型、容量和完整 Diff 验证。
+- `write_file` 覆盖已有文件必须引用当前 Run 的完整读取证据；`apply_patch` 每个 hunk 必须引用同 hash 下覆盖原文范围的读取证据。
+- 已脱敏的读取不能证明 Agent 看过原文：含脱敏命中的完整读取不授予覆盖资格，命中所在整行不计入 Patch 读取证据。
+- Patch 只按声明行号和原文精确应用，禁止 offset 搜索和 fuzz matching。
+- 文件变更会使旧 hash 的读取证据失效；任何证据均不能跨 Run 复用。
+- 父目录不存在时写入失败，不隐式创建目录；审批期间父目录身份或权限变化使审批失效。
+- 删除不要求事先读取正文，但必须展示 Runtime 生成的完整删除 Diff，并在执行前复检路径、父目录、类型、编码和 hash。
+- 单文件读取与搜索匹配必须来自稳定文件版本；并发变化时丢弃该文件结果，不把多个版本拼接为一次读取。
+
+## 6.1 遍历与排除
+
+- 安全排除永不可绕过。
+- `list_files`/`search_text` 使用文档化的固定性能排除集，MVP 不解析 `.gitignore` 或用户配置。
+- 性能排除不是文件访问权限；已知具体文件仍可通过直接读取或受审批写工具访问。
 
 ## 7. API Key MVP 风险接受
 
@@ -118,9 +137,18 @@ MVP 为尽快打通 Agent 主链路，允许 API Key 明文存放在 `~/.eidos/c
 ## 10. 数据与容量
 
 - Public files、Artifact、Event 和日志默认不自动清理。
-- Shell stdout 最多保存 768KB，stderr 最多 512KB，合计最多 1MB。
+- Shell stdout 最多保存 768 KiB，stderr 最多 512 KiB，合计最多 1 MiB；合计超限时 stderr 优先，流内保留 head+tail。
 - 返回模型的 Shell observation 最多 32KB。
 - 文件读取和搜索结果必须有单次大小、命中数和上下文预算上限。
 - 单文件敏感扫描上限为 32 MiB；超限文件不返回正文。
 - 单次 `search_text` 最多扫描 256 MiB 或 15 秒；只能返回已完成整文件扫描的结果并明确标记截断原因。
+- 稀疏文件的读写上限按逻辑字节计算；Shell 磁盘增长保护按已分配 blocks 计算并同时展示逻辑/已分配变化。
 - P1 增加数据管理、存储统计和清理策略；MVP 至少展示数据根目录和占用错误。
+
+## 11. Shell 审批、审计与资源
+
+- Shell Approval 授权 command、active root、沙箱/环境模板、Toolchain Profile、timeout 和网络权限，不授权审批时 Workspace 快照。
+- 批准后 5 分钟未开始的 Shell 授权失效。
+- Writable Shell 执行前后建立受控 manifest，只将变化归因为“执行窗口内观察到”，不自动回滚。
+- Shell 固定使用 64 进程、256 fd、2 GiB 进程树 RSS、1 GiB 单文件和 2 GiB 已分配磁盘净增长上限。
+- 资源监控或输出捕获故障时终止整个进程组，保留真实结果并进入事实确认屏障。

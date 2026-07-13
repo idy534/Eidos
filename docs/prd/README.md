@@ -12,7 +12,7 @@
 
 ## 当前结论
 
-Eidos MVP 是仅面向 macOS 的本地前台执行型 Agent Runtime。它通过全局单执行器、工具审批、macOS Seatbelt 沙箱、可恢复状态机和持久化 Timeline，完成 Workspace Mode 与 Public Mode 的核心闭环。
+Eidos MVP 是仅面向 macOS 的本地前台执行型 Agent Runtime。它通过全局单执行器、工具审批、macOS Seatbelt 沙箱、确定性文件契约、受控 Toolchain、Shell 资源/输出限制、可恢复状态机和持久化 Timeline，完成 Workspace Mode 与 Public Mode 的核心闭环。
 
 内嵌 Workspace Terminal、后台服务、跨平台支持、文件快照恢复、智能上下文摘要、多 Agent 和企业能力不进入 MVP。
 

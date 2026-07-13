@@ -108,3 +108,38 @@
 | A078 | 敏感重试 | 模型连续两次生成敏感 ToolCall 后 waiting_user_input，且不增加协议错误计数 |
 | A079 | 规则集失效 | 规则自检失败时不存在未扫描降级通道；用户无法热加载、白名单或审批绕过 |
 | A080 | 规则版本变更 | 升级后恢复旧 Run 使用新规则并记录版本变更；旧内容读取时按当前规则扫描；旧应用不能降级已生效规则 |
+
+## 9. 文件工具精确契约
+
+| 编号 | 验收项 | 标准 |
+|---|---|---|
+| A081 | read_file 分级 | <=256 KiB 完整；256 KiB..2 MiB 返回 <=256 KiB head+tail；>2 MiB 拒绝并引导 range |
+| A082 | range 语义 | 1-based 闭区间；2,000 行/256 KiB 截断可继续；不返回半行 |
+| A083 | 编码边界 | 严格 UTF-8/可选 BOM 成功；二进制与其他编码错误可区分；修改保留 BOM |
+| A084 | 搜索稳定 | literal/ASCII case-fold、路径-行-列排序、重叠匹配、preview 和首个停止原因符合契约 |
+| A085 | 文件树有界 | 深度/条目上限、隐藏敏感条目、`.git` 不展开、symlink 不跟随且不泄露 target |
+| A086 | 完整 Diff | write/apply/delete Diff 由 Runtime 生成；超出 512 KiB/5,000 行时零 Approval，UI 无截断审批 |
+| A087 | 父目录 | 父目录不存在时零创建；审批期间父目录变化使 Approval 失效 |
+| A088 | 覆盖证据 | write_file 只覆盖 <=256 KiB 且当前 Run 已完整、无脱敏地读取同 hash 的文件 |
+| A089 | Patch 证据 | 每个 hunk 原文都被引用的同 hash 非脱敏读取区间覆盖；无 offset/fuzz；变更后旧证据失效 |
+| A090 | 删除对账 | 仅 <=512 KiB 普通 UTF-8 文件可完整 Diff 审批删除；崩溃后不重删同路径新文件 |
+
+## 10. 文件与 Shell 闭环
+
+| 编号 | 验收项 | 标准 |
+|---|---|---|
+| A091 | 排除分层 | 安全排除无绕过；固定目录/lock 精确匹配；`.gitignore` 不影响 MVP 结果 |
+| A092 | 单文件一致 | 读取中变化零正文/零证据；搜索变化文件零匹配但继续其他文件；无跨文件快照假象 |
+| A093 | Unified Diff | 仅单文件标准 hunk；路径/行号/原文精确；Git 扩展/mixed newline/offset/fuzz 均拒绝 |
+| A094 | write 换行 | 新文件只 LF；覆盖保留原 LF/CRLF/BOM/末尾换行语义；无静默规范化 |
+| A095 | 文件 no-op | 相同候选字节零 Approval、零 intent、零文件接触，ToolCall `skipped/no_changes`，Reject 计数不清零 |
+| A096 | Shell 授权时效 | 审批参数/环境精确绑定；开始前超过 5 分钟失效；UI 明示不绑定 Workspace 快照 |
+| A097 | Shell Manifest | 前置超限零执行；后置 created/deleted/content/metadata/type 变化可审计；敏感名隐藏；崩溃不重放 |
+| A098 | Toolchain Profile | 默认系统 PATH；Homebrew/本地根须用户启用且替换后自动禁用；无真实 Home/rc/任意根回退 |
+| A099 | Shell 资源保护 | fork、fd、RSS、单文件、磁盘增长和监控器故障均终止进程组，sidecar 保持可用 |
+| A100 | Shell 输出 | 双流交错序可回放；100ms/4 KiB 合并；stderr 优先 1 MiB head+tail；慢订阅者不阻塞子进程 |
+| A101 | 路径名称稳定 | case-sensitive/insensitive 卷均以真实目录项唯一定位，Unicode/case 别名不能迁移 Approval |
+| A102 | 二进制判定 | NUL、已知 magic、控制字节阈值与严格 UTF-8 错误稳定可测，无替换字符降级 |
+| A103 | 所有权与 flags | 非当前 uid、immutable/append-only 文件零修改；成功修改保留 gid/mode/ACL/xattr/可保留 flags |
+| A104 | 稀疏文件 | 文件工具按 logical size 限制；Shell 磁盘保护按 allocated blocks；审计同时展示两种变化 |
+| A105 | Artifact 发布边界 | <=32 MiB 严格 UTF-8 文本发布为不可变快照；二进制/压缩/加密/格式不可扫描时零 Artifact |

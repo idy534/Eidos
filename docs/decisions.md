@@ -1,7 +1,7 @@
 # Eidos MVP 设计决策记录
 
 版本：v0.4
-范围：Grilling Q1-Q60
+范围：Grilling Q1-Q80
 
 本文件记录已经由产品与技术共同确认的结论。PRD 描述产品承诺，TDD 描述实现约束；若正文与本文件冲突，应先停止实现并统一文档。
 
@@ -67,5 +67,45 @@
 | Q58 | 模型普通文本命中时脱敏后继续；敏感 ToolCall 拒绝，连续两次后暂停，不计入模型协议错误。 | PRD 恢复；TDD 模型流与状态机 |
 | Q59 | 脱敏占位符统一为 `[REDACTED:<rule_id>]`，不包含长度、摘要或稳定关联标识；结构化数据只替换字符串叶子。 | TDD 脱敏格式；存储 |
 | Q60 | 规则集作为只读应用资源随版本发布，MVP 不远程更新或热加载；升级后继续的 Run 记录规则版本变更，应用回滚不得降级已生效规则。 | TDD 启动自检；Events |
+| Q61 | `read_file` 仅对 <=256 KiB 文件完整返回；256 KiB..2 MiB 返回最多 256 KiB head+tail，>2 MiB 改用 range。 | PRD 读取；TDD 容量 |
+| Q62 | `read_file_range` 使用 1-based 闭区间，单次最多 2,000 行/256 KiB，不返回半行。 | TDD 读取契约；测试 |
+| Q63 | MVP 文件工具只支持严格 UTF-8/可选 BOM；二进制与其他编码分类拒绝，新文件 UTF-8 无 BOM。 | PRD 文件；TDD 编码 |
+| Q64 | `search_text` 使用单行 literal，ASCII 大小写折叠、稳定路径/行/列排序和 100/500 结果上限。 | PRD 搜索；TDD 工具契约 |
+| Q65 | `list_files` 默认深度 2/最大 5，默认 500/最大 2,000 项；不跟随 symlink，隐藏敏感条目。 | PRD 文件树；TDD 遍历 |
+| Q66 | write 最大 512 KiB，patch 最大 256 KiB/5,000 行/200 hunks，候选文件最大 32 MiB；超大 Diff 不允许截断审批。 | PRD 审批；TDD Diff |
+| Q67 | `write_file` 不隐式创建父目录；MVP 不新增目录工具，目录操作使用受审批 Shell。 | PRD 工具；TDD 路径 |
+| Q68 | `write_file` 覆盖已有文件仅适用于 <=256 KiB 且当前 Run 已完整读取同 hash 的文件。 | PRD 写入；TDD 读取证据 |
+| Q69 | `apply_patch` 必须引用当前 Run 同 hash 的读取证据，hunk 原文范围全覆盖且零 fuzz/offset。 | TDD Patch 契约；存储 |
+| Q70 | `delete_file` 无需读取证据，但只删除可生成完整受控 Diff 的 <=512 KiB 普通 UTF-8 文件；崩溃后只对账。 | PRD 删除；TDD Durable Intent |
+| Q71 | 安全排除不可绕过；性能排除使用固定目录/lock 集，MVP 不解析 `.gitignore` 或提供自定义规则。 | PRD 文件树；TDD 排除策略 |
+| Q72 | 只读工具保证单文件一致，不提供跨文件 Workspace 快照；并发变化文件丢弃结果并有界重试。 | PRD 一致性；TDD 只读工具 |
+| Q73 | `apply_patch` 只接受严格单文件 unified diff；统一 LF/CRLF 可保留，mixed newline 拒绝，无 Git 扩展或 fuzz。 | PRD Patch；TDD 解析器 |
+| Q74 | `write_file` 新文件只接受 LF；覆盖文件必须显式匹配原 LF/CRLF，不静默规范化换行。 | PRD 写入；TDD 编码 |
+| Q75 | 已有文件候选字节完全相同时不创建 Approval/durable intent，ToolCall 以 `skipped/no_changes` 结束。 | PRD 审批；TDD 状态机 |
+| Q76 | Shell Approval 不绑定 Workspace 快照，精确绑定命令/环境/权限；批准后 5 分钟未开始则失效。 | PRD Shell 审批；TDD Approval |
+| Q77 | Writable Shell 在 durable intent 前后生成 Workspace manifest，记录执行窗口内观察变化；不声称因果或自动回滚。 | PRD 审计；TDD Shell 对账 |
+| Q78 | 默认仅系统工具链；`/opt/homebrew` 和 `/usr/local` 需用户启用 Toolchain Profile，用户 Home 工具链不进入 MVP。 | PRD Settings；TDD Shell 环境 |
+| Q79 | Shell 固定限制 64 进程、256 fd、2 GiB 内存、1 GiB 单文件和 2 GiB 净磁盘增长；限制不可单次放宽。 | PRD NFR；TDD 资源监控 |
+| Q80 | Shell 输出先脱敏再按 100ms/4 KiB 合并；stderr 优先的 1 MiB head+tail 持久化，慢订阅者不得阻塞管道。 | PRD Execution Feed；TDD 流式输出 |
+
+## 文件契约统一收敛
+
+以下是在 Q61–Q80 已授权边界内的实现细化，无需再作为独立问题确认：
+
+- 工具路径使用文件系统真实目录项名称，不小写化或静默 Unicode 规范化；输入必须与逐段打开的实际目录项唯一对应。
+- 二进制判定使用 NUL、固定 magic signature 和受控 C0 字节阈值；严格 UTF-8 解码是独立校验。
+- 文件工具只修改当前用户拥有的普通文件；保留 gid、mode、ACL、xattr 和可保留 flags，immutable/append-only flags 拒绝。
+- 文件容量上限按逻辑字节计算；Shell 磁盘增长按已分配 blocks 计算，稀疏文件两者分开记录。
+- MVP `publish_artifact` 只发布 <=32 MiB 的严格 UTF-8 文本快照；二进制、压缩包、加密容器和需格式解析才能扫描的 Artifact 延后。
 
 后续敏感信息细节由上述安全原则统一收敛：不降级、不静默改写有副作用输入、不持久化原始命中，且不增加用户可绕过通道。
+
+## 待答问题
+
+### Q81：OpenAI-compatible Model Profile 的能力验证
+
+状态：待回答，尚未形成设计决策，不得作为已批准规则写入 PRD/TDD。
+
+问题：Model Profile 是否必须在可被 Session 选择前，通过一次不携带用户任务数据的显式能力探测，验证认证、模型存在、streaming、ToolCall 和 usage 契约？
+
+当前推荐答案：必须。Profile 创建只保存配置，显式 Test Connection 产生版本化 capability snapshot；未通过的 Profile 不可用于新 Session/Run，Run 继续固化当时 snapshot，运行时能力漂移按结构化模型错误处理。

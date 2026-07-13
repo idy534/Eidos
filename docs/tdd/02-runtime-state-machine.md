@@ -151,6 +151,7 @@ create step
 ToolCall：
 
 ```text
+created -> skipped
 created -> pending_approval -> approved -> running -> succeeded|failed|timeout|interrupted
                          └── rejected
                          └── invalidated
@@ -168,6 +169,7 @@ pending -> approved|rejected|invalidated|canceled
 - 请求参数 hash 必须与审批创建时一致。
 - cancel 与 approve/reject 使用条件更新，只能一个事务成功。
 - approve 只改变审批和排队状态；真正执行由单执行器完成。
+- Shell approve 设置 `approval_expires_at=approved_at+300s`。执行器开始 ToolCall 前以数据库时间复检；超时原子转为 Approval invalidated/ToolCall failed(`approval_expired`)，不启动进程。
 
 Reject 计数：
 
@@ -175,15 +177,17 @@ Reject 计数：
 - 获批的状态变更 ToolCall 成功：清零。
 - user-input 创建新 Segment：清零。
 - 只读调用、重规划和失败副作用不清零。
+- `skipped/no_changes` 不是“获批的状态变更成功”，不清零。
 - 达到 2：进入 waiting_user_input，不再自动提出第三次变更。
 
 ## 7. 写入版本冲突
 
 批准后，ToolCall 重新获得执行槽时必须复检：
 
-- 已有文件：当前 SHA-256 等于 `base_sha256`。
-- 新建文件：目标仍不存在。
-- 删除文件：路径、普通文件类型和 SHA-256 均未变化。
+- 所有文件操作：已存在父目录链的 path/dev/inode/mode/uid/gid 快照未变，逐段打开中无 symlink 替换。
+- 已有文件：当前 SHA-256 等于 `base_sha256`，普通文件类型、size、encoding/BOM 和 link count 未变。
+- 新建文件：目标仍不存在，父目录仍可用，不自动创建缺失父目录。
+- 删除文件：路径、普通文件类型、size、encoding/BOM、`st_nlink=1` 和 SHA-256 均未变化。
 
 不满足时：
 
@@ -196,6 +200,8 @@ Agent 下一 Step 重新读取并重新申请
 
 原审批不能迁移到新参数或新 diff。
 
+任一 write/apply/delete 成功的结果事务同时将该 `run_id + path + old_sha256` 下的读取证据标记为 invalidated。同路径后续出现的新文件不继承旧证据。
+
 ### 7.1 Durable Intent
 
 任何副作用 ToolCall 在真正执行前先提交意图事务：
@@ -205,6 +211,7 @@ tool_call.status = running
 execution_nonce = random uuid
 preconditions_json = approved preconditions
 expected_postconditions_json = expected hash/snapshot
+shell_baseline_manifest_ref = nullable
 insert tool_call_started event
 COMMIT
 ```
@@ -212,8 +219,9 @@ COMMIT
 随后执行文件、Artifact 或 Shell 操作，再在第二个事务保存实际结果和 Event。第二个事务失败或进程崩溃时：
 
 - 文件工具比较目标 hash，判定 applied/not_applied/outcome_unknown。
+- delete_file 只检查已审批目录项是否仍不存在；同路径出现任何新对象时为 outcome_unknown，禁止再次删除。
 - publish_artifact 校验快照文件与 hash，允许补记已完成结果。
-- run_shell 统一标记 interrupted/side_effects_may_exist。
+- run_shell 使用已提交 baseline manifest 与当前 Workspace 对账，统一标记 interrupted/side_effects_may_exist；不重跑命令。
 - 恢复过程只能对账，不能再次执行原副作用。
 
 ## 8. 事实确认屏障
@@ -222,6 +230,7 @@ COMMIT
 
 - 写工具返回 `outcome_unknown`。
 - Shell 非零退出、timeout 或 interrupted，且可能已经有副作用。
+- Shell resource_limit、output_capture_failed、change_manifest_incomplete、git_boundary_change_detected 或 protected_path_change_count>0。
 
 屏障期间，下一模型响应只能：
 
@@ -273,6 +282,8 @@ applied | not_applied | outcome_unknown
 - finalizing Run 不重新调用模型；Runtime 根据已提交事件生成降级摘要并进入 stopped。
 - running ToolCall -> interrupted，`side_effects_may_exist=true`。
 - 不自动重放 ModelAttempt、文件工具、Artifact 或 Shell。
+- 仅清理名称、tool_call_id/execution_nonce、inode 和父目录身份与 durable intent 全部匹配的 Runtime 临时文件。
+- running Shell 存在 baseline manifest 时先保留文件并尝试后置对账；完整结果事务成功后才清理 manifest。
 - 清除过期 executor lease，恢复 FIFO 调度。
 
 用户恢复后，Run 创建新 Segment；Agent 必须先读取现状。

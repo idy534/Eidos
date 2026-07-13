@@ -36,6 +36,9 @@ window.eidos.events.subscribe(runId, handler)
 window.eidos.workspaces.chooseFolder()
 window.eidos.workspaces.openInSystemTerminal(workspaceId)
 window.eidos.artifacts.open(artifactId)
+window.eidos.toolchains.list()
+window.eidos.toolchains.enable(profileId, userGestureNonce)
+window.eidos.toolchains.disable(profileId, userGestureNonce)
 ```
 
 每个方法固定 IPC channel、请求 schema 和响应 schema。Main 再次验证所有 Renderer 参数，不能信任 TypeScript 类型。
@@ -53,6 +56,7 @@ webSecurity: true
 - Markdown 禁止 raw HTML 或使用严格 sanitizer。
 - 外部链接只允许用户点击后通过系统浏览器打开，并显示目标域名。
 - 文件预览不允许执行脚本、宏或任意本地 URL。
+- Workspace 文件树可向用户显示 protected 文件名，但 Preload/Main 不得把这些条目注入 Agent Tool 结果或模型上下文。
 - Sidecar 错误响应经 Main 字段白名单后返回 Renderer。
 - 敏感错误卡只显示 ruleset version、rule id/version、action、命中数和安全字段路径/行号；不显示原值、长度、摘要或哈希。
 
@@ -145,10 +149,27 @@ runtime_disconnected
 审批卡必须展示：
 
 - 工具名和完整目标。
-- 文件 diff 或完整 Shell command。
+- Runtime 生成的完整文件 diff 或完整 Shell command；不存在截断 Diff 审批模式。
 - Workspace write、外网 host、localhost 等权限。
 - 请求创建时间和当前文件版本状态。
+- 文件 size、encoding/BOM、父目录稳定性，以及 write/apply 引用的读取证据行范围。
 - Approve/Reject，不提供 Edit then Approve。
+
+Shell 卡额外展示：
+
+- “将在执行时的当前 Workspace 上运行，不绑定审批时快照”。
+- 完整 PATH、Toolchain Profile 及版本、环境模板版本、timeout、网络权限、64 进程/256 fd/2 GiB RSS/1 GiB 单文件/2 GiB allocated growth 限制。
+- approved 后的 5 分钟倒计时；过期时卡片标记 invalidated，不自动再审批。
+
+`approval_diff_too_large` 在创建审批卡前已返回，Renderer 只显示“请拆分修改或使用受审批 Shell”，不能在客户端截断后自行构造审批卡。
+
+文件读取错误必须区分 `file_too_large_for_read_file`、`invalid_line_range`、`line_too_large`、`binary_file_not_supported` 和 `unsupported_text_encoding`，并给出 range、受审批 Shell 或 P1 能力的对应引导。
+
+`tool_call_skipped/no_changes` 渲染为非审批信息卡，不渲染空 Diff。`workspace_changed`/`changed_during_scan_count` 显示为“结果可能不是 Workspace 快照”，不将跳过变化文件显示为零匹配。
+
+Shell 输出视图按 `chunk_index` 处理 stdout/stderr 交错，识别中间省略和 `tail_replay`，不在 Renderer 端重新计算截断。Workspace change 卡展示分类计数、manifest 完整性和前 200 个安全路径，文案始终使用“执行窗口内观察到”。
+
+Artifact UI 在 MVP 只接受 text/markdown/json/csv/html/code；不支持格式显示安全拒绝而不创建卡片。快照 hash 失配时标记 corrupted 并禁用正文预览。
 
 Renderer 不实现 raw reasoning 专用 UI；只渲染 `assistant_progress`、`final_answer` 和 reasoning token 用量元数据。
 

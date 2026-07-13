@@ -55,6 +55,30 @@
 | F047 | 副作用阻断 | 写/Patch/Shell/Artifact 敏感命中整个拒绝，不静默改写后执行 |
 | F048 | 扫描失败关闭 | 扫描失败、超时、超限或编码无法安全处理时不释放正文 |
 | F049 | 敏感重试暂停 | 模型连续两次提出敏感 ToolCall 后等待用户输入 |
+| F050 | 读取分级 | read_file 完整/head+tail/range 按固定字节阈值切换 |
+| F051 | 范围读取 | 1-based 闭区间；2,000 行/256 KiB 上限；不返回半行 |
+| F052 | 文本编码 | 仅严格 UTF-8/可选 BOM；二进制与其他编码分类拒绝 |
+| F053 | 稳定搜索 | 单行 literal、ASCII 不区分大小写、稳定排序和受控 preview |
+| F054 | 受控文件树 | 有界深度/条目、不跟随 symlink、隐藏敏感条目 |
+| F055 | 写入/Diff 容量 | write/patch/候选文件和审批 Diff 均有硬上限 |
+| F056 | 目录边界 | write 不创建父目录；MVP 目录操作使用受审批 Shell |
+| F057 | 完整覆盖证据 | 仅完整读取的 <=256 KiB 同版本文件可被 write_file 覆盖 |
+| F058 | Patch 读取证据 | hunk 原文范围必须由当前 Run 同 hash 的读取结果覆盖 |
+| F059 | 受控删除 | 只删除可展示完整 Diff 的 <=512 KiB 普通 UTF-8 文件 |
+| F060 | 统一排除策略 | 安全排除不可绕过；固定性能排除；MVP 不解析 `.gitignore` |
+| F061 | 单文件一致读取 | 并发变化时丢弃单文件结果并有界重试；无 Workspace 快照 |
+| F062 | 严格 Unified Diff | 单文件、路径一致、零 Git 扩展、零 offset/fuzz、保留统一换行 |
+| F063 | 写入换行 | 新文件 LF；覆盖显式匹配原 LF/CRLF；mixed 拒绝 |
+| F064 | 文件 no-op | 候选字节相同时 `skipped/no_changes`，零 Approval/intent/文件接触 |
+| F065 | Shell 审批时效 | 不绑定 Workspace 快照；参数/环境精确绑定；批准后 5 分钟过期 |
+| F066 | Shell 变化 Manifest | 执行前后对账文件变化；隐藏敏感名；不声称因果/事务/回滚 |
+| F067 | Toolchain Profile | 系统根默认；Homebrew/本地根用户启用；真实 Home 工具链禁止 |
+| F068 | Shell 资源限制 | 进程、fd、内存、单文件与磁盘增长上限 fail closed |
+| F069 | Shell 有界输出 | 双流脱敏、合并、交错序号、stderr 优先 head+tail 和慢订阅者回放 |
+| F070 | 文件名称身份 | 使用实际目录项名称/文件系统语义，禁止静默 case/Unicode 规范化 |
+| F071 | 文件元数据补全 | 仅当前用户所有文件；保留 gid/flags；immutable/append-only 拒绝 |
+| F072 | 稀疏文件计量 | 工具容量按逻辑字节，Shell 磁盘增长按 allocated blocks，同时记录两者 |
+| F073 | Artifact 文本边界 | 只发布 <=32 MiB 严格 UTF-8 不可变快照，不发布无法完整扫描的容器 |
 
 ## 2. ToolCall 组合规则
 
@@ -82,7 +106,21 @@
 | Run 总有效时间 | 120 分钟 | 硬上限 |
 | Finalization Call | 60 秒 | 无工具 |
 | run_shell | 120 秒 | 单次最大 600 秒 |
+| Shell Approval 授权时效 | 5 分钟 | 从 approved_at 到开始执行 |
+| Shell 前/后 manifest | 200,000 项 / 30 秒 | 前置超限不启动；后置不完整进屏障 |
+| Shell 进程/fd | 64 / 256 | 固定 |
+| Shell 内存 | 2 GiB | 进程树聚合 RSS |
+| Shell 单文件/净磁盘增长 | 1 GiB / 2 GiB | 磁盘增长按 allocated blocks |
 | 文件/搜索工具 | 10–15 秒 | 工具固定上限 |
+| read_file 完整正文 | 256 KiB | 256 KiB..2 MiB 返回最多 256 KiB head+tail |
+| read_file_range | 2,000 行 / 256 KiB | 不返回半行 |
+| search_text 结果 | 默认 100 | 最大 500 |
+| list_files | 默认深度 2 / 500 项 | 最大深度 5 / 2,000 项 |
+| write_file content | 512 KiB | 单次参数上限 |
+| apply_patch | 256 KiB / 5,000 行 / 200 hunks | 任一先到即拒绝 |
+| 文件审批 Diff | 512 KiB / 5,000 行 | 不允许截断审批 |
+| Shell 输出持久化 | stdout 768 KiB / stderr 512 KiB / 合计 1 MiB | stderr 优先，流内 head+tail |
+| 候选文件 | 32 MiB | 超限改用受审批 Shell |
 | 单文件敏感扫描 | 32 MiB | 超限不返回正文 |
 | 单次搜索扫描 | 256 MiB / 15 秒 | 可返回已完成整文件扫描的安全结果 |
 | 模型重试 | 2 次 | 仅首个 delta 前的瞬时错误 |
@@ -101,8 +139,12 @@
 | P1 | 智能摘要式上下文 compaction |
 | P1 | Timeout 与预算配置 UI |
 | P1 | Regex Search |
+| P1 | UTF-16/GB18030 等额外文本编码与字节范围读取 |
 | P1 | macOS Keychain 密钥存储 |
 | P1 | Artifact/Session 数据管理与自动清理策略 |
+| P1 | 二进制、PDF/Office、压缩包和加密容器 Artifact 的格式感知扫描/发布 |
+| P1 | `.gitignore`/自定义排除、Workspace 快照与文件变更自动回滚 |
+| P1 | 用户 Home 内受限工具链、项目环境自动激活和按可执行文件授权 |
 | P1 | 敏感规则升级后的历史数据重扫、Artifact 隔离与安全迁移 |
 | P2 | Windows/Linux 支持 |
 | P2 | 后台执行、tray 和通知 |

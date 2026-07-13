@@ -26,6 +26,8 @@ MVP 保留三栏工作台，但不内嵌 Terminal：
 | Artifact | 显示 | 显示且是唯一产物入口 |
 | 系统 Terminal | 可由用户点击打开 | 不提供 |
 
+Workspace 文件树是面向本机用户的视图，可显示受保护条目并标记不可预览；Agent 的 `list_files` 使用更严格的可见性投影，敏感文件名不进入模型上下文。
+
 ## 2. Execution Feed
 
 Execution Feed 合并对话、执行流和 Timeline，至少展示：
@@ -35,6 +37,8 @@ Execution Feed 合并对话、执行流和 Timeline，至少展示：
 - ToolCall 状态、参数摘要和结果摘要。
 - Approval 请求、决定、拒绝原因和版本冲突。
 - Shell 运行状态、最近输出、输出大小、退出码和终止原因。
+- Shell 执行窗口内观察到的文件变化分类、manifest 完整性和资源上限触发原因。
+- stdout/stderr 中间省略标记、命令结束后的 tail 回放和断线后一致的持久化回放。
 - 中断的模型流保留已显示进度文本，并明确标记“输出未完成”。
 - Run 排队、运行、暂停、停止、失败、取消与完成状态。
 - Artifact 发布与版本。
@@ -69,6 +73,9 @@ Execution Feed 不保存或展示模型供应商的 raw reasoning：
 
 - 一次文件写 ToolCall 只操作一个普通文件。
 - 创建使用 `write_file`，修改已有文件优先使用 `apply_patch`，明确删除使用 `delete_file`。
+- 文件工具只处理严格 UTF-8 文本；二进制、其他编码和超大文件使用受审批 Shell。
+- `write_file` 不隐式创建父目录；目录创建和删除使用受审批 Shell。
+- 覆盖已有文件必须先完整读取；Patch 只能修改 Agent 已读取的行区间。
 - 审批通过后、执行前必须重新验证文件版本。
 - `file_version_conflict` 不执行原写入，由 Agent 重新读取并重新申请。
 
@@ -85,6 +92,8 @@ Execution Feed 不保存或展示模型供应商的 raw reasoning：
 
 普通写入、中间草稿和临时文件不会自动显示为 Artifact。同一源文件再次发布会产生新版本，不覆盖旧快照。
 
+MVP Artifact 只支持最大 32 MiB 的严格 UTF-8 文本；二进制、压缩包、加密容器或需专用格式解析才能完成敏感扫描的文件不能发布。
+
 ## 5. Approval 流程
 
 ### 5.1 需要审批
@@ -93,6 +102,12 @@ Execution Feed 不保存或展示模型供应商的 raw reasoning：
 - `apply_patch`
 - `delete_file`
 - `run_shell`
+
+文件审批卡必须展示 Runtime 根据当前文件和候选内容生成的完整 Diff。超出展示上限时整个操作拒绝，不提供“截断展示仍审批”。
+
+已有文件候选字节与当前版本完全相同时，Execution Feed 显示 `skipped/no_changes`，不创建 Approval。
+
+Shell 审批卡必须说明命令作用于执行时的当前 Workspace，并展示完整 command、PATH/Toolchain Profile、网络权限、timeout 与固定资源上限。用户批准后 5 分钟未开始执行时，授权失效并需重新审批。
 
 ### 5.2 不需要审批
 
@@ -148,7 +163,14 @@ Run 达到 80 Steps 或 120 分钟有效执行时间后进入 `stopped`，不能
 - 当前 Run 不被新 Run 抢占。
 - MVP 支持取消排队 Run，但不支持手动调序和优先级。
 
-## 8. 关闭应用
+## 8. Toolchain Settings
+
+- 默认只使用 macOS 系统工具目录。
+- Settings 可检测但不自动启用 `/opt/homebrew` 和 `/usr/local`；用户需逐个确认 Toolchain Profile。
+- 已启用根目录被替换时 Profile 自动禁用，不会退化为任意 PATH。
+- MVP 不提供用户 Home 工具链或任意目录选择器。
+
+## 9. 关闭应用
 
 - 没有运行中 Run 时正常退出 sidecar。
 - 有运行中 Run 时，用户选择等待完成或取消后退出。

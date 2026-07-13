@@ -26,7 +26,7 @@ MVP 会优先打通这一条闭环：
 - [文档总索引](docs/README.md)
 - [PRD：Agent Runtime MVP](docs/prd/README.md)
 - [TDD：Agent Runtime MVP](docs/tdd/README.md)
-- [Q1-Q60 设计决策](docs/decisions.md)
+- [Q1-Q80 设计决策与待答 Q81](docs/decisions.md)
 
 ## MVP 边界
 
@@ -38,8 +38,8 @@ P0 只覆盖能让 Eidos 真正跑起来的能力：
 - 只读工具批次与逐文件 `write_file` / `apply_patch` / `delete_file`
 - 显式 `publish_artifact` 与不可变 Artifact 快照
 - macOS Seatbelt `workspace_write` Shell
-- 文件、敏感路径、网络、localhost 和环境隔离
-- 文件写入和 Shell 审批、版本复检与事实确认屏障
+- 文件、敏感路径、网络、localhost、Toolchain 和环境隔离
+- 文件写入和 Shell 审批、版本复检、资源/输出限制、Workspace 变化审计与事实确认屏障
 - approve / reject 后恢复执行
 - SSE 实时事件和持久化 Run Timeline
 - Execution Segment、Run 硬上限、cancel、崩溃恢复和基础测试

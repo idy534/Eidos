@@ -52,6 +52,9 @@ Python FastAPI Sidecar
   ├── Tool Registry / Tool Executor
   ├── Approval / Resume / Recovery
   ├── Seatbelt Policy Builder
+  ├── Toolchain Profile Registry
+  ├── Workspace Manifest / Shell Resource Monitor
+  ├── Shell Output Capture
   ├── Managed Network Proxy
   ├── Redaction Service
   └── Repository / Event Outbox
@@ -100,6 +103,8 @@ Main generate runtime token
   -> sidecar verify ~/.eidos permissions and migrate DB
   -> sidecar load and self-test Redaction ruleset
   -> sidecar run Seatbelt self-test
+  -> sidecar discover/validate Toolchain Profiles
+  -> sidecar self-test Shell limits, manifest monitor and output capture
   -> sidecar bind 127.0.0.1:random_port
   -> stdout {"event":"ready","port":12345,"shell_available":true|false,"redaction_available":true|false}
   -> Main starts API/SSE proxy
@@ -111,6 +116,8 @@ Seatbelt 自检失败不阻止只读文件工具和模型回复，但 `run_shell
 Redaction 规则 schema、重叠顺序、最大匹配长度或测试向量自检失败时，所有可能把不可信内容发送给模型/UI 或写入持久化的 API 不可用；只保留 health 和安全配置诊断能力，不存在未扫描回退。
 
 MVP 只从随应用发布的只读资源加载一个规则集，不从网络、Workspace 或用户配置加载规则。
+
+Shell 限制、Workspace manifest/磁盘增长监控或输出捕获任一自检失败时，与 Seatbelt 失败相同：只使 `run_shell` unavailable，不降级为无监控 Shell。
 
 ## 6. Eidos Home
 
@@ -129,6 +136,7 @@ MVP 只从随应用发布的只读资源加载一个规则集，不从网络、W
     homes/{tool_call_id}/
     tmp/{tool_call_id}/
     cache/{tool_call_id}/
+    manifests/{tool_call_id}/{execution_nonce}/
   logs/
 ```
 

@@ -88,6 +88,14 @@ Model Gateway 输出完整 ToolCall list 后，Runtime：
 
 所有注入项必须有单项上限和总 token 预算。
 
+`read_file`/`read_file_range` ToolResult 包含 `read_result_id, path, base_sha256, complete, content_redacted, evidence_ranges, encoding, bom`，供后续 write/apply 引用。`evidence_ranges` 已扣除发生脱敏的整行。Context Builder 可裁剪已读正文，但不会改变 Runtime 存储的证据范围；若证据 ID 也不再可见，模型应重新读取，不得自行构造。
+
+list/search 不注入“Workspace snapshot”结论。`workspace_changed=true` 和 `changed_during_scan_count` 始终保留；搜索项带自己 `file_sha256`，不与其他文件 hash 合并。
+
+`skipped/no_changes` ToolResult 包含 path/base hash 和“零文件接触”，模型可直接继续，不得解读为获批写入。
+
+Shell ToolResult 的模型部分只包含 32 KiB 受控 stdout/stderr observation、exit/resource/termination 元数据、manifest 分类计数、前 50 个安全路径和完整性标志。完整 manifest、Toolchain 内部文件列表和 protected path 不进入模型上下文。
+
 从 SQLite、Tool log 或 Artifact 读取的历史正文在进入 Context Builder 前按当前 `ruleset_version` 再扫描。读时 `deny` 不注入正文，`redact` 只注入脱敏版本；不修改原始 Timeline 或 Artifact 快照。
 
 ## 6. P0 确定性裁剪
