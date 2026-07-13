@@ -48,7 +48,8 @@ Electron Main
 Python FastAPI Sidecar
   ├── Run Scheduler (single executor)
   ├── Runtime Engine / Context Builder
-  ├── Model Gateway
+  ├── Model Gateway / Responses + Chat Adapters / Transport Controller
+  ├── Model Profile / Capability Registry
   ├── Tool Registry / Tool Executor
   ├── Approval / Resume / Recovery
   ├── Seatbelt Policy Builder
@@ -91,6 +92,7 @@ Main 是 Desktop 权限边界：
 Sidecar 是受信任 Runtime，但 Agent 输入、模型输出和 ToolCall 参数均不可信：
 
 - 所有 ToolCall 先通过 schema、组合和权限校验。
+- 两种 wire Adapter 只负责确定性协议编解码；Provider conversation/response 状态不作为 Runtime 事实来源，stream/event/ToolCall assembler 在进入业务状态前执行硬容量限制。
 - 文件工具经 Workspace Guard。
 - Shell 只通过 Seatbelt 执行；沙箱不可用时 fail closed。
 - sidecar 可以读取 `~/.eidos/config.toml`，沙箱子进程不能读取真实 `~/.eidos`。
@@ -101,6 +103,7 @@ Sidecar 是受信任 Runtime，但 Agent 输入、模型输出和 ToolCall 参�
 Main generate runtime token
   -> spawn sidecar with token
   -> sidecar verify ~/.eidos permissions and migrate DB
+  -> sidecar reconcile profile credential revisions and invalidate stale Gateway capability snapshots
   -> sidecar load and self-test Redaction ruleset
   -> sidecar run Seatbelt self-test
   -> sidecar discover/validate Toolchain Profiles

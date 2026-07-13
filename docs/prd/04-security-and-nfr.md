@@ -152,3 +152,18 @@ MVP 为尽快打通 Agent 主链路，允许 API Key 明文存放在 `~/.eidos/c
 - Writable Shell 执行前后建立受控 manifest，只将变化归因为“执行窗口内观察到”，不自动回滚。
 - Shell 固定使用 64 进程、256 fd、2 GiB 进程树 RSS、1 GiB 单文件和 2 GiB 已分配磁盘净增长上限。
 - 资源监控或输出捕获故障时终止整个进程组，保留真实结果并进入事实确认屏障。
+
+## 12. Model Provider 连接边界
+
+- Model `base_url` 不按公网、loopback、局域网或私网类别设置地址白名单，但只接受 HTTP(S)。
+- URL 不允许内嵌用户名、密码或 token；同 Origin Redirect 可以继续，跨 Origin Redirect 必须拒绝。
+- HTTPS 必须校验证书有效期、主机名和 macOS 系统信任链，不提供关闭校验、忽略错误或单次继续入口。
+- HTTP 端点允许使用，但 UI 必须明确提示 API Key、任务和模型上下文将通过非加密连接传输。
+- 每个 Model Profile 独占凭证槽位；API Key 保存后不回显、不共享，替换只影响本 Profile。
+- Run 快照不包含 API Key；Gateway 每次发送前从 Profile 专属槽读取当前凭证。日志、Event、Attempt 和 capability snapshot 只记录凭证 revision，不记录密钥或其摘要。
+- 认证仅支持固定 `bearer`、`api_key_header` 和 `none` 模式；用户不能用扩展参数注入 Header、代理、证书或传输配置。
+- WebSocket 与 HTTP(S) streaming 使用相同的认证和敏感日志边界；WSS/HTTPS 必须执行相同的系统信任校验。传输降级不得关闭证书校验、改变 Origin 或泄露 Provider 原始错误正文。
+- usage 缺失必须标记为 unknown；不得为了展示确定成本而推算或填零。Provider 重放可能产生重复计算或计费，UI 必须如实展示 Attempt 数和 usage 完整性。
+- Eidos 不主动请求 Provider 保存会话：Responses 使用 `store=false`，Chat 每次发送本地重建的消息。该设置不构成第三方零留存保证，UI 必须提示实际保留仍受 Provider 条款约束。
+- Provider response/conversation ID 只可作为审计元数据，不得成为恢复、ToolResult 续接或传输降级的唯一状态来源。
+- 模型流在协议解码后执行单 Event、总 payload、可见文本、reasoning 和 ToolCall 参数多层容量检查；超限内容不得进入 Event、日志、数据库或审批。

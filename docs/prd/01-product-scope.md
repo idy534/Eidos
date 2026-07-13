@@ -38,7 +38,10 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - Eidos 是前台执行型 Agent，不在窗口关闭后作为 daemon 继续运行。
 - MVP 只内置一个默认 Agent：Eidos，不提供多 Agent 管理。
 - system prompt 是内部运行协议，不向用户开放查看或编辑。
-- 用户按 Session 选择 Model Profile；Run 创建时固化模型配置快照。
+- Model Profile 必须先通过不携带用户任务数据的显式能力测试，才能被 Session 选择；Run 创建时固化已验证的模型配置与能力快照。
+- Model Profile 显式选择 Responses 或 Chat Completions；Eidos 不按厂商、模型名或错误响应猜测协议，也不在 Run 中跨协议回退。
+- 模型调用优先使用已验证的 WebSocket，必要时有界降级到原 endpoint 的 HTTP(S) streaming；传输恢复不会改变模型、输入、参数或 Run 的非密钥快照。
+- 模型请求语义由本地 Timeline 与 Context Builder 重建，不依赖 Provider 保存会话或 previous response。
 - 多个 Run 可以创建和保留，但任意时刻最多只有一个 Run 调用模型或执行工具。
 - 所有有副作用操作都必须显式建模；审批不能突破沙箱边界。
 - Eidos 自身数据保存在 `~/.eidos`，不默认向用户项目写入 `.eidos/`。
@@ -73,9 +76,9 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 ## 5. MVP P0 范围
 
 - Electron + React 桌面应用与 Python FastAPI sidecar。
-- `~/.eidos` 初始化、SQLite 状态持久化和 Model Profile。
+- `~/.eidos` 初始化、SQLite 状态持久化，以及可编辑、可 Archive、显式能力验证的 Model Profile。
 - Workspace/Public Session 与持久化 FIFO Run 队列。
-- ReAct-style Runtime Loop、Execution Segment 和有界上下文裁剪。
+- ReAct-style Runtime Loop、Execution Segment、版本化模型请求契约、上下文预算和有界裁剪。
 - `list_files`、`read_file`、`read_file_range`、`search_text`。
 - `write_file`、`apply_patch`、`delete_file`。
 - 固定文件遍历排除、单文件一致读取和严格 UTF-8 文本契约。
@@ -85,7 +88,7 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - Approval、Reject、版本冲突、事实确认屏障、取消与崩溃恢复。
 - 确定性敏感规则、分级拒绝/脱敏与全入口扫描。
 - SSE 实时 Execution Feed 与持久化 Timeline。
-- Run 预算、Tool timeout、有限重试和 Finalization Call。
+- Run 预算、模型传输降级、Tool timeout、有限重试和 Finalization Call。
 
 ## 6. MVP 非目标
 
@@ -105,3 +108,6 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - `.gitignore`/用户自定义文件遍历排除、Workspace 读取快照和文件变更自动回滚。
 - 二进制/压缩/加密 Artifact 发布与需格式解析的内容扫描。
 - Git commit、checkout、reset、stash 等修改 `.git` 的操作。
+- Model Profile 物理删除、共享凭证、任意自定义 Header、TLS 校验绕过、定时自动能力探测和按模型名自动推断上下文容量。
+- 依赖厂商专有幂等 Header、精确 tokenizer 或把 usage 未知的失败请求按零计费。
+- Provider 托管 conversation/thread、跨 wire API 自动兼容、厂商专用 Adapter 和依赖服务端 response history 的恢复。

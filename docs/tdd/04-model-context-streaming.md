@@ -9,20 +9,108 @@ id
 name
 base_url
 model
+wire_api = responses|chat_completions
 api_key_ref
+auth_mode = bearer|api_key_header|none
+credential_revision
 parameters_json
 context_window_tokens
 max_output_tokens
+config_revision
+configuration_hash
+archived_at nullable
 created_at
 updated_at
 ```
 
-- OpenAI-compatible provider 使用同一 Gateway，不为具体厂商建立业务分支。
-- `context_window_tokens` 与 `max_output_tokens` 必填，否则 Runtime 无法计算上下文预算。
-- API Key MVP 存在 `~/.eidos/config.toml`；`api_key_ref` 指向配置项。
+- OpenAI-compatible provider 使用同一 Gateway 的 `ResponsesAdapter|ChatCompletionsAdapter`，不为具体厂商建立业务分支。Profile 必须显式选择 wire API；不按模型名、URL 或错误响应自动推断，也不在 Run 内跨协议回退。
+- `context_window_tokens` 与 `max_output_tokens` 由用户显式填写且必填。Schema 固定 `4,096 <= context_window_tokens <= 4,194,304`、`1 <= max_output_tokens <= 262,144` 且 `max_output_tokens < context_window_tokens`；Runtime 不根据模型名称或 Provider 元数据自动覆盖。
+- API Key MVP 存在 `~/.eidos/config.toml`；每个 Profile 使用唯一 `api_key_ref` 和独立凭证槽位，`none` 模式不要求密钥。
 - `.eidos`/config 权限不符合 0700/0600 时拒绝加载密钥。
-- Run 快照保存 profile name/base_url/model/parameters/context limits，不保存密钥。
+- Profile 创建只持久化配置，初始状态不可被 Session 选择；Runtime 不在创建请求中隐式执行网络探测。
+- Run 快照保存 profile name/base_url/model/wire_api/parameters/context limits、`configuration_hash`、`model_request_contract_version` 和通过验证的 capability snapshot，不保存密钥。
 - waiting、queued、running Run 始终使用创建时快照。
+- API Key 不进入 Run 快照。每次实际发送模型请求前，Gateway 以 `profile_id` 从该 Profile 独占槽读取当前凭证和 `credential_revision`；密钥轮换后，既有 Run 保持原 auth mode/endpoint/model/parameters/capability snapshot，但使用新凭证。Attempt 保存实际 revision，不保存密钥、摘要或认证 Header。
+
+### 1.1 生命周期与失效
+
+- MVP 支持 Profile 创建、读取、编辑、Archive 和恢复，不提供物理删除。
+- `name` 是纯展示字段；仅修改名称不改变 `config_revision/configuration_hash`，也不使 capability snapshot 失效。
+- `base_url`、`model`、`wire_api`、`auth_mode`、API Key、`parameters_json`、context/output limits 任一变化都递增 `config_revision`，重新计算 `configuration_hash`，并在同一状态事务中使当前 capability snapshot 失效。
+- `configuration_hash` 覆盖所有非密钥连接/协议字段及 `credential_revision`，绝不包含 API Key 原文、摘要或哈希。替换密钥只递增本 Profile 的 `credential_revision`；其他 Profile 不受影响。
+- Snapshot 不设置时间 TTL，不由后台定时探测。Gateway contract version 或 model request contract version 变化、`model_capability_drift` 或 `model_context_limit_mismatch` 也会使当前 snapshot 失效。
+- Archive 仅设置 `archived_at`，不删除或改写历史 snapshot。Archived Profile 的 `selectable=false`；恢复后只有仍满足当前配置、Gateway contract 和 model request contract 的有效 passed snapshot 才可重新选择。
+- 既有 Run 始终使用内嵌快照；Profile 编辑、Archive、恢复、失效或重新测试都不能修改 Run。
+- canonical serializer、输入估算/开销/margin、输出预留、传输重试或 timeout 语义变化时递增 `model_request_contract_version`，并使旧 Profile snapshot 对新 Run 失效。既有非终态 Run 继续路由到创建时版本；Runtime 必须保留仍被非终态 Run 引用的实现。若版本不可用，零模型请求并进入 `waiting_user_input/runtime_contract_unsupported`，只允许取消或基于原任务创建新 Run。
+
+### 1.2 显式能力探测
+
+`Test Connection` 是用户显式触发的 Model Profile 操作，不创建 Session、Message、Run、Step 或 ToolCall：
+
+1. Gateway 只使用 Profile 配置、固定的 Eidos probe system/user 文本和固定无副作用 probe tool schema 构造请求。
+2. 请求不得读取或携带用户任务、Session 消息、Workspace、Artifact、Timeline 或 ToolResult 内容。
+3. 探测只使用所选 wire API，依次验证认证、模型存在、Provider 接受配置的输出 token 上限、streaming terminal、分片 ToolCall 与 ToolResult 关联、stateless continuation 和最终 usage 字段；probe ToolCall 只用于协议验证，永不进入 Tool Executor。短探测不声明已证明完整 context window。HTTP(S) streaming 是必需项；仅 Responses 额外探测 WebSocket 为 `supported|unsupported|unknown`，Chat 固定 `unsupported`。短探测使用 `request_max_output_tokens=min(profile.max_output_tokens,512)`，另一个无任务数据的参数校验请求验证 Provider 接受 Profile 声明的输出上限字段。
+4. 只有全部必需检查通过才创建 `passed` capability snapshot；部分通过仍保存 `failed` snapshot 和安全分类结果，但 Profile 不可选择。
+5. 每次探测都按 Profile 内单调递增 `snapshot_version` 创建新记录，绑定 `configuration_hash`、Gateway contract version 和探测时间，不覆盖历史结果。
+
+Provider 返回的 context/output 元数据只作为安全提示字段返回 UI，不写回 Profile，也不参与 selectable 计算。
+
+capability snapshot 至少包含：
+
+```text
+id
+profile_id
+snapshot_version
+configuration_hash
+gateway_contract_version
+model_request_contract_version
+probe_status = passed|failed
+valid = true|false
+authentication = passed|failed
+model_exists = passed|failed
+streaming = passed|failed
+tool_call = passed|failed
+usage = passed|failed
+websocket_transport = supported|unsupported|unknown
+output_token_parameter = max_output_tokens|max_completion_tokens|max_tokens
+stateless_continuation = passed|failed
+error_code nullable
+invalidation_reason nullable
+checked_at
+invalidated_at nullable
+```
+
+Profile 只有在未 Archive、当前 `configuration_hash`、Gateway contract version 与 model request contract version 下最新一次探测 `probe_status=passed` 且 `valid=true` 时才 `selectable=true`。Run 创建时把该 snapshot 的 ID、版本和完整能力字段复制进不可变 `model_config_snapshot`；后续探测不改变既有 Run。
+
+正常运行中若 Provider 不再满足固化 snapshot 已通过的 streaming、ToolCall 或 usage 契约，Gateway 返回 `model_capability_drift`。若 Provider 明确返回 context-length exceeded，则映射为 `model_context_limit_mismatch`。两者都属于确定性模型兼容性错误：Run 直接 `failed`，不重试、不 Finalize、不修改 Run 快照；Runtime 同时使 Profile 当前 capability snapshot 失效，阻止新 Session/Run，直到用户编辑并重新测试。
+
+WebSocket 不属于 selectable 的必需能力。瞬时 WebSocket 故障不使 capability snapshot 失效；明确的 Upgrade 拒绝、426 或协议不支持会在独立 transport health 记录中为当前 `(profile_id, configuration_hash, snapshot_version)` 设置 `ws_disabled=true`。该记录无 TTL、无后台探测，新 snapshot 自动使用新 key；HTTP(S) streaming 的确定性漂移仍按上段失效。
+
+### 1.3 Endpoint、TLS 与认证
+
+- `base_url` 必须是绝对 HTTP(S) URL；允许公网、loopback、局域网和其他私网，不执行地址类别或 DNS 私网过滤。
+- `base_url` 是 API root，保存时移除 path 末尾 `/`。Responses Adapter 结构化追加单个 `responses` path segment；Chat Adapter 追加 `chat/completions`。若输入 path 已以 `/responses` 或 `/chat/completions` 结尾，返回 `model_profile_endpoint_in_base_url`，不猜测或去重。
+- URL 禁止 userinfo。path prefix 和不含敏感内容的 query 可以保留；完整 URL 在保存前通过敏感扫描，禁止把密码、token 或 API Key 编码进 URL。
+- endpoint 使用 URL 组件 API 插入到 path 尾部，原安全 query 保持；禁止字符串拼接。规范化 API root、wire API 和最终 endpoint 共同参与 `configuration_hash`，UI/API 可返回安全的最终 URL preview。
+- Redirect 最多 5 次且每一跳必须保持相同 Origin；Origin 按 scheme、规范化 host 和有效 port 比较。跨 Origin、非 HTTP(S) 或 URL 内嵌凭证的 Location 立即失败。
+- HTTPS 使用 macOS 系统信任库，必须验证证书有效期、主机名和完整信任链；HTTP client 不暴露 `verify=false` 或忽略证书错误路径。
+- `auth_mode=bearer` 固定发送 `Authorization: Bearer <api_key>`；`api_key_header` 固定发送 `api-key: <api_key>`；`none` 不读取或发送凭证。
+- Gateway 只添加固定 Content-Type、Accept、User-Agent 和上述认证 Header；Profile 不接受任意自定义 Header。
+- API Key、完整 Authorization Header 和 Provider 原始错误正文不进入日志、Event、snapshot 或 API 响应。HTTP 端点在 UI 标记为非加密，但请求契约与 HTTPS 相同。
+
+### 1.4 Provider 扩展参数
+
+- `parameters_json` 使用标准 JSON，UTF-8 编码后最大 32 KiB、最大嵌套深度 8、容器成员合计最大 256；禁止 NaN、Infinity、二进制值和敏感内容。
+- Runtime 保留并拒绝用户提供 `model`、`messages|input|instructions`、`tools`、`tool_choice`、`stream`、`stream_options`、`store`、`previous_response_id`、`conversation|conversation_id|thread|thread_id`、`max_output_tokens`、`max_tokens`、`max_completion_tokens`、认证/Header、URL、代理、TLS 和其他传输层字段。
+- 其他字段原样透传并纳入 `configuration_hash`；Runtime 构造核心请求后再合并扩展字段，遇到保留键整次返回 `model_profile_reserved_parameter`。
+- Test Connection 必须使用 Profile 的实际扩展参数。Provider 确定性拒绝参数时 snapshot 为 failed，错误分类为 `model_invalid_request`。
+
+### 1.5 输出字段协商
+
+- Responses 固定发送 `max_output_tokens=request_max_output_tokens`。
+- Chat 在 Test Connection 中先使用 `max_completion_tokens`。只有 Provider 明确返回该字段未知/不支持的确定性错误时，才以相同固定 probe 尝试 `max_tokens`；认证、网络、429、5xx、timeout 或含糊 invalid request 不触发切换。
+- 两者都拒绝时探测失败 `model_output_limit_parameter_unsupported`；两者都接受时固定选择 `max_completion_tokens`。
+- `output_token_parameter` 固化到 capability/Run snapshot；正常 Run 只使用该字段。后来被拒绝时是 `model_capability_drift`，不得运行时尝试另一字段。
 
 ## 2. Model Gateway 流协议
 
@@ -43,6 +131,32 @@ class ModelGateway(Protocol):
 
 必须完整收到 `completed` 并解析 ToolCall 参数后，才能创建可执行 ToolCall。流中途失败时，部分 tool_call_delta 永远不能执行。
 
+### 2.1 Wire Adapter 与完成判定
+
+两个 Adapter 只输出统一内部事件，不把 Provider 原始对象泄露给 Runtime：
+
+- Responses 固定 `store=false`，不发送 `previous_response_id` 或 conversation；只有 `response.completed` 产生内部 completed。`response.incomplete/max_output_tokens` -> `model_output_truncated`，`response.incomplete/content_filter` -> `model_output_blocked`，failed 按安全错误映射，无终态 EOF -> `model_stream_interrupted`。
+- Chat 固定 `n=1, stream=true, stream_options.include_usage=true`，只接受 `choice.index=0`。必须同时收到合法 finish reason、完整 content/ToolCall、合法 usage 和 `[DONE]` 才 completed；仅 EOF 不完成。
+- Chat `stop` 正常完成文本；`tool_calls` 仅在完整批次时完成；`length` -> truncated；`content_filter` -> blocked；null 只允许非终态；deprecated `function_call` 和未知值 -> `model_capability_drift`。
+- truncated/blocked 不做协议纠正、重试或传输切换；已提交文本保持 incomplete，整个 ToolCall 批次丢弃，Run 分别进入 `waiting_user_input/model_output_truncated|model_output_blocked`，snapshot 不因正常 truncated/blocked 失效。
+
+usage 必须包含非负整数 `input_tokens,output_tokens,total_tokens` 且 `total_tokens >= input_tokens + output_tokens`。cached/reasoning/audio 等细分字段可选但存在时必须非负。探测时 Provider 拒绝 `include_usage`、完成时缺失或非法 usage -> `model_usage_unsupported`；正常 Run 完成态出现则 `model_capability_drift`。失败/中断未完成且未收到 usage 仍按 Q96 为 unknown，不属于 drift。
+
+### 2.2 Stateless continuation
+
+- 每个 Step 从 Eidos 本地 Timeline/Context Builder 重建完整语义输入，不依赖 Provider history。Provider response ID 只写 Attempt 审计字段。
+- Responses ToolResult 编码为 `function_call_output.call_id=provider_call_id`；Chat 编码为 `role=tool,tool_call_id=provider_call_id`。相应完整 assistant ToolCall item/message 必须在本地上下文中先于结果。
+- WebSocket session 只承载传输，不持有不可替代语义状态。Provider 必须依赖服务端会话才能完成 ToolResult continuation 时，Test Connection 失败 `model_stateless_mode_unsupported`。
+
+### 2.3 传输选择
+
+- 仅 `wire_api=responses` 且 `websocket_transport=supported`、当前 snapshot 未设置 `ws_disabled` 时优先使用 Responses-over-WebSocket；Chat 或 `unsupported|unknown` 直接使用 HTTP(S) streaming。
+- WebSocket URL 只能从固化 `base_url` 做同 Origin、同 path prefix 的协议映射：`https->wss`、`http->ws`。降级沿用原 `base_url` 的 `https|http` scheme，不允许静默改写 scheme。
+- 首个 delta 前 WebSocket 遇到瞬时网络错误时最多重放 5 次；明确不支持时不消耗重试预算，立即切换 HTTP(S)。
+- WebSocket 预算耗尽后，同一逻辑模型请求以完全相同的 model、canonical input、tools、parameters 和 `request_max_output_tokens` 切换 HTTP(S)；当前 Run 后续请求粘滞使用 HTTP(S)。
+- 瞬时降级不跨 Run；新 Run 依据 capability snapshot 和 transport health 重新选择。明确 `ws_disabled` 跨 Run 生效，直到用户显式 Test Connection 生成新 snapshot。
+- 收到首个 delta 后禁止传输切换或请求重放；中断按 `model_stream_interrupted` 处理。
+
 ## 3. 流式事件
 
 - delta 到达后先进入增量敏感扫描器，只有已确认安全或已脱敏的文本才通过内部 EventBus 推送给 SSE。
@@ -54,7 +168,43 @@ class ModelGateway(Protocol):
 - `deny`/`redact` 命中的普通 content delta 统一替换后继续；不因普通文本单次命中终止 Run。
 - 扫描器失败后不 flush 保留窗口，丢弃未完整解析的 ToolCall，Run 进入 `waiting_user_input/sensitive_scan_failed`。
 
+流式资源计数在解压和协议解码后、内容进入下游前执行：
+
+```text
+max_visible_text_bytes =
+    CLAMP(request_max_output_tokens * 16, 64 KiB, 4 MiB)
+max_discarded_reasoning_bytes = 2 MiB
+max_single_stream_event_bytes = 1 MiB
+max_total_stream_payload_bytes = 8 MiB
+```
+
+visible 统计全部普通 content UTF-8 字节；tool arguments 同时计入 Q106 自身上限和 8 MiB 总量；reasoning 即使立即丢弃也计数。任一上限超出即关闭流，Attempt/Step=`model_output_limit_exceeded`，Run waiting_user_input，零重试/纠正/传输切换。已提交安全文本保持 `assistant_progress/incomplete=true`，未完成 ToolCall 丢弃，usage 已完整收到则 reported，否则 unknown；snapshot 不失效。
+
 ## 4. ToolCall 解析和组合校验
+
+### 4.1 Adapter assembler
+
+- 每个合法 ToolCall 生成 Eidos 内部 UUID；Provider 标识单独保存为 `provider_call_id`，仅用于向相同 wire API 回传 ToolResult。内部 UUID 不发送给 Provider。
+- `provider_call_id` 必须非空、本响应唯一、UTF-8 <=256 bytes 且无控制字符；缺失/重复不得生成替代 ID。
+- Chat 固定 choice 0，按 `tool_calls[].index` 归并；index 从 0 连续且不得重绑到其他 ID。Responses 按 output index/item ID 归并且最终必须有唯一 call_id。
+- name/ID/type 可以跨 chunk 分片；已确定内容不得被后续片段修改。arguments 严格按同调用流顺序追加，completed 后必须恰好解析为一个 JSON object。
+- 缺失/冲突 ID、非法 index、字段矛盾或 arguments 非单一完整 object 统一 `model_protocol_error`，按 Q45 纠正一次；零 ToolCall row/Approval/原始参数持久化。
+
+assembler 硬上限：
+
+```text
+tool_calls_per_response = 16
+arguments_per_call = 1 MiB UTF-8
+arguments_per_response = 2 MiB UTF-8
+tool_call_delta_count = 16_384
+tool_name = 128 UTF-8 bytes
+json_depth = 16
+json_container_members = 2_048
+```
+
+边界值允许相等，超过即取消流并产生 `model_protocol_limit_exceeded`，按 Q45 计一次协议错误；纠正输入只含超限维度和固定上限。工具 schema 的更小限制随后继续生效，上述容量不放宽任何工具。
+
+### 4.2 Runtime 校验
 
 Model Gateway 输出完整 ToolCall list 后，Runtime：
 
@@ -98,13 +248,47 @@ Shell ToolResult 的模型部分只包含 32 KiB 受控 stdout/stderr observatio
 
 从 SQLite、Tool log 或 Artifact 读取的历史正文在进入 Context Builder 前按当前 `ruleset_version` 再扫描。读时 `deny` 不注入正文，`redact` 只注入脱敏版本；不修改原始 Timeline 或 Artifact 快照。
 
+每个 Step 都从上述本地事实重建完整模型语义历史，包括需要继续的 assistant ToolCall 与对应 ToolResult；不得用 Provider response/conversation ID 替代本地项。Context Builder 先生成协议无关 canonical model-visible items，再由 Run 固化 wire Adapter 编码，预算统计覆盖最终实际模型可见序列化结果。
+
 ## 6. P0 确定性裁剪
+
+发送前预算使用 Run 的 `model_request_contract_version` 对应的稳定、紧凑 UTF-8 canonical serializer。`canonical_model_visible_payload` 包含所有实际模型可见 system/runtime 指令、工具 schema、消息、ToolResult、结构化字段名和 JSON 转义字节，不包含认证、URL/传输协议字段、日志或 Eidos 内部元数据。
 
 计算：
 
 ```text
-input_budget = context_window_tokens - max_output_tokens - safety_margin
+payload_estimate_tokens =
+    UTF8_BYTE_LENGTH(canonical_model_visible_payload)
+
+protocol_overhead_tokens =
+    64
+    + message_count * 8
+    + tool_call_count * 16
+    + tool_result_count * 16
+
+estimated_input_tokens =
+    payload_estimate_tokens + protocol_overhead_tokens
+
+safety_margin_tokens =
+    CLAMP(CEIL(context_window_tokens * 0.02), 1_024, 8_192)
+
+usable_input_budget =
+    context_window_tokens
+    - request_max_output_tokens
+    - safety_margin_tokens
+
+estimated_input_tokens <= usable_input_budget
 ```
+
+每个 UTF-8 字节按一个估算 token 计入；这是保守预算规则，不声称是所有 Provider tokenizer 的严格数学上界。Context Builder 先验证不可裁剪内容，再按优先级添加可选内容并持续复算完整 canonical payload，而不是只累计正文长度。
+
+`request_max_output_tokens` 固定为：
+
+- 普通 Agent Step 和协议纠正 Step：Run 快照中的 `profile.max_output_tokens`。
+- Finalization：`min(profile.max_output_tokens, 4_096)`。
+- Test Connection 短探测：`min(profile.max_output_tokens, 512)`。
+
+同一逻辑请求的所有重放保持相同值，每个 ModelAttempt 保存实际值。Provider 元数据或响应不得静默覆盖。
 
 不可裁剪：
 
@@ -123,23 +307,39 @@ input_budget = context_window_tokens - max_output_tokens - safety_margin
 
 裁剪后保留 path、hash、状态、size、摘要和 `content_omitted=true`，Agent 可以重新读取。MVP 不调用模型生成 compaction summary。
 
+裁剪后若不可裁剪内容仍使 `estimated_input_tokens > usable_input_budget`，Gateway 零网络请求且不创建 started ModelAttempt；当前 Step 若已存在则标记 `failed/context_input_too_large`，Run 直接 `failed`、不 Finalize、capability snapshot 保持有效。保存并向 UI 返回 `estimated_required_tokens, usable_input_budget, request_max_output_tokens, safety_margin_tokens`，不包含原始 payload。只有本地预算通过后 Provider 明确返回 context-length exceeded 才是 `model_context_limit_mismatch`。
+
 ## 7. Model Retry
 
-每次网络尝试写入 ModelAttempt：
+每次实际网络发送都写入独立 ModelAttempt；同一 Step 的这些 Attempt 共享 `logical_model_request_id`，但拥有不同 `attempt_index`、transport、凭证 revision、Provider request id、时间和结果。MVP 不发送或依赖厂商专有 `Idempotency-Key`；首 delta 前的重放仍可能产生重复 Provider 计算或计费。
 
-- 首个 delta 前遇到网络失败、429、5xx：最多 2 次重试，指数退避并尊重 Retry-After。
-- 重试耗尽后 Step 标记 `model_temporarily_unavailable`，Run 进入 waiting_user_input。
+同一 Step 的一个逻辑模型请求周期从第一次发送前开始，共享 10 分钟 hard deadline。该 deadline 覆盖 DNS、TLS、建连、读取、全部 Attempt、Retry-After、固定退避和 WebSocket 到 HTTP(S) 的降级；不是每个 Attempt 各有 10 分钟。每个 Attempt 的局部上限为：
+
+- connect：15 秒。
+- first delta：180 秒。
+- stream idle：120 秒。
+
+任何局部等待都取局部上限与 cycle 剩余时间的较小值。WebSocket 五次重试退避固定 `1s,2s,4s,8s,16s`；HTTP(S) 两次重试退避固定 `1s,2s`。合法 Retry-After 优先，但上限 60 秒且不能越过 cycle deadline。
+
+- 首个 delta 前 WebSocket 瞬时错误按传输规则重试并降级；HTTP(S) 对网络失败、429、5xx 最多重试 2 次。
+- 周期或 HTTP(S) 重试耗尽后 Step 标记 `model_temporarily_unavailable`，Run 进入 waiting_user_input。
 - 同一 Step 的多个 ModelAttempt 只占一个 Step 预算；用户继续时创建新 Segment。
-- 收到 delta 后失败：本 Attempt 与 Step 标记 `model_stream_interrupted`，不透明重试。
+- 收到 delta 后失败：本 Attempt 与 Step 标记 `model_stream_interrupted`，不透明重试、不切换传输。
+- Provider 正常报告 output token 截断、内容过滤或 Runtime 触发输出流容量上限时，分别进入 `waiting_user_input/model_output_truncated|model_output_blocked|model_output_limit_exceeded`；三者均不重试、不切换传输、不执行该响应任何 ToolCall。
 - 已提交 content chunk 保留为 `assistant_progress/incomplete`，不得升级为 final_answer。
 - 部分 tool_call_delta 丢弃，不创建 ToolCall row。
 - Run 进入 waiting_user_input；用户继续时创建新 Segment。
 - 失败 Step 计入 Run 的 80 Steps 硬上限。
 - Provider validation/auth 错误不重试。
 - `401/403` 认证错误、确定性的 model not found、invalid request 或不支持参数直接终止 Run。
-- 终止时保存结构化 `model_auth_failed|model_not_found|model_invalid_request`，不调用 Finalization。
+- TLS 证书/主机名/信任链错误不重试，保存 `model_tls_validation_failed`；不存在关闭校验后继续的分支。
+- 当前凭证槽缺失、不可读或与 Run 固化 auth mode 不兼容时不回退到旧密钥，保存 `model_credential_unavailable` 并直接 failed；Provider 401/403 仍为 `model_auth_failed`。
+- 明确的 context-length exceeded 保存 `model_context_limit_mismatch`；wire terminal、streaming/ToolCall/usage/stateless continuation/固化输出字段与 snapshot 不符保存 `model_capability_drift`。两者在 Run failed 事务中使 Profile 当前 snapshot 失效。
+- 终止时保存结构化 `model_credential_unavailable|model_auth_failed|model_not_found|model_invalid_request|model_tls_validation_failed|context_input_too_large|model_context_limit_mismatch|model_capability_drift`，不调用 Finalization。
 - Run 的 Model Profile snapshot 不可修改；修复配置后只能创建新 Run。
 - 用户取消会关闭流并结束 Step。
+
+usage 按 Attempt 保存：Provider 明确报告的 usage 逐份计入 `reported_usage_total`；失败 Attempt 未返回 usage 时保存 `usage_status=unknown`，不得填零或推算。Run 汇总同时返回已报告 usage、unknown Attempt 数和总 Attempt 数。任何 ToolCall 都必须等当前响应 completed 后才创建，因此传输重放不会重复执行本地副作用。
 
 ## 8. Finalization Call
 
@@ -147,6 +347,8 @@ Finalization 使用原 Run 模型快照，但：
 
 - 无工具 schema。
 - timeout 60 秒。
+- `request_max_output_tokens=min(profile.max_output_tokens,4_096)`。
+- 使用 Run snapshot 固化的 wire API 与 `output_token_parameter`，保持 stateless；不重新协商字段。
 - 输入为有界结构化任务结果。
 - 不允许重试产生的内容覆盖已有 Artifact。
 - 调用失败由 Runtime 生成固定格式摘要。

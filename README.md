@@ -26,13 +26,14 @@ MVP 会优先打通这一条闭环：
 - [文档总索引](docs/README.md)
 - [PRD：Agent Runtime MVP](docs/prd/README.md)
 - [TDD：Agent Runtime MVP](docs/tdd/README.md)
-- [Q1-Q80 设计决策与待答 Q81](docs/decisions.md)
+- [Q1-Q110 设计决策](docs/decisions.md)
 
 ## MVP 边界
 
 P0 只覆盖能让 Eidos 真正跑起来的能力：
 
 - macOS 桌面端、Agent / Session / Run 管理
+- 可编辑/Archive 的 OpenAI-compatible Model Profile、显式 Responses/Chat Completions 协议、能力测试与版本化快照
 - 多 Run 持久化 FIFO 队列与全局单执行器
 - ReAct-style Agent Loop
 - 只读工具批次与逐文件 `write_file` / `apply_patch` / `delete_file`

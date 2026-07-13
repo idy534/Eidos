@@ -48,6 +48,11 @@ GET    /api/v1/artifacts/{artifact_id}/content
 
 POST   /api/v1/model-profiles
 GET    /api/v1/model-profiles
+GET    /api/v1/model-profiles/{profile_id}
+PATCH  /api/v1/model-profiles/{profile_id}
+POST   /api/v1/model-profiles/{profile_id}/test-connection
+POST   /api/v1/model-profiles/{profile_id}/archive
+POST   /api/v1/model-profiles/{profile_id}/restore
 
 GET    /api/v1/toolchain-profiles
 POST   /api/v1/toolchain-profiles/{profile_id}/enable
@@ -70,7 +75,8 @@ POST   /api/v1/toolchain-profiles/{profile_id}/disable
 - 服务端在写入 Message、占用 idempotency key 或创建 Run 前扫描 `user_input`。
 - `deny`/`redact` 命中时返回 `sensitive_user_input_rejected`，零落库且不占用 key；用户清理后可用原 key 重试。
 - 同一 Session + idempotency_key 返回同一 Run。
-- Run 创建时固化 Model Profile snapshot，创建第一个 Segment，并进入 queued。
+- 创建前复检 Session 的 Model Profile 在当前配置下最新 capability snapshot 为 `passed`；否则返回 `model_profile_not_verified`，不占用 idempotency key、不创建 Message/Run/Segment。
+- Run 创建时固化 Model Profile 与 capability snapshot，创建第一个 Segment，并进入 queued。
 
 ### 3.2 Approval
 
@@ -92,13 +98,34 @@ Approve/Reject 请求不接受工具参数编辑：
 
 仅允许 Run waiting_user_input。请求先在受控内存中扫描原文；命中或扫描失败时不追加 Message、不重置计数、不创建 Segment 且不改变 Run 状态。扫描通过后，一个事务内追加消息、重置 Reject 和 sensitive ToolCall 计数、创建新 Segment、清除允许清除的 pause reason，并进入队尾。
 
-### 3.4 Session Model 切换
+### 3.4 Model Profile 生命周期
+
+Create 请求包含 `name, base_url, model, wire_api=responses|chat_completions, auth_mode, api_key, parameters_json, context_window_tokens, max_output_tokens`。`bearer|api_key_header` 要求非空 API Key，`none` 禁止提交 API Key。创建只保存配置，返回 `profile_version, config_revision, has_api_key, archived=false, selectable=false, final_endpoint_preview`，绝不返回密钥。
+
+PATCH 使用 `expected_profile_version` 做条件更新：
+
+- `name` 是唯一不改变 `config_revision/configuration_hash` 的字段。
+- `base_url/model/wire_api/auth_mode/parameters/context/max_output` 或 API Key replacement 属于能力相关变更；事务内递增 `config_revision`，更新 hash 并使当前 snapshot `valid=false`。
+- API Key 字段使用 `api_key_action=keep|replace|clear`，从不以占位符回传。`clear` 只允许目标认证模式为 `none`；Archive 不清除密钥。
+- 任意编辑都递增 `profile_version`；版本冲突返回 `model_profile_version_conflict`，零部分更新。
+
+Archive/restore 同样要求 `expected_profile_version`。Archive 设置 `archived_at` 并使 `selectable=false`，不删除 Profile、凭证、snapshot 或引用；restore 清除 `archived_at`，但只有当前 snapshot 仍有效时才恢复 selectable。API 不提供 DELETE endpoint。
+
+### 3.5 Model Profile 能力探测
+
+- 创建 Profile 只校验并保存配置，不隐式发起 Test Connection；响应标记 `selectable=false`。
+- `POST /api/v1/model-profiles/{profile_id}/test-connection` 由用户显式触发，使用固定 probe 输入，不接受 task、message、workspace、artifact 或自定义 prompt 字段。
+- 探测不创建 Session/Run/Step/ToolCall/Event；probe ToolCall 永不进入工具注册表或执行器。
+- 每次完成都原子创建一个新的 capability snapshot；响应只返回版本、五项必需能力、stateless continuation、可选 `websocket_transport`、固化 output token parameter、时间和安全错误码，不返回 API Key、Provider 原始响应或 probe 正文。
+- Archived Profile 不可探测。只有非 Archived Profile 在当前配置、Gateway contract 和 model request contract 下最新 snapshot `probe_status=passed, valid=true` 时，Profile 列表才返回 `selectable=true`。
+
+### 3.6 Session Model 切换
 
 - Session 切换 Profile 只影响后续创建的 Run，现有 Run 继续使用自身快照。
+- 创建 Session 或切换 Profile 时，服务端要求目标 Profile `selectable=true`；否则返回 `model_profile_not_verified`，原 Session 配置不变。
 - Model Profile API 的任何响应都不返回 API Key 明文。
-- MVP 只创建和读取 Profile，不提供编辑或删除 API。
 
-### 3.5 Toolchain Profile
+### 3.7 Toolchain Profile
 
 - 列表只返回固定系统根和发现到的 `/opt/homebrew|/usr/local`，MVP 不接受 Renderer 提交任意路径。
 - enable/disable 要求受信用户手势 nonce，事务内递增 `profile_version` 和全局 `shell_environment_version`。
@@ -165,13 +192,34 @@ network_host_denied
 local_network_denied
 tool_timeout
 runtime_interrupted
+runtime_contract_unsupported
 reconciliation_required
 context_budget_exceeded
+context_input_too_large
+model_credential_unavailable
 model_auth_failed
 model_not_found
 model_invalid_request
+model_profile_not_verified
+model_profile_archived
+model_profile_version_conflict
+model_profile_invalid_url
+model_profile_endpoint_in_base_url
+model_profile_reserved_parameter
+model_profile_token_limits_invalid
+model_capability_probe_failed
+model_capability_drift
+model_usage_unsupported
+model_output_limit_parameter_unsupported
+model_stateless_mode_unsupported
+model_context_limit_mismatch
+model_tls_validation_failed
 model_temporarily_unavailable
 model_protocol_error
+model_protocol_limit_exceeded
+model_output_limit_exceeded
+model_output_truncated
+model_output_blocked
 repeated_sensitive_tool_input
 hardlink_not_allowed
 file_metadata_preservation_failed
@@ -215,7 +263,10 @@ segment_started
 segment_paused
 step_started
 model_attempt_started
+model_transport_retrying
+model_transport_fallback
 model_output_chunk
+model_output_stopped
 model_stream_interrupted
 model_attempt_failed
 model_response_completed
@@ -258,7 +309,7 @@ run_canceled
 
 每个 payload 带 `schema_version`。Event payload 在写入前脱敏；大正文保存在对应 message/tool log 表，Event 只包含有界摘要和引用 id。
 
-`model_output_chunk` 必须携带 `content_kind=assistant_progress|final_answer` 和 `incomplete`；raw reasoning 不生成 Event。流中断后追加 `model_stream_interrupted`，已提交 progress chunk 保持可回放。网络 Event 只含域名级审计元数据。敏感相关 Event 只允许 ruleset version、rule id/version、action、命中数和安全字段路径/行号，不允许原值、长度、摘要或哈希。
+`model_output_chunk` 必须携带 `content_kind=assistant_progress|final_answer` 和 `incomplete`；raw reasoning 不生成 Event。流中断后追加 `model_stream_interrupted`；token 截断、内容过滤或 Runtime 流上限追加 `model_output_stopped`，payload 只含固定 reason、已提交字节数和 limit category。已提交 progress chunk 保持可回放。`model_transport_retrying|model_transport_fallback` 只包含 attempt index、transport、安全错误分类和有界 delay，不包含 endpoint path/query、Header 或 Provider 原始正文。网络 Event 只含域名级审计元数据。敏感相关 Event 只允许 ruleset version、rule id/version、action、命中数和安全字段路径/行号，不允许原值、长度、摘要或哈希。
 
 Shell `tool_call_output_chunk` 必须携带 `chunk_index, stream_index, stream, captured_at, redacted, truncated, tail_replay`。`chunk_index` 在单 ToolCall 内全局单调，`stream_index` 在 stdout/stderr 各自单调。回放只返回最终持久化 head/省略标记/tail，不恢复已丢弃中间正文。
 
@@ -308,12 +359,16 @@ PRAGMA busy_timeout = 5000;
 |---|---|
 | agents | id, name；MVP seed 唯一 Eidos Agent |
 | security_metadata | singleton id, highest_ruleset_generation, last_ruleset_version, updated_at；用于防止应用回滚降级敏感规则 |
-| runtime_settings | singleton id, shell_environment_version, updated_at |
+| runtime_settings | singleton id, shell_environment_version, gateway_contract_version, current_model_request_contract_version, updated_at |
 | toolchain_profiles | id, fixed_kind, name, canonical_root, dev, inode, bin_dirs_json, enabled, profile_version, enabled_at, invalidated_at；canonical_root 仅允许预定义候选 |
-| model_profiles | name unique, base_url, model, api_key_ref, parameters, context/max output |
+| model_profiles | id, name unique, base_url, model, wire_api, auth_mode, api_key_ref UNIQUE nullable, credential_revision, parameters_json, context_window_tokens, max_output_tokens, profile_version, config_revision, configuration_hash, archived_at, created_at, updated_at；不保存 API Key |
+| model_profile_capability_snapshots | id, profile_id, snapshot_version, configuration_hash, gateway_contract_version, model_request_contract_version, probe_status, valid, authentication, model_exists, streaming, tool_call, usage, stateless_continuation, websocket_transport, output_token_parameter, error_code, invalidation_reason, checked_at, invalidated_at；`UNIQUE(profile_id,snapshot_version)` |
+| model_transport_health | profile_id, configuration_hash, snapshot_version, ws_disabled, disabled_reason, disabled_at；`PRIMARY KEY(profile_id,configuration_hash,snapshot_version)`，无 TTL |
 | workspaces | canonical_root_path unique, state_path, status |
-| sessions | agent_id, model_profile_id, mode, workspace_id, active/state roots；mode/workspace CHECK |
+| sessions | agent_id, model_profile_id, mode, workspace_id, active/state roots；mode/workspace CHECK；创建/切换时目标 Profile 必须非 Archived 且存在当前配置的 valid passed snapshot |
 | messages | session_id, run_id nullable, role, content_kind, content, metadata, ruleset_version, created_at；禁止 raw reasoning kind |
+
+Profile 凭证保存在 `~/.eidos/config.toml` 的 profile-id 专属槽位中，包含 `api_key` 与单调 `credential_revision`。一个槽位只能被同 id Profile 引用，禁止共享引用。替换/清除使用 mode `0600` 的临时文件、fsync 和原子 replace；随后提交 DB 配置版本与 snapshot 失效事务。若进程在两者之间崩溃，启动时发现 config/DB credential revision 不一致即 fail closed：同步到较新的 revision、使 snapshot 失效，但不回滚或回显密钥。
 
 Session 约束：
 
@@ -334,10 +389,14 @@ max_total_steps=80, max_total_effective_seconds=7200
 consecutive_rejects, consecutive_protocol_errors, consecutive_sensitive_tool_inputs
 reconciliation_required, ruleset_version_snapshot
 pause_reason, stop_reason, error_code, error_message
-model_profile_id, model_config_snapshot
+model_profile_id, model_capability_snapshot_id, model_config_snapshot
 started_at, finished_at, created_at, updated_at
 UNIQUE(session_id, idempotency_key)
 ```
+
+`model_config_snapshot` 必须内嵌创建 Run 时的非密钥 Profile 配置、wire API、auth mode、创建时 credential revision、`configuration_hash`、capability snapshot ID/version、Gateway/model request contract version、必需能力、stateless continuation、可选 WebSocket 和 output token parameter。`model_capability_snapshot_id` 只用于审计关联；运行时不得通过该外键读取更新后的能力替代内嵌快照。每次发送仍从 Profile 当前凭证槽读取密钥，并把实际 credential revision 写入 ModelAttempt，不修改该快照。
+
+Profile 不允许硬删除；Session/Run/snapshot 外键均使用 `ON DELETE RESTRICT`。Gateway 或 model request contract version 升级时，启动事务把旧 version 的当前 passed snapshot 设置为 `valid=false, invalidation_reason=gateway_contract_changed|model_request_contract_changed`。运行时 `model_capability_drift|model_context_limit_mismatch` 使 Run failed 的同一数据库事务也使对应 Profile 当前 snapshot `valid=false`，但不修改 Run 内嵌快照。启动时非终态 Run 引用 unsupported request contract 时不执行，原子进入 `waiting_user_input/runtime_contract_unsupported`。
 
 `execution_segments`：
 
@@ -355,6 +414,7 @@ UNIQUE(run_id, segment_index)
 id, run_id, segment_id
 global_step_index, segment_step_index
 status, model_response_json, error_code
+model_cycle_started_at, model_cycle_deadline_at
 started_at, finished_at
 UNIQUE(run_id, global_step_index)
 UNIQUE(segment_id, segment_step_index)
@@ -365,11 +425,18 @@ UNIQUE(segment_id, segment_step_index)
 `model_attempts`：
 
 ```text
-id, step_id, attempt_index, status
-provider_request_id, first_delta_at, usage_json
+id, step_id, logical_model_request_id, attempt_index, status
+wire_api = responses|chat_completions
+transport = websocket|http_stream
+credential_revision, request_max_output_tokens, output_token_parameter, retry_reason
+provider_request_id, first_delta_at
+visible_text_bytes, discarded_reasoning_bytes, stream_payload_bytes
+usage_status = reported|unknown, usage_json
 error_code, error_message, started_at, finished_at
 UNIQUE(step_id, attempt_index)
 ```
+
+同一逻辑请求的每次真实网络发送各占一行；WebSocket 到 HTTP(S) 的重放不得复用 Attempt 行。Run usage 汇总只累加 `usage_status=reported` 的结构化值，并同时返回 `attempt_count` 与 `unknown_usage_attempt_count`，不得把 unknown 转成零。`logical_model_request_id` 是 Eidos 内部关联 ID，不作为厂商幂等承诺。
 
 ### 9.3 Tool 与审批
 
@@ -377,7 +444,7 @@ UNIQUE(step_id, attempt_index)
 
 ```text
 id, run_id, step_id, batch_order
-tool_name, side_effect, arguments_json, arguments_hash
+provider_call_id, tool_name, side_effect, arguments_json, arguments_hash
 status, risk_level, timeout_seconds, execution_nonce
 preconditions_json, expected_postconditions_json, result_json, result_text
 candidate_sha256, read_result_ids_json
@@ -388,6 +455,7 @@ stdout_truncated, stderr_truncated
 exit_code, termination_reason, limit_kind, error_code, error_message
 started_at, finished_at, created_at, updated_at
 UNIQUE(step_id, batch_order)
+UNIQUE(step_id, provider_call_id)
 ```
 
 `approvals` 至少包含：
@@ -496,7 +564,8 @@ event_id
 本地指标至少记录：
 
 - FIFO queue wait、Run/Segment 有效执行时间。
-- 模型首 delta 延迟、总耗时、重试和失败分类。
+- 模型首 delta 延迟、request cycle 总耗时、分 transport 的 Attempt/重试/降级和失败分类，以及 reported usage 与 unknown usage Attempt 数。
+- Model Profile Test Connection 各能力结果、snapshot 失效原因、Archive/恢复、TLS/Redirect/保留参数拒绝和 context mismatch；指标不含 base_url query、API Key 或 Provider 原始错误正文。
 - ToolCall/Approval 耗时、timeout、cancel、interrupted 和冲突。
 - Seatbelt 自检失败、策略拒绝、代理 host 拒绝和 localhost 申请。
 - Event backlog、SSE reconnect 和 redaction 命中数。

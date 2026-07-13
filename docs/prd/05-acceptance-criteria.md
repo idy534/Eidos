@@ -8,7 +8,7 @@
 |---|---|---|
 | A001 | macOS 启动 | Electron 启动并拉起 sidecar；非 macOS 明确拒绝 |
 | A002 | 两种模式 | Workspace/Public Session 均可创建 Run |
-| A003 | Model Profile | Session 可选 Profile，Run 固化不含密钥的快照 |
+| A003 | Model Profile | 创建只保存配置；Test Connection 不携带用户任务数据并验证认证、模型、streaming、ToolCall、usage；失败 Profile 不可选，Run 固化不含密钥的版本化能力快照 |
 | A004 | 多 Run | 多个 Run 可创建、查看、排队、暂停和取消 |
 | A005 | 单执行器 | 任意时刻最多一个 Run 调模型或执行工具 |
 | A006 | FIFO | 新建和恢复按 `enqueued_at` 排队，重启后顺序保持 |
@@ -143,3 +143,45 @@
 | A103 | 所有权与 flags | 非当前 uid、immutable/append-only 文件零修改；成功修改保留 gid/mode/ACL/xattr/可保留 flags |
 | A104 | 稀疏文件 | 文件工具按 logical size 限制；Shell 磁盘保护按 allocated blocks；审计同时展示两种变化 |
 | A105 | Artifact 发布边界 | <=32 MiB 严格 UTF-8 文本发布为不可变快照；二进制/压缩/加密/格式不可扫描时零 Artifact |
+
+## 11. Model Profile 生命周期与连接
+
+| 编号 | 验收项 | 标准 |
+|---|---|---|
+| A106 | Snapshot 失效 | 无时间 TTL/后台探测；连接配置、Gateway/model request contract 版本或确定性能力漂移使 snapshot 失效，新 Session/Run 被拒绝，既有 Run 不变 |
+| A107 | Profile 编辑 | 展示字段编辑保持可选；连接/认证/参数/容量变化后立即不可选，重新测试通过后恢复 |
+| A108 | Archive | Archive/恢复可用且无物理删除；Archived Profile 不可用于新执行，所有历史引用完整 |
+| A109 | 凭证隔离 | 每个 Profile 独占密钥槽位，明文不回显；替换只使本 Profile snapshot 失效 |
+| A110 | Endpoint 边界 | 公网/loopback/局域网/私网 HTTP(S) 均可配置；URL 凭证和跨 Origin Redirect 拒绝，HTTP 有明文警告 |
+| A111 | TLS | HTTPS 使用系统信任链验证证书与主机名；证书错误结构化失败且无绕过入口 |
+| A112 | 认证与参数 | 仅 bearer/api_key_header/none；无任意 Header；扩展参数可透传但不能覆盖核心字段或传输配置 |
+| A113 | Token 容量 | context/output 上限必填且关系合法；不按模型名推断；明确 context mismatch 终止 Run、失效 snapshot 并要求重测 |
+
+## 12. 模型传输与上下文预算
+
+| 编号 | 验收项 | 标准 |
+|---|---|---|
+| A114 | 轮换凭证 | 既有 Run 的下一次请求使用 Profile 当前密钥；Run 非密钥快照保持不变，Attempt 记录实际凭证 revision |
+| A115 | 传输探测 | HTTP(S) streaming 必须通过；WebSocket 记录 supported/unsupported/unknown，unsupported Profile 仍可通过原 endpoint 的 HTTP(S) 选择 |
+| A116 | 传输降级 | 首 delta 前 WebSocket 最多 5 次后以相同模型请求降级 HTTP(S)；HTTP(S) 最多 2 次；明确不支持立即降级 |
+| A117 | 降级作用域 | 瞬时降级仅当前 Run 粘滞；明确不支持按 snapshot 抑制且无 TTL/后台重探测；HTTPS 能力 snapshot 不失效 |
+| A118 | Attempt 与 usage | 每次网络发送独立 Attempt、共享逻辑请求 ID；usage 逐次保存，缺失标记 unknown 且汇总不按零计算 |
+| A119 | 输入估算 | 稳定 canonical payload 的 UTF-8 字节、固定协议开销和 2% 有界 margin 按确认公式计算，发送前不得超预算 |
+| A120 | 输出预留 | 普通/纠正请求使用 Profile 上限，Finalization 最多 4,096，探测最多 512；重放值不变且 Attempt 可审计 |
+| A121 | 本地超限 | 不可裁剪输入超限时零 Provider 请求、Run failed/context_input_too_large、snapshot 保持有效并展示安全预算明细 |
+| A122 | 请求周期 | 同一 Step 全部 Attempt、退避和降级共享 10 分钟；每次建连/首 delta/空闲不超过 15/180/120 秒；Finalization 独立 60 秒 |
+
+## 13. 模型协议归一化
+
+| 编号 | 验收项 | 标准 |
+|---|---|---|
+| A123 | 契约版本 | Run 固化 model request contract；规则升级使 Profile 重测，既有 Run 不被静默迁移，不支持版本时零模型请求 |
+| A124 | Wire API | Responses 与 Chat Completions 均可显式配置并通过同一内部事件运行；不存在自动推断或跨协议 fallback |
+| A125 | Endpoint | API root 正确追加固定 endpoint；已有 endpoint 输入拒绝；path prefix/query/Origin 规则保持 |
+| A126 | Usage | 两种协议完整响应均有合法非负 input/output/total；Chat 请求 include_usage；缺失在探测失败、运行时 drift |
+| A127 | ToolCall identity | 分片按协议索引稳定归并，内部/Provider ID 分离；缺失、重复、冲突或非法 JSON 零 ToolCall/Approval |
+| A128 | ToolCall limits | 16 calls、1/2 MiB、16,384 deltas、名称与 JSON 深度/成员边界逐一强制，超限仅产生安全错误摘要 |
+| A129 | Stream limits | 动态可见文本、2 MiB reasoning、1 MiB Event 和 8 MiB 总流边界生效；超限无重试且部分文本保持 incomplete |
+| A130 | 完成判定 | Responses completed 与 Chat finish/usage/[DONE] 条件严格；EOF、length、filter 和未知终态分别正确映射 |
+| A131 | Stateless | Responses store=false 且无 previous response；Chat 发送本地完整消息；重启、轮换密钥和传输降级不依赖 Provider history |
+| A132 | 输出字段 | Responses 使用 max_output_tokens；Chat 探测并固化 max_completion_tokens 或 max_tokens，运行期不切换 |

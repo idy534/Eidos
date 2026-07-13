@@ -1,7 +1,7 @@
 # Eidos MVP 设计决策记录
 
 版本：v0.4
-范围：Grilling Q1-Q80
+范围：Grilling Q1-Q110
 
 本文件记录已经由产品与技术共同确认的结论。PRD 描述产品承诺，TDD 描述实现约束；若正文与本文件冲突，应先停止实现并统一文档。
 
@@ -43,7 +43,7 @@
 | Q34 | Reject 计数在获批状态变更成功或用户开启新 Segment 时重置；达到 2 次暂停。 | TDD Approval 状态机 |
 | Q35 | 全局执行队列不可抢占、持久化、FIFO；MVP 不支持优先级和手动调序。 | PRD 调度；TDD 队列 |
 | Q36 | 取消是协作式的；已经进入原子文件提交区的操作完成后再取消 Run。 | PRD 取消；TDD 状态机 |
-| Q37 | 模型仅在首个 delta 前对瞬时错误最多重试 2 次；只读工具瞬时错误重试 1 次；写和 Shell 不自动重试。 | TDD 重试策略 |
+| Q37 | 模型仅在首个 delta 前对瞬时错误最多重试 2 次；Q94 确认后该预算专指 HTTP(S) 阶段，WebSocket 使用独立 5 次预算。只读工具瞬时错误重试 1 次；写和 Shell 不自动重试。 | TDD 重试策略 |
 | Q38 | 写或 Shell 失败后强制事实确认屏障；完成只读核验前不能再次执行有副作用工具。 | TDD Runtime 状态机 |
 | Q39 | localhost 默认禁止；`local_network=true` 需单次审批；Unix Socket 在 MVP 中始终禁止。 | PRD 安全；TDD 网络策略 |
 | Q40 | 只读工具可批量；写、删除、Shell 独占且审批；`publish_artifact` 独占但自动执行。 | TDD 工具分类 |
@@ -87,6 +87,36 @@
 | Q78 | 默认仅系统工具链；`/opt/homebrew` 和 `/usr/local` 需用户启用 Toolchain Profile，用户 Home 工具链不进入 MVP。 | PRD Settings；TDD Shell 环境 |
 | Q79 | Shell 固定限制 64 进程、256 fd、2 GiB 内存、1 GiB 单文件和 2 GiB 净磁盘增长；限制不可单次放宽。 | PRD NFR；TDD 资源监控 |
 | Q80 | Shell 输出先脱敏再按 100ms/4 KiB 合并；stderr 优先的 1 MiB head+tail 持久化，慢订阅者不得阻塞管道。 | PRD Execution Feed；TDD 流式输出 |
+| Q81 | Model Profile 必须通过不携带用户任务数据的显式能力探测后才能被 Session 选择；探测生成版本化 capability snapshot，Run 固化创建时快照，运行时能力漂移按结构化模型错误处理。 | PRD Model Profile；TDD Model Gateway/API/存储 |
+| Q82 | Capability snapshot 不设时间 TTL 或后台自动探测；Profile 配置、Gateway contract version 变化或确定性 capability drift 使其失效，重新用于新 Session/Run 前必须显式测试。 | PRD Model Profile；TDD snapshot 状态 |
+| Q83 | MVP 支持编辑已有 Model Profile；连接/协议字段变化使 capability snapshot 失效，纯展示字段变化不失效，既有 Run 保持原快照。 | PRD Models；TDD API/版本 |
+| Q84 | Model Profile 只支持 Archive/恢复，不做物理删除；历史 Session、Run、Timeline 和 snapshot 引用永久保留。 | PRD Models；TDD 生命周期/存储 |
+| Q85 | 每个 Model Profile 独占 API Key 凭证槽位；密钥不共享、不回显，替换只使该 Profile 的 snapshot 失效。 | PRD 隐私；TDD 配置安全 |
+| Q86 | Model `base_url` 不按公网/私网类别限制，但只接受 HTTP(S)、禁止 URL 内嵌凭证和跨 Origin 重定向。 | PRD 兼容性/安全；TDD Gateway 网络 |
+| Q87 | HTTPS 必须校验证书、主机名和信任链，使用 macOS 系统信任库；MVP 不提供忽略 TLS 错误的通道。 | PRD 安全；TDD TLS |
+| Q88 | Model Profile 仅支持 `bearer`、`api_key_header`、`none` 三种固定认证模式，不允许任意自定义 Header。 | PRD Models；TDD 请求构造 |
+| Q89 | Provider 扩展参数可以透传，但不得覆盖 Runtime 核心字段或注入传输层配置；参数变化使 snapshot 失效。 | PRD Models；TDD 参数校验 |
+| Q90 | `context_window_tokens` 与 `max_output_tokens` 由用户显式填写，Eidos 不按模型名自动推断；明确的上下文上限不匹配使 Run 失败并使 snapshot 失效。 | PRD Models；TDD Context Builder |
+| Q91 | 既有 Run 不固化 API Key；每次模型请求从 Profile 专属凭证槽读取当前有效密钥，轮换后使用新密钥但不改写 Run 的非密钥配置快照。 | PRD 凭证轮换；TDD Gateway/凭证版本 |
+| Q92 | MVP 不依赖 Provider token 统计做发送前预算；使用版本化 canonical payload 的 UTF-8 字节保守估算、固定协议开销和固定公式 safety margin。 | PRD 上下文预算；TDD Context Builder |
+| Q93 | 模型网络阶段使用固定超时：建连 15 秒、首 delta 180 秒、流空闲 120 秒；完整请求周期受共享总时限约束。 | PRD 响应体验；TDD Model Gateway |
+| Q94 | 已验证支持 WebSocket 的 Profile 优先使用 WebSocket；首 delta 前最多重连 5 次后在同一逻辑请求内降级 HTTP(S)，HTTP(S) 最多重试 2 次；首 delta 后禁止重放。 | PRD 模型韧性；TDD 传输状态机 |
+| Q95 | WebSocket 是可选优化：瞬时降级仅粘滞于当前 Run；明确不支持时按 snapshot 版本记录 `ws_disabled`，不使 HTTP(S) streaming 能力 snapshot 失效，也不设 TTL 或后台重探测。 | PRD Model Profile；TDD 传输健康状态 |
+| Q96 | 每次实际模型网络发送都创建独立 ModelAttempt；同一 Step 共享逻辑请求 ID，不假设 Provider 幂等，分别保存已报告 usage，未知 usage 不按零计算。 | PRD 用量透明；TDD Attempt/可观测性 |
+| Q97 | 输入估算固定为 canonical payload UTF-8 字节数加协议开销；safety margin 为 context window 的 2%，下限 1,024、上限 8,192。 | PRD 上下文预算；TDD 估算公式 |
+| Q98 | 普通/纠正请求使用 Profile 的 `max_output_tokens`；Finalization 上限 4,096，Test Connection 探测上限 512；实际请求值参与预算并写入 Attempt。 | PRD 输出预算；TDD 请求构造 |
+| Q99 | 不可裁剪输入在本地预算阶段已超限时零 Provider 请求，Run 直接 `failed/context_input_too_large` 且不使 capability snapshot 失效。 | PRD 错误体验；TDD Context Builder/状态机 |
+| Q100 | 同一 Step 的完整模型请求周期共享 10 分钟 deadline，覆盖全部 Attempt、传输降级、退避和 Retry-After；Finalization 仍为独立 60 秒。 | PRD 时间预算；TDD 重试时钟 |
+| Q101 | 版本化 `model_request_contract_version` 固化序列化、预算、输出预留、传输重试与 timeout；新版本使 Profile snapshot 失效，既有 Run 继续使用创建时版本。 | PRD 升级兼容；TDD 版本路由/恢复 |
+| Q102 | MVP 同时支持显式 `wire_api=responses|chat_completions`；只测试和运行所选协议，不自动猜测、跨协议回退或建立厂商分支。 | PRD Model Profile；TDD Protocol Adapter |
+| Q103 | `base_url` 只表示 API 根；Adapter 固定追加 `/responses` 或 `/chat/completions`，完整 endpoint 输入拒绝，结构化拼接并保留安全 query。 | PRD Endpoint；TDD URL 构造 |
+| Q104 | 两种协议都必须提供完整非负 usage；Chat 固定请求 `stream_options.include_usage=true`，缺失或非法 usage 使探测失败，运行时属于 capability drift。 | PRD 用量；TDD usage 归一化 |
+| Q105 | 两种协议严格归一化流式 ToolCall；Provider call ID 必须完整唯一，内部 UUID 与 Provider ID 分离，缺失/冲突不得合成 ID。 | PRD 工具可靠性；TDD ToolCall assembler |
+| Q106 | ToolCall assembler 固定 16 calls、单 call 1 MiB、合计 2 MiB、16,384 deltas、JSON 深度 16/成员 2,048 等内存硬上限。 | PRD 资源边界；TDD 流式解析 |
+| Q107 | 模型可见文本按 output tokens 动态限制且最大 4 MiB；discarded reasoning 2 MiB、单 Event 1 MiB、总流 8 MiB，超限暂停且不重试。 | PRD 输出安全；TDD Stream limiter |
+| Q108 | Responses 只以 `response.completed` 完成；Chat 必须有合法 finish reason、完整分片、usage 和 `[DONE]`；截断/过滤暂停 Run，不执行任何 ToolCall。 | PRD 输出状态；TDD 完成判定 |
+| Q109 | MVP 固定语义无状态模型请求：Responses `store=false`，不依赖 previous response/conversation；每个 Step 从本地状态重建完整上下文。 | PRD 隐私/可恢复性；TDD Context Adapter |
+| Q110 | Responses 固定 `max_output_tokens`；Chat 仅在 Test Connection 中按确定性错误协商 `max_completion_tokens`/`max_tokens` 并把结果固化到 snapshot。 | PRD 兼容性；TDD 参数协商 |
 
 ## 文件契约统一收敛
 
@@ -99,13 +129,3 @@
 - MVP `publish_artifact` 只发布 <=32 MiB 的严格 UTF-8 文本快照；二进制、压缩包、加密容器和需格式解析才能扫描的 Artifact 延后。
 
 后续敏感信息细节由上述安全原则统一收敛：不降级、不静默改写有副作用输入、不持久化原始命中，且不增加用户可绕过通道。
-
-## 待答问题
-
-### Q81：OpenAI-compatible Model Profile 的能力验证
-
-状态：待回答，尚未形成设计决策，不得作为已批准规则写入 PRD/TDD。
-
-问题：Model Profile 是否必须在可被 Session 选择前，通过一次不携带用户任务数据的显式能力探测，验证认证、模型存在、streaming、ToolCall 和 usage 契约？
-
-当前推荐答案：必须。Profile 创建只保存配置，显式 Test Connection 产生版本化 capability snapshot；未通过的 Profile 不可用于新 Session/Run，Run 继续固化当时 snapshot，运行时能力漂移按结构化模型错误处理。

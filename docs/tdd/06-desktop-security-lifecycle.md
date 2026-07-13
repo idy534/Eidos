@@ -36,6 +36,13 @@ window.eidos.events.subscribe(runId, handler)
 window.eidos.workspaces.chooseFolder()
 window.eidos.workspaces.openInSystemTerminal(workspaceId)
 window.eidos.artifacts.open(artifactId)
+window.eidos.models.create(input)
+window.eidos.models.list()
+window.eidos.models.get(profileId)
+window.eidos.models.update(profileId, input)
+window.eidos.models.testConnection(profileId, userGestureNonce)
+window.eidos.models.archive(profileId, input)
+window.eidos.models.restore(profileId, input)
 window.eidos.toolchains.list()
 window.eidos.toolchains.enable(profileId, userGestureNonce)
 window.eidos.toolchains.disable(profileId, userGestureNonce)
@@ -173,7 +180,25 @@ Artifact UI 在 MVP 只接受 text/markdown/json/csv/html/code；不支持格式
 
 Renderer 不实现 raw reasoning 专用 UI；只渲染 `assistant_progress`、`final_answer` 和 reasoning token 用量元数据。
 
+Model Profile UI 必须区分未测试、测试中、已通过、已失效、失败和 Archived 状态。用户必须显式选择 Responses 或 Chat Completions。Test Connection 只能由用户手势触发，不接受任务或自定义 probe 文本；结果展示 snapshot/request contract version、认证、模型、HTTP(S) streaming、ToolCall 分片/续接、usage、stateless continuation、output token parameter、可选 WebSocket 的 supported/unsupported/unknown 和安全错误分类。WebSocket unsupported/unknown 不阻止选择；任一必需能力未通过、失效或 Archived Profile 禁用 Session 选择和新 Run 创建，既有 Run 仍展示其固化 snapshot。
+
+Profile 编辑表单不回显 API Key，只提供保持、替换或在 `none` 认证下清除。连接/协议字段修改前提示“保存后需要重新 Test Connection”；纯名称修改不显示失效提示。Archive 使用确认卡且无 Delete 操作，恢复后根据 snapshot 有效性决定是否可选。
+
+Endpoint 表单接受任意 HTTP(S) 地址类别，拒绝 URL 内嵌凭证和已包含固定 endpoint 的 base_url，并展示规范化 API root、Origin 和根据 wire API 生成的最终 URL。HTTP 显示 API Key 与任务内容非加密传输警告；HTTPS 证书错误只显示 `model_tls_validation_failed`，没有忽略错误按钮。认证只显示 bearer/api_key_header/none，参数编辑器明确标记 Runtime 保留字段；context/output 上限由用户输入，不根据模型名自动回填覆盖。
+
+运行时 `model_capability_drift|model_context_limit_mismatch` 显示为终态模型兼容性错误，Profile 同时变为已失效，并引导编辑或重新测试后创建新 Run。
+
 模型流中断时，已显示的 assistant_progress 保留并显示“输出未完成”；Renderer 不把它并入最终回答，也不渲染部分 ToolCall 参数。
+
+首 delta 前重试时，Renderer 根据 Event 显示 `正在重新连接 x/y`；WebSocket 降级时显示一次“已切换到 HTTP(S) 传输”。同一 Run 后续 HTTP(S) 请求不重复提示。首 delta 后不得显示重连状态。
+
+Run 用量区域分别显示 Provider 已报告 usage、总 Attempt 数和 usage unknown Attempt 数；unknown 不显示为 0，也不据此生成精确费用。密钥轮换只显示实际使用的 credential revision，不显示或比较密钥内容。
+
+`context_input_too_large` 错误卡显示 estimated required、usable input budget、request output reserve 和 safety margin，引导缩短任务或选择更大上下文 Profile 后创建新 Run；不提供恢复当前 Run 的入口，也不把 Profile 标为失效。
+
+`model_output_truncated|model_output_blocked|model_output_limit_exceeded` 分别显示“达到模型输出上限”“Provider 内容过滤”“Eidos 输出资源上限”；只保留 incomplete progress，不渲染或审批该响应 ToolCall。`runtime_contract_unsupported` 只允许取消或复制原任务创建新 Run。
+
+Model Profile 页面说明 Eidos 使用 stateless 请求且 Responses 设置 `store=false`，但不承诺第三方零留存；链接到用户所选 Provider 的隐私条款由用户自行确认，Eidos 不抓取或声称验证其政策。
 
 模型认证或确定性配置错误时，Renderer 显示 failed 错误卡和“更换/修复 Model Profile 后创建新 Run”，不提供恢复原 Run 的按钮。
 

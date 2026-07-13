@@ -11,7 +11,7 @@
 | F003 | Eidos Home | 初始化并校验 `~/.eidos` 权限与目录结构 |
 | F004 | Workspace Mode | 选择本地目录并创建 Workspace Session |
 | F005 | Public Mode | 不选择项目目录也能创建 Session 和 Run |
-| F006 | Model Profile | 配置多个 OpenAI-compatible Profile；Run 固化配置快照 |
+| F006 | Model Profile | 配置多个 OpenAI-compatible Profile；显式无任务数据能力测试通过后才可选择；Run 固化版本化配置与能力快照 |
 | F007 | Run 队列 | 多 Run 可保留；全局单执行器；持久化 FIFO |
 | F008 | Execution Segment | 单段最多 20 Steps/30 分钟；恢复创建新 Segment |
 | F009 | Run 硬上限 | 最多 80 Steps/120 分钟；到限进入 `stopped` |
@@ -38,7 +38,7 @@
 | F030 | Event Timeline | 所有关键事件与状态变更同事务持久化 |
 | F031 | Context Budget | P0 提供确定性的有界上下文裁剪 |
 | F032 | Redaction | 截断、展示、返回模型与持久化前按确定性规则分级处理 |
-| F033 | 有限重试 | 模型首 delta 前最多 2 次；只读瞬时错误 1 次 |
+| F033 | 有限重试 | 已验证 WebSocket 首 delta 前最多重连 5 次并降级 HTTP(S)，HTTP(S) 瞬时错误最多 2 次；只读瞬时错误 1 次 |
 | F034 | Finalization | 硬停止前一次最长 60 秒、无工具的收尾调用 |
 | F035 | 系统 Terminal | Workspace 中只提供用户点击打开系统 Terminal |
 | F036 | 模型流中断恢复 | 首 delta 后中断不重试，保留未完成进度并等待用户输入 |
@@ -79,6 +79,27 @@
 | F071 | 文件元数据补全 | 仅当前用户所有文件；保留 gid/flags；immutable/append-only 拒绝 |
 | F072 | 稀疏文件计量 | 工具容量按逻辑字节，Shell 磁盘增长按 allocated blocks，同时记录两者 |
 | F073 | Artifact 文本边界 | 只发布 <=32 MiB 严格 UTF-8 不可变快照，不发布无法完整扫描的容器 |
+| F074 | Profile 生命周期 | 支持编辑和 Archive/恢复，不物理删除；连接配置变化使能力快照失效，历史 Run 保持固化快照 |
+| F075 | Profile 凭证 | 每个 Profile 独占不回显的 API Key 槽位；固定 bearer/api_key_header/none 认证，不支持任意 Header |
+| F076 | Model Endpoint | base_url 地址类别不受限但仅 HTTP(S)、无内嵌凭证、无跨 Origin Redirect；HTTPS 不可绕过证书校验 |
+| F077 | Provider 参数 | 允许有界扩展参数透传，禁止覆盖 Runtime 核心字段或注入传输层配置 |
+| F078 | Model 容量声明 | 用户必填 context/output token 上限；不按模型名推断；明确不匹配使 Run failed 并使 snapshot 失效 |
+| F079 | 凭证轮换 | Run 不固化密钥；既有 Run 每次模型调用读取 Profile 当前凭证，但保持创建时非密钥配置与能力快照 |
+| F080 | 模型传输降级 | WebSocket 是可选优化；瞬时失败使当前 Run 粘滞 HTTP(S)，明确不支持时按 snapshot 抑制后续 WebSocket，不影响 Profile 可选性 |
+| F081 | 模型请求周期 | 一个 Step 的初始请求、重试、降级和退避共享 10 分钟 deadline；首 delta 后禁止重放 |
+| F082 | 模型尝试透明度 | 每次网络发送独立记录 Attempt；已报告 usage 累计，未知 usage 明示，不假设服务端幂等 |
+| F083 | 上下文预检 | 使用版本化 UTF-8 字节与固定开销公式估算；发送前必须满足输入、输出预留和 safety margin 总预算 |
+| F084 | 本地输入超限 | 不可裁剪输入超限时零 Provider 请求并以 `context_input_too_large` 终止 Run，不失效 Profile snapshot |
+| F085 | 请求契约版本 | 序列化、预算、传输和 timeout 语义版本化；新版本重测 Profile，既有 Run 保持创建时版本 |
+| F086 | 双 wire API | Profile 显式选择 Responses 或 Chat Completions；不自动推断、跨协议回退或按厂商分支 |
+| F087 | Endpoint 构造 | base_url 是 API 根；Adapter 结构化追加固定 endpoint，拒绝已含 endpoint 的输入 |
+| F088 | usage 契约 | 完整响应必须报告合法 usage；Chat 固定请求流式 usage，缺失不补查、不估算、不填零 |
+| F089 | ToolCall 归一化 | 内部 UUID 与 Provider call ID 分离；严格归并分片，缺失/冲突 ID 零 ToolCall |
+| F090 | ToolCall 流上限 | 单响应最多 16 calls，单 call 1 MiB、合计 2 MiB，并限制 delta 数、名称和 JSON 结构 |
+| F091 | 模型输出上限 | 可见文本、reasoning、单 Event 和总流量均有硬上限；超限保留安全进度并暂停，不重试 |
+| F092 | 完成语义 | 仅完整协议终态可完成；token 截断和内容过滤不执行 ToolCall并进入 waiting_user_input |
+| F093 | 无状态模型请求 | 每个 Step 从本地状态重建上下文；不依赖 Provider conversation、previous response 或服务端 history |
+| F094 | 输出字段协商 | Responses 固定字段；Chat 只在 Test Connection 有界协商并把结果固化到 snapshot |
 
 ## 2. ToolCall 组合规则
 
@@ -123,7 +144,13 @@
 | 候选文件 | 32 MiB | 超限改用受审批 Shell |
 | 单文件敏感扫描 | 32 MiB | 超限不返回正文 |
 | 单次搜索扫描 | 256 MiB / 15 秒 | 可返回已完成整文件扫描的安全结果 |
-| 模型重试 | 2 次 | 仅首个 delta 前的瞬时错误 |
+| 模型请求周期 | 10 分钟 | 含建连、流式、全部重试、退避和传输降级 |
+| 模型建连/首 delta/流空闲 | 15/180/120 秒 | 每次 Attempt，且不得越过请求周期 deadline |
+| WebSocket/HTTP(S) 重试 | 5/2 次 | 仅首个 delta 前；WebSocket 耗尽后降级原 endpoint 的 HTTP(S) streaming |
+| 模型可见文本 | 64 KiB..4 MiB | `CLAMP(request_max_output_tokens*16,64 KiB,4 MiB)` |
+| discarded reasoning | 2 MiB | 只计数后丢弃，超限终止流 |
+| 单 Event/总模型流 | 1 MiB / 8 MiB | 按协议解码后 payload 字节 |
+| ToolCall 响应批次 | 16 calls / 单个 1 MiB / 合计 2 MiB | 另受各工具 schema 更小上限约束 |
 | 只读工具重试 | 1 次 | 仅瞬时错误 |
 | 写/Shell 重试 | 0 | 必须先确认事实 |
 

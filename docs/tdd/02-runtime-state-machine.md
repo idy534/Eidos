@@ -19,7 +19,7 @@ Session
 - Run 是一次可暂停、恢复和排队的任务执行。
 - Execution Segment 是一次连续执行预算，用户补充信息后创建新 Segment。
 - Step 对应一次完整模型响应及其 ToolCall 批次。
-- ModelAttempt 记录同一 Step 的模型传输重试。
+- ModelAttempt 记录一次真实模型网络发送；同一 Step 的 Attempt 共享逻辑请求 ID，并由 Step 级 10 分钟 request cycle deadline 统一约束。
 
 ## 2. 全局单执行器
 
@@ -127,7 +127,7 @@ create step
 
 只读批次单项失败不阻断后续调用；取消、硬预算、安全异常终止剩余调用。
 
-模型协议错误包括空响应、ToolCall JSON 无法解析、未知工具、参数 schema 错误和非法批次。处理规则：
+模型协议错误包括空响应、ToolCall ID/index/JSON 归并失败、ToolCall 流资源超限、未知工具、参数 schema 错误和非法批次。处理规则：
 
 - 第一次错误：`consecutive_protocol_errors += 1`，记录失败 Step，把具体错误反馈给下一 Step 的模型。
 - 连续第二次错误：Run 进入 waiting_user_input，`pause_reason=model_protocol_error`。
@@ -247,11 +247,13 @@ applied | not_applied | outcome_unknown
 
 ## 9. Retry
 
-- 模型请求在首个 delta 前遇到网络错误、429、5xx：最多重试 2 次。
-- 两次重试仍失败时，当前 Step 标记 `failed/model_temporarily_unavailable`，Run 进入 waiting_user_input。
+- 已验证支持 WebSocket 时优先使用；首个 delta 前瞬时错误最多重放 5 次，随后以相同逻辑请求降级到原 endpoint 的 HTTP(S) streaming。明确不支持时立即降级。
+- HTTP(S) 在首个 delta 前遇到网络错误、429、5xx 最多重试 2 次；仍失败或 request cycle 达到 10 分钟时，当前 Step 标记 `failed/model_temporarily_unavailable`，Run 进入 waiting_user_input。
+- 每个 Attempt 的 connect/first-delta/stream-idle 上限分别为 15/180/120 秒，所有 Attempt、退避和降级共享 request cycle deadline。
 - 设置 `pause_reason=model_temporarily_unavailable`；多个 ModelAttempt 仍属于同一个 Step，只计一次 Step 预算。
 - 用户继续时创建新 Segment，使用原 Model Profile snapshot 重新入队。
-- 收到任何 delta 后不透明重试；Step 标记 `failed/model_stream_interrupted`。
+- 收到任何 delta 后不透明重试且不切换传输；Step 标记 `failed/model_stream_interrupted`。
+- Provider token 截断、内容过滤和 Runtime 输出流超限分别标记 `model_output_truncated|model_output_blocked|model_output_limit_exceeded`；Run waiting_user_input，已提交文本 incomplete，整个 ToolCall 批次丢弃，零自动重试。
 - 已显示文本保留为 `assistant_progress` 并标记 `incomplete=true`，不能成为 final_answer。
 - 未完整解析的 ToolCall 全部丢弃，一个也不创建或执行。
 - Run 进入 waiting_user_input，`pause_reason=model_stream_interrupted`。
@@ -260,9 +262,13 @@ applied | not_applied | outcome_unknown
 - not_found、validation、permission、sensitive_file 不重试。
 - 写工具、publish_artifact 和 run_shell 不自动重试或重放。
 - API Key 无效、模型不存在、Base URL 或请求参数确定性错误使 Run 直接进入 failed。
+- 本地预算发现不可裁剪输入超限时零模型发送，Step/Run 以 `context_input_too_large` failed，不使 capability snapshot 失效。
+- 每次请求读取 Profile 当前凭证；凭证槽缺失或不可读时不使用 Run 创建时旧密钥，Run 直接 failed。
+- TLS 校验失败、明确的 context-length exceeded 或 Provider 违反固化的 streaming/ToolCall/usage 契约同样直接 failed；后两类还在终态事务中使 Profile 当前 capability snapshot 失效。
 - 该终态失败不执行 Finalization Call，不允许替换 Run 的模型快照后恢复。
 - 已有 Timeline 和 Artifact 保留；用户修复或更换 Profile 后创建新 Run。
 - 模型流敏感扫描器失败时，未确认安全的文本和 ToolCall 丢弃，Step 标记 `sensitive_scan_failed`，Run 进入 waiting_user_input。
+- Run 固化的 model request contract 实现不可用时不创建 Step/Attempt，Run 进入 `waiting_user_input/runtime_contract_unsupported`；不能用新版本继续原 Run。
 
 ## 10. Cancel
 

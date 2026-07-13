@@ -53,11 +53,32 @@ Execution Feed 不保存或展示模型供应商的 raw reasoning：
 - reasoning token 数量可以作为用量元数据展示，但 reasoning 内容不进入消息、Timeline 或回放。
 - UI 不使用“思维链”“内部思考”等表述。
 
-## 3. Workspace 主流程
+## 3. Model Profile 流程
+
+- 创建 Profile 只保存 OpenAI-compatible 连接配置和显式 `responses|chat_completions` wire API，不会自动使其可用于 Session。
+- 用户必须显式执行 Test Connection；探测不携带用户任务、Session 消息、Workspace 内容或 Artifact 正文。
+- 探测必须验证认证、模型存在、streaming、ToolCall 和 usage 契约，并生成版本化 capability snapshot。
+- 只有最近一次能力探测成功且存在有效 snapshot 的 Profile 才能被 Session 选择或用于创建新 Run；失败项显示安全的分类结果，不回显 API Key。
+- Run 始终使用创建时固化的 Profile 与 capability snapshot。运行期间发现能力漂移时显示结构化模型错误，不静默修改原 Run 或切换 Profile。
+- Snapshot 不按时间自动过期，也不在后台自动探测；连接/协议配置变化、Gateway 契约升级或运行中确认能力漂移时失效，重新使用前必须由用户再次 Test Connection。
+- 用户可以编辑 Profile。名称等展示字段变化不影响 snapshot；连接、认证、参数和上下文上限变化会立即使 Profile 不可选择，既有 Run 不受影响。
+- 用户可以 Archive 和恢复 Profile，但不能物理删除。Archived Profile 不可用于新 Session/Run，历史 Session、Run、Timeline 和 snapshot 保留；恢复后仍需满足有效 snapshot 条件。
+- 每个 Profile 独占 API Key 凭证槽位；保存后不回显明文。替换密钥只影响该 Profile，不存在跨 Profile 共享或选择凭证。
+- Run 不复制 API Key；既有 Run 的后续模型请求使用该 Profile 凭证槽中的当前密钥。轮换密钥不会修改 Run 的非密钥配置和能力快照。
+- 认证模式只提供 `bearer`、`api_key_header` 和 `none`，不接受任意自定义 Header。
+- `base_url` 可以指向公网、loopback、局域网或其他私网 HTTP(S) 服务；不允许 URL 内嵌凭证，跨 Origin Redirect 被拒绝。HTTP 端点明确标记为非加密连接。
+- `base_url` 是 API 根地址；UI 展示 Adapter 追加后的最终 `/responses` 或 `/chat/completions` URL。用户填写完整 endpoint 时拒绝，不自动去重或猜测。
+- HTTPS 始终校验证书、主机名和系统信任链，不提供忽略证书错误的继续入口。
+- Provider 扩展参数可以透传，但不能覆盖 Runtime 管理的模型、消息、工具、streaming、认证、传输或输出上限字段。
+- `context_window_tokens` 与 `max_output_tokens` 由用户显式填写，Eidos 不按模型名称自动推断；明确的上下文上限不匹配会使 Run 失败并要求修改 Profile 后重新测试。
+- HTTP(S) streaming 是必需能力；WebSocket 是可选优化。已确认不支持 WebSocket 的 Profile 仍可通过原 endpoint 的 HTTP(S) 使用，不会因此变为不可选。
+- Test Connection 分别展示 usage、ToolCall 分片关联、无状态 ToolResult 续接和输出 token 字段结果；Chat 只在显式测试中协商兼容字段，Run 不临时试错。
+
+## 4. Workspace 主流程
 
 ```text
 选择 Workspace
-  -> 创建 Session 并选择 Model Profile
+  -> 创建 Session 并选择已通过能力测试的 Model Profile
   -> 提交任务，Run 进入 FIFO 队列
   -> 执行器获取 Run
   -> 模型通过只读工具收集上下文
@@ -79,7 +100,7 @@ Execution Feed 不保存或展示模型供应商的 raw reasoning：
 - 审批通过后、执行前必须重新验证文件版本。
 - `file_version_conflict` 不执行原写入，由 Agent 重新读取并重新申请。
 
-## 4. Public Mode 主流程
+## 5. Public Mode 主流程
 
 ```text
 创建 Public Session
@@ -94,9 +115,9 @@ Execution Feed 不保存或展示模型供应商的 raw reasoning：
 
 MVP Artifact 只支持最大 32 MiB 的严格 UTF-8 文本；二进制、压缩包、加密容器或需专用格式解析才能完成敏感扫描的文件不能发布。
 
-## 5. Approval 流程
+## 6. Approval 流程
 
-### 5.1 需要审批
+### 6.1 需要审批
 
 - `write_file`
 - `apply_patch`
@@ -109,19 +130,19 @@ MVP Artifact 只支持最大 32 MiB 的严格 UTF-8 文本；二进制、压缩�
 
 Shell 审批卡必须说明命令作用于执行时的当前 Workspace，并展示完整 command、PATH/Toolchain Profile、网络权限、timeout 与固定资源上限。用户批准后 5 分钟未开始执行时，授权失效并需重新审批。
 
-### 5.2 不需要审批
+### 6.2 不需要审批
 
 - 四个只读文件工具。
 - `publish_artifact`；它必须独占模型响应，但只写 Eidos 本地 Artifact 索引和快照。
 
-### 5.3 Reject
+### 6.3 Reject
 
 - Reject 原因作为 ToolCall 结果返回 Agent。
 - 连续 Reject 达到 2 次后，Run 进入 `waiting_user_input`。
 - 获批状态变更成功或用户补充新指令后，Reject 计数清零。
 - 只读调用、模型重规划和失败写入不清零。
 
-### 5.4 敏感内容
+### 6.4 敏感内容
 
 - 用户任务、后续补充和 Approval feedback 等自由文本在提交前扫描；疑似凭证命中 `deny` 或 `redact` 时整次提交拒绝。
 - 高置信度内容拒绝、文件名/路径硬拒绝不提供 Approval 绕过。
@@ -129,13 +150,13 @@ Shell 审批卡必须说明命令作用于执行时的当前 Workspace，并展�
 - 写入、Patch、Shell 或 Artifact 发布命中 `deny`/`redact` 时整个操作拒绝，不会将脱敏后的内容静默执行或发布。
 - UI 只展示规则 ID/版本、规则集版本、等级、命中数和安全位置，不回显原始命中、长度、摘要或哈希。
 
-## 6. 暂停与恢复
+## 7. 暂停与恢复
 
-### 6.1 waiting_approval
+### 7.1 waiting_approval
 
 工具尚未执行。下次启动后继续展示原审批，审批不能改变工具参数，也不能提升权限。
 
-### 6.2 waiting_user_input
+### 7.2 waiting_user_input
 
 由以下条件触发：
 
@@ -146,16 +167,26 @@ Shell 审批卡必须说明命令作用于执行时的当前 Workspace，并展�
 - 首个 delta 前的瞬时模型故障在自动重试耗尽后仍不可用。
 - 模型连续两次返回无效协议响应。
 - 模型连续两次提出包含敏感内容的 ToolCall。
+- 模型输出被 token 上限、Provider 内容过滤或 Eidos 流式资源上限终止。
 - 流式敏感扫描器故障，且存在未确认安全的模型输出。
+- Run 固化的 model request contract 实现已不可用；此时原 Run 只能取消或复制原任务创建新 Run。
 - 执行结果无法确认，需要用户判断。
 
 用户补充信息后，同一 Run 创建新 Execution Segment 并重新进入 FIFO 队列。
 
-### 6.3 stopped
+模型重连期间，Execution Feed 显示有界重试进度和 WebSocket 到 HTTP(S) streaming 的降级；首个 delta 后不显示“正在重连”，而是保留未完成进度并暂停。瞬时错误耗尽终止当前模型请求周期，不直接终止 Run。
+
+模型因输出 token 上限、内容过滤或 Eidos 输出资源上限而停止时，已确认安全的文本保留为未完成进度，任何 ToolCall 都不执行。UI 区分 `model_output_truncated|model_output_blocked|model_output_limit_exceeded`，并允许用户在新 Segment 中要求缩短或拆分输出。
+
+### 7.3 failed
+
+本地预算判断发现不可裁剪输入已经超过可用上下文时，Run 以 `context_input_too_large` 失败，不发送模型请求，也不使 Model Profile 失效。UI 展示估算需求、可用输入预算、输出预留和 safety margin，并引导缩短任务后创建新 Run 或改用更大上下文的 Profile。
+
+### 7.4 stopped
 
 Run 达到 80 Steps 或 120 分钟有效执行时间后进入 `stopped`，不能恢复原 Run。用户可以查看收尾摘要，并基于现状创建新 Run。
 
-## 7. 多 Run 与队列体验
+## 8. 多 Run 与队列体验
 
 - 用户可以创建和保留多个 Run。
 - 任意时刻只有一个 Run 调用模型或执行工具。
@@ -163,14 +194,14 @@ Run 达到 80 Steps 或 120 分钟有效执行时间后进入 `stopped`，不能
 - 当前 Run 不被新 Run 抢占。
 - MVP 支持取消排队 Run，但不支持手动调序和优先级。
 
-## 8. Toolchain Settings
+## 9. Toolchain Settings
 
 - 默认只使用 macOS 系统工具目录。
 - Settings 可检测但不自动启用 `/opt/homebrew` 和 `/usr/local`；用户需逐个确认 Toolchain Profile。
 - 已启用根目录被替换时 Profile 自动禁用，不会退化为任意 PATH。
 - MVP 不提供用户 Home 工具链或任意目录选择器。
 
-## 9. 关闭应用
+## 10. 关闭应用
 
 - 没有运行中 Run 时正常退出 sidecar。
 - 有运行中 Run 时，用户选择等待完成或取消后退出。

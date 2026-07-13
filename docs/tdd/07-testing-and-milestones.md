@@ -87,14 +87,23 @@
 
 ### 2.6 重试与上下文
 
-- 模型首 delta 前瞬时错误最多 2 次。
-- 瞬时错误重试耗尽后 waiting_user_input，多个 Attempt 只计一个 Step。
-- 首 delta 后不透明重试被禁止。
+- WebSocket supported 时 initial + 5 次首 delta 前重放后切换 HTTP(S)，HTTP(S) initial + 2 次重试后 waiting_user_input；多个 Attempt 只计一个 Step。
+- 426/Upgrade rejected/协议不支持立即降级且不消耗 WebSocket 重试；瞬时降级只对当前 Run 粘滞，明确不支持按 snapshot 跨 Run 抑制。
+- WebSocket unsupported/unknown 直接使用 HTTP(S)，Profile 仍可选；HTTP base_url 降级后仍是 HTTP，HTTPS base_url 仍校验证书。
+- 首 delta 后透明重试和传输切换均被禁止。
 - 首 delta 后中断会保留 incomplete progress、丢弃部分 ToolCall，并进入 waiting_user_input。
 - 模型流中断的失败 Step 计入 Segment 和 Run Step 预算。
+- 同一 Step request cycle 固定 10 分钟，包含 DNS/TLS、全部 Attempt、`1/2/4/8/16` 与 `1/2` 秒退避和 Retry-After；局部 15/180/120 秒 timer 均被 cycle deadline 截断。
+- Retry-After 上限 60 秒；超过剩余周期不会越过 deadline。Finalization 独立 60 秒且输出上限 `min(profile.max_output_tokens,4096)`。
 - 只读瞬时错误最多 1 次；确定错误不重试。
 - 写/Shell/Artifact 零自动重试。
-- 上下文裁剪顺序、不可裁剪项和 token 硬上限。
+- canonical serializer 稳定且版本化；对 ASCII、多字节 UTF-8、JSON escape、message/tool call/tool result 数量验证 `bytes + 64 + 8m + 16c + 16r`。
+- safety margin 验证 `CLAMP(CEIL(context*0.02),1024,8192)` 的下界、中间值、上界和取整；发送前严格满足 `estimated_input <= context-request_output-margin`。
+- 普通/协议纠正使用 Profile output 上限，probe 使用 `min(profile.max_output_tokens,512)`；同一逻辑请求所有重放值一致。
+- Context Builder 先放不可裁剪内容，再按固定顺序添加/裁剪可选内容并复算完整 canonical payload。
+- 不可裁剪输入超限时零 Provider 请求、零 started Attempt、Run failed/context_input_too_large、snapshot 不失效且预算明细不含原始 payload。
+- model request contract 升级使旧 Profile snapshot 失效；既有 Run 继续旧 serializer/budget/timeout。unsupported 旧版本零 Step/Attempt 并进入 runtime_contract_unsupported。
+- 可见文本动态 64 KiB..4 MiB、reasoning 2 MiB、单 Event 1 MiB 和总流 8 MiB 的等于/超一边界；超限零重试且已提交文本 incomplete。
 - Provider raw reasoning 内容不会进入 Message、Event、日志或后续上下文。
 - assistant_progress/final_answer 分类正确，reasoning usage 只保存数值元数据。
 - 模型认证、模型不存在和确定性 invalid request 不重试、不 Finalize，Run 直接 failed。
@@ -102,6 +111,41 @@
 - 模型 content 跨 chunk 凭证先脱敏后展示/落盘；扫描失败不 flush 保留窗口。
 - 敏感 ToolCall 零 ToolCall row/零 Approval；两次后 `repeated_sensitive_tool_input`，不影响协议错误计数。
 - 任一合法无敏感 ToolCall 响应清零敏感 ToolCall 计数。
+
+### 2.7 Model Profile 能力探测
+
+- 创建 Profile 只落配置且不发网络请求，初始 `selectable=false`。
+- Test Connection 请求只含 Profile 配置、固定 probe 文本和固定无副作用 tool schema；断言不含任务、Session、Workspace、Artifact、Timeline 或 ToolResult 数据。
+- 认证、模型存在、streaming、ToolCall 参数解析和 usage 分别成功；任一失败都产生新的 `failed` snapshot 和安全错误码，Profile 仍不可选择。
+- 全部通过时产生 `passed` snapshot；snapshot version 单调递增并绑定 configuration/Gateway/model request contract version，不覆盖历史结果。
+- Session 创建/切换和 Run 创建均拒绝未验证或最新探测失败的 Profile；拒绝创建 Run 时不占用 idempotency key。
+- Run 内嵌创建时的 Profile/capability snapshot；后续重新探测成功或失败都不改变既有 Run。
+- 正常运行违反已通过的 streaming/ToolCall/usage 契约时返回 `model_capability_drift`，Run 直接 failed，零重试、零 Finalization、零 Profile 切换。
+- Snapshot 无时间 TTL且无后台探测；配置/Gateway/model request contract 变化、capability drift 和 context mismatch 分别触发失效，新 Session/Run 均被阻断。
+- 只改 name 保持 snapshot 有效；修改 endpoint/model/auth/key/parameters/context limits 递增配置版本并失效，条件更新冲突零部分修改。
+- Archive 后不可选、不可测试且历史引用完整；restore 复用仍有效 snapshot，否则保持不可选；不存在 DELETE API 或级联删除。
+- 两个 Profile 即使保存相同 Key 也使用不同 credential slot/revision；替换一个只失效一个，API/日志/DB 不回显原文或凭证摘要。
+- bearer、api_key_header 和 none 分别生成唯一固定认证 Header 或零认证；任意自定义 Header/传输字段注入被拒绝。
+- 公网、loopback、局域网和私网 HTTP(S) 均可连接且不做 DNS 地址分类；非 HTTP(S)、userinfo、敏感 query 和跨 Origin Redirect 拒绝，同 Origin Redirect 有界通过。
+- HTTPS 的有效系统信任链通过；过期、主机名错误、自签名未信任证书失败且没有 verify=false 分支；HTTP 仍可连接。
+- 扩展参数稳定透传；保留字段、NaN/Infinity、敏感值、32 KiB/深度/成员上限分别拒绝，并参与 configuration hash。
+- context/output 在 4,096..4,194,304 和 1..262,144 固定边界内且 output<context；Provider 元数据不覆盖用户值，明确 context-length exceeded 映射为 `model_context_limit_mismatch` 并失效。
+- 必需 HTTP(S) streaming 与可选 WebSocket 分开探测；supported/unsupported/unknown 都正确持久化，后两者不使 passed snapshot 失败。
+- Test Connection 的短 probe 使用最多 512 输出 token，独立参数校验验证 Profile 声明上限。
+- Responses/Chat 显式 wire_api 分别通过；修改 wire 递增 config version 并失效，不存在按 URL/模型/错误自动推断或跨协议 fallback。
+- Responses 固化 max_output_tokens；Chat 明确 unknown max_completion_tokens 后才探测 max_tokens。认证/网络/429/5xx/含糊 invalid request 不触发字段切换。
+
+### 2.8 Wire Adapter 与流归一化
+
+- API root 的 trailing slash、path prefix 和安全 query 结构化追加 `/responses|/chat/completions`；已含 endpoint、字符串拼接歧义和跨 Origin Redirect 分别拒绝。
+- Responses `store=false` 且无 previous/conversation；只有 response.completed 完成，incomplete max token/content filter、failed 和无终态 EOF 正确映射。
+- Chat 固定 n=1/include_usage；choice 0 的 stop/tool_calls/length/content_filter/null、deprecated/unknown finish reason、缺 `[DONE]` 和 EOF 分别验证。
+- usage 必需字段非负且 total>=input+output；optional 细分非负。探测缺失/非法失败，正常完成缺失触发 drift，中断缺失为 unknown。
+- Chat tool call index 从 0 连续，Responses item/call ID 稳定；名称/ID/arguments 跨任意 chunk 边界归并，缺失/重复/重绑/冲突/非 object JSON 零 ToolCall。
+- internal UUID 与 <=256-byte provider_call_id 分离；Responses function_call_output 和 Chat role=tool 使用原 provider ID 完成 stateless continuation。
+- ToolCall 16 calls、单/总 1/2 MiB、16,384 deltas、128-byte name、JSON 16 depth/2,048 members 的等于/超一及大量零/小分片属性测试。
+- truncated/blocked/stream-limit 时即使存在已完整解析的单个 call，也丢弃整个批次；已提交 content 只作为 incomplete progress。
+- 每个 Step 从本地记录重建语义等价上下文；Provider response ID 改变、WebSocket->HTTP(S)、重启和 API Key 轮换都不丢失 ToolResult 关联。
 
 ## 3. Seatbelt 集成测试
 
@@ -136,6 +180,12 @@
 ## 4. Runtime 集成测试
 
 - Public 无工具回复。
+- Model Profile 创建 -> Test Connection -> Session 选择 -> Run 固化 snapshot；未测试/失败 Profile 在 Session 和 Run 两个入口均被拒绝。
+- Profile 编辑 -> snapshot 失效 -> 重新测试，以及 Archive/restore、Gateway contract 升级失效和 capability/context drift 终态事务。
+- 任意地址类别的 HTTP(S) Provider、同/跨 Origin Redirect、三种认证模式、TLS 系统信任链和扩展参数/保留字段端到端请求断言。
+- WebSocket 五次重放 -> HTTP(S) 两次重试、明确不支持立即降级、Run 级粘滞和 snapshot 级 ws_disabled 的端到端状态/Event/时钟断言。
+- Run 创建后轮换 API Key：下一 Attempt 使用新密钥和新 credential revision，但 endpoint/model/parameters/capability 仍取 Run 快照；凭证缺失时不回退旧密钥。
+- Responses 与 Chat 两条完整闭环：任务 -> 分片 ToolCall -> 本地执行 -> stateless ToolResult -> final；断言内部事件和业务状态一致。
 - Workspace 只读批次 -> 写审批 -> 版本复检 -> 成功。
 - Public 写文件 -> publish_artifact -> 不可变快照。
 - delete_file approve/reject/conflict。
@@ -181,6 +231,10 @@
 - Shell 卡快照警告、PATH/Toolchain/资源/授权倒计时，no_changes 非审批卡，stdout/stderr 省略/tail 不重算。
 - manifest 卡前 200 路径/详情列表、敏感名零泄露、完整性状态，Artifact 仅文本格式与 corrupted 禁用预览。
 - Toolchain Settings 只列固定候选，用户手势 enable/disable、root 替换自动禁用和无任意路径输入。
+- Model Profile 的未测试/测试中/通过/失败状态、逐能力安全结果、未验证禁用选择，以及 capability drift 后重新测试并创建新 Run 的引导。
+- Profile 编辑的失效提示、API Key 保持/替换/清除、Archive/恢复无删除、HTTP 明文警告、TLS 无绕过、固定认证模式和用户声明 token limits。
+- WebSocket 可选状态、重连计数、一次性 HTTP(S) 降级提示、reported/unknown usage 汇总和 context_input_too_large 预算错误卡。
+- wire API 选择、最终 endpoint preview、output token parameter 探测结果、stateless/第三方留存提示、三类 output stopped 与 runtime contract unsupported 卡片。
 
 ## 6. 持久化测试
 
@@ -190,6 +244,14 @@
 - 状态与 Event 原子提交。
 - FIFO enqueued_at 重启保持。
 - Artifact snapshot/source hash 和版本唯一性。
+- capability snapshot 的 `(profile_id,snapshot_version)` 唯一性、五项必需能力、stateless continuation 与可选传输/输出字段、configuration/Gateway/model request contract version，以及 Run 内嵌快照不随外键记录变化。
+- capability snapshot 的 WebSocket 可选结果和无 TTL `model_transport_health` 复合主键；新 snapshot 不继承旧 ws_disabled。
+- ModelAttempt 的逻辑请求关联、transport、attempt index、实际 credential revision、request output、retry reason、usage reported/unknown 与 Step cycle deadline 可重启审计。
+- Profile/snapshot/Run 的 wire API、model request contract、stateless continuation、output token parameter 持久一致；contract upgrade 只失效新 Run 选择，不改写旧快照。
+- ToolCall 的内部 id/provider_call_id 双标识、`UNIQUE(step_id,provider_call_id)` 和回传映射；Provider ID 不替代内部外键。
+- 多 Attempt usage 只累计 reported 值，unknown 计数保留；重复 Provider request id 不触发 ToolCall 重复创建。
+- Profile/snapshot 的 profile/config/credential version、valid/invalidation 字段、Archive 保留引用、`ON DELETE RESTRICT` 和 selectable 查询条件。
+- config.toml profile-id 独占 credential slot、0600 原子替换、config/DB revision 崩溃窗口启动对账，以及一个 Profile 替换密钥不改变其他 Profile。
 - config 权限 0700/0600；权限过宽拒绝密钥。
 - SQLite、日志和 Event 中不存在测试 API Key 原文。
 - Proxy audit 只含 host/port/decision/bytes，不含 URL、Header、Body 或 TLS 明文。
@@ -231,7 +293,7 @@ M0 未通过前，不进入 Agent Shell 主链路实现。
 
 ### M3：模型与只读闭环
 
-- Model Profile/Gateway 流。
+- Model Profile 编辑/Archive/凭证隔离、显式能力探测、版本化 capability snapshot 与 Gateway 流。
 - Context Builder 与有界裁剪。
 - 四个只读工具、批次校验和有限重试。
 - Execution Feed 基础展示。
@@ -253,5 +315,5 @@ M0 未通过前，不进入 Agent Shell 主链路实现。
 ## 8. 文档完成标准
 
 - PRD 每个 P0 要求在 TDD 和测试中有对应落点。
-- Q1-Q80 决策不得出现相反规则；Q81 待答，不得提前实现。
+- Q1-Q110 决策不得出现相反规则。
 - 实现开始前冻结 v0.4 API schema、状态 enum 和 Tool schema。
