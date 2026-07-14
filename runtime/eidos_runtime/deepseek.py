@@ -289,4 +289,36 @@ def _tool_definitions() -> list[dict[str, object]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "description": "Create a UTF-8 file or replace a file already read in this run. Requires user approval.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "content": {"type": "string"},
+                    },
+                    "required": ["path", "content"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "apply_patch",
+                "description": "Apply one strict unified diff to a file already read in this run. Requires user approval.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "patch": {"type": "string"},
+                    },
+                    "required": ["path", "patch"],
+                    "additionalProperties": False,
+                },
+            },
+        },
     ]

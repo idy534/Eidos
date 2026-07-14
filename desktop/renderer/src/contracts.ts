@@ -34,8 +34,24 @@ export interface ToolCall {
   itemId: string;
   toolName: string;
   status: "running" | "completed" | "failed" | "canceled";
-  argumentsJson: string;
+  argumentsJson?: string;
   resultJson?: string;
+  approvalStatus?: "pending" | "resolved" | "canceled";
+  approvalDecision?: "approve" | "reject";
+  approvalFeedback?: string;
+  approvalDiff?: string;
+  baseSha256?: string;
+}
+
+export interface ApprovalRequest {
+  id: string;
+  sessionId: string;
+  runId: string;
+  itemId: string;
+  toolCallId: string;
+  kind: "file_change";
+  summary: string;
+  diff: string;
 }
 
 export interface Item {
@@ -85,6 +101,8 @@ declare global {
       getModelStatus: () => Promise<ModelStatus>;
       configureModel: (apiKey: string) => Promise<ModelStatus>;
       onNotification: (callback: (notification: RuntimeNotification) => void) => () => void;
+      onApprovalRequest: (callback: (request: ApprovalRequest) => void) => () => void;
+      respondApproval: (id: string, decision: "approve" | "reject", feedback?: string) => Promise<boolean>;
     };
   }
 }

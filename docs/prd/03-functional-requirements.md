@@ -4,7 +4,7 @@
 
 范围说明：本文件的 P0 是完整目标态优先级。第一期必须项和延期项以 [MVP Lite](../mvp-lite.md) 为准。
 
-MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Session/Run/Item/ToolCall 最小事实；✅ 串行 Agent Loop；✅ `list_files/read_file/search_text`；✅ 模型流与基础 Execution Feed；✅ Cancel 与异常 `interrupted`；✅ 本机私有 DeepSeek 配置。文件写入审批与 `run_shell` 仍在 L2/L3，不能把这些 ✅ 外推为本文件完整目标态条目已全部满足。
+MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Session/Run/Item/ToolCall 最小事实；✅ 串行 Agent Loop；✅ `list_files/read_file/search_text`；✅ 模型流与基础 Execution Feed；✅ Cancel 与异常 `interrupted`；✅ 本机私有 DeepSeek 配置；✅ `write_file/apply_patch` 完整 diff、逐次审批、hash/CAS 复检和原子提交。`run_shell` 仍在 L3，不能把这些 ✅ 外推为本文件完整目标态条目已全部满足。
 
 ## 1. P0 功能清单
 

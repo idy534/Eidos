@@ -13,6 +13,7 @@
   (literal "/")
   (subpath "/System")
   (subpath "/Library/Apple")
+  (subpath "/Library/Developer")
   (subpath "/usr/lib")
   (subpath "/usr/share")
   (subpath "/bin")
@@ -27,9 +28,16 @@
   (literal "/dev/urandom")
   (subpath "/dev/fd"))
 
+(allow file-read* file-test-existence
+  (literal (param "FILE_COMMIT_HELPER")))
+
+(allow file-read-metadata file-test-existence
+  (path-ancestors "/Library/Developer/CommandLineTools/usr/bin/python3"))
+
 (allow file-map-executable
   (subpath "/System")
   (subpath "/Library/Apple")
+  (subpath "/Library/Developer")
   (subpath "/usr/lib"))
 
 (allow file-write-data

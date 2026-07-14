@@ -14,6 +14,8 @@ from typing import Sequence
 
 SANDBOX_EXECUTABLE = "/usr/bin/sandbox-exec"
 PROFILE_PATH = Path(__file__).with_name("seatbelt.sbpl")
+FILE_COMMIT_HELPER = Path(__file__).with_name("file_commit_helper.py")
+SYSTEM_PYTHON = "/Library/Developer/CommandLineTools/usr/bin/python3"
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,7 @@ class SeatbeltProfile:
             f"-DSENSITIVE_PATH={self.sensitive_path}",
             f"-DSANDBOX_HOME={self.sandbox_home}",
             f"-DSANDBOX_TMP={self.sandbox_tmp}",
+            f"-DFILE_COMMIT_HELPER={FILE_COMMIT_HELPER}",
             "--",
             *command,
         ]
@@ -134,6 +137,68 @@ def run_sandboxed(
             timed_out=True,
             duration_seconds=time.monotonic() - started_at,
         )
+
+
+def secure_workspace_move(
+    workspace_root: Path,
+    source: Path,
+    target: Path,
+    expected_sha256: str | None,
+) -> str:
+    """Perform the final rename under Seatbelt; never fall back unsandboxed."""
+    if sys.platform != "darwin" or not Path(SANDBOX_EXECUTABLE).is_file():
+        return "failed"
+    workspace = workspace_root.absolute()
+    try:
+        source.absolute().relative_to(workspace)
+        target.absolute().relative_to(workspace)
+    except ValueError:
+        return "failed"
+    command = [
+        SANDBOX_EXECUTABLE,
+        "-f",
+        str(PROFILE_PATH),
+        f"-DWORKSPACE_ROOT={workspace}",
+        f"-DGIT_DIR={workspace / '.git'}",
+        f"-DSENSITIVE_PATH={workspace / '.env'}",
+        f"-DSANDBOX_HOME={workspace / '.eidos-sandbox-home-unavailable'}",
+        f"-DSANDBOX_TMP={workspace / '.eidos-sandbox-tmp-unavailable'}",
+        f"-DFILE_COMMIT_HELPER={FILE_COMMIT_HELPER}",
+        "--",
+        SYSTEM_PYTHON,
+        str(FILE_COMMIT_HELPER),
+        str(source),
+        str(target),
+        expected_sha256 or "new",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=workspace,
+            env={
+                "HOME": "/var/empty",
+                "TMPDIR": "/private/tmp",
+                "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                "LANG": "en_US.UTF-8",
+                "LC_ALL": "en_US.UTF-8",
+            },
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+            start_new_session=False,
+        )
+    except OSError:
+        return "failed"
+    except subprocess.TimeoutExpired:
+        return "uncertain"
+    return {
+        0: "committed",
+        10: "conflict",
+        11: "uncertain",
+        12: "failed",
+    }.get(completed.returncode, "failed")
 
 
 def run_seatbelt_self_test() -> SeatbeltSelfTestResult:

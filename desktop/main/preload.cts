@@ -40,4 +40,16 @@ contextBridge.exposeInMainWorld("eidosRuntime", {
     ipcRenderer.on("runtime:notification", listener);
     return () => ipcRenderer.removeListener("runtime:notification", listener);
   },
+  onApprovalRequest: (callback: (request: unknown) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, request: unknown) => {
+      callback(request);
+    };
+    ipcRenderer.on("approval:requested", listener);
+    return () => ipcRenderer.removeListener("approval:requested", listener);
+  },
+  respondApproval: (
+    id: string,
+    decision: "approve" | "reject",
+    feedback?: string,
+  ): Promise<boolean> => ipcRenderer.invoke("approval:respond", id, decision, feedback),
 });

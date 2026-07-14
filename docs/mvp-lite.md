@@ -425,11 +425,13 @@ MVP Lite 不单独建立 Segment、Attempt、Approval、Event、Operation、Mani
 
 ### L2：文件写入审批闭环
 
-- `write_file`、`apply_patch`。
-- Runtime 生成完整 diff。
-- 双向 `item/requestApproval`、Approve/Reject、hash 复检和原子替换。
+- ✅ `write_file`、`apply_patch` 已实现闭合参数校验、单文件/256 KiB 上限与已有文件同 Run 读取证据。
+- ✅ Runtime 从冻结候选内容生成完整 diff；控制字符、symlink、硬链接、复杂 flags/xattr 和敏感路径 fail closed。
+- ✅ 双向 `item/requestApproval`、Approve/Reject、取消与迟到响应竞态已实现。
+- ✅ 批准提交使用 Seatbelt 内的 `RENAME_EXCL`（新文件）或 `RENAME_SWAP + 旧 hash 校验/冲突回滚`（已有文件），并 fsync、读回验证；post-commit 不确定性明确标记 `sideEffectsMayExist=true`。
+- ✅ 完成通知不重复大体积 arguments/diff，保持在 1 MiB JSON-RPC 上限内。
 
-退出标准：Approve 后文件按 diff 修改，Reject 零修改，审批等待期间变化会拒绝旧操作。
+退出标准：✅ 自动化测试已覆盖 Approve 按 diff 修改、Reject 零修改、审批等待期间版本冲突、CAS 回滚、symlink/root rebinding、取消和迟到 Approve。
 
 ### L3：开发者可用闭环
 
@@ -453,7 +455,7 @@ L3 前置风险验证状态：
 - [x] `Session -> Run -> Item/ToolCall` 数据模型没有 Segment、Attempt 或独立 Event 依赖。
 - [x] Runtime Loop 能在 fake model 与真实只读工具上完成至少两轮循环。
 - [x] Workspace Guard 和 Seatbelt 在目标 macOS 版本完成实机 smoke test。
-- [ ] 文件写入 diff 与 hash 复检有独立测试。
-- [ ] 审批请求、取消和迟到响应的竞态有集成测试。
+- [x] 文件写入 diff 与 hash 复检有独立测试。
+- [x] 审批请求、取消和迟到响应的竞态有集成测试。
 - [ ] stdout/stderr 隔离、消息大小和慢消费者行为有协议测试。
 - [x] PRD/TDD 后续实现任务明确标注 `MVP Lite` 或 `完整目标态`，不再混用 P0。

@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+import difflib
+import errno
+import fcntl
 import hashlib
 import heapq
 import os
 from pathlib import Path
+import re
 import stat
 import threading
 import time
 from typing import Callable, Iterator
+import uuid
 
 from eidos_runtime.storage import WorkspaceIdentity
+from eidos_runtime.seatbelt import secure_workspace_move
 
 
 MAX_FILE_BYTES = 256 * 1024
@@ -18,6 +25,8 @@ MAX_LIST_ENTRIES = 2_000
 MAX_SEARCH_BYTES = 8 * 1024 * 1024
 MAX_SEARCH_ENTRIES = 20_000
 MAX_SEARCH_RESULTS = 100
+MAX_FILE_CHANGE_BYTES = 256 * 1024
+MAX_DIFF_BYTES = 512 * 1024
 TOOL_DEADLINE_SECONDS = 5.0
 EXCLUDED_DIRECTORIES = {
     ".git",
@@ -51,6 +60,15 @@ class WorkspacePathError(ValueError):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+@dataclass(frozen=True)
+class FileChange:
+    path: str
+    content: bytes
+    base_sha256: str | None
+    mode: int
+    diff: str
 
 
 class ToolExecutor:
@@ -91,6 +109,7 @@ class ToolExecutor:
             "read_file": self._read_file,
             "search_text": self._search_text,
         }
+        self._side_effecting_tools = frozenset({"write_file", "apply_patch"})
 
     def __enter__(self) -> ToolExecutor:
         return self
@@ -105,7 +124,10 @@ class ToolExecutor:
 
     @property
     def tool_names(self) -> frozenset[str]:
-        return frozenset(self._tools)
+        return frozenset(self._tools) | self._side_effecting_tools
+
+    def is_side_effecting(self, tool_name: str) -> bool:
+        return tool_name in self._side_effecting_tools
 
     def validate_arguments(self, tool_name: str, arguments: object) -> bool:
         if not isinstance(arguments, dict):
@@ -121,6 +143,22 @@ class ToolExecutor:
                 and isinstance(query, str)
                 and bool(query)
                 and len(query.encode("utf-8")) <= 512
+            )
+        if tool_name == "write_file":
+            content = arguments.get("content")
+            return (
+                set(arguments) == {"path", "content"}
+                and isinstance(arguments.get("path"), str)
+                and isinstance(content, str)
+                and len(content.encode("utf-8")) <= MAX_FILE_CHANGE_BYTES
+            )
+        if tool_name == "apply_patch":
+            patch = arguments.get("patch")
+            return (
+                set(arguments) == {"path", "patch"}
+                and isinstance(arguments.get("path"), str)
+                and isinstance(patch, str)
+                and len(patch.encode("utf-8")) <= MAX_DIFF_BYTES
             )
         return False
 
@@ -143,6 +181,245 @@ class ToolExecutor:
             return _error(tool_name, "canceled", "Tool was canceled")
         except WorkspacePathError as error:
             return _error(tool_name, error.code, "Workspace path is unavailable")
+
+    def prepare_file_change(
+        self,
+        tool_name: str,
+        arguments: dict[str, object],
+        cancel: threading.Event,
+    ) -> FileChange | dict[str, object]:
+        if tool_name not in self._side_effecting_tools:
+            return _error(tool_name, "tool_not_found", "Tool is not available")
+        if not self.validate_arguments(tool_name, arguments):
+            return _error(tool_name, "invalid_arguments", "Invalid arguments")
+        try:
+            self._verify_root()
+            _check_cancel(cancel)
+            path_value = arguments["path"]
+            assert isinstance(path_value, str)
+            parts = _validate_relative_path(path_value)
+            normalized_path = "/".join(parts)
+            existing = self._read_existing_for_change(normalized_path, cancel)
+            if tool_name == "write_file":
+                content = arguments["content"]
+                assert isinstance(content, str)
+                candidate = content.encode("utf-8")
+            else:
+                if existing is None:
+                    raise WorkspacePathError("file_unavailable")
+                patch_value = arguments["patch"]
+                assert isinstance(patch_value, str)
+                candidate = _apply_unified_diff(
+                    normalized_path,
+                    existing[0].decode("utf-8", errors="strict"),
+                    patch_value,
+                ).encode("utf-8")
+            if len(candidate) > MAX_FILE_CHANGE_BYTES:
+                raise WorkspacePathError("file_too_large")
+            base_content = existing[0] if existing is not None else b""
+            base_sha256 = (
+                hashlib.sha256(base_content).hexdigest()
+                if existing is not None
+                else None
+            )
+            mode = existing[1] if existing is not None else 0o644
+            diff = _build_approval_diff(
+                base_content.decode("utf-8", errors="strict"),
+                candidate.decode("utf-8", errors="strict"),
+                (
+                    f"a/{normalized_path}" if existing is not None else "/dev/null"
+                ),
+                f"b/{normalized_path}",
+            )
+            if existing is None and not diff:
+                diff = f"--- /dev/null\n+++ b/{normalized_path}\n"
+            if len(diff.encode("utf-8")) > MAX_DIFF_BYTES:
+                raise WorkspacePathError("diff_too_large")
+            return FileChange(
+                path=normalized_path,
+                content=candidate,
+                base_sha256=base_sha256,
+                mode=mode,
+                diff=diff,
+            )
+        except UnicodeDecodeError:
+            return _error(tool_name, "invalid_utf8", "File is not valid UTF-8")
+        except ToolCancelled:
+            return _error(tool_name, "canceled", "Tool was canceled")
+        except WorkspacePathError as error:
+            return _error(tool_name, error.code, "File change could not be prepared")
+
+    def commit_file_change(
+        self,
+        tool_name: str,
+        change: FileChange,
+        cancel: threading.Event,
+    ) -> dict[str, object]:
+        temporary_name: str | None = None
+        preserve_temporary = False
+        parent_fd = -1
+        try:
+            self._verify_root()
+            _check_cancel(cancel)
+            parts = _validate_relative_path(change.path)
+            parent_fd = self._open_parent(parts)
+            self._verify_base_version(parent_fd, parts[-1], change.base_sha256, cancel)
+            temporary_name = f".eidos-{uuid.uuid4().hex}.tmp"
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            descriptor = os.open(temporary_name, flags, change.mode, dir_fd=self.root_fd)
+            try:
+                offset = 0
+                while offset < len(change.content):
+                    _check_cancel(cancel)
+                    written = os.write(descriptor, change.content[offset:])
+                    if written <= 0:
+                        raise WorkspacePathError("file_write_failed")
+                    offset += written
+                os.fchmod(descriptor, change.mode)
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            _check_cancel(cancel)
+            self._verify_base_version(parent_fd, parts[-1], change.base_sha256, cancel)
+            workspace_path = Path(_fd_path(self.root_fd))
+            if workspace_path != self.workspace.path:
+                raise WorkspacePathError("workspace_identity_changed")
+            source_path = workspace_path / temporary_name
+            target_path = workspace_path.joinpath(*parts)
+            move_status = secure_workspace_move(
+                workspace_path,
+                source_path,
+                target_path,
+                change.base_sha256,
+            )
+            final_move_started = True
+            if move_status == "uncertain":
+                preserve_temporary = True
+                return _commit_error(
+                    tool_name,
+                    "file_commit_uncertain",
+                    "File change outcome could not be verified",
+                    side_effects=True,
+                )
+            current_parent_fd = self._open_parent(parts)
+            os.close(parent_fd)
+            parent_fd = current_parent_fd
+            try:
+                committed_fd = self._open_file_at(parent_fd, parts[-1])
+            except WorkspacePathError as error:
+                if move_status in {"failed", "conflict"} and error.code == "file_unavailable":
+                    return _commit_error(
+                        tool_name,
+                        (
+                            "file_version_conflict"
+                            if move_status == "conflict"
+                            else "sandbox_unavailable"
+                        ),
+                        "Secure file commit did not change the target",
+                        side_effects=False,
+                    )
+                raise
+            try:
+                committed, _metadata = _read_regular_file(
+                    committed_fd, threading.Event()
+                )
+            finally:
+                os.close(committed_fd)
+            if committed != change.content:
+                current_sha256 = hashlib.sha256(committed).hexdigest()
+                unchanged = (
+                    change.base_sha256 is not None
+                    and current_sha256 == change.base_sha256
+                )
+                if move_status == "conflict":
+                    return _commit_error(
+                        tool_name,
+                        "file_version_conflict",
+                        "File changed after approval; the candidate was rolled back",
+                        side_effects=False,
+                    )
+                return _commit_error(
+                    tool_name,
+                    (
+                        "file_version_conflict"
+                        if move_status == "conflict" and unchanged
+                        else "file_write_failed"
+                        if unchanged
+                        else "file_write_verification_failed"
+                    ),
+                    (
+                        "Secure file commit failed"
+                        if unchanged
+                        else "File change outcome is uncertain"
+                    ),
+                    side_effects=not unchanged,
+                )
+            temporary_name = None
+            try:
+                os.fsync(parent_fd)
+                os.fsync(self.root_fd)
+            except OSError:
+                return _commit_error(
+                    tool_name,
+                    "file_commit_uncertain",
+                    "File changed but durability could not be confirmed",
+                    side_effects=True,
+                    path=change.path,
+                    sha256=hashlib.sha256(committed).hexdigest(),
+                )
+            return _success(
+                tool_name,
+                "File change committed",
+                {
+                    "path": change.path,
+                    "sha256": hashlib.sha256(committed).hexdigest(),
+                    "sizeBytes": len(committed),
+                },
+            )
+        except ToolCancelled:
+            return _error(tool_name, "canceled", "Tool was canceled")
+        except WorkspacePathError as error:
+            if locals().get("move_status") == "conflict":
+                return _commit_error(
+                    tool_name,
+                    "file_version_conflict",
+                    "File changed after approval; the candidate was rolled back",
+                    side_effects=False,
+                )
+            if locals().get("final_move_started", False):
+                return _commit_error(
+                    tool_name,
+                    "file_commit_uncertain",
+                    "File change outcome could not be verified",
+                    side_effects=True,
+                )
+            return _error(tool_name, error.code, "File change was not committed")
+        except OSError:
+            if locals().get("move_status") == "conflict":
+                return _commit_error(
+                    tool_name,
+                    "file_version_conflict",
+                    "File changed after approval; the candidate was rolled back",
+                    side_effects=False,
+                )
+            if locals().get("final_move_started", False):
+                return _commit_error(
+                    tool_name,
+                    "file_commit_uncertain",
+                    "File change outcome could not be verified",
+                    side_effects=True,
+                )
+            return _error(tool_name, "file_write_failed", "File change was not committed")
+        finally:
+            if temporary_name is not None and not preserve_temporary:
+                try:
+                    os.unlink(temporary_name, dir_fd=self.root_fd)
+                except OSError:
+                    pass
+            if parent_fd >= 0:
+                os.close(parent_fd)
 
     def _list_files(
         self, _arguments: dict[str, object], cancel: threading.Event
@@ -332,6 +609,69 @@ class ToolExecutor:
             metadata.st_uid,
         ) != (self.workspace.device, self.workspace.inode, self.workspace.owner):
             raise WorkspacePathError("workspace_identity_changed")
+        if Path(_fd_path(self.root_fd)) != self.workspace.path:
+            raise WorkspacePathError("workspace_identity_changed")
+
+    def _read_existing_for_change(
+        self, path: str, cancel: threading.Event
+    ) -> tuple[bytes, int] | None:
+        try:
+            descriptor, _normalized = self._open_file(path)
+        except WorkspacePathError as error:
+            if error.code == "file_unavailable":
+                return None
+            raise
+        try:
+            metadata = os.fstat(descriptor)
+            mode = stat.S_IMODE(metadata.st_mode)
+            if (
+                mode & 0o7000
+                or metadata.st_nlink != 1
+                or metadata.st_uid != os.getuid()
+                or getattr(metadata, "st_flags", 0) != 0
+            ):
+                raise WorkspacePathError("unsupported_file_metadata")
+            try:
+                if os.listxattr(descriptor):
+                    raise WorkspacePathError("unsupported_file_metadata")
+            except (AttributeError, TypeError):
+                pass
+            content, _stable = _read_regular_file(descriptor, cancel)
+            return content, mode
+        finally:
+            os.close(descriptor)
+
+    def _open_parent(self, parts: tuple[str, ...]) -> int:
+        directory_fd = os.dup(self.root_fd)
+        try:
+            for part in parts[:-1]:
+                next_fd = self._open_directory(directory_fd, part)
+                os.close(directory_fd)
+                directory_fd = next_fd
+            return directory_fd
+        except Exception:
+            os.close(directory_fd)
+            raise
+
+    def _verify_base_version(
+        self,
+        parent_fd: int,
+        name: str,
+        expected_sha256: str | None,
+        cancel: threading.Event,
+    ) -> None:
+        try:
+            descriptor = self._open_file_at(parent_fd, name)
+        except WorkspacePathError as error:
+            if expected_sha256 is None and error.code == "file_unavailable":
+                return
+            raise WorkspacePathError("file_version_conflict") from None
+        try:
+            content, _metadata = _read_regular_file(descriptor, cancel)
+        finally:
+            os.close(descriptor)
+        if expected_sha256 is None or hashlib.sha256(content).hexdigest() != expected_sha256:
+            raise WorkspacePathError("file_version_conflict")
 
     def _open_file(self, value: str) -> tuple[int, str]:
         parts = _validate_relative_path(value)
@@ -363,8 +703,15 @@ class ToolExecutor:
             flags |= os.O_NOFOLLOW
         try:
             descriptor = os.open(name, flags, dir_fd=parent_fd)
-        except OSError:
+        except FileNotFoundError:
             raise WorkspacePathError("file_unavailable") from None
+        except OSError as error:
+            code = (
+                "unsupported_file_type"
+                if error.errno in {errno.ELOOP, errno.EISDIR}
+                else "file_unavailable"
+            )
+            raise WorkspacePathError(code) from None
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode):
             os.close(descriptor)
@@ -428,7 +775,11 @@ def _read_regular_file(
 
 
 def _validate_relative_path(value: str) -> tuple[str, ...]:
-    if not value or len(value) > 4096:
+    if (
+        not value
+        or len(value) > 4096
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
         raise WorkspacePathError("workspace_boundary_violation")
     path = Path(value)
     if path.is_absolute() or ".." in path.parts:
@@ -440,6 +791,94 @@ def _validate_relative_path(value: str) -> tuple[str, ...]:
     return parts
 
 
+HUNK_HEADER = re.compile(
+    r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?\n?$"
+)
+
+
+def _apply_unified_diff(path: str, original: str, patch: str) -> str:
+    lines = patch.splitlines(keepends=True)
+    if len(lines) < 3:
+        raise WorkspacePathError("invalid_patch")
+    old_header = lines[0].rstrip("\r\n")
+    new_header = lines[1].rstrip("\r\n")
+    if old_header not in {f"--- {path}", f"--- a/{path}"} or new_header not in {
+        f"+++ {path}",
+        f"+++ b/{path}",
+    }:
+        raise WorkspacePathError("invalid_patch")
+    original_lines = original.splitlines(keepends=True)
+    output: list[str] = []
+    source_cursor = 0
+    index = 2
+    saw_hunk = False
+    while index < len(lines):
+        match = HUNK_HEADER.match(lines[index])
+        if match is None:
+            raise WorkspacePathError("invalid_patch")
+        saw_hunk = True
+        old_start = int(match.group(1))
+        old_count = int(match.group(2) or "1")
+        new_count = int(match.group(4) or "1")
+        target_cursor = 0 if old_start == 0 else old_start - 1
+        if target_cursor < source_cursor or target_cursor > len(original_lines):
+            raise WorkspacePathError("patch_context_mismatch")
+        output.extend(original_lines[source_cursor:target_cursor])
+        source_cursor = target_cursor
+        index += 1
+        consumed_old = 0
+        produced_new = 0
+        while index < len(lines) and not lines[index].startswith("@@ "):
+            line = lines[index]
+            if not line or line[0] not in {" ", "+", "-"}:
+                raise WorkspacePathError("invalid_patch")
+            content = line[1:]
+            if line[0] in {" ", "-"}:
+                if source_cursor >= len(original_lines) or original_lines[source_cursor] != content:
+                    raise WorkspacePathError("patch_context_mismatch")
+                source_cursor += 1
+                consumed_old += 1
+            if line[0] in {" ", "+"}:
+                output.append(content)
+                produced_new += 1
+            index += 1
+        if consumed_old != old_count or produced_new != new_count:
+            raise WorkspacePathError("invalid_patch")
+    if not saw_hunk:
+        raise WorkspacePathError("invalid_patch")
+    output.extend(original_lines[source_cursor:])
+    return "".join(output)
+
+
+def _build_approval_diff(
+    original: str,
+    candidate: str,
+    fromfile: str,
+    tofile: str,
+) -> str:
+    records = list(
+        difflib.unified_diff(
+            original.splitlines(),
+            candidate.splitlines(),
+            fromfile=fromfile,
+            tofile=tofile,
+            lineterm="",
+        )
+    )
+    before_newline = original.endswith("\n")
+    after_newline = candidate.endswith("\n")
+    if not records:
+        if original == candidate:
+            return ""
+        records = [f"--- {fromfile}", f"+++ {tofile}"]
+    diff = "\n".join(records) + "\n"
+    if before_newline != after_newline:
+        before = "present" if before_newline else "absent"
+        after = "present" if after_newline else "absent"
+        diff += f"\\ Eidos EOF newline: before={before}, after={after}\n"
+    return diff
+
+
 def _is_sensitive_directory(name: str) -> bool:
     return name.lower() in SENSITIVE_DIRECTORIES
 
@@ -449,6 +888,8 @@ def _is_sensitive_name(name: str) -> bool:
     if lowered == ".env.example":
         return False
     return (
+        lowered.startswith(".eidos-")
+        or
         lowered == ".env"
         or lowered.startswith(".env.")
         or lowered in SENSITIVE_NAMES
@@ -492,3 +933,39 @@ def _error(tool_name: str, code: str, summary: str) -> dict[str, object]:
         "data": {},
         "sideEffectsMayExist": False,
     }
+
+
+def _commit_error(
+    tool_name: str,
+    code: str,
+    summary: str,
+    *,
+    side_effects: bool,
+    path: str | None = None,
+    sha256: str | None = None,
+) -> dict[str, object]:
+    data: dict[str, object] = {}
+    if path is not None:
+        data["path"] = path
+    if sha256 is not None:
+        data["sha256"] = sha256
+    return {
+        "schemaVersion": 1,
+        "toolName": tool_name,
+        "outcome": "error",
+        "code": code,
+        "summary": summary,
+        "data": data,
+        "sideEffectsMayExist": side_effects,
+    }
+
+
+def _fd_path(descriptor: int) -> str:
+    try:
+        raw = fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024))
+        value = raw.split(bytes(1), 1)[0].decode("utf-8", errors="strict")
+    except (AttributeError, OSError, UnicodeDecodeError):
+        raise WorkspacePathError("workspace_identity_unavailable") from None
+    if not value:
+        raise WorkspacePathError("workspace_identity_unavailable")
+    return value

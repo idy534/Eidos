@@ -68,10 +68,31 @@ export interface ToolCall {
   providerCallId: string;
   toolName: string;
   status: "running" | "completed" | "failed" | "canceled";
-  argumentsJson: string;
+  argumentsJson?: string;
   resultJson?: string;
   startedAt: number;
   completedAt?: number;
+  approvalStatus?: "pending" | "resolved" | "canceled";
+  approvalDecision?: "approve" | "reject";
+  approvalFeedback?: string;
+  approvalDiff?: string;
+  baseSha256?: string;
+}
+
+export interface ApprovalRequest {
+  id: string;
+  sessionId: string;
+  runId: string;
+  itemId: string;
+  toolCallId: string;
+  kind: "file_change";
+  summary: string;
+  diff: string;
+}
+
+export interface ApprovalDecision {
+  decision: "approve" | "reject";
+  feedback?: string;
 }
 
 export interface Item {
@@ -117,6 +138,7 @@ interface RuntimeClientOptions {
   dataDirectory?: string;
   environment?: Record<string, string>;
   onNotification?: (notification: RuntimeNotification) => void;
+  onApprovalRequest?: (request: ApprovalRequest) => Promise<ApprovalDecision>;
   onStderr?: (line: string) => void;
 }
 
@@ -152,6 +174,7 @@ export class RuntimeClient {
   private readonly pending = new Map<string, PendingRequest>();
   private readonly exitPromise: Promise<number>;
   private readonly onNotification: ((notification: RuntimeNotification) => void) | undefined;
+  private readonly onApprovalRequest: ((request: ApprovalRequest) => Promise<ApprovalDecision>) | undefined;
   private stdoutBuffer = Buffer.alloc(0);
   private nextRequestId = 1;
   private closed = false;
@@ -180,6 +203,7 @@ export class RuntimeClient {
     const stderr = readline.createInterface({ input: this.child.stderr });
     stderr.on("line", (line) => options.onStderr?.(line));
     this.onNotification = options.onNotification;
+    this.onApprovalRequest = options.onApprovalRequest;
 
     this.exitPromise = new Promise((resolve) => {
       this.child.once("error", (error) => this.failAll(error));
@@ -350,10 +374,23 @@ export class RuntimeClient {
       return;
     }
     if (isServerRequest(message)) {
-      this.writeProtocolMessage({
-        jsonrpc: "2.0",
-        id: message.id,
-        error: { code: -32601, message: "Method not found" },
+      const request = approvalRequestFrom(message);
+      if (!request || !this.onApprovalRequest) {
+        this.writeProtocolMessage({
+          jsonrpc: "2.0",
+          id: message.id,
+          error: { code: -32601, message: "Method not found" },
+        });
+        return;
+      }
+      void this.onApprovalRequest(request).then((decision) => {
+        this.writeProtocolMessage({ jsonrpc: "2.0", id: message.id, result: decision });
+      }).catch(() => {
+        this.writeProtocolMessage({
+          jsonrpc: "2.0",
+          id: message.id,
+          error: { code: -32000, message: "Approval failed" },
+        });
       });
       return;
     }
@@ -378,6 +415,9 @@ export class RuntimeClient {
   }
 
   private writeProtocolMessage(message: Record<string, unknown>): void {
+    if (this.closed || this.child.stdin.destroyed) {
+      return;
+    }
     const serialized = JSON.stringify(message);
     if (Buffer.byteLength(serialized, "utf8") > MAX_MESSAGE_BYTES) {
       this.failProtocol("Runtime protocol response exceeds 1 MiB");
@@ -625,7 +665,9 @@ function isItem(value: unknown): value is Item {
   if (!valid) {
     return false;
   }
-  return value.kind === "tool_call" ? isToolCall(value.toolCall) : value.toolCall === undefined;
+  return ["tool_call", "file_change", "command_execution"].includes(String(value.kind))
+    ? isToolCall(value.toolCall)
+    : value.toolCall === undefined;
 }
 
 function isToolCall(value: unknown): value is ToolCall {
@@ -643,6 +685,11 @@ function isToolCall(value: unknown): value is ToolCall {
       "resultJson",
       "startedAt",
       "completedAt",
+      "approvalStatus",
+      "approvalDecision",
+      "approvalFeedback",
+      "approvalDiff",
+      "baseSha256",
     ])
   ) {
     return false;
@@ -655,10 +702,15 @@ function isToolCall(value: unknown): value is ToolCall {
     && typeof value.providerCallId === "string"
     && typeof value.toolName === "string"
     && ["running", "completed", "failed", "canceled"].includes(String(value.status))
-    && typeof value.argumentsJson === "string"
+    && (value.argumentsJson === undefined || typeof value.argumentsJson === "string")
     && (value.resultJson === undefined || typeof value.resultJson === "string")
     && isNonNegativeInteger(value.startedAt)
     && (value.completedAt === undefined || isNonNegativeInteger(value.completedAt))
+    && (value.approvalStatus === undefined || ["pending", "resolved", "canceled"].includes(String(value.approvalStatus)))
+    && (value.approvalDecision === undefined || ["approve", "reject"].includes(String(value.approvalDecision)))
+    && (value.approvalFeedback === undefined || typeof value.approvalFeedback === "string")
+    && (value.approvalDiff === undefined || typeof value.approvalDiff === "string")
+    && (value.baseSha256 === undefined || typeof value.baseSha256 === "string")
   );
 }
 
@@ -677,4 +729,34 @@ function isNonNegativeInteger(value: unknown): value is number {
 
 function isPositiveInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) > 0;
+}
+
+function approvalRequestFrom(
+  message: { jsonrpc: "2.0"; id: string; method: string; params: unknown },
+): ApprovalRequest | undefined {
+  if (message.method !== "item/requestApproval" || !isRecord(message.params)) {
+    return undefined;
+  }
+  const params = message.params;
+  if (
+    !hasOnlyKeys(params, [
+      "sessionId",
+      "runId",
+      "itemId",
+      "toolCallId",
+      "kind",
+      "summary",
+      "diff",
+    ])
+    || typeof params.sessionId !== "string"
+    || typeof params.runId !== "string"
+    || typeof params.itemId !== "string"
+    || typeof params.toolCallId !== "string"
+    || params.kind !== "file_change"
+    || typeof params.summary !== "string"
+    || typeof params.diff !== "string"
+  ) {
+    return undefined;
+  }
+  return { id: message.id, ...params } as ApprovalRequest;
 }

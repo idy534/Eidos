@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 import sys
 import threading
@@ -13,7 +14,7 @@ from eidos_runtime import __version__
 from eidos_runtime.deepseek import DeepSeekChatModel
 from eidos_runtime.model import ModelClient, ModelResponse, ModelToolCall, ScriptedModel
 from eidos_runtime.model_config import ModelConfigError, ModelConfigStore
-from eidos_runtime.runtime_loop import RuntimeLoop
+from eidos_runtime.runtime_loop import ApprovalDecision, RuntimeLoop
 from eidos_runtime.seatbelt import run_seatbelt_self_test
 from eidos_runtime.storage import (
     ActiveRunError,
@@ -30,6 +31,12 @@ MAX_MESSAGE_BYTES = 1024 * 1024
 PROTOCOL_VERSION = 1
 
 logger = logging.getLogger("eidos.runtime")
+
+
+@dataclass
+class PendingApproval:
+    event: threading.Event
+    decision: ApprovalDecision | None = None
 
 
 def response(request_id: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -116,10 +123,16 @@ class RuntimeServer:
         self.worker: threading.Thread | None = None
         self.active_run_id: str | None = None
         self.active_cancel: threading.Event | None = None
+        self.approval_lock = threading.RLock()
+        self.pending_approvals: dict[str, PendingApproval] = {}
 
     def handle(self, message: object) -> None:
         if not isinstance(message, dict):
             self.send(protocol_error(None, -32600, "Invalid Request"))
+            return
+
+        if self._is_server_response(message):
+            self.handle_approval_response(message)
             return
 
         request_id = message.get("id")
@@ -347,17 +360,28 @@ class RuntimeServer:
             self.send(protocol_error(request_id, -32602, "Invalid params"))
             return
         try:
-            canceled = self.store.cancel_run(params["runId"])
+            current = self.store.read_run(params["runId"])
         except ResourceNotFoundError:
             self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
             return
-        except InvalidRunStateError:
+        if current["status"] not in {"running", "waiting_approval", "canceled"}:
             self.send(business_error(request_id, "INVALID_STATE"))
             return
         with self.worker_lock:
             if self.active_run_id == params["runId"] and self.active_cancel is not None:
                 self.active_cancel.set()
-        self.send(response(request_id, canceled))
+                worker = self.worker
+            else:
+                worker = None
+        if worker is None:
+            try:
+                current = self.store.cancel_run(params["runId"])
+            except InvalidRunStateError:
+                current = self.store.read_run(params["runId"])
+        else:
+            worker.join(timeout=6.0)
+            current = self.store.read_run(params["runId"])
+        self.send(response(request_id, current))
 
     def model_status(self, request_id: str, params: object) -> None:
         if not isinstance(params, dict) or params:
@@ -408,13 +432,8 @@ class RuntimeServer:
                 self.active_cancel.set()
             active_run_id = self.active_run_id
             worker = self.worker
-        if active_run_id is not None:
-            try:
-                self.store.cancel_run(active_run_id)
-            except (ResourceNotFoundError, InvalidRunStateError):
-                pass
         if worker is not None:
-            worker.join(timeout=0.75)
+            worker.join(timeout=6.0)
         if worker is None or not worker.is_alive():
             self.store.close()
         self.send(response(request_id, {}))
@@ -424,6 +443,69 @@ class RuntimeServer:
     def send(self, message: dict[str, object]) -> None:
         with self.output_lock:
             write_message(self.output, message)
+
+    def request_approval(
+        self, params: dict[str, object], cancel: threading.Event
+    ) -> ApprovalDecision:
+        request_id = f"server-approval-{uuid.uuid4()}"
+        pending = PendingApproval(threading.Event())
+        with self.approval_lock:
+            self.pending_approvals[request_id] = pending
+        try:
+            self.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "item/requestApproval",
+                    "params": params,
+                }
+            )
+            while not pending.event.wait(0.1):
+                if cancel.is_set():
+                    return ApprovalDecision("reject")
+            return pending.decision or ApprovalDecision("reject")
+        finally:
+            with self.approval_lock:
+                self.pending_approvals.pop(request_id, None)
+
+    def handle_approval_response(self, message: dict[str, object]) -> None:
+        request_id = message["id"]
+        assert isinstance(request_id, str)
+        with self.approval_lock:
+            pending = self.pending_approvals.get(request_id)
+            if pending is None:
+                return
+            result = message.get("result")
+            if not isinstance(result, dict):
+                pending.decision = ApprovalDecision("reject")
+            else:
+                decision = result.get("decision")
+                feedback = result.get("feedback")
+                valid = (
+                    set(result) <= {"decision", "feedback"}
+                    and decision in {"approve", "reject"}
+                    and (feedback is None or isinstance(feedback, str))
+                    and not (decision == "approve" and feedback is not None)
+                    and (
+                        feedback is None
+                        or len(feedback.encode("utf-8")) <= 2_000
+                    )
+                )
+                pending.decision = ApprovalDecision(
+                    str(decision), feedback if isinstance(feedback, str) else None
+                ) if valid else ApprovalDecision("reject")
+            pending.event.set()
+
+    @staticmethod
+    def _is_server_response(message: dict[str, object]) -> bool:
+        return (
+            message.get("jsonrpc") == "2.0"
+            and isinstance(message.get("id"), str)
+            and str(message["id"]).startswith("server-")
+            and "method" not in message
+            and set(message) <= {"jsonrpc", "id", "result", "error"}
+            and (("result" in message) != ("error" in message))
+        )
 
     def wait_for_worker(self, timeout: float = 5.0) -> None:
         with self.worker_lock:
@@ -444,7 +526,7 @@ class RuntimeServer:
             except (ResourceNotFoundError, InvalidRunStateError):
                 pass
         if worker is not None:
-            worker.join(timeout=0.75)
+            worker.join(timeout=6.0)
         if worker is None or not worker.is_alive():
             self.store.close()
 
@@ -456,7 +538,12 @@ class RuntimeServer:
     ) -> None:
         start_gate.wait()
         try:
-            RuntimeLoop(self.store, self.model, self.send).run(run_id, cancellation)
+            RuntimeLoop(
+                self.store,
+                self.model,
+                self.send,
+                self.request_approval,
+            ).run(run_id, cancellation)
         except Exception:
             logger.exception("Run worker failed")
             try:
@@ -464,6 +551,18 @@ class RuntimeServer:
                 if run["status"] == "running":
                     failed = self.store.fail_run(run_id, "INTERNAL_ERROR")
                     for item in self.store.canceled_items_for_run(run_id):
+                        notification_item = item
+                        if item["kind"] == "file_change" and isinstance(
+                            item.get("toolCall"), dict
+                        ):
+                            notification_item = {
+                                **item,
+                                "toolCall": {
+                                    key: value
+                                    for key, value in item["toolCall"].items()
+                                    if key not in {"argumentsJson", "approvalDiff"}
+                                },
+                            }
                         self.send(
                             {
                                 "jsonrpc": "2.0",
@@ -471,7 +570,7 @@ class RuntimeServer:
                                 "params": {
                                     "sessionId": item["sessionId"],
                                     "runId": item["runId"],
-                                    "item": item,
+                                    "item": notification_item,
                                 },
                             }
                         )
@@ -501,7 +600,23 @@ def _is_canonical_uuid(value: object) -> bool:
 
 
 def _model_from_environment() -> ModelClient | None:
-    if os.environ.get("EIDOS_FAKE_MODEL") != "1":
+    fixture = os.environ.get("EIDOS_FAKE_MODEL")
+    if fixture == "write":
+        return ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "fake-write-1",
+                            "write_file",
+                            {"path": "approved.txt", "content": "approved\n"},
+                        ),
+                    )
+                ),
+                ModelResponse(text="Fake model completed after the approved write."),
+            ]
+        )
+    if fixture != "1":
         return None
     return ScriptedModel(
         [

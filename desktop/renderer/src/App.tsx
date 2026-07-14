@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import type {
   Item,
+  ApprovalRequest,
   ModelStatus,
   Run,
   RuntimeNotification,
@@ -22,6 +23,7 @@ export function App() {
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
 
   const activeRun = useMemo(
     () => snapshot?.runs.find((run) => ["running", "waiting_approval"].includes(run.status)),
@@ -31,7 +33,15 @@ export function App() {
   useEffect(() => {
     const unsubscribeStatus = window.eidosRuntime.onStatus(setRuntime);
     const unsubscribeNotifications = window.eidosRuntime.onNotification((notification) => {
+      if (notification.method === "run/completed") {
+        setApprovals((current) => current.filter(
+          (approval) => approval.runId !== notification.params.run.id,
+        ));
+      }
       setSnapshot((current) => applyNotification(current, notification));
+    });
+    const unsubscribeApprovals = window.eidosRuntime.onApprovalRequest((request) => {
+      setApprovals((current) => [...current.filter((item) => item.id !== request.id), request]);
     });
     void window.eidosRuntime.getStatus().then(setRuntime).catch((cause: unknown) => {
       setRuntime({ state: "error", message: messageFrom(cause) });
@@ -39,6 +49,7 @@ export function App() {
     return () => {
       unsubscribeStatus();
       unsubscribeNotifications();
+      unsubscribeApprovals();
     };
   }, []);
 
@@ -136,6 +147,25 @@ export function App() {
     }
   }
 
+  async function respondApproval(
+    request: ApprovalRequest,
+    decision: "approve" | "reject",
+  ): Promise<void> {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const accepted = await window.eidosRuntime.respondApproval(request.id, decision);
+      if (!accepted) {
+        throw new Error("这个审批已经失效。");
+      }
+      setApprovals((current) => current.filter((item) => item.id !== request.id));
+    } catch (cause) {
+      setError(messageFrom(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (runtime.state !== "ready") {
     return <RuntimeGate status={runtime} />;
   }
@@ -188,7 +218,13 @@ export function App() {
 
         {snapshot ? (
           <>
-            <ExecutionFeed items={snapshot.items} runs={snapshot.runs} />
+            <ExecutionFeed
+              items={snapshot.items}
+              runs={snapshot.runs}
+              approvals={approvals.filter((approval) => approval.sessionId === snapshot.session.id)}
+              disabled={busy}
+              onApproval={(request, decision) => void respondApproval(request, decision)}
+            />
             <form className="composer" onSubmit={(event) => {
               event.preventDefault();
               void startRun();
@@ -265,9 +301,12 @@ function applyNotification(
   }
   const incoming = notification.params.item;
   const existing = snapshot.items.find((item) => item.id === incoming.id);
-  const merged: Item = existing?.content !== undefined && incoming.content === undefined
+  let merged: Item = existing?.content !== undefined && incoming.content === undefined
     ? { ...incoming, content: existing.content }
     : incoming;
+  if (existing?.toolCall && incoming.toolCall) {
+    merged = { ...merged, toolCall: { ...existing.toolCall, ...incoming.toolCall } };
+  }
   return { ...snapshot, items: upsertItem(snapshot.items, merged) };
 }
 

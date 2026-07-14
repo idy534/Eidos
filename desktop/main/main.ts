@@ -3,7 +3,11 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { RuntimeClient } from "./runtime-client.js";
-import type { RuntimeNotification } from "./runtime-client.js";
+import type {
+  ApprovalDecision,
+  ApprovalRequest,
+  RuntimeNotification,
+} from "./runtime-client.js";
 
 
 type RuntimeStatus =
@@ -23,6 +27,10 @@ let runtimeClient: RuntimeClient | undefined;
 let isQuitting = false;
 let quitCanContinue = false;
 let shutdownStarted = false;
+const pendingApprovals = new Map<
+  string,
+  { request: ApprovalRequest; resolve: (decision: ApprovalDecision) => void }
+>();
 
 function publishStatus(status: RuntimeStatus): void {
   runtimeStatus = status;
@@ -35,6 +43,23 @@ function publishNotification(notification: RuntimeNotification): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send("runtime:notification", notification);
   }
+  if (notification.method === "run/completed") {
+    for (const [id, pending] of pendingApprovals) {
+      if (pending.request.runId === notification.params.run.id) {
+        pendingApprovals.delete(id);
+        pending.resolve({ decision: "reject" });
+      }
+    }
+  }
+}
+
+function requestApproval(request: ApprovalRequest): Promise<ApprovalDecision> {
+  return new Promise((resolve) => {
+    pendingApprovals.set(request.id, { request, resolve });
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send("approval:requested", request);
+    }
+  });
 }
 
 function clientOrThrow(): RuntimeClient {
@@ -72,6 +97,7 @@ async function startRuntime(): Promise<void> {
     runtimeRoot,
     dataDirectory: path.join(app.getPath("home"), ".eidos"),
     onNotification: publishNotification,
+    onApprovalRequest: requestApproval,
     onStderr: (line) => console.error(`[runtime] ${line}`),
   });
   runtimeClient = client;
@@ -146,6 +172,37 @@ ipcMain.handle("model:configure", (_event, apiKey: unknown) => {
   }
   return clientOrThrow().configureModel(apiKey);
 });
+ipcMain.handle(
+  "approval:respond",
+  (
+    _event,
+    id: unknown,
+    decision: unknown,
+    feedback: unknown,
+  ) => {
+    if (
+      typeof id !== "string"
+      || !["approve", "reject"].includes(String(decision))
+      || (feedback !== undefined && typeof feedback !== "string")
+      || (typeof feedback === "string" && Buffer.byteLength(feedback, "utf8") > 2_000)
+      || (decision === "approve" && feedback !== undefined)
+    ) {
+      throw new Error("审批参数无效。");
+    }
+    const pending = pendingApprovals.get(id);
+    if (!pending) {
+      return false;
+    }
+    pendingApprovals.delete(id);
+    const result: ApprovalDecision = decision === "approve"
+      ? { decision: "approve" }
+      : feedback
+        ? { decision: "reject", feedback }
+        : { decision: "reject" };
+    pending.resolve(result);
+    return true;
+  },
+);
 
 app.whenReady().then(() => {
   createWindow();
@@ -174,7 +231,7 @@ app.on("before-quit", (event) => {
     setTimeout(() => {
       client.terminate();
       resolve();
-    }, 3000);
+    }, 8000);
   });
   const gracefulStop = client
     .shutdown()

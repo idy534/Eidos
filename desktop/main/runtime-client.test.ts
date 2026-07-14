@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -126,6 +126,104 @@ test("routes runtime notifications during a fake model read loop", async () => {
       snapshot.items.map((item) => item.kind),
       ["user_message", "tool_call", "assistant_message"],
     );
+  } finally {
+    await rm(dataDirectory, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("routes a runtime approval request and commits only after approval", async () => {
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-workspace-"));
+  const approvals: string[] = [];
+
+  try {
+    let completeRun: ((notification: RuntimeNotification) => void) | undefined;
+    const runCompleted = new Promise<RuntimeNotification>((resolve) => {
+      completeRun = resolve;
+    });
+    const client = new RuntimeClient({
+      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      runtimeRoot: path.join(projectRoot, "runtime"),
+      dataDirectory,
+      environment: { EIDOS_FAKE_MODEL: "write" },
+      onApprovalRequest: async (request) => {
+        approvals.push(request.diff);
+        return { decision: "approve" };
+      },
+      onNotification: (notification) => {
+        if (notification.method === "run/completed") {
+          completeRun?.(notification);
+        }
+      },
+    });
+
+    await client.initialize();
+    const session = await client.createSession(workspaceRoot);
+    await client.startRun(session.id, "Create approved.txt");
+    const completed = await withTimeout(runCompleted, 5_000);
+    await client.shutdown();
+    assert.equal(await client.waitForExit(), 0);
+
+    assert.equal(completed.method, "run/completed");
+    assert.equal(await readFile(path.join(workspaceRoot, "approved.txt"), "utf8"), "approved\n");
+    assert.equal(approvals.length, 1);
+    assert.match(approvals[0] ?? "", /\+\+\+ b\/approved\.txt/);
+  } finally {
+    await rm(dataDirectory, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("cancel while awaiting approval ignores a late approve response", async () => {
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-workspace-"));
+
+  try {
+    let resolveApproval: ((decision: { decision: "approve" }) => void) | undefined;
+    let approvalStarted: (() => void) | undefined;
+    const approvalRequested = new Promise<void>((resolve) => {
+      approvalStarted = resolve;
+    });
+    const delayedApproval = new Promise<{ decision: "approve" }>((resolve) => {
+      resolveApproval = resolve;
+    });
+    let completeRun: ((notification: RuntimeNotification) => void) | undefined;
+    const runCompleted = new Promise<RuntimeNotification>((resolve) => {
+      completeRun = resolve;
+    });
+    const client = new RuntimeClient({
+      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      runtimeRoot: path.join(projectRoot, "runtime"),
+      dataDirectory,
+      environment: { EIDOS_FAKE_MODEL: "write" },
+      onApprovalRequest: async () => {
+        approvalStarted?.();
+        return delayedApproval;
+      },
+      onNotification: (notification) => {
+        if (notification.method === "run/completed") {
+          completeRun?.(notification);
+        }
+      },
+    });
+
+    await client.initialize();
+    const session = await client.createSession(workspaceRoot);
+    const run = await client.startRun(session.id, "Create approved.txt");
+    await withTimeout(approvalRequested, 5_000);
+    await client.cancelRun(run.id);
+    const completed = await withTimeout(runCompleted, 5_000);
+    resolveApproval?.({ decision: "approve" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const snapshot = await client.readSession(session.id);
+    await client.shutdown();
+    assert.equal(await client.waitForExit(), 0);
+
+    assert.equal(completed.method, "run/completed");
+    assert.equal(completed.params.run.status, "canceled");
+    assert.equal(snapshot.runs[0]?.status, "canceled");
+    await assert.rejects(readFile(path.join(workspaceRoot, "approved.txt"), "utf8"));
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });

@@ -139,12 +139,18 @@ class SessionStore:
                     )),
                     arguments_json TEXT NOT NULL,
                     result_json TEXT,
+                    approval_status TEXT,
+                    approval_decision TEXT,
+                    approval_feedback TEXT,
+                    approval_diff TEXT,
+                    base_sha256 TEXT,
                     started_at INTEGER NOT NULL,
                     completed_at INTEGER
                 );
                 """
             )
             _ensure_session_identity_columns(connection)
+            _ensure_tool_call_approval_columns(connection)
             _backfill_session_identities(connection)
             now = _now_ms()
             connection.execute(
@@ -159,6 +165,12 @@ class SessionStore:
                   )
                 """,
                 (now,),
+            )
+            connection.execute(
+                """
+                UPDATE tool_calls SET approval_status = 'canceled'
+                WHERE approval_status = 'pending'
+                """
             )
             connection.execute(
                 """
@@ -509,6 +521,13 @@ class SessionStore:
         item_id = str(uuid.uuid4())
         tool_call_id = str(uuid.uuid4())
         now = _now_ms()
+        item_kind = (
+            "file_change"
+            if tool_name in {"write_file", "apply_patch"}
+            else "command_execution"
+            if tool_name == "run_shell"
+            else "tool_call"
+        )
         with self.lock, self._connection() as connection:
             run = connection.execute(
                 "SELECT session_id FROM runs WHERE id = ? AND status = 'running'",
@@ -522,9 +541,17 @@ class SessionStore:
                 INSERT INTO items (
                     id, session_id, run_id, ordinal, model_step_index,
                     kind, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, 'tool_call', 'in_progress', ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, 'in_progress', ?)
                 """,
-                (item_id, run["session_id"], run_id, ordinal, model_step_index, now),
+                (
+                    item_id,
+                    run["session_id"],
+                    run_id,
+                    ordinal,
+                    model_step_index,
+                    item_kind,
+                    now,
+                ),
             )
             connection.execute(
                 """
@@ -547,28 +574,137 @@ class SessionStore:
         return self.read_item(item_id)
 
     def complete_tool_item(
-        self, item_id: str, result_json: str
+        self,
+        item_id: str,
+        result_json: str,
+        *,
+        item_status: str = "completed",
+        tool_status: str = "completed",
     ) -> dict[str, object]:
+        if item_status not in {"completed", "failed", "declined", "canceled"}:
+            raise ValueError("invalid item status")
+        if tool_status not in {"completed", "failed", "canceled"}:
+            raise ValueError("invalid tool status")
         now = _now_ms()
         with self.lock, self._connection() as connection:
             tool_update = connection.execute(
                 """
                 UPDATE tool_calls
-                SET status = 'completed', result_json = ?, completed_at = ?
+                SET status = ?, result_json = ?, completed_at = ?
                 WHERE item_id = ? AND status = 'running'
                 """,
-                (result_json, now, item_id),
+                (tool_status, result_json, now, item_id),
             )
             item_update = connection.execute(
                 """
-                UPDATE items SET status = 'completed', completed_at = ?
+                UPDATE items SET status = ?, completed_at = ?
                 WHERE id = ? AND status = 'in_progress'
                 """,
-                (now, item_id),
+                (item_status, now, item_id),
             )
             if tool_update.rowcount != 1 or item_update.rowcount != 1:
                 raise InvalidRunStateError("tool item is not active")
         return self.read_item(item_id)
+
+    def begin_approval(
+        self,
+        item_id: str,
+        diff: str,
+        base_sha256: str | None,
+    ) -> dict[str, object]:
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            row = connection.execute(
+                "SELECT run_id FROM items WHERE id = ? AND status = 'in_progress'",
+                (item_id,),
+            ).fetchone()
+            if row is None:
+                raise InvalidRunStateError("tool item is not active")
+            run_update = connection.execute(
+                """
+                UPDATE runs SET status = 'waiting_approval', updated_at = ?
+                WHERE id = ? AND status = 'running'
+                """,
+                (now, row["run_id"]),
+            )
+            tool_update = connection.execute(
+                """
+                UPDATE tool_calls
+                SET approval_status = 'pending', approval_diff = ?, base_sha256 = ?
+                WHERE item_id = ? AND status = 'running'
+                """,
+                (diff, base_sha256, item_id),
+            )
+            if run_update.rowcount != 1 or tool_update.rowcount != 1:
+                raise InvalidRunStateError("approval cannot start")
+        return self.read_item(item_id)
+
+    def resolve_approval(
+        self,
+        item_id: str,
+        decision: str,
+        feedback: str | None,
+    ) -> dict[str, object]:
+        if decision not in {"approve", "reject"}:
+            raise ValueError("invalid approval decision")
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            row = connection.execute(
+                "SELECT run_id FROM items WHERE id = ? AND status = 'in_progress'",
+                (item_id,),
+            ).fetchone()
+            if row is None:
+                raise InvalidRunStateError("tool item is not active")
+            tool_update = connection.execute(
+                """
+                UPDATE tool_calls
+                SET approval_status = 'resolved', approval_decision = ?,
+                    approval_feedback = ?
+                WHERE item_id = ? AND status = 'running'
+                  AND approval_status = 'pending'
+                """,
+                (decision, feedback, item_id),
+            )
+            run_update = connection.execute(
+                """
+                UPDATE runs SET status = 'running', updated_at = ?
+                WHERE id = ? AND status = 'waiting_approval'
+                """,
+                (now, row["run_id"]),
+            )
+            if tool_update.rowcount != 1 or run_update.rowcount != 1:
+                raise InvalidRunStateError("approval is no longer pending")
+        return self.read_item(item_id)
+
+    def has_read_evidence(
+        self, run_id: str, path: str, sha256: str
+    ) -> bool:
+        with self.lock:
+            rows = self._connection().execute(
+                """
+                SELECT tool_calls.arguments_json, tool_calls.result_json
+                FROM tool_calls
+                JOIN items ON items.id = tool_calls.item_id
+                WHERE items.run_id = ? AND items.status = 'completed'
+                  AND tool_calls.tool_name = 'read_file'
+                  AND tool_calls.status = 'completed'
+                ORDER BY tool_calls.creation_seq DESC
+                """,
+                (run_id,),
+            ).fetchall()
+        for row in rows:
+            try:
+                arguments = json.loads(row["arguments_json"])
+                result = json.loads(row["result_json"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if (
+                arguments == {"path": path}
+                and result.get("outcome") == "success"
+                and result.get("data", {}).get("sha256") == sha256
+            ):
+                return True
+        return False
 
     def record_protocol_error(self, run_id: str) -> int:
         with self.lock, self._connection() as connection:
@@ -611,6 +747,14 @@ class SessionStore:
             )
             connection.execute(
                 """
+                UPDATE tool_calls SET approval_status = 'canceled'
+                WHERE approval_status = 'pending'
+                  AND item_id IN (SELECT id FROM items WHERE run_id = ?)
+                """,
+                (run_id,),
+            )
+            connection.execute(
+                """
                 UPDATE items SET status = 'canceled', completed_at = ?
                 WHERE run_id = ? AND status = 'in_progress'
                 """,
@@ -620,7 +764,7 @@ class SessionStore:
                 """
                 UPDATE runs
                 SET status = 'failed', error_code = ?, updated_at = ?, completed_at = ?
-                WHERE id = ? AND status = 'running'
+                WHERE id = ? AND status IN ('running', 'waiting_approval')
                 """,
                 (error_code, now, now, run_id),
             )
@@ -647,6 +791,14 @@ class SessionStore:
                   AND item_id IN (SELECT id FROM items WHERE run_id = ?)
                 """,
                 (now, run_id),
+            )
+            connection.execute(
+                """
+                UPDATE tool_calls SET approval_status = 'canceled'
+                WHERE approval_status = 'pending'
+                  AND item_id IN (SELECT id FROM items WHERE run_id = ?)
+                """,
+                (run_id,),
             )
             connection.execute(
                 """
@@ -684,6 +836,14 @@ class SessionStore:
                   AND item_id IN (SELECT id FROM items WHERE run_id = ?)
                 """,
                 (now, run_id),
+            )
+            connection.execute(
+                """
+                UPDATE tool_calls SET approval_status = 'canceled'
+                WHERE approval_status = 'pending'
+                  AND item_id IN (SELECT id FROM items WHERE run_id = ?)
+                """,
+                (run_id,),
             )
             connection.execute(
                 """
@@ -733,7 +893,7 @@ class SessionStore:
             item_rows = connection.execute(
                 """
                 SELECT * FROM items
-                WHERE session_id = ? AND status = 'completed'
+                WHERE session_id = ? AND status IN ('completed', 'failed', 'declined')
                 ORDER BY creation_seq DESC LIMIT ?
                 """,
                 (session_id, MAX_CONTEXT_ITEMS),
@@ -757,7 +917,7 @@ class SessionStore:
                 group.append(
                     {"type": "assistant", "content": item.get("content", "")}
                 )
-            elif item["kind"] == "tool_call":
+            elif item["kind"] in {"tool_call", "file_change", "command_execution"}:
                 tool_call = item["toolCall"]
                 group.append(
                     {
@@ -892,6 +1052,22 @@ def _ensure_session_identity_columns(connection: sqlite3.Connection) -> None:
             connection.execute(f"ALTER TABLE sessions ADD COLUMN {name} INTEGER")
 
 
+def _ensure_tool_call_approval_columns(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(tool_calls)").fetchall()
+    }
+    for name in (
+        "approval_status",
+        "approval_decision",
+        "approval_feedback",
+        "approval_diff",
+        "base_sha256",
+    ):
+        if name not in columns:
+            connection.execute(f"ALTER TABLE tool_calls ADD COLUMN {name} TEXT")
+
+
 def _backfill_session_identities(connection: sqlite3.Connection) -> None:
     rows = connection.execute(
         """
@@ -991,6 +1167,16 @@ def _item_from_row(
             tool_call["resultJson"] = tool_row["result_json"]
         if tool_row["completed_at"] is not None:
             tool_call["completedAt"] = tool_row["completed_at"]
+        if tool_row["approval_status"] is not None:
+            tool_call["approvalStatus"] = tool_row["approval_status"]
+        if tool_row["approval_decision"] is not None:
+            tool_call["approvalDecision"] = tool_row["approval_decision"]
+        if tool_row["approval_feedback"] is not None:
+            tool_call["approvalFeedback"] = tool_row["approval_feedback"]
+        if tool_row["approval_diff"] is not None:
+            tool_call["approvalDiff"] = tool_row["approval_diff"]
+        if tool_row["base_sha256"] is not None:
+            tool_call["baseSha256"] = tool_row["base_sha256"]
         item["toolCall"] = tool_call
     return item
 

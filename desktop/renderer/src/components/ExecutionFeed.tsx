@@ -1,7 +1,15 @@
-import type { Item, Run } from "../contracts";
+import type { ApprovalRequest, Item, Run } from "../contracts";
 
 
-export function ExecutionFeed({ items, runs }: { items: Item[]; runs: Run[] }) {
+interface Props {
+  items: Item[];
+  runs: Run[];
+  approvals: ApprovalRequest[];
+  disabled: boolean;
+  onApproval: (request: ApprovalRequest, decision: "approve" | "reject") => void;
+}
+
+export function ExecutionFeed({ items, runs, approvals, disabled, onApproval }: Props) {
   if (items.length === 0) {
     return (
       <div className="feed-empty" role="status">
@@ -11,7 +19,15 @@ export function ExecutionFeed({ items, runs }: { items: Item[]; runs: Run[] }) {
   }
   return (
     <section className="feed" aria-label="Execution Feed" aria-live="polite">
-      {items.map((item) => <FeedItem key={item.id} item={item} />)}
+      {items.map((item) => (
+        <FeedItem
+          key={item.id}
+          item={item}
+          approval={approvals.find((request) => request.itemId === item.id)}
+          disabled={disabled}
+          onApproval={onApproval}
+        />
+      ))}
       {runs.at(-1)?.status === "failed" && (
         <p className="run-error" role="alert">Run 失败：{runs.at(-1)?.errorCode ?? "UNKNOWN_ERROR"}</p>
       )}
@@ -19,7 +35,17 @@ export function ExecutionFeed({ items, runs }: { items: Item[]; runs: Run[] }) {
   );
 }
 
-function FeedItem({ item }: { item: Item }) {
+function FeedItem({
+  item,
+  approval,
+  disabled,
+  onApproval,
+}: {
+  item: Item;
+  approval: ApprovalRequest | undefined;
+  disabled: boolean;
+  onApproval: (request: ApprovalRequest, decision: "approve" | "reject") => void;
+}) {
   if (item.kind === "user_message") {
     return <article className="feed-item feed-item--user"><p>{item.content}</p></article>;
   }
@@ -33,7 +59,25 @@ function FeedItem({ item }: { item: Item }) {
       </article>
     );
   }
-  if (item.kind === "tool_call" && item.toolCall) {
+  if (["tool_call", "file_change", "command_execution"].includes(item.kind) && item.toolCall) {
+    if (approval) {
+      return (
+        <article className="approval-card" aria-labelledby={`approval-${approval.id}`}>
+          <div className="approval-heading">
+            <div>
+              <p className="feed-label">需要你的批准</p>
+              <h3 id={`approval-${approval.id}`}>{approval.summary}</h3>
+            </div>
+            <span>文件变更</span>
+          </div>
+          <pre className="diff-view">{approval.diff}</pre>
+          <div className="approval-actions">
+            <button className="button-secondary" disabled={disabled} onClick={() => onApproval(approval, "reject")}>拒绝</button>
+            <button disabled={disabled} onClick={() => onApproval(approval, "approve")}>批准并写入</button>
+          </div>
+        </article>
+      );
+    }
     return (
       <details className="tool-item" open={item.status === "in_progress"}>
         <summary>
@@ -42,8 +86,9 @@ function FeedItem({ item }: { item: Item }) {
           <small>{statusLabel(item.status)}</small>
         </summary>
         <div className="tool-body">
-          <code>{item.toolCall.argumentsJson}</code>
+          {item.toolCall.argumentsJson && <code>{item.toolCall.argumentsJson}</code>}
           {item.toolCall.resultJson && <pre>{prettyJson(item.toolCall.resultJson)}</pre>}
+          {item.toolCall.approvalDiff && <pre>{item.toolCall.approvalDiff}</pre>}
         </div>
       </details>
     );

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 import threading
 import time
 from typing import Callable
@@ -18,16 +19,27 @@ class RunCancelled(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class ApprovalDecision:
+    decision: str
+    feedback: str | None = None
+
+
 class RuntimeLoop:
     def __init__(
         self,
         store: SessionStore,
         model: ModelClient,
         notify: Callable[[dict[str, object]], None],
+        request_approval: Callable[
+            [dict[str, object], threading.Event], ApprovalDecision
+        ]
+        | None = None,
     ) -> None:
         self.store = store
         self.model = model
         self.notify = notify
+        self.request_approval = request_approval
 
     def run(self, run_id: str, cancel: threading.Event) -> None:
         run = self.store.read_run(run_id)
@@ -199,21 +211,48 @@ class RuntimeLoop:
                             "item": item,
                         },
                     )
-                    result = _bounded_tool_result(
-                        tool_call.name,
-                        tools.execute(tool_call.name, tool_call.arguments, cancel),
-                    )
-                    self._check_cancel(run_id, cancel)
-                    completed = self.store.complete_tool_item(
-                        item["id"],
-                        json.dumps(
-                            result,
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                            sort_keys=True,
-                        ),
-                    )
-                    self._completed_item(completed)
+                    if tools.is_side_effecting(tool_call.name):
+                        result, item_status = self._execute_file_change(
+                            run_id,
+                            item,
+                            tool_call.name,
+                            tool_call.arguments,
+                            tools,
+                            cancel,
+                        )
+                        completed = self.store.complete_tool_item(
+                            item["id"],
+                            json.dumps(
+                                result,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                                sort_keys=True,
+                            ),
+                            item_status=item_status,
+                            tool_status=(
+                                "failed" if item_status == "failed" else "completed"
+                            ),
+                        )
+                        self._completed_item(completed)
+                        self._check_cancel(run_id, cancel)
+                    else:
+                        result = _bounded_tool_result(
+                            tool_call.name,
+                            tools.execute(tool_call.name, tool_call.arguments, cancel),
+                        )
+                        item_status = "completed"
+                        self._check_cancel(run_id, cancel)
+                        completed = self.store.complete_tool_item(
+                            item["id"],
+                            json.dumps(
+                                result,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                                sort_keys=True,
+                            ),
+                            item_status=item_status,
+                        )
+                        self._completed_item(completed)
 
                 context = self.store.model_context(run["sessionId"])
                 if step_index >= MAX_MODEL_STEPS:
@@ -221,7 +260,7 @@ class RuntimeLoop:
                     return
         except (RunCancelled, InvalidRunStateError):
             completed = self.store.read_run(run_id)
-            if completed["status"] == "running":
+            if completed["status"] in {"running", "waiting_approval"}:
                 completed = self.store.cancel_run(run_id)
             self._completed_canceled_items(run_id)
             self._completed_run(completed)
@@ -252,7 +291,85 @@ class RuntimeLoop:
             ):
                 return "invalid_tool_call"
             provider_ids.add(tool_call.provider_call_id)
+        if any(tools.is_side_effecting(call.name) for call in response.tool_calls) and len(
+            response.tool_calls
+        ) != 1:
+            return "invalid_tool_batch"
         return None
+
+    def _execute_file_change(
+        self,
+        run_id: str,
+        item: dict[str, object],
+        tool_name: str,
+        arguments: dict[str, object],
+        tools: ToolExecutor,
+        cancel: threading.Event,
+    ) -> tuple[dict[str, object], str]:
+        prepared = tools.prepare_file_change(tool_name, arguments, cancel)
+        if isinstance(prepared, dict):
+            return _bounded_tool_result(tool_name, prepared), "failed"
+        if prepared.base_sha256 is not None and not self.store.has_read_evidence(
+            run_id, prepared.path, prepared.base_sha256
+        ):
+            return _tool_error(
+                tool_name,
+                "read_evidence_required",
+                "Read the current file before proposing a change",
+            ), "failed"
+        if prepared.base_sha256 is not None and not prepared.diff:
+            return {
+                "schemaVersion": 1,
+                "toolName": tool_name,
+                "outcome": "success",
+                "code": "no_changes",
+                "summary": "File already matches the requested content",
+                "data": {"path": prepared.path, "baseSha256": prepared.base_sha256},
+                "sideEffectsMayExist": False,
+            }, "completed"
+        pending_item = self.store.begin_approval(
+            item["id"], prepared.diff, prepared.base_sha256
+        )
+        if self.request_approval is None:
+            decision = ApprovalDecision("reject")
+        else:
+            tool_call = pending_item["toolCall"]
+            decision = self.request_approval(
+                {
+                    "sessionId": pending_item["sessionId"],
+                    "runId": pending_item["runId"],
+                    "itemId": pending_item["id"],
+                    "toolCallId": tool_call["id"],
+                    "kind": "file_change",
+                    "summary": f"Modify {prepared.path}",
+                    "diff": prepared.diff,
+                },
+                cancel,
+            )
+        self._check_cancel(run_id, cancel)
+        if (
+            decision.decision not in {"approve", "reject"}
+            or decision.feedback is not None
+            and len(decision.feedback.encode("utf-8")) > 2_000
+        ):
+            decision = ApprovalDecision("reject")
+        self.store.resolve_approval(
+            item["id"], decision.decision, decision.feedback
+        )
+        if decision.decision == "reject":
+            return {
+                "schemaVersion": 1,
+                "toolName": tool_name,
+                "outcome": "declined",
+                "code": "user_rejected",
+                "summary": "User rejected the file change",
+                "data": {"path": prepared.path},
+                "sideEffectsMayExist": False,
+            }, "declined"
+        result = _bounded_tool_result(
+            tool_name, tools.commit_file_change(tool_name, prepared, cancel)
+        )
+        return result, "completed" if result["outcome"] == "success" else "failed"
 
     def _check_cancel(self, run_id: str, cancel: threading.Event) -> None:
         if cancel.is_set() or self.store.read_run(run_id)["status"] in {
@@ -274,6 +391,13 @@ class RuntimeLoop:
         notification_item = item
         if item["kind"] == "assistant_message" and "content" in item:
             notification_item = {key: value for key, value in item.items() if key != "content"}
+        elif item["kind"] == "file_change" and isinstance(item.get("toolCall"), dict):
+            tool_call = {
+                key: value
+                for key, value in item["toolCall"].items()
+                if key not in {"argumentsJson", "approvalDiff"}
+            }
+            notification_item = {**item, "toolCall": tool_call}
         self._notification(
             "item/completed",
             {
@@ -323,6 +447,18 @@ def _bounded_tool_result(
         "outcome": "error",
         "code": "tool_result_too_large",
         "summary": "Tool result exceeded the safe size limit",
+        "data": {},
+        "sideEffectsMayExist": False,
+    }
+
+
+def _tool_error(tool_name: str, code: str, summary: str) -> dict[str, object]:
+    return {
+        "schemaVersion": 1,
+        "toolName": tool_name,
+        "outcome": "error",
+        "code": code,
+        "summary": summary,
         "data": {},
         "sideEffectsMayExist": False,
     }

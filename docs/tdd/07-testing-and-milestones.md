@@ -311,6 +311,7 @@ MVP Lite 已验证：
 - ✅ Fake Model + `read_file` 两轮 Runtime Loop、Item notification 顺序和真实 Main 子进程路由。
 - ✅ Workspace root identity 固化与 fd-relative 文件访问，覆盖路径被 symlink 重绑后的逃逸回归。
 - ✅ DeepSeek Chat SSE 可见文本、隐藏 reasoning、跨 chunk ToolCall/arguments 归并与私有 `0600` 模型配置。
+- ✅ 文件 Approve/Reject、既有文件读取证据、完整 diff、版本冲突、CAS swap/rollback、原子提交、post-commit uncertain 与迟到审批。
 - ⏳ 以下条目属于完整目标态或后续 MVP Lite 增量。
 
 - `foreign_keys=ON`、WAL、busy_timeout 生效。
