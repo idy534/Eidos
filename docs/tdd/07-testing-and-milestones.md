@@ -2,6 +2,8 @@
 
 版本：v0.4
 
+范围说明：本文保留完整目标态测试设计与风险里程碑。第一期执行顺序和退出标准以 [MVP Lite](../mvp-lite.md) 的 L0-L3 为准。
+
 ## 1. 测试原则
 
 - 安全边界和状态机必须由自动化测试证明，不能只依赖人工演示。
@@ -336,7 +338,7 @@
 - shell log 全局/流内唯一约束、省略/tail_replay 持久化和断线回放不恢复中间内容。
 - Artifact session/source version 唯一、logical/allocated/encoding/BOM/type 字段、snapshot hash 损坏标记与零正文读取。
 
-## 7. 风险优先里程碑
+## 7. 完整目标态风险里程碑
 
 ### M0：macOS 安全可行性
 

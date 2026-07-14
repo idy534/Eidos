@@ -2,6 +2,8 @@
 
 版本：v0.4
 
+范围说明：本文描述完整目标态 Model Gateway。第一期只实现 [MVP Lite](../mvp-lite.md) 的单 Responses HTTP(S) SSE Profile，不实现 Chat Adapter、WebSocket、Capability Probe 或 contract version 路由。
+
 ## 1. Model Profile
 
 ```text

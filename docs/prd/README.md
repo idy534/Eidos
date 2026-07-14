@@ -1,6 +1,8 @@
-# Eidos Agent Runtime MVP PRD
+# Eidos Agent Runtime 完整目标态 PRD
 
 版本：v0.4
+
+第一期实现以 [MVP Lite](../mvp-lite.md) 为准。本目录保留完整目标态产品范围与后续加固要求，不作为第一期全量交付清单。
 
 ## 文档目录
 
@@ -10,9 +12,9 @@
 4. [安全与非功能需求](04-security-and-nfr.md)
 5. [验收标准](05-acceptance-criteria.md)
 
-## 当前结论
+## 完整目标态结论
 
-Eidos MVP 是仅面向 macOS 的本地前台执行型 Agent Runtime。它通过全局单执行器、工具审批、macOS Seatbelt 沙箱、确定性文件契约、受控 Toolchain、Shell 资源/输出限制、可恢复状态机和持久化 Timeline，完成 Workspace Mode 与 Public Mode 的核心闭环。
+Eidos 完整目标态是仅面向 macOS 的本地前台执行型 Agent Runtime。它通过全局单执行器、工具审批、macOS Seatbelt 沙箱、确定性文件契约、受控 Toolchain、Shell 资源/输出限制、可恢复状态机和持久化 Timeline，完成 Workspace Mode 与 Public Mode 的核心闭环。
 
 内嵌 Workspace Terminal、后台服务、跨平台支持、文件快照恢复、智能上下文摘要、多 Agent 和企业能力不进入 MVP。
 

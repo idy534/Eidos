@@ -2,6 +2,8 @@
 
 版本：v0.4
 
+范围说明：本文描述完整目标态 HTTP/SSE/API/存储契约。第一期改用 [MVP Lite](../mvp-lite.md) 定义的 stdio JSON-RPC 双向协议和四类最小业务表。
+
 ## 1. API 边界
 
 Sidecar 只监听 `127.0.0.1` 随机端口，除 health 外全部要求：

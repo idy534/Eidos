@@ -2,6 +2,8 @@
 
 版本：v0.4
 
+第一期实现范围请先阅读 [MVP Lite](mvp-lite.md)。
+
 PRD 已按职责拆分，请从 [PRD 索引](prd/README.md) 开始阅读。
 
 主要文档：

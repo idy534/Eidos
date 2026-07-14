@@ -23,14 +23,26 @@ MVP 会优先打通这一条闭环：
 
 ## 文档
 
+- [第一期实现基线：MVP Lite](docs/mvp-lite.md)
 - [文档总索引](docs/README.md)
-- [PRD：Agent Runtime MVP](docs/prd/README.md)
-- [TDD：Agent Runtime MVP](docs/tdd/README.md)
+- [完整目标态 PRD](docs/prd/README.md)
+- [完整目标态 TDD](docs/tdd/README.md)
 - [Q1-Q155 设计决策](docs/decisions.md)
 
-## MVP 边界
+## 第一阶段：MVP Lite
 
-P0 只覆盖能让 Eidos 真正跑起来的能力：
+第一期只验证一个 Workspace 中的最小 Agent Runtime 闭环：
+
+- Electron Main 通过 stdio JSON-RPC 双向协议管理 Python Runtime，Runtime 日志只写 stderr。
+- 首期领域模型固定为 `Session -> Run -> Item/ToolCall`，不引入 Execution Segment。
+- 只支持 Workspace Mode、Responses HTTP SSE、单活动 Run 和最小工具/审批闭环。
+- 未完成 Run 在重启后标记 interrupted，不自动恢复或重放。
+
+第一期的详细范围、延期项、协议、状态和里程碑以 [MVP Lite](docs/mvp-lite.md) 为准。
+
+## 完整目标态边界
+
+现有 v0.4 PRD/TDD 保留为完整目标态与后续安全加固依据，包括：
 
 - macOS 桌面端、Agent / Session / Run 管理
 - 可编辑/Archive 的 OpenAI-compatible Model Profile、显式 Responses/Chat Completions 协议、能力测试与版本化快照
@@ -46,4 +58,4 @@ P0 只覆盖能让 Eidos 真正跑起来的能力：
 - SSE 实时事件和持久化 Run Timeline
 - Execution Segment、Run 硬上限、cancel、崩溃恢复和基础测试
 
-MVP 暂不做内嵌 Terminal、持久服务、跨平台、知识库、长期记忆、多 Agent、MCP 插件市场、浏览器自动化、企业权限和分布式调度。
+完整目标态暂不做内嵌 Terminal、持久服务、跨平台、知识库、长期记忆、多 Agent、MCP 插件市场、浏览器自动化、企业权限和分布式调度。

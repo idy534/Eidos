@@ -2,6 +2,8 @@
 
 版本：v0.4
 
+范围说明：本文描述完整目标态架构。第一期采用 [MVP Lite](../mvp-lite.md) 的 stdio JSON-RPC 双向协议，不实现本文件中的 loopback HTTP/SSE、Bearer Token 和完整目标态组件集合。
+
 ## 1. 技术目标
 
 构建一个仅支持 macOS 的本地 Agent Runtime，优先保证以下主链路可运行、可审批、可追踪、可恢复：

@@ -2,6 +2,8 @@
 
 版本：v0.4
 
+范围说明：本文描述完整目标态用户体验。第一期只实现 [MVP Lite](../mvp-lite.md) 定义的 Workspace Mode、单活动 Run 和最小 Execution Feed。
+
 ## 1. Workbench 信息架构
 
 MVP 保留三栏工作台，但不内嵌 Terminal：

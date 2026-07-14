@@ -2,6 +2,8 @@
 
 版本：v0.4
 
+范围说明：本文描述完整目标态 Desktop 生命周期。第一期 Main/Runtime 通信、启动和异常处理以 [MVP Lite](../mvp-lite.md) 的 stdio JSON-RPC 边界为准。
+
 ## 1. Electron Main
 
 职责：

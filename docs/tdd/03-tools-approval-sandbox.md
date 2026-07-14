@@ -2,6 +2,8 @@
 
 版本：v0.4
 
+范围说明：本文保留完整目标态工具契约。第一期工具集合、审批和安全底线以 [MVP Lite](../mvp-lite.md) 为准。
+
 ## 1. ToolDefinition 与 ToolContext
 
 ```python

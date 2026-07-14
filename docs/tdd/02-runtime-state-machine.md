@@ -2,6 +2,8 @@
 
 版本：v0.4
 
+范围说明：本文描述完整目标态状态机。第一期固定为 [MVP Lite](../mvp-lite.md) 的 `Session -> Run -> Item/ToolCall`，不实现 Execution Segment、持久 FIFO、stopped 或跨重启恢复。
+
 ## 1. 核心实体
 
 ```text

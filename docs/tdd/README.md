@@ -1,6 +1,8 @@
-# Eidos Agent Runtime MVP TDD
+# Eidos Agent Runtime 完整目标态 TDD
 
 版本：v0.4
+
+第一期实现以 [MVP Lite](../mvp-lite.md) 为准，使用 stdio JSON-RPC 双向协议和 `Session -> Run -> Item/ToolCall`。本目录保留完整目标态技术契约，HTTP/SSE、Execution Segment、持久队列、复杂恢复与版本兼容不进入第一期。
 
 ## 文档目录
 
@@ -12,7 +14,7 @@
 6. [桌面端安全与生命周期](06-desktop-security-lifecycle.md)
 7. [测试与里程碑](07-testing-and-milestones.md)
 
-## 实现原则
+## 完整目标态实现原则
 
 - 安全边界故障时 fail closed，不允许降级为无沙箱 Shell。
 - 规范化业务表是当前状态来源，Events 是同事务写入的追加式 Timeline/Outbox。
