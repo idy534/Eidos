@@ -1,6 +1,6 @@
 # Eidos 本地开发与阶段验证
 
-本文面向第一次参与桌面端开发的维护者。当前实现阶段是 MVP Lite L0：验证 Electron Main、Preload、Renderer 与 Python Runtime 的进程和协议闭环。
+本文面向第一次参与桌面端开发的维护者。当前已完成 MVP Lite L0，并进入 L1：Electron Main 已可通过 Python Runtime 创建、分页读取并跨进程重启保留 Session 元数据。
 
 ## 1. 环境要求
 
@@ -35,7 +35,7 @@ Electron 第一次安装或启动时需要从官方源下载对应 macOS 架构�
 
 ## 3. 自动化验证
 
-运行全部 L0 测试：
+运行全部当前阶段测试：
 
 ```bash
 pnpm test
@@ -48,6 +48,7 @@ pnpm test
 - TypeScript Main Client 测试全部通过。
 - 测试会真实拉起 Python 子进程，不使用 Runtime mock。
 - 非协议 stdout 测试会证明 Main 能终止损坏的 Runtime。
+- Session 测试会创建隔离 SQLite，验证 Runtime 重启后的 `session/list|read` 结果。
 
 验证桌面端可以完整构建：
 
@@ -86,6 +87,8 @@ pnpm start
 ```
 
 日志应只出现在终端，不应出现在协议 stdout 或界面正文中。
+
+当前 Session 能力只开放给 Main Client，尚未接入 Renderer，因此界面暂时不会出现 Session 列表或文件夹选择按钮。请以 `pnpm test` 中的跨 Runtime 重启集成测试作为本阶段验收；对应 UI 会在 Workspace 主链路增量中加入。
 
 ## 5. 关闭验证
 

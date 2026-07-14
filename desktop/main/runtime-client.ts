@@ -13,9 +13,28 @@ export interface InitializeResult {
   };
 }
 
+export interface Session {
+  id: string;
+  workspaceRoot: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SessionListResult {
+  items: Session[];
+  nextCursor?: string;
+}
+
+export interface SessionSnapshot {
+  session: Session;
+  runs: unknown[];
+  items: unknown[];
+}
+
 interface RuntimeClientOptions {
   pythonExecutable: string;
   runtimeRoot: string;
+  dataDirectory?: string;
   onStderr?: (line: string) => void;
 }
 
@@ -56,10 +75,17 @@ export class RuntimeClient {
     const pythonPath = [options.runtimeRoot, process.env.PYTHONPATH]
       .filter((entry): entry is string => Boolean(entry))
       .join(path.delimiter);
+    const environment: NodeJS.ProcessEnv = {
+      ...process.env,
+      PYTHONPATH: pythonPath,
+    };
+    if (options.dataDirectory) {
+      environment.EIDOS_DATA_DIR = options.dataDirectory;
+    }
 
     this.child = spawn(options.pythonExecutable, ["-u", "-m", "eidos_runtime"], {
       cwd: options.runtimeRoot,
-      env: { ...process.env, PYTHONPATH: pythonPath },
+      env: environment,
       stdio: ["pipe", "pipe", "pipe"],
     });
 
@@ -84,6 +110,20 @@ export class RuntimeClient {
       client: { name: "eidos-desktop", version: "0.1.0" },
       protocolVersion: 1,
     });
+  }
+
+  createSession(workspaceRoot: string): Promise<Session> {
+    return this.request("session/create", { workspaceRoot });
+  }
+
+  listSessions(
+    options: { limit?: number; cursor?: string } = {},
+  ): Promise<SessionListResult> {
+    return this.request("session/list", options);
+  }
+
+  readSession(sessionId: string): Promise<SessionSnapshot> {
+    return this.request("session/read", { sessionId });
   }
 
   async shutdown(): Promise<void> {

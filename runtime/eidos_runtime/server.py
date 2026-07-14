@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 import sys
 from typing import Any, BinaryIO, TextIO
+import uuid
 
 from eidos_runtime import __version__
 from eidos_runtime.seatbelt import run_seatbelt_self_test
+from eidos_runtime.storage import (
+    InvalidCursorError,
+    SessionStore,
+    StorageError,
+    WorkspaceBoundaryError,
+)
 
 
 MAX_MESSAGE_BYTES = 1024 * 1024
@@ -79,10 +87,11 @@ def valid_initialize_params(params: object) -> bool:
 
 
 class RuntimeServer:
-    def __init__(self, output: TextIO) -> None:
+    def __init__(self, output: TextIO, data_directory: Path | None = None) -> None:
         self.output = output
         self.initialized = False
         self.shutting_down = False
+        self.store = SessionStore(data_directory)
 
     def handle(self, message: object) -> None:
         if not isinstance(message, dict):
@@ -115,6 +124,16 @@ class RuntimeServer:
             )
             return
 
+        if method == "session/create":
+            self.create_session(request_id, params)
+            return
+        if method == "session/list":
+            self.list_sessions(request_id, params)
+            return
+        if method == "session/read":
+            self.read_session(request_id, params)
+            return
+
         write_message(self.output, protocol_error(request_id, -32601, "Method not found"))
 
     def initialize(self, request_id: str, params: object) -> None:
@@ -129,6 +148,13 @@ class RuntimeServer:
                 self.output,
                 business_error(request_id, "PROTOCOL_VERSION_UNSUPPORTED"),
             )
+            return
+
+        try:
+            self.store.initialize()
+        except StorageError:
+            logger.exception("Runtime storage initialization failed")
+            write_message(self.output, business_error(request_id, "INTERNAL_ERROR"))
             return
 
         seatbelt = run_seatbelt_self_test()
@@ -154,13 +180,79 @@ class RuntimeServer:
         )
         logger.info("Runtime initialized")
 
+    def create_session(self, request_id: str, params: object) -> None:
+        if (
+            not isinstance(params, dict)
+            or set(params) != {"workspaceRoot"}
+            or not isinstance(params.get("workspaceRoot"), str)
+        ):
+            write_message(self.output, protocol_error(request_id, -32602, "Invalid params"))
+            return
+        try:
+            session = self.store.create_session(params["workspaceRoot"])
+        except WorkspaceBoundaryError:
+            write_message(
+                self.output,
+                business_error(request_id, "WORKSPACE_BOUNDARY_VIOLATION"),
+            )
+            return
+        write_message(self.output, response(request_id, session))
+
+    def list_sessions(self, request_id: str, params: object) -> None:
+        if not isinstance(params, dict) or set(params) - {"limit", "cursor"}:
+            write_message(self.output, protocol_error(request_id, -32602, "Invalid params"))
+            return
+        limit = params.get("limit", 50)
+        cursor = params.get("cursor")
+        if (
+            not isinstance(limit, int)
+            or isinstance(limit, bool)
+            or not 1 <= limit <= 200
+            or (cursor is not None and not isinstance(cursor, str))
+        ):
+            write_message(self.output, protocol_error(request_id, -32602, "Invalid params"))
+            return
+        try:
+            result = self.store.list_sessions(limit=limit, cursor=cursor)
+        except InvalidCursorError:
+            write_message(self.output, protocol_error(request_id, -32602, "Invalid params"))
+            return
+        write_message(self.output, response(request_id, result))
+
+    def read_session(self, request_id: str, params: object) -> None:
+        if (
+            not isinstance(params, dict)
+            or set(params) != {"sessionId"}
+            or not _is_canonical_uuid(params.get("sessionId"))
+        ):
+            write_message(self.output, protocol_error(request_id, -32602, "Invalid params"))
+            return
+        session = self.store.read_session(params["sessionId"])
+        if session is None:
+            write_message(self.output, business_error(request_id, "RESOURCE_NOT_FOUND"))
+            return
+        write_message(
+            self.output,
+            response(request_id, {"session": session, "runs": [], "items": []}),
+        )
+
     def shutdown(self, request_id: str, params: object) -> None:
         if not isinstance(params, dict) or params:
             write_message(self.output, protocol_error(request_id, -32602, "Invalid params"))
             return
+        self.store.close()
         write_message(self.output, response(request_id, {}))
         self.shutting_down = True
         logger.info("Runtime shutdown requested")
+
+
+def _is_canonical_uuid(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        return str(uuid.UUID(value)) == value
+    except ValueError:
+        return False
 
 
 def run() -> int:
@@ -171,26 +263,29 @@ def run() -> int:
     )
     server = RuntimeServer(sys.stdout)
 
-    while not server.shutting_down:
-        raw_line, too_large = read_bounded_line(sys.stdin.buffer)
-        if too_large:
-            write_message(sys.stdout, protocol_error(None, -32600, "Invalid Request"))
-            continue
-        if not raw_line:
-            break
+    try:
+        while not server.shutting_down:
+            raw_line, too_large = read_bounded_line(sys.stdin.buffer)
+            if too_large:
+                write_message(sys.stdout, protocol_error(None, -32600, "Invalid Request"))
+                continue
+            if not raw_line:
+                break
 
-        try:
-            message = json.loads(raw_line.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            write_message(sys.stdout, protocol_error(None, -32700, "Parse error"))
-            continue
+            try:
+                message = json.loads(raw_line.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                write_message(sys.stdout, protocol_error(None, -32700, "Parse error"))
+                continue
 
-        try:
-            server.handle(message)
-        except Exception:
-            logger.exception("Runtime request failed")
-            request_id = message.get("id") if isinstance(message, dict) else None
-            if valid_request_id(request_id):
-                write_message(sys.stdout, business_error(request_id, "INTERNAL_ERROR"))
+            try:
+                server.handle(message)
+            except Exception:
+                logger.exception("Runtime request failed")
+                request_id = message.get("id") if isinstance(message, dict) else None
+                if valid_request_id(request_id):
+                    write_message(sys.stdout, business_error(request_id, "INTERNAL_ERROR"))
+    finally:
+        server.store.close()
 
     return 0

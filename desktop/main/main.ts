@@ -55,6 +55,7 @@ async function startRuntime(): Promise<void> {
   const client = new RuntimeClient({
     pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
     runtimeRoot,
+    dataDirectory: path.join(app.getPath("home"), ".eidos"),
     onStderr: (line) => console.error(`[runtime] ${line}`),
   });
   runtimeClient = client;

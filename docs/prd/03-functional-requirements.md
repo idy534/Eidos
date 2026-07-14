@@ -6,7 +6,7 @@
 
 ## 1. P0 功能清单
 
-实施标记只表示对应完整功能已经通过当前范围的自动化与实机验收。F019 尚未完成，但其 Seatbelt 静态策略、路径参数和基础 fail-closed smoke test 已作为 MVP Lite 前置风险验证通过；审批、输出、manifest、资源监管和 ToolCall 主链路仍待实现。
+实施标记只表示对应完整功能已经通过当前范围的自动化与实机验收。F019 尚未完成，但其 Seatbelt 静态策略、路径参数和基础 fail-closed smoke test 已作为 MVP Lite 前置风险验证通过；审批、输出、manifest、资源监管和 ToolCall 主链路仍待实现。F003/F004 也尚未整体完成，但其私有数据目录、SQLite Session 元数据和 `session/create|list|read` Runtime/Main Client 链路已通过跨进程重启测试；文件夹选择 UI、Workspace 持久身份和 Run/Item 仍待实现。
 
 | 编号 | 功能 | 要求 |
 |---|---|---|

@@ -301,6 +301,14 @@
 
 ## 6. 持久化测试
 
+MVP Lite 已验证：
+
+- ✅ 隔离数据根创建/打开 SQLite，目录与数据库权限分别为 `0700/0600`。
+- ✅ `session/create -> shutdown -> Runtime restart -> session/list/read` 保留相同 Session 事实。
+- ✅ Session keyset 分页无重复，非法 cursor 返回闭合参数错误。
+- ✅ symlink Workspace 创建被拒绝且零 Session 写入，不存在 Session 返回闭合 `RESOURCE_NOT_FOUND`。
+- ⏳ 以下条目属于完整目标态或后续 MVP Lite 增量。
+
 - `foreign_keys=ON`、WAL、busy_timeout 生效。
 - enum CHECK、mode/workspace CHECK、全局 unique operation ID/request hash/closed response，以及 Run `creation_operation_id` 引用。
 - Alembic 空库初始化 head 和重复启动；已知旧 revision 先通过 SQLite Online Backup API 生成 mode 0600、fsync、hash/manifest、原子安装的完整备份，再以单 connection/transaction 迁移并复检 foreign keys/integrity/target revision。

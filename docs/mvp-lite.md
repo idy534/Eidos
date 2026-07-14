@@ -151,7 +151,7 @@ Main 启动 Runtime 后必须先发送：
 Runtime 完成 SQLite 初始化、工具注册和 Seatbelt 自检后返回：
 
 ```json
-{"jsonrpc":"2.0","id":"client-1","result":{"protocolVersion":1,"runtimeVersion":"0.1.0","capabilities":{"runShell":true}}}
+{"jsonrpc":"2.0","id":"client-1","result":{"protocolVersion":1,"runtimeVersion":"0.1.0","capabilities":{"runShell":false}}}
 ```
 
 初始化完成前除 `initialize` 和 `runtime/shutdown` 外不接受业务请求。`runShell=false` 允许只读和文件工具闭环继续运行，但不得降级为无沙箱 Shell。
@@ -160,13 +160,13 @@ Runtime 完成 SQLite 初始化、工具注册和 Seatbelt 自检后返回：
 
 | Method | 作用 | 结果 |
 |---|---|---|
-| `initialize` | 建立协议版本和能力握手 | Runtime 版本与 capability |
-| `session/create` | 绑定 Workspace 并创建 Session | Session |
-| `session/list` | 分页读取已有 Session 摘要 | `{items,nextCursor?}` |
+| ✅ `initialize` | 建立协议版本和能力握手 | Runtime 版本与 capability |
+| ✅ `session/create` | 绑定 Workspace 并创建 Session | Session |
+| ✅ `session/list` | 分页读取已有 Session 摘要 | `{items,nextCursor?}` |
 | `session/read` | 读取 Session、历史 Run 与有界 Item 页面 | SessionSnapshot |
 | `run/start` | 提交用户输入并开始一个 Run | 初始 Run |
 | `run/cancel` | 取消活动或等待审批的 Run | 最终/当前 Run |
-| `runtime/shutdown` | 有界停止 Runtime | 空结果 |
+| ✅ `runtime/shutdown` | 有界停止 Runtime | 空结果 |
 
 `session/list` 使用 `limit=50`、最大 200 和可选 opaque cursor；第一期不承诺跨页冻结成员集合，客户端遇到 cursor 失效时从第一页重取。`session/read` 使用 `itemLimit=200`、最大 500 和可选 `beforeItemId` 向前读取历史 Item。
 
@@ -412,7 +412,8 @@ MVP Lite 不单独建立 Segment、Attempt、Approval、Event、Operation、Mani
 
 ### L1：模型与只读闭环
 
-- Session、Run、Item 最小持久化。
+- ✅ Session 元数据、`session/create|list|read` 和 SQLite 跨 Runtime 重启持久化；`session/read` 当前返回空 Run/Item 集合。
+- ⏳ Run、Item、ToolCall 最小持久化与 Item 历史分页。
 - Responses HTTP SSE。
 - `list_files`、`read_file`、`search_text`。
 - Item 生命周期通知和基础 Feed。
