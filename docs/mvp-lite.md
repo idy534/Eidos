@@ -402,13 +402,13 @@ MVP Lite 不单独建立 Segment、Attempt、Approval、Event、Operation、Mani
 
 ## 10. MVP Lite 里程碑
 
-### L0：进程与协议闭环
+### L0：进程与协议闭环 ✅
 
-- Electron Main 拉起 Python Runtime。
-- stdio JSON-RPC initialize、shutdown 和 stderr 日志隔离。
-- Renderer 通过 Preload 显示 Runtime ready/error。
+- ✅ Electron Main 拉起 Python Runtime。
+- ✅ stdio JSON-RPC initialize、shutdown 和 stderr 日志隔离。
+- ✅ Renderer 通过 Preload 显示 Runtime ready/error。
 
-退出标准：应用可稳定启动和关闭，stdout 无非协议输出，非法协议能安全终止 Runtime。
+退出标准：✅ 已通过自动化与 macOS 实机验证。应用可稳定启动和关闭，stdout 无非协议输出，非法协议能安全终止 Runtime。
 
 ### L1：模型与只读闭环
 
@@ -436,6 +436,13 @@ MVP Lite 不单独建立 Segment、Attempt、Approval、Event、Operation、Mani
 
 退出标准：用户可以让 Eidos 阅读代码、修改文件、执行测试命令并获得最终回答。
 
+L3 前置风险验证状态：
+
+- ✅ Seatbelt 使用静态 profile 和 `-D` 路径参数，不从 PATH 解析 `sandbox-exec`。
+- ✅ macOS 实机 smoke test 已覆盖 Workspace/Home/Temp 创建修改删除、外部与敏感路径拒绝、`.git` 只读、symlink 逃逸、子进程继承、loopback 拒绝和基础进程组 timeout。
+- ✅ Runtime initialize 会执行 Seatbelt 自检；失败保持 fail closed，且在完整 `run_shell` 落地前即使自检通过也保持 `runShell=false`。
+- ⏳ Shell Approval、输出上限、manifest、完整资源监管、managed network 和真正的 `run_shell` ToolCall 尚未实现。
+
 ## 11. 第一期开工门槛
 
 - [ ] stdio JSON-RPC envelope、method、DTO 和错误码形成固定 v1 测试向量。
@@ -445,4 +452,4 @@ MVP Lite 不单独建立 Segment、Attempt、Approval、Event、Operation、Mani
 - [ ] 文件写入 diff 与 hash 复检有独立测试。
 - [ ] 审批请求、取消和迟到响应的竞态有集成测试。
 - [ ] stdout/stderr 隔离、消息大小和慢消费者行为有协议测试。
-- [ ] PRD/TDD 后续实现任务明确标注 `MVP Lite` 或 `完整目标态`，不再混用 P0。
+- [x] PRD/TDD 后续实现任务明确标注 `MVP Lite` 或 `完整目标态`，不再混用 P0。

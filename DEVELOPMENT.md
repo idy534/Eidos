@@ -44,6 +44,7 @@ pnpm test
 预期结果：
 
 - Python 协议测试全部通过。
+- macOS Seatbelt 策略与 fail-closed smoke test 全部通过。
 - TypeScript Main Client 测试全部通过。
 - 测试会真实拉起 Python 子进程，不使用 Runtime mock。
 - 非协议 stdout 测试会证明 Main 能终止损坏的 Runtime。
@@ -70,12 +71,18 @@ pnpm start
 2. `Runtime 已就绪`
 3. `协议 v1 · Runtime 0.1.0 · Shell 暂未启用`
 
-`Shell 暂未启用` 是当前阶段的正确结果。只有完成 Seatbelt 自检后，Runtime 才允许报告 Shell 可用。
+`Shell 暂未启用` 是当前阶段的正确结果。Seatbelt 自检通过只是必要条件；审批、输出上限和完整执行器完成前，Runtime 仍必须报告 Shell 不可用。
 
 启动应用的终端中应出现类似日志：
 
 ```text
 [runtime] ... INFO eidos.runtime Runtime initialized
+```
+
+在支持的 macOS 环境还应先看到：
+
+```text
+[runtime] ... INFO eidos.runtime Seatbelt self-test passed
 ```
 
 日志应只出现在终端，不应出现在协议 stdout 或界面正文中。

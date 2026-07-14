@@ -676,6 +676,13 @@ raw input/output
 
 ## 12. Fail Closed 与自检
 
+MVP Lite 当前实施状态：
+
+- ✅ 静态 Seatbelt profile 与 `-D` canonical path 参数已实现。
+- ✅ 实机自检已覆盖 active root、sandbox home/tmp、外部 sentinel、敏感 carve-out、`.git`、symlink 逃逸、子进程继承、loopback 拒绝和基础进程组 timeout。
+- ✅ 自检已接入 Runtime initialize；任何失败都保持 Shell unavailable，不存在无沙箱回退。
+- ⏳ hardlink 前置扫描、managed proxy、Toolchain、manifest、资源监控、输出捕获、guardian 与 Redaction Service 自检仍未实现，因此产品能力 `runShell` 继续为 false。
+
 应用启动执行 Seatbelt 自检：
 
 - active root 测试目录可写。

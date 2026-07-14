@@ -6,9 +6,11 @@
 
 ## 1. P0 功能清单
 
+实施标记只表示对应完整功能已经通过当前范围的自动化与实机验收。F019 尚未完成，但其 Seatbelt 静态策略、路径参数和基础 fail-closed smoke test 已作为 MVP Lite 前置风险验证通过；审批、输出、manifest、资源监管和 ToolCall 主链路仍待实现。
+
 | 编号 | 功能 | 要求 |
 |---|---|---|
-| F001 | macOS 桌面应用 | 启动 Electron 应用并拉起本地 sidecar |
+| F001 | ✅ macOS 桌面应用 | 启动 Electron 应用并拉起本地 sidecar |
 | F002 | 默认 Agent | 首次启动创建默认 Eidos Agent；不提供多 Agent UI |
 | F003 | Eidos Home | 初始化并校验 `~/.eidos` 权限与目录结构 |
 | F004 | Workspace Mode | 选择本地目录并创建 Workspace Session |

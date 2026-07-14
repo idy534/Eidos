@@ -6,6 +6,7 @@ import sys
 from typing import Any, BinaryIO, TextIO
 
 from eidos_runtime import __version__
+from eidos_runtime.seatbelt import run_seatbelt_self_test
 
 
 MAX_MESSAGE_BYTES = 1024 * 1024
@@ -129,6 +130,15 @@ class RuntimeServer:
                 business_error(request_id, "PROTOCOL_VERSION_UNSUPPORTED"),
             )
             return
+
+        seatbelt = run_seatbelt_self_test()
+        if seatbelt.available:
+            logger.info("Seatbelt self-test passed")
+        else:
+            logger.warning(
+                "Seatbelt self-test failed; Shell remains unavailable: %s",
+                ",".join(seatbelt.failures),
+            )
 
         self.initialized = True
         write_message(

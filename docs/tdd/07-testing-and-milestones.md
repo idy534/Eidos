@@ -197,13 +197,13 @@
 
 每次测试使用独立 active root、sandbox home/tmp 和外部 sentinel：
 
-- active root 创建、修改、删除成功。
-- sandbox home/tmp 可写。
-- 外部 sentinel 不可读写。
+- ✅ active root 创建、修改、删除成功。
+- ✅ sandbox home/tmp 创建、修改、删除成功。
+- ✅ 外部 sentinel 不可读写。
 - System Runtime 可读/可执行但不可写。
-- 子进程继承限制。
-- 敏感 carve-out 不可读。
-- `.git` 可读不可写。
+- ✅ 子进程继承限制。
+- ✅ 敏感 carve-out 不可读写。
+- ✅ `.git` 可读不可写。
 - 默认外网、localhost、bind 和 Unix Socket 失败。
 - 只允许连接 managed proxy port。
 - 精确批准 host/port 通过，通配符、未批准 host、私网解析和 redirect 新 host 失败。
@@ -342,11 +342,12 @@
 
 ### M0：macOS 安全可行性
 
-- Seatbelt 静态策略模板和参数绑定。
-- System Runtime read-only、active root write、外部 deny。
-- 敏感和 `.git` carve-out。
-- managed proxy、域名策略、localhost 独立权限。
-- fail-closed 自检与集成测试。
+- ✅ Seatbelt 静态策略模板和参数绑定。
+- ✅ System Runtime 可执行、active root write、外部 deny。
+- ⏳ System Runtime 不可写仍待补充专用 Toolchain fixture。
+- ✅ 敏感和 `.git` carve-out。
+- ⏳ managed proxy、域名策略、localhost 独立权限。
+- ✅ Seatbelt fail-closed 自检与集成测试。
 - 版本化敏感规则、全入口扫描管线、跨 chunk 脱敏和 fail-closed 自检。
 - Toolchain 只读根、Shell Approval boot-session/continuous 时效、前/后 manifest、进程树资源限制、allocated growth 监控、无阻塞输出捕获和最小原生 guardian 异常清理实机可行性。
 
@@ -354,7 +355,7 @@ M0 未通过前，不进入 Agent Shell 主链路实现。
 
 ### M1：Desktop 与 sidecar
 
-- Electron/React/Python 骨架。
+- ✅ Electron/React/Python 骨架。
 - 单实例、Token、listening/ready gate、随机端口、类型化 IPC/API/SSE 代理和 RunSnapshot 水位恢复。
 - OpenAPI 同源 DTO/validator、operation ID 转发、Event contract 握手和 storage health-only UI。
 - `~/.eidos` 权限与 config。
