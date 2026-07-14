@@ -25,11 +25,10 @@ test("spawns the Python runtime and completes initialize then shutdown", async (
     });
 
     const initialized = await client.initialize();
-    assert.deepEqual(initialized, {
-      protocolVersion: 1,
-      runtimeVersion: "0.1.0",
-      capabilities: { runShell: false, modelConfigured: false },
-    });
+    assert.equal(initialized.protocolVersion, 1);
+    assert.equal(initialized.runtimeVersion, "0.1.0");
+    assert.equal(typeof initialized.capabilities.runShell, "boolean");
+    assert.equal(initialized.capabilities.modelConfigured, false);
 
     await client.shutdown();
     assert.equal(await client.waitForExit(), 0);
@@ -148,7 +147,10 @@ test("routes a runtime approval request and commits only after approval", async 
       dataDirectory,
       environment: { EIDOS_FAKE_MODEL: "write" },
       onApprovalRequest: async (request) => {
-        approvals.push(request.diff);
+        assert.equal(request.kind, "file_change");
+        if (request.kind === "file_change") {
+          approvals.push(request.diff);
+        }
         return { decision: "approve" };
       },
       onNotification: (notification) => {
@@ -224,6 +226,54 @@ test("cancel while awaiting approval ignores a late approve response", async () 
     assert.equal(completed.params.run.status, "canceled");
     assert.equal(snapshot.runs[0]?.status, "canceled");
     await assert.rejects(readFile(path.join(workspaceRoot, "approved.txt"), "utf8"));
+  } finally {
+    await rm(dataDirectory, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("routes shell approval and streams sandboxed command completion", async () => {
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-workspace-"));
+  const approvals: string[] = [];
+
+  try {
+    let completeRun: ((notification: RuntimeNotification) => void) | undefined;
+    const runCompleted = new Promise<RuntimeNotification>((resolve) => {
+      completeRun = resolve;
+    });
+    const client = new RuntimeClient({
+      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      runtimeRoot: path.join(projectRoot, "runtime"),
+      dataDirectory,
+      environment: { EIDOS_FAKE_MODEL: "shell" },
+      onApprovalRequest: async (request) => {
+        assert.equal(request.kind, "command_execution");
+        if (request.kind === "command_execution") {
+          approvals.push(request.command);
+          assert.equal(request.networkEnabled, false);
+        }
+        return { decision: "approve" };
+      },
+      onNotification: (notification) => {
+        if (notification.method === "run/completed") {
+          completeRun?.(notification);
+        }
+      },
+    });
+
+    const initialized = await client.initialize();
+    assert.equal(initialized.capabilities.runShell, true);
+    const session = await client.createSession(workspaceRoot);
+    await client.startRun(session.id, "Run printf");
+    await withTimeout(runCompleted, 5_000);
+    const snapshot = await client.readSession(session.id);
+    await client.shutdown();
+    assert.equal(await client.waitForExit(), 0);
+
+    assert.deepEqual(approvals, ["printf desktop-shell-ok"]);
+    const commandItem = snapshot.items.find((item) => item.kind === "command_execution");
+    assert.ok(commandItem?.toolCall?.resultJson?.includes("desktop-shell-ok"));
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });

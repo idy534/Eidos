@@ -68,12 +68,16 @@ function FeedItem({
               <p className="feed-label">需要你的批准</p>
               <h3 id={`approval-${approval.id}`}>{approval.summary}</h3>
             </div>
-            <span>文件变更</span>
+            <span>{approval.kind === "file_change" ? "文件变更" : "Shell 命令"}</span>
           </div>
-          <pre className="diff-view">{approval.diff}</pre>
+          <pre className="diff-view">
+            {approval.kind === "file_change"
+              ? approval.diff
+              : `$ ${approval.command}\n\ncwd: ${approval.cwd}\nnetwork: disabled\ntimeout: ${approval.timeoutSeconds}s`}
+          </pre>
           <div className="approval-actions">
             <button className="button-secondary" disabled={disabled} onClick={() => onApproval(approval, "reject")}>拒绝</button>
-            <button disabled={disabled} onClick={() => onApproval(approval, "approve")}>批准并写入</button>
+            <button disabled={disabled} onClick={() => onApproval(approval, "approve")}>{approval.kind === "file_change" ? "批准并写入" : "批准并运行"}</button>
           </div>
         </article>
       );
@@ -87,6 +91,7 @@ function FeedItem({
         </summary>
         <div className="tool-body">
           {item.toolCall.argumentsJson && <code>{item.toolCall.argumentsJson}</code>}
+          {item.kind === "command_execution" && item.content && <pre>{item.content}</pre>}
           {item.toolCall.resultJson && <pre>{prettyJson(item.toolCall.resultJson)}</pre>}
           {item.toolCall.approvalDiff && <pre>{item.toolCall.approvalDiff}</pre>}
         </div>

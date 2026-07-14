@@ -79,16 +79,29 @@ export interface ToolCall {
   baseSha256?: string;
 }
 
-export interface ApprovalRequest {
+interface ApprovalRequestBase {
   id: string;
   sessionId: string;
   runId: string;
   itemId: string;
   toolCallId: string;
-  kind: "file_change";
   summary: string;
+}
+
+export interface FileApprovalRequest extends ApprovalRequestBase {
+  kind: "file_change";
   diff: string;
 }
+
+export interface CommandApprovalRequest extends ApprovalRequestBase {
+  kind: "command_execution";
+  command: string;
+  cwd: string;
+  networkEnabled: false;
+  timeoutSeconds: number;
+}
+
+export type ApprovalRequest = FileApprovalRequest | CommandApprovalRequest;
 
 export interface ApprovalDecision {
   decision: "approve" | "reject";
@@ -738,6 +751,25 @@ function approvalRequestFrom(
     return undefined;
   }
   const params = message.params;
+  const common = (
+    typeof params.sessionId === "string"
+    && typeof params.runId === "string"
+    && typeof params.itemId === "string"
+    && typeof params.toolCallId === "string"
+    && typeof params.summary === "string"
+  );
+  if (!common) {
+    return undefined;
+  }
+  if (params.kind === "file_change") {
+    if (
+      !hasOnlyKeys(params, ["sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "diff"])
+      || typeof params.diff !== "string"
+    ) {
+      return undefined;
+    }
+    return { id: message.id, ...params } as FileApprovalRequest;
+  }
   if (
     !hasOnlyKeys(params, [
       "sessionId",
@@ -746,17 +778,18 @@ function approvalRequestFrom(
       "toolCallId",
       "kind",
       "summary",
-      "diff",
+      "command",
+      "cwd",
+      "networkEnabled",
+      "timeoutSeconds",
     ])
-    || typeof params.sessionId !== "string"
-    || typeof params.runId !== "string"
-    || typeof params.itemId !== "string"
-    || typeof params.toolCallId !== "string"
-    || params.kind !== "file_change"
-    || typeof params.summary !== "string"
-    || typeof params.diff !== "string"
+    || params.kind !== "command_execution"
+    || typeof params.command !== "string"
+    || typeof params.cwd !== "string"
+    || params.networkEnabled !== false
+    || !isPositiveInteger(params.timeoutSeconds)
   ) {
     return undefined;
   }
-  return { id: message.id, ...params } as ApprovalRequest;
+  return { id: message.id, ...params } as CommandApprovalRequest;
 }

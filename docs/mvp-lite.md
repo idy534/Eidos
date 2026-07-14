@@ -435,19 +435,20 @@ MVP Lite 不单独建立 Segment、Attempt、Approval、Event、Operation、Mani
 
 ### L3：开发者可用闭环
 
-- Seatbelt `run_shell`、有界输出、timeout 和取消。
-- Workspace 主界面与历史 Session/Run 读取。
-- Runtime 异常退出统一标记 interrupted。
-- 首期端到端测试与 Developer Preview 限制说明。
+- ✅ Seatbelt `run_shell`、逐次命令审批、默认断网、干净 HOME/环境、256 KiB 有界输出、timeout 和进程组取消。
+- ✅ Workspace 主界面与历史 Session/Run 读取。
+- ✅ Runtime 异常退出统一标记 `interrupted`，不自动重放。
+- ✅ 首期端到端测试与 Developer Preview 限制说明。
 
-退出标准：用户可以让 Eidos 阅读代码、修改文件、执行测试命令并获得最终回答。
+退出标准：⏳ 离线 Fake Model 与真实 Seatbelt 闭环已完成；仍需用户在界面配置真实 DeepSeek Key 后完成一次“阅读代码 -> 审批修改 -> 审批执行测试 -> 最终回答”的联网验收。
 
 L3 前置风险验证状态：
 
 - ✅ Seatbelt 使用静态 profile 和 `-D` 路径参数，不从 PATH 解析 `sandbox-exec`。
 - ✅ macOS 实机 smoke test 已覆盖 Workspace/Home/Temp 创建修改删除、外部与敏感路径拒绝、`.git` 只读、symlink 逃逸、子进程继承、loopback 拒绝和基础进程组 timeout。
 - ✅ Runtime initialize 会执行 Seatbelt 自检；失败保持 fail closed，且在完整 `run_shell` 落地前即使自检通过也保持 `runShell=false`。
-- ⏳ Shell Approval、输出上限、manifest、完整资源监管、managed network 和真正的 `run_shell` ToolCall 尚未实现。
+- ✅ Shell Approval、默认断网、输出上限、timeout/cancel 与真正的 `run_shell` ToolCall 已实现。
+- ⏳ manifest、完整 RSS/fd/fork 资源监管、managed network 继续按 MVP Lite 延后，不阻塞 Developer Preview。
 
 ## 11. 第一期开工门槛
 

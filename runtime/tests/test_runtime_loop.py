@@ -270,6 +270,66 @@ class RuntimeLoopTests(unittest.TestCase):
             (self.workspace / "hello.txt").read_text(), "hello from workspace\n"
         )
 
+    def test_approved_shell_runs_in_sandbox_and_returns_output(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Run a command")
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "call-shell",
+                            "run_shell",
+                            {"command": "printf shell-ok", "timeoutSeconds": 5},
+                        ),
+                    )
+                ),
+                ModelResponse(text="Command completed."),
+            ]
+        )
+
+        RuntimeLoop(
+            self.store,
+            model,
+            lambda _message: None,
+            lambda _request, _cancel: ApprovalDecision("approve"),
+            shell_available=True,
+        ).run(run["id"], threading.Event())
+
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        command_item = next(
+            item for item in snapshot["items"] if item["kind"] == "command_execution"
+        )
+        result = json.loads(command_item["toolCall"]["resultJson"])
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(result["data"]["stdout"], "shell-ok")
+
+    def test_rejected_shell_has_zero_side_effects(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Reject a command")
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "call-shell",
+                            "run_shell",
+                            {"command": "touch rejected.txt"},
+                        ),
+                    )
+                ),
+                ModelResponse(text="Command rejected."),
+            ]
+        )
+
+        RuntimeLoop(
+            self.store,
+            model,
+            lambda _message: None,
+            lambda _request, _cancel: ApprovalDecision("reject"),
+            shell_available=True,
+        ).run(run["id"], threading.Event())
+
+        self.assertFalse((self.workspace / "rejected.txt").exists())
+
 
 class ToolExecutorTests(unittest.TestCase):
     def setUp(self) -> None:

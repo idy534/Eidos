@@ -125,6 +125,7 @@ class RuntimeServer:
         self.active_cancel: threading.Event | None = None
         self.approval_lock = threading.RLock()
         self.pending_approvals: dict[str, PendingApproval] = {}
+        self.shell_available = False
 
     def handle(self, message: object) -> None:
         if not isinstance(message, dict):
@@ -207,6 +208,7 @@ class RuntimeServer:
         seatbelt = run_seatbelt_self_test()
         if seatbelt.available:
             logger.info("Seatbelt self-test passed")
+            self.shell_available = True
         else:
             logger.warning(
                 "Seatbelt self-test failed; Shell remains unavailable: %s",
@@ -221,7 +223,7 @@ class RuntimeServer:
                     "protocolVersion": PROTOCOL_VERSION,
                     "runtimeVersion": __version__,
                     "capabilities": {
-                        "runShell": False,
+                        "runShell": self.shell_available,
                         "modelConfigured": self.model is not None,
                     },
                 },
@@ -543,6 +545,7 @@ class RuntimeServer:
                 self.model,
                 self.send,
                 self.request_approval,
+                self.shell_available,
             ).run(run_id, cancellation)
         except Exception:
             logger.exception("Run worker failed")
@@ -614,6 +617,21 @@ def _model_from_environment() -> ModelClient | None:
                     )
                 ),
                 ModelResponse(text="Fake model completed after the approved write."),
+            ]
+        )
+    if fixture == "shell":
+        return ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "fake-shell-1",
+                            "run_shell",
+                            {"command": "printf desktop-shell-ok", "timeoutSeconds": 5},
+                        ),
+                    )
+                ),
+                ModelResponse(text="Fake model completed after the approved command."),
             ]
         )
     if fixture != "1":

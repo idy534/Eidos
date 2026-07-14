@@ -321,4 +321,21 @@ def _tool_definitions() -> list[dict[str, object]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "run_shell",
+                "description": "Run one shell command inside the network-disabled workspace sandbox after user approval.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string"},
+                        "cwd": {"type": "string"},
+                        "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 600},
+                    },
+                    "required": ["command"],
+                    "additionalProperties": False,
+                },
+            },
+        },
     ]

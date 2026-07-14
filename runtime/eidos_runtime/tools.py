@@ -110,6 +110,7 @@ class ToolExecutor:
             "search_text": self._search_text,
         }
         self._side_effecting_tools = frozenset({"write_file", "apply_patch"})
+        self._shell_tools = frozenset({"run_shell"})
 
     def __enter__(self) -> ToolExecutor:
         return self
@@ -124,10 +125,13 @@ class ToolExecutor:
 
     @property
     def tool_names(self) -> frozenset[str]:
-        return frozenset(self._tools) | self._side_effecting_tools
+        return frozenset(self._tools) | self._side_effecting_tools | self._shell_tools
 
     def is_side_effecting(self, tool_name: str) -> bool:
         return tool_name in self._side_effecting_tools
+
+    def is_shell(self, tool_name: str) -> bool:
+        return tool_name in self._shell_tools
 
     def validate_arguments(self, tool_name: str, arguments: object) -> bool:
         if not isinstance(arguments, dict):
@@ -160,7 +164,39 @@ class ToolExecutor:
                 and isinstance(patch, str)
                 and len(patch.encode("utf-8")) <= MAX_DIFF_BYTES
             )
+        if tool_name == "run_shell":
+            command = arguments.get("command")
+            cwd = arguments.get("cwd", ".")
+            timeout = arguments.get("timeoutSeconds", 120)
+            return (
+                set(arguments) <= {"command", "cwd", "timeoutSeconds"}
+                and "command" in arguments
+                and isinstance(command, str)
+                and bool(command)
+                and len(command.encode("utf-8")) <= 16 * 1024
+                and isinstance(cwd, str)
+                and isinstance(timeout, int)
+                and not isinstance(timeout, bool)
+                and 1 <= timeout <= 600
+            )
         return False
+
+    def shell_cwd(self, value: str) -> Path:
+        if value == ".":
+            return self.workspace.path
+        parts = _validate_relative_path(value)
+        descriptor = os.dup(self.root_fd)
+        try:
+            for part in parts:
+                next_fd = self._open_directory(descriptor, part)
+                os.close(descriptor)
+                descriptor = next_fd
+            path = Path(_fd_path(descriptor))
+            if self.workspace.path not in path.parents and path != self.workspace.path:
+                raise WorkspacePathError("workspace_boundary_violation")
+            return path
+        finally:
+            os.close(descriptor)
 
     def execute(
         self,

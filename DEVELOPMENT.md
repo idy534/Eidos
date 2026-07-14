@@ -92,7 +92,7 @@ pnpm start
 4. 再次发起同样任务并点击“批准并写入”，确认文件与 diff 一致。
 5. 版本冲突验证：审批卡出现后，先在编辑器手动修改该文件，再点击批准；Eidos 必须返回 `file_version_conflict`，保留你的手动修改。
 
-文件工具只有在单次 diff 审批后才会修改 Workspace。Shell 尚未开放，必须等 L3 的命令审批与 Seatbelt 执行闭环完成后才能启用。
+文件工具只有在单次 diff 审批后才会修改 Workspace。Shell 也只在每次审批后运行；审批卡必须完整展示 command、cwd、`network: disabled` 和 timeout。可用“运行 `python3 -m unittest`”验证：拒绝时不执行；批准后 Feed 应流式显示输出，命令只能写 Workspace（`.git` 与敏感路径除外），不能访问网络或继承宿主 API Key/HOME。
 
 启动应用的终端中应出现类似日志：
 

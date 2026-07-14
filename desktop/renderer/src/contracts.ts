@@ -43,16 +43,29 @@ export interface ToolCall {
   baseSha256?: string;
 }
 
-export interface ApprovalRequest {
+interface ApprovalRequestBase {
   id: string;
   sessionId: string;
   runId: string;
   itemId: string;
   toolCallId: string;
-  kind: "file_change";
   summary: string;
+}
+
+export interface FileApprovalRequest extends ApprovalRequestBase {
+  kind: "file_change";
   diff: string;
 }
+
+export interface CommandApprovalRequest extends ApprovalRequestBase {
+  kind: "command_execution";
+  command: string;
+  cwd: string;
+  networkEnabled: false;
+  timeoutSeconds: number;
+}
+
+export type ApprovalRequest = FileApprovalRequest | CommandApprovalRequest;
 
 export interface Item {
   id: string;

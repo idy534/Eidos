@@ -7,6 +7,7 @@ import time
 from typing import Callable
 
 from eidos_runtime.model import ModelClient, ModelResponse, ModelToolCall
+from eidos_runtime.shell import run_shell
 from eidos_runtime.storage import InvalidRunStateError, SessionStore
 from eidos_runtime.tools import ToolExecutor
 
@@ -35,11 +36,13 @@ class RuntimeLoop:
             [dict[str, object], threading.Event], ApprovalDecision
         ]
         | None = None,
+        shell_available: bool = False,
     ) -> None:
         self.store = store
         self.model = model
         self.notify = notify
         self.request_approval = request_approval
+        self.shell_available = shell_available
 
     def run(self, run_id: str, cancel: threading.Event) -> None:
         run = self.store.read_run(run_id)
@@ -235,6 +238,22 @@ class RuntimeLoop:
                         )
                         self._completed_item(completed)
                         self._check_cancel(run_id, cancel)
+                    elif tools.is_shell(tool_call.name):
+                        result, item_status = self._execute_shell(
+                            run_id,
+                            item,
+                            tool_call.arguments,
+                            tools,
+                            cancel,
+                        )
+                        completed = self.store.complete_tool_item(
+                            item["id"],
+                            json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+                            item_status=item_status,
+                            tool_status="completed" if item_status == "completed" else "failed",
+                        )
+                        self._completed_item(completed)
+                        self._check_cancel(run_id, cancel)
                     else:
                         result = _bounded_tool_result(
                             tool_call.name,
@@ -291,7 +310,10 @@ class RuntimeLoop:
             ):
                 return "invalid_tool_call"
             provider_ids.add(tool_call.provider_call_id)
-        if any(tools.is_side_effecting(call.name) for call in response.tool_calls) and len(
+        if any(
+            tools.is_side_effecting(call.name) or tools.is_shell(call.name)
+            for call in response.tool_calls
+        ) and len(
             response.tool_calls
         ) != 1:
             return "invalid_tool_batch"
@@ -368,6 +390,74 @@ class RuntimeLoop:
             }, "declined"
         result = _bounded_tool_result(
             tool_name, tools.commit_file_change(tool_name, prepared, cancel)
+        )
+        return result, "completed" if result["outcome"] == "success" else "failed"
+
+    def _execute_shell(
+        self,
+        run_id: str,
+        item: dict[str, object],
+        arguments: dict[str, object],
+        tools: ToolExecutor,
+        cancel: threading.Event,
+    ) -> tuple[dict[str, object], str]:
+        if not self.shell_available:
+            return _tool_error("run_shell", "sandbox_unavailable", "Shell sandbox is unavailable"), "failed"
+        command = arguments["command"]
+        cwd_value = arguments.get("cwd", ".")
+        timeout = arguments.get("timeoutSeconds", 120)
+        assert isinstance(command, str) and isinstance(cwd_value, str) and isinstance(timeout, int)
+        try:
+            cwd = tools.shell_cwd(cwd_value)
+        except Exception:
+            return _tool_error("run_shell", "workspace_boundary_violation", "Shell cwd is invalid"), "failed"
+        pending_item = self.store.begin_approval(item["id"], "", None)
+        decision = ApprovalDecision("reject") if self.request_approval is None else self.request_approval(
+            {
+                "sessionId": pending_item["sessionId"],
+                "runId": pending_item["runId"],
+                "itemId": pending_item["id"],
+                "toolCallId": pending_item["toolCall"]["id"],
+                "kind": "command_execution",
+                "summary": "Run shell command",
+                "command": command,
+                "cwd": cwd_value,
+                "networkEnabled": False,
+                "timeoutSeconds": timeout,
+            },
+            cancel,
+        )
+        self._check_cancel(run_id, cancel)
+        self.store.resolve_approval(item["id"], decision.decision, decision.feedback)
+        if decision.decision != "approve":
+            return {
+                "schemaVersion": 1,
+                "toolName": "run_shell",
+                "outcome": "declined",
+                "code": "user_rejected",
+                "summary": "User rejected the command",
+                "data": {},
+                "sideEffectsMayExist": False,
+            }, "declined"
+        sequence = 0
+
+        def stream(delta: str) -> None:
+            nonlocal sequence
+            sequence += 1
+            self._notification(
+                "item/delta",
+                {
+                    "sessionId": item["sessionId"],
+                    "runId": item["runId"],
+                    "itemId": item["id"],
+                    "sequence": sequence,
+                    "delta": delta,
+                },
+            )
+
+        result = _bounded_tool_result(
+            "run_shell",
+            run_shell(self.store.workspace_for_run(run_id).path, command, cwd, timeout, cancel, stream),
         )
         return result, "completed" if result["outcome"] == "success" else "failed"
 

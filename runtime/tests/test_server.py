@@ -70,7 +70,7 @@ class RuntimeProtocolTests(unittest.TestCase):
 
         self_test.assert_called_once_with()
         response = json.loads(output.getvalue())
-        self.assertFalse(response["result"]["capabilities"]["runShell"])
+        self.assertTrue(response["result"]["capabilities"]["runShell"])
         self.assertFalse(response["result"]["capabilities"]["modelConfigured"])
         self.assertTrue(any("Seatbelt self-test passed" in line for line in logs.output))
 
@@ -111,7 +111,7 @@ class RuntimeProtocolTests(unittest.TestCase):
                         "protocolVersion": 1,
                         "runtimeVersion": "0.1.0",
                         "capabilities": {
-                            "runShell": False,
+                            "runShell": True,
                             "modelConfigured": False,
                         },
                     },
