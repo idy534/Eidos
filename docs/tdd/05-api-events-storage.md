@@ -7,9 +7,10 @@
 MVP Lite 当前实施状态：
 
 - ✅ Runtime 初始化并独占 SQLite，数据目录/数据库分别校验 `0700/0600`、owner、普通文件类型和 symlink 边界。
-- ✅ `session/create` 使用参数化 SQL 持久化 canonical Workspace root；`session/list` 使用 opaque cursor 和 `creation_seq DESC` keyset；`session/read` 可返回 Session 元数据与当前空 Run/Item 集合。
-- ✅ TypeScript Main Client 已通过真实子进程和跨 Runtime 重启持久化测试；测试使用隔离数据根，不触碰真实 `~/.eidos`。
-- ⏳ Run、Item、ToolCall 表、Item 历史分页、启动 interrupted 收敛和完整目标态迁移/恢复仍未实现。
+- ✅ `session/create` 使用参数化 SQL 持久化 canonical Workspace identity；`session/list` 使用 opaque cursor；`session/read` 返回有界 Run/Item 页面。
+- ✅ Run、Item、ToolCall 四类最小业务事实、单活动 Run 约束、模型步数、ToolCall 关联、Item 完成与启动 `interrupted` 收敛已实现。
+- ✅ TypeScript Main Client 已通过真实子进程、通知路由、Fake Model 两轮工具循环和跨 Runtime 重启持久化测试；测试使用隔离数据根，不触碰真实 `~/.eidos`。
+- ⏳ 完整目标态迁移、事件表、复杂恢复与跨版本兼容仍未实现。
 
 ## 1. API 边界
 

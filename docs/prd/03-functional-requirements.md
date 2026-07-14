@@ -4,6 +4,8 @@
 
 范围说明：本文件的 P0 是完整目标态优先级。第一期必须项和延期项以 [MVP Lite](../mvp-lite.md) 为准。
 
+MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Session/Run/Item/ToolCall 最小事实；✅ 串行 Agent Loop；✅ `list_files/read_file/search_text`；✅ 模型流与基础 Execution Feed；✅ Cancel 与异常 `interrupted`；✅ 本机私有 DeepSeek 配置。文件写入审批与 `run_shell` 仍在 L2/L3，不能把这些 ✅ 外推为本文件完整目标态条目已全部满足。
+
 ## 1. P0 功能清单
 
 实施标记只表示对应完整功能已经通过当前范围的自动化与实机验收。F019 尚未完成，但其 Seatbelt 静态策略、路径参数和基础 fail-closed smoke test 已作为 MVP Lite 前置风险验证通过；审批、输出、manifest、资源监管和 ToolCall 主链路仍待实现。F003/F004 也尚未整体完成，但其私有数据目录、SQLite Session 元数据和 `session/create|list|read` Runtime/Main Client 链路已通过跨进程重启测试；文件夹选择 UI、Workspace 持久身份和 Run/Item 仍待实现。

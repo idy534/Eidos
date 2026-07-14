@@ -1,8 +1,9 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { RuntimeClient } from "./runtime-client.js";
+import type { RuntimeNotification } from "./runtime-client.js";
 
 
 type RuntimeStatus =
@@ -12,6 +13,7 @@ type RuntimeStatus =
       protocolVersion: number;
       runtimeVersion: string;
       runShell: boolean;
+      modelConfigured: boolean;
     }
   | { state: "error"; message: string };
 
@@ -27,6 +29,19 @@ function publishStatus(status: RuntimeStatus): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send("runtime:status", status);
   }
+}
+
+function publishNotification(notification: RuntimeNotification): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send("runtime:notification", notification);
+  }
+}
+
+function clientOrThrow(): RuntimeClient {
+  if (!runtimeClient || runtimeStatus.state !== "ready") {
+    throw new Error("Runtime 尚未就绪。");
+  }
+  return runtimeClient;
 }
 
 function createWindow(): void {
@@ -56,6 +71,7 @@ async function startRuntime(): Promise<void> {
     pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
     runtimeRoot,
     dataDirectory: path.join(app.getPath("home"), ".eidos"),
+    onNotification: publishNotification,
     onStderr: (line) => console.error(`[runtime] ${line}`),
   });
   runtimeClient = client;
@@ -76,6 +92,7 @@ async function startRuntime(): Promise<void> {
       protocolVersion: initialized.protocolVersion,
       runtimeVersion: initialized.runtimeVersion,
       runShell: initialized.capabilities.runShell,
+      modelConfigured: initialized.capabilities.modelConfigured,
     });
   } catch (error) {
     console.error("[runtime] initialization failed", error);
@@ -87,6 +104,48 @@ async function startRuntime(): Promise<void> {
 }
 
 ipcMain.handle("runtime:get-status", () => runtimeStatus);
+ipcMain.handle("workspace:select", async () => {
+  const result = await dialog.showOpenDialog({
+    title: "选择 Eidos Workspace",
+    properties: ["openDirectory"],
+  });
+  return result.canceled ? null : result.filePaths[0] ?? null;
+});
+ipcMain.handle("session:list", () => clientOrThrow().listSessions());
+ipcMain.handle("session:read", (_event, sessionId: unknown) => {
+  if (typeof sessionId !== "string") {
+    throw new Error("Session 参数无效。");
+  }
+  return clientOrThrow().readSession(sessionId);
+});
+ipcMain.handle("session:create", (_event, workspaceRoot: unknown) => {
+  if (typeof workspaceRoot !== "string") {
+    throw new Error("Workspace 参数无效。");
+  }
+  return clientOrThrow().createSession(workspaceRoot);
+});
+ipcMain.handle(
+  "run:start",
+  (_event, sessionId: unknown, userInput: unknown) => {
+    if (typeof sessionId !== "string" || typeof userInput !== "string") {
+      throw new Error("Run 参数无效。");
+    }
+    return clientOrThrow().startRun(sessionId, userInput);
+  },
+);
+ipcMain.handle("run:cancel", (_event, runId: unknown) => {
+  if (typeof runId !== "string") {
+    throw new Error("Run 参数无效。");
+  }
+  return clientOrThrow().cancelRun(runId);
+});
+ipcMain.handle("model:status", () => clientOrThrow().modelStatus());
+ipcMain.handle("model:configure", (_event, apiKey: unknown) => {
+  if (typeof apiKey !== "string") {
+    throw new Error("API Key 参数无效。");
+  }
+  return clientOrThrow().configureModel(apiKey);
+});
 
 app.whenReady().then(() => {
   createWindow();
@@ -115,7 +174,7 @@ app.on("before-quit", (event) => {
     setTimeout(() => {
       client.terminate();
       resolve();
-    }, 2000);
+    }, 3000);
   });
   const gracefulStop = client
     .shutdown()

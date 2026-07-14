@@ -49,7 +49,7 @@ MVP Lite 是单用户、单机、前台运行的 Developer Preview，不承诺�
 | Agent | 固定内置 Eidos Agent，不提供 Agent 管理 |
 | 会话 | 创建和读取 Session |
 | 执行 | 每个 Session 可创建多个历史 Run，但全应用任意时刻最多一个活动 Run |
-| 模型 | 一个 OpenAI Responses 兼容 Profile；HTTP(S) SSE streaming |
+| 模型 | 固定 DeepSeek `deepseek-v4-flash`；OpenAI-compatible Chat Completions HTTP(S) SSE streaming |
 | Runtime | 串行 ReAct loop；最多 20 个模型 Step |
 | 只读工具 | `list_files`、`read_file`、`search_text` |
 | 文件写工具 | `write_file`、`apply_patch`；单 ToolCall 单文件 |
@@ -67,7 +67,7 @@ MVP Lite 是单用户、单机、前台运行的 Developer Preview，不承诺�
 - `read_file_range`、`delete_file`、Regex Search 和额外文本编码。
 - pending Approval、模型流和工具执行的跨重启恢复。
 - Durable Intent、事实确认屏障、Workspace 前后 manifest 和副作用自动对账。
-- Chat Completions Adapter、Responses WebSocket、传输降级和多 Provider 自动兼容。
+- Responses Adapter、WebSocket、传输降级和多 Provider 自动兼容。
 - Model Profile 编辑、Archive、凭证轮换、两阶段 Capability Probe 和 capability snapshot。
 - `model_request_contract_version`、`tool_contract_version` 的旧版本路由与恢复。
 - Canonical JSON、immutable base ToolResult projection 和 ToolResult quarantine。
@@ -87,7 +87,7 @@ React Renderer
   -> Electron Main
   <-> stdio JSON-RPC
   -> Python Runtime
-       -> Model Client / Responses HTTP SSE
+       -> Model Client / DeepSeek Chat Completions HTTP SSE
        -> Runtime Loop
        -> Tool Registry
        -> Approval Gate
@@ -163,9 +163,11 @@ Runtime 完成 SQLite 初始化、工具注册和 Seatbelt 自检后返回：
 | ✅ `initialize` | 建立协议版本和能力握手 | Runtime 版本与 capability |
 | ✅ `session/create` | 绑定 Workspace 并创建 Session | Session |
 | ✅ `session/list` | 分页读取已有 Session 摘要 | `{items,nextCursor?}` |
-| `session/read` | 读取 Session、历史 Run 与有界 Item 页面 | SessionSnapshot |
-| `run/start` | 提交用户输入并开始一个 Run | 初始 Run |
-| `run/cancel` | 取消活动或等待审批的 Run | 最终/当前 Run |
+| ✅ `session/read` | 读取 Session、历史 Run 与有界 Item 页面 | SessionSnapshot |
+| ✅ `run/start` | 提交用户输入并开始一个 Run | 初始 Run |
+| ✅ `run/cancel` | 取消活动或等待审批的 Run | 最终/当前 Run |
+| ✅ `model/status` | 读取不含凭证明文的固定模型配置状态 | ModelStatus |
+| ✅ `model/configure` | 保存 DeepSeek API Key；响应不回显凭证 | ModelStatus |
 | ✅ `runtime/shutdown` | 有界停止 Runtime | 空结果 |
 
 `session/list` 使用 `limit=50`、最大 200 和可选 opaque cursor；第一期不承诺跨页冻结成员集合，客户端遇到 cursor 失效时从第一页重取。`session/read` 使用 `itemLimit=200`、最大 500 和可选 `beforeItemId` 向前读取历史 Item。
@@ -326,7 +328,7 @@ id, item_id, tool_name, arguments_json, result_json, started_at, completed_at
 ```text
 persist user_message Item
   -> build bounded model input from completed Items
-  -> stream Responses API
+  -> stream DeepSeek Chat Completions API
   -> no ToolCall: complete assistant_message and Run succeeded
   -> ToolCall: validate complete response
        -> read tool: execute directly
@@ -412,13 +414,14 @@ MVP Lite 不单独建立 Segment、Attempt、Approval、Event、Operation、Mani
 
 ### L1：模型与只读闭环
 
-- ✅ Session 元数据、`session/create|list|read` 和 SQLite 跨 Runtime 重启持久化；`session/read` 当前返回空 Run/Item 集合。
-- ⏳ Run、Item、ToolCall 最小持久化与 Item 历史分页。
-- Responses HTTP SSE。
-- `list_files`、`read_file`、`search_text`。
-- Item 生命周期通知和基础 Feed。
+- ✅ Session、Run、Item、ToolCall 最小 SQLite 持久化；Item 历史有界分页；启动时未完成 Run 收敛为 `interrupted`。
+- ✅ 确定性 Fake Model 已跑通“模型 -> `read_file` -> ToolResult -> 模型最终回答”的两轮循环。
+- ✅ DeepSeek `deepseek-v4-flash` Chat Completions SSE Adapter 已实现；API Key 以 `0600` 保存且不进入响应、SQLite 或日志；尚待用户在界面配置真实 Key 后完成联网验收。
+- ✅ `list_files`、`read_file`、`search_text` 已实现有界执行、敏感路径拒绝、symlink/root rebinding 防护和取消。
+- ✅ Item 生命周期通知、Main 协议校验和基础 Execution Feed 已实现。
+- ✅ Renderer 已支持选择 Workspace、创建/读取 Session、配置模型、提交/取消 Run 与展示流式结果。
 
-退出标准：真实模型至少完成一次“读取工具 -> ToolResult -> 最终回答”。
+退出标准：⏳ 代码与离线闭环已完成；仍需使用真实 DeepSeek Key 完成一次“读取工具 -> ToolResult -> 最终回答”的联网验收。
 
 ### L2：文件写入审批闭环
 
@@ -447,9 +450,9 @@ L3 前置风险验证状态：
 ## 11. 第一期开工门槛
 
 - [ ] stdio JSON-RPC envelope、method、DTO 和错误码形成固定 v1 测试向量。
-- [ ] `Session -> Run -> Item/ToolCall` 数据模型没有 Segment、Attempt 或独立 Event 依赖。
-- [ ] Runtime Loop 能在 fake model 与 fake tool 上完成至少两轮循环。
-- [ ] Workspace Guard 和 Seatbelt 在目标 macOS 版本完成实机 smoke test。
+- [x] `Session -> Run -> Item/ToolCall` 数据模型没有 Segment、Attempt 或独立 Event 依赖。
+- [x] Runtime Loop 能在 fake model 与真实只读工具上完成至少两轮循环。
+- [x] Workspace Guard 和 Seatbelt 在目标 macOS 版本完成实机 smoke test。
 - [ ] 文件写入 diff 与 hash 复检有独立测试。
 - [ ] 审批请求、取消和迟到响应的竞态有集成测试。
 - [ ] stdout/stderr 隔离、消息大小和慢消费者行为有协议测试。

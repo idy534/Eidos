@@ -1,6 +1,6 @@
 # Eidos 本地开发与阶段验证
 
-本文面向第一次参与桌面端开发的维护者。当前已完成 MVP Lite L0，并进入 L1：Electron Main 已可通过 Python Runtime 创建、分页读取并跨进程重启保留 Session 元数据。
+本文面向第一次参与桌面端开发的维护者。当前已完成 MVP Lite L0，并完成 L1 的离线代码闭环：桌面端可以选择 Workspace、持久化 Session/Run/Item/ToolCall、配置 DeepSeek、执行只读工具并展示流式 Feed。L1 只剩一次真实 API 联网验收。
 
 ## 1. 环境要求
 
@@ -49,6 +49,8 @@ pnpm test
 - 测试会真实拉起 Python 子进程，不使用 Runtime mock。
 - 非协议 stdout 测试会证明 Main 能终止损坏的 Runtime。
 - Session 测试会创建隔离 SQLite，验证 Runtime 重启后的 `session/list|read` 结果。
+- Runtime Loop 测试会用确定性 Fake Model 完成 `read_file -> ToolResult -> final answer` 两轮循环。
+- DeepSeek Adapter 测试覆盖 SSE 文本、reasoning 隐藏、ToolCall 跨 chunk 归并与 `0600` 私有配置；不会产生真实 API 费用。
 
 验证桌面端可以完整构建：
 
@@ -68,11 +70,21 @@ pnpm start
 
 窗口中应依次看到：
 
-1. `正在启动 Python Runtime 并完成协议握手…`
-2. `Runtime 已就绪`
-3. `协议 v1 · Runtime 0.1.0 · Shell 暂未启用`
+1. `正在完成 Python Runtime 协议握手…`
+2. 左侧 Session 列表与右侧 Eidos Workspace。
+3. 尚未配置模型时出现“连接 DeepSeek”区域。
 
-`Shell 暂未启用` 是当前阶段的正确结果。Seatbelt 自检通过只是必要条件；审批、输出上限和完整执行器完成前，Runtime 仍必须报告 Shell 不可用。
+在“连接 DeepSeek”中输入 API Key 并保存。Key 只写入 `~/.eidos/model.json`，文件权限应为 `0600`；界面、Runtime stdout、SQLite 和日志都不应回显 Key。曾经发到聊天或其他第三方系统的 Key 建议先轮换，再作为长期配置使用。
+
+然后按以下步骤验收 L1：
+
+1. 点击“新建 Session”，选择一个不含敏感数据的测试项目。
+2. 输入“请先列出文件，读取 README.md，然后概括如何启动这个项目”，按 `Command + Enter`。
+3. Feed 应依次出现用户消息、`list_files`/`read_file` 工具项、模型可见文本和最终回答。
+4. 退出并重新启动 Eidos，左侧应保留 Session；打开后应看到已完成的 Run 与 Item。
+5. 再发起一个任务并立即点击“取消 Run”，状态应停止，不能在稍后被迟到模型结果改写为成功。
+
+当前只读工具不会修改 Workspace。文件写入与 Shell 尚未开放；它们必须等 L2/L3 的 diff/命令审批闭环完成后才能启用。
 
 启动应用的终端中应出现类似日志：
 
@@ -87,8 +99,6 @@ pnpm start
 ```
 
 日志应只出现在终端，不应出现在协议 stdout 或界面正文中。
-
-当前 Session 能力只开放给 Main Client，尚未接入 Renderer，因此界面暂时不会出现 Session 列表或文件夹选择按钮。请以 `pnpm test` 中的跨 Runtime 重启集成测试作为本阶段验收；对应 UI 会在 Workspace 主链路增量中加入。
 
 ## 5. 关闭验证
 

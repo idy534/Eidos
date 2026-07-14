@@ -307,6 +307,10 @@ MVP Lite 已验证：
 - ✅ `session/create -> shutdown -> Runtime restart -> session/list/read` 保留相同 Session 事实。
 - ✅ Session keyset 分页无重复，非法 cursor 返回闭合参数错误。
 - ✅ symlink Workspace 创建被拒绝且零 Session 写入，不存在 Session 返回闭合 `RESOURCE_NOT_FOUND`。
+- ✅ Run/Item/ToolCall 事务写入、全局单活动 Run、取消、异常重启 `interrupted` 和有界 SessionSnapshot。
+- ✅ Fake Model + `read_file` 两轮 Runtime Loop、Item notification 顺序和真实 Main 子进程路由。
+- ✅ Workspace root identity 固化与 fd-relative 文件访问，覆盖路径被 symlink 重绑后的逃逸回归。
+- ✅ DeepSeek Chat SSE 可见文本、隐藏 reasoning、跨 chunk ToolCall/arguments 归并与私有 `0600` 模型配置。
 - ⏳ 以下条目属于完整目标态或后续 MVP Lite 增量。
 
 - `foreign_keys=ON`、WAL、busy_timeout 生效。

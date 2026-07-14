@@ -71,6 +71,7 @@ class RuntimeProtocolTests(unittest.TestCase):
         self_test.assert_called_once_with()
         response = json.loads(output.getvalue())
         self.assertFalse(response["result"]["capabilities"]["runShell"])
+        self.assertFalse(response["result"]["capabilities"]["modelConfigured"])
         self.assertTrue(any("Seatbelt self-test passed" in line for line in logs.output))
 
     def test_initialize_then_shutdown_keeps_stdout_protocol_only(self) -> None:
@@ -109,7 +110,10 @@ class RuntimeProtocolTests(unittest.TestCase):
                     "result": {
                         "protocolVersion": 1,
                         "runtimeVersion": "0.1.0",
-                        "capabilities": {"runShell": False},
+                        "capabilities": {
+                            "runShell": False,
+                            "modelConfigured": False,
+                        },
                     },
                 },
                 {"jsonrpc": "2.0", "id": "client-2", "result": {}},
@@ -368,6 +372,43 @@ class RuntimeProtocolTests(unittest.TestCase):
             self.assertEqual(
                 response["error"]["data"],
                 {"code": "RESOURCE_NOT_FOUND", "retryable": False},
+            )
+
+    def test_model_configuration_is_private_and_loaded_after_restart(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-data-") as data_directory:
+            configured = run_runtime(
+                [
+                    initialize_message("client-1"),
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": "client-2",
+                            "method": "model/configure",
+                            "params": {"apiKey": "sk-example-key-for-tests"},
+                        }
+                    ),
+                    shutdown_message("client-3"),
+                ],
+                Path(data_directory),
+            )
+            configured_response = json.loads(configured.stdout.splitlines()[1])
+            self.assertEqual(
+                configured_response["result"],
+                {
+                    "provider": "deepseek",
+                    "model": "deepseek-v4-flash",
+                    "configured": True,
+                },
+            )
+            self.assertNotIn("sk-example", configured.stdout)
+
+            restarted = run_runtime(
+                [initialize_message("client-1"), shutdown_message("client-2")],
+                Path(data_directory),
+            )
+            initialize_response = json.loads(restarted.stdout.splitlines()[0])
+            self.assertTrue(
+                initialize_response["result"]["capabilities"]["modelConfigured"]
             )
 
 

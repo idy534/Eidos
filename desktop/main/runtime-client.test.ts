@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { RuntimeClient } from "./runtime-client.js";
+import type { RuntimeNotification } from "./runtime-client.js";
 
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -27,7 +28,7 @@ test("spawns the Python runtime and completes initialize then shutdown", async (
     assert.deepEqual(initialized, {
       protocolVersion: 1,
       runtimeVersion: "0.1.0",
-      capabilities: { runShell: false },
+      capabilities: { runShell: false, modelConfigured: false },
     });
 
     await client.shutdown();
@@ -71,6 +72,81 @@ test("creates and reads a persisted session across runtime restarts", async () =
     await rm(workspaceRoot, { recursive: true, force: true });
   }
 });
+
+test("routes runtime notifications during a fake model read loop", async () => {
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-workspace-"));
+  await writeFile(path.join(workspaceRoot, "README.md"), "# Fixture\n", "utf8");
+  const notifications: RuntimeNotification[] = [];
+
+  try {
+    let completeRun: ((notification: RuntimeNotification) => void) | undefined;
+    const runCompleted = new Promise<RuntimeNotification>((resolve) => {
+      completeRun = resolve;
+    });
+    const client = new RuntimeClient({
+      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      runtimeRoot: path.join(projectRoot, "runtime"),
+      dataDirectory,
+      environment: { EIDOS_FAKE_MODEL: "1" },
+      onNotification: (notification) => {
+        notifications.push(notification);
+        if (notification.method === "run/completed") {
+          completeRun?.(notification);
+        }
+      },
+    });
+
+    await client.initialize();
+    const session = await client.createSession(workspaceRoot);
+    const started = await client.startRun(session.id, "Read README.md");
+    const completed = await withTimeout(runCompleted, 5_000);
+    const snapshot = await client.readSession(session.id);
+    await client.shutdown();
+    assert.equal(await client.waitForExit(), 0);
+
+    assert.equal(started.status, "running");
+    assert.equal(completed.method, "run/completed");
+    assert.deepEqual(
+      notifications.map((notification) => notification.method),
+      [
+        "run/started",
+        "item/started",
+        "item/completed",
+        "item/started",
+        "item/completed",
+        "item/started",
+        "item/delta",
+        "item/completed",
+        "run/completed",
+      ],
+    );
+    assert.equal(snapshot.runs[0]?.status, "succeeded");
+    assert.deepEqual(
+      snapshot.items.map((item) => item.kind),
+      ["user_message", "tool_call", "assistant_message"],
+    );
+  } finally {
+    await rm(dataDirectory, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("run completion timed out")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
 
 test("terminates a runtime that writes non-protocol stdout", async () => {
   const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-invalid-runtime-"));

@@ -2,7 +2,7 @@
 
 版本：v0.4
 
-范围说明：本文描述完整目标态 Model Gateway。第一期只实现 [MVP Lite](../mvp-lite.md) 的单 Responses HTTP(S) SSE Profile，不实现 Chat Adapter、WebSocket、Capability Probe 或 contract version 路由。
+范围说明：本文描述完整目标态 Model Gateway。MVP Lite 已按首个实际接入模型收敛为固定 DeepSeek `deepseek-v4-flash` Chat Completions HTTP(S) SSE Adapter；✅ 已实现流式可见文本、跨 chunk ToolCall 归并、ToolResult 回填、120 秒总 deadline、取消连接、隐藏 reasoning 和安全错误映射。第一期不实现 Responses、WebSocket、Capability Probe 或 contract version 路由；完整目标态仍保留双 wire API 设计。
 
 ## 1. Model Profile
 
