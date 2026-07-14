@@ -12,10 +12,15 @@ from unittest.mock import patch
 
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
+PROTOCOL_V1_FIXTURE = RUNTIME_ROOT.parent / "protocol" / "fixtures" / "v1.json"
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.seatbelt import SeatbeltSelfTestResult  # noqa: E402
 from eidos_runtime.server import RuntimeServer  # noqa: E402
+from eidos_runtime.storage import (  # noqa: E402
+    SessionStore,
+    WorkspaceBoundaryError,
+)
 
 
 def run_runtime(
@@ -40,6 +45,33 @@ def run_runtime(
 
 
 class RuntimeProtocolTests(unittest.TestCase):
+    def test_shared_v1_vectors_match_runtime_envelopes(self) -> None:
+        vectors = json.loads(PROTOCOL_V1_FIXTURE.read_text(encoding="utf-8"))
+        output = io.StringIO()
+
+        with tempfile.TemporaryDirectory(prefix="eidos-data-") as data_directory:
+            server = RuntimeServer(output, Path(data_directory))
+            with patch(
+                "eidos_runtime.server.run_seatbelt_self_test",
+                return_value=SeatbeltSelfTestResult(
+                    available=False,
+                    passed_checks=(),
+                    failures=("fixture",),
+                ),
+            ):
+                server.handle(vectors["initialize"]["request"])
+            server.store.close()
+
+        self.assertEqual(vectors["protocolVersion"], 1)
+        self.assertEqual(
+            json.loads(output.getvalue()),
+            vectors["initialize"]["response"],
+        )
+        self.assertEqual(
+            vectors["notInitializedError"]["response"]["error"]["data"],
+            {"code": "RUNTIME_NOT_INITIALIZED", "retryable": False},
+        )
+
     def test_initialize_runs_seatbelt_self_test_without_enabling_shell(self) -> None:
         output = io.StringIO()
         request = {
@@ -101,23 +133,20 @@ class RuntimeProtocolTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0)
         stdout_messages = [json.loads(line) for line in completed.stdout.splitlines()]
+        self.assertEqual(len(stdout_messages), 2)
+        self.assertEqual(stdout_messages[0]["jsonrpc"], "2.0")
+        self.assertEqual(stdout_messages[0]["id"], "client-1")
+        self.assertEqual(stdout_messages[0]["result"]["protocolVersion"], 1)
+        self.assertEqual(stdout_messages[0]["result"]["runtimeVersion"], "0.1.0")
+        self.assertIsInstance(
+            stdout_messages[0]["result"]["capabilities"]["runShell"], bool
+        )
+        self.assertFalse(
+            stdout_messages[0]["result"]["capabilities"]["modelConfigured"]
+        )
         self.assertEqual(
-            stdout_messages,
-            [
-                {
-                    "jsonrpc": "2.0",
-                    "id": "client-1",
-                    "result": {
-                        "protocolVersion": 1,
-                        "runtimeVersion": "0.1.0",
-                        "capabilities": {
-                            "runShell": True,
-                            "modelConfigured": False,
-                        },
-                    },
-                },
-                {"jsonrpc": "2.0", "id": "client-2", "result": {}},
-            ],
+            stdout_messages[1],
+            {"jsonrpc": "2.0", "id": "client-2", "result": {}},
         )
         self.assertIn("Runtime initialized", completed.stderr)
         self.assertNotIn("Runtime initialized", completed.stdout)
@@ -226,6 +255,118 @@ class RuntimeProtocolTests(unittest.TestCase):
                 {"session": created, "runs": [], "items": []},
             )
             self.assertEqual((Path(data_directory) / "eidos.db").stat().st_mode & 0o777, 0o600)
+
+    def test_session_rejects_workspace_containing_runtime_data(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-overlap-") as root_directory:
+            root = Path(root_directory)
+            data_directory = root / ".eidos"
+            completed = run_runtime(
+                [
+                    initialize_message("client-1"),
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": "client-2",
+                            "method": "session/create",
+                            "params": {"workspaceRoot": str(root)},
+                        }
+                    ),
+                    shutdown_message("client-3"),
+                ],
+                data_directory,
+            )
+
+            response = json.loads(completed.stdout.splitlines()[1])
+            self.assertEqual(
+                response["error"]["data"],
+                {"code": "WORKSPACE_BOUNDARY_VIOLATION", "retryable": False},
+            )
+
+    def test_legacy_session_overlapping_runtime_data_cannot_start_run(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-legacy-overlap-") as root_directory:
+            root = Path(root_directory)
+            data = root / ".eidos"
+            safe_workspace = root / "safe"
+            safe_workspace.mkdir()
+            store = SessionStore(data)
+            store.initialize()
+            try:
+                session = store.create_session(str(safe_workspace))
+                metadata = root.stat()
+                assert store.connection is not None
+                store.connection.execute(
+                    """
+                    UPDATE sessions
+                    SET workspace_root = ?, workspace_dev = ?,
+                        workspace_inode = ?, workspace_uid = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        str(root),
+                        metadata.st_dev,
+                        metadata.st_ino,
+                        metadata.st_uid,
+                        session["id"],
+                    ),
+                )
+                store.connection.commit()
+
+                with self.assertRaises(WorkspaceBoundaryError):
+                    store.create_run(session["id"], "must not start")
+            finally:
+                store.close()
+
+    def test_session_snapshot_stays_below_protocol_message_limit(self) -> None:
+        with (
+            tempfile.TemporaryDirectory(prefix="eidos-snapshot-data-") as data,
+            tempfile.TemporaryDirectory(prefix="eidos-snapshot-workspace-") as workspace,
+        ):
+            store = SessionStore(Path(data))
+            store.initialize()
+            try:
+                session = store.create_session(workspace)
+                latest_run_id = ""
+                for index in range(20):
+                    run, _ = store.create_run(
+                        session["id"], f"{index}:" + "x" * (64 * 1024 - 3)
+                    )
+                    latest_run_id = str(run["id"])
+                    store.fail_run(latest_run_id, "TEST_COMPLETE")
+
+                snapshot = store.read_session_snapshot(session["id"])
+            finally:
+                store.close()
+
+            encoded = json.dumps(
+                snapshot, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+            self.assertLessEqual(len(encoded), 1024 * 1024)
+            self.assertEqual(snapshot["runs"][-1]["id"], latest_run_id)
+
+    def test_oversized_json_escaped_item_does_not_block_snapshot_pagination(self) -> None:
+        with (
+            tempfile.TemporaryDirectory(prefix="eidos-snapshot-data-") as data,
+            tempfile.TemporaryDirectory(prefix="eidos-snapshot-workspace-") as workspace,
+        ):
+            store = SessionStore(Path(data))
+            store.initialize()
+            try:
+                session = store.create_session(workspace)
+                run, _ = store.create_run(session["id"], "large output")
+                item = store.create_assistant_item(run["id"], 1)
+                store.append_item_content(item["id"], "\n" * (512 * 1024))
+                store.complete_assistant_and_run(item["id"], run["id"])
+                snapshot = store.read_session_snapshot(session["id"])
+            finally:
+                store.close()
+
+            self.assertGreaterEqual(len(snapshot["items"]), 1)
+            assistant = snapshot["items"][-1]
+            self.assertTrue(str(assistant["content"]).endswith("…[history truncated]"))
+            self.assertLessEqual(
+                len(json.dumps(snapshot, ensure_ascii=False).encode("utf-8")),
+                1024 * 1024,
+            )
 
     def test_session_list_uses_an_opaque_cursor(self) -> None:
         with (

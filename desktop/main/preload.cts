@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld("eidosRuntime", {
   getModelStatus: (): Promise<unknown> => ipcRenderer.invoke("model:status"),
   configureModel: (apiKey: string): Promise<unknown> =>
     ipcRenderer.invoke("model:configure", apiKey),
+  listPendingApprovals: (): Promise<unknown> => ipcRenderer.invoke("approval:list"),
   onNotification: (callback: (notification: unknown) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, notification: unknown) => {
       callback(notification);

@@ -312,6 +312,7 @@ MVP Lite 已验证：
 - ✅ Workspace root identity 固化与 fd-relative 文件访问，覆盖路径被 symlink 重绑后的逃逸回归。
 - ✅ DeepSeek Chat SSE 可见文本、隐藏 reasoning、跨 chunk ToolCall/arguments 归并与私有 `0600` 模型配置。
 - ✅ 文件 Approve/Reject、既有文件读取证据、完整 diff、版本冲突、CAS swap/rollback、原子提交、post-commit uncertain 与迟到审批。
+- ✅ `protocol/fixtures/v1.json` 固定代表性 envelope、错误、审批与通知 DTO：Python 验证初始化/错误 envelope，TypeScript 验证完整向量解析，真实双向审批/通知由双进程集成测试覆盖；增量 framing 覆盖无换行超限和慢消费者通知突发。
 - ⏳ 以下条目属于完整目标态或后续 MVP Lite 增量。
 
 - `foreign_keys=ON`、WAL、busy_timeout 生效。

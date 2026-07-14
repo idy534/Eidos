@@ -15,7 +15,11 @@ import sys
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
-from eidos_runtime.deepseek import _messages_from_context, _read_stream  # noqa: E402
+from eidos_runtime.deepseek import (  # noqa: E402
+    ModelProviderError,
+    _messages_from_context,
+    _read_stream,
+)
 from eidos_runtime.model_config import ModelConfigStore  # noqa: E402
 
 
@@ -86,6 +90,15 @@ class DeepSeekStreamTests(unittest.TestCase):
         self.assertEqual(messages[2]["role"], "assistant")
         self.assertEqual(messages[3]["role"], "tool")
         self.assertNotIn("reasoning_content", json.dumps(messages))
+
+    def test_stream_uses_request_absolute_deadline(self) -> None:
+        with self.assertRaisesRegex(ModelProviderError, "provider_timeout"):
+            _read_stream(
+                FakeResponse(_sse([])),
+                threading.Event(),
+                lambda _delta: None,
+                deadline=0.0,
+            )
 
 
 class ModelConfigStoreTests(unittest.TestCase):

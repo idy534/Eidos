@@ -19,7 +19,7 @@ export interface Session {
 export interface Run {
   id: string;
   sessionId: string;
-  userInput: string;
+  userInput?: string;
   status: "running" | "waiting_approval" | "succeeded" | "failed" | "canceled" | "interrupted";
   modelStepCount: number;
   createdAt: number;
@@ -113,6 +113,7 @@ declare global {
       cancelRun: (runId: string) => Promise<Run>;
       getModelStatus: () => Promise<ModelStatus>;
       configureModel: (apiKey: string) => Promise<ModelStatus>;
+      listPendingApprovals: () => Promise<ApprovalRequest[]>;
       onNotification: (callback: (notification: RuntimeNotification) => void) => () => void;
       onApprovalRequest: (callback: (request: ApprovalRequest) => void) => () => void;
       respondApproval: (id: string, decision: "approve" | "reject", feedback?: string) => Promise<boolean>;

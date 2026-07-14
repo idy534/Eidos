@@ -10,6 +10,7 @@ import type { RuntimeNotification } from "./runtime-client.js";
 
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const protocolV1Fixture = path.join(projectRoot, "protocol", "fixtures", "v1.json");
 
 
 test("spawns the Python runtime and completes initialize then shutdown", async () => {
@@ -236,13 +237,14 @@ test("routes shell approval and streams sandboxed command completion", async () 
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-workspace-"));
   const approvals: string[] = [];
+  let client: RuntimeClient | undefined;
 
   try {
     let completeRun: ((notification: RuntimeNotification) => void) | undefined;
     const runCompleted = new Promise<RuntimeNotification>((resolve) => {
       completeRun = resolve;
     });
-    const client = new RuntimeClient({
+    client = new RuntimeClient({
       pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
       runtimeRoot: path.join(projectRoot, "runtime"),
       dataDirectory,
@@ -275,6 +277,7 @@ test("routes shell approval and streams sandboxed command completion", async () 
     const commandItem = snapshot.items.find((item) => item.kind === "command_execution");
     assert.ok(commandItem?.toolCall?.resultJson?.includes("desktop-shell-ok"));
   } finally {
+    client?.terminate();
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
   }
@@ -323,6 +326,170 @@ test("terminates a runtime that writes non-protocol stdout", async () => {
       /Runtime wrote invalid JSON to stdout/,
     );
     await client.waitForExit();
+  } finally {
+    await rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test("uses the shared v1 vectors for requests, approvals, and notifications", async () => {
+  const vectors = JSON.parse(await readFile(protocolV1Fixture, "utf8")) as {
+    initialize: { request: object; response: object };
+    shutdown: { request: object; response: object };
+    approval: { request: object; approveResponse: object };
+    notifications: object[];
+  };
+  const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-vector-runtime-"));
+  const packageRoot = path.join(runtimeRoot, "eidos_runtime");
+  await mkdir(packageRoot);
+  await writeFile(path.join(packageRoot, "__init__.py"), "", "utf8");
+  await writeFile(
+    path.join(packageRoot, "__main__.py"),
+    [
+      "import json, pathlib, sys",
+      `vectors = json.loads(pathlib.Path(${JSON.stringify(protocolV1Fixture)}).read_text(encoding='utf-8'))`,
+      "def receive(expected):",
+      "    actual = json.loads(sys.stdin.readline())",
+      "    if actual != expected: raise SystemExit(2)",
+      "def send(message): print(json.dumps(message, separators=(',', ':')), flush=True)",
+      "receive(vectors['initialize']['request'])",
+      "send(vectors['initialize']['response'])",
+      "send(vectors['approval']['request'])",
+      "receive(vectors['approval']['approveResponse'])",
+      "for notification in vectors['notifications']: send(notification)",
+      "receive(vectors['shutdown']['request'])",
+      "send(vectors['shutdown']['response'])",
+    ].join("\n"),
+    "utf8",
+  );
+
+  try {
+    const notifications: RuntimeNotification[] = [];
+    let approvalSeen: (() => void) | undefined;
+    const approvalReceived = new Promise<void>((resolve) => {
+      approvalSeen = resolve;
+    });
+    let runFinished: (() => void) | undefined;
+    const runCompleted = new Promise<void>((resolve) => {
+      runFinished = resolve;
+    });
+    const client = new RuntimeClient({
+      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      runtimeRoot,
+      onApprovalRequest: async () => {
+        approvalSeen?.();
+        return { decision: "approve" };
+      },
+      onNotification: (notification) => {
+        notifications.push(notification);
+        if (notification.method === "run/completed") {
+          runFinished?.();
+        }
+      },
+    });
+
+    assert.equal((await client.initialize()).protocolVersion, 1);
+    await withTimeout(approvalReceived, 5_000);
+    await withTimeout(runCompleted, 5_000);
+    await client.shutdown();
+    assert.equal(await client.waitForExit(), 0);
+    assert.deepEqual(
+      notifications.map((notification) => notification.method),
+      ["run/started", "item/started", "item/delta", "item/completed", "run/completed"],
+    );
+  } finally {
+    await rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test("rejects an oversized unterminated frame before waiting for a newline", async () => {
+  const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-oversize-runtime-"));
+  const packageRoot = path.join(runtimeRoot, "eidos_runtime");
+  await mkdir(packageRoot);
+  await writeFile(path.join(packageRoot, "__init__.py"), "", "utf8");
+  await writeFile(
+    path.join(packageRoot, "__main__.py"),
+    [
+      "import sys, time",
+      "sys.stdin.readline()",
+      "for _ in range(17):",
+      "    sys.stdout.buffer.write(b'x' * (64 * 1024))",
+      "    sys.stdout.buffer.flush()",
+      "    time.sleep(0.005)",
+      "time.sleep(5)",
+    ].join("\n"),
+    "utf8",
+  );
+
+  try {
+    const client = new RuntimeClient({
+      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      runtimeRoot,
+    });
+    await assert.rejects(
+      withTimeout(client.initialize(), 3_000),
+      /Runtime response exceeds 1 MiB/,
+    );
+    await client.waitForExit();
+  } finally {
+    await rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test("drains a bounded notification burst even when its consumer is slow", async () => {
+  const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-slow-consumer-runtime-"));
+  const packageRoot = path.join(runtimeRoot, "eidos_runtime");
+  await mkdir(packageRoot);
+  await writeFile(path.join(packageRoot, "__init__.py"), "", "utf8");
+  await writeFile(
+    path.join(packageRoot, "__main__.py"),
+    [
+      "import json, pathlib, sys",
+      `vectors = json.loads(pathlib.Path(${JSON.stringify(protocolV1Fixture)}).read_text(encoding='utf-8'))`,
+      "json.loads(sys.stdin.readline())",
+      "def send(message): print(json.dumps(message, separators=(',', ':')), flush=True)",
+      "send(vectors['initialize']['response'])",
+      "send(vectors['notifications'][0])",
+      "send(vectors['notifications'][1])",
+      "for sequence in range(1, 129):",
+      "    message = json.loads(json.dumps(vectors['notifications'][2]))",
+      "    message['params']['sequence'] = sequence",
+      "    message['params']['delta'] = 'x' * 512",
+      "    send(message)",
+      "send(vectors['notifications'][3])",
+      "send(vectors['notifications'][4])",
+      "json.loads(sys.stdin.readline())",
+      "send(vectors['shutdown']['response'])",
+    ].join("\n"),
+    "utf8",
+  );
+
+  try {
+    let deltaCount = 0;
+    let finish: (() => void) | undefined;
+    const completed = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const client = new RuntimeClient({
+      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      runtimeRoot,
+      onNotification: (notification) => {
+        const busyUntil = Date.now() + 1;
+        while (Date.now() < busyUntil) {
+          // Exercise bounded stdout backpressure with a deliberately slow callback.
+        }
+        if (notification.method === "item/delta") {
+          deltaCount += 1;
+        } else if (notification.method === "run/completed") {
+          finish?.();
+        }
+      },
+    });
+
+    await client.initialize();
+    await withTimeout(completed, 5_000);
+    assert.equal(deltaCount, 128);
+    await client.shutdown();
+    assert.equal(await client.waitForExit(), 0);
   } finally {
     await rm(runtimeRoot, { recursive: true, force: true });
   }

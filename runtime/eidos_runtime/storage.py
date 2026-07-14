@@ -19,6 +19,7 @@ SESSION_CURSOR_PREFIX = "session-v1:"
 MAX_CONTEXT_BYTES = 768 * 1024
 MAX_CONTEXT_ITEMS = 200
 MAX_SNAPSHOT_BYTES = 768 * 1024
+MAX_SNAPSHOT_TEXT_BYTES = 192 * 1024
 
 
 class StorageError(RuntimeError):
@@ -68,7 +69,9 @@ class SessionStore:
             if not data_directory.is_absolute():
                 raise StorageError("data directory must be absolute")
             _prepare_private_directory(data_directory)
-            database_path = data_directory.resolve() / DATABASE_NAME
+            data_directory = data_directory.resolve()
+            self.data_directory = data_directory
+            database_path = data_directory / DATABASE_NAME
             _prepare_private_database(database_path)
 
             connection = sqlite3.connect(database_path, check_same_thread=False)
@@ -205,6 +208,8 @@ class SessionStore:
 
     def create_session(self, workspace_root: str) -> dict[str, object]:
         workspace = _canonical_workspace(workspace_root)
+        if self._workspace_overlaps_data(workspace):
+            raise WorkspaceBoundaryError("workspace overlaps runtime data")
         metadata = workspace.stat()
         session_id = str(uuid.uuid4())
         now = time.time_ns() // 1_000_000
@@ -277,10 +282,12 @@ class SessionStore:
         now = _now_ms()
         with self.lock, self._connection() as connection:
             session = connection.execute(
-                "SELECT id FROM sessions WHERE id = ?", (session_id,)
+                "SELECT id, workspace_root FROM sessions WHERE id = ?", (session_id,)
             ).fetchone()
             if session is None:
                 raise ResourceNotFoundError("session not found")
+            if self._workspace_overlaps_data(Path(session["workspace_root"])):
+                raise WorkspaceBoundaryError("workspace overlaps runtime data")
             try:
                 connection.execute(
                     """
@@ -379,26 +386,27 @@ class SessionStore:
                     f"SELECT * FROM tool_calls WHERE item_id IN ({placeholders})",
                     [row["id"] for row in item_rows],
                 ).fetchall()
+        session = _session_from_row(session_row)
+        selected_runs = [
+            _run_from_row(row, include_user_input=False)
+            for row in reversed(run_rows)
+        ]
         tools_by_item = {row["item_id"]: row for row in tool_rows}
         has_more = len(item_rows) > item_limit
         selected_items: list[dict[str, object]] = []
-        selected_bytes = 0
+        selected_bytes = _json_bytes(session) + _json_bytes(selected_runs) + 1024
         for row in item_rows[:item_limit]:
-            item = _item_from_row(row, tools_by_item.get(row["id"]))
-            item_bytes = len(
-                json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode(
-                    "utf-8"
-                )
-            )
-            if selected_items and selected_bytes + item_bytes > MAX_SNAPSHOT_BYTES:
+            item = _snapshot_item(row, tools_by_item.get(row["id"]))
+            item_bytes = _json_bytes(item)
+            if selected_bytes + item_bytes > MAX_SNAPSHOT_BYTES:
                 has_more = True
                 break
             selected_items.append(item)
             selected_bytes += item_bytes
         selected_items.reverse()
         snapshot: dict[str, object] = {
-            "session": _session_from_row(session_row),
-            "runs": [_run_from_row(row) for row in reversed(run_rows)],
+            "session": session,
+            "runs": selected_runs,
             "items": selected_items,
         }
         if has_more and selected_items:
@@ -1007,6 +1015,17 @@ class SessionStore:
             raise StorageError("storage is not initialized")
         return self.connection
 
+    def _workspace_overlaps_data(self, workspace: Path) -> bool:
+        data_directory = self.data_directory
+        if data_directory is None:
+            raise StorageError("storage is not initialized")
+        workspace = workspace.resolve(strict=False)
+        return (
+            workspace == data_directory
+            or workspace in data_directory.parents
+            or data_directory in workspace.parents
+        )
+
 
 def _default_data_directory() -> Path:
     configured = os.environ.get("EIDOS_DATA_DIR")
@@ -1115,17 +1134,59 @@ def _session_from_row(row: sqlite3.Row) -> dict[str, object]:
     }
 
 
-def _run_from_row(row: sqlite3.Row) -> dict[str, object]:
+def _json_bytes(value: object) -> int:
+    return len(
+        json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    )
+
+
+def _snapshot_item(
+    row: sqlite3.Row, tool_row: sqlite3.Row | None
+) -> dict[str, object]:
+    item = _item_from_row(row, tool_row)
+    content = item.get("content")
+    if isinstance(content, str):
+        item["content"] = _truncate_snapshot_text(content)
+    tool_call = item.get("toolCall")
+    if isinstance(tool_call, dict):
+        projected = dict(tool_call)
+        projected.pop("argumentsJson", None)
+        projected.pop("approvalDiff", None)
+        result = projected.get("resultJson")
+        if isinstance(result, str):
+            projected["resultJson"] = _truncate_snapshot_text(result)
+        item["toolCall"] = projected
+    return item
+
+
+def _truncate_snapshot_text(value: str) -> str:
+    encoded = value.encode("utf-8")
+    if len(encoded) <= MAX_SNAPSHOT_TEXT_BYTES:
+        return value
+    marker = "\n…[history truncated]"
+    budget = MAX_SNAPSHOT_TEXT_BYTES - len(marker.encode("utf-8"))
+    prefix = encoded[:budget]
+    while True:
+        try:
+            return prefix.decode("utf-8") + marker
+        except UnicodeDecodeError as error:
+            prefix = prefix[: error.start]
+
+
+def _run_from_row(
+    row: sqlite3.Row, *, include_user_input: bool = True
+) -> dict[str, object]:
     run: dict[str, object] = {
         "id": row["id"],
         "sessionId": row["session_id"],
-        "userInput": row["user_input"],
         "status": row["status"],
         "modelStepCount": row["model_step_count"],
         "createdAt": row["created_at"],
         "startedAt": row["started_at"],
         "updatedAt": row["updated_at"],
     }
+    if include_user_input:
+        run["userInput"] = row["user_input"]
     if row["completed_at"] is not None:
         run["completedAt"] = row["completed_at"]
     if row["error_code"] is not None:

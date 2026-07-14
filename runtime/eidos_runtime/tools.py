@@ -28,6 +28,8 @@ MAX_SEARCH_RESULTS = 100
 MAX_FILE_CHANGE_BYTES = 256 * 1024
 MAX_DIFF_BYTES = 512 * 1024
 TOOL_DEADLINE_SECONDS = 5.0
+SHELL_PREFLIGHT_DEADLINE_SECONDS = 10.0
+MAX_SHELL_PREFLIGHT_ENTRIES = 250_000
 EXCLUDED_DIRECTORIES = {
     ".git",
     ".venv",
@@ -181,9 +183,10 @@ class ToolExecutor:
             )
         return False
 
-    def shell_cwd(self, value: str) -> Path:
+    def shell_cwd(self, value: str) -> WorkspaceIdentity:
+        self._verify_root()
         if value == ".":
-            return self.workspace.path
+            return self.workspace
         parts = _validate_relative_path(value)
         descriptor = os.dup(self.root_fd)
         try:
@@ -194,9 +197,24 @@ class ToolExecutor:
             path = Path(_fd_path(descriptor))
             if self.workspace.path not in path.parents and path != self.workspace.path:
                 raise WorkspacePathError("workspace_boundary_violation")
-            return path
+            metadata = os.fstat(descriptor)
+            return WorkspaceIdentity(
+                path=path,
+                device=metadata.st_dev,
+                inode=metadata.st_ino,
+                owner=metadata.st_uid,
+            )
         finally:
             os.close(descriptor)
+
+    def prepare_shell(
+        self, value: str, cancel: threading.Event
+    ) -> WorkspaceIdentity:
+        self._verify_root()
+        self._verify_shell_workspace(cancel)
+        cwd = self.shell_cwd(value)
+        self._verify_root()
+        return cwd
 
     def execute(
         self,
@@ -338,6 +356,17 @@ class ToolExecutor:
                     "file_commit_uncertain",
                     "File change outcome could not be verified",
                     side_effects=True,
+                )
+            if move_status in {"conflict", "failed"}:
+                return _commit_error(
+                    tool_name,
+                    (
+                        "file_version_conflict"
+                        if move_status == "conflict"
+                        else "sandbox_unavailable"
+                    ),
+                    "Secure file commit did not change the target",
+                    side_effects=False,
                 )
             current_parent_fd = self._open_parent(parts)
             os.close(parent_fd)
@@ -648,6 +677,73 @@ class ToolExecutor:
         if Path(_fd_path(self.root_fd)) != self.workspace.path:
             raise WorkspacePathError("workspace_identity_changed")
 
+    def _verify_shell_workspace(self, cancel: threading.Event) -> None:
+        deadline = time.monotonic() + SHELL_PREFLIGHT_DEADLINE_SECONDS
+        entry_count = 0
+
+        def visit(directory_fd: int, depth: int, in_git: bool = False) -> None:
+            nonlocal entry_count
+            try:
+                with os.scandir(directory_fd) as entries:
+                    for entry in entries:
+                        _check_budget(cancel, deadline)
+                        entry_count += 1
+                        if entry_count > MAX_SHELL_PREFLIGHT_ENTRIES:
+                            raise WorkspacePathError("workspace_scan_limit")
+                        name = entry.name
+                        try:
+                            metadata = os.stat(
+                                name, dir_fd=directory_fd, follow_symlinks=False
+                            )
+                        except OSError:
+                            raise WorkspacePathError("workspace_changed") from None
+                        if depth == 0 and name == ".git":
+                            if stat.S_ISLNK(metadata.st_mode):
+                                raise WorkspacePathError("unsupported_workspace_entry")
+                            if stat.S_ISREG(metadata.st_mode):
+                                if metadata.st_nlink != 1:
+                                    raise WorkspacePathError(
+                                        "unsupported_workspace_hardlink"
+                                    )
+                                continue
+                            if not stat.S_ISDIR(metadata.st_mode):
+                                raise WorkspacePathError("unsupported_workspace_entry")
+                            child_fd = self._open_directory(directory_fd, name)
+                            try:
+                                visit(child_fd, depth + 1, True)
+                            finally:
+                                os.close(child_fd)
+                            continue
+                        root_env = depth == 0 and name.lower() == ".env"
+                        if not in_git and not root_env and (
+                            _is_shell_sensitive_name(name)
+                            or _is_sensitive_directory(name)
+                        ):
+                            raise WorkspacePathError("sensitive_workspace_content")
+                        if stat.S_ISLNK(metadata.st_mode):
+                            continue
+                        if stat.S_ISDIR(metadata.st_mode):
+                            child_fd = self._open_directory(directory_fd, name)
+                            try:
+                                visit(child_fd, depth + 1, in_git)
+                            finally:
+                                os.close(child_fd)
+                            continue
+                        if not stat.S_ISREG(metadata.st_mode):
+                            raise WorkspacePathError("unsupported_workspace_entry")
+                        if metadata.st_nlink != 1:
+                            raise WorkspacePathError("unsupported_workspace_hardlink")
+            except WorkspacePathError:
+                raise
+            except OSError:
+                raise WorkspacePathError("workspace_changed") from None
+
+        descriptor = os.dup(self.root_fd)
+        try:
+            visit(descriptor, 0)
+        finally:
+            os.close(descriptor)
+
     def _read_existing_for_change(
         self, path: str, cancel: threading.Event
     ) -> tuple[bytes, int] | None:
@@ -931,6 +1027,23 @@ def _is_sensitive_name(name: str) -> bool:
         or lowered in SENSITIVE_NAMES
         or Path(lowered).suffix in SENSITIVE_SUFFIXES
         or any(keyword in lowered for keyword in SENSITIVE_KEYWORDS)
+    )
+
+
+def _is_shell_sensitive_name(name: str) -> bool:
+    lowered = name.lower()
+    if lowered == ".env.example":
+        return False
+    keyword_name = re.search(
+        r"(?:^|[._-])(credentials?|secrets?|tokens?)(?:[._-]|$)", lowered
+    )
+    return (
+        lowered.startswith(".eidos-")
+        or lowered == ".env"
+        or lowered.startswith(".env.")
+        or lowered in SENSITIVE_NAMES
+        or Path(lowered).suffix in SENSITIVE_SUFFIXES
+        or keyword_name is not None
     )
 
 

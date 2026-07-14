@@ -21,6 +21,7 @@ export function App() {
   const [snapshot, setSnapshot] = useState<SessionSnapshot>();
   const [input, setInput] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [editingModel, setEditingModel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
@@ -60,9 +61,17 @@ export function App() {
     void Promise.all([
       window.eidosRuntime.listSessions(),
       window.eidosRuntime.getModelStatus(),
-    ]).then(([sessionPage, modelStatus]) => {
+      window.eidosRuntime.listPendingApprovals(),
+    ]).then(([sessionPage, modelStatus, pendingApprovals]) => {
       setSessions(sessionPage.items);
       setModel(modelStatus);
+      setApprovals((current) => pendingApprovals.reduce(
+        (merged, approval) => [
+          ...merged.filter((item) => item.id !== approval.id),
+          approval,
+        ],
+        current,
+      ));
     }).catch((cause: unknown) => setError(messageFrom(cause)));
   }, [runtime]);
 
@@ -102,6 +111,7 @@ export function App() {
     try {
       setModel(await window.eidosRuntime.configureModel(apiKey));
       setApiKey("");
+      setEditingModel(false);
     } catch (cause) {
       setError(messageFrom(cause));
     } finally {
@@ -175,26 +185,42 @@ export function App() {
       <SessionSidebar
         sessions={sessions}
         selectedId={snapshot?.session.id}
-        disabled={busy}
+        disabled={busy || Boolean(activeRun)}
         onCreate={() => void createSession()}
         onSelect={(session) => void selectSession(session)}
       />
       <section className="workspace" aria-label="Agent 工作区">
         <header className="workspace-header">
           <div>
-            <p className="eyebrow">Developer Preview · L1</p>
+            <p className="eyebrow">Developer Preview · MVP Lite</p>
             <h1>{snapshot ? "Eidos Workspace" : "Eidos"}</h1>
             <p className="workspace-path">
               {snapshot?.session.workspaceRoot ?? "选择一个本地目录开始。"}
+            </p>
+            <p className="preview-limit">
+              文件写入与 Shell 每次都需批准；当前不提供内容级 Secret 检测，也不支持后台守护进程，请勿选择含敏感数据的 Workspace。
             </p>
           </div>
           <span className="runtime-pill">Runtime {runtime.runtimeVersion}</span>
         </header>
 
-        {!model?.configured && (
+        {model?.configured && !editingModel && (
+          <section className="model-status" aria-label="模型配置">
+            <span>DeepSeek · deepseek-v4-flash 已配置</span>
+            <button
+              className="button-secondary"
+              disabled={busy || Boolean(activeRun)}
+              onClick={() => setEditingModel(true)}
+            >
+              更换 API Key
+            </button>
+          </section>
+        )}
+
+        {(!model?.configured || editingModel) && (
           <section className="setup-panel" aria-labelledby="model-title">
             <div>
-              <h2 id="model-title">连接 DeepSeek</h2>
+              <h2 id="model-title">{model?.configured ? "更换 DeepSeek API Key" : "连接 DeepSeek"}</h2>
               <p>API Key 仅保存在本机 ~/.eidos/model.json（权限 0600），不会写入项目。</p>
             </div>
             <div className="key-row">
@@ -210,6 +236,18 @@ export function App() {
               <button disabled={busy || apiKey.length < 16} onClick={() => void configureModel()}>
                 保存配置
               </button>
+              {model?.configured && (
+                <button
+                  className="button-secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    setApiKey("");
+                    setEditingModel(false);
+                  }}
+                >
+                  取消
+                </button>
+              )}
             </div>
           </section>
         )}
@@ -262,7 +300,7 @@ export function App() {
           <div className="empty-state">
             <p className="empty-kicker">Session → Run → Item</p>
             <h2>从一个 Workspace 开始</h2>
-            <p>Eidos 目前只会读取你选择的目录；写入和 Shell 将在下一阶段加入审批。</p>
+            <p>Eidos 可以阅读、修改和测试所选目录；每次文件写入与 Shell 命令都会先展示候选操作并等待批准。</p>
             <button disabled={busy} onClick={() => void createSession()}>选择目录</button>
           </div>
         )}

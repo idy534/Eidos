@@ -40,9 +40,10 @@ class SeatbeltProfile:
         temporary = _existing_directory(sandbox_tmp, "sandbox tmp")
         git_directory = workspace / ".git"
         if git_directory.is_symlink() or (
-            git_directory.exists() and not git_directory.is_dir()
+            git_directory.exists()
+            and not (git_directory.is_dir() or git_directory.is_file())
         ):
-            raise ValueError("workspace .git must be a directory or absent")
+            raise ValueError("workspace .git must be a directory, regular file, or absent")
         git_directory = git_directory.resolve(strict=False)
 
         sensitive = sensitive_path.resolve()

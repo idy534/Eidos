@@ -50,7 +50,7 @@ export type RunStatus =
 export interface Run {
   id: string;
   sessionId: string;
-  userInput: string;
+  userInput?: string;
   status: RunStatus;
   modelStepCount: number;
   createdAt: number;
@@ -633,7 +633,7 @@ function isRun(value: unknown): value is Run {
   return (
     typeof value.id === "string"
     && typeof value.sessionId === "string"
-    && typeof value.userInput === "string"
+    && (value.userInput === undefined || typeof value.userInput === "string")
     && ["running", "waiting_approval", "succeeded", "failed", "canceled", "interrupted"].includes(String(value.status))
     && isNonNegativeInteger(value.modelStepCount)
     && isNonNegativeInteger(value.createdAt)

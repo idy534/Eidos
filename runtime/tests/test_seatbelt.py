@@ -12,6 +12,7 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 from eidos_runtime.seatbelt import (  # noqa: E402
     SANDBOX_EXECUTABLE,
     SeatbeltProfile,
+    run_sandboxed,
     run_seatbelt_self_test,
 )
 
@@ -68,6 +69,26 @@ class SeatbeltProfileTests(unittest.TestCase):
                     sensitive_path=root / "outside.env",
                 )
 
+    def test_profile_accepts_git_worktree_pointer_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            workspace = root / "workspace"
+            sandbox_home = root / "home"
+            sandbox_tmp = root / "tmp"
+            for directory in (workspace, sandbox_home, sandbox_tmp):
+                directory.mkdir(parents=True, exist_ok=True)
+            git_pointer = workspace / ".git"
+            git_pointer.write_text("gitdir: /outside/worktree\n", encoding="utf-8")
+
+            profile = SeatbeltProfile.create(
+                workspace_root=workspace,
+                sandbox_home=sandbox_home,
+                sandbox_tmp=sandbox_tmp,
+                sensitive_path=workspace / ".env",
+            )
+
+            self.assertEqual(profile.git_directory, git_pointer.resolve())
+
 
 @unittest.skipUnless(sys.platform == "darwin", "Seatbelt is macOS-only")
 class SeatbeltSmokeTests(unittest.TestCase):
@@ -83,6 +104,33 @@ class SeatbeltSmokeTests(unittest.TestCase):
         self.assertIn("symlink_escape_denied", result.passed_checks)
         self.assertIn("loopback_denied", result.passed_checks)
         self.assertIn("timeout_enforced", result.passed_checks)
+
+    def test_git_worktree_pointer_is_supported_but_not_writable(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-worktree-") as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            home = root / "home"
+            sandbox_tmp = root / "tmp"
+            for directory in (workspace, home, sandbox_tmp):
+                directory.mkdir()
+            pointer = workspace / ".git"
+            original = "gitdir: /private/tmp/external-worktree\n"
+            pointer.write_text(original, encoding="utf-8")
+            profile = SeatbeltProfile.create(
+                workspace_root=workspace,
+                sandbox_home=home,
+                sandbox_tmp=sandbox_tmp,
+                sensitive_path=workspace / ".env",
+            )
+
+            allowed = run_sandboxed(profile, ["/usr/bin/true"])
+            denied = run_sandboxed(
+                profile, ["/bin/sh", "-c", "printf changed >> .git"]
+            )
+
+            self.assertEqual(allowed.returncode, 0, allowed.stderr)
+            self.assertNotEqual(denied.returncode, 0)
+            self.assertEqual(pointer.read_text(encoding="utf-8"), original)
 
 
 if __name__ == "__main__":

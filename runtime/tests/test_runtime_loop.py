@@ -17,7 +17,7 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 from eidos_runtime.model import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
 from eidos_runtime.runtime_loop import ApprovalDecision, RuntimeLoop  # noqa: E402
 from eidos_runtime.storage import ActiveRunError, SessionStore  # noqa: E402
-from eidos_runtime.tools import ToolExecutor  # noqa: E402
+from eidos_runtime.tools import ToolCancelled, ToolExecutor  # noqa: E402
 
 
 class RuntimeLoopTests(unittest.TestCase):
@@ -302,6 +302,7 @@ class RuntimeLoopTests(unittest.TestCase):
         result = json.loads(command_item["toolCall"]["resultJson"])
         self.assertEqual(result["outcome"], "success")
         self.assertEqual(result["data"]["stdout"], "shell-ok")
+        self.assertEqual(result["data"]["stderr"], "")
 
     def test_rejected_shell_has_zero_side_effects(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Reject a command")
@@ -329,6 +330,192 @@ class RuntimeLoopTests(unittest.TestCase):
         ).run(run["id"], threading.Event())
 
         self.assertFalse((self.workspace / "rejected.txt").exists())
+
+    def test_shell_workspace_rebind_after_approval_never_runs_in_replacement(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Run safely")
+        replacement = self.workspace.parent / "replacement"
+        replacement.mkdir()
+        moved = self.workspace.parent / "moved-workspace"
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "call-shell",
+                            "run_shell",
+                            {"command": "touch escaped.txt", "timeoutSeconds": 5},
+                        ),
+                    )
+                ),
+                ModelResponse(text="Command was blocked."),
+            ]
+        )
+
+        def rebind_then_approve(_request, _cancel):
+            self.workspace.rename(moved)
+            replacement.rename(self.workspace)
+            return ApprovalDecision("approve")
+
+        RuntimeLoop(
+            self.store,
+            model,
+            lambda _message: None,
+            rebind_then_approve,
+            shell_available=True,
+        ).run(run["id"], threading.Event())
+
+        self.assertFalse((self.workspace / "escaped.txt").exists())
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        command_item = next(
+            item for item in snapshot["items"] if item["kind"] == "command_execution"
+        )
+        result = json.loads(command_item["toolCall"]["resultJson"])
+        self.assertEqual(result["code"], "workspace_identity_changed")
+
+    def test_shell_rejects_sensitive_workspace_file_before_approval(self) -> None:
+        (self.workspace / "private.pem").write_text("secret", encoding="utf-8")
+        run, _ = self.store.create_run(self.session["id"], "Read secrets")
+        approvals: list[dict[str, object]] = []
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "call-shell",
+                            "run_shell",
+                            {"command": "cat private.pem", "timeoutSeconds": 5},
+                        ),
+                    )
+                ),
+                ModelResponse(text="Command was blocked."),
+            ]
+        )
+
+        RuntimeLoop(
+            self.store,
+            model,
+            lambda _message: None,
+            lambda request, _cancel: approvals.append(request)
+            or ApprovalDecision("approve"),
+            shell_available=True,
+        ).run(run["id"], threading.Event())
+
+        self.assertEqual(approvals, [])
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        command_item = next(
+            item for item in snapshot["items"] if item["kind"] == "command_execution"
+        )
+        result = json.loads(command_item["toolCall"]["resultJson"])
+        self.assertEqual(result["code"], "sensitive_workspace_content")
+
+    def test_shell_rejects_hard_link_to_external_inode_before_approval(self) -> None:
+        external = self.workspace.parent / "external.txt"
+        external.write_text("outside\n", encoding="utf-8")
+        os.link(external, self.workspace / "linked.txt")
+        run, _ = self.store.create_run(self.session["id"], "Modify linked file")
+        approvals: list[dict[str, object]] = []
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "call-shell",
+                            "run_shell",
+                            {"command": "printf changed > linked.txt", "timeoutSeconds": 5},
+                        ),
+                    )
+                ),
+                ModelResponse(text="Command was blocked."),
+            ]
+        )
+
+        RuntimeLoop(
+            self.store,
+            model,
+            lambda _message: None,
+            lambda request, _cancel: approvals.append(request)
+            or ApprovalDecision("approve"),
+            shell_available=True,
+        ).run(run["id"], threading.Event())
+
+        self.assertEqual(approvals, [])
+        self.assertEqual(external.read_text(encoding="utf-8"), "outside\n")
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        command_item = next(
+            item for item in snapshot["items"] if item["kind"] == "command_execution"
+        )
+        result = json.loads(command_item["toolCall"]["resultJson"])
+        self.assertEqual(result["code"], "unsupported_workspace_hardlink")
+
+    def test_cancel_during_shell_preflight_cancels_run_without_internal_error(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Run a command")
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "call-shell", "run_shell", {"command": "printf safe"}
+                        ),
+                    )
+                )
+            ]
+        )
+
+        with mock_patch(
+            "eidos_runtime.runtime_loop.ToolExecutor.prepare_shell",
+            side_effect=ToolCancelled(),
+        ):
+            RuntimeLoop(
+                self.store,
+                model,
+                lambda _message: None,
+                lambda _request, _cancel: ApprovalDecision("approve"),
+                shell_available=True,
+            ).run(run["id"], threading.Event())
+
+        completed = self.store.read_run(run["id"])
+        self.assertEqual(completed["status"], "canceled")
+        self.assertNotEqual(completed.get("errorCode"), "INTERNAL_ERROR")
+
+    def test_cancel_during_post_approval_shell_recheck_cancels_run(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Run a command")
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "call-shell", "run_shell", {"command": "printf safe"}
+                        ),
+                    )
+                )
+            ]
+        )
+        original_prepare = ToolExecutor.prepare_shell
+        calls = 0
+
+        def cancel_on_second_scan(executor, value, cancel):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise ToolCancelled
+            return original_prepare(executor, value, cancel)
+
+        with mock_patch(
+            "eidos_runtime.runtime_loop.ToolExecutor.prepare_shell",
+            side_effect=cancel_on_second_scan,
+            autospec=True,
+        ):
+            RuntimeLoop(
+                self.store,
+                model,
+                lambda _message: None,
+                lambda _request, _cancel: ApprovalDecision("approve"),
+                shell_available=True,
+            ).run(run["id"], threading.Event())
+
+        completed = self.store.read_run(run["id"])
+        self.assertEqual(calls, 2)
+        self.assertEqual(completed["status"], "canceled")
 
 
 class ToolExecutorTests(unittest.TestCase):
@@ -585,6 +772,41 @@ class ToolExecutorTests(unittest.TestCase):
         self.assertEqual(result["code"], "file_version_conflict")
         self.assertFalse(result["sideEffectsMayExist"])
         self.assertEqual(target.read_text(), "external\n")
+
+    def test_helper_conflict_or_failure_never_claims_matching_external_candidate(self) -> None:
+        target = self.workspace / "matching-candidate.txt"
+
+        for move_status, expected_code in (
+            ("conflict", "file_version_conflict"),
+            ("failed", "sandbox_unavailable"),
+        ):
+            with self.subTest(move_status=move_status):
+                target.write_text("base\n", encoding="utf-8")
+                prepared = self.executor.prepare_file_change(
+                    "write_file",
+                    {"path": target.name, "content": "candidate\n"},
+                    threading.Event(),
+                )
+                assert not isinstance(prepared, dict)
+
+                def external_candidate_then_report_status(
+                    _workspace, _source, _destination, _expected
+                ):
+                    target.write_text("candidate\n", encoding="utf-8")
+                    return move_status
+
+                with mock_patch(
+                    "eidos_runtime.tools.secure_workspace_move",
+                    side_effect=external_candidate_then_report_status,
+                ):
+                    result = self.executor.commit_file_change(
+                        "write_file", prepared, threading.Event()
+                    )
+
+                self.assertEqual(result["outcome"], "error")
+                self.assertEqual(result["code"], expected_code)
+                self.assertFalse(result["sideEffectsMayExist"])
+                self.assertEqual(target.read_text(), "candidate\n")
 
     def test_uncertain_helper_result_is_never_upgraded_to_success(self) -> None:
         prepared = self.executor.prepare_file_change(

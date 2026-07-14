@@ -1,0 +1,179 @@
+{
+  "protocolVersion": 1,
+  "initialize": {
+    "request": {
+      "jsonrpc": "2.0",
+      "id": "client-1",
+      "method": "initialize",
+      "params": {
+        "client": {
+          "name": "eidos-desktop",
+          "version": "0.1.0"
+        },
+        "protocolVersion": 1
+      }
+    },
+    "response": {
+      "jsonrpc": "2.0",
+      "id": "client-1",
+      "result": {
+        "protocolVersion": 1,
+        "runtimeVersion": "0.1.0",
+        "capabilities": {
+          "runShell": false,
+          "modelConfigured": false
+        }
+      }
+    }
+  },
+  "shutdown": {
+    "request": {
+      "jsonrpc": "2.0",
+      "id": "client-2",
+      "method": "runtime/shutdown",
+      "params": {}
+    },
+    "response": {
+      "jsonrpc": "2.0",
+      "id": "client-2",
+      "result": {}
+    }
+  },
+  "notInitializedError": {
+    "request": {
+      "jsonrpc": "2.0",
+      "id": "client-3",
+      "method": "session/list",
+      "params": {}
+    },
+    "response": {
+      "jsonrpc": "2.0",
+      "id": "client-3",
+      "error": {
+        "code": -32000,
+        "message": "Request failed",
+        "data": {
+          "code": "RUNTIME_NOT_INITIALIZED",
+          "retryable": false
+        }
+      }
+    }
+  },
+  "approval": {
+    "request": {
+      "jsonrpc": "2.0",
+      "id": "server-approval-44444444-4444-4444-8444-444444444444",
+      "method": "item/requestApproval",
+      "params": {
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "runId": "22222222-2222-4222-8222-222222222222",
+        "itemId": "33333333-3333-4333-8333-333333333333",
+        "toolCallId": "55555555-5555-4555-8555-555555555555",
+        "kind": "file_change",
+        "summary": "Modify README.md",
+        "diff": "--- a/README.md\n+++ b/README.md\n"
+      }
+    },
+    "approveResponse": {
+      "jsonrpc": "2.0",
+      "id": "server-approval-44444444-4444-4444-8444-444444444444",
+      "result": {
+        "decision": "approve"
+      }
+    },
+    "rejectResponse": {
+      "jsonrpc": "2.0",
+      "id": "server-approval-44444444-4444-4444-8444-444444444444",
+      "result": {
+        "decision": "reject",
+        "feedback": "Keep the current file."
+      }
+    }
+  },
+  "notifications": [
+    {
+      "jsonrpc": "2.0",
+      "method": "run/started",
+      "params": {
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "run": {
+          "id": "22222222-2222-4222-8222-222222222222",
+          "sessionId": "11111111-1111-4111-8111-111111111111",
+          "userInput": "Inspect README.md",
+          "status": "running",
+          "modelStepCount": 0,
+          "createdAt": 1,
+          "startedAt": 1,
+          "updatedAt": 1
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "item/started",
+      "params": {
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "runId": "22222222-2222-4222-8222-222222222222",
+        "item": {
+          "id": "66666666-6666-4666-8666-666666666666",
+          "sessionId": "11111111-1111-4111-8111-111111111111",
+          "runId": "22222222-2222-4222-8222-222222222222",
+          "ordinal": 2,
+          "modelStepIndex": 1,
+          "kind": "assistant_message",
+          "status": "in_progress",
+          "content": "",
+          "createdAt": 1
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "item/delta",
+      "params": {
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "runId": "22222222-2222-4222-8222-222222222222",
+        "itemId": "66666666-6666-4666-8666-666666666666",
+        "sequence": 1,
+        "delta": "Done."
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "item/completed",
+      "params": {
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "runId": "22222222-2222-4222-8222-222222222222",
+        "item": {
+          "id": "66666666-6666-4666-8666-666666666666",
+          "sessionId": "11111111-1111-4111-8111-111111111111",
+          "runId": "22222222-2222-4222-8222-222222222222",
+          "ordinal": 2,
+          "modelStepIndex": 1,
+          "kind": "assistant_message",
+          "status": "completed",
+          "createdAt": 1,
+          "completedAt": 2
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "run/completed",
+      "params": {
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "run": {
+          "id": "22222222-2222-4222-8222-222222222222",
+          "sessionId": "11111111-1111-4111-8111-111111111111",
+          "userInput": "Inspect README.md",
+          "status": "succeeded",
+          "modelStepCount": 1,
+          "createdAt": 1,
+          "startedAt": 1,
+          "updatedAt": 2,
+          "completedAt": 2
+        }
+      }
+    }
+  ]
+}

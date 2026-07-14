@@ -22,6 +22,7 @@
   (subpath "/usr/sbin")
   (subpath "/usr/libexec")
   (subpath "/private/etc")
+  (literal "/private/var/select/sh")
   (literal "/dev/null")
   (literal "/dev/zero")
   (literal "/dev/random")

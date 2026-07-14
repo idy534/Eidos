@@ -9,7 +9,7 @@ from typing import Callable
 from eidos_runtime.model import ModelClient, ModelResponse, ModelToolCall
 from eidos_runtime.shell import run_shell
 from eidos_runtime.storage import InvalidRunStateError, SessionStore
-from eidos_runtime.tools import ToolExecutor
+from eidos_runtime.tools import ToolCancelled, ToolExecutor, WorkspacePathError
 
 
 MAX_MODEL_STEPS = 20
@@ -408,9 +408,11 @@ class RuntimeLoop:
         timeout = arguments.get("timeoutSeconds", 120)
         assert isinstance(command, str) and isinstance(cwd_value, str) and isinstance(timeout, int)
         try:
-            cwd = tools.shell_cwd(cwd_value)
-        except Exception:
-            return _tool_error("run_shell", "workspace_boundary_violation", "Shell cwd is invalid"), "failed"
+            cwd = tools.prepare_shell(cwd_value, cancel)
+        except ToolCancelled:
+            raise RunCancelled from None
+        except WorkspacePathError as error:
+            return _tool_error("run_shell", error.code, "Shell workspace is unsafe"), "failed"
         pending_item = self.store.begin_approval(item["id"], "", None)
         decision = ApprovalDecision("reject") if self.request_approval is None else self.request_approval(
             {
@@ -439,6 +441,14 @@ class RuntimeLoop:
                 "data": {},
                 "sideEffectsMayExist": False,
             }, "declined"
+        try:
+            approved_cwd = tools.prepare_shell(cwd_value, cancel)
+            if approved_cwd != cwd:
+                raise WorkspacePathError("workspace_identity_changed")
+        except ToolCancelled:
+            raise RunCancelled from None
+        except WorkspacePathError as error:
+            return _tool_error("run_shell", error.code, "Shell workspace changed after approval"), "failed"
         sequence = 0
 
         def stream(delta: str) -> None:
@@ -457,7 +467,7 @@ class RuntimeLoop:
 
         result = _bounded_tool_result(
             "run_shell",
-            run_shell(self.store.workspace_for_run(run_id).path, command, cwd, timeout, cancel, stream),
+            run_shell(tools.workspace, command, approved_cwd, timeout, cancel, stream),
         )
         return result, "completed" if result["outcome"] == "success" else "failed"
 

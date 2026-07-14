@@ -325,6 +325,9 @@ class RuntimeServer:
             except ResourceNotFoundError:
                 self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
                 return
+            except WorkspaceBoundaryError:
+                self.send(business_error(request_id, "WORKSPACE_BOUNDARY_VIOLATION"))
+                return
             except ActiveRunError:
                 self.send(business_error(request_id, "RUN_ALREADY_ACTIVE"))
                 return

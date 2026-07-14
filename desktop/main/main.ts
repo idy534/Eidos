@@ -95,7 +95,7 @@ async function startRuntime(): Promise<void> {
   const client = new RuntimeClient({
     pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
     runtimeRoot,
-    dataDirectory: path.join(app.getPath("home"), ".eidos"),
+    dataDirectory: process.env.EIDOS_DATA_DIR ?? path.join(app.getPath("home"), ".eidos"),
     onNotification: publishNotification,
     onApprovalRequest: requestApproval,
     onStderr: (line) => console.error(`[runtime] ${line}`),
@@ -172,6 +172,9 @@ ipcMain.handle("model:configure", (_event, apiKey: unknown) => {
   }
   return clientOrThrow().configureModel(apiKey);
 });
+ipcMain.handle("approval:list", () =>
+  Array.from(pendingApprovals.values(), ({ request }) => request),
+);
 ipcMain.handle(
   "approval:respond",
   (

@@ -4,7 +4,7 @@
 
 范围说明：本文保留完整目标态工具契约。第一期工具集合、审批和安全底线以 [MVP Lite](../mvp-lite.md) 为准。
 
-MVP Lite 当前实施状态：✅ 只读三工具；✅ `write_file/apply_patch` 候选与完整 diff；✅ Runtime→Main 双向审批、拒绝零副作用、取消/迟到响应；✅ fd-relative Workspace Guard；✅ Seatbelt 内 `RENAME_EXCL` 新建与 `RENAME_SWAP` 旧 hash CAS/回滚；✅ 原子提交读回与不确定副作用标记；✅ `run_shell` 逐次审批、默认断网、干净环境、进程组 timeout/cancel 与有界输出。
+MVP Lite 当前实施状态：✅ 只读三工具；✅ `write_file/apply_patch` 候选与完整 diff；✅ Runtime→Main 双向审批、拒绝零副作用、取消/迟到响应；✅ fd-relative Workspace Guard；✅ Seatbelt 内 `RENAME_EXCL` 新建与 `RENAME_SWAP` 旧 hash CAS/回滚；✅ 原子提交读回与不确定副作用标记；✅ `run_shell` 逐次审批、默认断网、干净环境、敏感/硬链接预检、Workspace/cwd 身份复检、进程组 timeout/cancel/同组后台清理与有界输出。MVP Lite 不宣称 native guardian、脱离 PGID 的后代清理或对抗性同用户 TOCTOU 防护。
 
 ## 1. ToolDefinition 与 ToolContext
 
@@ -683,7 +683,8 @@ MVP Lite 当前实施状态：
 - ✅ 静态 Seatbelt profile 与 `-D` canonical path 参数已实现。
 - ✅ 实机自检已覆盖 active root、sandbox home/tmp、外部 sentinel、敏感 carve-out、`.git`、symlink 逃逸、子进程继承、loopback 拒绝和基础进程组 timeout。
 - ✅ 自检已接入 Runtime initialize；任何失败都保持 Shell unavailable，不存在无沙箱回退。
-- ⏳ hardlink 前置扫描、managed proxy、Toolchain、manifest、资源监控、输出捕获、guardian 与 Redaction Service 自检仍未实现，因此产品能力 `runShell` 继续为 false。
+- ✅ MVP Lite 的逐次审批、默认断网、干净环境、256 KiB 有界输出、timeout/cancel 与进程组清理已经实现；Seatbelt 自检通过时产品能力 `runShell=true`。
+- ⏳ 完整目标态的 hardlink 前置扫描、managed proxy、Toolchain、manifest、精确资源监控、guardian 与 Redaction Service 自检仍未实现，不外推为完整目标态 Shell 已完成。
 
 应用启动执行 Seatbelt 自检：
 

@@ -28,6 +28,7 @@ export function SessionSidebar({ sessions, selectedId, disabled, onCreate, onSel
                 <button
                   className={session.id === selectedId ? "selected" : ""}
                   aria-current={session.id === selectedId ? "page" : undefined}
+                  disabled={disabled}
                   onClick={() => onSelect(session)}
                 >
                   <span>{basename(session.workspaceRoot)}</span>

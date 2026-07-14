@@ -44,6 +44,7 @@ class DeepSeekChatModel:
     ) -> ModelResponse:
         if cancel.is_set():
             return ModelResponse()
+        deadline = time.monotonic() + REQUEST_DEADLINE_SECONDS
         payload = json.dumps(
             {
                 "model": MODEL,
@@ -62,6 +63,11 @@ class DeepSeekChatModel:
         def cancel_watcher() -> None:
             while not watcher_done.wait(0.1):
                 if cancel.is_set():
+                    if connection.sock is not None:
+                        try:
+                            connection.sock.shutdown(socket.SHUT_RDWR)
+                        except OSError:
+                            pass
                     connection.close()
                     return
 
@@ -83,8 +89,13 @@ class DeepSeekChatModel:
             if response.status != 200:
                 raise ModelProviderError(f"provider_http_{response.status}")
             if connection.sock is not None:
-                connection.sock.settimeout(1.0)
-            return _read_stream(response, cancel, on_text_delta)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ModelProviderError("provider_timeout")
+                connection.sock.settimeout(remaining)
+            return _read_stream(
+                response, cancel, on_text_delta, deadline=deadline
+            )
         except ModelProviderError:
             raise
         except (OSError, http.client.HTTPException, socket.timeout):
@@ -100,8 +111,11 @@ def _read_stream(
     response: http.client.HTTPResponse,
     cancel: threading.Event,
     on_text_delta: Callable[[str], None],
+    *,
+    deadline: float | None = None,
 ) -> ModelResponse:
-    deadline = time.monotonic() + REQUEST_DEADLINE_SECONDS
+    if deadline is None:
+        deadline = time.monotonic() + REQUEST_DEADLINE_SECONDS
     text_parts: list[str] = []
     tool_calls: dict[int, _ToolAccumulator] = {}
     finish_reason: str | None = None

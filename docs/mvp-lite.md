@@ -139,6 +139,7 @@ MVP Lite 不开放 TCP、Unix Socket 或 WebSocket 监听。未来需要多客�
 - stderr 日志不得包含 API Key、Authorization Header、完整文件正文或未脱敏 Shell 输出。
 - Main 遇到非法 JSON、未知 response id 或 envelope 校验失败时终止当前 Runtime，并把活动 Run 标记为 interrupted。
 - Runtime 对未知 method 返回标准 `-32601 Method not found`；参数校验失败返回 `-32602 Invalid params`。
+- 协议 v1 的代表性请求、响应、错误、Runtime 主动审批和 Item 生命周期向量固定在 `protocol/fixtures/v1.json`。Python Runtime 验证初始化与业务错误 envelope，TypeScript Main Client 验证完整向量解析；真实审批和通知另由双进程集成测试覆盖。
 
 ### 5.2 初始化
 
@@ -171,6 +172,8 @@ Runtime 完成 SQLite 初始化、工具注册和 Seatbelt 自检后返回：
 | ✅ `runtime/shutdown` | 有界停止 Runtime | 空结果 |
 
 `session/list` 使用 `limit=50`、最大 200 和可选 opaque cursor；第一期不承诺跨页冻结成员集合，客户端遇到 cursor 失效时从第一页重取。`session/read` 使用 `itemLimit=200`、最大 500 和可选 `beforeItemId` 向前读取历史 Item。
+
+`session/read` 的历史 Run 摘要省略与 `user_message` Item 重复的大体积 `userInput`；历史 Item 投影省略重复的 tool arguments/diff，并对大正文加显式 `…[history truncated]` 标记。Run 与 Item 页面共同受 768 KiB 响应预算约束，确保单个大 Item 不会形成分页黑洞且完整 JSON-RPC 消息不超过 1 MiB；`run/start` 与实时 Run 通知仍返回 `userInput`。
 
 `run/start` 只接受 `sessionId` 和 `userInput`。若已有活动 Run，固定返回 `RUN_ALREADY_ACTIVE`；MVP Lite 不隐式排队。
 
@@ -367,10 +370,12 @@ persist user_message Item
 - 每次 `run_shell` 都必须审批，不提供 session 级永久放行。
 - 命令在 `/usr/bin/sandbox-exec` Seatbelt `workspace_write` 中运行。
 - active root 可写；`.git`、`~/.eidos` 和其他用户数据路径不可写。
+- Session 创建会拒绝与 Eidos 数据目录重叠的 Workspace；Shell 在审批前后固定校验 Workspace/cwd inode，并对敏感文件、特殊文件和多硬链接文件执行有界预检，任一不确定性 fail closed。
 - 默认禁止网络、localhost 和 Unix Socket；MVP Lite 不提供单次放行。
 - 使用干净的临时 HOME，不加载用户 rc，不继承宿主凭证环境变量。
-- 默认 timeout 120 秒，最大 600 秒；stdout/stderr 合计持久化上限 1 MiB。
+- 默认 timeout 120 秒，最大 600 秒；stdout/stderr 合计持久化上限 256 KiB。
 - Cancel 或 timeout 向进程组发送 SIGTERM，短暂宽限后 SIGKILL。
+- 命令主进程退出后如同一进程组仍有后台进程，Runtime 会终止该进程组并返回 `background_process`，不会把命令误报为成功。
 - Seatbelt 策略、自检或进程组清理不可用时 `run_shell` capability 为 false。
 
 ### 8.3 最小敏感边界
@@ -378,6 +383,7 @@ persist user_message Item
 - API Key 只存在于 mode 0600 的本地配置，不进入 SQLite、stdout、Item 或 stderr。
 - 固定拒绝读取常见凭证文件和 `~/.ssh`、`~/.aws`、`~/.config` 等 active root 外路径。
 - Shell 不继承 API Key、SSH agent、云凭证和真实 HOME。
+- 常见凭证目录、`.env*`、私钥/证书和 credential/secret/token 命名文件会在 Shell 启动前拒绝；根目录 `.env` 由 Seatbelt 精确拒绝读取与写入。
 - MVP Lite 不承诺内容级 Secret 检测；UI 必须明确这是 Developer Preview 限制。
 
 ## 9. 最小持久化
@@ -435,7 +441,7 @@ MVP Lite 不单独建立 Segment、Attempt、Approval、Event、Operation、Mani
 
 ### L3：开发者可用闭环
 
-- ✅ Seatbelt `run_shell`、逐次命令审批、默认断网、干净 HOME/环境、256 KiB 有界输出、timeout 和进程组取消。
+- ✅ Seatbelt `run_shell`、逐次命令审批、默认断网、干净 HOME/环境、256 KiB 有界输出、timeout、进程组取消与同组后台进程收敛；审批前后校验 Workspace/cwd 身份，并拒绝敏感文件、特殊文件和多硬链接 Workspace。
 - ✅ Workspace 主界面与历史 Session/Run 读取。
 - ✅ Runtime 异常退出统一标记 `interrupted`，不自动重放。
 - ✅ 首期端到端测试与 Developer Preview 限制说明。
@@ -445,18 +451,20 @@ MVP Lite 不单独建立 Segment、Attempt、Approval、Event、Operation、Mani
 L3 前置风险验证状态：
 
 - ✅ Seatbelt 使用静态 profile 和 `-D` 路径参数，不从 PATH 解析 `sandbox-exec`。
-- ✅ macOS 实机 smoke test 已覆盖 Workspace/Home/Temp 创建修改删除、外部与敏感路径拒绝、`.git` 只读、symlink 逃逸、子进程继承、loopback 拒绝和基础进程组 timeout。
-- ✅ Runtime initialize 会执行 Seatbelt 自检；失败保持 fail closed，且在完整 `run_shell` 落地前即使自检通过也保持 `runShell=false`。
+- ✅ macOS 实机 smoke test 已覆盖 Workspace/Home/Temp 创建修改删除、外部与敏感路径拒绝、`.git` 目录写保护、symlink/硬链接逃逸、审批期间 Workspace 重绑、子进程继承、loopback 拒绝、同组后台进程清理和进程组 timeout；worktree pointer 的原生 smoke 用例已加入，需在本机运行 `pnpm test` 完成最终复核。
+- ✅ Runtime initialize 会执行 Seatbelt 自检；只有当前 `run_shell` 实现存在且自检全部通过时才返回 `runShell=true`，任一失败都保持 fail closed。
 - ✅ Shell Approval、默认断网、输出上限、timeout/cancel 与真正的 `run_shell` ToolCall 已实现。
 - ⏳ manifest、完整 RSS/fd/fork 资源监管、managed network 继续按 MVP Lite 延后，不阻塞 Developer Preview。
 
+Developer Preview 限制：MVP Lite 不支持通过 `setsid`/double-fork 脱离原进程组的守护进程，也不承诺抵御同一 macOS 用户下另一个对抗进程在命令执行微窗口内重绑 Workspace 或注入硬链接。只应批准可读、短生命周期的构建/测试命令，并避免执行期间由其他进程结构性替换 Workspace；完整原生 guardian 与文件系统事实对账仍属于目标态。
+
 ## 11. 第一期开工门槛
 
-- [ ] stdio JSON-RPC envelope、method、DTO 和错误码形成固定 v1 测试向量。
+- [x] stdio JSON-RPC envelope、method、DTO 和错误码形成固定 v1 测试向量。
 - [x] `Session -> Run -> Item/ToolCall` 数据模型没有 Segment、Attempt 或独立 Event 依赖。
 - [x] Runtime Loop 能在 fake model 与真实只读工具上完成至少两轮循环。
 - [x] Workspace Guard 和 Seatbelt 在目标 macOS 版本完成实机 smoke test。
 - [x] 文件写入 diff 与 hash 复检有独立测试。
 - [x] 审批请求、取消和迟到响应的竞态有集成测试。
-- [ ] stdout/stderr 隔离、消息大小和慢消费者行为有协议测试。
+- [x] stdout/stderr 隔离、消息大小、分块超限和慢消费者行为有协议测试。
 - [x] PRD/TDD 后续实现任务明确标注 `MVP Lite` 或 `完整目标态`，不再混用 P0。
