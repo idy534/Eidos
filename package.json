@@ -1,0 +1,34 @@
+{
+  "name": "eidos",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/main.js",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=22.12.0",
+    "pnpm": ">=11 <12"
+  },
+  "scripts": {
+    "build": "pnpm build:main && pnpm build:renderer",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "tsc -p tsconfig.renderer.json --noEmit && vite build",
+    "start": "pnpm build && electron .",
+    "test": "pnpm test:runtime && pnpm test:desktop",
+    "test:runtime": "python3 -m unittest discover -s runtime/tests -v",
+    "test:desktop": "pnpm build:main && node --test dist/main/runtime-client.test.js"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.0.0",
+    "electron": "^42.4.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.0"
+  }
+}

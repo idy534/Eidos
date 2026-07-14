@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": "desktop/main",
+    "outDir": "dist/main",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "sourceMap": true,
+    "types": ["node"]
+  },
+  "include": ["desktop/main/**/*.ts", "desktop/main/**/*.cts"]
+}
