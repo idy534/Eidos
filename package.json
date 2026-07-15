@@ -16,7 +16,8 @@
     "start": "pnpm build && electron .",
     "test": "pnpm test:runtime && pnpm test:desktop",
     "test:runtime": "python3 -m unittest discover -s runtime/tests -v",
-    "test:desktop": "pnpm build:main && node --test dist/main/runtime-client.test.js"
+    "test:renderer-state": "tsc -p tsconfig.renderer-test.json && node --test dist/renderer-test/session-state.test.js",
+    "test:desktop": "pnpm build && pnpm test:renderer-state && node --test dist/main/runtime-client.test.js"
   },
   "dependencies": {
     "react": "^19.2.0",

@@ -1,4 +1,7 @@
+import { Fragment } from "react";
+
 import type { ApprovalRequest, Item, Run } from "../contracts";
+import { terminalRunPresentation } from "../session-state";
 
 
 interface Props {
@@ -17,21 +20,43 @@ export function ExecutionFeed({ items, runs, approvals, disabled, onApproval }: 
       </div>
     );
   }
+  const runsById = new Map(runs.map((run) => [run.id, run]));
+  const lastItemByRun = new Map<string, string>();
+  for (const item of items) {
+    lastItemByRun.set(item.runId, item.id);
+  }
   return (
     <section className="feed" aria-label="Execution Feed" aria-live="polite">
-      {items.map((item) => (
-        <FeedItem
-          key={item.id}
-          item={item}
-          approval={approvals.find((request) => request.itemId === item.id)}
-          disabled={disabled}
-          onApproval={onApproval}
-        />
-      ))}
-      {runs.at(-1)?.status === "failed" && (
-        <p className="run-error" role="alert">Run 失败：{runs.at(-1)?.errorCode ?? "UNKNOWN_ERROR"}</p>
-      )}
+      {items.map((item) => {
+        const run = runsById.get(item.runId);
+        return (
+          <Fragment key={item.id}>
+            <FeedItem
+              item={item}
+              approval={approvals.find((request) => request.itemId === item.id)}
+              disabled={disabled}
+              onApproval={onApproval}
+            />
+            {run && lastItemByRun.get(item.runId) === item.id && <RunOutcome run={run} />}
+          </Fragment>
+        );
+      })}
     </section>
+  );
+}
+
+function RunOutcome({ run }: { run: Run }) {
+  const presentation = terminalRunPresentation(run);
+  if (!presentation) {
+    return null;
+  }
+  return (
+    <p
+      className={`run-status run-status--${presentation.tone}`}
+      role={presentation.tone === "error" ? "alert" : "status"}
+    >
+      {presentation.label}
+    </p>
   );
 }
 

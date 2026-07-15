@@ -1,17 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
-  Item,
   ApprovalRequest,
   ModelStatus,
   Run,
-  RuntimeNotification,
   RuntimeStatus,
   Session,
   SessionSnapshot,
 } from "./contracts";
 import { ExecutionFeed } from "./components/ExecutionFeed";
 import { SessionSidebar } from "./components/SessionSidebar";
+import { applyNotification, SnapshotReadCoordinator } from "./session-state";
 
 
 export function App() {
@@ -23,13 +22,16 @@ export function App() {
   const [apiKey, setApiKey] = useState("");
   const [editingModel, setEditingModel] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [refreshingSnapshot, setRefreshingSnapshot] = useState(false);
   const [error, setError] = useState<string>();
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const snapshotReads = useRef(new SnapshotReadCoordinator()).current;
 
   const activeRun = useMemo(
     () => snapshot?.runs.find((run) => ["running", "waiting_approval"].includes(run.status)),
     [snapshot],
   );
+  const interactionBusy = busy || refreshingSnapshot;
 
   useEffect(() => {
     const unsubscribeStatus = window.eidosRuntime.onStatus(setRuntime);
@@ -38,6 +40,7 @@ export function App() {
         setApprovals((current) => current.filter(
           (approval) => approval.runId !== notification.params.run.id,
         ));
+        void refreshCompletedSession(notification.params.sessionId);
       }
       setSnapshot((current) => applyNotification(current, notification));
     });
@@ -76,12 +79,20 @@ export function App() {
   }, [runtime]);
 
   async function selectSession(session: Session): Promise<void> {
+    const token = snapshotReads.select(session.id);
+    setRefreshingSnapshot(false);
     setBusy(true);
     setError(undefined);
     try {
-      setSnapshot(await window.eidosRuntime.readSession(session.id));
+      const loaded = await window.eidosRuntime.readSession(session.id);
+      const accepted = snapshotReads.accept(token, loaded);
+      if (accepted) {
+        setSnapshot(accepted);
+      }
     } catch (cause) {
-      setError(messageFrom(cause));
+      if (snapshotReads.isCurrent(token)) {
+        setError(messageFrom(cause));
+      }
     } finally {
       setBusy(false);
     }
@@ -96,8 +107,14 @@ export function App() {
     setError(undefined);
     try {
       const session = await window.eidosRuntime.createSession(workspace);
+      const token = snapshotReads.select(session.id);
+      setRefreshingSnapshot(false);
       setSessions((current) => [session, ...current]);
-      setSnapshot(await window.eidosRuntime.readSession(session.id));
+      const loaded = await window.eidosRuntime.readSession(session.id);
+      const accepted = snapshotReads.accept(token, loaded);
+      if (accepted) {
+        setSnapshot(accepted);
+      }
     } catch (cause) {
       setError(messageFrom(cause));
     } finally {
@@ -120,7 +137,7 @@ export function App() {
   }
 
   async function startRun(): Promise<void> {
-    if (!snapshot || !input.trim()) {
+    if (!snapshot || !input.trim() || interactionBusy) {
       return;
     }
     setBusy(true);
@@ -176,6 +193,29 @@ export function App() {
     }
   }
 
+  async function refreshCompletedSession(sessionId: string): Promise<void> {
+    const token = snapshotReads.refresh(sessionId);
+    if (!token) {
+      return;
+    }
+    setRefreshingSnapshot(true);
+    try {
+      const loaded = await window.eidosRuntime.readSession(sessionId);
+      const accepted = snapshotReads.accept(token, loaded);
+      if (accepted) {
+        setSnapshot(accepted);
+      }
+    } catch (cause) {
+      if (snapshotReads.isCurrent(token)) {
+        setError(messageFrom(cause));
+      }
+    } finally {
+      if (snapshotReads.isCurrent(token)) {
+        setRefreshingSnapshot(false);
+      }
+    }
+  }
+
   if (runtime.state !== "ready") {
     return <RuntimeGate status={runtime} />;
   }
@@ -185,7 +225,7 @@ export function App() {
       <SessionSidebar
         sessions={sessions}
         selectedId={snapshot?.session.id}
-        disabled={busy || Boolean(activeRun)}
+        disabled={interactionBusy || Boolean(activeRun)}
         onCreate={() => void createSession()}
         onSelect={(session) => void selectSession(session)}
       />
@@ -200,6 +240,11 @@ export function App() {
             <p className="preview-limit">
               文件写入与 Shell 每次都需批准；当前不提供内容级 Secret 检测，也不支持后台守护进程，请勿选择含敏感数据的 Workspace。
             </p>
+            {!runtime.runShell && (
+              <p className="shell-unavailable" role="status">
+                Shell 当前不可用：Seatbelt 自检未通过。文件读取与经审批的文件修改仍可使用。
+              </p>
+            )}
           </div>
           <span className="runtime-pill">Runtime {runtime.runtimeVersion}</span>
         </header>
@@ -209,7 +254,7 @@ export function App() {
             <span>DeepSeek · deepseek-v4-flash 已配置</span>
             <button
               className="button-secondary"
-              disabled={busy || Boolean(activeRun)}
+              disabled={interactionBusy || Boolean(activeRun)}
               onClick={() => setEditingModel(true)}
             >
               更换 API Key
@@ -233,13 +278,13 @@ export function App() {
                 value={apiKey}
                 onChange={(event) => setApiKey(event.target.value)}
               />
-              <button disabled={busy || apiKey.length < 16} onClick={() => void configureModel()}>
+              <button disabled={interactionBusy || apiKey.length < 16} onClick={() => void configureModel()}>
                 保存配置
               </button>
               {model?.configured && (
                 <button
                   className="button-secondary"
-                  disabled={busy}
+                  disabled={interactionBusy}
                   onClick={() => {
                     setApiKey("");
                     setEditingModel(false);
@@ -260,7 +305,7 @@ export function App() {
               items={snapshot.items}
               runs={snapshot.runs}
               approvals={approvals.filter((approval) => approval.sessionId === snapshot.session.id)}
-              disabled={busy}
+              disabled={interactionBusy}
               onApproval={(request, decision) => void respondApproval(request, decision)}
             />
             <form className="composer" onSubmit={(event) => {
@@ -273,7 +318,7 @@ export function App() {
                 rows={3}
                 placeholder={model?.configured ? "例如：阅读这个项目并说明如何启动" : "请先配置 DeepSeek API Key"}
                 value={input}
-                disabled={!model?.configured || Boolean(activeRun)}
+                disabled={!model?.configured || interactionBusy || Boolean(activeRun)}
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -285,11 +330,11 @@ export function App() {
               <div className="composer-actions">
                 <span>{activeRun ? "正在执行…" : "⌘↵ 发送"}</span>
                 {activeRun ? (
-                  <button className="button-secondary" type="button" disabled={busy} onClick={() => void cancelRun()}>
+                  <button className="button-secondary" type="button" disabled={interactionBusy} onClick={() => void cancelRun()}>
                     取消 Run
                   </button>
                 ) : (
-                  <button type="submit" disabled={busy || !model?.configured || !input.trim()}>
+                  <button type="submit" disabled={interactionBusy || !model?.configured || !input.trim()}>
                     开始
                   </button>
                 )}
@@ -301,7 +346,7 @@ export function App() {
             <p className="empty-kicker">Session → Run → Item</p>
             <h2>从一个 Workspace 开始</h2>
             <p>Eidos 可以阅读、修改和测试所选目录；每次文件写入与 Shell 命令都会先展示候选操作并等待批准。</p>
-            <button disabled={busy} onClick={() => void createSession()}>选择目录</button>
+            <button disabled={interactionBusy} onClick={() => void createSession()}>选择目录</button>
           </div>
         )}
       </section>
@@ -319,49 +364,12 @@ function RuntimeGate({ status }: { status: RuntimeStatus }) {
   );
 }
 
-function applyNotification(
-  snapshot: SessionSnapshot | undefined,
-  notification: RuntimeNotification,
-): SessionSnapshot | undefined {
-  if (!snapshot || notification.params.sessionId !== snapshot.session.id) {
-    return snapshot;
-  }
-  if (notification.method === "run/started" || notification.method === "run/completed") {
-    return { ...snapshot, runs: upsertRun(snapshot.runs, notification.params.run) };
-  }
-  if (notification.method === "item/delta") {
-    return {
-      ...snapshot,
-      items: snapshot.items.map((item) => item.id === notification.params.itemId
-        ? { ...item, content: `${item.content ?? ""}${notification.params.delta}` }
-        : item),
-    };
-  }
-  const incoming = notification.params.item;
-  const existing = snapshot.items.find((item) => item.id === incoming.id);
-  let merged: Item = existing?.content !== undefined && incoming.content === undefined
-    ? { ...incoming, content: existing.content }
-    : incoming;
-  if (existing?.toolCall && incoming.toolCall) {
-    merged = { ...merged, toolCall: { ...existing.toolCall, ...incoming.toolCall } };
-  }
-  return { ...snapshot, items: upsertItem(snapshot.items, merged) };
-}
-
 function upsertRun(runs: Run[], incoming: Run): Run[] {
   const existing = runs.findIndex((run) => run.id === incoming.id);
   if (existing < 0) {
     return [...runs, incoming];
   }
   return runs.map((run, index) => index === existing ? incoming : run);
-}
-
-function upsertItem(items: Item[], incoming: Item): Item[] {
-  const existing = items.findIndex((item) => item.id === incoming.id);
-  if (existing < 0) {
-    return [...items, incoming].sort((left, right) => left.ordinal - right.ordinal);
-  }
-  return items.map((item, index) => index === existing ? incoming : item);
 }
 
 function messageFrom(cause: unknown): string {
