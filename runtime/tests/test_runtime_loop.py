@@ -82,6 +82,77 @@ class RuntimeLoopTests(unittest.TestCase):
             ],
         )
 
+    def test_multiple_read_tools_execute_in_declared_order(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Inspect workspace")
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall("call-list", "list_files", {}),
+                        ModelToolCall(
+                            "call-read", "read_file", {"path": "hello.txt"}
+                        ),
+                    )
+                ),
+                ModelResponse(text="Inspection complete."),
+            ]
+        )
+
+        RuntimeLoop(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        tool_items = [item for item in snapshot["items"] if item.get("toolCall")]
+        self.assertEqual(
+            [item["toolCall"]["toolName"] for item in tool_items],
+            ["list_files", "read_file"],
+        )
+        self.assertEqual(
+            [entry["name"] for entry in model.contexts[1] if entry["type"] == "tool_result"],
+            ["list_files", "read_file"],
+        )
+
+    def test_second_consecutive_invalid_model_response_fails_the_run(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Invalid responses")
+        model = ScriptedModel([ModelResponse(), ModelResponse()])
+
+        RuntimeLoop(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        failed = self.store.read_run(run["id"])
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(failed["errorCode"], "MODEL_PROTOCOL_ERROR")
+        self.assertEqual(len(model.contexts), 2)
+
+    def test_twenty_model_steps_are_enforced_without_a_finalization_call(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Keep reading")
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            f"call-{index}",
+                            "read_file",
+                            {"path": "hello.txt"},
+                        ),
+                    )
+                )
+                for index in range(20)
+            ]
+        )
+
+        RuntimeLoop(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        failed = self.store.read_run(run["id"])
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(failed["errorCode"], "MAX_STEPS_EXCEEDED")
+        self.assertEqual(failed["modelStepCount"], 20)
+        self.assertEqual(len(model.contexts), 20)
+
     def test_second_active_run_is_rejected(self) -> None:
         self.store.create_run(self.session["id"], "First")
 
