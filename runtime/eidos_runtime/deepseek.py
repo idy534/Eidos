@@ -16,6 +16,8 @@ PATH = "/chat/completions"
 MODEL = "deepseek-v4-flash"
 REQUEST_DEADLINE_SECONDS = 120.0
 MAX_SSE_LINE_BYTES = 1024 * 1024
+MAX_SSE_EVENTS = 4_096
+MAX_TOOL_NAME_BYTES = 256
 SYSTEM_PROMPT = """You are Eidos, a local coding agent. Work only through the provided tools.
 Use relative workspace paths. Inspect relevant files before answering. Never invent tool results.
 When the task is complete, give a concise final answer in the user's language."""
@@ -88,13 +90,14 @@ class DeepSeekChatModel:
             response = connection.getresponse()
             if response.status != 200:
                 raise ModelProviderError(f"provider_http_{response.status}")
-            if connection.sock is not None:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise ModelProviderError("provider_timeout")
-                connection.sock.settimeout(remaining)
             return _read_stream(
-                response, cancel, on_text_delta, deadline=deadline
+                response,
+                cancel,
+                on_text_delta,
+                deadline=deadline,
+                set_read_timeout=(
+                    connection.sock.settimeout if connection.sock is not None else None
+                ),
             )
         except ModelProviderError:
             raise
@@ -113,17 +116,22 @@ def _read_stream(
     on_text_delta: Callable[[str], None],
     *,
     deadline: float | None = None,
+    set_read_timeout: Callable[[float], None] | None = None,
 ) -> ModelResponse:
     if deadline is None:
         deadline = time.monotonic() + REQUEST_DEADLINE_SECONDS
     text_parts: list[str] = []
     tool_calls: dict[int, _ToolAccumulator] = {}
     finish_reason: str | None = None
+    event_count = 0
     while True:
         if cancel.is_set():
             return ModelResponse()
-        if time.monotonic() >= deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             raise ModelProviderError("provider_timeout")
+        if set_read_timeout is not None:
+            set_read_timeout(remaining)
         try:
             line = response.readline(MAX_SSE_LINE_BYTES + 1)
         except socket.timeout:
@@ -139,6 +147,9 @@ def _read_stream(
             break
         if not data:
             continue
+        event_count += 1
+        if event_count > MAX_SSE_EVENTS:
+            raise ModelProviderError("provider_response_too_large")
         try:
             event = json.loads(data.decode("utf-8"))
             choice = event["choices"][0]
@@ -214,7 +225,11 @@ def _merge_tool_delta(
             if not isinstance(arguments, str):
                 raise ModelProviderError("provider_protocol_error")
             accumulator.arguments += arguments
-    if len(accumulator.call_id) > 256 or len(accumulator.arguments) > 64 * 1024:
+    if (
+        len(accumulator.call_id) > 256
+        or len(accumulator.name.encode("utf-8")) > MAX_TOOL_NAME_BYTES
+        or len(accumulator.arguments) > 64 * 1024
+    ):
         raise ModelProviderError("provider_response_too_large")
 
 

@@ -18,7 +18,7 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.model import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
 from eidos_runtime.seatbelt import SeatbeltSelfTestResult  # noqa: E402
-from eidos_runtime.server import RuntimeServer  # noqa: E402
+from eidos_runtime.server import RuntimeServer, valid_request_id  # noqa: E402
 from eidos_runtime.storage import (  # noqa: E402
     SessionStore,
     WorkspaceBoundaryError,
@@ -47,6 +47,41 @@ def run_runtime(
 
 
 class RuntimeProtocolTests(unittest.TestCase):
+    def test_oversized_request_id_is_rejected_without_stopping_runtime(self) -> None:
+        oversized_id = "client-" + "x" * 122
+        completed = run_runtime(
+            [
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": oversized_id,
+                        "method": "session/list",
+                        "params": {},
+                    }
+                ),
+                shutdown_message("client-1"),
+            ]
+        )
+
+        responses = [json.loads(line) for line in completed.stdout.splitlines()]
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(responses[0]["error"]["code"], -32600)
+        self.assertIsNone(responses[0]["id"])
+        self.assertEqual(responses[1], {"jsonrpc": "2.0", "id": "client-1", "result": {}})
+
+    def test_request_id_accepts_only_the_client_ascii_namespace(self) -> None:
+        self.assertTrue(valid_request_id("client-request_1.test"))
+        for invalid in (
+            "client-",
+            "client-request:1",
+            "client-测试",
+            "client-\ud800",
+            "server-request-1",
+            "client-request 1",
+        ):
+            with self.subTest(invalid=invalid):
+                self.assertFalse(valid_request_id(invalid))
+
     def test_worker_failure_while_waiting_for_approval_releases_active_run(self) -> None:
         with (
             tempfile.TemporaryDirectory(prefix="eidos-data-") as data_directory,

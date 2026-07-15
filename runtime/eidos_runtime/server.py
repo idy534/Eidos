@@ -5,6 +5,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import sys
 import threading
 from typing import Any, BinaryIO, TextIO
@@ -28,7 +29,9 @@ from eidos_runtime.storage import (
 
 
 MAX_MESSAGE_BYTES = 1024 * 1024
+MAX_REQUEST_ID_BYTES = 128
 PROTOCOL_VERSION = 1
+CLIENT_REQUEST_ID = re.compile(r"client-[A-Za-z0-9._-]+")
 
 logger = logging.getLogger("eidos.runtime")
 
@@ -87,7 +90,11 @@ def read_bounded_line(input_stream: BinaryIO) -> tuple[bytes, bool]:
 
 
 def valid_request_id(value: object) -> bool:
-    return isinstance(value, str) and value.startswith("client-") and len(value) > 7
+    return (
+        isinstance(value, str)
+        and CLIENT_REQUEST_ID.fullmatch(value) is not None
+        and len(value) <= MAX_REQUEST_ID_BYTES
+    )
 
 
 def valid_initialize_params(params: object) -> bool:

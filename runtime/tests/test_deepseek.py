@@ -8,6 +8,7 @@ import stat
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 
 import sys
@@ -16,6 +17,7 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.deepseek import (  # noqa: E402
+    MAX_SSE_EVENTS,
     ModelProviderError,
     _messages_from_context,
     _read_stream,
@@ -100,6 +102,73 @@ class DeepSeekStreamTests(unittest.TestCase):
                 deadline=0.0,
             )
 
+    def test_stream_refreshes_socket_timeout_before_every_blocking_read(self) -> None:
+        clock = [1.0]
+        response = AdvancingResponse(
+            [
+                _sse_line(
+                    {"choices": [{"delta": {"content": "ok"}, "finish_reason": None}]}
+                ),
+                _sse_line(
+                    {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+                ),
+                b"data: [DONE]\n",
+            ],
+            clock,
+            advances=(7.0, 1.5, 0.0),
+        )
+        read_timeouts: list[float] = []
+
+        with patch("eidos_runtime.deepseek.time.monotonic", side_effect=lambda: clock[0]):
+            result = _read_stream(
+                response,
+                threading.Event(),
+                lambda _delta: None,
+                deadline=10.0,
+                set_read_timeout=read_timeouts.append,
+            )
+
+        self.assertEqual(result.text, "ok")
+        self.assertEqual(read_timeouts, [9.0, 2.0, 0.5])
+
+    def test_stream_rejects_an_oversized_accumulated_tool_name(self) -> None:
+        response = FakeResponse(
+            _sse(
+                [
+                    {
+                        "choices": [
+                            {
+                                "delta": {
+                                    "tool_calls": [
+                                        {
+                                            "index": 0,
+                                            "id": "call-1",
+                                            "function": {
+                                                "name": "x" * 257,
+                                                "arguments": "{}",
+                                            },
+                                        }
+                                    ]
+                                },
+                                "finish_reason": "tool_calls",
+                            }
+                        ]
+                    }
+                ]
+            )
+        )
+
+        with self.assertRaisesRegex(ModelProviderError, "provider_response_too_large"):
+            _read_stream(response, threading.Event(), lambda _delta: None)
+
+    def test_stream_rejects_too_many_sse_events(self) -> None:
+        empty = {"choices": [{"delta": {}, "finish_reason": None}]}
+        final = {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+        response = FakeResponse(_sse([empty] * MAX_SSE_EVENTS + [final]))
+
+        with self.assertRaisesRegex(ModelProviderError, "provider_response_too_large"):
+            _read_stream(response, threading.Event(), lambda _delta: None)
+
 
 class ModelConfigStoreTests(unittest.TestCase):
     def test_saves_private_configuration_and_never_returns_the_key_in_status(self) -> None:
@@ -134,6 +203,24 @@ class FakeResponse:
         return self.stream.readline(limit)
 
 
+class AdvancingResponse:
+    def __init__(
+        self,
+        lines: list[bytes],
+        clock: list[float],
+        *,
+        advances: tuple[float, ...],
+    ) -> None:
+        self.lines = iter(lines)
+        self.clock = clock
+        self.advances = iter(advances)
+
+    def readline(self, _limit: int) -> bytes:
+        line = next(self.lines, b"")
+        self.clock[0] += next(self.advances, 0.0)
+        return line
+
+
 def _sse(events: list[dict[str, object]]) -> bytes:
     lines = [
         b"data: " + json.dumps(event, separators=(",", ":")).encode("utf-8") + b"\n\n"
@@ -141,6 +228,10 @@ def _sse(events: list[dict[str, object]]) -> bytes:
     ]
     lines.append(b"data: [DONE]\n\n")
     return b"".join(lines)
+
+
+def _sse_line(event: dict[str, object]) -> bytes:
+    return b"data: " + json.dumps(event, separators=(",", ":")).encode("utf-8") + b"\n"
 
 
 if __name__ == "__main__":
