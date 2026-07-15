@@ -315,7 +315,7 @@ export function App() {
               <label className="sr-only" htmlFor="task-input">告诉 Eidos 要做什么</label>
               <textarea
                 id="task-input"
-                rows={3}
+                rows={2}
                 placeholder={model?.configured ? "例如：阅读这个项目并说明如何启动" : "请先配置 DeepSeek API Key"}
                 value={input}
                 disabled={!model?.configured || interactionBusy || Boolean(activeRun)}

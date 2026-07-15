@@ -71,10 +71,10 @@ function clientOrThrow(): RuntimeClient {
 
 function createWindow(): void {
   const window = new BrowserWindow({
-    width: 920,
-    height: 640,
-    minWidth: 640,
-    minHeight: 480,
+    width: 1180,
+    height: 800,
+    minWidth: 800,
+    minHeight: 600,
     show: false,
     backgroundColor: "#f4f2ed",
     title: "Eidos",
