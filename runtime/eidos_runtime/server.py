@@ -554,7 +554,7 @@ class RuntimeServer:
             logger.exception("Run worker failed")
             try:
                 run = self.store.read_run(run_id)
-                if run["status"] == "running":
+                if run["status"] in {"running", "waiting_approval"}:
                     failed = self.store.fail_run(run_id, "INTERNAL_ERROR")
                     for item in self.store.canceled_items_for_run(run_id):
                         notification_item = item

@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -15,6 +16,7 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 PROTOCOL_V1_FIXTURE = RUNTIME_ROOT.parent / "protocol" / "fixtures" / "v1.json"
 sys.path.insert(0, str(RUNTIME_ROOT))
 
+from eidos_runtime.model import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
 from eidos_runtime.seatbelt import SeatbeltSelfTestResult  # noqa: E402
 from eidos_runtime.server import RuntimeServer  # noqa: E402
 from eidos_runtime.storage import (  # noqa: E402
@@ -45,6 +47,47 @@ def run_runtime(
 
 
 class RuntimeProtocolTests(unittest.TestCase):
+    def test_worker_failure_while_waiting_for_approval_releases_active_run(self) -> None:
+        with (
+            tempfile.TemporaryDirectory(prefix="eidos-data-") as data_directory,
+            tempfile.TemporaryDirectory(prefix="eidos-workspace-") as workspace,
+        ):
+            output = io.StringIO()
+            model = ScriptedModel(
+                [
+                    ModelResponse(
+                        tool_calls=(
+                            ModelToolCall(
+                                "call-write",
+                                "write_file",
+                                {"path": "new.txt", "content": "candidate\n"},
+                            ),
+                        )
+                    )
+                ]
+            )
+            server = RuntimeServer(output, Path(data_directory), model)
+            server.store.initialize()
+            session = server.store.create_session(workspace)
+            run, _ = server.store.create_run(session["id"], "create new.txt")
+
+            def fail_approval(_params: object, _cancel: object) -> object:
+                raise RuntimeError("approval channel failed")
+
+            server.request_approval = fail_approval  # type: ignore[method-assign]
+            start_gate = threading.Event()
+            start_gate.set()
+            with self.assertLogs("eidos.runtime", level="ERROR"):
+                server._run_worker(run["id"], threading.Event(), start_gate)
+
+            failed = server.store.read_run(run["id"])
+            self.assertEqual(failed["status"], "failed")
+            self.assertEqual(failed["errorCode"], "INTERNAL_ERROR")
+            replacement, _ = server.store.create_run(session["id"], "try again")
+            self.assertEqual(replacement["status"], "running")
+            server.store.cancel_run(replacement["id"])
+            server.store.close()
+
     def test_shared_v1_vectors_match_runtime_envelopes(self) -> None:
         vectors = json.loads(PROTOCOL_V1_FIXTURE.read_text(encoding="utf-8"))
         output = io.StringIO()
