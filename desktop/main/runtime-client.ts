@@ -4,6 +4,17 @@ import readline from "node:readline";
 
 
 const MAX_MESSAGE_BYTES = 1024 * 1024;
+const RUNTIME_BUSINESS_CODES = new Set([
+  "RUNTIME_NOT_INITIALIZED",
+  "PROTOCOL_VERSION_UNSUPPORTED",
+  "RUN_ALREADY_ACTIVE",
+  "RESOURCE_NOT_FOUND",
+  "INVALID_STATE",
+  "APPROVAL_NO_LONGER_PENDING",
+  "WORKSPACE_BOUNDARY_VIOLATION",
+  "SANDBOX_UNAVAILABLE",
+  "INTERNAL_ERROR",
+]);
 
 export interface InitializeResult {
   protocolVersion: number;
@@ -175,10 +186,13 @@ export class RuntimeRequestError extends Error {
   readonly businessCode: string | undefined;
 
   constructor(error: RpcError) {
-    super(error.message);
+    const businessCode = RUNTIME_BUSINESS_CODES.has(error.data?.code ?? "")
+      ? error.data?.code
+      : "INTERNAL_ERROR";
+    super(`EIDOS_RUNTIME_ERROR:${businessCode}`);
     this.name = "RuntimeRequestError";
     this.rpcCode = error.code;
-    this.businessCode = error.data?.code;
+    this.businessCode = businessCode;
   }
 }
 

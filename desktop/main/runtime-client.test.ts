@@ -5,12 +5,24 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import test from "node:test";
 
-import { RuntimeClient } from "./runtime-client.js";
+import { RuntimeClient, RuntimeRequestError } from "./runtime-client.js";
 import type { RuntimeNotification } from "./runtime-client.js";
 
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const protocolV1Fixture = path.join(projectRoot, "protocol", "fixtures", "v1.json");
+
+
+test("preserves a closed business error code without exposing runtime details", () => {
+  const error = new RuntimeRequestError({
+    code: -32000,
+    message: "Request failed",
+    data: { code: "RUN_ALREADY_ACTIVE", retryable: false },
+  });
+
+  assert.equal(error.message, "EIDOS_RUNTIME_ERROR:RUN_ALREADY_ACTIVE");
+  assert.equal(error.businessCode, "RUN_ALREADY_ACTIVE");
+});
 
 
 test("spawns the Python runtime and completes initialize then shutdown", async () => {

@@ -10,7 +10,11 @@ import type {
 } from "./contracts";
 import { ExecutionFeed } from "./components/ExecutionFeed";
 import { SessionSidebar } from "./components/SessionSidebar";
-import { applyNotification, SnapshotReadCoordinator } from "./session-state";
+import {
+  applyNotification,
+  SnapshotReadCoordinator,
+  userFacingError,
+} from "./session-state";
 
 
 export function App() {
@@ -373,5 +377,5 @@ function upsertRun(runs: Run[], incoming: Run): Run[] {
 }
 
 function messageFrom(cause: unknown): string {
-  return cause instanceof Error ? cause.message : "操作失败，请查看 Runtime 日志。";
+  return userFacingError(cause);
 }

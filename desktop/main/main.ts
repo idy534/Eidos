@@ -27,6 +27,7 @@ let runtimeClient: RuntimeClient | undefined;
 let isQuitting = false;
 let quitCanContinue = false;
 let shutdownStarted = false;
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 const pendingApprovals = new Map<
   string,
   { request: ApprovalRequest; resolve: (decision: ApprovalDecision) => void }
@@ -207,16 +208,32 @@ ipcMain.handle(
   },
 );
 
-app.whenReady().then(() => {
-  createWindow();
-  void startRuntime();
-
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (!window) {
+      return;
     }
+    if (window.isMinimized()) {
+      window.restore();
+    }
+    window.show();
+    window.focus();
   });
-});
+
+  app.whenReady().then(() => {
+    createWindow();
+    void startRuntime();
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
+  });
+}
 
 app.on("before-quit", (event) => {
   if (!runtimeClient || quitCanContinue) {

@@ -6,6 +6,7 @@ import {
   applyNotification,
   SnapshotReadCoordinator,
   terminalRunPresentation,
+  userFacingError,
 } from "./session-state.js";
 
 
@@ -113,4 +114,19 @@ test("every terminal run state has a user-facing presentation", () => {
     tone: "warning",
   });
   assert.equal(terminalRunPresentation(run("running")), undefined);
+});
+
+test("closed runtime business errors map to safe user-facing guidance", () => {
+  assert.equal(
+    userFacingError(
+      new Error(
+        "Error invoking remote method 'run:start': Error: EIDOS_RUNTIME_ERROR:RUN_ALREADY_ACTIVE",
+      ),
+    ),
+    "当前已有一个 Run 正在执行，请先等待完成或取消。",
+  );
+  assert.equal(
+    userFacingError(new Error("provider secret details")),
+    "操作失败，请查看 Runtime 日志。",
+  );
 });

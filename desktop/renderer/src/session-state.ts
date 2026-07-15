@@ -85,6 +85,31 @@ export interface RunStatusPresentation {
   tone: RunStatusTone;
 }
 
+const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
+  RUNTIME_NOT_INITIALIZED: "Runtime 尚未就绪，请稍后重试。",
+  PROTOCOL_VERSION_UNSUPPORTED: "桌面端与 Runtime 版本不兼容，请重启或更新 Eidos。",
+  RUN_ALREADY_ACTIVE: "当前已有一个 Run 正在执行，请先等待完成或取消。",
+  RESOURCE_NOT_FOUND: "请求的 Session 或 Run 已不存在，请刷新后重试。",
+  INVALID_STATE: "当前状态不允许执行这个操作，请刷新后重试。",
+  APPROVAL_NO_LONGER_PENDING: "这个审批已经失效，无需再次处理。",
+  WORKSPACE_BOUNDARY_VIOLATION: "所选路径超出 Workspace 安全边界，操作已拒绝。",
+  SANDBOX_UNAVAILABLE: "Shell 沙箱当前不可用，命令未执行。",
+  INTERNAL_ERROR: "Runtime 遇到内部错误，请查看诊断日志。",
+};
+
+export function userFacingError(cause: unknown): string {
+  const message = cause instanceof Error ? cause.message : "";
+  const match = message.match(/EIDOS_RUNTIME_ERROR:([A-Z_]+)/);
+  const code = match?.[1];
+  if (code) {
+    return RUNTIME_ERROR_MESSAGES[code] ?? "Runtime 遇到内部错误，请查看诊断日志。";
+  }
+  if (message === "这个审批已经失效。") {
+    return message;
+  }
+  return "操作失败，请查看 Runtime 日志。";
+}
+
 export function terminalRunPresentation(
   run: Run,
 ): RunStatusPresentation | undefined {
