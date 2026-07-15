@@ -11,13 +11,12 @@ Eidos 的第一阶段目标不是做一个聊天机器人，而是先打造一�
 MVP 会优先打通这一条闭环：
 
 ```text
-创建 Eidos Agent
-  -> 创建 Session 和 workspace
+选择 Workspace 并创建 Session
   -> 创建 Run
   -> 模型选择回复或调用工具
-  -> Runtime 执行文件工具或请求 shell 审批
+  -> Runtime 执行只读工具或请求文件/Shell 审批
   -> approve / reject 后恢复执行
-  -> 持久化完整 timeline
+  -> 持久化 Run、Item 与 ToolCall 历史
   -> 输出最终结果
 ```
 
@@ -35,10 +34,36 @@ MVP 会优先打通这一条闭环：
 
 - Electron Main 通过 stdio JSON-RPC 双向协议管理 Python Runtime，Runtime 日志只写 stderr。
 - 首期领域模型固定为 `Session -> Run -> Item/ToolCall`，不引入 Execution Segment。
-- 只支持 Workspace Mode、Responses HTTP SSE、单活动 Run 和最小工具/审批闭环。
+- 只支持 Workspace Mode、固定 DeepSeek `deepseek-v4-flash` Chat Completions HTTP SSE、单活动 Run 和最小工具/审批闭环。
 - 未完成 Run 在重启后标记 interrupted，不自动恢复或重放。
 
+当前 MVP Lite 已完成自动化、macOS 原生 Seatbelt 和真实 DeepSeek 联网验收；开发启动与人工验证方式见 [MVP Lite](docs/mvp-lite.md)。
+
 第一期的详细范围、延期项、协议、状态和里程碑以 [MVP Lite](docs/mvp-lite.md) 为准。
+
+## 开发运行与验证
+
+环境要求：macOS、Node.js 22+、pnpm 11、Python 3。首次运行：
+
+```bash
+pnpm install
+pnpm start
+```
+
+桌面端验证建议按一条纵向链路完成：
+
+1. 点击“新建 Session”，选择一个不含敏感信息且包含 `README.md` 的测试目录。
+2. 在界面配置 DeepSeek API Key；确认状态只显示“已配置”，不回显 Key。
+3. 提交“阅读 README 并说明项目用途”；预期 Feed 出现 `read_file` 和最终回答，底部输入框始终可见。
+4. 要求创建一个测试文件；预期先出现完整 diff，Reject 时文件不变，Approve 后按 diff 写入。
+5. 要求运行一个短测试命令；预期先展示 command、cwd、断网状态和 timeout，批准后显示有界输出与终态。
+6. 退出并重新启动；预期已完成 Session/Run/Item 可读取，未完成 Run 不自动重放。
+
+完整自动化与 macOS Seatbelt 回归：
+
+```bash
+pnpm test
+```
 
 ## 完整目标态边界
 

@@ -684,7 +684,7 @@ MVP Lite 当前实施状态：
 - ✅ 实机自检已覆盖 active root、sandbox home/tmp、外部 sentinel、敏感 carve-out、`.git`、symlink 逃逸、子进程继承、loopback 拒绝和基础进程组 timeout。
 - ✅ 自检已接入 Runtime initialize；任何失败都保持 Shell unavailable，不存在无沙箱回退。
 - ✅ MVP Lite 的逐次审批、默认断网、干净环境、256 KiB 有界输出、timeout/cancel 与进程组清理已经实现；Seatbelt 自检通过时产品能力 `runShell=true`。
-- ⏳ 完整目标态的 hardlink 前置扫描、managed proxy、Toolchain、manifest、精确资源监控、guardian 与 Redaction Service 自检仍未实现，不外推为完整目标态 Shell 已完成。
+- ⏳ 完整目标态的 managed proxy、可配置 Toolchain Profile、manifest、精确资源监控、guardian 与 Redaction Service 自检仍未实现，不外推为完整目标态 Shell 已完成。
 
 应用启动执行 Seatbelt 自检：
 

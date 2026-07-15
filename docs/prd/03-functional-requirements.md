@@ -4,42 +4,42 @@
 
 范围说明：本文件的 P0 是完整目标态优先级。第一期必须项和延期项以 [MVP Lite](../mvp-lite.md) 为准。
 
-MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Session/Run/Item/ToolCall 最小事实；✅ 串行 Agent Loop；✅ `list_files/read_file/search_text`；✅ 模型流与基础 Execution Feed；✅ Cancel 与异常 `interrupted`；✅ 本机私有 DeepSeek 配置；✅ `write_file/apply_patch` 完整 diff、逐次审批、hash/CAS 复检和原子提交；✅ `run_shell` 逐次审批、Seatbelt 默认断网、环境隔离、有界输出、timeout/取消。不能把这些 ✅ 外推为本文件完整目标态条目已全部满足。
+MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 `Session/Run/Item/ToolCall` 最小事实；✅ 串行 Agent Loop 与 20 Step 上限；✅ `list_files/read_file/search_text`；✅ 模型流、基础 Execution Feed 与真实 DeepSeek 联网闭环；✅ Cancel 与异常 `interrupted`；✅ 本机私有 DeepSeek 配置；✅ `write_file/apply_patch` 完整 diff、逐次审批、hash/CAS 复检和原子提交；✅ `run_shell` 逐次审批、Seatbelt 默认断网、环境隔离、Homebrew Toolchain、有界输出、timeout/取消。不能把这些 ✅ 外推为本文件完整目标态条目已全部满足。
 
 ## 1. P0 功能清单
 
-实施标记只表示对应完整功能已经通过当前范围的自动化与实机验收。F019 尚未完成，但其 Seatbelt 静态策略、路径参数和基础 fail-closed smoke test 已作为 MVP Lite 前置风险验证通过；审批、输出、manifest、资源监管和 ToolCall 主链路仍待实现。F003/F004 也尚未整体完成，但其私有数据目录、SQLite Session 元数据和 `session/create|list|read` Runtime/Main Client 链路已通过跨进程重启测试；文件夹选择 UI、Workspace 持久身份和 Run/Item 仍待实现。
+实施标记只表示表内要求已在 MVP Lite 当前边界通过自动化、macOS 实机或真实模型验收；未打勾条目继续属于完整目标态或显式延期项。完整目标态的 manifest、精确资源监管、跨重启恢复、复杂 Model Profile 和 Event Timeline 不因 MVP Lite 完成而视为已实现。
 
 | 编号 | 功能 | 要求 |
 |---|---|---|
 | F001 | ✅ macOS 桌面应用 | 启动 Electron 应用并拉起本地 sidecar |
 | F002 | 默认 Agent | 首次启动创建默认 Eidos Agent；不提供多 Agent UI |
 | F003 | Eidos Home | 初始化并校验 `~/.eidos` 权限与目录结构 |
-| F004 | Workspace Mode | 选择本地目录并创建 Workspace Session |
+| F004 | ✅ Workspace Mode | 选择本地目录并创建 Workspace Session |
 | F005 | Public Mode | 不选择项目目录也能创建 Session 和 Run |
 | F006 | Model Profile | 配置多个 OpenAI-compatible Profile；显式无任务数据能力测试通过后才可选择；Run 固化版本化配置与能力快照 |
 | F007 | Run 队列 | 多 Run 可保留；全局单执行器；持久化 FIFO |
 | F008 | Execution Segment | 单段最多 20 Steps/30 分钟；恢复创建新 Segment |
 | F009 | Run 硬上限 | 最多 80 Steps/120 分钟；到限进入 `stopped` |
-| F010 | Agent Loop | 模型调用、ToolCall、观察结果严格串行 |
-| F011 | Tool 批次校验 | 只读工具可批量；有副作用工具独占；非法组合零执行 |
-| F012 | list_files | 列出 active root 内受控文件结构 |
+| F010 | ✅ Agent Loop | 模型调用、ToolCall、观察结果严格串行 |
+| F011 | ✅ Tool 批次校验 | 只读工具可批量；有副作用工具独占；非法组合零执行 |
+| F012 | ✅ list_files | 列出 active root 内受控文件结构 |
 | F013 | read_file | 分级读取 active root 内普通文本文件 |
 | F014 | read_file_range | 按行读取局部内容 |
 | F015 | search_text | literal、大小写不敏感的受控搜索 |
-| F016 | write_file | 创建单个文件或完整生成单个文件；审批并展示 diff |
-| F017 | apply_patch | 修改单个已有文件；审批并展示 diff |
+| F016 | ✅ write_file | 创建单个文件或完整生成单个文件；审批并展示 diff |
+| F017 | ✅ apply_patch | 修改单个已有文件；审批并展示 diff |
 | F018 | delete_file | 删除单个普通文件；禁止目录、递归、通配符与批量 |
-| F019 | run_shell | macOS Seatbelt `workspace_write` Shell；每次调用审批 |
+| F019 | ✅ run_shell | macOS Seatbelt `workspace_write` Shell；每次调用审批 |
 | F020 | publish_artifact | 显式发布单个现有文件，生成不可变快照 |
-| F021 | Approval | 记录请求参数、权限、diff/命令与用户决定 |
+| F021 | ✅ Approval | 记录请求参数、权限、diff/命令与用户决定 |
 | F022 | 文件版本复检 | 审批后执行前验证 hash、目标不存在或删除前版本 |
 | F023 | Reject 恢复 | Reject 返回 Agent；连续 2 次后等待用户输入 |
 | F024 | 事实确认屏障 | 写或 Shell 失败后先只读核验，再允许下一次副作用 |
 | F025 | waiting_user_input | 用户补充信息后继续同一 Run 并重新排队 |
-| F026 | 崩溃恢复 | 不自动重放；运行中 ToolCall 标记 interrupted |
+| F026 | ✅ 崩溃恢复 | 不自动重放；运行中 ToolCall 标记 interrupted |
 | F027 | Cancel | 排队/等待立即取消；运行中协作式取消 |
-| F028 | Model Stream | 实时输出、分块持久化、保存最终响应 |
+| F028 | ✅ Model Stream | 实时输出、分块持久化、保存最终响应 |
 | F029 | Execution Feed | 展示消息、工具、审批、状态、错误和 Artifact |
 | F030 | Event Timeline | 所有关键事件与状态变更同事务持久化 |
 | F031 | Context Budget | P0 提供确定性的有界上下文裁剪 |
@@ -54,7 +54,7 @@ MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Session/Run/Item/ToolC
 | F040 | Durable Intent | 副作用执行前持久化意图，恢复时对账而不重放 |
 | F041 | 代理审计 | 只记录域名级元数据，不记录请求内容或解密 TLS |
 | F042 | Host 校验 | 精确 host/port、解析 IP 校验、拒绝通配符和跨 host redirect |
-| F043 | Hardlink 防护 | 写工具拒绝多链接文件；Writable Shell 前置扫描 fail closed |
+| F043 | ✅ Hardlink 防护 | 写工具拒绝多链接文件；Writable Shell 前置扫描 fail closed |
 | F044 | 文件元数据 | 修改已有文件保留 mode、ACL、xattr；新文件默认 0644 |
 | F045 | 敏感规则 | 版本化 `deny`/`redact`/`allow_with_audit`；MVP 不使用模型判断 |
 | F046 | 入口扫描 | 用户输入、文件/搜索、Shell/模型输出和持久化入口统一扫描 |
@@ -66,14 +66,14 @@ MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Session/Run/Item/ToolC
 | F052 | 文本编码 | 仅严格 UTF-8/可选 BOM；二进制与其他编码分类拒绝 |
 | F053 | 稳定搜索 | 单行 literal、ASCII 不区分大小写、稳定排序和受控 preview |
 | F054 | 受控文件树 | 有界深度/条目、不跟随 symlink、隐藏敏感条目 |
-| F055 | 写入/Diff 容量 | write/patch/候选文件和审批 Diff 均有硬上限 |
-| F056 | 目录边界 | write 不创建父目录；MVP 目录操作使用受审批 Shell |
-| F057 | 完整覆盖证据 | 仅完整读取的 <=256 KiB 同版本文件可被 write_file 覆盖 |
+| F055 | ✅ 写入/Diff 容量 | write/patch/候选文件和审批 Diff 均有硬上限 |
+| F056 | ✅ 目录边界 | write 不创建父目录；MVP 目录操作使用受审批 Shell |
+| F057 | ✅ 完整覆盖证据 | 仅完整读取的 <=256 KiB 同版本文件可被 write_file 覆盖 |
 | F058 | Patch 读取证据 | hunk 原文范围必须由当前 Run 同 hash 的读取结果覆盖 |
 | F059 | 受控删除 | 只删除可展示完整 Diff 的 <=512 KiB 普通 UTF-8 文件 |
 | F060 | 统一排除策略 | 安全排除不可绕过；固定性能排除；MVP 不解析 `.gitignore` |
 | F061 | 单文件一致读取 | 并发变化时丢弃单文件结果并有界重试；无 Workspace 快照 |
-| F062 | 严格 Unified Diff | 单文件、路径一致、零 Git 扩展、零 offset/fuzz、保留统一换行 |
+| F062 | ✅ 严格 Unified Diff | 单文件、路径一致、零 Git 扩展、零 offset/fuzz、保留统一换行 |
 | F063 | 写入换行 | 新文件 LF；覆盖显式匹配原 LF/CRLF；mixed 拒绝 |
 | F064 | 文件 no-op | 候选字节相同时 `skipped/no_changes`，零 Approval/intent/文件接触 |
 | F065 | Shell 审批时效 | 不绑定 Workspace 快照；参数/环境精确绑定；批准后 5 分钟过期 |
@@ -104,7 +104,7 @@ MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Session/Run/Item/ToolC
 | F090 | ToolCall 流上限 | 单响应最多 16 calls，单 call 1 MiB、合计 2 MiB，并限制 delta 数、名称和 JSON 结构 |
 | F091 | 模型输出上限 | 可见文本、reasoning、单 Event 和总流量均有硬上限；超限保留安全进度并暂停，不重试 |
 | F092 | 完成语义 | 仅完整协议终态可完成；token 截断和内容过滤不执行 ToolCall并进入 waiting_user_input |
-| F093 | 无状态模型请求 | 每个 Step 从本地状态重建上下文；不依赖 Provider conversation、previous response 或服务端 history |
+| F093 | ✅ 无状态模型请求 | 每个 Step 从本地状态重建上下文；不依赖 Provider conversation、previous response 或服务端 history |
 | F094 | 输出字段协商 | Responses 固定字段；Chat 只在 Test Connection 有界协商并把结果固化到 snapshot |
 | F095 | 工具控制字段 | 工具集非空的普通/纠正请求固定 auto + parallel，空集固定 none；probe 两阶段受控；Finalization 固定无工具 |
 | F096 | 非 strict 生成 | 两种 wire 显式 `strict=false`；Provider strict 不替代 Runtime 本地校验 |

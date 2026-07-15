@@ -2,7 +2,7 @@
 
 版本：v0.1
 
-状态：第一期实现基线
+状态：✅ 第一期实现完成（Developer Preview）
 
 ## 1. 文档定位与优先级
 
@@ -324,7 +324,7 @@ ToolCall 是 Item 的执行详情，不增加新的层级：
 id, item_id, tool_name, arguments_json, result_json, started_at, completed_at
 ```
 
-模型输出中的工具参数始终按不可信输入处理。Runtime 在创建 ToolCall 前完成工具名、闭合参数 schema、Workspace 边界和组合规则校验；工具是否向模型暴露不构成执行授权。
+模型输出中的工具参数始终按不可信输入处理。Runtime 在创建 ToolCall 前完成工具名、闭合参数 schema 和组合规则校验；随后把 ToolCall 作为 Feed 事实持久化，并在任何执行或审批前完成 fd-relative Workspace 边界与当前身份复检。路径验证失败会形成失败 ToolResult，不产生副作用；工具是否向模型暴露不构成执行授权。
 
 ## 7. Runtime Loop
 
@@ -418,18 +418,18 @@ MVP Lite 不单独建立 Segment、Attempt、Approval、Event、Operation、Mani
 
 退出标准：✅ 已通过自动化与 macOS 实机验证。应用可稳定启动和关闭，stdout 无非协议输出，非法协议能安全终止 Runtime。
 
-### L1：模型与只读闭环
+### L1：模型与只读闭环 ✅
 
 - ✅ Session、Run、Item、ToolCall 最小 SQLite 持久化；Item 历史有界分页；启动时未完成 Run 收敛为 `interrupted`。
 - ✅ 确定性 Fake Model 已跑通“模型 -> `read_file` -> ToolResult -> 模型最终回答”的两轮循环。
-- ✅ DeepSeek `deepseek-v4-flash` Chat Completions SSE Adapter 已实现；API Key 以 `0600` 保存且不进入响应、SQLite 或日志；尚待用户在界面配置真实 Key 后完成联网验收。
+- ✅ DeepSeek `deepseek-v4-flash` Chat Completions SSE Adapter 已实现并完成真实联网验收；API Key 以 `0600` 保存且不进入响应、SQLite 或日志。
 - ✅ `list_files`、`read_file`、`search_text` 已实现有界执行、敏感路径拒绝、symlink/root rebinding 防护和取消。
 - ✅ Item 生命周期通知、Main 协议校验和基础 Execution Feed 已实现。
 - ✅ Renderer 已支持选择 Workspace、创建/读取 Session、配置模型、提交/取消 Run 与展示流式结果。
 
-退出标准：⏳ 代码与离线闭环已完成；仍需使用真实 DeepSeek Key 完成一次“读取工具 -> ToolResult -> 最终回答”的联网验收。
+退出标准：✅ 已使用真实 DeepSeek 完成“读取工具 -> ToolResult -> 最终回答”，并验证流式可见文本与 Run 终态持久化。
 
-### L2：文件写入审批闭环
+### L2：文件写入审批闭环 ✅
 
 - ✅ `write_file`、`apply_patch` 已实现闭合参数校验、单文件/256 KiB 上限与已有文件同 Run 读取证据。
 - ✅ Runtime 从冻结候选内容生成完整 diff；控制字符、symlink、硬链接、复杂 flags/xattr 和敏感路径 fail closed。
@@ -439,19 +439,19 @@ MVP Lite 不单独建立 Segment、Attempt、Approval、Event、Operation、Mani
 
 退出标准：✅ 自动化测试已覆盖 Approve 按 diff 修改、Reject 零修改、审批等待期间版本冲突、CAS 回滚、symlink/root rebinding、取消和迟到 Approve。
 
-### L3：开发者可用闭环
+### L3：开发者可用闭环 ✅
 
 - ✅ Seatbelt `run_shell`、逐次命令审批、默认断网、干净 HOME/环境、256 KiB 有界输出、timeout、进程组取消与同组后台进程收敛；审批前后校验 Workspace/cwd 身份，并拒绝敏感文件、特殊文件和多硬链接 Workspace。
 - ✅ Workspace 主界面与历史 Session/Run 读取。
 - ✅ Runtime 异常退出统一标记 `interrupted`，不自动重放。
 - ✅ 首期端到端测试与 Developer Preview 限制说明。
 
-退出标准：⏳ 离线 Fake Model 与真实 Seatbelt 闭环已完成；仍需用户在界面配置真实 DeepSeek Key 后完成一次“阅读代码 -> 审批修改 -> 审批执行测试 -> 最终回答”的联网验收。
+退出标准：✅ 已使用真实 DeepSeek 完成“读取 README -> 审批写入新文件 -> Shell 首次安全失败并回填 -> 审批替代验证命令 -> 最终回答”；Run 为 `succeeded`，候选文件字节与 LF 换行已独立复核。
 
 L3 前置风险验证状态：
 
 - ✅ Seatbelt 使用静态 profile 和 `-D` 路径参数，不从 PATH 解析 `sandbox-exec`。
-- ✅ macOS 实机 smoke test 已覆盖 Workspace/Home/Temp 创建修改删除、外部与敏感路径拒绝、`.git` 目录写保护、symlink/硬链接逃逸、审批期间 Workspace 重绑、子进程继承、loopback 拒绝、同组后台进程清理和进程组 timeout；worktree pointer 的原生 smoke 用例已加入，需在本机运行 `pnpm test` 完成最终复核。
+- ✅ macOS 实机 smoke test 已覆盖 Workspace/Home/Temp 创建修改删除、外部与敏感路径拒绝、`.git` 目录写保护、symlink/硬链接逃逸、审批期间 Workspace 重绑、子进程继承、loopback 拒绝、同组后台进程清理、进程组 timeout、worktree pointer 以及固定 Homebrew Node/pnpm Toolchain。
 - ✅ Runtime initialize 会执行 Seatbelt 自检；只有当前 `run_shell` 实现存在且自检全部通过时才返回 `runShell=true`，任一失败都保持 fail closed。
 - ✅ Shell Approval、默认断网、输出上限、timeout/cancel 与真正的 `run_shell` ToolCall 已实现。
 - ⏳ manifest、完整 RSS/fd/fork 资源监管、managed network 继续按 MVP Lite 延后，不阻塞 Developer Preview。

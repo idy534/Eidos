@@ -4,6 +4,8 @@
 
 范围说明：本文描述完整目标态架构。第一期采用 [MVP Lite](../mvp-lite.md) 的 stdio JSON-RPC 双向协议，不实现本文件中的 loopback HTTP/SSE、Bearer Token 和完整目标态组件集合。
 
+MVP Lite 当前实施状态：✅ Electron Renderer/Preload/Main/Python Runtime 四层骨架；✅ Main 拉起单 sidecar 并取得 Electron single-instance lock；✅ stdio JSON-RPC 双向请求、通知与审批；✅ SQLite、DeepSeek Chat SSE、文件工具和 Seatbelt Shell 主链路；✅ 真实模型“读取 -> 写入审批 -> Shell 审批 -> 最终回答”验收。
+
 ## 1. 技术目标
 
 构建一个仅支持 macOS 的本地 Agent Runtime，优先保证以下主链路可运行、可审批、可追踪、可恢复：

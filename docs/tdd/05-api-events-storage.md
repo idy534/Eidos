@@ -6,10 +6,11 @@
 
 MVP Lite 当前实施状态：
 
-- ✅ Runtime 初始化并独占 SQLite，数据目录/数据库分别校验 `0700/0600`、owner、普通文件类型和 symlink 边界。
+- ✅ Runtime 初始化并打开 SQLite，数据目录/数据库分别校验 `0700/0600`、owner、普通文件类型和 symlink 边界；MVP Lite Desktop 由 Electron single-instance lock 阻止第二个 sidecar，完整目标态的状态目录 OS lock 仍按后文延期。
 - ✅ `session/create` 使用参数化 SQL 持久化 canonical Workspace identity；`session/list` 使用 opaque cursor；`session/read` 返回有界 Run/Item 页面。
 - ✅ Run、Item、ToolCall 四类最小业务事实、单活动 Run 约束、模型步数、ToolCall 关联、Item 完成与启动 `interrupted` 收敛已实现。
 - ✅ TypeScript Main Client 已通过真实子进程、通知路由、Fake Model 两轮工具循环和跨 Runtime 重启持久化测试；测试使用隔离数据根，不触碰真实 `~/.eidos`。
+- ✅ JSON-RPC 业务错误保留闭合 code，经 Main/Preload 后映射为安全 Renderer 提示，不透传 Python、Provider 或 OS 原始错误。
 - ⏳ 完整目标态迁移、事件表、复杂恢复与跨版本兼容仍未实现。
 
 ## 1. API 边界

@@ -311,7 +311,9 @@ MVP Lite 已验证：
 - ✅ Fake Model + `read_file` 两轮 Runtime Loop、Item notification 顺序和真实 Main 子进程路由。
 - ✅ Workspace root identity 固化与 fd-relative 文件访问，覆盖路径被 symlink 重绑后的逃逸回归。
 - ✅ DeepSeek Chat SSE 可见文本、隐藏 reasoning、跨 chunk ToolCall/arguments 归并与私有 `0600` 模型配置。
+- ✅ 真实 DeepSeek 联网端到端：读取 README、文件写入审批、Shell 首次失败 ToolResult 回填、安全替代命令审批、最终回答与 `succeeded` 持久化终态。
 - ✅ 文件 Approve/Reject、既有文件读取证据、完整 diff、版本冲突、CAS swap/rollback、原子提交、post-commit uncertain 与迟到审批。
+- ✅ Runtime Loop 覆盖只读多工具声明顺序、连续两次非法响应、20 Step 硬上限与本地上下文超限零 Provider 请求。
 - ✅ `protocol/fixtures/v1.json` 固定代表性 envelope、错误、审批与通知 DTO：Python 验证初始化/错误 envelope，TypeScript 验证完整向量解析，真实双向审批/通知由双进程集成测试覆盖；增量 framing 覆盖无换行超限和慢消费者通知突发。
 - ⏳ 以下条目属于完整目标态或后续 MVP Lite 增量。
 
@@ -370,7 +372,8 @@ M0 未通过前，不进入 Agent Shell 主链路实现。
 ### M1：Desktop 与 sidecar
 
 - ✅ Electron/React/Python 骨架。
-- 单实例、Token、listening/ready gate、随机端口、类型化 IPC/API/SSE 代理和 RunSnapshot 水位恢复。
+- ✅ MVP Lite Electron single-instance lock、类型化 Preload、stdio ready gate、双向审批和完成后权威 SessionSnapshot 刷新。
+- 完整目标态 Token、listening/ready gate、随机端口、HTTP/SSE 代理和 RunSnapshot 水位恢复。
 - OpenAPI 同源 DTO/validator、operation ID 转发、Event contract 握手和 storage health-only UI。
 - `~/.eidos` 权限与 config。
 

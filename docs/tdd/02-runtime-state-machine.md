@@ -4,6 +4,8 @@
 
 范围说明：本文描述完整目标态状态机。第一期固定为 [MVP Lite](../mvp-lite.md) 的 `Session -> Run -> Item/ToolCall`，不实现 Execution Segment、持久 FIFO、stopped 或跨重启恢复。
 
+MVP Lite 当前实施状态：✅ 全局单活动 Run；✅ `running/waiting_approval/succeeded/failed/canceled/interrupted`；✅ 串行模型/工具循环与 20 Step 上限；✅ 连续两次非法响应失败；✅ Cancel、迟到审批和 worker 异常收敛；✅ 未完成 Run 启动时标记 `interrupted` 且不重放。
+
 ## 1. 核心实体
 
 ```text
