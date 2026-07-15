@@ -21,6 +21,8 @@
   (subpath "/usr/bin")
   (subpath "/usr/sbin")
   (subpath "/usr/libexec")
+  (subpath "/opt/homebrew")
+  (subpath "/usr/local")
   (subpath "/private/etc")
   (literal "/private/var/select/sh")
   (literal "/dev/null")
@@ -33,12 +35,16 @@
   (literal (param "FILE_COMMIT_HELPER")))
 
 (allow file-read-metadata file-test-existence
-  (path-ancestors "/Library/Developer/CommandLineTools/usr/bin/python3"))
+  (path-ancestors "/Library/Developer/CommandLineTools/usr/bin/python3")
+  (path-ancestors "/opt/homebrew")
+  (path-ancestors "/usr/local"))
 
 (allow file-map-executable
   (subpath "/System")
   (subpath "/Library/Apple")
   (subpath "/Library/Developer")
+  (subpath "/opt/homebrew")
+  (subpath "/usr/local")
   (subpath "/usr/lib"))
 
 (allow file-write-data

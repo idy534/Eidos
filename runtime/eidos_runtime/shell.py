@@ -194,7 +194,7 @@ def _run_verified_shell(
 def _terminate_group(process_group: int) -> None:
     try:
         os.killpg(process_group, signal.SIGTERM)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         return
     deadline = time.monotonic() + TERMINATION_GRACE_SECONDS
     while time.monotonic() < deadline:
@@ -203,7 +203,7 @@ def _terminate_group(process_group: int) -> None:
         time.sleep(0.02)
     try:
         os.killpg(process_group, signal.SIGKILL)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         return
     deadline = time.monotonic() + TERMINATION_GRACE_SECONDS
     while time.monotonic() < deadline:

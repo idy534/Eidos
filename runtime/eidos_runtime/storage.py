@@ -46,6 +46,10 @@ class InvalidRunStateError(RuntimeError):
     pass
 
 
+class ContextLimitExceeded(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class WorkspaceIdentity:
     path: Path
@@ -904,8 +908,10 @@ class SessionStore:
                 WHERE session_id = ? AND status IN ('completed', 'failed', 'declined')
                 ORDER BY creation_seq DESC LIMIT ?
                 """,
-                (session_id, MAX_CONTEXT_ITEMS),
+                (session_id, MAX_CONTEXT_ITEMS + 1),
             ).fetchall()
+            if len(item_rows) > MAX_CONTEXT_ITEMS:
+                raise ContextLimitExceeded("model context item limit exceeded")
             tool_rows: list[sqlite3.Row] = []
             if item_rows:
                 placeholders = ",".join("?" for _ in item_rows)
@@ -948,8 +954,8 @@ class SessionStore:
                     "utf-8"
                 )
             )
-            if groups and context_bytes + group_bytes > MAX_CONTEXT_BYTES:
-                break
+            if context_bytes + group_bytes > MAX_CONTEXT_BYTES:
+                raise ContextLimitExceeded("model context byte limit exceeded")
             groups.append(group)
             context_bytes += group_bytes
         context: list[dict[str, object]] = []

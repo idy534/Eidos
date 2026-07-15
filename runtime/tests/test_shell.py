@@ -12,7 +12,7 @@ from unittest.mock import patch
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
-from eidos_runtime.shell import run_shell  # noqa: E402
+from eidos_runtime.shell import _terminate_group, run_shell  # noqa: E402
 from eidos_runtime.storage import WorkspaceIdentity  # noqa: E402
 
 
@@ -66,6 +66,10 @@ class ShellLifecycleUnitTests(unittest.TestCase):
 
         self.assertEqual(result["outcome"], "success")
         self.assertGreaterEqual(result["data"]["durationMs"], 1_000)
+
+    def test_process_group_permission_race_does_not_escape_cleanup(self) -> None:
+        with patch("eidos_runtime.shell.os.killpg", side_effect=PermissionError):
+            _terminate_group(12345)
 
 
 @unittest.skipUnless(sys.platform == "darwin", "Seatbelt is macOS-only")

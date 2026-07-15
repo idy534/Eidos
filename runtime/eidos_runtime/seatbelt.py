@@ -81,10 +81,11 @@ class SeatbeltProfile:
         return {
             "HOME": str(self.sandbox_home),
             "TMPDIR": str(self.sandbox_tmp),
-            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
             "LANG": "en_US.UTF-8",
             "LC_ALL": "en_US.UTF-8",
             "GIT_OPTIONAL_LOCKS": "0",
+            "PNPM_CONFIG_PM_ON_FAIL": "ignore",
         }
 
 
@@ -370,12 +371,12 @@ def _create_modify_delete(profile: SeatbeltProfile, path: Path) -> bool:
 def _terminate_process_group(process: subprocess.Popen[str]) -> None:
     try:
         os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         return
     try:
         process.wait(timeout=0.5)
     except subprocess.TimeoutExpired:
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass

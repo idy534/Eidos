@@ -8,7 +8,11 @@ from typing import Callable
 
 from eidos_runtime.model import ModelClient, ModelResponse, ModelToolCall
 from eidos_runtime.shell import run_shell
-from eidos_runtime.storage import InvalidRunStateError, SessionStore
+from eidos_runtime.storage import (
+    ContextLimitExceeded,
+    InvalidRunStateError,
+    SessionStore,
+)
 from eidos_runtime.tools import ToolCancelled, ToolExecutor, WorkspacePathError
 
 
@@ -68,7 +72,11 @@ class RuntimeLoop:
             {"sessionId": run["sessionId"], "runId": run_id, "item": user_item},
         )
 
-        context = self.store.model_context(run["sessionId"])
+        try:
+            context = self.store.model_context(run["sessionId"])
+        except ContextLimitExceeded:
+            self._fail(run_id, "CONTEXT_INPUT_TOO_LARGE")
+            return
         tools = ToolExecutor(self.store.workspace_for_run(run_id))
 
         try:
@@ -273,7 +281,11 @@ class RuntimeLoop:
                         )
                         self._completed_item(completed)
 
-                context = self.store.model_context(run["sessionId"])
+                try:
+                    context = self.store.model_context(run["sessionId"])
+                except ContextLimitExceeded:
+                    self._fail(run_id, "CONTEXT_INPUT_TOO_LARGE")
+                    return
                 if step_index >= MAX_MODEL_STEPS:
                     self._fail(run_id, "MAX_STEPS_EXCEEDED")
                     return

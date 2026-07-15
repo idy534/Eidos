@@ -20,6 +20,7 @@ from eidos_runtime.model import ModelResponse, ModelToolCall, ScriptedModel  # n
 from eidos_runtime.seatbelt import SeatbeltSelfTestResult  # noqa: E402
 from eidos_runtime.server import RuntimeServer, valid_request_id  # noqa: E402
 from eidos_runtime.storage import (  # noqa: E402
+    ContextLimitExceeded,
     SessionStore,
     WorkspaceBoundaryError,
 )
@@ -420,6 +421,26 @@ class RuntimeProtocolTests(unittest.TestCase):
             ).encode("utf-8")
             self.assertLessEqual(len(encoded), 1024 * 1024)
             self.assertEqual(snapshot["runs"][-1]["id"], latest_run_id)
+
+    def test_model_context_fails_instead_of_silently_dropping_history(self) -> None:
+        with (
+            tempfile.TemporaryDirectory(prefix="eidos-context-data-") as data,
+            tempfile.TemporaryDirectory(prefix="eidos-context-workspace-") as workspace,
+        ):
+            store = SessionStore(Path(data))
+            store.initialize()
+            try:
+                session = store.create_session(workspace)
+                for index in range(13):
+                    run, _ = store.create_run(
+                        session["id"], f"{index}:" + "x" * (64 * 1024 - 3)
+                    )
+                    store.fail_run(run["id"], "TEST_COMPLETE")
+
+                with self.assertRaises(ContextLimitExceeded):
+                    store.model_context(session["id"])
+            finally:
+                store.close()
 
     def test_oversized_json_escaped_item_does_not_block_snapshot_pagination(self) -> None:
         with (

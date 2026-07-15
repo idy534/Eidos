@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 from dataclasses import dataclass
 import difflib
 import errno
@@ -10,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import sys
 import threading
 import time
 from typing import Callable, Iterator
@@ -52,6 +54,27 @@ SENSITIVE_NAMES = {
 }
 SENSITIVE_SUFFIXES = {".key", ".p12", ".pem", ".pfx"}
 SENSITIVE_KEYWORDS = {"credential", "secret", "token"}
+SHELL_SOURCE_SUFFIXES = {
+    ".c",
+    ".cc",
+    ".cpp",
+    ".go",
+    ".h",
+    ".hpp",
+    ".java",
+    ".js",
+    ".jsx",
+    ".md",
+    ".mjs",
+    ".py",
+    ".pyc",
+    ".rs",
+    ".ts",
+    ".tsx",
+}
+MAX_PEM_SCAN_BYTES = 1024 * 1024
+DARWIN_ACL_TYPE_EXTENDED = 0x00000100
+DARWIN_REPLACE_SAFE_XATTRS = frozenset({b"com.apple.provenance"})
 
 
 class ToolCancelled(RuntimeError):
@@ -271,6 +294,12 @@ class ToolExecutor:
             if len(candidate) > MAX_FILE_CHANGE_BYTES:
                 raise WorkspacePathError("file_too_large")
             base_content = existing[0] if existing is not None else b""
+            base_text = base_content.decode("utf-8", errors="strict")
+            candidate_text = candidate.decode("utf-8", errors="strict")
+            if _has_unsupported_text_control(base_text) or _has_unsupported_text_control(
+                candidate_text
+            ):
+                raise WorkspacePathError("unsupported_text_content")
             base_sha256 = (
                 hashlib.sha256(base_content).hexdigest()
                 if existing is not None
@@ -278,8 +307,8 @@ class ToolExecutor:
             )
             mode = existing[1] if existing is not None else 0o644
             diff = _build_approval_diff(
-                base_content.decode("utf-8", errors="strict"),
-                candidate.decode("utf-8", errors="strict"),
+                base_text,
+                candidate_text,
                 (
                     f"a/{normalized_path}" if existing is not None else "/dev/null"
                 ),
@@ -733,6 +762,10 @@ class ToolExecutor:
                             raise WorkspacePathError("unsupported_workspace_entry")
                         if metadata.st_nlink != 1:
                             raise WorkspacePathError("unsupported_workspace_hardlink")
+                        if not in_git and _contains_sensitive_pem(
+                            directory_fd, name, metadata
+                        ):
+                            raise WorkspacePathError("sensitive_workspace_content")
             except WorkspacePathError:
                 raise
             except OSError:
@@ -761,13 +794,9 @@ class ToolExecutor:
                 or metadata.st_nlink != 1
                 or metadata.st_uid != os.getuid()
                 or getattr(metadata, "st_flags", 0) != 0
+                or _has_unsupported_file_metadata(descriptor)
             ):
                 raise WorkspacePathError("unsupported_file_metadata")
-            try:
-                if os.listxattr(descriptor):
-                    raise WorkspacePathError("unsupported_file_metadata")
-            except (AttributeError, TypeError):
-                pass
             content, _stable = _read_regular_file(descriptor, cancel)
             return content, mode
         finally:
@@ -876,6 +905,8 @@ def _read_regular_file(
     before = os.fstat(descriptor)
     if not stat.S_ISREG(before.st_mode):
         raise WorkspacePathError("unsupported_file_type")
+    if before.st_nlink != 1:
+        raise WorkspacePathError("unsupported_file_hardlink")
     if before.st_size > MAX_FILE_BYTES:
         raise WorkspacePathError("file_too_large")
     chunks: list[bytes] = []
@@ -896,11 +927,13 @@ def _read_regular_file(
         before.st_ino,
         before.st_size,
         before.st_mtime_ns,
+        before.st_nlink,
     ) != (
         after.st_dev,
         after.st_ino,
         after.st_size,
         after.st_mtime_ns,
+        after.st_nlink,
     ) or len(content) != before.st_size:
         raise WorkspacePathError("workspace_changed")
     return content, after
@@ -921,6 +954,64 @@ def _validate_relative_path(value: str) -> tuple[str, ...]:
         code = "sensitive_path" if parts else "workspace_boundary_violation"
         raise WorkspacePathError(code)
     return parts
+
+
+def _has_unsupported_file_metadata(descriptor: int) -> bool:
+    if sys.platform == "darwin":
+        return _darwin_has_unsupported_file_metadata(descriptor)
+
+    listxattr = getattr(os, "listxattr", None)
+    if listxattr is None:
+        return True
+    try:
+        return bool(listxattr(descriptor))
+    except (OSError, TypeError):
+        return True
+
+
+def _darwin_has_unsupported_file_metadata(descriptor: int) -> bool:
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        flistxattr = libc.flistxattr
+        acl_get_fd_np = libc.acl_get_fd_np
+        acl_free = libc.acl_free
+    except (AttributeError, OSError):
+        return True
+
+    flistxattr.argtypes = [
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_int,
+    ]
+    flistxattr.restype = ctypes.c_ssize_t
+    acl_get_fd_np.argtypes = [ctypes.c_int, ctypes.c_int]
+    acl_get_fd_np.restype = ctypes.c_void_p
+    acl_free.argtypes = [ctypes.c_void_p]
+    acl_free.restype = ctypes.c_int
+
+    ctypes.set_errno(0)
+    required = flistxattr(descriptor, None, 0, 0)
+    if required < 0:
+        return True
+    if required:
+        names_buffer = ctypes.create_string_buffer(required)
+        ctypes.set_errno(0)
+        actual = flistxattr(descriptor, names_buffer, required, 0)
+        if actual < 0 or actual != required:
+            return True
+        names = frozenset(
+            name for name in names_buffer.raw[:actual].split(b"\0") if name
+        )
+        if names - DARWIN_REPLACE_SAFE_XATTRS:
+            return True
+
+    ctypes.set_errno(0)
+    acl = acl_get_fd_np(descriptor, DARWIN_ACL_TYPE_EXTENDED)
+    if acl:
+        acl_free(acl)
+        return True
+    return ctypes.get_errno() != errno.ENOENT
 
 
 HUNK_HEADER = re.compile(
@@ -1008,7 +1099,35 @@ def _build_approval_diff(
         before = "present" if before_newline else "absent"
         after = "present" if after_newline else "absent"
         diff += f"\\ Eidos EOF newline: before={before}, after={after}\n"
+    before_endings = _line_ending_summary(original)
+    after_endings = _line_ending_summary(candidate)
+    if before_endings != after_endings:
+        diff += (
+            "\\ Eidos line endings: "
+            f"before={before_endings}, after={after_endings}\n"
+        )
     return diff
+
+
+def _line_ending_summary(value: str) -> str:
+    crlf = value.count("\r\n")
+    without_crlf = value.replace("\r\n", "")
+    lf = without_crlf.count("\n")
+    cr = without_crlf.count("\r")
+    endings = [
+        f"{label}:{count}"
+        for label, count in (("CRLF", crlf), ("LF", lf), ("CR", cr))
+        if count
+    ]
+    return "+".join(endings) if endings else "none"
+
+
+def _has_unsupported_text_control(value: str) -> bool:
+    return any(
+        character not in {"\n", "\r", "\t"}
+        and (ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F)
+        for character in value
+    )
 
 
 def _is_sensitive_directory(name: str) -> bool:
@@ -1034,6 +1153,7 @@ def _is_shell_sensitive_name(name: str) -> bool:
     lowered = name.lower()
     if lowered == ".env.example":
         return False
+    suffix = Path(lowered).suffix
     keyword_name = re.search(
         r"(?:^|[._-])(credentials?|secrets?|tokens?)(?:[._-]|$)", lowered
     )
@@ -1042,8 +1162,48 @@ def _is_shell_sensitive_name(name: str) -> bool:
         or lowered == ".env"
         or lowered.startswith(".env.")
         or lowered in SENSITIVE_NAMES
-        or Path(lowered).suffix in SENSITIVE_SUFFIXES
-        or keyword_name is not None
+        or suffix in SENSITIVE_SUFFIXES - {".pem"}
+        or keyword_name is not None and suffix not in SHELL_SOURCE_SUFFIXES
+    )
+
+
+def _contains_sensitive_pem(
+    directory_fd: int, name: str, metadata: os.stat_result
+) -> bool:
+    if Path(name.lower()).suffix != ".pem":
+        return False
+    if metadata.st_size > MAX_PEM_SCAN_BYTES:
+        return True
+    flags = os.O_RDONLY | os.O_NONBLOCK
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(name, flags, dir_fd=directory_fd)
+        try:
+            content = bytearray()
+            while len(content) <= MAX_PEM_SCAN_BYTES:
+                chunk = os.read(
+                    descriptor,
+                    min(64 * 1024, MAX_PEM_SCAN_BYTES + 1 - len(content)),
+                )
+                if not chunk:
+                    break
+                content.extend(chunk)
+            after = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError:
+        raise WorkspacePathError("workspace_changed") from None
+    if (
+        (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns)
+        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+        or len(content) != metadata.st_size
+    ):
+        raise WorkspacePathError("workspace_changed")
+    return (
+        b"PRIVATE KEY-----" in content
+        or b"-----BEGIN CERTIFICATE-----" not in content
+        or b"-----END CERTIFICATE-----" not in content
     )
 
 

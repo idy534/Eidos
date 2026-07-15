@@ -49,7 +49,15 @@ class SeatbeltProfileTests(unittest.TestCase):
             self.assertEqual(command[-2:], ["--", "/usr/bin/true"])
             self.assertEqual(
                 set(profile.environment()),
-                {"HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "GIT_OPTIONAL_LOCKS"},
+                {
+                    "HOME",
+                    "TMPDIR",
+                    "PATH",
+                    "LANG",
+                    "LC_ALL",
+                    "GIT_OPTIONAL_LOCKS",
+                    "PNPM_CONFIG_PM_ON_FAIL",
+                },
             )
 
     def test_profile_rejects_workspace_relative_sensitive_path(self) -> None:
@@ -113,6 +121,9 @@ class SeatbeltSmokeTests(unittest.TestCase):
             sandbox_tmp = root / "tmp"
             for directory in (workspace, home, sandbox_tmp):
                 directory.mkdir()
+            (workspace / "package.json").write_text(
+                '{"packageManager":"pnpm@0.0.1"}\n', encoding="utf-8"
+            )
             pointer = workspace / ".git"
             original = "gitdir: /private/tmp/external-worktree\n"
             pointer.write_text(original, encoding="utf-8")
@@ -131,6 +142,37 @@ class SeatbeltSmokeTests(unittest.TestCase):
             self.assertEqual(allowed.returncode, 0, allowed.stderr)
             self.assertNotEqual(denied.returncode, 0)
             self.assertEqual(pointer.read_text(encoding="utf-8"), original)
+
+    @unittest.skipUnless(
+        Path("/opt/homebrew/bin/node").is_file()
+        and Path("/opt/homebrew/bin/pnpm").is_file(),
+        "Homebrew Node toolchain is unavailable",
+    )
+    def test_fixed_homebrew_node_toolchain_is_readable_and_executable(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-homebrew-toolchain-") as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            home = root / "home"
+            sandbox_tmp = root / "tmp"
+            for directory in (workspace, home, sandbox_tmp):
+                directory.mkdir()
+            profile = SeatbeltProfile.create(
+                workspace_root=workspace,
+                sandbox_home=home,
+                sandbox_tmp=sandbox_tmp,
+                sensitive_path=workspace / ".env",
+            )
+
+            node = run_sandboxed(
+                profile,
+                ["/bin/sh", "-c", "node -e 'process.stdout.write(\"node-ok\")'"],
+            )
+            pnpm = run_sandboxed(profile, ["/bin/sh", "-c", "pnpm --version"])
+
+            self.assertEqual(node.returncode, 0, node.stderr)
+            self.assertEqual(node.stdout, "node-ok")
+            self.assertEqual(pnpm.returncode, 0, pnpm.stderr)
+            self.assertRegex(pnpm.stdout.strip(), r"^\d+\.\d+\.\d+$")
 
 
 if __name__ == "__main__":

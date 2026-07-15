@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -86,6 +87,25 @@ class RuntimeLoopTests(unittest.TestCase):
 
         with self.assertRaises(ActiveRunError):
             self.store.create_run(self.session["id"], "Second")
+
+    def test_oversized_session_context_fails_before_calling_the_model(self) -> None:
+        for index in range(13):
+            historical, _ = self.store.create_run(
+                self.session["id"], f"{index}:" + "x" * (64 * 1024 - 3)
+            )
+            self.store.fail_run(historical["id"], "TEST_COMPLETE")
+        run, _ = self.store.create_run(self.session["id"], "Continue")
+        model = ScriptedModel([ModelResponse(text="must not run")])
+        notifications: list[dict[str, object]] = []
+
+        RuntimeLoop(self.store, model, notifications.append).run(
+            run["id"], threading.Event()
+        )
+
+        failed = self.store.read_run(run["id"])
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(failed["errorCode"], "CONTEXT_INPUT_TOO_LARGE")
+        self.assertEqual(model.contexts, [])
 
     def test_cancel_prevents_a_late_model_result_from_succeeding_the_run(self) -> None:
         run, _user_item = self.store.create_run(self.session["id"], "Wait")
@@ -558,6 +578,44 @@ class ToolExecutorTests(unittest.TestCase):
         self.assertEqual(sensitive["code"], "sensitive_path")
         self.assertEqual(escaping["code"], "workspace_boundary_violation")
 
+    def test_read_and_search_never_expose_an_external_hard_link(self) -> None:
+        outside = self.workspace.parent / f"{self.workspace.name}-outside-secret.txt"
+        outside.write_text("external-hardlink-secret\n", encoding="utf-8")
+        os.link(outside, self.workspace / "notes.txt")
+        try:
+            read = self.executor.execute(
+                "read_file", {"path": "notes.txt"}, threading.Event()
+            )
+            searched = self.executor.execute(
+                "search_text", {"query": "external-hardlink-secret"}, threading.Event()
+            )
+        finally:
+            outside.unlink(missing_ok=True)
+
+        self.assertEqual(read["outcome"], "error")
+        self.assertEqual(read["code"], "unsupported_file_hardlink")
+        self.assertEqual(searched["outcome"], "success")
+        self.assertEqual(searched["data"]["matches"], [])
+        self.assertNotIn("external-hardlink-secret", json.dumps(searched))
+
+    def test_shell_preflight_allows_dependency_source_and_public_certificates(self) -> None:
+        source = self.workspace / ".venv" / "lib" / "package"
+        source.mkdir(parents=True)
+        (source / "token.py").write_text("TOKEN_KIND = 'name'\n", encoding="utf-8")
+        (source / "cacert.pem").write_text(
+            "-----BEGIN CERTIFICATE-----\npublic-ca\n-----END CERTIFICATE-----\n",
+            encoding="utf-8",
+        )
+        javascript = self.workspace / "node_modules" / "package"
+        javascript.mkdir(parents=True)
+        (javascript / "credentials.js").write_text(
+            "export const credentialType = 'fixture';\n", encoding="utf-8"
+        )
+
+        identity = self.executor.prepare_shell(".", threading.Event())
+
+        self.assertEqual(identity.path, self.workspace.resolve())
+
     def test_replacing_workspace_path_cannot_rebind_an_existing_executor(self) -> None:
         original = self.workspace / "original"
         outside = self.workspace / "outside"
@@ -730,6 +788,35 @@ class ToolExecutorTests(unittest.TestCase):
         self.assertIn("Eidos EOF newline: before=absent, after=present", prepared.diff)
         self.assertNotIn("-same+same", prepared.diff)
 
+    def test_line_ending_only_change_has_unambiguous_approval_diff(self) -> None:
+        target = self.workspace / "line-endings.txt"
+        target.write_bytes(b"first\r\nsecond\r\n")
+
+        prepared = self.executor.prepare_file_change(
+            "write_file",
+            {"path": "line-endings.txt", "content": "first\nsecond\n"},
+            threading.Event(),
+        )
+
+        assert not isinstance(prepared, dict)
+        self.assertIn(
+            "Eidos line endings: before=CRLF:2, after=LF:2",
+            prepared.diff,
+        )
+
+    def test_file_change_content_with_invisible_control_characters_is_rejected(
+        self,
+    ) -> None:
+        prepared = self.executor.prepare_file_change(
+            "write_file",
+            {"path": "control.txt", "content": "visible\x00hidden\n"},
+            threading.Event(),
+        )
+
+        self.assertIsInstance(prepared, dict)
+        assert isinstance(prepared, dict)
+        self.assertEqual(prepared["code"], "unsupported_text_content")
+
     def test_hard_linked_file_metadata_fails_closed(self) -> None:
         target = self.workspace / "hardlink.txt"
         alias = self.workspace / "hardlink-alias.txt"
@@ -739,6 +826,52 @@ class ToolExecutorTests(unittest.TestCase):
         prepared = self.executor.prepare_file_change(
             "write_file",
             {"path": "hardlink.txt", "content": "change\n"},
+            threading.Event(),
+        )
+
+        self.assertIsInstance(prepared, dict)
+        assert isinstance(prepared, dict)
+        self.assertEqual(prepared["code"], "unsupported_file_metadata")
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS file metadata")
+    def test_extended_attribute_metadata_fails_closed(self) -> None:
+        target = self.workspace / "xattr.txt"
+        target.write_text("base\n", encoding="utf-8")
+        completed = subprocess.run(
+            ["/usr/bin/xattr", "-w", "com.eidos.test", "value", str(target)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            self.skipTest(f"xattr fixture unavailable: {completed.stderr.strip()}")
+
+        prepared = self.executor.prepare_file_change(
+            "write_file",
+            {"path": "xattr.txt", "content": "change\n"},
+            threading.Event(),
+        )
+
+        self.assertIsInstance(prepared, dict)
+        assert isinstance(prepared, dict)
+        self.assertEqual(prepared["code"], "unsupported_file_metadata")
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS file metadata")
+    def test_access_control_list_metadata_fails_closed(self) -> None:
+        target = self.workspace / "acl.txt"
+        target.write_text("base\n", encoding="utf-8")
+        completed = subprocess.run(
+            ["/bin/chmod", "+a", "everyone deny write", str(target)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            self.skipTest(f"ACL fixture unavailable: {completed.stderr.strip()}")
+
+        prepared = self.executor.prepare_file_change(
+            "write_file",
+            {"path": "acl.txt", "content": "change\n"},
             threading.Event(),
         )
 
