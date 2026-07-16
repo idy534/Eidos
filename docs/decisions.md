@@ -1,7 +1,7 @@
 # Eidos 完整目标态设计决策记录
 
 版本：v0.4
-范围：Grilling Q1-Q155
+范围：Grilling Q1-Q159
 
 本文件记录已经由产品与技术共同确认的完整目标态结论。第一期允许按 [MVP Lite](mvp-lite.md) 显式延期其中的非首期能力；除该范围分层外，PRD/TDD 正文与本文件冲突时应先停止实现并统一文档。
 
@@ -162,6 +162,10 @@
 | Q153 | Event 使用闭合 envelope 与 per-type payload schema；仅兼容 contract 中明确可忽略的未知 type 可安全占位推进，已知语义版本不匹配必须 snapshot 恢复或阻断。 | PRD Timeline 兼容；TDD Event/reducer |
 | Q154 | DB/API/Event 时间统一为 UTC Unix 毫秒 safe integer；duration 使用 monotonic clock，Shell 授权另持久化 boot-session/continuous deadline，同 boot 延续、时基不可证明时失效，墙钟变化不得延长授权。 | PRD 时间可靠性；TDD TimeProvider |
 | Q155 | SQLite/state storage 不可可靠提交时 Runtime 进入 health-only；有界应急 reserve 仅辅助空间耗尽恢复，Workspace 写失败按提交阶段对账，任何副作用均不自动重放或自动删数据。 | PRD 存储故障；TDD storage recovery |
+| Q156 | 第二期将 RuntimeLoop 演进为一个对外仅暴露 `run(run_id, cancel)` 的 RuntimeEngine；内部按状态机、模型运行、工具调度、审批、事件和错误映射拆分职责，不为文件拆分增加浅层转发接口。 | 第二期清单；TDD 架构/状态机 |
+| Q157 | 持久 Run status 与内存 RuntimeState 分层：Scheduler 持有 queued，StateMachine 独占执行态合法迁移；重启只从持久事实重建，不恢复内存中的模型或工具执行。 | 第二期清单；TDD 状态机 |
+| Q158 | 第二期引入 Pydantic v2，用于 JSON-RPC DTO、ApprovalDecision、Run、Item、ToolSpec、ToolResult 和 Event 的 strict/closed 校验与安全投影；不引入 FastAPI，也不以 Pydantic 取代 Tool Schema、状态机或安全授权。 | 第二期清单；TDD 架构/API/工具 |
+| Q159 | ToolSpec 的 side_effect 保持 `none|workspace|eidos_state|shell` 分级枚举而非 bool；requires_approval、timeout 与闭合 input/result schema 为 Registry 固定元数据。 | 第二期清单；TDD 工具契约 |
 
 ## 文件契约统一收敛
 

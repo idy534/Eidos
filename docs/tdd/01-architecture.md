@@ -6,6 +6,8 @@
 
 MVP Lite 当前实施状态：✅ Electron Renderer/Preload/Main/Python Runtime 四层骨架；✅ Main 拉起单 sidecar 并取得 Electron single-instance lock；✅ stdio JSON-RPC 双向请求、通知与审批；✅ SQLite、DeepSeek Chat SSE、文件工具和 Seatbelt Shell 主链路；✅ 真实模型“读取 -> 写入审批 -> Shell 审批 -> 最终回答”验收。
 
+第二期实施边界：以 [第二期实施范围清单](../mvp-phase-2.md) 为准，继续使用现有 stdio JSON-RPC 和单 sidecar。第二期在此边界内补齐安全启动、持久 FIFO、Event、暂停/继续、Durable Intent、敏感扫描、文件工具契约，以及 Pydantic DTO/契约模型；不在本期切换 loopback HTTP/SSE 或引入 FastAPI、SQLAlchemy、Alembic。Pydantic 仅用于闭合数据模型与校验，不成为 Runtime 核心流程的替代品。
+
 ## 1. 技术目标
 
 构建一个仅支持 macOS 的本地 Agent Runtime，优先保证以下主链路可运行、可审批、可追踪、可恢复：
@@ -206,3 +208,24 @@ Eidos/
 ```
 
 Seatbelt profile 作为只读资源随 sidecar 打包。策略模板、参数绑定和 Shell 启动必须集中在 `sandbox/`，禁止业务代码自行 spawn Agent 命令。
+
+## 7.1 第二期 RuntimeEngine 模块
+
+第二期把现有 `eidos_runtime.runtime_loop.RuntimeLoop` 演进为 `eidos_runtime/runtime/` 包。目标是责任与测试 seam 的拆分，不是按行数切分文件；`RuntimeEngine.run(run_id, cancel)` 是 Runtime Server 和测试唯一需要知道的执行接口。
+
+```text
+eidos_runtime/runtime/
+  loop.py              # RuntimeEngine：装配依赖、驱动一次 Run、无业务分支复制
+  state_machine.py     # Run/执行态合法迁移、allowed_actions、迁移原因
+  model_runner.py      # 单 Step 的上下文、流、Attempt、模型响应归一化
+  tool_dispatcher.py   # ToolSpec 选择、批次校验、effective arguments 与执行分派
+  approval.py          # Approval 请求、决策、失效、Reject 计数
+  events.py            # 状态事实与 Event 的同事务记录及安全通知投影
+  errors.py            # 闭合 Runtime/Tool 错误码与安全映射
+```
+
+- `loop.py` 只协调状态机给出的下一步，不直接解析模型流、执行工具或写 Approval/Event。
+- `state_machine.py` 是唯一允许从事件推导持久 Run 状态和瞬时 `RuntimeState` 的模块；Storage 仍负责事务与条件更新，不在状态机中嵌入 SQL。
+- `model_runner.py`、`tool_dispatcher.py` 和 `approval.py` 只返回闭合结果或领域事件，不能自行把任意字典写入 SQLite、Event 或 Renderer。
+- `events.py` 是 Runtime 内部事件 seam，不改变现有 stdio notification 通道；通知必须由已提交的事实投影生成。
+- 先迁移 `RuntimeLoop` 的职责与测试，再删除旧模块；不得保留两个可独立运行的 Loop。

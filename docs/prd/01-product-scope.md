@@ -4,6 +4,8 @@
 
 范围说明：本文描述完整目标态。第一期交付范围以 [MVP Lite](../mvp-lite.md) 为准；本文中的 MVP P0 不再等同于第一期全量实现。
 
+第二期实施以 [第二期实施范围清单](../mvp-phase-2.md) 为准。本期只把完整目标态中的存储安全、Event、FIFO 调度、暂停/继续、Durable Intent、事实确认、敏感扫描和文件工具契约推进到可验收状态；Model Profile 重构、Public Mode、Artifact 和传输架构迁移不在本期实施。
+
 ## 1. 产品定位
 
 Eidos 是一个仅面向 macOS 的本地桌面端个人 Agent Runtime，让 Agent 能围绕任务持续读取信息、修改文件、执行命令，并将审批和执行过程完整记录下来。

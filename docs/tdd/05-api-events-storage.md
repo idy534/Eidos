@@ -79,7 +79,7 @@ POST   /api/v1/toolchain-profiles/{profile_id}/disable
 
 ### 2.1 闭合 DTO 与分页
 
-`/api/v1` 的 request、success response 和每个 API error code 的 `details` 都使用递归闭合 schema；Pydantic 固定 `extra=forbid`，每个 endpoint 在 JSON 解析前强制自己的 body byte cap。禁止返回 ORM row、自由 map、未声明字段或因数据库新增列而扩大响应。
+`/api/v1` 的 request、success response 和每个 API error code 的 `details` 都使用递归闭合 schema；Pydantic 固定 strict 与 `extra="forbid"`，每个 endpoint 在 JSON 解析前强制自己的 body byte cap。禁止返回 ORM row、自由 map、未声明字段或因数据库新增列而扩大响应。第二期尚未引入 HTTP API，但同一组 Pydantic 模型已先用于 stdio JSON-RPC 的 request/response、ApprovalDecision、Run/Item、ToolResult 和 Event envelope；HTTP 迁移只能复用这些字段语义，不能另起一套 DTO。
 
 OpenAPI 是 HTTP DTO 的唯一来源，生成 Python validator、TypeScript type 与 runtime validator。Preload 只暴露命名方法；方法名可使用 TypeScript 风格，但 payload 保持相同字段语义。Main 必须验证 sidecar success/error 后才投影给 Renderer；未知字段、类型或 enum 固定 `runtime_contract_mismatch`，不得把原响应透传。
 

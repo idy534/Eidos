@@ -2,7 +2,7 @@
 
 版本：v0.4
 
-第一期实现以 [MVP Lite](../mvp-lite.md) 为准，使用 stdio JSON-RPC 双向协议和 `Session -> Run -> Item/ToolCall`。本目录保留完整目标态技术契约，HTTP/SSE、Execution Segment、持久队列、复杂恢复与版本兼容不进入第一期。
+第一期实现以 [MVP Lite](../mvp-lite.md) 为准，使用 stdio JSON-RPC 双向协议和 `Session -> Run -> Item/ToolCall`。第二期以 [第二期实施范围清单](../mvp-phase-2.md) 为准：继续沿用该已验证的 Desktop/Main/sidecar 边界，优先实现持久化、调度、恢复、安全扫描与文件契约。HTTP/SSE、Model Profile 双 wire、Public Mode 和 Artifact 仍是后续目标态能力。
 
 ## 文档目录
 
@@ -28,6 +28,7 @@
 - Q131-Q140 固定副作用工具 success/no-op、Shell observation/outcome、`side_effects_may_exist`、Reject feedback 以及 code 专属 error data；API Error 与模型 ToolResult Error 分层。
 - Q141-Q150 固定 ToolResult 数值与 Unicode canonical 规则、SQLite 迁移、Shell guardian、ready gate、RunSnapshot、水位续接、Workspace 持久身份、唯一执行权、allowed actions 与 reconciliation epoch。
 - Q151-Q155 固定持久化 operation 幂等、闭合 API/IPC DTO 与水位 keyset、Event contract、Unix 毫秒/monotonic 时间和 storage fail-closed 恢复。
-- 当前仓库尚无实现代码，本 TDD 是后续实现契约，不代表能力已经落地。
+- Q156-Q159 固定第二期 RuntimeEngine 的职责 seam、持久状态与执行态分层、Pydantic 闭合契约模型，以及 ToolSpec 的分级副作用语义。
+- MVP Lite 的代码和自动化验收已落地；完整目标态中未列入第二期实施范围的条目仍只是技术契约，不代表能力已经落地。
 
 模型原始 reasoning 内容不进入持久化或 UI；模型文本按 `assistant_progress` 与 `final_answer` 分类。

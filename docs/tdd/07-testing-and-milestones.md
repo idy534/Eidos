@@ -4,6 +4,8 @@
 
 范围说明：本文保留完整目标态测试设计与风险里程碑。第一期执行顺序和退出标准以 [MVP Lite](../mvp-lite.md) 的 L0-L3 为准。
 
+第二期按 [第二期实施范围清单](../mvp-phase-2.md) 的 P2-00 至 P2-07 顺序推进。每一个清单项必须至少新增一个能在隔离数据根运行的自动化验证；不得以手工演示替代状态机、存储或安全边界回归。
+
 ## 1. 测试原则
 
 - 安全边界和状态机必须由自动化测试证明，不能只依赖人工演示。
@@ -12,6 +14,13 @@
 - 测试目录、config 和数据库必须使用隔离临时根，不能触碰用户真实 `~/.eidos`。
 
 ## 2. Runtime 单元测试
+
+### 2.0 RuntimeEngine、状态机与 Pydantic 契约
+
+- `RuntimeEngine.run(run_id, cancel)` 覆盖模型最终回答、只读批次、副作用审批、取消和异常；每条职责只通过 `state_machine`、`model_runner`、`tool_dispatcher`、`approval`、`events` 或 `errors` 的对应 seam 验证，不依赖复制一个第二 Loop。
+- RuntimeState 的全部合法/非法迁移、持久 Run status 映射、重启不恢复内存执行态、条件更新竞态与 `allowed_actions` 固定向量。
+- JSON-RPC request/response、ApprovalDecision、Run、Item、ToolSpec、ToolResult 与 Event 的 Pydantic strict/`extra=forbid` 测试：未知字段、缺失字段、错误 enum、错误类型和超出容量的数据均安全拒绝。
+- Pydantic 序列化后的 JSON 与 TypeScript runtime validator 使用相同 fixture；不得把 Python 异常、SQLite Row、Path 或自由 map 泄漏到协议。
 
 ### 2.1 路径与敏感规则
 
@@ -379,6 +388,8 @@ M0 未通过前，不进入 Agent Shell 主链路实现。
 
 ### M2：SQLite、队列与状态机
 
+第二期对应 M2 的最小可交付子集为 P2-01、P2-02、P2-03：先保证旧数据库可安全启动或明确 health-only，再交付 Event/幂等基础与持久 FIFO/Segment 状态机。其余 M2 项继续由后续阶段承接。
+
 - 状态目录独占 OS lock、SQLite 一致备份与 forward-only Alembic migration。
 - ApiTimestampV1/TimeProvider/high-water、operation records、collection creation sequence、Event payload registry 与 emergency reserve 恢复。
 - Run/Segment/Step/Attempt/ToolCall/Approval/Event。
@@ -412,5 +423,5 @@ M0 未通过前，不进入 Agent Shell 主链路实现。
 ## 8. 文档完成标准
 
 - PRD 每个 P0 要求在 TDD 和测试中有对应落点。
-- Q1-Q155 决策不得出现相反规则。
+- Q1-Q159 决策不得出现相反规则。
 - 实现开始前冻结 v0.4 API schema、状态 enum 和 Tool schema。

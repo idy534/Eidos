@@ -6,10 +6,10 @@
 
 MVP Lite 当前实施状态：✅ 只读三工具；✅ `write_file/apply_patch` 候选与完整 diff；✅ Runtime→Main 双向审批、拒绝零副作用、取消/迟到响应；✅ fd-relative Workspace Guard；✅ Seatbelt 内 `RENAME_EXCL` 新建与 `RENAME_SWAP` 旧 hash CAS/回滚；✅ 原子提交读回与不确定副作用标记；✅ `run_shell` 逐次审批、默认断网、干净环境、敏感/硬链接预检、Workspace/cwd 身份复检、进程组 timeout/cancel/同组后台清理与有界输出。MVP Lite 不宣称 native guardian、脱离 PGID 的后代清理或对抗性同用户 TOCTOU 防护。
 
-## 1. ToolDefinition 与 ToolContext
+## 1. ToolSpec 与 ToolContext
 
 ```python
-class ToolDefinition(BaseModel):
+class ToolSpec(BaseModel):
     name: str
     description: str
     side_effect: Literal["none", "workspace", "eidos_state", "shell"]
@@ -36,6 +36,10 @@ class ToolContext(BaseModel):
     network_hosts: list[str] = []
     local_network: bool = False
 ```
+
+`ToolSpec`、`ToolContext`、Approval request/decision、Run/Item 投影、canonical ToolResult 和 Event envelope 均使用 Pydantic v2 的 strict、`extra="forbid"` 模型；它们在 JSON-RPC 输入、Storage 投影和 Renderer notification 三个 seam 使用同一字段语义。`input_schema` 与 `result_schemas` 仍由 Tool Schema Dialect 和每工具闭合 result schema 解释，Pydantic 不把自由 `dict` 变成可执行授权。
+
+`side_effect` 保持分级 Literal，不能降级为 bool：`workspace`、`eidos_state` 和 `shell` 的审批、Seatbelt、Durable Intent 与对账语义不同。调用方如只需要布尔判断，只能读取 `side_effect != "none"` 的派生值。
 
 ToolCall row 创建前，工具参数必须完成归一化、schema 校验、组合校验和敏感扫描。工具结果在投影为模型内容、参与 Context Builder 预算、交付 UI 和持久化前必须经过 Redaction Service。
 

@@ -84,6 +84,27 @@ waiting_approval -> waiting_user_input
 - 不允许恢复原 Run。
 - 用户可基于摘要和当前 Workspace 创建新 Run。
 
+### 3.1 执行态 RuntimeState
+
+Run `status` 是可跨重启的事实；它不能直接替代单次执行循环的控制状态。第二期新增仅在内存中存在、由 StateMachine 维护的 `RuntimeState`：
+
+```python
+class RuntimeState(str, Enum):
+    THINKING = "thinking"
+    TOOL_EXECUTING = "tool_executing"
+    WAITING_APPROVAL = "waiting_approval"
+    WAITING_USER_INPUT = "waiting_user_input"
+    FINALIZING = "finalizing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELED = "canceled"
+```
+
+- `queued` 由 Scheduler 持有，不进入 RuntimeEngine；认领为 `running` 后从 `THINKING` 开始。
+- `THINKING -> TOOL_EXECUTING|WAITING_APPROVAL|FINALIZING|COMPLETED|FAILED|CANCELED`，工具完成后回到 `THINKING`；`WAITING_APPROVAL` 只可由有效审批或取消离开。
+- 每次迁移先由 StateMachine 校验，再与 Run/Segment/Step/Approval 的持久事实和 Event 同事务提交；任何非法迁移安全失败，不能由调用方绕过。
+- Sidecar 重启不反序列化旧 `RuntimeState`：它从持久 Run 状态和最后已提交事实重建可调度状态，绝不恢复已在内存中的模型或工具执行。
+
 ## 4. Execution Segment 与预算
 
 每次 Run 首次执行或 user-input 恢复都创建新 Segment：
