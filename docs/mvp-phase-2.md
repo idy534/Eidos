@@ -29,7 +29,7 @@
 
 > ponytail: 本地控制面固定为 stdio JSON-RPC，不再保留 loopback HTTP/SSE、随机端口、Bearer Token、FastAPI 或 WebSocket 迁移路线。远端模型链路继续使用 HTTP 请求和 SSE 响应流。
 
-Pydantic v2 是本期唯一新增的 Runtime 依赖，用于 JSON-RPC DTO、持久化事实投影和工具契约的闭合校验；它不引入 HTTP 框架，也不代替状态机、Tool Schema Dialect、敏感扫描或文件系统授权。
+Pydantic v2 是本期新增的 Runtime 依赖，用于 JSON-RPC DTO、持久化事实投影和工具契约的闭合校验；它不引入 HTTP 框架，也不代替状态机、Tool Schema Dialect、敏感扫描或文件系统授权。
 
 ## 3. 实施顺序与检查点
 
