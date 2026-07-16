@@ -1,6 +1,6 @@
 # 安全与非功能需求
 
-版本：v0.4
+版本：v0.4（探索草案）
 
 范围说明：本文保留完整安全目标。第一期只承诺 [MVP Lite](../mvp-lite.md) 中列出的安全底线，其余要求作为后续加固项保留。
 
@@ -101,7 +101,7 @@
 - 删除不要求事先读取正文，但必须展示 Runtime 生成的完整删除 Diff，并在执行前复检路径、父目录、类型、编码和 hash。
 - 单文件读取与搜索匹配必须来自稳定文件版本；并发变化时丢弃该文件结果，不把多个版本拼接为一次读取。
 
-## 6.1 遍历与排除
+### 6.1 遍历与排除
 
 - 安全排除永不可绕过。
 - `list_files`/`search_text` 使用文档化的固定性能排除集，MVP 不解析 `.gitignore` 或用户配置。
@@ -120,14 +120,14 @@ MVP 为尽快打通 Agent 主链路，允许 API Key 明文存放在 `~/.eidos/c
 ## 8. Desktop 安全
 
 - `contextIsolation=true`、`nodeIntegration=false`、Renderer sandbox 开启。
-- Renderer 不持有 sidecar token 和端口，不直接访问 sidecar。
+- Renderer 不持有 sidecar stdin/stdout 或进程句柄，不直接访问 sidecar。
 - Preload 只暴露类型化、按通道白名单的 API，不提供任意 `invoke(channel)`。
 - 模型生成的 Markdown、代码和链接按不可信内容处理，禁止导航、脚本和任意本地资源访问。
 - “打开系统 Terminal”只能由用户 UI 操作触发，模型和 Runtime 无法调用。
 
 ## 9. 可恢复性与可靠性
 
-- Runtime 完成状态目录校验、唯一执行权、数据库 revision/完整性、契约和安全自检、崩溃对账与 FIFO 恢复后才开放业务 API 和调度；失败时只保留最小安全诊断。
+- Runtime 完成状态目录校验、唯一执行权、数据库 revision/完整性、契约和安全自检、崩溃对账与 FIFO 恢复后才接受业务 JSON-RPC method 并开始调度；失败时只保留最小安全诊断 method。
 - SQLite 只允许向前迁移；迁移前创建一致、可验证且不自动覆盖的备份。未知或更高 schema、备份失败、迁移失败或完整性失败均不得继续执行业务。
 - 状态变更与 Event 在同一 SQLite 事务中提交。
 - 有副作用 ToolCall 不自动重放。
@@ -145,7 +145,7 @@ MVP 为尽快打通 Agent 主链路，允许 API Key 明文存放在 `~/.eidos/c
 
 ### 9.1 时间与存储故障
 
-- DB/API/Event 的业务时间统一为 UTC Unix epoch milliseconds 的 JSON safe integer；持续时间、预算和进程内 deadline 使用 monotonic clock，UI 才转换本地时区。
+- DB/Protocol/Event 的业务时间统一为 UTC Unix epoch milliseconds 的 JSON safe integer；持续时间、预算和进程内 deadline 使用 monotonic clock，UI 才转换本地时区。
 - 系统时钟回拨不得延长已有有期限授权；Shell Approval 绑定可验证的 boot-session/continuous-monotonic deadline，同 boot 重启延续原期限，boot/timebase 不可证明或检测到回拨时在开放业务前失效。sleep/停机时间计入原 TTL，时钟前跳可以安全地提前失效。
 - SQLite/state root 无法可靠提交时，Runtime 停止调度和业务写入，进入 health-only。未提交结果不能仅凭内存向 UI 声称成功。
 - MVP 可保留同卷、有界、真实分配的 emergency reserve 辅助空间耗尽后的 rollback/诊断，但不承诺足以完成任意 WAL/事务；I/O 或损坏故障不得通过释放 reserve 假装修复。
@@ -179,10 +179,10 @@ MVP 为尽快打通 Agent 主链路，允许 API Key 明文存放在 `~/.eidos/c
 - 每个 Model Profile 独占凭证槽位；API Key 保存后不回显、不共享，替换只影响本 Profile。
 - Run 快照不包含 API Key；Gateway 每次发送前从 Profile 专属槽读取当前凭证。日志、Event、Attempt 和 capability snapshot 只记录凭证 revision，不记录密钥或其摘要。
 - 认证仅支持固定 `bearer`、`api_key_header` 和 `none` 模式；用户不能用扩展参数注入 Header、代理、证书或传输配置。
-- WebSocket 与 HTTP(S) streaming 使用相同的认证和敏感日志边界；WSS/HTTPS 必须执行相同的系统信任校验。传输降级不得关闭证书校验、改变 Origin 或泄露 Provider 原始错误正文。
+- 模型链路只使用 HTTP 请求与 SSE 响应流。HTTPS 必须执行系统信任校验；重试不得关闭证书校验、改变 Origin 或泄露 Provider 原始错误正文。
 - usage 缺失必须标记为 unknown；不得为了展示确定成本而推算或填零。Provider 重放可能产生重复计算或计费，UI 必须如实展示 Attempt 数和 usage 完整性。
 - Eidos 不主动请求 Provider 保存会话：Responses 使用 `store=false`，Chat 每次发送本地重建的消息。该设置不构成第三方零留存保证，UI 必须提示实际保留仍受 Provider 条款约束。
-- Provider response/conversation ID 只可作为审计元数据，不得成为恢复、ToolResult 续接或传输降级的唯一状态来源。
+- Provider response/conversation ID 只可作为审计元数据，不得成为恢复、ToolResult 续接或模型重试的唯一状态来源。
 - 模型流在协议解码后执行单 Event、总 payload、可见文本、reasoning 和 ToolCall 参数多层容量检查；超限内容不得进入 Event、日志、数据库或审批。
 
 ## 13. 工具输入与结果边界
@@ -197,7 +197,7 @@ MVP 为尽快打通 Agent 主链路，允许 API Key 明文存放在 `~/.eidos/c
 - ToolResult base 是不可变事实。Context 投影只能按版本化规则删除或加强脱敏已声明可裁剪字段，并保存省略量；不得改变 outcome、code、工具级截断或副作用状态，也不得在后续 Step 重新显露另一批等量内容。
 - 敏感隐藏文件既不进入 list/search 项目，也不进入模型可见聚合计数；避免通过多次差分推断受保护路径。
 - ToolResult schema、投影或序列化 invariant 失败时不得返回自由文本 fallback。Runtime 保留真实副作用事实、终止当前 Run，并隔离故障工具或整个结果能力，直到受验证的新实现解除。
-- ToolResult error 不提供通用 `details/message/cause` 或任意 map；只有按工具与 code 声明的有界字段可进入模型。API Error 是独立的 Renderer/HTTP 契约，也必须按 code 闭合并安全化。
+- ToolResult error 不提供通用 `details/message/cause` 或任意 map；只有按工具与 code 声明的有界字段可进入模型。JSON-RPC business error 是独立的 Renderer 契约，也必须按 code 闭合并安全化。
 - Reject feedback 是唯一共享 rejection data 的可选用户原文：必须先扫描、不得截断，且不得进入 summary。Provider/OS 动态错误、stack、errno 和内部诊断不能因只用于审计而绕过扫描与最小化。
 - 模型可见 Shell 字节计数只使用脱敏后的 observation 口径；原始 pipe 字节数、完整 manifest、敏感路径和真实 snapshot 路径不得进入 ToolResult、Event 或模型上下文。
 - `side_effects_may_exist=true` 不得单独自动推导事实确认；但任何 `reconciliation_required=true` 的工具结果都必须同时标记可能存在未确认副作用。

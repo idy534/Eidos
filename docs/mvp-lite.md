@@ -18,7 +18,7 @@ MVP Lite 的唯一目标是尽快验证 Eidos 在 macOS 本机上的最小 Agent
   -> 输出最终回答
 ```
 
-本文是第一期实现范围的最高优先级文档。现有 v0.4 PRD、TDD 和 Q1-Q159 决策继续保留，作为完整目标态与后续加固依据；当它们与本文的首期范围、协议、实体或里程碑冲突时，第一期以本文为准。
+本文是第一期实现范围的最高优先级文档。现有 v0.4 PRD、TDD 和 Q1-Q160 决策继续保留，作为目标态草案与后续加固依据；当它们与本文的首期范围、协议、实体或里程碑冲突时，第一期以本文为准。
 
 MVP Lite 是单用户、单机、前台运行的 Developer Preview，不承诺完整生产级兼容、灾难恢复或跨版本恢复。
 
@@ -36,7 +36,7 @@ MVP Lite 是单用户、单机、前台运行的 Developer Preview，不承诺�
 - 用户能够取消正在运行或等待审批的 Run。
 - 应用重启后能够读取已完成的 Session、Run 和 Item；未完成 Run 不自动恢复或重放。
 
-以下能力不作为第一期成功条件：Public Mode、Artifact、多 Run 队列、跨重启继续执行、双模型协议、WebSocket、复杂模型能力探测、完整敏感信息治理和生产级存储恢复。
+以下能力不作为第一期成功条件：Public Mode、Artifact、多 Run 队列、跨重启继续执行、双模型协议、复杂模型能力探测、完整敏感信息治理和生产级存储恢复。本地 WebSocket/HTTP/SSE 控制面已不再规划。
 
 ## 3. 产品范围
 
@@ -67,7 +67,7 @@ MVP Lite 是单用户、单机、前台运行的 Developer Preview，不承诺�
 - `read_file_range`、`delete_file`、Regex Search 和额外文本编码。
 - pending Approval、模型流和工具执行的跨重启恢复。
 - Durable Intent、事实确认屏障、Workspace 前后 manifest 和副作用自动对账。
-- Responses Adapter、WebSocket、传输降级和多 Provider 自动兼容。
+- Responses Adapter、复杂传输降级和多 Provider 自动兼容；远端模型仍只使用 HTTP/SSE。
 - Model Profile 编辑、Archive、凭证轮换、两阶段 Capability Probe 和 capability snapshot。
 - `model_request_contract_version`、`tool_contract_version` 的旧版本路由与恢复。
 - Canonical JSON、immutable base ToolResult projection 和 ToolResult quarantine。
@@ -122,10 +122,10 @@ Python Runtime：
 
 - Main 是 Runtime 的唯一父进程和客户端，不需要随机端口、Bearer Token 或 loopback 路由。
 - 同一连接原生支持 Main 发请求、Runtime 发通知，以及 Runtime 主动发起审批请求。
-- 不需要为第一期维护 REST、SSE、OpenAPI、HTTP DTO、IPC DTO 四套边界。
+- 不维护 REST、SSE、OpenAPI、HTTP DTO、IPC DTO 多套本地边界。
 - stdout 可作为纯协议通道，stderr 可作为独立诊断通道。
 
-MVP Lite 不开放 TCP、Unix Socket 或 WebSocket 监听。未来需要多客户端或远程 Runtime 时，再在同一领域契约外增加 transport adapter。
+Eidos 本地控制面不开放 TCP、Unix Socket 或 WebSocket 监听；后续阶段继续复用同一 stdio JSON-RPC 边界。
 
 ## 5. stdio JSON-RPC 双向协议
 
@@ -467,4 +467,4 @@ Developer Preview 限制：MVP Lite 不支持通过 `setsid`/double-fork 脱离�
 - [x] 文件写入 diff 与 hash 复检有独立测试。
 - [x] 审批请求、取消和迟到响应的竞态有集成测试。
 - [x] stdout/stderr 隔离、消息大小、分块超限和慢消费者行为有协议测试。
-- [x] PRD/TDD 后续实现任务明确标注 `MVP Lite` 或 `完整目标态`，不再混用 P0。
+- [x] PRD/TDD 后续实现任务明确标注 `MVP Lite`、具体阶段或 `目标态草案`，不再混用 P0。

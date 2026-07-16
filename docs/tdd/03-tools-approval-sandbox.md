@@ -1,8 +1,8 @@
 # 工具、审批与沙箱
 
-版本：v0.4
+版本：v0.4（探索草案）
 
-范围说明：本文保留完整目标态工具契约。第一期工具集合、审批和安全底线以 [MVP Lite](../mvp-lite.md) 为准。
+范围说明：本文保留目标态工具契约草案。第一期工具集合、审批和安全底线以 [MVP Lite](../mvp-lite.md) 为准。
 
 MVP Lite 当前实施状态：✅ 只读三工具；✅ `write_file/apply_patch` 候选与完整 diff；✅ Runtime→Main 双向审批、拒绝零副作用、取消/迟到响应；✅ fd-relative Workspace Guard；✅ Seatbelt 内 `RENAME_EXCL` 新建与 `RENAME_SWAP` 旧 hash CAS/回滚；✅ 原子提交读回与不确定副作用标记；✅ `run_shell` 逐次审批、默认断网、干净环境、敏感/硬链接预检、Workspace/cwd 身份复检、进程组 timeout/cancel/同组后台清理与有界输出。MVP Lite 不宣称 native guardian、脱离 PGID 的后代清理或对抗性同用户 TOCTOU 防护。
 
@@ -249,7 +249,7 @@ Shell outcome/code 固定映射与优先级：
 
 ### 1.8 Error data registry
 
-ToolResult Error 与 API Error 是独立契约。ToolResult 禁止通用 `details|message|cause`、动态 map、raw stack/errno/Provider/OS message；每个 `(tool,error,code)` 默认 data=`{}`，只有模型确定性恢复所需且原 ToolCall 不含的安全事实才能进入 code 专属闭合 schema。API Error 可保留 `code,message,retryable,details,request_id` envelope，但 details 也必须按 API code 闭合、有界和安全，且绝不进入模型 ToolResult。内部诊断同样必须扫描、限长和访问隔离，不能默认原样持久化。
+ToolResult Error 与 JSON-RPC business error 是独立契约。ToolResult 禁止通用 `details|message|cause`、动态 map、raw stack/errno/Provider/OS message；每个 `(tool,error,code)` 默认 data=`{}`，只有模型确定性恢复所需且原 ToolCall 不含的安全事实才能进入 code 专属闭合 schema。JSON-RPC error 可在 `error.data` 中保留闭合的 `code,retryable,details`，但 details 也必须按 business code 闭合、有界和安全，且绝不进入模型 ToolResult。内部诊断同样必须扫描、限长和访问隔离，不能默认原样持久化。
 
 只读工具的非空 error data 只有：
 
@@ -564,12 +564,12 @@ summary
 
 ### 7.4 stdout/stderr 流
 
-- pipe reader 独立持续排空 stdout/stderr，不等待 SSE/Renderer/DB 消费。原始字节先执行字节凭证扫描，再增量 UTF-8 解码；非法序列以 `\xNN` 转义，文本规则再扫描解码结果。
+- pipe reader 独立持续排空 stdout/stderr，不等待 JSON-RPC notification、Renderer 或 DB 消费。原始字节先执行字节凭证扫描，再增量 UTF-8 解码；非法序列以 `\xNN` 转义，文本规则再扫描解码结果。
 - 安全文本按 100ms 或累计 4 KiB 合并，任一先到即 flush。每个 chunk 包含全局单调 `chunk_index`、流内 `stream_index`、`stream`、时间戳、redaction/truncation/tail_replay。全局序只表示 Runtime 观察交错，不声称 OS 同时写的绝对顺序。
 - 保留上限为 stdout 768 KiB、stderr 512 KiB、合计 1 MiB。先为 stderr 分配最多 512 KiB，stdout 使用剩余且不超过 768 KiB。流超限时在最终预算内等量保留 head/tail，不截断 UTF-8 字符或脱敏占位符。
 - UI 实时显示 head；达到 head 上限时只发一次中间省略标记，Runtime 继续排空管道并维护滚动 tail，结束时以 `tail_replay=true` 补发。持久化与最终 UI head/tail 完全一致。
 - 模型 observation 最多 32 KiB：stderr 优先最多 16 KiB，剩余给 stdout，流内仍 head/tail。内部审计保存 exit_code、duration、raw original/持久化 retained 字节数、termination_reason 和 redaction 元数据；ToolResult 只返回 1.6 定义的脱敏后 observation/returned 字节口径，raw counts 不进入 Event 或模型。
-- pipe reader -> 日志聚合器 -> Event publisher 使用有界队列。慢 SSE/Renderer 订阅断开后从最后 committed event id 回放，不增长无界内存，也不阻塞子进程。
+- pipe reader -> 日志聚合器 -> Event projector 使用有界队列。慢 Renderer 不增长无界内存，也不阻塞子进程；恢复时从最后 committed event id 通过 `run/readEvents` 补齐。
 - DB write/日志聚合故障终止进程组，返回 `output_capture_failed, side_effects_may_exist=true`并进入事实确认。cancel/timeout/resource limit 后在短暂宽限期内排空已产生管道字节，仍受同一上限。
 
 ### 7.5 Shell guardian
@@ -688,7 +688,7 @@ MVP Lite 当前实施状态：
 - ✅ 实机自检已覆盖 active root、sandbox home/tmp、外部 sentinel、敏感 carve-out、`.git`、symlink 逃逸、子进程继承、loopback 拒绝和基础进程组 timeout。
 - ✅ 自检已接入 Runtime initialize；任何失败都保持 Shell unavailable，不存在无沙箱回退。
 - ✅ MVP Lite 的逐次审批、默认断网、干净环境、256 KiB 有界输出、timeout/cancel 与进程组清理已经实现；Seatbelt 自检通过时产品能力 `runShell=true`。
-- ⏳ 完整目标态的 managed proxy、可配置 Toolchain Profile、manifest、精确资源监控、guardian 与 Redaction Service 自检仍未实现，不外推为完整目标态 Shell 已完成。
+- ⏳ 目标态候选的 managed proxy、可配置 Toolchain Profile、manifest、精确资源监控、guardian 与 Redaction Service 自检仍未实现，不外推为目标态 Shell 已完成。
 
 应用启动执行 Seatbelt 自检：
 

@@ -1,8 +1,8 @@
 # 桌面端安全与生命周期
 
-版本：v0.4
+版本：v0.4（探索草案）
 
-范围说明：本文描述完整目标态 Desktop 生命周期。第一期 Main/Runtime 通信、启动和异常处理以 [MVP Lite](../mvp-lite.md) 的 stdio JSON-RPC 边界为准。
+范围说明：本文描述目标态 Desktop 生命周期。Main/Runtime 通信跨阶段固定使用 [MVP Lite](../mvp-lite.md) 的 stdio JSON-RPC 边界。
 
 MVP Lite 当前实施状态：✅ Electron single-instance lock；✅ 默认 1180×800、最小 800×600 窗口；✅ Renderer 仅通过类型化 Preload 调用 Runtime；✅ Runtime stdout 协议/stderr 日志隔离；✅ Composer 固定在窗口底部、Execution Feed 独立滚动；✅ Run 完成后权威 SessionSnapshot 刷新与安全业务错误提示；✅ 退出时有界 shutdown/terminate。
 
@@ -10,10 +10,10 @@ MVP Lite 当前实施状态：✅ Electron single-instance lock；✅ 默认 118
 
 职责：
 
-- 生成 runtime token，启动和停止 Python sidecar。
+- 启动和停止 Python sidecar，独占其 stdin/stdout/stderr 生命周期。
 - 启动最早阶段取得 Electron single-instance lock；第二实例只激活已有窗口，不启动第二 sidecar。
-- 读取唯一 ready JSON 行并保存随机端口。
-- 代理 Renderer 的 HTTP API 和 SSE。
+- 实现双向 JSON-RPC：发送 Main 请求、响应 Runtime 主动请求、校验并转发 notifications。
+- 执行协议版本、消息大小、request id 和闭合 DTO 校验。
 - 调用 macOS 文件夹选择器。
 - 响应用户点击，在系统 Terminal 中打开 Workspace。
 - 处理窗口关闭、应用退出和 sidecar 异常。
@@ -57,9 +57,9 @@ window.eidos.toolchains.disable(profileId, userGestureNonce)
 
 每个方法固定 IPC channel、请求 schema 和响应 schema。Main 再次验证所有 Renderer 参数，不能信任 TypeScript 类型。
 
-所有修改 sidecar 持久状态的方法额外接收由 Renderer 为单次用户意图生成的 `operationId`，Main 映射为 HTTP `Idempotency-Key`；断线重试只能复用同一方法/参数/operationId，新的用户手势必须新建 ID。decision nonce、expected version 和 user gesture nonce 仍分别传递。GET/SSE、folder picker 与 open Terminal 不持久化 operation，Main 不自动重放后两者。
+所有修改 sidecar 持久状态的方法额外接收由 Renderer 为单次用户意图生成的 `operationId`，Main 将它放入对应 JSON-RPC params；断线重试只能复用同一 method/params/operationId，新的用户手势必须新建 ID。decision nonce、expected version 和 user gesture nonce 仍分别传递。只读 method、notifications、folder picker 与 open Terminal 不持久化 operation，Main 不自动重放后两者。
 
-OpenAPI 生成 Preload/Renderer type 与 runtime validator。Main 必须验证 sidecar 的 closed success/error DTO，分页 cursor 只允许原样透传；`runtime_contract_mismatch` 时停止对应流，不把未知字段或原 payload交给 Renderer。
+Pydantic 导出的版本化 schema、协议 fixture 和生成/校验后的 TypeScript contract 约束 Preload/Renderer type 与 runtime validator。Main 必须验证 sidecar 的 closed result/error DTO，分页 cursor 只允许原样透传；`runtime_contract_mismatch` 时停止对应通知流，不把未知字段或原 payload 交给 Renderer。
 
 ## 3. Renderer 安全
 
@@ -78,42 +78,41 @@ webSecurity: true
 - Sidecar 错误响应经 Main 字段白名单后返回 Renderer。
 - 敏感错误卡只显示 ruleset version、rule id/version、action、命中数和安全字段路径/行号；不显示原值、长度、摘要或哈希。
 
-## 4. Sidecar 启动与认证
+## 4. Sidecar 启动与通道所有权
 
 Main：
 
-1. 取得 Electron single-instance lock，再生成高熵 token。
-2. 以 `EIDOS_RUNTIME_TOKEN` 和专用生命周期控制 pipe 注入 sidecar。
-3. 接受当前 child 的 `listening` 后只代理最小 health；等待唯一、带 schema 的 ready，其他 stdout 作为日志处理。
-4. 验证 port 为本地有效端口、ready 属于当前 child，且 API/Event contract version 与当前 Main/Renderer registry 兼容，才开放业务 IPC/API/SSE。
-5. 所有后续请求添加 Bearer token。
+1. 取得 Electron single-instance lock，创建私有 stdin/stdout/stderr pipes 并拉起 sidecar。
+2. 立即发送 `initialize`，携带 client/runtime protocol 与 Event contract 版本；初始化完成前不发送业务 method。
+3. 只接受当前 child stdout 上的 JSON-RPC envelope。非法 JSON、未知 response id、方向错误或超限消息使当前 sidecar fail closed 退出。
+4. 验证 initialize result 属于当前 child，且 protocol/Event contract 与 Main/Renderer registry 兼容，才开放业务 IPC。
+5. `mode=diagnostic` 时只开放 status/recheck/shutdown；`mode=ready` 时才开放业务 method 和 notifications。
 
 Sidecar：
 
-- 在打开 DB 前验证状态目录并取得 `runtime.lock` 的独占 OS advisory lock，持有至进程退出。lock fd 在 open 时使用 `O_CLOEXEC` 并复检 `FD_CLOEXEC`，不得通过 spawn file actions、fd duplication 或显式传递进入 guardian、sandbox-exec、Shell 或其他子进程。锁内容的 PID/start identity/instance nonce/protocol version 只用于诊断；不得删锁文件、按 PID 抢占或接管旧 runtime token。
-- 只 bind `127.0.0.1`，不 bind `0.0.0.0` 或 `::`。
-- ready 前只有 `/internal/health` 可到达；gate 必须在路由匹配/body parsing 前拒绝其他请求。ready 后除 health 外都验证固定时间 token compare。
-- CORS 不作为认证手段；Renderer 不直连。
-- 日志 formatter 必须删除 Authorization header。
+- 在打开 DB 前验证状态目录并取得 `runtime.lock` 的独占 OS advisory lock，持有至进程退出。lock fd 在 open 时使用 `O_CLOEXEC` 并复检 `FD_CLOEXEC`，不得通过 spawn file actions、fd duplication 或显式传递进入 guardian、sandbox-exec、Shell 或其他子进程。锁内容的 PID/start identity/instance nonce/protocol version 只用于诊断；不得删锁文件或按 PID 抢占。
+- 不创建本地 listener；除继承的 stdin/stdout/stderr 外，不接受其他客户端 attach。
+- ready 前的 method gate 必须早于业务 params 解析和 operation 占用；只有 initialize/status/recheck/shutdown 可达。
+- stdout 禁止日志；stderr formatter 必须删除 API Key、认证 Header、用户正文和未扫描输出。
 
-Main 异常关闭控制 pipe 后，sidecar 立即停止接收新业务，提交可恢复中断事实、驱动 guardian 清理并退出，由 OS 释放 lock。新 Main 发现 lock 仍占用只做有界等待，随后报告 `runtime_already_active`；锁释放后只能启动新 sidecar并执行完整恢复，不能 attach 旧 sidecar。
+Main stdin EOF 或父进程退出后，sidecar 立即停止接收新业务，提交可恢复中断事实、驱动 guardian 清理并退出，由 OS 释放 lock。新 Main 发现 lock 仍占用只做有界等待，随后报告 `runtime_already_active`；锁释放后只能启动新 sidecar 并执行完整恢复，不能 attach 旧 sidecar。
 
-## 5. SSE 代理
+## 5. Event notification 桥接
 
 ```text
-sidecar committed Events
+Runtime committed Events
   -> same-transaction RunSnapshot + through_event_id
   -> Renderer atomically installs snapshot
-  -> Main authenticated SSE connection after watermark
-  -> IPC event stream
+  -> Runtime JSON-RPC notifications after watermark
+  -> Main validated IPC projection
   -> Renderer per-run reducer
 ```
 
-- Main 为每个活跃 Run 维护至多一个 sidecar SSE 连接。
+- Main 只维护当前 sidecar 的一条 stdout 消息流，不为每个 Run 建立额外连接。
 - Renderer 首次加载/重载都从 RunSnapshot 的 `through_event_id` 恢复；本地缓存水位不能替代权威 snapshot。
 - IPC listener 必须在组件卸载时释放。
 - Main 可批量转发高频 model/tool chunks，避免压垮 Renderer。
-- Main 对未知但 contract 声明可忽略的 event type 丢弃原 payload，只发送闭合 unsupported-event 占位并推进 id；已知 type 未知 version/非法 payload 停流并触发一次 snapshot 恢复。snapshot 仍未覆盖时显示 contract mismatch，禁止循环。
+- Main 对未知但 contract 声明可忽略的 event type 丢弃原 payload，只发送闭合 unsupported-event 占位并推进 id；已知 type 未知 version/非法 payload 停止对应 reducer 并触发一次 snapshot 恢复。发现 event id 缺口时调用 `run/readEvents` 补齐；snapshot 仍未覆盖时显示 contract mismatch，禁止循环。
 
 ## 6. Workspace 选择
 
@@ -174,7 +173,7 @@ canceled
 runtime_disconnected
 ```
 
-Renderer 只能从 snapshot 的稳定排序 `allowed_actions` 渲染 Continue/Cancel/Approve/Reject；不能仅凭 `waiting_user_input` 或本地 Event 猜测。提交后若服务端返回状态竞态，立即重新获取 snapshot。终态 snapshot 不订阅 SSE；未知 snapshot schema 显示兼容错误，未知 Event schema 先停止 reducer 再 resnapshot。
+Renderer 只能从 snapshot 的稳定排序 `allowed_actions` 渲染 Continue/Cancel/Approve/Reject；不能仅凭 `waiting_user_input` 或本地 Event 猜测。提交后若 Runtime 返回状态竞态，立即重新获取 snapshot。终态 snapshot 不应用实时 notifications；未知 snapshot schema 显示兼容错误，未知 Event schema 先停止 reducer 再 resnapshot。
 
 所有 `*_at` 作为 UTC Unix 毫秒 ApiTimestampV1 接收，Renderer 只负责本地化展示。Approval 倒计时以服务端 `approval_expires_at` 展示，但授权判断只在 Runtime；客户端墙钟、休眠或回拨不能延长授权。
 
@@ -211,7 +210,7 @@ Artifact UI 在 MVP 只接受 text/markdown/json/csv/html/code；不支持格式
 
 Renderer 不实现 raw reasoning 专用 UI；只渲染 `assistant_progress`、`final_answer` 和 reasoning token 用量元数据。
 
-Model Profile UI 必须区分未测试、测试中、已通过、已失效、失败和 Archived 状态。用户必须显式选择 Responses 或 Chat Completions。Test Connection 只能由用户手势触发，不接受任务或自定义 probe 文本；结果展示 snapshot/Gateway/model request/Tool Schema Dialect version、认证、模型、HTTP(S) streaming、`tool_choice`/`parallel_tool_calls` 控制、`strict=false` schema 模式、ToolCall/ToolResult 分片与无状态续接、usage、output token parameter、可选 WebSocket 的 supported/unsupported/unknown 和安全错误分类。WebSocket unsupported/unknown 不阻止选择；任一必需能力未通过、失效或 Archived Profile 禁用 Session 选择和新 Run 创建，既有 Run 仍展示其固化 snapshot。
+Model Profile UI 必须区分未测试、测试中、已通过、已失效、失败和 Archived 状态。用户必须显式选择 Responses 或 Chat Completions。Test Connection 只能由用户手势触发，不接受任务或自定义 probe 文本；结果展示 snapshot/Gateway/model request/Tool Schema Dialect version、认证、模型、HTTP/SSE、`tool_choice`/`parallel_tool_calls` 控制、`strict=false` schema 模式、ToolCall/ToolResult 分片与无状态续接、usage、output token parameter 和安全错误分类。任一必需能力未通过、失效或 Archived Profile 禁用 Session 选择和新 Run 创建，既有 Run 仍展示其固化 snapshot。
 
 Profile 编辑表单不回显 API Key，只提供保持、替换或在 `none` 认证下清除。连接/协议字段修改前提示“保存后需要重新 Test Connection”；纯名称修改不显示失效提示。Archive 使用确认卡且无 Delete 操作，恢复后根据 snapshot 有效性决定是否可选。
 
@@ -221,7 +220,7 @@ Endpoint 表单接受任意 HTTP(S) 地址类别，拒绝 URL 内嵌凭证和已
 
 模型流中断时，已显示的 assistant_progress 保留并显示“输出未完成”；Renderer 不把它并入最终回答，也不渲染部分 ToolCall 参数。
 
-首 delta 前重试时，Renderer 根据 Event 显示 `正在重新连接 x/y`；WebSocket 降级时显示一次“已切换到 HTTP(S) 传输”。同一 Run 后续 HTTP(S) 请求不重复提示。首 delta 后不得显示重连状态。
+首 delta 前 HTTP/SSE 重试时，Renderer 根据 Event 显示 `正在重新连接 x/y`。首 delta 后不得显示重连状态，而应展示流已中断和继续入口。
 
 Run 用量区域分别显示 Provider 已报告 usage、总 Attempt 数和 usage unknown Attempt 数；unknown 不显示为 0，也不据此生成精确费用。密钥轮换只显示实际使用的 credential revision，不显示或比较密钥内容。
 

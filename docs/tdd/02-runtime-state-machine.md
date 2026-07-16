@@ -1,8 +1,8 @@
 # Runtime、队列与状态机
 
-版本：v0.4
+版本：v0.4（探索草案）
 
-范围说明：本文描述完整目标态状态机。第一期固定为 [MVP Lite](../mvp-lite.md) 的 `Session -> Run -> Item/ToolCall`，不实现 Execution Segment、持久 FIFO、stopped 或跨重启恢复。
+范围说明：本文描述目标态状态机草案。第一期固定为 [MVP Lite](../mvp-lite.md) 的 `Session -> Run -> Item/ToolCall`，不实现 Execution Segment、持久 FIFO、stopped 或跨重启恢复。
 
 MVP Lite 当前实施状态：✅ 全局单活动 Run；✅ `running/waiting_approval/succeeded/failed/canceled/interrupted`；✅ 串行模型/工具循环与 20 Step 上限；✅ 连续两次非法响应失败；✅ Cancel、迟到审批和 worker 异常收敛；✅ 未完成 Run 启动时标记 `interrupted` 且不重放。
 
@@ -292,12 +292,12 @@ applied | not_applied | outcome_unknown
 
 ## 9. Retry
 
-- 已验证支持 WebSocket 时优先使用；首个 delta 前瞬时错误最多重放 5 次，随后以相同逻辑请求降级到原 endpoint 的 HTTP(S) streaming。明确不支持时立即降级。
-- HTTP(S) 在首个 delta 前遇到网络错误、429、5xx 最多重试 2 次；仍失败或 request cycle 达到 10 分钟时，当前 Step 标记 `failed/model_temporarily_unavailable`，Run 进入 waiting_user_input。
-- 每个 Attempt 的 connect/first-delta/stream-idle 上限分别为 15/180/120 秒，所有 Attempt、退避和降级共享 request cycle deadline。
+- 模型固定使用 HTTP 请求与 SSE 响应流；首个 delta 前遇到网络错误、429、5xx 最多重试 2 次。
+- 重试仍失败或 request cycle 达到 10 分钟时，当前 Step 标记 `failed/model_temporarily_unavailable`，Run 进入 waiting_user_input。
+- 每个 Attempt 的 connect/first-delta/stream-idle 上限分别为 15/180/120 秒，所有 Attempt 和退避共享 request cycle deadline。
 - 设置 `pause_reason=model_temporarily_unavailable`；多个 ModelAttempt 仍属于同一个 Step，只计一次 Step 预算。
 - 用户继续时创建新 Segment，使用原 Model Profile snapshot 重新入队。
-- 收到任何 delta 后不透明重试且不切换传输；Step 标记 `failed/model_stream_interrupted`。
+- 收到任何 delta 后不透明重试；Step 标记 `failed/model_stream_interrupted`。
 - Provider token 截断、内容过滤和 Runtime 输出流超限分别标记 `model_output_truncated|model_output_blocked|model_output_limit_exceeded`；Run waiting_user_input，已提交文本 incomplete，整个 ToolCall 批次丢弃，零自动重试。
 - 已显示文本保留为 `assistant_progress` 并标记 `incomplete=true`，不能成为 final_answer。
 - 未完整解析的 ToolCall 全部丢弃，一个也不创建或执行。

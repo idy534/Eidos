@@ -1,34 +1,126 @@
-# Eidos Agent Runtime 完整目标态 TDD
+# Eidos Agent Runtime 目标态 TDD
 
-版本：v0.4
+版本：v0.4（探索草案）
 
-第一期实现以 [MVP Lite](../mvp-lite.md) 为准，使用 stdio JSON-RPC 双向协议和 `Session -> Run -> Item/ToolCall`。第二期以 [第二期实施范围清单](../mvp-phase-2.md) 为准：继续沿用该已验证的 Desktop/Main/sidecar 边界，优先实现持久化、调度、恢复、安全扫描与文件契约。HTTP/SSE、Model Profile 双 wire、Public Mode 和 Artifact 仍是后续目标态能力。
+本 TDD 先定义稳定边界和模块关系，再由各章节描述模块内部合同。已实现能力以 [MVP Lite](../mvp-lite.md) 为准；第二期只实施 [第二期清单](../mvp-phase-2.md) 中列出的纵向切片。
 
-## 文档目录
+## 1. 系统全景
 
-1. [总体架构](01-architecture.md)
-2. [Runtime、队列与状态机](02-runtime-state-machine.md)
-3. [工具、审批与沙箱](03-tools-approval-sandbox.md)
-4. [模型、上下文与流式输出](04-model-context-streaming.md)
-5. [API、事件与存储](05-api-events-storage.md)
-6. [桌面端安全与生命周期](06-desktop-security-lifecycle.md)
-7. [测试与里程碑](07-testing-and-milestones.md)
+```mermaid
+flowchart LR
+    subgraph Desktop["本地 Desktop"]
+        UI["Renderer"] -->|"typed IPC"| MAIN["Electron Main"]
+        MAIN -->|"stdio JSON-RPC 2.0 / JSONL"| RT["Python Runtime"]
+        RT --> DB["SQLite<br/>State + Event"]
+        RT --> TOOLS["Tool Registry / Executor"]
+        TOOLS --> FS["Workspace Files"]
+        TOOLS --> SB["Seatbelt Shell"]
+    end
 
-## 完整目标态实现原则
+    RT -->|"HTTP request"| MODEL["Remote Model Provider"]
+    MODEL -->|"SSE response stream"| RT
+```
 
-- 安全边界故障时 fail closed，不允许降级为无沙箱 Shell。
-- 规范化业务表是当前状态来源，Events 是同事务写入的追加式 Timeline/Outbox。
-- 多个 Run 可以存在，但模型调用和工具执行由一个持久化 FIFO 执行器串行调度。
-- 对有副作用操作不做自动重放；失败后先确认事实，再允许下一次变更。
-- 所有不可信内容在截断、展示、模型观察和持久化之前经过同一版本化敏感规则。
-- 文件读取证据、完整 Diff、真实路径身份和元数据复检共同约束逐文件修改；Shell 由固定 Toolchain、前后 Manifest、资源监控和有界双流输出共同约束。
-- Model Profile 的编辑/Archive、独占凭证、Responses/Chat 双 Adapter、Endpoint/TLS/认证/参数校验、显式能力探测、WebSocket 到 HTTP(S) 的有界降级、无状态上下文、流容量、上下文预算和 snapshot 失效由 Gateway、API 与存储共同约束。
-- 工具能力由独立 `tool_contract_version`、递归闭合的 Tool Schema Dialect v1、本地 effective arguments 校验、确定性 Step tool set 和协议无关 canonical ToolResult 共同约束；Provider `strict=false` 不替代 Runtime 授权。
-- ToolResult 使用版本化 deterministic JSON、唯一 immutable base、每 Step 冻结 projection 和跨重启故障 quarantine；list/read/range/search、文件变更、Artifact 与 Shell 的模型结果均有闭合字段、容量、排序和错误映射契约。
-- Q131-Q140 固定副作用工具 success/no-op、Shell observation/outcome、`side_effects_may_exist`、Reject feedback 以及 code 专属 error data；API Error 与模型 ToolResult Error 分层。
-- Q141-Q150 固定 ToolResult 数值与 Unicode canonical 规则、SQLite 迁移、Shell guardian、ready gate、RunSnapshot、水位续接、Workspace 持久身份、唯一执行权、allowed actions 与 reconciliation epoch。
-- Q151-Q155 固定持久化 operation 幂等、闭合 API/IPC DTO 与水位 keyset、Event contract、Unix 毫秒/monotonic 时间和 storage fail-closed 恢复。
-- Q156-Q159 固定第二期 RuntimeEngine 的职责 seam、持久状态与执行态分层、Pydantic 闭合契约模型，以及 ToolSpec 的分级副作用语义。
-- MVP Lite 的代码和自动化验收已落地；完整目标态中未列入第二期实施范围的条目仍只是技术契约，不代表能力已经落地。
+固定边界：
 
-模型原始 reasoning 内容不进入持久化或 UI；模型文本按 `assistant_progress` 与 `final_answer` 分类。
+- 本地控制面只有标准 JSON-RPC 2.0 over stdio/JSONL；不开放本地 HTTP、SSE、WebSocket、Unix Socket 或随机端口。
+- Main 是 Runtime 的唯一父进程和客户端；stdout 只承载协议，stderr 只承载安全日志。
+- Runtime 调用远端模型使用 HTTP 请求与 SSE 响应流；Provider 原始事件不得直达 Renderer。
+- Runtime 是 Session、Run、Item、ToolCall、Approval 和 Event 的状态权威，Renderer 只是投影。
+
+## 2. 一次 Run 的主时序
+
+```mermaid
+sequenceDiagram
+    participant UI as Renderer
+    participant Main as Electron Main
+    participant RT as RuntimeEngine
+    participant Model as Model Provider
+    participant Tool as Tool Orchestrator
+    participant DB as SQLite
+
+    UI->>Main: typed IPC: startRun
+    Main->>RT: run/start JSON-RPC request
+    RT->>DB: commit Run + Event
+    RT-->>Main: event/committed: run_started
+    RT->>Model: HTTP request with StepContext
+    Model-->>RT: SSE internal deltas / ToolCall
+    RT->>DB: commit Item / ToolCall / Approval + Event
+    RT-->>Main: event/committed: Item / ToolCall
+    alt tool requires approval
+        RT->>Main: item/requestApproval JSON-RPC request
+        Main-->>UI: approval card
+        UI-->>Main: approve / reject
+        Main-->>RT: approval response
+    end
+    RT->>Tool: validate -> approve -> sandbox -> execute
+    Tool-->>RT: canonical ToolResult
+    RT->>DB: commit result + Event
+    RT->>Model: next HTTP request
+    Model-->>RT: SSE final answer
+    RT->>DB: commit terminal state + Event
+    RT-->>Main: event/committed: Run terminal
+```
+
+## 3. 模块关系
+
+```mermaid
+flowchart TD
+    SERVER["JSON-RPC Server"] --> ENGINE["RuntimeEngine"]
+    ENGINE --> SM["StateMachine"]
+    ENGINE --> MR["ModelRunner"]
+    ENGINE --> TD["ToolDispatcher"]
+    ENGINE --> AP["Approval"]
+    ENGINE --> STORE["SQLite Store"]
+    MR --> CTX["Context Builder"]
+    MR --> GW["Model Gateway"]
+    TD --> REG["ToolSpec Registry"]
+    TD --> SB["Sandbox / Workspace Guard"]
+    SM --> STORE
+    AP --> STORE
+    STORE --> EV["Event Projector"]
+    EV --> SERVER
+```
+
+依赖方向必须保持：Transport 只做收发；RuntimeEngine 只做协调；状态机决定合法迁移；Storage 原子提交事实；Event 层只投影已提交事实；工具和模型 Adapter 不直接写 UI payload。
+
+## 4. 模块文档
+
+| 模块 | 核心职责 | 输入/输出 | 详细设计 |
+|---|---|---|---|
+| Process & Trust Boundary | 进程、stdio、初始化、单实例和信任边界 | JSON-RPC envelope、capability handshake | [总体架构](01-architecture.md) |
+| Runtime & StateMachine | Run 队列、Step、暂停、取消、终态与恢复 | command/domain event → legal state transition | [Runtime、队列与状态机](02-runtime-state-machine.md) |
+| Tool Orchestrator | ToolSpec、参数、审批、沙箱、执行与结果 | effective arguments → canonical ToolResult | [工具、审批与沙箱](03-tools-approval-sandbox.md) |
+| Model & Context | StepContext、HTTP/SSE Adapter、上下文和流归一化 | local facts → model request/internal events | [模型、上下文与流式输出](04-model-context-streaming.md) |
+| Protocol / Event / Storage | JSON-RPC 方法、闭合 DTO、Event、水位和 SQLite | request/fact ↔ result/notification/snapshot | [协议、事件与存储](05-api-events-storage.md) |
+| Desktop | Main、Preload、Renderer、审批 UI 和生命周期 | typed IPC ↔ validated JSON-RPC | [桌面端安全与生命周期](06-desktop-security-lifecycle.md) |
+| Verification | 单元、集成、崩溃注入、协议 fixture 和里程碑 | invariants → executable checks | [测试与里程碑](07-testing-and-milestones.md) |
+
+## 5. 从 Codex 借鉴的边界
+
+[Codex 技术架构参考](../codex-technical-architecture.md) 只作为能力地图；Eidos 的阶段清单、协议和安全合同优先，不能把参考文档中的产品规模直接变成需求。
+
+借鉴：
+
+- 本地 sidecar 是稳定 Runtime boundary，UI 不实现 Agent Loop。
+- 双向 RPC 支持 Runtime 主动发起审批；通知只承载 Item/Event 生命周期。
+- 模型事件先归一为内部事件，再映射客户端协议。
+- ToolSpec Registry 统一模型可见定义与本地执行入口；审批与沙箱属于单一调度链。
+- 每个模型 Step 捕获不可变 StepContext，保证模型看到的工具、策略和实际执行视图一致。
+- 协议 schema 与 Runtime 版本绑定，由闭合模型和 fixture 共同验证。
+
+不借鉴：Codex JSON-RPC Lite 的 wire 差异、多传输、多 Agent、并行执行、MCP/插件生态、Worktree 编排和 JSONL 历史存储。这些都没有当前需求。
+
+Codex 的项目级指令可作为 Context Builder 的后续候选：第一版最多读取 active root 下一个有大小上限的 `AGENTS.md`，按确定顺序放入 StepContext；只有进入后续阶段清单时才实施，不提前复制多层配置体系。
+
+## 6. 跨模块不变量
+
+- 安全能力故障时 fail closed，不降级为无沙箱 Shell。
+- 规范化业务表是当前状态来源；Event 是同事务写入的追加式 Timeline/Outbox。
+- 多个 Run 可以存在，但模型调用和工具执行由一个持久 FIFO 执行器串行调度。
+- 有副作用操作不自动重放；失败后先核验事实，再允许下一次变更。
+- 不可信内容在截断、展示、模型观察和持久化之前经过同一版本化敏感规则。
+- ToolCall 只消费已校验的 effective arguments；Approval 不能修改参数或放宽 Sandbox。
+- ToolCall 保存唯一 canonical ToolResult；Context 和 UI 只生成有界投影，不创建第二个结果事实。
+- 模型原始 reasoning 不进入持久化或 UI；文本只分为 `assistant_progress` 与 `final_answer`。
+- 未进入阶段清单的目标态合同不能驱动当前实现扩项。

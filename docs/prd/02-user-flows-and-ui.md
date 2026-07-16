@@ -1,8 +1,8 @@
 # 用户流程与界面
 
-版本：v0.4
+版本：v0.4（探索草案）
 
-范围说明：本文描述完整目标态用户体验。第一期只实现 [MVP Lite](../mvp-lite.md) 定义的 Workspace Mode、单活动 Run 和最小 Execution Feed。
+范围说明：本文描述目标态用户体验草案。第一期只实现 [MVP Lite](../mvp-lite.md) 定义的 Workspace Mode、单活动 Run 和最小 Execution Feed。
 
 ## 1. Workbench 信息架构
 
@@ -73,7 +73,7 @@ Execution Feed 不保存或展示模型供应商的 raw reasoning：
 - HTTPS 始终校验证书、主机名和系统信任链，不提供忽略证书错误的继续入口。
 - Provider 扩展参数可以透传，但不能覆盖 Runtime 管理的模型、消息、工具、streaming、认证、传输或输出上限字段。
 - `context_window_tokens` 与 `max_output_tokens` 由用户显式填写，Eidos 不按模型名称自动推断；明确的上下文上限不匹配会使 Run 失败并要求修改 Profile 后重新测试。
-- HTTP(S) streaming 是必需能力；WebSocket 是可选优化。已确认不支持 WebSocket 的 Profile 仍可通过原 endpoint 的 HTTP(S) 使用，不会因此变为不可选。
+- HTTP 请求与 SSE streaming 是唯一模型传输。Test Connection 必须验证 SSE 终态、ToolCall/ToolResult 关联和 usage；不探测或协商 WebSocket。
 - Test Connection 分别展示 usage、ToolCall 分片关联、工具控制/Schema Dialect、无状态 ToolResult 续接和输出 token 字段结果；Chat 只在显式测试中协商兼容字段，Run 不临时试错。
 
 ## 4. Workspace 主流程
@@ -184,9 +184,9 @@ Shell 审批卡必须说明命令作用于执行时的当前 Workspace，并展�
 
 用户补充信息后，同一 Run 创建新 Execution Segment 并重新进入 FIFO 队列。
 
-“继续、取消、Approve、Reject”只按 Runtime 返回的当前 `allowed_actions` 渲染。它是界面提示而不是授权；提交时服务端仍以最新状态重新判断。不可恢复的 waiting 原因不显示继续入口，未知原因默认不允许继续。
+“继续、取消、Approve、Reject”只按 Runtime 返回的当前 `allowed_actions` 渲染。它是界面提示而不是授权；提交时 Runtime 仍以最新状态重新判断。不可恢复的 waiting 原因不显示继续入口，未知原因默认不允许继续。
 
-模型重连期间，Execution Feed 显示有界重试进度和 WebSocket 到 HTTP(S) streaming 的降级；首个 delta 后不显示“正在重连”，而是保留未完成进度并暂停。瞬时错误耗尽终止当前模型请求周期，不直接终止 Run。
+模型在首个 delta 前重试时，Execution Feed 显示有界重试进度；首个 delta 后不再重放请求，而是保留未完成进度并暂停。瞬时错误耗尽终止当前模型请求周期，不直接终止 Run。
 
 模型因输出 token 上限、内容过滤或 Eidos 输出资源上限而停止时，已确认安全的文本保留为未完成进度，任何 ToolCall 都不执行。UI 区分 `model_output_truncated|model_output_blocked|model_output_limit_exceeded`，并允许用户在新 Segment 中要求缩短或拆分输出。
 

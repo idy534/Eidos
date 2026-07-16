@@ -1,14 +1,16 @@
 # 功能需求
 
-版本：v0.4
+版本：v0.4（探索草案）
 
-范围说明：本文件的 P0 是完整目标态优先级。第一期必须项和延期项以 [MVP Lite](../mvp-lite.md) 为准。
+范围说明：本文件是目标态功能合同索引。第一期与第二期范围分别以 [MVP Lite](../mvp-lite.md) 和 [第二期实施范围](../mvp-phase-2.md) 为准。
 
-MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 `Session/Run/Item/ToolCall` 最小事实；✅ 串行 Agent Loop 与 20 Step 上限；✅ `list_files/read_file/search_text`；✅ 模型流、基础 Execution Feed 与真实 DeepSeek 联网闭环；✅ Cancel 与异常 `interrupted`；✅ 本机私有 DeepSeek 配置；✅ `write_file/apply_patch` 完整 diff、逐次审批、hash/CAS 复检和原子提交；✅ `run_shell` 逐次审批、Seatbelt 默认断网、环境隔离、Homebrew Toolchain、有界输出、timeout/取消。不能把这些 ✅ 外推为本文件完整目标态条目已全部满足。
+MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 `Session/Run/Item/ToolCall` 最小事实；✅ 串行 Agent Loop 与 20 Step 上限；✅ `list_files/read_file/search_text`；✅ 模型流、基础 Execution Feed 与真实 DeepSeek 联网闭环；✅ Cancel 与异常 `interrupted`；✅ 本机私有 DeepSeek 配置；✅ `write_file/apply_patch` 完整 diff、逐次审批、hash/CAS 复检和原子提交；✅ `run_shell` 逐次审批、Seatbelt 默认断网、环境隔离、Homebrew Toolchain、有界输出、timeout/取消。不能把这些 ✅ 外推为本文件目标态条目已全部满足。
 
-## 1. P0 功能清单
+模块阅读索引：Desktop/Workspace `F001-F006`；Runtime 与恢复 `F007-F011,F023-F040,F127-F139`；文件、Shell 与安全 `F012-F022,F041-F073`；模型与上下文 `F028,F031,F033,F036-F039,F074-F096`；工具契约与结果 `F097-F126`。编号保持稳定，阶段是否实施仍以 `mvp-lite.md` 和 `mvp-phase-2.md` 为准。
 
-实施标记只表示表内要求已在 MVP Lite 当前边界通过自动化、macOS 实机或真实模型验收；未打勾条目继续属于完整目标态或显式延期项。完整目标态的 manifest、精确资源监管、跨重启恢复、复杂 Model Profile 和 Event Timeline 不因 MVP Lite 完成而视为已实现。
+## 1. 目标态功能清单
+
+实施标记只表示表内要求已在 MVP Lite 当前边界通过自动化、macOS 实机或真实模型验收；未打勾条目继续属于目标态候选或显式延期项。manifest、精确资源监管、跨重启恢复、复杂 Model Profile 和 Event Timeline 不因 MVP Lite 完成而视为已实现。
 
 | 编号 | 功能 | 要求 |
 |---|---|---|
@@ -44,7 +46,7 @@ MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 
 | F030 | Event Timeline | 所有关键事件与状态变更同事务持久化 |
 | F031 | Context Budget | P0 提供确定性的有界上下文裁剪 |
 | F032 | Redaction | 截断、展示、返回模型与持久化前按确定性规则分级处理 |
-| F033 | 有限重试 | 已验证 WebSocket 首 delta 前最多重连 5 次并降级 HTTP(S)，HTTP(S) 瞬时错误最多 2 次；只读瞬时错误 1 次 |
+| F033 | 有限重试 | 模型 HTTP/SSE 在首 delta 前遇瞬时错误最多重试 2 次；首 delta 后不重放；只读工具瞬时错误重试 1 次 |
 | F034 | Finalization | 硬停止前一次最长 60 秒、无工具的收尾调用 |
 | F035 | 系统 Terminal | Workspace 中只提供用户点击打开系统 Terminal |
 | F036 | 模型流中断恢复 | 首 delta 后中断不重试，保留未完成进度并等待用户输入 |
@@ -91,8 +93,8 @@ MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 
 | F077 | Provider 参数 | 允许有界扩展参数透传，禁止覆盖 Runtime 核心字段或注入传输层配置 |
 | F078 | Model 容量声明 | 用户必填 context/output token 上限；不按模型名推断；明确不匹配使 Run failed 并使 snapshot 失效 |
 | F079 | 凭证轮换 | Run 不固化密钥；既有 Run 每次模型调用读取 Profile 当前凭证，但保持创建时非密钥配置与能力快照 |
-| F080 | 模型传输降级 | WebSocket 是可选优化；瞬时失败使当前 Run 粘滞 HTTP(S)，明确不支持时按 snapshot 抑制后续 WebSocket，不影响 Profile 可选性 |
-| F081 | 模型请求周期 | 一个 Step 的初始请求、重试、降级和退避共享 10 分钟 deadline；首 delta 后禁止重放 |
+| F080 | 模型 HTTP/SSE 传输 | Runtime 只发送 HTTP 请求并消费 SSE 响应流；不在 Run 内切换为 WebSocket 或其他传输 |
+| F081 | 模型请求周期 | 一个 Step 的初始请求、重试和退避共享 10 分钟 deadline；首 delta 后禁止重放 |
 | F082 | 模型尝试透明度 | 每次网络发送独立记录 Attempt；已报告 usage 累计，未知 usage 明示，不假设服务端幂等 |
 | F083 | 上下文预检 | 使用版本化 UTF-8 字节与固定开销公式估算；发送前必须满足输入、输出预留和 safety margin 总预算 |
 | F084 | 本地输入超限 | 不可裁剪输入超限时零 Provider 请求并以 `context_input_too_large` 终止 Run，不失效 Profile snapshot |
@@ -140,14 +142,14 @@ MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 
 | F126 | Canonical Unicode | ToolResult 使用版本化、跨实现一致的 Unicode 与转义规则，不静默规范化用户内容 |
 | F127 | 安全迁移 | 数据库只向前迁移；迁移前保留一致可验证备份，失败时不进入业务 Runtime |
 | F128 | Shell 异常清理 | Main 或 sidecar 异常退出后，有界清理受控 Shell 进程组和已识别后代，不把 Agent Shell 留作后台服务 |
-| F129 | Ready 屏障 | Runtime 完成状态、契约、安全自检与恢复后才开放业务 API 和调度；此前仅提供安全 health |
+| F129 | Ready 屏障 | Runtime 完成状态、契约、安全自检与恢复后才接受业务 JSON-RPC method 并启动调度；此前仅提供闭合诊断 method |
 | F130 | Workbench 一致启动 | Run 页面从同一事实快照与 Event 水位启动，重载不漏状态或把旧审批当作当前事实 |
 | F131 | Workspace 持久身份 | Workspace 移动、替换或身份不可验证时不继承旧授权；恢复必须由用户显式选择 |
 | F132 | 唯一执行权 | 同一用户状态目录任一时刻只有一个 sidecar 可以迁移、恢复、调度或执行 |
-| F133 | 服务端可执行动作 | UI 操作由服务端当前状态事实决定；不可恢复 Run 不显示或接受继续操作 |
+| F133 | Runtime 可执行动作 | UI 操作由 Runtime 当前状态事实决定；不可恢复 Run 不显示或接受继续操作 |
 | F134 | 事实确认 episode | 每次新副作用不确定性都要求之后至少一次成功只读观察，旧观察不能解除新的确认屏障 |
-| F135 | 写 API 幂等 | Renderer 写操作在断线、超时和重启重试时返回原提交结果或明确不确定，不重复产生领域状态或 Event |
-| F136 | 闭合 API/IPC | HTTP、Preload 与 Renderer 使用同源闭合 DTO；未知字段、非法分页和 Runtime 契约不匹配安全失败 |
+| F135 | 写请求幂等 | Renderer 发起的持久化 JSON-RPC 操作在超时和重启重试时返回原提交结果或明确不确定，不重复产生领域状态或 Event |
+| F136 | 闭合 Protocol/IPC | JSON-RPC、Preload 与 Renderer 使用同源闭合 DTO；未知字段、非法分页和 Runtime 契约不匹配安全失败 |
 | F137 | Event 前向兼容 | Timeline 新增可忽略事件不阻断旧 UI；状态语义不兼容时由版本握手和 snapshot 恢复阻断误解释 |
 | F138 | 统一时间 | 持久化/API 时间统一 UTC 毫秒，运行时预算和 deadline 不受系统墙钟回拨延长 |
 | F139 | 存储故障恢复 | 状态无法可靠提交时停止业务且不虚报成功；释放空间后先校验、对账再 ready，不自动删除或重放副作用 |
@@ -195,9 +197,9 @@ MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 
 | 候选文件 | 32 MiB | 超限改用受审批 Shell |
 | 单文件敏感扫描 | 32 MiB | 超限不返回正文 |
 | 单次搜索扫描 | 256 MiB / 15 秒 | 可返回已完成整文件扫描的安全结果 |
-| 模型请求周期 | 10 分钟 | 含建连、流式、全部重试、退避和传输降级 |
+| 模型请求周期 | 10 分钟 | 含 HTTP 建连、SSE 流、全部重试和退避 |
 | 模型建连/首 delta/流空闲 | 15/180/120 秒 | 每次 Attempt，且不得越过请求周期 deadline |
-| WebSocket/HTTP(S) 重试 | 5/2 次 | 仅首个 delta 前；WebSocket 耗尽后降级原 endpoint 的 HTTP(S) streaming |
+| 模型 HTTP/SSE 重试 | 2 次 | 仅首个 delta 前；收到首个 delta 后禁止重放 |
 | 模型可见文本 | 64 KiB..4 MiB | `CLAMP(request_max_output_tokens*16,64 KiB,4 MiB)` |
 | discarded reasoning | 2 MiB | 只计数后丢弃，超限终止流 |
 | 单 Event/总模型流 | 1 MiB / 8 MiB | 按协议解码后 payload 字节 |

@@ -1,8 +1,8 @@
 # 模型、上下文与流式输出
 
-版本：v0.4
+版本：v0.4（探索草案）
 
-范围说明：本文描述完整目标态 Model Gateway。MVP Lite 已按首个实际接入模型收敛为固定 DeepSeek `deepseek-v4-flash` Chat Completions HTTP(S) SSE Adapter；✅ 已实现并真实联网验证流式可见文本、跨 chunk ToolCall 归并、ToolResult 回填、120 秒总 deadline、取消连接、隐藏 reasoning、安全错误映射和本地上下文超限零请求失败。第一期不实现 Responses、WebSocket、Capability Probe 或 contract version 路由；完整目标态仍保留双 wire API 设计。
+范围说明：本文描述目标态 Model Gateway。MVP Lite 已按首个实际接入模型收敛为固定 DeepSeek `deepseek-v4-flash` Chat Completions HTTP(S) SSE Adapter；✅ 已实现并真实联网验证流式可见文本、跨 chunk ToolCall 归并、ToolResult 回填、120 秒总 deadline、取消连接、隐藏 reasoning、安全错误映射和本地上下文超限零请求失败。目标态可保留 Responses 与 Chat Completions 两种 wire encoding，但网络传输统一为 HTTP 请求与 SSE 响应流。
 
 ## 1. Model Profile
 
@@ -53,7 +53,7 @@ updated_at
 2. 请求不得读取或携带用户任务、Session 消息、Workspace、Artifact、Timeline 或 ToolResult 内容。
 3. 探测只使用所选 wire API，依次验证认证、模型存在、Provider 接受配置的输出 token 上限、streaming terminal、工具控制/Schema Dialect、ToolCall 与 ToolResult 关联、stateless continuation 和最终 usage 字段。参数接受请求验证具工具请求可以显式发送 `strict=false, tool_choice=auto, parallel_tool_calls=true`，但不要求生成多调用。
 4. 关联 probe 严格分两阶段：第一阶段只提供单一固定工具，发送 `strict=false, tool_choice=required, parallel_tool_calls=false`，必须得到恰好一个合法 ToolCall；Gateway 不执行，只生成固定 ToolResult。第二阶段回传该 ToolCall/ToolResult，移除 tools 并发送 `tool_choice=none`，必须返回固定确认文本和完整 usage。Probe ToolCall 永不进入 Tool Executor。
-5. 短探测不声明已证明完整 context window。HTTP(S) streaming 是必需项；仅 Responses 额外探测 WebSocket 为 `supported|unsupported|unknown`，Chat 固定 `unsupported`。短探测使用 `request_max_output_tokens=min(profile.max_output_tokens,512)`，另一个无任务数据的参数校验请求验证 Provider 接受 Profile 声明的输出上限字段。
+5. 短探测不声明已证明完整 context window。HTTP 请求与 SSE 完整终态是必需项；不探测 WebSocket 或其他传输。短探测使用 `request_max_output_tokens=min(profile.max_output_tokens,512)`，另一个无任务数据的参数校验请求验证 Provider 接受 Profile 声明的输出上限字段。
 6. 只有全部必需检查通过才创建 `passed` capability snapshot；部分通过仍保存 `failed` snapshot 和安全分类结果，但 Profile 不可选择。
 7. 每次探测都按 Profile 内单调递增 `snapshot_version` 创建新记录，绑定 `configuration_hash`、Gateway contract version 和探测时间，不覆盖历史结果。
 
@@ -78,7 +78,6 @@ tool_call = passed|failed
 tool_control = passed|failed
 tool_schema = passed|failed
 usage = passed|failed
-websocket_transport = supported|unsupported|unknown
 output_token_parameter = max_output_tokens|max_completion_tokens|max_tokens
 stateless_continuation = passed|failed
 error_code nullable
@@ -91,8 +90,6 @@ Profile 只有在未 Archive、当前 `configuration_hash`、Gateway contract ve
 
 正常运行中若 Provider 不再满足固化 snapshot 已通过的 streaming、工具控制、Tool Schema Dialect、ToolCall/ToolResult 关联或 usage 契约，Gateway 返回 `model_capability_drift`。若 Provider 明确返回 context-length exceeded，则映射为 `model_context_limit_mismatch`。两者都属于确定性模型兼容性错误：Run 直接 `failed`，不重试、不 Finalize、不修改 Run 快照；Runtime 同时使 Profile 当前 capability snapshot 失效，阻止新 Session/Run，直到用户编辑并重新测试。
 
-WebSocket 不属于 selectable 的必需能力。瞬时 WebSocket 故障不使 capability snapshot 失效；明确的 Upgrade 拒绝、426 或协议不支持会在独立 transport health 记录中为当前 `(profile_id, configuration_hash, snapshot_version)` 设置 `ws_disabled=true`。该记录无 TTL、无后台探测，新 snapshot 自动使用新 key；HTTP(S) streaming 的确定性漂移仍按上段失效。
-
 ### 1.3 Endpoint、TLS 与认证
 
 - `base_url` 必须是绝对 HTTP(S) URL；允许公网、loopback、局域网和其他私网，不执行地址类别或 DNS 私网过滤。
@@ -103,7 +100,7 @@ WebSocket 不属于 selectable 的必需能力。瞬时 WebSocket 故障不使 c
 - HTTPS 使用 macOS 系统信任库，必须验证证书有效期、主机名和完整信任链；HTTP client 不暴露 `verify=false` 或忽略证书错误路径。
 - `auth_mode=bearer` 固定发送 `Authorization: Bearer <api_key>`；`api_key_header` 固定发送 `api-key: <api_key>`；`none` 不读取或发送凭证。
 - Gateway 只添加固定 Content-Type、Accept、User-Agent 和上述认证 Header；Profile 不接受任意自定义 Header。
-- API Key、完整 Authorization Header 和 Provider 原始错误正文不进入日志、Event、snapshot 或 API 响应。HTTP 端点在 UI 标记为非加密，但请求契约与 HTTPS 相同。
+- API Key、完整 Authorization Header 和 Provider 原始错误正文不进入日志、Event、snapshot 或 JSON-RPC result。HTTP 端点在 UI 标记为非加密，但请求契约与 HTTPS 相同。
 
 ### 1.4 Provider 扩展参数
 
@@ -160,20 +157,19 @@ usage 必须包含非负整数 `input_tokens,output_tokens,total_tokens` 且 `to
 
 - 每个 Step 从 Eidos 本地 Timeline/Context Builder 重建完整语义输入，不依赖 Provider history。Provider response ID 只写 Attempt 审计字段。
 - Responses ToolResult 编码为 `function_call_output.call_id=provider_call_id`；Chat 编码为 `role=tool,tool_call_id=provider_call_id`。相应完整 assistant ToolCall item/message 必须在本地上下文中先于结果。
-- WebSocket session 只承载传输，不持有不可替代语义状态。Provider 必须依赖服务端会话才能完成 ToolResult continuation 时，Test Connection 失败 `model_stateless_mode_unsupported`。
+- HTTP 连接或 SSE 流只承载传输，不持有不可替代语义状态。Provider 必须依赖服务端会话才能完成 ToolResult continuation 时，Test Connection 失败 `model_stateless_mode_unsupported`。
 
-### 2.3 传输选择
+### 2.3 HTTP/SSE 传输
 
-- 仅 `wire_api=responses` 且 `websocket_transport=supported`、当前 snapshot 未设置 `ws_disabled` 时优先使用 Responses-over-WebSocket；Chat 或 `unsupported|unknown` 直接使用 HTTP(S) streaming。
-- WebSocket URL 只能从固化 `base_url` 做同 Origin、同 path prefix 的协议映射：`https->wss`、`http->ws`。降级沿用原 `base_url` 的 `https|http` scheme，不允许静默改写 scheme。
-- 首个 delta 前 WebSocket 遇到瞬时网络错误时最多重放 5 次；明确不支持时不消耗重试预算，立即切换 HTTP(S)。
-- WebSocket 预算耗尽后，同一逻辑模型请求以完全相同的 model、canonical input、tools、parameters 和 `request_max_output_tokens` 切换 HTTP(S)；当前 Run 后续请求粘滞使用 HTTP(S)。
-- 瞬时降级不跨 Run；新 Run 依据 capability snapshot 和 transport health 重新选择。明确 `ws_disabled` 跨 Run 生效，直到用户显式 Test Connection 生成新 snapshot。
-- 收到首个 delta 后禁止传输切换或请求重放；中断按 `model_stream_interrupted` 处理。
+- Responses 与 Chat Adapter 都通过固化 endpoint 发起一次 HTTP 请求，并以 SSE 消费响应；不协商 WebSocket 或其他传输。
+- 每个 Attempt 必须保持相同的 model、canonical input、tools、parameters、认证模式和 `request_max_output_tokens`。
+- 首个 delta 前遇到瞬时网络错误、429 或 5xx 时最多重试 2 次；Retry-After 和固定退避受同一 request-cycle deadline 约束。
+- 收到首个 delta 后禁止请求重放；中断按 `model_stream_interrupted` 处理。
+- HTTP 与 HTTPS scheme 来自 Profile 固化的 `base_url`，重试不得静默改写 scheme、Origin、endpoint 或 TLS 策略。
 
 ## 3. 流式事件
 
-- delta 到达后先进入增量敏感扫描器，只有已确认安全或已脱敏的文本才通过内部 EventBus 推送给 SSE。
+- delta 到达后先进入增量敏感扫描器，只有已确认安全或已脱敏的文本才进入内部 model event 管线，再由持久 Event 与 JSON-RPC notification 投影给客户端。
 - `tool_call_delta` 在完整解析和参数扫描前只存在于短暂内存，不对 UI 流式展示、不持久化原始片段；通过后只生成受控的 ToolCall 摘要事件。
 - 按 100ms 或累计 4KB 合并为一个持久化 chunk，任一阈值先到即 flush。
 - 完成时保存经增量扫描后合并的完整最终响应和 usage；Provider 原始响应不落盘。
@@ -364,18 +360,18 @@ estimated_input_tokens <= usable_input_budget
 
 每次实际网络发送都写入独立 ModelAttempt；同一 Step 的这些 Attempt 共享 `logical_model_request_id`，但拥有不同 `attempt_index`、transport、凭证 revision、Provider request id、时间和结果。MVP 不发送或依赖厂商专有 `Idempotency-Key`；首 delta 前的重放仍可能产生重复 Provider 计算或计费。
 
-同一 Step 的一个逻辑模型请求周期从第一次发送前开始，共享 10 分钟 hard deadline。该 deadline 覆盖 DNS、TLS、建连、读取、全部 Attempt、Retry-After、固定退避和 WebSocket 到 HTTP(S) 的降级；不是每个 Attempt 各有 10 分钟。每个 Attempt 的局部上限为：
+同一 Step 的一个逻辑模型请求周期从第一次发送前开始，共享 10 分钟 hard deadline。该 deadline 覆盖 DNS、TLS、HTTP 建连、SSE 读取、全部 Attempt、Retry-After 和固定退避；不是每个 Attempt 各有 10 分钟。每个 Attempt 的局部上限为：
 
 - connect：15 秒。
 - first delta：180 秒。
 - stream idle：120 秒。
 
-任何局部等待都取局部上限与 cycle 剩余时间的较小值。WebSocket 五次重试退避固定 `1s,2s,4s,8s,16s`；HTTP(S) 两次重试退避固定 `1s,2s`。合法 Retry-After 优先，但上限 60 秒且不能越过 cycle deadline。
+任何局部等待都取局部上限与 cycle 剩余时间的较小值。HTTP/SSE 两次重试退避固定 `1s,2s`。合法 Retry-After 优先，但上限 60 秒且不能越过 cycle deadline。
 
-- 首个 delta 前 WebSocket 瞬时错误按传输规则重试并降级；HTTP(S) 对网络失败、429、5xx 最多重试 2 次。
-- 周期或 HTTP(S) 重试耗尽后 Step 标记 `model_temporarily_unavailable`，Run 进入 waiting_user_input。
+- 首个 delta 前 HTTP/SSE 对网络失败、429、5xx 最多重试 2 次。
+- 周期或重试耗尽后 Step 标记 `model_temporarily_unavailable`，Run 进入 waiting_user_input。
 - 同一 Step 的多个 ModelAttempt 只占一个 Step 预算；用户继续时创建新 Segment。
-- 收到 delta 后失败：本 Attempt 与 Step 标记 `model_stream_interrupted`，不透明重试、不切换传输。
+- 收到 delta 后失败：本 Attempt 与 Step 标记 `model_stream_interrupted`，不透明重试。
 - Provider 正常报告 output token 截断、内容过滤或 Runtime 触发输出流容量上限时，分别进入 `waiting_user_input/model_output_truncated|model_output_blocked|model_output_limit_exceeded`；三者均不重试、不切换传输、不执行该响应任何 ToolCall。
 - 已提交 content chunk 保留为 `assistant_progress/incomplete`，不得升级为 final_answer。
 - 部分 tool_call_delta 丢弃，不创建 ToolCall row。
@@ -390,7 +386,7 @@ estimated_input_tokens <= usable_input_budget
 - Run 的 Model Profile snapshot 不可修改；修复配置后只能创建新 Run。
 - 用户取消会关闭流并结束 Step。
 
-usage 按 Attempt 保存：Provider 明确报告的 usage 逐份计入 `reported_usage_total`；失败 Attempt 未返回 usage 时保存 `usage_status=unknown`，不得填零或推算。Run 汇总同时返回已报告 usage、unknown Attempt 数和总 Attempt 数。任何 ToolCall 都必须等当前响应 completed 后才创建，因此传输重放不会重复执行本地副作用。
+usage 按 Attempt 保存：Provider 明确报告的 usage 逐份计入 `reported_usage_total`；失败 Attempt 未返回 usage 时保存 `usage_status=unknown`，不得填零或推算。Run 汇总同时返回已报告 usage、unknown Attempt 数和总 Attempt 数。任何 ToolCall 都必须等当前响应 completed 后才创建，因此首 delta 前的请求重试不会重复执行本地副作用。
 
 ## 8. Finalization Call
 

@@ -10,7 +10,7 @@
 
 本清单是第二期唯一的实施范围与完成状态来源。每项必须满足自身验收条件、通过自动化验证，并在 PRD/TDD 的对应契约没有冲突后，才能将 `- [ ]` 改为 `- [x] ✅`。仅完成部分代码、人工演示或仅更新文档均不得打勾。
 
-第一期的 [MVP Lite](mvp-lite.md) 仍是已完成基线。完整目标态 PRD/TDD 中未列出的能力并未取消，只是明确不属于本期。
+第一期的 [MVP Lite](mvp-lite.md) 仍是已完成基线。目标态 PRD/TDD 中未列出的能力只是候选方向，不属于本期；进入后续实施前仍需重新确认并写入对应阶段清单。
 
 ## 2. 第二期边界
 
@@ -22,13 +22,12 @@
 
 ### 本期不交付
 
-- loopback HTTP/SSE、随机端口、Bearer Token，以及 FastAPI、SQLAlchemy、Alembic 迁移。
-- 多 Model Profile、Test Connection、Capability Snapshot、Responses Adapter、WebSocket 和传输降级。
+- 多 Model Profile、Test Connection、Capability Snapshot 和 Responses Adapter。
 - Public Mode、`publish_artifact`、Artifact 生命周期和数据清理。
 - managed network proxy、Shell manifest、精确 RSS/fd/fork/allocated-block 监管、原生 Shell guardian。
 - 内嵌 Terminal、智能摘要、Keychain、跨平台、多 Agent、后台运行。
 
-> ponytail: 现有 stdio 单 Desktop 边界已覆盖第二期用户路径；只有出现多客户端或远程 Runtime 需求时，才评估 HTTP/SSE 迁移。
+> ponytail: 本地控制面固定为 stdio JSON-RPC，不再保留 loopback HTTP/SSE、随机端口、Bearer Token、FastAPI 或 WebSocket 迁移路线。远端模型链路继续使用 HTTP 请求和 SSE 响应流。
 
 Pydantic v2 是本期唯一新增的 Runtime 依赖，用于 JSON-RPC DTO、持久化事实投影和工具契约的闭合校验；它不引入 HTTP 框架，也不代替状态机、Tool Schema Dialect、敏感扫描或文件系统授权。
 
@@ -53,14 +52,14 @@ P2-00 基线与契约
 
 | 清单分组 | PRD 主要落点 | TDD 主要落点 |
 |---|---|---|
-| P2-00 | F129、F136、F137 | 01 架构、05 API/Events/Storage、07 测试与里程碑 |
-| P2-01 | F003、F127、F129、F132、F139 | 01 架构、05 API/Events/Storage |
-| P2-02 | F030、F135、F136、F137、F138 | 05 API/Events/Storage、06 Desktop、07 测试与里程碑 |
-| P2-03 | F007–F009、F025、F027、F034、F133 | 02 Runtime 状态机、05 API/Events/Storage |
-| P2-04 | F023、F025、F036、F040、F120、F134 | 02 Runtime 状态机、03 工具/审批/沙箱、05 API/Events/Storage |
-| P2-05 | F045–F049、F057、F058 | 03 工具/审批/沙箱、04 模型/上下文/流、05 API/Events/Storage |
+| P2-00 | F129、F136、F137 | 01 架构、05 协议/Events/Storage、07 测试与里程碑 |
+| P2-01 | F003、F127、F129、F132、F139 | 01 架构、05 协议/Events/Storage |
+| P2-02 | F030、F135、F136、F137、F138 | 05 协议/Events/Storage、06 Desktop、07 测试与里程碑 |
+| P2-03 | F007–F009、F025、F027、F034、F133 | 02 Runtime 状态机、05 协议/Events/Storage |
+| P2-04 | F023、F025、F036、F040、F120、F134 | 02 Runtime 状态机、03 工具/审批/沙箱、05 协议/Events/Storage |
+| P2-05 | F045–F049、F057、F058 | 03 工具/审批/沙箱、04 模型/上下文/流、05 协议/Events/Storage |
 | P2-06 | F013–F015、F018、F050–F053、F097–F126 | 03 工具/审批/沙箱、04 模型/上下文/流、07 测试与里程碑 |
-| P2-07 | F029、F130、F133、F136 | 05 API/Events/Storage、06 Desktop、07 测试与里程碑 |
+| P2-07 | F029、F130、F133、F136 | 05 协议/Events/Storage、06 Desktop、07 测试与里程碑 |
 
 ## 5. 详细实施清单
 
@@ -159,7 +158,7 @@ P2-00 基线与契约
 - [ ] P2-07-03 Feed 展示 Timeline、拒绝/继续入口、对账屏障和安全摘要；不显示 raw reasoning、敏感原文、API Key、内部路径或原始 OS/Provider 错误。
 - [ ] P2-07-04 通过 snapshot + Event 水位恢复页面；重载与延迟通知不能覆盖更新的权威状态。
 - [ ] P2-07-05 在隔离临时根执行 Runtime、Desktop、协议 fixture、迁移、重启、敏感扫描和 macOS Seatbelt 回归。
-- [ ] P2-07-06 更新 PRD/TDD 的实施状态、M2 进度和本清单复选框；确认未把未完成的完整目标态能力标记为已实现。
+- [ ] P2-07-06 更新 PRD/TDD 的实施状态、M2 进度和本清单复选框；确认未把未完成的目标态候选能力标记为已实现。
 
 验收：`pnpm test`、第二期新增存储/状态机/安全回归及 macOS 实机 smoke test 全部通过；本清单无未完成条目后才可标记第二期完成。
 
@@ -167,8 +166,8 @@ P2-00 基线与契约
 
 以下能力依赖第二期完成，但不应提前实现：
 
-- Model Profile、Capability Snapshot、双 wire Adapter、Attempt 审计、Context Builder 和重试/传输降级。
+- Model Profile、Capability Snapshot、双 wire Adapter、Attempt 审计、Context Builder 和 HTTP/SSE 重试加固。
 - Public Mode、Artifact、不可变快照和数据管理。
-- managed proxy、Shell manifest/资源监控/guardian，以及传输层 HTTP/SSE 演进。
+- managed proxy、Shell manifest/资源监控/guardian。
 
 当 P2-07 全部完成后，再从上述能力中选择一条完整纵向链路作为第三期范围，避免并行引入多个尚无持久化与安全基础的子系统。
