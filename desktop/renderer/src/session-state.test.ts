@@ -85,6 +85,44 @@ test("a completed assistant item without content preserves streamed text", () =>
   assert.equal(result?.items[0]?.status, "completed");
 });
 
+test("a new run's user item stays after the preceding run's items", () => {
+  const previousUser: Item = {
+    id: "item-previous-user",
+    sessionId: session.id,
+    runId: "run-previous",
+    ordinal: 1,
+    kind: "user_message",
+    status: "completed",
+    createdAt: 1,
+    content: "First question",
+    completedAt: 1,
+  };
+  const previousAssistant: Item = {
+    ...assistant("First answer", "completed"),
+    id: "item-previous-assistant",
+    runId: "run-previous",
+  };
+  const newUser: Item = {
+    ...previousUser,
+    id: "item-new-user",
+    runId: "run-new",
+    content: "Second question",
+  };
+  const result = applyNotification(
+    { session, runs: [], items: [previousUser, previousAssistant] },
+    {
+      method: "item/started",
+      params: { sessionId: session.id, runId: newUser.runId, item: newUser },
+    },
+  );
+
+  assert.deepEqual(result?.items.map((item) => item.id), [
+    previousUser.id,
+    previousAssistant.id,
+    newUser.id,
+  ]);
+});
+
 test("run completion replaces the active run with its terminal state", () => {
   const notification: RuntimeNotification = {
     method: "run/completed",

@@ -142,7 +142,7 @@ function upsertRun(runs: Run[], incoming: Run): Run[] {
 function upsertItem(items: Item[], incoming: Item): Item[] {
   const existing = items.findIndex((item) => item.id === incoming.id);
   if (existing < 0) {
-    return [...items, incoming].sort((left, right) => left.ordinal - right.ordinal);
+    return [...items, incoming];
   }
   return items.map((item, index) => index === existing ? incoming : item);
 }

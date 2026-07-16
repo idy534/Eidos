@@ -86,13 +86,16 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 }
 
 .brand-mark {
-  display: grid;
-  width: 1.75rem;
-  height: 1.75rem;
-  place-items: center;
-  border: 1px solid #555b53;
-  border-radius: 50%;
-  font-size: 0.9rem;
+  display: block;
+  width: 1.9rem;
+  height: 1.9rem;
+  flex: none;
+}
+
+.brand-mark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .new-session { width: 100%; margin-bottom: 1.5rem; text-align: left; }
@@ -245,6 +248,7 @@ input, textarea {
 .empty-kicker { margin-bottom: 0.5rem; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 
 .runtime-gate { display: grid; min-height: 100vh; place-content: center; padding: 2rem; text-align: center; background: var(--surface); }
+.runtime-logo { width: 5.5rem; height: 5.5rem; margin: 0 auto 1rem; }
 .runtime-gate h1 { font-size: 3rem; }
 .runtime-gate > p:last-child { color: var(--muted); }
 

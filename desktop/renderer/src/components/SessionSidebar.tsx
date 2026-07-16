@@ -1,4 +1,5 @@
 import type { Session } from "../contracts";
+import { EidosMark } from "./EidosMark";
 
 
 interface Props {
@@ -13,7 +14,9 @@ export function SessionSidebar({ sessions, selectedId, disabled, onCreate, onSel
   return (
     <aside className="sidebar" aria-label="Sessions">
       <div className="brand-row">
-        <span className="brand-mark">E</span>
+        <span className="brand-mark" aria-hidden="true">
+          <EidosMark />
+        </span>
         <span>Eidos</span>
       </div>
       <button className="new-session" disabled={disabled} onClick={onCreate}>＋ 新建 Session</button>

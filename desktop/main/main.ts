@@ -22,6 +22,7 @@ type RuntimeStatus =
   | { state: "error"; message: string };
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
+app.setName("Eidos");
 let runtimeStatus: RuntimeStatus = { state: "starting" };
 let runtimeClient: RuntimeClient | undefined;
 let isQuitting = false;

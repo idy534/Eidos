@@ -1,5 +1,6 @@
 {
   "name": "eidos",
+  "productName": "Eidos",
   "version": "0.1.0",
   "private": true,
   "type": "module",

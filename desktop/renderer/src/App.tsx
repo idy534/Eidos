@@ -9,6 +9,7 @@ import type {
   SessionSnapshot,
 } from "./contracts";
 import { ExecutionFeed } from "./components/ExecutionFeed";
+import { EidosMark } from "./components/EidosMark";
 import { SessionSidebar } from "./components/SessionSidebar";
 import {
   applyNotification,
@@ -361,6 +362,7 @@ export function App() {
 function RuntimeGate({ status }: { status: RuntimeStatus }) {
   return (
     <main className="runtime-gate" role={status.state === "error" ? "alert" : "status"}>
+      <EidosMark className="runtime-logo" />
       <p className="eyebrow">Eidos · Local Runtime</p>
       <h1>{status.state === "error" ? "启动失败" : "正在启动"}</h1>
       <p>{status.state === "error" ? status.message : "正在完成 Python Runtime 协议握手…"}</p>
