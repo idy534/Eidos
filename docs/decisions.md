@@ -1,7 +1,7 @@
 # Eidos 目标态设计决策记录
 
 版本：v0.4
-范围：Grilling Q1-Q160
+范围：Grilling Q1-Q165
 
 本文件记录已经由产品与技术共同确认的目标态设计结论。它们仍可能被后续显式决策覆盖；只有进入 [MVP Lite](mvp-lite.md) 或阶段实施清单的条目才构成当前交付范围。PRD/TDD 与本文件冲突时应先统一文档再实现。
 
@@ -171,6 +171,7 @@
 | Q162 | Session 标题由首次 `userInput` 触发一次独立、无工具的模型命名；标题持久化后不随后续 Run 改写，生成失败时退回首次输入的有界安全短文本。 | PRD 任务命名；TDD Model/Session/Event |
 | Q163 | Workspace 项目按最早保留 Session 的创建时间倒序并可折叠；已读完成是 Renderer 展示状态而非 Runtime 状态，左侧任务右键与内容区标题菜单复用同一任务操作。 | PRD Workbench；TDD Desktop/Session 投影 |
 | Q164 | Session 采用固定系统 UI/等宽字体与 16/14/13px 标题、正文、代码层级；模型正文由安全 CommonMark Renderer 生成 React element，原始 HTML、远程图片和正文内直接导航默认禁用，用户消息和结构化执行卡不走 Markdown。 | PRD Execution Feed；TDD Renderer 安全/测试 |
+| Q165 | 左侧导航使用常规字重且本地折叠/重复选择不读取快照；跨 Session 切换即时更新导航、后台原子安装快照而不全局淡出。有工具的一轮将进度与工具合并为可计时折叠过程，成功后默认折叠且不显示完成卡；无工具则直接流式输出最终 Markdown。 | PRD Workbench/Execution Feed；TDD Desktop/Renderer |
 
 ## 文件契约统一收敛
 

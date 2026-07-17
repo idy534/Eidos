@@ -415,6 +415,8 @@ eventId, runId, eventType, schemaVersion, createdAt, payload
 
 Event 只承载 Timeline/增量；RunSnapshot、规范化业务表和详情 method 永远是当前事实。Approval、allowed actions、Run/ToolCall 终态或安全 gate 不得只存在于 Event。Reducer 按 event id 升序处理；id 为全局序列，同一 Run 允许因其他 Run 的 Event 而跳号。`id<=watermark` 的重复无条件忽略，不比较 wire payload：当前 ruleset 的读时脱敏/整体替代可以合法改变同一持久 Event 的响应字节。
 
+RunSnapshot 不返回持久化的完整 ToolCall arguments。为支持历史执行摘要，Runtime 将 `argumentsJson` 重写为按工具固定的展示白名单：读取/文件变更只保留 `path` 与范围，搜索只保留 `query`，Shell 只保留 `command/cwd/timeoutSeconds`，`list_files` 返回空对象；`content`、`patch`、未知字段、Approval diff 和未知工具参数一律不进入快照。该 JSON 必须重新 canonical 编码并继续计入 snapshot byte budget；实时 completed notification 仍沿用自身的最小投影规则。
+
 `eventContractVersion` 由 `initialize` 握手比较。只有 contract 明确声明“同一兼容版本中新增 type 可忽略，且不参与旧 Reducer 正确重建规范化状态”时，未知 `eventType` 才可前向兼容：Main 丢弃未知原 payload，生成闭合 `{kind=unsupported_event,eventType}` 安全占位，Renderer 显示后推进水位。旧客户端必须理解的状态语义变化必须提升不兼容 event contract，并在业务 IPC 开放前阻断。
 
 已知 type 的未知 `schemaVersion` 或 payload 校验失败时，Reducer 停止且不推进 offending id，重新获取 RunSnapshot。若 snapshot `throughEventId` 已覆盖它，则原子安装并从新水位继续；若尚未覆盖，只允许有界重取，随后 `runtime_contract_mismatch`，禁止循环。读时敏感替换固定为闭合 `{kind=content_unavailable,reason=sensitive_structured_payload_rejected}`，保留原 envelope id/type/version，所有 Renderer 必须接受并推进，不尝试恢复原 payload。

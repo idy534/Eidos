@@ -29,6 +29,7 @@ export function App() {
   const [modelList, setModelList] = useState<ModelListResult>();
   const [selectedModelId, setSelectedModelId] = useState<ModelId>("deepseek-v4-flash");
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [navigationSessionId, setNavigationSessionId] = useState<string>();
   const [readCompletedSessions, setReadCompletedSessions] = useState<Set<string>>(() => {
     try {
       const stored = JSON.parse(window.localStorage.getItem(READ_COMPLETIONS_KEY) ?? "[]");
@@ -45,7 +46,6 @@ export function App() {
   const [renaming, setRenaming] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [busy, setBusy] = useState(false);
-  const [refreshingSnapshot, setRefreshingSnapshot] = useState(false);
   const [error, setError] = useState<string>();
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const snapshotReads = useRef(new SnapshotReadCoordinator()).current;
@@ -58,7 +58,7 @@ export function App() {
   );
   const continuingRun = activeRun?.status === "waiting_user_input"
     && activeRun.allowedActions?.includes("continue") ? activeRun : undefined;
-  const interactionBusy = busy || refreshingSnapshot;
+  const interactionBusy = busy;
 
   useEffect(() => {
     const unsubscribeStatus = window.eidosRuntime.onStatus(setRuntime);
@@ -136,13 +136,21 @@ export function App() {
   }, [runtime]);
 
   async function selectSession(session: Session): Promise<void> {
+    setNavigationSessionId(session.id);
+    if (selectedSessionId.current === session.id && snapshot?.session.id === session.id) {
+      if (session.taskStatus === "completed") {
+        setReadCompletedSessions((current) => new Set(current).add(session.id));
+      }
+      setSettingsOpen(false);
+      setSessionMenuOpen(false);
+      setRenaming(false);
+      return;
+    }
     const token = snapshotReads.select(session.id);
     selectedSessionId.current = session.id;
     if (session.taskStatus === "completed") {
       setReadCompletedSessions((current) => new Set(current).add(session.id));
     }
-    setRefreshingSnapshot(false);
-    setBusy(true);
     setError(undefined);
     setSettingsOpen(false);
     setSessionMenuOpen(false);
@@ -156,10 +164,12 @@ export function App() {
       }
     } catch (cause) {
       if (snapshotReads.isCurrent(token)) {
+        const fallbackSessionId = snapshot?.session.id;
+        selectedSessionId.current = fallbackSessionId;
+        snapshotReads.select(fallbackSessionId ?? "");
+        setNavigationSessionId(fallbackSessionId);
         setError(messageFrom(cause));
       }
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -175,7 +185,7 @@ export function App() {
       const session = await window.eidosRuntime.createSession(workspace);
       const token = snapshotReads.select(session.id);
       selectedSessionId.current = session.id;
-      setRefreshingSnapshot(false);
+      setNavigationSessionId(session.id);
       setSessions((current) => [session, ...current]);
       const loaded = await loadAuthoritativeSnapshot(session.id);
       const accepted = snapshotReads.accept(token, loaded);
@@ -251,6 +261,7 @@ export function App() {
       setRenaming(false);
       if (snapshot?.session.id === deleted.deletedSessionId) {
         setSnapshot(undefined);
+        setNavigationSessionId(undefined);
         selectedSessionId.current = undefined;
         snapshotReads.select("");
         if (remaining[0]) {
@@ -341,7 +352,6 @@ export function App() {
     if (!token) {
       return;
     }
-    setRefreshingSnapshot(true);
     try {
       const loaded = await loadAuthoritativeSnapshot(sessionId);
       const accepted = snapshotReads.accept(token, loaded);
@@ -351,10 +361,6 @@ export function App() {
     } catch (cause) {
       if (snapshotReads.isCurrent(token)) {
         setError(messageFrom(cause));
-      }
-    } finally {
-      if (snapshotReads.isCurrent(token)) {
-        setRefreshingSnapshot(false);
       }
     }
   }
@@ -367,7 +373,7 @@ export function App() {
     <main className="workbench">
       <SessionSidebar
         sessions={sessions}
-        selectedId={snapshot?.session.id}
+        selectedId={navigationSessionId ?? snapshot?.session.id}
         disabled={interactionBusy || runtime.storageHealth.state !== "ready"}
         modelId={selectedModelId}
         modelConfigured={Boolean(model?.configured)}

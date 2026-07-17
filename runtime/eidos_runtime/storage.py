@@ -2673,13 +2673,45 @@ def _snapshot_item(
     tool_call = item.get("toolCall")
     if isinstance(tool_call, dict):
         projected = dict(tool_call)
-        projected.pop("argumentsJson", None)
+        display_arguments = _snapshot_display_arguments(tool_call)
+        if display_arguments is None:
+            projected.pop("argumentsJson", None)
+        else:
+            projected["argumentsJson"] = display_arguments
         projected.pop("approvalDiff", None)
         result = projected.get("resultJson")
         if isinstance(result, str):
             projected["resultJson"] = _truncate_snapshot_text(result)
         item["toolCall"] = projected
     return item
+
+
+def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
+    fields_by_tool = {
+        "list_files": (),
+        "read_file": ("path",),
+        "read_file_range": ("path", "startLine", "endLine"),
+        "search_text": ("query",),
+        "write_file": ("path",),
+        "apply_patch": ("path",),
+        "delete_file": ("path",),
+        "run_shell": ("command", "cwd", "timeoutSeconds"),
+    }
+    fields = fields_by_tool.get(tool_call.get("toolName"))
+    arguments = _load_json_object(tool_call.get("argumentsJson"))
+    if fields is None or arguments is None:
+        return None
+    projected = {
+        field: arguments[field]
+        for field in fields
+        if field in arguments and isinstance(arguments[field], (str, int))
+    }
+    return json.dumps(
+        projected,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _truncate_snapshot_text(value: str) -> str:

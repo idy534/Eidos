@@ -247,6 +247,10 @@ class RuntimeLoopTests(unittest.TestCase):
         file_item = next(item for item in snapshot["items"] if item["kind"] == "file_change")
         self.assertEqual(file_item["status"], "completed")
         self.assertEqual(file_item["toolCall"]["approvalDecision"], "approve")
+        self.assertEqual(
+            json.loads(file_item["toolCall"]["argumentsJson"]),
+            {"path": "notes.txt"},
+        )
         completed_notification = next(
             notification
             for notification in notifications
@@ -390,6 +394,10 @@ class RuntimeLoopTests(unittest.TestCase):
         snapshot = self.store.read_session_snapshot(self.session["id"])
         command_item = next(
             item for item in snapshot["items"] if item["kind"] == "command_execution"
+        )
+        self.assertEqual(
+            json.loads(command_item["toolCall"]["argumentsJson"]),
+            {"command": "printf shell-ok", "timeoutSeconds": 5},
         )
         result = json.loads(command_item["toolCall"]["resultJson"])
         self.assertEqual(result["outcome"], "success")
