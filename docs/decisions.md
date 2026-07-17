@@ -170,6 +170,7 @@
 | Q161 | 左侧任务导航按 canonical `workspace_root` 分组；同一 Workspace 的所有 Session 作为任务放在同一项目节点下，不再重复平铺 Workspace 名。 | PRD Workbench；TDD Session 投影 |
 | Q162 | Session 标题由首次 `userInput` 触发一次独立、无工具的模型命名；标题持久化后不随后续 Run 改写，生成失败时退回首次输入的有界安全短文本。 | PRD 任务命名；TDD Model/Session/Event |
 | Q163 | Workspace 项目按最早保留 Session 的创建时间倒序并可折叠；已读完成是 Renderer 展示状态而非 Runtime 状态，左侧任务右键与内容区标题菜单复用同一任务操作。 | PRD Workbench；TDD Desktop/Session 投影 |
+| Q164 | Session 采用固定系统 UI/等宽字体与 16/14/13px 标题、正文、代码层级；模型正文由安全 CommonMark Renderer 生成 React element，原始 HTML、远程图片和正文内直接导航默认禁用，用户消息和结构化执行卡不走 Markdown。 | PRD Execution Feed；TDD Renderer 安全/测试 |
 
 ## 文件契约统一收敛
 

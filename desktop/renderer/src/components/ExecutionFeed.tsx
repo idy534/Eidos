@@ -2,6 +2,7 @@ import { Fragment } from "react";
 
 import type { ApprovalRequest, Item, Run } from "../contracts";
 import { terminalRunPresentation } from "../session-state";
+import { MarkdownContent } from "./MarkdownContent";
 
 
 interface Props {
@@ -106,9 +107,9 @@ function FeedItem({
     return (
       <article className="feed-item feed-item--assistant">
         <p className="feed-label">Eidos</p>
-        <p className={item.status === "in_progress" ? "streaming" : ""}>
-          {item.content || "正在思考下一步…"}
-        </p>
+        <div className={item.status === "in_progress" ? "streaming" : ""}>
+          <MarkdownContent content={item.content || "正在思考下一步…"} />
+        </div>
       </article>
     );
   }

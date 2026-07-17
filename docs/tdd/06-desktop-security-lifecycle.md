@@ -191,6 +191,8 @@ Workbench 布局额外满足：
 - 新任务首次 `run/start` 前，Composer 操作栏在“开始”按钮左侧渲染 Runtime 返回的模型选项。默认选中 `defaultModelId`；无可用模型时禁用“开始”并链接到 Settings。提交成功后选择器锁定，Reducer 不允许 Event 或本地状态切换该 Run 的 `modelId`。
 - Session 内容区 header 只以低于页面标题的字号渲染权威 `title` 和紧邻标题的紧凑三点按钮。标题 `contextmenu`、三点按钮与左侧任务按钮 `contextmenu` 打开同一组“编辑标题、删除任务”动作；左侧右键菜单支持 `Shift+F10`，重命名成功后以 Runtime result 更新，删除先显示不可逆确认，`session_has_active_run` 时引导先结束任务。
 - 删除成功后清理选中态并导航到剩余第一个任务或空状态；不得调用文件 API。header 不渲染 Developer Preview、Workspace 名称/绝对路径和通用审批/敏感扫描说明；Workspace 路径只在左侧项目辅助信息中显示，具体安全范围由 Approval 卡片展示。
+- Renderer 在 `:root` 固定 `--font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif` 与 `--font-code: ui-monospace, "SFMono-Regular", SFMono-Regular, Menlo, Monaco, Consolas, monospace`；字号 token 为 `11/12/13/13/14/16px`（xs/caption/sidebar/code/body/title），代码、正文和标题行高分别为 `20/22/24px`。Session header、Feed、Composer、工具输出和 Diff 只引用这些 token。
+- `assistant_message` 交给同步 CommonMark Renderer 生成 React element；`user_message` 保持纯文本。Renderer 不使用 `dangerouslySetInnerHTML`，启用 `skipHtml`，并将 Markdown `a/img` 替换为不导航、不加载资源的文本组件；流式 item 每次以当前已提交安全文本重新解析，未闭合语法不得阻塞后续 delta。工具、Approval 和 Run 状态不经过 Markdown。
 
 审批卡必须展示：
 

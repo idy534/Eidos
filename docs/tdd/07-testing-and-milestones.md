@@ -308,6 +308,7 @@
 - 左下角齿轮打开仅含模型目录/API Key 的第一版 Settings；旧对话区模型横幅不存在，未配置时从 Settings 返回后列表和默认项刷新。
 - Runtime 模型列表按 flash、pro 返回时默认第一个可用项；开始前可切换，未知/不可用/空列表禁止创建 Run，提交成功后模型选择锁定且 RunSnapshot 保持所选 `modelId`。
 - Session header 以较小字号显示标题和紧邻的紧凑三点菜单；内容区标题、三点菜单和左侧任务标题右键/`Shift+F10` 共享重命名/删除操作，活动任务删除被拒绝，确认删除后导航安全且 Workspace 文件零变化；预览阶段、绝对路径和通用安全说明不出现在 header。
+- Renderer 静态渲染测试断言模型 Markdown 的标题、列表和 fenced code 生成对应语义化 element；raw HTML、脚本、远程图片和正文链接不生成可执行/可加载/可导航节点，用户消息不进入 Markdown Renderer。实际 Electron 验收 Session 标题 `16px/24px`、正文 `14px/22px`、代码 `13px/20px` 及系统 UI/等宽字体栈。
 - 每个状态只按 snapshot allowed_actions 渲染；recoverable/irrecoverable/unknown/workspace unavailable 的 Continue、Approval 竞态和 terminal 空动作均符合服务端矩阵。
 - Main 对 success/error DTO 二次 runtime validation、cursor 只透传、unknown Event 原 payload 零 Renderer 泄漏、不兼容 contract 停流；storage health-only 只显示安全 reason/data root/recheck 且无自动清理/恢复按钮。
 - UTC 毫秒的本地化展示、客户端时钟回拨/休眠不延长 Approval、启动 clock rollback invalidation 在业务 IPC 前可见。

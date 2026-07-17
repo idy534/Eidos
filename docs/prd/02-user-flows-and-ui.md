@@ -63,6 +63,10 @@ Execution Feed 不保存或展示模型供应商的 raw reasoning：
 - reasoning token 数量可以作为用量元数据展示，但 reasoning 内容不进入消息、Timeline 或回放。
 - UI 不使用“思维链”“内部思考”等表述。
 
+Session 中的模型正文按 CommonMark Markdown 展示，至少支持标题、段落、强调、列表、引用、分隔线、行内代码和代码块；用户消息保持纯文本，工具、审批和运行状态继续使用结构化组件。Markdown 原始 HTML 不执行，图片不自动加载，正文链接不在 Session 内直接导航，避免模型内容触发脚本、远程请求或窗口跳转。
+
+右侧 Session 使用统一排版 token：UI 字体为 macOS/Windows 中文系统字体栈，代码字体为系统等宽字体栈；正文 `14px/22px`、代码 `13px/20px`、标题 `16px/24px`、caption `12px`、辅助小字 `11px`。Session 标题、正文、Composer 和工具代码必须使用对应 token，不再混用页面级衬线标题或任意 rem 字号。
+
 ## 3. Model Profile 流程
 
 - 新任务首次提交前，Composer 操作栏在“开始”按钮左侧显示模型选择器。选项由 Runtime 有序返回，当前至少包含 `deepseek-v4-flash` 与 `deepseek-v4-pro`；默认选择第一个可用模型，当前返回顺序将 `deepseek-v4-flash` 放在首位。
