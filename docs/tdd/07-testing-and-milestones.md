@@ -303,10 +303,11 @@
 - Profile 编辑的失效提示、API Key 保持/替换/清除、Archive/恢复无删除、HTTP 明文警告、TLS 无绕过、固定认证模式和用户声明 token limits。
 - HTTP/SSE 重试计数、首 delta 后中断提示、reported/unknown usage 汇总和 context_input_too_large 预算错误卡。
 - wire API 选择、最终 endpoint preview、output token parameter 探测结果、stateless/第三方留存提示、三类 output stopped 与 runtime contract unsupported 卡片。
-- 左侧任务项无第二行状态文字；`taskStatus` 的完成/进行中/失败分别映射绿点/转圈/红点，`new|canceled` 无彩色点，reduced-motion 下转圈停止动画。
+- 左侧任务项无第二行状态文字；`taskStatus` 的未读完成/进行中/失败分别映射小绿点/小转圈/小红点，进入完成任务后绿点消失，新的 Run 清除旧已读标记，reduced-motion 下转圈停止动画。
+- 项目按首次 Session 创建时间倒序且向旧项目新增任务不重排；开/关文件夹图标、折叠状态、项目加号创建到原 Workspace 和 `aria-expanded`/键盘操作均通过 Renderer 与实际 Electron 验收。
 - 左下角齿轮打开仅含模型目录/API Key 的第一版 Settings；旧对话区模型横幅不存在，未配置时从 Settings 返回后列表和默认项刷新。
 - Runtime 模型列表按 flash、pro 返回时默认第一个可用项；开始前可切换，未知/不可用/空列表禁止创建 Run，提交成功后模型选择锁定且 RunSnapshot 保持所选 `modelId`。
-- Session header 只显示标题和三点菜单；标题右键与三点菜单共享重命名/删除操作，活动任务删除被拒绝，确认删除后导航安全且 Workspace 文件零变化；预览阶段、绝对路径和通用安全说明不出现在 header。
+- Session header 以较小字号显示标题和紧邻的紧凑三点菜单；内容区标题、三点菜单和左侧任务标题右键/`Shift+F10` 共享重命名/删除操作，活动任务删除被拒绝，确认删除后导航安全且 Workspace 文件零变化；预览阶段、绝对路径和通用安全说明不出现在 header。
 - 每个状态只按 snapshot allowed_actions 渲染；recoverable/irrecoverable/unknown/workspace unavailable 的 Continue、Approval 竞态和 terminal 空动作均符合服务端矩阵。
 - Main 对 success/error DTO 二次 runtime validation、cursor 只透传、unknown Event 原 payload 零 Renderer 泄漏、不兼容 contract 停流；storage health-only 只显示安全 reason/data root/recheck 且无自动清理/恢复按钮。
 - UTC 毫秒的本地化展示、客户端时钟回拨/休眠不延长 Approval、启动 clock rollback invalidation 在业务 IPC 前可见。

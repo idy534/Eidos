@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   ApprovalRequest,
+  ModelId,
+  ModelListResult,
   ModelStatus,
   Run,
   RuntimeStatus,
@@ -14,24 +16,40 @@ import { SessionSidebar } from "./components/SessionSidebar";
 import {
   applyNotification,
   SnapshotReadCoordinator,
+  taskStatusFromRun,
   userFacingError,
 } from "./session-state";
+
+const READ_COMPLETIONS_KEY = "eidos.readCompletedSessionIds";
 
 
 export function App() {
   const [runtime, setRuntime] = useState<RuntimeStatus>({ state: "starting" });
   const [model, setModel] = useState<ModelStatus>();
+  const [modelList, setModelList] = useState<ModelListResult>();
+  const [selectedModelId, setSelectedModelId] = useState<ModelId>("deepseek-v4-flash");
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [sessionStatuses, setSessionStatuses] = useState<Record<string, Run["status"]>>({});
+  const [readCompletedSessions, setReadCompletedSessions] = useState<Set<string>>(() => {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(READ_COMPLETIONS_KEY) ?? "[]");
+      return new Set(Array.isArray(stored) ? stored.filter((id): id is string => typeof id === "string") : []);
+    } catch {
+      return new Set();
+    }
+  });
   const [snapshot, setSnapshot] = useState<SessionSnapshot>();
   const [input, setInput] = useState("");
   const [apiKey, setApiKey] = useState("");
-  const [editingModel, setEditingModel] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [refreshingSnapshot, setRefreshingSnapshot] = useState(false);
   const [error, setError] = useState<string>();
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const snapshotReads = useRef(new SnapshotReadCoordinator()).current;
+  const selectedSessionId = useRef<string | undefined>(undefined);
 
   const activeRun = useMemo(
     () => [...(snapshot?.runs ?? [])].reverse().find((run) =>
@@ -51,7 +69,18 @@ export function App() {
         || notification.method === "run/completed"
       ) {
         const run = notification.params.run;
-        setSessionStatuses((current) => ({ ...current, [run.sessionId]: run.status }));
+        setSessions((current) => current.map((session) => session.id === run.sessionId
+          ? { ...session, taskStatus: taskStatusFromRun(run), updatedAt: run.updatedAt }
+          : session));
+        setReadCompletedSessions((current) => {
+          const next = new Set(current);
+          if (run.status === "succeeded" && selectedSessionId.current === run.sessionId) {
+            next.add(run.sessionId);
+          } else if (["queued", "running", "waiting_approval", "waiting_user_input", "finalizing", "succeeded"].includes(run.status)) {
+            next.delete(run.sessionId);
+          }
+          return next;
+        });
       }
       if (notification.method === "run/completed") {
         setApprovals((current) => current.filter(
@@ -75,16 +104,27 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    window.localStorage.setItem(READ_COMPLETIONS_KEY, JSON.stringify([...readCompletedSessions]));
+  }, [readCompletedSessions]);
+
+  useEffect(() => {
     if (runtime.state !== "ready" || runtime.storageHealth.state !== "ready") {
       return;
     }
     void Promise.all([
       window.eidosRuntime.listSessions(),
       window.eidosRuntime.getModelStatus(),
+      window.eidosRuntime.listModels(),
       window.eidosRuntime.listPendingApprovals(),
-    ]).then(([sessionPage, modelStatus, pendingApprovals]) => {
+    ]).then(([sessionPage, modelStatus, availableModels, pendingApprovals]) => {
       setSessions(sessionPage.items);
+      const sessionIds = new Set(sessionPage.items.map((session) => session.id));
+      setReadCompletedSessions((current) => new Set(
+        [...current].filter((sessionId) => sessionIds.has(sessionId)),
+      ));
       setModel(modelStatus);
+      setModelList(availableModels);
+      setSelectedModelId(availableModels.defaultModelId);
       setApprovals((current) => pendingApprovals.reduce(
         (merged, approval) => [
           ...merged.filter((item) => item.id !== approval.id),
@@ -92,27 +132,27 @@ export function App() {
         ],
         current,
       ));
-      void Promise.all(sessionPage.items.map((session) => loadAuthoritativeSnapshot(session.id)))
-        .then((snapshots) => setSessionStatuses(Object.fromEntries(
-          snapshots.flatMap((loaded) => {
-            const latest = [...loaded.runs].sort((a, b) => b.createdAt - a.createdAt)[0];
-            return latest ? [[loaded.session.id, latest.status]] : [];
-          }),
-        )))
-        .catch(() => undefined);
     }).catch((cause: unknown) => setError(messageFrom(cause)));
   }, [runtime]);
 
   async function selectSession(session: Session): Promise<void> {
     const token = snapshotReads.select(session.id);
+    selectedSessionId.current = session.id;
+    if (session.taskStatus === "completed") {
+      setReadCompletedSessions((current) => new Set(current).add(session.id));
+    }
     setRefreshingSnapshot(false);
     setBusy(true);
     setError(undefined);
+    setSettingsOpen(false);
+    setSessionMenuOpen(false);
+    setRenaming(false);
     try {
       const loaded = await loadAuthoritativeSnapshot(session.id);
       const accepted = snapshotReads.accept(token, loaded);
       if (accepted) {
         setSnapshot(accepted);
+        setSelectedModelId(accepted.runs[0]?.modelId ?? modelList?.defaultModelId ?? "deepseek-v4-flash");
       }
     } catch (cause) {
       if (snapshotReads.isCurrent(token)) {
@@ -123,22 +163,25 @@ export function App() {
     }
   }
 
-  async function createSession(): Promise<void> {
-    const workspace = await window.eidosRuntime.selectWorkspace();
+  async function createSession(workspaceRoot?: string): Promise<void> {
+    const workspace = workspaceRoot ?? await window.eidosRuntime.selectWorkspace();
     if (!workspace) {
       return;
     }
     setBusy(true);
     setError(undefined);
+    setSettingsOpen(false);
     try {
       const session = await window.eidosRuntime.createSession(workspace);
       const token = snapshotReads.select(session.id);
+      selectedSessionId.current = session.id;
       setRefreshingSnapshot(false);
       setSessions((current) => [session, ...current]);
       const loaded = await loadAuthoritativeSnapshot(session.id);
       const accepted = snapshotReads.accept(token, loaded);
       if (accepted) {
         setSnapshot(accepted);
+        setSelectedModelId(modelList?.defaultModelId ?? "deepseek-v4-flash");
       }
     } catch (cause) {
       setError(messageFrom(cause));
@@ -152,8 +195,68 @@ export function App() {
     setError(undefined);
     try {
       setModel(await window.eidosRuntime.configureModel(apiKey));
+      setModelList(await window.eidosRuntime.listModels());
       setApiKey("");
-      setEditingModel(false);
+    } catch (cause) {
+      setError(messageFrom(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function renameSession(): Promise<void> {
+    if (!snapshot || !titleDraft.trim()) {
+      return;
+    }
+    setBusy(true);
+    setError(undefined);
+    try {
+      const renamed = await window.eidosRuntime.renameSession(snapshot.session.id, titleDraft.trim());
+      setSessions((current) => current.map((session) => session.id === renamed.id ? renamed : session));
+      setSnapshot((current) => current && ({ ...current, session: renamed }));
+      setRenaming(false);
+      setSessionMenuOpen(false);
+    } catch (cause) {
+      setError(messageFrom(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function beginRename(session: Session): Promise<void> {
+    if (snapshot?.session.id !== session.id) {
+      await selectSession(session);
+    }
+    setTitleDraft(session.title ?? "新任务");
+    setRenaming(true);
+    setSessionMenuOpen(false);
+  }
+
+  async function deleteSession(session: Session): Promise<void> {
+    if (!window.confirm(`删除任务“${session.title ?? "新任务"}”？项目文件不会被删除。`)) {
+      return;
+    }
+    setBusy(true);
+    setError(undefined);
+    try {
+      const deleted = await window.eidosRuntime.deleteSession(session.id);
+      const remaining = sessions.filter((session) => session.id !== deleted.deletedSessionId);
+      setSessions(remaining);
+      setReadCompletedSessions((current) => {
+        const next = new Set(current);
+        next.delete(deleted.deletedSessionId);
+        return next;
+      });
+      setSessionMenuOpen(false);
+      setRenaming(false);
+      if (snapshot?.session.id === deleted.deletedSessionId) {
+        setSnapshot(undefined);
+        selectedSessionId.current = undefined;
+        snapshotReads.select("");
+        if (remaining[0]) {
+          await selectSession(remaining[0]);
+        }
+      }
     } catch (cause) {
       setError(messageFrom(cause));
     } finally {
@@ -170,7 +273,12 @@ export function App() {
     try {
       const run = continuingRun
         ? await window.eidosRuntime.continueRun(continuingRun.id, input.trim())
-        : await window.eidosRuntime.startRun(snapshot.session.id, input.trim());
+        : await window.eidosRuntime.startRun(snapshot.session.id, input.trim(), selectedModelId);
+      setReadCompletedSessions((current) => {
+        const next = new Set(current);
+        next.delete(snapshot.session.id);
+        return next;
+      });
       setSnapshot((current) => current && ({
         ...current,
         runs: upsertRun(current.runs, run),
@@ -261,88 +369,86 @@ export function App() {
         sessions={sessions}
         selectedId={snapshot?.session.id}
         disabled={interactionBusy || runtime.storageHealth.state !== "ready"}
-        statusBySession={sessionStatuses}
+        modelId={selectedModelId}
+        modelConfigured={Boolean(model?.configured)}
+        readCompletedSessions={readCompletedSessions}
         onCreate={() => void createSession()}
+        onCreateInWorkspace={(workspaceRoot) => void createSession(workspaceRoot)}
         onSelect={(session) => void selectSession(session)}
+        onRename={(session) => void beginRename(session)}
+        onDelete={(session) => void deleteSession(session)}
+        onOpenSettings={() => {
+          setSettingsOpen(true);
+          setSessionMenuOpen(false);
+          setRenaming(false);
+        }}
       />
       <section className="workspace" aria-label="Agent 工作区">
-        <header className="workspace-header">
-          <div>
-            <p className="eyebrow">Developer Preview · Phase 2</p>
-            <h1>{snapshot ? "Eidos Workspace" : "Eidos"}</h1>
-            <p className="workspace-path">
-              {snapshot?.session.workspaceRoot ?? "选择一个本地目录开始。"}
-            </p>
-            <p className="preview-limit">
-              文件写入、删除与 Shell 每次都需批准；内容会先经过本地敏感信息扫描。
-            </p>
-            {!runtime.runShell && (
-              <p className="shell-unavailable" role="status">
-                Shell 当前不可用：Seatbelt 自检未通过。文件读取与经审批的文件修改仍可使用。
-              </p>
-            )}
-          </div>
-          <span className="runtime-pill">Runtime {runtime.runtimeVersion}</span>
-        </header>
-
         {runtime.storageHealth.state !== "ready" && (
           <p className="error-banner" role="alert">
             状态存储处于只读健康模式（{runtime.storageHealth.code ?? "unknown"}），不会执行 Run 或写入状态。
           </p>
         )}
 
-        {model?.configured && !editingModel && (
-          <section className="model-status" aria-label="模型配置">
-            <span>DeepSeek · deepseek-v4-flash 已配置</span>
-            <button
-              className="button-secondary"
-              disabled={interactionBusy || Boolean(activeRun)}
-              onClick={() => setEditingModel(true)}
-            >
-              更换 API Key
-            </button>
-          </section>
-        )}
-
-        {(!model?.configured || editingModel) && (
-          <section className="setup-panel" aria-labelledby="model-title">
-            <div>
-              <h2 id="model-title">{model?.configured ? "更换 DeepSeek API Key" : "连接 DeepSeek"}</h2>
-              <p>API Key 仅保存在本机 ~/.eidos/model.json（权限 0600），不会写入项目。</p>
-            </div>
-            <div className="key-row">
-              <label className="sr-only" htmlFor="api-key">DeepSeek API Key</label>
-              <input
-                id="api-key"
-                type="password"
-                autoComplete="off"
-                placeholder="sk-…"
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-              />
-              <button disabled={interactionBusy || runtime.storageHealth.state !== "ready" || apiKey.length < 16} onClick={() => void configureModel()}>
-                保存配置
-              </button>
-              {model?.configured && (
-                <button
-                  className="button-secondary"
-                  disabled={interactionBusy}
-                  onClick={() => {
-                    setApiKey("");
-                    setEditingModel(false);
-                  }}
-                >
-                  取消
-                </button>
-              )}
-            </div>
-          </section>
-        )}
-
         {error && <p className="error-banner" role="alert">{error}</p>}
 
-        {snapshot ? (
+        {settingsOpen ? (
+          <section className="settings-page" aria-labelledby="settings-title">
+            <header className="workspace-header"><h1 id="settings-title">设置</h1></header>
+            <div className="settings-content">
+              <section className="settings-card">
+                <h2>模型配置</h2>
+                <p>支持的模型由 Runtime 返回；任务首次开始后将锁定本次使用的模型。</p>
+                <ul className="model-list">
+                  {modelList?.models.map((option) => (
+                    <li key={option.id}>
+                      <span><strong>{option.displayName}</strong><small>{option.id}</small></span>
+                      <span>{option.configured ? "可用" : "待配置"}</span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="key-row">
+                  <label className="sr-only" htmlFor="api-key">DeepSeek API Key</label>
+                  <input id="api-key" type="password" autoComplete="off" placeholder="sk-…" value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
+                  <button disabled={interactionBusy || runtime.storageHealth.state !== "ready" || apiKey.length < 16} onClick={() => void configureModel()}>
+                    {model?.configured ? "更换 API Key" : "保存配置"}
+                  </button>
+                </div>
+                <p className="settings-note">API Key 仅保存在本机 ~/.eidos/model.json（权限 0600），不会写入项目。</p>
+              </section>
+              <section className="settings-card">
+                <h2>Runtime</h2>
+                <dl className="runtime-details">
+                  <div><dt>版本</dt><dd>{runtime.runtimeVersion}</dd></div>
+                  <div><dt>Shell</dt><dd>{runtime.runShell ? "可用" : "Seatbelt 自检未通过"}</dd></div>
+                  <div><dt>状态存储</dt><dd>{runtime.storageHealth.state}</dd></div>
+                </dl>
+              </section>
+            </div>
+          </section>
+        ) : snapshot ? (
           <>
+            <header className="workspace-header session-header">
+              {renaming ? (
+                <form className="rename-form" onSubmit={(event) => { event.preventDefault(); void renameSession(); }}>
+                  <label className="sr-only" htmlFor="session-title">任务标题</label>
+                  <input id="session-title" value={titleDraft} autoFocus onChange={(event) => setTitleDraft(event.target.value)} />
+                  <button type="submit" disabled={interactionBusy || !titleDraft.trim()}>保存</button>
+                  <button className="button-secondary" type="button" onClick={() => setRenaming(false)}>取消</button>
+                </form>
+              ) : (
+                <h1 onContextMenu={(event) => { event.preventDefault(); setSessionMenuOpen(true); }}>{snapshot.session.title ?? "新任务"}</h1>
+              )}
+              <div className="session-menu">
+                <button className="icon-button" aria-label="任务菜单" aria-expanded={sessionMenuOpen} onClick={() => setSessionMenuOpen((open) => !open)}>•••</button>
+                {sessionMenuOpen && (
+                  <div className="session-menu-popover" role="menu">
+                    <button role="menuitem" onClick={() => void beginRename(snapshot.session)}>编辑标题</button>
+                    <button role="menuitem" className="danger-action" disabled={Boolean(activeRun)} onClick={() => void deleteSession(snapshot.session)}>删除任务</button>
+                  </div>
+                )}
+              </div>
+            </header>
             <ExecutionFeed
               items={snapshot.items}
               runs={snapshot.runs}
@@ -370,7 +476,16 @@ export function App() {
                 }}
               />
               <div className="composer-actions">
-                <span>{continuingRun ? "等待你的补充" : activeRun ? statusText(activeRun.status) : "⌘↵ 发送"}</span>
+                <div className="composer-meta">
+                  {!continuingRun && snapshot.runs.length === 0 ? (
+                    <>
+                      <label htmlFor="run-model">本次模型</label>
+                      <select id="run-model" value={selectedModelId} disabled={interactionBusy} onChange={(event) => setSelectedModelId(event.target.value as ModelId)}>
+                        {modelList?.models.map((option) => <option key={option.id} value={option.id} disabled={!option.selectable}>{option.displayName}</option>)}
+                      </select>
+                    </>
+                  ) : <span>{continuingRun ? "等待你的补充" : activeRun ? statusText(activeRun.status) : selectedModelId}</span>}
+                </div>
                 {activeRun?.allowedActions?.includes("cancel") && !continuingRun ? (
                   <button className="button-secondary" type="button" disabled={interactionBusy} onClick={() => void cancelRun()}>
                     取消 Run
@@ -385,7 +500,6 @@ export function App() {
           </>
         ) : (
           <div className="empty-state">
-            <p className="empty-kicker">Session → Run → Item</p>
             <h2>从一个 Workspace 开始</h2>
             <p>Eidos 可以阅读、修改和测试所选目录；每次文件写入与 Shell 命令都会先展示候选操作并等待批准。</p>
             <button disabled={interactionBusy || runtime.storageHealth.state !== "ready"} onClick={() => void createSession()}>选择目录</button>

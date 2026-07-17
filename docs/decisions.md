@@ -169,6 +169,7 @@
 | Q160 | 本地控制面永久固定为 Electron Main 与 Python Runtime 之间的标准 JSON-RPC 2.0 over stdio/JSONL，不开放本地 HTTP/SSE/WebSocket/Unix Socket、随机端口、Bearer Token 或 FastAPI；Runtime 调用远端模型只使用 HTTP 请求与 SSE 响应流。 | PRD/TDD 总览；协议、模型与 Desktop |
 | Q161 | 左侧任务导航按 canonical `workspace_root` 分组；同一 Workspace 的所有 Session 作为任务放在同一项目节点下，不再重复平铺 Workspace 名。 | PRD Workbench；TDD Session 投影 |
 | Q162 | Session 标题由首次 `userInput` 触发一次独立、无工具的模型命名；标题持久化后不随后续 Run 改写，生成失败时退回首次输入的有界安全短文本。 | PRD 任务命名；TDD Model/Session/Event |
+| Q163 | Workspace 项目按最早保留 Session 的创建时间倒序并可折叠；已读完成是 Renderer 展示状态而非 Runtime 状态，左侧任务右键与内容区标题菜单复用同一任务操作。 | PRD Workbench；TDD Desktop/Session 投影 |
 
 ## 文件契约统一收敛
 

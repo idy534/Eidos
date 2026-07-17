@@ -163,13 +163,33 @@ ipcMain.handle("session:create", (_event, workspaceRoot: unknown) => {
   }
   return clientOrThrow().createSession(workspaceRoot);
 });
+ipcMain.handle("session:rename", (_event, sessionId: unknown, title: unknown) => {
+  if (typeof sessionId !== "string" || typeof title !== "string") {
+    throw new Error("Session 参数无效。");
+  }
+  return clientOrThrow().renameSession(sessionId, title);
+});
+ipcMain.handle("session:delete", (_event, sessionId: unknown) => {
+  if (typeof sessionId !== "string") {
+    throw new Error("Session 参数无效。");
+  }
+  return clientOrThrow().deleteSession(sessionId);
+});
 ipcMain.handle(
   "run:start",
-  (_event, sessionId: unknown, userInput: unknown) => {
-    if (typeof sessionId !== "string" || typeof userInput !== "string") {
+  (_event, sessionId: unknown, userInput: unknown, modelId: unknown) => {
+    if (
+      typeof sessionId !== "string"
+      || typeof userInput !== "string"
+      || !["deepseek-v4-flash", "deepseek-v4-pro"].includes(String(modelId))
+    ) {
       throw new Error("Run 参数无效。");
     }
-    return clientOrThrow().startRun(sessionId, userInput);
+    return clientOrThrow().startRun(
+      sessionId,
+      userInput,
+      modelId as "deepseek-v4-flash" | "deepseek-v4-pro",
+    );
   },
 );
 ipcMain.handle("run:cancel", (_event, runId: unknown) => {
@@ -185,6 +205,7 @@ ipcMain.handle("run:continue", (_event, runId: unknown, userInput: unknown) => {
   return clientOrThrow().continueRun(runId, userInput);
 });
 ipcMain.handle("model:status", () => clientOrThrow().modelStatus());
+ipcMain.handle("model:list", () => clientOrThrow().listModels());
 ipcMain.handle("model:configure", (_event, apiKey: unknown) => {
   if (typeof apiKey !== "string") {
     throw new Error("API Key 参数无效。");

@@ -22,7 +22,7 @@ from eidos_runtime.deepseek import (  # noqa: E402
     _messages_from_context,
     _read_stream,
 )
-from eidos_runtime.model_config import ModelConfigStore  # noqa: E402
+from eidos_runtime.model_config import ModelConfigStore, model_catalog  # noqa: E402
 
 
 class DeepSeekStreamTests(unittest.TestCase):
@@ -171,6 +171,30 @@ class DeepSeekStreamTests(unittest.TestCase):
 
 
 class ModelConfigStoreTests(unittest.TestCase):
+    def test_model_catalog_lists_flash_then_pro_and_defaults_to_flash(self) -> None:
+        self.assertEqual(
+            model_catalog(configured=True),
+            {
+                "models": [
+                    {
+                        "id": "deepseek-v4-flash",
+                        "provider": "deepseek",
+                        "displayName": "DeepSeek V4 Flash",
+                        "configured": True,
+                        "selectable": True,
+                    },
+                    {
+                        "id": "deepseek-v4-pro",
+                        "provider": "deepseek",
+                        "displayName": "DeepSeek V4 Pro",
+                        "configured": True,
+                        "selectable": True,
+                    },
+                ],
+                "defaultModelId": "deepseek-v4-flash",
+            },
+        )
+
     def test_saves_private_configuration_and_never_returns_the_key_in_status(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-model-") as temporary:
             directory = Path(temporary)

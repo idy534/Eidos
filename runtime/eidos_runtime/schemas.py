@@ -61,6 +61,9 @@ class SessionDto(ClosedModel):
     id: StrictStr
     workspace_root: StrictStr = Field(alias="workspaceRoot")
     title: StrictStr | None = None
+    task_status: Literal[
+        "new", "in_progress", "completed", "failed", "canceled"
+    ] = Field(alias="taskStatus")
     created_at: StrictInt = Field(alias="createdAt")
     updated_at: StrictInt = Field(alias="updatedAt")
 
@@ -69,6 +72,9 @@ class RunDto(ClosedModel):
     id: StrictStr
     session_id: StrictStr = Field(alias="sessionId")
     user_input: StrictStr | None = Field(default=None, alias="userInput")
+    model_id: Literal["deepseek-v4-flash", "deepseek-v4-pro"] = Field(
+        alias="modelId"
+    )
     status: Literal[
         "queued", "running", "waiting_approval", "waiting_user_input",
         "finalizing", "stopped", "succeeded", "failed", "canceled", "interrupted",

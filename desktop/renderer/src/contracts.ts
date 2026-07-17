@@ -14,6 +14,7 @@ export interface Session {
   id: string;
   workspaceRoot: string;
   title?: string;
+  taskStatus: "new" | "in_progress" | "completed" | "failed" | "canceled";
   createdAt: number;
   updatedAt: number;
 }
@@ -23,6 +24,7 @@ export interface Run {
   sessionId: string;
   userInput?: string;
   status: "queued" | "running" | "waiting_approval" | "waiting_user_input" | "finalizing" | "stopped" | "succeeded" | "failed" | "canceled" | "interrupted";
+  modelId: ModelId;
   allowedActions?: Array<"cancel" | "approve" | "reject" | "continue">;
   modelStepCount: number;
   createdAt: number;
@@ -122,6 +124,21 @@ export interface ModelStatus {
   configured: boolean;
 }
 
+export type ModelId = "deepseek-v4-flash" | "deepseek-v4-pro";
+
+export interface ModelOption {
+  id: ModelId;
+  provider: "deepseek";
+  displayName: string;
+  configured: boolean;
+  selectable: boolean;
+}
+
+export interface ModelListResult {
+  models: ModelOption[];
+  defaultModelId: ModelId;
+}
+
 export type RuntimeNotification =
   | { method: "run/started"; params: { sessionId: string; run: Run } }
   | { method: "run/updated"; params: { sessionId: string; run: Run } }
@@ -141,10 +158,13 @@ declare global {
       readSession: (sessionId: string) => Promise<SessionSnapshot>;
       listEvents: (sessionId: string, afterEventId: number) => Promise<EventListResult>;
       createSession: (workspaceRoot: string) => Promise<Session>;
-      startRun: (sessionId: string, userInput: string) => Promise<Run>;
+      renameSession: (sessionId: string, title: string) => Promise<Session>;
+      deleteSession: (sessionId: string) => Promise<{ deletedSessionId: string }>;
+      startRun: (sessionId: string, userInput: string, modelId: ModelId) => Promise<Run>;
       cancelRun: (runId: string) => Promise<Run>;
       continueRun: (runId: string, userInput: string) => Promise<Run>;
       getModelStatus: () => Promise<ModelStatus>;
+      listModels: () => Promise<ModelListResult>;
       configureModel: (apiKey: string) => Promise<ModelStatus>;
       listPendingApprovals: () => Promise<ApprovalRequest[]>;
       onNotification: (callback: (notification: RuntimeNotification) => void) => () => void;

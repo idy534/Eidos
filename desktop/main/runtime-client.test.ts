@@ -103,6 +103,56 @@ test("creates and reads a persisted session across runtime restarts", async () =
   }
 });
 
+test("lists models, locks a task model, then renames and deletes only task state", async () => {
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-workspace-"));
+  await writeFile(path.join(workspaceRoot, "README.md"), "# Keep me\n", "utf8");
+
+  try {
+    let completeRun: ((notification: RuntimeNotification) => void) | undefined;
+    const runCompleted = new Promise<RuntimeNotification>((resolve) => {
+      completeRun = resolve;
+    });
+    const client = new RuntimeClient({
+      pythonExecutable,
+      runtimeRoot: path.join(projectRoot, "runtime"),
+      dataDirectory,
+      environment: { EIDOS_FAKE_MODEL: "1" },
+      onNotification: (notification) => {
+        if (notification.method === "run/completed") {
+          completeRun?.(notification);
+        }
+      },
+    });
+
+    await client.initialize();
+    const models = await client.listModels();
+    const session = await client.createSession(workspaceRoot);
+    const started = await client.startRun(
+      session.id, "Read README.md", "deepseek-v4-pro",
+    );
+    await withTimeout(runCompleted, 5_000);
+    const listed = await client.listSessions();
+    const renamed = await client.renameSession(session.id, "检查项目");
+    const deleted = await client.deleteSession(session.id);
+    await client.shutdown();
+    assert.equal(await client.waitForExit(), 0);
+
+    assert.deepEqual(models.models.map((entry) => entry.id), [
+      "deepseek-v4-flash", "deepseek-v4-pro",
+    ]);
+    assert.equal(models.defaultModelId, "deepseek-v4-flash");
+    assert.equal(started.modelId, "deepseek-v4-pro");
+    assert.equal(listed.items[0]?.taskStatus, "completed");
+    assert.equal(renamed.title, "检查项目");
+    assert.deepEqual(deleted, { deletedSessionId: session.id });
+    assert.equal(await readFile(path.join(workspaceRoot, "README.md"), "utf8"), "# Keep me\n");
+  } finally {
+    await rm(dataDirectory, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
 test("routes runtime notifications during a fake model read loop", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-workspace-"));

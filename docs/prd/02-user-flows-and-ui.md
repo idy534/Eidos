@@ -30,13 +30,13 @@ MVP 保留三栏工作台，但不内嵌 Terminal：
 
 Workspace 文件树是面向本机用户的视图，可显示受保护条目并标记不可预览；Agent 的 `list_files` 使用更严格的可见性投影，敏感文件名不进入模型上下文。
 
-左侧任务导航采用 `Workspace -> 任务` 两级结构：canonical Workspace 路径相同的 Session 必须归入同一个项目节点，节点标题显示目录 basename，完整路径只作为辅助信息；Session 作为该 Workspace 下的任务展示，不再为每个 Session 重复显示一条 Workspace。任务行改为紧凑单行，不再在标题下方显示“已完成”等状态文字；标题右侧只显示 Runtime 返回的状态标识：完成为绿色实心点、进行中为转圈、失败为红色实心点，新任务和已取消任务不显示彩色标识。
+左侧任务导航采用 `Workspace -> 任务` 两级结构：canonical Workspace 路径相同的 Session 必须归入同一个项目节点，节点标题显示目录 basename，完整路径只作为辅助信息；Session 作为该 Workspace 下的任务展示，不再为每个 Session 重复显示一条 Workspace。项目按首次 Session 创建时间倒序排列，向已有项目增加 Session 不改变项目顺序；项目行使用展开/折叠两种文件夹图标，可折叠任务列表，并在右侧提供加号以当前 Workspace 直接创建 Session。任务行改为紧凑单行，不再在标题下方显示“已完成”等状态文字；标题右侧只显示 Runtime 返回的状态标识：未读完成为绿色实心点、进行中为转圈、失败为红色实心点，新任务、已取消任务和已读完成任务不显示彩色标识。点击进入完成任务即视为已读；新的 Run 开始后重新计算下一次完成的未读状态。
 
 左下角固定显示齿轮配置入口与当前模型摘要，例如 `DeepSeek · deepseek-v4-flash 已配置`；原对话区顶部不再显示模型配置横幅。第一版配置页只提供模型列表与 API Key 配置，不提前加入未实施的通用设置；Toolchain 等设置在对应能力进入阶段清单后再增加。
 
 新 Session 在首次提交任务前显示“新任务”。首次 `userInput` 通过本次选定模型执行一次无工具标题生成，使用输入语言产出不超过 60 字符的单行标题；标题与首个 Run 原子持久化，后续补充和新 Run 不自动改名。模型命名失败或返回空/非法标题时，使用首次输入的有界安全短文本，不阻断原任务执行。用户手动改名后，自动命名不得再次覆盖。
 
-Session 内容区顶部只显示本次任务标题和标题右侧的三点菜单。标题右键菜单与三点菜单使用同一组操作：重命名、删除任务；删除必须二次确认，只删除 Eidos 中的任务与运行历史，不修改 Workspace 文件。`Developer Preview · Phase 2`、`Eidos Workspace`、Workspace 绝对路径和通用审批/敏感扫描说明不再占用 Session 内容区；Workspace 路径保留在左侧项目辅助信息中，具体权限与风险在实际 Approval 卡片中说明。
+Session 内容区顶部只显示本次任务标题和紧邻标题的紧凑三点菜单，标题字号低于页面级标题。内容区标题右键、三点菜单和左侧任务标题右键使用同一组操作：重命名、删除任务；删除必须二次确认，只删除 Eidos 中的任务与运行历史，不修改 Workspace 文件。`Developer Preview · Phase 2`、`Eidos Workspace`、Workspace 绝对路径和通用审批/敏感扫描说明不再占用 Session 内容区；Workspace 路径保留在左侧项目辅助信息中，具体权限与风险在实际 Approval 卡片中说明。
 
 ## 2. Execution Feed
 

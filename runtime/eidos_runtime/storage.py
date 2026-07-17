@@ -16,13 +16,14 @@ from typing import Callable, TypeVar
 
 from eidos_runtime.schemas import ItemDto, RunDto, SessionDto
 from eidos_runtime.events import append_event, event_from_row
+from eidos_runtime.model_config import DEFAULT_MODEL_ID, SUPPORTED_MODELS
 from eidos_runtime.state_machine import EventType, RunStatus
 
 
 DATABASE_NAME = "eidos.db"
 LOCK_NAME = "runtime.lock"
 RESERVE_NAME = "emergency.reserve"
-SCHEMA_REVISION = 3
+SCHEMA_REVISION = 4
 RESERVE_BYTES = 1024 * 1024
 DEFAULT_LIST_LIMIT = 50
 MAX_LIST_LIMIT = 200
@@ -31,6 +32,36 @@ MAX_CONTEXT_BYTES = 768 * 1024
 MAX_CONTEXT_ITEMS = 200
 MAX_SNAPSHOT_BYTES = 768 * 1024
 MAX_SNAPSHOT_TEXT_BYTES = 192 * 1024
+
+SESSION_SELECT = """
+    SELECT s.creation_seq, s.id, s.workspace_root, s.title,
+           s.created_at, s.updated_at,
+           CASE
+             WHEN EXISTS (
+               SELECT 1 FROM runs active
+               WHERE active.session_id = s.id
+                 AND active.status IN (
+                   'queued', 'running', 'waiting_approval',
+                   'waiting_user_input', 'finalizing'
+                 )
+             ) THEN 'in_progress'
+             ELSE COALESCE((
+               SELECT CASE latest.status
+                 WHEN 'succeeded' THEN 'completed'
+                 WHEN 'failed' THEN 'failed'
+                 WHEN 'stopped' THEN 'failed'
+                 WHEN 'interrupted' THEN 'failed'
+                 WHEN 'canceled' THEN 'canceled'
+                 ELSE 'new'
+               END
+               FROM runs latest
+               WHERE latest.session_id = s.id
+               ORDER BY latest.creation_seq DESC
+               LIMIT 1
+             ), 'new')
+           END AS task_status
+    FROM sessions s
+"""
 
 
 class StorageError(RuntimeError):
@@ -46,6 +77,10 @@ class InvalidCursorError(ValueError):
 
 
 class ActiveRunError(RuntimeError):
+    pass
+
+
+class SessionActiveError(RuntimeError):
     pass
 
 
@@ -136,7 +171,7 @@ class SessionStore:
                     raise StorageError("schema_revision_missing")
             if revision > SCHEMA_REVISION or revision < 0:
                 raise StorageError("schema_revision_unsupported")
-            if revision in {1, 2}:
+            if revision in {1, 2, 3}:
                 _backup_database(connection, database_path, revision)
             if revision == 1:
                 _migrate_v1_to_v2(connection)
@@ -144,6 +179,9 @@ class SessionStore:
             if revision == 2:
                 _migrate_v2_to_v3(connection)
                 revision = 3
+            if revision == 3:
+                _migrate_v3_to_v4(connection)
+                revision = 4
             elif revision not in {0, SCHEMA_REVISION}:
                 raise StorageError("schema_revision_unsupported")
 
@@ -163,6 +201,7 @@ class SessionStore:
                     id TEXT NOT NULL UNIQUE,
                     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
                     user_input TEXT NOT NULL,
+                    model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash',
                     status TEXT NOT NULL CHECK (status IN (
                         'queued', 'running', 'waiting_approval', 'waiting_user_input',
                         'finalizing', 'succeeded', 'failed', 'stopped', 'canceled',
@@ -443,6 +482,7 @@ class SessionStore:
             "id": session_id,
             "workspaceRoot": str(workspace),
             "title": None,
+            "taskStatus": "new",
             "createdAt": now,
             "updatedAt": now,
         }).to_json_value()
@@ -483,10 +523,7 @@ class SessionStore:
         self, *, limit: int = DEFAULT_LIST_LIMIT, cursor: str | None = None
     ) -> dict[str, object]:
         cursor_state = _decode_cursor(cursor) if cursor is not None else None
-        sql = """
-            SELECT creation_seq, id, workspace_root, title, created_at, updated_at
-            FROM sessions
-        """
+        sql = SESSION_SELECT
         with self.lock:
             connection = self._connection()
             if cursor_state is None:
@@ -498,8 +535,8 @@ class SessionStore:
                 high_water, before_sequence = cursor_state
             rows = connection.execute(
                 sql
-                + " WHERE creation_seq <= ? AND creation_seq < ?"
-                + " ORDER BY creation_seq DESC LIMIT ?",
+                + " WHERE s.creation_seq <= ? AND s.creation_seq < ?"
+                + " ORDER BY s.creation_seq DESC LIMIT ?",
                 (high_water, before_sequence, limit + 1),
             ).fetchall()
         has_more = len(rows) > limit
@@ -514,14 +551,129 @@ class SessionStore:
     def read_session(self, session_id: str) -> dict[str, object] | None:
         with self.lock:
             row = self._connection().execute(
-                """
-                SELECT id, workspace_root, title, created_at, updated_at
-                FROM sessions
-                WHERE id = ?
-                """,
+                SESSION_SELECT + " WHERE s.id = ?",
                 (session_id,),
             ).fetchone()
         return _session_from_row(row) if row is not None else None
+
+    def session_model_id(self, session_id: str) -> str | None:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT model_id FROM runs
+                WHERE session_id = ?
+                ORDER BY creation_seq LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+        return str(row["model_id"]) if row is not None else None
+
+    def rename_session(
+        self,
+        session_id: str,
+        title: str,
+        *,
+        operation_id: str | None = None,
+    ) -> dict[str, object]:
+        if not title or len(title) > 60 or len(title.encode("utf-8")) > 120:
+            raise ValueError("session title is invalid")
+        now = _now_ms()
+
+        def write(connection: sqlite3.Connection) -> dict[str, object]:
+            updated = connection.execute(
+                "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+                (title, now, session_id),
+            )
+            if updated.rowcount != 1:
+                raise ResourceNotFoundError("session not found")
+            append_event(
+                connection,
+                EventType.SESSION_TITLE_UPDATED,
+                now,
+                {"title": title},
+                session_id=session_id,
+            )
+            row = connection.execute(
+                SESSION_SELECT + " WHERE s.id = ?", (session_id,)
+            ).fetchone()
+            return _session_from_row(row)
+
+        return self._write(
+            write,
+            operation_id=operation_id,
+            operation_scope="session/rename",
+            operation_request={"sessionId": session_id, "title": title},
+        )
+
+    def delete_session(
+        self,
+        session_id: str,
+        *,
+        operation_id: str | None = None,
+    ) -> dict[str, object]:
+        def write(connection: sqlite3.Connection) -> dict[str, object]:
+            session = connection.execute(
+                "SELECT id FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            if session is None:
+                raise ResourceNotFoundError("session not found")
+            active = connection.execute(
+                """
+                SELECT 1 FROM runs
+                WHERE session_id = ? AND status IN (
+                    'queued', 'running', 'waiting_approval',
+                    'waiting_user_input', 'finalizing'
+                ) LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+            if active is not None:
+                raise SessionActiveError("session has an active run")
+            run_ids = "SELECT id FROM runs WHERE session_id = ?"
+            connection.execute(
+                f"DELETE FROM durable_intents WHERE run_id IN ({run_ids})",
+                (session_id,),
+            )
+            connection.execute(
+                f"DELETE FROM approvals WHERE run_id IN ({run_ids})", (session_id,)
+            )
+            connection.execute(
+                """
+                DELETE FROM model_attempts WHERE step_id IN (
+                    SELECT steps.id FROM steps
+                    JOIN runs ON runs.id = steps.run_id
+                    WHERE runs.session_id = ?
+                )
+                """,
+                (session_id,),
+            )
+            connection.execute(
+                f"DELETE FROM steps WHERE run_id IN ({run_ids})", (session_id,)
+            )
+            connection.execute(
+                f"DELETE FROM execution_segments WHERE run_id IN ({run_ids})",
+                (session_id,),
+            )
+            connection.execute(
+                """
+                DELETE FROM tool_calls WHERE item_id IN (
+                    SELECT id FROM items WHERE session_id = ?
+                )
+                """,
+                (session_id,),
+            )
+            connection.execute("DELETE FROM items WHERE session_id = ?", (session_id,))
+            connection.execute("DELETE FROM events WHERE session_id = ?", (session_id,))
+            connection.execute("DELETE FROM runs WHERE session_id = ?", (session_id,))
+            connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            return {"deletedSessionId": session_id}
+
+        return self._write(
+            write,
+            operation_id=operation_id,
+            operation_scope="session/delete",
+            operation_request={"sessionId": session_id},
+        )
 
     def create_run(
         self,
@@ -531,6 +683,7 @@ class SessionStore:
         operation_id: str | None = None,
         queued: bool = False,
         session_title: str | None = None,
+        model_id: str = DEFAULT_MODEL_ID,
     ) -> tuple[dict[str, object], dict[str, object]]:
         if session_title is not None and (
             not session_title
@@ -538,6 +691,8 @@ class SessionStore:
             or len(session_title.encode("utf-8")) > 120
         ):
             raise ValueError("session title is invalid")
+        if model_id not in SUPPORTED_MODELS:
+            raise ValueError("model is unsupported")
         run_id = str(uuid.uuid4())
         item_id = str(uuid.uuid4())
         now = _now_ms()
@@ -569,12 +724,12 @@ class SessionStore:
                 connection.execute(
                     """
                     INSERT INTO runs (
-                        id, session_id, user_input, status, enqueued_at,
+                        id, session_id, user_input, model_id, status, enqueued_at,
                         created_at, started_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        run_id, session_id, user_input, status,
+                        run_id, session_id, user_input, model_id, status,
                         now if queued else None, now, started_at, now,
                     ),
                 )
@@ -614,7 +769,11 @@ class SessionStore:
             write,
             operation_id=operation_id,
             operation_scope="run/start",
-            operation_request={"sessionId": session_id, "userInput": user_input},
+            operation_request={
+                "sessionId": session_id,
+                "userInput": user_input,
+                "modelId": model_id,
+            },
         )
         return result["run"], result["item"]
 
@@ -625,6 +784,7 @@ class SessionStore:
         *,
         operation_id: str | None = None,
         session_title: str | None = None,
+        model_id: str = DEFAULT_MODEL_ID,
     ) -> tuple[dict[str, object], dict[str, object]]:
         return self.create_run(
             session_id,
@@ -632,6 +792,7 @@ class SessionStore:
             operation_id=operation_id,
             queued=True,
             session_title=session_title,
+            model_id=model_id,
         )
 
     def continue_run(
@@ -817,7 +978,7 @@ class SessionStore:
         with self.lock:
             connection = self._connection()
             session_row = connection.execute(
-                "SELECT * FROM sessions WHERE id = ?", (session_id,)
+                SESSION_SELECT + " WHERE s.id = ?", (session_id,)
             ).fetchone()
             if session_row is None:
                 raise ResourceNotFoundError("session not found")
@@ -2345,6 +2506,28 @@ def _migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
         raise StorageError("migration_failed") from None
 
 
+def _migrate_v3_to_v4(connection: sqlite3.Connection) -> None:
+    try:
+        tables = _table_names(connection)
+        if "runs" in tables:
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(runs)").fetchall()
+            }
+            if "model_id" not in columns:
+                connection.execute(
+                    """
+                    ALTER TABLE runs ADD COLUMN model_id TEXT NOT NULL
+                    DEFAULT 'deepseek-v4-flash'
+                    """
+                )
+        connection.execute("PRAGMA user_version = 4")
+        connection.commit()
+    except sqlite3.Error:
+        connection.rollback()
+        raise StorageError("migration_failed") from None
+
+
 def _prepare_private_directory(path: Path) -> None:
     if path.is_symlink():
         raise StorageError("data directory must not be a symlink")
@@ -2451,6 +2634,7 @@ def _session_from_row(row: sqlite3.Row) -> dict[str, object]:
         "id": row["id"],
         "workspaceRoot": row["workspace_root"],
         "title": row["title"],
+        "taskStatus": row["task_status"],
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }).to_json_value()
@@ -2518,6 +2702,7 @@ def _run_from_row(
     run: dict[str, object] = {
         "id": row["id"],
         "sessionId": row["session_id"],
+        "modelId": row["model_id"],
         "status": row["status"],
         "modelStepCount": row["model_step_count"],
         "createdAt": row["created_at"],

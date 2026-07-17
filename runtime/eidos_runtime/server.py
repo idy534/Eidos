@@ -17,7 +17,13 @@ from pydantic import ValidationError
 from eidos_runtime import __version__
 from eidos_runtime.deepseek import DeepSeekChatModel
 from eidos_runtime.model import ModelClient, ModelResponse, ModelToolCall, ScriptedModel
-from eidos_runtime.model_config import ModelConfigError, ModelConfigStore
+from eidos_runtime.model_config import (
+    DEFAULT_MODEL_ID,
+    SUPPORTED_MODELS,
+    ModelConfigError,
+    ModelConfigStore,
+    model_catalog,
+)
 from eidos_runtime.runtime_loop import ApprovalDecision, RuntimeEngine
 from eidos_runtime.schemas import ApprovalDecisionDto, JsonRpcRequestDto, JsonRpcResponse
 from eidos_runtime.sensitive import (
@@ -33,6 +39,7 @@ from eidos_runtime.storage import (
     OperationConflictError,
     OperationInProgressError,
     ResourceNotFoundError,
+    SessionActiveError,
     SessionStore,
     StorageError,
     WorkspaceBoundaryError,
@@ -220,6 +227,12 @@ class RuntimeServer:
         if method == "session/read":
             self.read_session(request_id, params)
             return
+        if method == "session/rename":
+            self.rename_session(request_id, params)
+            return
+        if method == "session/delete":
+            self.delete_session(request_id, params)
+            return
         if method == "event/list":
             self.list_events(request_id, params)
             return
@@ -234,6 +247,9 @@ class RuntimeServer:
             return
         if method == "model/status":
             self.model_status(request_id, params)
+            return
+        if method == "model/list":
+            self.list_models(request_id, params)
             return
         if method == "model/configure":
             self.configure_model(request_id, params)
@@ -372,6 +388,70 @@ class RuntimeServer:
             return
         self.send(response(request_id, snapshot))
 
+    def rename_session(self, request_id: str, params: object) -> None:
+        if (
+            not isinstance(params, dict)
+            or set(params) - {"sessionId", "title", "operationId"}
+            or not {"sessionId", "title"} <= set(params)
+            or not _is_canonical_uuid(params.get("sessionId"))
+            or not isinstance(params.get("title"), str)
+            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
+        ):
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        title = clean_session_title(params["title"])
+        if not title:
+            self.send(business_error(request_id, "INVALID_SESSION_TITLE"))
+            return
+        try:
+            title = clean_session_title(self._scan_text(title))
+            session = self.store.rename_session(
+                params["sessionId"], title, operation_id=params.get("operationId")
+            )
+        except SensitiveContentDenied:
+            self.send(business_error(request_id, "SENSITIVE_CONTENT_REJECTED"))
+            return
+        except SensitiveScanError:
+            self.send(business_error(request_id, "SENSITIVE_SCAN_FAILED"))
+            return
+        except ResourceNotFoundError:
+            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
+            return
+        except OperationConflictError:
+            self.send(business_error(request_id, "OPERATION_ID_REUSED"))
+            return
+        except OperationInProgressError:
+            self.send(business_error(request_id, "OPERATION_IN_PROGRESS"))
+            return
+        self.send(response(request_id, session))
+
+    def delete_session(self, request_id: str, params: object) -> None:
+        if (
+            not isinstance(params, dict)
+            or set(params) - {"sessionId", "operationId"}
+            or not _is_canonical_uuid(params.get("sessionId"))
+            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
+        ):
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        try:
+            result = self.store.delete_session(
+                params["sessionId"], operation_id=params.get("operationId")
+            )
+        except ResourceNotFoundError:
+            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
+            return
+        except SessionActiveError:
+            self.send(business_error(request_id, "SESSION_HAS_ACTIVE_RUN"))
+            return
+        except OperationConflictError:
+            self.send(business_error(request_id, "OPERATION_ID_REUSED"))
+            return
+        except OperationInProgressError:
+            self.send(business_error(request_id, "OPERATION_IN_PROGRESS"))
+            return
+        self.send(response(request_id, result))
+
     def list_events(self, request_id: str, params: object) -> None:
         if (
             not isinstance(params, dict)
@@ -397,13 +477,14 @@ class RuntimeServer:
     def start_run(self, request_id: str, params: object) -> None:
         if (
             not isinstance(params, dict)
-            or set(params) - {"sessionId", "userInput", "operationId"}
+            or set(params) - {"sessionId", "userInput", "modelId", "operationId"}
             or not {"sessionId", "userInput"} <= set(params)
             or not _is_canonical_uuid(params.get("sessionId"))
             or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
             or not isinstance(params.get("userInput"), str)
             or not params["userInput"].strip()
             or len(params["userInput"].encode("utf-8")) > 64 * 1024
+            or ("modelId" in params and not isinstance(params["modelId"], str))
         ):
             self.send(protocol_error(request_id, -32602, "Invalid params"))
             return
@@ -418,13 +499,35 @@ class RuntimeServer:
         except SensitiveScanError:
             self.send(business_error(request_id, "SENSITIVE_SCAN_FAILED"))
             return
+        session = self.store.read_session(params["sessionId"])
+        if session is None:
+            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
+            return
+        requested_model_id = params.get("modelId")
+        if requested_model_id is not None and requested_model_id not in SUPPORTED_MODELS:
+            self.send(business_error(request_id, "MODEL_NOT_AVAILABLE"))
+            return
+        existing_model_id = self.store.session_model_id(params["sessionId"])
+        if (
+            existing_model_id is not None
+            and requested_model_id is not None
+            and requested_model_id != existing_model_id
+        ):
+            self.send(business_error(request_id, "MODEL_CHANGE_NOT_ALLOWED"))
+            return
+        model_id = existing_model_id or requested_model_id or DEFAULT_MODEL_ID
+        run_model = self._model_for(model_id)
         operation_id = params.get("operationId")
         if isinstance(operation_id, str):
             try:
                 replay = self.store.operation_result(
                     operation_id,
                     "run/start",
-                    {"sessionId": params["sessionId"], "userInput": user_input},
+                    {
+                        "sessionId": params["sessionId"],
+                        "userInput": user_input,
+                        "modelId": model_id,
+                    },
                 )
             except OperationConflictError:
                 self.send(business_error(request_id, "OPERATION_ID_REUSED"))
@@ -435,15 +538,11 @@ class RuntimeServer:
             if isinstance(replay, dict) and isinstance(replay.get("run"), dict):
                 self.send(response(request_id, replay["run"]))
                 return
-        session = self.store.read_session(params["sessionId"])
-        if session is None:
-            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
-            return
         session_title: str | None = None
         if "title" not in session:
             try:
                 session_title = clean_session_title(
-                    self.model.generate_title(user_input, threading.Event())
+                    run_model.generate_title(user_input, threading.Event())
                 )
                 if session_title:
                     session_title = clean_session_title(self._scan_text(session_title))
@@ -457,6 +556,7 @@ class RuntimeServer:
                     params["sessionId"], user_input,
                     operation_id=params.get("operationId"),
                     session_title=session_title,
+                    model_id=model_id,
                 )
             except ResourceNotFoundError:
                 self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
@@ -592,6 +692,14 @@ class RuntimeServer:
         if self.model is not None:
             status["configured"] = True
         self.send(response(request_id, status))
+
+    def list_models(self, request_id: str, params: object) -> None:
+        if not isinstance(params, dict) or params:
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        self.send(response(
+            request_id, model_catalog(configured=self.model is not None)
+        ))
 
     def configure_model(self, request_id: str, params: object) -> None:
         if (
@@ -752,9 +860,10 @@ class RuntimeServer:
     ) -> None:
         start_gate.wait()
         try:
+            run = self.store.read_run(run_id)
             RuntimeEngine(
                 self.store,
-                self.model,
+                self._model_for(str(run["modelId"])),
                 self.send,
                 self.request_approval,
                 self.shell_available,
@@ -813,6 +922,13 @@ class RuntimeServer:
                     should_schedule = should_schedule or not self.shutting_down
             if should_schedule:
                 self._schedule_next()
+
+    def _model_for(self, model_id: str) -> ModelClient:
+        if isinstance(self.model, DeepSeekChatModel):
+            return DeepSeekChatModel(self.model.api_key, model_id)
+        if self.model is None:
+            raise ModelConfigError("model is not configured")
+        return self.model
 
     def _start_worker_locked(self, run_id: str) -> threading.Event:
         cancellation = threading.Event()

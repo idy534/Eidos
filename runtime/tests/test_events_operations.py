@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from eidos_runtime.events import IncompatibleEventError  # noqa: E402
 from eidos_runtime.storage import (  # noqa: E402
     OperationConflictError,
+    SessionActiveError,
     SessionStore,
 )
 
@@ -103,6 +104,49 @@ class EventAndOperationTests(unittest.TestCase):
             ),
             1,
         )
+
+    def test_session_list_projects_task_status_from_runs(self) -> None:
+        session = self.store.create_session(str(self.workspace))
+        self.assertEqual(self.store.list_sessions()["items"][0]["taskStatus"], "new")
+
+        run, _ = self.store.enqueue_run(
+            session["id"], "first", model_id="deepseek-v4-pro"
+        )
+        listed = self.store.list_sessions()["items"][0]
+        self.assertEqual(listed["taskStatus"], "in_progress")
+        self.assertEqual(self.store.read_run(run["id"])["modelId"], "deepseek-v4-pro")
+
+        self.store.cancel_run(run["id"])
+        self.assertEqual(self.store.list_sessions()["items"][0]["taskStatus"], "canceled")
+
+    def test_session_rename_and_delete_preserve_workspace(self) -> None:
+        session = self.store.create_session(str(self.workspace))
+        renamed = self.store.rename_session(
+            session["id"],
+            "手动标题",
+            operation_id="33333333-3333-4333-8333-333333333333",
+        )
+        replay = self.store.rename_session(
+            session["id"],
+            "手动标题",
+            operation_id="33333333-3333-4333-8333-333333333333",
+        )
+        self.assertEqual(renamed, replay)
+
+        active, _ = self.store.create_run(
+            session["id"], "first", session_title="不应覆盖"
+        )
+        with self.assertRaises(SessionActiveError):
+            self.store.delete_session(session["id"])
+        self.store.fail_run(active["id"], "fixture")
+
+        deleted = self.store.delete_session(
+            session["id"],
+            operation_id="44444444-4444-4444-8444-444444444444",
+        )
+        self.assertEqual(deleted, {"deletedSessionId": session["id"]})
+        self.assertIsNone(self.store.read_session(session["id"]))
+        self.assertTrue(self.workspace.is_dir())
 
     def test_unknown_event_type_is_ignored_but_unknown_version_is_incompatible(self) -> None:
         session = self.store.create_session(str(self.workspace))

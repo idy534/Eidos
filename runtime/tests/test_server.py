@@ -19,6 +19,7 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.model import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
 from eidos_runtime.seatbelt import SeatbeltSelfTestResult  # noqa: E402
+from eidos_runtime.sensitive import SensitiveScanner  # noqa: E402
 from eidos_runtime.server import (  # noqa: E402
     RuntimeServer,
     clean_session_title,
@@ -60,6 +61,65 @@ class RuntimeProtocolTests(unittest.TestCase):
         self.assertEqual(title, "分析 Codex 架构")
         self.assertLessEqual(len(long_title), 60)
         self.assertLessEqual(len(long_title.encode("utf-8")), 120)
+
+    def test_model_selection_and_session_mutations_use_closed_rpc_contracts(self) -> None:
+        with (
+            tempfile.TemporaryDirectory(prefix="eidos-data-") as data_directory,
+            tempfile.TemporaryDirectory(prefix="eidos-workspace-") as workspace,
+        ):
+            output = io.StringIO()
+            server = RuntimeServer(output, Path(data_directory), ScriptedModel([]))
+            server.store.initialize()
+            server.initialized = True
+            server.sensitive = SensitiveScanner()
+            server._schedule_next = lambda: None  # type: ignore[method-assign]
+            server.worker = threading.current_thread()
+            session = server.store.create_session(workspace)
+
+            server.handle({
+                "jsonrpc": "2.0", "id": "client-models",
+                "method": "model/list", "params": {},
+            })
+            server.handle({
+                "jsonrpc": "2.0", "id": "client-run",
+                "method": "run/start",
+                "params": {
+                    "sessionId": session["id"], "userInput": "inspect",
+                    "modelId": "deepseek-v4-pro",
+                },
+            })
+            run = next(
+                json.loads(line)["result"]
+                for line in output.getvalue().splitlines()
+                if json.loads(line).get("id") == "client-run"
+            )
+            server.store.cancel_run(run["id"])
+            server.handle({
+                "jsonrpc": "2.0", "id": "client-rename",
+                "method": "session/rename",
+                "params": {"sessionId": session["id"], "title": "新标题"},
+            })
+            server.handle({
+                "jsonrpc": "2.0", "id": "client-delete",
+                "method": "session/delete", "params": {"sessionId": session["id"]},
+            })
+            messages = {
+                message["id"]: message
+                for line in output.getvalue().splitlines()
+                if (message := json.loads(line)).get("id", "").startswith("client-")
+            }
+
+            self.assertEqual(
+                [model["id"] for model in messages["client-models"]["result"]["models"]],
+                ["deepseek-v4-flash", "deepseek-v4-pro"],
+            )
+            self.assertEqual(run["modelId"], "deepseek-v4-pro")
+            self.assertEqual(messages["client-rename"]["result"]["title"], "新标题")
+            self.assertEqual(
+                messages["client-delete"]["result"],
+                {"deletedSessionId": session["id"]},
+            )
+            server.store.close()
 
     def test_waiting_approval_releases_execution_slot_and_requeues_fifo(self) -> None:
         with (

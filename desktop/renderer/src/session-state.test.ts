@@ -6,6 +6,7 @@ import {
   applyNotification,
   groupSessionsByWorkspace,
   SnapshotReadCoordinator,
+  taskStatusPresentation,
   terminalRunPresentation,
   userFacingError,
 } from "./session-state.js";
@@ -14,6 +15,7 @@ import {
 const session = {
   id: "session-1",
   workspaceRoot: "/workspace",
+  taskStatus: "new" as const,
   createdAt: 1,
   updatedAt: 1,
 };
@@ -24,6 +26,7 @@ function run(status: Run["status"]): Run {
     sessionId: session.id,
     userInput: "Inspect the project",
     status,
+    modelId: "deepseek-v4-flash",
     modelStepCount: status === "running" ? 0 : 1,
     createdAt: 1,
     startedAt: 1,
@@ -182,19 +185,41 @@ test("closed runtime business errors map to safe user-facing guidance", () => {
   );
 });
 
-test("sessions are grouped by workspace without changing task order", () => {
+test("projects keep creation order while tasks stay newest first", () => {
   const groups = groupSessionsByWorkspace([
-    { ...session, id: "session-2", title: "第二期规划", updatedAt: 3 },
-    { ...session, id: "session-1", title: "分析架构", updatedAt: 2 },
+    { ...session, id: "session-2", workspaceRoot: "/old", title: "第二期规划", createdAt: 10, updatedAt: 10 },
     {
       ...session,
       id: "session-3",
-      workspaceRoot: "/other",
+      workspaceRoot: "/new",
       title: "修复测试",
-      updatedAt: 1,
+      createdAt: 5,
+      updatedAt: 5,
     },
+    { ...session, id: "session-1", workspaceRoot: "/old", title: "分析架构", createdAt: 1, updatedAt: 1 },
   ]);
 
-  assert.deepEqual(groups.map((group) => group.workspaceRoot), ["/workspace", "/other"]);
-  assert.deepEqual(groups[0]?.sessions.map((item) => item.title), ["第二期规划", "分析架构"]);
+  assert.deepEqual(groups.map((group) => group.workspaceRoot), ["/new", "/old"]);
+  assert.deepEqual(groups[1]?.sessions.map((item) => item.title), ["第二期规划", "分析架构"]);
+});
+
+test("task statuses use compact accessible indicators", () => {
+  assert.deepEqual(taskStatusPresentation("completed"), {
+    label: "未读完成",
+    tone: "success",
+    spinning: false,
+  });
+  assert.equal(taskStatusPresentation("completed", true), undefined);
+  assert.deepEqual(taskStatusPresentation("in_progress"), {
+    label: "进行中",
+    tone: "progress",
+    spinning: true,
+  });
+  assert.deepEqual(taskStatusPresentation("failed"), {
+    label: "失败",
+    tone: "error",
+    spinning: false,
+  });
+  assert.equal(taskStatusPresentation("new"), undefined);
+  assert.equal(taskStatusPresentation("canceled"), undefined);
 });

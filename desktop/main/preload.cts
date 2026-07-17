@@ -31,12 +31,17 @@ contextBridge.exposeInMainWorld("eidosRuntime", {
     ipcRenderer.invoke("event:list", sessionId, afterEventId),
   createSession: (workspaceRoot: string): Promise<unknown> =>
     ipcRenderer.invoke("session:create", workspaceRoot),
-  startRun: (sessionId: string, userInput: string): Promise<unknown> =>
-    ipcRenderer.invoke("run:start", sessionId, userInput),
+  renameSession: (sessionId: string, title: string): Promise<unknown> =>
+    ipcRenderer.invoke("session:rename", sessionId, title),
+  deleteSession: (sessionId: string): Promise<unknown> =>
+    ipcRenderer.invoke("session:delete", sessionId),
+  startRun: (sessionId: string, userInput: string, modelId: string): Promise<unknown> =>
+    ipcRenderer.invoke("run:start", sessionId, userInput, modelId),
   cancelRun: (runId: string): Promise<unknown> => ipcRenderer.invoke("run:cancel", runId),
   continueRun: (runId: string, userInput: string): Promise<unknown> =>
     ipcRenderer.invoke("run:continue", runId, userInput),
   getModelStatus: (): Promise<unknown> => ipcRenderer.invoke("model:status"),
+  listModels: (): Promise<unknown> => ipcRenderer.invoke("model:list"),
   configureModel: (apiKey: string): Promise<unknown> =>
     ipcRenderer.invoke("model:configure", apiKey),
   listPendingApprovals: (): Promise<unknown> => ipcRenderer.invoke("approval:list"),

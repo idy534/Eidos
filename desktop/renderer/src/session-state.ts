@@ -9,7 +9,46 @@ import type {
 
 export interface WorkspaceSessionGroup {
   workspaceRoot: string;
+  createdAt: number;
   sessions: Session[];
+}
+
+export interface TaskStatusPresentation {
+  label: string;
+  tone: "success" | "progress" | "error";
+  spinning: boolean;
+}
+
+export function taskStatusPresentation(
+  status: Session["taskStatus"],
+  completedRead = false,
+): TaskStatusPresentation | undefined {
+  switch (status) {
+    case "completed":
+      return completedRead
+        ? undefined
+        : { label: "未读完成", tone: "success", spinning: false };
+    case "in_progress":
+      return { label: "进行中", tone: "progress", spinning: true };
+    case "failed":
+      return { label: "失败", tone: "error", spinning: false };
+    case "new":
+    case "canceled":
+      return undefined;
+  }
+}
+
+export function taskStatusFromRun(run: Run): Session["taskStatus"] {
+  if (["queued", "running", "waiting_approval", "waiting_user_input", "finalizing"].includes(run.status)) {
+    return "in_progress";
+  }
+  if (run.status === "succeeded") {
+    return "completed";
+  }
+  if (["failed", "stopped", "interrupted"].includes(run.status)) {
+    return "failed";
+  }
+  return "canceled";
 }
 
 export function groupSessionsByWorkspace(sessions: Session[]): WorkspaceSessionGroup[] {
@@ -24,8 +63,12 @@ export function groupSessionsByWorkspace(sessions: Session[]): WorkspaceSessionG
   }
   return [...grouped].map(([workspaceRoot, groupedSessions]) => ({
     workspaceRoot,
-    sessions: groupedSessions,
-  }));
+    createdAt: Math.min(...groupedSessions.map((session) => session.createdAt)),
+    sessions: [...groupedSessions].sort((left, right) => right.createdAt - left.createdAt),
+  })).sort((left, right) => (
+    right.createdAt - left.createdAt
+    || left.workspaceRoot.localeCompare(right.workspaceRoot)
+  ));
 }
 
 
@@ -132,6 +175,10 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   STORAGE_HEALTH_ONLY: "状态存储需要修复；当前仅提供健康检查，未执行任何业务操作。",
   SENSITIVE_CONTENT_REJECTED: "内容包含受保护信息，已在写入或发送前拒绝。",
   SENSITIVE_SCAN_FAILED: "内容安全扫描未完成，原文未被发送或保存。",
+  INVALID_SESSION_TITLE: "任务标题不能为空，请换一个标题。",
+  SESSION_HAS_ACTIVE_RUN: "任务仍在执行，请先取消或等待完成后再删除。",
+  MODEL_NOT_AVAILABLE: "所选模型当前不可用，请重新选择。",
+  MODEL_CHANGE_NOT_ALLOWED: "任务开始后不能切换模型；请新建任务使用其他模型。",
   INTERNAL_ERROR: "Runtime 遇到内部错误，请查看诊断日志。",
 };
 

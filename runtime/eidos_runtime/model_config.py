@@ -9,7 +9,13 @@ import tempfile
 
 CONFIG_NAME = "model.json"
 PROVIDER = "deepseek"
-MODEL = "deepseek-v4-flash"
+SUPPORTED_MODELS = ("deepseek-v4-flash", "deepseek-v4-pro")
+DEFAULT_MODEL_ID = SUPPORTED_MODELS[0]
+MODEL = DEFAULT_MODEL_ID
+MODEL_NAMES = {
+    "deepseek-v4-flash": "DeepSeek V4 Flash",
+    "deepseek-v4-pro": "DeepSeek V4 Pro",
+}
 
 
 class ModelConfigError(RuntimeError):
@@ -121,6 +127,22 @@ class ModelConfigStore:
         if self.path is None:
             raise ModelConfigError("model configuration is not initialized")
         return self.path
+
+
+def model_catalog(*, configured: bool) -> dict[str, object]:
+    return {
+        "models": [
+            {
+                "id": model_id,
+                "provider": PROVIDER,
+                "displayName": MODEL_NAMES[model_id],
+                "configured": configured,
+                "selectable": configured,
+            }
+            for model_id in SUPPORTED_MODELS
+        ],
+        "defaultModelId": DEFAULT_MODEL_ID,
+    }
 
 
 def _validate_key(value: object) -> str:

@@ -20,6 +20,10 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "INTERNAL_ERROR",
   "SENSITIVE_CONTENT_REJECTED",
   "SENSITIVE_SCAN_FAILED",
+  "INVALID_SESSION_TITLE",
+  "SESSION_HAS_ACTIVE_RUN",
+  "MODEL_NOT_AVAILABLE",
+  "MODEL_CHANGE_NOT_ALLOWED",
 ]);
 
 export interface InitializeResult {
@@ -37,6 +41,21 @@ export interface ModelStatus {
   configured: boolean;
 }
 
+export type ModelId = "deepseek-v4-flash" | "deepseek-v4-pro";
+
+export interface ModelOption {
+  id: ModelId;
+  provider: "deepseek";
+  displayName: string;
+  configured: boolean;
+  selectable: boolean;
+}
+
+export interface ModelListResult {
+  models: ModelOption[];
+  defaultModelId: ModelId;
+}
+
 export interface RuntimeHealth {
   state: "ready" | "health_only";
   code?: string;
@@ -46,6 +65,7 @@ export interface Session {
   id: string;
   workspaceRoot: string;
   title?: string;
+  taskStatus: "new" | "in_progress" | "completed" | "failed" | "canceled";
   createdAt: number;
   updatedAt: number;
 }
@@ -96,6 +116,7 @@ export interface Run {
   sessionId: string;
   userInput?: string;
   status: RunStatus;
+  modelId: ModelId;
   modelStepCount: number;
   allowedActions?: Array<"cancel" | "approve" | "reject" | "continue">;
   createdAt: number;
@@ -315,6 +336,22 @@ export class RuntimeClient {
     );
   }
 
+  renameSession(
+    sessionId: string, title: string, operationId = randomUUID(),
+  ): Promise<Session> {
+    return this.validatedRequest(
+      "session/rename", { sessionId, title, operationId }, isSession,
+    );
+  }
+
+  deleteSession(
+    sessionId: string, operationId = randomUUID(),
+  ): Promise<{ deletedSessionId: string }> {
+    return this.validatedRequest(
+      "session/delete", { sessionId, operationId }, isDeletedSessionResult,
+    );
+  }
+
   listEvents(sessionId: string, afterEventId: number, limit = 200): Promise<EventListResult> {
     return this.validatedRequest(
       "event/list", { sessionId, afterEventId, limit }, isEventListResult,
@@ -325,9 +362,14 @@ export class RuntimeClient {
     return this.validatedRequest("runtime/health", {}, isRuntimeHealth);
   }
 
-  startRun(sessionId: string, userInput: string, operationId = randomUUID()): Promise<Run> {
+  startRun(
+    sessionId: string,
+    userInput: string,
+    modelId: ModelId = "deepseek-v4-flash",
+    operationId = randomUUID(),
+  ): Promise<Run> {
     return this.validatedRequest(
-      "run/start", { sessionId, userInput, operationId }, isRun,
+      "run/start", { sessionId, userInput, modelId, operationId }, isRun,
     );
   }
 
@@ -343,6 +385,10 @@ export class RuntimeClient {
 
   modelStatus(): Promise<ModelStatus> {
     return this.validatedRequest("model/status", {}, isModelStatus);
+  }
+
+  listModels(): Promise<ModelListResult> {
+    return this.validatedRequest("model/list", {}, isModelListResult);
   }
 
   configureModel(apiKey: string): Promise<ModelStatus> {
@@ -661,6 +707,28 @@ function isModelStatus(value: unknown): value is ModelStatus {
   );
 }
 
+function isModelId(value: unknown): value is ModelId {
+  return value === "deepseek-v4-flash" || value === "deepseek-v4-pro";
+}
+
+function isModelListResult(value: unknown): value is ModelListResult {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["models", "defaultModelId"])
+    && isModelId(value.defaultModelId)
+    && Array.isArray(value.models)
+    && value.models.every((model) => (
+      isRecord(model)
+      && hasOnlyKeys(model, ["id", "provider", "displayName", "configured", "selectable"])
+      && isModelId(model.id)
+      && model.provider === "deepseek"
+      && typeof model.displayName === "string"
+      && typeof model.configured === "boolean"
+      && typeof model.selectable === "boolean"
+    ))
+  );
+}
+
 function isRuntimeHealth(value: unknown): value is RuntimeHealth {
   return (
     isRecord(value)
@@ -673,10 +741,11 @@ function isRuntimeHealth(value: unknown): value is RuntimeHealth {
 function isSession(value: unknown): value is Session {
   return (
     isRecord(value)
-    && hasOnlyKeys(value, ["id", "workspaceRoot", "title", "createdAt", "updatedAt"])
+    && hasOnlyKeys(value, ["id", "workspaceRoot", "title", "taskStatus", "createdAt", "updatedAt"])
     && typeof value.id === "string"
     && typeof value.workspaceRoot === "string"
     && (value.title === undefined || typeof value.title === "string")
+    && ["new", "in_progress", "completed", "failed", "canceled"].includes(String(value.taskStatus))
     && isNonNegativeInteger(value.createdAt)
     && isNonNegativeInteger(value.updatedAt)
   );
@@ -738,6 +807,7 @@ function isRun(value: unknown): value is Run {
       "sessionId",
       "userInput",
       "status",
+      "modelId",
       "modelStepCount",
       "allowedActions",
       "createdAt",
@@ -760,6 +830,7 @@ function isRun(value: unknown): value is Run {
       "queued", "running", "waiting_approval", "waiting_user_input",
       "finalizing", "stopped", "succeeded", "failed", "canceled", "interrupted",
     ].includes(String(value.status))
+    && isModelId(value.modelId)
     && isNonNegativeInteger(value.modelStepCount)
     && (value.allowedActions === undefined || (
       Array.isArray(value.allowedActions)
@@ -775,6 +846,14 @@ function isRun(value: unknown): value is Run {
     && (value.pauseReason === undefined || typeof value.pauseReason === "string")
     && (value.stopReason === undefined || typeof value.stopReason === "string")
     && (value.sideEffectsMayExist === undefined || typeof value.sideEffectsMayExist === "boolean")
+  );
+}
+
+function isDeletedSessionResult(value: unknown): value is { deletedSessionId: string } {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["deletedSessionId"])
+    && typeof value.deletedSessionId === "string"
   );
 }
 

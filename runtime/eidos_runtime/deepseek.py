@@ -9,12 +9,13 @@ import time
 from typing import Callable
 
 from eidos_runtime.model import ModelContextItem, ModelResponse, ModelToolCall
+from eidos_runtime.model_config import DEFAULT_MODEL_ID, SUPPORTED_MODELS
 from eidos_runtime.tools import model_tool_definitions
 
 
 HOST = "api.deepseek.com"
 PATH = "/chat/completions"
-MODEL = "deepseek-v4-flash"
+MODEL = DEFAULT_MODEL_ID
 REQUEST_DEADLINE_SECONDS = 120.0
 MAX_SSE_LINE_BYTES = 1024 * 1024
 MAX_SSE_EVENTS = 4_096
@@ -42,8 +43,11 @@ class _ToolAccumulator:
 
 
 class DeepSeekChatModel:
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, model_id: str = DEFAULT_MODEL_ID) -> None:
+        if model_id not in SUPPORTED_MODELS:
+            raise ValueError("model is unsupported")
         self.api_key = api_key
+        self.model_id = model_id
 
     def generate_title(self, user_input: str, cancel: threading.Event) -> str:
         return self.complete(
@@ -64,7 +68,7 @@ class DeepSeekChatModel:
             return ModelResponse()
         deadline = time.monotonic() + REQUEST_DEADLINE_SECONDS
         request: dict[str, object] = {
-                "model": MODEL,
+                "model": self.model_id,
                 "messages": _messages_from_context(context),
                 "stream": True,
                 "thinking": {"type": "disabled"},
