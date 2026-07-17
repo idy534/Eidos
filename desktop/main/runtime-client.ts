@@ -45,6 +45,7 @@ export interface RuntimeHealth {
 export interface Session {
   id: string;
   workspaceRoot: string;
+  title?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -672,9 +673,10 @@ function isRuntimeHealth(value: unknown): value is RuntimeHealth {
 function isSession(value: unknown): value is Session {
   return (
     isRecord(value)
-    && hasOnlyKeys(value, ["id", "workspaceRoot", "createdAt", "updatedAt"])
+    && hasOnlyKeys(value, ["id", "workspaceRoot", "title", "createdAt", "updatedAt"])
     && typeof value.id === "string"
     && typeof value.workspaceRoot === "string"
+    && (value.title === undefined || typeof value.title === "string")
     && isNonNegativeInteger(value.createdAt)
     && isNonNegativeInteger(value.updatedAt)
   );

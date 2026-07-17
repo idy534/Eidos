@@ -12,6 +12,7 @@ MVP Lite 当前实施状态：
 - ✅ TypeScript Main Client 已通过真实子进程、通知路由、Fake Model 两轮工具循环和跨 Runtime 重启持久化测试；测试使用隔离数据根，不触碰真实 `~/.eidos`。
 - ✅ JSON-RPC 业务错误保留闭合 code，经 Main/Preload 后映射为安全 Renderer 提示，不透传 Python、Provider 或 OS 原始错误。
 - ✅ 第二期已实现 revision 2 前向迁移/备份/完整性复检、状态目录 OS lock、health-only、Event 表与闭合 payload registry、snapshot 水位、operation 幂等、keyset high-water 分页和崩溃对账。
+- ✅ revision 3 为 Session 增加 nullable `title`；首个 `run/start` 在创建 Run 的同一事务中仅设置一次标题并提交 `session.title_updated`，后续 Run 不覆盖。
 - ⏳ 第二期清单外的完整 Workspace/Model Profile/Artifact 表与通用 Outbox 投递仍未实现。
 
 ## 1. 本地控制协议
@@ -37,18 +38,25 @@ Wire 字段统一使用 `lowerCamelCase`，状态和错误枚举继续使用稳�
 | Main → Runtime | `runtime/status` / `runtime/recheck` / `runtime/shutdown` | 诊断、用户触发重新检查、有界关闭 |
 | Main → Runtime | `workspace/create` / `workspace/list` / `workspace/read` | Workspace 身份和可用状态 |
 | Main → Runtime | `workspace/listFiles` / `workspace/readFile` | 面向用户的有界文件树与预览；不等同于 Agent Tool |
-| Main → Runtime | `session/create` / `session/list` / `session/read` / `session/setModel` | Session 生命周期和快照 |
+| Main → Runtime | `session/create` / `session/list` / `session/read` / `session/setModel` / `session/rename` / `session/delete` | Session 生命周期、标题和删除 |
 | Main → Runtime | `run/start` / `run/read` / `run/readSnapshot` / `run/readEvents` | 创建 Run、读取当前事实与 Event 页面 |
 | Main → Runtime | `run/cancel` / `run/continue` | 取消或提交用户补充信息 |
 | Main → Runtime | `approval/read` | 读取当前 pending Approval 的权威有界详情 |
 | Main → Runtime | `toolCall/read` / `toolCall/readLogs` / `toolCall/readChanges` | ToolCall 事实、日志和 Workspace 变化 |
 | Main → Runtime | `artifact/list` / `artifact/read` / `artifact/readContent` | 读取已发布 Artifact；不创建 Artifact |
+| Main → Runtime | `model/list` / `model/status` / `model/configure` | 当前 DeepSeek 模型目录、配置摘要与 API Key 写入 |
 | Main → Runtime | `modelProfile/create|list|read|update|test|archive|restore` | Model Profile 生命周期 |
 | Main → Runtime | `toolchain/list|enable|disable` | Toolchain Profile 生命周期 |
 | Runtime → Main | `item/requestApproval` | 双向 RPC 审批；Main response 只能 approve/reject，不修改参数 |
 | Runtime → Main | `event/committed` notification | 投影一个已提交的 Event envelope；Main 按 eventId 去重和续接 |
 
 `publish_artifact` 是 Agent Tool，不是 Renderer 创建 Artifact 的 method。MVP Lite v1 的 `run/*`、`item/*` 生命周期 notifications 仍由 [MVP Lite](../mvp-lite.md) 定义；目标态 `event/committed` 必须通过显式 protocol version 迁移，不能在同一版本同时发送两套等价事件，也不能用另一套 HTTP 命名重建相同能力。
+
+Session list/read DTO 增加可选 `title` 与必填 `taskStatus=new|in_progress|completed|failed|canceled`。Renderer 只按 canonical `workspaceRoot` 分组，不从标题、目录 basename 或本地 Run 缓存推断 Workspace 身份和任务状态。Runtime 按 Session 全部 Run 投影 `taskStatus`：存在任一 `queued|running|waiting_approval|waiting_user_input|finalizing` Run 时为 `in_progress`；否则按最新 Run 将 `succeeded` 映射为 `completed`，`failed|stopped|interrupted` 映射为 `failed`，`canceled` 映射为 `canceled`；无 Run 为 `new`。
+
+首次 `run/start` 在敏感扫描和 operation replay 检查后，使用同一请求选定并固化的 `modelId`，以 `allow_tools=false` 生成标题；模型输出按普通不可信输入处理，折叠为单行、移除包裹引号并限制为 60 字符/120 UTF-8 字节。生成、扫描或传输失败时回退到同样有界的首次 `userInput`，不得阻断 Run。
+
+`session/rename` 请求为 `{sessionId,title,operationId}`。Runtime 对标题执行与自动标题相同的单行、控制字符和 `60 chars/120 UTF-8 bytes` 边界校验，空标题返回 `invalid_session_title`；成功后手动标题成为权威值，后续 Run 不得自动覆盖。`session/delete` 请求为 `{sessionId,operationId}`；存在非终态 Run 时返回 `session_has_active_run`，否则在单事务中删除该 Session 的 Eidos 任务事实与关联运行历史并返回 `{deletedSessionId}`。该方法不得读取、修改或删除 Workspace 文件；operation replay 继续返回第一次已提交结果。
 
 ### 2.1 闭合 DTO 与分页
 
@@ -131,7 +139,7 @@ Runtime 必须先提交 Approval 事实与 Event，再发出 `item/requestApprov
   schemaVersion = 1,
   throughEventId: nonnegative integer,
   run: {
-    runId, sessionId, workspaceId?, modelProfileId,
+    runId, sessionId, workspaceId?, modelProfileId, modelId,
     status = created|queued|running|waiting_approval|waiting_user_input|
              finalizing|succeeded|failed|stopped|canceled,
     pauseReason?, stopReason?, errorCode?,
@@ -212,7 +220,22 @@ Archive/restore 同样要求 `expectedProfileVersion`。Archive 设置内部 `ar
 - 创建 Session 或切换 Profile 时，Runtime 要求目标 Profile `selectable=true`；否则返回 `model_profile_not_verified`，原 Session 配置不变。
 - Model Profile method 的任何 result 都不返回 API Key 明文。
 
-### 3.7 Toolchain Profile
+### 3.7 当前阶段 DeepSeek 模型目录
+
+当前 DeepSeek-only 阶段使用闭合 `model/list` result：
+
+```text
+models: [{ id, provider=deepseek, displayName, configured, selectable }]
+defaultModelId?: string
+```
+
+- Runtime 返回稳定有序列表，当前顺序为 `deepseek-v4-flash`、`deepseek-v4-pro`；`defaultModelId` 取第一个 `selectable=true` 的模型，因此当前正常配置下默认是 `deepseek-v4-flash`。Renderer 不维护第二份硬编码默认值。
+- `model/status` 返回 Provider、`configured`、默认模型摘要和 `hasApiKey`，不返回 API Key；`model/configure` 继续只接受 API Key，并使同一 DeepSeek Provider 下模型的 `configured/selectable` 状态同时刷新。
+- 首次 `run/start` 接受可选 `modelId`；省略时使用 `defaultModelId`，不存在可用默认项时返回 `model_not_configured` 且零 Run/Message 写入。传入未知或不可用模型返回 `model_not_available`。
+- Run 创建事务固化 `modelId` 与当时配置快照。后续 Segment、恢复和重试不接受模型替换；选择另一个模型必须创建新任务。
+- 目标态 Model Profile 落地后可由 `modelProfile/list` 生成相同的 Renderer 模型选项，但不得改变上述任务前选择和 Run 固化语义。
+
+### 3.8 Toolchain Profile
 
 - 列表只返回固定系统根和发现到的 `/opt/homebrew|/usr/local`，MVP 不接受 Renderer 提交任意路径。
 - enable/disable 要求受信用户手势 nonce，事务内递增 `profile_version` 和全局 `shell_environment_version`。
@@ -290,6 +313,8 @@ sensitive_user_input_rejected
 sensitive_tool_input
 sensitive_structured_payload_rejected
 redaction_ruleset_downgrade
+invalid_session_title
+session_has_active_run
 sandbox_unavailable
 network_host_denied
 local_network_denied
@@ -308,6 +333,8 @@ context_budget_exceeded
 context_input_too_large
 model_credential_unavailable
 model_auth_failed
+model_not_configured
+model_not_available
 model_not_found
 model_invalid_request
 model_profile_not_verified
@@ -545,7 +572,7 @@ Migration 开始前对源 DB/WAL、backup/manifest、迁移临时增长、固定
 | model_profiles | creation_seq INTEGER PRIMARY KEY AUTOINCREMENT, id UUID UNIQUE, name unique, base_url, model, wire_api, auth_mode, api_key_ref UNIQUE nullable, credential_revision, parameters_json, context_window_tokens, max_output_tokens, profile_version, config_revision, configuration_hash, archived_at, created_at, updated_at；不保存 API Key |
 | model_profile_capability_snapshots | id, profile_id, snapshot_version, configuration_hash, gateway_contract_version, model_request_contract_version, tool_schema_dialect_version, probe_status, valid, authentication, model_exists, http_sse_streaming, tool_control, tool_schema, tool_call, usage, stateless_continuation, output_token_parameter, error_code, invalidation_reason, checked_at, invalidated_at；`UNIQUE(profile_id,snapshot_version)` |
 | workspaces | creation_seq INTEGER PRIMARY KEY AUTOINCREMENT, id UUID UNIQUE, canonical_root_path, volume_uuid, root_inode, root_birthtime_ns, last_seen_dev, state_path, status=available\|unavailable, unavailable_reason, created_at, last_verified_at；available 行分别对 canonical path 与 `(volume_uuid,root_inode,root_birthtime_ns)` 建立部分唯一约束 |
-| sessions | creation_seq INTEGER PRIMARY KEY AUTOINCREMENT, id UUID UNIQUE, agent_id, model_profile_id, mode, workspace_id, active/state roots；mode/workspace CHECK；创建/切换时目标 Profile 必须非 Archived 且存在当前配置的 valid passed snapshot |
+| sessions | creation_seq INTEGER PRIMARY KEY AUTOINCREMENT, id UUID UNIQUE, agent_id, model_profile_id, mode, workspace_id, title nullable, active/state roots；title 首次 Run 原子写一次，手动改名后不得自动覆盖；taskStatus 由关联 Run 投影而非单独持久化；mode/workspace CHECK；创建/切换时目标 Profile 必须非 Archived 且存在当前配置的 valid passed snapshot |
 | messages | session_id, run_id nullable, role, content_kind, content, metadata, ruleset_version, created_at；禁止 raw reasoning kind |
 
 Profile 凭证保存在 `~/.eidos/config.toml` 的 profile-id 专属槽位中，包含 `api_key` 与单调 `credential_revision`。一个槽位只能被同 id Profile 引用，禁止共享引用。替换/清除使用 mode `0600` 的临时文件、fsync 和原子 replace；随后提交 DB 配置版本与 snapshot 失效事务。若进程在两者之间崩溃，启动时发现 config/DB credential revision 不一致即 fail closed：同步到较新的 revision、使 snapshot 失效，但不回滚或回显密钥。
@@ -569,7 +596,7 @@ max_total_steps=80, max_total_effective_seconds=7200
 consecutive_rejects, consecutive_protocol_errors, consecutive_sensitive_tool_inputs
 reconciliation_required, reconciliation_epoch, ruleset_version_snapshot
 pause_reason, stop_reason, error_code, error_message
-model_profile_id, model_capability_snapshot_id, model_config_snapshot
+model_profile_id, model_capability_snapshot_id, model_id, model_config_snapshot
 tool_contract_version
 started_at, finished_at, created_at, updated_at
 ```

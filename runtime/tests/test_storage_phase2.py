@@ -133,6 +133,46 @@ class PhaseTwoStorageTests(unittest.TestCase):
         self.assertEqual(len(manifest["sha256"]), 64)
         migrated.close()
 
+    def test_revision_two_adds_nullable_session_title(self) -> None:
+        workspace = Path(self.temporary_directory.name) / "workspace"
+        workspace.mkdir()
+        database = self.data_directory / DATABASE_NAME
+        connection = sqlite3.connect(database)
+        connection.executescript(
+            """
+            CREATE TABLE sessions (
+                creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                id TEXT NOT NULL UNIQUE,
+                workspace_root TEXT NOT NULL,
+                workspace_dev INTEGER,
+                workspace_inode INTEGER,
+                workspace_uid INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            PRAGMA user_version = 2;
+            """
+        )
+        connection.execute(
+            "INSERT INTO sessions (id, workspace_root, created_at, updated_at) VALUES (?, ?, 1, 1)",
+            ("session-1", str(workspace)),
+        )
+        connection.commit()
+        connection.close()
+        os.chmod(database, 0o600)
+
+        store = SessionStore(self.data_directory)
+        store.initialize()
+
+        self.assertEqual(store.health(), {"state": "ready"})
+        self.assertNotIn("title", store.read_session("session-1"))
+        assert store.connection is not None
+        self.assertIn(
+            "title",
+            {row["name"] for row in store.connection.execute("PRAGMA table_info(sessions)")},
+        )
+        store.close()
+
     def test_migration_failure_keeps_source_revision_and_enters_health_only(self) -> None:
         original = SessionStore(self.data_directory)
         original.initialize()

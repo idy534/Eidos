@@ -17,6 +17,10 @@ class SessionCreatedPayload(ClosedModel):
     session: SessionDto
 
 
+class SessionTitleUpdatedPayload(ClosedModel):
+    title: str
+
+
 class RunCreatedPayload(ClosedModel):
     run: RunDto
 
@@ -46,6 +50,7 @@ class ReconciliationEventPayload(ClosedModel):
 
 EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.SESSION_CREATED: SessionCreatedPayload,
+    EventType.SESSION_TITLE_UPDATED: SessionTitleUpdatedPayload,
     EventType.RUN_CREATED: RunCreatedPayload,
     EventType.RUN_STATUS_CHANGED: RunStatusChangedPayload,
     EventType.SEGMENT_CREATED: EntityStatusChangedPayload,

@@ -83,6 +83,27 @@ class EventAndOperationTests(unittest.TestCase):
         )
         self.assertEqual([event["eventType"] for event in resumed["items"]], ["run.created"])
 
+    def test_session_title_is_persisted_once(self) -> None:
+        session = self.store.create_session(str(self.workspace))
+
+        first, _ = self.store.create_run(
+            session["id"], "first", session_title="分析 Codex 架构"
+        )
+        self.store.fail_run(first["id"], "fixture")
+        self.store.create_run(session["id"], "second", session_title="不应覆盖")
+        unchanged = self.store.read_session(session["id"])
+
+        assert unchanged is not None
+        self.assertEqual(unchanged["title"], "分析 Codex 架构")
+        events = self.store.list_events(session["id"], after_event_id=0)
+        self.assertEqual(
+            sum(
+                event["eventType"] == "session.title_updated"
+                for event in events["items"]
+            ),
+            1,
+        )
+
     def test_unknown_event_type_is_ignored_but_unknown_version_is_incompatible(self) -> None:
         session = self.store.create_session(str(self.workspace))
         connection = self.store.connection

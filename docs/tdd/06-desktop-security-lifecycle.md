@@ -32,6 +32,8 @@ window.eidos.invoke(channel: string, payload: unknown)
 
 ```ts
 window.eidos.sessions.create(input)
+window.eidos.sessions.rename(sessionId, title)
+window.eidos.sessions.delete(sessionId)
 window.eidos.runs.create(sessionId, input)
 window.eidos.runs.cancel(runId)
 window.eidos.runs.getSnapshot(runId)
@@ -45,6 +47,8 @@ window.eidos.workspaces.openInSystemTerminal(workspaceId)
 window.eidos.artifacts.open(artifactId)
 window.eidos.models.create(input)
 window.eidos.models.list()
+window.eidos.models.status()
+window.eidos.models.configure(apiKey)
 window.eidos.models.get(profileId)
 window.eidos.models.update(profileId, input)
 window.eidos.models.testConnection(profileId, userGestureNonce)
@@ -178,6 +182,14 @@ Renderer 只能从 snapshot 的稳定排序 `allowed_actions` 渲染 Continue/Ca
 所有 `*_at` 作为 UTC Unix 毫秒 ApiTimestampV1 接收，Renderer 只负责本地化展示。Approval 倒计时以服务端 `approval_expires_at` 展示，但授权判断只在 Runtime；客户端墙钟、休眠或回拨不能延长授权。
 
 `storage_unavailable` 时 Main 关闭业务 IPC 并显示 health-only 诊断：安全 reason、Eidos 数据根、释放空间和“重新检查/重启”入口。重新检查是用户手势触发的新 sidecar 恢复流程，不是重试原写操作；UI 不提供自动删除、自动恢复 backup 或“忽略后继续”。
+
+Workbench 布局额外满足：
+
+- 左侧任务项使用单行紧凑布局，标题与状态标识同排，不再渲染第二行状态文字。Renderer 只消费 Session DTO 的 `taskStatus`：`completed` 为绿色实心点，`in_progress` 为转圈，`failed` 为红色实心点，`new|canceled` 不显示彩色点。状态图形提供可访问名称；转圈在 `prefers-reduced-motion` 下停用动画但保留状态语义。
+- 左下角固定一个齿轮按钮和当前 `Provider · model · configured` 摘要。点击后打开 Settings；第一版只渲染 `model/list` 与 `model/configure` 的模型目录和 API Key 表单，不显示尚未进入阶段清单的占位设置。
+- 新任务首次 `run/start` 前，Composer 操作栏在“开始”按钮左侧渲染 Runtime 返回的模型选项。默认选中 `defaultModelId`；无可用模型时禁用“开始”并链接到 Settings。提交成功后选择器锁定，Reducer 不允许 Event 或本地状态切换该 Run 的 `modelId`。
+- Session 内容区 header 只渲染权威 `title` 和右侧三点按钮。标题的 `contextmenu` 与三点按钮打开同一个 action menu，固定为“重命名、删除任务”；重命名成功后以 Runtime result 更新，删除先显示不可逆确认，`session_has_active_run` 时引导先结束任务。
+- 删除成功后清理选中态并导航到剩余第一个任务或空状态；不得调用文件 API。header 不渲染 Developer Preview、Workspace 名称/绝对路径和通用审批/敏感扫描说明；Workspace 路径只在左侧项目辅助信息中显示，具体安全范围由 Approval 卡片展示。
 
 审批卡必须展示：
 

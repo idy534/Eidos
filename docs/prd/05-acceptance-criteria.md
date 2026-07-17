@@ -247,3 +247,12 @@
 | A175 | Event contract | envelope/per-type payload 固定向量通过；重复、跳号、未知可忽略 type、已知未知 version、敏感替代和 resnapshot 防循环分别符合契约 |
 | A176 | 时间与时钟 | 所有业务时间为 UTC Unix ms safe integer、duration 为 monotonic ms；同 boot 以 continuous deadline 延续，boot/timebase 不可证明或回拨时失效 timed approved Shell，重启不重置 TTL |
 | A177 | Storage fail closed | state full/quota/I/O/corruption 与 Workspace 各提交阶段正确分类；reserve 仅在空间耗尽释放，恢复先 WAL/integrity/FK/intent 对账，零自动清理和副作用重放 |
+
+## 17. Workbench 导航与模型配置
+
+| 编号 | 验收项 | 标准 |
+|---|---|---|
+| A178 | 紧凑任务状态 | 每个任务只占一行且无“已完成”等第二行文字；完成/进行中/失败分别显示绿点/转圈/红点，状态由 Session DTO 的任务级枚举提供而非 Renderer 猜测 |
+| A179 | 配置入口 | 对话区不再显示模型配置横幅；左下角齿轮与当前模型摘要可打开配置页，第一版只包含模型列表和 API Key |
+| A180 | 模型选择 | 新任务开始前可选择 `deepseek-v4-flash` 或 `deepseek-v4-pro`；默认使用 Runtime 返回的第一个可用模型，开始后本次任务的模型不可切换，空列表时禁止开始 |
+| A181 | 标题与任务操作 | Session 顶部只显示标题和三点菜单；标题右键与三点菜单均提供重命名/删除；删除需确认、活动任务需先结束且 Workspace 文件保持不变；预览阶段、绝对路径和通用安全说明不出现在内容区 |

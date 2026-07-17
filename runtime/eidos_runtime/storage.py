@@ -22,7 +22,7 @@ from eidos_runtime.state_machine import EventType, RunStatus
 DATABASE_NAME = "eidos.db"
 LOCK_NAME = "runtime.lock"
 RESERVE_NAME = "emergency.reserve"
-SCHEMA_REVISION = 2
+SCHEMA_REVISION = 3
 RESERVE_BYTES = 1024 * 1024
 DEFAULT_LIST_LIMIT = 50
 MAX_LIST_LIMIT = 200
@@ -136,9 +136,14 @@ class SessionStore:
                     raise StorageError("schema_revision_missing")
             if revision > SCHEMA_REVISION or revision < 0:
                 raise StorageError("schema_revision_unsupported")
-            if revision == 1:
+            if revision in {1, 2}:
                 _backup_database(connection, database_path, revision)
+            if revision == 1:
                 _migrate_v1_to_v2(connection)
+                revision = 2
+            if revision == 2:
+                _migrate_v2_to_v3(connection)
+                revision = 3
             elif revision not in {0, SCHEMA_REVISION}:
                 raise StorageError("schema_revision_unsupported")
 
@@ -148,6 +153,7 @@ class SessionStore:
                     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
                     id TEXT NOT NULL UNIQUE,
                     workspace_root TEXT NOT NULL,
+                    title TEXT,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
@@ -436,6 +442,7 @@ class SessionStore:
         session = SessionDto.model_validate({
             "id": session_id,
             "workspaceRoot": str(workspace),
+            "title": None,
             "createdAt": now,
             "updatedAt": now,
         }).to_json_value()
@@ -477,7 +484,7 @@ class SessionStore:
     ) -> dict[str, object]:
         cursor_state = _decode_cursor(cursor) if cursor is not None else None
         sql = """
-            SELECT creation_seq, id, workspace_root, created_at, updated_at
+            SELECT creation_seq, id, workspace_root, title, created_at, updated_at
             FROM sessions
         """
         with self.lock:
@@ -508,7 +515,7 @@ class SessionStore:
         with self.lock:
             row = self._connection().execute(
                 """
-                SELECT id, workspace_root, created_at, updated_at
+                SELECT id, workspace_root, title, created_at, updated_at
                 FROM sessions
                 WHERE id = ?
                 """,
@@ -523,7 +530,14 @@ class SessionStore:
         *,
         operation_id: str | None = None,
         queued: bool = False,
+        session_title: str | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
+        if session_title is not None and (
+            not session_title
+            or len(session_title) > 60
+            or len(session_title.encode("utf-8")) > 120
+        ):
+            raise ValueError("session title is invalid")
         run_id = str(uuid.uuid4())
         item_id = str(uuid.uuid4())
         now = _now_ms()
@@ -531,12 +545,24 @@ class SessionStore:
             connection: sqlite3.Connection,
         ) -> dict[str, object]:
             session = connection.execute(
-                "SELECT id, workspace_root FROM sessions WHERE id = ?", (session_id,)
+                "SELECT id, workspace_root, title FROM sessions WHERE id = ?", (session_id,)
             ).fetchone()
             if session is None:
                 raise ResourceNotFoundError("session not found")
             if self._workspace_overlaps_data(Path(session["workspace_root"])):
                 raise WorkspaceBoundaryError("workspace overlaps runtime data")
+            if session["title"] is None and session_title is not None:
+                connection.execute(
+                    "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+                    (session_title, now, session_id),
+                )
+                append_event(
+                    connection,
+                    EventType.SESSION_TITLE_UPDATED,
+                    now,
+                    {"title": session_title},
+                    session_id=session_id,
+                )
             status = "queued" if queued else "running"
             started_at = None if queued else now
             try:
@@ -593,10 +619,19 @@ class SessionStore:
         return result["run"], result["item"]
 
     def enqueue_run(
-        self, session_id: str, user_input: str, *, operation_id: str | None = None
+        self,
+        session_id: str,
+        user_input: str,
+        *,
+        operation_id: str | None = None,
+        session_title: str | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         return self.create_run(
-            session_id, user_input, operation_id=operation_id, queued=True
+            session_id,
+            user_input,
+            operation_id=operation_id,
+            queued=True,
+            session_title=session_title,
         )
 
     def continue_run(
@@ -2296,6 +2331,20 @@ def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
         raise StorageError("migration_failed") from None
 
 
+def _migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
+    try:
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(sessions)").fetchall()
+        }
+        if "title" not in columns:
+            connection.execute("ALTER TABLE sessions ADD COLUMN title TEXT")
+        connection.execute("PRAGMA user_version = 3")
+        connection.commit()
+    except sqlite3.Error:
+        connection.rollback()
+        raise StorageError("migration_failed") from None
+
+
 def _prepare_private_directory(path: Path) -> None:
     if path.is_symlink():
         raise StorageError("data directory must not be a symlink")
@@ -2401,6 +2450,7 @@ def _session_from_row(row: sqlite3.Row) -> dict[str, object]:
     return SessionDto.model_validate({
         "id": row["id"],
         "workspaceRoot": row["workspace_root"],
+        "title": row["title"],
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }).to_json_value()

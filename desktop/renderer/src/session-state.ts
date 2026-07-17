@@ -2,8 +2,31 @@ import type {
   Item,
   Run,
   RuntimeNotification,
+  Session,
   SessionSnapshot,
 } from "./contracts.js";
+
+
+export interface WorkspaceSessionGroup {
+  workspaceRoot: string;
+  sessions: Session[];
+}
+
+export function groupSessionsByWorkspace(sessions: Session[]): WorkspaceSessionGroup[] {
+  const grouped = new Map<string, Session[]>();
+  for (const session of sessions) {
+    const existing = grouped.get(session.workspaceRoot);
+    if (existing) {
+      existing.push(session);
+    } else {
+      grouped.set(session.workspaceRoot, [session]);
+    }
+  }
+  return [...grouped].map(([workspaceRoot, groupedSessions]) => ({
+    workspaceRoot,
+    sessions: groupedSessions,
+  }));
+}
 
 
 export interface SnapshotReadToken {

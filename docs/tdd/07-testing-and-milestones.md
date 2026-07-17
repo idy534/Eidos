@@ -303,6 +303,10 @@
 - Profile 编辑的失效提示、API Key 保持/替换/清除、Archive/恢复无删除、HTTP 明文警告、TLS 无绕过、固定认证模式和用户声明 token limits。
 - HTTP/SSE 重试计数、首 delta 后中断提示、reported/unknown usage 汇总和 context_input_too_large 预算错误卡。
 - wire API 选择、最终 endpoint preview、output token parameter 探测结果、stateless/第三方留存提示、三类 output stopped 与 runtime contract unsupported 卡片。
+- 左侧任务项无第二行状态文字；`taskStatus` 的完成/进行中/失败分别映射绿点/转圈/红点，`new|canceled` 无彩色点，reduced-motion 下转圈停止动画。
+- 左下角齿轮打开仅含模型目录/API Key 的第一版 Settings；旧对话区模型横幅不存在，未配置时从 Settings 返回后列表和默认项刷新。
+- Runtime 模型列表按 flash、pro 返回时默认第一个可用项；开始前可切换，未知/不可用/空列表禁止创建 Run，提交成功后模型选择锁定且 RunSnapshot 保持所选 `modelId`。
+- Session header 只显示标题和三点菜单；标题右键与三点菜单共享重命名/删除操作，活动任务删除被拒绝，确认删除后导航安全且 Workspace 文件零变化；预览阶段、绝对路径和通用安全说明不出现在 header。
 - 每个状态只按 snapshot allowed_actions 渲染；recoverable/irrecoverable/unknown/workspace unavailable 的 Continue、Approval 竞态和 terminal 空动作均符合服务端矩阵。
 - Main 对 success/error DTO 二次 runtime validation、cursor 只透传、unknown Event 原 payload 零 Renderer 泄漏、不兼容 contract 停流；storage health-only 只显示安全 reason/data root/recheck 且无自动清理/恢复按钮。
 - UTC 毫秒的本地化展示、客户端时钟回拨/休眠不延长 Approval、启动 clock rollback invalidation 在业务 IPC 前可见。
@@ -314,6 +318,7 @@ MVP Lite 已验证：
 - ✅ 隔离数据根创建/打开 SQLite，目录与数据库权限分别为 `0700/0600`。
 - ✅ `session/create -> shutdown -> Runtime restart -> session/list/read` 保留相同 Session 事实。
 - ✅ Session keyset 分页无重复，非法 cursor 返回闭合参数错误。
+- ✅ 相同 canonical Workspace 的 Session 保持任务顺序并归入同一导航组；首个 query 生成标题、跨重启保留且后续 Run 不覆盖，模型失败走有界回退。
 - ✅ symlink Workspace 创建被拒绝且零 Session 写入，不存在 Session 返回闭合 `RESOURCE_NOT_FOUND`。
 - ✅ Run/Item/ToolCall 事务写入、全局单活动 Run、取消、异常重启 `interrupted` 和有界 SessionSnapshot。
 - ✅ Fake Model + `read_file` 两轮 Runtime Loop、Item notification 顺序和真实 Main 子进程路由。
@@ -330,6 +335,8 @@ MVP Lite 已验证：
 - Alembic 空库初始化 head 和重复启动；已知旧 revision 先通过 SQLite Online Backup API 生成 mode 0600、fsync、hash/manifest、原子安装的完整备份，再以单 connection/transaction 迁移并复检 foreign keys/integrity/target revision。
 - backup 临时写/关闭/校验/fsync/rename/目录 fsync/manifest 任一点故障均不改源库；migration SQL、commit 后 reopen 或 integrity 故障保持 health-only并保留源/备份。未知/缺失/newer revision、autocommit/VACUUM/journal 变化和自动 downgrade/stamp 全部拒绝。
 - 状态与 Event 原子提交。
+- Session `taskStatus` 在 Run 排队、等待、成功、失败、中断、取消和无 Run 场景下投影稳定；Renderer 不需要读取全部 Run 重新计算。
+- 手动改名跨重启保留且不会被后续 Run 自动标题覆盖；`session/delete` 对活动任务 fail closed，对终态任务原子删除 Eidos 关联事实并保留 Workspace 文件，operation replay 不重复删除。
 - FIFO enqueued_at 重启保持。
 - Artifact snapshot/source hash 和版本唯一性。
 - capability snapshot 的 `(profile_id,snapshot_version)` 唯一性、必需能力（含 tool control/schema）、Tool Schema Dialect、stateless continuation 与可选传输/输出字段、configuration/Gateway/model request contract version，以及 Run 内嵌快照不随外键记录变化。

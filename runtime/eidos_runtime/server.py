@@ -8,8 +8,9 @@ from pathlib import Path
 import re
 import sys
 import threading
-from typing import Any, BinaryIO, TextIO
+import unicodedata
 import uuid
+from typing import Any, BinaryIO, TextIO
 
 from pydantic import ValidationError
 
@@ -42,8 +43,20 @@ MAX_MESSAGE_BYTES = 1024 * 1024
 MAX_REQUEST_ID_BYTES = 128
 PROTOCOL_VERSION = 1
 CLIENT_REQUEST_ID = re.compile(r"client-[A-Za-z0-9._-]+")
+MAX_SESSION_TITLE_BYTES = 120
 
 logger = logging.getLogger("eidos.runtime")
+
+
+def clean_session_title(value: str) -> str:
+    title = "".join(
+        " " if unicodedata.category(character).startswith("C") else character
+        for character in value
+    )
+    title = " ".join(title.split()).strip("\"'`“”‘’ ")[:60]
+    return title.encode("utf-8")[:MAX_SESSION_TITLE_BYTES].decode(
+        "utf-8", errors="ignore"
+    ).strip()
 
 
 @dataclass
@@ -422,11 +435,28 @@ class RuntimeServer:
             if isinstance(replay, dict) and isinstance(replay.get("run"), dict):
                 self.send(response(request_id, replay["run"]))
                 return
+        session = self.store.read_session(params["sessionId"])
+        if session is None:
+            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
+            return
+        session_title: str | None = None
+        if "title" not in session:
+            try:
+                session_title = clean_session_title(
+                    self.model.generate_title(user_input, threading.Event())
+                )
+                if session_title:
+                    session_title = clean_session_title(self._scan_text(session_title))
+            except Exception:
+                logger.warning("Session title generation failed; using query fallback")
+                session_title = ""
+            session_title = session_title or clean_session_title(user_input) or "新任务"
         with self.worker_lock:
             try:
                 run, _user_item = self.store.enqueue_run(
                     params["sessionId"], user_input,
                     operation_id=params.get("operationId"),
+                    session_title=session_title,
                 )
             except ResourceNotFoundError:
                 self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))

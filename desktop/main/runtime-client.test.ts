@@ -153,6 +153,7 @@ test("routes runtime notifications during a fake model read loop", async () => {
       ],
     );
     assert.equal(snapshot.runs[0]?.status, "succeeded");
+    assert.equal(snapshot.session.title, "Fixture task");
     assert.deepEqual(
       snapshot.items.map((item) => item.kind),
       ["user_message", "tool_call", "assistant_message"],

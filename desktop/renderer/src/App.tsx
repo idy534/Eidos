@@ -175,6 +175,14 @@ export function App() {
         ...current,
         runs: upsertRun(current.runs, run),
       }));
+      if (!continuingRun && !snapshot.session.title) {
+        const sessionPage = await window.eidosRuntime.listSessions();
+        const titledSession = sessionPage.items.find((session) => session.id === snapshot.session.id);
+        setSessions(sessionPage.items);
+        if (titledSession) {
+          setSnapshot((current) => current && ({ ...current, session: titledSession }));
+        }
+      }
       setInput("");
     } catch (cause) {
       setError(messageFrom(cause));

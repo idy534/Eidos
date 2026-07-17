@@ -60,6 +60,7 @@ class OperationStatus(StrEnum):
 
 class EventType(StrEnum):
     SESSION_CREATED = "session.created"
+    SESSION_TITLE_UPDATED = "session.title_updated"
     RUN_CREATED = "run.created"
     RUN_STATUS_CHANGED = "run.status_changed"
     SEGMENT_CREATED = "segment.created"

@@ -22,6 +22,12 @@ MAX_TOOL_NAME_BYTES = 256
 SYSTEM_PROMPT = """You are Eidos, a local coding agent. Work only through the provided tools.
 Use relative workspace paths. Inspect relevant files before answering. Never invent tool results.
 When the task is complete, give a concise final answer in the user's language."""
+TITLE_PROMPT = """Create a concise task title from the user query below.
+Use the query's language, capture its intent, and return only the title with no quotes or punctuation wrapper.
+Keep it under 60 characters.
+
+User query:
+"""
 
 
 class ModelProviderError(RuntimeError):
@@ -38,6 +44,14 @@ class _ToolAccumulator:
 class DeepSeekChatModel:
     def __init__(self, api_key: str) -> None:
         self.api_key = api_key
+
+    def generate_title(self, user_input: str, cancel: threading.Event) -> str:
+        return self.complete(
+            ({"type": "user", "content": TITLE_PROMPT + user_input},),
+            cancel,
+            lambda _delta: None,
+            allow_tools=False,
+        ).text
 
     def complete(
         self,

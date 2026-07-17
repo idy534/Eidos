@@ -6,7 +6,7 @@
 
 MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 `Session/Run/Item/ToolCall` 最小事实；✅ 串行 Agent Loop 与 20 Step 上限；✅ `list_files/read_file/search_text`；✅ 模型流、基础 Execution Feed 与真实 DeepSeek 联网闭环；✅ Cancel 与异常 `interrupted`；✅ 本机私有 DeepSeek 配置；✅ `write_file/apply_patch` 完整 diff、逐次审批、hash/CAS 复检和原子提交；✅ `run_shell` 逐次审批、Seatbelt 默认断网、环境隔离、Homebrew Toolchain、有界输出、timeout/取消。不能把这些 ✅ 外推为本文件目标态条目已全部满足。
 
-模块阅读索引：Desktop/Workspace `F001-F006`；Runtime 与恢复 `F007-F011,F023-F040,F127-F139`；文件、Shell 与安全 `F012-F022,F041-F073`；模型与上下文 `F028,F031,F033,F036-F039,F074-F096`；工具契约与结果 `F097-F126`。编号保持稳定，阶段是否实施仍以 `mvp-lite.md` 和 `mvp-phase-2.md` 为准。
+模块阅读索引：Desktop/Workspace `F001-F006,F140-F143`；Runtime 与恢复 `F007-F011,F023-F040,F127-F139`；文件、Shell 与安全 `F012-F022,F041-F073`；模型与上下文 `F028,F031,F033,F036-F039,F074-F096,F142`；工具契约与结果 `F097-F126`。编号保持稳定，阶段是否实施仍以 `mvp-lite.md` 和 `mvp-phase-2.md` 为准。
 
 ## 1. 目标态功能清单
 
@@ -153,6 +153,10 @@ MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 
 | F137 | Event 前向兼容 | Timeline 新增可忽略事件不阻断旧 UI；状态语义不兼容时由版本握手和 snapshot 恢复阻断误解释 |
 | F138 | 统一时间 | 持久化/API 时间统一 UTC 毫秒，运行时预算和 deadline 不受系统墙钟回拨延长 |
 | F139 | 存储故障恢复 | 状态无法可靠提交时停止业务且不虚报成功；释放空间后先校验、对账再 ready，不自动删除或重放副作用 |
+| F140 | ✅ Workspace 任务导航与命名 | 同路径 Session 按 Workspace 分组；首次 query 由本次选定模型生成一次性持久标题，失败时安全回退且不阻断 Run |
+| F141 | 紧凑任务状态 | 左侧任务为单行紧凑布局，不显示第二行状态文字；Runtime 返回任务级状态，UI 只以完成绿点、进行中转圈、失败红点表示 |
+| F142 | 模型设置与任务前选择 | 左下角齿轮进入仅含模型列表/API Key 的第一版配置页；新任务开始前从 Runtime 模型列表选择，默认第一个可用项，Run 创建后锁定模型 |
+| F143 | Session 标题与任务管理 | 内容区顶部只显示标题与三点菜单；标题右键和三点菜单均可重命名或删除，删除需确认且不触碰 Workspace 文件；通用预览、路径和安全说明移出内容区 |
 
 ## 2. ToolCall 组合规则
 

@@ -19,7 +19,11 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.model import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
 from eidos_runtime.seatbelt import SeatbeltSelfTestResult  # noqa: E402
-from eidos_runtime.server import RuntimeServer, valid_request_id  # noqa: E402
+from eidos_runtime.server import (  # noqa: E402
+    RuntimeServer,
+    clean_session_title,
+    valid_request_id,
+)
 from eidos_runtime.storage import (  # noqa: E402
     ContextLimitExceeded,
     SessionStore,
@@ -49,6 +53,14 @@ def run_runtime(
 
 
 class RuntimeProtocolTests(unittest.TestCase):
+    def test_generated_session_title_is_single_line_and_bounded(self) -> None:
+        title = clean_session_title('  “分析\nCodex\u202e 架构”  ')
+        long_title = clean_session_title("任务" * 100)
+
+        self.assertEqual(title, "分析 Codex 架构")
+        self.assertLessEqual(len(long_title), 60)
+        self.assertLessEqual(len(long_title.encode("utf-8")), 120)
+
     def test_waiting_approval_releases_execution_slot_and_requeues_fifo(self) -> None:
         with (
             tempfile.TemporaryDirectory(prefix="eidos-data-") as data_directory,

@@ -102,13 +102,15 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 .sidebar nav { min-height: 0; overflow-x: hidden; overflow-y: auto; }
 .nav-label { margin: 0 0.5rem 0.5rem; color: var(--muted); font-size: 0.75rem; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; }
 .nav-empty { margin: 1rem 0.5rem; color: var(--muted); font-size: 0.85rem; }
+.workspace-list { display: grid; gap: 0.75rem; margin: 0; padding: 0; list-style: none; }
+.workspace-title { overflow: hidden; margin: 0; padding: 0.5rem; font-size: 0.9rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .session-list { display: grid; gap: 0.25rem; margin: 0; padding: 0; list-style: none; }
 .session-list button {
   display: block;
   width: 100%;
   overflow: hidden;
   border-color: transparent;
-  padding: 0.625rem 0.75rem;
+  padding: 0.625rem 0.75rem 0.625rem 1.5rem;
   color: var(--text);
   background: transparent;
   text-align: left;

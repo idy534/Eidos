@@ -1,4 +1,5 @@
 import type { Run, Session } from "../contracts";
+import { groupSessionsByWorkspace } from "../session-state";
 import { EidosMark } from "./EidosMark";
 
 
@@ -12,35 +13,44 @@ interface Props {
 }
 
 export function SessionSidebar({ sessions, selectedId, disabled, statusBySession, onCreate, onSelect }: Props) {
+  const workspaces = groupSessionsByWorkspace(sessions);
   return (
-    <aside className="sidebar" aria-label="Sessions">
+    <aside className="sidebar" aria-label="任务导航">
       <div className="brand-row">
         <span className="brand-mark" aria-hidden="true">
           <EidosMark />
         </span>
         <span>Eidos</span>
       </div>
-      <button className="new-session" disabled={disabled} onClick={onCreate}>＋ 新建 Session</button>
-      <nav aria-label="历史 Sessions">
-        <p className="nav-label">最近</p>
+      <button className="new-session" disabled={disabled} onClick={onCreate}>＋ 新建任务</button>
+      <nav aria-label="工作空间与任务">
+        <p className="nav-label">项目</p>
         {sessions.length === 0 ? (
-          <p className="nav-empty">还没有 Session</p>
+          <p className="nav-empty">还没有任务</p>
         ) : (
-          <ul className="session-list">
-            {sessions.map((session) => (
-              <li key={session.id}>
-                <button
-                  className={session.id === selectedId ? "selected" : ""}
-                  aria-current={session.id === selectedId ? "page" : undefined}
-                  disabled={disabled}
-                  onClick={() => onSelect(session)}
-                >
-                  <span>{basename(session.workspaceRoot)}</span>
-                  <small>{session.workspaceRoot}</small>
-                  {statusBySession[session.id] && (
-                    <small className="session-status">{statusLabel(statusBySession[session.id]!)}</small>
-                  )}
-                </button>
+          <ul className="workspace-list">
+            {workspaces.map((workspace) => (
+              <li key={workspace.workspaceRoot}>
+                <section className="workspace-group" aria-label={basename(workspace.workspaceRoot)}>
+                  <p className="workspace-title" title={workspace.workspaceRoot}>{basename(workspace.workspaceRoot)}</p>
+                  <ul className="session-list">
+                    {workspace.sessions.map((session) => (
+                      <li key={session.id}>
+                        <button
+                          className={session.id === selectedId ? "selected" : ""}
+                          aria-current={session.id === selectedId ? "page" : undefined}
+                          disabled={disabled}
+                          onClick={() => onSelect(session)}
+                        >
+                          <span>{session.title ?? "新任务"}</span>
+                          {statusBySession[session.id] && (
+                            <small className="session-status">{statusLabel(statusBySession[session.id]!)}</small>
+                          )}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
               </li>
             ))}
           </ul>

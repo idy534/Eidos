@@ -60,6 +60,7 @@ class ApprovalDecisionDto(ClosedModel):
 class SessionDto(ClosedModel):
     id: StrictStr
     workspace_root: StrictStr = Field(alias="workspaceRoot")
+    title: StrictStr | None = None
     created_at: StrictInt = Field(alias="createdAt")
     updated_at: StrictInt = Field(alias="updatedAt")
 

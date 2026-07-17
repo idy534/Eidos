@@ -22,6 +22,8 @@ class ModelResponse:
 
 
 class ModelClient(Protocol):
+    def generate_title(self, user_input: str, cancel: threading.Event) -> str: ...
+
     def complete(
         self,
         context: tuple[ModelContextItem, ...],
@@ -34,9 +36,17 @@ class ModelClient(Protocol):
 @dataclass
 class ScriptedModel:
     responses: Sequence[ModelResponse]
+    generated_title: str = "Fixture task"
     contexts: list[tuple[ModelContextItem, ...]] = field(default_factory=list)
     allow_tools_history: list[bool] = field(default_factory=list)
+    title_inputs: list[str] = field(default_factory=list)
     _index: int = 0
+
+    def generate_title(self, user_input: str, cancel: threading.Event) -> str:
+        if cancel.is_set():
+            return ""
+        self.title_inputs.append(user_input)
+        return self.generated_title
 
     def complete(
         self,

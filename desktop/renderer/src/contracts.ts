@@ -13,6 +13,7 @@ export type RuntimeStatus =
 export interface Session {
   id: string;
   workspaceRoot: string;
+  title?: string;
   createdAt: number;
   updatedAt: number;
 }

@@ -167,6 +167,8 @@
 | Q158 | 第二期引入 Pydantic v2，用于 JSON-RPC DTO、ApprovalDecision、Run、Item、ToolSpec、ToolResult 和 Event 的 strict/closed 校验与安全投影；不引入 FastAPI，也不以 Pydantic 取代 Tool Schema、状态机或安全授权。 | 第二期清单；TDD 架构/协议/工具 |
 | Q159 | ToolSpec 的 side_effect 保持 `none|workspace|eidos_state|shell` 分级枚举而非 bool；requires_approval、timeout 与闭合 input/result schema 为 Registry 固定元数据。 | 第二期清单；TDD 工具契约 |
 | Q160 | 本地控制面永久固定为 Electron Main 与 Python Runtime 之间的标准 JSON-RPC 2.0 over stdio/JSONL，不开放本地 HTTP/SSE/WebSocket/Unix Socket、随机端口、Bearer Token 或 FastAPI；Runtime 调用远端模型只使用 HTTP 请求与 SSE 响应流。 | PRD/TDD 总览；协议、模型与 Desktop |
+| Q161 | 左侧任务导航按 canonical `workspace_root` 分组；同一 Workspace 的所有 Session 作为任务放在同一项目节点下，不再重复平铺 Workspace 名。 | PRD Workbench；TDD Session 投影 |
+| Q162 | Session 标题由首次 `userInput` 触发一次独立、无工具的模型命名；标题持久化后不随后续 Run 改写，生成失败时退回首次输入的有界安全短文本。 | PRD 任务命名；TDD Model/Session/Event |
 
 ## 文件契约统一收敛
 

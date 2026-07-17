@@ -4,6 +4,7 @@ import test from "node:test";
 import type { Item, Run, RuntimeNotification, SessionSnapshot } from "./contracts.js";
 import {
   applyNotification,
+  groupSessionsByWorkspace,
   SnapshotReadCoordinator,
   terminalRunPresentation,
   userFacingError,
@@ -179,4 +180,21 @@ test("closed runtime business errors map to safe user-facing guidance", () => {
     userFacingError(new Error("provider secret details")),
     "操作失败，请查看 Runtime 日志。",
   );
+});
+
+test("sessions are grouped by workspace without changing task order", () => {
+  const groups = groupSessionsByWorkspace([
+    { ...session, id: "session-2", title: "第二期规划", updatedAt: 3 },
+    { ...session, id: "session-1", title: "分析架构", updatedAt: 2 },
+    {
+      ...session,
+      id: "session-3",
+      workspaceRoot: "/other",
+      title: "修复测试",
+      updatedAt: 1,
+    },
+  ]);
+
+  assert.deepEqual(groups.map((group) => group.workspaceRoot), ["/workspace", "/other"]);
+  assert.deepEqual(groups[0]?.sessions.map((item) => item.title), ["第二期规划", "分析架构"]);
 });
