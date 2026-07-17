@@ -29,6 +29,8 @@ brew install node pnpm python
 
 ```bash
 pnpm install
+python3 -m venv .venv
+.venv/bin/pip install -r runtime/requirements.txt
 ```
 
 Electron 第一次安装或启动时需要从官方源下载对应 macOS 架构的 Chromium 二进制，耗时会明显长于普通前端依赖。后续启动会复用本地缓存。

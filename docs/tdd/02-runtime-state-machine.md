@@ -2,9 +2,11 @@
 
 版本：v0.4（探索草案）
 
-范围说明：本文描述目标态状态机草案。第一期固定为 [MVP Lite](../mvp-lite.md) 的 `Session -> Run -> Item/ToolCall`，不实现 Execution Segment、持久 FIFO、stopped 或跨重启恢复。
+范围说明：本文描述目标态状态机草案。第一期基线见 [MVP Lite](../mvp-lite.md)；Execution Segment、持久 FIFO、暂停/继续、`stopped` 与对账恢复的第二期子集已按 [第二期清单](../mvp-phase-2.md) 实现。
 
 MVP Lite 当前实施状态：✅ 全局单活动 Run；✅ `running/waiting_approval/succeeded/failed/canceled/interrupted`；✅ 串行模型/工具循环与 20 Step 上限；✅ 连续两次非法响应失败；✅ Cancel、迟到审批和 worker 异常收敛；✅ 未完成 Run 启动时标记 `interrupted` 且不重放。
+
+第二期实施状态：✅ 持久 FIFO 与单执行槽；✅ waiting_approval 释放执行槽并重新排队；✅ Segment/Step/Attempt；✅ 20/80 Step 与 30/120 分钟有效时间预算；✅ 无工具 Finalization；✅ Reject 两次暂停、用户补充新 Segment、Durable Intent 与 reconciliation 屏障。
 
 ## 1. 核心实体
 
@@ -30,7 +32,7 @@ Session
 队列规则：
 
 - 可同时创建和保留多个 Run。
-- `queued` Run 按 `enqueued_at, id` FIFO 获取执行槽。
+- `queued` Run 按 `enqueued_at, creation_seq` FIFO 获取执行槽。
 - 当前 Run 不可抢占；它进入等待态或终态后释放执行槽。
 - waiting_approval/waiting_user_input 不占执行槽。
 - Approve、Reject 后继续或 user-input 恢复时，将 Run 以新的 `enqueued_at` 追加到队尾。

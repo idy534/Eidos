@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -48,6 +49,61 @@ def run_runtime(
 
 
 class RuntimeProtocolTests(unittest.TestCase):
+    def test_waiting_approval_releases_execution_slot_and_requeues_fifo(self) -> None:
+        with (
+            tempfile.TemporaryDirectory(prefix="eidos-data-") as data_directory,
+            tempfile.TemporaryDirectory(prefix="eidos-workspace-a-") as workspace_a,
+            tempfile.TemporaryDirectory(prefix="eidos-workspace-b-") as workspace_b,
+        ):
+            output = io.StringIO()
+            model = ScriptedModel([
+                ModelResponse(tool_calls=(ModelToolCall(
+                    "call-write", "write_file", {"path": "new.txt", "content": "candidate\n"},
+                ),)),
+                ModelResponse(text="second completed"),
+                ModelResponse(text="first continued"),
+            ])
+            server = RuntimeServer(output, Path(data_directory), model)
+            with patch(
+                "eidos_runtime.server.run_seatbelt_self_test",
+                return_value=SeatbeltSelfTestResult(False, (), ("test",)),
+            ):
+                server.handle({
+                    "jsonrpc": "2.0", "id": "client-init", "method": "initialize",
+                    "params": {"client": {"name": "test", "version": "1"}, "protocolVersion": 1},
+                })
+            first_session = server.store.create_session(workspace_a)
+            second_session = server.store.create_session(workspace_b)
+            first, _ = server.store.enqueue_run(first_session["id"], "write a file")
+            second, _ = server.store.enqueue_run(second_session["id"], "answer now")
+            server._schedule_next()
+
+            approval_id = ""
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                messages = [json.loads(line) for line in output.getvalue().splitlines()]
+                approval = next((message for message in messages if message.get("method") == "item/requestApproval"), None)
+                if approval is not None:
+                    approval_id = approval["id"]
+                    break
+                time.sleep(0.01)
+            self.assertTrue(approval_id)
+
+            while time.monotonic() < deadline and server.store.read_run(second["id"])["status"] != "succeeded":
+                time.sleep(0.01)
+            self.assertEqual(server.store.read_run(second["id"])["status"], "succeeded")
+            self.assertEqual(server.store.read_run(first["id"])["status"], "waiting_approval")
+
+            server.handle({
+                "jsonrpc": "2.0", "id": approval_id,
+                "result": {"decision": "reject", "feedback": "use another approach"},
+            })
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and server.store.read_run(first["id"])["status"] != "succeeded":
+                time.sleep(0.01)
+            self.assertEqual(server.store.read_run(first["id"])["status"], "succeeded")
+            server.close()
+
     def test_oversized_request_id_is_rejected_without_stopping_runtime(self) -> None:
         oversized_id = "client-" + "x" * 122
         completed = run_runtime(
@@ -216,7 +272,7 @@ class RuntimeProtocolTests(unittest.TestCase):
         self.assertEqual(stdout_messages[0]["jsonrpc"], "2.0")
         self.assertEqual(stdout_messages[0]["id"], "client-1")
         self.assertEqual(stdout_messages[0]["result"]["protocolVersion"], 1)
-        self.assertEqual(stdout_messages[0]["result"]["runtimeVersion"], "0.1.0")
+        self.assertEqual(stdout_messages[0]["result"]["runtimeVersion"], "0.2.0")
         self.assertIsInstance(
             stdout_messages[0]["result"]["capabilities"]["runShell"], bool
         )
@@ -331,7 +387,7 @@ class RuntimeProtocolTests(unittest.TestCase):
             self.assertEqual(responses[1]["result"], {"items": [created]})
             self.assertEqual(
                 responses[2]["result"],
-                {"session": created, "runs": [], "items": []},
+                {"session": created, "runs": [], "items": [], "throughEventId": 1},
             )
             self.assertEqual((Path(data_directory) / "eidos.db").stat().st_mode & 0o777, 0o600)
 

@@ -11,7 +11,8 @@ MVP Lite 当前实施状态：
 - ✅ Run、Item、ToolCall 四类最小业务事实、单活动 Run 约束、模型步数、ToolCall 关联、Item 完成与启动 `interrupted` 收敛已实现。
 - ✅ TypeScript Main Client 已通过真实子进程、通知路由、Fake Model 两轮工具循环和跨 Runtime 重启持久化测试；测试使用隔离数据根，不触碰真实 `~/.eidos`。
 - ✅ JSON-RPC 业务错误保留闭合 code，经 Main/Preload 后映射为安全 Renderer 提示，不透传 Python、Provider 或 OS 原始错误。
-- ⏳ 目标态迁移、事件表、复杂恢复与跨版本兼容仍未实现。
+- ✅ 第二期已实现 revision 2 前向迁移/备份/完整性复检、状态目录 OS lock、health-only、Event 表与闭合 payload registry、snapshot 水位、operation 幂等、keyset high-water 分页和崩溃对账。
+- ⏳ 第二期清单外的完整 Workspace/Model Profile/Artifact 表与通用 Outbox 投递仍未实现。
 
 ## 1. 本地控制协议
 

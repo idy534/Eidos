@@ -11,6 +11,21 @@ import type { RuntimeNotification } from "./runtime-client.js";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const protocolV1Fixture = path.join(projectRoot, "protocol", "fixtures", "v1.json");
+const toolResultsV1Fixture = path.join(projectRoot, "protocol", "fixtures", "tool-results-v1.json");
+const pythonExecutable = process.env.EIDOS_PYTHON
+  ?? path.join(projectRoot, ".venv", "bin", "python");
+
+
+test("shares canonical ToolResult vectors with the Python runtime", async () => {
+  const fixture = JSON.parse(await readFile(toolResultsV1Fixture, "utf8")) as {
+    toolContractVersion: number;
+    vectors: Array<{ result: unknown; canonicalJson: string }>;
+  };
+  assert.equal(fixture.toolContractVersion, 1);
+  for (const vector of fixture.vectors) {
+    assert.equal(JSON.stringify(sortJson(vector.result)), vector.canonicalJson);
+  }
+});
 
 
 test("preserves a closed business error code without exposing runtime details", () => {
@@ -31,7 +46,7 @@ test("spawns the Python runtime and completes initialize then shutdown", async (
 
   try {
     const client = new RuntimeClient({
-      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      pythonExecutable: pythonExecutable,
       runtimeRoot: path.join(projectRoot, "runtime"),
       dataDirectory,
       onStderr: (line) => stderrLines.push(line),
@@ -39,9 +54,10 @@ test("spawns the Python runtime and completes initialize then shutdown", async (
 
     const initialized = await client.initialize();
     assert.equal(initialized.protocolVersion, 1);
-    assert.equal(initialized.runtimeVersion, "0.1.0");
+    assert.equal(initialized.runtimeVersion, "0.2.0");
     assert.equal(typeof initialized.capabilities.runShell, "boolean");
     assert.equal(initialized.capabilities.modelConfigured, false);
+    assert.deepEqual(await client.health(), { state: "ready" });
 
     await client.shutdown();
     assert.equal(await client.waitForExit(), 0);
@@ -57,7 +73,7 @@ test("creates and reads a persisted session across runtime restarts", async () =
 
   try {
     const firstClient = new RuntimeClient({
-      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      pythonExecutable: pythonExecutable,
       runtimeRoot: path.join(projectRoot, "runtime"),
       dataDirectory,
     });
@@ -67,7 +83,7 @@ test("creates and reads a persisted session across runtime restarts", async () =
     assert.equal(await firstClient.waitForExit(), 0);
 
     const secondClient = new RuntimeClient({
-      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      pythonExecutable: pythonExecutable,
       runtimeRoot: path.join(projectRoot, "runtime"),
       dataDirectory,
     });
@@ -78,7 +94,9 @@ test("creates and reads a persisted session across runtime restarts", async () =
     assert.equal(await secondClient.waitForExit(), 0);
 
     assert.deepEqual(listed, { items: [created] });
-    assert.deepEqual(snapshot, { session: created, runs: [], items: [] });
+    assert.deepEqual(snapshot, {
+      session: created, runs: [], items: [], throughEventId: 1,
+    });
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
@@ -97,7 +115,7 @@ test("routes runtime notifications during a fake model read loop", async () => {
       completeRun = resolve;
     });
     const client = new RuntimeClient({
-      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      pythonExecutable: pythonExecutable,
       runtimeRoot: path.join(projectRoot, "runtime"),
       dataDirectory,
       environment: { EIDOS_FAKE_MODEL: "1" },
@@ -127,6 +145,7 @@ test("routes runtime notifications during a fake model read loop", async () => {
         "item/completed",
         "item/started",
         "item/completed",
+        "run/updated",
         "item/started",
         "item/delta",
         "item/completed",
@@ -155,7 +174,7 @@ test("routes a runtime approval request and commits only after approval", async 
       completeRun = resolve;
     });
     const client = new RuntimeClient({
-      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      pythonExecutable: pythonExecutable,
       runtimeRoot: path.join(projectRoot, "runtime"),
       dataDirectory,
       environment: { EIDOS_FAKE_MODEL: "write" },
@@ -208,7 +227,7 @@ test("cancel while awaiting approval ignores a late approve response", async () 
       completeRun = resolve;
     });
     const client = new RuntimeClient({
-      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      pythonExecutable: pythonExecutable,
       runtimeRoot: path.join(projectRoot, "runtime"),
       dataDirectory,
       environment: { EIDOS_FAKE_MODEL: "write" },
@@ -257,7 +276,7 @@ test("routes shell approval and streams sandboxed command completion", async () 
       completeRun = resolve;
     });
     client = new RuntimeClient({
-      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      pythonExecutable: pythonExecutable,
       runtimeRoot: path.join(projectRoot, "runtime"),
       dataDirectory,
       environment: { EIDOS_FAKE_MODEL: "shell" },
@@ -295,6 +314,19 @@ test("routes shell approval and streams sandboxed command completion", async () 
   }
 });
 
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortJson);
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, sortJson(item)]),
+    );
+  }
+  return value;
+}
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -329,7 +361,7 @@ test("terminates a runtime that writes non-protocol stdout", async () => {
 
   try {
     const client = new RuntimeClient({
-      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      pythonExecutable: pythonExecutable,
       runtimeRoot,
     });
 
@@ -385,7 +417,7 @@ test("uses the shared v1 vectors for requests, approvals, and notifications", as
       runFinished = resolve;
     });
     const client = new RuntimeClient({
-      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      pythonExecutable: pythonExecutable,
       runtimeRoot,
       onApprovalRequest: async () => {
         approvalSeen?.();
@@ -434,7 +466,7 @@ test("rejects an oversized unterminated frame before waiting for a newline", asy
 
   try {
     const client = new RuntimeClient({
-      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      pythonExecutable: pythonExecutable,
       runtimeRoot,
     });
     await assert.rejects(
@@ -482,7 +514,7 @@ test("drains a bounded notification burst even when its consumer is slow", async
       finish = resolve;
     });
     const client = new RuntimeClient({
-      pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+      pythonExecutable: pythonExecutable,
       runtimeRoot,
       onNotification: (notification) => {
         const busyUntil = Date.now() + 1;

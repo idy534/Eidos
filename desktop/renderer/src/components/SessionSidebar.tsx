@@ -1,4 +1,4 @@
-import type { Session } from "../contracts";
+import type { Run, Session } from "../contracts";
 import { EidosMark } from "./EidosMark";
 
 
@@ -6,11 +6,12 @@ interface Props {
   sessions: Session[];
   selectedId: string | undefined;
   disabled: boolean;
+  statusBySession: Record<string, Run["status"]>;
   onCreate: () => void;
   onSelect: (session: Session) => void;
 }
 
-export function SessionSidebar({ sessions, selectedId, disabled, onCreate, onSelect }: Props) {
+export function SessionSidebar({ sessions, selectedId, disabled, statusBySession, onCreate, onSelect }: Props) {
   return (
     <aside className="sidebar" aria-label="Sessions">
       <div className="brand-row">
@@ -36,6 +37,9 @@ export function SessionSidebar({ sessions, selectedId, disabled, onCreate, onSel
                 >
                   <span>{basename(session.workspaceRoot)}</span>
                   <small>{session.workspaceRoot}</small>
+                  {statusBySession[session.id] && (
+                    <small className="session-status">{statusLabel(statusBySession[session.id]!)}</small>
+                  )}
                 </button>
               </li>
             ))}
@@ -45,6 +49,14 @@ export function SessionSidebar({ sessions, selectedId, disabled, onCreate, onSel
       <p className="preview-note">MVP Lite · 本机单用户预览</p>
     </aside>
   );
+}
+
+function statusLabel(status: Run["status"]): string {
+  return ({
+    queued: "已排队", running: "执行中", waiting_approval: "等待批准",
+    waiting_user_input: "等待输入", finalizing: "收尾中", stopped: "已停止",
+    succeeded: "已完成", failed: "失败", canceled: "已取消", interrupted: "已中断",
+  } as const)[status];
 }
 
 function basename(path: string): string {

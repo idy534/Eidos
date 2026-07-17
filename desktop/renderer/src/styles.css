@@ -207,6 +207,7 @@ input, textarea {
 .run-status--success { border-color: #b8c9ba; color: var(--accent); background: var(--accent-soft); }
 .run-status--error { border-color: #dfb9b2; color: var(--danger); background: var(--danger-soft); }
 .run-status--warning { border-color: #d5c29d; color: #6f5b38; background: #f4ecdc; }
+.session-status { color: var(--accent) !important; font-weight: 700; }
 
 .tool-item { max-width: 44rem; margin: 0 0 1rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-muted); }
 .tool-item summary { display: grid; grid-template-columns: auto 1fr auto; gap: 0.625rem; align-items: center; padding: 0.625rem 0.75rem; cursor: pointer; font-size: 0.82rem; font-weight: 650; list-style: none; }

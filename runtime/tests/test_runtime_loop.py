@@ -75,6 +75,7 @@ class RuntimeLoopTests(unittest.TestCase):
                 "item/completed",
                 "item/started",
                 "item/completed",
+                "run/updated",
                 "item/started",
                 "item/delta",
                 "item/completed",
@@ -126,7 +127,7 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(failed["errorCode"], "MODEL_PROTOCOL_ERROR")
         self.assertEqual(len(model.contexts), 2)
 
-    def test_twenty_model_steps_are_enforced_without_a_finalization_call(self) -> None:
+    def test_twenty_model_steps_pause_the_segment_without_finalization(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Keep reading")
         model = ScriptedModel(
             [
@@ -147,10 +148,10 @@ class RuntimeLoopTests(unittest.TestCase):
             run["id"], threading.Event()
         )
 
-        failed = self.store.read_run(run["id"])
-        self.assertEqual(failed["status"], "failed")
-        self.assertEqual(failed["errorCode"], "MAX_STEPS_EXCEEDED")
-        self.assertEqual(failed["modelStepCount"], 20)
+        paused = self.store.read_run(run["id"])
+        self.assertEqual(paused["status"], "waiting_user_input")
+        self.assertEqual(paused["pauseReason"], "segment_step_limit")
+        self.assertEqual(paused["modelStepCount"], 20)
         self.assertEqual(len(model.contexts), 20)
 
     def test_second_active_run_is_rejected(self) -> None:
@@ -648,6 +649,91 @@ class ToolExecutorTests(unittest.TestCase):
 
         self.assertEqual(sensitive["code"], "sensitive_path")
         self.assertEqual(escaping["code"], "workspace_boundary_violation")
+
+    def test_sensitive_file_content_is_withheld_as_a_whole(self) -> None:
+        (self.workspace / "notes.txt").write_text(
+            "public line\npassword=hunter2\n", encoding="utf-8"
+        )
+        result = self.executor.execute(
+            "read_file", {"path": "notes.txt"}, threading.Event()
+        )
+        self.assertEqual(result["code"], "sensitive_content_rejected")
+        self.assertNotIn("hunter2", json.dumps(result))
+        self.assertNotIn("public line", json.dumps(result))
+
+    def test_read_file_size_tiers_and_line_ranges_are_bounded(self) -> None:
+        medium = self.workspace / "medium.txt"
+        medium.write_text("a" * (300 * 1024), encoding="utf-8")
+        huge = self.workspace / "huge.txt"
+        huge.write_text("b" * (2 * 1024 * 1024 + 1), encoding="utf-8")
+        lines = self.workspace / "lines.txt"
+        lines.write_text("".join(f"line {number}\n" for number in range(1, 21)), encoding="utf-8")
+
+        truncated = self.executor.execute(
+            "read_file", {"path": "medium.txt"}, threading.Event()
+        )
+        rejected = self.executor.execute(
+            "read_file", {"path": "huge.txt"}, threading.Event()
+        )
+        ranged = self.executor.execute(
+            "read_file_range",
+            {"path": "lines.txt", "startLine": 3, "endLine": 5},
+            threading.Event(),
+        )
+
+        self.assertTrue(truncated["data"]["truncated"])
+        self.assertEqual(truncated["data"]["truncationReason"], "head_tail")
+        self.assertEqual(rejected["code"], "file_too_large")
+        self.assertEqual(ranged["data"]["content"], "line 3\nline 4\nline 5\n")
+        self.assertEqual(ranged["data"]["nextLine"], 6)
+
+    def test_read_file_classifies_binary_and_non_utf8_content(self) -> None:
+        (self.workspace / "binary.dat").write_bytes(b"text\x00binary")
+        (self.workspace / "latin1.txt").write_bytes(b"caf\xe9")
+        binary = self.executor.execute(
+            "read_file", {"path": "binary.dat"}, threading.Event()
+        )
+        encoded = self.executor.execute(
+            "read_file", {"path": "latin1.txt"}, threading.Event()
+        )
+        self.assertEqual(binary["code"], "binary_file")
+        self.assertEqual(encoded["code"], "invalid_utf8")
+
+    def test_search_is_ascii_case_insensitive_and_rejects_multiline_query(self) -> None:
+        (self.workspace / "case.txt").write_text("Alpha NEEDLE omega\n", encoding="utf-8")
+        result = self.executor.execute(
+            "search_text", {"query": "needle"}, threading.Event()
+        )
+        invalid = self.executor.execute(
+            "search_text", {"query": "one\ntwo"}, threading.Event()
+        )
+
+        self.assertEqual(result["data"]["matches"][0]["column"], 7)
+        self.assertEqual(invalid["code"], "invalid_arguments")
+
+    def test_delete_file_prepares_full_diff_and_commits_one_file(self) -> None:
+        target = self.workspace / "delete-me.txt"
+        target.write_text("remove me\n", encoding="utf-8")
+        prepared = self.executor.prepare_file_change(
+            "delete_file", {"path": "delete-me.txt"}, threading.Event()
+        )
+        self.assertFalse(isinstance(prepared, dict), prepared)
+        assert not isinstance(prepared, dict)
+        self.assertTrue(prepared.delete)
+        self.assertIn("+++ /dev/null", prepared.diff)
+
+        result = self.executor.commit_file_change(
+            "delete_file", prepared, threading.Event()
+        )
+
+        self.assertEqual(result["outcome"], "success")
+        self.assertFalse(target.exists())
+
+    def test_all_results_use_the_versioned_canonical_contract(self) -> None:
+        result = self.executor.execute("list_files", {}, threading.Event())
+        self.assertEqual(result["schemaVersion"], 1)
+        self.assertEqual(result["toolContractVersion"], 1)
+        self.assertEqual(result["reconciliationRequired"], False)
 
     def test_read_and_search_never_expose_an_external_hard_link(self) -> None:
         outside = self.workspace.parent / f"{self.workspace.name}-outside-secret.txt"

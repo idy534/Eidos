@@ -18,6 +18,7 @@ type RuntimeStatus =
       runtimeVersion: string;
       runShell: boolean;
       modelConfigured: boolean;
+      storageHealth: { state: "ready" | "health_only"; code?: string };
     }
   | { state: "error"; message: string };
 
@@ -95,7 +96,8 @@ function createWindow(): void {
 async function startRuntime(): Promise<void> {
   const runtimeRoot = path.join(app.getAppPath(), "runtime");
   const client = new RuntimeClient({
-    pythonExecutable: process.env.EIDOS_PYTHON ?? "python3",
+    pythonExecutable: process.env.EIDOS_PYTHON
+      ?? path.join(app.getAppPath(), ".venv", "bin", "python"),
     runtimeRoot,
     dataDirectory: process.env.EIDOS_DATA_DIR ?? path.join(app.getPath("home"), ".eidos"),
     onNotification: publishNotification,
@@ -115,12 +117,14 @@ async function startRuntime(): Promise<void> {
 
   try {
     const initialized = await client.initialize();
+    const storageHealth = await client.health();
     publishStatus({
       state: "ready",
       protocolVersion: initialized.protocolVersion,
       runtimeVersion: initialized.runtimeVersion,
       runShell: initialized.capabilities.runShell,
       modelConfigured: initialized.capabilities.modelConfigured,
+      storageHealth,
     });
   } catch (error) {
     console.error("[runtime] initialization failed", error);
@@ -132,6 +136,7 @@ async function startRuntime(): Promise<void> {
 }
 
 ipcMain.handle("runtime:get-status", () => runtimeStatus);
+ipcMain.handle("runtime:health", () => clientOrThrow().health());
 ipcMain.handle("workspace:select", async () => {
   const result = await dialog.showOpenDialog({
     title: "选择 Eidos Workspace",
@@ -145,6 +150,12 @@ ipcMain.handle("session:read", (_event, sessionId: unknown) => {
     throw new Error("Session 参数无效。");
   }
   return clientOrThrow().readSession(sessionId);
+});
+ipcMain.handle("event:list", (_event, sessionId: unknown, afterEventId: unknown) => {
+  if (typeof sessionId !== "string" || typeof afterEventId !== "number") {
+    throw new Error("Event 参数无效。");
+  }
+  return clientOrThrow().listEvents(sessionId, afterEventId);
 });
 ipcMain.handle("session:create", (_event, workspaceRoot: unknown) => {
   if (typeof workspaceRoot !== "string") {
@@ -166,6 +177,12 @@ ipcMain.handle("run:cancel", (_event, runId: unknown) => {
     throw new Error("Run 参数无效。");
   }
   return clientOrThrow().cancelRun(runId);
+});
+ipcMain.handle("run:continue", (_event, runId: unknown, userInput: unknown) => {
+  if (typeof runId !== "string" || typeof userInput !== "string") {
+    throw new Error("Run 参数无效。");
+  }
+  return clientOrThrow().continueRun(runId, userInput);
 });
 ipcMain.handle("model:status", () => clientOrThrow().modelStatus());
 ipcMain.handle("model:configure", (_event, apiKey: unknown) => {

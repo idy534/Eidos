@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import readline from "node:readline";
 
@@ -13,7 +14,12 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "APPROVAL_NO_LONGER_PENDING",
   "WORKSPACE_BOUNDARY_VIOLATION",
   "SANDBOX_UNAVAILABLE",
+  "STORAGE_HEALTH_ONLY",
+  "OPERATION_ID_REUSED",
+  "OPERATION_IN_PROGRESS",
   "INTERNAL_ERROR",
+  "SENSITIVE_CONTENT_REJECTED",
+  "SENSITIVE_SCAN_FAILED",
 ]);
 
 export interface InitializeResult {
@@ -29,6 +35,11 @@ export interface ModelStatus {
   provider: "deepseek";
   model: "deepseek-v4-flash";
   configured: boolean;
+}
+
+export interface RuntimeHealth {
+  state: "ready" | "health_only";
+  code?: string;
 }
 
 export interface Session {
@@ -48,11 +59,32 @@ export interface SessionSnapshot {
   runs: Run[];
   items: Item[];
   previousItemId?: string;
+  throughEventId?: number;
+}
+
+export interface RuntimeEvent {
+  eventContractVersion: 1;
+  eventId: number;
+  eventType: string;
+  occurredAt: number;
+  sessionId?: string;
+  runId?: string;
+  payload: Record<string, unknown>;
+}
+
+export interface EventListResult {
+  items: RuntimeEvent[];
+  hasMore: boolean;
+  throughEventId: number;
 }
 
 export type RunStatus =
+  | "queued"
   | "running"
   | "waiting_approval"
+  | "waiting_user_input"
+  | "finalizing"
+  | "stopped"
   | "succeeded"
   | "failed"
   | "canceled"
@@ -64,11 +96,15 @@ export interface Run {
   userInput?: string;
   status: RunStatus;
   modelStepCount: number;
+  allowedActions?: Array<"cancel" | "approve" | "reject" | "continue">;
   createdAt: number;
-  startedAt: number;
+  startedAt?: number;
   updatedAt: number;
   completedAt?: number;
   errorCode?: string;
+  pauseReason?: string;
+  stopReason?: string;
+  sideEffectsMayExist?: boolean;
 }
 
 export interface ToolCall {
@@ -134,12 +170,14 @@ export interface Item {
   createdAt: number;
   modelStepIndex?: number;
   content?: string;
+  incomplete?: boolean;
   completedAt?: number;
   toolCall?: ToolCall;
 }
 
 export type RuntimeNotification =
   | { method: "run/started"; params: { sessionId: string; run: Run } }
+  | { method: "run/updated"; params: { sessionId: string; run: Run } }
   | {
       method: "item/started" | "item/completed";
       params: { sessionId: string; runId: string; item: Item };
@@ -246,15 +284,17 @@ export class RuntimeClient {
     return this.validatedRequest(
       "initialize",
       {
-        client: { name: "eidos-desktop", version: "0.1.0" },
+        client: { name: "eidos-desktop", version: "0.2.0" },
         protocolVersion: 1,
       },
       isInitializeResult,
     );
   }
 
-  async createSession(workspaceRoot: string): Promise<Session> {
-    return this.validatedRequest("session/create", { workspaceRoot }, isSession);
+  async createSession(workspaceRoot: string, operationId = randomUUID()): Promise<Session> {
+    return this.validatedRequest(
+      "session/create", { workspaceRoot, operationId }, isSession,
+    );
   }
 
   listSessions(
@@ -274,12 +314,30 @@ export class RuntimeClient {
     );
   }
 
-  startRun(sessionId: string, userInput: string): Promise<Run> {
-    return this.validatedRequest("run/start", { sessionId, userInput }, isRun);
+  listEvents(sessionId: string, afterEventId: number, limit = 200): Promise<EventListResult> {
+    return this.validatedRequest(
+      "event/list", { sessionId, afterEventId, limit }, isEventListResult,
+    );
   }
 
-  cancelRun(runId: string): Promise<Run> {
-    return this.validatedRequest("run/cancel", { runId }, isRun);
+  health(): Promise<RuntimeHealth> {
+    return this.validatedRequest("runtime/health", {}, isRuntimeHealth);
+  }
+
+  startRun(sessionId: string, userInput: string, operationId = randomUUID()): Promise<Run> {
+    return this.validatedRequest(
+      "run/start", { sessionId, userInput, operationId }, isRun,
+    );
+  }
+
+  cancelRun(runId: string, operationId = randomUUID()): Promise<Run> {
+    return this.validatedRequest("run/cancel", { runId, operationId }, isRun);
+  }
+
+  continueRun(runId: string, userInput: string, operationId = randomUUID()): Promise<Run> {
+    return this.validatedRequest(
+      "run/continue", { runId, userInput, operationId }, isRun,
+    );
   }
 
   modelStatus(): Promise<ModelStatus> {
@@ -523,7 +581,11 @@ function isNotification(value: unknown): value is RuntimeNotification {
     return false;
   }
   const params = value.params;
-  if (value.method === "run/started" || value.method === "run/completed") {
+  if (
+    value.method === "run/started"
+    || value.method === "run/updated"
+    || value.method === "run/completed"
+  ) {
     const run = params.run;
     const valid = (
       hasOnlyKeys(params, ["sessionId", "run"])
@@ -534,9 +596,15 @@ function isNotification(value: unknown): value is RuntimeNotification {
     if (!valid || !isRun(run)) {
       return false;
     }
-    return value.method === "run/started"
-      ? run.status === "running"
-      : !["running", "waiting_approval"].includes(run.status);
+    if (value.method === "run/started") {
+      return run.status === "running";
+    }
+    if (value.method === "run/updated") {
+      return ["queued", "running", "waiting_approval", "waiting_user_input", "finalizing"].includes(run.status);
+    }
+    return ![
+      "queued", "running", "waiting_approval", "waiting_user_input", "finalizing",
+    ].includes(run.status);
   }
   if (value.method === "item/started" || value.method === "item/completed") {
     const item = params.item;
@@ -592,6 +660,15 @@ function isModelStatus(value: unknown): value is ModelStatus {
   );
 }
 
+function isRuntimeHealth(value: unknown): value is RuntimeHealth {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["state", "code"])
+    && ["ready", "health_only"].includes(String(value.state))
+    && (value.code === undefined || typeof value.code === "string")
+  );
+}
+
 function isSession(value: unknown): value is Session {
   return (
     isRecord(value)
@@ -616,13 +693,38 @@ function isSessionListResult(value: unknown): value is SessionListResult {
 function isSessionSnapshot(value: unknown): value is SessionSnapshot {
   return (
     isRecord(value)
-    && hasOnlyKeys(value, ["session", "runs", "items", "previousItemId"])
+    && hasOnlyKeys(value, ["session", "runs", "items", "previousItemId", "throughEventId"])
     && isSession(value.session)
     && Array.isArray(value.runs)
     && value.runs.every(isRun)
     && Array.isArray(value.items)
     && value.items.every(isItem)
     && (value.previousItemId === undefined || typeof value.previousItemId === "string")
+    && (value.throughEventId === undefined || isNonNegativeInteger(value.throughEventId))
+  );
+}
+
+function isEventListResult(value: unknown): value is EventListResult {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["items", "hasMore", "throughEventId"])
+    && Array.isArray(value.items)
+    && value.items.every((event) => (
+      isRecord(event)
+      && hasOnlyKeys(event, [
+        "eventContractVersion", "eventId", "eventType", "occurredAt",
+        "sessionId", "runId", "payload",
+      ])
+      && event.eventContractVersion === 1
+      && isPositiveInteger(event.eventId)
+      && typeof event.eventType === "string"
+      && isNonNegativeInteger(event.occurredAt)
+      && (event.sessionId === undefined || typeof event.sessionId === "string")
+      && (event.runId === undefined || typeof event.runId === "string")
+      && isRecord(event.payload)
+    ))
+    && typeof value.hasMore === "boolean"
+    && isNonNegativeInteger(value.throughEventId)
   );
 }
 
@@ -635,11 +737,15 @@ function isRun(value: unknown): value is Run {
       "userInput",
       "status",
       "modelStepCount",
+      "allowedActions",
       "createdAt",
       "startedAt",
       "updatedAt",
       "completedAt",
       "errorCode",
+      "pauseReason",
+      "stopReason",
+      "sideEffectsMayExist",
     ])
   ) {
     return false;
@@ -648,13 +754,25 @@ function isRun(value: unknown): value is Run {
     typeof value.id === "string"
     && typeof value.sessionId === "string"
     && (value.userInput === undefined || typeof value.userInput === "string")
-    && ["running", "waiting_approval", "succeeded", "failed", "canceled", "interrupted"].includes(String(value.status))
+    && [
+      "queued", "running", "waiting_approval", "waiting_user_input",
+      "finalizing", "stopped", "succeeded", "failed", "canceled", "interrupted",
+    ].includes(String(value.status))
     && isNonNegativeInteger(value.modelStepCount)
+    && (value.allowedActions === undefined || (
+      Array.isArray(value.allowedActions)
+      && value.allowedActions.every((action) => [
+        "cancel", "approve", "reject", "continue",
+      ].includes(String(action)))
+    ))
     && isNonNegativeInteger(value.createdAt)
-    && isNonNegativeInteger(value.startedAt)
+    && (value.startedAt === undefined || isNonNegativeInteger(value.startedAt))
     && isNonNegativeInteger(value.updatedAt)
     && (value.completedAt === undefined || isNonNegativeInteger(value.completedAt))
     && (value.errorCode === undefined || typeof value.errorCode === "string")
+    && (value.pauseReason === undefined || typeof value.pauseReason === "string")
+    && (value.stopReason === undefined || typeof value.stopReason === "string")
+    && (value.sideEffectsMayExist === undefined || typeof value.sideEffectsMayExist === "boolean")
   );
 }
 
@@ -670,6 +788,7 @@ function isItem(value: unknown): value is Item {
       "kind",
       "status",
       "content",
+      "incomplete",
       "createdAt",
       "completedAt",
       "toolCall",
@@ -687,6 +806,7 @@ function isItem(value: unknown): value is Item {
     && isNonNegativeInteger(value.createdAt)
     && (value.modelStepIndex === undefined || isNonNegativeInteger(value.modelStepIndex))
     && (value.content === undefined || typeof value.content === "string")
+    && (value.incomplete === undefined || typeof value.incomplete === "boolean")
     && (value.completedAt === undefined || isNonNegativeInteger(value.completedAt))
   );
   if (!valid) {

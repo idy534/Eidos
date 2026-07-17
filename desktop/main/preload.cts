@@ -9,11 +9,13 @@ type RuntimeStatus =
       runtimeVersion: string;
       runShell: boolean;
       modelConfigured: boolean;
+      storageHealth: { state: "ready" | "health_only"; code?: string };
     }
   | { state: "error"; message: string };
 
 contextBridge.exposeInMainWorld("eidosRuntime", {
   getStatus: (): Promise<RuntimeStatus> => ipcRenderer.invoke("runtime:get-status"),
+  getHealth: (): Promise<unknown> => ipcRenderer.invoke("runtime:health"),
   onStatus: (callback: (status: RuntimeStatus) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, status: RuntimeStatus) => {
       callback(status);
@@ -25,11 +27,15 @@ contextBridge.exposeInMainWorld("eidosRuntime", {
   listSessions: (): Promise<unknown> => ipcRenderer.invoke("session:list"),
   readSession: (sessionId: string): Promise<unknown> =>
     ipcRenderer.invoke("session:read", sessionId),
+  listEvents: (sessionId: string, afterEventId: number): Promise<unknown> =>
+    ipcRenderer.invoke("event:list", sessionId, afterEventId),
   createSession: (workspaceRoot: string): Promise<unknown> =>
     ipcRenderer.invoke("session:create", workspaceRoot),
   startRun: (sessionId: string, userInput: string): Promise<unknown> =>
     ipcRenderer.invoke("run:start", sessionId, userInput),
   cancelRun: (runId: string): Promise<unknown> => ipcRenderer.invoke("run:cancel", runId),
+  continueRun: (runId: string, userInput: string): Promise<unknown> =>
+    ipcRenderer.invoke("run:continue", runId, userInput),
   getModelStatus: (): Promise<unknown> => ipcRenderer.invoke("model:status"),
   configureModel: (apiKey: string): Promise<unknown> =>
     ipcRenderer.invoke("model:configure", apiKey),

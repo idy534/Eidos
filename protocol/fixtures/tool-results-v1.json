@@ -1,0 +1,20 @@
+{
+  "toolContractVersion": 1,
+  "vectors": [
+    {
+      "name": "unicode-safe-integer",
+      "result": {
+        "schemaVersion": 1,
+        "toolContractVersion": 1,
+        "toolName": "read_file_range",
+        "outcome": "success",
+        "code": "ok",
+        "summary": "Read file range",
+        "data": {"content": "Eidos 世界\n", "nextLine": null, "sizeBytes": 9007199254740991},
+        "sideEffectsMayExist": false,
+        "reconciliationRequired": false
+      },
+      "canonicalJson": "{\"code\":\"ok\",\"data\":{\"content\":\"Eidos 世界\\n\",\"nextLine\":null,\"sizeBytes\":9007199254740991},\"outcome\":\"success\",\"reconciliationRequired\":false,\"schemaVersion\":1,\"sideEffectsMayExist\":false,\"summary\":\"Read file range\",\"toolContractVersion\":1,\"toolName\":\"read_file_range\"}"
+    }
+  ]
+}

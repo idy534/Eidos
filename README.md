@@ -23,6 +23,7 @@ MVP 会优先打通这一条闭环：
 ## 文档
 
 - [第一期实现基线：MVP Lite](docs/mvp-lite.md)
+- [第二期实现与回归清单](docs/mvp-phase-2.md)
 - [文档总索引](docs/README.md)
 - [完整目标态 PRD](docs/prd/README.md)
 - [完整目标态 TDD](docs/tdd/README.md)
@@ -41,12 +42,16 @@ MVP 会优先打通这一条闭环：
 
 第一期的详细范围、延期项、协议、状态和里程碑以 [MVP Lite](docs/mvp-lite.md) 为准。
 
+第二期已完成持久 FIFO、暂停/继续、Event/operation 水位、安全存储迁移、Durable Intent/对账、敏感内容边界、完整文件工具契约与 Desktop 恢复状态；详细证据以 [第二期清单](docs/mvp-phase-2.md) 为准。
+
 ## 开发运行与验证
 
 环境要求：macOS、Node.js 22+、pnpm 11、Python 3。首次运行：
 
 ```bash
 pnpm install
+python3 -m venv .venv
+.venv/bin/pip install -r runtime/requirements.txt
 pnpm start
 ```
 

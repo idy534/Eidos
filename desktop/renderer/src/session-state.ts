@@ -14,9 +14,11 @@ export interface SnapshotReadToken {
 export class SnapshotReadCoordinator {
   private generation = 0;
   private selectedSessionId: string | undefined;
+  private throughEventId = 0;
 
   select(sessionId: string): SnapshotReadToken {
     this.selectedSessionId = sessionId;
+    this.throughEventId = 0;
     return this.nextToken(sessionId);
   }
 
@@ -31,9 +33,15 @@ export class SnapshotReadCoordinator {
     token: SnapshotReadToken,
     snapshot: SessionSnapshot,
   ): SessionSnapshot | undefined {
-    return this.isCurrent(token) && snapshot.session.id === token.sessionId
-      ? snapshot
-      : undefined;
+    if (
+      !this.isCurrent(token)
+      || snapshot.session.id !== token.sessionId
+      || (snapshot.throughEventId ?? 0) < this.throughEventId
+    ) {
+      return undefined;
+    }
+    this.throughEventId = snapshot.throughEventId ?? 0;
+    return snapshot;
   }
 
   isCurrent(token: SnapshotReadToken): boolean {
@@ -56,7 +64,11 @@ export function applyNotification(
   if (!snapshot || notification.params.sessionId !== snapshot.session.id) {
     return snapshot;
   }
-  if (notification.method === "run/started" || notification.method === "run/completed") {
+  if (
+    notification.method === "run/started"
+    || notification.method === "run/updated"
+    || notification.method === "run/completed"
+  ) {
     return { ...snapshot, runs: upsertRun(snapshot.runs, notification.params.run) };
   }
   if (notification.method === "item/delta") {
@@ -94,6 +106,9 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   APPROVAL_NO_LONGER_PENDING: "这个审批已经失效，无需再次处理。",
   WORKSPACE_BOUNDARY_VIOLATION: "所选路径超出 Workspace 安全边界，操作已拒绝。",
   SANDBOX_UNAVAILABLE: "Shell 沙箱当前不可用，命令未执行。",
+  STORAGE_HEALTH_ONLY: "状态存储需要修复；当前仅提供健康检查，未执行任何业务操作。",
+  SENSITIVE_CONTENT_REJECTED: "内容包含受保护信息，已在写入或发送前拒绝。",
+  SENSITIVE_SCAN_FAILED: "内容安全扫描未完成，原文未被发送或保存。",
   INTERNAL_ERROR: "Runtime 遇到内部错误，请查看诊断日志。",
 };
 
@@ -125,6 +140,11 @@ export function terminalRunPresentation(
       return { label: "Run 已取消", tone: "neutral" };
     case "interrupted":
       return { label: "Run 已中断，未自动恢复", tone: "warning" };
+    case "stopped":
+      return { label: "Run 已达到执行上限", tone: "warning" };
+    case "queued":
+    case "waiting_user_input":
+    case "finalizing":
     case "running":
     case "waiting_approval":
       return undefined;

@@ -66,6 +66,18 @@ test("a completion refresh supersedes an older in-flight snapshot read", () => {
   assert.equal(authoritative.items[0]?.content, "Done.");
 });
 
+test("a snapshot below the accepted event waterline is rejected", () => {
+  const reads = new SnapshotReadCoordinator();
+  const current = reads.select(session.id);
+  assert.ok(reads.accept(current, { ...snapshot("running", "new"), throughEventId: 8 }));
+  const stale = reads.refresh(session.id);
+  assert.ok(stale);
+  assert.equal(
+    reads.accept(stale, { ...snapshot("running", "old"), throughEventId: 7 }),
+    undefined,
+  );
+});
+
 test("a completed assistant item without content preserves streamed text", () => {
   const streaming = snapshot("running", "Done.");
   const completedItem = assistant("", "completed");

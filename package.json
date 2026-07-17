@@ -1,7 +1,7 @@
 {
   "name": "eidos",
   "productName": "Eidos",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "main": "dist/main/main.js",
@@ -16,7 +16,7 @@
     "build:renderer": "tsc -p tsconfig.renderer.json --noEmit && vite build",
     "start": "pnpm build && electron .",
     "test": "pnpm test:runtime && pnpm test:desktop",
-    "test:runtime": "python3 -m unittest discover -s runtime/tests -v",
+    "test:runtime": ".venv/bin/python -m unittest discover -s runtime/tests -v",
     "test:renderer-state": "tsc -p tsconfig.renderer-test.json && node --test dist/renderer-test/session-state.test.js",
     "test:desktop": "pnpm build && pnpm test:renderer-state && node --test dist/main/runtime-client.test.js"
   },

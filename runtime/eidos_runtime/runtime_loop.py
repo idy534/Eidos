@@ -8,16 +8,31 @@ from typing import Callable
 
 from eidos_runtime.model import ModelClient, ModelResponse, ModelToolCall
 from eidos_runtime.shell import run_shell
+from eidos_runtime.sensitive import (
+    SensitiveContentDenied,
+    SensitiveScanError,
+    SensitiveScanner,
+    StreamingSensitiveScanner,
+    default_scanner,
+)
 from eidos_runtime.storage import (
     ContextLimitExceeded,
     InvalidRunStateError,
+    RunLimitReached,
+    SegmentLimitReached,
     SessionStore,
 )
-from eidos_runtime.tools import ToolCancelled, ToolExecutor, WorkspacePathError
+from eidos_runtime.state_machine import RuntimeState, StateMachine
+from eidos_runtime.tools import (
+    ToolCancelled,
+    ToolExecutor,
+    WorkspacePathError,
+    canonical_tool_result,
+)
 
 
-MAX_MODEL_STEPS = 20
 MAX_ASSISTANT_BYTES = 512 * 1024
+FINALIZATION_SECONDS = 60
 
 
 class RunCancelled(RuntimeError):
@@ -30,7 +45,7 @@ class ApprovalDecision:
     feedback: str | None = None
 
 
-class RuntimeLoop:
+class RuntimeEngine:
     def __init__(
         self,
         store: SessionStore,
@@ -41,12 +56,20 @@ class RuntimeLoop:
         ]
         | None = None,
         shell_available: bool = False,
+        monotonic: Callable[[], float] = time.monotonic,
+        sensitive: SensitiveScanner | None = None,
+        wait_for_execution_slot: Callable[[str, threading.Event], bool] | None = None,
     ) -> None:
         self.store = store
         self.model = model
         self.notify = notify
         self.request_approval = request_approval
         self.shell_available = shell_available
+        self.monotonic = monotonic
+        self.active_started: float | None = None
+        self.sensitive = sensitive or default_scanner()
+        self.wait_for_execution_slot = wait_for_execution_slot
+        self.state_machine = StateMachine()
 
     def run(self, run_id: str, cancel: threading.Event) -> None:
         run = self.store.read_run(run_id)
@@ -82,17 +105,36 @@ class RuntimeLoop:
         try:
             while True:
                 self._check_cancel(run_id, cancel)
+                self._pause_effective_time(run_id)
                 current = self.store.read_run(run_id)
-                if current["modelStepCount"] >= MAX_MODEL_STEPS:
-                    self._fail(run_id, "MAX_STEPS_EXCEEDED")
+                try:
+                    step_index = self.store.increment_model_step(run_id)
+                except SegmentLimitReached as error:
+                    reason = (
+                        "segment_time_limit" if "time" in str(error)
+                        else "segment_step_limit"
+                    )
+                    paused = self.store.pause_run(run_id, reason)
+                    self.state_machine.transition(RuntimeState.WAITING_USER_INPUT, reason)
+                    self._notification(
+                        "run/updated", {"sessionId": paused["sessionId"], "run": paused}
+                    )
                     return
-                step_index = self.store.increment_model_step(run_id)
+                except RunLimitReached as error:
+                    self._finalize(
+                        run_id, context, cancel,
+                        "max_effective_runtime" if "time" in str(error)
+                        else "max_total_steps",
+                    )
+                    return
+                self.active_started = self.monotonic()
                 assistant_item: dict[str, object] | None = None
                 assistant_bytes = 0
                 delta_sequence = 0
                 pending_deltas: list[str] = []
                 pending_delta_bytes = 0
                 last_persisted_at = time.monotonic()
+                model_stream = StreamingSensitiveScanner(self.sensitive)
 
                 def flush_deltas() -> None:
                     nonlocal pending_delta_bytes, last_persisted_at
@@ -146,13 +188,55 @@ class RuntimeLoop:
                     )
 
                 try:
-                    response = self.model.complete(context, cancel, on_text_delta)
+                    response = self.model.complete(context, cancel, model_stream.feed)
+                    safe_text = model_stream.finish().text
+                    if safe_text:
+                        on_text_delta(safe_text)
+                except SensitiveScanError:
+                    self.store.complete_current_step(
+                        run_id, "failed", reason="sensitive_scan_failed"
+                    )
+                    paused = self.store.pause_run(run_id, "sensitive_scan_failed")
+                    self._notification(
+                        "run/updated", {"sessionId": paused["sessionId"], "run": paused}
+                    )
+                    return
                 except RunCancelled:
                     raise
                 except Exception:
+                    try:
+                        incomplete_text = model_stream.finish().text
+                        if incomplete_text:
+                            on_text_delta(incomplete_text)
+                    except SensitiveScanError:
+                        self.store.complete_current_step(
+                            run_id, "failed", reason="sensitive_scan_failed"
+                        )
+                        paused = self.store.pause_run(run_id, "sensitive_scan_failed")
+                        self._notification(
+                            "run/updated",
+                            {"sessionId": paused["sessionId"], "run": paused},
+                        )
+                        return
                     flush_deltas()
                     self._check_cancel(run_id, cancel)
-                    self._fail(run_id, "MODEL_REQUEST_FAILED")
+                    if assistant_item is not None:
+                        incomplete = self.store.mark_assistant_incomplete(
+                            str(assistant_item["id"])
+                        )
+                        self._completed_item(incomplete)
+                        self.store.complete_current_step(
+                            run_id, "failed", reason="model_stream_interrupted"
+                        )
+                        paused = self.store.pause_run(
+                            run_id, "model_stream_interrupted"
+                        )
+                        self._notification(
+                            "run/updated",
+                            {"sessionId": paused["sessionId"], "run": paused},
+                        )
+                    else:
+                        self._fail(run_id, "MODEL_REQUEST_FAILED")
                     return
 
                 self._check_cancel(run_id, cancel)
@@ -170,7 +254,11 @@ class RuntimeLoop:
                         )
                         self._completed_item(completed)
                     errors = self.store.record_protocol_error(run_id)
+                    self.store.complete_current_step(
+                        run_id, "failed", reason=validation_error
+                    )
                     if errors >= 2:
+                        self.state_machine.transition(RuntimeState.FAILED, "model_protocol_error")
                         self._fail(run_id, "MODEL_PROTOCOL_ERROR")
                         return
                     context = (*context, {"type": "protocol_error", "code": validation_error})
@@ -180,6 +268,9 @@ class RuntimeLoop:
                 if not response.tool_calls:
                     if assistant_item is None:
                         errors = self.store.record_protocol_error(run_id)
+                        self.store.complete_current_step(
+                            run_id, "failed", reason="empty_response"
+                        )
                         if errors >= 2:
                             self._fail(run_id, "MODEL_PROTOCOL_ERROR")
                             return
@@ -188,19 +279,53 @@ class RuntimeLoop:
                             {"type": "protocol_error", "code": "empty_response"},
                         )
                         continue
+                    self.store.complete_current_step(run_id, "completed")
                     completed_item, completed_run = self.store.complete_assistant_and_run(
                         assistant_item["id"], run_id
                     )
                     self._completed_item(completed_item)
                     self._completed_run(completed_run)
+                    self.state_machine.transition(RuntimeState.COMPLETED, "run_succeeded")
                     return
 
                 if assistant_item is not None:
                     completed = self.store.complete_assistant_item(assistant_item["id"])
                     self._completed_item(completed)
 
+                sensitive_tool_failed = False
+                self.state_machine.transition(RuntimeState.TOOL_EXECUTING, "model_tool_calls")
                 for batch_order, tool_call in enumerate(response.tool_calls):
                     self._check_cancel(run_id, cancel)
+                    try:
+                        scanned_arguments = self.sensitive.scan_json(tool_call.arguments)
+                        if scanned_arguments != tool_call.arguments:
+                            raise SensitiveScanError("sensitive tool arguments")
+                    except SensitiveScanError:
+                        failures = self.store.record_sensitive_tool_input(run_id)
+                        self.store.complete_current_step(
+                            run_id, "failed", reason="sensitive_tool_input"
+                        )
+                        if failures >= 2:
+                            paused = self.store.pause_run(
+                                run_id, "repeated_sensitive_tool_input"
+                            )
+                            self._notification(
+                                "run/updated",
+                                {"sessionId": paused["sessionId"], "run": paused},
+                            )
+                            self.state_machine.transition(
+                                RuntimeState.WAITING_USER_INPUT,
+                                "repeated_sensitive_tool_input",
+                            )
+                            return
+                        context = (*context, {
+                            "type": "tool_error",
+                            "code": "sensitive_tool_input_rejected",
+                        })
+                        sensitive_tool_failed = True
+                        break
+                    assert isinstance(scanned_arguments, dict)
+                    self.store.clear_sensitive_tool_inputs(run_id)
                     item = self.store.create_tool_item(
                         run_id,
                         step_index,
@@ -208,7 +333,7 @@ class RuntimeLoop:
                         tool_call.provider_call_id,
                         tool_call.name,
                         json.dumps(
-                            tool_call.arguments,
+                            scanned_arguments,
                             ensure_ascii=False,
                             separators=(",", ":"),
                             sort_keys=True,
@@ -223,14 +348,24 @@ class RuntimeLoop:
                         },
                     )
                     if tools.is_side_effecting(tool_call.name):
-                        result, item_status = self._execute_file_change(
-                            run_id,
-                            item,
-                            tool_call.name,
-                            tool_call.arguments,
-                            tools,
-                            cancel,
-                        )
+                        if self.store.side_effects_blocked(run_id):
+                            result, item_status = (
+                                _tool_error(
+                                    tool_call.name,
+                                    "reconciliation_required",
+                                    "A successful read-only observation is required",
+                                ),
+                                "failed",
+                            )
+                        else:
+                            result, item_status = self._execute_file_change(
+                                run_id,
+                                item,
+                                tool_call.name,
+                                scanned_arguments,
+                                tools,
+                                cancel,
+                            )
                         completed = self.store.complete_tool_item(
                             item["id"],
                             json.dumps(
@@ -247,13 +382,23 @@ class RuntimeLoop:
                         self._completed_item(completed)
                         self._check_cancel(run_id, cancel)
                     elif tools.is_shell(tool_call.name):
-                        result, item_status = self._execute_shell(
-                            run_id,
-                            item,
-                            tool_call.arguments,
-                            tools,
-                            cancel,
-                        )
+                        if self.store.side_effects_blocked(run_id):
+                            result, item_status = (
+                                _tool_error(
+                                    "run_shell",
+                                    "reconciliation_required",
+                                    "A successful read-only observation is required",
+                                ),
+                                "failed",
+                            )
+                        else:
+                            result, item_status = self._execute_shell(
+                                run_id,
+                                item,
+                                scanned_arguments,
+                                tools,
+                                cancel,
+                            )
                         completed = self.store.complete_tool_item(
                             item["id"],
                             json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
@@ -265,8 +410,9 @@ class RuntimeLoop:
                     else:
                         result = _bounded_tool_result(
                             tool_call.name,
-                            tools.execute(tool_call.name, tool_call.arguments, cancel),
+                            tools.execute(tool_call.name, scanned_arguments, cancel),
                         )
+                        result = self._safe_tool_result(tool_call.name, result)
                         item_status = "completed"
                         self._check_cancel(run_id, cancel)
                         completed = self.store.complete_tool_item(
@@ -281,21 +427,37 @@ class RuntimeLoop:
                         )
                         self._completed_item(completed)
 
+                if sensitive_tool_failed:
+                    self.state_machine.transition(RuntimeState.THINKING, "safe_tool_feedback")
+                    continue
+                self.store.complete_current_step(run_id, "completed")
+                self.state_machine.transition(RuntimeState.THINKING, "tool_batch_completed")
+                self._pause_effective_time(run_id)
+                updated = self.store.read_run(run_id)
+                self._notification(
+                    "run/updated",
+                    {"sessionId": updated["sessionId"], "run": updated},
+                )
+                if updated["status"] == "waiting_user_input":
+                    return
                 try:
                     context = self.store.model_context(run["sessionId"])
                 except ContextLimitExceeded:
                     self._fail(run_id, "CONTEXT_INPUT_TOO_LARGE")
                     return
-                if step_index >= MAX_MODEL_STEPS:
-                    self._fail(run_id, "MAX_STEPS_EXCEEDED")
-                    return
         except (RunCancelled, InvalidRunStateError):
+            if self.state_machine.state not in {
+                RuntimeState.COMPLETED, RuntimeState.FAILED, RuntimeState.CANCELED,
+            }:
+                self.state_machine.transition(RuntimeState.CANCELED, "run_canceled")
+            self.store.complete_current_step(run_id, "canceled", reason="canceled")
             completed = self.store.read_run(run_id)
             if completed["status"] in {"running", "waiting_approval"}:
                 completed = self.store.cancel_run(run_id)
             self._completed_canceled_items(run_id)
             self._completed_run(completed)
         finally:
+            self._pause_effective_time(run_id)
             tools.close()
 
     @staticmethod
@@ -364,6 +526,12 @@ class RuntimeLoop:
         pending_item = self.store.begin_approval(
             item["id"], prepared.diff, prepared.base_sha256
         )
+        approval_run = self.store.read_run(run_id)
+        self._notification(
+            "run/updated", {"sessionId": approval_run["sessionId"], "run": approval_run}
+        )
+        self.state_machine.transition(RuntimeState.WAITING_APPROVAL, "file_approval")
+        self._pause_effective_time(run_id)
         if self.request_approval is None:
             decision = ApprovalDecision("reject")
         else:
@@ -380,6 +548,7 @@ class RuntimeLoop:
                 },
                 cancel,
             )
+        self.active_started = self.monotonic()
         self._check_cancel(run_id, cancel)
         if (
             decision.decision not in {"approve", "reject"}
@@ -388,7 +557,16 @@ class RuntimeLoop:
         ):
             decision = ApprovalDecision("reject")
         self.store.resolve_approval(
-            item["id"], decision.decision, decision.feedback
+            item["id"], decision.decision, decision.feedback,
+            requeue=self.wait_for_execution_slot is not None,
+        )
+        self._resume_after_approval(run_id, cancel)
+        approval_run = self.store.read_run(run_id)
+        self.state_machine.transition(
+            RuntimeState.WAITING_USER_INPUT
+            if approval_run["status"] == "waiting_user_input"
+            else RuntimeState.TOOL_EXECUTING,
+            "file_approval_resolved",
         )
         if decision.decision == "reject":
             return {
@@ -400,9 +578,18 @@ class RuntimeLoop:
                 "data": {"path": prepared.path},
                 "sideEffectsMayExist": False,
             }, "declined"
-        result = _bounded_tool_result(
-            tool_name, tools.commit_file_change(tool_name, prepared, cancel)
+        self.store.begin_durable_intent(
+            item["id"],
+            preconditions={
+                "path": prepared.path,
+                "baseSha256": prepared.base_sha256,
+            },
         )
+        result = self._safe_tool_result(tool_name, _bounded_tool_result(
+            tool_name, tools.commit_file_change(tool_name, prepared, cancel)
+        ))
+        if result["outcome"] == "success" and result.get("code") != "no_changes":
+            self.store.clear_rejects(run_id)
         return result, "completed" if result["outcome"] == "success" else "failed"
 
     def _execute_shell(
@@ -426,6 +613,12 @@ class RuntimeLoop:
         except WorkspacePathError as error:
             return _tool_error("run_shell", error.code, "Shell workspace is unsafe"), "failed"
         pending_item = self.store.begin_approval(item["id"], "", None)
+        approval_run = self.store.read_run(run_id)
+        self._notification(
+            "run/updated", {"sessionId": approval_run["sessionId"], "run": approval_run}
+        )
+        self.state_machine.transition(RuntimeState.WAITING_APPROVAL, "shell_approval")
+        self._pause_effective_time(run_id)
         decision = ApprovalDecision("reject") if self.request_approval is None else self.request_approval(
             {
                 "sessionId": pending_item["sessionId"],
@@ -441,8 +634,20 @@ class RuntimeLoop:
             },
             cancel,
         )
+        self.active_started = self.monotonic()
         self._check_cancel(run_id, cancel)
-        self.store.resolve_approval(item["id"], decision.decision, decision.feedback)
+        self.store.resolve_approval(
+            item["id"], decision.decision, decision.feedback,
+            requeue=self.wait_for_execution_slot is not None,
+        )
+        self._resume_after_approval(run_id, cancel)
+        approval_run = self.store.read_run(run_id)
+        self.state_machine.transition(
+            RuntimeState.WAITING_USER_INPUT
+            if approval_run["status"] == "waiting_user_input"
+            else RuntimeState.TOOL_EXECUTING,
+            "shell_approval_resolved",
+        )
         if decision.decision != "approve":
             return {
                 "schemaVersion": 1,
@@ -453,6 +658,10 @@ class RuntimeLoop:
                 "data": {},
                 "sideEffectsMayExist": False,
             }, "declined"
+        self.store.begin_durable_intent(
+            item["id"],
+            preconditions={"cwd": cwd_value, "timeoutSeconds": timeout},
+        )
         try:
             approved_cwd = tools.prepare_shell(cwd_value, cancel)
             if approved_cwd != cwd:
@@ -462,25 +671,34 @@ class RuntimeLoop:
         except WorkspacePathError as error:
             return _tool_error("run_shell", error.code, "Shell workspace changed after approval"), "failed"
         sequence = 0
+        output_stream = StreamingSensitiveScanner(self.sensitive)
 
         def stream(delta: str) -> None:
-            nonlocal sequence
-            sequence += 1
-            self._notification(
-                "item/delta",
-                {
-                    "sessionId": item["sessionId"],
-                    "runId": item["runId"],
-                    "itemId": item["id"],
-                    "sequence": sequence,
-                    "delta": delta,
-                },
-            )
+            output_stream.feed(delta)
 
         result = _bounded_tool_result(
             "run_shell",
             run_shell(tools.workspace, command, approved_cwd, timeout, cancel, stream),
         )
+        try:
+            safe_output = output_stream.finish().text
+            result = self._safe_tool_result("run_shell", result)
+        except SensitiveScanError:
+            result = _tool_error(
+                "run_shell", "sensitive_content_rejected", "Shell output was withheld"
+            )
+            safe_output = ""
+        if safe_output:
+            sequence += 1
+            self._notification(
+                "item/delta",
+                {
+                    "sessionId": item["sessionId"], "runId": item["runId"],
+                    "itemId": item["id"], "sequence": sequence, "delta": safe_output,
+                },
+            )
+        if result["outcome"] == "success":
+            self.store.clear_rejects(run_id)
         return result, "completed" if result["outcome"] == "success" else "failed"
 
     def _check_cancel(self, run_id: str, cancel: threading.Event) -> None:
@@ -490,10 +708,98 @@ class RuntimeLoop:
         }:
             raise RunCancelled
 
+    def _resume_after_approval(
+        self, run_id: str, cancel: threading.Event
+    ) -> None:
+        current = self.store.read_run(run_id)
+        if current["status"] != "queued":
+            return
+        if self.wait_for_execution_slot is not None:
+            if not self.wait_for_execution_slot(run_id, cancel):
+                raise RunCancelled
+            return
+        claimed = self.store.claim_next_run()
+        if claimed is None or claimed["id"] != run_id:
+            raise InvalidRunStateError("run could not reacquire execution slot")
+
+    def _safe_tool_result(
+        self, tool_name: str, result: dict[str, object]
+    ) -> dict[str, object]:
+        try:
+            scanned = self.sensitive.scan_json(result)
+        except SensitiveScanError:
+            return _tool_error(
+                tool_name, "sensitive_content_rejected", "Tool output was withheld"
+            )
+        assert isinstance(scanned, dict)
+        if scanned != result:
+            return _tool_error(
+                tool_name, "sensitive_content_rejected", "Tool output was withheld"
+            )
+        return canonical_tool_result(tool_name, scanned)
+
     def _fail(self, run_id: str, error_code: str) -> None:
+        if self.state_machine.state != RuntimeState.FAILED:
+            self.state_machine.transition(RuntimeState.FAILED, error_code)
+        self._pause_effective_time(run_id)
+        self.store.complete_current_step(run_id, "failed", reason=error_code)
         failed = self.store.fail_run(run_id, error_code)
         self._completed_canceled_items(run_id)
         self._completed_run(failed)
+
+    def _pause_effective_time(self, run_id: str) -> None:
+        if self.active_started is None:
+            return
+        elapsed_ms = max(0, int((self.monotonic() - self.active_started) * 1000 + 0.999))
+        self.active_started = None
+        self.store.add_effective_time(run_id, elapsed_ms)
+
+    def _finalize(
+        self,
+        run_id: str,
+        context: tuple[dict[str, object], ...],
+        cancel: threading.Event,
+        stop_reason: str,
+    ) -> None:
+        self.state_machine.transition(RuntimeState.FINALIZING, stop_reason)
+        self.store.begin_finalization(run_id)
+        finalization_cancel = threading.Event()
+        timer = threading.Timer(FINALIZATION_SECONDS, finalization_cancel.set)
+        timer.start()
+        item: dict[str, object] | None = None
+        total_bytes = 0
+        final_stream = StreamingSensitiveScanner(self.sensitive)
+
+        def on_delta(delta: str) -> None:
+            nonlocal item, total_bytes
+            if cancel.is_set() or finalization_cancel.is_set() or not delta:
+                return
+            total_bytes += len(delta.encode("utf-8"))
+            if total_bytes > MAX_ASSISTANT_BYTES:
+                finalization_cancel.set()
+                return
+            final_stream.feed(delta)
+
+        try:
+            self.model.complete(
+                (*context, {"type": "finalization", "toolsAllowed": False}),
+                finalization_cancel,
+                on_delta,
+                allow_tools=False,
+            )
+            safe_text = final_stream.finish().text
+            if safe_text:
+                item = self.store.create_assistant_item(run_id, 80)
+                self.store.append_item_content(str(item["id"]), safe_text)
+        except Exception:
+            pass
+        finally:
+            timer.cancel()
+        if item is not None:
+            self._completed_item(self.store.complete_assistant_item(str(item["id"])))
+        stopped = self.store.stop_run(run_id, stop_reason)
+        self._completed_run(stopped)
+        self.state_machine.transition(RuntimeState.COMPLETED, "finalization_stopped")
 
     def _completed_canceled_items(self, run_id: str) -> None:
         for item in self.store.canceled_items_for_run(run_id):
@@ -545,6 +851,7 @@ def _valid_tool_arguments(arguments: object) -> bool:
 def _bounded_tool_result(
     tool_name: str, result: dict[str, object]
 ) -> dict[str, object]:
+    result = canonical_tool_result(tool_name, result)
     encoded = json.dumps(
         result,
         ensure_ascii=False,
@@ -555,22 +862,30 @@ def _bounded_tool_result(
         return result
     return {
         "schemaVersion": 1,
+        "toolContractVersion": 1,
         "toolName": tool_name,
         "outcome": "error",
         "code": "tool_result_too_large",
         "summary": "Tool result exceeded the safe size limit",
         "data": {},
         "sideEffectsMayExist": False,
+        "reconciliationRequired": False,
     }
 
 
 def _tool_error(tool_name: str, code: str, summary: str) -> dict[str, object]:
     return {
         "schemaVersion": 1,
+        "toolContractVersion": 1,
         "toolName": tool_name,
         "outcome": "error",
         "code": code,
         "summary": summary,
         "data": {},
         "sideEffectsMayExist": False,
+        "reconciliationRequired": False,
     }
+
+
+# Compatibility for first-phase imports while callers migrate to RuntimeEngine.
+RuntimeLoop = RuntimeEngine

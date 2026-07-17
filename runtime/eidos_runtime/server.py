@@ -11,16 +11,26 @@ import threading
 from typing import Any, BinaryIO, TextIO
 import uuid
 
+from pydantic import ValidationError
+
 from eidos_runtime import __version__
 from eidos_runtime.deepseek import DeepSeekChatModel
 from eidos_runtime.model import ModelClient, ModelResponse, ModelToolCall, ScriptedModel
 from eidos_runtime.model_config import ModelConfigError, ModelConfigStore
-from eidos_runtime.runtime_loop import ApprovalDecision, RuntimeLoop
+from eidos_runtime.runtime_loop import ApprovalDecision, RuntimeEngine
+from eidos_runtime.schemas import ApprovalDecisionDto, JsonRpcRequestDto, JsonRpcResponse
+from eidos_runtime.sensitive import (
+    SensitiveContentDenied,
+    SensitiveScanError,
+    SensitiveScanner,
+)
 from eidos_runtime.seatbelt import run_seatbelt_self_test
 from eidos_runtime.storage import (
     ActiveRunError,
     InvalidCursorError,
     InvalidRunStateError,
+    OperationConflictError,
+    OperationInProgressError,
     ResourceNotFoundError,
     SessionStore,
     StorageError,
@@ -40,6 +50,13 @@ logger = logging.getLogger("eidos.runtime")
 class PendingApproval:
     event: threading.Event
     decision: ApprovalDecision | None = None
+
+
+@dataclass
+class WaitingWorker:
+    thread: threading.Thread
+    cancellation: threading.Event
+    resume: threading.Event
 
 
 def response(request_id: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -69,6 +86,8 @@ def business_error(request_id: str, code: str) -> dict[str, Any]:
 
 
 def write_message(output: TextIO, message: dict[str, Any]) -> None:
+    if "id" in message and ("result" in message or "error" in message):
+        message = JsonRpcResponse.model_validate(message).to_json_value()
     serialized = json.dumps(message, ensure_ascii=False, separators=(",", ":"))
     if len(serialized.encode("utf-8")) > MAX_MESSAGE_BYTES:
         raise ValueError("outbound protocol message exceeds 1 MiB")
@@ -130,9 +149,11 @@ class RuntimeServer:
         self.worker: threading.Thread | None = None
         self.active_run_id: str | None = None
         self.active_cancel: threading.Event | None = None
+        self.waiting_workers: dict[str, WaitingWorker] = {}
         self.approval_lock = threading.RLock()
         self.pending_approvals: dict[str, PendingApproval] = {}
         self.shell_available = False
+        self.sensitive: SensitiveScanner | None = None
 
     def handle(self, message: object) -> None:
         if not isinstance(message, dict):
@@ -143,18 +164,20 @@ class RuntimeServer:
             self.handle_approval_response(message)
             return
 
-        request_id = message.get("id")
-        if (
-            message.get("jsonrpc") != "2.0"
-            or not valid_request_id(request_id)
-            or not isinstance(message.get("method"), str)
-            or set(message) - {"jsonrpc", "id", "method", "params"}
-        ):
+        try:
+            request = JsonRpcRequestDto.model_validate({
+                **message, "params": message.get("params", {})
+            })
+        except ValidationError:
+            self.send(protocol_error(None, -32600, "Invalid Request"))
+            return
+        request_id = request.id
+        if not valid_request_id(request_id):
             self.send(protocol_error(None, -32600, "Invalid Request"))
             return
 
-        method = message["method"]
-        params = message.get("params", {})
+        method = request.method
+        params = request.params
 
         if method == "initialize":
             self.initialize(request_id, params)
@@ -164,6 +187,15 @@ class RuntimeServer:
             return
         if not self.initialized:
             self.send(business_error(request_id, "RUNTIME_NOT_INITIALIZED"))
+            return
+        if method == "runtime/health":
+            if params != {}:
+                self.send(protocol_error(request_id, -32602, "Invalid params"))
+            else:
+                self.send(response(request_id, self.store.health()))
+            return
+        if self.store.health_state != "ready":
+            self.send(business_error(request_id, "STORAGE_HEALTH_ONLY"))
             return
 
         if method == "session/create":
@@ -175,11 +207,17 @@ class RuntimeServer:
         if method == "session/read":
             self.read_session(request_id, params)
             return
+        if method == "event/list":
+            self.list_events(request_id, params)
+            return
         if method == "run/start":
             self.start_run(request_id, params)
             return
         if method == "run/cancel":
             self.cancel_run(request_id, params)
+            return
+        if method == "run/continue":
+            self.continue_run(request_id, params)
             return
         if method == "model/status":
             self.model_status(request_id, params)
@@ -203,24 +241,27 @@ class RuntimeServer:
 
         try:
             self.store.initialize()
-            self.model_config.initialize()
-            configured_key = self.model_config.api_key()
-            if self.model is None and configured_key is not None:
-                self.model = DeepSeekChatModel(configured_key)
-        except (StorageError, ModelConfigError):
+            if self.store.health_state == "ready":
+                self.sensitive = SensitiveScanner()
+                self.model_config.initialize()
+                configured_key = self.model_config.api_key()
+                if self.model is None and configured_key is not None:
+                    self.model = DeepSeekChatModel(configured_key)
+        except (StorageError, ModelConfigError, SensitiveScanError):
             logger.exception("Runtime storage initialization failed")
             self.send(business_error(request_id, "INTERNAL_ERROR"))
             return
 
-        seatbelt = run_seatbelt_self_test()
-        if seatbelt.available:
-            logger.info("Seatbelt self-test passed")
-            self.shell_available = True
-        else:
-            logger.warning(
-                "Seatbelt self-test failed; Shell remains unavailable: %s",
-                ",".join(seatbelt.failures),
-            )
+        if self.store.health_state == "ready":
+            seatbelt = run_seatbelt_self_test()
+            if seatbelt.available:
+                logger.info("Seatbelt self-test passed")
+                self.shell_available = True
+            else:
+                logger.warning(
+                    "Seatbelt self-test failed; Shell remains unavailable: %s",
+                    ",".join(seatbelt.failures),
+                )
 
         self.initialized = True
         self.send(
@@ -237,19 +278,30 @@ class RuntimeServer:
             )
         )
         logger.info("Runtime initialized")
+        self._schedule_next()
 
     def create_session(self, request_id: str, params: object) -> None:
         if (
             not isinstance(params, dict)
-            or set(params) != {"workspaceRoot"}
+            or set(params) - {"workspaceRoot", "operationId"}
+            or "workspaceRoot" not in params
             or not isinstance(params.get("workspaceRoot"), str)
+            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
         ):
             self.send(protocol_error(request_id, -32602, "Invalid params"))
             return
         try:
-            session = self.store.create_session(params["workspaceRoot"])
+            session = self.store.create_session(
+                params["workspaceRoot"], operation_id=params.get("operationId")
+            )
         except WorkspaceBoundaryError:
             self.send(business_error(request_id, "WORKSPACE_BOUNDARY_VIOLATION"))
+            return
+        except OperationConflictError:
+            self.send(business_error(request_id, "OPERATION_ID_REUSED"))
+            return
+        except OperationInProgressError:
+            self.send(business_error(request_id, "OPERATION_IN_PROGRESS"))
             return
         self.send(response(request_id, session))
 
@@ -307,11 +359,35 @@ class RuntimeServer:
             return
         self.send(response(request_id, snapshot))
 
+    def list_events(self, request_id: str, params: object) -> None:
+        if (
+            not isinstance(params, dict)
+            or set(params) - {"sessionId", "afterEventId", "limit"}
+            or not _is_canonical_uuid(params.get("sessionId"))
+        ):
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        after_event_id = params.get("afterEventId", 0)
+        limit = params.get("limit", 200)
+        if (
+            not isinstance(after_event_id, int) or isinstance(after_event_id, bool)
+            or after_event_id < 0
+            or not isinstance(limit, int) or isinstance(limit, bool)
+            or not 1 <= limit <= 500
+        ):
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        self.send(response(request_id, self.store.list_events(
+            params["sessionId"], after_event_id=after_event_id, limit=limit
+        )))
+
     def start_run(self, request_id: str, params: object) -> None:
         if (
             not isinstance(params, dict)
-            or set(params) != {"sessionId", "userInput"}
+            or set(params) - {"sessionId", "userInput", "operationId"}
+            or not {"sessionId", "userInput"} <= set(params)
             or not _is_canonical_uuid(params.get("sessionId"))
+            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
             or not isinstance(params.get("userInput"), str)
             or not params["userInput"].strip()
             or len(params["userInput"].encode("utf-8")) > 64 * 1024
@@ -321,13 +397,36 @@ class RuntimeServer:
         if self.model is None:
             self.send(business_error(request_id, "INVALID_STATE"))
             return
-        with self.worker_lock:
-            if self.worker is not None and self.worker.is_alive():
-                self.send(business_error(request_id, "RUN_ALREADY_ACTIVE"))
-                return
+        try:
+            user_input = self._scan_text(params["userInput"])
+        except SensitiveContentDenied:
+            self.send(business_error(request_id, "SENSITIVE_CONTENT_REJECTED"))
+            return
+        except SensitiveScanError:
+            self.send(business_error(request_id, "SENSITIVE_SCAN_FAILED"))
+            return
+        operation_id = params.get("operationId")
+        if isinstance(operation_id, str):
             try:
-                run, _user_item = self.store.create_run(
-                    params["sessionId"], params["userInput"]
+                replay = self.store.operation_result(
+                    operation_id,
+                    "run/start",
+                    {"sessionId": params["sessionId"], "userInput": user_input},
+                )
+            except OperationConflictError:
+                self.send(business_error(request_id, "OPERATION_ID_REUSED"))
+                return
+            except OperationInProgressError:
+                self.send(business_error(request_id, "OPERATION_IN_PROGRESS"))
+                return
+            if isinstance(replay, dict) and isinstance(replay.get("run"), dict):
+                self.send(response(request_id, replay["run"]))
+                return
+        with self.worker_lock:
+            try:
+                run, _user_item = self.store.enqueue_run(
+                    params["sessionId"], user_input,
+                    operation_id=params.get("operationId"),
                 )
             except ResourceNotFoundError:
                 self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
@@ -335,39 +434,40 @@ class RuntimeServer:
             except WorkspaceBoundaryError:
                 self.send(business_error(request_id, "WORKSPACE_BOUNDARY_VIOLATION"))
                 return
-            except ActiveRunError:
-                self.send(business_error(request_id, "RUN_ALREADY_ACTIVE"))
+            except OperationConflictError:
+                self.send(business_error(request_id, "OPERATION_ID_REUSED"))
+                return
+            except OperationInProgressError:
+                self.send(business_error(request_id, "OPERATION_IN_PROGRESS"))
                 return
 
-            cancellation = threading.Event()
-            start_gate = threading.Event()
-            worker = threading.Thread(
-                target=self._run_worker,
-                args=(run["id"], cancellation, start_gate),
-                name=f"eidos-run-{run['id']}",
-                daemon=True,
-            )
-            self.active_run_id = run["id"]
-            self.active_cancel = cancellation
-            self.worker = worker
+            start_gate: threading.Event | None = None
+            if self.worker is None or not self.worker.is_alive():
+                claimed = self.store.claim_next_run()
+                if claimed is not None:
+                    start_gate = self._start_worker_locked(str(claimed["id"]))
+                    run = self.store.read_run(str(run["id"]))
             try:
-                worker.start()
                 self.send(response(request_id, run))
             except Exception:
-                cancellation.set()
+                if self.active_cancel is not None:
+                    self.active_cancel.set()
                 try:
                     self.store.interrupt_run(run["id"])
                 except (ResourceNotFoundError, InvalidRunStateError):
                     pass
                 raise
             finally:
-                start_gate.set()
+                if start_gate is not None:
+                    start_gate.set()
 
     def cancel_run(self, request_id: str, params: object) -> None:
         if (
             not isinstance(params, dict)
-            or set(params) != {"runId"}
+            or set(params) - {"runId", "operationId"}
+            or "runId" not in params
             or not _is_canonical_uuid(params.get("runId"))
+            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
         ):
             self.send(protocol_error(request_id, -32602, "Invalid params"))
             return
@@ -376,24 +476,79 @@ class RuntimeServer:
         except ResourceNotFoundError:
             self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
             return
-        if current["status"] not in {"running", "waiting_approval", "canceled"}:
+        if current["status"] not in {
+            "queued", "running", "waiting_approval", "waiting_user_input", "canceled"
+        }:
             self.send(business_error(request_id, "INVALID_STATE"))
             return
         with self.worker_lock:
             if self.active_run_id == params["runId"] and self.active_cancel is not None:
                 self.active_cancel.set()
                 worker = self.worker
+            elif params["runId"] in self.waiting_workers:
+                waiting = self.waiting_workers[params["runId"]]
+                waiting.cancellation.set()
+                worker = waiting.thread
             else:
                 worker = None
-        if worker is None:
-            try:
-                current = self.store.cancel_run(params["runId"])
-            except InvalidRunStateError:
-                current = self.store.read_run(params["runId"])
-        else:
-            worker.join(timeout=6.0)
+        try:
+            if worker is None:
+                current = self.store.cancel_run(
+                    params["runId"], operation_id=params.get("operationId")
+                )
+            else:
+                worker.join(timeout=6.0)
+                current = self.store.cancel_run(
+                    params["runId"], operation_id=params.get("operationId")
+                )
+        except InvalidRunStateError:
             current = self.store.read_run(params["runId"])
+        except OperationConflictError:
+            self.send(business_error(request_id, "OPERATION_ID_REUSED"))
+            return
+        except OperationInProgressError:
+            self.send(business_error(request_id, "OPERATION_IN_PROGRESS"))
+            return
         self.send(response(request_id, current))
+
+    def continue_run(self, request_id: str, params: object) -> None:
+        if (
+            not isinstance(params, dict)
+            or set(params) - {"runId", "userInput", "operationId"}
+            or not {"runId", "userInput"} <= set(params)
+            or not _is_canonical_uuid(params.get("runId"))
+            or not isinstance(params.get("userInput"), str)
+            or not params["userInput"].strip()
+            or len(params["userInput"].encode("utf-8")) > 64 * 1024
+            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
+        ):
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        try:
+            user_input = self._scan_text(params["userInput"])
+        except SensitiveContentDenied:
+            self.send(business_error(request_id, "SENSITIVE_CONTENT_REJECTED"))
+            return
+        except SensitiveScanError:
+            self.send(business_error(request_id, "SENSITIVE_SCAN_FAILED"))
+            return
+        try:
+            run = self.store.continue_run(
+                params["runId"], user_input,
+                operation_id=params.get("operationId"),
+            )
+        except InvalidRunStateError:
+            self.send(business_error(request_id, "INVALID_STATE"))
+            return
+        except OperationConflictError:
+            self.send(business_error(request_id, "OPERATION_ID_REUSED"))
+            return
+        except OperationInProgressError:
+            self.send(business_error(request_id, "OPERATION_IN_PROGRESS"))
+            return
+        self._schedule_next()
+        run = self.store.read_run(params["runId"])
+        self.send(response(request_id, run))
 
     def model_status(self, request_id: str, params: object) -> None:
         if not isinstance(params, dict) or params:
@@ -433,23 +588,31 @@ class RuntimeServer:
                 logger.exception("Model configuration failed")
                 self.send(business_error(request_id, "INTERNAL_ERROR"))
                 return
+        self._schedule_next()
         self.send(response(request_id, self.model_config.public_status()))
 
     def shutdown(self, request_id: str, params: object) -> None:
         if not isinstance(params, dict) or params:
             self.send(protocol_error(request_id, -32602, "Invalid params"))
             return
+        self.shutting_down = True
         with self.worker_lock:
             if self.active_cancel is not None:
                 self.active_cancel.set()
             active_run_id = self.active_run_id
             worker = self.worker
+            waiting = list(self.waiting_workers.values())
+            for entry in waiting:
+                entry.cancellation.set()
         if worker is not None:
             worker.join(timeout=6.0)
-        if worker is None or not worker.is_alive():
+        for entry in waiting:
+            entry.thread.join(timeout=6.0)
+        if (worker is None or not worker.is_alive()) and all(
+            not entry.thread.is_alive() for entry in waiting
+        ):
             self.store.close()
         self.send(response(request_id, {}))
-        self.shutting_down = True
         logger.info("Runtime shutdown requested")
 
     def send(self, message: dict[str, object]) -> None:
@@ -464,6 +627,7 @@ class RuntimeServer:
         with self.approval_lock:
             self.pending_approvals[request_id] = pending
         try:
+            self._park_active_worker(str(params["runId"]), cancel)
             self.send(
                 {
                     "jsonrpc": "2.0",
@@ -488,25 +652,26 @@ class RuntimeServer:
             if pending is None:
                 return
             result = message.get("result")
-            if not isinstance(result, dict):
+            try:
+                parsed = ApprovalDecisionDto.model_validate(result)
+            except ValidationError:
                 pending.decision = ApprovalDecision("reject")
             else:
-                decision = result.get("decision")
-                feedback = result.get("feedback")
-                valid = (
-                    set(result) <= {"decision", "feedback"}
-                    and decision in {"approve", "reject"}
-                    and (feedback is None or isinstance(feedback, str))
-                    and not (decision == "approve" and feedback is not None)
-                    and (
-                        feedback is None
-                        or len(feedback.encode("utf-8")) <= 2_000
+                try:
+                    feedback = (
+                        self._scan_text(parsed.feedback)
+                        if parsed.feedback is not None else None
                     )
-                )
-                pending.decision = ApprovalDecision(
-                    str(decision), feedback if isinstance(feedback, str) else None
-                ) if valid else ApprovalDecision("reject")
+                except SensitiveScanError:
+                    pending.decision = ApprovalDecision("reject")
+                else:
+                    pending.decision = ApprovalDecision(parsed.decision, feedback)
             pending.event.set()
+
+    def _scan_text(self, value: str) -> str:
+        if self.sensitive is None:
+            raise SensitiveScanError("sensitive scanner unavailable")
+        return self.sensitive.scan_text(value).text
 
     @staticmethod
     def _is_server_response(message: dict[str, object]) -> bool:
@@ -521,8 +686,8 @@ class RuntimeServer:
 
     def wait_for_worker(self, timeout: float = 5.0) -> None:
         with self.worker_lock:
-            worker = self.worker
-        if worker is not None:
+            workers = [self.worker] + [entry.thread for entry in self.waiting_workers.values()]
+        for worker in {worker for worker in workers if worker is not None}:
             worker.join(timeout=timeout)
 
     def close(self) -> None:
@@ -530,8 +695,11 @@ class RuntimeServer:
             cancellation = self.active_cancel
             worker = self.worker
             active_run_id = self.active_run_id
+            waiting = list(self.waiting_workers.items())
         if cancellation is not None:
             cancellation.set()
+        for _run_id, entry in waiting:
+            entry.cancellation.set()
         if active_run_id is not None and not self.shutting_down:
             try:
                 self.store.interrupt_run(active_run_id)
@@ -539,7 +707,11 @@ class RuntimeServer:
                 pass
         if worker is not None:
             worker.join(timeout=6.0)
-        if worker is None or not worker.is_alive():
+        for _run_id, entry in waiting:
+            entry.thread.join(timeout=6.0)
+        if (worker is None or not worker.is_alive()) and all(
+            not entry.thread.is_alive() for _run_id, entry in waiting
+        ):
             self.store.close()
 
     def _run_worker(
@@ -550,12 +722,14 @@ class RuntimeServer:
     ) -> None:
         start_gate.wait()
         try:
-            RuntimeLoop(
+            RuntimeEngine(
                 self.store,
                 self.model,
                 self.send,
                 self.request_approval,
                 self.shell_available,
+                sensitive=self.sensitive,
+                wait_for_execution_slot=self._wait_for_execution_slot,
             ).run(run_id, cancellation)
         except Exception:
             logger.exception("Run worker failed")
@@ -597,10 +771,82 @@ class RuntimeServer:
             except Exception:
                 logger.exception("Run worker cleanup failed")
         finally:
+            should_schedule = False
             with self.worker_lock:
                 if self.active_run_id == run_id:
                     self.active_run_id = None
                     self.active_cancel = None
+                    self.worker = None
+                    should_schedule = not self.shutting_down
+                waiting = self.waiting_workers.pop(run_id, None)
+                if waiting is not None:
+                    should_schedule = should_schedule or not self.shutting_down
+            if should_schedule:
+                self._schedule_next()
+
+    def _start_worker_locked(self, run_id: str) -> threading.Event:
+        cancellation = threading.Event()
+        start_gate = threading.Event()
+        worker = threading.Thread(
+            target=self._run_worker,
+            args=(run_id, cancellation, start_gate),
+            name=f"eidos-run-{run_id}",
+            daemon=True,
+        )
+        self.active_run_id = run_id
+        self.active_cancel = cancellation
+        self.worker = worker
+        worker.start()
+        return start_gate
+
+    def _schedule_next(self) -> None:
+        if self.model is None or self.store.health_state != "ready":
+            return
+        with self.worker_lock:
+            if self.worker is not None and self.worker.is_alive():
+                return
+            claimed = self.store.claim_next_run()
+            if claimed is None:
+                return
+            run_id = str(claimed["id"])
+            waiting = self.waiting_workers.pop(run_id, None)
+            if waiting is not None:
+                self.active_run_id = run_id
+                self.active_cancel = waiting.cancellation
+                self.worker = waiting.thread
+                waiting.resume.set()
+            else:
+                gate = self._start_worker_locked(run_id)
+                gate.set()
+
+    def _park_active_worker(
+        self, run_id: str, cancellation: threading.Event
+    ) -> None:
+        with self.worker_lock:
+            if self.active_run_id != run_id or self.worker is not threading.current_thread():
+                return
+            self.waiting_workers[run_id] = WaitingWorker(
+                thread=self.worker,
+                cancellation=cancellation,
+                resume=threading.Event(),
+            )
+            self.active_run_id = None
+            self.active_cancel = None
+            self.worker = None
+        self._schedule_next()
+
+    def _wait_for_execution_slot(
+        self, run_id: str, cancellation: threading.Event
+    ) -> bool:
+        with self.worker_lock:
+            waiting = self.waiting_workers.get(run_id)
+        if waiting is None:
+            return False
+        self._schedule_next()
+        while not waiting.resume.wait(0.1):
+            if cancellation.is_set() or self.shutting_down:
+                return False
+        return not cancellation.is_set()
 
 
 def _is_canonical_uuid(value: object) -> bool:

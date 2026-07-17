@@ -9,6 +9,7 @@ import time
 from typing import Callable
 
 from eidos_runtime.model import ModelContextItem, ModelResponse, ModelToolCall
+from eidos_runtime.tools import model_tool_definitions
 
 
 HOST = "api.deepseek.com"
@@ -43,19 +44,22 @@ class DeepSeekChatModel:
         context: tuple[ModelContextItem, ...],
         cancel: threading.Event,
         on_text_delta: Callable[[str], None],
+        allow_tools: bool = True,
     ) -> ModelResponse:
         if cancel.is_set():
             return ModelResponse()
         deadline = time.monotonic() + REQUEST_DEADLINE_SECONDS
-        payload = json.dumps(
-            {
+        request: dict[str, object] = {
                 "model": MODEL,
                 "messages": _messages_from_context(context),
                 "stream": True,
                 "thinking": {"type": "disabled"},
-                "tools": _tool_definitions(),
-                "tool_choice": "auto",
-            },
+        }
+        if allow_tools:
+            request["tools"] = _tool_definitions()
+            request["tool_choice"] = "auto"
+        payload = json.dumps(
+            request,
             ensure_ascii=False,
             separators=(",", ":"),
         ).encode("utf-8")
@@ -84,7 +88,7 @@ class DeepSeekChatModel:
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                     "Accept": "text/event-stream",
-                    "User-Agent": "Eidos/0.1.0",
+                    "User-Agent": "Eidos/0.2.0",
                 },
             )
             response = connection.getresponse()
@@ -283,88 +287,4 @@ def _messages_from_context(
 
 
 def _tool_definitions() -> list[dict[str, object]]:
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": "list_files",
-                "description": "List bounded regular files under the workspace.",
-                "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "read_file",
-                "description": "Read one bounded UTF-8 file using a workspace-relative path.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"path": {"type": "string"}},
-                    "required": ["path"],
-                    "additionalProperties": False,
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "search_text",
-                "description": "Search for a literal string in bounded workspace text files.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"query": {"type": "string"}},
-                    "required": ["query"],
-                    "additionalProperties": False,
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "write_file",
-                "description": "Create a UTF-8 file or replace a file already read in this run. Requires user approval.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                        "content": {"type": "string"},
-                    },
-                    "required": ["path", "content"],
-                    "additionalProperties": False,
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "apply_patch",
-                "description": "Apply one strict unified diff to a file already read in this run. Requires user approval.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                        "patch": {"type": "string"},
-                    },
-                    "required": ["path", "patch"],
-                    "additionalProperties": False,
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "run_shell",
-                "description": "Run one shell command inside the network-disabled workspace sandbox after user approval.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "command": {"type": "string"},
-                        "cwd": {"type": "string"},
-                        "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 600},
-                    },
-                    "required": ["command"],
-                    "additionalProperties": False,
-                },
-            },
-        },
-    ]
+    return model_tool_definitions()

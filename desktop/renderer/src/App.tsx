@@ -22,6 +22,7 @@ export function App() {
   const [runtime, setRuntime] = useState<RuntimeStatus>({ state: "starting" });
   const [model, setModel] = useState<ModelStatus>();
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessionStatuses, setSessionStatuses] = useState<Record<string, Run["status"]>>({});
   const [snapshot, setSnapshot] = useState<SessionSnapshot>();
   const [input, setInput] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -33,14 +34,25 @@ export function App() {
   const snapshotReads = useRef(new SnapshotReadCoordinator()).current;
 
   const activeRun = useMemo(
-    () => snapshot?.runs.find((run) => ["running", "waiting_approval"].includes(run.status)),
+    () => [...(snapshot?.runs ?? [])].reverse().find((run) =>
+      ["queued", "running", "waiting_approval", "waiting_user_input", "finalizing"].includes(run.status)),
     [snapshot],
   );
+  const continuingRun = activeRun?.status === "waiting_user_input"
+    && activeRun.allowedActions?.includes("continue") ? activeRun : undefined;
   const interactionBusy = busy || refreshingSnapshot;
 
   useEffect(() => {
     const unsubscribeStatus = window.eidosRuntime.onStatus(setRuntime);
     const unsubscribeNotifications = window.eidosRuntime.onNotification((notification) => {
+      if (
+        notification.method === "run/started"
+        || notification.method === "run/updated"
+        || notification.method === "run/completed"
+      ) {
+        const run = notification.params.run;
+        setSessionStatuses((current) => ({ ...current, [run.sessionId]: run.status }));
+      }
       if (notification.method === "run/completed") {
         setApprovals((current) => current.filter(
           (approval) => approval.runId !== notification.params.run.id,
@@ -63,7 +75,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (runtime.state !== "ready") {
+    if (runtime.state !== "ready" || runtime.storageHealth.state !== "ready") {
       return;
     }
     void Promise.all([
@@ -80,6 +92,14 @@ export function App() {
         ],
         current,
       ));
+      void Promise.all(sessionPage.items.map((session) => loadAuthoritativeSnapshot(session.id)))
+        .then((snapshots) => setSessionStatuses(Object.fromEntries(
+          snapshots.flatMap((loaded) => {
+            const latest = [...loaded.runs].sort((a, b) => b.createdAt - a.createdAt)[0];
+            return latest ? [[loaded.session.id, latest.status]] : [];
+          }),
+        )))
+        .catch(() => undefined);
     }).catch((cause: unknown) => setError(messageFrom(cause)));
   }, [runtime]);
 
@@ -89,7 +109,7 @@ export function App() {
     setBusy(true);
     setError(undefined);
     try {
-      const loaded = await window.eidosRuntime.readSession(session.id);
+      const loaded = await loadAuthoritativeSnapshot(session.id);
       const accepted = snapshotReads.accept(token, loaded);
       if (accepted) {
         setSnapshot(accepted);
@@ -115,7 +135,7 @@ export function App() {
       const token = snapshotReads.select(session.id);
       setRefreshingSnapshot(false);
       setSessions((current) => [session, ...current]);
-      const loaded = await window.eidosRuntime.readSession(session.id);
+      const loaded = await loadAuthoritativeSnapshot(session.id);
       const accepted = snapshotReads.accept(token, loaded);
       if (accepted) {
         setSnapshot(accepted);
@@ -141,14 +161,16 @@ export function App() {
     }
   }
 
-  async function startRun(): Promise<void> {
+  async function submitInput(): Promise<void> {
     if (!snapshot || !input.trim() || interactionBusy) {
       return;
     }
     setBusy(true);
     setError(undefined);
     try {
-      const run = await window.eidosRuntime.startRun(snapshot.session.id, input.trim());
+      const run = continuingRun
+        ? await window.eidosRuntime.continueRun(continuingRun.id, input.trim())
+        : await window.eidosRuntime.startRun(snapshot.session.id, input.trim());
       setSnapshot((current) => current && ({
         ...current,
         runs: upsertRun(current.runs, run),
@@ -205,7 +227,7 @@ export function App() {
     }
     setRefreshingSnapshot(true);
     try {
-      const loaded = await window.eidosRuntime.readSession(sessionId);
+      const loaded = await loadAuthoritativeSnapshot(sessionId);
       const accepted = snapshotReads.accept(token, loaded);
       if (accepted) {
         setSnapshot(accepted);
@@ -230,20 +252,21 @@ export function App() {
       <SessionSidebar
         sessions={sessions}
         selectedId={snapshot?.session.id}
-        disabled={interactionBusy || Boolean(activeRun)}
+        disabled={interactionBusy || runtime.storageHealth.state !== "ready"}
+        statusBySession={sessionStatuses}
         onCreate={() => void createSession()}
         onSelect={(session) => void selectSession(session)}
       />
       <section className="workspace" aria-label="Agent 工作区">
         <header className="workspace-header">
           <div>
-            <p className="eyebrow">Developer Preview · MVP Lite</p>
+            <p className="eyebrow">Developer Preview · Phase 2</p>
             <h1>{snapshot ? "Eidos Workspace" : "Eidos"}</h1>
             <p className="workspace-path">
               {snapshot?.session.workspaceRoot ?? "选择一个本地目录开始。"}
             </p>
             <p className="preview-limit">
-              文件写入与 Shell 每次都需批准；当前不提供内容级 Secret 检测，也不支持后台守护进程，请勿选择含敏感数据的 Workspace。
+              文件写入、删除与 Shell 每次都需批准；内容会先经过本地敏感信息扫描。
             </p>
             {!runtime.runShell && (
               <p className="shell-unavailable" role="status">
@@ -253,6 +276,12 @@ export function App() {
           </div>
           <span className="runtime-pill">Runtime {runtime.runtimeVersion}</span>
         </header>
+
+        {runtime.storageHealth.state !== "ready" && (
+          <p className="error-banner" role="alert">
+            状态存储处于只读健康模式（{runtime.storageHealth.code ?? "unknown"}），不会执行 Run 或写入状态。
+          </p>
+        )}
 
         {model?.configured && !editingModel && (
           <section className="model-status" aria-label="模型配置">
@@ -283,7 +312,7 @@ export function App() {
                 value={apiKey}
                 onChange={(event) => setApiKey(event.target.value)}
               />
-              <button disabled={interactionBusy || apiKey.length < 16} onClick={() => void configureModel()}>
+              <button disabled={interactionBusy || runtime.storageHealth.state !== "ready" || apiKey.length < 16} onClick={() => void configureModel()}>
                 保存配置
               </button>
               {model?.configured && (
@@ -315,32 +344,32 @@ export function App() {
             />
             <form className="composer" onSubmit={(event) => {
               event.preventDefault();
-              void startRun();
+              void submitInput();
             }}>
               <label className="sr-only" htmlFor="task-input">告诉 Eidos 要做什么</label>
               <textarea
                 id="task-input"
                 rows={2}
-                placeholder={model?.configured ? "例如：阅读这个项目并说明如何启动" : "请先配置 DeepSeek API Key"}
+                placeholder={continuingRun ? "补充信息后继续这个 Run" : model?.configured ? "例如：阅读这个项目并说明如何启动" : "请先配置 DeepSeek API Key"}
                 value={input}
-                disabled={!model?.configured || interactionBusy || Boolean(activeRun)}
+                disabled={!model?.configured || interactionBusy || runtime.storageHealth.state !== "ready"}
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                     event.preventDefault();
-                    void startRun();
+                    void submitInput();
                   }
                 }}
               />
               <div className="composer-actions">
-                <span>{activeRun ? "正在执行…" : "⌘↵ 发送"}</span>
-                {activeRun ? (
+                <span>{continuingRun ? "等待你的补充" : activeRun ? statusText(activeRun.status) : "⌘↵ 发送"}</span>
+                {activeRun?.allowedActions?.includes("cancel") && !continuingRun ? (
                   <button className="button-secondary" type="button" disabled={interactionBusy} onClick={() => void cancelRun()}>
                     取消 Run
                   </button>
                 ) : (
                   <button type="submit" disabled={interactionBusy || !model?.configured || !input.trim()}>
-                    开始
+                    {continuingRun ? "继续" : "开始"}
                   </button>
                 )}
               </div>
@@ -351,12 +380,38 @@ export function App() {
             <p className="empty-kicker">Session → Run → Item</p>
             <h2>从一个 Workspace 开始</h2>
             <p>Eidos 可以阅读、修改和测试所选目录；每次文件写入与 Shell 命令都会先展示候选操作并等待批准。</p>
-            <button disabled={interactionBusy} onClick={() => void createSession()}>选择目录</button>
+            <button disabled={interactionBusy || runtime.storageHealth.state !== "ready"} onClick={() => void createSession()}>选择目录</button>
           </div>
         )}
       </section>
     </main>
   );
+}
+
+async function loadAuthoritativeSnapshot(sessionId: string): Promise<SessionSnapshot> {
+  let loaded = await window.eidosRuntime.readSession(sessionId);
+  let after = loaded.throughEventId ?? 0;
+  let changed = false;
+  for (let page = 0; page < 10; page += 1) {
+    const events = await window.eidosRuntime.listEvents(sessionId, after);
+    changed ||= events.items.length > 0;
+    after = events.throughEventId;
+    if (!events.hasMore) {
+      break;
+    }
+  }
+  if (changed) {
+    loaded = await window.eidosRuntime.readSession(sessionId);
+  }
+  return loaded;
+}
+
+function statusText(status: Run["status"]): string {
+  return ({
+    queued: "已排队", running: "正在执行", waiting_approval: "等待批准",
+    waiting_user_input: "等待输入", finalizing: "正在收尾", stopped: "已停止",
+    succeeded: "已完成", failed: "失败", canceled: "已取消", interrupted: "已中断",
+  } as const)[status];
 }
 
 function RuntimeGate({ status }: { status: RuntimeStatus }) {

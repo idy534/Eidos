@@ -387,13 +387,13 @@ M0 未通过前，不进入 Agent Shell 主链路实现。
 
 ### M2：SQLite、队列与状态机
 
-第二期对应 M2 的最小可交付子集为 P2-01、P2-02、P2-03：先保证旧数据库可安全启动或明确 health-only，再交付 Event/幂等基础与持久 FIFO/Segment 状态机。其余 M2 项继续由后续阶段承接。
+第二期对应 M2 的 P2-01、P2-02、P2-03 已完成：旧数据库可安全迁移或明确 health-only，Event/幂等基础与持久 FIFO/Segment 状态机已通过隔离数据根和重启回归。清单外的完整 Workspace/Profile/Artifact 存储仍由后续阶段承接。
 
-- 状态目录独占 OS lock、SQLite 一致备份与显式 forward-only migration。
-- ApiTimestampV1/TimeProvider/high-water、operation records、collection creation sequence、Event payload registry 与 emergency reserve 恢复。
-- Run/Segment/Step/Attempt/ToolCall/Approval/Event。
-- 单执行器 FIFO、预算、取消与恢复。
-- 独立 tool contract version、当步 tool set/hash 和 canonical ToolResult 持久化。
+- ✅ 状态目录独占 OS lock、SQLite 一致备份与显式 forward-only migration。
+- ✅ UTC 毫秒/monotonic duration、high-water、operation records、creation sequence、Event payload registry 与 emergency reserve。
+- ✅ Run/Segment/Step/Attempt/ToolCall/Approval/Event 最小事实。
+- ✅ 单执行器 FIFO、预算、取消与恢复。
+- ✅ 独立 tool contract version、ToolSpec Registry 和 canonical ToolResult 持久化。
 - Immutable base、Step projection/hash、ToolResult quarantine 和读取证据完整/模型投影分层。
 
 ### M3：模型与只读闭环

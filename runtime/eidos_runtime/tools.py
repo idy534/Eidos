@@ -14,14 +14,21 @@ import stat
 import sys
 import threading
 import time
-from typing import Callable, Iterator
+from typing import Callable, Iterator, Literal
 import uuid
+import json
 
+from pydantic import Field, StrictInt, StrictStr
+
+from eidos_runtime.schemas import ClosedModel, ToolResultDto
+from eidos_runtime.sensitive import SensitiveScanError, default_scanner
 from eidos_runtime.storage import WorkspaceIdentity
 from eidos_runtime.seatbelt import secure_workspace_move
 
 
 MAX_FILE_BYTES = 256 * 1024
+MAX_READ_FILE_BYTES = 2 * 1024 * 1024
+MAX_RANGE_LINES = 2_000
 MAX_LIST_DEPTH = 5
 MAX_LIST_ENTRIES = 2_000
 MAX_SEARCH_BYTES = 8 * 1024 * 1024
@@ -94,6 +101,95 @@ class FileChange:
     base_sha256: str | None
     mode: int
     diff: str
+    delete: bool = False
+
+
+class ToolSpec(ClosedModel):
+    name: StrictStr
+    description: StrictStr
+    side_effect: Literal["none", "workspace", "eidos_state", "shell"] = Field(alias="sideEffect")
+    approval_required: bool = Field(alias="approvalRequired")
+    timeout_seconds: StrictInt = Field(alias="timeoutSeconds")
+    input_schema: dict[str, object] = Field(alias="inputSchema")
+    result_schema: dict[str, object] = Field(alias="resultSchema")
+
+
+def _object_schema(properties: dict[str, object], required: list[str] | None = None) -> dict[str, object]:
+    schema: dict[str, object] = {
+        "type": "object", "properties": properties, "additionalProperties": False,
+    }
+    if required:
+        schema["required"] = required
+    return schema
+
+
+_RESULT_SCHEMA = _object_schema({
+    "schemaVersion": {"type": "integer", "const": 1},
+    "toolContractVersion": {"type": "integer", "const": 1},
+    "toolName": {"type": "string"},
+    "outcome": {"type": "string"},
+    "code": {"type": "string"},
+    "summary": {"type": "string"},
+    "data": {"type": "object", "additionalProperties": False, "properties": {}},
+    "sideEffectsMayExist": {"type": "boolean"},
+    "reconciliationRequired": {"type": "boolean"},
+}, [
+    "schemaVersion", "toolContractVersion", "toolName", "outcome", "code",
+    "summary", "data", "sideEffectsMayExist", "reconciliationRequired",
+])
+TOOL_SPECS = tuple(ToolSpec.model_validate(spec) for spec in (
+    {"name": "list_files", "description": "List bounded regular files under the workspace.", "sideEffect": "none", "approvalRequired": False, "timeoutSeconds": 5, "inputSchema": _object_schema({}), "resultSchema": _RESULT_SCHEMA},
+    {"name": "read_file", "description": "Read one bounded UTF-8 file.", "sideEffect": "none", "approvalRequired": False, "timeoutSeconds": 5, "inputSchema": _object_schema({"path": {"type": "string"}}, ["path"]), "resultSchema": _RESULT_SCHEMA},
+    {"name": "read_file_range", "description": "Read a bounded inclusive line range from one UTF-8 file.", "sideEffect": "none", "approvalRequired": False, "timeoutSeconds": 5, "inputSchema": _object_schema({"path": {"type": "string"}, "startLine": {"type": "integer", "minimum": 1}, "endLine": {"type": "integer", "minimum": 1}}, ["path", "startLine", "endLine"]), "resultSchema": _RESULT_SCHEMA},
+    {"name": "search_text", "description": "Search for one literal single-line string.", "sideEffect": "none", "approvalRequired": False, "timeoutSeconds": 5, "inputSchema": _object_schema({"query": {"type": "string"}}, ["query"]), "resultSchema": _RESULT_SCHEMA},
+    {"name": "write_file", "description": "Create or replace one UTF-8 file after approval.", "sideEffect": "workspace", "approvalRequired": True, "timeoutSeconds": 5, "inputSchema": _object_schema({"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"]), "resultSchema": _RESULT_SCHEMA},
+    {"name": "apply_patch", "description": "Apply one strict unified diff after approval.", "sideEffect": "workspace", "approvalRequired": True, "timeoutSeconds": 5, "inputSchema": _object_schema({"path": {"type": "string"}, "patch": {"type": "string"}}, ["path", "patch"]), "resultSchema": _RESULT_SCHEMA},
+    {"name": "delete_file", "description": "Delete one regular UTF-8 file after approval.", "sideEffect": "workspace", "approvalRequired": True, "timeoutSeconds": 5, "inputSchema": _object_schema({"path": {"type": "string"}}, ["path"]), "resultSchema": _RESULT_SCHEMA},
+    {"name": "run_shell", "description": "Run one network-disabled shell command after approval.", "sideEffect": "shell", "approvalRequired": True, "timeoutSeconds": 600, "inputSchema": _object_schema({"command": {"type": "string"}, "cwd": {"type": "string"}, "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 600}}, ["command"]), "resultSchema": _RESULT_SCHEMA},
+))
+if len({spec.name for spec in TOOL_SPECS}) != len(TOOL_SPECS):
+    raise RuntimeError("duplicate tool spec")
+for _spec in TOOL_SPECS:
+    if (
+        _spec.input_schema.get("type") != "object"
+        or _spec.input_schema.get("additionalProperties") is not False
+        or _spec.result_schema.get("type") != "object"
+        or _spec.result_schema.get("additionalProperties") is not False
+    ):
+        raise RuntimeError("tool schemas must be closed objects")
+
+
+def model_tool_definitions() -> list[dict[str, object]]:
+    return [{"type": "function", "function": {
+        "name": spec.name, "description": spec.description,
+        "parameters": spec.input_schema,
+    }} for spec in TOOL_SPECS]
+
+
+def canonical_tool_result(
+    tool_name: str, result: dict[str, object]
+) -> dict[str, object]:
+    normalized = {
+        "schemaVersion": 1,
+        "toolContractVersion": 1,
+        "toolName": tool_name,
+        "outcome": result.get("outcome", "error"),
+        "code": result.get("code", "unknown_error"),
+        "summary": result.get("summary", "Tool request failed"),
+        "data": result.get("data", {}),
+        "sideEffectsMayExist": bool(result.get("sideEffectsMayExist", False)),
+        "reconciliationRequired": bool(result.get("reconciliationRequired", result.get("sideEffectsMayExist", False))),
+    }
+    validated = ToolResultDto.model_validate(normalized).model_dump(
+        mode="json", by_alias=True, exclude_none=False, exclude_defaults=False,
+        exclude_unset=True,
+    )
+    encoded = json.dumps(
+        validated, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+    if len(encoded) > 512 * 1024:
+        return _error(tool_name, "tool_result_too_large", "Tool result exceeded the safe size limit")
+    return validated
 
 
 class ToolExecutor:
@@ -132,9 +228,10 @@ class ToolExecutor:
         ] = {
             "list_files": self._list_files,
             "read_file": self._read_file,
+            "read_file_range": self._read_file_range,
             "search_text": self._search_text,
         }
-        self._side_effecting_tools = frozenset({"write_file", "apply_patch"})
+        self._side_effecting_tools = frozenset({"write_file", "apply_patch", "delete_file"})
         self._shell_tools = frozenset({"run_shell"})
 
     def __enter__(self) -> ToolExecutor:
@@ -165,12 +262,24 @@ class ToolExecutor:
             return not arguments
         if tool_name == "read_file":
             return set(arguments) == {"path"} and isinstance(arguments.get("path"), str)
+        if tool_name == "read_file_range":
+            return (
+                set(arguments) == {"path", "startLine", "endLine"}
+                and isinstance(arguments.get("path"), str)
+                and isinstance(arguments.get("startLine"), int)
+                and not isinstance(arguments.get("startLine"), bool)
+                and isinstance(arguments.get("endLine"), int)
+                and not isinstance(arguments.get("endLine"), bool)
+                and 1 <= arguments["startLine"] <= arguments["endLine"]
+                and arguments["endLine"] - arguments["startLine"] < MAX_RANGE_LINES
+            )
         if tool_name == "search_text":
             query = arguments.get("query")
             return (
                 set(arguments) == {"query"}
                 and isinstance(query, str)
                 and bool(query)
+                and "\n" not in query and "\r" not in query
                 and len(query.encode("utf-8")) <= 512
             )
         if tool_name == "write_file":
@@ -189,6 +298,8 @@ class ToolExecutor:
                 and isinstance(patch, str)
                 and len(patch.encode("utf-8")) <= MAX_DIFF_BYTES
             )
+        if tool_name == "delete_file":
+            return set(arguments) == {"path"} and isinstance(arguments.get("path"), str)
         if tool_name == "run_shell":
             command = arguments.get("command")
             cwd = arguments.get("cwd", ".")
@@ -253,7 +364,18 @@ class ToolExecutor:
         try:
             self._verify_root()
             _check_cancel(cancel)
-            return tool(arguments, cancel)
+            scanned_arguments = default_scanner().scan_json(arguments)
+            assert isinstance(scanned_arguments, dict)
+            result = tool(scanned_arguments, cancel)
+            scanned = default_scanner().scan_json(result)
+            assert isinstance(scanned, dict)
+            if scanned != result:
+                return _error(
+                    tool_name, "sensitive_content_rejected", "Sensitive content was withheld"
+                )
+            return canonical_tool_result(tool_name, scanned)
+        except SensitiveScanError:
+            return _error(tool_name, "sensitive_content_rejected", "Sensitive content was withheld")
         except ToolCancelled:
             return _error(tool_name, "canceled", "Tool was canceled")
         except WorkspacePathError as error:
@@ -272,12 +394,20 @@ class ToolExecutor:
         try:
             self._verify_root()
             _check_cancel(cancel)
+            scanned_arguments = default_scanner().scan_json(arguments)
+            if scanned_arguments != arguments:
+                raise SensitiveScanError("sensitive tool arguments")
             path_value = arguments["path"]
             assert isinstance(path_value, str)
             parts = _validate_relative_path(path_value)
             normalized_path = "/".join(parts)
             existing = self._read_existing_for_change(normalized_path, cancel)
-            if tool_name == "write_file":
+            deleting = tool_name == "delete_file"
+            if deleting:
+                if existing is None:
+                    raise WorkspacePathError("file_unavailable")
+                candidate = b""
+            elif tool_name == "write_file":
                 content = arguments["content"]
                 assert isinstance(content, str)
                 candidate = content.encode("utf-8")
@@ -312,7 +442,7 @@ class ToolExecutor:
                 (
                     f"a/{normalized_path}" if existing is not None else "/dev/null"
                 ),
-                f"b/{normalized_path}",
+                "/dev/null" if deleting else f"b/{normalized_path}",
             )
             if existing is None and not diff:
                 diff = f"--- /dev/null\n+++ b/{normalized_path}\n"
@@ -324,7 +454,10 @@ class ToolExecutor:
                 base_sha256=base_sha256,
                 mode=mode,
                 diff=diff,
+                delete=deleting,
             )
+        except SensitiveScanError:
+            return _error(tool_name, "sensitive_content_rejected", "Sensitive arguments were rejected")
         except UnicodeDecodeError:
             return _error(tool_name, "invalid_utf8", "File is not valid UTF-8")
         except ToolCancelled:
@@ -347,6 +480,18 @@ class ToolExecutor:
             parts = _validate_relative_path(change.path)
             parent_fd = self._open_parent(parts)
             self._verify_base_version(parent_fd, parts[-1], change.base_sha256, cancel)
+            if change.delete:
+                os.unlink(parts[-1], dir_fd=parent_fd)
+                try:
+                    os.fsync(parent_fd)
+                    os.fsync(self.root_fd)
+                except OSError:
+                    return _commit_error(
+                        tool_name, "file_commit_uncertain",
+                        "File was deleted but durability could not be confirmed",
+                        side_effects=True,
+                    )
+                return _success(tool_name, "File deleted", {"path": change.path})
             temporary_name = f".eidos-{uuid.uuid4().hex}.tmp"
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
             if hasattr(os, "O_NOFOLLOW"):
@@ -576,15 +721,22 @@ class ToolExecutor:
     ) -> dict[str, object]:
         path_value = arguments["path"]
         assert isinstance(path_value, str)
-        descriptor, normalized_path = self._open_file(path_value)
-        try:
-            content_bytes, metadata = _read_regular_file(descriptor, cancel)
-        finally:
-            os.close(descriptor)
+        content_bytes, metadata, normalized_path = self._read_stable_path(
+            path_value, cancel, MAX_READ_FILE_BYTES
+        )
         try:
             content = content_bytes.decode("utf-8", errors="strict")
         except UnicodeDecodeError:
             return _error("read_file", "invalid_utf8", "File is not valid UTF-8")
+        if "\x00" in content:
+            return _error("read_file", "binary_file", "Binary file content is unavailable")
+        if content.startswith("\ufeff"):
+            content = content[1:]
+        truncated = len(content_bytes) > MAX_FILE_BYTES
+        if truncated:
+            head = content_bytes[:128 * 1024].decode("utf-8", errors="ignore")
+            tail = content_bytes[-128 * 1024:].decode("utf-8", errors="ignore")
+            content = head + "\n[...truncated...]\n" + tail
         return _success(
             "read_file",
             "Read file",
@@ -593,8 +745,66 @@ class ToolExecutor:
                 "content": content,
                 "sizeBytes": metadata.st_size,
                 "sha256": hashlib.sha256(content_bytes).hexdigest(),
+                "truncated": truncated,
+                "truncationReason": "head_tail" if truncated else None,
             },
         )
+
+    def _read_file_range(
+        self, arguments: dict[str, object], cancel: threading.Event
+    ) -> dict[str, object]:
+        path_value = arguments["path"]
+        start = arguments["startLine"]
+        end = arguments["endLine"]
+        assert isinstance(path_value, str) and isinstance(start, int) and isinstance(end, int)
+        content_bytes, metadata, normalized_path = self._read_stable_path(
+            path_value, cancel, MAX_READ_FILE_BYTES
+        )
+        try:
+            content = content_bytes.decode("utf-8-sig", errors="strict")
+        except UnicodeDecodeError:
+            return _error("read_file_range", "invalid_utf8", "File is not valid UTF-8")
+        if "\x00" in content:
+            return _error(
+                "read_file_range", "binary_file", "Binary file content is unavailable"
+            )
+        lines = content.splitlines(keepends=True)
+        selected: list[str] = []
+        size = 0
+        next_line: int | None = None
+        for number in range(start, min(end, len(lines)) + 1):
+            encoded = lines[number - 1].encode("utf-8")
+            if size + len(encoded) > MAX_FILE_BYTES:
+                next_line = number
+                break
+            selected.append(lines[number - 1])
+            size += len(encoded)
+        if next_line is None and end < len(lines):
+            next_line = end + 1
+        return _success("read_file_range", "Read file range", {
+            "path": normalized_path, "startLine": start,
+            "endLine": start + len(selected) - 1 if selected else start - 1,
+            "content": "".join(selected), "nextLine": next_line,
+            "sizeBytes": metadata.st_size,
+            "sha256": hashlib.sha256(content_bytes).hexdigest(),
+        })
+
+    def _read_stable_path(
+        self, path_value: str, cancel: threading.Event, limit: int
+    ) -> tuple[bytes, os.stat_result, str]:
+        last_error: WorkspacePathError | None = None
+        for _attempt in range(2):
+            descriptor, normalized_path = self._open_file(path_value)
+            try:
+                return (*_read_regular_file(descriptor, cancel, limit=limit), normalized_path)
+            except WorkspacePathError as error:
+                last_error = error
+                if error.code != "workspace_changed":
+                    raise
+            finally:
+                os.close(descriptor)
+        assert last_error is not None
+        raise last_error
 
     def _search_text(
         self, arguments: dict[str, object], cancel: threading.Event
@@ -650,11 +860,16 @@ class ToolExecutor:
                     truncated = True
                     return
                 try:
-                    file_fd = self._open_file_at(directory_fd, name)
-                    try:
-                        content_bytes, stable_metadata = _read_regular_file(file_fd, cancel)
-                    finally:
-                        os.close(file_fd)
+                    for attempt in range(2):
+                        file_fd = self._open_file_at(directory_fd, name)
+                        try:
+                            content_bytes, stable_metadata = _read_regular_file(file_fd, cancel)
+                            break
+                        except WorkspacePathError as error:
+                            if error.code != "workspace_changed" or attempt == 1:
+                                raise
+                        finally:
+                            os.close(file_fd)
                 except WorkspacePathError:
                     continue
                 scanned_bytes += stable_metadata.st_size
@@ -663,7 +878,7 @@ class ToolExecutor:
                 except UnicodeDecodeError:
                     continue
                 for line_number, line in enumerate(content.splitlines(), start=1):
-                    column = line.find(query)
+                    column = _ascii_lower(line).find(_ascii_lower(query))
                     if column < 0:
                         continue
                     matches.append(
@@ -690,6 +905,7 @@ class ToolExecutor:
                 "matches": matches,
                 "scannedBytes": scanned_bytes,
                 "truncated": truncated,
+                "truncationReason": "limit" if truncated else None,
             },
         )
 
@@ -900,17 +1116,17 @@ class ToolExecutor:
 
 
 def _read_regular_file(
-    descriptor: int, cancel: threading.Event
+    descriptor: int, cancel: threading.Event, *, limit: int = MAX_FILE_BYTES
 ) -> tuple[bytes, os.stat_result]:
     before = os.fstat(descriptor)
     if not stat.S_ISREG(before.st_mode):
         raise WorkspacePathError("unsupported_file_type")
     if before.st_nlink != 1:
         raise WorkspacePathError("unsupported_file_hardlink")
-    if before.st_size > MAX_FILE_BYTES:
+    if before.st_size > limit:
         raise WorkspacePathError("file_too_large")
     chunks: list[bytes] = []
-    remaining = MAX_FILE_BYTES + 1
+    remaining = limit + 1
     while remaining > 0:
         _check_cancel(cancel)
         chunk = os.read(descriptor, min(64 * 1024, remaining))
@@ -920,7 +1136,7 @@ def _read_regular_file(
         remaining -= len(chunk)
     content = b"".join(chunks)
     after = os.fstat(descriptor)
-    if len(content) > MAX_FILE_BYTES:
+    if len(content) > limit:
         raise WorkspacePathError("file_too_large")
     if (
         before.st_dev,
@@ -1212,6 +1428,10 @@ def _check_cancel(cancel: threading.Event) -> None:
         raise ToolCancelled
 
 
+def _ascii_lower(value: str) -> str:
+    return "".join(chr(ord(char) + 32) if "A" <= char <= "Z" else char for char in value)
+
+
 def _check_budget(cancel: threading.Event, deadline: float) -> None:
     _check_cancel(cancel)
     if time.monotonic() >= deadline:
@@ -1223,24 +1443,28 @@ def _success(
 ) -> dict[str, object]:
     return {
         "schemaVersion": 1,
+        "toolContractVersion": 1,
         "toolName": tool_name,
         "outcome": "success",
         "code": "ok",
         "summary": summary,
         "data": data,
         "sideEffectsMayExist": False,
+        "reconciliationRequired": False,
     }
 
 
 def _error(tool_name: str, code: str, summary: str) -> dict[str, object]:
     return {
         "schemaVersion": 1,
+        "toolContractVersion": 1,
         "toolName": tool_name,
         "outcome": "error",
         "code": code,
         "summary": summary,
         "data": {},
         "sideEffectsMayExist": False,
+        "reconciliationRequired": False,
     }
 
 
@@ -1260,12 +1484,14 @@ def _commit_error(
         data["sha256"] = sha256
     return {
         "schemaVersion": 1,
+        "toolContractVersion": 1,
         "toolName": tool_name,
         "outcome": "error",
         "code": code,
         "summary": summary,
         "data": data,
         "sideEffectsMayExist": side_effects,
+        "reconciliationRequired": side_effects,
     }
 
 

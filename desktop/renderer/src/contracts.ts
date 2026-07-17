@@ -6,6 +6,7 @@ export type RuntimeStatus =
       runtimeVersion: string;
       runShell: boolean;
       modelConfigured: boolean;
+      storageHealth: RuntimeHealth;
     }
   | { state: "error"; message: string };
 
@@ -20,13 +21,17 @@ export interface Run {
   id: string;
   sessionId: string;
   userInput?: string;
-  status: "running" | "waiting_approval" | "succeeded" | "failed" | "canceled" | "interrupted";
+  status: "queued" | "running" | "waiting_approval" | "waiting_user_input" | "finalizing" | "stopped" | "succeeded" | "failed" | "canceled" | "interrupted";
+  allowedActions?: Array<"cancel" | "approve" | "reject" | "continue">;
   modelStepCount: number;
   createdAt: number;
-  startedAt: number;
+  startedAt?: number;
   updatedAt: number;
   completedAt?: number;
   errorCode?: string;
+  pauseReason?: string;
+  stopReason?: string;
+  sideEffectsMayExist?: boolean;
 }
 
 export interface ToolCall {
@@ -76,6 +81,7 @@ export interface Item {
   status: "in_progress" | "completed" | "failed" | "declined" | "canceled";
   createdAt: number;
   content?: string;
+  incomplete?: boolean;
   completedAt?: number;
   toolCall?: ToolCall;
 }
@@ -85,6 +91,28 @@ export interface SessionSnapshot {
   runs: Run[];
   items: Item[];
   previousItemId?: string;
+  throughEventId?: number;
+}
+
+export interface RuntimeHealth {
+  state: "ready" | "health_only";
+  code?: string;
+}
+
+export interface RuntimeEvent {
+  eventContractVersion: 1;
+  eventId: number;
+  eventType: string;
+  occurredAt: number;
+  sessionId?: string;
+  runId?: string;
+  payload: Record<string, unknown>;
+}
+
+export interface EventListResult {
+  items: RuntimeEvent[];
+  hasMore: boolean;
+  throughEventId: number;
 }
 
 export interface ModelStatus {
@@ -95,6 +123,7 @@ export interface ModelStatus {
 
 export type RuntimeNotification =
   | { method: "run/started"; params: { sessionId: string; run: Run } }
+  | { method: "run/updated"; params: { sessionId: string; run: Run } }
   | { method: "run/completed"; params: { sessionId: string; run: Run } }
   | { method: "item/started"; params: { sessionId: string; runId: string; item: Item } }
   | { method: "item/completed"; params: { sessionId: string; runId: string; item: Item } }
@@ -104,13 +133,16 @@ declare global {
   interface Window {
     eidosRuntime: {
       getStatus: () => Promise<RuntimeStatus>;
+      getHealth: () => Promise<RuntimeHealth>;
       onStatus: (callback: (status: RuntimeStatus) => void) => () => void;
       selectWorkspace: () => Promise<string | null>;
       listSessions: () => Promise<{ items: Session[] }>;
       readSession: (sessionId: string) => Promise<SessionSnapshot>;
+      listEvents: (sessionId: string, afterEventId: number) => Promise<EventListResult>;
       createSession: (workspaceRoot: string) => Promise<Session>;
       startRun: (sessionId: string, userInput: string) => Promise<Run>;
       cancelRun: (runId: string) => Promise<Run>;
+      continueRun: (runId: string, userInput: string) => Promise<Run>;
       getModelStatus: () => Promise<ModelStatus>;
       configureModel: (apiKey: string) => Promise<ModelStatus>;
       listPendingApprovals: () => Promise<ApprovalRequest[]>;
