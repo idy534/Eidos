@@ -6,7 +6,16 @@ import threading
 import time
 from typing import Callable
 
-from eidos_runtime.model import ModelClient, ModelResponse, ModelToolCall
+from eidos_runtime.model import ModelClient, ModelResponse
+from eidos_runtime.runtime.model_runner import ModelRunner, ModelStreamInterrupted
+from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
+from eidos_runtime.runtime.approval import ApprovalAdapter, ApprovalRequest
+from eidos_runtime.runtime.events import RuntimeEvents
+from eidos_runtime.runtime.errors import (
+    bounded_tool_result as _bounded_tool_result,
+    safe_tool_result,
+    tool_error as _tool_error,
+)
 from eidos_runtime.shell import run_shell
 from eidos_runtime.sensitive import (
     SensitiveContentDenied,
@@ -27,7 +36,6 @@ from eidos_runtime.tools import (
     ToolCancelled,
     ToolExecutor,
     WorkspacePathError,
-    canonical_tool_result,
 )
 
 
@@ -62,8 +70,8 @@ class RuntimeEngine:
     ) -> None:
         self.store = store
         self.model = model
-        self.notify = notify
-        self.request_approval = request_approval
+        self.approval = ApprovalAdapter(request_approval)
+        self.events = RuntimeEvents(notify)
         self.shell_available = shell_available
         self.monotonic = monotonic
         self.active_started: float | None = None
@@ -101,6 +109,7 @@ class RuntimeEngine:
             self._fail(run_id, "CONTEXT_INPUT_TOO_LARGE")
             return
         tools = ToolExecutor(self.store.workspace_for_run(run_id))
+        dispatcher = ToolDispatcher(tools)
 
         try:
             while True:
@@ -134,7 +143,6 @@ class RuntimeEngine:
                 pending_deltas: list[str] = []
                 pending_delta_bytes = 0
                 last_persisted_at = time.monotonic()
-                model_stream = StreamingSensitiveScanner(self.sensitive)
 
                 def flush_deltas() -> None:
                     nonlocal pending_delta_bytes, last_persisted_at
@@ -188,10 +196,10 @@ class RuntimeEngine:
                     )
 
                 try:
-                    response = self.model.complete(context, cancel, model_stream.feed)
-                    safe_text = model_stream.finish().text
-                    if safe_text:
-                        on_text_delta(safe_text)
+                    result = ModelRunner(self.model, self.sensitive).run(
+                        context, cancel, on_text_delta
+                    )
+                    response = ModelResponse(result.text, result.tool_calls)
                 except SensitiveScanError:
                     self.store.complete_current_step(
                         run_id, "failed", reason="sensitive_scan_failed"
@@ -203,21 +211,9 @@ class RuntimeEngine:
                     return
                 except RunCancelled:
                     raise
-                except Exception:
-                    try:
-                        incomplete_text = model_stream.finish().text
-                        if incomplete_text:
-                            on_text_delta(incomplete_text)
-                    except SensitiveScanError:
-                        self.store.complete_current_step(
-                            run_id, "failed", reason="sensitive_scan_failed"
-                        )
-                        paused = self.store.pause_run(run_id, "sensitive_scan_failed")
-                        self._notification(
-                            "run/updated",
-                            {"sessionId": paused["sessionId"], "run": paused},
-                        )
-                        return
+                except ModelStreamInterrupted as interrupted:
+                    if interrupted.text:
+                        on_text_delta(interrupted.text)
                     flush_deltas()
                     self._check_cancel(run_id, cancel)
                     if assistant_item is not None:
@@ -246,7 +242,7 @@ class RuntimeEngine:
                 if response.text and assistant_item is None:
                     on_text_delta(response.text)
 
-                validation_error = self._validate_response(response, tools)
+                validation_error = dispatcher.validate(response).error_code
                 if validation_error is not None:
                     if assistant_item is not None:
                         completed = self.store.complete_assistant_item(
@@ -347,7 +343,8 @@ class RuntimeEngine:
                             "item": item,
                         },
                     )
-                    if tools.is_side_effecting(tool_call.name):
+                    plan = dispatcher.plan(tool_call)
+                    if plan.requires_approval and not plan.is_shell:
                         if self.store.side_effects_blocked(run_id):
                             result, item_status = (
                                 _tool_error(
@@ -363,7 +360,7 @@ class RuntimeEngine:
                                 item,
                                 tool_call.name,
                                 scanned_arguments,
-                                tools,
+                                dispatcher,
                                 cancel,
                             )
                         completed = self.store.complete_tool_item(
@@ -381,7 +378,7 @@ class RuntimeEngine:
                         )
                         self._completed_item(completed)
                         self._check_cancel(run_id, cancel)
-                    elif tools.is_shell(tool_call.name):
+                    elif plan.is_shell:
                         if self.store.side_effects_blocked(run_id):
                             result, item_status = (
                                 _tool_error(
@@ -396,7 +393,7 @@ class RuntimeEngine:
                                 run_id,
                                 item,
                                 scanned_arguments,
-                                tools,
+                                dispatcher,
                                 cancel,
                             )
                         completed = self.store.complete_tool_item(
@@ -410,7 +407,7 @@ class RuntimeEngine:
                     else:
                         result = _bounded_tool_result(
                             tool_call.name,
-                            tools.execute(tool_call.name, scanned_arguments, cancel),
+                            dispatcher.execute_read_only(tool_call, cancel),
                         )
                         result = self._safe_tool_result(tool_call.name, result)
                         item_status = "completed"
@@ -460,46 +457,13 @@ class RuntimeEngine:
             self._pause_effective_time(run_id)
             tools.close()
 
-    @staticmethod
-    def _validate_response(
-        response: ModelResponse, tools: ToolExecutor
-    ) -> str | None:
-        if not isinstance(response, ModelResponse):
-            return "invalid_response"
-        if not response.text and not response.tool_calls:
-            return "empty_response"
-        if len(response.tool_calls) > 16:
-            return "too_many_tool_calls"
-        provider_ids: set[str] = set()
-        for tool_call in response.tool_calls:
-            if (
-                not isinstance(tool_call, ModelToolCall)
-                or not isinstance(tool_call.provider_call_id, str)
-                or not 1 <= len(tool_call.provider_call_id) <= 256
-                or tool_call.provider_call_id in provider_ids
-                or not isinstance(tool_call.name, str)
-                or tool_call.name not in tools.tool_names
-                or not tools.validate_arguments(tool_call.name, tool_call.arguments)
-                or not _valid_tool_arguments(tool_call.arguments)
-            ):
-                return "invalid_tool_call"
-            provider_ids.add(tool_call.provider_call_id)
-        if any(
-            tools.is_side_effecting(call.name) or tools.is_shell(call.name)
-            for call in response.tool_calls
-        ) and len(
-            response.tool_calls
-        ) != 1:
-            return "invalid_tool_batch"
-        return None
-
     def _execute_file_change(
         self,
         run_id: str,
         item: dict[str, object],
         tool_name: str,
         arguments: dict[str, object],
-        tools: ToolExecutor,
+        tools: ToolDispatcher,
         cancel: threading.Event,
     ) -> tuple[dict[str, object], str]:
         prepared = tools.prepare_file_change(tool_name, arguments, cancel)
@@ -532,11 +496,8 @@ class RuntimeEngine:
         )
         self.state_machine.transition(RuntimeState.WAITING_APPROVAL, "file_approval")
         self._pause_effective_time(run_id)
-        if self.request_approval is None:
-            decision = ApprovalDecision("reject")
-        else:
-            tool_call = pending_item["toolCall"]
-            decision = self.request_approval(
+        tool_call = pending_item["toolCall"]
+        approval = self.approval.request(ApprovalRequest(
                 {
                     "sessionId": pending_item["sessionId"],
                     "runId": pending_item["runId"],
@@ -545,9 +506,9 @@ class RuntimeEngine:
                     "kind": "file_change",
                     "summary": f"Modify {prepared.path}",
                     "diff": prepared.diff,
-                },
-                cancel,
-            )
+                }
+            ), cancel)
+        decision = ApprovalDecision(approval.decision, approval.feedback)
         self.active_started = self.monotonic()
         self._check_cancel(run_id, cancel)
         if (
@@ -597,7 +558,7 @@ class RuntimeEngine:
         run_id: str,
         item: dict[str, object],
         arguments: dict[str, object],
-        tools: ToolExecutor,
+        tools: ToolDispatcher,
         cancel: threading.Event,
     ) -> tuple[dict[str, object], str]:
         if not self.shell_available:
@@ -619,8 +580,7 @@ class RuntimeEngine:
         )
         self.state_machine.transition(RuntimeState.WAITING_APPROVAL, "shell_approval")
         self._pause_effective_time(run_id)
-        decision = ApprovalDecision("reject") if self.request_approval is None else self.request_approval(
-            {
+        approval = self.approval.request(ApprovalRequest({
                 "sessionId": pending_item["sessionId"],
                 "runId": pending_item["runId"],
                 "itemId": pending_item["id"],
@@ -631,9 +591,9 @@ class RuntimeEngine:
                 "cwd": cwd_value,
                 "networkEnabled": False,
                 "timeoutSeconds": timeout,
-            },
-            cancel,
-        )
+            }
+        ), cancel)
+        decision = ApprovalDecision(approval.decision, approval.feedback)
         self.active_started = self.monotonic()
         self._check_cancel(run_id, cancel)
         self.store.resolve_approval(
@@ -725,18 +685,7 @@ class RuntimeEngine:
     def _safe_tool_result(
         self, tool_name: str, result: dict[str, object]
     ) -> dict[str, object]:
-        try:
-            scanned = self.sensitive.scan_json(result)
-        except SensitiveScanError:
-            return _tool_error(
-                tool_name, "sensitive_content_rejected", "Tool output was withheld"
-            )
-        assert isinstance(scanned, dict)
-        if scanned != result:
-            return _tool_error(
-                tool_name, "sensitive_content_rejected", "Tool output was withheld"
-            )
-        return canonical_tool_result(tool_name, scanned)
+        return safe_tool_result(self.sensitive, tool_name, result)
 
     def _fail(self, run_id: str, error_code: str) -> None:
         if self.state_machine.state != RuntimeState.FAILED:
@@ -832,59 +781,7 @@ class RuntimeEngine:
         )
 
     def _notification(self, method: str, params: dict[str, object]) -> None:
-        self.notify({"jsonrpc": "2.0", "method": method, "params": params})
-
-
-def _valid_tool_arguments(arguments: object) -> bool:
-    try:
-        encoded = json.dumps(
-            arguments,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-    except (TypeError, ValueError, RecursionError):
-        return False
-    return len(encoded) <= 64 * 1024
-
-
-def _bounded_tool_result(
-    tool_name: str, result: dict[str, object]
-) -> dict[str, object]:
-    result = canonical_tool_result(tool_name, result)
-    encoded = json.dumps(
-        result,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    if len(encoded) <= 512 * 1024:
-        return result
-    return {
-        "schemaVersion": 1,
-        "toolContractVersion": 1,
-        "toolName": tool_name,
-        "outcome": "error",
-        "code": "tool_result_too_large",
-        "summary": "Tool result exceeded the safe size limit",
-        "data": {},
-        "sideEffectsMayExist": False,
-        "reconciliationRequired": False,
-    }
-
-
-def _tool_error(tool_name: str, code: str, summary: str) -> dict[str, object]:
-    return {
-        "schemaVersion": 1,
-        "toolContractVersion": 1,
-        "toolName": tool_name,
-        "outcome": "error",
-        "code": code,
-        "summary": summary,
-        "data": {},
-        "sideEffectsMayExist": False,
-        "reconciliationRequired": False,
-    }
+        self.events.emit(method, params)
 
 
 # Compatibility for first-phase imports while callers migrate to RuntimeEngine.
