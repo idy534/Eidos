@@ -14,10 +14,10 @@ import time
 import uuid
 from typing import Callable, TypeVar
 
-from eidos_runtime.schemas import ItemDto, RunDto, SessionDto
-from eidos_runtime.events import append_event, event_from_row
-from eidos_runtime.model_config import DEFAULT_MODEL_ID, SUPPORTED_MODELS
-from eidos_runtime.state_machine import EventType, RunStatus
+from eidos_runtime.protocol.schemas import ItemDto, RunDto, SessionDto
+from eidos_runtime.db.events import append_event, event_from_row
+from eidos_runtime.model.config import DEFAULT_MODEL_ID, SUPPORTED_MODELS
+from eidos_runtime.runtime.state_machine import EventType, RunStatus
 
 
 DATABASE_NAME = "eidos.db"

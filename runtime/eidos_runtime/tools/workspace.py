@@ -20,10 +20,10 @@ import json
 
 from pydantic import Field, StrictInt, StrictStr
 
-from eidos_runtime.schemas import ClosedModel, ToolResultDto
-from eidos_runtime.sensitive import SensitiveScanError, default_scanner
-from eidos_runtime.storage import WorkspaceIdentity
-from eidos_runtime.seatbelt import secure_workspace_move
+from eidos_runtime.protocol.schemas import ClosedModel, ToolResultDto
+from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
+from eidos_runtime.db.storage import WorkspaceIdentity
+from eidos_runtime.sandbox.seatbelt import secure_workspace_move
 
 
 MAX_FILE_BYTES = 256 * 1024

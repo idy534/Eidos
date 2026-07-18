@@ -6,7 +6,7 @@ import threading
 import time
 from typing import Callable
 
-from eidos_runtime.model import ModelClient, ModelResponse
+from eidos_runtime.model.client import ModelClient, ModelResponse
 from eidos_runtime.runtime.model_runner import ModelRunner, ModelStreamInterrupted
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
 from eidos_runtime.runtime.approval import ApprovalAdapter, ApprovalRequest
@@ -16,23 +16,23 @@ from eidos_runtime.runtime.errors import (
     safe_tool_result,
     tool_error as _tool_error,
 )
-from eidos_runtime.shell import run_shell
-from eidos_runtime.sensitive import (
+from eidos_runtime.sandbox.shell import run_shell
+from eidos_runtime.sandbox.sensitive import (
     SensitiveContentDenied,
     SensitiveScanError,
     SensitiveScanner,
     StreamingSensitiveScanner,
     default_scanner,
 )
-from eidos_runtime.storage import (
+from eidos_runtime.db.storage import (
     ContextLimitExceeded,
     InvalidRunStateError,
     RunLimitReached,
     SegmentLimitReached,
     SessionStore,
 )
-from eidos_runtime.state_machine import RuntimeState, StateMachine
-from eidos_runtime.tools import (
+from eidos_runtime.runtime.state_machine import RuntimeState, StateMachine
+from eidos_runtime.tools.workspace import (
     ToolCancelled,
     ToolExecutor,
     WorkspacePathError,

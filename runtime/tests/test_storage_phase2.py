@@ -14,7 +14,7 @@ from unittest.mock import patch
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
-from eidos_runtime.storage import (  # noqa: E402
+from eidos_runtime.db.storage import (  # noqa: E402
     DATABASE_NAME,
     RESERVE_BYTES,
     RESERVE_NAME,
@@ -22,7 +22,7 @@ from eidos_runtime.storage import (  # noqa: E402
     SessionStore,
     StorageError,
 )
-from eidos_runtime.server import RuntimeServer  # noqa: E402
+from eidos_runtime.protocol.server import RuntimeServer  # noqa: E402
 
 
 class PhaseTwoStorageTests(unittest.TestCase):
@@ -181,7 +181,7 @@ class PhaseTwoStorageTests(unittest.TestCase):
         original.connection.commit()
         original.close()
 
-        with patch("eidos_runtime.storage._migrate_v1_to_v2", side_effect=StorageError("migration_failed")):
+        with patch("eidos_runtime.db.storage._migrate_v1_to_v2", side_effect=StorageError("migration_failed")):
             failed = SessionStore(self.data_directory)
             failed.initialize()
         self.assertEqual(
@@ -201,7 +201,7 @@ class PhaseTwoStorageTests(unittest.TestCase):
         self.assertIsNone(store.connection)
 
     def test_reserve_allocation_failure_starts_health_only_without_business_db(self) -> None:
-        with patch("eidos_runtime.storage._prepare_reserve", side_effect=OSError("disk full")):
+        with patch("eidos_runtime.db.storage._prepare_reserve", side_effect=OSError("disk full")):
             store = SessionStore(self.data_directory)
             store.initialize()
         self.assertEqual(

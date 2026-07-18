@@ -9,7 +9,7 @@ import unittest
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
-from eidos_runtime.seatbelt import (  # noqa: E402
+from eidos_runtime.sandbox.seatbelt import (  # noqa: E402
     SANDBOX_EXECUTABLE,
     SeatbeltProfile,
     run_sandboxed,

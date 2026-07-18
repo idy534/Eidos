@@ -171,7 +171,7 @@ Seatbelt profile 作为只读资源随 sidecar 打包。策略模板、参数绑
 
 ### 7.1 第二期 RuntimeEngine 模块
 
-第二期把现有 `eidos_runtime.runtime_loop.RuntimeLoop` 演进为 `eidos_runtime/runtime/` 包。目标是责任与测试 seam 的拆分，不是按行数切分文件；`RuntimeEngine.run(run_id, cancel)` 是 JSON-RPC Server 和测试唯一需要知道的执行接口。
+第二期把现有 `eidos_runtime.runtime.loop.RuntimeLoop` 演进为 `eidos_runtime/runtime/` 包。目标是责任与测试 seam 的拆分，不是按行数切分文件；`RuntimeEngine.run(run_id, cancel)` 是 JSON-RPC Server 和测试唯一需要知道的执行接口。
 
 ```text
 eidos_runtime/runtime/

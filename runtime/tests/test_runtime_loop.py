@@ -15,10 +15,10 @@ import sys
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
-from eidos_runtime.model import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
-from eidos_runtime.runtime_loop import ApprovalDecision, RuntimeLoop  # noqa: E402
-from eidos_runtime.storage import ActiveRunError, SessionStore  # noqa: E402
-from eidos_runtime.tools import ToolCancelled, ToolExecutor  # noqa: E402
+from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
+from eidos_runtime.runtime.loop import ApprovalDecision, RuntimeLoop  # noqa: E402
+from eidos_runtime.db.storage import ActiveRunError, SessionStore  # noqa: E402
+from eidos_runtime.tools.workspace import ToolCancelled, ToolExecutor  # noqa: E402
 
 
 class RuntimeLoopTests(unittest.TestCase):
@@ -562,7 +562,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
 
         with mock_patch(
-            "eidos_runtime.runtime_loop.ToolExecutor.prepare_shell",
+            "eidos_runtime.runtime.loop.ToolExecutor.prepare_shell",
             side_effect=ToolCancelled(),
         ):
             RuntimeLoop(
@@ -601,7 +601,7 @@ class RuntimeLoopTests(unittest.TestCase):
             return original_prepare(executor, value, cancel)
 
         with mock_patch(
-            "eidos_runtime.runtime_loop.ToolExecutor.prepare_shell",
+            "eidos_runtime.runtime.loop.ToolExecutor.prepare_shell",
             side_effect=cancel_on_second_scan,
             autospec=True,
         ):
@@ -856,13 +856,13 @@ class ToolExecutorTests(unittest.TestCase):
 
         def move_parent_then_attempt(workspace, source, destination, expected):
             subdirectory.rename(moved)
-            from eidos_runtime.seatbelt import secure_workspace_move
+            from eidos_runtime.sandbox.seatbelt import secure_workspace_move
 
             return secure_workspace_move(workspace, source, destination, expected)
 
         try:
             with mock_patch(
-                "eidos_runtime.tools.secure_workspace_move",
+                "eidos_runtime.tools.workspace.secure_workspace_move",
                 side_effect=move_parent_then_attempt,
             ):
                 result = self.executor.commit_file_change(
@@ -884,7 +884,7 @@ class ToolExecutorTests(unittest.TestCase):
         assert not isinstance(prepared, dict)
         cancel = threading.Event()
 
-        from eidos_runtime.seatbelt import secure_workspace_move
+        from eidos_runtime.sandbox.seatbelt import secure_workspace_move
 
         def move_then_cancel(workspace, source, destination, expected):
             moved = secure_workspace_move(workspace, source, destination, expected)
@@ -892,7 +892,7 @@ class ToolExecutorTests(unittest.TestCase):
             return moved
 
         with mock_patch(
-            "eidos_runtime.tools.secure_workspace_move",
+            "eidos_runtime.tools.workspace.secure_workspace_move",
             side_effect=move_then_cancel,
         ):
             result = self.executor.commit_file_change(
@@ -930,7 +930,7 @@ class ToolExecutorTests(unittest.TestCase):
                 raise OSError("fixture fsync failure")
             return real_fsync(descriptor)
 
-        with mock_patch("eidos_runtime.tools.os.fsync", side_effect=fail_parent_fsync):
+        with mock_patch("eidos_runtime.tools.workspace.os.fsync", side_effect=fail_parent_fsync):
             result = self.executor.commit_file_change(
                 "write_file", prepared, threading.Event()
             )
@@ -1053,14 +1053,14 @@ class ToolExecutorTests(unittest.TestCase):
             threading.Event(),
         )
         assert not isinstance(prepared, dict)
-        from eidos_runtime.seatbelt import secure_workspace_move
+        from eidos_runtime.sandbox.seatbelt import secure_workspace_move
 
         def edit_then_swap(workspace, source, destination, expected):
             target.write_text("external\n", encoding="utf-8")
             return secure_workspace_move(workspace, source, destination, expected)
 
         with mock_patch(
-            "eidos_runtime.tools.secure_workspace_move",
+            "eidos_runtime.tools.workspace.secure_workspace_move",
             side_effect=edit_then_swap,
         ):
             result = self.executor.commit_file_change(
@@ -1094,7 +1094,7 @@ class ToolExecutorTests(unittest.TestCase):
                     return move_status
 
                 with mock_patch(
-                    "eidos_runtime.tools.secure_workspace_move",
+                    "eidos_runtime.tools.workspace.secure_workspace_move",
                     side_effect=external_candidate_then_report_status,
                 ):
                     result = self.executor.commit_file_change(
@@ -1113,7 +1113,7 @@ class ToolExecutorTests(unittest.TestCase):
             threading.Event(),
         )
         assert not isinstance(prepared, dict)
-        from eidos_runtime.seatbelt import secure_workspace_move
+        from eidos_runtime.sandbox.seatbelt import secure_workspace_move
 
         def commit_then_report_uncertain(workspace, source, destination, expected):
             self.assertEqual(
@@ -1123,7 +1123,7 @@ class ToolExecutorTests(unittest.TestCase):
             return "uncertain"
 
         with mock_patch(
-            "eidos_runtime.tools.secure_workspace_move",
+            "eidos_runtime.tools.workspace.secure_workspace_move",
             side_effect=commit_then_report_uncertain,
         ):
             result = self.executor.commit_file_change(

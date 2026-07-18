@@ -15,24 +15,24 @@ from typing import Any, BinaryIO, TextIO
 from pydantic import ValidationError
 
 from eidos_runtime import __version__
-from eidos_runtime.deepseek import DeepSeekChatModel
-from eidos_runtime.model import ModelClient, ModelResponse, ModelToolCall, ScriptedModel
-from eidos_runtime.model_config import (
+from eidos_runtime.model.deepseek import DeepSeekChatModel
+from eidos_runtime.model.client import ModelClient, ModelResponse, ModelToolCall, ScriptedModel
+from eidos_runtime.model.config import (
     DEFAULT_MODEL_ID,
     SUPPORTED_MODELS,
     ModelConfigError,
     ModelConfigStore,
     model_catalog,
 )
-from eidos_runtime.runtime_loop import ApprovalDecision, RuntimeEngine
-from eidos_runtime.schemas import ApprovalDecisionDto, JsonRpcRequestDto, JsonRpcResponse
-from eidos_runtime.sensitive import (
+from eidos_runtime.runtime.loop import ApprovalDecision, RuntimeEngine
+from eidos_runtime.protocol.schemas import ApprovalDecisionDto, JsonRpcRequestDto, JsonRpcResponse
+from eidos_runtime.sandbox.sensitive import (
     SensitiveContentDenied,
     SensitiveScanError,
     SensitiveScanner,
 )
-from eidos_runtime.seatbelt import run_seatbelt_self_test
-from eidos_runtime.storage import (
+from eidos_runtime.sandbox.seatbelt import run_seatbelt_self_test
+from eidos_runtime.db.storage import (
     ActiveRunError,
     InvalidCursorError,
     InvalidRunStateError,

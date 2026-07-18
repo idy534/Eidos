@@ -17,15 +17,15 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 PROTOCOL_V1_FIXTURE = RUNTIME_ROOT.parent / "protocol" / "fixtures" / "v1.json"
 sys.path.insert(0, str(RUNTIME_ROOT))
 
-from eidos_runtime.model import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
-from eidos_runtime.seatbelt import SeatbeltSelfTestResult  # noqa: E402
-from eidos_runtime.sensitive import SensitiveScanner  # noqa: E402
-from eidos_runtime.server import (  # noqa: E402
+from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
+from eidos_runtime.sandbox.seatbelt import SeatbeltSelfTestResult  # noqa: E402
+from eidos_runtime.sandbox.sensitive import SensitiveScanner  # noqa: E402
+from eidos_runtime.protocol.server import (  # noqa: E402
     RuntimeServer,
     clean_session_title,
     valid_request_id,
 )
-from eidos_runtime.storage import (  # noqa: E402
+from eidos_runtime.db.storage import (  # noqa: E402
     ContextLimitExceeded,
     SessionStore,
     WorkspaceBoundaryError,
@@ -137,7 +137,7 @@ class RuntimeProtocolTests(unittest.TestCase):
             ])
             server = RuntimeServer(output, Path(data_directory), model)
             with patch(
-                "eidos_runtime.server.run_seatbelt_self_test",
+                "eidos_runtime.protocol.server.run_seatbelt_self_test",
                 return_value=SeatbeltSelfTestResult(False, (), ("test",)),
             ):
                 server.handle({
@@ -259,7 +259,7 @@ class RuntimeProtocolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="eidos-data-") as data_directory:
             server = RuntimeServer(output, Path(data_directory))
             with patch(
-                "eidos_runtime.server.run_seatbelt_self_test",
+                "eidos_runtime.protocol.server.run_seatbelt_self_test",
                 return_value=SeatbeltSelfTestResult(
                     available=False,
                     passed_checks=(),
@@ -295,7 +295,7 @@ class RuntimeProtocolTests(unittest.TestCase):
             server = RuntimeServer(output, Path(data_directory))
             with (
                 patch(
-                    "eidos_runtime.server.run_seatbelt_self_test",
+                    "eidos_runtime.protocol.server.run_seatbelt_self_test",
                     return_value=SeatbeltSelfTestResult(
                         available=True,
                         passed_checks=("workspace_write",),

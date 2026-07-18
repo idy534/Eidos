@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eidos_runtime.events import IncompatibleEventError  # noqa: E402
-from eidos_runtime.storage import (  # noqa: E402
+from eidos_runtime.db.events import IncompatibleEventError  # noqa: E402
+from eidos_runtime.db.storage import (  # noqa: E402
     OperationConflictError,
     SessionActiveError,
     SessionStore,
@@ -66,7 +66,7 @@ class EventAndOperationTests(unittest.TestCase):
 
     def test_event_failure_rolls_back_fact_and_operation(self) -> None:
         operation_id = "11111111-1111-4111-8111-111111111111"
-        with patch("eidos_runtime.storage.append_event", side_effect=ValueError("fixture")):
+        with patch("eidos_runtime.db.storage.append_event", side_effect=ValueError("fixture")):
             with self.assertRaises(ValueError):
                 self.store.create_session(str(self.workspace), operation_id=operation_id)
         connection = self.store.connection

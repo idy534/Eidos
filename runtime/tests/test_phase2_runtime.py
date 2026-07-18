@@ -10,9 +10,9 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eidos_runtime.model import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
-from eidos_runtime.runtime_loop import RuntimeEngine  # noqa: E402
-from eidos_runtime.storage import SessionStore  # noqa: E402
+from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
+from eidos_runtime.runtime.loop import RuntimeEngine  # noqa: E402
+from eidos_runtime.db.storage import SessionStore  # noqa: E402
 
 
 class PhaseTwoRuntimeTests(unittest.TestCase):

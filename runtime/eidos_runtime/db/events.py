@@ -5,9 +5,9 @@ import sqlite3
 
 from pydantic import ValidationError
 
-from eidos_runtime.schemas import ClosedModel, EventEnvelopeDto, RunDto, SessionDto
-from eidos_runtime.sensitive import default_scanner
-from eidos_runtime.state_machine import EventType, RunStatus
+from eidos_runtime.protocol.schemas import ClosedModel, EventEnvelopeDto, RunDto, SessionDto
+from eidos_runtime.sandbox.sensitive import default_scanner
+from eidos_runtime.runtime.state_machine import EventType, RunStatus
 
 
 EVENT_CONTRACT_VERSION = 1

@@ -9,12 +9,12 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eidos_runtime.model import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
+from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
 from eidos_runtime.runtime.model_runner import ModelRunner  # noqa: E402
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher  # noqa: E402
 from eidos_runtime.runtime.approval import ApprovalAdapter, ApprovalRequest  # noqa: E402
 from eidos_runtime.runtime.events import RuntimeEvents  # noqa: E402
-from eidos_runtime.tools import ToolExecutor  # noqa: E402
+from eidos_runtime.tools.workspace import ToolExecutor  # noqa: E402
 
 
 class RuntimeSeamTests(unittest.TestCase):

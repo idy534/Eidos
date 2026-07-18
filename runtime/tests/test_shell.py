@@ -12,8 +12,8 @@ from unittest.mock import patch
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
-from eidos_runtime.shell import _terminate_group, run_shell  # noqa: E402
-from eidos_runtime.storage import WorkspaceIdentity  # noqa: E402
+from eidos_runtime.sandbox.shell import _terminate_group, run_shell  # noqa: E402
+from eidos_runtime.db.storage import WorkspaceIdentity  # noqa: E402
 
 
 class _PassthroughProfile:
@@ -44,7 +44,7 @@ class ShellLifecycleUnitTests(unittest.TestCase):
 
     def _run_shell(self, command: str, timeout: int) -> dict[str, object]:
         with patch(
-            "eidos_runtime.shell.SeatbeltProfile.create",
+            "eidos_runtime.sandbox.shell.SeatbeltProfile.create",
             return_value=_PassthroughProfile(),
         ):
             return run_shell(
@@ -68,7 +68,7 @@ class ShellLifecycleUnitTests(unittest.TestCase):
         self.assertGreaterEqual(result["data"]["durationMs"], 1_000)
 
     def test_process_group_permission_race_does_not_escape_cleanup(self) -> None:
-        with patch("eidos_runtime.shell.os.killpg", side_effect=PermissionError):
+        with patch("eidos_runtime.sandbox.shell.os.killpg", side_effect=PermissionError):
             _terminate_group(12345)
 
 

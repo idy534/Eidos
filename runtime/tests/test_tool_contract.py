@@ -9,7 +9,7 @@ import unittest
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
-from eidos_runtime.tools import TOOL_SPECS, canonical_tool_result  # noqa: E402
+from eidos_runtime.tools.workspace import TOOL_SPECS, canonical_tool_result  # noqa: E402
 
 
 class ToolContractTests(unittest.TestCase):

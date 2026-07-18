@@ -4,8 +4,8 @@ from dataclasses import dataclass
 import threading
 from typing import Callable
 
-from eidos_runtime.model import ModelClient, ModelContextItem, ModelResponse, ModelToolCall
-from eidos_runtime.sensitive import SensitiveScanner, StreamingSensitiveScanner, default_scanner
+from eidos_runtime.model.client import ModelClient, ModelContextItem, ModelResponse, ModelToolCall
+from eidos_runtime.sandbox.sensitive import SensitiveScanner, StreamingSensitiveScanner, default_scanner
 
 
 @dataclass(frozen=True)

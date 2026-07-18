@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from eidos_runtime.schemas import ClosedModel
+from eidos_runtime.protocol.schemas import ClosedModel
 
 
 MAX_SCAN_BYTES = 512 * 1024

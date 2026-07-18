@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eidos_runtime.schemas import ApprovalDecisionDto, JsonRpcResponse, RunDto
+from eidos_runtime.protocol.schemas import ApprovalDecisionDto, JsonRpcResponse, RunDto
 
 
 class ClosedSchemaTests(unittest.TestCase):

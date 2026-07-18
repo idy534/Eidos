@@ -16,13 +16,13 @@ import sys
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
-from eidos_runtime.deepseek import (  # noqa: E402
+from eidos_runtime.model.deepseek import (  # noqa: E402
     MAX_SSE_EVENTS,
     ModelProviderError,
     _messages_from_context,
     _read_stream,
 )
-from eidos_runtime.model_config import ModelConfigStore, model_catalog  # noqa: E402
+from eidos_runtime.model.config import ModelConfigStore, model_catalog  # noqa: E402
 
 
 class DeepSeekStreamTests(unittest.TestCase):
@@ -119,7 +119,7 @@ class DeepSeekStreamTests(unittest.TestCase):
         )
         read_timeouts: list[float] = []
 
-        with patch("eidos_runtime.deepseek.time.monotonic", side_effect=lambda: clock[0]):
+        with patch("eidos_runtime.model.deepseek.time.monotonic", side_effect=lambda: clock[0]):
             result = _read_stream(
                 response,
                 threading.Event(),

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 
-from eidos_runtime.sensitive import SensitiveScanError, SensitiveScanner
-from eidos_runtime.tools import canonical_tool_result
+from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
+from eidos_runtime.tools.workspace import canonical_tool_result
 
 
 def tool_error(tool_name: str, code: str, summary: str) -> dict[str, object]:

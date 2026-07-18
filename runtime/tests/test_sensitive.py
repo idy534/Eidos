@@ -12,15 +12,15 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eidos_runtime.sensitive import (  # noqa: E402
+from eidos_runtime.sandbox.sensitive import (  # noqa: E402
     SensitiveContentDenied,
     SensitiveScanError,
     SensitiveScanner,
     StreamingSensitiveScanner,
 )
-from eidos_runtime.model import ModelResponse, ScriptedModel  # noqa: E402
-from eidos_runtime.seatbelt import SeatbeltSelfTestResult  # noqa: E402
-from eidos_runtime.server import RuntimeServer  # noqa: E402
+from eidos_runtime.model.client import ModelResponse, ScriptedModel  # noqa: E402
+from eidos_runtime.sandbox.seatbelt import SeatbeltSelfTestResult  # noqa: E402
+from eidos_runtime.protocol.server import RuntimeServer  # noqa: E402
 
 
 class SensitiveScannerTests(unittest.TestCase):
@@ -67,7 +67,7 @@ class SensitiveScannerTests(unittest.TestCase):
             model = ScriptedModel([ModelResponse(text="unused")])
             server = RuntimeServer(output, Path(data), model)
             with patch(
-                "eidos_runtime.server.run_seatbelt_self_test",
+                "eidos_runtime.protocol.server.run_seatbelt_self_test",
                 return_value=SeatbeltSelfTestResult(False, (), ("test",)),
             ):
                 server.handle({

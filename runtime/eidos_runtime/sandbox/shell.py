@@ -11,8 +11,8 @@ import threading
 import time
 from typing import Callable
 
-from eidos_runtime.seatbelt import SeatbeltProfile
-from eidos_runtime.storage import WorkspaceIdentity
+from eidos_runtime.sandbox.seatbelt import SeatbeltProfile
+from eidos_runtime.db.storage import WorkspaceIdentity
 
 
 MAX_OUTPUT_BYTES = 256 * 1024

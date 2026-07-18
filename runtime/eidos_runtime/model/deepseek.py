@@ -8,9 +8,9 @@ import threading
 import time
 from typing import Callable
 
-from eidos_runtime.model import ModelContextItem, ModelResponse, ModelToolCall
-from eidos_runtime.model_config import DEFAULT_MODEL_ID, SUPPORTED_MODELS
-from eidos_runtime.tools import model_tool_definitions
+from eidos_runtime.model.client import ModelContextItem, ModelResponse, ModelToolCall
+from eidos_runtime.model.config import DEFAULT_MODEL_ID, SUPPORTED_MODELS
+from eidos_runtime.tools.workspace import model_tool_definitions
 
 
 HOST = "api.deepseek.com"

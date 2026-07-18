@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import threading
 
-from eidos_runtime.model import ModelResponse, ModelToolCall
-from eidos_runtime.tools import FileChange, ToolExecutor
+from eidos_runtime.model.client import ModelResponse, ModelToolCall
+from eidos_runtime.tools.workspace import FileChange, ToolExecutor
 
 
 @dataclass(frozen=True)
