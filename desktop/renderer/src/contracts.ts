@@ -35,11 +35,26 @@ export interface Run {
   pauseReason?: string;
   stopReason?: string;
   sideEffectsMayExist?: boolean;
+  extensionSnapshot?: Record<string, unknown>;
+  activatedTools?: string[];
+}
+
+export interface ToolProvenance {
+  kind: "builtin" | "skill" | "mcp";
+  sourceId: string;
+  sourceVersion: string;
+  contentHash: string;
+  pluginId?: string;
+  serverId?: string;
+  skillId?: string;
 }
 
 export interface ToolCall {
   id: string;
   itemId: string;
+  modelStepIndex: number;
+  batchOrder: number;
+  providerCallId: string;
   toolName: string;
   status: "running" | "completed" | "failed" | "canceled";
   argumentsJson?: string;
@@ -49,6 +64,10 @@ export interface ToolCall {
   approvalFeedback?: string;
   approvalDiff?: string;
   baseSha256?: string;
+  provenance?: ToolProvenance;
+  toolSetHash?: string;
+  startedAt: number;
+  completedAt?: number;
 }
 
 interface ApprovalRequestBase {
@@ -73,7 +92,60 @@ export interface CommandApprovalRequest extends ApprovalRequestBase {
   timeoutSeconds: number;
 }
 
-export type ApprovalRequest = FileApprovalRequest | CommandApprovalRequest;
+export interface ExternalToolApprovalRequest extends ApprovalRequestBase {
+  kind: "external_tool";
+  toolName: string;
+  arguments: Record<string, unknown>;
+  provenance: ToolProvenance;
+  permissionProfile: "connector" | "workspace_read";
+  timeoutSeconds: number;
+  envNames: string[];
+}
+
+export type ApprovalRequest = FileApprovalRequest | CommandApprovalRequest | ExternalToolApprovalRequest;
+
+export interface PluginRecord {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  contentHash: string;
+  enabled: boolean;
+  status: "installed" | "removed";
+  installedAt: number;
+  updatedAt: number;
+}
+
+export interface SkillMetadata {
+  schemaVersion: 1;
+  qualifiedId: string;
+  name: string;
+  description: string;
+  pluginId: string;
+  pluginVersion: string;
+  pluginHash: string;
+  contentHash: string;
+}
+
+export interface McpServerRecord {
+  schemaVersion: 1;
+  pluginId: string;
+  pluginVersion: string;
+  pluginHash: string;
+  serverId: string;
+  executable: string;
+  argv: string[];
+  envNames: string[];
+  permissionProfile: "connector" | "workspace_read";
+  startupTimeoutSeconds: number;
+  toolTimeoutSeconds: number;
+  declaredEnabled: boolean;
+  consented: boolean;
+  available: boolean;
+  errorCode?: string;
+  updatedAt: number;
+}
 
 export interface Item {
   id: string;
@@ -166,6 +238,20 @@ declare global {
       getModelStatus: () => Promise<ModelStatus>;
       listModels: () => Promise<ModelListResult>;
       configureModel: (apiKey: string) => Promise<ModelStatus>;
+      listPlugins: () => Promise<{ plugins: PluginRecord[] }>;
+      importPlugin: () => Promise<PluginRecord | null>;
+      setPluginEnabled: (pluginId: string, enabled: boolean) => Promise<PluginRecord>;
+      removePlugin: (pluginId: string) => Promise<PluginRecord>;
+      listSkills: () => Promise<{ skills: SkillMetadata[] }>;
+      listMcpServers: () => Promise<{ servers: McpServerRecord[] }>;
+      setMcpEnabled: (pluginId: string, serverId: string, enabled: boolean) => Promise<McpServerRecord>;
+      readExtensions: () => Promise<{
+        plugins: PluginRecord[];
+        skills: SkillMetadata[];
+        servers: McpServerRecord[];
+        throughEventId: number;
+      }>;
+      readExtensionEvents: (afterEventId: number) => Promise<EventListResult>;
       listPendingApprovals: () => Promise<ApprovalRequest[]>;
       onNotification: (callback: (notification: RuntimeNotification) => void) => () => void;
       onApprovalRequest: (callback: (request: ApprovalRequest) => void) => () => void;

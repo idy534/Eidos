@@ -4,7 +4,7 @@
 
 范围说明：本文描述目标态候选方向。第一期交付范围以 [MVP Lite](../mvp-lite.md) 为准；目标态能力只有进入阶段清单后才成为实施承诺。
 
-第二期实施以 [第二期实施范围清单](../mvp-phase-2.md) 为准。本期只把目标态中的存储安全、Event、FIFO 调度、暂停/继续、Durable Intent、事实确认、敏感扫描和文件工具契约推进到可验收状态；Model Profile 重构、Public Mode 和 Artifact 不在本期实施。本地 stdio JSON-RPC 与远端模型 HTTP/SSE 是稳定边界，不属于待迁移能力。
+第二期实施以 [第二期实施范围清单](../mvp-phase-2.md) 为准。第三期以 [第三期实施范围清单](../mvp-phase-3.md) 为准，只推进本地 Plugin、Skill、stdio MCP Tools、动态 Tool Registry、能力快照、外部审批/沙箱与 Tool Search。Model Profile 重构、Public Mode、Artifact、MCP 市场与远程 MCP 不在第三期。本地 stdio JSON-RPC 与远端模型 HTTP/SSE 是稳定边界，不属于待迁移能力。
 
 ## 1. 产品定位
 
@@ -98,6 +98,7 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - 确定性敏感规则、分级拒绝/脱敏与全入口扫描。
 - JSON-RPC notifications 驱动的实时 Execution Feed 与持久化 Timeline。
 - 闭合且可跨重启幂等的本地 JSON-RPC/IPC、稳定分页与版本化 Event 兼容。
+- 用户显式导入的本地 Plugin v1、只读 Skill v1、stdio MCP Tools v1、能力快照与有界 Tool Search。
 - Run 预算、模型 HTTP/SSE 重试、Tool timeout、有限重试和 Finalization Call。
 
 ## 6. 当前非目标
@@ -109,7 +110,9 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - 自动接管另一路 Runtime、强制抢占状态目录锁或在 Workspace 移动后静默迁移旧授权。
 - 自动清理用户数据、自动覆盖数据库备份，或在存储故障后自动重放副作用。
 - 多 Agent 与并行工具执行。
-- MCP 插件市场、浏览器自动化、Skill 自动生成和长期记忆。
+- MCP/Plugin 市场、远程安装与更新、浏览器自动化、Skill 自动生成和长期记忆。
+- MCP Streamable HTTP/OAuth、Resources、Prompts、Sampling、Elicitation、Tasks 与多模态结果。
+- Plugin 任意代码入口、Hook/App 和 Skill 脚本自动执行。
 - 平台知识库、术语库、Text2SQL、本体和企业资源接入。
 - 文件写入前快照、一键回滚、跨文件原子事务和完整 diff 编辑器。
 - Edit then Approve。

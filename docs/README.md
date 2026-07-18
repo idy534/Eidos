@@ -1,6 +1,6 @@
 # Eidos Agent Runtime 文档
 
-当前状态：早期设计与实施探索。MVP Lite 与第二期 Runtime 基础均已完成回归；目标态 PRD/TDD 仍是可演进草案，不代表清单外能力已经实现。
+当前状态：早期设计与实施探索。MVP Lite、第二期 Runtime 基础与第三期“可扩展工具系统 v1”均已完成回归。目标态 PRD/TDD 仍是可演进草案，不代表清单外能力已经实现。
 
 ## 1. 文档全景
 
@@ -10,8 +10,10 @@ flowchart LR
     PRD --> TDD["技术设计<br/>tdd/README.md"]
     TDD --> M1["已验证基线<br/>mvp-lite.md"]
     TDD --> M2["已完成第二期<br/>mvp-phase-2.md"]
+    TDD --> M3["已完成第三期<br/>mvp-phase-3.md"]
     M1 --> CODE["当前实现与测试"]
     M2 --> CODE
+    M3 --> CODE
 ```
 
 | 层级 | 回答的问题 | 状态与权威性 |
@@ -21,12 +23,13 @@ flowchart LR
 | [目标态 TDD](tdd/README.md) | 模块如何协作、协议和状态如何保证正确 | 探索性技术契约，不等于当前实现 |
 | [MVP Lite](mvp-lite.md) | 已经跑通的最小闭环是什么 | 第一期实现与回归基线 |
 | [第二期清单](mvp-phase-2.md) | 第二阶段具体交付了什么 | 第二期实现、回归与完成状态来源 |
+| [第三期清单](mvp-phase-3.md) | 本地 Plugin、Skill、MCP Tools 与动态 Registry 交付什么 | 第三期实现、回归与完成状态来源 |
 
 ## 2. 推荐阅读顺序
 
 1. 了解产品：先读 [PRD 总览](prd/README.md)，再按模块进入详细 PRD。
 2. 了解架构：读 [TDD 总览](tdd/README.md)，再进入状态机、工具、模型、协议/事件/存储等模块。
-3. 判断当前实现：以 [MVP Lite](mvp-lite.md) 和 [第二期清单](mvp-phase-2.md) 为准，不从目标态文档自行外推。
+3. 判断当前实现：以 [MVP Lite](mvp-lite.md)、[第二期清单](mvp-phase-2.md) 和 [第三期清单](mvp-phase-3.md) 的完成状态为准，不从目标态文档自行外推。
 4. 追溯原因：需要知道“为什么这样设计”时查 [设计决策](decisions.md)。
 
 ## 3. 固定架构边界
@@ -38,7 +41,7 @@ flowchart LR
 
 ## 4. 冲突处理
 
-1. 当前阶段是否实施，以 `mvp-lite.md` 和 `mvp-phase-2.md` 为准。
+1. 当前阶段是否实施，以 `mvp-lite.md`、`mvp-phase-2.md` 和 `mvp-phase-3.md` 为准。
 2. 产品语义以 PRD 为准；技术实现不能静默改变产品承诺。
 3. 技术合同以 TDD 为准；当前代码与目标态不一致时，必须明确标注“当前实现”与“目标设计”。
 4. 新确认决策与旧文档冲突时，先更新 `decisions.md`，再同步 PRD、TDD、验收与测试。

@@ -397,7 +397,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
         self.assertEqual(
             json.loads(command_item["toolCall"]["argumentsJson"]),
-            {"command": "printf shell-ok", "timeoutSeconds": 5},
+            {"command": "printf shell-ok", "cwd": ".", "timeoutSeconds": 5},
         )
         result = json.loads(command_item["toolCall"]["resultJson"])
         self.assertEqual(result["outcome"], "success")
@@ -1139,7 +1139,10 @@ class BlockingModel:
         self.started = threading.Event()
         self.release = threading.Event()
 
-    def complete(self, context, cancel, on_text_delta):
+    def complete(
+        self, context, cancel, on_text_delta,
+        allow_tools=True, tool_definitions=(),
+    ):
         self.started.set()
         self.release.wait(timeout=2)
         return ModelResponse(text="Too late")

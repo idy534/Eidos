@@ -1,7 +1,7 @@
 # Eidos 目标态设计决策记录
 
 版本：v0.4
-范围：Grilling Q1-Q165
+范围：Grilling Q1-Q165；第三期实施 Q166-Q180
 
 本文件记录已经由产品与技术共同确认的目标态设计结论。它们仍可能被后续显式决策覆盖；只有进入 [MVP Lite](mvp-lite.md) 或阶段实施清单的条目才构成当前交付范围。PRD/TDD 与本文件冲突时应先统一文档再实现。
 
@@ -172,6 +172,21 @@
 | Q163 | Workspace 项目按最早保留 Session 的创建时间倒序并可折叠；已读完成是 Renderer 展示状态而非 Runtime 状态，左侧任务右键与内容区标题菜单复用同一任务操作。 | PRD Workbench；TDD Desktop/Session 投影 |
 | Q164 | Session 采用固定系统 UI/等宽字体与 16/14/13px 标题、正文、代码层级；模型正文由安全 CommonMark Renderer 生成 React element，原始 HTML、远程图片和正文内直接导航默认禁用，用户消息和结构化执行卡不走 Markdown。 | PRD Execution Feed；TDD Renderer 安全/测试 |
 | Q165 | 左侧导航使用常规字重且本地折叠/重复选择不读取快照；跨 Session 切换即时更新导航、后台原子安装快照而不全局淡出。有工具的一轮将进度与工具合并为可计时折叠过程，成功后默认折叠且不显示完成卡；无工具则直接流式输出最终 Markdown。 | PRD Workbench/Execution Feed；TDD Desktop/Renderer |
+| Q166 | 第三期只引入用户显式导入的本地 Plugin v1；Plugin 是 Skill 与 MCP Server 配置包，不含任意 Runtime 代码、Hook、App、远程安装、市场或自动更新。 | P3-03；PRD 扩展范围；TDD Extension Catalog |
+| Q167 | Plugin import 先验证 owner、普通文件、symlink、路径和容量，再原子复制到私有受管目录；导入过程不执行包内命令、不联网解析依赖。 | P3-03；TDD Plugin 安全 |
+| Q168 | Skill v1 只加载 `SKILL.md` 和包内只读 UTF-8 资源；正文是有来源的非可信上下文，脚本只能读取，不能获得新的执行通道。 | P3-04；PRD Skill；TDD Context/Skill |
+| Q169 | MCP v1 固定官方 Python SDK 稳定 v1、stdio transport 与 Tools capability；Streamable HTTP、OAuth、Resources、Prompts、Sampling、Elicitation 和 Tasks 延后。 | P3-05；PRD MCP；TDD MCP Adapter |
+| Q170 | Tool Registry entry 是 ToolSpec、执行 Adapter 与 provenance 的唯一事实源；内置工具保留名称，MCP 工具固定为 `mcp__<server_id>__<tool_name>`。 | P3-01；TDD Tool Registry |
+| Q171 | provenance 固定来源种类、source ID/version/content hash；Run 固化 extension snapshot，每个 Step 固化有序 tool snapshot，同一 ModelAttempt 重试不得改变工具定义或 hash。 | P3-01/P3-02；TDD Storage/Context |
+| Q172 | 已暴露工具在调用时退化返回唯一 `unavailable/tool_unavailable` Canonical ToolResult；不能重新解释为未知 Provider 协议错误。 | P3-02；TDD ToolResult/恢复 |
+| Q173 | Plugin 禁用只影响新 Run；移除不删除历史事实，非终态 Run 不再引用后才删除执行资源，历史由安全 metadata 与 hash 解释。 | P3-02/P3-03；TDD Extension lifecycle |
+| Q174 | 所有 MCP Tool 固定 `side_effect=external`、单调用、逐次审批、禁止 batch 和自动重试；Server annotation 仅作不可信提示，不能降权。 | P3-05/P3-06；TDD Approval/MCP |
+| Q175 | 启用本地 MCP Server 前必须展示完整 executable、argv、Plugin provenance、env names 与 permission profile 并取得显式同意；取消时不启动进程、不释放 env value。 | P3-06；PRD MCP consent；TDD Desktop/MCP |
+| Q176 | MCP 仅有互斥的 `connector` 与 `workspace_read` 沙箱：前者允许网络但拒绝 Workspace，后者只读 Workspace 且拒绝网络；两者都拒绝真实 Home、`~/.eidos` 和 Workspace 写入。 | P3-06；TDD Seatbelt |
+| Q177 | MCP 参数在审批和发送前完成 effective arguments、敏感扫描和 hash 绑定；结果在进入 ToolResult、模型、UI、Event、SQLite 或日志前统一扫描和容量限制。 | P3-06；TDD Redaction/Approval |
+| Q178 | MCP timeout、取消、连接断开或提交失败不自动重试；一旦可能已发送，结果标记 `side_effects_may_exist=true` 并要求用户核验。 | P3-06；TDD Recovery |
+| Q179 | Tool catalog 分为 direct/deferred；`tool_search` 只做本地有界确定性检索，命中工具从下一 Step 才激活，不能在同一模型响应内越权调用。 | P3-07；TDD Context Builder |
+| Q180 | 第三期不增加并行工具、多 Agent、后台 daemon、MCP 市场或 Skill 自动生成；Desktop 只提供受控的 Plugin/Skill/MCP 设置与来源展示。 | P3-08；PRD 非目标；TDD Desktop |
 
 ## 文件契约统一收敛
 

@@ -2,7 +2,7 @@
 
 版本：v0.4（探索草案）
 
-本 TDD 先定义稳定边界和模块关系，再由各章节描述模块内部合同。已实现能力以 [MVP Lite](../mvp-lite.md) 与已完成的 [第二期清单](../mvp-phase-2.md) 为准；清单外合同仍是目标态草案。
+本 TDD 先定义稳定边界和模块关系，再由各章节描述模块内部合同。已实现能力以 [MVP Lite](../mvp-lite.md)、已完成的 [第二期清单](../mvp-phase-2.md) 与已完成的 [第三期清单](../mvp-phase-3.md) 为准；清单外合同仍是目标态草案。
 
 ## 1. 系统全景
 
@@ -109,7 +109,7 @@ flowchart TD
 - 每个模型 Step 捕获不可变 StepContext，保证模型看到的工具、策略和实际执行视图一致。
 - 协议 schema 与 Runtime 版本绑定，由闭合模型和 fixture 共同验证。
 
-不借鉴：Codex JSON-RPC Lite 的 wire 差异、多传输、多 Agent、并行执行、MCP/插件生态、Worktree 编排和 JSONL 历史存储。这些都没有当前需求。
+第三期只把 Codex 的“能力来源 -> 注册表 -> Step 快照 -> 单一调度链”原则用于本地 Plugin/Skill/stdio MCP Tools v1；不复制其市场、多传输、并行、多 Agent、Worktree 编排和 JSONL 历史规模。
 
 Codex 的项目级指令可作为 Context Builder 的后续候选：第一版最多读取 active root 下一个有大小上限的 `AGENTS.md`，按确定顺序放入 StepContext；只有进入后续阶段清单时才实施，不提前复制多层配置体系。
 
@@ -124,3 +124,15 @@ Codex 的项目级指令可作为 Context Builder 的后续候选：第一版最
 - ToolCall 保存唯一 canonical ToolResult；Context 和 UI 只生成有界投影，不创建第二个结果事实。
 - 模型原始 reasoning 不进入持久化或 UI；文本只分为 `assistant_progress` 与 `final_answer`。
 - 未进入阶段清单的目标态合同不能驱动当前实现扩项。
+
+## 7. 第三期扩展边界
+
+```text
+Extension Catalog snapshot
+  -> ToolRegistrySnapshot(ToolSpec + Adapter + provenance)
+  -> StepToolSnapshot(direct + deferred + activated + hashes)
+  -> ModelRunner(explicit model-visible definitions)
+  -> ToolDispatcher(one entry, one approval/sandbox/result path)
+```
+
+Plugin/Skill/MCP 生命周期属于 Python Runtime；Electron Main 只负责目录选择、类型化 RPC 与用户 consent/approval。MCP stdio 是 Runtime 到外部 Server 的内部连接，不是新的 Eidos 控制面。

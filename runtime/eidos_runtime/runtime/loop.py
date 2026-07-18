@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 import threading
 import time
@@ -31,12 +32,17 @@ from eidos_runtime.db.storage import (
     SegmentLimitReached,
     SessionStore,
 )
+from eidos_runtime.extensions.plugins import PluginCatalog
+from eidos_runtime.extensions.skills import SkillCatalog, SkillReadError
+from eidos_runtime.extensions.mcp import McpManager
 from eidos_runtime.runtime.state_machine import RuntimeState, StateMachine
 from eidos_runtime.tools.workspace import (
     ToolCancelled,
     ToolExecutor,
     WorkspacePathError,
 )
+from eidos_runtime.tools.registry import ToolRegistry
+from eidos_runtime.tools.search import tool_search_entry
 
 
 MAX_ASSISTANT_BYTES = 512 * 1024
@@ -67,6 +73,7 @@ class RuntimeEngine:
         monotonic: Callable[[], float] = time.monotonic,
         sensitive: SensitiveScanner | None = None,
         wait_for_execution_slot: Callable[[str, threading.Event], bool] | None = None,
+        mcp_sandbox: bool = True,
     ) -> None:
         self.store = store
         self.model = model
@@ -77,6 +84,7 @@ class RuntimeEngine:
         self.active_started: float | None = None
         self.sensitive = sensitive or default_scanner()
         self.wait_for_execution_slot = wait_for_execution_slot
+        self.mcp_sandbox = mcp_sandbox
         self.state_machine = StateMachine()
 
     def run(self, run_id: str, cancel: threading.Event) -> None:
@@ -109,15 +117,80 @@ class RuntimeEngine:
             self._fail(run_id, "CONTEXT_INPUT_TOO_LARGE")
             return
         tools = ToolExecutor(self.store.workspace_for_run(run_id))
-        dispatcher = ToolDispatcher(tools)
+        extension_snapshot = run.get("extensionSnapshot")
+        if not isinstance(extension_snapshot, dict):
+            extension_snapshot = {
+                "schemaVersion": 1,
+                "extensionContractVersion": 1,
+                "plugins": [],
+                "skillCatalogHash": "",
+                "mcpConfigHash": "",
+            }
+        skills = SkillCatalog(PluginCatalog(self.store))
+        mcp = McpManager(
+            skills.plugins,
+            extension_snapshot,
+            self.store.workspace_for_run(run_id).path,
+            sandbox=self.mcp_sandbox,
+        )
+        def build_registry(
+            external_entries: tuple[object, ...]
+        ) -> ToolRegistry:
+            base = ToolRegistry.build(
+                builtin_entries=(
+                    *tools.registry.entries,
+                    *skills.tool_entries(extension_snapshot),
+                ),
+                external_entries=external_entries,  # type: ignore[arg-type]
+            )
+            deferred = tuple(
+                entry for entry in base.entries if entry.spec.visibility == "deferred"
+            )
+            return ToolRegistry((
+                *base.entries,
+                tool_search_entry(deferred),
+            ))
+
+        mcp_entries = mcp.start()
+        registry = build_registry(mcp_entries)
+        dispatcher = ToolDispatcher(registry)
+        mentioned_plugins = {
+            match.group(1)
+            for match in re.finditer(
+                r"@([a-z][a-z0-9_-]{0,63})(?::[A-Za-z0-9_-]{1,64})?",
+                str(run.get("userInput") or ""),
+            )
+        }
+        mentioned_tools = tuple(
+            entry.spec.name for entry in registry.entries
+            if entry.spec.visibility == "deferred"
+            and entry.provenance.plugin_id in mentioned_plugins
+        )
+        if mentioned_tools:
+            self.store.activate_tools(run_id, mentioned_tools)
+        try:
+            skill_context = skills.context(
+                extension_snapshot, str(run.get("userInput") or "")
+            )
+        except SkillReadError:
+            skill_context = ()
 
         try:
             while True:
                 self._check_cancel(run_id, cancel)
                 self._pause_effective_time(run_id)
                 current = self.store.read_run(run_id)
+                refreshed_mcp = mcp.refresh_if_changed()
+                if refreshed_mcp is not None:
+                    registry = build_registry(refreshed_mcp)
+                    dispatcher = ToolDispatcher(registry)
                 try:
-                    step_index = self.store.increment_model_step(run_id)
+                    step_snapshot = dispatcher.snapshot(
+                        self.store.activated_tools(run_id)
+                    )
+                    step_index = self.store.increment_model_step(
+                        run_id, tool_snapshot=step_snapshot.as_dict()
+                    )
                 except SegmentLimitReached as error:
                     reason = (
                         "segment_time_limit" if "time" in str(error)
@@ -197,7 +270,12 @@ class RuntimeEngine:
 
                 try:
                     result = ModelRunner(self.model, self.sensitive).run(
-                        context, cancel, on_text_delta
+                        (*context, *skill_context),
+                        cancel,
+                        on_text_delta,
+                        tool_definitions=tuple(dispatcher.model_definitions(
+                            step_snapshot.activated_names
+                        )),
                     )
                     response = ModelResponse(result.text, result.tool_calls)
                 except SensitiveScanError:
@@ -242,7 +320,10 @@ class RuntimeEngine:
                 if response.text and assistant_item is None:
                     on_text_delta(response.text)
 
-                validation_error = dispatcher.validate(response).error_code
+                validation = dispatcher.validate(
+                    response, step_snapshot.available_names
+                )
+                validation_error = validation.error_code
                 if validation_error is not None:
                     if assistant_item is not None:
                         completed = self.store.complete_assistant_item(
@@ -259,6 +340,8 @@ class RuntimeEngine:
                         return
                     context = (*context, {"type": "protocol_error", "code": validation_error})
                     continue
+
+                response = ModelResponse(response.text, validation.tool_calls)
 
                 self.store.clear_protocol_errors(run_id)
                 if not response.tool_calls:
@@ -334,6 +417,8 @@ class RuntimeEngine:
                             separators=(",", ":"),
                             sort_keys=True,
                         ),
+                        provenance=dispatcher.provenance(tool_call.name),
+                        tool_set_hash=step_snapshot.tool_set_hash,
                     )
                     self._notification(
                         "item/started",
@@ -344,7 +429,45 @@ class RuntimeEngine:
                         },
                     )
                     plan = dispatcher.plan(tool_call)
-                    if plan.requires_approval and not plan.is_shell:
+                    if plan.is_external:
+                        if self.store.side_effects_blocked(run_id):
+                            result, item_status = (
+                                _tool_error(
+                                    tool_call.name,
+                                    "reconciliation_required",
+                                    "External outcome must be reconciled",
+                                ),
+                                "failed",
+                            )
+                        else:
+                            result, item_status = self._execute_external(
+                                run_id, item, tool_call, dispatcher, cancel
+                            )
+                        completed = self.store.complete_tool_item(
+                            item["id"],
+                            json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+                            item_status=item_status,
+                            tool_status="completed" if item_status == "completed" else "failed",
+                        )
+                        self._completed_item(completed)
+                        self._check_cancel(run_id, cancel)
+                        if result.get("reconciliationRequired") is True:
+                            self.store.complete_current_step(
+                                run_id, "failed", reason=str(result.get("code"))
+                            )
+                            paused = self.store.pause_run(
+                                run_id, "external_tool_reconciliation_required"
+                            )
+                            self.state_machine.transition(
+                                RuntimeState.WAITING_USER_INPUT,
+                                "external_tool_reconciliation_required",
+                            )
+                            self._notification(
+                                "run/updated",
+                                {"sessionId": paused["sessionId"], "run": paused},
+                            )
+                            return
+                    elif plan.requires_approval and not plan.is_shell:
                         if self.store.side_effects_blocked(run_id):
                             result, item_status = (
                                 _tool_error(
@@ -423,6 +546,9 @@ class RuntimeEngine:
                             item_status=item_status,
                         )
                         self._completed_item(completed)
+                        activations = dispatcher.consume_activations(tool_call.name)
+                        if activations:
+                            self.store.activate_tools(run_id, activations)
 
                 if sensitive_tool_failed:
                     self.state_machine.transition(RuntimeState.THINKING, "safe_tool_feedback")
@@ -455,7 +581,83 @@ class RuntimeEngine:
             self._completed_run(completed)
         finally:
             self._pause_effective_time(run_id)
+            mcp.close()
             tools.close()
+
+    def _execute_external(
+        self,
+        run_id: str,
+        item: dict[str, object],
+        tool_call: object,
+        tools: ToolDispatcher,
+        cancel: threading.Event,
+    ) -> tuple[dict[str, object], str]:
+        from eidos_runtime.model.client import ModelToolCall
+
+        assert isinstance(tool_call, ModelToolCall)
+        pending_item = self.store.begin_approval(item["id"], "", None)
+        approval_run = self.store.read_run(run_id)
+        self._notification(
+            "run/updated", {"sessionId": approval_run["sessionId"], "run": approval_run}
+        )
+        self.state_machine.transition(RuntimeState.WAITING_APPROVAL, "external_approval")
+        self._pause_effective_time(run_id)
+        details = tools.external_approval_details(tool_call.name)
+        approval = self.approval.request(ApprovalRequest({
+            "sessionId": pending_item["sessionId"],
+            "runId": pending_item["runId"],
+            "itemId": pending_item["id"],
+            "toolCallId": pending_item["toolCall"]["id"],
+            "kind": "external_tool",
+            "summary": "Call an external MCP tool",
+            "toolName": tool_call.name,
+            "arguments": tool_call.arguments,
+            **details,
+        }), cancel)
+        self.active_started = self.monotonic()
+        self._check_cancel(run_id, cancel)
+        self.store.resolve_approval(
+            item["id"], approval.decision, approval.feedback,
+            requeue=self.wait_for_execution_slot is not None,
+        )
+        self._resume_after_approval(run_id, cancel)
+        approval_run = self.store.read_run(run_id)
+        self.state_machine.transition(
+            RuntimeState.WAITING_USER_INPUT
+            if approval_run["status"] == "waiting_user_input"
+            else RuntimeState.TOOL_EXECUTING,
+            "external_approval_resolved",
+        )
+        if approval.decision != "approve":
+            return {
+                "schemaVersion": 1,
+                "toolContractVersion": 1,
+                "toolName": tool_call.name,
+                "outcome": "declined",
+                "code": "user_rejected",
+                "summary": "User rejected the external tool",
+                "data": {},
+                "sideEffectsMayExist": False,
+                "reconciliationRequired": False,
+            }, "declined"
+        self.store.begin_durable_intent(
+            item["id"],
+            preconditions={
+                "toolName": tool_call.name,
+                "provenance": details.get("provenance"),
+                "permissionProfile": details.get("permissionProfile"),
+                "timeoutSeconds": details.get("timeoutSeconds"),
+            },
+        )
+        result = self._safe_tool_result(
+            tool_call.name,
+            _bounded_tool_result(
+                tool_call.name, tools.execute_external(tool_call, cancel)
+            ),
+        )
+        if result["outcome"] == "success":
+            self.store.clear_rejects(run_id)
+        return result, "completed" if result["outcome"] == "success" else "failed"
 
     def _execute_file_change(
         self,
@@ -568,7 +770,7 @@ class RuntimeEngine:
         timeout = arguments.get("timeoutSeconds", 120)
         assert isinstance(command, str) and isinstance(cwd_value, str) and isinstance(timeout, int)
         try:
-            cwd = tools.prepare_shell(cwd_value, cancel)
+            cwd = tools.prepare_shell("run_shell", cwd_value, cancel)
         except ToolCancelled:
             raise RunCancelled from None
         except WorkspacePathError as error:
@@ -623,7 +825,7 @@ class RuntimeEngine:
             preconditions={"cwd": cwd_value, "timeoutSeconds": timeout},
         )
         try:
-            approved_cwd = tools.prepare_shell(cwd_value, cancel)
+            approved_cwd = tools.prepare_shell("run_shell", cwd_value, cancel)
             if approved_cwd != cwd:
                 raise WorkspacePathError("workspace_identity_changed")
         except ToolCancelled:

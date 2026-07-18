@@ -6,6 +6,7 @@ from typing import Callable, Protocol, Sequence
 
 
 ModelContextItem = dict[str, object]
+ModelToolDefinition = dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class ModelClient(Protocol):
         cancel: threading.Event,
         on_text_delta: Callable[[str], None],
         allow_tools: bool = True,
+        tool_definitions: tuple[ModelToolDefinition, ...] = (),
     ) -> ModelResponse: ...
 
 
@@ -39,6 +41,9 @@ class ScriptedModel:
     generated_title: str = "Fixture task"
     contexts: list[tuple[ModelContextItem, ...]] = field(default_factory=list)
     allow_tools_history: list[bool] = field(default_factory=list)
+    tool_definitions_history: list[tuple[ModelToolDefinition, ...]] = field(
+        default_factory=list
+    )
     title_inputs: list[str] = field(default_factory=list)
     _index: int = 0
 
@@ -54,11 +59,13 @@ class ScriptedModel:
         cancel: threading.Event,
         on_text_delta: Callable[[str], None],
         allow_tools: bool = True,
+        tool_definitions: tuple[ModelToolDefinition, ...] = (),
     ) -> ModelResponse:
         if cancel.is_set():
             return ModelResponse()
         self.contexts.append(context)
         self.allow_tools_history.append(allow_tools)
+        self.tool_definitions_history.append(tool_definitions)
         if self._index >= len(self.responses):
             return ModelResponse()
         response = self.responses[self._index]

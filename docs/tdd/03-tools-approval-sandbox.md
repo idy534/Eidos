@@ -707,3 +707,30 @@ MVP Lite 当前实施状态：
 Redaction Service 同时校验规则 schema、唯一 rule id、重叠排序、8 KiB 长度上限、幂等性和全部 test vectors。自检失败时所有内容通路 unavailable，不仅限于 Shell。
 
 `sandbox-exec` 缺失、策略生成/编译失败、必需 Toolchain 或任一强制资源/manifest/输出捕获自检失败时，Shell capability 为 unavailable，审批和 API 都不能绕过。
+
+## 13. 第三期 Registry、Skill 与 MCP Adapter
+
+`ToolRegistryEntry v1` 是工具执行唯一事实源：
+
+```text
+spec: name, description, sideEffect, approvalRequired, timeoutSeconds,
+      inputSchema, resultSchema, batchPolicy, visibility
+provenance: kind=builtin|skill|mcp, sourceId, sourceVersion, contentHash,
+            optional pluginId/serverId/skillId
+adapter: validate/default/execute capability (Runtime-only, never serialized)
+```
+
+Tool Schema Dialect v1 仍只接受递归闭合 object、受控 scalar/array、required/default/min/max/enum/const；遇到 `$ref`、组合 schema、自由 map 或未知关键字时整个外部工具隔离，不能静默删除关键字。
+
+Skill 工具只有 `skill_read` 与 `skill_read_resource`。读取路径必须位于已安装 Plugin 声明 root，逐段拒绝绝对路径、`..`、symlink、特殊文件、非 UTF-8、二进制和容量超限；`scripts/` 只作为文本资源，不存在执行 Adapter。
+
+所有 MCP Tool 固定 `sideEffect=external`、`approvalRequired=true`、`batchPolicy=single`。Server annotations 只用于展示，不能降低权限。参数在审批前补默认值、校验、敏感扫描并 canonical hash；Approval 只批准该 hash、Server、profile、timeout 和 env names，不能改写其中任何值。
+
+MCP Server 只能使用 `connector` 或 `workspace_read` profile：
+
+| profile | Workspace | 网络 | 真实 Home / `~/.eidos` | Plugin/runtime |
+|---|---|---|---|---|
+| connector | deny | allow | deny | read-only |
+| workspace_read | read-only | deny | deny | read-only |
+
+两种 profile 都无 Workspace 写权限。Sandbox、自检或结果扫描不可用时 MCP capability fail closed，但内置只读工具继续可用。

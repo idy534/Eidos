@@ -14,16 +14,20 @@ import stat
 import sys
 import threading
 import time
-from typing import Callable, Iterator, Literal
+from typing import Iterator
 import uuid
 import json
 
-from pydantic import Field, StrictInt, StrictStr
-
-from eidos_runtime.protocol.schemas import ClosedModel, ToolResultDto
+from eidos_runtime.protocol.schemas import ToolResultDto
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 from eidos_runtime.db.storage import WorkspaceIdentity
 from eidos_runtime.sandbox.seatbelt import secure_workspace_move
+from eidos_runtime.tools.registry import (
+    ToolProvenance,
+    ToolRegistry,
+    ToolRegistryEntry,
+    ToolSpec,
+)
 
 
 MAX_FILE_BYTES = 256 * 1024
@@ -104,16 +108,6 @@ class FileChange:
     delete: bool = False
 
 
-class ToolSpec(ClosedModel):
-    name: StrictStr
-    description: StrictStr
-    side_effect: Literal["none", "workspace", "eidos_state", "shell"] = Field(alias="sideEffect")
-    approval_required: bool = Field(alias="approvalRequired")
-    timeout_seconds: StrictInt = Field(alias="timeoutSeconds")
-    input_schema: dict[str, object] = Field(alias="inputSchema")
-    result_schema: dict[str, object] = Field(alias="resultSchema")
-
-
 def _object_schema(properties: dict[str, object], required: list[str] | None = None) -> dict[str, object]:
     schema: dict[str, object] = {
         "type": "object", "properties": properties, "additionalProperties": False,
@@ -138,14 +132,14 @@ _RESULT_SCHEMA = _object_schema({
     "summary", "data", "sideEffectsMayExist", "reconciliationRequired",
 ])
 TOOL_SPECS = tuple(ToolSpec.model_validate(spec) for spec in (
-    {"name": "list_files", "description": "List bounded regular files under the workspace.", "sideEffect": "none", "approvalRequired": False, "timeoutSeconds": 5, "inputSchema": _object_schema({}), "resultSchema": _RESULT_SCHEMA},
-    {"name": "read_file", "description": "Read one bounded UTF-8 file.", "sideEffect": "none", "approvalRequired": False, "timeoutSeconds": 5, "inputSchema": _object_schema({"path": {"type": "string"}}, ["path"]), "resultSchema": _RESULT_SCHEMA},
-    {"name": "read_file_range", "description": "Read a bounded inclusive line range from one UTF-8 file.", "sideEffect": "none", "approvalRequired": False, "timeoutSeconds": 5, "inputSchema": _object_schema({"path": {"type": "string"}, "startLine": {"type": "integer", "minimum": 1}, "endLine": {"type": "integer", "minimum": 1}}, ["path", "startLine", "endLine"]), "resultSchema": _RESULT_SCHEMA},
-    {"name": "search_text", "description": "Search for one literal single-line string.", "sideEffect": "none", "approvalRequired": False, "timeoutSeconds": 5, "inputSchema": _object_schema({"query": {"type": "string"}}, ["query"]), "resultSchema": _RESULT_SCHEMA},
-    {"name": "write_file", "description": "Create or replace one UTF-8 file after approval.", "sideEffect": "workspace", "approvalRequired": True, "timeoutSeconds": 5, "inputSchema": _object_schema({"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"]), "resultSchema": _RESULT_SCHEMA},
-    {"name": "apply_patch", "description": "Apply one strict unified diff after approval.", "sideEffect": "workspace", "approvalRequired": True, "timeoutSeconds": 5, "inputSchema": _object_schema({"path": {"type": "string"}, "patch": {"type": "string"}}, ["path", "patch"]), "resultSchema": _RESULT_SCHEMA},
-    {"name": "delete_file", "description": "Delete one regular UTF-8 file after approval.", "sideEffect": "workspace", "approvalRequired": True, "timeoutSeconds": 5, "inputSchema": _object_schema({"path": {"type": "string"}}, ["path"]), "resultSchema": _RESULT_SCHEMA},
-    {"name": "run_shell", "description": "Run one network-disabled shell command after approval.", "sideEffect": "shell", "approvalRequired": True, "timeoutSeconds": 600, "inputSchema": _object_schema({"command": {"type": "string"}, "cwd": {"type": "string"}, "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 600}}, ["command"]), "resultSchema": _RESULT_SCHEMA},
+    {"name": "list_files", "description": "List bounded regular files under the workspace.", "sideEffect": "none", "approvalRequired": False, "timeoutSeconds": 5, "batchPolicy": "parallel", "visibility": "direct", "inputSchema": _object_schema({}), "resultSchema": _RESULT_SCHEMA},
+    {"name": "read_file", "description": "Read one bounded UTF-8 file.", "sideEffect": "none", "approvalRequired": False, "timeoutSeconds": 5, "batchPolicy": "parallel", "visibility": "direct", "inputSchema": _object_schema({"path": {"type": "string"}}, ["path"]), "resultSchema": _RESULT_SCHEMA},
+    {"name": "read_file_range", "description": "Read a bounded inclusive line range from one UTF-8 file.", "sideEffect": "none", "approvalRequired": False, "timeoutSeconds": 5, "batchPolicy": "parallel", "visibility": "direct", "inputSchema": _object_schema({"path": {"type": "string"}, "startLine": {"type": "integer", "minimum": 1}, "endLine": {"type": "integer", "minimum": 1}}, ["path", "startLine", "endLine"]), "resultSchema": _RESULT_SCHEMA},
+    {"name": "search_text", "description": "Search for one literal single-line string.", "sideEffect": "none", "approvalRequired": False, "timeoutSeconds": 5, "batchPolicy": "parallel", "visibility": "direct", "inputSchema": _object_schema({"query": {"type": "string"}}, ["query"]), "resultSchema": _RESULT_SCHEMA},
+    {"name": "write_file", "description": "Create or replace one UTF-8 file after approval.", "sideEffect": "workspace", "approvalRequired": True, "timeoutSeconds": 5, "batchPolicy": "single", "visibility": "direct", "inputSchema": _object_schema({"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"]), "resultSchema": _RESULT_SCHEMA},
+    {"name": "apply_patch", "description": "Apply one strict unified diff after approval.", "sideEffect": "workspace", "approvalRequired": True, "timeoutSeconds": 5, "batchPolicy": "single", "visibility": "direct", "inputSchema": _object_schema({"path": {"type": "string"}, "patch": {"type": "string"}}, ["path", "patch"]), "resultSchema": _RESULT_SCHEMA},
+    {"name": "delete_file", "description": "Delete one regular UTF-8 file after approval.", "sideEffect": "workspace", "approvalRequired": True, "timeoutSeconds": 5, "batchPolicy": "single", "visibility": "direct", "inputSchema": _object_schema({"path": {"type": "string"}}, ["path"]), "resultSchema": _RESULT_SCHEMA},
+    {"name": "run_shell", "description": "Run one network-disabled shell command after approval.", "sideEffect": "shell", "approvalRequired": True, "timeoutSeconds": 600, "batchPolicy": "single", "visibility": "direct", "inputSchema": _object_schema({"command": {"type": "string"}, "cwd": {"type": "string", "default": "."}, "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 600, "default": 120}}, ["command"]), "resultSchema": _RESULT_SCHEMA},
 ))
 if len({spec.name for spec in TOOL_SPECS}) != len(TOOL_SPECS):
     raise RuntimeError("duplicate tool spec")
@@ -164,6 +158,132 @@ def model_tool_definitions() -> list[dict[str, object]]:
         "name": spec.name, "description": spec.description,
         "parameters": spec.input_schema,
     }} for spec in TOOL_SPECS]
+
+
+class _BuiltinAdapter:
+    def __init__(
+        self,
+        executor: ToolExecutor,
+        spec: ToolSpec,
+        operation: str,
+    ) -> None:
+        self.executor = executor
+        self.spec = spec
+        self.operation = operation
+        self.execution_kind = (
+            "read" if spec.side_effect == "none"
+            else "file" if spec.side_effect == "workspace"
+            else "shell"
+        )
+        self.workspace = executor.workspace
+
+    def effective_arguments(self, arguments: object) -> dict[str, object] | None:
+        return _effective_builtin_arguments(self.operation, arguments)
+
+    def execute(
+        self, arguments: dict[str, object], cancel: threading.Event
+    ) -> dict[str, object]:
+        return self.executor.execute_read(
+            self.spec.name, self.operation, arguments, cancel
+        )
+
+    def prepare_file_change(
+        self, arguments: dict[str, object], cancel: threading.Event
+    ) -> FileChange | dict[str, object]:
+        return self.executor._prepare_file_change(
+            self.spec.name, self.operation, arguments, cancel
+        )
+
+    def commit_file_change(
+        self, change: FileChange, cancel: threading.Event
+    ) -> dict[str, object]:
+        return self.executor.commit_file_change(self.spec.name, change, cancel)
+
+    def prepare_shell(self, cwd: str, cancel: threading.Event) -> WorkspaceIdentity:
+        return self.executor.prepare_shell(cwd, cancel)
+
+
+def builtin_tool_registry(executor: ToolExecutor) -> ToolRegistry:
+    operations = (
+        "list", "read", "range", "search", "write", "patch", "delete", "shell"
+    )
+    entries: list[ToolRegistryEntry] = []
+    for spec, operation in zip(TOOL_SPECS, operations, strict=True):
+        encoded = json.dumps(
+            spec.model_dump(mode="json", by_alias=True),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        entries.append(ToolRegistryEntry(
+            spec,
+            ToolProvenance.model_validate({
+                "kind": "builtin",
+                "sourceId": "eidos",
+                "sourceVersion": "1",
+                "contentHash": hashlib.sha256(encoded).hexdigest(),
+            }),
+            _BuiltinAdapter(executor, spec, operation),
+        ))
+    return ToolRegistry(tuple(entries))
+
+
+def _effective_builtin_arguments(
+    operation: str, arguments: object
+) -> dict[str, object] | None:
+    if not isinstance(arguments, dict):
+        return None
+    if operation == "list":
+        return {} if not arguments else None
+    if operation in {"read", "delete"}:
+        return dict(arguments) if (
+            set(arguments) == {"path"} and isinstance(arguments.get("path"), str)
+        ) else None
+    if operation == "range":
+        start = arguments.get("startLine")
+        end = arguments.get("endLine")
+        return dict(arguments) if (
+            set(arguments) == {"path", "startLine", "endLine"}
+            and isinstance(arguments.get("path"), str)
+            and isinstance(start, int) and not isinstance(start, bool)
+            and isinstance(end, int) and not isinstance(end, bool)
+            and 1 <= start <= end
+            and end - start < MAX_RANGE_LINES
+        ) else None
+    if operation == "search":
+        query = arguments.get("query")
+        return dict(arguments) if (
+            set(arguments) == {"query"}
+            and isinstance(query, str) and bool(query)
+            and "\n" not in query and "\r" not in query
+            and len(query.encode("utf-8")) <= 512
+        ) else None
+    if operation in {"write", "patch"}:
+        content_key = "content" if operation == "write" else "patch"
+        content = arguments.get(content_key)
+        limit = MAX_FILE_CHANGE_BYTES if operation == "write" else MAX_DIFF_BYTES
+        return dict(arguments) if (
+            set(arguments) == {"path", content_key}
+            and isinstance(arguments.get("path"), str)
+            and isinstance(content, str)
+            and len(content.encode("utf-8")) <= limit
+        ) else None
+    if operation == "shell":
+        command = arguments.get("command")
+        cwd = arguments.get("cwd", ".")
+        timeout = arguments.get("timeoutSeconds", 120)
+        if not (
+            set(arguments) <= {"command", "cwd", "timeoutSeconds"}
+            and "command" in arguments
+            and isinstance(command, str) and bool(command)
+            and len(command.encode("utf-8")) <= 16 * 1024
+            and isinstance(cwd, str)
+            and isinstance(timeout, int) and not isinstance(timeout, bool)
+            and 1 <= timeout <= 600
+        ):
+            return None
+        return {"command": command, "cwd": cwd, "timeoutSeconds": timeout}
+    return None
 
 
 def canonical_tool_result(
@@ -223,16 +343,7 @@ class ToolExecutor:
 
         self.workspace = identity
         self.root_fd = root_fd
-        self._tools: dict[
-            str, Callable[[dict[str, object], threading.Event], dict[str, object]]
-        ] = {
-            "list_files": self._list_files,
-            "read_file": self._read_file,
-            "read_file_range": self._read_file_range,
-            "search_text": self._search_text,
-        }
-        self._side_effecting_tools = frozenset({"write_file", "apply_patch", "delete_file"})
-        self._shell_tools = frozenset({"run_shell"})
+        self.registry = builtin_tool_registry(self)
 
     def __enter__(self) -> ToolExecutor:
         return self
@@ -245,77 +356,30 @@ class ToolExecutor:
             os.close(self.root_fd)
             self.root_fd = -1
 
-    @property
-    def tool_names(self) -> frozenset[str]:
-        return frozenset(self._tools) | self._side_effecting_tools | self._shell_tools
+    def execute(
+        self,
+        tool_name: str,
+        arguments: dict[str, object],
+        cancel: threading.Event,
+    ) -> dict[str, object]:
+        entry = self.registry.get(tool_name)
+        effective = entry.adapter.effective_arguments(arguments) if entry else None
+        if entry is None or effective is None:
+            return _error(tool_name, "invalid_arguments", "Invalid arguments")
+        return entry.adapter.execute(effective, cancel)
 
-    def is_side_effecting(self, tool_name: str) -> bool:
-        return tool_name in self._side_effecting_tools
-
-    def is_shell(self, tool_name: str) -> bool:
-        return tool_name in self._shell_tools
-
-    def validate_arguments(self, tool_name: str, arguments: object) -> bool:
-        if not isinstance(arguments, dict):
-            return False
-        if tool_name == "list_files":
-            return not arguments
-        if tool_name == "read_file":
-            return set(arguments) == {"path"} and isinstance(arguments.get("path"), str)
-        if tool_name == "read_file_range":
-            return (
-                set(arguments) == {"path", "startLine", "endLine"}
-                and isinstance(arguments.get("path"), str)
-                and isinstance(arguments.get("startLine"), int)
-                and not isinstance(arguments.get("startLine"), bool)
-                and isinstance(arguments.get("endLine"), int)
-                and not isinstance(arguments.get("endLine"), bool)
-                and 1 <= arguments["startLine"] <= arguments["endLine"]
-                and arguments["endLine"] - arguments["startLine"] < MAX_RANGE_LINES
-            )
-        if tool_name == "search_text":
-            query = arguments.get("query")
-            return (
-                set(arguments) == {"query"}
-                and isinstance(query, str)
-                and bool(query)
-                and "\n" not in query and "\r" not in query
-                and len(query.encode("utf-8")) <= 512
-            )
-        if tool_name == "write_file":
-            content = arguments.get("content")
-            return (
-                set(arguments) == {"path", "content"}
-                and isinstance(arguments.get("path"), str)
-                and isinstance(content, str)
-                and len(content.encode("utf-8")) <= MAX_FILE_CHANGE_BYTES
-            )
-        if tool_name == "apply_patch":
-            patch = arguments.get("patch")
-            return (
-                set(arguments) == {"path", "patch"}
-                and isinstance(arguments.get("path"), str)
-                and isinstance(patch, str)
-                and len(patch.encode("utf-8")) <= MAX_DIFF_BYTES
-            )
-        if tool_name == "delete_file":
-            return set(arguments) == {"path"} and isinstance(arguments.get("path"), str)
-        if tool_name == "run_shell":
-            command = arguments.get("command")
-            cwd = arguments.get("cwd", ".")
-            timeout = arguments.get("timeoutSeconds", 120)
-            return (
-                set(arguments) <= {"command", "cwd", "timeoutSeconds"}
-                and "command" in arguments
-                and isinstance(command, str)
-                and bool(command)
-                and len(command.encode("utf-8")) <= 16 * 1024
-                and isinstance(cwd, str)
-                and isinstance(timeout, int)
-                and not isinstance(timeout, bool)
-                and 1 <= timeout <= 600
-            )
-        return False
+    def prepare_file_change(
+        self,
+        tool_name: str,
+        arguments: dict[str, object],
+        cancel: threading.Event,
+    ) -> FileChange | dict[str, object]:
+        entry = self.registry.get(tool_name)
+        effective = entry.adapter.effective_arguments(arguments) if entry else None
+        prepare = getattr(entry.adapter, "prepare_file_change", None) if entry else None
+        if effective is None or prepare is None:
+            return _error(tool_name, "invalid_arguments", "Invalid arguments")
+        return prepare(effective, cancel)
 
     def shell_cwd(self, value: str) -> WorkspaceIdentity:
         self._verify_root()
@@ -350,17 +414,21 @@ class ToolExecutor:
         self._verify_root()
         return cwd
 
-    def execute(
+    def execute_read(
         self,
         tool_name: str,
+        operation: str,
         arguments: dict[str, object],
         cancel: threading.Event,
     ) -> dict[str, object]:
-        tool = self._tools.get(tool_name)
+        tool = {
+            "list": self._list_files,
+            "read": self._read_file,
+            "range": self._read_file_range,
+            "search": self._search_text,
+        }.get(operation)
         if tool is None:
             return _error(tool_name, "tool_not_found", "Tool is not available")
-        if not self.validate_arguments(tool_name, arguments):
-            return _error(tool_name, "invalid_arguments", "Invalid arguments")
         try:
             self._verify_root()
             _check_cancel(cancel)
@@ -381,16 +449,15 @@ class ToolExecutor:
         except WorkspacePathError as error:
             return _error(tool_name, error.code, "Workspace path is unavailable")
 
-    def prepare_file_change(
+    def _prepare_file_change(
         self,
         tool_name: str,
+        operation: str,
         arguments: dict[str, object],
         cancel: threading.Event,
     ) -> FileChange | dict[str, object]:
-        if tool_name not in self._side_effecting_tools:
+        if operation not in {"write", "patch", "delete"}:
             return _error(tool_name, "tool_not_found", "Tool is not available")
-        if not self.validate_arguments(tool_name, arguments):
-            return _error(tool_name, "invalid_arguments", "Invalid arguments")
         try:
             self._verify_root()
             _check_cancel(cancel)
@@ -402,12 +469,12 @@ class ToolExecutor:
             parts = _validate_relative_path(path_value)
             normalized_path = "/".join(parts)
             existing = self._read_existing_for_change(normalized_path, cancel)
-            deleting = tool_name == "delete_file"
+            deleting = operation == "delete"
             if deleting:
                 if existing is None:
                     raise WorkspacePathError("file_unavailable")
                 candidate = b""
-            elif tool_name == "write_file":
+            elif operation == "write":
                 content = arguments["content"]
                 assert isinstance(content, str)
                 candidate = content.encode("utf-8")

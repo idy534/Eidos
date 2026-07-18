@@ -2,7 +2,7 @@
 
 版本：v0.4（探索草案）
 
-范围说明：本文是目标态验收集合，不是当前阶段退出清单。第一期和第二期验收分别见 [MVP Lite](../mvp-lite.md) 与 [第二期实施范围](../mvp-phase-2.md)。
+范围说明：本文是目标态验收集合，不是当前阶段退出清单。第一期、第二期和第三期验收分别见 [MVP Lite](../mvp-lite.md)、[第二期实施范围](../mvp-phase-2.md) 与 [第三期实施范围](../mvp-phase-3.md)。
 
 ## 1. 产品闭环
 
@@ -259,3 +259,12 @@
 | A182 | 项目导航 | 项目使用展开/折叠文件夹图标并可折叠任务列表；按首次 Session 创建时间倒序，向已有项目新增任务不改变项目顺序；项目右侧加号直接在该 Workspace 创建 Session |
 | A183 | Session 排版与 Markdown | 标题、正文、代码、caption 分别使用 16px/24px、14px/22px、13px/20px、12px token；模型正文的标题、列表、强调、引用和代码生成语义化 DOM，原始 HTML 不执行，图片不发起远程加载，链接不直接导航；用户消息仍按纯文本展示 |
 | A184 | 导航与执行过程 | 项目/任务标题为常规字重；折叠项目和重复点击当前任务不发起 SessionSnapshot 读取，切换任务时导航不整体淡出且目标快照到达后原子替换；有工具的一轮执行期间显示展开的“正在处理”计时过程，完成后折叠为“已处理”，Shell 可展开查看命令、输出和状态且成功 Run 无完成卡；无工具的一轮只流式展示最终 Markdown |
+| A185 | 动态 Registry | 增加内存 Adapter 无需修改 RuntimeEngine 名称分支；八个内置工具协议与审批回归不变，非法外部 entry 被单独隔离 |
+| A186 | 能力快照 | 全局启停和 MCP list_changed 不改变已创建 Run/Step/Attempt；重启后可复算相同工具顺序、序列化和 hash |
+| A187 | Plugin import | 合法 Plugin 跨重启保留；未知字段、路径穿越、symlink、超限、中断和同版本内容冲突均零半安装、零覆盖、零代码执行 |
+| A188 | Skill 只读边界 | Skill-only Plugin 可列出、显式加载和读取资源；恶意路径、非 UTF-8、特殊文件、超限内容和包内脚本不能越界或执行 |
+| A189 | MCP 生命周期 | fixture 覆盖 stdio initialize/list/call/list_changed/shutdown、分页、isError、非法 schema、stdout 污染、超时、取消和崩溃 |
+| A190 | MCP 审批与沙箱 | 取消 Server consent 零进程/零凭证；每次 ToolCall 单独审批；原生 macOS 证明 connector/workspace_read 文件与网络矩阵互斥且 fail closed |
+| A191 | 外部不确定性 | 已发送的 MCP 调用在 timeout、断连、取消或提交失败时只有一个不确定 ToolResult、零自动重放并进入用户核验状态 |
+| A192 | Tool Search 预算 | 100+ 工具不会全量进入模型；稳定搜索命中在下一 Step 激活，schema/Skill/ToolResult 使用真实 UTF-8 byte 预算且不裁安全指令 |
+| A193 | 第三期纵向闭环 | 导入含 Skill 与 MCP fixture 的 Plugin，经搜索、审批、调用、模型续接和重启读取后，provenance、snapshot、ToolCall、ToolResult 与 Event 可互相追溯 |

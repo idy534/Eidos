@@ -24,6 +24,14 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "SESSION_HAS_ACTIVE_RUN",
   "MODEL_NOT_AVAILABLE",
   "MODEL_CHANGE_NOT_ALLOWED",
+  "EXTENSIONS_UNAVAILABLE",
+  "PLUGIN_IMPORT_REJECTED",
+  "PLUGIN_IMPORT_FAILED",
+  "PLUGIN_VERSION_CONFLICT",
+  "PLUGIN_ID_CONFLICT",
+  "SKILL_CATALOG_UNAVAILABLE",
+  "SKILL_UNAVAILABLE",
+  "MCP_SERVER_DISABLED",
 ]);
 
 export interface InitializeResult {
@@ -127,6 +135,18 @@ export interface Run {
   pauseReason?: string;
   stopReason?: string;
   sideEffectsMayExist?: boolean;
+  extensionSnapshot?: Record<string, unknown>;
+  activatedTools?: string[];
+}
+
+export interface ToolProvenance {
+  kind: "builtin" | "skill" | "mcp";
+  sourceId: string;
+  sourceVersion: string;
+  contentHash: string;
+  pluginId?: string;
+  serverId?: string;
+  skillId?: string;
 }
 
 export interface ToolCall {
@@ -146,6 +166,8 @@ export interface ToolCall {
   approvalFeedback?: string;
   approvalDiff?: string;
   baseSha256?: string;
+  provenance?: ToolProvenance;
+  toolSetHash?: string;
 }
 
 interface ApprovalRequestBase {
@@ -170,7 +192,67 @@ export interface CommandApprovalRequest extends ApprovalRequestBase {
   timeoutSeconds: number;
 }
 
-export type ApprovalRequest = FileApprovalRequest | CommandApprovalRequest;
+export interface ExternalToolApprovalRequest extends ApprovalRequestBase {
+  kind: "external_tool";
+  toolName: string;
+  arguments: Record<string, unknown>;
+  provenance: ToolProvenance;
+  permissionProfile: "connector" | "workspace_read";
+  timeoutSeconds: number;
+  envNames: string[];
+}
+
+export type ApprovalRequest = FileApprovalRequest | CommandApprovalRequest | ExternalToolApprovalRequest;
+
+export interface PluginRecord {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  contentHash: string;
+  enabled: boolean;
+  status: "installed" | "removed";
+  installedAt: number;
+  updatedAt: number;
+}
+
+export interface SkillMetadata {
+  schemaVersion: 1;
+  qualifiedId: string;
+  name: string;
+  description: string;
+  pluginId: string;
+  pluginVersion: string;
+  pluginHash: string;
+  contentHash: string;
+}
+
+export interface McpServerRecord {
+  schemaVersion: 1;
+  pluginId: string;
+  pluginVersion: string;
+  pluginHash: string;
+  serverId: string;
+  executable: string;
+  argv: string[];
+  envNames: string[];
+  permissionProfile: "connector" | "workspace_read";
+  startupTimeoutSeconds: number;
+  toolTimeoutSeconds: number;
+  declaredEnabled: boolean;
+  consented: boolean;
+  available: boolean;
+  errorCode?: string;
+  updatedAt: number;
+}
+
+export interface ExtensionSnapshotResult {
+  plugins: PluginRecord[];
+  skills: SkillMetadata[];
+  servers: McpServerRecord[];
+  throughEventId: number;
+}
 
 export interface ApprovalDecision {
   decision: "approve" | "reject";
@@ -306,7 +388,7 @@ export class RuntimeClient {
     return this.validatedRequest(
       "initialize",
       {
-        client: { name: "eidos-desktop", version: "0.2.0" },
+        client: { name: "eidos-desktop", version: "0.3.0" },
         protocolVersion: 1,
       },
       isInitializeResult,
@@ -393,6 +475,56 @@ export class RuntimeClient {
 
   configureModel(apiKey: string): Promise<ModelStatus> {
     return this.validatedRequest("model/configure", { apiKey }, isModelStatus);
+  }
+
+  listPlugins(): Promise<{ plugins: PluginRecord[] }> {
+    return this.validatedRequest("plugin/list", {}, isPluginListResult);
+  }
+
+  importPlugin(sourcePath: string, operationId = randomUUID()): Promise<PluginRecord> {
+    return this.validatedRequest(
+      "plugin/import", { sourcePath, operationId }, isPluginRecord,
+    );
+  }
+
+  setPluginEnabled(pluginId: string, enabled: boolean, operationId = randomUUID()): Promise<PluginRecord> {
+    return this.validatedRequest(
+      "plugin/setEnabled", { pluginId, enabled, operationId }, isPluginRecord,
+    );
+  }
+
+  removePlugin(pluginId: string, operationId = randomUUID()): Promise<PluginRecord> {
+    return this.validatedRequest(
+      "plugin/remove", { pluginId, operationId }, isPluginRecord,
+    );
+  }
+
+  listSkills(): Promise<{ skills: SkillMetadata[] }> {
+    return this.validatedRequest("skill/list", {}, isSkillListResult);
+  }
+
+  listMcpServers(): Promise<{ servers: McpServerRecord[] }> {
+    return this.validatedRequest("mcp/list", {}, isMcpServerListResult);
+  }
+
+  setMcpEnabled(
+    pluginId: string, serverId: string, enabled: boolean,
+    operationId = randomUUID(),
+  ): Promise<McpServerRecord> {
+    return this.validatedRequest(
+      "mcp/setEnabled", { pluginId, serverId, enabled, consent: true, operationId },
+      isMcpServerRecord,
+    );
+  }
+
+  readExtensions(): Promise<ExtensionSnapshotResult> {
+    return this.validatedRequest("extension/read", {}, isExtensionSnapshotResult);
+  }
+
+  readExtensionEvents(afterEventId: number, limit = 200): Promise<EventListResult> {
+    return this.validatedRequest(
+      "extension/readEvents", { afterEventId, limit }, isEventListResult,
+    );
   }
 
   async shutdown(): Promise<void> {
@@ -818,6 +950,8 @@ function isRun(value: unknown): value is Run {
       "pauseReason",
       "stopReason",
       "sideEffectsMayExist",
+      "extensionSnapshot",
+      "activatedTools",
     ])
   ) {
     return false;
@@ -846,6 +980,11 @@ function isRun(value: unknown): value is Run {
     && (value.pauseReason === undefined || typeof value.pauseReason === "string")
     && (value.stopReason === undefined || typeof value.stopReason === "string")
     && (value.sideEffectsMayExist === undefined || typeof value.sideEffectsMayExist === "boolean")
+    && (value.extensionSnapshot === undefined || isExtensionSnapshot(value.extensionSnapshot))
+    && (value.activatedTools === undefined || (
+      Array.isArray(value.activatedTools)
+      && value.activatedTools.every((name) => typeof name === "string")
+    ))
   );
 }
 
@@ -918,6 +1057,8 @@ function isToolCall(value: unknown): value is ToolCall {
       "approvalFeedback",
       "approvalDiff",
       "baseSha256",
+      "provenance",
+      "toolSetHash",
     ])
   ) {
     return false;
@@ -939,6 +1080,132 @@ function isToolCall(value: unknown): value is ToolCall {
     && (value.approvalFeedback === undefined || typeof value.approvalFeedback === "string")
     && (value.approvalDiff === undefined || typeof value.approvalDiff === "string")
     && (value.baseSha256 === undefined || typeof value.baseSha256 === "string")
+    && (value.provenance === undefined || isToolProvenance(value.provenance))
+    && (value.toolSetHash === undefined || typeof value.toolSetHash === "string")
+  );
+}
+
+function isToolProvenance(value: unknown): value is ToolProvenance {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "kind", "sourceId", "sourceVersion", "contentHash",
+      "pluginId", "serverId", "skillId",
+    ])
+    && ["builtin", "skill", "mcp"].includes(String(value.kind))
+    && typeof value.sourceId === "string"
+    && typeof value.sourceVersion === "string"
+    && typeof value.contentHash === "string"
+    && (value.pluginId === undefined || typeof value.pluginId === "string")
+    && (value.serverId === undefined || typeof value.serverId === "string")
+    && (value.skillId === undefined || typeof value.skillId === "string")
+  );
+}
+
+function isExtensionSnapshot(value: unknown): value is Record<string, unknown> {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "schemaVersion", "extensionContractVersion", "plugins",
+      "skillCatalogHash", "mcpConfigHash",
+    ])
+    && value.schemaVersion === 1
+    && value.extensionContractVersion === 1
+    && typeof value.skillCatalogHash === "string"
+    && typeof value.mcpConfigHash === "string"
+    && Array.isArray(value.plugins)
+    && value.plugins.every((plugin) => (
+      isRecord(plugin)
+      && hasOnlyKeys(plugin, ["id", "version", "contentHash"])
+      && typeof plugin.id === "string"
+      && typeof plugin.version === "string"
+      && typeof plugin.contentHash === "string"
+    ))
+  );
+}
+
+function isPluginRecord(value: unknown): value is PluginRecord {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "schemaVersion", "id", "name", "version", "description", "contentHash",
+      "enabled", "status", "installedAt", "updatedAt",
+    ])
+    && value.schemaVersion === 1
+    && ["id", "name", "version", "description", "contentHash"].every(
+      (key) => typeof value[key] === "string",
+    )
+    && typeof value.enabled === "boolean"
+    && ["installed", "removed"].includes(String(value.status))
+    && isNonNegativeInteger(value.installedAt)
+    && isNonNegativeInteger(value.updatedAt)
+  );
+}
+
+function isPluginListResult(value: unknown): value is { plugins: PluginRecord[] } {
+  return isRecord(value) && hasOnlyKeys(value, ["plugins"])
+    && Array.isArray(value.plugins) && value.plugins.every(isPluginRecord);
+}
+
+function isSkillMetadata(value: unknown): value is SkillMetadata {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "schemaVersion", "qualifiedId", "name", "description", "pluginId",
+      "pluginVersion", "pluginHash", "contentHash",
+    ])
+    && value.schemaVersion === 1
+    && [
+      "qualifiedId", "name", "description", "pluginId",
+      "pluginVersion", "pluginHash", "contentHash",
+    ].every((key) => typeof value[key] === "string")
+  );
+}
+
+function isSkillListResult(value: unknown): value is { skills: SkillMetadata[] } {
+  return isRecord(value) && hasOnlyKeys(value, ["skills"])
+    && Array.isArray(value.skills) && value.skills.every(isSkillMetadata);
+}
+
+function isMcpServerRecord(value: unknown): value is McpServerRecord {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "schemaVersion", "pluginId", "pluginVersion", "pluginHash", "serverId",
+      "executable", "argv", "envNames", "permissionProfile",
+      "startupTimeoutSeconds", "toolTimeoutSeconds", "declaredEnabled",
+      "consented", "available", "errorCode", "updatedAt",
+    ])
+    && value.schemaVersion === 1
+    && ["pluginId", "pluginVersion", "pluginHash", "serverId", "executable"].every(
+      (key) => typeof value[key] === "string",
+    )
+    && Array.isArray(value.argv) && value.argv.every((item) => typeof item === "string")
+    && Array.isArray(value.envNames) && value.envNames.every((item) => typeof item === "string")
+    && ["connector", "workspace_read"].includes(String(value.permissionProfile))
+    && isPositiveInteger(value.startupTimeoutSeconds)
+    && isPositiveInteger(value.toolTimeoutSeconds)
+    && typeof value.declaredEnabled === "boolean"
+    && typeof value.consented === "boolean"
+    && typeof value.available === "boolean"
+    && (value.errorCode === undefined || typeof value.errorCode === "string")
+    && isNonNegativeInteger(value.updatedAt)
+  );
+}
+
+function isMcpServerListResult(value: unknown): value is { servers: McpServerRecord[] } {
+  return isRecord(value) && hasOnlyKeys(value, ["servers"])
+    && Array.isArray(value.servers) && value.servers.every(isMcpServerRecord);
+}
+
+function isExtensionSnapshotResult(value: unknown): value is ExtensionSnapshotResult {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["plugins", "skills", "servers", "throughEventId"])
+    && Array.isArray(value.plugins) && value.plugins.every(isPluginRecord)
+    && Array.isArray(value.skills) && value.skills.every(isSkillMetadata)
+    && Array.isArray(value.servers) && value.servers.every(isMcpServerRecord)
+    && isNonNegativeInteger(value.throughEventId)
   );
 }
 
@@ -984,6 +1251,25 @@ function approvalRequestFrom(
       return undefined;
     }
     return { id: message.id, ...params } as FileApprovalRequest;
+  }
+  if (params.kind === "external_tool") {
+    if (
+      !hasOnlyKeys(params, [
+        "sessionId", "runId", "itemId", "toolCallId", "kind", "summary",
+        "toolName", "arguments", "provenance", "permissionProfile",
+        "timeoutSeconds", "envNames",
+      ])
+      || typeof params.toolName !== "string"
+      || !isRecord(params.arguments)
+      || !isToolProvenance(params.provenance)
+      || !["connector", "workspace_read"].includes(String(params.permissionProfile))
+      || !isPositiveInteger(params.timeoutSeconds)
+      || !Array.isArray(params.envNames)
+      || !params.envNames.every((name) => typeof name === "string")
+    ) {
+      return undefined;
+    }
+    return { id: message.id, ...params } as ExternalToolApprovalRequest;
   }
   if (
     !hasOnlyKeys(params, [

@@ -4,7 +4,13 @@ from dataclasses import dataclass
 import threading
 from typing import Callable
 
-from eidos_runtime.model.client import ModelClient, ModelContextItem, ModelResponse, ModelToolCall
+from eidos_runtime.model.client import (
+    ModelClient,
+    ModelContextItem,
+    ModelResponse,
+    ModelToolCall,
+    ModelToolDefinition,
+)
 from eidos_runtime.sandbox.sensitive import SensitiveScanner, StreamingSensitiveScanner, default_scanner
 
 
@@ -34,15 +40,16 @@ class ModelRunner:
         on_text: Callable[[str], None],
         *,
         allow_tools: bool = True,
+        tool_definitions: tuple[ModelToolDefinition, ...] = (),
     ) -> ModelStepResult:
         stream = StreamingSensitiveScanner(self._sensitive)
         try:
-            # Keep the legacy three-argument call for existing ModelClient
-            # implementations; finalization is the only path that needs tools off.
-            response = (
-                self._model.complete(context, cancel, stream.feed)
-                if allow_tools
-                else self._model.complete(context, cancel, stream.feed, allow_tools=False)
+            response = self._model.complete(
+                context,
+                cancel,
+                stream.feed,
+                allow_tools=allow_tools,
+                tool_definitions=tool_definitions,
             )
         except Exception as error:
             # Finish the scanner before surfacing the interruption: safe visible

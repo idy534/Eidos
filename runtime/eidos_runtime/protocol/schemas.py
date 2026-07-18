@@ -68,6 +68,76 @@ class SessionDto(ClosedModel):
     updated_at: StrictInt = Field(alias="updatedAt")
 
 
+class PluginRecordDto(ClosedModel):
+    schema_version: Literal[1] = Field(alias="schemaVersion")
+    id: StrictStr
+    name: StrictStr
+    version: StrictStr
+    description: StrictStr
+    content_hash: StrictStr = Field(alias="contentHash")
+    enabled: bool
+    status: Literal["installed", "removed"]
+    installed_at: StrictInt = Field(alias="installedAt")
+    updated_at: StrictInt = Field(alias="updatedAt")
+
+
+class RunPluginSnapshotDto(ClosedModel):
+    id: StrictStr
+    version: StrictStr
+    content_hash: StrictStr = Field(alias="contentHash")
+
+
+class RunExtensionSnapshotDto(ClosedModel):
+    schema_version: Literal[1] = Field(alias="schemaVersion")
+    extension_contract_version: Literal[1] = Field(alias="extensionContractVersion")
+    plugins: list[RunPluginSnapshotDto]
+    skill_catalog_hash: StrictStr = Field(alias="skillCatalogHash")
+    mcp_config_hash: StrictStr = Field(alias="mcpConfigHash")
+
+
+class SkillMetadataDto(ClosedModel):
+    schema_version: Literal[1] = Field(alias="schemaVersion")
+    qualified_id: StrictStr = Field(alias="qualifiedId")
+    name: StrictStr
+    description: StrictStr
+    plugin_id: StrictStr = Field(alias="pluginId")
+    plugin_version: StrictStr = Field(alias="pluginVersion")
+    plugin_hash: StrictStr = Field(alias="pluginHash")
+    content_hash: StrictStr = Field(alias="contentHash")
+
+
+class StepToolSnapshotDto(ClosedModel):
+    schema_version: Literal[1] = Field(alias="schemaVersion")
+    available_names: list[StrictStr] = Field(alias="availableNames")
+    direct_names: list[StrictStr] = Field(alias="directNames")
+    deferred_names: list[StrictStr] = Field(alias="deferredNames")
+    activated_names: list[StrictStr] = Field(alias="activatedNames")
+    spec_hashes: dict[StrictStr, StrictStr] = Field(alias="specHashes")
+    definitions_hash: StrictStr = Field(alias="definitionsHash")
+    tool_set_hash: StrictStr = Field(alias="toolSetHash")
+
+
+class McpServerRecordDto(ClosedModel):
+    schema_version: Literal[1] = Field(alias="schemaVersion")
+    plugin_id: StrictStr = Field(alias="pluginId")
+    plugin_version: StrictStr = Field(alias="pluginVersion")
+    plugin_hash: StrictStr = Field(alias="pluginHash")
+    server_id: StrictStr = Field(alias="serverId")
+    executable: StrictStr
+    argv: list[StrictStr]
+    env_names: list[StrictStr] = Field(alias="envNames")
+    permission_profile: Literal["connector", "workspace_read"] = Field(
+        alias="permissionProfile"
+    )
+    startup_timeout_seconds: StrictInt = Field(alias="startupTimeoutSeconds")
+    tool_timeout_seconds: StrictInt = Field(alias="toolTimeoutSeconds")
+    declared_enabled: bool = Field(alias="declaredEnabled")
+    consented: bool
+    available: bool
+    error_code: StrictStr | None = Field(default=None, alias="errorCode")
+    updated_at: StrictInt = Field(alias="updatedAt")
+
+
 class RunDto(ClosedModel):
     id: StrictStr
     session_id: StrictStr = Field(alias="sessionId")
@@ -95,6 +165,12 @@ class RunDto(ClosedModel):
     pause_reason: StrictStr | None = Field(default=None, alias="pauseReason")
     stop_reason: StrictStr | None = Field(default=None, alias="stopReason")
     side_effects_may_exist: bool = Field(default=False, alias="sideEffectsMayExist")
+    extension_snapshot: RunExtensionSnapshotDto | None = Field(
+        default=None, alias="extensionSnapshot"
+    )
+    activated_tools: list[StrictStr] = Field(
+        default_factory=list, alias="activatedTools"
+    )
 
 
 class ToolCallDto(ClosedModel):
@@ -112,6 +188,8 @@ class ToolCallDto(ClosedModel):
     approval_feedback: StrictStr | None = Field(default=None, alias="approvalFeedback")
     approval_diff: StrictStr | None = Field(default=None, alias="approvalDiff")
     base_sha256: StrictStr | None = Field(default=None, alias="baseSha256")
+    provenance: dict[str, JsonValue] | None = None
+    tool_set_hash: StrictStr | None = Field(default=None, alias="toolSetHash")
     started_at: StrictInt = Field(alias="startedAt")
     completed_at: StrictInt | None = Field(default=None, alias="completedAt")
 
@@ -138,6 +216,13 @@ class SearchMatchDto(ClosedModel):
     preview: StrictStr
 
 
+class ToolSearchHitDto(ClosedModel):
+    name: StrictStr
+    description: StrictStr
+    provenance: dict[str, JsonValue]
+    score: StrictInt
+
+
 class ToolResultDataDto(ClosedModel):
     path: StrictStr | None = None
     paths: list[StrictStr] | None = None
@@ -157,6 +242,18 @@ class ToolResultDataDto(ClosedModel):
     stderr: StrictStr | None = None
     termination: StrictStr | None = None
     duration_ms: StrictInt | None = Field(default=None, alias="durationMs")
+    qualified_id: StrictStr | None = Field(default=None, alias="qualifiedId")
+    resource_path: StrictStr | None = Field(default=None, alias="resourcePath")
+    content_hash: StrictStr | None = Field(default=None, alias="contentHash")
+    plugin_id: StrictStr | None = Field(default=None, alias="pluginId")
+    plugin_version: StrictStr | None = Field(default=None, alias="pluginVersion")
+    plugin_hash: StrictStr | None = Field(default=None, alias="pluginHash")
+    text: StrictStr | None = None
+    structured_content: dict[str, JsonValue] | None = Field(
+        default=None, alias="structuredContent"
+    )
+    hits: list[ToolSearchHitDto] | None = None
+    total_matches: StrictInt | None = Field(default=None, alias="totalMatches")
 
 
 class ToolResultDto(ClosedModel):

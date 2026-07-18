@@ -821,3 +821,19 @@ event_id
 - Message、Event 回放、Tool log、Artifact 和其他历史正文的读取 method 在响应前按当前规则再扫描。`deny` 返回无正文的结构化拒绝，`redact` 只影响当次响应；MVP 不就地改写追加式 Event 或不可变 Artifact。
 - Event 回放不得因读时扫描跳过 event id。字符串叶子命中时在当次响应内脱敏；结构 token 命中时保留 wire 的 `eventId,eventType,schemaVersion`，将 payload 整体替换为固定 `{kind=content_unavailable,reason=sensitive_structured_payload_rejected}`。
 - JSON-RPC payload 有 1 MiB 硬上限；大内容通过分页或有界 chunk method 获取，但分页不得绕过全文件扫描。
+
+## 12. 第三期闭合扩展合同与存储
+
+以下 DTO 均为 `schemaVersion=1`、strict/closed，未知字段拒绝：
+
+- `PluginManifestV1`: `id,name,version,description,skills,mcpServers`；skills 只含相对 root，mcpServers 只含结构化 executable/argv/envNames/profile/timeouts。
+- `PluginRecordV1`: manifest 安全投影、content hash、enabled、availability/status、installed/updated 时间；不返回受管目录真实路径。
+- `SkillMetadataV1`: qualified ID、name、description、Plugin provenance、root/content hash、可选展示 metadata。
+- `McpServerConfigV1`: server ID、executable、argv、env names、`connector|workspace_read`、startup/tool timeout、enabled/consented；env value 不序列化。
+- `ToolProvenanceV1`: kind、source ID/version/content hash 与可选 plugin/server/skill ID。
+- `RunExtensionSnapshotV1`: enabled Plugin ID/version/hash、Skill catalog hash、MCP config hash、extension contract version。
+- `StepToolSnapshotV1`: ordered available/direct/deferred/activated names、ToolSpec hashes、serialized definitions hash、tool set hash。
+
+SQLite forward migration 新增 Plugin catalog/state、Run extension snapshot、Step tool snapshot 和 ToolCall provenance。历史行只保存安全 metadata/hash；删除 Plugin 不级联删除 Session/Run/Item/ToolCall/ToolResult/Event。
+
+新增 RPC 为 `plugin/list|import|setEnabled|remove`、`skill/list|read`、`mcp/list|setEnabled`，以及既有 approval 通道中的 Server enable consent。所有 request/response 与 Event 使用闭合 schema、operation idempotency 和 snapshot/event waterline；敏感错误不得携带受管目录、env value、原始 stderr 或协议正文。

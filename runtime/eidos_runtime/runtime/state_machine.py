@@ -70,6 +70,10 @@ class EventType(StrEnum):
     TOOL_CALL_COMPLETED = "tool_call.completed"
     RECONCILIATION_REQUIRED = "reconciliation.required"
     RECONCILIATION_CLEARED = "reconciliation.cleared"
+    PLUGIN_IMPORTED = "plugin.imported"
+    PLUGIN_STATE_CHANGED = "plugin.state_changed"
+    MCP_SERVER_STATE_CHANGED = "mcp_server.state_changed"
+    MCP_TOOL_LIST_CHANGED = "mcp_tool_list.changed"
 
 
 TRANSITIONS: dict[type[StrEnum], dict[StrEnum, frozenset[StrEnum]]] = {

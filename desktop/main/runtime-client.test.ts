@@ -12,6 +12,7 @@ import type { RuntimeNotification } from "./runtime-client.js";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const protocolV1Fixture = path.join(projectRoot, "protocol", "fixtures", "v1.json");
 const toolResultsV1Fixture = path.join(projectRoot, "protocol", "fixtures", "tool-results-v1.json");
+const extensionsV1Fixture = path.join(projectRoot, "protocol", "fixtures", "extensions-v1.json");
 const pythonExecutable = process.env.EIDOS_PYTHON
   ?? path.join(projectRoot, ".venv", "bin", "python");
 
@@ -25,6 +26,17 @@ test("shares canonical ToolResult vectors with the Python runtime", async () => 
   for (const vector of fixture.vectors) {
     assert.equal(JSON.stringify(sortJson(vector.result)), vector.canonicalJson);
   }
+});
+
+test("shares closed extension vectors with the Python runtime", async () => {
+  const fixture = JSON.parse(await readFile(extensionsV1Fixture, "utf8")) as Record<string, unknown>;
+  assert.equal(fixture.extensionContractVersion, 1);
+  assert.equal((fixture.plugin as { id: string }).id, "demo");
+  assert.equal((fixture.mcpServer as { permissionProfile: string }).permissionProfile, "connector");
+  assert.deepEqual(
+    (fixture.stepToolSnapshot as { deferredNames: string[] }).deferredNames,
+    ["mcp__fixture__echo"],
+  );
 });
 
 
@@ -54,7 +66,7 @@ test("spawns the Python runtime and completes initialize then shutdown", async (
 
     const initialized = await client.initialize();
     assert.equal(initialized.protocolVersion, 1);
-    assert.equal(initialized.runtimeVersion, "0.2.0");
+    assert.equal(initialized.runtimeVersion, "0.3.0");
     assert.equal(typeof initialized.capabilities.runShell, "boolean");
     assert.equal(initialized.capabilities.modelConfigured, false);
     assert.deepEqual(await client.health(), { state: "ready" });
@@ -100,6 +112,64 @@ test("creates and reads a persisted session across runtime restarts", async () =
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("imports and manages closed Plugin Skill and MCP records", async () => {
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
+  const pluginRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-plugin-"));
+  await mkdir(path.join(pluginRoot, "skills", "review"), { recursive: true });
+  await writeFile(
+    path.join(pluginRoot, "skills", "review", "SKILL.md"),
+    "---\nname: review\ndescription: Review files.\n---\nInspect first.\n",
+    "utf8",
+  );
+  await writeFile(path.join(pluginRoot, "server.py"), "# fixture\n", "utf8");
+  await writeFile(path.join(pluginRoot, "plugin.json"), JSON.stringify({
+    schemaVersion: 1,
+    id: "desktop_fixture",
+    name: "Desktop Fixture",
+    version: "1.0.0",
+    description: "Fixture",
+    skills: [{ root: "skills/review" }],
+    mcpServers: [{
+      id: "fixture",
+      executable: "python3",
+      argv: ["server.py"],
+      envNames: [],
+      permissionProfile: "workspace_read",
+      startupTimeoutSeconds: 5,
+      toolTimeoutSeconds: 10,
+      enabled: true,
+    }],
+  }), "utf8");
+
+  try {
+    const client = new RuntimeClient({
+      pythonExecutable,
+      runtimeRoot: path.join(projectRoot, "runtime"),
+      dataDirectory,
+    });
+    await client.initialize();
+    const imported = await client.importPlugin(pluginRoot);
+    await client.setPluginEnabled(imported.id, true);
+    const skills = await client.listSkills();
+    const servers = await client.listMcpServers();
+    const enabled = await client.setMcpEnabled(imported.id, "fixture", true);
+    const extensionSnapshot = await client.readExtensions();
+    const extensionEvents = await client.readExtensionEvents(0);
+
+    assert.equal((await client.listPlugins()).plugins[0]?.id, "desktop_fixture");
+    assert.equal(skills.skills[0]?.qualifiedId, "desktop_fixture:review");
+    assert.equal(servers.servers[0]?.permissionProfile, "workspace_read");
+    assert.equal(enabled.consented, true);
+    assert.equal(extensionSnapshot.plugins[0]?.id, "desktop_fixture");
+    assert.ok(extensionEvents.items.some((event) => event.eventType === "mcp_server.state_changed"));
+    await client.shutdown();
+    assert.equal(await client.waitForExit(), 0);
+  } finally {
+    await rm(dataDirectory, { recursive: true, force: true });
+    await rm(pluginRoot, { recursive: true, force: true });
   }
 });
 

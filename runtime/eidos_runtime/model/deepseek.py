@@ -8,9 +8,13 @@ import threading
 import time
 from typing import Callable
 
-from eidos_runtime.model.client import ModelContextItem, ModelResponse, ModelToolCall
+from eidos_runtime.model.client import (
+    ModelContextItem,
+    ModelResponse,
+    ModelToolCall,
+    ModelToolDefinition,
+)
 from eidos_runtime.model.config import DEFAULT_MODEL_ID, SUPPORTED_MODELS
-from eidos_runtime.tools.workspace import model_tool_definitions
 
 
 HOST = "api.deepseek.com"
@@ -63,6 +67,7 @@ class DeepSeekChatModel:
         cancel: threading.Event,
         on_text_delta: Callable[[str], None],
         allow_tools: bool = True,
+        tool_definitions: tuple[ModelToolDefinition, ...] = (),
     ) -> ModelResponse:
         if cancel.is_set():
             return ModelResponse()
@@ -74,7 +79,7 @@ class DeepSeekChatModel:
                 "thinking": {"type": "disabled"},
         }
         if allow_tools:
-            request["tools"] = _tool_definitions()
+            request["tools"] = list(tool_definitions)
             request["tool_choice"] = "auto"
         payload = json.dumps(
             request,
@@ -106,7 +111,7 @@ class DeepSeekChatModel:
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                     "Accept": "text/event-stream",
-                    "User-Agent": "Eidos/0.2.0",
+                    "User-Agent": "Eidos/0.3.0",
                 },
             )
             response = connection.getresponse()
@@ -302,7 +307,3 @@ def _messages_from_context(
                     }
                 )
     return messages
-
-
-def _tool_definitions() -> list[dict[str, object]]:
-    return model_tool_definitions()

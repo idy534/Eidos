@@ -1,0 +1,74 @@
+{
+  "extensionContractVersion": 1,
+  "plugin": {
+    "schemaVersion": 1,
+    "id": "demo",
+    "name": "Demo",
+    "version": "1.0.0",
+    "description": "Extension fixture",
+    "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "enabled": true,
+    "status": "installed",
+    "installedAt": 1000,
+    "updatedAt": 1000
+  },
+  "skill": {
+    "schemaVersion": 1,
+    "qualifiedId": "demo:review",
+    "name": "review",
+    "description": "Review files.",
+    "pluginId": "demo",
+    "pluginVersion": "1.0.0",
+    "pluginHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "contentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "mcpServer": {
+    "schemaVersion": 1,
+    "pluginId": "demo",
+    "pluginVersion": "1.0.0",
+    "pluginHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "serverId": "fixture",
+    "executable": "python3",
+    "argv": ["server.py"],
+    "envNames": ["DEMO_TOKEN"],
+    "permissionProfile": "connector",
+    "startupTimeoutSeconds": 15,
+    "toolTimeoutSeconds": 60,
+    "declaredEnabled": true,
+    "consented": true,
+    "available": true,
+    "updatedAt": 1000
+  },
+  "toolProvenance": {
+    "kind": "mcp",
+    "sourceId": "demo:fixture",
+    "sourceVersion": "1.0.0",
+    "contentHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "pluginId": "demo",
+    "serverId": "fixture"
+  },
+  "runExtensionSnapshot": {
+    "schemaVersion": 1,
+    "extensionContractVersion": 1,
+    "plugins": [{
+      "id": "demo",
+      "version": "1.0.0",
+      "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }],
+    "skillCatalogHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "mcpConfigHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "stepToolSnapshot": {
+    "schemaVersion": 1,
+    "availableNames": ["read_file", "tool_search"],
+    "directNames": ["read_file", "tool_search"],
+    "deferredNames": ["mcp__fixture__echo"],
+    "activatedNames": [],
+    "specHashes": {
+      "read_file": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "tool_search": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "definitionsHash": "2222222222222222222222222222222222222222222222222222222222222222",
+    "toolSetHash": "3333333333333333333333333333333333333333333333333333333333333333"
+  }
+}

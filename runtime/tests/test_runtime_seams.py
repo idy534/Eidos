@@ -33,11 +33,33 @@ class RuntimeSeamTests(unittest.TestCase):
         self.assertEqual(result.tool_calls[0].name, "read_file")
         self.assertEqual(deltas, ["hello"])
 
+    def test_model_runner_passes_the_step_tool_definitions_explicitly(self) -> None:
+        model = ScriptedModel([ModelResponse(text="done")])
+        definitions = ({
+            "type": "function",
+            "function": {
+                "name": "memory_echo",
+                "description": "Echo.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+            },
+        },)
+
+        ModelRunner(model).run(
+            (), threading.Event(), lambda _delta: None,
+            tool_definitions=definitions,
+        )
+
+        self.assertEqual(model.tool_definitions_history, [definitions])
+
     def test_tool_dispatcher_returns_one_closed_batch_error(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             tools = ToolExecutor(Path(directory))
             try:
-                result = ToolDispatcher(tools).validate(ModelResponse(tool_calls=(
+                result = ToolDispatcher(tools.registry).validate(ModelResponse(tool_calls=(
                     ModelToolCall("first", "read_file", {"path": "a.txt"}),
                     ModelToolCall("second", "write_file", {"path": "a.txt", "content": "x"}),
                 )))
@@ -52,7 +74,7 @@ class RuntimeSeamTests(unittest.TestCase):
             (root / "a.txt").write_text("ok", encoding="utf-8")
             tools = ToolExecutor(root)
             try:
-                result = ToolDispatcher(tools).execute_read_only(
+                result = ToolDispatcher(tools.registry).execute_read_only(
                     ModelToolCall("read", "read_file", {"path": "a.txt"}),
                     threading.Event(),
                 )
@@ -65,7 +87,7 @@ class RuntimeSeamTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             tools = ToolExecutor(Path(directory))
             try:
-                plan = ToolDispatcher(tools).plan(
+                plan = ToolDispatcher(tools.registry).plan(
                     ModelToolCall("shell", "run_shell", {"command": "true"})
                 )
             finally:

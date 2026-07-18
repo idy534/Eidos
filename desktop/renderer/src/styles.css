@@ -248,6 +248,18 @@ h2 { margin-bottom: 0.375rem; font-size: 1rem; }
 .runtime-details div { display: flex; justify-content: space-between; padding: 0.55rem 0; border-bottom: 1px solid var(--line); font-size: 0.8rem; }
 .runtime-details div:last-child { border-bottom: 0; }
 .runtime-details dd { margin: 0; color: var(--muted); }
+.settings-card-heading { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
+.settings-card-heading h2, .settings-card-heading p { margin-top: 0; }
+.settings-card-heading p { color: var(--muted); font-size: 0.8rem; }
+.extension-list { margin: 0.75rem 0 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+.extension-list li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.8rem 0; border-bottom: 1px solid var(--line); font-size: 0.8rem; }
+.extension-list strong, .extension-list small { display: block; overflow-wrap: anywhere; }
+.extension-list small { margin-top: 0.2rem; color: var(--muted); font-family: var(--font-mono); font-size: 0.68rem; }
+.extension-list--stacked li { align-items: start; }
+.extension-actions { display: flex; gap: 0.4rem; flex: 0 0 auto; }
+.extension-list .empty-extension { justify-content: center; color: var(--muted); }
+.extension-list .extension-error { color: var(--danger); }
+.tool-provenance { color: var(--muted); font-family: var(--font-mono); font-size: 0.68rem; }
 .setup-panel p { margin-bottom: 0; color: #4d5e52; font-size: 0.78rem; line-height: 1.5; }
 .key-row { display: flex; gap: 0.5rem; }
 input, textarea {

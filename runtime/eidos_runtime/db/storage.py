@@ -23,7 +23,7 @@ from eidos_runtime.runtime.state_machine import EventType, RunStatus
 DATABASE_NAME = "eidos.db"
 LOCK_NAME = "runtime.lock"
 RESERVE_NAME = "emergency.reserve"
-SCHEMA_REVISION = 4
+SCHEMA_REVISION = 5
 RESERVE_BYTES = 1024 * 1024
 DEFAULT_LIST_LIMIT = 50
 MAX_LIST_LIMIT = 200
@@ -32,6 +32,13 @@ MAX_CONTEXT_BYTES = 768 * 1024
 MAX_CONTEXT_ITEMS = 200
 MAX_SNAPSHOT_BYTES = 768 * 1024
 MAX_SNAPSHOT_TEXT_BYTES = 192 * 1024
+EMPTY_EXTENSION_SNAPSHOT = {
+    "schemaVersion": 1,
+    "extensionContractVersion": 1,
+    "plugins": [],
+    "skillCatalogHash": "0" * 64,
+    "mcpConfigHash": "0" * 64,
+}
 
 SESSION_SELECT = """
     SELECT s.creation_seq, s.id, s.workspace_root, s.title,
@@ -171,7 +178,7 @@ class SessionStore:
                     raise StorageError("schema_revision_missing")
             if revision > SCHEMA_REVISION or revision < 0:
                 raise StorageError("schema_revision_unsupported")
-            if revision in {1, 2, 3}:
+            if revision in {1, 2, 3, 4}:
                 _backup_database(connection, database_path, revision)
             if revision == 1:
                 _migrate_v1_to_v2(connection)
@@ -182,7 +189,10 @@ class SessionStore:
             if revision == 3:
                 _migrate_v3_to_v4(connection)
                 revision = 4
-            elif revision not in {0, SCHEMA_REVISION}:
+            if revision == 4:
+                _migrate_v4_to_v5(connection)
+                revision = 5
+            if revision not in {0, SCHEMA_REVISION}:
                 raise StorageError("schema_revision_unsupported")
 
             connection.executescript(
@@ -218,6 +228,8 @@ class SessionStore:
                     reconciliation_required INTEGER NOT NULL DEFAULT 0,
                     reconciliation_epoch INTEGER NOT NULL DEFAULT 0,
                     side_effects_may_exist INTEGER NOT NULL DEFAULT 0,
+                    extension_snapshot_json TEXT NOT NULL DEFAULT '{}',
+                    activated_tools_json TEXT NOT NULL DEFAULT '[]',
                     error_code TEXT,
                     created_at INTEGER NOT NULL,
                     started_at INTEGER,
@@ -268,6 +280,8 @@ class SessionStore:
                     approval_feedback TEXT,
                     approval_diff TEXT,
                     base_sha256 TEXT,
+                    provenance_json TEXT,
+                    tool_set_hash TEXT,
                     started_at INTEGER NOT NULL,
                     completed_at INTEGER
                 );
@@ -308,6 +322,8 @@ class SessionStore:
                     ordinal INTEGER NOT NULL,
                     status TEXT NOT NULL,
                     observed_reconciliation_epoch INTEGER NOT NULL DEFAULT 0,
+                    tool_snapshot_json TEXT,
+                    tool_set_hash TEXT,
                     created_at INTEGER NOT NULL,
                     completed_at INTEGER,
                     UNIQUE(segment_id, ordinal)
@@ -356,12 +372,35 @@ class SessionStore:
                     created_at INTEGER NOT NULL,
                     reconciled_at INTEGER
                 );
+
+                CREATE TABLE IF NOT EXISTS plugins (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    manifest_json TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL CHECK (status IN ('installed', 'removed')),
+                    installed_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS mcp_server_states (
+                    plugin_id TEXT NOT NULL,
+                    server_id TEXT NOT NULL,
+                    consented INTEGER NOT NULL DEFAULT 0,
+                    error_code TEXT,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY(plugin_id, server_id)
+                );
                 """
             )
             connection.execute(f"PRAGMA user_version = {SCHEMA_REVISION}")
             _ensure_session_identity_columns(connection)
             _ensure_tool_call_approval_columns(connection)
             _ensure_phase_two_columns(connection)
+            _ensure_phase_three_columns(connection)
             _backfill_session_identities(connection)
             now = _now_ms()
             connection.execute(
@@ -684,6 +723,7 @@ class SessionStore:
         queued: bool = False,
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
+        extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         if session_title is not None and (
             not session_title
@@ -693,6 +733,10 @@ class SessionStore:
             raise ValueError("session title is invalid")
         if model_id not in SUPPORTED_MODELS:
             raise ValueError("model is unsupported")
+        extension_snapshot_json = _bounded_canonical_json(
+            extension_snapshot or EMPTY_EXTENSION_SNAPSHOT,
+            code="extension_snapshot_invalid",
+        )
         run_id = str(uuid.uuid4())
         item_id = str(uuid.uuid4())
         now = _now_ms()
@@ -725,12 +769,13 @@ class SessionStore:
                     """
                     INSERT INTO runs (
                         id, session_id, user_input, model_id, status, enqueued_at,
-                        created_at, started_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        extension_snapshot_json, created_at, started_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         run_id, session_id, user_input, model_id, status,
-                        now if queued else None, now, started_at, now,
+                        now if queued else None, extension_snapshot_json,
+                        now, started_at, now,
                     ),
                 )
             except sqlite3.IntegrityError as error:
@@ -773,6 +818,7 @@ class SessionStore:
                 "sessionId": session_id,
                 "userInput": user_input,
                 "modelId": model_id,
+                "extensionSnapshot": json.loads(extension_snapshot_json),
             },
         )
         return result["run"], result["item"]
@@ -785,6 +831,7 @@ class SessionStore:
         operation_id: str | None = None,
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
+        extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         return self.create_run(
             session_id,
@@ -793,6 +840,7 @@ class SessionStore:
             queued=True,
             session_title=session_title,
             model_id=model_id,
+            extension_snapshot=extension_snapshot,
         )
 
     def continue_run(
@@ -956,6 +1004,254 @@ class SessionStore:
             raise ResourceNotFoundError("run not found")
         return _run_from_row(row)
 
+    def plugin_record(self, plugin_id: str) -> dict[str, object] | None:
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT * FROM plugins WHERE id = ?", (plugin_id,)
+            ).fetchone()
+        return _plugin_from_row(row) if row is not None else None
+
+    def list_plugin_records(
+        self, *, include_removed: bool = False
+    ) -> list[dict[str, object]]:
+        sql = "SELECT * FROM plugins"
+        if not include_removed:
+            sql += " WHERE status = 'installed'"
+        sql += " ORDER BY id"
+        with self.lock:
+            rows = self._connection().execute(sql).fetchall()
+        return [_plugin_from_row(row) for row in rows]
+
+    def insert_plugin_record(self, record: dict[str, object]) -> dict[str, object]:
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO plugins (
+                    id, name, version, description, manifest_json, content_hash,
+                    enabled, status, installed_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 0, 'installed', ?, ?)
+                """,
+                (
+                    record["id"], record["name"], record["version"],
+                    record["description"], record["manifestJson"],
+                    record["contentHash"], now, now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM plugins WHERE id = ?", (record["id"],)
+            ).fetchone()
+            append_event(
+                connection,
+                EventType.PLUGIN_IMPORTED,
+                now,
+                {"plugin": _plugin_from_row(row)},
+            )
+        result = self.plugin_record(str(record["id"]))
+        assert result is not None
+        return result
+
+    def set_plugin_enabled(
+        self, plugin_id: str, enabled: bool
+    ) -> dict[str, object]:
+        with self.lock, self._connection() as connection:
+            updated = connection.execute(
+                """
+                UPDATE plugins SET enabled = ?, updated_at = ?
+                WHERE id = ? AND status = 'installed'
+                """,
+                (int(enabled), _now_ms(), plugin_id),
+            )
+            if updated.rowcount != 1:
+                raise ResourceNotFoundError("plugin not found")
+            row = connection.execute(
+                "SELECT * FROM plugins WHERE id = ?", (plugin_id,)
+            ).fetchone()
+            append_event(
+                connection,
+                EventType.PLUGIN_STATE_CHANGED,
+                _now_ms(),
+                {"plugin": _plugin_from_row(row)},
+            )
+        result = self.plugin_record(plugin_id)
+        assert result is not None
+        return result
+
+    def remove_plugin_record(self, plugin_id: str) -> dict[str, object]:
+        current = self.plugin_record(plugin_id)
+        if current is None:
+            raise ResourceNotFoundError("plugin not found")
+        if current["status"] == "removed":
+            return current
+        with self.lock, self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE plugins
+                SET enabled = 0, status = 'removed', updated_at = ?
+                WHERE id = ? AND status = 'installed'
+                """,
+                (_now_ms(), plugin_id),
+            )
+            row = connection.execute(
+                "SELECT * FROM plugins WHERE id = ?", (plugin_id,)
+            ).fetchone()
+            append_event(
+                connection,
+                EventType.PLUGIN_STATE_CHANGED,
+                _now_ms(),
+                {"plugin": _plugin_from_row(row)},
+            )
+        result = self.plugin_record(plugin_id)
+        assert result is not None
+        return result
+
+    def plugin_referenced_by_nonterminal_run(
+        self, plugin_id: str, content_hash: str
+    ) -> bool:
+        terminal = {"succeeded", "failed", "stopped", "canceled", "interrupted"}
+        with self.lock:
+            rows = self._connection().execute(
+                "SELECT status, extension_snapshot_json FROM runs"
+            ).fetchall()
+        for row in rows:
+            if row["status"] in terminal:
+                continue
+            snapshot = _load_json_object(row["extension_snapshot_json"])
+            plugins = snapshot.get("plugins") if snapshot else None
+            if not isinstance(plugins, list):
+                continue
+            if any(
+                isinstance(plugin, dict)
+                and plugin.get("id") == plugin_id
+                and plugin.get("contentHash") == content_hash
+                for plugin in plugins
+            ):
+                return True
+        return False
+
+    def mcp_server_state(
+        self, plugin_id: str, server_id: str
+    ) -> dict[str, object]:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT consented, error_code, updated_at
+                FROM mcp_server_states WHERE plugin_id = ? AND server_id = ?
+                """,
+                (plugin_id, server_id),
+            ).fetchone()
+        return {
+            "consented": bool(row["consented"]) if row is not None else False,
+            "errorCode": row["error_code"] if row is not None else None,
+            "updatedAt": row["updated_at"] if row is not None else 0,
+        }
+
+    def set_mcp_server_state(
+        self,
+        server: dict[str, object],
+        *,
+        consented: bool,
+        error_code: str | None = None,
+    ) -> dict[str, object]:
+        now = _now_ms()
+        projection = {
+            **server,
+            "consented": consented,
+            "available": bool(server["declaredEnabled"]) and consented and error_code is None,
+            "errorCode": error_code,
+            "updatedAt": now,
+        }
+        if error_code is None:
+            projection.pop("errorCode")
+        with self.lock, self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO mcp_server_states (
+                    plugin_id, server_id, consented, error_code, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(plugin_id, server_id) DO UPDATE SET
+                    consented = excluded.consented,
+                    error_code = excluded.error_code,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    server["pluginId"], server["serverId"], int(consented),
+                    error_code, now,
+                ),
+            )
+            append_event(
+                connection,
+                EventType.MCP_SERVER_STATE_CHANGED,
+                now,
+                {"server": projection},
+            )
+        return projection
+
+    def activated_tools(self, run_id: str) -> tuple[str, ...]:
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT activated_tools_json FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        if row is None:
+            raise ResourceNotFoundError("run not found")
+        try:
+            values = json.loads(row["activated_tools_json"])
+        except (TypeError, json.JSONDecodeError):
+            raise StorageError("activated_tools_invalid") from None
+        if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+            raise StorageError("activated_tools_invalid")
+        return tuple(values)
+
+    def activate_tools(self, run_id: str, names: tuple[str, ...]) -> tuple[str, ...]:
+        current = set(self.activated_tools(run_id))
+        current.update(names)
+        ordered = tuple(sorted(current, key=lambda value: value.encode("utf-8")))[:32]
+        encoded = json.dumps(ordered, ensure_ascii=False, separators=(",", ":"))
+        with self.lock, self._connection() as connection:
+            updated = connection.execute(
+                "UPDATE runs SET activated_tools_json = ?, updated_at = ? WHERE id = ?",
+                (encoded, _now_ms(), run_id),
+            )
+            if updated.rowcount != 1:
+                raise ResourceNotFoundError("run not found")
+        return ordered
+
+    def record_mcp_tool_list_changed(self, plugin_id: str, server_id: str) -> None:
+        with self.lock, self._connection() as connection:
+            append_event(
+                connection,
+                EventType.MCP_TOOL_LIST_CHANGED,
+                _now_ms(),
+                {"plugin_id": plugin_id, "server_id": server_id},
+            )
+
+    def extension_event_waterline(self) -> int:
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT COALESCE(MAX(id), 0) FROM events WHERE session_id IS NULL"
+            ).fetchone()
+        return int(row[0])
+
+    def list_extension_events(
+        self, *, after_event_id: int = 0, limit: int = 200
+    ) -> dict[str, object]:
+        with self.lock:
+            rows = self._connection().execute(
+                """
+                SELECT * FROM events
+                WHERE session_id IS NULL AND id > ?
+                ORDER BY id ASC LIMIT ?
+                """,
+                (after_event_id, limit + 1),
+            ).fetchall()
+            waterline = self.extension_event_waterline()
+        events = [event_from_row(row) for row in rows[:limit]]
+        return {
+            "items": [event for event in events if event is not None],
+            "hasMore": len(rows) > limit,
+            "throughEventId": waterline,
+        }
+
     def read_item(self, item_id: str) -> dict[str, object]:
         with self.lock:
             row = self._connection().execute(
@@ -1109,7 +1405,21 @@ class SessionStore:
             owner=row["workspace_uid"],
         )
 
-    def increment_model_step(self, run_id: str) -> int:
+    def increment_model_step(
+        self,
+        run_id: str,
+        *,
+        tool_snapshot: dict[str, object] | None = None,
+    ) -> int:
+        tool_snapshot_json = (
+            _bounded_canonical_json(tool_snapshot, code="tool_snapshot_invalid")
+            if tool_snapshot is not None else None
+        )
+        tool_set_hash = tool_snapshot.get("toolSetHash") if tool_snapshot else None
+        if tool_set_hash is not None and (
+            not isinstance(tool_set_hash, str) or len(tool_set_hash) != 64
+        ):
+            raise ValueError("tool_snapshot_invalid")
         with self.lock, self._connection() as connection:
             run = connection.execute(
                 "SELECT * FROM runs WHERE id = ? AND status = 'running'", (run_id,)
@@ -1158,12 +1468,14 @@ class SessionStore:
                 """
                 INSERT INTO steps (
                     id, run_id, segment_id, ordinal, status,
-                    observed_reconciliation_epoch, created_at
-                ) VALUES (?, ?, ?, ?, 'running', ?, ?)
+                    observed_reconciliation_epoch, tool_snapshot_json,
+                    tool_set_hash, created_at
+                ) VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?)
                 """,
                 (
                     step_id, run_id, segment["id"], step_ordinal,
-                    run["reconciliation_epoch"], now,
+                    run["reconciliation_epoch"], tool_snapshot_json,
+                    tool_set_hash, now,
                 ),
             )
             connection.execute(
@@ -1192,6 +1504,24 @@ class SessionStore:
                 "SELECT model_step_count FROM runs WHERE id = ?", (run_id,)
             ).fetchone()
         return row["model_step_count"]
+
+    def read_step_tool_snapshot(
+        self, run_id: str, model_step_index: int
+    ) -> dict[str, object]:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT tool_snapshot_json FROM steps
+                WHERE run_id = ? ORDER BY creation_seq LIMIT 1 OFFSET ?
+                """,
+                (run_id, model_step_index - 1),
+            ).fetchone()
+        if row is None or row["tool_snapshot_json"] is None:
+            raise ResourceNotFoundError("tool snapshot not found")
+        value = json.loads(row["tool_snapshot_json"])
+        if not isinstance(value, dict):
+            raise StorageError("tool_snapshot_invalid")
+        return value
 
     def add_effective_time(self, run_id: str, elapsed_ms: int) -> None:
         if elapsed_ms <= 0:
@@ -1382,7 +1712,16 @@ class SessionStore:
         provider_call_id: str,
         tool_name: str,
         arguments_json: str,
+        *,
+        provenance: dict[str, object] | None = None,
+        tool_set_hash: str | None = None,
     ) -> dict[str, object]:
+        provenance_json = (
+            _bounded_canonical_json(provenance, code="tool_provenance_invalid")
+            if provenance is not None else None
+        )
+        if tool_set_hash is not None and len(tool_set_hash) != 64:
+            raise ValueError("tool_set_hash_invalid")
         item_id = str(uuid.uuid4())
         tool_call_id = str(uuid.uuid4())
         now = _now_ms()
@@ -1422,8 +1761,9 @@ class SessionStore:
                 """
                 INSERT INTO tool_calls (
                     id, item_id, model_step_index, batch_order, provider_call_id,
-                    tool_name, status, arguments_json, started_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?)
+                    tool_name, status, arguments_json, provenance_json,
+                    tool_set_hash, started_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)
                 """,
                 (
                     tool_call_id,
@@ -1433,6 +1773,8 @@ class SessionStore:
                     provider_call_id,
                     tool_name,
                     arguments_json,
+                    provenance_json,
+                    tool_set_hash,
                     now,
                 ),
             )
@@ -2288,6 +2630,20 @@ class SessionStore:
             raise OperationInProgressError("operation is still in progress")
         return json.loads(row["result_json"])
 
+    def record_operation_result(
+        self,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+        result: dict[str, object],
+    ) -> dict[str, object]:
+        return self._write(
+            lambda _connection: result,
+            operation_id=operation_id,
+            operation_scope=scope,
+            operation_request=request,
+        )
+
     def _workspace_overlaps_data(self, workspace: Path) -> bool:
         data_directory = self.data_directory
         if data_directory is None:
@@ -2528,6 +2884,17 @@ def _migrate_v3_to_v4(connection: sqlite3.Connection) -> None:
         raise StorageError("migration_failed") from None
 
 
+def _migrate_v4_to_v5(connection: sqlite3.Connection) -> None:
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        _ensure_phase_three_columns(connection)
+        connection.execute("PRAGMA user_version = 5")
+        connection.commit()
+    except sqlite3.Error:
+        connection.rollback()
+        raise StorageError("migration_failed") from None
+
+
 def _prepare_private_directory(path: Path) -> None:
     if path.is_symlink():
         raise StorageError("data directory must not be a symlink")
@@ -2591,6 +2958,39 @@ def _ensure_phase_two_columns(connection: sqlite3.Connection) -> None:
         )
 
 
+def _ensure_phase_three_columns(connection: sqlite3.Connection) -> None:
+    tables = _table_names(connection)
+    run_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(runs)").fetchall()
+    }
+    if "runs" in tables and "extension_snapshot_json" not in run_columns:
+        connection.execute(
+            """
+            ALTER TABLE runs ADD COLUMN extension_snapshot_json TEXT NOT NULL
+            DEFAULT '{"extensionContractVersion":1,"mcpConfigHash":"0000000000000000000000000000000000000000000000000000000000000000","plugins":[],"schemaVersion":1,"skillCatalogHash":"0000000000000000000000000000000000000000000000000000000000000000"}'
+            """
+        )
+    if "runs" in tables and "activated_tools_json" not in run_columns:
+        connection.execute(
+            "ALTER TABLE runs ADD COLUMN activated_tools_json TEXT NOT NULL DEFAULT '[]'"
+        )
+    step_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(steps)").fetchall()
+    }
+    if "steps" in tables and "tool_snapshot_json" not in step_columns:
+        connection.execute("ALTER TABLE steps ADD COLUMN tool_snapshot_json TEXT")
+    if "steps" in tables and "tool_set_hash" not in step_columns:
+        connection.execute("ALTER TABLE steps ADD COLUMN tool_set_hash TEXT")
+    tool_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(tool_calls)").fetchall()
+    }
+    if "tool_calls" in tables and "provenance_json" not in tool_columns:
+        connection.execute("ALTER TABLE tool_calls ADD COLUMN provenance_json TEXT")
+    if "tool_calls" in tables and "tool_set_hash" not in tool_columns:
+        connection.execute("ALTER TABLE tool_calls ADD COLUMN tool_set_hash TEXT")
+
+
 def _backfill_session_identities(connection: sqlite3.Connection) -> None:
     rows = connection.execute(
         """
@@ -2640,6 +3040,21 @@ def _session_from_row(row: sqlite3.Row) -> dict[str, object]:
     }).to_json_value()
 
 
+def _plugin_from_row(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "schemaVersion": 1,
+        "id": row["id"],
+        "name": row["name"],
+        "version": row["version"],
+        "description": row["description"],
+        "contentHash": row["content_hash"],
+        "enabled": bool(row["enabled"]),
+        "status": row["status"],
+        "installedAt": row["installed_at"],
+        "updatedAt": row["updated_at"],
+    }
+
+
 def _json_bytes(value: object) -> int:
     return len(
         json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -2651,6 +3066,19 @@ def _canonical_hash(value: object) -> str:
         value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _bounded_canonical_json(value: object, *, code: str) -> str:
+    try:
+        encoded = json.dumps(
+            value, ensure_ascii=False, separators=(",", ":"), sort_keys=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        raise ValueError(code) from None
+    if not isinstance(value, dict) or len(encoded) > 256 * 1024:
+        raise ValueError(code)
+    return encoded.decode("utf-8")
 
 
 def _load_json_object(value: object) -> dict[str, object] | None:
@@ -2762,6 +3190,17 @@ def _run_from_row(
         run["stopReason"] = row["stop_reason"]
     if "side_effects_may_exist" in row.keys():
         run["sideEffectsMayExist"] = bool(row["side_effects_may_exist"])
+    if (
+        "extension_snapshot_json" in row.keys()
+        and row["extension_snapshot_json"] is not None
+    ):
+        snapshot = json.loads(row["extension_snapshot_json"])
+        if isinstance(snapshot, dict):
+            run["extensionSnapshot"] = snapshot
+    if "activated_tools_json" in row.keys() and row["activated_tools_json"] is not None:
+        activated = json.loads(row["activated_tools_json"])
+        if isinstance(activated, list):
+            run["activatedTools"] = activated
     return RunDto.model_validate(run).to_json_value()
 
 
@@ -2811,6 +3250,12 @@ def _item_from_row(
             tool_call["approvalDiff"] = tool_row["approval_diff"]
         if tool_row["base_sha256"] is not None:
             tool_call["baseSha256"] = tool_row["base_sha256"]
+        if "provenance_json" in tool_row.keys() and tool_row["provenance_json"]:
+            provenance = json.loads(tool_row["provenance_json"])
+            if isinstance(provenance, dict):
+                tool_call["provenance"] = provenance
+        if "tool_set_hash" in tool_row.keys() and tool_row["tool_set_hash"]:
+            tool_call["toolSetHash"] = tool_row["tool_set_hash"]
         item["toolCall"] = tool_call
     return ItemDto.model_validate(item).to_json_value()
 

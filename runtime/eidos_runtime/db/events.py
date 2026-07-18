@@ -3,9 +3,16 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 
-from eidos_runtime.protocol.schemas import ClosedModel, EventEnvelopeDto, RunDto, SessionDto
+from eidos_runtime.protocol.schemas import (
+    ClosedModel,
+    EventEnvelopeDto,
+    PluginRecordDto,
+    McpServerRecordDto,
+    RunDto,
+    SessionDto,
+)
 from eidos_runtime.sandbox.sensitive import default_scanner
 from eidos_runtime.runtime.state_machine import EventType, RunStatus
 
@@ -48,6 +55,19 @@ class ReconciliationEventPayload(ClosedModel):
     reason: str
 
 
+class PluginEventPayload(ClosedModel):
+    plugin: PluginRecordDto
+
+
+class McpServerEventPayload(ClosedModel):
+    server: McpServerRecordDto
+
+
+class McpToolListChangedPayload(ClosedModel):
+    plugin_id: str = Field(alias="pluginId")
+    server_id: str = Field(alias="serverId")
+
+
 EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.SESSION_CREATED: SessionCreatedPayload,
     EventType.SESSION_TITLE_UPDATED: SessionTitleUpdatedPayload,
@@ -60,6 +80,10 @@ EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.TOOL_CALL_COMPLETED: ToolCallEventPayload,
     EventType.RECONCILIATION_REQUIRED: ReconciliationEventPayload,
     EventType.RECONCILIATION_CLEARED: ReconciliationEventPayload,
+    EventType.PLUGIN_IMPORTED: PluginEventPayload,
+    EventType.PLUGIN_STATE_CHANGED: PluginEventPayload,
+    EventType.MCP_SERVER_STATE_CHANGED: McpServerEventPayload,
+    EventType.MCP_TOOL_LIST_CHANGED: McpToolListChangedPayload,
 }
 
 

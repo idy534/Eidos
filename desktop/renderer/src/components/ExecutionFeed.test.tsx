@@ -41,8 +41,13 @@ test("folds tool execution before the final answer and omits the success pill", 
       toolCall: {
         id: "tool-1",
         itemId: "shell",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "provider-1",
         toolName: "run_shell",
         status: "completed",
+        startedAt: 1_000,
+        completedAt: 66_000,
         argumentsJson: JSON.stringify({ command: "git diff --check" }),
         resultJson: JSON.stringify({
           outcome: "success",
@@ -100,4 +105,36 @@ test("shows a thinking indicator before the first model item", () => {
 
   assert.match(html, /class="thinking-indicator"/);
   assert.match(html, /正在思考/);
+});
+
+test("shows safe MCP provenance and duration without internal diagnostics", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({ id: "user", ordinal: 1, kind: "user_message", content: "查询" }),
+        item({
+          id: "mcp", ordinal: 2, kind: "tool_call",
+          toolCall: {
+            id: "tool-mcp", itemId: "mcp", modelStepIndex: 1, batchOrder: 0,
+            providerCallId: "provider-mcp", toolName: "mcp__fixture__echo",
+            status: "completed", argumentsJson: JSON.stringify({ message: "hello" }),
+            resultJson: JSON.stringify({ outcome: "success", code: "ok", summary: "MCP tool completed", data: {} }),
+            provenance: {
+              kind: "mcp", sourceId: "demo:fixture", sourceVersion: "1.0.0",
+              contentHash: "a".repeat(64), pluginId: "demo", serverId: "fixture",
+            },
+            startedAt: 1_000, completedAt: 1_250,
+          },
+        }),
+      ]}
+      runs={[run]}
+      approvals={[]}
+      disabled={false}
+      onApproval={() => {}}
+    />,
+  );
+
+  assert.match(html, /已运行 mcp__fixture__echo/);
+  assert.match(html, /Plugin demo · Server fixture · 250ms/);
+  assert.doesNotMatch(html, /stderr|internal path|SECRET_VALUE/);
 });

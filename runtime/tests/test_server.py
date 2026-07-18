@@ -344,7 +344,7 @@ class RuntimeProtocolTests(unittest.TestCase):
         self.assertEqual(stdout_messages[0]["jsonrpc"], "2.0")
         self.assertEqual(stdout_messages[0]["id"], "client-1")
         self.assertEqual(stdout_messages[0]["result"]["protocolVersion"], 1)
-        self.assertEqual(stdout_messages[0]["result"]["runtimeVersion"], "0.2.0")
+        self.assertEqual(stdout_messages[0]["result"]["runtimeVersion"], "0.3.0")
         self.assertIsInstance(
             stdout_messages[0]["result"]["capabilities"]["runShell"], bool
         )

@@ -166,16 +166,18 @@ function ProcessItem({
             <p className="feed-label">需要你的批准</p>
             <h3 id={`approval-${approval.id}`}>{approval.summary}</h3>
           </div>
-          <span>{approval.kind === "file_change" ? "文件变更" : "Shell 命令"}</span>
+          <span>{approval.kind === "file_change" ? "文件变更" : approval.kind === "external_tool" ? "MCP 工具" : "Shell 命令"}</span>
         </div>
         <pre className="diff-view">
           {approval.kind === "file_change"
             ? approval.diff
-            : `$ ${approval.command}\n\ncwd: ${approval.cwd}\nnetwork: disabled\ntimeout: ${approval.timeoutSeconds}s`}
+            : approval.kind === "external_tool"
+              ? `${approval.toolName}\n\nPlugin: ${approval.provenance.pluginId ?? "unknown"}\nServer: ${approval.provenance.serverId ?? "unknown"}\nprofile: ${approval.permissionProfile}\ntimeout: ${approval.timeoutSeconds}s\nenv names: ${approval.envNames.join(", ") || "none"}\narguments: ${JSON.stringify(approval.arguments, null, 2)}`
+              : `$ ${approval.command}\n\ncwd: ${approval.cwd}\nnetwork: disabled\ntimeout: ${approval.timeoutSeconds}s`}
         </pre>
         <div className="approval-actions">
           <button className="button-secondary" disabled={disabled || !run.allowedActions?.includes("reject")} onClick={() => onApproval(approval, "reject")}>拒绝</button>
-          <button disabled={disabled || !run.allowedActions?.includes("approve")} onClick={() => onApproval(approval, "approve")}>{approval.kind === "file_change" ? "批准并写入" : "批准并运行"}</button>
+          <button disabled={disabled || !run.allowedActions?.includes("approve")} onClick={() => onApproval(approval, "approve")}>{approval.kind === "file_change" ? "批准并写入" : approval.kind === "external_tool" ? "批准调用" : "批准并运行"}</button>
         </div>
       </article>
     );
@@ -232,7 +234,15 @@ function ToolItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
         <span className="tool-icon" aria-hidden="true">{toolIcon(toolCall.toolName)}</span>
         <span>{toolSummary(toolCall, item.status)}</span>
       </summary>
-      <div className="tool-body"><p>{safeToolSummary(toolCall.resultJson, item.status)}</p></div>
+      <div className="tool-body">
+        <p>{safeToolSummary(toolCall.resultJson, item.status)}</p>
+        {toolCall.provenance?.kind === "mcp" && (
+          <p className="tool-provenance">
+            Plugin {toolCall.provenance.pluginId} · Server {toolCall.provenance.serverId}
+            {toolCall.completedAt && ` · ${Math.max(0, toolCall.completedAt - toolCall.startedAt)}ms`}
+          </p>
+        )}
+      </div>
     </details>
   );
 }

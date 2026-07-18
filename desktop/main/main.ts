@@ -212,6 +212,49 @@ ipcMain.handle("model:configure", (_event, apiKey: unknown) => {
   }
   return clientOrThrow().configureModel(apiKey);
 });
+ipcMain.handle("plugin:list", () => clientOrThrow().listPlugins());
+ipcMain.handle("plugin:import", async () => {
+  const result = await dialog.showOpenDialog({
+    title: "导入本地 Eidos Plugin",
+    properties: ["openDirectory"],
+  });
+  const sourcePath = result.canceled ? undefined : result.filePaths[0];
+  return sourcePath ? clientOrThrow().importPlugin(sourcePath) : null;
+});
+ipcMain.handle("plugin:set-enabled", (_event, pluginId: unknown, enabled: unknown) => {
+  if (typeof pluginId !== "string" || typeof enabled !== "boolean") {
+    throw new Error("Plugin 参数无效。");
+  }
+  return clientOrThrow().setPluginEnabled(pluginId, enabled);
+});
+ipcMain.handle("plugin:remove", (_event, pluginId: unknown) => {
+  if (typeof pluginId !== "string") {
+    throw new Error("Plugin 参数无效。");
+  }
+  return clientOrThrow().removePlugin(pluginId);
+});
+ipcMain.handle("skill:list", () => clientOrThrow().listSkills());
+ipcMain.handle("mcp:list", () => clientOrThrow().listMcpServers());
+ipcMain.handle("extension:read", () => clientOrThrow().readExtensions());
+ipcMain.handle("extension:read-events", (_event, afterEventId: unknown) => {
+  if (typeof afterEventId !== "number") {
+    throw new Error("Extension Event 参数无效。");
+  }
+  return clientOrThrow().readExtensionEvents(afterEventId);
+});
+ipcMain.handle(
+  "mcp:set-enabled",
+  (_event, pluginId: unknown, serverId: unknown, enabled: unknown) => {
+    if (
+      typeof pluginId !== "string"
+      || typeof serverId !== "string"
+      || typeof enabled !== "boolean"
+    ) {
+      throw new Error("MCP Server 参数无效。");
+    }
+    return clientOrThrow().setMcpEnabled(pluginId, serverId, enabled);
+  },
+);
 ipcMain.handle("approval:list", () =>
   Array.from(pendingApprovals.values(), ({ request }) => request),
 );

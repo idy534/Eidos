@@ -266,3 +266,9 @@ Execution Feed 的工具结果状态只来自 immutable base envelope；Renderer
 - `sensitive_scan_limit_exceeded`、`sensitive_scan_incomplete` 和 `sensitive_scan_failed` 必须区分于文件本身敏感，不得统一显示为“权限拒绝”。
 - Reducer 必须接受保留 event id/type 的 `content_unavailable` 安全载荷，继续推进回放水位而不尝试渲染原 payload。
 - Redaction Service unavailable 时禁用新 Run、用户补充、工具详情和 Artifact 内容读取，只显示诊断和安全恢复提示。
+
+## 第三期 Settings 与扩展 Feed
+
+Settings 增加 Plugins、Skills、MCP Servers 三个受控区域：系统目录选择后调用 `plugin/import`，支持启停/移除、Skill metadata 与 MCP 状态展示，不出现市场、URL 安装或命令编辑器。
+
+启用 MCP Server 的 consent 必须不截断展示 executable、逐项 argv、Plugin ID/version/hash、env names 与 permission profile；env value 永不进入 Renderer。Execution Feed 展示 Plugin、Server、映射后工具名、审批、状态和耗时，只消费闭合 Tool provenance/ToolResult/Event，不渲染内部安装路径、原始 stderr 或协议异常正文。

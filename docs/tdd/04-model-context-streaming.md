@@ -418,3 +418,11 @@ Finalization 使用原 Run 模型快照，但：
 - Run 创建时把当前版本写入快照；每个扫描结果记录实际版本。
 - 应用升级重启后，queued/waiting Run 使用新版本继续，并在恢复前追加 `redaction_ruleset_changed` Event。安全规则不因 Run 的旧快照而降级。
 - MVP 不远程下载、不允许 Workspace/用户覆盖，也不对旧数据执行升级后的全量追溯重扫；历史数据安全迁移属于 P1。
+
+## 11. 第三期 Step 能力与上下文预算
+
+ModelClient/ModelRunner 每次调用显式接收当前 Step 的 model-visible tool definitions；Provider Adapter 不读取全局工具列表。一个逻辑 Step 的所有 ModelAttempt 复用相同 canonical definitions 与 `tool_set_hash`。
+
+工具按稳定名称排序并分为 direct/deferred。八个内置工具、`skill_read`、`skill_read_resource` 与 `tool_search` 始终 direct；外部工具在数量、单 schema bytes、总 schema bytes 与模型输入预算内进入 direct，其余仅保留有界 catalog metadata。`tool_search` 的命中写入 Run activated set，并从下一 Step 起生效。
+
+Context Builder 按实际 UTF-8 bytes 分别统计 system/safety instructions、用户与历史事实、Skill catalog、显式加载的 Skill 正文、Tool schema、ToolResult projection。超限时先按确定顺序裁 deferred catalog/结果投影；安全指令、当前用户输入和已冻结 direct tool contract 不可静默裁除。

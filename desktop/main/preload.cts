@@ -44,6 +44,19 @@ contextBridge.exposeInMainWorld("eidosRuntime", {
   listModels: (): Promise<unknown> => ipcRenderer.invoke("model:list"),
   configureModel: (apiKey: string): Promise<unknown> =>
     ipcRenderer.invoke("model:configure", apiKey),
+  listPlugins: (): Promise<unknown> => ipcRenderer.invoke("plugin:list"),
+  importPlugin: (): Promise<unknown> => ipcRenderer.invoke("plugin:import"),
+  setPluginEnabled: (pluginId: string, enabled: boolean): Promise<unknown> =>
+    ipcRenderer.invoke("plugin:set-enabled", pluginId, enabled),
+  removePlugin: (pluginId: string): Promise<unknown> =>
+    ipcRenderer.invoke("plugin:remove", pluginId),
+  listSkills: (): Promise<unknown> => ipcRenderer.invoke("skill:list"),
+  listMcpServers: (): Promise<unknown> => ipcRenderer.invoke("mcp:list"),
+  setMcpEnabled: (pluginId: string, serverId: string, enabled: boolean): Promise<unknown> =>
+    ipcRenderer.invoke("mcp:set-enabled", pluginId, serverId, enabled),
+  readExtensions: (): Promise<unknown> => ipcRenderer.invoke("extension:read"),
+  readExtensionEvents: (afterEventId: number): Promise<unknown> =>
+    ipcRenderer.invoke("extension:read-events", afterEventId),
   listPendingApprovals: (): Promise<unknown> => ipcRenderer.invoke("approval:list"),
   onNotification: (callback: (notification: unknown) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, notification: unknown) => {

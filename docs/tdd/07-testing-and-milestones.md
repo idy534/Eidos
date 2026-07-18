@@ -4,7 +4,7 @@
 
 范围说明：本文保留目标态测试设计草案与风险里程碑。第一期执行顺序和退出标准以 [MVP Lite](../mvp-lite.md) 的 L0-L3 为准。
 
-第二期按 [第二期实施范围清单](../mvp-phase-2.md) 的 P2-00 至 P2-07 顺序推进。每一个清单项必须至少新增一个能在隔离数据根运行的自动化验证；不得以手工演示替代状态机、存储或安全边界回归。
+第二期按 [第二期实施范围清单](../mvp-phase-2.md) 的 P2-00 至 P2-07 顺序推进。第三期按 [第三期实施范围清单](../mvp-phase-3.md) 的 P3-00 至 P3-08 顺序推进。每一个清单项必须至少新增一个能在隔离数据根运行的自动化验证；不得以手工演示替代状态机、存储或安全边界回归。
 
 ## 1. 测试原则
 
@@ -433,5 +433,18 @@ M0 未通过前，不进入 Agent Shell 主链路实现。
 ## 8. 文档完成标准
 
 - PRD 每个进入阶段清单的要求在 TDD 和测试中有对应落点。
-- Q1-Q160 决策不得出现相反规则。
+- Q1-Q180 决策不得出现相反规则。
 - 实现开始前冻结对应阶段的 protocol schema、状态 enum 和 Tool schema。
+
+## 9. 第三期测试矩阵
+
+- `test_tool_registry.py`：entry 唯一事实源、schema dialect、provenance、builtin 回归、direct/deferred/hash。
+- `test_extension_storage.py`：revision migration、Plugin lifecycle、Run/Step snapshots、ToolCall provenance、重启读取与历史保留。
+- `test_plugins.py` / `test_skills.py`：closed manifest、owner/symlink/path/容量/原子导入、Skill UTF-8 只读边界与零执行。
+- `test_mcp.py`：官方 SDK stdio initialize/list pagination/call/isError/list_changed/shutdown、非法 schema、超限、stdout 污染、crash/timeout/cancel。
+- `test_mcp_sandbox.py`：原生 macOS connector/workspace_read 的文件、Home、状态目录、网络和子进程权限矩阵。
+- protocol fixture、Renderer state、RuntimeClient/sidecar：closed DTO、Settings、consent、Feed provenance、snapshot+waterline 与纵向闭环。
+
+发布门槛为 Runtime 全量、`pnpm test`、production build、`git diff --check`，以及原生 macOS MCP Seatbelt、进程组清理和 Electron smoke；受限容器不能替代原生安全结论。
+
+第三期已于 2026-07-18 通过发布门槛：Runtime 170 项、Renderer 15 项、Main/sidecar 15 项全部通过；production build、原生 MCP Seatbelt 权限矩阵、官方 SDK fixture、进程组子进程清理、超时/取消/崩溃注入和重启读取均通过。

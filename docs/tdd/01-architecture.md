@@ -189,3 +189,22 @@ eidos_runtime/runtime/
 - `model_runner.py`、`tool_dispatcher.py` 和 `approval.py` 只返回闭合结果或领域事件，不能自行把任意字典写入 SQLite、Event 或 Renderer。
 - `events.py` 是 Runtime 内部事件 seam，不改变现有 stdio notification 通道；通知必须由已提交的事实投影生成。
 - 先迁移 `RuntimeLoop` 的职责与测试，再删除旧模块；不得保留两个可独立运行的 Loop。
+
+## 8. 第三期 Extension Catalog 与 Tool Registry
+
+第三期在既有 RuntimeEngine 内增加两个深模块，不增加第二条 Agent Loop：
+
+```text
+extensions/catalog
+  input: installed Plugin facts + enabled state + Run snapshot
+  output: immutable Plugin/Skill/MCP catalog snapshot
+
+tools/registry
+  input: builtin adapters + catalog snapshot + current MCP discovery
+  output: immutable ToolRegistrySnapshot and quarantined external entries
+```
+
+- Plugin import、Skill 读取和 MCP 连接都在 Runtime 进程；Renderer/Main 不解析 manifest 或重建工具定义。
+- Registry entry 同时持有闭合 ToolSpec、执行 Adapter 与 provenance；模型 schema、参数校验、side effect、审批、timeout、batch 和执行不得来自另一份按名称分支。
+- 内置 entry 不合法使 Runtime unavailable；单个 Plugin/Skill/MCP entry 不合法只隔离该 entry/source。
+- Run 创建时冻结 extension snapshot；Step 在 Provider 请求前冻结 tool snapshot；正在进行的 Step/Attempt 不响应全局 enable/list_changed。

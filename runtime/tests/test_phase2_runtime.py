@@ -159,7 +159,10 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
 
     def test_stream_failure_after_first_delta_keeps_incomplete_progress_and_pauses(self) -> None:
         class InterruptedModel:
-            def complete(self, _context, _cancel, on_text_delta, allow_tools=True):
+            def complete(
+                self, _context, _cancel, on_text_delta,
+                allow_tools=True, tool_definitions=(),
+            ):
                 on_text_delta("safe progress")
                 raise OSError("fixture")
 

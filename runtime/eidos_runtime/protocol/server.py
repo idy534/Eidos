@@ -44,6 +44,11 @@ from eidos_runtime.db.storage import (
     StorageError,
     WorkspaceBoundaryError,
 )
+from eidos_runtime.extensions.plugins import (
+    PluginCatalog,
+    PluginImportError,
+)
+from eidos_runtime.extensions.skills import SkillCatalog, SkillReadError
 
 
 MAX_MESSAGE_BYTES = 1024 * 1024
@@ -174,6 +179,7 @@ class RuntimeServer:
         self.pending_approvals: dict[str, PendingApproval] = {}
         self.shell_available = False
         self.sensitive: SensitiveScanner | None = None
+        self.plugins: PluginCatalog | None = None
 
     def handle(self, message: object) -> None:
         if not isinstance(message, dict):
@@ -254,6 +260,36 @@ class RuntimeServer:
         if method == "model/configure":
             self.configure_model(request_id, params)
             return
+        if method == "plugin/list":
+            self.list_plugins(request_id, params)
+            return
+        if method == "plugin/import":
+            self.import_plugin(request_id, params)
+            return
+        if method == "plugin/setEnabled":
+            self.set_plugin_enabled(request_id, params)
+            return
+        if method == "plugin/remove":
+            self.remove_plugin(request_id, params)
+            return
+        if method == "skill/list":
+            self.list_skills(request_id, params)
+            return
+        if method == "skill/read":
+            self.read_skill(request_id, params)
+            return
+        if method == "mcp/list":
+            self.list_mcp_servers(request_id, params)
+            return
+        if method == "mcp/setEnabled":
+            self.set_mcp_enabled(request_id, params)
+            return
+        if method == "extension/read":
+            self.read_extensions(request_id, params)
+            return
+        if method == "extension/readEvents":
+            self.read_extension_events(request_id, params)
+            return
 
         self.send(protocol_error(request_id, -32601, "Method not found"))
 
@@ -272,6 +308,7 @@ class RuntimeServer:
             self.store.initialize()
             if self.store.health_state == "ready":
                 self.sensitive = SensitiveScanner()
+                self.plugins = PluginCatalog(self.store)
                 self.model_config.initialize()
                 configured_key = self.model_config.api_key()
                 if self.model is None and configured_key is not None:
@@ -517,6 +554,10 @@ class RuntimeServer:
             return
         model_id = existing_model_id or requested_model_id or DEFAULT_MODEL_ID
         run_model = self._model_for(model_id)
+        extension_snapshot = (
+            self.plugins.extension_snapshot()
+            if self.plugins is not None else None
+        )
         operation_id = params.get("operationId")
         if isinstance(operation_id, str):
             try:
@@ -527,6 +568,7 @@ class RuntimeServer:
                         "sessionId": params["sessionId"],
                         "userInput": user_input,
                         "modelId": model_id,
+                        "extensionSnapshot": extension_snapshot,
                     },
                 )
             except OperationConflictError:
@@ -557,6 +599,7 @@ class RuntimeServer:
                     operation_id=params.get("operationId"),
                     session_title=session_title,
                     model_id=model_id,
+                    extension_snapshot=extension_snapshot,
                 )
             except ResourceNotFoundError:
                 self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
@@ -728,6 +771,269 @@ class RuntimeServer:
                 return
         self._schedule_next()
         self.send(response(request_id, self.model_config.public_status()))
+
+    def list_plugins(self, request_id: str, params: object) -> None:
+        if not isinstance(params, dict) or params:
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        if self.plugins is None:
+            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
+            return
+        self.send(response(request_id, {"plugins": self.plugins.list_plugins()}))
+
+    def import_plugin(self, request_id: str, params: object) -> None:
+        if (
+            not isinstance(params, dict)
+            or set(params) - {"sourcePath", "operationId"}
+            or "sourcePath" not in params
+            or not isinstance(params.get("sourcePath"), str)
+            or not 1 <= len(params["sourcePath"].encode("utf-8")) <= 4096
+            or not Path(params["sourcePath"]).is_absolute()
+            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
+        ):
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        if self.plugins is None:
+            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
+            return
+        operation_request = {"sourcePath": params["sourcePath"]}
+        if self._extension_replay(
+            request_id, params.get("operationId"), "plugin/import", operation_request
+        ):
+            return
+        try:
+            plugin = self.plugins.import_directory(Path(params["sourcePath"]))
+        except PluginImportError as error:
+            code = {
+                "plugin_version_conflict": "PLUGIN_VERSION_CONFLICT",
+                "plugin_id_conflict": "PLUGIN_ID_CONFLICT",
+            }.get(str(error), "PLUGIN_IMPORT_REJECTED")
+            self.send(business_error(request_id, code))
+            return
+        except (OSError, StorageError):
+            self.send(business_error(request_id, "PLUGIN_IMPORT_FAILED"))
+            return
+        plugin = self._record_extension_operation(
+            params.get("operationId"), "plugin/import", operation_request, plugin
+        )
+        self.send(response(request_id, plugin))
+
+    def set_plugin_enabled(self, request_id: str, params: object) -> None:
+        if (
+            not isinstance(params, dict)
+            or set(params) - {"pluginId", "enabled", "operationId"}
+            or not {"pluginId", "enabled"} <= set(params)
+            or not isinstance(params.get("pluginId"), str)
+            or not isinstance(params.get("enabled"), bool)
+            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
+        ):
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        if self.plugins is None:
+            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
+            return
+        operation_request = {"pluginId": params["pluginId"], "enabled": params["enabled"]}
+        if self._extension_replay(
+            request_id, params.get("operationId"), "plugin/setEnabled", operation_request
+        ):
+            return
+        try:
+            plugin = self.plugins.set_enabled(params["pluginId"], params["enabled"])
+        except ResourceNotFoundError:
+            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
+            return
+        plugin = self._record_extension_operation(
+            params.get("operationId"), "plugin/setEnabled", operation_request, plugin
+        )
+        self.send(response(request_id, plugin))
+
+    def remove_plugin(self, request_id: str, params: object) -> None:
+        if (
+            not isinstance(params, dict)
+            or set(params) - {"pluginId", "operationId"}
+            or "pluginId" not in params
+            or not isinstance(params.get("pluginId"), str)
+            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
+        ):
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        if self.plugins is None:
+            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
+            return
+        operation_request = {"pluginId": params["pluginId"]}
+        if self._extension_replay(
+            request_id, params.get("operationId"), "plugin/remove", operation_request
+        ):
+            return
+        try:
+            plugin = self.plugins.remove(params["pluginId"])
+        except ResourceNotFoundError:
+            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
+            return
+        plugin = self._record_extension_operation(
+            params.get("operationId"), "plugin/remove", operation_request, plugin
+        )
+        self.send(response(request_id, plugin))
+
+    def list_skills(self, request_id: str, params: object) -> None:
+        if not isinstance(params, dict) or params:
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        if self.plugins is None:
+            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
+            return
+        try:
+            skills = SkillCatalog(self.plugins).catalog(
+                self.plugins.extension_snapshot()
+            )
+        except SkillReadError:
+            self.send(business_error(request_id, "SKILL_CATALOG_UNAVAILABLE"))
+            return
+        self.send(response(request_id, {"skills": skills}))
+
+    def read_skill(self, request_id: str, params: object) -> None:
+        if (
+            not isinstance(params, dict)
+            or set(params) != {"qualifiedId"}
+            or not isinstance(params.get("qualifiedId"), str)
+        ):
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        if self.plugins is None:
+            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
+            return
+        try:
+            skill = SkillCatalog(self.plugins).read_skill(
+                self.plugins.extension_snapshot(), params["qualifiedId"]
+            )
+        except SkillReadError:
+            self.send(business_error(request_id, "SKILL_UNAVAILABLE"))
+            return
+        self.send(response(request_id, skill))
+
+    def list_mcp_servers(self, request_id: str, params: object) -> None:
+        if not isinstance(params, dict) or params:
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        if self.plugins is None:
+            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
+            return
+        self.send(response(request_id, {"servers": self.plugins.list_mcp_servers()}))
+
+    def read_extensions(self, request_id: str, params: object) -> None:
+        if not isinstance(params, dict) or params:
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        if self.plugins is None:
+            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
+            return
+        waterline = self.store.extension_event_waterline()
+        try:
+            skills = SkillCatalog(self.plugins).catalog(
+                self.plugins.extension_snapshot()
+            )
+        except SkillReadError:
+            skills = []
+        self.send(response(request_id, {
+            "plugins": self.plugins.list_plugins(),
+            "skills": skills,
+            "servers": self.plugins.list_mcp_servers(),
+            "throughEventId": waterline,
+        }))
+
+    def read_extension_events(self, request_id: str, params: object) -> None:
+        if (
+            not isinstance(params, dict)
+            or set(params) - {"afterEventId", "limit"}
+        ):
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        after = params.get("afterEventId", 0)
+        limit = params.get("limit", 200)
+        if (
+            not isinstance(after, int) or isinstance(after, bool) or after < 0
+            or not isinstance(limit, int) or isinstance(limit, bool)
+            or not 1 <= limit <= 500
+        ):
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        self.send(response(request_id, self.store.list_extension_events(
+            after_event_id=after, limit=limit
+        )))
+
+    def set_mcp_enabled(self, request_id: str, params: object) -> None:
+        if (
+            not isinstance(params, dict)
+            or set(params) - {"pluginId", "serverId", "enabled", "consent", "operationId"}
+            or not {"pluginId", "serverId", "enabled", "consent"} <= set(params)
+            or not isinstance(params.get("pluginId"), str)
+            or not isinstance(params.get("serverId"), str)
+            or not isinstance(params.get("enabled"), bool)
+            or params.get("consent") is not True
+            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
+        ):
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        if self.plugins is None:
+            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
+            return
+        operation_request = {
+            "pluginId": params["pluginId"], "serverId": params["serverId"],
+            "enabled": params["enabled"], "consent": True,
+        }
+        if self._extension_replay(
+            request_id, params.get("operationId"), "mcp/setEnabled", operation_request
+        ):
+            return
+        try:
+            server = self.plugins.set_mcp_enabled(
+                params["pluginId"], params["serverId"], params["enabled"]
+            )
+        except ResourceNotFoundError:
+            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
+            return
+        except PluginImportError:
+            self.send(business_error(request_id, "MCP_SERVER_DISABLED"))
+            return
+        server = self._record_extension_operation(
+            params.get("operationId"), "mcp/setEnabled", operation_request, server
+        )
+        self.send(response(request_id, server))
+
+    def _extension_replay(
+        self,
+        request_id: str,
+        operation_id: object,
+        scope: str,
+        request: dict[str, object],
+    ) -> bool:
+        if not isinstance(operation_id, str):
+            return False
+        try:
+            replay = self.store.operation_result(operation_id, scope, request)
+        except OperationConflictError:
+            self.send(business_error(request_id, "OPERATION_ID_REUSED"))
+            return True
+        except OperationInProgressError:
+            self.send(business_error(request_id, "OPERATION_IN_PROGRESS"))
+            return True
+        if isinstance(replay, dict):
+            self.send(response(request_id, replay))
+            return True
+        return False
+
+    def _record_extension_operation(
+        self,
+        operation_id: object,
+        scope: str,
+        request: dict[str, object],
+        result: dict[str, object],
+    ) -> dict[str, object]:
+        if not isinstance(operation_id, str):
+            return result
+        return self.store.record_operation_result(
+            operation_id, scope, request, result
+        )
 
     def shutdown(self, request_id: str, params: object) -> None:
         if not isinstance(params, dict) or params:
@@ -910,6 +1216,8 @@ class RuntimeServer:
             except Exception:
                 logger.exception("Run worker cleanup failed")
         finally:
+            if self.plugins is not None:
+                self.plugins.cleanup_removed()
             should_schedule = False
             with self.worker_lock:
                 if self.active_run_id == run_id:

@@ -2,7 +2,7 @@
 
 版本：v0.4（探索草案）
 
-Eidos 仍处于早期设计与实施阶段。本 PRD 描述产品方向和目标态约束；已实现能力以 [MVP Lite](../mvp-lite.md) 与已完成的 [第二期实施范围](../mvp-phase-2.md) 为准。
+Eidos 仍处于早期设计与实施阶段。本 PRD 描述产品方向和目标态约束；已实现能力以 [MVP Lite](../mvp-lite.md)、已完成的 [第二期实施范围](../mvp-phase-2.md) 与已完成的 [第三期实施范围](../mvp-phase-3.md) 为准。
 
 ## 1. 产品总览
 
@@ -63,6 +63,7 @@ sequenceDiagram
 | Agent Execution | 模型、工具、结果和继续推理的串行闭环 | 读取 Context，产出 Item/ToolCall/Event | [功能需求](03-functional-requirements.md) | [Runtime 状态机](../tdd/02-runtime-state-machine.md)、[模型](../tdd/04-model-context-streaming.md)、[工具](../tdd/03-tools-approval-sandbox.md) |
 | Model & Context | 管理远端模型配置、HTTP/SSE 流和有界上下文 | Provider 事件先进入 Runtime，不直达 UI | [功能需求](03-functional-requirements.md)、[安全与非功能需求](04-security-and-nfr.md) | [模型、上下文与流](../tdd/04-model-context-streaming.md) |
 | Tools / Approval / Sandbox | 安全地读取、修改文件和执行命令 | ToolSpec 决定能力；Approval 不突破 Sandbox | [功能需求](03-functional-requirements.md)、[安全与非功能需求](04-security-and-nfr.md) | [工具、审批与沙箱](../tdd/03-tools-approval-sandbox.md) |
+| Extensions | 从本地 Plugin 安全加载 Skill 与 MCP Tool | Catalog 产出快照；Registry 统一执行；外部工具仍经过审批/沙箱 | [产品定位与范围](01-product-scope.md)、[功能需求](03-functional-requirements.md) | [架构](../tdd/01-architecture.md)、[工具](../tdd/03-tools-approval-sandbox.md)、[协议/存储](../tdd/05-api-events-storage.md) |
 | Timeline & Recovery | 让重载、重启和失败后的事实保持一致 | 规范化状态是当前事实，Event 是有序投影 | [安全与非功能需求](04-security-and-nfr.md) | [协议、事件与存储](../tdd/05-api-events-storage.md)、[状态机](../tdd/02-runtime-state-machine.md) |
 | Artifact / Public Mode | 将内部结果发布为可见、不可变产物 | 依赖工具、安全扫描和持久化 | [产品定位与范围](01-product-scope.md)、[用户流程与界面](02-user-flows-and-ui.md) | [工具](../tdd/03-tools-approval-sandbox.md)、[存储](../tdd/05-api-events-storage.md) |
 | Verification | 把产品承诺转成可执行验收条件 | 每个进入阶段的要求最终落到 A 编号 | [验收标准](05-acceptance-criteria.md) | [测试与里程碑](../tdd/07-testing-and-milestones.md) |
@@ -85,9 +86,10 @@ sequenceDiagram
 |---|---|
 | MVP Lite | 已跑通的 Workspace 单 Run 最小闭环 |
 | 第二期 | 可排队、可暂停、可恢复核验、可审计的 Runtime 基础 |
+| 第三期 | 用户显式导入的本地 Plugin、Skill、stdio MCP Tools、能力快照与 Tool Search |
 | 目标态草案 | Public Mode、Artifact、完整 Model Profile 等候选方向，需按阶段重新确认 |
 
-跨平台、后台 daemon、多 Agent、并行执行、MCP/插件市场、智能 compaction 和企业能力不是当前实施目标。
+跨平台、后台 daemon、多 Agent、并行执行、MCP/插件市场、远程 MCP、智能 compaction 和企业能力不是当前实施目标。
 
 ## 6. 稳定产品原则
 

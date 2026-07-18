@@ -2,7 +2,7 @@
 
 版本：v0.4（探索草案）
 
-范围说明：本文件是目标态功能合同索引。第一期与第二期范围分别以 [MVP Lite](../mvp-lite.md) 和 [第二期实施范围](../mvp-phase-2.md) 为准。
+范围说明：本文件是目标态功能合同索引。第一期、第二期与第三期范围分别以 [MVP Lite](../mvp-lite.md)、[第二期实施范围](../mvp-phase-2.md) 和 [第三期实施范围](../mvp-phase-3.md) 为准。
 
 MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 `Session/Run/Item/ToolCall` 最小事实；✅ 串行 Agent Loop 与 20 Step 上限；✅ `list_files/read_file/search_text`；✅ 模型流、基础 Execution Feed 与真实 DeepSeek 联网闭环；✅ Cancel 与异常 `interrupted`；✅ 本机私有 DeepSeek 配置；✅ `write_file/apply_patch` 完整 diff、逐次审批、hash/CAS 复检和原子提交；✅ `run_shell` 逐次审批、Seatbelt 默认断网、环境隔离、Homebrew Toolchain、有界输出、timeout/取消。不能把这些 ✅ 外推为本文件目标态条目已全部满足。
 
@@ -159,6 +159,16 @@ MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 
 | F143 | Session 标题与任务管理 | 内容区顶部以较小字号显示标题与紧邻的紧凑三点菜单；内容区标题、三点菜单和左侧任务标题均可打开同一重命名/删除操作，删除需确认且不触碰 Workspace 文件；通用预览、路径和安全说明移出内容区 |
 | F144 | Session 排版与 Markdown 正文 | 右侧 Session 使用统一 UI/代码字体与 14px 正文、13px 代码、16px 标题的固定字号/行高 token；模型正文安全渲染 CommonMark，原始 HTML、远程图片加载和正文内直接导航均不启用 |
 | F145 | 无闪烁导航与可折叠执行过程 | 项目折叠和当前任务点击不读取快照；任务切换即时更新选中态且后台原子安装目标快照，不全局淡出导航；有结构化执行时以计时过程组承载进度和可折叠工具结果，成功后默认折叠且不显示完成卡，无执行项时直接流式输出最终回答 |
+| F146 | 第三期动态 Tool Registry | ToolSpec、执行 Adapter 和 provenance 形成唯一不可变 entry；内置、Skill resource 与 MCP Tool 通过同一调度链执行 |
+| F147 | 能力快照 | Run 固化 Plugin/Skill/MCP 配置，Step 固化 direct/deferred/activated 工具及完整 schema hash；重试复用相同快照 |
+| F148 | 本地 Plugin v1 | 用户显式导入只含 Skill/MCP 配置的本地目录；严格校验并原子安装，支持幂等列出、启停和移除，不执行安装脚本 |
+| F149 | Skill v1 | 加载有来源的有界 Skill catalog；显式 mention 或只读工具加载 `SKILL.md`/包内资源，拒绝越界、symlink、二进制与超限内容 |
+| F150 | MCP Tools v1 | 通过官方 Python SDK 稳定 v1 管理 stdio Server 的初始化、分页工具发现、调用、列表变化与有界关闭 |
+| F151 | 外部工具审批 | MCP 工具统一为 external、单调用、逐次审批；Server 启用需展示完整命令、来源、env names 和权限档案并获得用户同意 |
+| F152 | MCP 最小权限沙箱 | connector 只有网络且无 Workspace；workspace_read 只有 Workspace 只读且无网络；两者拒绝真实 Home、状态目录和 Workspace 写入 |
+| F153 | 外部结果与恢复 | MCP 参数/结果统一扫描和限额；timeout、取消、断连与提交失败零自动重试并保留可能副作用事实 |
+| F154 | Tool Search | 大工具目录按 direct/deferred 有界暴露；本地确定性搜索命中的工具只能从下一 Step 激活并写入快照 |
+| F155 | 扩展设置与 Feed | Desktop 提供 Plugins、Skills、MCP Servers 受控设置，Feed 展示安全 provenance/审批/状态，不泄露 env value、内部路径或原始 stderr |
 
 ## 2. ToolCall 组合规则
 

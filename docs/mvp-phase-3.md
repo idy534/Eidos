@@ -1,8 +1,8 @@
 # Eidos MVP 第三期实施范围
 
-版本：v0.3-draft
+版本：v0.3
 
-状态：📝 范围草案（待确认，未实施）
+状态：✅ 已完成（P3-00 至 P3-08 已验收）
 
 ## 1. 定位与优先级
 
@@ -21,11 +21,11 @@
   -> 下一模型 Step
 ```
 
-第一期 [MVP Lite](mvp-lite.md) 和已完成的 [第二期清单](mvp-phase-2.md) 仍是回归基线。本文在确认前不改变 PRD、TDD 或 `decisions.md` 的既有合同；P3-00 完成同步后，本文才成为第三期唯一实施清单。
+第一期 [MVP Lite](mvp-lite.md) 和已完成的 [第二期清单](mvp-phase-2.md) 仍是回归基线。P3-00 已将本期边界同步到 PRD、TDD 与 `decisions.md`；本文现在是第三期唯一实施清单。
 
-## 2. 待确认前提
+## 2. 已确认前提
 
-本草案先按以下最小边界编写：
+用户以“完成全部第三期的内容”确认以下最小边界：
 
 1. Plugin v1 仅支持用户显式导入本地目录，不提供市场、远程下载、自动更新或分享。
 2. Plugin 是 Skill 与 MCP Server 配置的包，不提供任意 Python/JavaScript 插件入口、Hook 或 App。
@@ -115,128 +115,128 @@ P3-00 契约与基线
 
 ## 6. 契约追溯
 
-P3-00 确认前暂不预占既有 PRD/TDD 编号。确认后应从当前编号末尾追加，不改写一期、二期历史编号。
+第三期从既有编号末尾追加 Q166-Q180、F146-F155、A185-A193，不改写一期、二期历史编号。
 
-| 清单分组 | 待同步 PRD 语义 | 待同步 TDD 落点 |
-|---|---|---|
-| P3-00 | 本地扩展进入第三期；市场和自动生成继续延后 | 总览、决策、测试完成标准 |
-| P3-01 | 工具来源、名称、可用性与执行一致 | 架构、ToolSpec/Registry、RuntimeEngine |
-| P3-02 | Run/Step 能力确定性与历史可解释性 | 状态机、Context、Storage、Model request |
-| P3-03 | Plugin 导入、启停、移除和来源展示 | Extension Catalog、协议、存储、Desktop |
-| P3-04 | Skill 发现、显式调用和只读资源 | Context Builder、工具、敏感边界 |
-| P3-05 | MCP Tools 生命周期和调用结果 | MCP Adapter、工具、Event、协议 |
-| P3-06 | 本地 Server 启用同意、逐次审批和沙箱 | Approval、Seatbelt、恢复、Redaction |
-| P3-07 | 大工具目录的有界发现 | Context Budget、Tool Search、Step snapshot |
-| P3-08 | 设置、Feed、重启和发布验收 | Desktop、协议 fixture、测试里程碑 |
+| 清单分组 | 决策/PRD | TDD 落点 | 自动化主位置 |
+|---|---|---|---|
+| P3-00 | Q166-Q180；F146-F155；A185-A193 | TDD 总览与各模块第三期小节 | `mvp-phase-3-baseline.md`、全量回归 |
+| P3-01 | Q170-Q172；F146；A185 | 架构 §8；工具 §13 | `test_tool_registry.py`、`test_runtime_seams.py`、`test_deepseek.py` |
+| P3-02 | Q171-Q173；F147；A186 | 模型 §11；协议/存储 §12 | `test_extension_storage.py`、`test_phase3_runtime.py` |
+| P3-03 | Q166-Q167/Q173；F148；A187 | 架构 §8；协议/存储 §12 | `test_plugins.py`、`test_server.py` |
+| P3-04 | Q168；F149；A188 | 工具 §13；模型 §11 | `test_skills.py`、`test_phase3_runtime.py` |
+| P3-05 | Q169/Q174；F150；A189 | 工具 §13；协议/存储 §12 | `test_mcp.py`、MCP fixture |
+| P3-06 | Q174-Q178；F151-F153；A190-A191 | 工具 §13；Desktop 第三期小节 | `test_mcp_sandbox.py`、`test_mcp.py` |
+| P3-07 | Q179；F154；A192 | 模型 §11 | `test_tool_registry.py`、`test_phase3_runtime.py` |
+| P3-08 | Q180；F155；A193 | Desktop 第三期小节；测试 §9 | Renderer/Main/sidecar tests、vertical fixture |
 
 ## 7. 详细实施清单
 
 ### P3-00：冻结第三期契约与回归基线
 
-- [ ] P3-00-01 记录第三期开工 commit、Runtime/SQLite/protocol/tool contract 版本和 `pnpm test`、macOS Seatbelt smoke 结果。
-- [ ] P3-00-02 在 `decisions.md` 追加 Plugin、Skill、MCP、外部副作用分类、审批和 Sandbox 决策；不修改 Q1-Q165 历史。
-- [ ] P3-00-03 更新 PRD：将“Plugin 市场、Skill 自动生成”继续保留为非目标，将“本地 Plugin/Skill/MCP Tools v1”加入第三期实施目标。
-- [ ] P3-00-04 更新 TDD：定义 Extension Catalog、Tool Adapter、能力快照、MCP 生命周期、Skill 注入和 Desktop 合同。
-- [ ] P3-00-05 固定 Plugin Manifest v1、Skill Metadata v1、MCP Server Config v1、Tool provenance、Run extension snapshot 与 Step tool snapshot 的闭合 schema。
-- [ ] P3-00-06 为本文每项补齐正式 PRD 编号、TDD 小节和自动化测试位置。
+- [x] P3-00-01 记录第三期开工 commit、Runtime/SQLite/protocol/tool contract 版本和 `pnpm test`、macOS Seatbelt smoke 结果。
+- [x] P3-00-02 在 `decisions.md` 追加 Plugin、Skill、MCP、外部副作用分类、审批和 Sandbox 决策；不修改 Q1-Q165 历史。
+- [x] P3-00-03 更新 PRD：将“Plugin 市场、Skill 自动生成”继续保留为非目标，将“本地 Plugin/Skill/MCP Tools v1”加入第三期实施目标。
+- [x] P3-00-04 更新 TDD：定义 Extension Catalog、Tool Adapter、能力快照、MCP 生命周期、Skill 注入和 Desktop 合同。
+- [x] P3-00-05 固定 Plugin Manifest v1、Skill Metadata v1、MCP Server Config v1、Tool provenance、Run extension snapshot 与 Step tool snapshot 的闭合 schema。
+- [x] P3-00-06 为本文每项补齐正式 PRD 编号、TDD 小节和自动化测试位置。
 
 验收：PRD、TDD、决策和本文对 Plugin/Skill/MCP 的范围、信任边界和非目标没有相反描述；未开始实现前所有新增协议与状态已冻结。
 
 ### P3-01：统一动态 Tool Registry
 
-- [ ] P3-01-01 将 ToolSpec、执行 Adapter 和 provenance 注册为单个不可变 Registry entry；provenance 至少包含 `builtin|skill|mcp`、source ID、source version 和 content hash。
-- [ ] P3-01-02 让现有八个内置工具通过 Builtin Tool Adapter 注册；删除 `ToolExecutor.validate_arguments()`、工具名集合和模型 `TOOL_SPECS` 之间可漂移的重复分支。
-- [ ] P3-01-03 ToolDispatcher 只从 Registry entry 取得 schema、effective arguments、side effect、approval、timeout、batch 和 executor，不按工具名猜测类别。
-- [ ] P3-01-04 Tool name 使用稳定 namespace：内置工具保留原名；MCP 工具使用 `mcp__<server_id>__<tool_name>`；Plugin/Skill 名称使用独立命名空间，不与 Tool name 混用。
-- [ ] P3-01-05 Registry 启动时验证名称唯一、schema dialect、默认值、result schema、Adapter 存在和 provenance 完整性；单个外部工具非法只隔离该工具，内置工具非法仍使 Runtime unavailable。
-- [ ] P3-01-06 ModelClient/ModelRunner 显式接收当前 Step 的 model-visible Tool definitions；DeepSeek Adapter 不再导入全局工具列表。
+- [x] P3-01-01 将 ToolSpec、执行 Adapter 和 provenance 注册为单个不可变 Registry entry；provenance 至少包含 `builtin|skill|mcp`、source ID、source version 和 content hash。
+- [x] P3-01-02 让现有八个内置工具通过 Builtin Tool Adapter 注册；删除 `ToolExecutor.validate_arguments()`、工具名集合和模型 `TOOL_SPECS` 之间可漂移的重复分支。
+- [x] P3-01-03 ToolDispatcher 只从 Registry entry 取得 schema、effective arguments、side effect、approval、timeout、batch 和 executor，不按工具名猜测类别。
+- [x] P3-01-04 Tool name 使用稳定 namespace：内置工具保留原名；MCP 工具使用 `mcp__<server_id>__<tool_name>`；Plugin/Skill 名称使用独立命名空间，不与 Tool name 混用。
+- [x] P3-01-05 Registry 启动时验证名称唯一、schema dialect、默认值、result schema、Adapter 存在和 provenance 完整性；单个外部工具非法只隔离该工具，内置工具非法仍使 Runtime unavailable。
+- [x] P3-01-06 ModelClient/ModelRunner 显式接收当前 Step 的 model-visible Tool definitions；DeepSeek Adapter 不再导入全局工具列表。
 
 验收：现有文件与 Shell 工具的 ToolCall、审批、ToolResult 和 protocol fixture 字节语义保持一致；加入一个内存测试 Adapter 无需修改 RuntimeEngine 分支。
 
 ### P3-02：Run Extension Snapshot 与 Step Tool Snapshot
 
-- [ ] P3-02-01 Run 创建时固化 enabled Plugin ID/version/hash、Skill catalog hash、MCP Server config hash 和 extension contract version；后续全局启停不改写该 Run。
-- [ ] P3-02-02 每个 Step 在模型请求前持久化有序 available tool names、完整 ToolSpec hash、direct/deferred 集合、activated tool names 和 tool set hash。
-- [ ] P3-02-03 同一逻辑 ModelAttempt 重试必须复用相同 Step snapshot；若无法重建一致工具集，零 Provider 请求并进入安全失败。
-- [ ] P3-02-04 已经暴露但调用时不可用的工具生成 `tool_unavailable` Canonical ToolResult，不把调用重新解释成未知模型协议错误。
-- [ ] P3-02-05 Plugin 禁用只影响新 Run；移除先标记不可用于新 Run，非终态 Run 不再引用后才删除执行资源，历史仅保留安全元数据与 hash。
-- [ ] P3-02-06 snapshot、ToolCall provenance、ToolResult 和 Event 在一次执行及重启后可互相追溯，不依赖当前 Plugin 目录仍存在。
+- [x] P3-02-01 Run 创建时固化 enabled Plugin ID/version/hash、Skill catalog hash、MCP Server config hash 和 extension contract version；后续全局启停不改写该 Run。
+- [x] P3-02-02 每个 Step 在模型请求前持久化有序 available tool names、完整 ToolSpec hash、direct/deferred 集合、activated tool names 和 tool set hash。
+- [x] P3-02-03 同一逻辑 ModelAttempt 重试必须复用相同 Step snapshot；若无法重建一致工具集，零 Provider 请求并进入安全失败。
+- [x] P3-02-04 已经暴露但调用时不可用的工具生成 `tool_unavailable` Canonical ToolResult，不把调用重新解释成未知模型协议错误。
+- [x] P3-02-05 Plugin 禁用只影响新 Run；移除先标记不可用于新 Run，非终态 Run 不再引用后才删除执行资源，历史仅保留安全元数据与 hash。
+- [x] P3-02-06 snapshot、ToolCall provenance、ToolResult 和 Event 在一次执行及重启后可互相追溯，不依赖当前 Plugin 目录仍存在。
 
 验收：Run 排队后修改全局 Plugin 状态不改变该 Run 的能力快照；MCP 工具列表在 Step 间变化不会改变已开始 Step 或其重试请求。
 
 ### P3-03：本地 Plugin v1
 
-- [ ] P3-03-01 定义 strict/closed Plugin Manifest v1，只接受 `schemaVersion,id,name,version,description,skills,mcpServers`；未知字段、重复 ID、非法路径和非法版本安全拒绝。
-- [ ] P3-03-02 通过系统目录选择显式导入本地 Plugin；Runtime 验证 owner、普通文件、非 symlink、文件数量、单文件/总容量和 manifest 后再原子安装到私有受管目录。
-- [ ] P3-03-03 导入不执行 `npm/pnpm/npx/uv/uvx/pip`、Shell 或包内安装脚本，不联网解析依赖。
-- [ ] P3-03-04 MCP command 只允许结构化 executable + argv；禁止 shell 字符串、命令替换、环境展开和导入时启动。
-- [ ] P3-03-05 提供闭合、幂等的 `plugin/list`、`plugin/import`、`plugin/setEnabled`、`plugin/remove` Runtime methods 与 Event；敏感错误不泄露真实内部存储路径。
-- [ ] P3-03-06 重复导入相同 ID/version/hash 返回原结果；相同 ID/version 不同内容明确冲突，不静默覆盖。
-- [ ] P3-03-07 禁用或移除 Plugin 不删除 Session、Run、Item、ToolCall、ToolResult 或 Event 历史。
+- [x] P3-03-01 定义 strict/closed Plugin Manifest v1，只接受 `schemaVersion,id,name,version,description,skills,mcpServers`；未知字段、重复 ID、非法路径和非法版本安全拒绝。
+- [x] P3-03-02 通过系统目录选择显式导入本地 Plugin；Runtime 验证 owner、普通文件、非 symlink、文件数量、单文件/总容量和 manifest 后再原子安装到私有受管目录。
+- [x] P3-03-03 导入不执行 `npm/pnpm/npx/uv/uvx/pip`、Shell 或包内安装脚本，不联网解析依赖。
+- [x] P3-03-04 MCP command 只允许结构化 executable + argv；禁止 shell 字符串、命令替换、环境展开和导入时启动。
+- [x] P3-03-05 提供闭合、幂等的 `plugin/list`、`plugin/import`、`plugin/setEnabled`、`plugin/remove` Runtime methods 与 Event；敏感错误不泄露真实内部存储路径。
+- [x] P3-03-06 重复导入相同 ID/version/hash 返回原结果；相同 ID/version 不同内容明确冲突，不静默覆盖。
+- [x] P3-03-07 禁用或移除 Plugin 不删除 Session、Run、Item、ToolCall、ToolResult 或 Event 历史。
 
 验收：合法 Plugin 可跨重启保留；路径穿越、symlink、超限、重复冲突、未知字段和导入中断均不会留下半安装包或启用状态。
 
 ### P3-04：Skill v1
 
-- [ ] P3-04-01 从已启用 Plugin 的 skill root 加载 `SKILL.md`；解析有界 `name`、`description` 和可选展示元数据，记录 Plugin provenance 与 content hash。
-- [ ] P3-04-02 Skill name 在 Plugin namespace 内唯一；跨 Plugin 同名使用限定名，不按加载顺序静默覆盖。
-- [ ] P3-04-03 当前 Step 只注入有界 Skill catalog 元数据，不默认注入全部正文；catalog 超出预算时确定性裁剪并保留检索入口。
-- [ ] P3-04-04 用户显式 `@skill` 时在模型请求前加载对应 `SKILL.md`；模型可通过内置 `skill_read` 和 `skill_read_resource` 获取正文或包内资源。
-- [ ] P3-04-05 Skill/resource 读取严格限制在已安装 Plugin 的声明根，拒绝绝对路径、`..`、symlink、特殊文件、二进制、非 UTF-8 和容量超限。
-- [ ] P3-04-06 Skill 内容按不可信上下文处理：先敏感扫描、有来源标签和大小上限，不能覆盖 Eidos system/runtime 安全规则。
-- [ ] P3-04-07 `scripts/` 只可作为文本资源读取；本期不提供脚本执行 Adapter。需要执行时由模型生成用户可见的现有 `run_shell` 调用并遵守其审批与 Workspace 沙箱。
+- [x] P3-04-01 从已启用 Plugin 的 skill root 加载 `SKILL.md`；解析有界 `name`、`description` 和可选展示元数据，记录 Plugin provenance 与 content hash。
+- [x] P3-04-02 Skill name 在 Plugin namespace 内唯一；跨 Plugin 同名使用限定名，不按加载顺序静默覆盖。
+- [x] P3-04-03 当前 Step 只注入有界 Skill catalog 元数据，不默认注入全部正文；catalog 超出预算时确定性裁剪并保留检索入口。
+- [x] P3-04-04 用户显式 `@skill` 时在模型请求前加载对应 `SKILL.md`；模型可通过内置 `skill_read` 和 `skill_read_resource` 获取正文或包内资源。
+- [x] P3-04-05 Skill/resource 读取严格限制在已安装 Plugin 的声明根，拒绝绝对路径、`..`、symlink、特殊文件、二进制、非 UTF-8 和容量超限。
+- [x] P3-04-06 Skill 内容按不可信上下文处理：先敏感扫描、有来源标签和大小上限，不能覆盖 Eidos system/runtime 安全规则。
+- [x] P3-04-07 `scripts/` 只可作为文本资源读取；本期不提供脚本执行 Adapter。需要执行时由模型生成用户可见的现有 `run_shell` 调用并遵守其审批与 Workspace 沙箱。
 
 验收：一个 Skill-only Plugin 可被导入、列出、显式调用和读取引用资源；恶意路径或指令不能读取 Plugin 根外内容或绕过工具审批。
 
 ### P3-05：MCP Tools v1
 
-- [ ] P3-05-01 使用官方 Python SDK 的稳定 v1 Client；实现 stdio `initialize`、`initialized`、分页 `tools/list`、`tools/call`、`notifications/tools/list_changed` 和有界 shutdown。
-- [ ] P3-05-02 MCP Server Config v1 固定 server ID、executable、argv、显式 env names、permission profile、startup timeout、tool timeout 和 enabled 状态；配置不接受 shell command。
-- [ ] P3-05-03 MCP Server 只在 Plugin 已启用且用户完成 Server 启用同意后启动；可选 Server 启动失败只标记该能力 unavailable，不使内置 Runtime health-only。
-- [ ] P3-05-04 MCP `tools/list` 分页有总页数、工具数、schema bytes 和 deadline 上限；名称映射确定且碰撞时隔离冲突工具。
-- [ ] P3-05-05 MCP input schema 只在完整兼容 Eidos Tool Schema Dialect 时注册；不得静默删除 `$ref`、组合 schema、自由 map 或其他不支持关键字。
-- [ ] P3-05-06 MCP ToolResult v1 只接受有界 text 与 `structuredContent`；Image、Audio、Embedded Resource、Resource Link 和未知 content type 返回明确不支持结果，不进入模型或 UI。
-- [ ] P3-05-07 MCP `isError=true` 映射为工具错误结果而非传输失败；协议错误、stdout 污染、未知 response ID、超限和进程退出使用闭合安全 code。
-- [ ] P3-05-08 `tools/list_changed` 只使下一 Step 重新构建 Registry snapshot，不修改当前 Step 或正在重试的 ModelAttempt。
+- [x] P3-05-01 使用官方 Python SDK 的稳定 v1 Client；实现 stdio `initialize`、`initialized`、分页 `tools/list`、`tools/call`、`notifications/tools/list_changed` 和有界 shutdown。
+- [x] P3-05-02 MCP Server Config v1 固定 server ID、executable、argv、显式 env names、permission profile、startup timeout、tool timeout 和 enabled 状态；配置不接受 shell command。
+- [x] P3-05-03 MCP Server 只在 Plugin 已启用且用户完成 Server 启用同意后启动；可选 Server 启动失败只标记该能力 unavailable，不使内置 Runtime health-only。
+- [x] P3-05-04 MCP `tools/list` 分页有总页数、工具数、schema bytes 和 deadline 上限；名称映射确定且碰撞时隔离冲突工具。
+- [x] P3-05-05 MCP input schema 只在完整兼容 Eidos Tool Schema Dialect 时注册；不得静默删除 `$ref`、组合 schema、自由 map 或其他不支持关键字。
+- [x] P3-05-06 MCP ToolResult v1 只接受有界 text 与 `structuredContent`；Image、Audio、Embedded Resource、Resource Link 和未知 content type 返回明确不支持结果，不进入模型或 UI。
+- [x] P3-05-07 MCP `isError=true` 映射为工具错误结果而非传输失败；协议错误、stdout 污染、未知 response ID、超限和进程退出使用闭合安全 code。
+- [x] P3-05-08 `tools/list_changed` 只使下一 Step 重新构建 Registry snapshot，不修改当前 Step 或正在重试的 ModelAttempt。
 
 验收：fixture Server 覆盖初始化、分页发现、调用成功、`isError`、列表变化、超时、取消、非法 schema、stdout 污染和崩溃；所有路径均产生唯一 ToolResult 或在 ToolCall 创建前安全拒绝。
 
 ### P3-06：外部工具审批、Sandbox 与恢复
 
-- [ ] P3-06-01 将 ToolSpec `side_effect` 显式扩展为 `external`；所有 MCP Tool 固定 `external`、禁止 batch、逐次审批，不信任 Server annotation 降级权限。
-- [ ] P3-06-02 启用本地 MCP Server 前展示完整 executable、argv、Plugin ID/version/hash、env names 和 permission profile；用户取消时零进程启动、零凭证释放。
-- [ ] P3-06-03 增加专用 `connector` Seatbelt profile：允许受控运行时和 Plugin 内容只读、私有临时 HOME/TMP 与网络；拒绝 Workspace、真实 Home 和 `~/.eidos` 读取。
-- [ ] P3-06-04 增加专用 `workspace_read` Seatbelt profile：只读当前 Workspace、受控运行时和 Plugin 内容；拒绝网络、Workspace 写入、真实 Home 和 `~/.eidos`。
-- [ ] P3-06-05 两个 profile 互斥；本期没有 Workspace 写 MCP profile，也没有同时获得 Workspace 读取与网络的 profile。
-- [ ] P3-06-06 MCP ToolCall 参数在 Approval 和发送前完成 effective arguments、敏感扫描和 hash 绑定；Approval 不能修改参数、Server、profile、timeout 或 env。
-- [ ] P3-06-07 MCP 结果在进入 ToolResult、模型、UI、Event、SQLite 和日志前统一扫描、递归限深、限项和限字节；Server stderr 只生成有界安全诊断，不作为 ToolResult。
-- [ ] P3-06-08 `tools/call` timeout、取消、连接断开或结果提交失败均不自动重试；结果标记 `side_effects_may_exist=true` 并让 Run 进入 `waiting_user_input`，不得由 Workspace 只读工具自动清除外部不确定性。
-- [ ] P3-06-09 sidecar 退出时有界终止 MCP 进程组；失联进程、迟到 response 和旧 Approval 不得进入新 Run 或新 Step。
+- [x] P3-06-01 将 ToolSpec `side_effect` 显式扩展为 `external`；所有 MCP Tool 固定 `external`、禁止 batch、逐次审批，不信任 Server annotation 降级权限。
+- [x] P3-06-02 启用本地 MCP Server 前展示完整 executable、argv、Plugin ID/version/hash、env names 和 permission profile；用户取消时零进程启动、零凭证释放。
+- [x] P3-06-03 增加专用 `connector` Seatbelt profile：允许受控运行时和 Plugin 内容只读、私有临时 HOME/TMP 与网络；拒绝 Workspace、真实 Home 和 `~/.eidos` 读取。
+- [x] P3-06-04 增加专用 `workspace_read` Seatbelt profile：只读当前 Workspace、受控运行时和 Plugin 内容；拒绝网络、Workspace 写入、真实 Home 和 `~/.eidos`。
+- [x] P3-06-05 两个 profile 互斥；本期没有 Workspace 写 MCP profile，也没有同时获得 Workspace 读取与网络的 profile。
+- [x] P3-06-06 MCP ToolCall 参数在 Approval 和发送前完成 effective arguments、敏感扫描和 hash 绑定；Approval 不能修改参数、Server、profile、timeout 或 env。
+- [x] P3-06-07 MCP 结果在进入 ToolResult、模型、UI、Event、SQLite 和日志前统一扫描、递归限深、限项和限字节；Server stderr 只生成有界安全诊断，不作为 ToolResult。
+- [x] P3-06-08 `tools/call` timeout、取消、连接断开或结果提交失败均不自动重试；结果标记 `side_effects_may_exist=true` 并让 Run 进入 `waiting_user_input`，不得由 Workspace 只读工具自动清除外部不确定性。
+- [x] P3-06-09 sidecar 退出时有界终止 MCP 进程组；失联进程、迟到 response 和旧 Approval 不得进入新 Run 或新 Step。
 
 验收：macOS 原生测试证明两个 profile 的文件/网络矩阵、子进程继承、真实 Home/状态目录 deny、timeout/cancel 清理和零自动重放；安全核心失败时 MCP unavailable，但内置只读闭环仍可工作。
 
 ### P3-07：Tool Search 与有界上下文
 
-- [ ] P3-07-01 Registry 将工具分为 direct 和 deferred；内置工具、`skill_read`、`skill_read_resource`、`tool_search` 始终 direct，外部工具按确定性预算进入 direct 或 deferred。
-- [ ] P3-07-02 `tool_search` 对 name、description、Plugin、Server 和 Skill dependency metadata 做本地有界检索，返回稳定排序、来源和截断原因，不调用模型或外部网络。
-- [ ] P3-07-03 search 命中的工具从下一 Step 起加入 activated tool set；当前 Step 不能在收到搜索结果的同一模型响应中调用尚未暴露的工具。
-- [ ] P3-07-04 activated tool set 持久化在 Run/Step snapshot 中并受数量、单 schema bytes、总 schema bytes 和模型输入预算约束。
-- [ ] P3-07-05 显式 Plugin/Skill mention 可为下一 Step 提供确定性候选，但不能绕过 enabled 状态、schema 校验、审批或 Sandbox。
-- [ ] P3-07-06 Context Builder 统计 Skill metadata、加载的 Skill 正文、Tool schema 和 ToolResult 投影的实际 UTF-8 bytes；超限时确定性裁剪 deferred 能力，不能裁掉安全指令。
-- [ ] P3-07-07 同一 Step 的 available tools 顺序、serialized schema 和 hash 在重启与重试后可复算一致。
+- [x] P3-07-01 Registry 将工具分为 direct 和 deferred；内置工具、`skill_read`、`skill_read_resource`、`tool_search` 始终 direct，外部工具按确定性预算进入 direct 或 deferred。
+- [x] P3-07-02 `tool_search` 对 name、description、Plugin、Server 和 Skill dependency metadata 做本地有界检索，返回稳定排序、来源和截断原因，不调用模型或外部网络。
+- [x] P3-07-03 search 命中的工具从下一 Step 起加入 activated tool set；当前 Step 不能在收到搜索结果的同一模型响应中调用尚未暴露的工具。
+- [x] P3-07-04 activated tool set 持久化在 Run/Step snapshot 中并受数量、单 schema bytes、总 schema bytes 和模型输入预算约束。
+- [x] P3-07-05 显式 Plugin/Skill mention 可为下一 Step 提供确定性候选，但不能绕过 enabled 状态、schema 校验、审批或 Sandbox。
+- [x] P3-07-06 Context Builder 统计 Skill metadata、加载的 Skill 正文、Tool schema 和 ToolResult 投影的实际 UTF-8 bytes；超限时确定性裁剪 deferred 能力，不能裁掉安全指令。
+- [x] P3-07-07 同一 Step 的 available tools 顺序、serialized schema 和 hash 在重启与重试后可复算一致。
 
 验收：包含 100+ fixture MCP Tools 的目录不会把全部 schema 注入模型；模型可搜索、在下一 Step 调用目标工具，且请求预算、顺序和 hash 确定可测。
 
 ### P3-08：Desktop 收口与第三期发布验收
 
-- [ ] P3-08-01 Settings 增加 Plugins、Skills、MCP Servers 三个受控区域；支持本地导入、启停、移除、状态和安全错误展示，不提供市场入口。
-- [ ] P3-08-02 Renderer/Preload/Main 对 Plugin、Skill、MCP、Tool provenance 和 Server enable approval DTO 使用闭合校验；未知字段和旧响应不进入 UI 状态。
-- [ ] P3-08-03 Execution Feed 展示 MCP Tool 的 Plugin、Server、工具名、审批、运行状态、耗时和安全结果；不展示 env value、内部安装路径、原始 stderr 或协议错误详情。
-- [ ] P3-08-04 Plugin 启停、MCP Server 状态、工具列表变化和 ToolCall 生命周期写入有界 Event；页面从 snapshot + Event 水位恢复。
-- [ ] P3-08-05 完成一个真实纵向 fixture：导入包含一个 Skill 和一个 MCP Server 的 Plugin，Skill 引导模型搜索并调用 MCP Tool，用户审批后模型使用结果完成 Run。
-- [ ] P3-08-06 重启后可以读取 Plugin 状态、Run extension snapshot、Step tool snapshot、ToolCall provenance 和 Canonical ToolResult；不恢复或重放未完成 MCP 调用。
-- [ ] P3-08-07 通过 Runtime、协议 fixture、Renderer state、真实 sidecar、MCP fixture、存储迁移、崩溃注入和 macOS Seatbelt 原生回归。
-- [ ] P3-08-08 更新 PRD/TDD 实施状态、测试里程碑和本文复选框；确认所有非目标仍标记未实现。
+- [x] P3-08-01 Settings 增加 Plugins、Skills、MCP Servers 三个受控区域；支持本地导入、启停、移除、状态和安全错误展示，不提供市场入口。
+- [x] P3-08-02 Renderer/Preload/Main 对 Plugin、Skill、MCP、Tool provenance 和 Server enable approval DTO 使用闭合校验；未知字段和旧响应不进入 UI 状态。
+- [x] P3-08-03 Execution Feed 展示 MCP Tool 的 Plugin、Server、工具名、审批、运行状态、耗时和安全结果；不展示 env value、内部安装路径、原始 stderr 或协议错误详情。
+- [x] P3-08-04 Plugin 启停、MCP Server 状态、工具列表变化和 ToolCall 生命周期写入有界 Event；页面从 snapshot + Event 水位恢复。
+- [x] P3-08-05 完成一个真实纵向 fixture：导入包含一个 Skill 和一个 MCP Server 的 Plugin，Skill 引导模型搜索并调用 MCP Tool，用户审批后模型使用结果完成 Run。
+- [x] P3-08-06 重启后可以读取 Plugin 状态、Run extension snapshot、Step tool snapshot、ToolCall provenance 和 Canonical ToolResult；不恢复或重放未完成 MCP 调用。
+- [x] P3-08-07 通过 Runtime、协议 fixture、Renderer state、真实 sidecar、MCP fixture、存储迁移、崩溃注入和 macOS Seatbelt 原生回归。
+- [x] P3-08-08 更新 PRD/TDD 实施状态、测试里程碑和本文复选框；确认所有非目标仍标记未实现。
 
 验收：本清单全部勾选，完整 Plugin -> Skill -> Tool Search -> MCP Tool -> Approval -> ToolResult -> 下一 Step -> 重启读取闭环通过，才能将第三期标记为完成。
 
@@ -254,7 +254,8 @@ runtime/eidos_runtime/
     registry.py           # ToolSpec + Adapter + provenance 的深模块
     workspace.py          # 内置 Workspace Adapter 的现有实现
   sandbox/
-    mcp_server.sbpl       # connector/workspace_read 专用 profile
+    mcp_connector.sbpl    # connector：网络 + Plugin 只读
+    mcp_workspace_read.sbpl # workspace_read：Workspace + Plugin 只读
   db/storage.py           # Plugin/Run/Step/ToolCall provenance 与 snapshot
   protocol/schemas.py     # 闭合 Plugin/Skill/MCP DTO
 
@@ -280,6 +281,12 @@ git diff --check
 ```
 
 发布检查必须在原生 macOS 环境执行 MCP Server Seatbelt、进程组清理、网络/文件权限矩阵和 Electron smoke；受限容器结果不能替代原生安全结论。
+
+第三期发布验收结果（2026-07-18）：
+
+- `pnpm test`：Runtime 170 项、Renderer 15 项、Main/sidecar 15 项全部通过。
+- 原生 macOS 回归包含 connector/workspace_read Seatbelt 权限矩阵、官方 MCP Client fixture、进程退出、超时、进行中取消和零自动重放。
+- `pnpm build` 与 `git diff --check` 通过；协议与 Runtime 版本为 `0.3.0`，SQLite schema revision 为 5。
 
 ## 10. 第三期完成标准
 

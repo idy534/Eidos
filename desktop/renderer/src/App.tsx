@@ -5,10 +5,13 @@ import type {
   ModelId,
   ModelListResult,
   ModelStatus,
+  McpServerRecord,
+  PluginRecord,
   Run,
   RuntimeStatus,
   Session,
   SessionSnapshot,
+  SkillMetadata,
 } from "./contracts";
 import { ExecutionFeed } from "./components/ExecutionFeed";
 import { EidosMark } from "./components/EidosMark";
@@ -48,6 +51,9 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const [plugins, setPlugins] = useState<PluginRecord[]>([]);
+  const [skills, setSkills] = useState<SkillMetadata[]>([]);
+  const [mcpServers, setMcpServers] = useState<McpServerRecord[]>([]);
   const snapshotReads = useRef(new SnapshotReadCoordinator()).current;
   const selectedSessionId = useRef<string | undefined>(undefined);
 
@@ -134,6 +140,83 @@ export function App() {
       ));
     }).catch((cause: unknown) => setError(messageFrom(cause)));
   }, [runtime]);
+
+  useEffect(() => {
+    if (!settingsOpen || runtime.state !== "ready" || runtime.storageHealth.state !== "ready") {
+      return;
+    }
+    void refreshExtensions();
+  }, [settingsOpen, runtime]);
+
+  async function refreshExtensions(): Promise<void> {
+    try {
+      let extensionSnapshot = await window.eidosRuntime.readExtensions();
+      const events = await window.eidosRuntime.readExtensionEvents(
+        extensionSnapshot.throughEventId,
+      );
+      if (events.items.length > 0) {
+        extensionSnapshot = await window.eidosRuntime.readExtensions();
+      }
+      setPlugins(extensionSnapshot.plugins);
+      setSkills(extensionSnapshot.skills);
+      setMcpServers(extensionSnapshot.servers);
+    } catch (cause) {
+      setError(messageFrom(cause));
+    }
+  }
+
+  async function importPlugin(): Promise<void> {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const imported = await window.eidosRuntime.importPlugin();
+      if (imported) await refreshExtensions();
+    } catch (cause) {
+      setError(messageFrom(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setPluginEnabled(pluginId: string, enabled: boolean): Promise<void> {
+    setBusy(true);
+    try {
+      await window.eidosRuntime.setPluginEnabled(pluginId, enabled);
+      await refreshExtensions();
+    } catch (cause) {
+      setError(messageFrom(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removePlugin(pluginId: string): Promise<void> {
+    if (!window.confirm("移除这个本地 Plugin？历史 Run 的来源记录会保留。")) return;
+    setBusy(true);
+    try {
+      await window.eidosRuntime.removePlugin(pluginId);
+      await refreshExtensions();
+    } catch (cause) {
+      setError(messageFrom(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setMcpEnabled(server: McpServerRecord, enabled: boolean): Promise<void> {
+    if (enabled && !window.confirm(
+      `启用本地 MCP Server？\n\n命令：${[server.executable, ...server.argv].join(" ")}\nPlugin：${server.pluginId}@${server.pluginVersion}\n环境变量名：${server.envNames.join(", ") || "无"}\n权限：${server.permissionProfile}`,
+    )) return;
+    setBusy(true);
+    try {
+      await window.eidosRuntime.setMcpEnabled(server.pluginId, server.serverId, enabled);
+      await refreshExtensions();
+    } catch (cause) {
+      setError(messageFrom(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function selectSession(session: Session): Promise<void> {
     setNavigationSessionId(session.id);
@@ -429,6 +512,53 @@ export function App() {
                   <div><dt>Shell</dt><dd>{runtime.runShell ? "可用" : "Seatbelt 自检未通过"}</dd></div>
                   <div><dt>状态存储</dt><dd>{runtime.storageHealth.state}</dd></div>
                 </dl>
+              </section>
+              <section className="settings-card">
+                <div className="settings-card-heading">
+                  <div><h2>Plugins</h2><p>只导入本地配置包，不执行安装脚本。</p></div>
+                  <button disabled={interactionBusy} onClick={() => void importPlugin()}>导入本地 Plugin</button>
+                </div>
+                <ul className="extension-list">
+                  {plugins.map((plugin) => (
+                    <li key={plugin.id}>
+                      <span><strong>{plugin.name}</strong><small>{plugin.id}@{plugin.version} · {plugin.contentHash.slice(0, 10)}</small></span>
+                      <span className="extension-actions">
+                        <button disabled={interactionBusy} onClick={() => void setPluginEnabled(plugin.id, !plugin.enabled)}>{plugin.enabled ? "停用" : "启用"}</button>
+                        <button className="button-secondary" disabled={interactionBusy} onClick={() => void removePlugin(plugin.id)}>移除</button>
+                      </span>
+                    </li>
+                  ))}
+                  {!plugins.length && <li className="empty-extension">尚未导入 Plugin</li>}
+                </ul>
+              </section>
+              <section className="settings-card">
+                <h2>Skills</h2>
+                <ul className="extension-list">
+                  {skills.map((skill) => (
+                    <li key={skill.qualifiedId}>
+                      <span><strong>{skill.qualifiedId}</strong><small>{skill.description}</small></span>
+                      <span>只读</span>
+                    </li>
+                  ))}
+                  {!skills.length && <li className="empty-extension">没有已启用的 Skill</li>}
+                </ul>
+              </section>
+              <section className="settings-card">
+                <h2>MCP Servers</h2>
+                <ul className="extension-list extension-list--stacked">
+                  {mcpServers.map((server) => (
+                    <li key={`${server.pluginId}:${server.serverId}`}>
+                      <span>
+                        <strong>{server.pluginId}:{server.serverId}</strong>
+                        <small>{[server.executable, ...server.argv].join(" ")}</small>
+                        <small>权限 {server.permissionProfile} · env {server.envNames.join(", ") || "无"}</small>
+                        {server.errorCode && <small className="extension-error">{server.errorCode}</small>}
+                      </span>
+                      <button disabled={interactionBusy || !server.declaredEnabled} onClick={() => void setMcpEnabled(server, !server.consented)}>{server.consented ? "停用" : "审阅并启用"}</button>
+                    </li>
+                  ))}
+                  {!mcpServers.length && <li className="empty-extension">没有 MCP Server 声明</li>}
+                </ul>
               </section>
             </div>
           </section>
