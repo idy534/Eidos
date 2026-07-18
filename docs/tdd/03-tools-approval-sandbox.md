@@ -722,7 +722,7 @@ adapter: validate/default/execute capability (Runtime-only, never serialized)
 
 Tool Schema Dialect v1 仍只接受递归闭合 object、受控 scalar/array、required/default/min/max/enum/const；遇到 `$ref`、组合 schema、自由 map 或未知关键字时整个外部工具隔离，不能静默删除关键字。
 
-Skill 工具只有 `skill_read` 与 `skill_read_resource`。读取路径必须位于已安装 Plugin 声明 root，逐段拒绝绝对路径、`..`、symlink、特殊文件、非 UTF-8、二进制和容量超限；`scripts/` 只作为文本资源，不存在执行 Adapter。
+Skill 工具只有 `skill_read` 与 `skill_read_resource`。Catalog 合并应用管理的 `system:<name>`、用户管理的 `user:<name>` 与 Plugin 的 `<plugin>:<name>`；读取路径必须位于该来源 root，逐段拒绝绝对路径、`..`、symlink、特殊文件、非 UTF-8、二进制和容量超限。`scripts/` 只作为文本资源，不存在执行 Adapter；系统 installer/creator helper 由用户在系统 Terminal 显式运行，不能借此绕过 Agent Shell 的网络与 Eidos Home 隔离。
 
 所有 MCP Tool 固定 `sideEffect=external`、`approvalRequired=true`、`batchPolicy=single`。Server annotations 只用于展示，不能降低权限。参数在审批前补默认值、校验、敏感扫描并 canonical hash；Approval 只批准该 hash、Server、profile、timeout 和 env names，不能改写其中任何值。
 

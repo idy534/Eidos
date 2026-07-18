@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
+from eidos_runtime.extensions.skills import SkillCatalog  # noqa: E402
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
 from eidos_runtime.runtime.loop import RuntimeEngine  # noqa: E402
 from eidos_runtime.runtime.loop import ApprovalDecision  # noqa: E402
@@ -48,7 +49,7 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             session = store.create_session(str(workspace))
             run, _ = store.create_run(
                 session["id"], "Call slow",
-                extension_snapshot=plugins.extension_snapshot(),
+                extension_snapshot=SkillCatalog(plugins).extension_snapshot(),
             )
             model = ScriptedModel([
                 ModelResponse(tool_calls=(ModelToolCall(
@@ -114,7 +115,7 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             session = store.create_session(str(workspace))
             run, _ = store.create_run(
                 session["id"], "Find and call echo",
-                extension_snapshot=plugins.extension_snapshot(),
+                extension_snapshot=SkillCatalog(plugins).extension_snapshot(),
             )
             model = ScriptedModel([
                 ModelResponse(tool_calls=(ModelToolCall(
@@ -201,7 +202,7 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             run, _ = store.create_run(
                 session["id"],
                 "Use @demo:review",
-                extension_snapshot=plugins.extension_snapshot(),
+                extension_snapshot=SkillCatalog(plugins).extension_snapshot(),
             )
             model = ScriptedModel([
                 ModelResponse(tool_calls=(ModelToolCall(

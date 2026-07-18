@@ -169,6 +169,7 @@ MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 
 | F153 | 外部结果与恢复 | MCP 参数/结果统一扫描和限额；timeout、取消、断连与提交失败零自动重试并保留可能副作用事实 |
 | F154 | Tool Search | 大工具目录按 direct/deferred 有界暴露；本地确定性搜索命中的工具只能从下一 Step 激活并写入快照 |
 | F155 | 扩展设置与 Feed | Desktop 提供 Plugins、Skills、MCP Servers 受控设置，Feed 展示安全 provenance/审批/状态，不泄露 env value、内部路径或原始 stderr |
+| F156 | 系统与用户 Skill | Runtime 将随应用发布的系统 Skill 原子部署到 `skills/.system`，发现同级用户 Skill，并以稳定 namespace、私有权限和内容树 hash 合入 Run 快照；v0.3 不从 Agent Shell 写 Eidos Home |
 
 ## 2. ToolCall 组合规则
 

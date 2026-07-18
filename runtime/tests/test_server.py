@@ -18,6 +18,7 @@ PROTOCOL_V1_FIXTURE = RUNTIME_ROOT.parent / "protocol" / "fixtures" / "v1.json"
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
+from eidos_runtime.extensions.skills import SkillCatalog  # noqa: E402
 from eidos_runtime.sandbox.seatbelt import SeatbeltSelfTestResult  # noqa: E402
 from eidos_runtime.sandbox.sensitive import SensitiveScanner  # noqa: E402
 from eidos_runtime.protocol.server import (  # noqa: E402
@@ -146,8 +147,13 @@ class RuntimeProtocolTests(unittest.TestCase):
                 })
             first_session = server.store.create_session(workspace_a)
             second_session = server.store.create_session(workspace_b)
-            first, _ = server.store.enqueue_run(first_session["id"], "write a file")
-            second, _ = server.store.enqueue_run(second_session["id"], "answer now")
+            snapshot = SkillCatalog(server.plugins).extension_snapshot()
+            first, _ = server.store.enqueue_run(
+                first_session["id"], "write a file", extension_snapshot=snapshot
+            )
+            second, _ = server.store.enqueue_run(
+                second_session["id"], "answer now", extension_snapshot=snapshot
+            )
             server._schedule_next()
 
             approval_id = ""

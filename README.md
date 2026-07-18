@@ -44,6 +44,8 @@ MVP 会优先打通这一条闭环：
 
 第二期已完成持久 FIFO、暂停/继续、Event/operation 水位、安全存储迁移、Durable Intent/对账、敏感内容边界、完整文件工具契约与 Desktop 恢复状态；详细证据以 [第二期清单](docs/mvp-phase-2.md) 为准。
 
+第三期已完成本地 Plugin、只读 Skill、stdio MCP Tools、动态 Registry 与能力快照。内置 Skill 作为 Runtime 资源随应用发布，并在启动时部署到 `~/.eidos/skills/.system`；用户 Skill 使用 `~/.eidos/skills/<name>`。详细边界以 [第三期清单](docs/mvp-phase-3.md) 为准。
+
 ## 开发运行与验证
 
 环境要求：macOS、Node.js 22+、pnpm 11、Python 3。首次运行：

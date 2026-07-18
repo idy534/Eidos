@@ -828,7 +828,7 @@ event_id
 
 - `PluginManifestV1`: `id,name,version,description,skills,mcpServers`；skills 只含相对 root，mcpServers 只含结构化 executable/argv/envNames/profile/timeouts。
 - `PluginRecordV1`: manifest 安全投影、content hash、enabled、availability/status、installed/updated 时间；不返回受管目录真实路径。
-- `SkillMetadataV1`: qualified ID、name、description、Plugin provenance、root/content hash、可选展示 metadata。
+- `SkillMetadataV1`: qualified ID、name、description、system/user/Plugin source provenance、source/content hash、可选展示 metadata；当前 wire 字段沿用 `pluginId/pluginVersion/pluginHash` 承载闭合 source 投影。
 - `McpServerConfigV1`: server ID、executable、argv、env names、`connector|workspace_read`、startup/tool timeout、enabled/consented；env value 不序列化。
 - `ToolProvenanceV1`: kind、source ID/version/content hash 与可选 plugin/server/skill ID。
 - `RunExtensionSnapshotV1`: enabled Plugin ID/version/hash、Skill catalog hash、MCP config hash、extension contract version。
@@ -837,3 +837,5 @@ event_id
 SQLite forward migration 新增 Plugin catalog/state、Run extension snapshot、Step tool snapshot 和 ToolCall provenance。历史行只保存安全 metadata/hash；删除 Plugin 不级联删除 Session/Run/Item/ToolCall/ToolResult/Event。
 
 新增 RPC 为 `plugin/list|import|setEnabled|remove`、`skill/list|read`、`mcp/list|setEnabled`，以及既有 approval 通道中的 Server enable consent。所有 request/response 与 Event 使用闭合 schema、operation idempotency 和 snapshot/event waterline；敏感错误不得携带受管目录、env value、原始 stderr 或协议正文。
+
+系统 Skill 的发布源位于 Runtime 包内 `eidos_runtime/resources/skills/.system`。Runtime ready 前将其以 `0700` 目录、`0600` 文件原子部署到 `${EIDOS_DATA_DIR}/skills/.system`；用户 Skill 位于 `${EIDOS_DATA_DIR}/skills/<name>`。Catalog 对每个本地 Skill 的完整受限文件树计算 hash，Run 创建后任一资源变化均使旧快照明确失效。

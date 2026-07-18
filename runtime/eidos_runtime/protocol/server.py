@@ -48,7 +48,11 @@ from eidos_runtime.extensions.plugins import (
     PluginCatalog,
     PluginImportError,
 )
-from eidos_runtime.extensions.skills import SkillCatalog, SkillReadError
+from eidos_runtime.extensions.skills import (
+    SkillCatalog,
+    SkillReadError,
+    deploy_system_skills,
+)
 
 
 MAX_MESSAGE_BYTES = 1024 * 1024
@@ -308,12 +312,14 @@ class RuntimeServer:
             self.store.initialize()
             if self.store.health_state == "ready":
                 self.sensitive = SensitiveScanner()
+                assert self.store.data_directory is not None
+                deploy_system_skills(self.store.data_directory)
                 self.plugins = PluginCatalog(self.store)
                 self.model_config.initialize()
                 configured_key = self.model_config.api_key()
                 if self.model is None and configured_key is not None:
                     self.model = DeepSeekChatModel(configured_key)
-        except (StorageError, ModelConfigError, SensitiveScanError):
+        except (StorageError, ModelConfigError, SensitiveScanError, SkillReadError):
             logger.exception("Runtime storage initialization failed")
             self.send(business_error(request_id, "INTERNAL_ERROR"))
             return
@@ -555,7 +561,7 @@ class RuntimeServer:
         model_id = existing_model_id or requested_model_id or DEFAULT_MODEL_ID
         run_model = self._model_for(model_id)
         extension_snapshot = (
-            self.plugins.extension_snapshot()
+            SkillCatalog(self.plugins).extension_snapshot()
             if self.plugins is not None else None
         )
         operation_id = params.get("operationId")
@@ -883,9 +889,8 @@ class RuntimeServer:
             self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
             return
         try:
-            skills = SkillCatalog(self.plugins).catalog(
-                self.plugins.extension_snapshot()
-            )
+            catalog = SkillCatalog(self.plugins)
+            skills = catalog.catalog(catalog.extension_snapshot())
         except SkillReadError:
             self.send(business_error(request_id, "SKILL_CATALOG_UNAVAILABLE"))
             return
@@ -903,8 +908,9 @@ class RuntimeServer:
             self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
             return
         try:
-            skill = SkillCatalog(self.plugins).read_skill(
-                self.plugins.extension_snapshot(), params["qualifiedId"]
+            catalog = SkillCatalog(self.plugins)
+            skill = catalog.read_skill(
+                catalog.extension_snapshot(), params["qualifiedId"]
             )
         except SkillReadError:
             self.send(business_error(request_id, "SKILL_UNAVAILABLE"))
@@ -929,9 +935,8 @@ class RuntimeServer:
             return
         waterline = self.store.extension_event_waterline()
         try:
-            skills = SkillCatalog(self.plugins).catalog(
-                self.plugins.extension_snapshot()
-            )
+            catalog = SkillCatalog(self.plugins)
+            skills = catalog.catalog(catalog.extension_snapshot())
         except SkillReadError:
             skills = []
         self.send(response(request_id, {

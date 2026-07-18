@@ -173,7 +173,10 @@ class RuntimeEngine:
                 extension_snapshot, str(run.get("userInput") or "")
             )
         except SkillReadError:
-            skill_context = ()
+            mcp.close()
+            tools.close()
+            self._fail(run_id, "SKILL_SNAPSHOT_INVALID")
+            return
 
         try:
             while True:

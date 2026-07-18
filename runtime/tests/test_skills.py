@@ -12,7 +12,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
-from eidos_runtime.extensions.skills import SkillCatalog, SkillReadError  # noqa: E402
+from eidos_runtime.extensions.skills import (  # noqa: E402
+    SkillCatalog,
+    SkillReadError,
+    deploy_system_skills,
+)
 
 
 class SkillCatalogTests(unittest.TestCase):
@@ -44,8 +48,8 @@ class SkillCatalogTests(unittest.TestCase):
         self.plugins = PluginCatalog(self.store)
         self.plugins.import_directory(source)
         self.plugins.set_enabled("demo", True)
-        self.snapshot = self.plugins.extension_snapshot()
         self.skills = SkillCatalog(self.plugins)
+        self.snapshot = self.skills.extension_snapshot()
 
     def tearDown(self) -> None:
         self.store.close()
@@ -84,6 +88,75 @@ class SkillCatalogTests(unittest.TestCase):
         (root / "invalid.txt").write_bytes(b"\xff")
         with self.assertRaisesRegex(SkillReadError, "skill_content_unsupported"):
             self.skills.read_resource(self.snapshot, "demo:review", "invalid.txt")
+
+    def test_deploys_system_skills_and_discovers_user_skills(self) -> None:
+        assert self.store.data_directory is not None
+        deploy_system_skills(self.store.data_directory)
+        installer = (
+            self.store.data_directory / "skills" / ".system"
+            / "skill-installer" / "SKILL.md"
+        )
+        expected_installer = installer.read_text(encoding="utf-8")
+        installer.write_text("tampered\n", encoding="utf-8")
+        user = self.store.data_directory / "skills" / "my-skill"
+        user.mkdir(mode=0o700)
+        (user / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: User skill.\n---\nUser body.\n",
+            encoding="utf-8",
+        )
+        os.chmod(user / "SKILL.md", 0o600)
+        deploy_system_skills(self.store.data_directory)
+
+        self.assertEqual(installer.read_text(encoding="utf-8"), expected_installer)
+        self.assertTrue((user / "SKILL.md").is_file())
+
+        snapshot = self.skills.extension_snapshot()
+        catalog = self.skills.catalog(snapshot)
+
+        qualified = {entry["qualifiedId"] for entry in catalog}
+        self.assertIn("system:skill-installer", qualified)
+        self.assertIn("system:skill-creator", qualified)
+        self.assertIn("user:my-skill", qualified)
+        resource = self.skills.read_resource(
+            snapshot, "system:skill-installer", "scripts/list-skills.py"
+        )
+        self.assertIn("List skills", resource["content"])
+
+    def test_local_skill_change_invalidates_existing_snapshot(self) -> None:
+        assert self.store.data_directory is not None
+        user = self.store.data_directory / "skills" / "changing"
+        user.mkdir(mode=0o700, parents=True)
+        skill_file = user / "SKILL.md"
+        skill_file.write_text(
+            "---\nname: changing\ndescription: Before.\n---\nBody.\n",
+            encoding="utf-8",
+        )
+        os.chmod(skill_file, 0o600)
+        snapshot = self.skills.extension_snapshot()
+        skill_file.write_text(
+            "---\nname: changing\ndescription: After.\n---\nBody.\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(SkillReadError, "skill_snapshot_invalid"):
+            self.skills.catalog(snapshot)
+
+    def test_qualified_mention_does_not_partially_match_user_skill(self) -> None:
+        assert self.store.data_directory is not None
+        user = self.store.data_directory / "skills" / "dem"
+        user.mkdir(mode=0o700, parents=True)
+        skill_file = user / "SKILL.md"
+        skill_file.write_text(
+            "---\nname: dem\ndescription: Partial fixture.\n---\nPARTIAL BODY.\n",
+            encoding="utf-8",
+        )
+        os.chmod(skill_file, 0o600)
+        snapshot = self.skills.extension_snapshot()
+
+        context = self.skills.context(snapshot, "Use @demo:review")
+
+        self.assertIn("Inspect before editing", str(context))
+        self.assertNotIn("PARTIAL BODY", str(context))
 
 
 if __name__ == "__main__":

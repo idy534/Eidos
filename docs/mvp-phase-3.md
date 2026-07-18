@@ -182,9 +182,12 @@ P3-00 契约与基线
 - [x] P3-04-02 Skill name 在 Plugin namespace 内唯一；跨 Plugin 同名使用限定名，不按加载顺序静默覆盖。
 - [x] P3-04-03 当前 Step 只注入有界 Skill catalog 元数据，不默认注入全部正文；catalog 超出预算时确定性裁剪并保留检索入口。
 - [x] P3-04-04 用户显式 `@skill` 时在模型请求前加载对应 `SKILL.md`；模型可通过内置 `skill_read` 和 `skill_read_resource` 获取正文或包内资源。
-- [x] P3-04-05 Skill/resource 读取严格限制在已安装 Plugin 的声明根，拒绝绝对路径、`..`、symlink、特殊文件、二进制、非 UTF-8 和容量超限。
+- [x] P3-04-05 Skill/resource 读取严格限制在对应 system/user/Plugin source root，拒绝绝对路径、`..`、symlink、特殊文件、二进制、非 UTF-8 和容量超限。
 - [x] P3-04-06 Skill 内容按不可信上下文处理：先敏感扫描、有来源标签和大小上限，不能覆盖 Eidos system/runtime 安全规则。
-- [x] P3-04-07 `scripts/` 只可作为文本资源读取；本期不提供脚本执行 Adapter。需要执行时由模型生成用户可见的现有 `run_shell` 调用并遵守其审批与 Workspace 沙箱。
+- [x] P3-04-07 `scripts/` 只可作为文本资源读取；本期不提供脚本执行 Adapter。Workspace 内脚本需要执行时使用现有 `run_shell` 并遵守审批与沙箱；需要网络或写 Eidos Home 的系统 helper 只能由用户在系统 Terminal 显式运行。
+- [x] P3-04-08 将内置 Skill 作为 Runtime 资源随应用发布并原子部署到 `${EIDOS_DATA_DIR}/skills/.system`；用户 Skill 固定为 `${EIDOS_DATA_DIR}/skills/<name>`，不支持单数 `skill/` 根。
+- [x] P3-04-09 Catalog 合并 `system:`、`user:` 和 Plugin namespace，并把完整本地 Skill 树 hash 固化进 Run；运行中修改资源不会静默生效。
+- [x] P3-04-10 将 `skill-installer`、`skill-creator`、`plugin-creator`、`review-agent` 的 Codex 专属路径和合同替换为 Eidos v0.3 合同；安装/创建 helper 由系统 Terminal 显式运行，不新增 Agent Shell 越权通道。
 
 验收：一个 Skill-only Plugin 可被导入、列出、显式调用和读取引用资源；恶意路径或指令不能读取 Plugin 根外内容或绕过工具审批。
 
@@ -246,6 +249,7 @@ P3-00 契约与基线
 
 ```text
 runtime/eidos_runtime/
+  resources/skills/.system/ # 随 Runtime 发布的内置 Skill 源
   extensions/             # Plugin manifest/catalog/import；Skill catalog；MCP manager
   runtime/
     tool_dispatcher.py    # 只依赖 Registry snapshot，不按工具名分支
@@ -284,7 +288,7 @@ git diff --check
 
 第三期发布验收结果（2026-07-18）：
 
-- `pnpm test`：Runtime 170 项、Renderer 15 项、Main/sidecar 15 项全部通过。
+- `pnpm test`：Runtime 177 项、Renderer 15 项、Main/sidecar 15 项全部通过。
 - 原生 macOS 回归包含 connector/workspace_read Seatbelt 权限矩阵、官方 MCP Client fixture、进程退出、超时、进行中取消和零自动重放。
 - `pnpm build` 与 `git diff --check` 通过；协议与 Runtime 版本为 `0.3.0`，SQLite schema revision 为 5。
 

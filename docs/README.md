@@ -38,6 +38,7 @@ flowchart LR
 - 本地不开放 HTTP、SSE、WebSocket、Unix Socket 或随机端口，不引入 FastAPI、Bearer Token 和本地代理控制面。
 - Runtime 调用远端模型使用 HTTP 请求与 SSE 响应流；Provider 原始流先归一为内部事件，再进入 Item、Event 和 UI 投影。
 - `Session -> Run -> Item/ToolCall`、Runtime 状态权威、Approval 与 Sandbox 分层是跨阶段稳定语义。
+- 内置 Skill 随 Runtime 发布并部署到 `${EIDOS_DATA_DIR:-~/.eidos}/skills/.system`；用户 Skill 位于同级 `skills/<name>`，两者与 Plugin Skill 一起进入 Run 冻结快照。
 
 ## 4. 冲突处理
 
