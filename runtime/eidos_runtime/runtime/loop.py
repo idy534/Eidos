@@ -470,6 +470,56 @@ class RuntimeEngine:
                                 {"sessionId": paused["sessionId"], "run": paused},
                             )
                             return
+                    elif plan.is_eidos_state:
+                        if self.store.side_effects_blocked(run_id):
+                            result, item_status = (
+                                _tool_error(
+                                    tool_call.name,
+                                    "reconciliation_required",
+                                    "A successful read-only observation is required",
+                                ),
+                                "failed",
+                            )
+                        else:
+                            result, item_status = self._execute_eidos_state(
+                                run_id,
+                                item,
+                                tool_call.name,
+                                scanned_arguments,
+                                dispatcher,
+                                cancel,
+                            )
+                        completed = self.store.complete_tool_item(
+                            item["id"],
+                            json.dumps(
+                                result,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                                sort_keys=True,
+                            ),
+                            item_status=item_status,
+                            tool_status=(
+                                "failed" if item_status == "failed" else "completed"
+                            ),
+                        )
+                        self._completed_item(completed)
+                        self._check_cancel(run_id, cancel)
+                        if result.get("reconciliationRequired") is True:
+                            self.store.complete_current_step(
+                                run_id, "failed", reason=str(result.get("code"))
+                            )
+                            paused = self.store.pause_run(
+                                run_id, "eidos_state_reconciliation_required"
+                            )
+                            self.state_machine.transition(
+                                RuntimeState.WAITING_USER_INPUT,
+                                "eidos_state_reconciliation_required",
+                            )
+                            self._notification(
+                                "run/updated",
+                                {"sessionId": paused["sessionId"], "run": paused},
+                            )
+                            return
                     elif plan.requires_approval and not plan.is_shell:
                         if self.store.side_effects_blocked(run_id):
                             result, item_status = (
@@ -755,6 +805,80 @@ class RuntimeEngine:
             tool_name, tools.commit_file_change(tool_name, prepared, cancel)
         ))
         if result["outcome"] == "success" and result.get("code") != "no_changes":
+            self.store.clear_rejects(run_id)
+        return result, "completed" if result["outcome"] == "success" else "failed"
+
+    def _execute_eidos_state(
+        self,
+        run_id: str,
+        item: dict[str, object],
+        tool_name: str,
+        arguments: dict[str, object],
+        tools: ToolDispatcher,
+        cancel: threading.Event,
+    ) -> tuple[dict[str, object], str]:
+        prepared = tools.prepare_eidos_state(tool_name, arguments, cancel)
+        if isinstance(prepared, dict):
+            return _bounded_tool_result(tool_name, prepared), "failed"
+        pending_item = self.store.begin_approval(item["id"], prepared.diff, None)
+        approval_run = self.store.read_run(run_id)
+        self._notification(
+            "run/updated", {"sessionId": approval_run["sessionId"], "run": approval_run}
+        )
+        self.state_machine.transition(RuntimeState.WAITING_APPROVAL, "eidos_state_approval")
+        self._pause_effective_time(run_id)
+        tool_call = pending_item["toolCall"]
+        approval = self.approval.request(ApprovalRequest({
+            "sessionId": pending_item["sessionId"],
+            "runId": pending_item["runId"],
+            "itemId": pending_item["id"],
+            "toolCallId": tool_call["id"],
+            "kind": "file_change",
+            "summary": f"Create {prepared.path}",
+            "diff": prepared.diff,
+        }), cancel)
+        decision = ApprovalDecision(approval.decision, approval.feedback)
+        self.active_started = self.monotonic()
+        self._check_cancel(run_id, cancel)
+        if (
+            decision.decision not in {"approve", "reject"}
+            or decision.feedback is not None
+            and len(decision.feedback.encode("utf-8")) > 2_000
+        ):
+            decision = ApprovalDecision("reject")
+        self.store.resolve_approval(
+            item["id"], decision.decision, decision.feedback,
+            requeue=self.wait_for_execution_slot is not None,
+        )
+        self._resume_after_approval(run_id, cancel)
+        approval_run = self.store.read_run(run_id)
+        self.state_machine.transition(
+            RuntimeState.WAITING_USER_INPUT
+            if approval_run["status"] == "waiting_user_input"
+            else RuntimeState.TOOL_EXECUTING,
+            "eidos_state_approval_resolved",
+        )
+        if decision.decision == "reject":
+            return {
+                "schemaVersion": 1,
+                "toolContractVersion": 1,
+                "toolName": tool_name,
+                "outcome": "declined",
+                "code": "user_rejected",
+                "summary": "User rejected the skill creation",
+                "data": {"path": prepared.path},
+                "sideEffectsMayExist": False,
+                "reconciliationRequired": False,
+            }, "declined"
+        self.store.begin_durable_intent(item["id"], preconditions={
+            "path": prepared.path,
+            "qualifiedId": f"user:{prepared.name}",
+            "contentHash": prepared.content_hash,
+        })
+        result = self._safe_tool_result(tool_name, _bounded_tool_result(
+            tool_name, tools.commit_eidos_state(tool_name, prepared, cancel)
+        ))
+        if result["outcome"] == "success":
             self.store.clear_rejects(run_id)
         return result, "completed" if result["outcome"] == "success" else "failed"
 

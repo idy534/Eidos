@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import threading
 
 from eidos_runtime.model.client import ModelResponse, ModelToolCall
+from eidos_runtime.extensions.skills import SkillCreation
 from eidos_runtime.tools.registry import StepToolSnapshot, ToolRegistry
 from eidos_runtime.tools.workspace import FileChange
 
@@ -26,6 +27,10 @@ class ToolDispatchPlan:
     @property
     def is_external(self) -> bool:
         return self.execution_kind == "external"
+
+    @property
+    def is_eidos_state(self) -> bool:
+        return self.execution_kind == "eidos_state"
 
 
 class ToolDispatcher:
@@ -152,6 +157,20 @@ class ToolDispatcher:
     ) -> dict[str, object]:
         entry = self._registry.get(tool_name)
         commit = getattr(entry.adapter, "commit_file_change", None) if entry else None
+        return commit(change, cancel) if commit else _unavailable(tool_name)
+
+    def prepare_eidos_state(
+        self, tool_name: str, arguments: dict[str, object], cancel: threading.Event
+    ) -> SkillCreation | dict[str, object]:
+        entry = self._registry.get(tool_name)
+        prepare = getattr(entry.adapter, "prepare_eidos_state", None) if entry else None
+        return prepare(arguments, cancel) if prepare else _unavailable(tool_name)
+
+    def commit_eidos_state(
+        self, tool_name: str, change: SkillCreation, cancel: threading.Event
+    ) -> dict[str, object]:
+        entry = self._registry.get(tool_name)
+        commit = getattr(entry.adapter, "commit_eidos_state", None) if entry else None
         return commit(change, cancel) if commit else _unavailable(tool_name)
 
     def prepare_shell(self, tool_name: str, cwd: str, cancel: threading.Event):

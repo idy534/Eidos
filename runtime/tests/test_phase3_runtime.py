@@ -19,6 +19,101 @@ from eidos_runtime.runtime.loop import ApprovalDecision  # noqa: E402
 
 
 class PhaseThreeRuntimeTests(unittest.TestCase):
+    def test_skill_create_requires_approval_and_is_available_to_a_new_run(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-p3-skill-create-") as directory:
+            root = Path(directory)
+            data, workspace = root / "data", root / "workspace"
+            data.mkdir(mode=0o700)
+            workspace.mkdir()
+            store = SessionStore(data)
+            store.initialize()
+            plugins = PluginCatalog(store)
+            skills = SkillCatalog(plugins)
+            session = store.create_session(str(workspace))
+            run, _ = store.create_run(
+                session["id"], "Create a release notes skill",
+                extension_snapshot=skills.extension_snapshot(),
+            )
+            model = ScriptedModel([
+                ModelResponse(tool_calls=(ModelToolCall(
+                    "create-skill", "skill_create", {
+                        "name": "release-notes",
+                        "description": "Draft concise release notes.",
+                        "instructions": "Summarize user-visible changes and migration steps.",
+                    }
+                ),)),
+                ModelResponse(text="done"),
+            ])
+            approvals: list[dict[str, object]] = []
+
+            RuntimeEngine(
+                store, model, lambda _message: None,
+                request_approval=lambda params, _cancel: (
+                    approvals.append(params) or ApprovalDecision("approve")
+                ),
+            ).run(run["id"], threading.Event())
+
+            skill_file = data / "skills" / "release-notes" / "SKILL.md"
+            self.assertEqual(store.read_run(run["id"])["status"], "succeeded")
+            self.assertEqual(approvals[0]["kind"], "file_change")
+            self.assertIn(
+                "~/.eidos/skills/release-notes/SKILL.md",
+                str(approvals[0]["diff"]),
+            )
+            self.assertEqual(skill_file.stat().st_mode & 0o777, 0o600)
+            self.assertIn(
+                "Summarize user-visible changes",
+                skill_file.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "user:release-notes",
+                {
+                    entry["qualifiedId"]
+                    for entry in skills.catalog(skills.extension_snapshot())
+                },
+            )
+            store.close()
+
+    def test_skill_create_rejection_has_no_side_effect(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-p3-skill-reject-") as directory:
+            root = Path(directory)
+            data, workspace = root / "data", root / "workspace"
+            data.mkdir(mode=0o700)
+            workspace.mkdir()
+            store = SessionStore(data)
+            store.initialize()
+            plugins = PluginCatalog(store)
+            session = store.create_session(str(workspace))
+            run, _ = store.create_run(
+                session["id"], "Create a rejected skill",
+                extension_snapshot=SkillCatalog(plugins).extension_snapshot(),
+            )
+            model = ScriptedModel([
+                ModelResponse(tool_calls=(ModelToolCall(
+                    "create-skill", "skill_create", {
+                        "name": "rejected-skill",
+                        "description": "Must not be written.",
+                        "instructions": "Do nothing.",
+                    }
+                ),)),
+                ModelResponse(text="done"),
+            ])
+
+            RuntimeEngine(
+                store, model, lambda _message: None,
+                request_approval=lambda _params, _cancel: ApprovalDecision("reject"),
+            ).run(run["id"], threading.Event())
+
+            self.assertEqual(store.read_run(run["id"])["status"], "succeeded")
+            self.assertFalse((data / "skills" / "rejected-skill").exists())
+            result = json.loads(store.connection.execute(
+                "SELECT result_json FROM tool_calls WHERE tool_name = ?",
+                ("skill_create",),
+            ).fetchone()[0])
+            self.assertEqual(result["code"], "user_rejected")
+            self.assertFalse(result["sideEffectsMayExist"])
+            store.close()
+
     def test_external_timeout_pauses_for_reconciliation_without_model_retry(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-p3-timeout-") as directory:
             root = Path(directory)

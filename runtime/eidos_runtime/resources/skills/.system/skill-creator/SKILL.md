@@ -1,45 +1,35 @@
 ---
 name: skill-creator
-description: Create or update concise Eidos skills with strict SKILL.md metadata and optional scripts or references. Use when a user asks to create, revise, or validate a user skill.
+description: Create a new concise Eidos user skill with strict SKILL.md metadata. Use when a user asks to create a skill for repeated work.
 ---
 
 # Skill Creator
 
-Create user skills in `${EIDOS_DATA_DIR:-$HOME/.eidos}/skills/<skill-name>`. The `.system` directory is managed by Eidos and must not be edited through this skill.
+Create user skills with the built-in `skill_create` tool. Eidos stores them in `${EIDOS_DATA_DIR:-$HOME/.eidos}/skills/<skill-name>`. The `.system` directory is managed by Eidos and must never be edited or shadowed.
 
-Eidos v0.3 does not allow Agent Shell to write `~/.eidos`. Give the user the exact helper command to run in the system Terminal, then validate the resulting files. Project-local skill drafts may still be created with normal file tools when the user explicitly chooses a project path.
+Do not use Agent Shell or workspace file tools for this operation. Draft the three tool arguments, call `skill_create` once, and let Eidos show the exact `SKILL.md` change for user approval. Rejection must be treated as final and leaves no skill behind.
 
 ## Contract
 
-Each skill has one required `SKILL.md`:
+The current creation tool creates one required `SKILL.md`:
 
 ```text
 skill-name/
-├── SKILL.md
-├── scripts/      optional deterministic helpers
-└── references/   optional detailed UTF-8 context
+└── SKILL.md
 ```
 
-`SKILL.md` frontmatter contains exactly `name` and `description`. The folder and `name` must match lowercase hyphen-case and be at most 64 characters. Put triggering conditions in `description`; keep the body procedural and under 500 lines. Eidos reads UTF-8 scripts and references as text resources but does not execute them automatically. Binary assets are not a supported user-skill resource in Eidos v0.3.
+`SKILL.md` frontmatter contains exactly `name` and `description`. The name must start with a lowercase letter, contain only lowercase letters, digits, and hyphens, and be at most 64 characters. The description is one non-empty line describing when to use the skill. Keep instructions procedural, concise, free of secrets, and below the tool size limit.
 
 ## Create
 
-Run from this skill directory:
+Call `skill_create` with exactly:
 
-```bash
-python3 scripts/init_skill.py <skill-name>
-python3 scripts/init_skill.py <skill-name> --resources scripts,references
-python3 scripts/init_skill.py <skill-name> --path /explicit/parent
-```
+- `name`: validated lowercase hyphen-case name.
+- `description`: one-line trigger description.
+- `instructions`: complete `SKILL.md` body without frontmatter.
 
-Edit the generated `SKILL.md`, remove every TODO, and create only resources required by repeated work. Do not add README, changelog, installation guide, or speculative scaffolding.
+Eidos generates the frontmatter and heading, rejects collisions, and writes only after approval. Do not ask the user to run Terminal commands for ordinary skill creation. A newly created skill is available to a new Run as `user:<name>`; the current Run retains its frozen skill snapshot.
 
 ## Validate
 
-```bash
-python3 scripts/quick_validate.py <path/to/skill>
-```
-
-Run relevant bundled scripts directly before declaring the skill usable. A newly installed user skill is discovered by a new Run; an existing Run keeps its frozen skill snapshot.
-
-Do not add `agents/openai.yaml` to user skills. The current Eidos catalog does not consume it.
+Before calling the tool, verify the name and description constraints, ensure instructions contain no placeholder TODOs, and avoid README, changelog, installation guide, `agents/openai.yaml`, or speculative scaffolding. The current tool does not update an existing skill or create optional resource files.

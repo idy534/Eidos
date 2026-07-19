@@ -22,6 +22,7 @@ MAX_SKILL_BYTES = 128 * 1024
 MAX_RESOURCE_BYTES = 256 * 1024
 MAX_CATALOG_BYTES = 16 * 1024
 _SKILL_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_USER_SKILL_NAME = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 BUNDLED_SYSTEM_SKILLS = (
     Path(__file__).resolve().parents[1] / "resources" / "skills" / ".system"
 )
@@ -41,6 +42,15 @@ class _SkillSource:
     source_version: str
     source_hash: str
     content_hash: str
+
+
+@dataclass(frozen=True)
+class SkillCreation:
+    name: str
+    path: str
+    content: bytes
+    content_hash: str
+    diff: str
 
 
 def deploy_system_skills(data_directory: Path) -> None:
@@ -244,6 +254,7 @@ class SkillCatalog:
             _skill_entry(
                 "skill_read_resource", _SkillResourceAdapter(self, snapshot)
             ),
+            _skill_create_entry(_SkillCreateAdapter(self)),
         )
 
 
@@ -334,6 +345,133 @@ class _SkillResourceAdapter:
         })
 
 
+class _SkillCreateAdapter:
+    execution_kind = "eidos_state"
+
+    def __init__(self, catalog: SkillCatalog) -> None:
+        self.catalog = catalog
+
+    def effective_arguments(self, arguments: object) -> dict[str, object] | None:
+        if not isinstance(arguments, dict) or set(arguments) != {
+            "name", "description", "instructions"
+        }:
+            return None
+        name = arguments.get("name")
+        description = arguments.get("description")
+        instructions = arguments.get("instructions")
+        if (
+            not isinstance(name, str)
+            or not _USER_SKILL_NAME.fullmatch(name)
+            or not isinstance(description, str)
+            or description.strip() != description
+            or not description
+            or len(description.splitlines()) != 1
+            or "\x00" in description
+            or description[0] in "\"'"
+            or description[-1] in "\"'"
+            or len(description.encode("utf-8")) > 1024
+            or not isinstance(instructions, str)
+            or not instructions.strip()
+            or "\x00" in instructions
+        ):
+            return None
+        normalized = instructions.strip() + "\n"
+        if len(_skill_document(name, description, normalized)) > MAX_SKILL_BYTES:
+            return None
+        return {
+            "name": name,
+            "description": description,
+            "instructions": normalized,
+        }
+
+    def execute(
+        self, arguments: dict[str, object], cancel: threading.Event
+    ) -> dict[str, object]:
+        return _skill_error(
+            "skill_create", "approval_required", "Skill creation requires approval"
+        )
+
+    def prepare_eidos_state(
+        self, arguments: dict[str, object], cancel: threading.Event
+    ) -> SkillCreation | dict[str, object]:
+        if cancel.is_set():
+            return _skill_error("skill_create", "tool_canceled", "Skill creation canceled")
+        if self.catalog.plugins.store.data_directory is None:
+            return _skill_error("skill_create", "skill_store_unavailable", "Skill store is unavailable")
+        name = str(arguments["name"])
+        skills_root = self.catalog.plugins.store.data_directory / "skills"
+        destination = skills_root / name
+        if (
+            os.path.lexists(destination)
+            or os.path.lexists(skills_root / ".system" / name)
+            or os.path.lexists(BUNDLED_SYSTEM_SKILLS / name)
+        ):
+            return _skill_error("skill_create", "skill_already_exists", "Skill already exists")
+        description = str(arguments["description"])
+        instructions = str(arguments["instructions"])
+        content = _skill_document(name, description, instructions)
+        content_hash = hashlib.sha256(content).hexdigest()
+        logical_path = f"~/.eidos/skills/{name}/SKILL.md"
+        diff = "\n".join((
+            "--- /dev/null",
+            f"+++ {logical_path}",
+            *[f"+{line}" for line in content.decode("utf-8").splitlines()],
+            "",
+        ))
+        return SkillCreation(name, logical_path, content, content_hash, diff)
+
+    def commit_eidos_state(
+        self, creation: SkillCreation, cancel: threading.Event
+    ) -> dict[str, object]:
+        if cancel.is_set():
+            return _skill_error("skill_create", "tool_canceled", "Skill creation canceled")
+        data_directory = self.catalog.plugins.store.data_directory
+        if data_directory is None:
+            return _skill_error("skill_create", "skill_store_unavailable", "Skill store is unavailable")
+        skills_root = data_directory / "skills"
+        destination = skills_root / creation.name
+        staging = skills_root / f".skill-stage-{uuid.uuid4().hex}"
+        committed = False
+        try:
+            _private_directory(skills_root)
+            if (
+                os.path.lexists(destination)
+                or os.path.lexists(skills_root / ".system" / creation.name)
+                or os.path.lexists(BUNDLED_SYSTEM_SKILLS / creation.name)
+            ):
+                return _skill_error("skill_create", "skill_already_exists", "Skill already exists")
+            _write_tree(staging, {"SKILL.md": creation.content})
+            if os.path.lexists(destination):
+                shutil.rmtree(staging, ignore_errors=True)
+                return _skill_error("skill_create", "skill_already_exists", "Skill already exists")
+            os.replace(staging, destination)
+            committed = True
+            _fsync_directory(skills_root)
+        except (OSError, SkillReadError):
+            if staging.exists():
+                shutil.rmtree(staging, ignore_errors=True)
+            result = _skill_error("skill_create", "skill_create_failed", "Skill could not be created")
+            if committed:
+                result["sideEffectsMayExist"] = True
+                result["reconciliationRequired"] = True
+            return result
+        return {
+            "toolContractVersion": 1,
+            "schemaVersion": 1,
+            "toolName": "skill_create",
+            "outcome": "success",
+            "code": "ok",
+            "summary": "User skill created",
+            "data": {
+                "path": creation.path,
+                "qualifiedId": f"user:{creation.name}",
+                "contentHash": creation.content_hash,
+            },
+            "sideEffectsMayExist": False,
+            "reconciliationRequired": False,
+        }
+
+
 def _skill_entry(name: str, adapter: object) -> ToolRegistryEntry:
     is_resource = name == "skill_read_resource"
     properties: dict[str, object] = {
@@ -381,6 +519,47 @@ def _skill_entry(name: str, adapter: object) -> ToolRegistryEntry:
     )
 
 
+def _skill_create_entry(adapter: object) -> ToolRegistryEntry:
+    name = "skill_create"
+    schema = {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string", "minLength": 1, "maxLength": 64,
+                "description": "Lowercase hyphenated skill name",
+            },
+            "description": {"type": "string", "minLength": 1, "maxLength": 1024},
+            "instructions": {"type": "string", "minLength": 1, "maxLength": MAX_SKILL_BYTES},
+        },
+        "required": ["name", "description", "instructions"],
+        "additionalProperties": False,
+    }
+    encoded = json.dumps(schema, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return ToolRegistryEntry(
+        spec=ToolSpec.model_validate({
+            "name": name,
+            "description": "Create one user skill after explicit approval",
+            "sideEffect": "eidos_state",
+            "approvalRequired": True,
+            "timeoutSeconds": 5,
+            "batchPolicy": "single",
+            "visibility": "direct",
+            "inputSchema": schema,
+            "resultSchema": {
+                "type": "object", "properties": {}, "required": [],
+                "additionalProperties": False,
+            },
+        }),
+        provenance=ToolProvenance.model_validate({
+            "kind": "builtin",
+            "sourceId": "eidos.skill-creator",
+            "sourceVersion": "1",
+            "contentHash": hashlib.sha256(encoded).hexdigest(),
+        }),
+        adapter=adapter,  # type: ignore[arg-type]
+    )
+
+
 def _skill_success(tool_name: str, data: dict[str, object]) -> dict[str, object]:
     return {
         "toolContractVersion": 1,
@@ -407,6 +586,14 @@ def _skill_error(tool_name: str, code: str, summary: str) -> dict[str, object]:
         "sideEffectsMayExist": False,
         "reconciliationRequired": False,
     }
+
+
+def _skill_document(name: str, description: str, instructions: str) -> bytes:
+    title = name.replace("-", " ").title()
+    return (
+        f"---\nname: {name}\ndescription: {description}\n---\n\n"
+        f"# {title}\n\n{instructions}"
+    ).encode("utf-8")
 
 
 def _snapshot_plugins(snapshot: dict[str, object]) -> list[dict[str, object]]:

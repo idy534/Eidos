@@ -65,7 +65,7 @@ class ToolProvenance(ClosedModel):
 
 
 class ToolAdapter(Protocol):
-    execution_kind: Literal["read", "file", "shell", "external"]
+    execution_kind: Literal["read", "file", "shell", "external", "eidos_state"]
 
     def effective_arguments(self, arguments: object) -> dict[str, object] | None: ...
 

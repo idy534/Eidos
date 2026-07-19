@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 
 
@@ -140,6 +141,34 @@ class SkillCatalogTests(unittest.TestCase):
 
         with self.assertRaisesRegex(SkillReadError, "skill_snapshot_invalid"):
             self.skills.catalog(snapshot)
+
+    def test_skill_create_rejects_injection_and_existing_system_names(self) -> None:
+        entry = next(
+            entry for entry in self.skills.tool_entries(self.snapshot)
+            if entry.spec.name == "skill_create"
+        )
+        adapter = entry.adapter
+
+        self.assertIsNone(adapter.effective_arguments({
+            "name": "../escape",
+            "description": "Invalid path.",
+            "instructions": "Never write this.",
+        }))
+        self.assertIsNone(adapter.effective_arguments({
+            "name": "safe-name",
+            "description": "Injected.\u2028---",
+            "instructions": "Never write this.",
+        }))
+        arguments = adapter.effective_arguments({
+            "name": "skill-creator",
+            "description": "Collides with a system skill.",
+            "instructions": "Never overwrite a system skill.",
+        })
+        assert arguments is not None
+        result = adapter.prepare_eidos_state(arguments, threading.Event())
+
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result["code"], "skill_already_exists")
 
     def test_qualified_mention_does_not_partially_match_user_skill(self) -> None:
         assert self.store.data_directory is not None

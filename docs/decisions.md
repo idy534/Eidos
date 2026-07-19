@@ -186,10 +186,10 @@
 | Q177 | MCP 参数在审批和发送前完成 effective arguments、敏感扫描和 hash 绑定；结果在进入 ToolResult、模型、UI、Event、SQLite 或日志前统一扫描和容量限制。 | P3-06；TDD Redaction/Approval |
 | Q178 | MCP timeout、取消、连接断开或提交失败不自动重试；一旦可能已发送，结果标记 `side_effects_may_exist=true` 并要求用户核验。 | P3-06；TDD Recovery |
 | Q179 | Tool catalog 分为 direct/deferred；`tool_search` 只做本地有界确定性检索，命中工具从下一 Step 才激活，不能在同一模型响应内越权调用。 | P3-07；TDD Context Builder |
-| Q180 | 第三期不增加并行工具、多 Agent、后台 daemon、MCP 市场或 Skill 自动生成；Desktop 只提供受控的 Plugin/Skill/MCP 设置与来源展示。 | P3-08；PRD 非目标；TDD Desktop |
+| Q180 | 第三期不增加并行工具、多 Agent、后台 daemon、MCP 市场或远程 Skill 自动安装；仅允许经专用工具与逐次审批创建单文件用户 Skill。Desktop 只提供受控的 Plugin/Skill/MCP 设置与来源展示。 | P3-08；PRD 非目标；TDD Desktop |
 | Q181 | Eidos 内置 Skill 以 Runtime 只读资源随应用发布，启动时原子部署到 `${EIDOS_DATA_DIR:-~/.eidos}/skills/.system`；该目录由应用管理，用户 Skill 统一位于同级 `skills/<name>`，不再引入单数 `skill/` 根。 | P3 Skill 补充；TDD Extension Catalog |
 | Q182 | Skill Catalog 合并 `system:<name>`、`user:<name>` 与 `<plugin>:<name>` 三类来源并固化完整内容树 hash；已有 Run 不因文件或应用升级静默换 Skill，失配时明确失败。 | P3 Skill 补充；TDD Snapshot/Skill |
-| Q183 | v0.3 的 `skill-installer` 与 `skill-creator` 提供经校验的系统 Terminal helper，但不削弱 Agent Shell 对网络和 `~/.eidos` 的隔离，也不新增包内脚本自动执行通道；Agent 内直接安装/创建留待独立的 Eidos-state Tool 合同。 | P3 Skill 补充；PRD 非目标；TDD Sandbox |
+| Q183 | v0.3 以专用 `skill_create` Eidos-state Tool 创建单文件用户 Skill：参数闭合、拒绝覆盖、展示 diff、逐次审批、Durable Intent 与原子私有写入；普通 Agent Shell 仍不能访问 `~/.eidos`。远程安装和资源文件创建仍由受校验的系统 Terminal helper 完成。 | P3 Skill 补充；PRD 非目标；TDD Sandbox |
 
 ## 文件契约统一收敛
 
