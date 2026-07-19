@@ -4,7 +4,7 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { Item, Run } from "../contracts.js";
-import { ExecutionFeed } from "./ExecutionFeed.js";
+import { ExecutionFeed, isFeedAtBottom } from "./ExecutionFeed.js";
 
 
 const run: Run = {
@@ -29,6 +29,27 @@ function item(overrides: Partial<Item> & Pick<Item, "id" | "ordinal" | "kind">):
     ...overrides,
   };
 }
+
+test("keeps auto-scroll only while the feed is at the bottom", () => {
+  assert.equal(isFeedAtBottom({ scrollHeight: 1000, scrollTop: 398, clientHeight: 600 }), true);
+  assert.equal(isFeedAtBottom({ scrollHeight: 1000, scrollTop: 350, clientHeight: 600 }), false);
+});
+
+test("provides an accessible jump to the latest content control", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({ id: "user", ordinal: 1, kind: "user_message", content: "向上浏览" })]}
+      runs={[run]}
+      approvals={[]}
+      disabled={false}
+      onApproval={() => {}}
+    />,
+  );
+
+  assert.match(html, /class="feed-jump-to-bottom"/);
+  assert.match(html, /aria-label="滚动到最新内容"/);
+  assert.match(html, /hidden=""/);
+});
 
 test("folds tool execution before the final answer and omits the success pill", () => {
   const items = [

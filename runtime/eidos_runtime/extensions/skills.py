@@ -618,13 +618,18 @@ def _source(
     source_id: str,
     source_version: str,
     source_hash: str | None = None,
+    *,
+    private: bool = False,
+    owned: bool = False,
 ) -> _SkillSource:
     content = _read_text(root / "SKILL.md", MAX_SKILL_BYTES)
     name, description = _frontmatter(content)
     if root.name != name:
         raise SkillReadError("skill_metadata_invalid")
     content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    resolved_source_hash = source_hash or _tree_hash(_read_tree(root, private=True))
+    resolved_source_hash = source_hash or _tree_hash(
+        _read_tree(root, private=private, owned=owned)
+    )
     return _SkillSource(
         f"{prefix}{name}", name, description, root,
         source_id, source_version, resolved_source_hash, content_hash,
@@ -664,7 +669,10 @@ def _directory_sources(
                 or child_metadata.st_uid != os.getuid()
             ):
                 continue
-            sources.append(_source(f"{prefix}:", child, source_id, source_version))
+            sources.append(_source(
+                f"{prefix}:", child, source_id, source_version,
+                private=strict, owned=True,
+            ))
         except (OSError, SkillReadError):
             if strict:
                 raise SkillReadError("skill_catalog_invalid") from None
@@ -762,7 +770,9 @@ def _scan(content: str) -> str:
         raise SkillReadError("skill_sensitive_content") from None
 
 
-def _read_tree(root: Path, *, private: bool = False) -> dict[str, bytes]:
+def _read_tree(
+    root: Path, *, private: bool = False, owned: bool = False
+) -> dict[str, bytes]:
     try:
         metadata = root.lstat()
     except OSError:
@@ -770,9 +780,8 @@ def _read_tree(root: Path, *, private: bool = False) -> dict[str, bytes]:
     if (
         root.is_symlink()
         or not stat.S_ISDIR(metadata.st_mode)
-        or (private and (
-            metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o700
-        ))
+        or ((private or owned) and metadata.st_uid != os.getuid())
+        or (private and stat.S_IMODE(metadata.st_mode) != 0o700)
     ):
         raise SkillReadError("system_skills_unavailable")
     files: dict[str, bytes] = {}
@@ -790,20 +799,16 @@ def _read_tree(root: Path, *, private: bool = False) -> dict[str, bytes]:
             if name in names:
                 if (
                     not stat.S_ISDIR(entry.st_mode)
-                    or (private and (
-                        entry.st_uid != os.getuid()
-                        or stat.S_IMODE(entry.st_mode) != 0o700
-                    ))
+                    or ((private or owned) and entry.st_uid != os.getuid())
+                    or (private and stat.S_IMODE(entry.st_mode) != 0o700)
                 ):
                     raise SkillReadError("system_skills_unavailable")
                 continue
             if (
                 not stat.S_ISREG(entry.st_mode)
                 or entry.st_size > MAX_RESOURCE_BYTES
-                or (private and (
-                    entry.st_uid != os.getuid()
-                    or stat.S_IMODE(entry.st_mode) != 0o600
-                ))
+                or ((private or owned) and entry.st_uid != os.getuid())
+                or (private and stat.S_IMODE(entry.st_mode) != 0o600)
             ):
                 raise SkillReadError("system_skills_unavailable")
             relative = candidate.relative_to(root).as_posix()

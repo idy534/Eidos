@@ -1,7 +1,7 @@
 # Eidos 目标态设计决策记录
 
 版本：v0.4
-范围：Grilling Q1-Q165；第三期实施 Q166-Q180
+范围：Grilling Q1-Q165；第三期实施与补充 Q166-Q185
 
 本文件记录已经由产品与技术共同确认的目标态设计结论。它们仍可能被后续显式决策覆盖；只有进入 [MVP Lite](mvp-lite.md) 或阶段实施清单的条目才构成当前交付范围。PRD/TDD 与本文件冲突时应先统一文档再实现。
 
@@ -190,6 +190,8 @@
 | Q181 | Eidos 内置 Skill 以 Runtime 只读资源随应用发布，启动时原子部署到 `${EIDOS_DATA_DIR:-~/.eidos}/skills/.system`；该目录由应用管理，用户 Skill 统一位于同级 `skills/<name>`，不再引入单数 `skill/` 根。 | P3 Skill 补充；TDD Extension Catalog |
 | Q182 | Skill Catalog 合并 `system:<name>`、`user:<name>` 与 `<plugin>:<name>` 三类来源并固化完整内容树 hash；已有 Run 不因文件或应用升级静默换 Skill，失配时明确失败。 | P3 Skill 补充；TDD Snapshot/Skill |
 | Q183 | v0.3 以专用 `skill_create` Eidos-state Tool 创建单文件用户 Skill：参数闭合、拒绝覆盖、展示 diff、逐次审批、Durable Intent 与原子私有写入；普通 Agent Shell 仍不能访问 `~/.eidos`。远程安装和资源文件创建仍由受校验的系统 Terminal helper 完成。 | P3 Skill 补充；PRD 非目标；TDD Sandbox |
+| Q184 | `.system` Skill 继续要求 Runtime 管理的 owner 与精确 `0700/0600`；用户 Skill 允许 Finder、Git 或 `cp` 常见的目录/文件 mode，只要求完整树归当前用户所有并继续拒绝 symlink、特殊文件、越界和非法内容。 | P3 Skill 补充；PRD F156/A188；TDD Extension Catalog |
+| Q185 | 模型正文在安全 CommonMark 基础上启用 GFM 表格；最终文本在跨分片敏感扫描后以完整安全行为最小放出单位，模型请求完成前即可经既有 `item/delta` 链路呈现。 | PRD F144-F145/A183-A184；TDD Renderer/Runtime |
 
 ## 文件契约统一收敛
 

@@ -838,4 +838,4 @@ SQLite forward migration 新增 Plugin catalog/state、Run extension snapshot、
 
 新增 RPC 为 `plugin/list|import|setEnabled|remove`、`skill/list|read`、`mcp/list|setEnabled`，以及既有 approval 通道中的 Server enable consent。所有 request/response 与 Event 使用闭合 schema、operation idempotency 和 snapshot/event waterline；敏感错误不得携带受管目录、env value、原始 stderr 或协议正文。
 
-系统 Skill 的发布源位于 Runtime 包内 `eidos_runtime/resources/skills/.system`。Runtime ready 前将其以 `0700` 目录、`0600` 文件原子部署到 `${EIDOS_DATA_DIR}/skills/.system`；用户 Skill 位于 `${EIDOS_DATA_DIR}/skills/<name>`。Catalog 对每个本地 Skill 的完整受限文件树计算 hash，Run 创建后任一资源变化均使旧快照明确失效。
+系统 Skill 的发布源位于 Runtime 包内 `eidos_runtime/resources/skills/.system`。Runtime ready 前将其以 `0700` 目录、`0600` 文件原子部署到 `${EIDOS_DATA_DIR}/skills/.system`，Catalog 复检其 owner 与精确 mode；用户 Skill 位于 `${EIDOS_DATA_DIR}/skills/<name>`，完整树只要求归当前用户所有，不要求精确 mode。两者都拒绝 symlink 和特殊文件并计算完整受限文件树 hash，Run 创建后任一资源变化均使旧快照明确失效。

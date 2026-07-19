@@ -157,8 +157,8 @@ MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 
 | F141 | 紧凑任务状态 | 左侧任务为单行紧凑布局，不显示第二行状态文字；UI 以未读完成绿点、进行中转圈、失败红点表示，进入完成任务后绿点消失 |
 | F142 | 模型设置与任务前选择 | 左下角齿轮进入仅含模型列表/API Key 的第一版配置页；新任务开始前从 Runtime 模型列表选择，默认第一个可用项，Run 创建后锁定模型 |
 | F143 | Session 标题与任务管理 | 内容区顶部以较小字号显示标题与紧邻的紧凑三点菜单；内容区标题、三点菜单和左侧任务标题均可打开同一重命名/删除操作，删除需确认且不触碰 Workspace 文件；通用预览、路径和安全说明移出内容区 |
-| F144 | Session 排版与 Markdown 正文 | 右侧 Session 使用统一 UI/代码字体与 14px 正文、13px 代码、16px 标题的固定字号/行高 token；模型正文安全渲染 CommonMark，原始 HTML、远程图片加载和正文内直接导航均不启用 |
-| F145 | 无闪烁导航与可折叠执行过程 | 项目折叠和当前任务点击不读取快照；任务切换即时更新选中态且后台原子安装目标快照，不全局淡出导航；有结构化执行时以计时过程组承载进度和可折叠工具结果，成功后默认折叠且不显示完成卡，无执行项时直接流式输出最终回答 |
+| F144 | Session 排版与 Markdown 正文 | 右侧 Session 使用统一 UI/代码字体与 14px 正文、13px 代码、16px 标题的固定字号/行高 token；模型正文安全渲染 CommonMark 与 GFM 表格，原始 HTML、远程图片加载和正文内直接导航均不启用 |
+| F145 | 无闪烁导航与可折叠执行过程 | 项目折叠和当前任务点击不读取快照；任务切换即时更新选中态且后台原子安装目标快照，不全局淡出导航；有结构化执行时以计时过程组承载进度和可折叠工具结果，成功后默认折叠且不显示完成卡，无执行项时按敏感扫描确认的完整安全行流式输出最终回答并淡入最新语义块；Feed 位于底部时跟随新增内容，用户上滚后暂停、显示回到底部按钮，并在再次到底后恢复 |
 | F146 | 第三期动态 Tool Registry | ToolSpec、执行 Adapter 和 provenance 形成唯一不可变 entry；内置、Skill resource 与 MCP Tool 通过同一调度链执行 |
 | F147 | 能力快照 | Run 固化 Plugin/Skill/MCP 配置，Step 固化 direct/deferred/activated 工具及完整 schema hash；重试复用相同快照 |
 | F148 | 本地 Plugin v1 | 用户显式导入只含 Skill/MCP 配置的本地目录；严格校验并原子安装，支持幂等列出、启停和移除，不执行安装脚本 |
@@ -169,7 +169,7 @@ MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 
 | F153 | 外部结果与恢复 | MCP 参数/结果统一扫描和限额；timeout、取消、断连与提交失败零自动重试并保留可能副作用事实 |
 | F154 | Tool Search | 大工具目录按 direct/deferred 有界暴露；本地确定性搜索命中的工具只能从下一 Step 激活并写入快照 |
 | F155 | 扩展设置与 Feed | Desktop 提供 Plugins、Skills、MCP Servers 受控设置，Feed 展示安全 provenance/审批/状态，不泄露 env value、内部路径或原始 stderr |
-| F156 | 系统与用户 Skill | Runtime 将随应用发布的系统 Skill 原子部署到 `skills/.system`，发现同级用户 Skill，并以稳定 namespace、私有权限和内容树 hash 合入 Run 快照；v0.3 不从 Agent Shell 写 Eidos Home |
+| F156 | 系统与用户 Skill | Runtime 将随应用发布的系统 Skill 以精确私有权限原子部署到 `skills/.system`；发现同级且完整树归当前用户所有的用户 Skill，不因 Finder、Git 或 `cp` 产生的常见 mode 拒绝加载，并以稳定 namespace 和内容树 hash 合入 Run 快照；v0.3 不从 Agent Shell 写 Eidos Home |
 
 ## 2. ToolCall 组合规则
 

@@ -115,11 +115,11 @@ P3-00 契约与基线
 
 ## 6. 契约追溯
 
-第三期从既有编号末尾追加 Q166-Q180、F146-F155、A185-A193，不改写一期、二期历史编号。
+第三期从既有编号末尾追加 Q166-Q185、F146-F156、A185-A193，不改写一期、二期历史编号。
 
 | 清单分组 | 决策/PRD | TDD 落点 | 自动化主位置 |
 |---|---|---|---|
-| P3-00 | Q166-Q180；F146-F155；A185-A193 | TDD 总览与各模块第三期小节 | `mvp-phase-3-baseline.md`、全量回归 |
+| P3-00 | Q166-Q185；F146-F156；A185-A193 | TDD 总览与各模块第三期小节 | `mvp-phase-3-baseline.md`、全量回归 |
 | P3-01 | Q170-Q172；F146；A185 | 架构 §8；工具 §13 | `test_tool_registry.py`、`test_runtime_seams.py`、`test_deepseek.py` |
 | P3-02 | Q171-Q173；F147；A186 | 模型 §11；协议/存储 §12 | `test_extension_storage.py`、`test_phase3_runtime.py` |
 | P3-03 | Q166-Q167/Q173；F148；A187 | 架构 §8；协议/存储 §12 | `test_plugins.py`、`test_server.py` |
@@ -189,6 +189,7 @@ P3-00 契约与基线
 - [x] P3-04-09 Catalog 合并 `system:`、`user:` 和 Plugin namespace，并把完整本地 Skill 树 hash 固化进 Run；运行中修改资源不会静默生效。
 - [x] P3-04-10 将 `skill-installer`、`skill-creator`、`plugin-creator`、`review-agent` 的 Codex 专属路径和合同替换为 Eidos v0.3 合同；远程安装 helper 由系统 Terminal 显式运行，不新增 Agent Shell 越权通道。
 - [x] P3-04-11 新增 direct、single、approval-required 的 `skill_create` Eidos-state Tool；只接受 `name`、`description`、`instructions`，拒绝路径注入与 system/user 同名覆盖，以 diff 审批、Durable Intent 和原子 `0700/0600` 写入创建 `${EIDOS_DATA_DIR}/skills/<name>/SKILL.md`，拒绝审批时零副作用。
+- [x] P3-04-12 系统 Skill 完整树继续要求当前 owner 与精确 `0700/0600`；用户 Skill 只要求完整树归当前用户所有，不因手工复制产生的 `0755/0644` 等 mode 被过滤，symlink、特殊文件和内容边界不放宽。
 
 验收：一个 Skill-only Plugin 可被导入、列出、显式调用和读取引用资源；恶意路径或指令不能读取 Plugin 根外内容或绕过工具审批。
 
@@ -287,9 +288,9 @@ git diff --check
 
 发布检查必须在原生 macOS 环境执行 MCP Server Seatbelt、进程组清理、网络/文件权限矩阵和 Electron smoke；受限容器结果不能替代原生安全结论。
 
-第三期发布验收结果（2026-07-18）：
+第三期发布验收结果（2026-07-20）：
 
-- `pnpm test`：Runtime 180 项、Renderer 15 项、Main/sidecar 15 项全部通过。
+- 全量回归：Runtime 181 项、Renderer 18 项、Main/sidecar 15 项全部通过。
 - 原生 macOS 回归包含 connector/workspace_read Seatbelt 权限矩阵、官方 MCP Client fixture、进程退出、超时、进行中取消和零自动重放。
 - `pnpm build` 与 `git diff --check` 通过；协议与 Runtime 版本为 `0.3.0`，SQLite schema revision 为 5。
 

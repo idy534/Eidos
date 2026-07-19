@@ -276,8 +276,10 @@ input, textarea {
 .error-banner { flex: none; margin: 0.75rem 1.75rem 0; border: 1px solid #dfb9b2; border-radius: var(--radius); padding: 0.75rem 1rem; color: var(--danger); background: var(--danger-soft); font-size: var(--font-size-body); }
 .shell-unavailable { max-width: 48rem; margin: 0.5rem 0 0; color: var(--danger); font-size: var(--font-size-caption); line-height: var(--line-height-code); }
 
+.feed-shell { position: relative; flex: 1 1 auto; min-height: 0; }
 .feed {
   flex: 1 1 auto;
+  height: 100%;
   min-height: 0;
   overflow-y: auto;
   padding: 1.25rem max(1.75rem, calc((100% - 56rem) / 2));
@@ -286,6 +288,24 @@ input, textarea {
   font-size: var(--font-size-body);
   line-height: var(--line-height-body);
 }
+.feed-jump-to-bottom {
+  position: absolute;
+  z-index: 2;
+  bottom: 1rem;
+  left: 50%;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-color: var(--line);
+  border-radius: 50%;
+  padding: 0;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 0.25rem 0.8rem rgb(20 25 21 / 12%);
+  transform: translateX(-50%);
+  font-size: 1.35rem;
+  font-weight: 450;
+}
+.feed-jump-to-bottom:hover:not(:disabled) { background: var(--surface-muted); }
 .feed-empty, .empty-state { display: grid; place-content: center; text-align: center; color: var(--muted); }
 .feed-empty { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .feed-item { max-width: 44rem; margin-bottom: 1.25rem; line-height: var(--line-height-body); }
@@ -308,6 +328,9 @@ input, textarea {
 .markdown-body pre { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); padding: 0.75rem; background: var(--surface-muted); }
 .markdown-body code { border-radius: 0.25rem; padding: 0.1rem 0.3rem; background: var(--surface-muted); font: var(--font-size-code)/var(--line-height-code) var(--font-code); }
 .markdown-body pre code { padding: 0; background: transparent; white-space: pre; }
+.markdown-body table { width: 100%; margin: 0 0 0.75rem; border-collapse: collapse; }
+.markdown-body th, .markdown-body td { border: 1px solid var(--line); padding: 0.375rem 0.5rem; text-align: left; vertical-align: top; }
+.markdown-body th { background: var(--surface-muted); font-weight: 600; }
 .markdown-link { color: var(--accent); text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 0.15em; cursor: help; }
 .markdown-image-alt { color: var(--muted); font-size: var(--font-size-caption); }
 .streaming::after { content: ""; display: inline-block; width: 0.45rem; height: 1em; margin-left: 0.25rem; vertical-align: -0.15rem; background: var(--accent); animation: blink 1s steps(1) infinite; }

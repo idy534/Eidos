@@ -193,8 +193,10 @@ Workbench 布局额外满足：
 - Session 内容区 header 只以低于页面标题的字号渲染权威 `title` 和紧邻标题的紧凑三点按钮。标题 `contextmenu`、三点按钮与左侧任务按钮 `contextmenu` 打开同一组“编辑标题、删除任务”动作；左侧右键菜单支持 `Shift+F10`，重命名成功后以 Runtime result 更新，删除先显示不可逆确认，`session_has_active_run` 时引导先结束任务。
 - 删除成功后清理选中态并导航到剩余第一个任务或空状态；不得调用文件 API。header 不渲染 Developer Preview、Workspace 名称/绝对路径和通用审批/敏感扫描说明；Workspace 路径只在左侧项目辅助信息中显示，具体安全范围由 Approval 卡片展示。
 - Renderer 在 `:root` 固定 `--font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif` 与 `--font-code: ui-monospace, "SFMono-Regular", SFMono-Regular, Menlo, Monaco, Consolas, monospace`；字号 token 为 `11/12/13/13/14/16px`（xs/caption/sidebar/code/body/title），代码、正文和标题行高分别为 `20/22/24px`。Session header、Feed、Composer、工具输出和 Diff 只引用这些 token。
-- `assistant_message` 交给同步 CommonMark Renderer 生成 React element；`user_message` 保持纯文本。Renderer 不使用 `dangerouslySetInnerHTML`，启用 `skipHtml`，并将 Markdown `a/img` 替换为不导航、不加载资源的文本组件；流式 item 每次以当前已提交安全文本重新解析，未闭合语法不得阻塞后续 delta。工具、Approval 和 Run 状态不经过 Markdown。
+- `assistant_message` 交给同步 CommonMark + `remark-gfm` Renderer 生成 React element；`user_message` 保持纯文本。Renderer 不使用 `dangerouslySetInnerHTML`，启用 `skipHtml`，并将 Markdown `a/img` 替换为不导航、不加载资源的文本组件；GFM 表格生成语义化 `table`；流式 item 每次以当前已提交的完整安全行重新解析，未闭合语法不得阻塞后续 delta。工具、Approval 和 Run 状态不经过 Markdown。
 - `ExecutionFeed` 按 Run、再按 `user_message` 分段；一段中存在结构化工具 Item 时，以最后一个工具 ordinal 为边界，将此前 assistant Item 与工具 Item 投影为过程、此后 assistant Item 投影为最终回答。过程用原生 `details/summary`：非终态默认展开并用 Run `startedAt/createdAt` 到当前时间显示“正在处理”，终态以 `completedAt` 固化耗时并通过状态 key 重挂载为默认折叠；无工具段不生成过程组。尚无 assistant/tool Item 的活动段显示 CSS 渐变“正在思考”，`prefers-reduced-motion` 下退回静态文本。`succeeded` 不渲染 Run notice，其他终态、等待输入和副作用不确定仍渲染安全提示。
+- Feed 用自身 `scroll` 事件记录是否贴底（允许 2px 像素误差）；仅在贴底时于流式 Item 更新后的 layout effect 将 `scrollTop` 更新到 `scrollHeight`。用户上滚立即停止跟随并显示底部居中的“滚动到最新内容”按钮，点击使用原生 smooth scroll，再次滚到底部后恢复跟随；不持久化浏览位置。
+- 已通过敏感扫描的完整安全行到达后，Renderer 通过原生 Web Animations 对最后一个 Markdown 语义块执行 `220ms ease-out` 淡入上移；列表和表格只动画最新项/行，不重新分割 Markdown，也不改变 Runtime 的安全放出边界；`prefers-reduced-motion` 时不执行动画。
 - 工具 Item 在过程组内使用可折叠摘要。`run_shell` 从 RunSnapshot 展示白名单中的 `argumentsJson.command|cwd|timeoutSeconds` 与 ToolResult envelope `data.stdout/stderr/exitCode` 构建 Shell 卡；完整命令和输出使用代码字体，双流为空时显示“无输出”，状态只由 Item status 与 exit code 推导。读取、搜索、编辑和删除使用工具名与参数白名单生成本地化摘要，未知或非法 JSON 安全退回结构化状态，不渲染任意 HTML。
 
 审批卡必须展示：

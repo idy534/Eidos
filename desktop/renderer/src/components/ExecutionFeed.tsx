@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import type { ApprovalRequest, Item, Run, ToolCall } from "../contracts.js";
@@ -30,6 +30,14 @@ const TERMINAL_RUN_STATUSES = new Set<Run["status"]>([
 
 
 export function ExecutionFeed({ items, runs, approvals, disabled, onApproval }: Props) {
+  const feedRef = useRef<HTMLElement>(null);
+  const [atBottom, setAtBottom] = useState(true);
+
+  useLayoutEffect(() => {
+    const feed = feedRef.current;
+    if (feed && atBottom) feed.scrollTop = feed.scrollHeight;
+  }, [items, atBottom]);
+
   if (items.length === 0) {
     return (
       <div className="feed-empty" role="status">
@@ -42,30 +50,53 @@ export function ExecutionFeed({ items, runs, approvals, disabled, onApproval }: 
   const itemGroups = groupItemsByRun(items);
 
   return (
-    <section className="feed" aria-label="Execution Feed" aria-live="polite">
-      {itemGroups.map(({ runId, items: runItems }) => {
-        const run = runsById.get(runId);
-        if (!run) return null;
-        const segments = splitRunIntoSegments(runItems);
-        return (
-          <Fragment key={runId}>
-            {segments.map((segment, index) => (
-              <RunSegment
-                key={`${runId}:${segment.user?.id ?? index}`}
-                segment={segment}
-                run={run}
-                isLast={index === segments.length - 1}
-                approvals={approvals}
-                disabled={disabled}
-                onApproval={onApproval}
-              />
-            ))}
-            <RunNotice run={run} />
-          </Fragment>
-        );
-      })}
-    </section>
+    <div className="feed-shell">
+      <section
+        ref={feedRef}
+        className="feed"
+        aria-label="Execution Feed"
+        aria-live="polite"
+        onScroll={(event) => setAtBottom(isFeedAtBottom(event.currentTarget))}
+      >
+        {itemGroups.map(({ runId, items: runItems }) => {
+          const run = runsById.get(runId);
+          if (!run) return null;
+          const segments = splitRunIntoSegments(runItems);
+          return (
+            <Fragment key={runId}>
+              {segments.map((segment, index) => (
+                <RunSegment
+                  key={`${runId}:${segment.user?.id ?? index}`}
+                  segment={segment}
+                  run={run}
+                  isLast={index === segments.length - 1}
+                  approvals={approvals}
+                  disabled={disabled}
+                  onApproval={onApproval}
+                />
+              ))}
+              <RunNotice run={run} />
+            </Fragment>
+          );
+        })}
+      </section>
+      <button
+        className="feed-jump-to-bottom"
+        type="button"
+        aria-label="滚动到最新内容"
+        hidden={atBottom}
+        onClick={() => feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" })}
+      >
+        <span aria-hidden="true">↓</span>
+      </button>
+    </div>
   );
+}
+
+export function isFeedAtBottom(
+  feed: Pick<HTMLElement, "scrollHeight" | "scrollTop" | "clientHeight">,
+): boolean {
+  return feed.scrollHeight - feed.scrollTop - feed.clientHeight <= 2;
 }
 
 function RunSegment({
@@ -130,9 +161,25 @@ function UserMessage({ item }: { item: Item }) {
 }
 
 function AssistantMessage({ item }: { item: Item }) {
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (
+      item.status !== "in_progress"
+      || !item.content
+      || window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) return;
+    const block = contentRef.current?.querySelector<HTMLElement>(".markdown-body > :last-child");
+    const latest = block?.querySelector<HTMLElement>("tbody tr:last-child, li:last-child") ?? block;
+    latest?.animate(
+      [{ opacity: 0.55, transform: "translateY(0.15rem)" }, { opacity: 1, transform: "translateY(0)" }],
+      { duration: 220, easing: "ease-out" },
+    );
+  }, [item.content, item.status]);
+
   return (
     <article className="feed-item feed-item--assistant">
-      <div className={item.status === "in_progress" ? "streaming" : ""}>
+      <div ref={contentRef} className={item.status === "in_progress" ? "streaming" : ""}>
         <MarkdownContent content={item.content || ""} />
       </div>
     </article>

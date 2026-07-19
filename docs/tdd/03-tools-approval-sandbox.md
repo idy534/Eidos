@@ -722,7 +722,7 @@ adapter: validate/default/execute capability (Runtime-only, never serialized)
 
 Tool Schema Dialect v1 仍只接受递归闭合 object、受控 scalar/array、required/default/min/max/enum/const；遇到 `$ref`、组合 schema、自由 map 或未知关键字时整个外部工具隔离，不能静默删除关键字。
 
-Skill 读取工具为 `skill_read` 与 `skill_read_resource`。Catalog 合并应用管理的 `system:<name>`、用户管理的 `user:<name>` 与 Plugin 的 `<plugin>:<name>`；读取路径必须位于该来源 root，逐段拒绝绝对路径、`..`、symlink、特殊文件、非 UTF-8、二进制和容量超限。`scripts/` 只作为文本资源，不存在执行 Adapter。
+Skill 读取工具为 `skill_read` 与 `skill_read_resource`。Catalog 合并应用管理的 `system:<name>`、用户管理的 `user:<name>` 与 Plugin 的 `<plugin>:<name>`；读取路径必须位于该来源 root，逐段拒绝绝对路径、`..`、symlink、特殊文件、非 UTF-8、二进制和容量超限。系统 Skill 完整树要求当前 owner 与精确 `0700/0600`；用户 Skill 完整树要求当前 owner，但接受 Finder、Git 或 `cp` 产生的常见 mode。`scripts/` 只作为文本资源，不存在执行 Adapter。
 
 `skill_create` 是独立的 `sideEffect=eidos_state`、direct、single、approval-required Adapter，不经过 Agent Shell。它只接受闭合的 `name`、`description`、`instructions`，由 Runtime 生成完整 `SKILL.md`；prepare 阶段拒绝非法名称、frontmatter 注入、容量超限和 system/user 同名，审批绑定目标 diff 与 content hash，批准后以 Durable Intent、私有 staging 和原子 rename 写入 `${EIDOS_DATA_DIR}/skills/<name>`。commit 前再次检查碰撞；拒绝审批时零副作用，提交结果未知时进入 reconciliation。远程安装、更新已有 Skill 和创建资源文件不在该工具合同内，仍不能借此绕过 Agent Shell 的网络与 Eidos Home 隔离。
 

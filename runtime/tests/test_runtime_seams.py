@@ -18,6 +18,25 @@ from eidos_runtime.tools.workspace import ToolExecutor  # noqa: E402
 
 
 class RuntimeSeamTests(unittest.TestCase):
+    def test_model_runner_releases_safe_lines_before_model_completion(self) -> None:
+        observed_during_completion: list[list[str]] = []
+        deltas: list[str] = []
+
+        class StreamingModel:
+            def complete(self, _context, _cancel, on_text_delta, **_kwargs):
+                on_text_delta("first line\n")
+                observed_during_completion.append(list(deltas))
+                on_text_delta("second line")
+                return ModelResponse(text="first line\nsecond line")
+
+        result = ModelRunner(StreamingModel()).run(
+            (), threading.Event(), deltas.append
+        )
+
+        self.assertEqual(observed_during_completion, [["first line\n"]])
+        self.assertEqual(deltas, ["first line\n", "second line"])
+        self.assertEqual(result.text, "first line\nsecond line")
+
     def test_model_runner_returns_visible_text_and_tool_calls(self) -> None:
         model = ScriptedModel([
             ModelResponse(

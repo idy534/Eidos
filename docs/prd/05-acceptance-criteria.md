@@ -257,12 +257,12 @@
 | A180 | 模型选择 | 新任务开始前可选择 `deepseek-v4-flash` 或 `deepseek-v4-pro`；默认使用 Runtime 返回的第一个可用模型，开始后本次任务的模型不可切换，空列表时禁止开始 |
 | A181 | 标题与任务操作 | Session 顶部以较小字号显示标题和紧邻标题的紧凑三点菜单；内容区标题、三点菜单与左侧任务标题右键均提供重命名/删除；删除需确认、活动任务需先结束且 Workspace 文件保持不变；预览阶段、绝对路径和通用安全说明不出现在内容区 |
 | A182 | 项目导航 | 项目使用展开/折叠文件夹图标并可折叠任务列表；按首次 Session 创建时间倒序，向已有项目新增任务不改变项目顺序；项目右侧加号直接在该 Workspace 创建 Session |
-| A183 | Session 排版与 Markdown | 标题、正文、代码、caption 分别使用 16px/24px、14px/22px、13px/20px、12px token；模型正文的标题、列表、强调、引用和代码生成语义化 DOM，原始 HTML 不执行，图片不发起远程加载，链接不直接导航；用户消息仍按纯文本展示 |
-| A184 | 导航与执行过程 | 项目/任务标题为常规字重；折叠项目和重复点击当前任务不发起 SessionSnapshot 读取，切换任务时导航不整体淡出且目标快照到达后原子替换；有工具的一轮执行期间显示展开的“正在处理”计时过程，完成后折叠为“已处理”，Shell 可展开查看命令、输出和状态且成功 Run 无完成卡；无工具的一轮只流式展示最终 Markdown |
+| A183 | Session 排版与 Markdown | 标题、正文、代码、caption 分别使用 16px/24px、14px/22px、13px/20px、12px token；模型正文的标题、列表、强调、引用、GFM 表格和代码生成语义化 DOM，原始 HTML 不执行，图片不发起远程加载，链接不直接导航；用户消息仍按纯文本展示 |
+| A184 | 导航与执行过程 | 项目/任务标题为常规字重；折叠项目和重复点击当前任务不发起 SessionSnapshot 读取，切换任务时导航不整体淡出且目标快照到达后原子替换；有工具的一轮执行期间显示展开的“正在处理”计时过程，完成后折叠为“已处理”，Shell 可展开查看命令、输出和状态且成功 Run 无完成卡；无工具的一轮按完整安全行流式展示最终 Markdown，最新语义块淡入且模型请求完成前可见首批内容；Feed 在底部时自动跟随，用户上滚后不抢占浏览位置并出现可访问的回到底部按钮，再次滚到底后恢复跟随 |
 | A185 | 动态 Registry | 增加内存 Adapter 无需修改 RuntimeEngine 名称分支；八个内置工具协议与审批回归不变，非法外部 entry 被单独隔离 |
 | A186 | 能力快照 | 全局启停和 MCP list_changed 不改变已创建 Run/Step/Attempt；重启后可复算相同工具顺序、序列化和 hash |
 | A187 | Plugin import | 合法 Plugin 跨重启保留；未知字段、路径穿越、symlink、超限、中断和同版本内容冲突均零半安装、零覆盖、零代码执行 |
-| A188 | Skill 只读边界 | Skill-only Plugin 可列出、显式加载和读取资源；恶意路径、非 UTF-8、特殊文件、超限内容和包内脚本不能越界或执行 |
+| A188 | Skill 只读边界 | Skill-only Plugin 可列出、显式加载和读取资源；用户复制的 owner 一致 `0755/0644` Skill 可加载，系统 Skill 仍要求精确 `0700/0600`；恶意路径、symlink、非 UTF-8、特殊文件、超限内容和包内脚本不能越界或执行 |
 | A189 | MCP 生命周期 | fixture 覆盖 stdio initialize/list/call/list_changed/shutdown、分页、isError、非法 schema、stdout 污染、超时、取消和崩溃 |
 | A190 | MCP 审批与沙箱 | 取消 Server consent 零进程/零凭证；每次 ToolCall 单独审批；原生 macOS 证明 connector/workspace_read 文件与网络矩阵互斥且 fail closed |
 | A191 | 外部不确定性 | 已发送的 MCP 调用在 timeout、断连、取消或提交失败时只有一个不确定 ToolResult、零自动重放并进入用户核验状态 |

@@ -39,11 +39,20 @@ class SensitiveScannerTests(unittest.TestCase):
         self.assertEqual(redacted.audited_rule_ids, ["email_address"])
 
     def test_cross_chunk_secret_is_never_released(self) -> None:
-        stream = StreamingSensitiveScanner(self.scanner)
+        released: list[str] = []
+        stream = StreamingSensitiveScanner(self.scanner, released.append)
         stream.feed("credential sk-abcdefgh")
-        stream.feed("ijklmnop")
+        self.assertEqual(released, [])
         with self.assertRaises(SensitiveContentDenied):
-            stream.finish()
+            stream.feed("ijklmnop\n")
+        self.assertEqual(released, [])
+
+        redacted: list[str] = []
+        assignment = StreamingSensitiveScanner(self.scanner, redacted.append)
+        assignment.feed("password:\n")
+        self.assertEqual(redacted, [])
+        assignment.feed("hunter2\n")
+        self.assertEqual(redacted, ["[REDACTED:secret_assignment]\n"])
 
     def test_invalid_or_writable_rule_resource_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-rules-") as directory:

@@ -69,7 +69,7 @@ Execution Feed 不保存或展示模型供应商的 raw reasoning：
 
 过程组中的工具行按类型显示读取、搜索、编辑和运行命令摘要，具体结果默认可折叠。Shell 行摘要显示“正在运行/已运行 {command}”；展开后以 Shell 结果卡显示完整 `$ command`、stdout/stderr（空结果显示“无输出”）以及成功或失败状态。Feed 只从 ToolResult canonical envelope 的白名单字段读取展示内容。
 
-Session 中的模型正文按 CommonMark Markdown 展示，至少支持标题、段落、强调、列表、引用、分隔线、行内代码和代码块；用户消息保持纯文本，工具、审批和运行状态继续使用结构化组件。Markdown 原始 HTML 不执行，图片不自动加载，正文链接不在 Session 内直接导航，避免模型内容触发脚本、远程请求或窗口跳转。
+Session 中的模型正文按 CommonMark Markdown 与 GFM 表格展示，至少支持标题、段落、强调、列表、引用、分隔线、表格、行内代码和代码块；用户消息保持纯文本，工具、审批和运行状态继续使用结构化组件。Markdown 原始 HTML 不执行，图片不自动加载，正文链接不在 Session 内直接导航，避免模型内容触发脚本、远程请求或窗口跳转。
 
 右侧 Session 使用统一排版 token：UI 字体为 macOS/Windows 中文系统字体栈，代码字体为系统等宽字体栈；正文 `14px/22px`、代码 `13px/20px`、标题 `16px/24px`、caption `12px`、辅助小字 `11px`。Session 标题、正文、Composer 和工具代码必须使用对应 token，不再混用页面级衬线标题或任意 rem 字号。
 

@@ -310,7 +310,7 @@
 - Session header 以较小字号显示标题和紧邻的紧凑三点菜单；内容区标题、三点菜单和左侧任务标题右键/`Shift+F10` 共享重命名/删除操作，活动任务删除被拒绝，确认删除后导航安全且 Workspace 文件零变化；预览阶段、绝对路径和通用安全说明不出现在 header。
 - Renderer 静态渲染测试断言模型 Markdown 的标题、列表和 fenced code 生成对应语义化 element；raw HTML、脚本、远程图片和正文链接不生成可执行/可加载/可导航节点，用户消息不进入 Markdown Renderer。实际 Electron 验收 Session 标题 `16px/24px`、正文 `14px/22px`、代码 `13px/20px` 及系统 UI/等宽字体栈。
 - Renderer 测试断言项目折叠与重复选择当前 Session 不读取快照，竞态切换只安装最后选择的快照且导航不因后台 refresh 进入 disabled/opacity；项目、任务标题 computed font weight 为 400。
-- Execution Feed 静态测试覆盖：有工具的一轮生成终态默认折叠过程组、“已处理”稳定耗时、Shell 命令/无输出/成功状态且最终 Markdown 位于其后；成功 Run 不出现完成标签；无工具回答不生成过程组；活动 Run 只有用户消息时显示“正在思考”。实际 Electron 验收运行期间过程默认展开、终态自动折叠、手动展开/折叠和 reduced-motion 回退。
+- Execution Feed 静态测试覆盖：有工具的一轮生成终态默认折叠过程组、“已处理”稳定耗时、Shell 命令/无输出/成功状态且最终 Markdown 位于其后；成功 Run 不出现完成标签；无工具回答不生成过程组；活动 Run 只有用户消息时显示“正在思考”；贴底判定覆盖像素误差，回到底部按钮具备可访问名称。实际 Electron 验收运行期间过程默认展开、终态自动折叠、手动展开/折叠、流式贴底跟随、上滚按钮、语义块淡入和 reduced-motion 回退。
 - 每个状态只按 snapshot allowed_actions 渲染；recoverable/irrecoverable/unknown/workspace unavailable 的 Continue、Approval 竞态和 terminal 空动作均符合服务端矩阵。
 - Main 对 success/error DTO 二次 runtime validation、cursor 只透传、unknown Event 原 payload 零 Renderer 泄漏、不兼容 contract 停流；storage health-only 只显示安全 reason/data root/recheck 且无自动清理/恢复按钮。
 - UTC 毫秒的本地化展示、客户端时钟回拨/休眠不延长 Approval、启动 clock rollback invalidation 在业务 IPC 前可见。
@@ -433,7 +433,7 @@ M0 未通过前，不进入 Agent Shell 主链路实现。
 ## 8. 文档完成标准
 
 - PRD 每个进入阶段清单的要求在 TDD 和测试中有对应落点。
-- Q1-Q180 决策不得出现相反规则。
+- Q1-Q185 决策不得出现相反规则。
 - 实现开始前冻结对应阶段的 protocol schema、状态 enum 和 Tool schema。
 
 ## 9. 第三期测试矩阵
@@ -448,4 +448,4 @@ M0 未通过前，不进入 Agent Shell 主链路实现。
 
 发布门槛为 Runtime 全量、`pnpm test`、production build、`git diff --check`，以及原生 macOS MCP Seatbelt、进程组清理和 Electron smoke；受限容器不能替代原生安全结论。
 
-第三期已于 2026-07-19 通过发布门槛：Runtime 180 项、Renderer 15 项、Main/sidecar 15 项全部通过；production build、原生 MCP Seatbelt 权限矩阵、官方 SDK fixture、进程组子进程清理、超时/取消/崩溃注入和重启读取均通过。
+第三期已于 2026-07-20 通过发布门槛：Runtime 181 项、Renderer 18 项、Main/sidecar 15 项全部通过；production build、原生 MCP Seatbelt 权限矩阵、官方 SDK fixture、进程组子进程清理、超时/取消/崩溃注入和重启读取均通过。

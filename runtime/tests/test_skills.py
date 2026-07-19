@@ -100,12 +100,12 @@ class SkillCatalogTests(unittest.TestCase):
         expected_installer = installer.read_text(encoding="utf-8")
         installer.write_text("tampered\n", encoding="utf-8")
         user = self.store.data_directory / "skills" / "my-skill"
-        user.mkdir(mode=0o700)
+        user.mkdir(mode=0o755)
         (user / "SKILL.md").write_text(
             "---\nname: my-skill\ndescription: User skill.\n---\nUser body.\n",
             encoding="utf-8",
         )
-        os.chmod(user / "SKILL.md", 0o600)
+        os.chmod(user / "SKILL.md", 0o644)
         deploy_system_skills(self.store.data_directory)
 
         self.assertEqual(installer.read_text(encoding="utf-8"), expected_installer)
@@ -122,6 +122,10 @@ class SkillCatalogTests(unittest.TestCase):
             snapshot, "system:skill-installer", "scripts/list-skills.py"
         )
         self.assertIn("List skills", resource["content"])
+
+        os.chmod(installer, 0o644)
+        with self.assertRaisesRegex(SkillReadError, "skill_catalog_invalid"):
+            self.skills.extension_snapshot()
 
     def test_local_skill_change_invalidates_existing_snapshot(self) -> None:
         assert self.store.data_directory is not None

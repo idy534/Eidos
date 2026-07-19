@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import stat
 import time
-from typing import Literal
+from typing import Callable, Literal
 
 from pydantic import Field
 
@@ -16,6 +16,9 @@ from eidos_runtime.protocol.schemas import ClosedModel
 
 MAX_SCAN_BYTES = 512 * 1024
 SCAN_TIMEOUT_SECONDS = 1.0
+_INCOMPLETE_SECRET_ASSIGNMENT = re.compile(
+    r"(?is)\b(?:password|passwd|token|secret)\s*[:=]\s*$"
+)
 
 
 class SensitiveScanError(RuntimeError):
@@ -108,9 +111,16 @@ class SensitiveScanner:
 
 
 class StreamingSensitiveScanner:
-    def __init__(self, scanner: SensitiveScanner) -> None:
+    def __init__(
+        self,
+        scanner: SensitiveScanner,
+        on_safe_text: Callable[[str], None] | None = None,
+    ) -> None:
         self.scanner = scanner
+        self.on_safe_text = on_safe_text
         self.parts: list[str] = []
+        self.safe_parts: list[str] = []
+        self.audited_rule_ids: list[str] = []
         self.bytes = 0
 
     def feed(self, chunk: str) -> None:
@@ -122,9 +132,41 @@ class StreamingSensitiveScanner:
         if self.bytes > MAX_SCAN_BYTES:
             raise SensitiveScanError("sensitive scan capacity exceeded")
         self.parts.append(chunk)
+        if self.on_safe_text is not None and "\n" in chunk:
+            self._release_complete_lines()
 
     def finish(self) -> ScanResult:
-        return self.scanner.scan_text("".join(self.parts))
+        result = self.scanner.scan_text("".join(self.parts))
+        self.parts.clear()
+        self._release(result)
+        return ScanResult(
+            text="".join(self.safe_parts),
+            auditedRuleIds=self.audited_rule_ids,
+        )
+
+    def _release_complete_lines(self) -> None:
+        pending = "".join(self.parts)
+        boundary = pending.rfind("\n") + 1
+        if boundary == 0:
+            return
+        # ponytail: stream complete lines; require a streaming-safe rule dialect
+        # before releasing token-sized fragments.
+        incomplete = _INCOMPLETE_SECRET_ASSIGNMENT.search(pending[:boundary])
+        if incomplete is not None:
+            boundary = incomplete.start()
+        if boundary == 0:
+            return
+        result = self.scanner.scan_text(pending[:boundary])
+        self.parts[:] = [pending[boundary:]]
+        self._release(result)
+
+    def _release(self, result: ScanResult) -> None:
+        self.safe_parts.append(result.text)
+        for rule_id in result.audited_rule_ids:
+            if rule_id not in self.audited_rule_ids:
+                self.audited_rule_ids.append(rule_id)
+        if self.on_safe_text is not None and result.text:
+            self.on_safe_text(result.text)
 
 
 @lru_cache(maxsize=1)

@@ -42,7 +42,7 @@ class ModelRunner:
         allow_tools: bool = True,
         tool_definitions: tuple[ModelToolDefinition, ...] = (),
     ) -> ModelStepResult:
-        stream = StreamingSensitiveScanner(self._sensitive)
+        stream = StreamingSensitiveScanner(self._sensitive, on_text)
         try:
             response = self._model.complete(
                 context,
@@ -54,10 +54,9 @@ class ModelRunner:
         except Exception as error:
             # Finish the scanner before surfacing the interruption: safe visible
             # progress is retained, while sensitive content still raises normally.
-            raise ModelStreamInterrupted(stream.finish().text) from error
+            stream.finish()
+            raise ModelStreamInterrupted("") from error
         text = stream.finish().text
-        if text:
-            on_text(text)
         if not isinstance(response, ModelResponse):
             return ModelStepResult("", ())
-        return ModelStepResult(response.text, response.tool_calls)
+        return ModelStepResult(text, response.tool_calls)
