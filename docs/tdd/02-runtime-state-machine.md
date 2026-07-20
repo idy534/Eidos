@@ -299,11 +299,11 @@ applied | not_applied | outcome_unknown
 - 每个 Attempt 的 connect/first-delta/stream-idle 上限分别为 15/180/120 秒，所有 Attempt 和退避共享 request cycle deadline。
 - 设置 `pause_reason=model_temporarily_unavailable`；多个 ModelAttempt 仍属于同一个 Step，只计一次 Step 预算。
 - 用户继续时创建新 Segment，使用原 Model Profile snapshot 重新入队。
-- 收到任何 delta 后不透明重试；Step 标记 `failed/model_stream_interrupted`。
+- 可重试的流错误在同一 Step 内按指数退避重放相同模型输入，默认最多重试 5 次；每次重试创建新的 ModelAttempt，不要求用户输入。已显示文本保留为 incomplete assistant 供 UI 审计，但不进入模型上下文。
 - Provider token 截断、内容过滤和 Runtime 输出流超限分别标记 `model_output_truncated|model_output_blocked|model_output_limit_exceeded`；Run waiting_user_input，已提交文本 incomplete，整个 ToolCall 批次丢弃，零自动重试。
 - 已显示文本保留为 `assistant_progress` 并标记 `incomplete=true`，不能成为 final_answer。
 - 未完整解析的 ToolCall 全部丢弃，一个也不创建或执行。
-- Run 进入 waiting_user_input，`pause_reason=model_stream_interrupted`。
+- 6 个 ModelAttempt 都在输出过可见文本后中断，Run 才进入 waiting_user_input，`pause_reason=model_stream_interrupted`；始终没有可见文本则重试耗尽后 Run failed。
 - 本次失败 Step 计入 Segment 和 Run Step 预算；用户继续时创建新 Segment 并重新入队。
 - 只读工具仅对 timeout、EINTR、EAGAIN 等瞬时错误重试 1 次。
 - not_found、validation、permission、sensitive_file 不重试。

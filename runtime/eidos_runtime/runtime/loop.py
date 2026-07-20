@@ -47,6 +47,7 @@ from eidos_runtime.tools.search import tool_search_entry
 
 MAX_ASSISTANT_BYTES = 512 * 1024
 FINALIZATION_SECONDS = 60
+MAX_STREAM_RETRIES = 5
 
 
 class RunCancelled(RuntimeError):
@@ -179,6 +180,8 @@ class RuntimeEngine:
             return
 
         try:
+            stream_retries = 0
+            retrying_stream = False
             while True:
                 self._check_cancel(run_id, cancel)
                 self._pause_effective_time(run_id)
@@ -187,31 +190,34 @@ class RuntimeEngine:
                 if refreshed_mcp is not None:
                     registry = build_registry(refreshed_mcp)
                     dispatcher = ToolDispatcher(registry)
-                try:
-                    step_snapshot = dispatcher.snapshot(
-                        self.store.activated_tools(run_id)
-                    )
-                    step_index = self.store.increment_model_step(
-                        run_id, tool_snapshot=step_snapshot.as_dict()
-                    )
-                except SegmentLimitReached as error:
-                    reason = (
-                        "segment_time_limit" if "time" in str(error)
-                        else "segment_step_limit"
-                    )
-                    paused = self.store.pause_run(run_id, reason)
-                    self.state_machine.transition(RuntimeState.WAITING_USER_INPUT, reason)
-                    self._notification(
-                        "run/updated", {"sessionId": paused["sessionId"], "run": paused}
-                    )
-                    return
-                except RunLimitReached as error:
-                    self._finalize(
-                        run_id, context, cancel,
-                        "max_effective_runtime" if "time" in str(error)
-                        else "max_total_steps",
-                    )
-                    return
+                if retrying_stream:
+                    retrying_stream = False
+                else:
+                    try:
+                        step_snapshot = dispatcher.snapshot(
+                            self.store.activated_tools(run_id)
+                        )
+                        step_index = self.store.increment_model_step(
+                            run_id, tool_snapshot=step_snapshot.as_dict()
+                        )
+                    except SegmentLimitReached as error:
+                        reason = (
+                            "segment_time_limit" if "time" in str(error)
+                            else "segment_step_limit"
+                        )
+                        paused = self.store.pause_run(run_id, reason)
+                        self.state_machine.transition(RuntimeState.WAITING_USER_INPUT, reason)
+                        self._notification(
+                            "run/updated", {"sessionId": paused["sessionId"], "run": paused}
+                        )
+                        return
+                    except RunLimitReached as error:
+                        self._finalize(
+                            run_id, context, cancel,
+                            "max_effective_runtime" if "time" in str(error)
+                            else "max_total_steps",
+                        )
+                        return
                 self.active_started = self.monotonic()
                 assistant_item: dict[str, object] | None = None
                 assistant_bytes = 0
@@ -302,6 +308,14 @@ class RuntimeEngine:
                             str(assistant_item["id"])
                         )
                         self._completed_item(incomplete)
+                    if stream_retries < MAX_STREAM_RETRIES:
+                        stream_retries += 1
+                        self.store.retry_current_model_attempt(run_id)
+                        if cancel.wait(min(0.2 * 2 ** (stream_retries - 1), 2.0)):
+                            raise RunCancelled
+                        retrying_stream = True
+                        continue
+                    if assistant_item is not None:
                         self.store.complete_current_step(
                             run_id, "failed", reason="model_stream_interrupted"
                         )
@@ -316,6 +330,7 @@ class RuntimeEngine:
                         self._fail(run_id, "MODEL_REQUEST_FAILED")
                     return
 
+                stream_retries = 0
                 self._check_cancel(run_id, cancel)
                 flush_deltas()
                 if not isinstance(response, ModelResponse):

@@ -157,28 +157,109 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.store.complete_current_step(run["id"], "completed")
         self.assertFalse(self.store.side_effects_blocked(run["id"]))
 
-    def test_stream_failure_after_first_delta_keeps_incomplete_progress_and_pauses(self) -> None:
-        class InterruptedModel:
+    def test_stream_failure_after_first_delta_retries_without_user_input(self) -> None:
+        class InterruptedThenCompletedModel:
+            calls = 0
+            contexts = []
+
+            def complete(
+                self, context, _cancel, on_text_delta,
+                allow_tools=True, tool_definitions=(),
+            ):
+                self.calls += 1
+                self.contexts.append(context)
+                if self.calls == 1:
+                    on_text_delta("safe progress")
+                    raise OSError("fixture")
+                on_text_delta("done")
+                return ModelResponse(text="done")
+
+        run, _ = self.store.create_run(self.session["id"], "stream")
+        model = InterruptedThenCompletedModel()
+        RuntimeEngine(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+        completed = self.store.read_run(run["id"])
+        self.assertEqual(completed["status"], "succeeded")
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        messages = [
+            item for item in snapshot["items"] if item["kind"] == "assistant_message"
+        ]
+        progress, final = messages
+        self.assertEqual(progress["content"], "safe progress")
+        self.assertTrue(progress["incomplete"])
+        self.assertEqual(final["content"], "done")
+        self.assertFalse(final.get("incomplete", False))
+        self.assertEqual(model.calls, 2)
+        self.assertEqual(model.contexts[1], model.contexts[0])
+        future_context = self.store.model_context(self.session["id"])
+        self.assertNotIn(
+            "safe progress",
+            [item.get("content") for item in future_context],
+        )
+        connection = self.store.connection
+        assert connection is not None
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM steps").fetchone()[0], 1)
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM model_attempts").fetchone()[0],
+            2,
+        )
+
+    def test_stream_failure_before_first_delta_retries_same_model_input(self) -> None:
+        class InitiallyUnavailableModel:
+            calls = 0
+            contexts = []
+
+            def complete(
+                self, context, _cancel, on_text_delta,
+                allow_tools=True, tool_definitions=(),
+            ):
+                self.calls += 1
+                self.contexts.append(context)
+                if self.calls == 1:
+                    raise OSError("fixture")
+                on_text_delta("done")
+                return ModelResponse(text="done")
+
+        run, _ = self.store.create_run(self.session["id"], "stream")
+        model = InitiallyUnavailableModel()
+        RuntimeEngine(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        self.assertEqual(model.calls, 2)
+        self.assertEqual(model.contexts[1], model.contexts[0])
+
+    def test_repeated_stream_failures_pause_after_bounded_retries(self) -> None:
+        class AlwaysInterruptedModel:
+            calls = 0
+
             def complete(
                 self, _context, _cancel, on_text_delta,
                 allow_tools=True, tool_definitions=(),
             ):
-                on_text_delta("safe progress")
+                self.calls += 1
+                on_text_delta(f"progress {self.calls}\n")
                 raise OSError("fixture")
 
         run, _ = self.store.create_run(self.session["id"], "stream")
-        RuntimeEngine(self.store, InterruptedModel(), lambda _message: None).run(
+        model = AlwaysInterruptedModel()
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
+
         paused = self.store.read_run(run["id"])
         self.assertEqual(paused["status"], "waiting_user_input")
         self.assertEqual(paused["pauseReason"], "model_stream_interrupted")
-        snapshot = self.store.read_session_snapshot(self.session["id"])
-        progress = next(
-            item for item in snapshot["items"] if item["kind"] == "assistant_message"
+        self.assertEqual(model.calls, 6)
+        connection = self.store.connection
+        assert connection is not None
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM steps").fetchone()[0], 1)
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM model_attempts").fetchone()[0],
+            6,
         )
-        self.assertEqual(progress["content"], "safe progress")
-        self.assertTrue(progress["incomplete"])
 
     def test_two_sensitive_model_tool_inputs_pause_without_tool_or_approval(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "write safely")

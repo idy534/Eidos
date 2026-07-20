@@ -164,7 +164,7 @@ usage 必须包含非负整数 `input_tokens,output_tokens,total_tokens` 且 `to
 - Responses 与 Chat Adapter 都通过固化 endpoint 发起一次 HTTP 请求，并以 SSE 消费响应；不协商 WebSocket 或其他传输。
 - 每个 Attempt 必须保持相同的 model、canonical input、tools、parameters、认证模式和 `request_max_output_tokens`。
 - 首个 delta 前遇到瞬时网络错误、429 或 5xx 时最多重试 2 次；Retry-After 和固定退避受同一 request-cycle deadline 约束。
-- 收到首个 delta 后禁止请求重放；中断按 `model_stream_interrupted` 处理。
+- 可重试的 SSE 中断按指数退避重放相同模型输入，默认最多重试 5 次；重试仍属于同一 Step，每次创建新的 ModelAttempt。已显示的 incomplete assistant 不进入模型上下文，也不要求新的用户消息。
 - HTTP 与 HTTPS scheme 来自 Profile 固化的 `base_url`，重试不得静默改写 scheme、Origin、endpoint 或 TLS 策略。
 
 ## 3. 流式事件
@@ -371,7 +371,7 @@ estimated_input_tokens <= usable_input_budget
 - 首个 delta 前 HTTP/SSE 对网络失败、429、5xx 最多重试 2 次。
 - 周期或重试耗尽后 Step 标记 `model_temporarily_unavailable`，Run 进入 waiting_user_input。
 - 同一 Step 的多个 ModelAttempt 只占一个 Step 预算；用户继续时创建新 Segment。
-- 收到 delta 后失败：本 Attempt 与 Step 标记 `model_stream_interrupted`，不透明重试。
+- 收到 delta 后失败：本 Attempt 标记 `failed`，同一 Step 最多自动重试 5 次；重试耗尽后 Step 标记 `model_stream_interrupted`。
 - Provider 正常报告 output token 截断、内容过滤或 Runtime 触发输出流容量上限时，分别进入 `waiting_user_input/model_output_truncated|model_output_blocked|model_output_limit_exceeded`；三者均不重试、不切换传输、不执行该响应任何 ToolCall。
 - 已提交 content chunk 保留为 `assistant_progress/incomplete`，不得升级为 final_answer。
 - 部分 tool_call_delta 丢弃，不创建 ToolCall row。

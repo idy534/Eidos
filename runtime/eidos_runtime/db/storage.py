@@ -1614,6 +1614,7 @@ class SessionStore:
                         for row in observations
                         for result in [_load_json_object(row["result_json"])]
                     )
+
                     if observed:
                         cleared = connection.execute(
                             """
@@ -1632,6 +1633,46 @@ class SessionStore:
                                 },
                                 session_id=run["session_id"], run_id=run_id,
                             )
+
+    def retry_current_model_attempt(self, run_id: str) -> None:
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            step = connection.execute(
+                """
+                SELECT steps.id FROM steps JOIN runs ON runs.id = steps.run_id
+                WHERE steps.run_id = ? AND steps.status = 'running'
+                  AND runs.status = 'running'
+                ORDER BY steps.creation_seq DESC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+            if step is None:
+                raise InvalidRunStateError("model attempt cannot retry")
+            attempt = connection.execute(
+                """
+                SELECT ordinal FROM model_attempts
+                WHERE step_id = ? AND status = 'running'
+                ORDER BY ordinal DESC LIMIT 1
+                """,
+                (step["id"],),
+            ).fetchone()
+            if attempt is None:
+                raise InvalidRunStateError("model attempt cannot retry")
+            connection.execute(
+                """
+                UPDATE model_attempts SET status = 'failed', completed_at = ?
+                WHERE step_id = ? AND status = 'running'
+                """,
+                (now, step["id"]),
+            )
+            connection.execute(
+                """
+                INSERT INTO model_attempts (
+                    id, step_id, ordinal, status, started_at
+                ) VALUES (?, ?, ?, 'running', ?)
+                """,
+                (str(uuid.uuid4()), step["id"], attempt["ordinal"] + 1, now),
+            )
 
     def create_assistant_item(
         self, run_id: str, model_step_index: int
@@ -2459,6 +2500,7 @@ class SessionStore:
                 """
                 SELECT * FROM items
                 WHERE session_id = ? AND status IN ('completed', 'failed', 'declined')
+                  AND NOT (kind = 'assistant_message' AND incomplete = 1)
                 ORDER BY creation_seq DESC LIMIT ?
                 """,
                 (session_id, MAX_CONTEXT_ITEMS + 1),
