@@ -636,8 +636,8 @@ export function App() {
           </>
         ) : (
           <div className="empty-state">
-            <h2>从一个 Workspace 开始</h2>
-            <p>Eidos 可以阅读、修改和测试所选目录；每次文件写入与 Shell 命令都会先展示候选操作并等待批准。</p>
+            <h2>我们该做点什么？</h2>
+            <p>Eidos 可以阅读、修改所选工作空间的文件</p>
             <button disabled={interactionBusy || runtime.storageHealth.state !== "ready"} onClick={() => void createSession()}>选择目录</button>
           </div>
         )}
@@ -678,7 +678,7 @@ function RuntimeGate({ status }: { status: RuntimeStatus }) {
       <EidosMark className="runtime-logo" />
       <p className="eyebrow">Eidos · Local Runtime</p>
       <h1>{status.state === "error" ? "启动失败" : "正在启动"}</h1>
-      <p>{status.state === "error" ? status.message : "正在完成 Python Runtime 协议握手…"}</p>
+      <p>{status.state === "error" ? status.message : "正在完成 Runtime 协议握手…"}</p>
     </main>
   );
 }
