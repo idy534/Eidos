@@ -23,7 +23,7 @@ from eidos_runtime.runtime.state_machine import EventType, RunStatus
 DATABASE_NAME = "eidos.db"
 LOCK_NAME = "runtime.lock"
 RESERVE_NAME = "emergency.reserve"
-SCHEMA_REVISION = 5
+SCHEMA_REVISION = 6
 RESERVE_BYTES = 1024 * 1024
 DEFAULT_LIST_LIMIT = 50
 MAX_LIST_LIMIT = 200
@@ -178,7 +178,7 @@ class SessionStore:
                     raise StorageError("schema_revision_missing")
             if revision > SCHEMA_REVISION or revision < 0:
                 raise StorageError("schema_revision_unsupported")
-            if revision in {1, 2, 3, 4}:
+            if revision in {1, 2, 3, 4, 5}:
                 _backup_database(connection, database_path, revision)
             if revision == 1:
                 _migrate_v1_to_v2(connection)
@@ -192,6 +192,9 @@ class SessionStore:
             if revision == 4:
                 _migrate_v4_to_v5(connection)
                 revision = 5
+            if revision == 5:
+                _migrate_v5_to_v6(connection)
+                revision = 6
             if revision not in {0, SCHEMA_REVISION}:
                 raise StorageError("schema_revision_unsupported")
 
@@ -289,9 +292,9 @@ class SessionStore:
                 CREATE TABLE IF NOT EXISTS approvals (
                     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
                     id TEXT NOT NULL UNIQUE,
-                    tool_call_id TEXT NOT NULL UNIQUE REFERENCES tool_calls(id) ON DELETE RESTRICT,
+                    tool_call_id TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE RESTRICT,
                     run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                    item_id TEXT NOT NULL UNIQUE REFERENCES items(id) ON DELETE RESTRICT,
+                    item_id TEXT NOT NULL REFERENCES items(id) ON DELETE RESTRICT,
                     status TEXT NOT NULL,
                     request_hash TEXT NOT NULL,
                     decision TEXT,
@@ -299,6 +302,10 @@ class SessionStore:
                     created_at INTEGER NOT NULL,
                     decided_at INTEGER
                 );
+
+                CREATE UNIQUE INDEX IF NOT EXISTS one_pending_approval_per_item
+                ON approvals (item_id)
+                WHERE status = 'pending';
 
                 CREATE TABLE IF NOT EXISTS execution_segments (
                     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2890,6 +2897,42 @@ def _migrate_v4_to_v5(connection: sqlite3.Connection) -> None:
         _ensure_phase_three_columns(connection)
         connection.execute("PRAGMA user_version = 5")
         connection.commit()
+    except sqlite3.Error:
+        connection.rollback()
+        raise StorageError("migration_failed") from None
+
+
+def _migrate_v5_to_v6(connection: sqlite3.Connection) -> None:
+    try:
+        if "approvals" in _table_names(connection):
+            connection.executescript(
+                """
+                BEGIN IMMEDIATE;
+                CREATE TABLE approvals_v6 (
+                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id TEXT NOT NULL UNIQUE,
+                    tool_call_id TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE RESTRICT,
+                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+                    item_id TEXT NOT NULL REFERENCES items(id) ON DELETE RESTRICT,
+                    status TEXT NOT NULL,
+                    request_hash TEXT NOT NULL,
+                    decision TEXT,
+                    feedback TEXT,
+                    created_at INTEGER NOT NULL,
+                    decided_at INTEGER
+                );
+                INSERT INTO approvals_v6 SELECT * FROM approvals;
+                DROP TABLE approvals;
+                ALTER TABLE approvals_v6 RENAME TO approvals;
+                CREATE UNIQUE INDEX one_pending_approval_per_item
+                ON approvals (item_id) WHERE status = 'pending';
+                PRAGMA user_version = 6;
+                COMMIT;
+                """
+            )
+        else:
+            connection.execute("PRAGMA user_version = 6")
+            connection.commit()
     except sqlite3.Error:
         connection.rollback()
         raise StorageError("migration_failed") from None

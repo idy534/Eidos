@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 from pathlib import Path
@@ -7,6 +8,8 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
+import zipfile
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -16,6 +19,8 @@ from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
 from eidos_runtime.extensions.skills import (  # noqa: E402
     SkillCatalog,
     SkillReadError,
+    _CodeloadRedirectHandler,
+    _download_github_skill,
     deploy_system_skills,
 )
 
@@ -55,6 +60,60 @@ class SkillCatalogTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.store.close()
         self.temporary.cleanup()
+
+    def test_runtime_installer_downloads_one_complete_public_github_skill(self) -> None:
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as bundle:
+            unrelated_symlink = zipfile.ZipInfo("skills-main/AGENTS.md")
+            unrelated_symlink.create_system = 3
+            unrelated_symlink.external_attr = 0o120777 << 16
+            bundle.writestr(unrelated_symlink, "../../AGENTS.md")
+            bundle.writestr(
+                "skills-main/skills/productivity/grilling/SKILL.md",
+                "---\nname: grilling\ndescription: Grill a plan.\n---\nBody.\n",
+            )
+            bundle.writestr(
+                "skills-main/skills/productivity/grilling/scripts/check.py",
+                "print('ok')\n",
+            )
+
+        class Response:
+            def __enter__(self):
+                self.data = io.BytesIO(archive.getvalue())
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def geturl(self) -> str:
+                return "https://codeload.github.com/mattpocock/skills/zip/main"
+
+            def read(self, size: int) -> bytes:
+                return self.data.read(size)
+
+        with patch("urllib.request.OpenerDirector.open", return_value=Response()):
+            name, files = _download_github_skill(
+                "https://github.com/mattpocock/skills/tree/main/skills/productivity/grilling",
+                threading.Event(),
+            )
+
+        self.assertEqual(name, "grilling")
+        self.assertEqual(files["scripts/check.py"], b"print('ok')\n")
+
+    def test_runtime_installer_rejects_non_github_url_before_network(self) -> None:
+        with patch("urllib.request.OpenerDirector.open") as request:
+            with self.assertRaisesRegex(SkillReadError, "skill_url_invalid"):
+                _download_github_skill(
+                    "https://example.com/mattpocock/skills/tree/main/skills/grilling",
+                    threading.Event(),
+                )
+        request.assert_not_called()
+
+    def test_runtime_installer_rejects_redirect_to_unapproved_host(self) -> None:
+        with self.assertRaisesRegex(SkillReadError, "skill_download_redirected"):
+            _CodeloadRedirectHandler().redirect_request(
+                None, None, 302, "Found", {}, "https://example.com/archive.zip"
+            )
 
     def test_catalog_is_qualified_bounded_and_does_not_include_body(self) -> None:
         catalog = self.skills.catalog(self.snapshot)

@@ -173,6 +173,29 @@ class PhaseTwoStorageTests(unittest.TestCase):
         )
         store.close()
 
+    def test_revision_five_migrates_to_multiple_historical_approvals(self) -> None:
+        store = SessionStore(self.data_directory)
+        store.initialize()
+        assert store.connection is not None
+        store.connection.execute("PRAGMA user_version = 5")
+        store.connection.commit()
+        store.close()
+
+        migrated = SessionStore(self.data_directory)
+        migrated.initialize()
+        assert migrated.connection is not None
+        indexes = {
+            row[1]
+            for row in migrated.connection.execute("PRAGMA index_list(approvals)")
+        }
+
+        self.assertEqual(
+            migrated.connection.execute("PRAGMA user_version").fetchone()[0],
+            SCHEMA_REVISION,
+        )
+        self.assertIn("one_pending_approval_per_item", indexes)
+        migrated.close()
+
     def test_migration_failure_keeps_source_revision_and_enters_health_only(self) -> None:
         original = SessionStore(self.data_directory)
         original.initialize()

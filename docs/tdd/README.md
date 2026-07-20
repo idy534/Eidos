@@ -132,7 +132,7 @@ Extension Catalog snapshot
   -> ToolRegistrySnapshot(ToolSpec + Adapter + provenance)
   -> StepToolSnapshot(direct + deferred + activated + hashes)
   -> ModelRunner(explicit model-visible definitions)
-  -> ToolDispatcher(one entry, one approval/sandbox/result path)
+  -> ToolDispatcher(one entry, one ordered approval/sandbox/result path)
 ```
 
 Plugin/Skill/MCP 生命周期属于 Python Runtime；Electron Main 只负责目录选择、类型化 RPC 与用户 consent/approval。MCP stdio 是 Runtime 到外部 Server 的内部连接，不是新的 Eidos 控制面。

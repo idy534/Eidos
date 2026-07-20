@@ -143,7 +143,7 @@ create step
   -> stream model response
   -> parse complete response
   -> normalize effective arguments and validate entire ToolCall batch
-  -> execute allowed batch serially OR create one approval
+  -> execute allowed batch serially OR create one or more ordered approvals
   -> persist observations
   -> complete step
 ```

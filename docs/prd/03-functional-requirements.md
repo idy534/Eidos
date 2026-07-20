@@ -170,6 +170,8 @@ MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 
 | F154 | Tool Search | 大工具目录按 direct/deferred 有界暴露；本地确定性搜索命中的工具只能从下一 Step 激活并写入快照 |
 | F155 | 扩展设置与 Feed | Desktop 提供 Plugins、Skills、MCP Servers 受控设置，Feed 展示安全 provenance/审批/状态，不泄露 env value、内部路径或原始 stderr |
 | F156 | 系统与用户 Skill | Runtime 将随应用发布的系统 Skill 以精确私有权限原子部署到 `skills/.system`；发现同级且完整树归当前用户所有的用户 Skill，不因 Finder、Git 或 `cp` 产生的常见 mode 拒绝加载，并以稳定 namespace 和内容树 hash 合入 Run 快照；v0.3 不从 Agent Shell 写 Eidos Home |
+| F157 | Skill 创建 | `skill_create` 经逐次 Eidos State 审批创建 `SKILL.md` 与可选 UTF-8 `scripts/`、`references/`、`assets/` 等资源；Runtime 校验完整树并原子写入，拒绝时零副作用 |
+| F158 | GitHub Skill 安装 | `skill_install` 只接受单个公开 GitHub tree URL；先审批固定 `codeload.github.com:443` 网络下载，再验证完整包并审批 Eidos State 文件清单，原子安装后仅新 Run 可见 |
 
 ## 2. ToolCall 组合规则
 
@@ -178,6 +180,8 @@ MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 
 | 只读 | list_files/read_file/read_file_range/search_text | 1..N，按声明顺序串行 | 否 |
 | Workspace 副作用 | write_file/apply_patch/delete_file | 必须唯一 | 是 |
 | Shell 副作用 | run_shell | 必须唯一 | 是 |
+| Eidos Skill 副作用 | skill_create | 必须唯一 | 一次 Eidos State 审批 |
+| 网络 + Eidos Skill 副作用 | skill_install | 必须唯一 | 网络审批后再进行 Eidos State 审批 |
 | Eidos 本地副作用 | publish_artifact | 必须唯一 | 否 |
 
 其他规则：

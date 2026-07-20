@@ -56,7 +56,7 @@
 - Plugin 市场、远程仓库、推荐、评分、搜索、下载、自动安装、自动更新、签名、分享和跨设备同步。
 - Plugin Hook、App、任意 Runtime 代码入口和安装脚本。
 - Workspace 内自动发现 Plugin；Plugin 只来自用户显式导入的受管目录。
-- 无逐次审批的 Skill 自动生成、修改已有 Skill、创建资源文件、隐式执行脚本、独立包管理器和远程 Skill 安装。
+- 无逐次审批的 Skill 自动生成、修改已有 Skill、隐式执行脚本和独立包管理器；私有仓库、批量安装、更新和远程目录发现不在本期。
 - MCP Streamable HTTP、旧 HTTP+SSE、OAuth、动态客户端注册和 Token 管理。
 - MCP Resources、Resource Templates、Prompts、Sampling、Elicitation、Tasks、Roots 写权限和服务端 Agent Loop。
 - 信任 MCP `readOnlyHint` 等 annotation、永久免审批、按 Session 批准或自动批准。
@@ -135,7 +135,7 @@ P3-00 契约与基线
 
 - [x] P3-00-01 记录第三期开工 commit、Runtime/SQLite/protocol/tool contract 版本和 `pnpm test`、macOS Seatbelt smoke 结果。
 - [x] P3-00-02 在 `decisions.md` 追加 Plugin、Skill、MCP、外部副作用分类、审批和 Sandbox 决策；不修改 Q1-Q165 历史。
-- [x] P3-00-03 更新 PRD：将“Plugin 市场、远程 Skill 安装和无审批生成”继续保留为非目标，将“本地 Plugin/Skill/MCP Tools v1”加入第三期实施目标。
+- [x] P3-00-03 更新 PRD：将 Plugin 市场、私有/批量 Skill 安装、Skill 更新和无审批生成保留为非目标，将本地 Plugin/Skill/MCP Tools v1 与受控公开 GitHub Skill 安装加入第三期实施目标。
 - [x] P3-00-04 更新 TDD：定义 Extension Catalog、Tool Adapter、能力快照、MCP 生命周期、Skill 注入和 Desktop 合同。
 - [x] P3-00-05 固定 Plugin Manifest v1、Skill Metadata v1、MCP Server Config v1、Tool provenance、Run extension snapshot 与 Step tool snapshot 的闭合 schema。
 - [x] P3-00-06 为本文每项补齐正式 PRD 编号、TDD 小节和自动化测试位置。
@@ -184,12 +184,13 @@ P3-00 契约与基线
 - [x] P3-04-04 用户显式 `@skill` 时在模型请求前加载对应 `SKILL.md`；模型可通过内置 `skill_read` 和 `skill_read_resource` 获取正文或包内资源。
 - [x] P3-04-05 Skill/resource 读取严格限制在对应 system/user/Plugin source root，拒绝绝对路径、`..`、symlink、特殊文件、二进制、非 UTF-8 和容量超限。
 - [x] P3-04-06 Skill 内容按不可信上下文处理：先敏感扫描、有来源标签和大小上限，不能覆盖 Eidos system/runtime 安全规则。
-- [x] P3-04-07 `scripts/` 只可作为文本资源读取；本期不提供脚本执行 Adapter。Workspace 内脚本需要执行时使用现有 `run_shell` 并遵守审批与沙箱；需要网络的安装 helper 只能由用户在系统 Terminal 显式运行。
+- [x] P3-04-07 `scripts/`、`references/`、`assets/` 和其他合法文件属于 Skill 完整树；文本资源可按需读取，本期仍不提供 Skill 脚本执行 Adapter。
 - [x] P3-04-08 将内置 Skill 作为 Runtime 资源随应用发布并原子部署到 `${EIDOS_DATA_DIR}/skills/.system`；用户 Skill 固定为 `${EIDOS_DATA_DIR}/skills/<name>`，不支持单数 `skill/` 根。
 - [x] P3-04-09 Catalog 合并 `system:`、`user:` 和 Plugin namespace，并把完整本地 Skill 树 hash 固化进 Run；运行中修改资源不会静默生效。
-- [x] P3-04-10 将 `skill-installer`、`skill-creator`、`plugin-creator`、`review-agent` 的 Codex 专属路径和合同替换为 Eidos v0.3 合同；远程安装 helper 由系统 Terminal 显式运行，不新增 Agent Shell 越权通道。
-- [x] P3-04-11 新增 direct、single、approval-required 的 `skill_create` Eidos-state Tool；只接受 `name`、`description`、`instructions`，拒绝路径注入与 system/user 同名覆盖，以 diff 审批、Durable Intent 和原子 `0700/0600` 写入创建 `${EIDOS_DATA_DIR}/skills/<name>/SKILL.md`，拒绝审批时零副作用。
+- [x] P3-04-10 将 `skill-installer`、`skill-creator`、`plugin-creator`、`review-agent` 的 Codex 专属路径和合同替换为 Eidos v0.3 合同；安装和创建均调用 Runtime 专用 Tool，不要求用户切换到系统 Terminal。
+- [x] P3-04-11 新增 direct、single、approval-required 的 `skill_create` Eidos-state Tool；接受 `name`、`description`、`instructions` 与可选 UTF-8 `files[]`，拒绝路径注入、文件/目录冲突与 system/user 同名覆盖，以完整 diff 审批、Durable Intent 和原子 `0700/0600` 写入创建完整 Skill 树，拒绝审批时零副作用。
 - [x] P3-04-12 系统 Skill 完整树继续要求当前 owner 与精确 `0700/0600`；用户 Skill 只要求完整树归当前用户所有，不因手工复制产生的 `0755/0644` 等 mode 被过滤，symlink、特殊文件和内容边界不放宽。
+- [x] P3-04-13 新增 direct、single 的 `skill_install`：只接受一个公开 GitHub `/tree/<ref>/<path>` URL；先审批仅限 `codeload.github.com:443` 的一次网络下载，验证完整包后再审批 Eidos State 文件清单并私有原子安装。任一拒绝均不写入用户 Skill，当前 Run 保持冻结快照，新 Run 才可见。
 
 验收：一个 Skill-only Plugin 可被导入、列出、显式调用和读取引用资源；恶意路径或指令不能读取 Plugin 根外内容或绕过工具审批。
 
@@ -290,9 +291,9 @@ git diff --check
 
 第三期发布验收结果（2026-07-20）：
 
-- 全量回归：Runtime 181 项、Renderer 18 项、Main/sidecar 15 项全部通过。
+- 全量回归：Runtime 189 项、Renderer 19 项、Main/sidecar 15 项全部通过。
 - 原生 macOS 回归包含 connector/workspace_read Seatbelt 权限矩阵、官方 MCP Client fixture、进程退出、超时、进行中取消和零自动重放。
-- `pnpm build` 与 `git diff --check` 通过；协议与 Runtime 版本为 `0.3.0`，SQLite schema revision 为 5。
+- `pnpm build` 与 `git diff --check` 通过；协议与 Runtime 版本为 `0.3.0`，SQLite schema revision 为 6。
 
 ## 10. 第三期完成标准
 
@@ -311,9 +312,8 @@ git diff --check
 
 - MCP Streamable HTTP + OAuth +安全凭证存储。
 - Plugin 市场、签名、远程安装和更新。
-- Skill 脚本的受控物化与执行合同。
 - MCP Resources/Prompts 与更丰富的多模态 ToolResult。
-- 外部工具的细粒度信任策略和可审计的免审批规则。
 - Model Profile/Capability Snapshot/Responses Adapter，或 Public Mode/Artifact。
+- 模型控制循环的确定性能力失败码、同能力重复重试抑制和终止式恢复策略。
 
 这些能力不得以“兼容未来”为由提前加入第三期接口、表结构或 UI。

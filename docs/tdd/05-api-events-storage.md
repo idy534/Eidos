@@ -678,7 +678,7 @@ UNIQUE(step_id, provider_call_id)
 `approvals` 至少包含：
 
 ```text
-id, run_id, tool_call_id UNIQUE
+id, run_id, tool_call_id
 status, decision_nonce, requested_args_hash
 requested_permissions_json, diff_text
 diff_sha256, diff_size_bytes, diff_line_count
@@ -689,6 +689,7 @@ created_at, decided_at
 ```
 
 ToolCall 不反向保存 approval_id，避免双向可空外键；通过 approvals.tool_call_id 查询。
+同一 ToolCall 可按确定顺序拥有多个历史 Approval；`UNIQUE(item_id) WHERE status='pending'` 保证任一时刻最多一个待决审批。组合能力必须在前一审批 resolved 后才能创建下一审批。
 
 `arguments_json` 是应用静态默认值并通过完整本地校验后的唯一 effective arguments；不得另存 raw arguments。`defaulted_field_paths_json` 仅含稳定 JSON Pointer 数组且不重复参数值。`model_result_base_envelope_json` 保存唯一不可变的协议无关 base ToolResult，`model_result_base_hash` 覆盖 canonical JSON v1 bytes；内部执行详情仍在 `result_json/result_text`，不得绕过 base/projection 进入模型上下文。
 

@@ -159,3 +159,39 @@ test("shows safe MCP provenance and duration without internal diagnostics", () =
   assert.match(html, /Plugin demo · Server fixture · 250ms/);
   assert.doesNotMatch(html, /stderr|internal path|SECRET_VALUE/);
 });
+
+test("shows the exact host and target for network approval", () => {
+  const { completedAt: _completedAt, ...runWithoutCompletion } = run;
+  const waitingRun: Run = {
+    ...runWithoutCompletion,
+    status: "waiting_approval",
+    allowedActions: ["approve", "reject", "cancel"],
+  };
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({
+        id: "install", ordinal: 1, kind: "tool_call", status: "in_progress",
+        toolCall: {
+          id: "tool-install", itemId: "install", modelStepIndex: 1, batchOrder: 0,
+          providerCallId: "provider-install", toolName: "skill_install",
+          status: "running", startedAt: 1_000,
+          argumentsJson: JSON.stringify({ url: "https://github.com/example/skills/tree/main/grilling" }),
+        },
+      })]}
+      runs={[waitingRun]}
+      approvals={[{
+        id: "approval-network", sessionId: "session-1", runId: run.id,
+        itemId: "install", toolCallId: "tool-install", kind: "network_access",
+        summary: "Download a public GitHub skill", toolName: "skill_install",
+        target: "example/skills@main:grilling", hosts: ["codeload.github.com:443"],
+      }]}
+      disabled={false}
+      onApproval={() => {}}
+    />,
+  );
+
+  assert.match(html, /网络访问/);
+  assert.match(html, /target: example\/skills@main:grilling/);
+  assert.match(html, /approved hosts: codeload.github.com:443/);
+  assert.match(html, /批准联网/);
+});

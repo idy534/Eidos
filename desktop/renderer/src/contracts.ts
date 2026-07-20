@@ -102,7 +102,14 @@ export interface ExternalToolApprovalRequest extends ApprovalRequestBase {
   envNames: string[];
 }
 
-export type ApprovalRequest = FileApprovalRequest | CommandApprovalRequest | ExternalToolApprovalRequest;
+export interface NetworkApprovalRequest extends ApprovalRequestBase {
+  kind: "network_access";
+  toolName: string;
+  hosts: string[];
+  target: string;
+}
+
+export type ApprovalRequest = FileApprovalRequest | CommandApprovalRequest | ExternalToolApprovalRequest | NetworkApprovalRequest;
 
 export interface PluginRecord {
   schemaVersion: 1;

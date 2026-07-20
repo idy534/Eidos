@@ -32,6 +32,10 @@ class ToolDispatchPlan:
     def is_eidos_state(self) -> bool:
         return self.execution_kind == "eidos_state"
 
+    @property
+    def is_network_eidos_state(self) -> bool:
+        return self.execution_kind == "network_eidos_state"
+
 
 class ToolDispatcher:
     """Owns model ToolCall validation and batch invariants for RuntimeEngine."""
@@ -172,6 +176,20 @@ class ToolDispatcher:
         entry = self._registry.get(tool_name)
         commit = getattr(entry.adapter, "commit_eidos_state", None) if entry else None
         return commit(change, cancel) if commit else _unavailable(tool_name)
+
+    def network_approval_details(
+        self, tool_name: str, arguments: dict[str, object]
+    ) -> dict[str, object]:
+        entry = self._registry.get(tool_name)
+        details = getattr(entry.adapter, "network_approval_details", None) if entry else None
+        return details(arguments) if details else {}
+
+    def download_eidos_state(
+        self, tool_name: str, arguments: dict[str, object], cancel: threading.Event
+    ) -> SkillCreation | dict[str, object]:
+        entry = self._registry.get(tool_name)
+        download = getattr(entry.adapter, "download_eidos_state", None) if entry else None
+        return download(arguments, cancel) if download else _unavailable(tool_name)
 
     def prepare_shell(self, tool_name: str, cwd: str, cancel: threading.Event):
         entry = self._registry.get(tool_name)

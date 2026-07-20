@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -9,7 +10,11 @@ import re
 import shutil
 import stat
 import threading
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
+import zipfile
 
 from eidos_runtime.extensions.plugins import PluginCatalog, PluginImportError
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
@@ -21,6 +26,8 @@ MAX_SKILLS = 64
 MAX_SKILL_BYTES = 128 * 1024
 MAX_RESOURCE_BYTES = 256 * 1024
 MAX_CATALOG_BYTES = 16 * 1024
+MAX_SKILL_ARCHIVE_BYTES = 128 * 1024 * 1024
+MAX_SKILL_ARCHIVE_EXPANDED_BYTES = 256 * 1024 * 1024
 _SKILL_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _USER_SKILL_NAME = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 BUNDLED_SYSTEM_SKILLS = (
@@ -30,6 +37,22 @@ BUNDLED_SYSTEM_SKILLS = (
 
 class SkillReadError(ValueError):
     pass
+
+
+class _CodeloadRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, file, code, message, headers, new_url):
+        parsed = urllib.parse.urlparse(new_url)
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "codeload.github.com"
+            or parsed.port is not None
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise SkillReadError("skill_download_redirected")
+        return super().redirect_request(
+            request, file, code, message, headers, new_url
+        )
 
 
 @dataclass(frozen=True)
@@ -48,7 +71,7 @@ class _SkillSource:
 class SkillCreation:
     name: str
     path: str
-    content: bytes
+    files: dict[str, bytes]
     content_hash: str
     diff: str
 
@@ -255,6 +278,7 @@ class SkillCatalog:
                 "skill_read_resource", _SkillResourceAdapter(self, snapshot)
             ),
             _skill_create_entry(_SkillCreateAdapter(self)),
+            _skill_install_entry(_SkillInstallAdapter(self)),
         )
 
 
@@ -352,13 +376,16 @@ class _SkillCreateAdapter:
         self.catalog = catalog
 
     def effective_arguments(self, arguments: object) -> dict[str, object] | None:
-        if not isinstance(arguments, dict) or set(arguments) != {
-            "name", "description", "instructions"
-        }:
+        if (
+            not isinstance(arguments, dict)
+            or not {"name", "description", "instructions"} <= set(arguments)
+            or not set(arguments) <= {"name", "description", "instructions", "files"}
+        ):
             return None
         name = arguments.get("name")
         description = arguments.get("description")
         instructions = arguments.get("instructions")
+        files = arguments.get("files", [])
         if (
             not isinstance(name, str)
             or not _USER_SKILL_NAME.fullmatch(name)
@@ -373,15 +400,50 @@ class _SkillCreateAdapter:
             or not isinstance(instructions, str)
             or not instructions.strip()
             or "\x00" in instructions
+            or not isinstance(files, list)
+            or len(files) > 64
         ):
             return None
         normalized = instructions.strip() + "\n"
-        if len(_skill_document(name, description, normalized)) > MAX_SKILL_BYTES:
+        tree = {"SKILL.md": _skill_document(name, description, normalized)}
+        for resource in files:
+            if (
+                not isinstance(resource, dict)
+                or set(resource) != {"path", "content"}
+                or not isinstance(resource.get("path"), str)
+                or not isinstance(resource.get("content"), str)
+                or "\x00" in str(resource["content"])
+            ):
+                return None
+            try:
+                relative = _safe_relative(str(resource["path"]))
+            except SkillReadError:
+                return None
+            relative_name = relative.as_posix()
+            content = str(resource["content"]).encode("utf-8")
+            if (
+                relative_name == "SKILL.md"
+                or relative_name in tree
+                or len(content) > MAX_RESOURCE_BYTES
+                or any(parent.as_posix() in tree for parent in relative.parents if parent.as_posix() != ".")
+                or any(existing.startswith(relative_name + "/") for existing in tree)
+            ):
+                return None
+            tree[relative_name] = content
+        if (
+            len(tree["SKILL.md"]) > MAX_SKILL_BYTES
+            or len(tree) > 512
+            or sum(len(content) for content in tree.values()) > 8 * 1024 * 1024
+        ):
             return None
         return {
             "name": name,
             "description": description,
             "instructions": normalized,
+            "files": [
+                {"path": path, "content": content.decode("utf-8")}
+                for path, content in tree.items() if path != "SKILL.md"
+            ],
         }
 
     def execute(
@@ -409,67 +471,92 @@ class _SkillCreateAdapter:
             return _skill_error("skill_create", "skill_already_exists", "Skill already exists")
         description = str(arguments["description"])
         instructions = str(arguments["instructions"])
-        content = _skill_document(name, description, instructions)
-        content_hash = hashlib.sha256(content).hexdigest()
+        files = {"SKILL.md": _skill_document(name, description, instructions)}
+        for resource in arguments.get("files", []):
+            assert isinstance(resource, dict)
+            files[str(resource["path"])] = str(resource["content"]).encode("utf-8")
+        content_hash = _tree_hash(files)
         logical_path = f"~/.eidos/skills/{name}/SKILL.md"
-        diff = "\n".join((
-            "--- /dev/null",
-            f"+++ {logical_path}",
-            *[f"+{line}" for line in content.decode("utf-8").splitlines()],
-            "",
-        ))
-        return SkillCreation(name, logical_path, content, content_hash, diff)
+        return SkillCreation(
+            name, logical_path, files, content_hash,
+            _created_tree_diff(name, files),
+        )
 
     def commit_eidos_state(
         self, creation: SkillCreation, cancel: threading.Event
     ) -> dict[str, object]:
+        return _commit_skill_tree(self.catalog, creation, cancel, "skill_create")
+
+
+class _SkillInstallAdapter:
+    execution_kind = "network_eidos_state"
+
+    def __init__(self, catalog: SkillCatalog) -> None:
+        self.catalog = catalog
+
+    def effective_arguments(self, arguments: object) -> dict[str, object] | None:
+        if (
+            not isinstance(arguments, dict)
+            or set(arguments) != {"url"}
+            or not isinstance(arguments.get("url"), str)
+        ):
+            return None
+        try:
+            owner, repo, ref, path = _parse_github_skill_url(str(arguments["url"]))
+        except SkillReadError:
+            return None
+        return {
+            "url": f"https://github.com/{owner}/{repo}/tree/{ref}/{path}",
+        }
+
+    def execute(
+        self, arguments: dict[str, object], cancel: threading.Event
+    ) -> dict[str, object]:
+        return _skill_error(
+            "skill_install", "approval_required", "Skill installation requires approval"
+        )
+
+    def network_approval_details(self, arguments: dict[str, object]) -> dict[str, object]:
+        owner, repo, ref, path = _parse_github_skill_url(str(arguments["url"]))
+        return {
+            "hosts": ["codeload.github.com:443"],
+            "target": f"{owner}/{repo}@{ref}:{path}",
+        }
+
+    def download_eidos_state(
+        self, arguments: dict[str, object], cancel: threading.Event
+    ) -> SkillCreation | dict[str, object]:
         if cancel.is_set():
-            return _skill_error("skill_create", "tool_canceled", "Skill creation canceled")
+            return _skill_error("skill_install", "tool_canceled", "Skill installation canceled")
+        try:
+            name, files = _download_github_skill(str(arguments["url"]), cancel)
+        except SkillReadError as error:
+            return _skill_error("skill_install", str(error), "Skill could not be downloaded")
+        if cancel.is_set():
+            return _skill_error("skill_install", "tool_canceled", "Skill installation canceled")
         data_directory = self.catalog.plugins.store.data_directory
         if data_directory is None:
-            return _skill_error("skill_create", "skill_store_unavailable", "Skill store is unavailable")
+            return _skill_error("skill_install", "skill_store_unavailable", "Skill store is unavailable")
         skills_root = data_directory / "skills"
-        destination = skills_root / creation.name
-        staging = skills_root / f".skill-stage-{uuid.uuid4().hex}"
-        committed = False
-        try:
-            _private_directory(skills_root)
-            if (
-                os.path.lexists(destination)
-                or os.path.lexists(skills_root / ".system" / creation.name)
-                or os.path.lexists(BUNDLED_SYSTEM_SKILLS / creation.name)
-            ):
-                return _skill_error("skill_create", "skill_already_exists", "Skill already exists")
-            _write_tree(staging, {"SKILL.md": creation.content})
-            if os.path.lexists(destination):
-                shutil.rmtree(staging, ignore_errors=True)
-                return _skill_error("skill_create", "skill_already_exists", "Skill already exists")
-            os.replace(staging, destination)
-            committed = True
-            _fsync_directory(skills_root)
-        except (OSError, SkillReadError):
-            if staging.exists():
-                shutil.rmtree(staging, ignore_errors=True)
-            result = _skill_error("skill_create", "skill_create_failed", "Skill could not be created")
-            if committed:
-                result["sideEffectsMayExist"] = True
-                result["reconciliationRequired"] = True
-            return result
-        return {
-            "toolContractVersion": 1,
-            "schemaVersion": 1,
-            "toolName": "skill_create",
-            "outcome": "success",
-            "code": "ok",
-            "summary": "User skill created",
-            "data": {
-                "path": creation.path,
-                "qualifiedId": f"user:{creation.name}",
-                "contentHash": creation.content_hash,
-            },
-            "sideEffectsMayExist": False,
-            "reconciliationRequired": False,
-        }
+        if (
+            os.path.lexists(skills_root / name)
+            or os.path.lexists(skills_root / ".system" / name)
+            or os.path.lexists(BUNDLED_SYSTEM_SKILLS / name)
+        ):
+            return _skill_error("skill_install", "skill_already_exists", "Skill already exists")
+        logical_path = f"~/.eidos/skills/{name}"
+        return SkillCreation(
+            name,
+            logical_path,
+            files,
+            _tree_hash(files),
+            _installed_tree_manifest(name, files),
+        )
+
+    def commit_eidos_state(
+        self, creation: SkillCreation, cancel: threading.Event
+    ) -> dict[str, object]:
+        return _commit_skill_tree(self.catalog, creation, cancel, "skill_install")
 
 
 def _skill_entry(name: str, adapter: object) -> ToolRegistryEntry:
@@ -530,6 +617,19 @@ def _skill_create_entry(adapter: object) -> ToolRegistryEntry:
             },
             "description": {"type": "string", "minLength": 1, "maxLength": 1024},
             "instructions": {"type": "string", "minLength": 1, "maxLength": MAX_SKILL_BYTES},
+            "files": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "minLength": 1, "maxLength": 512},
+                        "content": {"type": "string", "maxLength": MAX_RESOURCE_BYTES},
+                    },
+                    "required": ["path", "content"],
+                    "additionalProperties": False,
+                },
+            },
         },
         "required": ["name", "description", "instructions"],
         "additionalProperties": False,
@@ -555,6 +655,47 @@ def _skill_create_entry(adapter: object) -> ToolRegistryEntry:
             "sourceId": "eidos.skill-creator",
             "sourceVersion": "1",
             "contentHash": hashlib.sha256(encoded).hexdigest(),
+        }),
+        adapter=adapter,  # type: ignore[arg-type]
+    )
+
+
+def _skill_install_entry(adapter: object) -> ToolRegistryEntry:
+    schema = {
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048,
+                "description": "Exact HTTPS GitHub tree URL for one public skill directory",
+            },
+        },
+        "required": ["url"],
+        "additionalProperties": False,
+    }
+    return ToolRegistryEntry(
+        spec=ToolSpec.model_validate({
+            "name": "skill_install",
+            "description": "Install one complete public GitHub skill after network and Eidos state approval",
+            "sideEffect": "eidos_state",
+            "approvalRequired": True,
+            "timeoutSeconds": 120,
+            "batchPolicy": "single",
+            "visibility": "direct",
+            "inputSchema": schema,
+            "resultSchema": {
+                "type": "object", "properties": {}, "required": [],
+                "additionalProperties": False,
+            },
+        }),
+        provenance=ToolProvenance.model_validate({
+            "kind": "builtin",
+            "sourceId": "eidos.skill-installer",
+            "sourceVersion": "1",
+            "contentHash": hashlib.sha256(json.dumps(
+                schema, separators=(",", ":"), sort_keys=True
+            ).encode("utf-8")).hexdigest(),
         }),
         adapter=adapter,  # type: ignore[arg-type]
     )
@@ -594,6 +735,204 @@ def _skill_document(name: str, description: str, instructions: str) -> bytes:
         f"---\nname: {name}\ndescription: {description}\n---\n\n"
         f"# {title}\n\n{instructions}"
     ).encode("utf-8")
+
+
+def _created_tree_diff(name: str, files: dict[str, bytes]) -> str:
+    lines: list[str] = []
+    for relative in sorted(files, key=lambda value: value.encode("utf-8")):
+        lines.extend(("--- /dev/null", f"+++ ~/.eidos/skills/{name}/{relative}"))
+        lines.extend(f"+{line}" for line in files[relative].decode("utf-8").splitlines())
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _installed_tree_manifest(name: str, files: dict[str, bytes]) -> str:
+    lines = [f"Install complete skill tree at ~/.eidos/skills/{name}/"]
+    for relative in sorted(files, key=lambda value: value.encode("utf-8")):
+        data = files[relative]
+        lines.append(
+            f"+ {relative} ({len(data)} bytes, sha256:{hashlib.sha256(data).hexdigest()})"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _commit_skill_tree(
+    catalog: SkillCatalog,
+    creation: SkillCreation,
+    cancel: threading.Event,
+    tool_name: str,
+) -> dict[str, object]:
+    if cancel.is_set():
+        return _skill_error(tool_name, "tool_canceled", "Skill change canceled")
+    data_directory = catalog.plugins.store.data_directory
+    if data_directory is None:
+        return _skill_error(tool_name, "skill_store_unavailable", "Skill store is unavailable")
+    skills_root = data_directory / "skills"
+    destination = skills_root / creation.name
+    staging = skills_root / f".skill-stage-{uuid.uuid4().hex}"
+    committed = False
+    try:
+        _private_directory(skills_root)
+        if (
+            os.path.lexists(destination)
+            or os.path.lexists(skills_root / ".system" / creation.name)
+            or os.path.lexists(BUNDLED_SYSTEM_SKILLS / creation.name)
+        ):
+            return _skill_error(tool_name, "skill_already_exists", "Skill already exists")
+        _write_tree(staging, creation.files)
+        if os.path.lexists(destination):
+            shutil.rmtree(staging, ignore_errors=True)
+            return _skill_error(tool_name, "skill_already_exists", "Skill already exists")
+        os.replace(staging, destination)
+        committed = True
+        _fsync_directory(skills_root)
+    except (OSError, SkillReadError):
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+        result = _skill_error(tool_name, "skill_write_failed", "Skill could not be written")
+        if committed:
+            result["sideEffectsMayExist"] = True
+            result["reconciliationRequired"] = True
+        return result
+    return {
+        "toolContractVersion": 1,
+        "schemaVersion": 1,
+        "toolName": tool_name,
+        "outcome": "success",
+        "code": "ok",
+        "summary": "User skill installed" if tool_name == "skill_install" else "User skill created",
+        "data": {
+            "path": creation.path,
+            "qualifiedId": f"user:{creation.name}",
+            "contentHash": creation.content_hash,
+        },
+        "sideEffectsMayExist": False,
+        "reconciliationRequired": False,
+    }
+
+
+def _parse_github_skill_url(url: str) -> tuple[str, str, str, str]:
+    parsed = urllib.parse.urlparse(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "github.com"
+        or parsed.port is not None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise SkillReadError("skill_url_invalid")
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 5 or parts[2] != "tree":
+        raise SkillReadError("skill_url_invalid")
+    owner, repo, ref = parts[0], parts[1].removesuffix(".git"), parts[3]
+    path_parts = parts[4:]
+    component = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
+    if (
+        not component.fullmatch(owner)
+        or not component.fullmatch(repo)
+        or not ref
+        or any(character in ref for character in "\x00\r\n/")
+        or any(part in {"", ".", ".."} for part in path_parts)
+    ):
+        raise SkillReadError("skill_url_invalid")
+    return owner, repo, ref, "/".join(path_parts)
+
+
+def _download_github_skill(
+    url: str, cancel: threading.Event
+) -> tuple[str, dict[str, bytes]]:
+    owner, repo, ref, source_path = _parse_github_skill_url(url)
+    archive_url = (
+        "https://codeload.github.com/"
+        f"{urllib.parse.quote(owner, safe='')}/"
+        f"{urllib.parse.quote(repo, safe='')}/zip/"
+        f"{urllib.parse.quote(ref, safe='')}"
+    )
+    request = urllib.request.Request(
+        archive_url, headers={"User-Agent": "eidos-skill-installer"}
+    )
+    try:
+        opener = urllib.request.build_opener(_CodeloadRedirectHandler())
+        with opener.open(request, timeout=30) as response:
+            if urllib.parse.urlparse(response.geturl()).hostname != "codeload.github.com":
+                raise SkillReadError("skill_download_redirected")
+            payload = bytearray()
+            while True:
+                if cancel.is_set():
+                    raise SkillReadError("tool_canceled")
+                chunk = response.read(min(64 * 1024, MAX_SKILL_ARCHIVE_BYTES + 1 - len(payload)))
+                if not chunk:
+                    break
+                payload.extend(chunk)
+                if len(payload) > MAX_SKILL_ARCHIVE_BYTES:
+                    raise SkillReadError("skill_archive_too_large")
+    except (OSError, urllib.error.URLError, ValueError):
+        raise SkillReadError("skill_download_failed") from None
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as bundle:
+            expanded = 0
+            roots: set[str] = set()
+            entries: list[tuple[zipfile.ZipInfo, PurePosixPath]] = []
+            for entry in bundle.infolist():
+                pure = PurePosixPath(entry.filename)
+                if pure.is_absolute() or any(part == ".." for part in pure.parts):
+                    raise SkillReadError("skill_archive_unsafe")
+                expanded += entry.file_size
+                if expanded > MAX_SKILL_ARCHIVE_EXPANDED_BYTES:
+                    raise SkillReadError("skill_archive_too_large")
+                if pure.parts:
+                    roots.add(pure.parts[0])
+                entries.append((entry, pure))
+            if len(roots) != 1:
+                raise SkillReadError("skill_archive_invalid")
+
+            source = PurePosixPath(next(iter(roots))) / PurePosixPath(source_path)
+            files: dict[str, bytes] = {}
+            total = 0
+            for entry, pure in entries:
+                try:
+                    relative = pure.relative_to(source)
+                except ValueError:
+                    continue
+                if relative == PurePosixPath(".") or entry.is_dir():
+                    continue
+                mode = entry.external_attr >> 16
+                kind = stat.S_IFMT(mode)
+                if (
+                    stat.S_ISLNK(mode)
+                    or kind and kind not in {stat.S_IFREG, stat.S_IFDIR}
+                    or entry.file_size > MAX_RESOURCE_BYTES
+                ):
+                    raise SkillReadError("skill_archive_unsafe")
+                relative_name = _safe_relative(relative.as_posix()).as_posix()
+                if (
+                    relative_name in files
+                    or any(parent.as_posix() in files for parent in relative.parents)
+                    or any(existing.startswith(relative_name + "/") for existing in files)
+                ):
+                    raise SkillReadError("skill_archive_unsafe")
+                data = bundle.read(entry)
+                total += len(data)
+                files[relative_name] = data
+                if len(files) > 512 or total > 8 * 1024 * 1024:
+                    raise SkillReadError("skill_archive_too_large")
+
+            document = files.get("SKILL.md")
+            if document is None or len(document) > MAX_SKILL_BYTES or b"\x00" in document:
+                raise SkillReadError("skill_metadata_invalid")
+            try:
+                content = document.decode("utf-8")
+            except UnicodeDecodeError:
+                raise SkillReadError("skill_metadata_invalid") from None
+            name, _description = _frontmatter(content)
+            if source.name != name:
+                raise SkillReadError("skill_metadata_invalid")
+            return name, files
+    except (OSError, zipfile.BadZipFile):
+        raise SkillReadError("skill_archive_invalid") from None
 
 
 def _snapshot_plugins(snapshot: dict[str, object]) -> list[dict[str, object]]:

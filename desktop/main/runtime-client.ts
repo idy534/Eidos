@@ -202,7 +202,14 @@ export interface ExternalToolApprovalRequest extends ApprovalRequestBase {
   envNames: string[];
 }
 
-export type ApprovalRequest = FileApprovalRequest | CommandApprovalRequest | ExternalToolApprovalRequest;
+export interface NetworkApprovalRequest extends ApprovalRequestBase {
+  kind: "network_access";
+  toolName: string;
+  hosts: string[];
+  target: string;
+}
+
+export type ApprovalRequest = FileApprovalRequest | CommandApprovalRequest | ExternalToolApprovalRequest | NetworkApprovalRequest;
 
 export interface PluginRecord {
   schemaVersion: 1;
@@ -1270,6 +1277,22 @@ function approvalRequestFrom(
       return undefined;
     }
     return { id: message.id, ...params } as ExternalToolApprovalRequest;
+  }
+  if (params.kind === "network_access") {
+    if (
+      !hasOnlyKeys(params, [
+        "sessionId", "runId", "itemId", "toolCallId", "kind", "summary",
+        "toolName", "hosts", "target",
+      ])
+      || typeof params.toolName !== "string"
+      || !Array.isArray(params.hosts)
+      || params.hosts.length === 0
+      || !params.hosts.every((host) => typeof host === "string")
+      || typeof params.target !== "string"
+    ) {
+      return undefined;
+    }
+    return { id: message.id, ...params } as NetworkApprovalRequest;
   }
   if (
     !hasOnlyKeys(params, [

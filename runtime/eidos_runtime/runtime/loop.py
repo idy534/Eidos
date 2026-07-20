@@ -470,6 +470,40 @@ class RuntimeEngine:
                                 {"sessionId": paused["sessionId"], "run": paused},
                             )
                             return
+                    elif plan.is_network_eidos_state:
+                        if self.store.side_effects_blocked(run_id):
+                            result, item_status = (
+                                _tool_error(
+                                    tool_call.name,
+                                    "reconciliation_required",
+                                    "A successful read-only observation is required",
+                                ),
+                                "failed",
+                            )
+                        else:
+                            result, item_status = self._execute_network_eidos_state(
+                                run_id,
+                                item,
+                                tool_call.name,
+                                scanned_arguments,
+                                dispatcher,
+                                cancel,
+                            )
+                        completed = self.store.complete_tool_item(
+                            item["id"],
+                            json.dumps(
+                                result,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                                sort_keys=True,
+                            ),
+                            item_status=item_status,
+                            tool_status=(
+                                "failed" if item_status == "failed" else "completed"
+                            ),
+                        )
+                        self._completed_item(completed)
+                        self._check_cancel(run_id, cancel)
                     elif plan.is_eidos_state:
                         if self.store.side_effects_blocked(run_id):
                             result, item_status = (
@@ -820,6 +854,84 @@ class RuntimeEngine:
         prepared = tools.prepare_eidos_state(tool_name, arguments, cancel)
         if isinstance(prepared, dict):
             return _bounded_tool_result(tool_name, prepared), "failed"
+        return self._approve_eidos_state(
+            run_id, item, tool_name, prepared, tools, cancel
+        )
+
+    def _execute_network_eidos_state(
+        self,
+        run_id: str,
+        item: dict[str, object],
+        tool_name: str,
+        arguments: dict[str, object],
+        tools: ToolDispatcher,
+        cancel: threading.Event,
+    ) -> tuple[dict[str, object], str]:
+        details = tools.network_approval_details(tool_name, arguments)
+        pending_item = self.store.begin_approval(item["id"], "", None)
+        approval_run = self.store.read_run(run_id)
+        self._notification(
+            "run/updated", {"sessionId": approval_run["sessionId"], "run": approval_run}
+        )
+        self.state_machine.transition(RuntimeState.WAITING_APPROVAL, "network_approval")
+        self._pause_effective_time(run_id)
+        approval = self.approval.request(ApprovalRequest({
+            "sessionId": pending_item["sessionId"],
+            "runId": pending_item["runId"],
+            "itemId": pending_item["id"],
+            "toolCallId": pending_item["toolCall"]["id"],
+            "kind": "network_access",
+            "summary": "Download a public GitHub skill",
+            "toolName": tool_name,
+            "hosts": details.get("hosts", []),
+            "target": details.get("target", ""),
+        }), cancel)
+        decision = ApprovalDecision(approval.decision, approval.feedback)
+        self.active_started = self.monotonic()
+        self._check_cancel(run_id, cancel)
+        self.store.resolve_approval(
+            item["id"], decision.decision, decision.feedback,
+            requeue=self.wait_for_execution_slot is not None,
+        )
+        self._resume_after_approval(run_id, cancel)
+        approval_run = self.store.read_run(run_id)
+        self.state_machine.transition(
+            RuntimeState.WAITING_USER_INPUT
+            if approval_run["status"] == "waiting_user_input"
+            else RuntimeState.TOOL_EXECUTING,
+            "network_approval_resolved",
+        )
+        if decision.decision != "approve":
+            return {
+                "schemaVersion": 1,
+                "toolContractVersion": 1,
+                "toolName": tool_name,
+                "outcome": "declined",
+                "code": "user_rejected_network",
+                "summary": "User rejected network access",
+                "data": {},
+                "sideEffectsMayExist": False,
+                "reconciliationRequired": False,
+            }, "declined"
+        prepared = tools.download_eidos_state(tool_name, arguments, cancel)
+        if isinstance(prepared, dict):
+            return _bounded_tool_result(tool_name, prepared), "failed"
+        return self._approve_eidos_state(
+            run_id, item, tool_name, prepared, tools, cancel
+        )
+
+    def _approve_eidos_state(
+        self,
+        run_id: str,
+        item: dict[str, object],
+        tool_name: str,
+        prepared: object,
+        tools: ToolDispatcher,
+        cancel: threading.Event,
+    ) -> tuple[dict[str, object], str]:
+        from eidos_runtime.extensions.skills import SkillCreation
+
+        assert isinstance(prepared, SkillCreation)
         pending_item = self.store.begin_approval(item["id"], prepared.diff, None)
         approval_run = self.store.read_run(run_id)
         self._notification(
@@ -834,7 +946,7 @@ class RuntimeEngine:
             "itemId": pending_item["id"],
             "toolCallId": tool_call["id"],
             "kind": "file_change",
-            "summary": f"Create {prepared.path}",
+            "summary": f"Write {prepared.path}",
             "diff": prepared.diff,
         }), cancel)
         decision = ApprovalDecision(approval.decision, approval.feedback)
@@ -865,7 +977,7 @@ class RuntimeEngine:
                 "toolName": tool_name,
                 "outcome": "declined",
                 "code": "user_rejected",
-                "summary": "User rejected the skill creation",
+                "summary": "User rejected the Eidos state change",
                 "data": {"path": prepared.path},
                 "sideEffectsMayExist": False,
                 "reconciliationRequired": False,

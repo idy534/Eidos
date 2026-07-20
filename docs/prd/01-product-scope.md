@@ -99,7 +99,7 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - JSON-RPC notifications 驱动的实时 Execution Feed 与持久化 Timeline。
 - 闭合且可跨重启幂等的本地 JSON-RPC/IPC、稳定分页与版本化 Event 兼容。
 - 用户显式导入的本地 Plugin v1、只读 Skill v1、stdio MCP Tools v1、能力快照与有界 Tool Search。
-- 随应用发布的只读系统 Skill，以及位于统一 Eidos Home 技能根的用户 Skill；v0.3 可经逐次审批的专用工具创建单文件用户 Skill，远程安装仍由用户在系统 Terminal 显式运行。
+- 随应用发布的只读系统 Skill，以及位于统一 Eidos Home 技能根的用户 Skill；v0.3 可经专用工具和逐次审批创建完整文本 Skill 树，或从单个公开 GitHub tree URL 安装完整 Skill 包。
 - Run 预算、模型 HTTP/SSE 重试、Tool timeout、有限重试和 Finalization Call。
 
 ## 6. 当前非目标
@@ -111,7 +111,7 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - 自动接管另一路 Runtime、强制抢占状态目录锁或在 Workspace 移动后静默迁移旧授权。
 - 自动清理用户数据、自动覆盖数据库备份，或在存储故障后自动重放副作用。
 - 多 Agent 与并行工具执行。
-- MCP/Plugin 市场、Runtime 内远程 Skill 安装与更新、创建 Skill 资源文件、浏览器自动化和长期记忆。
+- MCP/Plugin 市场、私有/批量 Skill 安装、Skill 更新、浏览器自动化和长期记忆。
 - MCP Streamable HTTP/OAuth、Resources、Prompts、Sampling、Elicitation、Tasks 与多模态结果。
 - Plugin 任意代码入口、Hook/App 和 Skill 脚本自动执行。
 - 平台知识库、术语库、Text2SQL、本体和企业资源接入。

@@ -448,4 +448,4 @@ M0 未通过前，不进入 Agent Shell 主链路实现。
 
 发布门槛为 Runtime 全量、`pnpm test`、production build、`git diff --check`，以及原生 macOS MCP Seatbelt、进程组清理和 Electron smoke；受限容器不能替代原生安全结论。
 
-第三期已于 2026-07-20 通过发布门槛：Runtime 181 项、Renderer 18 项、Main/sidecar 15 项全部通过；production build、原生 MCP Seatbelt 权限矩阵、官方 SDK fixture、进程组子进程清理、超时/取消/崩溃注入和重启读取均通过。
+第三期已于 2026-07-20 通过发布门槛：Runtime 189 项、Renderer 19 项、Main/sidecar 15 项全部通过；production build、原生 MCP Seatbelt 权限矩阵、官方 SDK fixture、进程组子进程清理、超时/取消/崩溃注入和重启读取均通过。

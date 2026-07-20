@@ -6,6 +6,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -72,6 +73,188 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
                     for entry in skills.catalog(skills.extension_snapshot())
                 },
             )
+            store.close()
+
+    def test_skill_create_can_include_text_resources(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-p3-skill-resources-") as directory:
+            root = Path(directory)
+            data, workspace = root / "data", root / "workspace"
+            data.mkdir(mode=0o700)
+            workspace.mkdir()
+            store = SessionStore(data)
+            store.initialize()
+            skills = SkillCatalog(PluginCatalog(store))
+            session = store.create_session(str(workspace))
+            run, _ = store.create_run(
+                session["id"], "Create a skill with a script",
+                extension_snapshot=skills.extension_snapshot(),
+            )
+            model = ScriptedModel([
+                ModelResponse(tool_calls=(ModelToolCall(
+                    "create-skill", "skill_create", {
+                        "name": "release-notes",
+                        "description": "Draft concise release notes.",
+                        "instructions": "Run the bundled helper when deterministic output is needed.",
+                        "files": [{
+                            "path": "scripts/render.py",
+                            "content": "print('release notes')\n",
+                        }],
+                    }
+                ),)),
+                ModelResponse(text="done"),
+            ])
+
+            RuntimeEngine(
+                store, model, lambda _message: None,
+                request_approval=lambda _params, _cancel: ApprovalDecision("approve"),
+            ).run(run["id"], threading.Event())
+
+            script = data / "skills" / "release-notes" / "scripts" / "render.py"
+            self.assertEqual(script.read_text(encoding="utf-8"), "print('release notes')\n")
+            self.assertEqual(script.stat().st_mode & 0o777, 0o600)
+            store.close()
+
+    def test_skill_install_requires_network_then_state_approval_and_preserves_tree(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-p3-skill-install-") as directory:
+            root = Path(directory)
+            data, workspace = root / "data", root / "workspace"
+            data.mkdir(mode=0o700)
+            workspace.mkdir()
+            store = SessionStore(data)
+            store.initialize()
+            skills = SkillCatalog(PluginCatalog(store))
+            session = store.create_session(str(workspace))
+            run, _ = store.create_run(
+                session["id"], "Install grilling",
+                extension_snapshot=skills.extension_snapshot(),
+            )
+            url = "https://github.com/mattpocock/skills/tree/main/skills/productivity/grilling"
+            model = ScriptedModel([
+                ModelResponse(tool_calls=(ModelToolCall(
+                    "install-skill", "skill_install", {"url": url}
+                ),)),
+                ModelResponse(text="done"),
+            ])
+            approvals: list[dict[str, object]] = []
+            downloaded = {
+                "SKILL.md": b"---\nname: grilling\ndescription: Grill a plan.\n---\nRun a grilling session.\n",
+                "scripts/check.py": b"print('ok')\n",
+            }
+
+            with patch(
+                "eidos_runtime.extensions.skills._download_github_skill",
+                return_value=("grilling", downloaded),
+                create=True,
+            ):
+                RuntimeEngine(
+                    store, model, lambda _message: None,
+                    request_approval=lambda params, _cancel: (
+                        approvals.append(params) or ApprovalDecision("approve")
+                    ),
+                ).run(run["id"], threading.Event())
+
+            self.assertEqual(
+                [approval["kind"] for approval in approvals],
+                ["network_access", "file_change"],
+            )
+            self.assertEqual(
+                store.connection.execute(
+                    "SELECT COUNT(*) FROM approvals WHERE item_id = ("
+                    "SELECT item_id FROM tool_calls WHERE tool_name = 'skill_install')"
+                ).fetchone()[0],
+                2,
+            )
+            self.assertEqual(approvals[0]["hosts"], ["codeload.github.com:443"])
+            self.assertIn("scripts/check.py", str(approvals[1]["diff"]))
+            self.assertEqual(
+                (data / "skills" / "grilling" / "scripts" / "check.py").read_bytes(),
+                downloaded["scripts/check.py"],
+            )
+            next_snapshot = skills.extension_snapshot()
+            self.assertIn(
+                "user:grilling",
+                {entry["qualifiedId"] for entry in skills.catalog(next_snapshot)},
+            )
+            self.assertNotEqual(
+                run["extensionSnapshot"]["skillCatalogHash"],
+                next_snapshot["skillCatalogHash"],
+            )
+            store.close()
+
+    def test_skill_install_rejection_stops_before_download_or_write(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-p3-skill-install-reject-") as directory:
+            root = Path(directory)
+            data, workspace = root / "data", root / "workspace"
+            data.mkdir(mode=0o700)
+            workspace.mkdir()
+            store = SessionStore(data)
+            store.initialize()
+            skills = SkillCatalog(PluginCatalog(store))
+            session = store.create_session(str(workspace))
+            run, _ = store.create_run(
+                session["id"], "Install grilling",
+                extension_snapshot=skills.extension_snapshot(),
+            )
+            model = ScriptedModel([
+                ModelResponse(tool_calls=(ModelToolCall(
+                    "install-skill", "skill_install", {
+                        "url": "https://github.com/mattpocock/skills/tree/main/skills/productivity/grilling"
+                    }
+                ),)),
+                ModelResponse(text="done"),
+            ])
+
+            with patch(
+                "eidos_runtime.extensions.skills._download_github_skill",
+                create=True,
+            ) as download:
+                RuntimeEngine(
+                    store, model, lambda _message: None,
+                    request_approval=lambda _params, _cancel: ApprovalDecision("reject"),
+                ).run(run["id"], threading.Event())
+
+            download.assert_not_called()
+            self.assertFalse((data / "skills" / "grilling").exists())
+            store.close()
+
+    def test_skill_install_state_rejection_keeps_downloaded_skill_out_of_store(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-p3-skill-write-reject-") as directory:
+            root = Path(directory)
+            data, workspace = root / "data", root / "workspace"
+            data.mkdir(mode=0o700)
+            workspace.mkdir()
+            store = SessionStore(data)
+            store.initialize()
+            skills = SkillCatalog(PluginCatalog(store))
+            session = store.create_session(str(workspace))
+            run, _ = store.create_run(
+                session["id"], "Install grilling",
+                extension_snapshot=skills.extension_snapshot(),
+            )
+            model = ScriptedModel([
+                ModelResponse(tool_calls=(ModelToolCall(
+                    "install-skill", "skill_install", {
+                        "url": "https://github.com/mattpocock/skills/tree/main/skills/productivity/grilling"
+                    }
+                ),)),
+                ModelResponse(text="done"),
+            ])
+            decisions = iter(("approve", "reject"))
+
+            with patch(
+                "eidos_runtime.extensions.skills._download_github_skill",
+                return_value=("grilling", {
+                    "SKILL.md": b"---\nname: grilling\ndescription: Grill a plan.\n---\nBody.\n",
+                }),
+                create=True,
+            ) as download:
+                RuntimeEngine(
+                    store, model, lambda _message: None,
+                    request_approval=lambda _params, _cancel: ApprovalDecision(next(decisions)),
+                ).run(run["id"], threading.Event())
+
+            download.assert_called_once()
+            self.assertFalse((data / "skills" / "grilling").exists())
             store.close()
 
     def test_skill_create_rejection_has_no_side_effect(self) -> None:
