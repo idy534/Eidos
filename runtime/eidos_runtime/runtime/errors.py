@@ -14,6 +14,26 @@ def tool_error(tool_name: str, code: str, summary: str) -> dict[str, object]:
     }
 
 
+def tool_result(
+    tool_name: str,
+    outcome: str,
+    code: str,
+    summary: str,
+    data: dict[str, object] | None = None,
+    *,
+    side_effects_may_exist: bool = False,
+    reconciliation_required: bool = False,
+) -> dict[str, object]:
+    return canonical_tool_result(tool_name, {
+        "outcome": outcome,
+        "code": code,
+        "summary": summary,
+        "data": data or {},
+        "sideEffectsMayExist": side_effects_may_exist,
+        "reconciliationRequired": reconciliation_required,
+    })
+
+
 def bounded_tool_result(tool_name: str, result: dict[str, object]) -> dict[str, object]:
     result = canonical_tool_result(tool_name, result)
     encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")

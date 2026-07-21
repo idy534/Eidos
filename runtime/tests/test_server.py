@@ -18,6 +18,7 @@ PROTOCOL_V1_FIXTURE = RUNTIME_ROOT.parent / "protocol" / "fixtures" / "v1.json"
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
+from eidos_runtime.context.builder import ContextBuilder  # noqa: E402
 from eidos_runtime.extensions.skills import SkillCatalog  # noqa: E402
 from eidos_runtime.sandbox.seatbelt import SeatbeltSelfTestResult  # noqa: E402
 from eidos_runtime.sandbox.sensitive import SensitiveScanner  # noqa: E402
@@ -26,11 +27,7 @@ from eidos_runtime.protocol.server import (  # noqa: E402
     clean_session_title,
     valid_request_id,
 )
-from eidos_runtime.db.storage import (  # noqa: E402
-    ContextLimitExceeded,
-    SessionStore,
-    WorkspaceBoundaryError,
-)
+from eidos_runtime.db.storage import SessionStore, WorkspaceBoundaryError  # noqa: E402
 
 
 def run_runtime(
@@ -73,8 +70,7 @@ class RuntimeProtocolTests(unittest.TestCase):
             server.store.initialize()
             server.initialized = True
             server.sensitive = SensitiveScanner()
-            server._schedule_next = lambda: None  # type: ignore[method-assign]
-            server.worker = threading.current_thread()
+            server.supervisor.prepare_next = lambda: None  # type: ignore[method-assign]
             session = server.store.create_session(workspace)
 
             server.handle({
@@ -154,7 +150,7 @@ class RuntimeProtocolTests(unittest.TestCase):
             second, _ = server.store.enqueue_run(
                 second_session["id"], "answer now", extension_snapshot=snapshot
             )
-            server._schedule_next()
+            server.supervisor.schedule_next()
 
             approval_id = ""
             deadline = time.monotonic() + 5
@@ -244,11 +240,13 @@ class RuntimeProtocolTests(unittest.TestCase):
             def fail_approval(_params: object, _cancel: object) -> object:
                 raise RuntimeError("approval channel failed")
 
-            server.request_approval = fail_approval  # type: ignore[method-assign]
+            server.supervisor.request_approval = fail_approval  # type: ignore[method-assign]
             start_gate = threading.Event()
             start_gate.set()
             with self.assertLogs("eidos.runtime", level="ERROR"):
-                server._run_worker(run["id"], threading.Event(), start_gate)
+                server.supervisor._run_worker(
+                    run["id"], threading.Event(), start_gate
+                )
 
             failed = server.store.read_run(run["id"])
             self.assertEqual(failed["status"], "failed")
@@ -556,7 +554,7 @@ class RuntimeProtocolTests(unittest.TestCase):
             self.assertLessEqual(len(encoded), 1024 * 1024)
             self.assertEqual(snapshot["runs"][-1]["id"], latest_run_id)
 
-    def test_model_context_fails_instead_of_silently_dropping_history(self) -> None:
+    def test_context_builder_reports_candidate_overflow_without_unbounded_load(self) -> None:
         with (
             tempfile.TemporaryDirectory(prefix="eidos-context-data-") as data,
             tempfile.TemporaryDirectory(prefix="eidos-context-workspace-") as workspace,
@@ -571,8 +569,14 @@ class RuntimeProtocolTests(unittest.TestCase):
                     )
                     store.fail_run(run["id"], "TEST_COMPLETE")
 
-                with self.assertRaises(ContextLimitExceeded):
-                    store.model_context(session["id"])
+                current, _ = store.create_run(session["id"], "continue")
+                built = ContextBuilder(store).build(current["id"])
+                self.assertFalse(built.budget.fits)
+                self.assertTrue(built.facts.candidate_overflow)
+                self.assertLessEqual(len(built.facts.items), 200)
+                self.assertIn(
+                    "continue", [item.content for item in built.facts.items]
+                )
             finally:
                 store.close()
 

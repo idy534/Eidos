@@ -114,7 +114,7 @@ class RuntimeLoopTests(unittest.TestCase):
             ["list_files", "read_file"],
         )
 
-    def test_second_consecutive_invalid_model_response_fails_the_run(self) -> None:
+    def test_second_consecutive_empty_response_pauses_the_run(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Invalid responses")
         model = ScriptedModel([ModelResponse(), ModelResponse()])
 
@@ -123,8 +123,8 @@ class RuntimeLoopTests(unittest.TestCase):
         )
 
         failed = self.store.read_run(run["id"])
-        self.assertEqual(failed["status"], "failed")
-        self.assertEqual(failed["errorCode"], "MODEL_PROTOCOL_ERROR")
+        self.assertEqual(failed["status"], "waiting_user_input")
+        self.assertEqual(failed["pauseReason"], "repeated_empty_response")
         self.assertEqual(len(model.contexts), 2)
 
     def test_twenty_model_steps_pause_the_segment_without_finalization(self) -> None:
@@ -150,9 +150,9 @@ class RuntimeLoopTests(unittest.TestCase):
 
         paused = self.store.read_run(run["id"])
         self.assertEqual(paused["status"], "waiting_user_input")
-        self.assertEqual(paused["pauseReason"], "segment_step_limit")
-        self.assertEqual(paused["modelStepCount"], 20)
-        self.assertEqual(len(model.contexts), 20)
+        self.assertEqual(paused["pauseReason"], "repeated_tool_call")
+        self.assertEqual(paused["modelStepCount"], 3)
+        self.assertEqual(len(model.contexts), 3)
 
     def test_second_active_run_is_rejected(self) -> None:
         self.store.create_run(self.session["id"], "First")
@@ -160,24 +160,24 @@ class RuntimeLoopTests(unittest.TestCase):
         with self.assertRaises(ActiveRunError):
             self.store.create_run(self.session["id"], "Second")
 
-    def test_oversized_session_context_fails_before_calling_the_model(self) -> None:
+    def test_oversized_session_context_compacts_before_calling_the_model(self) -> None:
         for index in range(13):
             historical, _ = self.store.create_run(
                 self.session["id"], f"{index}:" + "x" * (64 * 1024 - 3)
             )
             self.store.fail_run(historical["id"], "TEST_COMPLETE")
         run, _ = self.store.create_run(self.session["id"], "Continue")
-        model = ScriptedModel([ModelResponse(text="must not run")])
+        model = ScriptedModel([ModelResponse(text="continued")])
         notifications: list[dict[str, object]] = []
 
         RuntimeLoop(self.store, model, notifications.append).run(
             run["id"], threading.Event()
         )
 
-        failed = self.store.read_run(run["id"])
-        self.assertEqual(failed["status"], "failed")
-        self.assertEqual(failed["errorCode"], "CONTEXT_INPUT_TOO_LARGE")
-        self.assertEqual(model.contexts, [])
+        completed = self.store.read_run(run["id"])
+        self.assertEqual(completed["status"], "succeeded")
+        self.assertEqual(self.store.compaction_count(run["id"]), 1)
+        self.assertEqual(len(model.contexts), 1)
 
     def test_cancel_prevents_a_late_model_result_from_succeeding_the_run(self) -> None:
         run, _user_item = self.store.create_run(self.session["id"], "Wait")
@@ -562,7 +562,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
 
         with mock_patch(
-            "eidos_runtime.runtime.loop.ToolExecutor.prepare_shell",
+            "eidos_runtime.runtime.run_resources.ToolExecutor.prepare_shell",
             side_effect=ToolCancelled(),
         ):
             RuntimeLoop(
@@ -601,7 +601,7 @@ class RuntimeLoopTests(unittest.TestCase):
             return original_prepare(executor, value, cancel)
 
         with mock_patch(
-            "eidos_runtime.runtime.loop.ToolExecutor.prepare_shell",
+            "eidos_runtime.runtime.run_resources.ToolExecutor.prepare_shell",
             side_effect=cancel_on_second_scan,
             autospec=True,
         ):

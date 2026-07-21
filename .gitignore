@@ -9,6 +9,7 @@ __pycache__/
 .ruff_cache/
 .runtime/
 node_modules/
+.pnpm-store/
 data/postgres/
 dist/
 build/

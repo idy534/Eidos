@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
 from eidos_runtime.runtime.loop import RuntimeEngine  # noqa: E402
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
+from eidos_runtime.context.builder import ContextBuilder  # noqa: E402
 
 
 class PhaseTwoRuntimeTests(unittest.TestCase):
@@ -82,6 +83,11 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.assertEqual(stopped["status"], "stopped")
         self.assertEqual(stopped["stopReason"], "max_total_steps")
         self.assertEqual(model.allow_tools_history, [False])
+        item = connection.execute(
+            "SELECT model_step_index FROM items WHERE kind = 'assistant_message'"
+        ).fetchone()
+        self.assertIsNotNone(item)
+        self.assertIsNone(item["model_step_index"])
 
     def test_two_rejections_pause_and_user_input_creates_a_new_segment(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "change")
@@ -192,7 +198,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.assertFalse(final.get("incomplete", False))
         self.assertEqual(model.calls, 2)
         self.assertEqual(model.contexts[1], model.contexts[0])
-        future_context = self.store.model_context(self.session["id"])
+        future_context = ContextBuilder(self.store).build(run["id"]).model_context
         self.assertNotIn(
             "safe progress",
             [item.get("content") for item in future_context],

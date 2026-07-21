@@ -14,6 +14,7 @@ from eidos_runtime.runtime.model_runner import ModelRunner  # noqa: E402
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher  # noqa: E402
 from eidos_runtime.runtime.approval import ApprovalAdapter, ApprovalRequest  # noqa: E402
 from eidos_runtime.runtime.events import RuntimeEvents  # noqa: E402
+from eidos_runtime.db.storage import CommittedMutation  # noqa: E402
 from eidos_runtime.tools.workspace import ToolExecutor  # noqa: E402
 
 
@@ -127,10 +128,21 @@ class RuntimeSeamTests(unittest.TestCase):
 
     def test_runtime_events_preserves_the_notification_envelope(self) -> None:
         messages: list[dict[str, object]] = []
+        run = {"id": "run", "sessionId": "session", "status": "running"}
+        event = {
+            "eventType": "run.updated",
+            "payload": {"reason": "fixture"},
+        }
 
-        RuntimeEvents(messages.append).emit("run/updated", {"run": {"id": "run"}})
+        RuntimeEvents(messages.append).publish(
+            CommittedMutation(run, (event,)), run=run
+        )
 
-        self.assertEqual(messages, [{"jsonrpc": "2.0", "method": "run/updated", "params": {"run": {"id": "run"}}}])
+        self.assertEqual(messages, [{
+            "jsonrpc": "2.0",
+            "method": "run/updated",
+            "params": {"sessionId": "session", "run": run},
+        }])
 
 
 if __name__ == "__main__":

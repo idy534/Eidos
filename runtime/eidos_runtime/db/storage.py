@@ -12,24 +12,35 @@ import stat
 import threading
 import time
 import uuid
-from typing import Callable, TypeVar
+from typing import Callable, Generic, TypeVar
 
+from eidos_runtime.context.facts import CompactSummary, ContextFacts, ContextItemFact
 from eidos_runtime.protocol.schemas import ItemDto, RunDto, SessionDto
 from eidos_runtime.db.events import append_event, event_from_row
 from eidos_runtime.model.config import DEFAULT_MODEL_ID, SUPPORTED_MODELS
-from eidos_runtime.runtime.state_machine import EventType, RunStatus
+from eidos_runtime.runtime.state_machine import (
+    ApprovalStatus,
+    EventType,
+    RunStatus,
+    SegmentStatus,
+    StepStatus,
+    ToolCallStatus,
+    ensure_transition,
+)
+from eidos_runtime.runtime.contracts import ProgressSignature
 
 
 DATABASE_NAME = "eidos.db"
 LOCK_NAME = "runtime.lock"
 RESERVE_NAME = "emergency.reserve"
-SCHEMA_REVISION = 6
+SCHEMA_REVISION = 8
 RESERVE_BYTES = 1024 * 1024
 DEFAULT_LIST_LIMIT = 50
 MAX_LIST_LIMIT = 200
 SESSION_CURSOR_PREFIX = "session-v2:"
 MAX_CONTEXT_BYTES = 768 * 1024
 MAX_CONTEXT_ITEMS = 200
+RECENT_CONTEXT_STEPS = 3
 MAX_SNAPSHOT_BYTES = 768 * 1024
 MAX_SNAPSHOT_TEXT_BYTES = 192 * 1024
 EMPTY_EXTENSION_SNAPSHOT = {
@@ -100,7 +111,9 @@ class InvalidRunStateError(RuntimeError):
 
 
 class ContextLimitExceeded(RuntimeError):
-    pass
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
 
 
 class OperationConflictError(RuntimeError):
@@ -120,6 +133,358 @@ class RunLimitReached(RuntimeError):
 
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class CommittedMutation(Generic[T]):
+    value: T
+    events: tuple[dict[str, object], ...]
+
+
+def transition_run(
+    connection: sqlite3.Connection,
+    run_id: str,
+    expected_statuses: frozenset[RunStatus],
+    target_status: RunStatus,
+    reason: str | None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Validate, update, and event one persisted Run transition."""
+    row = connection.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
+    if row is None:
+        raise ResourceNotFoundError("run not found")
+    current = RunStatus(row["status"])
+    if current not in expected_statuses:
+        raise InvalidRunStateError("run status changed")
+    ensure_transition(current, target_status)
+    now = _now_ms()
+    updates: dict[str, object] = {"status": target_status.value, "updated_at": now}
+    if target_status is RunStatus.RUNNING:
+        updates.update({"started_at": row["started_at"] or now, "enqueued_at": None})
+    elif target_status is RunStatus.QUEUED:
+        updates["enqueued_at"] = now
+    elif target_status is RunStatus.WAITING_USER_INPUT:
+        updates["pause_reason"] = reason
+    elif target_status is RunStatus.FAILED:
+        updates.update({"error_code": reason, "completed_at": now})
+    elif target_status is RunStatus.STOPPED:
+        updates.update({"stop_reason": reason, "completed_at": now})
+    elif target_status is RunStatus.CANCELED:
+        updates["completed_at"] = now
+    elif target_status is RunStatus.INTERRUPTED:
+        updates.update({"error_code": "RUNTIME_INTERRUPTED", "completed_at": now})
+    elif target_status is RunStatus.SUCCEEDED:
+        updates["completed_at"] = now
+    assignments = ", ".join(f"{column} = ?" for column in updates)
+    changed = connection.execute(
+        f"UPDATE runs SET {assignments} WHERE id = ? AND status = ?",
+        (*updates.values(), run_id, current.value),
+    )
+    if changed.rowcount != 1:
+        raise InvalidRunStateError("run status changed")
+    run = _run_from_row(
+        connection.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
+    )
+    event = append_event(
+        connection,
+        EventType.RUN_STATUS_CHANGED,
+        now,
+        {"previous": current, "current": target_status, "reason": reason},
+        session_id=str(run["sessionId"]),
+        run_id=run_id,
+    )
+    return run, event
+
+
+def transition_segments(
+    connection: sqlite3.Connection,
+    run_id: str,
+    expected_statuses: frozenset[SegmentStatus],
+    target_status: SegmentStatus,
+    now: int,
+    reason: str,
+) -> tuple[dict[str, object], ...]:
+    run = connection.execute(
+        "SELECT session_id FROM runs WHERE id = ?", (run_id,)
+    ).fetchone()
+    if run is None:
+        raise ResourceNotFoundError("run not found")
+    placeholders = ",".join("?" for _ in expected_statuses)
+    rows = connection.execute(
+        f"SELECT id, status FROM execution_segments WHERE run_id = ? AND status IN ({placeholders})",
+        (run_id, *(status.value for status in expected_statuses)),
+    ).fetchall()
+    events: list[dict[str, object]] = []
+    for row in rows:
+        current = SegmentStatus(row["status"])
+        ensure_transition(current, target_status)
+        connection.execute(
+            "UPDATE execution_segments SET status = ?, completed_at = ? WHERE id = ? AND status = ?",
+            (target_status.value, now, row["id"], current.value),
+        )
+        events.append(append_event(
+            connection,
+            EventType.SEGMENT_STATUS_CHANGED,
+            now,
+            {
+                "entity_id": row["id"],
+                "previous": current.value,
+                "current": target_status.value,
+                "reason": reason,
+            },
+            session_id=run["session_id"],
+            run_id=run_id,
+        ))
+    return tuple(events)
+
+
+def settle_run_children(
+    connection: sqlite3.Connection,
+    run_id: str,
+    target_status: RunStatus,
+    now: int,
+) -> tuple[dict[str, object], ...]:
+    """Settle active child facts in the same transaction as a terminal Run."""
+    run = connection.execute(
+        "SELECT session_id FROM runs WHERE id = ?", (run_id,)
+    ).fetchone()
+    if run is None:
+        raise ResourceNotFoundError("run not found")
+    events: list[dict[str, object]] = []
+    tool_rows = connection.execute(
+        """
+        SELECT tool_calls.id FROM tool_calls
+        JOIN items ON items.id = tool_calls.item_id
+        WHERE items.run_id = ? AND tool_calls.status = 'running'
+        """,
+        (run_id,),
+    ).fetchall()
+    for tool in tool_rows:
+        ensure_transition(ToolCallStatus.RUNNING, ToolCallStatus.CANCELED)
+        connection.execute(
+            "UPDATE tool_calls SET status = 'canceled', completed_at = ? WHERE id = ? AND status = 'running'",
+            (now, tool["id"]),
+        )
+        events.append(append_event(
+            connection,
+            EventType.TOOL_CALL_COMPLETED,
+            now,
+            {"tool_call_id": tool["id"], "code": "run_terminated"},
+            session_id=run["session_id"],
+            run_id=run_id,
+        ))
+
+    approval_target = (
+        ApprovalStatus.CANCELED
+        if target_status is RunStatus.CANCELED
+        else ApprovalStatus.INVALIDATED
+    )
+    approvals = connection.execute(
+        "SELECT id FROM approvals WHERE run_id = ? AND status = 'pending'",
+        (run_id,),
+    ).fetchall()
+    for approval in approvals:
+        ensure_transition(ApprovalStatus.PENDING, approval_target)
+        connection.execute(
+            "UPDATE approvals SET status = ?, decided_at = ? WHERE id = ? AND status = 'pending'",
+            (approval_target.value, now, approval["id"]),
+        )
+        events.append(append_event(
+            connection,
+            EventType.APPROVAL_STATUS_CHANGED,
+            now,
+            {
+                "entity_id": approval["id"],
+                "previous": ApprovalStatus.PENDING.value,
+                "current": approval_target.value,
+            },
+            session_id=run["session_id"],
+            run_id=run_id,
+        ))
+    connection.execute(
+        """
+        UPDATE tool_calls SET approval_status = 'canceled'
+        WHERE approval_status = 'pending'
+          AND item_id IN (SELECT id FROM items WHERE run_id = ?)
+        """,
+        (run_id,),
+    )
+
+    item_rows = connection.execute(
+        "SELECT id FROM items WHERE run_id = ? AND status = 'in_progress'",
+        (run_id,),
+    ).fetchall()
+    for item in item_rows:
+        connection.execute(
+            "UPDATE items SET status = 'canceled', completed_at = ? WHERE id = ? AND status = 'in_progress'",
+            (now, item["id"]),
+        )
+        events.append(append_event(
+            connection,
+            EventType.ITEM_COMPLETED,
+            now,
+            {"item_id": item["id"]},
+            session_id=run["session_id"],
+            run_id=run_id,
+        ))
+
+    step_target = (
+        StepStatus.CANCELED
+        if target_status is RunStatus.CANCELED
+        else StepStatus.FAILED
+    )
+    steps = connection.execute(
+        "SELECT id FROM steps WHERE run_id = ? AND status = 'running'",
+        (run_id,),
+    ).fetchall()
+    for step in steps:
+        ensure_transition(StepStatus.RUNNING, step_target)
+        connection.execute(
+            "UPDATE model_attempts SET status = ?, completed_at = ? WHERE step_id = ? AND status = 'running'",
+            (step_target.value, now, step["id"]),
+        )
+        connection.execute(
+            "UPDATE steps SET status = ?, completed_at = ? WHERE id = ? AND status = 'running'",
+            (step_target.value, now, step["id"]),
+        )
+        events.append(append_event(
+            connection,
+            EventType.STEP_STATUS_CHANGED,
+            now,
+            {
+                "entity_id": step["id"],
+                "previous": StepStatus.RUNNING.value,
+                "current": step_target.value,
+                "reason": "run_terminated",
+            },
+            session_id=run["session_id"],
+            run_id=run_id,
+        ))
+
+    segment_target = (
+        SegmentStatus.CANCELED
+        if target_status is RunStatus.CANCELED
+        else SegmentStatus.FAILED
+    )
+    events.extend(transition_segments(
+        connection,
+        run_id,
+        frozenset({
+            SegmentStatus.QUEUED,
+            SegmentStatus.RUNNING,
+            SegmentStatus.WAITING_USER_INPUT,
+        }),
+        segment_target,
+        now,
+        "run_terminated",
+    ))
+    connection.execute(
+        "UPDATE input_mailbox SET status = 'canceled' WHERE run_id = ? AND status = 'pending'",
+        (run_id,),
+    )
+    return tuple(events)
+
+
+def recover_runtime_facts(connection: sqlite3.Connection) -> None:
+    """Recover abandoned persisted facts without consulting in-memory phases."""
+    now = _now_ms()
+    connection.execute(
+        "UPDATE durable_intents SET status = 'interrupted' WHERE status = 'running'"
+    )
+    reconciliation_runs = connection.execute(
+        """
+        SELECT DISTINCT runs.id, runs.status
+        FROM runs JOIN durable_intents ON durable_intents.run_id = runs.id
+        WHERE durable_intents.status = 'interrupted'
+          AND runs.status IN ('running', 'waiting_approval', 'finalizing')
+        """
+    ).fetchall()
+    for row in reconciliation_runs:
+        current = RunStatus(row["status"])
+        connection.execute(
+            """
+            UPDATE runs
+            SET reconciliation_required = 1,
+                reconciliation_epoch = reconciliation_epoch + 1,
+                side_effects_may_exist = 1
+            WHERE id = ? AND status = ?
+            """,
+            (row["id"], current.value),
+        )
+        transition_segments(
+            connection,
+            str(row["id"]),
+            frozenset({SegmentStatus.RUNNING}),
+            SegmentStatus.WAITING_USER_INPUT,
+            now,
+            "side_effect_reconciliation_required",
+        )
+        run, _event = transition_run(
+            connection,
+            str(row["id"]),
+            frozenset({current}),
+            RunStatus.WAITING_USER_INPUT,
+            "side_effect_reconciliation_required",
+        )
+        epoch = connection.execute(
+            "SELECT reconciliation_epoch FROM runs WHERE id = ?", (row["id"],)
+        ).fetchone()["reconciliation_epoch"]
+        append_event(
+            connection,
+            EventType.RECONCILIATION_REQUIRED,
+            now,
+            {
+                "epoch": int(epoch),
+                "reason": "runtime_restart",
+            },
+            session_id=str(run["sessionId"]),
+            run_id=str(run["id"]),
+        )
+
+    active_runs = connection.execute(
+        """
+        SELECT id, status FROM runs
+        WHERE status IN ('running', 'waiting_approval', 'finalizing')
+        """
+    ).fetchall()
+    for row in active_runs:
+        settle_run_children(connection, str(row["id"]), RunStatus.INTERRUPTED, now)
+        transition_run(
+            connection,
+            str(row["id"]),
+            frozenset({RunStatus(row["status"])}),
+            RunStatus.INTERRUPTED,
+            "runtime_interrupted",
+        )
+
+    approvals = connection.execute(
+        """
+        SELECT approvals.id, approvals.run_id, runs.session_id
+        FROM approvals JOIN runs ON runs.id = approvals.run_id
+        WHERE approvals.status = 'pending'
+        """
+    ).fetchall()
+    for approval in approvals:
+        ensure_transition(ApprovalStatus.PENDING, ApprovalStatus.INVALIDATED)
+        connection.execute(
+            "UPDATE approvals SET status = 'invalidated', decided_at = ? WHERE id = ? AND status = 'pending'",
+            (now, approval["id"]),
+        )
+        append_event(
+            connection,
+            EventType.APPROVAL_STATUS_CHANGED,
+            now,
+            {
+                "entity_id": approval["id"],
+                "previous": ApprovalStatus.PENDING.value,
+                "current": ApprovalStatus.INVALIDATED.value,
+                "reason": "runtime_restart",
+            },
+            session_id=approval["session_id"],
+            run_id=approval["run_id"],
+        )
+    connection.execute(
+        "UPDATE tool_calls SET approval_status = 'canceled' WHERE approval_status = 'pending'"
+    )
 
 
 @dataclass(frozen=True)
@@ -178,7 +543,7 @@ class SessionStore:
                     raise StorageError("schema_revision_missing")
             if revision > SCHEMA_REVISION or revision < 0:
                 raise StorageError("schema_revision_unsupported")
-            if revision in {1, 2, 3, 4, 5}:
+            if revision in {1, 2, 3, 4, 5, 6, 7}:
                 _backup_database(connection, database_path, revision)
             if revision == 1:
                 _migrate_v1_to_v2(connection)
@@ -195,6 +560,12 @@ class SessionStore:
             if revision == 5:
                 _migrate_v5_to_v6(connection)
                 revision = 6
+            if revision == 6:
+                _migrate_v6_to_v7(connection)
+                revision = 7
+            if revision == 7:
+                _migrate_v7_to_v8(connection)
+                revision = 8
             if revision not in {0, SCHEMA_REVISION}:
                 raise StorageError("schema_revision_unsupported")
 
@@ -233,6 +604,9 @@ class SessionStore:
                     side_effects_may_exist INTEGER NOT NULL DEFAULT 0,
                     extension_snapshot_json TEXT NOT NULL DEFAULT '{}',
                     activated_tools_json TEXT NOT NULL DEFAULT '[]',
+                    compaction_count INTEGER NOT NULL DEFAULT 0,
+                    workspace_version INTEGER NOT NULL DEFAULT 0,
+                    last_diff_hash TEXT,
                     error_code TEXT,
                     created_at INTEGER NOT NULL,
                     started_at INTEGER,
@@ -331,6 +705,7 @@ class SessionStore:
                     observed_reconciliation_epoch INTEGER NOT NULL DEFAULT 0,
                     tool_snapshot_json TEXT,
                     tool_set_hash TEXT,
+                    progress_signature_json TEXT,
                     created_at INTEGER NOT NULL,
                     completed_at INTEGER,
                     UNIQUE(segment_id, ordinal)
@@ -401,6 +776,33 @@ class SessionStore:
                     updated_at INTEGER NOT NULL,
                     PRIMARY KEY(plugin_id, server_id)
                 );
+
+                CREATE TABLE IF NOT EXISTS compact_summaries (
+                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id TEXT NOT NULL UNIQUE,
+                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
+                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+                    task_goal TEXT NOT NULL,
+                    constraints_json TEXT NOT NULL,
+                    completed_actions_json TEXT NOT NULL,
+                    workspace_changes_json TEXT NOT NULL,
+                    important_facts_json TEXT NOT NULL,
+                    unresolved_problems_json TEXT NOT NULL,
+                    next_actions_json TEXT NOT NULL,
+                    source_item_ids_json TEXT NOT NULL,
+                    phase TEXT NOT NULL CHECK (phase IN ('pre_turn', 'mid_turn')),
+                    created_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS input_mailbox (
+                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id TEXT NOT NULL UNIQUE,
+                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+                    content TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('pending', 'injected', 'canceled')),
+                    created_at INTEGER NOT NULL,
+                    injected_at INTEGER
+                );
                 """
             )
             connection.execute(f"PRAGMA user_version = {SCHEMA_REVISION}")
@@ -409,76 +811,7 @@ class SessionStore:
             _ensure_phase_two_columns(connection)
             _ensure_phase_three_columns(connection)
             _backfill_session_identities(connection)
-            now = _now_ms()
-            connection.execute(
-                """
-                UPDATE durable_intents
-                SET status = 'interrupted'
-                WHERE status = 'running'
-                """
-            )
-            connection.execute(
-                """
-                UPDATE runs
-                SET status = 'waiting_user_input',
-                    pause_reason = 'side_effect_reconciliation_required',
-                    reconciliation_required = 1,
-                    reconciliation_epoch = reconciliation_epoch + 1,
-                    side_effects_may_exist = 1,
-                    updated_at = ?
-                WHERE id IN (
-                    SELECT run_id FROM durable_intents WHERE status = 'interrupted'
-                ) AND status IN ('running', 'waiting_approval', 'finalizing')
-                """,
-                (now,),
-            )
-            connection.execute(
-                """
-                UPDATE tool_calls
-                SET status = 'canceled', completed_at = ?
-                WHERE status = 'running'
-                  AND item_id IN (
-                    SELECT items.id FROM items
-                    JOIN runs ON runs.id = items.run_id
-                    WHERE runs.status IN ('running', 'waiting_approval')
-                  )
-                """,
-                (now,),
-            )
-            connection.execute(
-                """
-                UPDATE tool_calls SET approval_status = 'canceled'
-                WHERE approval_status = 'pending'
-                """
-            )
-            connection.execute(
-                """
-                UPDATE approvals SET status = 'invalidated', decided_at = ?
-                WHERE status = 'pending'
-                """,
-                (now,),
-            )
-            connection.execute(
-                """
-                UPDATE items
-                SET status = 'canceled', completed_at = ?
-                WHERE status = 'in_progress'
-                  AND run_id IN (
-                    SELECT id FROM runs
-                    WHERE status IN ('running', 'waiting_approval')
-                  )
-                """,
-                (now,),
-            )
-            connection.execute(
-                """
-                UPDATE runs
-                SET status = 'interrupted', error_code = 'RUNTIME_INTERRUPTED',
-                    updated_at = ?, completed_at = ?
-                WHERE status IN ('running', 'waiting_approval')
-                """,
-                (now, now),
-            )
+            recover_runtime_facts(connection)
             connection.commit()
             _verify_integrity(connection)
             connection.close()
@@ -701,6 +1034,13 @@ class SessionStore:
                 (session_id,),
             )
             connection.execute(
+                f"DELETE FROM input_mailbox WHERE run_id IN ({run_ids})",
+                (session_id,),
+            )
+            connection.execute(
+                "DELETE FROM compact_summaries WHERE session_id = ?", (session_id,)
+            )
+            connection.execute(
                 """
                 DELETE FROM tool_calls WHERE item_id IN (
                     SELECT id FROM items WHERE session_id = ?
@@ -895,16 +1235,11 @@ class SessionStore:
             )
             connection.execute(
                 """
-                UPDATE runs
-                SET status = 'queued', enqueued_at = ?, pause_reason = NULL,
-                    consecutive_rejects = 0, updated_at = ?
+                UPDATE runs SET pause_reason = NULL, consecutive_rejects = 0
                 WHERE id = ? AND status = 'waiting_user_input'
                 """,
-                (now, now, run_id),
+                (run_id,),
             )
-            run = _run_from_row(connection.execute(
-                "SELECT * FROM runs WHERE id = ?", (run_id,)
-            ).fetchone())
             append_event(
                 connection, EventType.SEGMENT_CREATED, now,
                 {
@@ -913,14 +1248,12 @@ class SessionStore:
                 },
                 session_id=run_row["session_id"], run_id=run_id,
             )
-            append_event(
-                connection, EventType.RUN_STATUS_CHANGED, now,
-                {
-                    "previous": RunStatus.WAITING_USER_INPUT,
-                    "current": RunStatus.QUEUED,
-                    "reason": "user_input",
-                },
-                session_id=run_row["session_id"], run_id=run_id,
+            run, _run_event = transition_run(
+                connection,
+                run_id,
+                frozenset({RunStatus.WAITING_USER_INPUT}),
+                RunStatus.QUEUED,
+                "user_input",
             )
             return run
 
@@ -932,9 +1265,15 @@ class SessionStore:
         )
 
     def claim_next_run(self) -> dict[str, object] | None:
-        now = _now_ms()
+        mutation = self.claim_next_run_committed()
+        return mutation.value if mutation is not None else None
+
+    def claim_next_run_committed(
+        self,
+    ) -> CommittedMutation[dict[str, object]] | None:
         segment_id = str(uuid.uuid4())
         with self.lock, self._connection() as connection:
+            now = _now_ms()
             row = connection.execute(
                 """
                 SELECT id FROM runs
@@ -947,24 +1286,9 @@ class SessionStore:
             ).fetchone()
             if row is None:
                 return None
-            updated = connection.execute(
-                """
-                UPDATE runs
-                SET status = 'running', started_at = COALESCE(started_at, ?),
-                    updated_at = ?
-                WHERE id = ? AND status = 'queued'
-                  AND NOT EXISTS (
-                    SELECT 1 FROM runs
-                    WHERE status IN ('running', 'finalizing') AND id != ?
-                  )
-                """,
-                (now, now, row["id"], row["id"]),
-            )
-            if updated.rowcount != 1:
-                return None
             existing_segment = connection.execute(
                 """
-                SELECT id FROM execution_segments
+                SELECT id, status FROM execution_segments
                 WHERE run_id = ? AND status IN ('queued', 'running')
                 ORDER BY ordinal DESC LIMIT 1
                 """,
@@ -983,7 +1307,8 @@ class SessionStore:
                     """,
                     (segment_id, row["id"], ordinal, now, now),
                 )
-            else:
+            elif existing_segment["status"] == SegmentStatus.QUEUED.value:
+                ensure_transition(SegmentStatus.QUEUED, SegmentStatus.RUNNING)
                 connection.execute(
                     """
                     UPDATE execution_segments SET status = 'running',
@@ -992,15 +1317,14 @@ class SessionStore:
                     """,
                     (now, existing_segment["id"]),
                 )
-            run = _run_from_row(connection.execute(
-                "SELECT * FROM runs WHERE id = ?", (row["id"],)
-            ).fetchone())
-            append_event(
-                connection, EventType.RUN_STATUS_CHANGED, now,
-                {"previous": RunStatus.QUEUED, "current": RunStatus.RUNNING},
-                session_id=str(run["sessionId"]), run_id=str(run["id"]),
+            run, event = transition_run(
+                connection,
+                str(row["id"]),
+                frozenset({RunStatus.QUEUED}),
+                RunStatus.RUNNING,
+                "fifo_claim",
             )
-            return run
+        return CommittedMutation(run, (event,))
 
     def read_run(self, run_id: str) -> dict[str, object]:
         with self.lock:
@@ -1010,6 +1334,47 @@ class SessionStore:
         if row is None:
             raise ResourceNotFoundError("run not found")
         return _run_from_row(row)
+
+    def run_budget(self, run_id: str) -> dict[str, int]:
+        with self.lock:
+            connection = self._connection()
+            run = connection.execute(
+                "SELECT model_step_count, total_effective_ms FROM runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+            segment = connection.execute(
+                """
+                SELECT step_count, effective_ms FROM execution_segments
+                WHERE run_id = ? AND status = 'running'
+                ORDER BY ordinal DESC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        if run is None:
+            raise ResourceNotFoundError("run not found")
+        return {
+            "segmentStepsRemaining": max(0, 20 - int(segment["step_count"] if segment else 0)),
+            "runStepsRemaining": max(0, 80 - int(run["model_step_count"])),
+            "segmentEffectiveMsRemaining": max(
+                0, 1_800_000 - int(segment["effective_ms"] if segment else 0)
+            ),
+            "runEffectiveMsRemaining": max(0, 7_200_000 - int(run["total_effective_ms"])),
+        }
+
+    def read_runtime_start_event(self, run_id: str) -> dict[str, object]:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT * FROM events
+                WHERE run_id = ? AND event_type IN ('run.created', 'run.status_changed')
+                ORDER BY id DESC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        event = event_from_row(row) if row is not None else None
+        if event is None:
+            raise ResourceNotFoundError("run start event not found")
+        return event
 
     def plugin_record(self, plugin_id: str) -> dict[str, object] | None:
         with self.lock:
@@ -1530,9 +1895,32 @@ class SessionStore:
             raise StorageError("tool_snapshot_invalid")
         return value
 
+    def read_current_step_fact(self, run_id: str) -> dict[str, object]:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT id, observed_reconciliation_epoch
+                FROM steps
+                WHERE run_id = ? AND status = 'running'
+                ORDER BY creation_seq DESC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            raise ResourceNotFoundError("current step not found")
+        return {
+            "stepId": row["id"],
+            "reconciliationEpoch": row["observed_reconciliation_epoch"],
+        }
+
     def add_effective_time(self, run_id: str, elapsed_ms: int) -> None:
+        self.add_effective_time_committed(run_id, elapsed_ms)
+
+    def add_effective_time_committed(
+        self, run_id: str, elapsed_ms: int
+    ) -> CommittedMutation[dict[str, object]] | None:
         if elapsed_ms <= 0:
-            return
+            return None
         with self.lock, self._connection() as connection:
             connection.execute(
                 "UPDATE runs SET total_effective_ms = total_effective_ms + ? WHERE id = ?",
@@ -1550,12 +1938,30 @@ class SessionStore:
                 """,
                 (elapsed_ms, run_id),
             )
+            run = _run_from_row(connection.execute(
+                "SELECT * FROM runs WHERE id = ?", (run_id,)
+            ).fetchone())
+            event = append_event(
+                connection,
+                EventType.RUN_UPDATED,
+                _now_ms(),
+                {"reason": "effective_time"},
+                session_id=str(run["sessionId"]),
+                run_id=run_id,
+            )
+        return CommittedMutation(run, (event,))
 
     def complete_current_step(
-        self, run_id: str, status_value: str, *, reason: str | None = None
+        self,
+        run_id: str,
+        status_value: str,
+        *,
+        reason: str | None = None,
+        progress_signature: ProgressSignature | None = None,
     ) -> None:
         if status_value not in {"completed", "failed", "canceled"}:
             raise ValueError("invalid step status")
+        target_status = StepStatus(status_value)
         now = _now_ms()
         with self.lock, self._connection() as connection:
             step = connection.execute(
@@ -1568,13 +1974,24 @@ class SessionStore:
             ).fetchone()
             if step is None:
                 return
+            ensure_transition(StepStatus.RUNNING, target_status)
             connection.execute(
                 "UPDATE model_attempts SET status = ?, completed_at = ? WHERE step_id = ? AND status = 'running'",
                 (status_value, now, step["id"]),
             )
             connection.execute(
-                "UPDATE steps SET status = ?, completed_at = ? WHERE id = ? AND status = 'running'",
-                (status_value, now, step["id"]),
+                """
+                UPDATE steps
+                SET status = ?, completed_at = ?, progress_signature_json = ?
+                WHERE id = ? AND status = 'running'
+                """,
+                (
+                    status_value,
+                    now,
+                    progress_signature.model_dump_json()
+                    if progress_signature is not None else None,
+                    step["id"],
+                ),
             )
             run = connection.execute(
                 "SELECT session_id FROM runs WHERE id = ?", (run_id,)
@@ -1634,6 +2051,24 @@ class SessionStore:
                                 session_id=run["session_id"], run_id=run_id,
                             )
 
+    def recent_progress_signatures(
+        self, run_id: str, limit: int = 8
+    ) -> tuple[ProgressSignature, ...]:
+        if not 1 <= limit <= 32:
+            raise ValueError("invalid signature history limit")
+        with self.lock:
+            rows = self._connection().execute(
+                """
+                SELECT progress_signature_json FROM steps
+                WHERE run_id = ? AND progress_signature_json IS NOT NULL
+                ORDER BY creation_seq DESC LIMIT ?
+                """,
+                (run_id, limit),
+            ).fetchall()
+        return tuple(
+            ProgressSignature.model_validate_json(row[0]) for row in reversed(rows)
+        )
+
     def retry_current_model_attempt(self, run_id: str) -> None:
         now = _now_ms()
         with self.lock, self._connection() as connection:
@@ -1677,7 +2112,23 @@ class SessionStore:
     def create_assistant_item(
         self, run_id: str, model_step_index: int
     ) -> dict[str, object]:
-        return self._create_item(run_id, "assistant_message", model_step_index)
+        return self.create_assistant_item_committed(run_id, model_step_index).value
+
+    def create_assistant_item_committed(
+        self, run_id: str, model_step_index: int
+    ) -> CommittedMutation[dict[str, object]]:
+        return self._create_item_committed(run_id, "assistant_message", model_step_index)
+
+    def create_finalization_assistant_item(
+        self, run_id: str
+    ) -> dict[str, object]:
+        """Create an explicitly step-less Item while the Run is finalizing."""
+        return self.create_finalization_assistant_item_committed(run_id).value
+
+    def create_finalization_assistant_item_committed(
+        self, run_id: str
+    ) -> CommittedMutation[dict[str, object]]:
+        return self._create_item_committed(run_id, "assistant_message", None)
 
     def append_item_content(self, item_id: str, delta: str) -> dict[str, object]:
         with self.lock, self._connection() as connection:
@@ -1692,12 +2143,76 @@ class SessionStore:
                 raise InvalidRunStateError("item is not active")
         return self.read_item(item_id)
 
+    def append_item_deltas_committed(
+        self,
+        item_id: str,
+        deltas: tuple[str, ...],
+        first_sequence: int,
+    ) -> CommittedMutation[dict[str, object]]:
+        if not deltas:
+            raise ValueError("at least one delta is required")
+        with self.lock, self._connection() as connection:
+            fact = connection.execute(
+                "SELECT session_id, run_id FROM items WHERE id = ? AND status = 'in_progress'",
+                (item_id,),
+            ).fetchone()
+            if fact is None:
+                raise InvalidRunStateError("item is not active")
+            updated = connection.execute(
+                "UPDATE items SET content = COALESCE(content, '') || ? WHERE id = ? AND status = 'in_progress'",
+                ("".join(deltas), item_id),
+            )
+            if updated.rowcount != 1:
+                raise InvalidRunStateError("item is not active")
+            now = _now_ms()
+            events = tuple(
+                append_event(
+                    connection,
+                    EventType.ITEM_DELTA,
+                    now,
+                    {
+                        "item_id": item_id,
+                        "sequence": first_sequence + offset,
+                        "delta": delta,
+                    },
+                    session_id=fact["session_id"],
+                    run_id=fact["run_id"],
+                )
+                for offset, delta in enumerate(deltas)
+            )
+        item = self.read_item(item_id)
+        return CommittedMutation(item, events)
+
     def complete_assistant_item(self, item_id: str) -> dict[str, object]:
-        return self._complete_item(item_id, "completed")
+        return self.complete_assistant_item_committed(item_id).value
+
+    def complete_assistant_item_committed(
+        self, item_id: str
+    ) -> CommittedMutation[dict[str, object]]:
+        return self._complete_item_committed(item_id, "completed")
 
     def mark_assistant_incomplete(self, item_id: str) -> dict[str, object]:
-        now = _now_ms()
+        return self.mark_assistant_incomplete_committed(item_id).value
+
+    def mark_assistant_incomplete_committed(
+        self, item_id: str
+    ) -> CommittedMutation[dict[str, object]]:
+        mutation = self.mark_assistant_incomplete_if_active_committed(item_id)
+        if mutation is None:
+            raise InvalidRunStateError("assistant item is not active")
+        return mutation
+
+    def mark_assistant_incomplete_if_active_committed(
+        self, item_id: str
+    ) -> CommittedMutation[dict[str, object]] | None:
         with self.lock, self._connection() as connection:
+            now = _now_ms()
+            fact = connection.execute(
+                "SELECT session_id, run_id FROM items WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+            if fact is None:
+                raise ResourceNotFoundError("item not found")
             updated = connection.execute(
                 """
                 UPDATE items
@@ -1708,24 +2223,27 @@ class SessionStore:
                 (now, item_id),
             )
             if updated.rowcount != 1:
-                raise InvalidRunStateError("assistant item is not active")
-        return self.read_item(item_id)
+                return None
+            event = append_event(
+                connection,
+                EventType.ITEM_COMPLETED,
+                now,
+                {"item_id": item_id},
+                session_id=fact["session_id"],
+                run_id=fact["run_id"],
+            )
+        return CommittedMutation(self.read_item(item_id), (event,))
 
     def complete_assistant_and_run(
         self, item_id: str, run_id: str
     ) -> tuple[dict[str, object], dict[str, object]]:
-        now = _now_ms()
+        return self.complete_assistant_and_run_committed(item_id, run_id).value
+
+    def complete_assistant_and_run_committed(
+        self, item_id: str, run_id: str
+    ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
         with self.lock, self._connection() as connection:
-            run_update = connection.execute(
-                """
-                UPDATE runs
-                SET status = 'succeeded', updated_at = ?, completed_at = ?
-                WHERE id = ? AND status = 'running'
-                """,
-                (now, now, run_id),
-            )
-            if run_update.rowcount != 1:
-                raise InvalidRunStateError("run is not active")
+            now = _now_ms()
             item_update = connection.execute(
                 """
                 UPDATE items SET status = 'completed', completed_at = ?
@@ -1735,22 +2253,35 @@ class SessionStore:
             )
             if item_update.rowcount != 1:
                 raise InvalidRunStateError("assistant item is not active")
-            connection.execute(
-                """
-                UPDATE execution_segments SET status = 'completed', completed_at = ?
-                WHERE run_id = ? AND status = 'running'
-                """,
-                (now, run_id),
+            segment_events = transition_segments(
+                connection,
+                run_id,
+                frozenset({SegmentStatus.RUNNING}),
+                SegmentStatus.COMPLETED,
+                now,
+                "run_succeeded",
             )
-            run = _run_from_row(connection.execute(
-                "SELECT * FROM runs WHERE id = ?", (run_id,)
-            ).fetchone())
-            append_event(
-                connection, EventType.RUN_STATUS_CHANGED, now,
-                {"previous": RunStatus.RUNNING, "current": RunStatus.SUCCEEDED},
-                session_id=str(run["sessionId"]), run_id=run_id,
+            item_event = append_event(
+                connection,
+                EventType.ITEM_COMPLETED,
+                now,
+                {"item_id": item_id},
+                session_id=connection.execute(
+                    "SELECT session_id FROM runs WHERE id = ?", (run_id,)
+                ).fetchone()["session_id"],
+                run_id=run_id,
             )
-        return self.read_item(item_id), run
+            run, run_event = transition_run(
+                connection,
+                run_id,
+                frozenset({RunStatus.RUNNING}),
+                RunStatus.SUCCEEDED,
+                None,
+            )
+        item = self.read_item(item_id)
+        return CommittedMutation(
+            (item, run), (*segment_events, item_event, run_event)
+        )
 
     def create_tool_item(
         self,
@@ -1764,6 +2295,29 @@ class SessionStore:
         provenance: dict[str, object] | None = None,
         tool_set_hash: str | None = None,
     ) -> dict[str, object]:
+        return self.create_tool_item_committed(
+            run_id,
+            model_step_index,
+            batch_order,
+            provider_call_id,
+            tool_name,
+            arguments_json,
+            provenance=provenance,
+            tool_set_hash=tool_set_hash,
+        ).value
+
+    def create_tool_item_committed(
+        self,
+        run_id: str,
+        model_step_index: int,
+        batch_order: int,
+        provider_call_id: str,
+        tool_name: str,
+        arguments_json: str,
+        *,
+        provenance: dict[str, object] | None = None,
+        tool_set_hash: str | None = None,
+    ) -> CommittedMutation[dict[str, object]]:
         provenance_json = (
             _bounded_canonical_json(provenance, code="tool_provenance_invalid")
             if provenance is not None else None
@@ -1826,12 +2380,22 @@ class SessionStore:
                     now,
                 ),
             )
-            append_event(
+            tool_event = append_event(
                 connection, EventType.TOOL_CALL_STARTED, now,
                 {"tool_call_id": tool_call_id},
                 session_id=run["session_id"], run_id=run_id,
             )
-        return self.read_item(item_id)
+            item_event = append_event(
+                connection,
+                EventType.ITEM_STARTED,
+                now,
+                {"item_id": item_id},
+                session_id=run["session_id"],
+                run_id=run_id,
+            )
+        return CommittedMutation(
+            self.read_item(item_id), (tool_event, item_event)
+        )
 
     def complete_tool_item(
         self,
@@ -1840,16 +2404,43 @@ class SessionStore:
         *,
         item_status: str = "completed",
         tool_status: str = "completed",
+        workspace_changed: bool = False,
+        diff_hash: str | None = None,
     ) -> dict[str, object]:
+        return self.complete_tool_item_committed(
+            item_id,
+            result_json,
+            item_status=item_status,
+            tool_status=tool_status,
+            workspace_changed=workspace_changed,
+            diff_hash=diff_hash,
+        ).value
+
+    def complete_tool_item_committed(
+        self,
+        item_id: str,
+        result_json: str,
+        *,
+        item_status: str = "completed",
+        tool_status: str = "completed",
+        workspace_changed: bool = False,
+        diff_hash: str | None = None,
+    ) -> CommittedMutation[dict[str, object]]:
         if item_status not in {"completed", "failed", "declined", "canceled"}:
             raise ValueError("invalid item status")
         if tool_status not in {"completed", "failed", "canceled"}:
             raise ValueError("invalid tool status")
+        if diff_hash is not None and (
+            len(diff_hash) != 64 or any(value not in "0123456789abcdef" for value in diff_hash)
+        ):
+            raise ValueError("invalid diff hash")
         now = _now_ms()
+        events: list[dict[str, object]] = []
         with self.lock, self._connection() as connection:
             fact = connection.execute(
                 """
                 SELECT tool_calls.id AS tool_call_id, tool_calls.tool_name,
+                       tool_calls.status AS tool_status,
                        items.run_id, items.session_id
                 FROM tool_calls JOIN items ON items.id = tool_calls.item_id
                 WHERE items.id = ?
@@ -1858,6 +2449,9 @@ class SessionStore:
             ).fetchone()
             if fact is None:
                 raise InvalidRunStateError("tool item is unavailable")
+            ensure_transition(
+                ToolCallStatus(fact["tool_status"]), ToolCallStatus(tool_status)
+            )
             tool_update = connection.execute(
                 """
                 UPDATE tool_calls
@@ -1875,6 +2469,15 @@ class SessionStore:
             )
             if tool_update.rowcount != 1 or item_update.rowcount != 1:
                 raise InvalidRunStateError("tool item is not active")
+            if workspace_changed:
+                connection.execute(
+                    """
+                    UPDATE runs SET workspace_version = workspace_version + 1,
+                                    last_diff_hash = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (diff_hash, now, fact["run_id"]),
+                )
             try:
                 result = json.loads(result_json)
             except json.JSONDecodeError:
@@ -1897,11 +2500,19 @@ class SessionStore:
                 """,
                 (intent_status, now, fact["tool_call_id"]),
             )
-            append_event(
+            events.append(append_event(
                 connection, EventType.TOOL_CALL_COMPLETED, now,
                 {"tool_call_id": fact["tool_call_id"], "code": result.get("code")},
                 session_id=fact["session_id"], run_id=fact["run_id"],
-            )
+            ))
+            events.append(append_event(
+                connection,
+                EventType.ITEM_COMPLETED,
+                now,
+                {"item_id": item_id},
+                session_id=fact["session_id"],
+                run_id=fact["run_id"],
+            ))
             if reconciliation_required:
                 connection.execute(
                     """
@@ -1918,12 +2529,12 @@ class SessionStore:
                     "SELECT reconciliation_epoch FROM runs WHERE id = ?",
                     (fact["run_id"],),
                 ).fetchone()[0]
-                append_event(
+                events.append(append_event(
                     connection, EventType.RECONCILIATION_REQUIRED, now,
                     {"epoch": epoch, "reason": str(result.get("code", "outcome_unknown"))},
                     session_id=fact["session_id"], run_id=fact["run_id"],
-                )
-        return self.read_item(item_id)
+                ))
+        return CommittedMutation(self.read_item(item_id), tuple(events))
 
     def begin_approval(
         self,
@@ -1931,6 +2542,14 @@ class SessionStore:
         diff: str,
         base_sha256: str | None,
     ) -> dict[str, object]:
+        return self.begin_approval_committed(item_id, diff, base_sha256).value
+
+    def begin_approval_committed(
+        self,
+        item_id: str,
+        diff: str,
+        base_sha256: str | None,
+    ) -> CommittedMutation[dict[str, object]]:
         now = _now_ms()
         approval_id = str(uuid.uuid4())
         with self.lock, self._connection() as connection:
@@ -1945,13 +2564,6 @@ class SessionStore:
             ).fetchone()
             if row is None:
                 raise InvalidRunStateError("tool item is not active")
-            run_update = connection.execute(
-                """
-                UPDATE runs SET status = 'waiting_approval', updated_at = ?
-                WHERE id = ? AND status = 'running'
-                """,
-                (now, row["run_id"]),
-            )
             tool_update = connection.execute(
                 """
                 UPDATE tool_calls
@@ -1960,7 +2572,7 @@ class SessionStore:
                 """,
                 (diff, base_sha256, item_id),
             )
-            if run_update.rowcount != 1 or tool_update.rowcount != 1:
+            if tool_update.rowcount != 1:
                 raise InvalidRunStateError("approval cannot start")
             connection.execute(
                 """
@@ -1979,7 +2591,14 @@ class SessionStore:
                     now,
                 ),
             )
-            append_event(
+            _run, run_event = transition_run(
+                connection,
+                str(row["run_id"]),
+                frozenset({RunStatus.RUNNING}),
+                RunStatus.WAITING_APPROVAL,
+                "approval_required",
+            )
+            approval_event = append_event(
                 connection, EventType.APPROVAL_STATUS_CHANGED, now,
                 {
                     "entity_id": approval_id, "previous": "created",
@@ -1987,7 +2606,9 @@ class SessionStore:
                 },
                 run_id=row["run_id"],
             )
-        return self.read_item(item_id)
+        return CommittedMutation(
+            self.read_item(item_id), (run_event, approval_event)
+        )
 
     def resolve_approval(
         self,
@@ -1997,6 +2618,18 @@ class SessionStore:
         *,
         requeue: bool = False,
     ) -> dict[str, object]:
+        return self.resolve_approval_committed(
+            item_id, decision, feedback, requeue=requeue
+        ).value
+
+    def resolve_approval_committed(
+        self,
+        item_id: str,
+        decision: str,
+        feedback: str | None,
+        *,
+        requeue: bool = False,
+    ) -> CommittedMutation[dict[str, object]]:
         if decision not in {"approve", "reject"}:
             raise ValueError("invalid approval decision")
         now = _now_ms()
@@ -2024,6 +2657,10 @@ class SessionStore:
             if approval is None:
                 raise InvalidRunStateError("approval is no longer pending")
             next_status = "approved" if decision == "approve" else "rejected"
+            ensure_transition(
+                ApprovalStatus.PENDING,
+                ApprovalStatus(next_status),
+            )
             approval_update = connection.execute(
                 """
                 UPDATE approvals
@@ -2044,14 +2681,10 @@ class SessionStore:
             run_update = connection.execute(
                 """
                 UPDATE runs
-                SET status = ?, consecutive_rejects = ?,
-                    enqueued_at = CASE WHEN ? = 'queued' THEN ? ELSE enqueued_at END,
-                    pause_reason = CASE WHEN ? = 'waiting_user_input'
-                        THEN 'repeated_approval_rejection' ELSE pause_reason END,
-                    updated_at = ?
+                SET consecutive_rejects = ?
                 WHERE id = ? AND status = 'waiting_approval'
                 """,
-                (run_status, rejects, run_status, now, run_status, now, row["run_id"]),
+                (rejects, row["run_id"]),
             )
             if (
                 tool_update.rowcount != 1
@@ -2059,7 +2692,20 @@ class SessionStore:
                 or run_update.rowcount != 1
             ):
                 raise InvalidRunStateError("approval is no longer pending")
-            append_event(
+            target = RunStatus(run_status)
+            reason = (
+                "repeated_approval_rejection"
+                if target is RunStatus.WAITING_USER_INPUT
+                else "approval_resolved"
+            )
+            _run, run_event = transition_run(
+                connection,
+                str(row["run_id"]),
+                frozenset({RunStatus.WAITING_APPROVAL}),
+                target,
+                reason,
+            )
+            approval_event = append_event(
                 connection, EventType.APPROVAL_STATUS_CHANGED, now,
                 {
                     "entity_id": approval["id"], "previous": "pending",
@@ -2067,7 +2713,9 @@ class SessionStore:
                 },
                 run_id=row["run_id"],
             )
-        return self.read_item(item_id)
+        return CommittedMutation(
+            self.read_item(item_id), (approval_event, run_event)
+        )
 
     def clear_rejects(self, run_id: str) -> None:
         with self.lock, self._connection() as connection:
@@ -2215,198 +2863,176 @@ class SessionStore:
             )
 
     def pause_run(self, run_id: str, reason: str) -> dict[str, object]:
-        now = _now_ms()
+        return self.pause_run_committed(run_id, reason).value
+
+    def pause_run_committed(
+        self, run_id: str, reason: str
+    ) -> CommittedMutation[dict[str, object]]:
         with self.lock, self._connection() as connection:
-            updated = connection.execute(
-                """
-                UPDATE runs
-                SET status = 'waiting_user_input', pause_reason = ?, updated_at = ?
-                WHERE id = ? AND status = 'running'
-                """,
-                (reason, now, run_id),
+            now = _now_ms()
+            segment_events = transition_segments(
+                connection,
+                run_id,
+                frozenset({SegmentStatus.RUNNING}),
+                SegmentStatus.WAITING_USER_INPUT,
+                now,
+                reason,
             )
-            if updated.rowcount != 1:
-                raise InvalidRunStateError("run cannot pause")
-            connection.execute(
-                """
-                UPDATE execution_segments
-                SET status = 'waiting_user_input', completed_at = ?
-                WHERE run_id = ? AND status = 'running'
-                """,
-                (now, run_id),
+            run, event = transition_run(
+                connection,
+                run_id,
+                frozenset({RunStatus.RUNNING}),
+                RunStatus.WAITING_USER_INPUT,
+                reason,
             )
-            run = _run_from_row(connection.execute(
-                "SELECT * FROM runs WHERE id = ?", (run_id,)
-            ).fetchone())
-            append_event(
-                connection, EventType.RUN_STATUS_CHANGED, now,
-                {
-                    "previous": RunStatus.RUNNING,
-                    "current": RunStatus.WAITING_USER_INPUT,
-                    "reason": reason,
-                },
-                session_id=str(run["sessionId"]), run_id=run_id,
-            )
-        return run
+        return CommittedMutation(run, (*segment_events, event))
 
     def begin_finalization(self, run_id: str) -> dict[str, object]:
-        now = _now_ms()
+        return self.begin_finalization_committed(run_id).value
+
+    def begin_finalization_committed(
+        self, run_id: str
+    ) -> CommittedMutation[dict[str, object]]:
         with self.lock, self._connection() as connection:
-            updated = connection.execute(
-                "UPDATE runs SET status = 'finalizing', updated_at = ? WHERE id = ? AND status = 'running'",
-                (now, run_id),
+            run, event = transition_run(
+                connection,
+                run_id,
+                frozenset({RunStatus.RUNNING}),
+                RunStatus.FINALIZING,
+                "run_limit",
             )
-            if updated.rowcount != 1:
-                raise InvalidRunStateError("run cannot finalize")
-            run = _run_from_row(connection.execute(
-                "SELECT * FROM runs WHERE id = ?", (run_id,)
-            ).fetchone())
-            append_event(
-                connection, EventType.RUN_STATUS_CHANGED, now,
-                {"previous": RunStatus.RUNNING, "current": RunStatus.FINALIZING, "reason": "run_limit"},
-                session_id=str(run["sessionId"]), run_id=run_id,
-            )
-        return run
+        return CommittedMutation(run, (event,))
 
     def stop_run(self, run_id: str, reason: str) -> dict[str, object]:
-        now = _now_ms()
+        return self.stop_run_committed(run_id, reason).value
+
+    def stop_run_committed(
+        self, run_id: str, reason: str
+    ) -> CommittedMutation[dict[str, object]]:
         with self.lock, self._connection() as connection:
-            updated = connection.execute(
-                """
-                UPDATE runs SET status = 'stopped', stop_reason = ?,
-                    updated_at = ?, completed_at = ?
-                WHERE id = ? AND status = 'finalizing'
-                """,
-                (reason, now, now, run_id),
+            now = _now_ms()
+            segment_events = transition_segments(
+                connection,
+                run_id,
+                frozenset({SegmentStatus.RUNNING}),
+                SegmentStatus.COMPLETED,
+                now,
+                "run_stopped",
             )
-            if updated.rowcount != 1:
-                raise InvalidRunStateError("run cannot stop")
-            connection.execute(
-                """
-                UPDATE execution_segments SET status = 'completed', completed_at = ?
-                WHERE run_id = ? AND status = 'running'
-                """,
-                (now, run_id),
+            run, event = transition_run(
+                connection,
+                run_id,
+                frozenset({RunStatus.FINALIZING}),
+                RunStatus.STOPPED,
+                reason,
             )
-            run = _run_from_row(connection.execute(
-                "SELECT * FROM runs WHERE id = ?", (run_id,)
-            ).fetchone())
-            append_event(
-                connection, EventType.RUN_STATUS_CHANGED, now,
-                {"previous": RunStatus.FINALIZING, "current": RunStatus.STOPPED, "reason": reason},
-                session_id=str(run["sessionId"]), run_id=run_id,
+        return CommittedMutation(run, (*segment_events, event))
+
+    def complete_finalization_and_stop_committed(
+        self,
+        item_id: str | None,
+        run_id: str,
+        stop_reason: str,
+    ) -> CommittedMutation[
+        tuple[dict[str, object] | None, dict[str, object]]
+    ]:
+        with self.lock, self._connection() as connection:
+            run_row = connection.execute(
+                "SELECT session_id, status FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if run_row is None:
+                raise ResourceNotFoundError("run not found")
+            if run_row["status"] != RunStatus.FINALIZING.value:
+                raise InvalidRunStateError("run status changed")
+            item: dict[str, object] | None = None
+            item_event: dict[str, object] | None = None
+            now = _now_ms()
+            if item_id is not None:
+                item_row = connection.execute(
+                    """
+                    SELECT * FROM items
+                    WHERE id = ? AND run_id = ? AND kind = 'assistant_message'
+                      AND model_step_index IS NULL AND status = 'in_progress'
+                    """,
+                    (item_id, run_id),
+                ).fetchone()
+                if item_row is None:
+                    raise InvalidRunStateError("finalization item is not active")
+                updated = connection.execute(
+                    """
+                    UPDATE items SET status = 'completed', completed_at = ?
+                    WHERE id = ? AND run_id = ? AND status = 'in_progress'
+                    """,
+                    (now, item_id, run_id),
+                )
+                if updated.rowcount != 1:
+                    raise InvalidRunStateError("finalization item is not active")
+                item_event = append_event(
+                    connection,
+                    EventType.ITEM_COMPLETED,
+                    now,
+                    {"item_id": item_id},
+                    session_id=run_row["session_id"],
+                    run_id=run_id,
+                )
+                item = _item_from_row(
+                    connection.execute(
+                        "SELECT * FROM items WHERE id = ?", (item_id,)
+                    ).fetchone(),
+                    None,
+                )
+            segment_events = transition_segments(
+                connection,
+                run_id,
+                frozenset({SegmentStatus.RUNNING}),
+                SegmentStatus.COMPLETED,
+                now,
+                "run_stopped",
             )
-        return run
+            run, run_event = transition_run(
+                connection,
+                run_id,
+                frozenset({RunStatus.FINALIZING}),
+                RunStatus.STOPPED,
+                stop_reason,
+            )
+        events = (
+            *((item_event,) if item_event is not None else ()),
+            *segment_events,
+            run_event,
+        )
+        return CommittedMutation((item, run), events)
 
     def fail_run(self, run_id: str, error_code: str) -> dict[str, object]:
-        now = _now_ms()
+        return self.fail_run_committed(run_id, error_code).value
+
+    def fail_run_committed(
+        self, run_id: str, error_code: str
+    ) -> CommittedMutation[dict[str, object]]:
         with self.lock, self._connection() as connection:
-            previous = connection.execute(
-                "SELECT status FROM runs WHERE id = ?", (run_id,)
-            ).fetchone()
-            if previous is None or previous["status"] not in {"running", "waiting_approval"}:
-                raise InvalidRunStateError("run is not active")
-            connection.execute(
-                """
-                UPDATE tool_calls SET status = 'canceled', completed_at = ?
-                WHERE status = 'running'
-                  AND item_id IN (SELECT id FROM items WHERE run_id = ?)
-                """,
-                (now, run_id),
+            now = _now_ms()
+            events = list(settle_run_children(
+                connection, run_id, RunStatus.FAILED, now
+            ))
+            run, event = transition_run(
+                connection,
+                run_id,
+                frozenset({
+                    RunStatus.RUNNING,
+                    RunStatus.WAITING_APPROVAL,
+                    RunStatus.FINALIZING,
+                }),
+                RunStatus.FAILED,
+                error_code,
             )
-            connection.execute(
-                """
-                UPDATE tool_calls SET approval_status = 'canceled'
-                WHERE approval_status = 'pending'
-                  AND item_id IN (SELECT id FROM items WHERE run_id = ?)
-                """,
-                (run_id,),
-            )
-            connection.execute(
-                """
-                UPDATE items SET status = 'canceled', completed_at = ?
-                WHERE run_id = ? AND status = 'in_progress'
-                """,
-                (now, run_id),
-            )
-            updated = connection.execute(
-                """
-                UPDATE runs
-                SET status = 'failed', error_code = ?, updated_at = ?, completed_at = ?
-                WHERE id = ? AND status IN ('running', 'waiting_approval')
-                """,
-                (error_code, now, now, run_id),
-            )
-            if updated.rowcount != 1:
-                raise InvalidRunStateError("run is not active")
-            run = _run_from_row(connection.execute(
-                "SELECT * FROM runs WHERE id = ?", (run_id,)
-            ).fetchone())
-            append_event(
-                connection, EventType.RUN_STATUS_CHANGED, now,
-                {"previous": RunStatus(previous["status"]), "current": RunStatus.FAILED, "reason": error_code},
-                session_id=str(run["sessionId"]), run_id=run_id,
-            )
-        return run
+            events.append(event)
+        return CommittedMutation(run, tuple(events))
 
     def cancel_run(
         self, run_id: str, *, operation_id: str | None = None
     ) -> dict[str, object]:
         def write(connection: sqlite3.Connection) -> dict[str, object]:
-            now = _now_ms()
-            row = connection.execute(
-                "SELECT status FROM runs WHERE id = ?", (run_id,)
-            ).fetchone()
-            if row is None:
-                raise ResourceNotFoundError("run not found")
-            if row["status"] == "canceled":
-                return _run_from_row(connection.execute(
-                    "SELECT * FROM runs WHERE id = ?", (run_id,)
-                ).fetchone())
-            if row["status"] not in {
-                "queued", "running", "waiting_approval", "waiting_user_input"
-            }:
-                raise InvalidRunStateError("run cannot be canceled")
-            connection.execute(
-                """
-                UPDATE tool_calls SET status = 'canceled', completed_at = ?
-                WHERE status = 'running'
-                  AND item_id IN (SELECT id FROM items WHERE run_id = ?)
-                """,
-                (now, run_id),
-            )
-            connection.execute(
-                """
-                UPDATE tool_calls SET approval_status = 'canceled'
-                WHERE approval_status = 'pending'
-                  AND item_id IN (SELECT id FROM items WHERE run_id = ?)
-                """,
-                (run_id,),
-            )
-            connection.execute(
-                """
-                UPDATE items SET status = 'canceled', completed_at = ?
-                WHERE run_id = ? AND status = 'in_progress'
-                """,
-                (now, run_id),
-            )
-            connection.execute(
-                """
-                UPDATE runs
-                SET status = 'canceled', updated_at = ?, completed_at = ?
-                WHERE id = ?
-                """,
-                (now, now, run_id),
-            )
-            run = _run_from_row(connection.execute(
-                "SELECT * FROM runs WHERE id = ?", (run_id,)
-            ).fetchone())
-            append_event(
-                connection, EventType.RUN_STATUS_CHANGED, now,
-                {"previous": RunStatus(row["status"]), "current": RunStatus.CANCELED},
-                session_id=str(run["sessionId"]), run_id=run_id,
-            )
-            return run
+            return self._cancel_run_transaction(connection, run_id).value
 
         return self._write(
             write,
@@ -2415,8 +3041,65 @@ class SessionStore:
             operation_request={"runId": run_id} if operation_id is not None else None,
         )
 
-    def interrupt_run(self, run_id: str) -> dict[str, object]:
+    def cancel_run_committed(
+        self, run_id: str
+    ) -> CommittedMutation[dict[str, object]]:
+        with self.lock, self._connection() as connection:
+            return self._cancel_run_transaction(connection, run_id)
+
+    def cancel_waiting_approval_committed(
+        self, run_id: str
+    ) -> CommittedMutation[dict[str, object]]:
+        with self.lock, self._connection() as connection:
+            return self._cancel_run_transaction(
+                connection,
+                run_id,
+                expected=frozenset({RunStatus.WAITING_APPROVAL}),
+            )
+
+    def _cancel_run_transaction(
+        self,
+        connection: sqlite3.Connection,
+        run_id: str,
+        *,
+        expected: frozenset[RunStatus] | None = None,
+    ) -> CommittedMutation[dict[str, object]]:
+        row = connection.execute(
+            "SELECT status FROM runs WHERE id = ?", (run_id,)
+        ).fetchone()
+        if row is None:
+            raise ResourceNotFoundError("run not found")
+        if row["status"] == RunStatus.CANCELED.value:
+            run = _run_from_row(connection.execute(
+                "SELECT * FROM runs WHERE id = ?", (run_id,)
+            ).fetchone())
+            return CommittedMutation(run, ())
+        expected = expected or frozenset({
+            RunStatus.QUEUED,
+            RunStatus.RUNNING,
+            RunStatus.WAITING_APPROVAL,
+            RunStatus.WAITING_USER_INPUT,
+            RunStatus.FINALIZING,
+        })
+        current = RunStatus(row["status"])
+        if current not in expected:
+            raise InvalidRunStateError("run cannot be canceled")
         now = _now_ms()
+        events = list(settle_run_children(
+            connection, run_id, RunStatus.CANCELED, now
+        ))
+        run, event = transition_run(
+            connection, run_id, expected, RunStatus.CANCELED, "user_cancel"
+        )
+        events.append(event)
+        return CommittedMutation(run, tuple(events))
+
+    def interrupt_run(self, run_id: str) -> dict[str, object]:
+        return self.interrupt_run_committed(run_id).value
+
+    def interrupt_run_committed(
+        self, run_id: str
+    ) -> CommittedMutation[dict[str, object]]:
         with self.lock, self._connection() as connection:
             row = connection.execute(
                 "SELECT status FROM runs WHERE id = ?", (run_id,)
@@ -2424,50 +3107,22 @@ class SessionStore:
             if row is None:
                 raise ResourceNotFoundError("run not found")
             if row["status"] == "interrupted":
-                return self.read_run(run_id)
+                return CommittedMutation(self.read_run(run_id), ())
             if row["status"] not in {"running", "waiting_approval"}:
                 raise InvalidRunStateError("run cannot be interrupted")
-            connection.execute(
-                """
-                UPDATE tool_calls SET status = 'canceled', completed_at = ?
-                WHERE status = 'running'
-                  AND item_id IN (SELECT id FROM items WHERE run_id = ?)
-                """,
-                (now, run_id),
+            now = _now_ms()
+            events = list(settle_run_children(
+                connection, run_id, RunStatus.INTERRUPTED, now
+            ))
+            run, event = transition_run(
+                connection,
+                run_id,
+                frozenset({RunStatus.RUNNING, RunStatus.WAITING_APPROVAL}),
+                RunStatus.INTERRUPTED,
+                "runtime_interrupted",
             )
-            connection.execute(
-                """
-                UPDATE tool_calls SET approval_status = 'canceled'
-                WHERE approval_status = 'pending'
-                  AND item_id IN (SELECT id FROM items WHERE run_id = ?)
-                """,
-                (run_id,),
-            )
-            connection.execute(
-                """
-                UPDATE items SET status = 'canceled', completed_at = ?
-                WHERE run_id = ? AND status = 'in_progress'
-                """,
-                (now, run_id),
-            )
-            connection.execute(
-                """
-                UPDATE runs
-                SET status = 'interrupted', error_code = 'RUNTIME_INTERRUPTED',
-                    updated_at = ?, completed_at = ?
-                WHERE id = ?
-                """,
-                (now, now, run_id),
-            )
-            run = _run_from_row(connection.execute(
-                "SELECT * FROM runs WHERE id = ?", (run_id,)
-            ).fetchone())
-            append_event(
-                connection, EventType.RUN_STATUS_CHANGED, now,
-                {"previous": RunStatus(row["status"]), "current": RunStatus.INTERRUPTED, "reason": "runtime_interrupted"},
-                session_id=str(run["sessionId"]), run_id=run_id,
-            )
-        return run
+            events.append(event)
+        return CommittedMutation(run, tuple(events))
 
     def canceled_items_for_run(self, run_id: str) -> list[dict[str, object]]:
         with self.lock:
@@ -2493,74 +3148,406 @@ class SessionStore:
             _item_from_row(row, tools_by_item.get(row["id"])) for row in rows
         ]
 
-    def model_context(self, session_id: str) -> tuple[dict[str, object], ...]:
+    def context_projection_facts(self, run_id: str) -> ContextFacts:
+        return self._bounded_context_facts(run_id, newest=True)
+
+    def compaction_candidate_facts(self, run_id: str) -> ContextFacts:
+        return self._bounded_context_facts(run_id, newest=False)
+
+    def _bounded_context_facts(
+        self, run_id: str, *, newest: bool
+    ) -> ContextFacts:
         with self.lock:
             connection = self._connection()
-            item_rows = connection.execute(
+            run = connection.execute(
+                "SELECT * FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if run is None:
+                raise ResourceNotFoundError("run not found")
+            summary_row = connection.execute(
+                """
+                SELECT * FROM compact_summaries
+                WHERE run_id = ? ORDER BY creation_seq DESC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+            source_ids = set(
+                _compact_summary_from_row(summary_row).source_item_ids
+                if summary_row is not None else ()
+            )
+            goal_row = connection.execute(
                 """
                 SELECT * FROM items
-                WHERE session_id = ? AND status IN ('completed', 'failed', 'declined')
-                  AND NOT (kind = 'assistant_message' AND incomplete = 1)
-                ORDER BY creation_seq DESC LIMIT ?
+                WHERE run_id = ? AND kind = 'user_message'
+                ORDER BY creation_seq ASC LIMIT 1
                 """,
-                (session_id, MAX_CONTEXT_ITEMS + 1),
+                (run_id,),
+            ).fetchone()
+            latest_user_row = connection.execute(
+                """
+                SELECT * FROM items
+                WHERE session_id = ? AND kind = 'user_message'
+                  AND status = 'completed'
+                ORDER BY creation_seq DESC LIMIT 1
+                """,
+                (run["session_id"],),
+            ).fetchone()
+            recent_steps = connection.execute(
+                """
+                SELECT DISTINCT model_step_index FROM items
+                WHERE run_id = ? AND model_step_index IS NOT NULL
+                ORDER BY model_step_index DESC LIMIT ?
+                """,
+                (run_id, RECENT_CONTEXT_STEPS),
             ).fetchall()
-            if len(item_rows) > MAX_CONTEXT_ITEMS:
-                raise ContextLimitExceeded("model context item limit exceeded")
+            recent_rows: list[sqlite3.Row] = []
+            if recent_steps:
+                placeholders = ",".join("?" for _ in recent_steps)
+                recent_rows = connection.execute(
+                    f"""
+                    SELECT * FROM items
+                    WHERE run_id = ? AND model_step_index IN ({placeholders})
+                      AND status IN ('completed', 'failed', 'declined')
+                      AND NOT (kind = 'assistant_message' AND incomplete = 1)
+                    """,
+                    (run_id, *(row[0] for row in recent_steps)),
+                ).fetchall()
+            reconciliation_rows: list[sqlite3.Row] = []
+            if bool(run["reconciliation_required"]):
+                reconciliation_rows = connection.execute(
+                    """
+                    SELECT items.* FROM items
+                    JOIN tool_calls ON tool_calls.item_id = items.id
+                    WHERE items.run_id = ?
+                      AND json_extract(tool_calls.result_json, '$.reconciliationRequired') = 1
+                    """,
+                    (run_id,),
+                ).fetchall()
+            protected_rows = {
+                str(row["id"]): row
+                for row in (
+                    goal_row,
+                    latest_user_row,
+                    *recent_rows,
+                    *reconciliation_rows,
+                )
+                if row is not None
+            }
+            protected_ids = set(protected_rows)
+            excluded = source_ids | protected_ids
+            excluded_sql = ""
+            excluded_values: tuple[object, ...] = ()
+            if excluded:
+                placeholders = ",".join("?" for _ in excluded)
+                excluded_sql = f" AND items.id NOT IN ({placeholders})"
+                excluded_values = tuple(excluded)
+            base = f"""
+                FROM items LEFT JOIN tool_calls ON tool_calls.item_id = items.id
+                WHERE items.session_id = ?
+                  AND items.status IN ('completed', 'failed', 'declined')
+                  AND NOT (items.kind = 'assistant_message' AND items.incomplete = 1)
+                  {excluded_sql}
+            """
+            size_expression = """
+                length(CAST(COALESCE(items.content, '') AS BLOB))
+                + length(CAST(COALESCE(tool_calls.arguments_json, '') AS BLOB))
+                + length(CAST(COALESCE(tool_calls.result_json, '') AS BLOB)) + 256
+            """
+            aggregate = connection.execute(
+                f"SELECT COUNT(*), COALESCE(SUM({size_expression}), 0) {base}",
+                (run["session_id"], *excluded_values),
+            ).fetchone()
+            metadata = connection.execute(
+                f"""
+                SELECT items.id, items.creation_seq, {size_expression} AS fact_bytes
+                {base}
+                ORDER BY items.creation_seq {'DESC' if newest else 'ASC'} LIMIT ?
+                """,
+                (run["session_id"], *excluded_values, MAX_CONTEXT_ITEMS + 1),
+            ).fetchall()
+            goal_size = (
+                len(str(goal_row["content"] or "").encode("utf-8")) + 256
+                if goal_row is not None else 0
+            )
+            if goal_size > MAX_CONTEXT_BYTES:
+                raise ContextLimitExceeded("current_user_goal")
+            selected_ids = list(protected_ids) if newest else []
+            protected_bytes = 0
+            if newest and protected_ids:
+                placeholders = ",".join("?" for _ in protected_ids)
+                protected_bytes = int(connection.execute(
+                    f"""
+                    SELECT COALESCE(SUM({size_expression}), 0)
+                    FROM items LEFT JOIN tool_calls ON tool_calls.item_id = items.id
+                    WHERE items.id IN ({placeholders})
+                    """,
+                    tuple(protected_ids),
+                ).fetchone()[0])
+            selected_bytes = protected_bytes
+            if len(selected_ids) > MAX_CONTEXT_ITEMS or selected_bytes > MAX_CONTEXT_BYTES:
+                raise ContextLimitExceeded("protected_context")
+            base_selected = 0
+            for row in metadata:
+                fact_bytes = int(row["fact_bytes"])
+                if (
+                    len(selected_ids) >= MAX_CONTEXT_ITEMS
+                    or selected_bytes + fact_bytes > MAX_CONTEXT_BYTES
+                ):
+                    break
+                selected_ids.append(str(row["id"]))
+                selected_bytes += fact_bytes
+                base_selected += 1
+            item_rows: list[sqlite3.Row] = []
+            if selected_ids:
+                placeholders = ",".join("?" for _ in selected_ids)
+                item_rows = connection.execute(
+                    f"SELECT * FROM items WHERE id IN ({placeholders})",
+                    selected_ids,
+                ).fetchall()
+            item_rows.sort(key=lambda row: int(row["creation_seq"]))
             tool_rows: list[sqlite3.Row] = []
-            if item_rows:
-                placeholders = ",".join("?" for _ in item_rows)
+            if selected_ids:
+                placeholders = ",".join("?" for _ in selected_ids)
                 tool_rows = connection.execute(
                     f"SELECT * FROM tool_calls WHERE item_id IN ({placeholders})",
-                    [row["id"] for row in item_rows],
+                    selected_ids,
                 ).fetchall()
-        tools_by_item = {row["item_id"]: row for row in tool_rows}
-        groups: list[list[dict[str, object]]] = []
-        context_bytes = 0
-        for row in item_rows:
-            item = _item_from_row(row, tools_by_item.get(row["id"]))
-            group: list[dict[str, object]] = []
-            if item["kind"] == "user_message":
-                group.append({"type": "user", "content": item.get("content", "")})
-            elif item["kind"] == "assistant_message":
-                group.append(
-                    {"type": "assistant", "content": item.get("content", "")}
-                )
-            elif item["kind"] in {"tool_call", "file_change", "command_execution"}:
-                tool_call = item["toolCall"]
-                group.append(
-                    {
-                        "type": "tool_call",
-                        "callId": tool_call["providerCallId"],
-                        "name": tool_call["toolName"],
-                        "arguments": tool_call["argumentsJson"],
-                    }
-                )
-                group.append(
-                    {
-                        "type": "tool_result",
-                        "callId": tool_call["providerCallId"],
-                        "name": tool_call["toolName"],
-                        "result": tool_call["resultJson"],
-                    }
-                )
-            group_bytes = len(
-                json.dumps(group, ensure_ascii=False, separators=(",", ":")).encode(
-                    "utf-8"
-                )
+            candidate_overflow = (
+                int(aggregate[0]) > base_selected
+                or int(aggregate[1]) > MAX_CONTEXT_BYTES - protected_bytes
             )
-            if context_bytes + group_bytes > MAX_CONTEXT_BYTES:
-                raise ContextLimitExceeded("model context byte limit exceeded")
-            groups.append(group)
-            context_bytes += group_bytes
-        context: list[dict[str, object]] = []
-        for group in reversed(groups):
-            context.extend(group)
-        return tuple(context)
+            latest_signature = connection.execute(
+                """
+                SELECT progress_signature_json FROM steps
+                WHERE run_id = ? AND progress_signature_json IS NOT NULL
+                ORDER BY creation_seq DESC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+            active_errors = (
+                ProgressSignature.model_validate_json(latest_signature[0]).error_fingerprints
+                if latest_signature is not None else ()
+            )
+        tools_by_item = {row["item_id"]: row for row in tool_rows}
+        items: list[ContextItemFact] = []
+        serialized_bytes = 2
+        for row in item_rows:
+            tool = tools_by_item.get(row["id"])
+            fact = ContextItemFact(
+                item_id=str(row["id"]),
+                run_id=str(row["run_id"]),
+                kind=str(row["kind"]),
+                status=str(row["status"]),
+                content=row["content"],
+                provider_call_id=str(tool["provider_call_id"]) if tool else None,
+                tool_name=str(tool["tool_name"]) if tool else None,
+                arguments_json=str(tool["arguments_json"]) if tool else None,
+                result_json=str(tool["result_json"]) if tool and tool["result_json"] is not None else None,
+            )
+            size = len(json.dumps(
+                fact.model_dump(),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")) + 1
+            if serialized_bytes + size > MAX_CONTEXT_BYTES:
+                candidate_overflow = True
+                if goal_row is not None and row["id"] == goal_row["id"]:
+                    raise ContextLimitExceeded("current_user_goal")
+                if str(row["id"]) in protected_ids:
+                    raise ContextLimitExceeded("protected_context")
+                continue
+            items.append(fact)
+            serialized_bytes += size
+        return ContextFacts(
+            run_id=run_id,
+            session_id=str(run["session_id"]),
+            items=tuple(items),
+            compact_summary=_compact_summary_from_row(summary_row),
+            compaction_count=int(run["compaction_count"]),
+            workspace_version=int(run["workspace_version"]),
+            reconciliation_epoch=int(run["reconciliation_epoch"]),
+            last_diff_hash=run["last_diff_hash"],
+            candidate_overflow=candidate_overflow,
+            current_user_goal_id=(
+                str(goal_row["id"]) if goal_row is not None else None
+            ),
+            reconciliation_required=bool(run["reconciliation_required"]),
+            active_error_fingerprints=tuple(active_errors),
+        )
+
+    def latest_compact_summary(self, run_id: str) -> CompactSummary | None:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT * FROM compact_summaries
+                WHERE run_id = ? ORDER BY creation_seq DESC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        return _compact_summary_from_row(row)
+
+    def compaction_count(self, run_id: str) -> int:
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT compaction_count FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        if row is None:
+            raise ResourceNotFoundError("run not found")
+        return int(row[0])
+
+    def commit_compaction(
+        self, run_id: str, phase: str, summary: CompactSummary
+    ) -> CommittedMutation[CompactSummary]:
+        if phase not in {"pre_turn", "mid_turn"}:
+            raise ValueError("invalid compaction phase")
+        summary_id = str(uuid.uuid4())
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            run = connection.execute(
+                "SELECT session_id, compaction_count FROM runs WHERE id = ? AND status = 'running'",
+                (run_id,),
+            ).fetchone()
+            if run is None:
+                raise InvalidRunStateError("run is not active")
+            if int(run["compaction_count"]) >= 2:
+                raise ContextLimitExceeded("compaction_limit")
+            connection.execute(
+                """
+                INSERT INTO compact_summaries (
+                    id, session_id, run_id, task_goal, constraints_json,
+                    completed_actions_json, workspace_changes_json,
+                    important_facts_json, unresolved_problems_json,
+                    next_actions_json, source_item_ids_json, phase, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    summary_id, run["session_id"], run_id, summary.task_goal,
+                    _json_tuple(summary.constraints),
+                    _json_tuple(summary.completed_actions),
+                    _json_tuple(summary.workspace_changes),
+                    _json_tuple(summary.important_facts),
+                    _json_tuple(summary.unresolved_problems),
+                    _json_tuple(summary.next_actions),
+                    _json_tuple(summary.source_item_ids), phase, now,
+                ),
+            )
+            updated = connection.execute(
+                """
+                UPDATE runs SET compaction_count = compaction_count + 1, updated_at = ?
+                WHERE id = ? AND status = 'running' AND compaction_count < 2
+                """,
+                (now, run_id),
+            )
+            if updated.rowcount != 1:
+                raise InvalidRunStateError("compaction could not commit")
+            event = append_event(
+                connection,
+                EventType.CONTEXT_COMPACTED,
+                now,
+                {
+                    "summaryId": summary_id,
+                    "sourceItemCount": len(summary.source_item_ids),
+                    "phase": phase,
+                },
+                session_id=run["session_id"],
+                run_id=run_id,
+            )
+        return CommittedMutation(summary, (event,))
+
+    def enqueue_input(self, run_id: str, content: str) -> str:
+        if not content or len(content.encode("utf-8")) > 64 * 1024:
+            raise ValueError("input is invalid")
+        input_id = str(uuid.uuid4())
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            run = connection.execute(
+                "SELECT session_id FROM runs WHERE id = ? AND status = 'running'",
+                (run_id,),
+            ).fetchone()
+            if run is None:
+                raise InvalidRunStateError("run is not active")
+            connection.execute(
+                """
+                INSERT INTO input_mailbox (id, run_id, content, status, created_at)
+                VALUES (?, ?, ?, 'pending', ?)
+                """,
+                (input_id, run_id, content, now),
+            )
+            append_event(
+                connection, EventType.INPUT_QUEUED, now, {"inputId": input_id},
+                session_id=run["session_id"], run_id=run_id,
+            )
+        return input_id
+
+    def has_pending_input(self, run_id: str) -> bool:
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT 1 FROM input_mailbox WHERE run_id = ? AND status = 'pending' LIMIT 1",
+                (run_id,),
+            ).fetchone()
+        return row is not None
+
+    def consume_pending_inputs(self, run_id: str) -> int:
+        return len(self.consume_pending_input_facts(run_id))
+
+    def consume_pending_input_facts(
+        self, run_id: str
+    ) -> tuple[tuple[str, str], ...]:
+        now = _now_ms()
+        injected: list[tuple[str, str]] = []
+        with self.lock, self._connection() as connection:
+            run = connection.execute(
+                "SELECT session_id FROM runs WHERE id = ? AND status = 'running'",
+                (run_id,),
+            ).fetchone()
+            if run is None:
+                raise InvalidRunStateError("run is not active")
+            pending = connection.execute(
+                """
+                SELECT * FROM input_mailbox
+                WHERE run_id = ? AND status = 'pending' ORDER BY creation_seq
+                """,
+                (run_id,),
+            ).fetchall()
+            for entry in pending:
+                item_id = str(uuid.uuid4())
+                connection.execute(
+                    """
+                    INSERT INTO items (
+                        id, session_id, run_id, ordinal, kind, status,
+                        content, created_at, completed_at
+                    ) VALUES (?, ?, ?, ?, 'user_message', 'completed', ?, ?, ?)
+                    """,
+                    (
+                        item_id, run["session_id"], run_id,
+                        self._next_ordinal(connection, run_id), entry["content"], now, now,
+                    ),
+                )
+                updated = connection.execute(
+                    """
+                    UPDATE input_mailbox SET status = 'injected', injected_at = ?
+                    WHERE id = ? AND status = 'pending'
+                    """,
+                    (now, entry["id"]),
+                )
+                if updated.rowcount != 1:
+                    raise InvalidRunStateError("pending input changed")
+                append_event(
+                    connection, EventType.INPUT_INJECTED, now,
+                    {"inputId": entry["id"]},
+                    session_id=run["session_id"], run_id=run_id,
+                )
+                injected.append((item_id, str(entry["content"])))
+        return tuple(injected)
 
     def _create_item(
         self, run_id: str, kind: str, model_step_index: int | None
     ) -> dict[str, object]:
+        return self._create_item_committed(run_id, kind, model_step_index).value
+
+    def _create_item_committed(
+        self, run_id: str, kind: str, model_step_index: int | None
+    ) -> CommittedMutation[dict[str, object]]:
         item_id = str(uuid.uuid4())
         now = _now_ms()
         with self.lock, self._connection() as connection:
@@ -2588,20 +3575,48 @@ class SessionStore:
                     now,
                 ),
             )
-        return self.read_item(item_id)
+            event = append_event(
+                connection,
+                EventType.ITEM_STARTED,
+                now,
+                {"item_id": item_id},
+                session_id=run["session_id"],
+                run_id=run_id,
+            )
+        return CommittedMutation(self.read_item(item_id), (event,))
 
     def _complete_item(self, item_id: str, status_value: str) -> dict[str, object]:
+        return self._complete_item_committed(item_id, status_value).value
+
+    def _complete_item_committed(
+        self, item_id: str, status_value: str
+    ) -> CommittedMutation[dict[str, object]]:
         with self.lock, self._connection() as connection:
+            fact = connection.execute(
+                "SELECT session_id, run_id FROM items WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+            if fact is None:
+                raise ResourceNotFoundError("item not found")
+            now = _now_ms()
             updated = connection.execute(
                 """
                 UPDATE items SET status = ?, completed_at = ?
                 WHERE id = ? AND status = 'in_progress'
                 """,
-                (status_value, _now_ms(), item_id),
+                (status_value, now, item_id),
             )
             if updated.rowcount != 1:
                 raise InvalidRunStateError("item is not active")
-        return self.read_item(item_id)
+            event = append_event(
+                connection,
+                EventType.ITEM_COMPLETED,
+                now,
+                {"item_id": item_id},
+                session_id=fact["session_id"],
+                run_id=fact["run_id"],
+            )
+        return CommittedMutation(self.read_item(item_id), (event,))
 
     @staticmethod
     def _next_ordinal(connection: sqlite3.Connection, run_id: str) -> int:
@@ -2980,6 +3995,76 @@ def _migrate_v5_to_v6(connection: sqlite3.Connection) -> None:
         raise StorageError("migration_failed") from None
 
 
+def _migrate_v6_to_v7(connection: sqlite3.Connection) -> None:
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        run_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(runs)").fetchall()
+        }
+        additions = {
+            "compaction_count": "INTEGER NOT NULL DEFAULT 0",
+            "workspace_version": "INTEGER NOT NULL DEFAULT 0",
+            "last_diff_hash": "TEXT",
+        }
+        for name, definition in additions.items():
+            if run_columns and name not in run_columns:
+                connection.execute(f"ALTER TABLE runs ADD COLUMN {name} {definition}")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS compact_summaries (
+                creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                id TEXT NOT NULL UNIQUE,
+                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
+                run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+                task_goal TEXT NOT NULL,
+                constraints_json TEXT NOT NULL,
+                completed_actions_json TEXT NOT NULL,
+                workspace_changes_json TEXT NOT NULL,
+                important_facts_json TEXT NOT NULL,
+                unresolved_problems_json TEXT NOT NULL,
+                next_actions_json TEXT NOT NULL,
+                source_item_ids_json TEXT NOT NULL,
+                phase TEXT NOT NULL CHECK (phase IN ('pre_turn', 'mid_turn')),
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS input_mailbox (
+                creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                id TEXT NOT NULL UNIQUE,
+                run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+                content TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('pending', 'injected', 'canceled')),
+                created_at INTEGER NOT NULL,
+                injected_at INTEGER
+            )
+            """
+        )
+        connection.execute("PRAGMA user_version = 7")
+        connection.commit()
+    except sqlite3.Error:
+        connection.rollback()
+        raise StorageError("migration_failed") from None
+
+
+def _migrate_v7_to_v8(connection: sqlite3.Connection) -> None:
+    try:
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(steps)").fetchall()
+        }
+        if columns and "progress_signature_json" not in columns:
+            connection.execute(
+                "ALTER TABLE steps ADD COLUMN progress_signature_json TEXT"
+            )
+        connection.execute("PRAGMA user_version = 8")
+        connection.commit()
+    except sqlite3.Error:
+        connection.rollback()
+        raise StorageError("migration_failed") from None
+
+
 def _prepare_private_directory(path: Path) -> None:
     if path.is_symlink():
         raise StorageError("data directory must not be a symlink")
@@ -3241,6 +4326,25 @@ def _truncate_snapshot_text(value: str) -> str:
             prefix = prefix[: error.start]
 
 
+def _json_tuple(values: tuple[str, ...]) -> str:
+    return json.dumps(values, ensure_ascii=False, separators=(",", ":"))
+
+
+def _compact_summary_from_row(row: sqlite3.Row | None) -> CompactSummary | None:
+    if row is None:
+        return None
+    return CompactSummary(
+        task_goal=str(row["task_goal"]),
+        constraints=tuple(json.loads(row["constraints_json"])),
+        completed_actions=tuple(json.loads(row["completed_actions_json"])),
+        workspace_changes=tuple(json.loads(row["workspace_changes_json"])),
+        important_facts=tuple(json.loads(row["important_facts_json"])),
+        unresolved_problems=tuple(json.loads(row["unresolved_problems_json"])),
+        next_actions=tuple(json.loads(row["next_actions_json"])),
+        source_item_ids=tuple(json.loads(row["source_item_ids_json"])),
+    )
+
+
 def _run_from_row(
     row: sqlite3.Row, *, include_user_input: bool = True
 ) -> dict[str, object]:
@@ -3258,6 +4362,7 @@ def _run_from_row(
         "running": ["cancel"],
         "waiting_approval": ["approve", "reject", "cancel"],
         "waiting_user_input": ["continue", "cancel"],
+        "finalizing": ["cancel"],
     }.get(row["status"], [])
     if allowed_actions:
         run["allowedActions"] = allowed_actions
