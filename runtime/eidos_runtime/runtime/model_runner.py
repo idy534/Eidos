@@ -11,7 +11,11 @@ from eidos_runtime.model.client import (
     ModelToolCall,
     ModelToolDefinition,
 )
-from eidos_runtime.sandbox.sensitive import SensitiveScanner, StreamingSensitiveScanner, default_scanner
+from eidos_runtime.sandbox.sensitive import (
+    SensitiveScanner,
+    StreamingSensitiveScanner,
+    default_scanner,
+)
 
 
 @dataclass(frozen=True)
@@ -23,8 +27,9 @@ class ModelStepResult:
 class ModelStreamInterrupted(RuntimeError):
     """The model failed after emitting text that may still be safely persisted."""
 
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, cause: Exception | None = None) -> None:
         self.text = text
+        self.cause = cause
 
 class ModelRunner:
     """Owns one model invocation and keeps raw stream fragments out of callers."""
@@ -55,7 +60,7 @@ class ModelRunner:
             # Finish the scanner before surfacing the interruption: safe visible
             # progress is retained, while sensitive content still raises normally.
             stream.finish()
-            raise ModelStreamInterrupted("") from error
+            raise ModelStreamInterrupted("", error) from error
         text = stream.finish().text
         if not isinstance(response, ModelResponse):
             return ModelStepResult("", ())

@@ -562,7 +562,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
 
         with mock_patch(
-            "eidos_runtime.runtime.loop.ToolExecutor.prepare_shell",
+            "eidos_runtime.runtime.run_resources.ToolExecutor.prepare_shell",
             side_effect=ToolCancelled(),
         ):
             RuntimeLoop(
@@ -601,7 +601,7 @@ class RuntimeLoopTests(unittest.TestCase):
             return original_prepare(executor, value, cancel)
 
         with mock_patch(
-            "eidos_runtime.runtime.loop.ToolExecutor.prepare_shell",
+            "eidos_runtime.runtime.run_resources.ToolExecutor.prepare_shell",
             side_effect=cancel_on_second_scan,
             autospec=True,
         ):

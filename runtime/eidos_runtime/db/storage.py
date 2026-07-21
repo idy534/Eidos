@@ -1530,6 +1530,24 @@ class SessionStore:
             raise StorageError("tool_snapshot_invalid")
         return value
 
+    def read_current_step_fact(self, run_id: str) -> dict[str, object]:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT id, observed_reconciliation_epoch
+                FROM steps
+                WHERE run_id = ? AND status = 'running'
+                ORDER BY creation_seq DESC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            raise ResourceNotFoundError("current step not found")
+        return {
+            "stepId": row["id"],
+            "reconciliationEpoch": row["observed_reconciliation_epoch"],
+        }
+
     def add_effective_time(self, run_id: str, elapsed_ms: int) -> None:
         if elapsed_ms <= 0:
             return
@@ -1678,6 +1696,12 @@ class SessionStore:
         self, run_id: str, model_step_index: int
     ) -> dict[str, object]:
         return self._create_item(run_id, "assistant_message", model_step_index)
+
+    def create_finalization_assistant_item(
+        self, run_id: str
+    ) -> dict[str, object]:
+        """Create an explicitly step-less Item while the Run is finalizing."""
+        return self._create_item(run_id, "assistant_message", None)
 
     def append_item_content(self, item_id: str, delta: str) -> dict[str, object]:
         with self.lock, self._connection() as connection:

@@ -1,16 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
-import type { ModelId, Session } from "../contracts";
+import type { Session } from "../contracts";
 import { groupSessionsByWorkspace, taskStatusPresentation } from "../session-state";
 import { EidosMark } from "./EidosMark";
+import settingsIcon from "./settings.svg";
 
 
 interface Props {
   sessions: Session[];
   selectedId: string | undefined;
   disabled: boolean;
-  modelId: ModelId;
-  modelConfigured: boolean;
   readCompletedSessions: ReadonlySet<string>;
   onCreate: () => void;
   onCreateInWorkspace: (workspaceRoot: string) => void;
@@ -21,12 +21,25 @@ interface Props {
 }
 
 export function SessionSidebar({
-  sessions, selectedId, disabled, modelId, modelConfigured, readCompletedSessions,
+  sessions, selectedId, disabled, readCompletedSessions,
   onCreate, onCreateInWorkspace, onSelect, onRename, onDelete, onOpenSettings,
 }: Props) {
   const workspaces = groupSessionsByWorkspace(sessions);
   const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Set<string>>(new Set());
-  const [contextSessionId, setContextSessionId] = useState<string>();
+  const [contextMenu, setContextMenu] = useState<ContextMenu>();
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(undefined);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [contextMenu]);
   return (
     <aside className="sidebar" aria-label="任务导航">
       <div className="brand-row">
@@ -89,17 +102,18 @@ export function SessionSidebar({
                           aria-haspopup="menu"
                           disabled={disabled}
                           onClick={() => {
-                            setContextSessionId(undefined);
+                            setContextMenu(undefined);
                             onSelect(session);
                           }}
                           onContextMenu={(event) => {
                             event.preventDefault();
-                            setContextSessionId(session.id);
+                            setContextMenu({ session, x: event.clientX, y: event.clientY });
                           }}
                           onKeyDown={(event) => {
                             if (event.shiftKey && event.key === "F10") {
                               event.preventDefault();
-                              setContextSessionId(session.id);
+                              const bounds = event.currentTarget.getBoundingClientRect();
+                              setContextMenu({ session, x: bounds.left, y: bounds.bottom });
                             }
                           }}
                         >
@@ -112,12 +126,6 @@ export function SessionSidebar({
                             />
                           )}
                         </button>
-                        {contextSessionId === session.id && (
-                          <div className="task-context-menu" role="menu">
-                            <button role="menuitem" onClick={() => { setContextSessionId(undefined); onRename(session); }}>编辑标题</button>
-                            <button role="menuitem" className="danger-action" disabled={session.taskStatus === "in_progress"} onClick={() => { setContextSessionId(undefined); onDelete(session); }}>删除任务</button>
-                          </div>
-                        )}
                       </li>
                     })}
                   </ul>}
@@ -128,26 +136,33 @@ export function SessionSidebar({
         )}
       </nav>
       <button className="settings-entry" onClick={onOpenSettings} aria-label="打开设置">
-        <GearIcon />
-        <span>
-          <strong>DeepSeek · {modelId}</strong>
-          <small>{modelConfigured ? "已配置" : "未配置"}</small>
-        </span>
+        <img src={settingsIcon} alt="" />
+        <span>设置</span>
       </button>
+      {contextMenu && createPortal(
+        <div
+          className="task-context-menu"
+          role="menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button role="menuitem" onClick={() => { setContextMenu(undefined); onRename(contextMenu.session); }}>编辑标题</button>
+          <button role="menuitem" className="danger-action" disabled={contextMenu.session.taskStatus === "in_progress"} onClick={() => { setContextMenu(undefined); onDelete(contextMenu.session); }}>删除任务</button>
+        </div>,
+        document.body,
+      )}
     </aside>
   );
 }
 
-function basename(path: string): string {
-  return path.split("/").filter(Boolean).at(-1) ?? path;
+interface ContextMenu {
+  session: Session;
+  x: number;
+  y: number;
 }
 
-function GearIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 8.25A3.75 3.75 0 1 0 12 15.75 3.75 3.75 0 0 0 12 8.25Zm8.1 5.2-1.54-.9a6.7 6.7 0 0 0 0-1.1l1.54-.9-1.5-2.6-1.55.9a7.06 7.06 0 0 0-.95-.55V5.5h-3v1.8a7.06 7.06 0 0 0-.95.55l-1.55-.9-1.5 2.6 1.54.9a6.7 6.7 0 0 0 0 1.1l-1.54.9 1.5 2.6 1.55-.9c.3.2.62.38.95.55v1.8h3v-1.8c.33-.17.65-.35.95-.55l1.55.9 1.5-2.6Z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-    </svg>
-  );
+function basename(path: string): string {
+  return path.split("/").filter(Boolean).at(-1) ?? path;
 }
 
 function FolderIcon({ open }: { open: boolean }) {

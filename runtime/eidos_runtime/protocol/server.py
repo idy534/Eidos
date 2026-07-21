@@ -24,7 +24,8 @@ from eidos_runtime.model.config import (
     ModelConfigStore,
     model_catalog,
 )
-from eidos_runtime.runtime.loop import ApprovalDecision, RuntimeEngine
+from eidos_runtime.runtime.approval import ApprovalDecision
+from eidos_runtime.runtime.engine import RuntimeEngine
 from eidos_runtime.protocol.schemas import ApprovalDecisionDto, JsonRpcRequestDto, JsonRpcResponse
 from eidos_runtime.sandbox.sensitive import (
     SensitiveContentDenied,

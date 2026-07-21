@@ -82,6 +82,11 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.assertEqual(stopped["status"], "stopped")
         self.assertEqual(stopped["stopReason"], "max_total_steps")
         self.assertEqual(model.allow_tools_history, [False])
+        item = connection.execute(
+            "SELECT model_step_index FROM items WHERE kind = 'assistant_message'"
+        ).fetchone()
+        self.assertIsNotNone(item)
+        self.assertIsNone(item["model_step_index"])
 
     def test_two_rejections_pause_and_user_input_creates_a_new_segment(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "change")

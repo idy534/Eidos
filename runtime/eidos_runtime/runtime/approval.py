@@ -4,6 +4,19 @@ from dataclasses import dataclass
 import threading
 from typing import Callable
 
+from pydantic import BaseModel, ConfigDict, ValidationError
+
+from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.protocol.schemas import ApprovalDecisionDto
+from eidos_runtime.runtime.events import RuntimeEvents
+from eidos_runtime.runtime.state_machine import RuntimeState, StateMachine
+
+
+@dataclass(frozen=True)
+class ApprovalDecision:
+    decision: str
+    feedback: str | None = None
+
 
 @dataclass(frozen=True)
 class ApprovalRequest:
@@ -16,8 +29,16 @@ class ApprovalResult:
     feedback: str | None = None
 
 
+class ApprovalOutcome(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    decision: str
+    feedback: str | None = None
+    item: dict[str, object]
+
+
 class ApprovalAdapter:
-    """Keeps approval transport details outside the RuntimeEngine implementation."""
+    """Compatibility transport adapter retained for existing imports."""
 
     def __init__(
         self,
@@ -33,3 +54,97 @@ class ApprovalAdapter:
             str(getattr(value, "decision", "reject")),
             getattr(value, "feedback", None),
         )
+
+
+class ApprovalCoordinator:
+    """Owns the complete persisted approval pause/resume state machine."""
+
+    def __init__(
+        self,
+        store: SessionStore,
+        request: Callable[[dict[str, object], threading.Event], object] | None,
+        events: RuntimeEvents,
+        state_machine: StateMachine,
+        pause_effective_time: Callable[[str], None],
+        resume_effective_time: Callable[[], None],
+        resume_execution_slot: Callable[[str, threading.Event], None],
+        check_cancel: Callable[[str, threading.Event], None],
+        *,
+        requeue: bool,
+    ) -> None:
+        self.store = store
+        self.transport = ApprovalAdapter(request)
+        self.events = events
+        self.state_machine = state_machine
+        self.pause_effective_time = pause_effective_time
+        self.resume_effective_time = resume_effective_time
+        self.resume_execution_slot = resume_execution_slot
+        self.check_cancel = check_cancel
+        self.requeue = requeue
+
+    def request(
+        self,
+        run_id: str,
+        item: dict[str, object],
+        description: dict[str, object],
+        cancel: threading.Event,
+        *,
+        diff: str = "",
+        base_sha256: str | None = None,
+        transition_reason: str,
+    ) -> ApprovalOutcome:
+        pending_item = self.store.begin_approval(
+            str(item["id"]), diff, base_sha256
+        )
+        approval_run = self.store.read_run(run_id)
+        self.events.emit(
+            "run/updated",
+            {"sessionId": approval_run["sessionId"], "run": approval_run},
+        )
+        self.state_machine.transition(RuntimeState.WAITING_APPROVAL, transition_reason)
+        self.pause_effective_time(run_id)
+        tool_call = pending_item["toolCall"]
+        assert isinstance(tool_call, dict)
+        result = self.transport.request(
+            ApprovalRequest({
+                "sessionId": pending_item["sessionId"],
+                "runId": pending_item["runId"],
+                "itemId": pending_item["id"],
+                "toolCallId": tool_call["id"],
+                **description,
+            }),
+            cancel,
+        )
+        self.check_cancel(run_id, cancel)
+        decision = self._validated(result)
+        self.store.resolve_approval(
+            str(item["id"]),
+            decision.decision,
+            decision.feedback,
+            requeue=self.requeue,
+        )
+        self.resume_execution_slot(run_id, cancel)
+        self.resume_effective_time()
+        approval_run = self.store.read_run(run_id)
+        self.state_machine.transition(
+            RuntimeState.WAITING_USER_INPUT
+            if approval_run["status"] == "waiting_user_input"
+            else RuntimeState.TOOL_EXECUTING,
+            f"{transition_reason}_resolved",
+        )
+        return ApprovalOutcome(
+            decision=decision.decision,
+            feedback=decision.feedback,
+            item=pending_item,
+        )
+
+    @staticmethod
+    def _validated(result: ApprovalResult) -> ApprovalResult:
+        try:
+            value = ApprovalDecisionDto.model_validate({
+                "decision": result.decision,
+                "feedback": result.feedback,
+            })
+        except ValidationError:
+            return ApprovalResult("reject")
+        return ApprovalResult(value.decision, value.feedback)

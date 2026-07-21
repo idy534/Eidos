@@ -458,8 +458,6 @@ export function App() {
         sessions={sessions}
         selectedId={navigationSessionId ?? snapshot?.session.id}
         disabled={interactionBusy || runtime.storageHealth.state !== "ready"}
-        modelId={selectedModelId}
-        modelConfigured={Boolean(model?.configured)}
         readCompletedSessions={readCompletedSessions}
         onCreate={() => void createSession()}
         onCreateInWorkspace={(workspaceRoot) => void createSession(workspaceRoot)}
