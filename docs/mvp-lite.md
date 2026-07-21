@@ -2,7 +2,7 @@
 
 版本：v0.1
 
-状态：第一期实现基线
+状态：✅ 第一期实现完成（Developer Preview）
 
 ## 1. 文档定位与优先级
 
@@ -18,7 +18,7 @@ MVP Lite 的唯一目标是尽快验证 Eidos 在 macOS 本机上的最小 Agent
   -> 输出最终回答
 ```
 
-本文是第一期实现范围的最高优先级文档。现有 v0.4 PRD、TDD 和 Q1-Q155 决策继续保留，作为完整目标态与后续加固依据；当它们与本文的首期范围、协议、实体或里程碑冲突时，第一期以本文为准。
+本文是第一期实现范围的最高优先级文档。现有 v0.4 PRD、TDD 和 Q1-Q160 决策继续保留，作为目标态草案与后续加固依据；当它们与本文的首期范围、协议、实体或里程碑冲突时，第一期以本文为准。
 
 MVP Lite 是单用户、单机、前台运行的 Developer Preview，不承诺完整生产级兼容、灾难恢复或跨版本恢复。
 
@@ -36,7 +36,7 @@ MVP Lite 是单用户、单机、前台运行的 Developer Preview，不承诺�
 - 用户能够取消正在运行或等待审批的 Run。
 - 应用重启后能够读取已完成的 Session、Run 和 Item；未完成 Run 不自动恢复或重放。
 
-以下能力不作为第一期成功条件：Public Mode、Artifact、多 Run 队列、跨重启继续执行、双模型协议、WebSocket、复杂模型能力探测、完整敏感信息治理和生产级存储恢复。
+以下能力不作为第一期成功条件：Public Mode、Artifact、多 Run 队列、跨重启继续执行、双模型协议、复杂模型能力探测、完整敏感信息治理和生产级存储恢复。本地 WebSocket/HTTP/SSE 控制面已不再规划。
 
 ## 3. 产品范围
 
@@ -49,7 +49,7 @@ MVP Lite 是单用户、单机、前台运行的 Developer Preview，不承诺�
 | Agent | 固定内置 Eidos Agent，不提供 Agent 管理 |
 | 会话 | 创建和读取 Session |
 | 执行 | 每个 Session 可创建多个历史 Run，但全应用任意时刻最多一个活动 Run |
-| 模型 | 一个 OpenAI Responses 兼容 Profile；HTTP(S) SSE streaming |
+| 模型 | 固定 DeepSeek `deepseek-v4-flash`；OpenAI-compatible Chat Completions HTTP(S) SSE streaming |
 | Runtime | 串行 ReAct loop；最多 20 个模型 Step |
 | 只读工具 | `list_files`、`read_file`、`search_text` |
 | 文件写工具 | `write_file`、`apply_patch`；单 ToolCall 单文件 |
@@ -67,7 +67,7 @@ MVP Lite 是单用户、单机、前台运行的 Developer Preview，不承诺�
 - `read_file_range`、`delete_file`、Regex Search 和额外文本编码。
 - pending Approval、模型流和工具执行的跨重启恢复。
 - Durable Intent、事实确认屏障、Workspace 前后 manifest 和副作用自动对账。
-- Chat Completions Adapter、Responses WebSocket、传输降级和多 Provider 自动兼容。
+- Responses Adapter、复杂传输降级和多 Provider 自动兼容；远端模型仍只使用 HTTP/SSE。
 - Model Profile 编辑、Archive、凭证轮换、两阶段 Capability Probe 和 capability snapshot。
 - `model_request_contract_version`、`tool_contract_version` 的旧版本路由与恢复。
 - Canonical JSON、immutable base ToolResult projection 和 ToolResult quarantine。
@@ -87,7 +87,7 @@ React Renderer
   -> Electron Main
   <-> stdio JSON-RPC
   -> Python Runtime
-       -> Model Client / Responses HTTP SSE
+       -> Model Client / DeepSeek Chat Completions HTTP SSE
        -> Runtime Loop
        -> Tool Registry
        -> Approval Gate
@@ -122,10 +122,10 @@ Python Runtime：
 
 - Main 是 Runtime 的唯一父进程和客户端，不需要随机端口、Bearer Token 或 loopback 路由。
 - 同一连接原生支持 Main 发请求、Runtime 发通知，以及 Runtime 主动发起审批请求。
-- 不需要为第一期维护 REST、SSE、OpenAPI、HTTP DTO、IPC DTO 四套边界。
+- 不维护 REST、SSE、OpenAPI、HTTP DTO、IPC DTO 多套本地边界。
 - stdout 可作为纯协议通道，stderr 可作为独立诊断通道。
 
-MVP Lite 不开放 TCP、Unix Socket 或 WebSocket 监听。未来需要多客户端或远程 Runtime 时，再在同一领域契约外增加 transport adapter。
+Eidos 本地控制面不开放 TCP、Unix Socket 或 WebSocket 监听；后续阶段继续复用同一 stdio JSON-RPC 边界。
 
 ## 5. stdio JSON-RPC 双向协议
 
@@ -139,6 +139,7 @@ MVP Lite 不开放 TCP、Unix Socket 或 WebSocket 监听。未来需要多客�
 - stderr 日志不得包含 API Key、Authorization Header、完整文件正文或未脱敏 Shell 输出。
 - Main 遇到非法 JSON、未知 response id 或 envelope 校验失败时终止当前 Runtime，并把活动 Run 标记为 interrupted。
 - Runtime 对未知 method 返回标准 `-32601 Method not found`；参数校验失败返回 `-32602 Invalid params`。
+- 协议 v1 的代表性请求、响应、错误、Runtime 主动审批和 Item 生命周期向量固定在 `protocol/fixtures/v1.json`。Python Runtime 验证初始化与业务错误 envelope，TypeScript Main Client 验证完整向量解析；真实审批和通知另由双进程集成测试覆盖。
 
 ### 5.2 初始化
 
@@ -151,7 +152,7 @@ Main 启动 Runtime 后必须先发送：
 Runtime 完成 SQLite 初始化、工具注册和 Seatbelt 自检后返回：
 
 ```json
-{"jsonrpc":"2.0","id":"client-1","result":{"protocolVersion":1,"runtimeVersion":"0.1.0","capabilities":{"runShell":true}}}
+{"jsonrpc":"2.0","id":"client-1","result":{"protocolVersion":1,"runtimeVersion":"0.1.0","capabilities":{"runShell":false}}}
 ```
 
 初始化完成前除 `initialize` 和 `runtime/shutdown` 外不接受业务请求。`runShell=false` 允许只读和文件工具闭环继续运行，但不得降级为无沙箱 Shell。
@@ -160,15 +161,19 @@ Runtime 完成 SQLite 初始化、工具注册和 Seatbelt 自检后返回：
 
 | Method | 作用 | 结果 |
 |---|---|---|
-| `initialize` | 建立协议版本和能力握手 | Runtime 版本与 capability |
-| `session/create` | 绑定 Workspace 并创建 Session | Session |
-| `session/list` | 分页读取已有 Session 摘要 | `{items,nextCursor?}` |
-| `session/read` | 读取 Session、历史 Run 与有界 Item 页面 | SessionSnapshot |
-| `run/start` | 提交用户输入并开始一个 Run | 初始 Run |
-| `run/cancel` | 取消活动或等待审批的 Run | 最终/当前 Run |
-| `runtime/shutdown` | 有界停止 Runtime | 空结果 |
+| ✅ `initialize` | 建立协议版本和能力握手 | Runtime 版本与 capability |
+| ✅ `session/create` | 绑定 Workspace 并创建 Session | Session |
+| ✅ `session/list` | 分页读取已有 Session 摘要 | `{items,nextCursor?}` |
+| ✅ `session/read` | 读取 Session、历史 Run 与有界 Item 页面 | SessionSnapshot |
+| ✅ `run/start` | 提交用户输入并开始一个 Run | 初始 Run |
+| ✅ `run/cancel` | 取消活动或等待审批的 Run | 最终/当前 Run |
+| ✅ `model/status` | 读取不含凭证明文的固定模型配置状态 | ModelStatus |
+| ✅ `model/configure` | 保存 DeepSeek API Key；响应不回显凭证 | ModelStatus |
+| ✅ `runtime/shutdown` | 有界停止 Runtime | 空结果 |
 
 `session/list` 使用 `limit=50`、最大 200 和可选 opaque cursor；第一期不承诺跨页冻结成员集合，客户端遇到 cursor 失效时从第一页重取。`session/read` 使用 `itemLimit=200`、最大 500 和可选 `beforeItemId` 向前读取历史 Item。
+
+`session/read` 的历史 Run 摘要省略与 `user_message` Item 重复的大体积 `userInput`；历史 Item 投影省略重复的 tool arguments/diff，并对大正文加显式 `…[history truncated]` 标记。Run 与 Item 页面共同受 768 KiB 响应预算约束，确保单个大 Item 不会形成分页黑洞且完整 JSON-RPC 消息不超过 1 MiB；`run/start` 与实时 Run 通知仍返回 `userInput`。
 
 `run/start` 只接受 `sessionId` 和 `userInput`。若已有活动 Run，固定返回 `RUN_ALREADY_ACTIVE`；MVP Lite 不隐式排队。
 
@@ -319,14 +324,14 @@ ToolCall 是 Item 的执行详情，不增加新的层级：
 id, item_id, tool_name, arguments_json, result_json, started_at, completed_at
 ```
 
-模型输出中的工具参数始终按不可信输入处理。Runtime 在创建 ToolCall 前完成工具名、闭合参数 schema、Workspace 边界和组合规则校验；工具是否向模型暴露不构成执行授权。
+模型输出中的工具参数始终按不可信输入处理。Runtime 在创建 ToolCall 前完成工具名、闭合参数 schema 和组合规则校验；随后把 ToolCall 作为 Feed 事实持久化，并在任何执行或审批前完成 fd-relative Workspace 边界与当前身份复检。路径验证失败会形成失败 ToolResult，不产生副作用；工具是否向模型暴露不构成执行授权。
 
 ## 7. Runtime Loop
 
 ```text
 persist user_message Item
   -> build bounded model input from completed Items
-  -> stream Responses API
+  -> stream DeepSeek Chat Completions API
   -> no ToolCall: complete assistant_message and Run succeeded
   -> ToolCall: validate complete response
        -> read tool: execute directly
@@ -365,10 +370,12 @@ persist user_message Item
 - 每次 `run_shell` 都必须审批，不提供 session 级永久放行。
 - 命令在 `/usr/bin/sandbox-exec` Seatbelt `workspace_write` 中运行。
 - active root 可写；`.git`、`~/.eidos` 和其他用户数据路径不可写。
+- Session 创建会拒绝与 Eidos 数据目录重叠的 Workspace；Shell 在审批前后固定校验 Workspace/cwd inode，并对敏感文件、特殊文件和多硬链接文件执行有界预检，任一不确定性 fail closed。
 - 默认禁止网络、localhost 和 Unix Socket；MVP Lite 不提供单次放行。
 - 使用干净的临时 HOME，不加载用户 rc，不继承宿主凭证环境变量。
-- 默认 timeout 120 秒，最大 600 秒；stdout/stderr 合计持久化上限 1 MiB。
+- 默认 timeout 120 秒，最大 600 秒；stdout/stderr 合计持久化上限 256 KiB。
 - Cancel 或 timeout 向进程组发送 SIGTERM，短暂宽限后 SIGKILL。
+- 命令主进程退出后如同一进程组仍有后台进程，Runtime 会终止该进程组并返回 `background_process`，不会把命令误报为成功。
 - Seatbelt 策略、自检或进程组清理不可用时 `run_shell` capability 为 false。
 
 ### 8.3 最小敏感边界
@@ -376,6 +383,7 @@ persist user_message Item
 - API Key 只存在于 mode 0600 的本地配置，不进入 SQLite、stdout、Item 或 stderr。
 - 固定拒绝读取常见凭证文件和 `~/.ssh`、`~/.aws`、`~/.config` 等 active root 外路径。
 - Shell 不继承 API Key、SSH agent、云凭证和真实 HOME。
+- 常见凭证目录、`.env*`、私钥/证书和 credential/secret/token 命名文件会在 Shell 启动前拒绝；根目录 `.env` 由 Seatbelt 精确拒绝读取与写入。
 - MVP Lite 不承诺内容级 Secret 检测；UI 必须明确这是 Developer Preview 限制。
 
 ## 9. 最小持久化
@@ -402,47 +410,61 @@ MVP Lite 不单独建立 Segment、Attempt、Approval、Event、Operation、Mani
 
 ## 10. MVP Lite 里程碑
 
-### L0：进程与协议闭环
+### L0：进程与协议闭环 ✅
 
-- Electron Main 拉起 Python Runtime。
-- stdio JSON-RPC initialize、shutdown 和 stderr 日志隔离。
-- Renderer 通过 Preload 显示 Runtime ready/error。
+- ✅ Electron Main 拉起 Python Runtime。
+- ✅ stdio JSON-RPC initialize、shutdown 和 stderr 日志隔离。
+- ✅ Renderer 通过 Preload 显示 Runtime ready/error。
 
-退出标准：应用可稳定启动和关闭，stdout 无非协议输出，非法协议能安全终止 Runtime。
+退出标准：✅ 已通过自动化与 macOS 实机验证。应用可稳定启动和关闭，stdout 无非协议输出，非法协议能安全终止 Runtime。
 
-### L1：模型与只读闭环
+### L1：模型与只读闭环 ✅
 
-- Session、Run、Item 最小持久化。
-- Responses HTTP SSE。
-- `list_files`、`read_file`、`search_text`。
-- Item 生命周期通知和基础 Feed。
+- ✅ Session、Run、Item、ToolCall 最小 SQLite 持久化；Item 历史有界分页；启动时未完成 Run 收敛为 `interrupted`。
+- ✅ 确定性 Fake Model 已跑通“模型 -> `read_file` -> ToolResult -> 模型最终回答”的两轮循环。
+- ✅ DeepSeek `deepseek-v4-flash` Chat Completions SSE Adapter 已实现并完成真实联网验收；API Key 以 `0600` 保存且不进入响应、SQLite 或日志。
+- ✅ `list_files`、`read_file`、`search_text` 已实现有界执行、敏感路径拒绝、symlink/root rebinding 防护和取消。
+- ✅ Item 生命周期通知、Main 协议校验和基础 Execution Feed 已实现。
+- ✅ Renderer 已支持选择 Workspace、创建/读取 Session、配置模型、提交/取消 Run 与展示流式结果。
 
-退出标准：真实模型至少完成一次“读取工具 -> ToolResult -> 最终回答”。
+退出标准：✅ 已使用真实 DeepSeek 完成“读取工具 -> ToolResult -> 最终回答”，并验证流式可见文本与 Run 终态持久化。
 
-### L2：文件写入审批闭环
+### L2：文件写入审批闭环 ✅
 
-- `write_file`、`apply_patch`。
-- Runtime 生成完整 diff。
-- 双向 `item/requestApproval`、Approve/Reject、hash 复检和原子替换。
+- ✅ `write_file`、`apply_patch` 已实现闭合参数校验、单文件/256 KiB 上限与已有文件同 Run 读取证据。
+- ✅ Runtime 从冻结候选内容生成完整 diff；控制字符、symlink、硬链接、复杂 flags/xattr 和敏感路径 fail closed。
+- ✅ 双向 `item/requestApproval`、Approve/Reject、取消与迟到响应竞态已实现。
+- ✅ 批准提交使用 Seatbelt 内的 `RENAME_EXCL`（新文件）或 `RENAME_SWAP + 旧 hash 校验/冲突回滚`（已有文件），并 fsync、读回验证；post-commit 不确定性明确标记 `sideEffectsMayExist=true`。
+- ✅ 完成通知不重复大体积 arguments/diff，保持在 1 MiB JSON-RPC 上限内。
 
-退出标准：Approve 后文件按 diff 修改，Reject 零修改，审批等待期间变化会拒绝旧操作。
+退出标准：✅ 自动化测试已覆盖 Approve 按 diff 修改、Reject 零修改、审批等待期间版本冲突、CAS 回滚、symlink/root rebinding、取消和迟到 Approve。
 
-### L3：开发者可用闭环
+### L3：开发者可用闭环 ✅
 
-- Seatbelt `run_shell`、有界输出、timeout 和取消。
-- Workspace 主界面与历史 Session/Run 读取。
-- Runtime 异常退出统一标记 interrupted。
-- 首期端到端测试与 Developer Preview 限制说明。
+- ✅ Seatbelt `run_shell`、逐次命令审批、默认断网、干净 HOME/环境、256 KiB 有界输出、timeout、进程组取消与同组后台进程收敛；审批前后校验 Workspace/cwd 身份，并拒绝敏感文件、特殊文件和多硬链接 Workspace。
+- ✅ Workspace 主界面与历史 Session/Run 读取。
+- ✅ Runtime 异常退出统一标记 `interrupted`，不自动重放。
+- ✅ 首期端到端测试与 Developer Preview 限制说明。
 
-退出标准：用户可以让 Eidos 阅读代码、修改文件、执行测试命令并获得最终回答。
+退出标准：✅ 已使用真实 DeepSeek 完成“读取 README -> 审批写入新文件 -> Shell 首次安全失败并回填 -> 审批替代验证命令 -> 最终回答”；Run 为 `succeeded`，候选文件字节与 LF 换行已独立复核。
+
+L3 前置风险验证状态：
+
+- ✅ Seatbelt 使用静态 profile 和 `-D` 路径参数，不从 PATH 解析 `sandbox-exec`。
+- ✅ macOS 实机 smoke test 已覆盖 Workspace/Home/Temp 创建修改删除、外部与敏感路径拒绝、`.git` 目录写保护、symlink/硬链接逃逸、审批期间 Workspace 重绑、子进程继承、loopback 拒绝、同组后台进程清理、进程组 timeout、worktree pointer 以及固定 Homebrew Node/pnpm Toolchain。
+- ✅ Runtime initialize 会执行 Seatbelt 自检；只有当前 `run_shell` 实现存在且自检全部通过时才返回 `runShell=true`，任一失败都保持 fail closed。
+- ✅ Shell Approval、默认断网、输出上限、timeout/cancel 与真正的 `run_shell` ToolCall 已实现。
+- ⏳ manifest、完整 RSS/fd/fork 资源监管、managed network 继续按 MVP Lite 延后，不阻塞 Developer Preview。
+
+Developer Preview 限制：MVP Lite 不支持通过 `setsid`/double-fork 脱离原进程组的守护进程，也不承诺抵御同一 macOS 用户下另一个对抗进程在命令执行微窗口内重绑 Workspace 或注入硬链接。只应批准可读、短生命周期的构建/测试命令，并避免执行期间由其他进程结构性替换 Workspace；完整原生 guardian 与文件系统事实对账仍属于目标态。
 
 ## 11. 第一期开工门槛
 
-- [ ] stdio JSON-RPC envelope、method、DTO 和错误码形成固定 v1 测试向量。
-- [ ] `Session -> Run -> Item/ToolCall` 数据模型没有 Segment、Attempt 或独立 Event 依赖。
-- [ ] Runtime Loop 能在 fake model 与 fake tool 上完成至少两轮循环。
-- [ ] Workspace Guard 和 Seatbelt 在目标 macOS 版本完成实机 smoke test。
-- [ ] 文件写入 diff 与 hash 复检有独立测试。
-- [ ] 审批请求、取消和迟到响应的竞态有集成测试。
-- [ ] stdout/stderr 隔离、消息大小和慢消费者行为有协议测试。
-- [ ] PRD/TDD 后续实现任务明确标注 `MVP Lite` 或 `完整目标态`，不再混用 P0。
+- [x] stdio JSON-RPC envelope、method、DTO 和错误码形成固定 v1 测试向量。
+- [x] `Session -> Run -> Item/ToolCall` 数据模型没有 Segment、Attempt 或独立 Event 依赖。
+- [x] Runtime Loop 能在 fake model 与真实只读工具上完成至少两轮循环。
+- [x] Workspace Guard 和 Seatbelt 在目标 macOS 版本完成实机 smoke test。
+- [x] 文件写入 diff 与 hash 复检有独立测试。
+- [x] 审批请求、取消和迟到响应的竞态有集成测试。
+- [x] stdout/stderr 隔离、消息大小、分块超限和慢消费者行为有协议测试。
+- [x] PRD/TDD 后续实现任务明确标注 `MVP Lite`、具体阶段或 `目标态草案`，不再混用 P0。

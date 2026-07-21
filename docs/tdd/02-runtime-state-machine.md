@@ -1,8 +1,12 @@
 # Runtime、队列与状态机
 
-版本：v0.4
+版本：v0.4（探索草案）
 
-范围说明：本文描述完整目标态状态机。第一期固定为 [MVP Lite](../mvp-lite.md) 的 `Session -> Run -> Item/ToolCall`，不实现 Execution Segment、持久 FIFO、stopped 或跨重启恢复。
+范围说明：本文描述目标态状态机草案。第一期基线见 [MVP Lite](../mvp-lite.md)；Execution Segment、持久 FIFO、暂停/继续、`stopped` 与对账恢复的第二期子集已按 [第二期清单](../mvp-phase-2.md) 实现。
+
+MVP Lite 当前实施状态：✅ 全局单活动 Run；✅ `running/waiting_approval/succeeded/failed/canceled/interrupted`；✅ 串行模型/工具循环与 20 Step 上限；✅ 连续两次非法响应失败；✅ Cancel、迟到审批和 worker 异常收敛；✅ 未完成 Run 启动时标记 `interrupted` 且不重放。
+
+第二期实施状态：✅ 持久 FIFO 与单执行槽；✅ waiting_approval 释放执行槽并重新排队；✅ Segment/Step/Attempt；✅ 20/80 Step 与 30/120 分钟有效时间预算；✅ 无工具 Finalization；✅ Reject 两次暂停、用户补充新 Segment、Durable Intent 与 reconciliation 屏障。
 
 ## 1. 核心实体
 
@@ -28,7 +32,7 @@ Session
 队列规则：
 
 - 可同时创建和保留多个 Run。
-- `queued` Run 按 `enqueued_at, id` FIFO 获取执行槽。
+- `queued` Run 按 `enqueued_at, creation_seq` FIFO 获取执行槽。
 - 当前 Run 不可抢占；它进入等待态或终态后释放执行槽。
 - waiting_approval/waiting_user_input 不占执行槽。
 - Approve、Reject 后继续或 user-input 恢复时，将 Run 以新的 `enqueued_at` 追加到队尾。
@@ -82,6 +86,27 @@ waiting_approval -> waiting_user_input
 - 不允许恢复原 Run。
 - 用户可基于摘要和当前 Workspace 创建新 Run。
 
+### 3.1 执行态 RuntimeState
+
+Run `status` 是可跨重启的事实；它不能直接替代单次执行循环的控制状态。第二期新增仅在内存中存在、由 StateMachine 维护的 `RuntimeState`：
+
+```python
+class RuntimeState(str, Enum):
+    THINKING = "thinking"
+    TOOL_EXECUTING = "tool_executing"
+    WAITING_APPROVAL = "waiting_approval"
+    WAITING_USER_INPUT = "waiting_user_input"
+    FINALIZING = "finalizing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELED = "canceled"
+```
+
+- `queued` 由 Scheduler 持有，不进入 RuntimeEngine；认领为 `running` 后从 `THINKING` 开始。
+- `THINKING -> TOOL_EXECUTING|WAITING_APPROVAL|FINALIZING|COMPLETED|FAILED|CANCELED`，工具完成后回到 `THINKING`；`WAITING_APPROVAL` 只可由有效审批或取消离开。
+- 每次迁移先由 StateMachine 校验，再与 Run/Segment/Step/Approval 的持久事实和 Event 同事务提交；任何非法迁移安全失败，不能由调用方绕过。
+- Sidecar 重启不反序列化旧 `RuntimeState`：它从持久 Run 状态和最后已提交事实重建可调度状态，绝不恢复已在内存中的模型或工具执行。
+
 ## 4. Execution Segment 与预算
 
 每次 Run 首次执行或 user-input 恢复都创建新 Segment：
@@ -118,7 +143,7 @@ create step
   -> stream model response
   -> parse complete response
   -> normalize effective arguments and validate entire ToolCall batch
-  -> execute allowed batch serially OR create one approval
+  -> execute allowed batch serially OR create one or more ordered approvals
   -> persist observations
   -> complete step
 ```
@@ -269,16 +294,16 @@ applied | not_applied | outcome_unknown
 
 ## 9. Retry
 
-- 已验证支持 WebSocket 时优先使用；首个 delta 前瞬时错误最多重放 5 次，随后以相同逻辑请求降级到原 endpoint 的 HTTP(S) streaming。明确不支持时立即降级。
-- HTTP(S) 在首个 delta 前遇到网络错误、429、5xx 最多重试 2 次；仍失败或 request cycle 达到 10 分钟时，当前 Step 标记 `failed/model_temporarily_unavailable`，Run 进入 waiting_user_input。
-- 每个 Attempt 的 connect/first-delta/stream-idle 上限分别为 15/180/120 秒，所有 Attempt、退避和降级共享 request cycle deadline。
+- 模型固定使用 HTTP 请求与 SSE 响应流；首个 delta 前遇到网络错误、429、5xx 最多重试 2 次。
+- 重试仍失败或 request cycle 达到 10 分钟时，当前 Step 标记 `failed/model_temporarily_unavailable`，Run 进入 waiting_user_input。
+- 每个 Attempt 的 connect/first-delta/stream-idle 上限分别为 15/180/120 秒，所有 Attempt 和退避共享 request cycle deadline。
 - 设置 `pause_reason=model_temporarily_unavailable`；多个 ModelAttempt 仍属于同一个 Step，只计一次 Step 预算。
 - 用户继续时创建新 Segment，使用原 Model Profile snapshot 重新入队。
-- 收到任何 delta 后不透明重试且不切换传输；Step 标记 `failed/model_stream_interrupted`。
+- 可重试的流错误在同一 Step 内按指数退避重放相同模型输入，默认最多重试 5 次；每次重试创建新的 ModelAttempt，不要求用户输入。已显示文本保留为 incomplete assistant 供 UI 审计，但不进入模型上下文。
 - Provider token 截断、内容过滤和 Runtime 输出流超限分别标记 `model_output_truncated|model_output_blocked|model_output_limit_exceeded`；Run waiting_user_input，已提交文本 incomplete，整个 ToolCall 批次丢弃，零自动重试。
 - 已显示文本保留为 `assistant_progress` 并标记 `incomplete=true`，不能成为 final_answer。
 - 未完整解析的 ToolCall 全部丢弃，一个也不创建或执行。
-- Run 进入 waiting_user_input，`pause_reason=model_stream_interrupted`。
+- 6 个 ModelAttempt 都在输出过可见文本后中断，Run 才进入 waiting_user_input，`pause_reason=model_stream_interrupted`；始终没有可见文本则重试耗尽后 Run failed。
 - 本次失败 Step 计入 Segment 和 Run Step 预算；用户继续时创建新 Segment 并重新入队。
 - 只读工具仅对 timeout、EINTR、EAGAIN 等瞬时错误重试 1 次。
 - not_found、validation、permission、sensitive_file 不重试。

@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "jsx": "react-jsx",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "rootDir": "desktop/renderer/src",
+    "outDir": "dist/renderer-test",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "types": ["node", "react", "react-dom"]
+  },
+  "include": [
+    "desktop/renderer/src/contracts.ts",
+    "desktop/renderer/src/session-state.ts",
+    "desktop/renderer/src/session-state.test.ts",
+    "desktop/renderer/src/components/MarkdownContent.tsx",
+    "desktop/renderer/src/components/MarkdownContent.test.tsx",
+    "desktop/renderer/src/components/ExecutionFeed.tsx",
+    "desktop/renderer/src/components/ExecutionFeed.test.tsx"
+  ]
+}

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Skill Installer"
+  short_description: "Install user skills into Eidos"
+  default_prompt: "Use $skill-installer to list or install a user skill for Eidos."
+  icon_small: "./assets/skill-installer-small.svg"
+  icon_large: "./assets/skill-installer.png"

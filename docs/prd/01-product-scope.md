@@ -1,8 +1,10 @@
 # 产品定位与范围
 
-版本：v0.4
+版本：v0.4（探索草案）
 
-范围说明：本文描述完整目标态。第一期交付范围以 [MVP Lite](../mvp-lite.md) 为准；本文中的 MVP P0 不再等同于第一期全量实现。
+范围说明：本文描述目标态候选方向。第一期交付范围以 [MVP Lite](../mvp-lite.md) 为准；目标态能力只有进入阶段清单后才成为实施承诺。
+
+第二期实施以 [第二期实施范围清单](../mvp-phase-2.md) 为准。第三期以 [第三期实施范围清单](../mvp-phase-3.md) 为准，只推进本地 Plugin、Skill、stdio MCP Tools、动态 Tool Registry、能力快照、外部审批/沙箱与 Tool Search。Model Profile 重构、Public Mode、Artifact、MCP 市场与远程 MCP 不在第三期。本地 stdio JSON-RPC 与远端模型 HTTP/SSE 是稳定边界，不属于待迁移能力。
 
 ## 1. 产品定位
 
@@ -42,7 +44,7 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - system prompt 是内部运行协议，不向用户开放查看或编辑。
 - Model Profile 必须先通过不携带用户任务数据的显式能力测试，才能被 Session 选择；Run 创建时固化已验证的模型配置与能力快照。
 - Model Profile 显式选择 Responses 或 Chat Completions；Eidos 不按厂商、模型名或错误响应猜测协议，也不在 Run 中跨协议回退。
-- 模型调用优先使用已验证的 WebSocket，必要时有界降级到原 endpoint 的 HTTP(S) streaming；传输恢复不会改变模型、输入、参数或 Run 的非密钥快照。
+- 模型调用固定使用 HTTP 请求和 SSE 响应流；首个安全 delta 前只允许有界重试，重试不会改变模型、输入、参数或 Run 的非密钥快照。
 - 模型请求语义由本地 Timeline 与 Context Builder 重建，不依赖 Provider 保存会话或 previous response。
 - Provider 生成的工具参数始终不可信；Eidos 本地封闭 schema、安全规则与执行前复检是唯一授权依据。
 - 持久化 Run 固化工具契约；每个 Step 只向模型暴露当时可用的确定性工具子集，但隐藏不是安全边界。
@@ -78,9 +80,9 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - Agent 必须显式调用 `publish_artifact` 发布最终产物。
 - 已发布 Artifact 是不可变快照，默认长期保留。
 
-## 5. MVP P0 范围
+## 5. 目标态候选范围
 
-- Electron + React 桌面应用与 Python FastAPI sidecar。
+- Electron + React 桌面应用与 Python sidecar；本地控制面固定为 stdio JSON-RPC 2.0。
 - `~/.eidos` 初始化、SQLite 状态持久化，以及可编辑、可 Archive、显式能力验证的 Model Profile。
 - Workspace/Public Session 与持久化 FIFO Run 队列。
 - ReAct-style Runtime Loop、Execution Segment、版本化模型/工具请求契约、canonical ToolResult、上下文预算和确定性有界投影。
@@ -94,11 +96,13 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - 单实例执行权、启动 ready 屏障、安全数据库迁移、Workbench 一致快照和持久 Workspace 身份。
 - Shell guardian 在前台 Runtime 异常退出后有界清理受控进程；不承诺无法被系统同时强杀时的绝对零遗留。
 - 确定性敏感规则、分级拒绝/脱敏与全入口扫描。
-- SSE 实时 Execution Feed 与持久化 Timeline。
-- 闭合且可跨重启幂等的本地 API/IPC、稳定分页与版本化 Event 兼容。
-- Run 预算、模型传输降级、Tool timeout、有限重试和 Finalization Call。
+- JSON-RPC notifications 驱动的实时 Execution Feed 与持久化 Timeline。
+- 闭合且可跨重启幂等的本地 JSON-RPC/IPC、稳定分页与版本化 Event 兼容。
+- 用户显式导入的本地 Plugin v1、只读 Skill v1、stdio MCP Tools v1、能力快照与有界 Tool Search。
+- 随应用发布的只读系统 Skill，以及位于统一 Eidos Home 技能根的用户 Skill；v0.3 可经专用工具和逐次审批创建完整文本 Skill 树，或从单个公开 GitHub tree URL 安装完整 Skill 包。
+- Run 预算、模型 HTTP/SSE 重试、Tool timeout、有限重试和 Finalization Call。
 
-## 6. MVP 非目标
+## 6. 当前非目标
 
 - Windows/Linux 支持。
 - 内嵌 Workspace Terminal。
@@ -107,7 +111,9 @@ MVP 为单用户、单机应用，不建立账号、组织、租户或企业权�
 - 自动接管另一路 Runtime、强制抢占状态目录锁或在 Workspace 移动后静默迁移旧授权。
 - 自动清理用户数据、自动覆盖数据库备份，或在存储故障后自动重放副作用。
 - 多 Agent 与并行工具执行。
-- MCP 插件市场、浏览器自动化、Skill 自动生成和长期记忆。
+- MCP/Plugin 市场、私有/批量 Skill 安装、Skill 更新、浏览器自动化和长期记忆。
+- MCP Streamable HTTP/OAuth、Resources、Prompts、Sampling、Elicitation、Tasks 与多模态结果。
+- Plugin 任意代码入口、Hook/App 和 Skill 脚本自动执行。
 - 平台知识库、术语库、Text2SQL、本体和企业资源接入。
 - 文件写入前快照、一键回滚、跨文件原子事务和完整 diff 编辑器。
 - Edit then Approve。

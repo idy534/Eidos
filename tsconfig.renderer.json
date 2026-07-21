@@ -15,5 +15,6 @@
     "exactOptionalPropertyTypes": true,
     "types": ["vite/client"]
   },
-  "include": ["desktop/renderer/src"]
+  "include": ["desktop/renderer/src"],
+  "exclude": ["desktop/renderer/src/**/*.test.ts", "desktop/renderer/src/**/*.test.tsx"]
 }

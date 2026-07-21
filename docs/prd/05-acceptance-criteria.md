@@ -1,8 +1,8 @@
 # 验收标准
 
-版本：v0.4
+版本：v0.4（探索草案）
 
-范围说明：本文是完整目标态验收集合，不是第一期退出清单。第一期验收与开工门槛见 [MVP Lite](../mvp-lite.md)。
+范围说明：本文是目标态验收集合，不是当前阶段退出清单。第一期、第二期和第三期验收分别见 [MVP Lite](../mvp-lite.md)、[第二期实施范围](../mvp-phase-2.md) 与 [第三期实施范围](../mvp-phase-3.md)。
 
 ## 1. 产品闭环
 
@@ -68,7 +68,7 @@
 | A051 | 有界上下文 | 长 Run 不会因无限累积历史而超过配置窗口 |
 | A052 | 重试边界 | 模型和只读工具只按瞬时错误规则重试，副作用零自动重试 |
 | A053 | Event 事务 | 状态与对应 Event 同时成功或同时回滚 |
-| A054 | SSE 回放 | 可从最后 event id 恢复，不重复改变业务状态 |
+| A054 | Event 续接 | JSON-RPC notification 可从最后 event id 续接，不重复改变业务状态 |
 | A055 | 配置权限 | `.eidos`/`config.toml` 权限不合规时拒绝加载 API Key |
 | A056 | 密钥不落库 | SQLite、Event、日志和 Run 快照中不出现已配置 API Key |
 | A057 | 统一脱敏 | 模型可见 Shell 结果及所有持久化 payload 均通过脱敏层 |
@@ -79,7 +79,7 @@
 
 | 编号 | 验收项 | 标准 |
 |---|---|---|
-| A060 | Renderer 隔离 | Renderer 无法读取 sidecar port/token 或调用未列入白名单的 IPC |
+| A060 | Renderer 隔离 | Renderer 无法访问 sidecar stdio/进程句柄或调用未列入白名单的 IPC |
 | A061 | 无内嵌 Terminal | MVP 不启动 PTY；用户按钮可打开系统 Terminal |
 | A062 | 前台退出 | 运行中 Run 退出前要求等待或取消；等待/排队状态可恢复 |
 | A063 | 推理内容边界 | Feed、SQLite、Event 和日志中没有 raw reasoning；只展示 progress/final answer，可保存 token 用量 |
@@ -164,14 +164,14 @@
 | 编号 | 验收项 | 标准 |
 |---|---|---|
 | A114 | 轮换凭证 | 既有 Run 的下一次请求使用 Profile 当前密钥；Run 非密钥快照保持不变，Attempt 记录实际凭证 revision |
-| A115 | 传输探测 | HTTP(S) streaming 必须通过；WebSocket 记录 supported/unsupported/unknown，unsupported Profile 仍可通过原 endpoint 的 HTTP(S) 选择 |
-| A116 | 传输降级 | 首 delta 前 WebSocket 最多 5 次后以相同模型请求降级 HTTP(S)；HTTP(S) 最多 2 次；明确不支持立即降级 |
-| A117 | 降级作用域 | 瞬时降级仅当前 Run 粘滞；明确不支持按 snapshot 抑制且无 TTL/后台重探测；HTTPS 能力 snapshot 不失效 |
+| A115 | 传输探测 | Test Connection 必须证明 HTTP 请求、SSE 完整终态、ToolCall/ToolResult 续接和 usage；不探测 WebSocket |
+| A116 | 传输重试 | 首 delta 前 HTTP/SSE 瞬时错误最多重试 2 次且请求语义不变；首 delta 后禁止重放 |
+| A117 | 重试作用域 | 重试只属于当前逻辑模型请求；不会切换协议或传输，瞬时故障不使 Profile capability snapshot 失效 |
 | A118 | Attempt 与 usage | 每次网络发送独立 Attempt、共享逻辑请求 ID；usage 逐次保存，缺失标记 unknown 且汇总不按零计算 |
 | A119 | 输入估算 | 稳定 canonical payload 的 UTF-8 字节、固定协议开销和 2% 有界 margin 按确认公式计算，发送前不得超预算 |
 | A120 | 输出预留 | 普通/纠正请求使用 Profile 上限，Finalization 最多 4,096，探测最多 512；重放值不变且 Attempt 可审计 |
 | A121 | 本地超限 | 不可裁剪输入超限时零 Provider 请求、Run failed/context_input_too_large、snapshot 保持有效并展示安全预算明细 |
-| A122 | 请求周期 | 同一 Step 全部 Attempt、退避和降级共享 10 分钟；每次建连/首 delta/空闲不超过 15/180/120 秒；Finalization 独立 60 秒 |
+| A122 | 请求周期 | 同一 Step 全部 HTTP/SSE Attempt 和退避共享 10 分钟；每次建连/首 delta/空闲不超过 15/180/120 秒；Finalization 独立 60 秒 |
 
 ## 13. 模型协议归一化
 
@@ -185,7 +185,7 @@
 | A128 | ToolCall limits | 16 calls、1/2 MiB、16,384 deltas、名称与 JSON 深度/成员边界逐一强制，超限仅产生安全错误摘要 |
 | A129 | Stream limits | 动态可见文本、2 MiB reasoning、1 MiB Event 和 8 MiB 总流边界生效；超限无重试且部分文本保持 incomplete |
 | A130 | 完成判定 | Responses completed 与 Chat finish/usage/[DONE] 条件严格；EOF、length、filter 和未知终态分别正确映射 |
-| A131 | Stateless | Responses store=false 且无 previous response；Chat 发送本地完整消息；重启、轮换密钥和传输降级不依赖 Provider history |
+| A131 | Stateless | Responses store=false 且无 previous response；Chat 发送本地完整消息；重启、轮换密钥和 HTTP/SSE 重试不依赖 Provider history |
 | A132 | 输出字段 | Responses 使用 max_output_tokens；Chat 探测并固化 max_completion_tokens 或 max_tokens，运行期不切换 |
 
 ## 14. 工具请求与结果契约
@@ -219,7 +219,7 @@
 | A157 | Shell outcome/code | exit、timeout、limit、signal、interrupt、capture 和 manifest 故障按固定映射与优先级产生唯一结果；安全变化不篡改进程事实 |
 | A158 | 副作用标志 | 只读、未启动、no-op、verified success/not_applied 为 false；未知 commit 与已启动 Shell 为 true；屏障不能只由该布尔值推导 |
 | A159 | 共享非成功 data | Reject 原因可选、已扫描且 <=4,096 UTF-8 bytes；unavailable 与默认 interrupted 为最小 data，已启动 Shell 保留专属事实 |
-| A160 | Error data 分层 | ToolResult error 无通用 details/message/cause；API Error 不进入模型且按 code 闭合；内部错误不保存未扫描原文 |
+| A160 | Error data 分层 | ToolResult error 无通用 details/message/cause；JSON-RPC business error 不进入模型且按 code 闭合；内部错误不保存未扫描原文 |
 | A161 | 只读 error data | 超大文件返回 actual/max size，超长行返回唯一 line/max；其他错误为零正文、零 evidence/matches/entries |
 | A162 | 变更 error data | Patch hunk/reason、Diff actual/max 与候选 actual/max 可复现；版本冲突和 Artifact 错误不返回当前 hash、格式详情或内部路径 |
 
@@ -231,19 +231,40 @@
 | A164 | Canonical Unicode | 补充平面字符、BMP/补充字符 key 排序、NFC/NFD、控制字符、U+2028/U+2029、孤立 surrogate 和递归重复 key 固定向量在 Python/JS 完全一致 |
 | A165 | SQLite 迁移 | 迁移前一致备份、hash/manifest、受限事务、revision 与完整性复检全部通过才 ready；任一步失败保留原库和备份并保持 health-only |
 | A166 | Shell guardian | nohup、background、double-fork、setsid、忽略 TERM 和 Main+sidecar 强杀向量均触发 guardian 有界清理；guardian 能力不可用时 Shell 不可用 |
-| A167 | Ready gate | business API/SSE 和调度在 ready 前不可达；启动恢复和必需安全自检完成后只发布一次 ready，局部 capability 降级被明确报告 |
+| A167 | Ready gate | business JSON-RPC method 和调度在 ready 前不可用；启动恢复和必需安全自检完成后初始化只成功一次，局部 capability 降级被明确报告 |
 | A168 | RunSnapshot 水位 | snapshot 与 through_event_id 来自同一读事务；原子安装后从水位续接无缺口，未知 schema 按规定 resnapshot 或兼容失败 |
 | A169 | Workspace 身份 | 同路径替换、同身份移动、卸载重挂、卷身份缺失和显式恢复分别按身份与路径边界处理；旧 Approval 不复活 |
 | A170 | 唯一 Runtime | 第二 UI 实例只激活已有窗口；第二 sidecar 无法取得状态目录 OS lock，不能删锁、按 PID 抢占或并行恢复 |
-| A171 | Allowed actions | 每种 Run status、pause reason、Workspace/Approval 状态返回稳定闭合动作；所有写 API 在事务内重算并正确处理幂等与竞态 |
+| A171 | Allowed actions | 每种 Run status、pause reason、Workspace/Approval 状态返回稳定闭合动作；所有持久化 RPC 在事务内重算并正确处理幂等与竞态 |
 | A172 | Reconciliation epoch | 失败/中断/空 ToolCall 不解除屏障；正常只读 Step 的至少一个 success 可按匹配 epoch 清除，合法空结果可计，旧 Step 不能清除新 episode |
 
-## 16. API、时间与存储故障
+## 16. 协议、时间与存储故障
 
 | 编号 | 验收项 | 标准 |
 |---|---|---|
-| A173 | Operation 幂等 | 同 operation ID/hash 重放原 status/body 且零重复状态/Event，不同 envelope 冲突；敏感拒绝不占 key，重放前重新鉴权，外部不确定操作不自动重发 |
+| A173 | Operation 幂等 | 同 operation ID/hash 重放原 result/error 且零重复状态/Event，不同 envelope 冲突；敏感拒绝不占 key，重放前重新校验授权事实，外部不确定操作不自动重发 |
 | A174 | DTO 与分页 | request/response/error/IPC 递归闭合并由同源 validator 验证；cursor 绑定规范化 scope/filter/order，keyset+high-water 排除新增项且不使用 offset |
 | A175 | Event contract | envelope/per-type payload 固定向量通过；重复、跳号、未知可忽略 type、已知未知 version、敏感替代和 resnapshot 防循环分别符合契约 |
 | A176 | 时间与时钟 | 所有业务时间为 UTC Unix ms safe integer、duration 为 monotonic ms；同 boot 以 continuous deadline 延续，boot/timebase 不可证明或回拨时失效 timed approved Shell，重启不重置 TTL |
 | A177 | Storage fail closed | state full/quota/I/O/corruption 与 Workspace 各提交阶段正确分类；reserve 仅在空间耗尽释放，恢复先 WAL/integrity/FK/intent 对账，零自动清理和副作用重放 |
+
+## 17. Workbench 导航与模型配置
+
+| 编号 | 验收项 | 标准 |
+|---|---|---|
+| A178 | 紧凑任务状态 | 每个任务只占一行且无“已完成”等第二行文字；未读完成/进行中/失败分别显示小绿点/小转圈/小红点，进入完成任务后绿点消失，新的 Run 开始后可产生下一次未读完成标识 |
+| A179 | 配置入口 | 对话区不再显示模型配置横幅；左下角齿轮与当前模型摘要可打开配置页，第一版只包含模型列表和 API Key |
+| A180 | 模型选择 | 新任务开始前可选择 `deepseek-v4-flash` 或 `deepseek-v4-pro`；默认使用 Runtime 返回的第一个可用模型，开始后本次任务的模型不可切换，空列表时禁止开始 |
+| A181 | 标题与任务操作 | Session 顶部以较小字号显示标题和紧邻标题的紧凑三点菜单；内容区标题、三点菜单与左侧任务标题右键均提供重命名/删除；删除需确认、活动任务需先结束且 Workspace 文件保持不变；预览阶段、绝对路径和通用安全说明不出现在内容区 |
+| A182 | 项目导航 | 项目使用展开/折叠文件夹图标并可折叠任务列表；按首次 Session 创建时间倒序，向已有项目新增任务不改变项目顺序；项目右侧加号直接在该 Workspace 创建 Session |
+| A183 | Session 排版与 Markdown | 标题、正文、代码、caption 分别使用 16px/24px、14px/22px、13px/20px、12px token；模型正文的标题、列表、强调、引用、GFM 表格和代码生成语义化 DOM，原始 HTML 不执行，图片不发起远程加载，链接不直接导航；用户消息仍按纯文本展示 |
+| A184 | 导航与执行过程 | 项目/任务标题为常规字重；折叠项目和重复点击当前任务不发起 SessionSnapshot 读取，切换任务时导航不整体淡出且目标快照到达后原子替换；有工具的一轮执行期间显示展开的“正在处理”计时过程，完成后折叠为“已处理”，Shell 可展开查看命令、输出和状态且成功 Run 无完成卡；无工具的一轮按完整安全行流式展示最终 Markdown，最新语义块淡入且模型请求完成前可见首批内容；Feed 在底部时自动跟随，用户上滚后不抢占浏览位置并出现可访问的回到底部按钮，再次滚到底后恢复跟随 |
+| A185 | 动态 Registry | 增加内存 Adapter 无需修改 RuntimeEngine 名称分支；八个内置工具协议与审批回归不变，非法外部 entry 被单独隔离 |
+| A186 | 能力快照 | 全局启停和 MCP list_changed 不改变已创建 Run/Step/Attempt；重启后可复算相同工具顺序、序列化和 hash |
+| A187 | Plugin import | 合法 Plugin 跨重启保留；未知字段、路径穿越、symlink、超限、中断和同版本内容冲突均零半安装、零覆盖、零代码执行 |
+| A188 | Skill 只读边界 | Skill-only Plugin 可列出、显式加载和读取资源；用户复制的 owner 一致 `0755/0644` Skill 可加载，系统 Skill 仍要求精确 `0700/0600`；恶意路径、symlink、非 UTF-8、特殊文件、超限内容和包内脚本不能越界或执行 |
+| A189 | MCP 生命周期 | fixture 覆盖 stdio initialize/list/call/list_changed/shutdown、分页、isError、非法 schema、stdout 污染、超时、取消和崩溃 |
+| A190 | MCP 审批与沙箱 | 取消 Server consent 零进程/零凭证；每次 ToolCall 单独审批；原生 macOS 证明 connector/workspace_read 文件与网络矩阵互斥且 fail closed |
+| A191 | 外部不确定性 | 已发送的 MCP 调用在 timeout、断连、取消或提交失败时只有一个不确定 ToolResult、零自动重放并进入用户核验状态 |
+| A192 | Tool Search 预算 | 100+ 工具不会全量进入模型；稳定搜索命中在下一 Step 激活，schema/Skill/ToolResult 使用真实 UTF-8 byte 预算且不裁安全指令 |
+| A193 | 第三期纵向闭环 | 导入含 Skill 与 MCP fixture 的 Plugin，经搜索、审批、调用、模型续接和重启读取后，provenance、snapshot、ToolCall、ToolResult 与 Event 可互相追溯 |

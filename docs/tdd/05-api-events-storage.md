@@ -1,106 +1,94 @@
-# API、事件与存储
+# 协议、事件与存储
 
-版本：v0.4
+版本：v0.4（探索草案）
 
-范围说明：本文描述完整目标态 HTTP/SSE/API/存储契约。第一期改用 [MVP Lite](../mvp-lite.md) 定义的 stdio JSON-RPC 双向协议和四类最小业务表。
+范围说明：本文描述目标态 stdio JSON-RPC、Event 和 SQLite 契约。本地控制面跨阶段固定使用标准 JSON-RPC 2.0 over JSONL；不存在 HTTP API、本地 SSE、监听端口或 Bearer Token。Runtime 到远端模型的 HTTP/SSE 由 [模型、上下文与流式输出](04-model-context-streaming.md) 定义，不属于本地控制协议。
 
-## 1. API 边界
+MVP Lite 当前实施状态：
 
-Sidecar 只监听 `127.0.0.1` 随机端口，除 health 外全部要求：
+- ✅ Runtime 初始化并打开 SQLite，数据目录/数据库分别校验 `0700/0600`、owner、普通文件类型和 symlink 边界；MVP Lite Desktop 由 Electron single-instance lock 阻止第二个 sidecar，目标态的状态目录 OS lock 仍按后文延期。
+- ✅ `session/create` 使用参数化 SQL 持久化 canonical Workspace identity；`session/list` 使用 opaque cursor；`session/read` 返回有界 Run/Item 页面。
+- ✅ Run、Item、ToolCall 四类最小业务事实、单活动 Run 约束、模型步数、ToolCall 关联、Item 完成与启动 `interrupted` 收敛已实现。
+- ✅ TypeScript Main Client 已通过真实子进程、通知路由、Fake Model 两轮工具循环和跨 Runtime 重启持久化测试；测试使用隔离数据根，不触碰真实 `~/.eidos`。
+- ✅ JSON-RPC 业务错误保留闭合 code，经 Main/Preload 后映射为安全 Renderer 提示，不透传 Python、Provider 或 OS 原始错误。
+- ✅ 第二期已实现 revision 2 前向迁移/备份/完整性复检、状态目录 OS lock、health-only、Event 表与闭合 payload registry、snapshot 水位、operation 幂等、keyset high-water 分页和崩溃对账。
+- ✅ revision 3 为 Session 增加 nullable `title`；首个 `run/start` 在创建 Run 的同一事务中仅设置一次标题并提交 `session.title_updated`，后续 Run 不覆盖。
+- ⏳ 第二期清单外的完整 Workspace/Model Profile/Artifact 表与通用 Outbox 投递仍未实现。
 
-```text
-Authorization: Bearer {runtime_token}
-```
+## 1. 本地控制协议
 
-Runtime token 只存在于 Electron Main 和 sidecar 内存，不写磁盘、stdout、Renderer、Event 或日志。
+- stdin/stdout 使用 UTF-8 JSONL；每行恰好一个完整 JSON-RPC 2.0 object。
+- Main 发起的 request id 以 `client-` 开头，Runtime 发起的 request id 以 `server-` 开头；notification 不含 id。
+- 单条消息最大 1 MiB。大正文使用有界分页、Item chunk 或日志 chunk，不扩大 framing 上限。
+- stdout 只承载协议。日志、banner、traceback 和诊断文本只可写 stderr，且必须先安全化。
+- Main 是唯一客户端；父子进程私有 pipe、Electron single-instance lock 和 Runtime 状态目录锁共同限定身份，不再叠加本地网络认证。
+- 未完成 `initialize` 时只接受 `initialize`、`runtime/status`、`runtime/recheck` 和 `runtime/shutdown`。
+- envelope、params、result、error 和 notification payload 都使用递归闭合 schema；未知 method 返回 `-32601`，非法参数返回 `-32602`。
+- Runtime 只有一个 stdout writer。Response 和 Runtime 主动 request 不可丢；可从 SQLite 重放的 notifications 使用有界队列，压力下允许 Main 通过 event id 缺口和 `run/readEvents` 补齐，不能反向阻塞模型流或 Shell pipe reader。
 
-`GET /internal/health` 的安全响应是闭合 object，包含 `runtime_build_id,phase,stage,reason_code,api_contract_version,event_contract_version,capabilities`；ToolResult capability 为 `available|degraded|unavailable`，active quarantine 只含 `scope,tool_contract_version,tool_name,reason_code,detected_build_id`。storage/clock/migration 原因同样只用闭合 code，不返回 projector exception、result bytes、SQL、路径内容或原始错误。Tool scope 为 degraded，global scope 为 unavailable。该 endpoint 只报告状态，不提供清除 quarantine、释放 reserve 或恢复写操作。
+Wire 字段统一使用 `lowerCamelCase`，状态和错误枚举继续使用稳定 `snake_case` 字符串；Python 内部属性和 SQLite 列使用 `snake_case`。标记为 JSON 的示例是精确 wire 形状，SQL/表模型章节使用存储命名，不允许消费者把数据库列名直接当协议字段。
 
-## 2. API 清单
+`runtime/status` 返回闭合的 `runtimeBuildId,mode,phase,stage,reasonCode,protocolVersion,eventContractVersion,capabilities`。ToolResult quarantine 只暴露 `scope,toolContractVersion,toolName,reasonCode,detectedBuildId`；不得返回异常正文、SQL、路径内容、凭证或 stack。该 method 只报告诊断，不清除 quarantine、不释放 reserve、不恢复业务写入。
 
-```text
-GET    /internal/health
+## 2. JSON-RPC 方法与通知
 
-POST   /api/v1/workspaces
-GET    /api/v1/workspaces
-GET    /api/v1/workspaces/{workspace_id}
-GET    /api/v1/workspaces/{workspace_id}/files
-GET    /api/v1/workspaces/{workspace_id}/files/content
+| 方向 | Method | 作用 |
+|---|---|---|
+| Main → Runtime | `initialize` | 协议、Runtime 版本、contract 和 capability 握手 |
+| Main → Runtime | `runtime/status` / `runtime/recheck` / `runtime/shutdown` | 诊断、用户触发重新检查、有界关闭 |
+| Main → Runtime | `workspace/create` / `workspace/list` / `workspace/read` | Workspace 身份和可用状态 |
+| Main → Runtime | `workspace/listFiles` / `workspace/readFile` | 面向用户的有界文件树与预览；不等同于 Agent Tool |
+| Main → Runtime | `session/create` / `session/list` / `session/read` / `session/setModel` / `session/rename` / `session/delete` | Session 生命周期、标题和删除 |
+| Main → Runtime | `run/start` / `run/read` / `run/readSnapshot` / `run/readEvents` | 创建 Run、读取当前事实与 Event 页面 |
+| Main → Runtime | `run/cancel` / `run/continue` | 取消或提交用户补充信息 |
+| Main → Runtime | `approval/read` | 读取当前 pending Approval 的权威有界详情 |
+| Main → Runtime | `toolCall/read` / `toolCall/readLogs` / `toolCall/readChanges` | ToolCall 事实、日志和 Workspace 变化 |
+| Main → Runtime | `artifact/list` / `artifact/read` / `artifact/readContent` | 读取已发布 Artifact；不创建 Artifact |
+| Main → Runtime | `model/list` / `model/status` / `model/configure` | 当前 DeepSeek 模型目录、配置摘要与 API Key 写入 |
+| Main → Runtime | `modelProfile/create|list|read|update|test|archive|restore` | Model Profile 生命周期 |
+| Main → Runtime | `toolchain/list|enable|disable` | Toolchain Profile 生命周期 |
+| Runtime → Main | `item/requestApproval` | 双向 RPC 审批；Main response 只能 approve/reject，不修改参数 |
+| Runtime → Main | `event/committed` notification | 投影一个已提交的 Event envelope；Main 按 eventId 去重和续接 |
 
-POST   /api/v1/sessions
-GET    /api/v1/sessions
-GET    /api/v1/sessions/{session_id}
-PATCH  /api/v1/sessions/{session_id}/model
-GET    /api/v1/sessions/{session_id}/runs
+`publish_artifact` 是 Agent Tool，不是 Renderer 创建 Artifact 的 method。MVP Lite v1 的 `run/*`、`item/*` 生命周期 notifications 仍由 [MVP Lite](../mvp-lite.md) 定义；目标态 `event/committed` 必须通过显式 protocol version 迁移，不能在同一版本同时发送两套等价事件，也不能用另一套 HTTP 命名重建相同能力。
 
-POST   /api/v1/sessions/{session_id}/runs
-GET    /api/v1/runs/{run_id}
-GET    /api/v1/runs/{run_id}/snapshot
-GET    /api/v1/runs/{run_id}/steps
-GET    /api/v1/runs/{run_id}/events
-POST   /api/v1/runs/{run_id}/cancel
-POST   /api/v1/runs/{run_id}/user-input
+Session list/read DTO 增加可选 `title` 与必填 `taskStatus=new|in_progress|completed|failed|canceled`。Renderer 只按 canonical `workspaceRoot` 分组，不从标题或目录 basename 推断 Workspace 身份；每组以最早保留 Session 的 `createdAt` 作为项目创建时间倒序排列，组内 Session 按 `createdAt` 倒序。Runtime 按 Session 全部 Run 投影 `taskStatus`：存在任一 `queued|running|waiting_approval|waiting_user_input|finalizing` Run 时为 `in_progress`；否则按最新 Run 将 `succeeded` 映射为 `completed`，`failed|stopped|interrupted` 映射为 `failed`，`canceled` 映射为 `canceled`；无 Run 为 `new`。完成是否已读是 Renderer 展示状态，不改变 Runtime `taskStatus`；Renderer 记录已查看的完成 Session，新的活动 Run 会清除该展示记录。
 
-POST   /api/v1/approvals/{approval_id}/approve
-POST   /api/v1/approvals/{approval_id}/reject
-GET    /api/v1/approvals/{approval_id}
+首次 `run/start` 在敏感扫描和 operation replay 检查后，使用同一请求选定并固化的 `modelId`，以 `allow_tools=false` 生成标题；模型输出按普通不可信输入处理，折叠为单行、移除包裹引号并限制为 60 字符/120 UTF-8 字节。生成、扫描或传输失败时回退到同样有界的首次 `userInput`，不得阻断 Run。
 
-GET    /api/v1/tool-calls/{tool_call_id}
-GET    /api/v1/tool-calls/{tool_call_id}/logs
-GET    /api/v1/tool-calls/{tool_call_id}/workspace-changes
-
-GET    /api/v1/artifacts
-GET    /api/v1/artifacts/{artifact_id}
-GET    /api/v1/artifacts/{artifact_id}/content
-
-POST   /api/v1/model-profiles
-GET    /api/v1/model-profiles
-GET    /api/v1/model-profiles/{profile_id}
-PATCH  /api/v1/model-profiles/{profile_id}
-POST   /api/v1/model-profiles/{profile_id}/test-connection
-POST   /api/v1/model-profiles/{profile_id}/archive
-POST   /api/v1/model-profiles/{profile_id}/restore
-
-GET    /api/v1/toolchain-profiles
-POST   /api/v1/toolchain-profiles/{profile_id}/enable
-POST   /api/v1/toolchain-profiles/{profile_id}/disable
-```
-
-`publish_artifact` 是 Agent Tool，不是 Renderer 创建 Artifact 的 API。Renderer 只读取已发布快照。
+`session/rename` 请求为 `{sessionId,title,operationId}`。Runtime 对标题执行与自动标题相同的单行、控制字符和 `60 chars/120 UTF-8 bytes` 边界校验，空标题返回 `invalid_session_title`；成功后手动标题成为权威值，后续 Run 不得自动覆盖。`session/delete` 请求为 `{sessionId,operationId}`；存在非终态 Run 时返回 `session_has_active_run`，否则在单事务中删除该 Session 的 Eidos 任务事实与关联运行历史并返回 `{deletedSessionId}`。该方法不得读取、修改或删除 Workspace 文件；operation replay 继续返回第一次已提交结果。
 
 ### 2.1 闭合 DTO 与分页
 
-`/api/v1` 的 request、success response 和每个 API error code 的 `details` 都使用递归闭合 schema；Pydantic 固定 `extra=forbid`，每个 endpoint 在 JSON 解析前强制自己的 body byte cap。禁止返回 ORM row、自由 map、未声明字段或因数据库新增列而扩大响应。
-
-OpenAPI 是 HTTP DTO 的唯一来源，生成 Python validator、TypeScript type 与 runtime validator。Preload 只暴露命名方法；方法名可使用 TypeScript 风格，但 payload 保持相同字段语义。Main 必须验证 sidecar success/error 后才投影给 Renderer；未知字段、类型或 enum 固定 `runtime_contract_mismatch`，不得把原响应透传。
+JSON-RPC params、result、business error data 和 notification payload 使用 Pydantic strict、`extra="forbid"` 的递归闭合模型。禁止返回 SQLite row、自由 map、未声明字段或因数据库新增列而扩大响应。Pydantic schema 与版本化 JSON fixture 是协议事实来源；TypeScript contract 必须由它生成或用同一 fixture 机械验证，不能维护另一套自由手写 schema。第二期只有一个客户端，fixture 校验已经足够，不为代码生成器本身扩项。
 
 普通分页统一：
 
 ```text
 request: limit=50 (1..200), cursor?
-response: {items:[closed item DTO], next_cursor?}
+response: {items:[closed item DTO], nextCursor?}
 ```
 
-无下一页时省略 cursor，不返回 null。小而固定的 Toolchain/capability 集合可使用声明上限的非分页数组。cursor 是 Renderer 只能透传的版本化 base64url canonical object，内部绑定 `cursor_version,endpoint,normalized_scope_hash,normalized_filter_hash,order,collection_high_water,last_key`；不含用户正文或权限。任一字段、endpoint、scope、filter、order 或版本不匹配返回 `invalid_cursor`。服务端每页重新鉴权，cursor 不是授权。
+无下一页时省略 cursor，不返回 null。小而固定的 Toolchain/capability 集合可使用声明上限的非分页数组。cursor 是 Renderer 只能透传的版本化 base64url canonical object，内部绑定 `cursor_version,method,normalized_scope_hash,normalized_filter_hash,order,collection_high_water,last_key`；不含用户正文或权限。任一字段、method、scope、filter、order 或版本不匹配返回 `invalid_cursor`。Runtime 每页重新校验当前 scope，cursor 不是授权。
 
-所有可分页资源集合使用不可复用的内部单调 `creation_seq`；首请求冻结 `collection_high_water=MAX(creation_seq)`，后续查询固定 `creation_seq<=high_water` 并以 `creation_seq DESC` keyset 翻页。水位限定成员集合，last key 只负责翻页；公共 DTO 不必暴露 sequence。Run Step/Event/Shell log/Workspace change 分别复用 `global_step_index/event_id/chunk_index/change_index` 的单调 high-water 和 ASC keyset。禁止 offset、`created_at` 或 UUID 排序来声称稳定成员集合。Q146 snapshot/SSE 继续使用专用 `through_event_id`。
+所有可分页资源集合使用不可复用的内部单调 `creation_seq`；首请求冻结 `collection_high_water=MAX(creation_seq)`，后续查询固定 `creation_seq<=high_water` 并以 `creation_seq DESC` keyset 翻页。水位限定成员集合，last key 只负责翻页；公共 DTO 不必暴露 sequence。Run Step/Event/Shell log/Workspace change 分别复用 `global_step_index/event_id/chunk_index/change_index` 的单调 high-water 和 ASC keyset。禁止 offset、`created_at` 或 UUID 排序来声称稳定成员集合。RunSnapshot/Event wire 续接字段为 `throughEventId`。
 
-详情正文不塞入 list item：Approval Diff 因固定 512 KiB/5,000 行上限整份返回；Artifact content、Shell log 与完整 Workspace changes 使用各自有界详情/流接口。更新/删除仍不宣称跨页数据库 snapshot；cursor 失效后客户端从第一页重取。
+详情正文不塞入 list item：Approval Diff 因固定 512 KiB/5,000 行上限整份返回；Artifact content、Shell log 与完整 Workspace changes 使用各自有界读取 method。更新/删除仍不宣称跨页数据库 snapshot；cursor 失效后客户端从第一页重取。
 
 ## 3. 请求规则
 
 ### 3.0 持久化 operation 幂等
 
-所有 Renderer 发起且修改 sidecar 持久状态的 POST/PATCH 必须携带 `Idempotency-Key: {canonical UUID}`；Preload 对应参数名为 `operationId`。Create Run 原 body `idempotency_key` 即迁移为此统一 key，不再同时保留第二个字段。GET/SSE、系统文件夹选择和 `openInSystemTerminal` 不进入该表，Main 不得自动把一次用户手势重试成外部动作。
+所有 Renderer 发起且修改 Runtime 持久状态的 JSON-RPC params 必须携带 `operationId: canonical UUID`。JSON-RPC `id` 只关联一次传输请求，不承担幂等语义。只读 method、Runtime notification、系统文件夹选择和 `openInSystemTerminal` 不进入 operation 表，Main 不得自动把一次用户手势重试成外部动作。
 
 在 schema、鉴权、权限和敏感扫描通过后，服务端构造版本化 canonical operation envelope：
 
 ```text
-operation_contract_version, operation_kind, HTTP method, route template,
-normalized workspace/resource scope, canonical validated body
+operation_contract_version, operation_kind, JSON-RPC method,
+normalized workspace/resource scope, canonical validated params
 ```
 
-hash 排除 operation ID 本身，但包含静态 default 后的全部语义输入。全局同 operation ID + 同 envelope hash 返回首次已提交的原 HTTP status 和闭合安全 body，零重复状态/Event；同 ID + 不同 hash 返回 `idempotency_key_reused`。每次重放仍重新鉴权，不允许 cached response 跨权限泄露。`decision_nonce`、`expected_*_version`、user-gesture nonce 和 Run 状态复检保留原语义，operation ID 不替代它们。
+hash 排除 operation ID 本身，但包含静态 default 后的全部语义输入。全局同 operation ID + 同 envelope hash 返回首次已提交的原闭合 result 或 business error，零重复状态/Event；同 ID + 不同 hash 返回 `operation_id_reused`。每次重放仍重新校验 Workspace、gesture、nonce 和当前权限事实，不允许 cached response 跨状态泄露。`decisionNonce`、`expected*Version`、user-gesture nonce 和 Run 状态复检保留原语义，operation ID 不替代它们。
 
 纯 SQLite 写把 operation completed record、领域状态、Event 与安全 response snapshot 放在同一事务。验证/鉴权/敏感拒绝不占 key、不保存 payload/hash，保持 Q57。operation record 不保存请求正文，只保存 contract/kind/scope/request hash、闭合响应和资源引用；MVP 不自动清理，计入存储统计。
 
@@ -110,14 +98,14 @@ Test Connection 等包含外部网络的 operation 先持久化 in-progress inte
 
 ```json
 {
-  "user_input": "..."
+  "userInput": "..."
 }
 ```
 
-- 服务端在写入 Message、占用 idempotency key 或创建 Run 前扫描 `user_input`。
-- `deny`/`redact` 命中时返回 `sensitive_user_input_rejected`，零落库且不占用 key；用户清理后可用原 key 重试。
+- Runtime 在写入 Message、占用 operation ID 或创建 Run 前扫描 `userInput`。
+- `deny`/`redact` 命中时返回 `sensitive_user_input_rejected`，零落库且不占用 operation ID；用户清理后可用原 ID 重试。
 - 同一 Create Run operation 按 3.0 返回同一 Run。
-- 创建前复检 Session 的 Model Profile 在当前配置下最新 capability snapshot 为 `passed`；否则返回 `model_profile_not_verified`，不占用 idempotency key、不创建 Message/Run/Segment。
+- 创建前复检 Session 的 Model Profile 在当前配置下最新 capability snapshot 为 `passed`；否则返回 `model_profile_not_verified`，不占用 operation ID、不创建 Message/Run/Segment。
 - Run 创建时固化 Model Profile 与 capability snapshot，创建第一个 Segment，并进入 queued。
 
 ### 3.2 Approval
@@ -126,15 +114,17 @@ Approve/Reject 请求不接受工具参数编辑：
 
 ```json
 {
-  "decision_nonce": "approval-card-instance-id",
-  "user_feedback": "optional"
+  "decisionNonce": "approval-card-instance-id",
+  "userFeedback": "optional"
 }
 ```
 
-- `decision_nonce` 防止 UI 重复提交旧卡片。
-- 非空 `user_feedback` 必须为 1..4,096 UTF-8 bytes，并在审批状态变更前扫描；超限、命中或扫描失败时整个 approve/reject 请求拒绝，Approval 保持 pending，用户可移除 feedback 后重试。Reject 成功时该原文只进入 `approval_rejected` 的闭合 ToolResult data，不进入 summary。
-- 服务端校验 Approval pending、Run waiting_approval、ToolCall 参数 hash 未变化。
+- `decisionNonce` 防止 UI 重复提交旧卡片。
+- 非空 `userFeedback` 必须为 1..4,096 UTF-8 bytes，并在审批状态变更前扫描；超限、命中或扫描失败时整个 approve/reject 响应拒绝，Approval 保持 pending，用户可移除 feedback 后重试。Reject 成功时该原文只进入 `approval_rejected` 的闭合 ToolResult data，不进入 summary。
+- Runtime 校验 Approval pending、Run waiting_approval、ToolCall 参数 hash 未变化。
 - approve 仅更新状态并排队，执行器稍后复检文件和沙箱条件。
+
+Runtime 必须先提交 Approval 事实与 Event，再发出 `item/requestApproval`。Main 的用户操作最终表现为该 JSON-RPC request 的 response；response 只能包含 approve/reject 和可选 feedback。Main 或 Runtime 重启后，Runtime 为仍 pending 的 Approval 使用新的传输 request id 重新发出请求，但保持相同 `approvalId+decisionNonce`；旧 request 的迟到 response 无效，且不能复活已决定或失效的 Approval。
 
 ### 3.3 User Input
 
@@ -142,58 +132,58 @@ Approve/Reject 请求不接受工具参数编辑：
 
 ### 3.3.1 RunSnapshot、Approval detail 与 allowed actions
 
-`GET /api/v1/runs/{run_id}/snapshot` 在同一 SQLite read transaction 中读取规范化当前状态，并返回闭合 `RunSnapshot v1` 与该事务可见的本 Run `through_event_id=MAX(events.id)`；无 Event 时为 `0`。准确 schema 为：
+`run/readSnapshot` 在同一 SQLite read transaction 中读取规范化当前状态，并返回闭合 `RunSnapshot v1` 与该事务可见的本 Run `throughEventId=MAX(events.id)`；无 Event 时为 `0`。准确 schema 为：
 
 ```text
 {
-  schema_version = 1,
-  through_event_id: nonnegative integer,
+  schemaVersion = 1,
+  throughEventId: nonnegative integer,
   run: {
-    run_id, session_id, workspace_id?, model_profile_id,
+    runId, sessionId, workspaceId?, modelProfileId, modelId,
     status = created|queued|running|waiting_approval|waiting_user_input|
              finalizing|succeeded|failed|stopped|canceled,
-    pause_reason?, stop_reason?, error_code?,
-    reconciliation_required: boolean,
-    reconciliation_epoch: nonnegative integer
+    pauseReason?, stopReason?, errorCode?,
+    reconciliationRequired: boolean,
+    reconciliationEpoch: nonnegative integer
   },
-  active_segment?: {
-    segment_id, segment_index: positive integer,
-    steps_used: nonnegative integer, max_steps: positive integer,
-    effective_elapsed_ms: nonnegative integer,
-    max_effective_ms: positive integer
+  activeSegment?: {
+    segmentId, segmentIndex: positive integer,
+    stepsUsed: nonnegative integer, maxSteps: positive integer,
+    effectiveElapsedMs: nonnegative integer,
+    maxEffectiveMs: positive integer
   },
-  current_step?: {
-    step_id, global_step_index: positive integer,
-    segment_step_index: positive integer
+  currentStep?: {
+    stepId, globalStepIndex: positive integer,
+    segmentStepIndex: positive integer
   },
-  active_tool_call?: { tool_call_id, tool_name },
-  run_budget: {
-    steps_used: nonnegative integer, max_steps: positive integer,
-    effective_elapsed_ms: nonnegative integer,
-    max_effective_ms: positive integer
+  activeToolCall?: { toolCallId, toolName },
+  runBudget: {
+    stepsUsed: nonnegative integer, maxSteps: positive integer,
+    effectiveElapsedMs: nonnegative integer,
+    maxEffectiveMs: positive integer
   },
-  allowed_actions: [closed action enum],
-  pending_approval?: ApprovalSummaryV1
+  allowedActions: [closed action enum],
+  pendingApproval?: ApprovalSummaryV1
 }
 ```
 
-所有 object 递归 `additionalProperties=false`，所有 id 为 canonical UUID，所有 string 有对应 enum/长度上限；不使用 null，不适用的 optional 字段省略。`workspace_id` 仅 Public Mode 省略。active fields 只在对应规范化当前行存在且一致时出现；任何悬空/多 active 行都是 snapshot invariant error。`pause_reason|stop_reason|error_code` 必须来自各自闭合 registry，不携带动态 message。Snapshot 不内嵌 Timeline body、完整 Diff、日志或 manifest；详情使用有界专用 API。
+所有 object 递归 `additionalProperties=false`，所有 id 为 canonical UUID，所有 string 有对应 enum/长度上限；不使用 null，不适用的 optional 字段省略。`workspaceId` 仅 Public Mode 省略。active fields 只在对应规范化当前行存在且一致时出现；任何悬空/多 active 行都是 snapshot invariant error。`pauseReason|stopReason|errorCode` 必须来自各自闭合 registry，不携带动态 message。Snapshot 不内嵌 Timeline body、完整 Diff、日志或 manifest；详情使用有界专用 method。
 
 `ApprovalSummaryV1` 固定为：
 
 ```text
-approval_id, tool_call_id, status=pending, decision_nonce, tool_name,
-created_at, risk_level, requested_permissions, safe_target_summary,
-diff_sha256?, diff_size_bytes?, diff_line_count?, detail_ref
+approvalId, toolCallId, status=pending, decisionNonce, toolName,
+createdAt, riskLevel, requestedPermissions, safeTargetSummary,
+diffSha256?, diffSizeBytes?, diffLineCount?, detailRef
 ```
 
-其中 `status` 只能是 pending，`risk_level=low|medium|high`；`requested_permissions` 是按枚举序稳定排序、无重复的 `workspace_write|shell_execution|external_network|local_network` 数组；`safe_target_summary` 是已扫描单行 UTF-8、最大 1,024 bytes；`detail_ref` 必须精确指向当前 approval id 的同 Origin 相对 API resource，不能是任意 URL。三个 diff 字段对文件 Approval 同时存在、其他 Approval 同时省略。`created_at` 使用 Q154 的 ApiTimestampV1 UTC Unix 毫秒整数，禁止端点替换为 ISO 字符串。
+其中 `status` 只能是 pending，`riskLevel=low|medium|high`；`requestedPermissions` 是按枚举序稳定排序、无重复的 `workspace_write|shell_execution|external_network|local_network` 数组；`safeTargetSummary` 是已扫描单行 UTF-8、最大 1,024 bytes；`detailRef` 是只能传给 `approval/read` 的 opaque id，不能是 URL 或任意 method。三个 diff 字段对文件 Approval 同时存在、其他 Approval 同时省略。`createdAt` 使用 Q154 的 ApiTimestampV1 UTC Unix 毫秒整数，禁止替换为 ISO 字符串。
 
-`GET /api/v1/approvals/{approval_id}` 是完整命令/Diff、effective arguments、preconditions、读取证据、环境和限制的权威来源；文件 Diff 因已有 512 KiB/5,000 行上限而整份返回。若其他详情采用分页，Renderer 必须取得全部页并验证内容 hash 后才启用 Approve。详情只有在相同 `approval_id+decision_nonce` 仍 pending 时才能安装；Approval 不设置 pending expiry，Shell 的五分钟 expiry 仍从 approve 成功开始。
+`approval/read` 是完整命令/Diff、effective arguments、preconditions、读取证据、环境和限制的权威来源；文件 Diff 因已有 512 KiB/5,000 行上限而整份返回。若其他详情采用分页，Renderer 必须取得全部页并验证内容 hash 后才启用 Approve。详情只有在相同 `approvalId+decisionNonce` 仍 pending 时才能安装；Approval 不设置 pending expiry，Shell 的五分钟 expiry 仍从 approve 成功开始。
 
-Renderer 原子替换 snapshot 后，只从 `through_event_id` 之后订阅 SSE；状态变更与 Event 同事务提交保证无缺口。未知 Event schema version 停止增量并重新取 snapshot；未知 Snapshot schema version 显示兼容错误，不得循环重试。Run 不存在返回 `run_not_found`，snapshot invariant 失败返回安全错误而非部分 snapshot。终态 Run 返回 200、active/pending 字段省略且 `allowed_actions=[]`，无需建立 SSE。
+Renderer 原子替换 snapshot 后，Main 只应用 `eventId > throughEventId` 的 Runtime notifications；若启动或重连期间有缺口，Main 调用 `run/readEvents` 从该水位补齐。状态变更与 Event 同事务提交保证无缺口。未知 Event schema version 停止增量并重新取 snapshot；未知 Snapshot schema version 显示兼容错误，不得循环重试。Run 不存在返回 `run_not_found`，snapshot invariant 失败返回安全错误而非部分 snapshot。终态 Run 的 active/pending 字段省略且 `allowedActions=[]`，无需保留实时订阅。
 
-`allowed_actions` v1 只允许按字典序排列的 `approve_pending_approval|cancel_run|reject_pending_approval|submit_user_input`：
+`allowedActions` v1 只允许按字典序排列的 `approve_pending_approval|cancel_run|reject_pending_approval|submit_user_input`：
 
 - queued/running：`cancel_run`。
 - waiting_approval 且当前唯一 Approval 仍 pending、nonce/Run 匹配：approve、cancel、reject。
@@ -205,52 +195,71 @@ Snapshot action 只是 affordance。Cancel/User Input/Approve/Reject 都必须�
 
 ### 3.4 Model Profile 生命周期
 
-Create 请求包含 `name, base_url, model, wire_api=responses|chat_completions, auth_mode, api_key, parameters_json, context_window_tokens, max_output_tokens`。`bearer|api_key_header` 要求非空 API Key，`none` 禁止提交 API Key。创建只保存配置，返回 `profile_version, config_revision, has_api_key, archived=false, selectable=false, final_endpoint_preview`，绝不返回密钥。
+`modelProfile/create` 请求包含 `name, baseUrl, model, wireApi=responses|chat_completions, authMode, apiKey, parameters, contextWindowTokens, maxOutputTokens`。`bearer|api_key_header` 要求非空 API Key，`none` 禁止提交 API Key。创建只保存配置，返回 `profileVersion, configRevision, hasApiKey, archived=false, selectable=false, finalEndpointPreview`，绝不返回密钥。
 
-PATCH 使用 `expected_profile_version` 做条件更新：
+`modelProfile/update` 使用 `expectedProfileVersion` 做条件更新：
 
-- `name` 是唯一不改变 `config_revision/configuration_hash` 的字段。
-- `base_url/model/wire_api/auth_mode/parameters/context/max_output` 或 API Key replacement 属于能力相关变更；事务内递增 `config_revision`，更新 hash 并使当前 snapshot `valid=false`。
-- API Key 字段使用 `api_key_action=keep|replace|clear`，从不以占位符回传。`clear` 只允许目标认证模式为 `none`；Archive 不清除密钥。
-- 任意编辑都递增 `profile_version`；版本冲突返回 `model_profile_version_conflict`，零部分更新。
+- `name` 是唯一不改变内部 `config_revision/configuration_hash` 的字段。
+- `baseUrl/model/wireApi/authMode/parameters/contextWindowTokens/maxOutputTokens` 或 API Key replacement 属于能力相关变更；事务内递增 `config_revision`，更新 hash 并使当前 snapshot `valid=false`。
+- API Key 字段使用 `apiKeyAction=keep|replace|clear`，从不以占位符回传。`clear` 只允许目标认证模式为 `none`；Archive 不清除密钥。
+- 任意编辑都递增内部 `profile_version`；版本冲突返回 `model_profile_version_conflict`，零部分更新。
 
-Archive/restore 同样要求 `expected_profile_version`。Archive 设置 `archived_at` 并使 `selectable=false`，不删除 Profile、凭证、snapshot 或引用；restore 清除 `archived_at`，但只有当前 snapshot 仍有效时才恢复 selectable。API 不提供 DELETE endpoint。
+Archive/restore 同样要求 `expectedProfileVersion`。Archive 设置内部 `archived_at` 并使 `selectable=false`，不删除 Profile、凭证、snapshot 或引用；restore 清除 `archived_at`，但只有当前 snapshot 仍有效时才恢复 selectable。协议不提供物理删除 Model Profile 的 method。
 
 ### 3.5 Model Profile 能力探测
 
 - 创建 Profile 只校验并保存配置，不隐式发起 Test Connection；响应标记 `selectable=false`。
-- `POST /api/v1/model-profiles/{profile_id}/test-connection` 由用户显式触发，使用固定 probe 输入，不接受 task、message、workspace、artifact 或自定义 prompt 字段。
+- `modelProfile/test` 由用户显式触发，使用固定 probe 输入，不接受 task、message、workspace、artifact 或自定义 prompt 字段。
 - 探测不创建 Session/Run/Step/ToolCall/Event；probe ToolCall 永不进入工具注册表或执行器。
-- 每次完成都原子创建一个新的 capability snapshot；响应只返回版本、必需能力（含工具控制、Tool Schema Dialect 接受和 ToolCall/ToolResult 关联）、stateless continuation、可选 `websocket_transport`、固化 output token parameter、时间和安全错误码，不返回 API Key、Provider 原始响应或 probe 正文。
+- 每次完成都原子创建一个新的 capability snapshot；响应只返回版本、HTTP/SSE、工具控制、Tool Schema Dialect、ToolCall/ToolResult 关联、stateless continuation、固化 output token parameter、时间和安全错误码，不返回 API Key、Provider 原始响应或 probe 正文。
 - Archived Profile 不可探测。只有非 Archived Profile 在当前配置、Gateway contract 和 model request contract 下最新 snapshot `probe_status=passed, valid=true` 时，Profile 列表才返回 `selectable=true`。
 
 ### 3.6 Session Model 切换
 
 - Session 切换 Profile 只影响后续创建的 Run，现有 Run 继续使用自身快照。
-- 创建 Session 或切换 Profile 时，服务端要求目标 Profile `selectable=true`；否则返回 `model_profile_not_verified`，原 Session 配置不变。
-- Model Profile API 的任何响应都不返回 API Key 明文。
+- 创建 Session 或切换 Profile 时，Runtime 要求目标 Profile `selectable=true`；否则返回 `model_profile_not_verified`，原 Session 配置不变。
+- Model Profile method 的任何 result 都不返回 API Key 明文。
 
-### 3.7 Toolchain Profile
+### 3.7 当前阶段 DeepSeek 模型目录
+
+当前 DeepSeek-only 阶段使用闭合 `model/list` result：
+
+```text
+models: [{ id, provider=deepseek, displayName, configured, selectable }]
+defaultModelId?: string
+```
+
+- Runtime 返回稳定有序列表，当前顺序为 `deepseek-v4-flash`、`deepseek-v4-pro`；`defaultModelId` 取第一个 `selectable=true` 的模型，因此当前正常配置下默认是 `deepseek-v4-flash`。Renderer 不维护第二份硬编码默认值。
+- `model/status` 返回 Provider、`configured`、默认模型摘要和 `hasApiKey`，不返回 API Key；`model/configure` 继续只接受 API Key，并使同一 DeepSeek Provider 下模型的 `configured/selectable` 状态同时刷新。
+- 首次 `run/start` 接受可选 `modelId`；省略时使用 `defaultModelId`，不存在可用默认项时返回 `model_not_configured` 且零 Run/Message 写入。传入未知或不可用模型返回 `model_not_available`。
+- Run 创建事务固化 `modelId` 与当时配置快照。后续 Segment、恢复和重试不接受模型替换；选择另一个模型必须创建新任务。
+- 目标态 Model Profile 落地后可由 `modelProfile/list` 生成相同的 Renderer 模型选项，但不得改变上述任务前选择和 Run 固化语义。
+
+### 3.8 Toolchain Profile
 
 - 列表只返回固定系统根和发现到的 `/opt/homebrew|/usr/local`，MVP 不接受 Renderer 提交任意路径。
 - enable/disable 要求受信用户手势 nonce，事务内递增 `profile_version` 和全局 `shell_environment_version`。
 - 变更后使所有引用旧 environment version 的 pending/approved Shell Approval invalidated，不影响已启动进程。
 
-## 4. 错误模型
+## 4. JSON-RPC business error
 
 ```json
 {
+  "jsonrpc": "2.0",
+  "id": "client-42",
   "error": {
-    "code": "file_version_conflict",
-    "message": "Target changed after approval",
-    "retryable": false,
-    "details": {},
-    "request_id": "..."
+    "code": -32000,
+    "message": "Request failed",
+    "data": {
+      "code": "file_version_conflict",
+      "retryable": false,
+      "details": {}
+    }
   }
 }
 ```
 
-该 envelope 只服务 Renderer/HTTP 客户端，不进入模型上下文；它与 canonical ToolResult Error 独立。`details` 必须按 API code 使用闭合、有界、安全 schema，禁止动态 map；UI 只按 code 本地化和决定动作。ToolResult error 不复用这里的 `message|retryable|details|request_id`，只使用 outcome/code/固定 summary/code 专属 data。Provider/OS 原始错误正文、stack 与 errno 即使仅用于内部诊断，也必须先安全映射或经过扫描、限长和访问隔离。
+该 envelope 只服务 Main/Renderer，不进入模型上下文；它与 canonical ToolResult Error 独立。`error.message` 是稳定安全文案，`error.data.details` 必须按 business code 使用闭合、有界、安全 schema。UI 只按 `error.data.code` 本地化和决定动作。ToolResult error 不复用这里的 message/retryable/details，只使用 outcome/code/固定 summary/code 专属 data。Provider/OS 原始错误正文、stack 与 errno即使仅用于内部诊断，也必须先安全映射或经过扫描、限长和访问隔离。
 
 核心错误码：
 
@@ -262,7 +271,7 @@ runtime_already_active
 run_not_found
 runtime_contract_mismatch
 invalid_cursor
-idempotency_key_reused
+operation_id_reused
 operation_in_progress
 operation_interrupted
 invalid_tool_batch
@@ -304,6 +313,8 @@ sensitive_user_input_rejected
 sensitive_tool_input
 sensitive_structured_payload_rejected
 redaction_ruleset_downgrade
+invalid_session_title
+session_has_active_run
 sandbox_unavailable
 network_host_denied
 local_network_denied
@@ -322,6 +333,8 @@ context_budget_exceeded
 context_input_too_large
 model_credential_unavailable
 model_auth_failed
+model_not_configured
+model_not_available
 model_not_found
 model_invalid_request
 model_profile_not_verified
@@ -365,41 +378,48 @@ shell_exit_nonzero
 artifact_source_changed
 ```
 
-## 5. SSE 契约
+## 5. Event 通知与续接
 
-```text
-GET /api/v1/runs/{run_id}/events?after_event_id=1024
+实时 Event 通过 Runtime notification 投影：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "event/committed",
+  "params": {
+    "eventId": 1025,
+    "runId": "...",
+    "eventType": "tool_call_completed",
+    "schemaVersion": 1,
+    "createdAt": 1780000000000,
+    "payload": {"toolCallId": "...", "toolName": "read_file"}
+  }
+}
 ```
 
-SSE：
-
-```text
-id: 1025
-event: tool_call_created
-data: {"event_id":1025,"run_id":"...","event_type":"tool_call_created","schema_version":1,"created_at":1780000000000,"payload":{"tool_call_id":"...","tool_name":"read_file"}}
-```
-
-- `id` 是 events 自增主键，单调递增。
-- 支持 query `after_event_id` 和标准 `Last-Event-ID`，两者冲突时返回 400。
-- 只推送已提交事务中的 Event。
-- 重连可能重复传输最后一个 Event；Renderer 按 event id 去重。
-- 业务状态不因 SSE 消费或重放而改变。
+- `eventId` 来自 events 自增主键，单调递增；只通知已提交事务中的 Event。
+- Main 校验 notification 后按 event id 去重；业务状态不因通知消费或重放而改变。
+- Main 发现跳号、重载或 sidecar 重启后，调用 `run/readEvents {runId,afterEventId,limit}` 补齐。
+- `run/readEvents` 只返回 `eventId > afterEventId` 的有界 Event 页面和 `nextCursor?`；不建立第二条流。
+- notification 丢失不丢 Event，Event backlog 只保存在 SQLite；慢 Renderer 不阻塞 Runtime、模型流或 Shell 输出捕获。
 
 ## 6. Event 类型
 
-Event API envelope v1 固定为闭合 object：
+Event envelope v1 固定为闭合 object：
 
 ```text
-event_id, run_id, event_type, schema_version, created_at, payload
+eventId, runId, eventType, schemaVersion, createdAt, payload
 ```
 
-`event_type` 是最大 128 bytes 的受限 snake_case；`schema_version` 表示 `(event_type,schema_version)` 对应的递归闭合 payload 版本；`created_at` 是 ApiTimestampV1。SSE `id/event` 必须与 data 的 `event_id/event_type` 相同。Event schema 不原地改变字段或语义；任何变化发布新 payload version。写入、REST、SSE、Main 和 Reducer 使用同源 registry/validator。
+`eventType` 是最大 128 bytes 的受限 snake_case enum；`schemaVersion` 表示 `(eventType,schemaVersion)` 对应的递归闭合 payload 版本；`createdAt` 是 ApiTimestampV1。所有实时 envelope 都通过 `event/committed` 承载，具体 payload 由版本化 Event registry 校验。Event schema 不原地改变字段或语义；任何变化发布新 payload version。写入、JSON-RPC、Main 和 Reducer 使用同源 registry/validator。
 
-Event 只承载 Timeline/增量；RunSnapshot、规范化业务表和详情 API 永远是当前事实。Approval、allowed actions、Run/ToolCall 终态或安全 gate 不得只存在于 Event。Reducer 按 event id 升序处理；id 为全局序列，同一 Run 允许跳号。`id<=watermark` 的重复无条件忽略，不比较 wire payload：当前 ruleset 的读时脱敏/整体替代可以合法改变同一持久 Event 的响应字节。
+Event 只承载 Timeline/增量；RunSnapshot、规范化业务表和详情 method 永远是当前事实。Approval、allowed actions、Run/ToolCall 终态或安全 gate 不得只存在于 Event。Reducer 按 event id 升序处理；id 为全局序列，同一 Run 允许因其他 Run 的 Event 而跳号。`id<=watermark` 的重复无条件忽略，不比较 wire payload：当前 ruleset 的读时脱敏/整体替代可以合法改变同一持久 Event 的响应字节。
 
-`event_contract_version` 由 ready 握手实际比较。只有 contract 明确声明“同一兼容版本中新增 type 可忽略，且不参与旧 Reducer 正确重建规范化状态”时，未知 `event_type` 才可前向兼容：Main 丢弃未知原 payload，生成闭合 `{kind=unsupported_event,event_type}` 安全占位，Renderer 显示后推进水位。旧客户端必须理解的状态语义变化必须提升不兼容 event contract 并在业务 IPC/SSE 开放前阻断。
+RunSnapshot 不返回持久化的完整 ToolCall arguments。为支持历史执行摘要，Runtime 将 `argumentsJson` 重写为按工具固定的展示白名单：读取/文件变更只保留 `path` 与范围，搜索只保留 `query`，Shell 只保留 `command/cwd/timeoutSeconds`，`list_files` 返回空对象；`content`、`patch`、未知字段、Approval diff 和未知工具参数一律不进入快照。该 JSON 必须重新 canonical 编码并继续计入 snapshot byte budget；实时 completed notification 仍沿用自身的最小投影规则。
 
-已知 type 的未知 `schema_version` 或 payload 校验失败时，Reducer 停止且不推进 offending id，重新获取 RunSnapshot。若 snapshot `through_event_id` 已覆盖它，则原子安装并从新水位继续；若尚未覆盖，只允许有界重取，随后 `runtime_contract_mismatch`，禁止循环。读时敏感替换固定为闭合 `{kind=content_unavailable,reason=sensitive_structured_payload_rejected}`，保留原 envelope id/type/version，所有 Renderer 必须接受并推进，不尝试恢复原 payload。
+`eventContractVersion` 由 `initialize` 握手比较。只有 contract 明确声明“同一兼容版本中新增 type 可忽略，且不参与旧 Reducer 正确重建规范化状态”时，未知 `eventType` 才可前向兼容：Main 丢弃未知原 payload，生成闭合 `{kind=unsupported_event,eventType}` 安全占位，Renderer 显示后推进水位。旧客户端必须理解的状态语义变化必须提升不兼容 event contract，并在业务 IPC 开放前阻断。
+
+已知 type 的未知 `schemaVersion` 或 payload 校验失败时，Reducer 停止且不推进 offending id，重新获取 RunSnapshot。若 snapshot `throughEventId` 已覆盖它，则原子安装并从新水位继续；若尚未覆盖，只允许有界重取，随后 `runtime_contract_mismatch`，禁止循环。读时敏感替换固定为闭合 `{kind=content_unavailable,reason=sensitive_structured_payload_rejected}`，保留原 envelope id/type/version，所有 Renderer 必须接受并推进，不尝试恢复原 payload。
 
 ```text
 run_created
@@ -411,7 +431,6 @@ segment_paused
 step_started
 model_attempt_started
 model_transport_retrying
-model_transport_fallback
 model_output_chunk
 model_output_stopped
 model_stream_interrupted
@@ -459,11 +478,11 @@ run_canceled
 
 每个上述 type/version 都必须有独立闭合 payload schema。Event payload 在写入前脱敏；大正文保存在对应 message/tool log 表，Event 只包含有界摘要和引用 id。
 
-`model_output_chunk` 必须携带 `content_kind=assistant_progress|final_answer` 和 `incomplete`；raw reasoning 不生成 Event。流中断后追加 `model_stream_interrupted`；token 截断、内容过滤或 Runtime 流上限追加 `model_output_stopped`，payload 只含固定 reason、已提交字节数和 limit category。已提交 progress chunk 保持可回放。`model_transport_retrying|model_transport_fallback` 只包含 attempt index、transport、安全错误分类和有界 delay，不包含 endpoint path/query、Header 或 Provider 原始正文。网络 Event 只含域名级审计元数据。敏感相关 Event 只允许 ruleset version、rule id/version、action、命中数和安全字段路径/行号，不允许原值、长度、摘要或哈希。
+`model_output_chunk` payload 必须携带 `contentKind=assistant_progress|final_answer` 和 `incomplete`；raw reasoning 不生成 Event。流中断后追加 `model_stream_interrupted`；token 截断、内容过滤或 Runtime 流上限追加 `model_output_stopped`，payload 只含固定 reason、`committedBytes` 和 `limitCategory`。已提交 progress chunk 保持可回放。`model_transport_retrying` 只包含 `attemptIndex`、固定 `transport=http_sse`、安全错误分类和有界 delay，不包含 endpoint path/query、Header 或 Provider 原始正文。网络 Event 只含域名级审计元数据。敏感相关 Event 只允许 ruleset/rule version、rule id、action、命中数和安全字段路径/行号，不允许原值、长度、摘要或哈希。
 
-Shell `tool_call_output_chunk` 必须携带 `chunk_index, stream_index, stream, captured_at, redacted, truncated, tail_replay`。`chunk_index` 在单 ToolCall 内全局单调，`stream_index` 在 stdout/stderr 各自单调。回放只返回最终持久化 head/省略标记/tail，不恢复已丢弃中间正文。
+Shell `tool_call_output_chunk` payload 必须携带 `chunkIndex,streamIndex,stream,capturedAt,redacted,truncated,tailReplay`。`chunkIndex` 在单 ToolCall 内全局单调，`streamIndex` 在 stdout/stderr 各自单调。回放只返回最终持久化 head/省略标记/tail，不恢复已丢弃中间正文。
 
-`tool_call_skipped` 只对零字节变化的 write/apply 生成，payload 包含 `result_code=no_changes, path, base_sha256`，不得伪造 approval/intent id。Shell manifest Event 只携带计数、完整性、安全引用 id 和有界路径摘要。
+`tool_call_skipped` 只对零字节变化的 write/apply 生成，payload 包含 `resultCode=no_changes,path,baseSha256`，不得伪造 approval/intent id。Shell manifest Event 只携带计数、完整性、安全引用 id 和有界路径摘要。
 
 ## 7. 状态表与 Events 的关系
 
@@ -477,10 +496,10 @@ BEGIN IMMEDIATE
   update domain rows
   insert event rows
 COMMIT
-notify in-memory SSE publisher with committed max event id
+enqueue committed event id for JSON-RPC notification projection
 ```
 
-Event insert 失败时状态事务回滚。SSE publisher 崩溃不丢 Event，重启后从 SQLite 读取。
+Event insert 失败时状态事务回滚。内存 notification projector 崩溃不丢 Event，重启后从 SQLite 续接。
 
 文件系统与 SQLite 不能组成单一事务。副作用执行前先提交 `tool_call_intent_committed`；执行后再提交结果。恢复时依据 execution nonce 和后置条件对账，禁止自动重放。
 
@@ -514,11 +533,11 @@ PRAGMA busy_timeout = 5000;
 
 迁移/复检失败保留源库、backup 与 manifest，不自动覆盖或删除 backup，也不继续运行旧 schema。备份计入本地存储占用、空间预检和 UI 数据目录说明；MVP 不自动清理。
 
-`tool_result_numeric_limit_exceeded` 属于模型可见 ToolResult code registry，不属于本章 API Error registry；不得为了复用 HTTP 错误列表而改变其 envelope。
+`tool_result_numeric_limit_exceeded` 属于模型可见 ToolResult code registry，不属于 JSON-RPC business error registry；不得为了复用客户端错误列表而改变其 envelope。
 
 ### 8.2 时间契约
 
-`ApiTimestampV1` 是 `[0,9007199254740991]` 的 UTC Unix epoch milliseconds JSON/SQLite integer。所有 duration/budget/timeout 使用同范围非负 `*_ms`；UI 才把 timestamp 转为本地时区。文件 `mtime_ns|ctime_ns|birthtime_ns`、进程启动 identity 等是闭合内部 OS metadata，不属于 ApiTimestampV1，也不因名称相似直接进入 API/模型。
+`ApiTimestampV1` 是 `[0,9007199254740991]` 的 UTC Unix epoch milliseconds JSON/SQLite integer；名称为既有 contract 标识，不表示存在 HTTP API。所有 duration/budget/timeout 使用同范围非负 `*_ms`；UI 才把 timestamp 转为本地时区。文件 `mtime_ns|ctime_ns|birthtime_ns`、进程启动 identity 等是闭合内部 OS metadata，不属于 ApiTimestampV1，也不因名称相似直接进入协议/模型。
 
 Runtime 只通过可注入 TimeProvider 获取时间。DNS/TLS、首 delta、idle、model cycle、退避、Shell deadline、guardian 宽限和有效执行区间在同一进程中全部使用原生 monotonic clock；禁止用 wall time 相减计算持续时间。一次实际计费区间结束并持久化时，才把 monotonic elapsed 向上取整为毫秒；deadline 和区间内累计保持原生精度，不按轮询反复取整。
 
@@ -532,7 +551,7 @@ state DB 同一文件系统保存 mode `0600`、真实分配且 fsync 的 `emerg
 
 只有 `SQLITE_FULL`、底层 `ENOSPC` 或 `EDQUOT` 可审计地释放 reserve 一次；释放后只允许 SQLite rollback/WAL 收尾和最小诊断，Runtime 随即进入 `health-only/storage_unavailable`，不能继续业务。`SQLITE_IOERR_*`、EIO/fsync、只读、CORRUPT/NOTADB 等同样 health-only，但不得消耗 reserve。诊断写仍失败时只返回闭合内存 health，不声称已持久化。
 
-state persistence 不可靠后：scheduler 停止认领，业务写/SSE publisher 关闭，模型和只读任务取消，guardian 终止已启动 Shell。事前 durable intent 仍是恢复依据；结果/Event 事务未提交就不得用内存结果向 UI 宣称成功，也不得自动重试 DB 写、删除数据或重放副作用。
+state persistence 不可靠后：scheduler 停止认领，持久化业务 method 和 notification projector 关闭，模型和只读任务取消，guardian 终止已启动 Shell。事前 durable intent 仍是恢复依据；结果/Event 事务未提交就不得用内存结果向 UI 宣称成功，也不得自动重试 DB 写、删除数据或重放副作用。
 
 重启或用户显式“重新检查”先确认空间足以同时容纳 reserve 重建、当前 WAL/journal recovery 和固定余量，再重新创建/fsync reserve、打开 SQLite 完成 WAL recovery、integrity/foreign-key check、clock check 和 durable intent 对账；任一步失败继续 health-only，全部通过才可进入 Q145 ready。损坏时只展示安全原因、数据根和 Q143 backup 引用；MVP 不自动覆盖当前 DB。
 
@@ -548,15 +567,14 @@ Migration 开始前对源 DB/WAL、backup/manifest、迁移临时增长、固定
 |---|---|
 | agents | id, name；MVP seed 唯一 Eidos Agent |
 | security_metadata | singleton id, highest_ruleset_generation, last_ruleset_version, highest_observed_wall_time_ms, updated_at；用于防止规则回滚和检测墙钟回拨 |
-| runtime_settings | singleton id, api_contract_version, operation_contract_version, event_contract_version, shell_environment_version, gateway_contract_version, current_model_request_contract_version, current_tool_contract_version, updated_at |
-| api_operations | operation_id UUID PRIMARY KEY, operation_contract_version, operation_kind, method, route_template, normalized_scope_hash, request_hash, status=in_progress\|completed\|interrupted, response_status, response_body_json, resource_type, resource_id, created_at, finished_at；无 raw request，completed response 闭合且已扫描 |
+| runtime_settings | singleton id, protocol_contract_version, operation_contract_version, event_contract_version, shell_environment_version, gateway_contract_version, current_model_request_contract_version, current_tool_contract_version, updated_at |
+| operations | operation_id UUID PRIMARY KEY, operation_contract_version, operation_kind, method, normalized_scope_hash, request_hash, status=in_progress\|completed\|interrupted, response_kind=result\|error, response_json, resource_type, resource_id, created_at, finished_at；无 raw request，completed response 闭合且已扫描 |
 | tool_result_capability_quarantines | id, scope=tool|global, tool_contract_version nullable, tool_name nullable, detected_build_id, reason_code, active, detected_at, cleared_at nullable, cleared_build_id nullable；active tool scope 唯一 `(tool_contract_version,tool_name)`，global 同时最多一条 |
 | toolchain_profiles | id, fixed_kind, name, canonical_root, dev, inode, bin_dirs_json, enabled, profile_version, enabled_at, invalidated_at；canonical_root 仅允许预定义候选 |
 | model_profiles | creation_seq INTEGER PRIMARY KEY AUTOINCREMENT, id UUID UNIQUE, name unique, base_url, model, wire_api, auth_mode, api_key_ref UNIQUE nullable, credential_revision, parameters_json, context_window_tokens, max_output_tokens, profile_version, config_revision, configuration_hash, archived_at, created_at, updated_at；不保存 API Key |
-| model_profile_capability_snapshots | id, profile_id, snapshot_version, configuration_hash, gateway_contract_version, model_request_contract_version, tool_schema_dialect_version, probe_status, valid, authentication, model_exists, streaming, tool_control, tool_schema, tool_call, usage, stateless_continuation, websocket_transport, output_token_parameter, error_code, invalidation_reason, checked_at, invalidated_at；`UNIQUE(profile_id,snapshot_version)` |
-| model_transport_health | profile_id, configuration_hash, snapshot_version, ws_disabled, disabled_reason, disabled_at；`PRIMARY KEY(profile_id,configuration_hash,snapshot_version)`，无 TTL |
+| model_profile_capability_snapshots | id, profile_id, snapshot_version, configuration_hash, gateway_contract_version, model_request_contract_version, tool_schema_dialect_version, probe_status, valid, authentication, model_exists, http_sse_streaming, tool_control, tool_schema, tool_call, usage, stateless_continuation, output_token_parameter, error_code, invalidation_reason, checked_at, invalidated_at；`UNIQUE(profile_id,snapshot_version)` |
 | workspaces | creation_seq INTEGER PRIMARY KEY AUTOINCREMENT, id UUID UNIQUE, canonical_root_path, volume_uuid, root_inode, root_birthtime_ns, last_seen_dev, state_path, status=available\|unavailable, unavailable_reason, created_at, last_verified_at；available 行分别对 canonical path 与 `(volume_uuid,root_inode,root_birthtime_ns)` 建立部分唯一约束 |
-| sessions | creation_seq INTEGER PRIMARY KEY AUTOINCREMENT, id UUID UNIQUE, agent_id, model_profile_id, mode, workspace_id, active/state roots；mode/workspace CHECK；创建/切换时目标 Profile 必须非 Archived 且存在当前配置的 valid passed snapshot |
+| sessions | creation_seq INTEGER PRIMARY KEY AUTOINCREMENT, id UUID UNIQUE, agent_id, model_profile_id, mode, workspace_id, title nullable, active/state roots；title 首次 Run 原子写一次，手动改名后不得自动覆盖；taskStatus 由关联 Run 投影而非单独持久化；mode/workspace CHECK；创建/切换时目标 Profile 必须非 Archived 且存在当前配置的 valid passed snapshot |
 | messages | session_id, run_id nullable, role, content_kind, content, metadata, ruleset_version, created_at；禁止 raw reasoning kind |
 
 Profile 凭证保存在 `~/.eidos/config.toml` 的 profile-id 专属槽位中，包含 `api_key` 与单调 `credential_revision`。一个槽位只能被同 id Profile 引用，禁止共享引用。替换/清除使用 mode `0600` 的临时文件、fsync 和原子 replace；随后提交 DB 配置版本与 snapshot 失效事务。若进程在两者之间崩溃，启动时发现 config/DB credential revision 不一致即 fail closed：同步到较新的 revision、使 snapshot 失效，但不回滚或回显密钥。
@@ -580,12 +598,12 @@ max_total_steps=80, max_total_effective_seconds=7200
 consecutive_rejects, consecutive_protocol_errors, consecutive_sensitive_tool_inputs
 reconciliation_required, reconciliation_epoch, ruleset_version_snapshot
 pause_reason, stop_reason, error_code, error_message
-model_profile_id, model_capability_snapshot_id, model_config_snapshot
+model_profile_id, model_capability_snapshot_id, model_id, model_config_snapshot
 tool_contract_version
 started_at, finished_at, created_at, updated_at
 ```
 
-`model_config_snapshot` 必须内嵌创建 Run 时的非密钥 Profile 配置、wire API、auth mode、创建时 credential revision、`configuration_hash`、capability snapshot ID/version、Gateway/model request contract version、`tool_schema_dialect_version`、必需能力（含 tool control/schema）、stateless continuation、可选 WebSocket 和 output token parameter。`model_capability_snapshot_id` 只用于审计关联；运行时不得通过该外键读取更新后的能力替代内嵌快照。每次发送仍从 Profile 当前凭证槽读取密钥，并把实际 credential revision 写入 ModelAttempt，不修改该快照。`tool_contract_version` 是独立 Run 快照字段，不因同一 Profile 后续重测或工具升级而改变。
+`model_config_snapshot` 必须内嵌创建 Run 时的非密钥 Profile 配置、wire API、auth mode、创建时 credential revision、`configuration_hash`、capability snapshot ID/version、Gateway/model request contract version、`tool_schema_dialect_version`、HTTP/SSE、tool control/schema、stateless continuation 和 output token parameter。`model_capability_snapshot_id` 只用于审计关联；运行时不得通过该外键读取更新后的能力替代内嵌快照。每次发送仍从 Profile 当前凭证槽读取密钥，并把实际 credential revision 写入 ModelAttempt，不修改该快照。`tool_contract_version` 是独立 Run 快照字段，不因同一 Profile 后续重测或工具升级而改变。
 
 Profile 不允许硬删除；Session/Run/snapshot 外键均使用 `ON DELETE RESTRICT`。Gateway 或 model request contract version 升级时，启动事务把旧 version 的当前 passed snapshot 设置为 `valid=false, invalidation_reason=gateway_contract_changed|model_request_contract_changed`。Tool Schema Dialect 扩展属于 Gateway contract 变更并要求重测；只改变具体工具定义/默认值/结果 schema 时只递增 `tool_contract_version`，不失效 Profile snapshot。运行时 `model_capability_drift|model_context_limit_mismatch` 使 Run failed 的同一数据库事务也使对应 Profile 当前 snapshot `valid=false`，但不修改 Run 内嵌快照。启动时非终态 Run 引用 unsupported request/tool contract，或旧 tool contract 不再满足当前安全底线时，不创建 Step/Attempt、不执行工具，使 pending/approved Approval invalidated，并原子进入 `waiting_user_input/runtime_contract_unsupported`。
 
@@ -623,7 +641,7 @@ UNIQUE(segment_id, segment_step_index)
 ```text
 id, step_id, logical_model_request_id, attempt_index, status
 wire_api = responses|chat_completions
-transport = websocket|http_stream
+transport = http_sse
 credential_revision, request_max_output_tokens, output_token_parameter, retry_reason
 provider_request_id, first_delta_at
 canonical_model_payload_hash
@@ -633,7 +651,7 @@ error_code, error_message, started_at, finished_at
 UNIQUE(step_id, attempt_index)
 ```
 
-同一逻辑请求的每次真实网络发送各占一行；WebSocket 到 HTTP(S) 的重放不得复用 Attempt 行。Run usage 汇总只累加 `usage_status=reported` 的结构化值，并同时返回 `attempt_count` 与 `unknown_usage_attempt_count`，不得把 unknown 转成零。`logical_model_request_id` 是 Eidos 内部关联 ID，不作为厂商幂等承诺。
+同一逻辑请求的每次 HTTP/SSE 发送各占一行；首 delta 前重试不得复用 Attempt 行。Run usage 汇总只累加 `usage_status=reported` 的结构化值，并同时返回 `attempt_count` 与 `unknown_usage_attempt_count`，不得把 unknown 转成零。`logical_model_request_id` 是 Eidos 内部关联 ID，不作为厂商幂等承诺。
 
 ### 9.3 Tool 与审批
 
@@ -660,7 +678,7 @@ UNIQUE(step_id, provider_call_id)
 `approvals` 至少包含：
 
 ```text
-id, run_id, tool_call_id UNIQUE
+id, run_id, tool_call_id
 status, decision_nonce, requested_args_hash
 requested_permissions_json, diff_text
 diff_sha256, diff_size_bytes, diff_line_count
@@ -671,6 +689,7 @@ created_at, decided_at
 ```
 
 ToolCall 不反向保存 approval_id，避免双向可空外键；通过 approvals.tool_call_id 查询。
+同一 ToolCall 可按确定顺序拥有多个历史 Approval；`UNIQUE(item_id) WHERE status='pending'` 保证任一时刻最多一个待决审批。组合能力必须在前一审批 resolved 后才能创建下一审批。
 
 `arguments_json` 是应用静态默认值并通过完整本地校验后的唯一 effective arguments；不得另存 raw arguments。`defaulted_field_paths_json` 仅含稳定 JSON Pointer 数组且不重复参数值。`model_result_base_envelope_json` 保存唯一不可变的协议无关 base ToolResult，`model_result_base_hash` 覆盖 canonical JSON v1 bytes；内部执行详情仍在 `result_json/result_text`，不得绕过 base/projection 进入模型上下文。
 
@@ -760,9 +779,9 @@ logical_size_bytes, allocated_size_bytes, encoding, bom
 version, summary, status, created_at
 ```
 
-Artifact `id` 为不编码业务信息的 canonical UUID。`status=available|corrupted`。每次 content API 在当前敏感规则扫描前先复检 snapshot SHA-256；不一致时原子标记 corrupted 并返回零正文错误。`UNIQUE(session_id, source_path, version)`，同一 session/source_path 的 version 从 1 单调递增。
+Artifact `id` 为不编码业务信息的 canonical UUID。`status=available|corrupted`。每次 `artifact/readContent` 在当前敏感规则扫描前先复检 snapshot SHA-256；不一致时原子标记 corrupted 并返回零正文错误。`UNIQUE(session_id, source_path, version)`，同一 session/source_path 的 version 从 1 单调递增。
 
-`events`：`id INTEGER PRIMARY KEY AUTOINCREMENT, run_id, event_type, schema_version, payload_json, envelope_sha256, created_at`，索引 `(run_id,id)`。hash 覆盖持久化的 canonical Event envelope，只用于服务端读前完整性校验且不进入 API/Renderer；写入后 immutable。随后才按当前 ruleset 生成可能不同字节的 wire projection。
+`events`：`id INTEGER PRIMARY KEY AUTOINCREMENT, run_id, event_type, schema_version, payload_json, envelope_sha256, created_at`，索引 `(run_id,id)`。hash 覆盖持久化的 canonical Event envelope，只用于 Runtime 读前完整性校验且不进入 Renderer；写入后 immutable。随后才按当前 ruleset 生成可能不同字节的 wire projection。
 
 ## 10. 可观测性
 
@@ -787,7 +806,7 @@ event_id
 - Model Profile Test Connection 各能力结果、snapshot 失效原因、Archive/恢复、TLS/Redirect/保留参数拒绝和 context mismatch；指标不含 base_url query、API Key 或 Provider 原始错误正文。
 - ToolCall/Approval 耗时、timeout、cancel、interrupted 和冲突。
 - Seatbelt 自检失败、策略拒绝、代理 host 拒绝和 localhost 申请。
-- Event backlog、SSE reconnect 和 redaction 命中数。
+- Event backlog、notification gap/replay 和 redaction 命中数。
 - Redaction ruleset 自检状态、扫描字节/耗时、超限、失败、分级命中和敏感 ToolCall 暂停数。
 
 日志和指标都不得包含 API Key、原始敏感命中或未脱敏 payload。
@@ -800,6 +819,24 @@ event_id
 - 原始敏感命中不写数据库；只保存 ruleset/rule id、action、命中计数、安全位置和 placeholder。
 - 写入前的持久化扫描是独立最后屏障，不能因上游已扫描而跳过。
 - Run 快照保存创建时 `ruleset_version`；应用升级后的首次恢复事务先写入 `redaction_ruleset_changed` Event，再将 Run 入队。
-- Message、Event 回放、Tool log、Artifact 和其他历史正文的读 API 在响应前按当前规则再扫描。`deny` 返回无正文的结构化拒绝，`redact` 只影响当次响应；MVP 不就地改写追加式 Event 或不可变 Artifact。
-- Event 回放不得因读时扫描跳过 event id。字符串叶子命中时在当次响应内脱敏；结构 token 命中时保留原 `event_id,event_type,schema_version`，将 payload 整体替换为固定 `{kind=content_unavailable,reason=sensitive_structured_payload_rejected}`。
-- API/SSE payload 有硬上限；大内容通过分页/流式 detail API 获取，但分页不得绕过全文件扫描。
+- Message、Event 回放、Tool log、Artifact 和其他历史正文的读取 method 在响应前按当前规则再扫描。`deny` 返回无正文的结构化拒绝，`redact` 只影响当次响应；MVP 不就地改写追加式 Event 或不可变 Artifact。
+- Event 回放不得因读时扫描跳过 event id。字符串叶子命中时在当次响应内脱敏；结构 token 命中时保留 wire 的 `eventId,eventType,schemaVersion`，将 payload 整体替换为固定 `{kind=content_unavailable,reason=sensitive_structured_payload_rejected}`。
+- JSON-RPC payload 有 1 MiB 硬上限；大内容通过分页或有界 chunk method 获取，但分页不得绕过全文件扫描。
+
+## 12. 第三期闭合扩展合同与存储
+
+以下 DTO 均为 `schemaVersion=1`、strict/closed，未知字段拒绝：
+
+- `PluginManifestV1`: `id,name,version,description,skills,mcpServers`；skills 只含相对 root，mcpServers 只含结构化 executable/argv/envNames/profile/timeouts。
+- `PluginRecordV1`: manifest 安全投影、content hash、enabled、availability/status、installed/updated 时间；不返回受管目录真实路径。
+- `SkillMetadataV1`: qualified ID、name、description、system/user/Plugin source provenance、source/content hash、可选展示 metadata；当前 wire 字段沿用 `pluginId/pluginVersion/pluginHash` 承载闭合 source 投影。
+- `McpServerConfigV1`: server ID、executable、argv、env names、`connector|workspace_read`、startup/tool timeout、enabled/consented；env value 不序列化。
+- `ToolProvenanceV1`: kind、source ID/version/content hash 与可选 plugin/server/skill ID。
+- `RunExtensionSnapshotV1`: enabled Plugin ID/version/hash、Skill catalog hash、MCP config hash、extension contract version。
+- `StepToolSnapshotV1`: ordered available/direct/deferred/activated names、ToolSpec hashes、serialized definitions hash、tool set hash。
+
+SQLite forward migration 新增 Plugin catalog/state、Run extension snapshot、Step tool snapshot 和 ToolCall provenance。历史行只保存安全 metadata/hash；删除 Plugin 不级联删除 Session/Run/Item/ToolCall/ToolResult/Event。
+
+新增 RPC 为 `plugin/list|import|setEnabled|remove`、`skill/list|read`、`mcp/list|setEnabled`，以及既有 approval 通道中的 Server enable consent。所有 request/response 与 Event 使用闭合 schema、operation idempotency 和 snapshot/event waterline；敏感错误不得携带受管目录、env value、原始 stderr 或协议正文。
+
+系统 Skill 的发布源位于 Runtime 包内 `eidos_runtime/resources/skills/.system`。Runtime ready 前将其以 `0700` 目录、`0600` 文件原子部署到 `${EIDOS_DATA_DIR}/skills/.system`，Catalog 复检其 owner 与精确 mode；用户 Skill 位于 `${EIDOS_DATA_DIR}/skills/<name>`，完整树只要求归当前用户所有，不要求精确 mode。两者都拒绝 symlink 和特殊文件并计算完整受限文件树 hash，Run 创建后任一资源变化均使旧快照明确失效。

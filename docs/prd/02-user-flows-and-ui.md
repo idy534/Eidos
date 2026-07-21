@@ -1,8 +1,8 @@
 # 用户流程与界面
 
-版本：v0.4
+版本：v0.4（探索草案）
 
-范围说明：本文描述完整目标态用户体验。第一期只实现 [MVP Lite](../mvp-lite.md) 定义的 Workspace Mode、单活动 Run 和最小 Execution Feed。
+范围说明：本文描述目标态用户体验草案。第一期只实现 [MVP Lite](../mvp-lite.md) 定义的 Workspace Mode、单活动 Run 和最小 Execution Feed。
 
 ## 1. Workbench 信息架构
 
@@ -30,6 +30,16 @@ MVP 保留三栏工作台，但不内嵌 Terminal：
 
 Workspace 文件树是面向本机用户的视图，可显示受保护条目并标记不可预览；Agent 的 `list_files` 使用更严格的可见性投影，敏感文件名不进入模型上下文。
 
+左侧任务导航采用 `Workspace -> 任务` 两级结构：canonical Workspace 路径相同的 Session 必须归入同一个项目节点，节点标题显示目录 basename，完整路径只作为辅助信息；Session 作为该 Workspace 下的任务展示，不再为每个 Session 重复显示一条 Workspace。项目按首次 Session 创建时间倒序排列，向已有项目增加 Session 不改变项目顺序；项目行使用展开/折叠两种文件夹图标，可折叠任务列表，并在右侧提供加号以当前 Workspace 直接创建 Session。导航区“项目”、项目名称和任务标题均使用常规字重，不以加粗区分层级。任务行改为紧凑单行，不再在标题下方显示“已完成”等状态文字；标题右侧只显示 Runtime 返回的状态标识：未读完成为绿色实心点、进行中为转圈、失败为红色实心点，新任务、已取消任务和已读完成任务不显示彩色标识。点击进入完成任务即视为已读；新的 Run 开始后重新计算下一次完成的未读状态。
+
+展开或折叠项目只更新 Renderer 本地状态，不读取 SessionSnapshot。点击当前任务不得重新读取或替换当前快照；切换到其他任务时先即时更新左侧选中态，后台读取目标快照后原子替换内容区，期间保留当前内容且不得用全局 `disabled/opacity` 让整个导航闪烁。切换失败时回退到原选中态并展示安全错误。
+
+左下角固定显示齿轮配置入口与当前模型摘要，例如 `DeepSeek · deepseek-v4-flash 已配置`；原对话区顶部不再显示模型配置横幅。第一版配置页只提供模型列表与 API Key 配置，不提前加入未实施的通用设置；Toolchain 等设置在对应能力进入阶段清单后再增加。
+
+新 Session 在首次提交任务前显示“新任务”。首次 `userInput` 通过本次选定模型执行一次无工具标题生成，使用输入语言产出不超过 60 字符的单行标题；标题与首个 Run 原子持久化，后续补充和新 Run 不自动改名。模型命名失败或返回空/非法标题时，使用首次输入的有界安全短文本，不阻断原任务执行。用户手动改名后，自动命名不得再次覆盖。
+
+Session 内容区顶部只显示本次任务标题和紧邻标题的紧凑三点菜单，标题字号低于页面级标题。内容区标题右键、三点菜单和左侧任务标题右键使用同一组操作：重命名、删除任务；删除必须二次确认，只删除 Eidos 中的任务与运行历史，不修改 Workspace 文件。`Developer Preview · Phase 2`、`Eidos Workspace`、Workspace 绝对路径和通用审批/敏感扫描说明不再占用 Session 内容区；Workspace 路径保留在左侧项目辅助信息中，具体权限与风险在实际 Approval 卡片中说明。
+
 ## 2. Execution Feed
 
 Execution Feed 合并对话、执行流和 Timeline，至少展示：
@@ -55,8 +65,19 @@ Execution Feed 不保存或展示模型供应商的 raw reasoning：
 - reasoning token 数量可以作为用量元数据展示，但 reasoning 内容不进入消息、Timeline 或回放。
 - UI 不使用“思维链”“内部思考”等表述。
 
+用户发送任务后，若尚未收到模型文本或结构化执行项，Feed 显示带 reduced-motion 回退的“正在思考”动态文字，不显示独立 Run 卡片。只要该轮出现工具、文件读写、搜索、Shell 或其他结构化执行项，Feed 就把最终回答之前的 `assistant_progress` 与执行项合并为一个过程组：执行期间默认展开并显示“正在处理 {duration}”，Run 终态后默认折叠并显示“已处理 {duration}”，用户仍可展开回看；最终回答位于过程组之后并继续流式输出。若该轮没有任何结构化执行项，则不创建过程组，模型正文直接流式输出。成功终态不显示“Run 已完成”标签或展示框；暂停、失败、取消和副作用不确定仍保留必要的结构化状态提示。
+
+过程组中的工具行按类型显示读取、搜索、编辑和运行命令摘要，具体结果默认可折叠。Shell 行摘要显示“正在运行/已运行 {command}”；展开后以 Shell 结果卡显示完整 `$ command`、stdout/stderr（空结果显示“无输出”）以及成功或失败状态。Feed 只从 ToolResult canonical envelope 的白名单字段读取展示内容。
+
+Session 中的模型正文按 CommonMark Markdown 与 GFM 表格展示，至少支持标题、段落、强调、列表、引用、分隔线、表格、行内代码和代码块；用户消息保持纯文本，工具、审批和运行状态继续使用结构化组件。Markdown 原始 HTML 不执行，图片不自动加载，正文链接不在 Session 内直接导航，避免模型内容触发脚本、远程请求或窗口跳转。
+
+右侧 Session 使用统一排版 token：UI 字体为 macOS/Windows 中文系统字体栈，代码字体为系统等宽字体栈；正文 `14px/22px`、代码 `13px/20px`、标题 `16px/24px`、caption `12px`、辅助小字 `11px`。Session 标题、正文、Composer 和工具代码必须使用对应 token，不再混用页面级衬线标题或任意 rem 字号。
+
 ## 3. Model Profile 流程
 
+- 新任务首次提交前，Composer 操作栏在“开始”按钮左侧显示模型选择器。选项由 Runtime 有序返回，当前至少包含 `deepseek-v4-flash` 与 `deepseek-v4-pro`；默认选择第一个可用模型，当前返回顺序将 `deepseek-v4-flash` 放在首位。
+- 用户可在开始前切换并确认本次任务使用的模型；首个 Run 创建后模型锁定，后续 Segment、恢复和重试继续使用该 Run 的模型快照，不在执行中切换。
+- 模型列表为空或没有可用模型时禁用“开始”，并引导用户从左下角齿轮进入模型配置。
 - 创建 Profile 只保存 OpenAI-compatible 连接配置和显式 `responses|chat_completions` wire API，不会自动使其可用于 Session。
 - 用户必须显式执行 Test Connection；探测不携带用户任务、Session 消息、Workspace 内容或 Artifact 正文。
 - 探测必须验证认证、模型存在、streaming、ToolCall 和 usage 契约，并生成版本化 capability snapshot。ToolCall 探测使用一个固定无副作用工具完成受控调用与 ToolResult 续接，不执行真实工具。
@@ -73,15 +94,15 @@ Execution Feed 不保存或展示模型供应商的 raw reasoning：
 - HTTPS 始终校验证书、主机名和系统信任链，不提供忽略证书错误的继续入口。
 - Provider 扩展参数可以透传，但不能覆盖 Runtime 管理的模型、消息、工具、streaming、认证、传输或输出上限字段。
 - `context_window_tokens` 与 `max_output_tokens` 由用户显式填写，Eidos 不按模型名称自动推断；明确的上下文上限不匹配会使 Run 失败并要求修改 Profile 后重新测试。
-- HTTP(S) streaming 是必需能力；WebSocket 是可选优化。已确认不支持 WebSocket 的 Profile 仍可通过原 endpoint 的 HTTP(S) 使用，不会因此变为不可选。
+- HTTP 请求与 SSE streaming 是唯一模型传输。Test Connection 必须验证 SSE 终态、ToolCall/ToolResult 关联和 usage；不探测或协商 WebSocket。
 - Test Connection 分别展示 usage、ToolCall 分片关联、工具控制/Schema Dialect、无状态 ToolResult 续接和输出 token 字段结果；Chat 只在显式测试中协商兼容字段，Run 不临时试错。
 
 ## 4. Workspace 主流程
 
 ```text
 选择 Workspace
-  -> 创建 Session 并选择已通过能力测试的 Model Profile
-  -> 提交任务，Run 进入 FIFO 队列
+  -> 创建 Session，并从 Runtime 返回的可用模型列表选择本次模型
+  -> 首次提交任务，生成并固化任务标题，Run 进入 FIFO 队列
   -> 执行器获取 Run
   -> 模型通过只读工具收集上下文
   -> 模型单独提出一个写工具或 Shell
@@ -184,9 +205,9 @@ Shell 审批卡必须说明命令作用于执行时的当前 Workspace，并展�
 
 用户补充信息后，同一 Run 创建新 Execution Segment 并重新进入 FIFO 队列。
 
-“继续、取消、Approve、Reject”只按 Runtime 返回的当前 `allowed_actions` 渲染。它是界面提示而不是授权；提交时服务端仍以最新状态重新判断。不可恢复的 waiting 原因不显示继续入口，未知原因默认不允许继续。
+“继续、取消、Approve、Reject”只按 Runtime 返回的当前 `allowed_actions` 渲染。它是界面提示而不是授权；提交时 Runtime 仍以最新状态重新判断。不可恢复的 waiting 原因不显示继续入口，未知原因默认不允许继续。
 
-模型重连期间，Execution Feed 显示有界重试进度和 WebSocket 到 HTTP(S) streaming 的降级；首个 delta 后不显示“正在重连”，而是保留未完成进度并暂停。瞬时错误耗尽终止当前模型请求周期，不直接终止 Run。
+模型在首个 delta 前重试时，Execution Feed 显示有界重试进度；首个 delta 后不再重放请求，而是保留未完成进度并暂停。瞬时错误耗尽终止当前模型请求周期，不直接终止 Run。
 
 模型因输出 token 上限、内容过滤或 Eidos 输出资源上限而停止时，已确认安全的文本保留为未完成进度，任何 ToolCall 都不执行。UI 区分 `model_output_truncated|model_output_blocked|model_output_limit_exceeded`，并允许用户在新 Segment 中要求缩短或拆分输出。
 

@@ -1,8 +1,10 @@
 # 测试与里程碑
 
-版本：v0.4
+版本：v0.4（探索草案）
 
-范围说明：本文保留完整目标态测试设计与风险里程碑。第一期执行顺序和退出标准以 [MVP Lite](../mvp-lite.md) 的 L0-L3 为准。
+范围说明：本文保留目标态测试设计草案与风险里程碑。第一期执行顺序和退出标准以 [MVP Lite](../mvp-lite.md) 的 L0-L3 为准。
+
+第二期按 [第二期实施范围清单](../mvp-phase-2.md) 的 P2-00 至 P2-07 顺序推进。第三期按 [第三期实施范围清单](../mvp-phase-3.md) 的 P3-00 至 P3-08 顺序推进。每一个清单项必须至少新增一个能在隔离数据根运行的自动化验证；不得以手工演示替代状态机、存储或安全边界回归。
 
 ## 1. 测试原则
 
@@ -12,6 +14,13 @@
 - 测试目录、config 和数据库必须使用隔离临时根，不能触碰用户真实 `~/.eidos`。
 
 ## 2. Runtime 单元测试
+
+### 2.0 RuntimeEngine、状态机与 Pydantic 契约
+
+- `RuntimeEngine.run(run_id, cancel)` 覆盖模型最终回答、只读批次、副作用审批、取消和异常；每条职责只通过 `state_machine`、`model_runner`、`tool_dispatcher`、`approval`、`events` 或 `errors` 的对应 seam 验证，不依赖复制一个第二 Loop。
+- RuntimeState 的全部合法/非法迁移、持久 Run status 映射、重启不恢复内存执行态、条件更新竞态与 `allowed_actions` 固定向量。
+- JSON-RPC request/response、ApprovalDecision、Run、Item、ToolSpec、ToolResult 与 Event 的 Pydantic strict/`extra=forbid` 测试：未知字段、缺失字段、错误 enum、错误类型和超出容量的数据均安全拒绝。
+- Pydantic 序列化后的 JSON 与 TypeScript runtime validator 使用相同 fixture；不得把 Python 异常、SQLite Row、Path 或自由 map 泄漏到协议。
 
 ### 2.1 路径与敏感规则
 
@@ -109,16 +118,15 @@
 - Run 80 Steps/120 分钟 Finalization -> stopped。
 - Finalization 超时/失败生成降级摘要。
 - reconciliation_required 屏障拒绝副作用；每次新不确定性递增 epoch，Step 冻结 observed epoch，只有正常 completed 且至少一个只读 success 才 CAS 清除。部分成功、合法空结果、truncated/workspace_changed 可计，error/无工具/中断不计，旧 Step 不能清新 episode，未清除 final 保留审计。
-- allowed_actions 覆盖所有 status、闭合 pause reason、Workspace available/unavailable、Approval pending/decided/invalidated；写 API 事务重算，cancel canceled 幂等，其他终态和未知 pause fail closed。
+- allowed_actions 覆盖所有 status、闭合 pause reason、Workspace available/unavailable、Approval pending/decided/invalidated；持久化 RPC 在写事务内重算，cancel canceled 幂等，其他终态和未知 pause fail closed。
 - side_effects 映射覆盖只读/未启动/no-op/verified success=false、outcome_unknown/已启动 Shell=true；reconciliation=>true 但正常成功 Shell 证明反向不成立。
 - Shell 多故障按 interrupted、manifest、capture、limit、timeout、signal、nonzero、success 优先级唯一映射；`.git`/protected 只加屏障不改写 exit 0 success。
 - TimeProvider 固定向量覆盖 ApiTimestampV1/DurationMs safe integer、monotonic 区间单次 ceil、wall 不参与 elapsed、Shell continuous/wall 任一先到、同 boot 跨 sidecar/sleep 延续、boot/timebase mismatch 失效、部分/完整回拨与前跳。
 
 ### 2.6 重试与上下文
 
-- WebSocket supported 时 initial + 5 次首 delta 前重放后切换 HTTP(S)，HTTP(S) initial + 2 次重试后 waiting_user_input；多个 Attempt 只计一个 Step。
-- 426/Upgrade rejected/协议不支持立即降级且不消耗 WebSocket 重试；瞬时降级只对当前 Run 粘滞，明确不支持按 snapshot 跨 Run 抑制。
-- WebSocket unsupported/unknown 直接使用 HTTP(S)，Profile 仍可选；HTTP base_url 降级后仍是 HTTP，HTTPS base_url 仍校验证书。
+- HTTP/SSE initial + 2 次首 delta 前瞬时重试后进入 waiting_user_input；多个 Attempt 只计一个 Step。
+- 每次重试保持相同 canonical request、wire API、endpoint、认证模式和输出上限；HTTP 不升级、HTTPS 始终校验证书。
 - 首 delta 后透明重试和传输切换均被禁止。
 - 首 delta 后中断会保留 incomplete progress、丢弃部分 ToolCall，并进入 waiting_user_input。
 - 模型流中断的失败 Step 计入 Segment 和 Run Step 预算。
@@ -131,7 +139,7 @@
 - 普通/协议纠正使用 Profile output 上限，probe 使用 `min(profile.max_output_tokens,512)`；同一逻辑请求所有重放值一致。
 - Context Builder 先放不可裁剪内容，再按固定顺序添加/裁剪可选内容并复算完整 canonical payload。
 - Immutable base envelope/hash 在所有 Step 不变；每 Step projection 只裁声明字段、保留 core status、记录省略量并在首次 Attempt 前冻结。后续 Step 不得换等量前缀重新显露。
-- Projection 前按当前 ruleset 重扫只能减少或加强脱敏；同 Step WebSocket/HTTP(S) Attempt 的 projection hash、base hash 和 canonical payload hash 完全相同。
+- Projection 前按当前 ruleset 重扫只能减少或加强脱敏；同 Step 的 HTTP/SSE Attempts 使用完全相同的 projection hash、base hash 和 canonical payload hash。
 - list/search projection 只能保留 base array 的稳定前缀；read/range 先整体删除所有 segment content，再裁 evidence_ranges 尾部；对应 `context_omitted_*` 只在正数时出现，且精确控制 model_content_truncated。
 - Shell projection 对任意目标 B 都先保留 stderr、再保留 stdout，流内按 `CEIL(B/2)` head 和 `FLOOR(B/2)` tail 取合法 UTF-8/脱敏占位符边界；边界舍入不重新分配，`context_omitted_output_bytes` 必须等于 base 与 projection observation 字节差。
 - 不可字段级裁剪的 ToolResult 只能按历史项整体纳入或不纳入；协议关联要求纳入而预算仍不足时进入 context_input_too_large，不得临时新增省略字段或破坏闭合 schema。
@@ -140,7 +148,7 @@
 - tool contract 升级不失效 Profile snapshot；旧 Run 始终使用固化版本。旧实现缺失或低于当前安全底线时零模型/工具执行、pending/approved Approval invalidated，并进入 runtime_contract_unsupported。
 - available tool set 只依赖固化 contract、请求类型、mode、持久 gate 和单工具 health；任务文本、路径存在性、预算和常用度变化不改变集合。
 - Workspace/Public Mode 的九个工具都按各自 active root 可用；Public 底层文件树不可见不改变 Tool Registry，reconciliation 和单工具 health 仍能进一步隐藏工具。
-- 首次 Attempt 冻结稳定排序工具名及完整定义 hash；WebSocket/HTTP(S) 重放保持不变，下一普通/纠正 Step 重新计算。空集合发送 none 并省略 tools/parallel，非空发送 auto/parallel true。
+- 首次 Attempt 冻结稳定排序工具名及完整定义 hash；HTTP/SSE 重试保持不变，下一普通/纠正 Step 重新计算。空集合发送 none 并省略 tools/parallel，非空发送 auto/parallel true。
 - 未在冻结集合中的调用进入协议纠正；已暴露工具在请求后变 unavailable 时产生 `tool_unavailable` canonical observation、零副作用且不增加协议错误计数。
 - 可见文本动态 64 KiB..4 MiB、reasoning 2 MiB、单 Event 1 MiB 和总流 8 MiB 的等于/超一边界；超限零重试且已提交文本 incomplete。
 - Provider raw reasoning 内容不会进入 Message、Event、日志或后续上下文。
@@ -169,7 +177,7 @@
 - HTTPS 的有效系统信任链通过；过期、主机名错误、自签名未信任证书失败且没有 verify=false 分支；HTTP 仍可连接。
 - 扩展参数稳定透传；保留字段、NaN/Infinity、敏感值、32 KiB/深度/成员上限分别拒绝，并参与 configuration hash。
 - context/output 在 4,096..4,194,304 和 1..262,144 固定边界内且 output<context；Provider 元数据不覆盖用户值，明确 context-length exceeded 映射为 `model_context_limit_mismatch` 并失效。
-- 必需 HTTP(S) streaming 与可选 WebSocket 分开探测；supported/unsupported/unknown 都正确持久化，后两者不使 passed snapshot 失败。
+- Test Connection 必须验证 HTTP 请求、SSE 完整终态、ToolCall/ToolResult 关联和 usage；不发送 WebSocket probe。
 - Test Connection 的短 probe 使用最多 512 输出 token，独立参数校验验证 Profile 声明上限。
 - Responses/Chat 显式 wire_api 分别通过；修改 wire 递增 config version 并失效，不存在按 URL/模型/错误自动推断或跨协议 fallback。
 - Responses 固化 max_output_tokens；Chat 明确 unknown max_completion_tokens 后才探测 max_tokens。认证/网络/429/5xx/含糊 invalid request 不触发字段切换。
@@ -188,7 +196,7 @@
 - internal UUID 与 <=256-byte provider_call_id 分离；Responses function_call_output 和 Chat role=tool 使用原 provider ID 完成 stateless continuation。
 - ToolCall 16 calls、单/总 1/2 MiB、16,384 deltas、128-byte name、JSON 16 depth/2,048 members 的等于/超一及大量零/小分片属性测试。
 - truncated/blocked/stream-limit 时即使存在已完整解析的单个 call，也丢弃整个批次；已提交 content 只作为 incomplete progress。
-- 每个 Step 从本地记录重建语义等价上下文；Provider response ID 改变、WebSocket->HTTP(S)、重启和 API Key 轮换都不丢失 ToolResult 关联。
+- 每个 Step 从本地记录重建语义等价上下文；Provider response ID 改变、HTTP/SSE 重试、重启和 API Key 轮换都不丢失 ToolResult 关联。
 - Responses 与 Chat 都只编码同一 canonical ToolResult JSON；内部 UUID/自由文本不进入模型内容，Provider call ID 只做关联。只读批次按 batch_order 一调用一 envelope。
 - Responses 与 Chat 对同一 Step projection 的 JSON bytes/hash 完全相同；Adapter 只添加 wire 关联。Base/projection hash 不匹配时零 Provider 请求并触发 contract violation。
 - rejected、skipped/no_changes、unavailable、interrupted 在模型继续时进入后续上下文；终止 Run 不发 Provider 但仍保存真实内部终态。非法/敏感/非法组合因零 ToolCall row，也零 synthetic ToolResult。
@@ -197,13 +205,13 @@
 
 每次测试使用独立 active root、sandbox home/tmp 和外部 sentinel：
 
-- active root 创建、修改、删除成功。
-- sandbox home/tmp 可写。
-- 外部 sentinel 不可读写。
+- ✅ active root 创建、修改、删除成功。
+- ✅ sandbox home/tmp 创建、修改、删除成功。
+- ✅ 外部 sentinel 不可读写。
 - System Runtime 可读/可执行但不可写。
-- 子进程继承限制。
-- 敏感 carve-out 不可读。
-- `.git` 可读不可写。
+- ✅ 子进程继承限制。
+- ✅ 敏感 carve-out 不可读写。
+- ✅ `.git` 可读不可写。
 - 默认外网、localhost、bind 和 Unix Socket 失败。
 - 只允许连接 managed proxy port。
 - 精确批准 host/port 通过，通配符、未批准 host、私网解析和 redirect 新 host 失败。
@@ -232,7 +240,7 @@
 - Model Profile 创建 -> Test Connection -> Session 选择 -> Run 固化 snapshot；未测试/失败 Profile 在 Session 和 Run 两个入口均被拒绝。
 - Profile 编辑 -> snapshot 失效 -> 重新测试，以及 Archive/restore、Gateway contract 升级失效和 capability/context drift 终态事务。
 - 任意地址类别的 HTTP(S) Provider、同/跨 Origin Redirect、三种认证模式、TLS 系统信任链和扩展参数/保留字段端到端请求断言。
-- WebSocket 五次重放 -> HTTP(S) 两次重试、明确不支持立即降级、Run 级粘滞和 snapshot 级 ws_disabled 的端到端状态/Event/时钟断言。
+- HTTP/SSE 首 delta 前两次瞬时重试、首 delta 后零重放、request-cycle deadline 和 Attempt/Event/时钟断言。
 - Run 创建后轮换 API Key：下一 Attempt 使用新密钥和新 credential revision，但 endpoint/model/parameters/capability 仍取 Run 快照；凭证缺失时不回退旧密钥。
 - Responses 与 Chat 两条完整闭环：任务 -> 分片 ToolCall -> 本地执行 -> stateless ToolResult -> final；断言内部事件和业务状态一致。
 - Workspace 只读批次 -> 写审批 -> 版本复检 -> 成功。
@@ -247,13 +255,13 @@
 - Event 与状态同事务；模拟 Event insert 失败回滚状态。
 - 所有持久化 POST/PATCH 的 operation ID：同 envelope 并发/断线/重启只提交一次并重放原 response；跨 method/route/resource/body 复用冲突；重放重新鉴权；敏感/鉴权/validation 失败不占 key；nonce/version/gesture guard 仍生效。
 - Test Connection 在 intent 前、网络发送中、结果提交前崩溃的同 ID 分别返回可确定结果或 operation_interrupted，绝不自动重发；新用户点击使用新 ID。
-- closed OpenAPI DTO 的 Python/TypeScript/runtime validator contract tests；unknown/missing/null/enum/body cap 和 ORM 新列零泄漏。分页 cursor 覆盖 endpoint/scope/filter/order/version 篡改、每页重新鉴权、limit、creation_seq high-water、last key、并发新增/更新/删除和零 offset。
+- closed JSON-RPC DTO 的 Python/TypeScript/runtime validator 与 fixture contract tests；unknown/missing/null/enum/message cap 和 SQLite 新列零泄漏。分页 cursor 覆盖 method/scope/filter/order/version 篡改、每页重新校验、limit、creation_seq high-water、last key、并发新增/更新/删除和零 offset。
 - Event envelope/type payload 固定向量、全局 id 跳号/重复无条件忽略、同一持久 Event 在 ruleset 变化后 wire payload 可不同、服务端 immutable hash 校验、content_unavailable、兼容未知 type 安全占位、已知未知 version resnapshot、snapshot 未覆盖有界失败和不兼容 event contract ready 阻断。
 - health-only 启动顺序注入状态目录、lock、DB revision/迁移/完整性、契约 serializer、Redaction 和恢复故障；ready 前零业务 body parse/Event/idempotency/调度，ready 只发布一次且 scheduler 后释放。
-- 同一读事务 RunSnapshot/through_event_id，在 snapshot 前、事务中、安装后并发写 Event 均无缺口；terminal 不开 SSE，未知 Event resnapshot，未知 snapshot schema 停止兼容。
+- 同一读事务 RunSnapshot/through_event_id，在 snapshot 前、事务中、安装后并发写 Event 均无缺口；terminal 不应用实时 notification，未知 Event resnapshot，未知 snapshot schema 停止兼容。
 - 副作用 intent 已提交但结果未提交时，重启只对账不重放。
 - file/artifact 根据 hash 补记结果；Shell 标记 interrupted/side_effects_may_exist。
-- SSE after_event_id 回放和去重。
+- `run/readEvents` afterEventId 续接、notification 去重和缺口补齐。
 - Create Run/user-input 敏感命中时零 Message/Run/Segment 变更，Create Run 不占用 idempotency key。
 - approve/reject feedback 敏感命中时 Approval 保持 pending，决策与 feedback 都零落库。
 - read/range 在请求区间外命中 `deny` 时也零正文；search 跳过整个敏感文件但继续其他文件。
@@ -261,7 +269,7 @@
 - 写/Patch/Shell 参数和 Artifact 源文件敏感命中时零审批、零执行、零静默改写。
 - 升级后恢复 waiting/queued Run 先记录 ruleset 变更，再使用新规则入队。
 - 新规则对旧 Message/Event/Tool log/Artifact 的读时 deny/redact 生效，但不改写原始历史记录。
-- Event 读时脱敏/整体安全替换仍保留 id/type，SSE reducer 可连续推进且无原 payload 泄露。
+- Event 读时脱敏/整体安全替换仍保留 id/type，notification reducer 可连续推进且无原 payload 泄露。
 - 以更低 ruleset generation 启动时内容通路 fail closed；携带相同或更高 generation 的回滚构建可正常启动。
 - 大仓库 list/search 的稳定顺序、有界内存/时间、分类跳过和无失效游标依赖。
 - read evidence 在多 Step/Segment 可用、Context 正文裁剪不改变证据，但绝不跨 Run 或文件新版本。
@@ -274,13 +282,13 @@
 
 ## 5. Desktop 集成测试
 
-- Electron 第二实例只激活已有窗口；Main token、listening/health-only、唯一 ready、sidecar port 和认证代理。
+- Electron 第二实例只激活已有窗口；私有 stdio、initialize/diagnostic/ready gate、状态目录锁和唯一 sidecar。
 - 两个 sidecar 竞争同一 `runtime.lock` 只有一个进入 DB；陈旧锁文件不阻塞，真实 OS lock 不可通过删文件/PID/nonce 抢占。lock fd 的 `O_CLOEXEC/FD_CLOEXEC` 和所有 child fd table 断言 guardian/Shell 不继承；Main crash 后新实例有界等待旧 sidecar退出，再完整恢复。
 - Renderer 获取不到 token/port。
 - 未列入白名单 IPC 无法调用。
 - Markdown/XSS、导航和本地 URL 被阻止。
-- SSE -> IPC -> Feed reducer。
-- RunSnapshot 原子安装 -> SSE 水位续接 -> Feed reducer；Approval summary/detail nonce 竞态禁用旧 Approve。
+- JSON-RPC notification -> validated IPC -> Feed reducer。
+- RunSnapshot 原子安装 -> Event 水位续接 -> Feed reducer；Approval summary/detail nonce 竞态禁用旧 Approve。
 - 文件夹选择、持久 volume/inode/birthtime 身份、Workspace unavailable/显式恢复和旧审批不复活。
 - 打开系统 Terminal 仅允许用户手势和 workspace_id。
 - 不加载 node-pty，不存在内嵌 Terminal。
@@ -293,23 +301,50 @@
 - Toolchain Settings 只列固定候选，用户手势 enable/disable、root 替换自动禁用和无任意路径输入。
 - Model Profile 的未测试/测试中/通过/失败状态、逐能力安全结果、未验证禁用选择，以及 capability drift 后重新测试并创建新 Run 的引导。
 - Profile 编辑的失效提示、API Key 保持/替换/清除、Archive/恢复无删除、HTTP 明文警告、TLS 无绕过、固定认证模式和用户声明 token limits。
-- WebSocket 可选状态、重连计数、一次性 HTTP(S) 降级提示、reported/unknown usage 汇总和 context_input_too_large 预算错误卡。
+- HTTP/SSE 重试计数、首 delta 后中断提示、reported/unknown usage 汇总和 context_input_too_large 预算错误卡。
 - wire API 选择、最终 endpoint preview、output token parameter 探测结果、stateless/第三方留存提示、三类 output stopped 与 runtime contract unsupported 卡片。
+- 左侧任务项无第二行状态文字；`taskStatus` 的未读完成/进行中/失败分别映射小绿点/小转圈/小红点，进入完成任务后绿点消失，新的 Run 清除旧已读标记，reduced-motion 下转圈停止动画。
+- 项目按首次 Session 创建时间倒序且向旧项目新增任务不重排；开/关文件夹图标、折叠状态、项目加号创建到原 Workspace 和 `aria-expanded`/键盘操作均通过 Renderer 与实际 Electron 验收。
+- 左下角齿轮打开仅含模型目录/API Key 的第一版 Settings；旧对话区模型横幅不存在，未配置时从 Settings 返回后列表和默认项刷新。
+- Runtime 模型列表按 flash、pro 返回时默认第一个可用项；开始前可切换，未知/不可用/空列表禁止创建 Run，提交成功后模型选择锁定且 RunSnapshot 保持所选 `modelId`。
+- Session header 以较小字号显示标题和紧邻的紧凑三点菜单；内容区标题、三点菜单和左侧任务标题右键/`Shift+F10` 共享重命名/删除操作，活动任务删除被拒绝，确认删除后导航安全且 Workspace 文件零变化；预览阶段、绝对路径和通用安全说明不出现在 header。
+- Renderer 静态渲染测试断言模型 Markdown 的标题、列表和 fenced code 生成对应语义化 element；raw HTML、脚本、远程图片和正文链接不生成可执行/可加载/可导航节点，用户消息不进入 Markdown Renderer。实际 Electron 验收 Session 标题 `16px/24px`、正文 `14px/22px`、代码 `13px/20px` 及系统 UI/等宽字体栈。
+- Renderer 测试断言项目折叠与重复选择当前 Session 不读取快照，竞态切换只安装最后选择的快照且导航不因后台 refresh 进入 disabled/opacity；项目、任务标题 computed font weight 为 400。
+- Execution Feed 静态测试覆盖：有工具的一轮生成终态默认折叠过程组、“已处理”稳定耗时、Shell 命令/无输出/成功状态且最终 Markdown 位于其后；成功 Run 不出现完成标签；无工具回答不生成过程组；活动 Run 只有用户消息时显示“正在思考”；贴底判定覆盖像素误差，回到底部按钮具备可访问名称。实际 Electron 验收运行期间过程默认展开、终态自动折叠、手动展开/折叠、流式贴底跟随、上滚按钮、语义块淡入和 reduced-motion 回退。
 - 每个状态只按 snapshot allowed_actions 渲染；recoverable/irrecoverable/unknown/workspace unavailable 的 Continue、Approval 竞态和 terminal 空动作均符合服务端矩阵。
 - Main 对 success/error DTO 二次 runtime validation、cursor 只透传、unknown Event 原 payload 零 Renderer 泄漏、不兼容 contract 停流；storage health-only 只显示安全 reason/data root/recheck 且无自动清理/恢复按钮。
 - UTC 毫秒的本地化展示、客户端时钟回拨/休眠不延长 Approval、启动 clock rollback invalidation 在业务 IPC 前可见。
 
 ## 6. 持久化测试
 
+MVP Lite 已验证：
+
+- ✅ 隔离数据根创建/打开 SQLite，目录与数据库权限分别为 `0700/0600`。
+- ✅ `session/create -> shutdown -> Runtime restart -> session/list/read` 保留相同 Session 事实。
+- ✅ Session keyset 分页无重复，非法 cursor 返回闭合参数错误。
+- ✅ 相同 canonical Workspace 的 Session 保持任务顺序并归入同一导航组；首个 query 生成标题、跨重启保留且后续 Run 不覆盖，模型失败走有界回退。
+- ✅ symlink Workspace 创建被拒绝且零 Session 写入，不存在 Session 返回闭合 `RESOURCE_NOT_FOUND`。
+- ✅ Run/Item/ToolCall 事务写入、全局单活动 Run、取消、异常重启 `interrupted` 和有界 SessionSnapshot。
+- ✅ Fake Model + `read_file` 两轮 Runtime Loop、Item notification 顺序和真实 Main 子进程路由。
+- ✅ Workspace root identity 固化与 fd-relative 文件访问，覆盖路径被 symlink 重绑后的逃逸回归。
+- ✅ DeepSeek Chat SSE 可见文本、隐藏 reasoning、跨 chunk ToolCall/arguments 归并与私有 `0600` 模型配置。
+- ✅ 真实 DeepSeek 联网端到端：读取 README、文件写入审批、Shell 首次失败 ToolResult 回填、安全替代命令审批、最终回答与 `succeeded` 持久化终态。
+- ✅ 文件 Approve/Reject、既有文件读取证据、完整 diff、版本冲突、CAS swap/rollback、原子提交、post-commit uncertain 与迟到审批。
+- ✅ Runtime Loop 覆盖只读多工具声明顺序、连续两次非法响应、20 Step 硬上限与本地上下文超限零 Provider 请求。
+- ✅ `protocol/fixtures/v1.json` 固定代表性 envelope、错误、审批与通知 DTO：Python 验证初始化/错误 envelope，TypeScript 验证完整向量解析，真实双向审批/通知由双进程集成测试覆盖；增量 framing 覆盖无换行超限和慢消费者通知突发。
+- ⏳ 以下条目属于目标态候选或后续阶段增量。
+
 - `foreign_keys=ON`、WAL、busy_timeout 生效。
 - enum CHECK、mode/workspace CHECK、全局 unique operation ID/request hash/closed response，以及 Run `creation_operation_id` 引用。
 - Alembic 空库初始化 head 和重复启动；已知旧 revision 先通过 SQLite Online Backup API 生成 mode 0600、fsync、hash/manifest、原子安装的完整备份，再以单 connection/transaction 迁移并复检 foreign keys/integrity/target revision。
 - backup 临时写/关闭/校验/fsync/rename/目录 fsync/manifest 任一点故障均不改源库；migration SQL、commit 后 reopen 或 integrity 故障保持 health-only并保留源/备份。未知/缺失/newer revision、autocommit/VACUUM/journal 变化和自动 downgrade/stamp 全部拒绝。
 - 状态与 Event 原子提交。
+- Session `taskStatus` 在 Run 排队、等待、成功、失败、中断、取消和无 Run 场景下投影稳定；Renderer 不需要读取全部 Run 重新计算。
+- 手动改名跨重启保留且不会被后续 Run 自动标题覆盖；`session/delete` 对活动任务 fail closed，对终态任务原子删除 Eidos 关联事实并保留 Workspace 文件，operation replay 不重复删除。
 - FIFO enqueued_at 重启保持。
 - Artifact snapshot/source hash 和版本唯一性。
 - capability snapshot 的 `(profile_id,snapshot_version)` 唯一性、必需能力（含 tool control/schema）、Tool Schema Dialect、stateless continuation 与可选传输/输出字段、configuration/Gateway/model request contract version，以及 Run 内嵌快照不随外键记录变化。
-- capability snapshot 的 WebSocket 可选结果和无 TTL `model_transport_health` 复合主键；新 snapshot 不继承旧 ws_disabled。
+- capability snapshot 的 HTTP/SSE、ToolCall/ToolResult、usage 与 stateless continuation 字段和失效语义。
 - ModelAttempt 的逻辑请求关联、transport、attempt index、实际 credential revision、request output、retry reason、usage reported/unknown 与 Step cycle deadline 可重启审计。
 - Profile/snapshot/Run 的 wire API、model request contract、stateless continuation、output token parameter 持久一致；contract upgrade 只失效新 Run 选择，不改写旧快照。
 - ToolCall 的内部 id/provider_call_id 双标识、`UNIQUE(step_id,provider_call_id)` 和回传映射；Provider ID 不替代内部外键。
@@ -338,15 +373,16 @@
 - shell log 全局/流内唯一约束、省略/tail_replay 持久化和断线回放不恢复中间内容。
 - Artifact session/source version 唯一、logical/allocated/encoding/BOM/type 字段、snapshot hash 损坏标记与零正文读取。
 
-## 7. 完整目标态风险里程碑
+## 7. 目标态风险里程碑
 
 ### M0：macOS 安全可行性
 
-- Seatbelt 静态策略模板和参数绑定。
-- System Runtime read-only、active root write、外部 deny。
-- 敏感和 `.git` carve-out。
-- managed proxy、域名策略、localhost 独立权限。
-- fail-closed 自检与集成测试。
+- ✅ Seatbelt 静态策略模板和参数绑定。
+- ✅ System Runtime 可执行、active root write、外部 deny。
+- ⏳ System Runtime 不可写仍待补充专用 Toolchain fixture。
+- ✅ 敏感和 `.git` carve-out。
+- ⏳ managed proxy、域名策略、localhost 独立权限。
+- ✅ Seatbelt fail-closed 自检与集成测试。
 - 版本化敏感规则、全入口扫描管线、跨 chunk 脱敏和 fail-closed 自检。
 - Toolchain 只读根、Shell Approval boot-session/continuous 时效、前/后 manifest、进程树资源限制、allocated growth 监控、无阻塞输出捕获和最小原生 guardian 异常清理实机可行性。
 
@@ -354,18 +390,21 @@ M0 未通过前，不进入 Agent Shell 主链路实现。
 
 ### M1：Desktop 与 sidecar
 
-- Electron/React/Python 骨架。
-- 单实例、Token、listening/ready gate、随机端口、类型化 IPC/API/SSE 代理和 RunSnapshot 水位恢复。
-- OpenAPI 同源 DTO/validator、operation ID 转发、Event contract 握手和 storage health-only UI。
+- ✅ Electron/React/Python 骨架。
+- ✅ MVP Lite Electron single-instance lock、类型化 Preload、stdio ready gate、双向审批和完成后权威 SessionSnapshot 刷新。
+- stdio initialize/diagnostic/ready gate、双向 JSON-RPC、非法 stdout fail-closed 和 RunSnapshot/Event 水位恢复。
+- Pydantic schema + protocol fixture 同源 DTO/validator、operation ID 转发、Event contract 握手和 storage diagnostic UI。
 - `~/.eidos` 权限与 config。
 
 ### M2：SQLite、队列与状态机
 
-- 状态目录独占 OS lock、SQLite 一致备份与 forward-only Alembic migration。
-- ApiTimestampV1/TimeProvider/high-water、operation records、collection creation sequence、Event payload registry 与 emergency reserve 恢复。
-- Run/Segment/Step/Attempt/ToolCall/Approval/Event。
-- 单执行器 FIFO、预算、取消与恢复。
-- 独立 tool contract version、当步 tool set/hash 和 canonical ToolResult 持久化。
+第二期对应 M2 的 P2-01、P2-02、P2-03 已完成：旧数据库可安全迁移或明确 health-only，Event/幂等基础与持久 FIFO/Segment 状态机已通过隔离数据根和重启回归。清单外的完整 Workspace/Profile/Artifact 存储仍由后续阶段承接。
+
+- ✅ 状态目录独占 OS lock、SQLite 一致备份与显式 forward-only migration。
+- ✅ UTC 毫秒/monotonic duration、high-water、operation records、creation sequence、Event payload registry 与 emergency reserve。
+- ✅ Run/Segment/Step/Attempt/ToolCall/Approval/Event 最小事实。
+- ✅ 单执行器 FIFO、预算、取消与恢复。
+- ✅ 独立 tool contract version、ToolSpec Registry 和 canonical ToolResult 持久化。
 - Immutable base、Step projection/hash、ToolResult quarantine 和读取证据完整/模型投影分层。
 
 ### M3：模型与只读闭环
@@ -393,6 +432,20 @@ M0 未通过前，不进入 Agent Shell 主链路实现。
 
 ## 8. 文档完成标准
 
-- PRD 每个 P0 要求在 TDD 和测试中有对应落点。
-- Q1-Q155 决策不得出现相反规则。
-- 实现开始前冻结 v0.4 API schema、状态 enum 和 Tool schema。
+- PRD 每个进入阶段清单的要求在 TDD 和测试中有对应落点。
+- Q1-Q185 决策不得出现相反规则。
+- 实现开始前冻结对应阶段的 protocol schema、状态 enum 和 Tool schema。
+
+## 9. 第三期测试矩阵
+
+- `test_tool_registry.py`：entry 唯一事实源、schema dialect、provenance、builtin 回归、direct/deferred/hash。
+- `test_extension_storage.py`：revision migration、Plugin lifecycle、Run/Step snapshots、ToolCall provenance、重启读取与历史保留。
+- `test_plugins.py` / `test_skills.py`：closed manifest、owner/symlink/path/容量/原子导入、Skill UTF-8 只读边界与零执行。
+- `test_system_skills.py`：系统 Skill helper 的离线创建/校验/原子安装、网络失败收敛，以及 Codex 合同残留回归。
+- `test_mcp.py`：官方 SDK stdio initialize/list pagination/call/isError/list_changed/shutdown、非法 schema、超限、stdout 污染、crash/timeout/cancel。
+- `test_mcp_sandbox.py`：原生 macOS connector/workspace_read 的文件、Home、状态目录、网络和子进程权限矩阵。
+- protocol fixture、Renderer state、RuntimeClient/sidecar：closed DTO、Settings、consent、Feed provenance、snapshot+waterline 与纵向闭环。
+
+发布门槛为 Runtime 全量、`pnpm test`、production build、`git diff --check`，以及原生 macOS MCP Seatbelt、进程组清理和 Electron smoke；受限容器不能替代原生安全结论。
+
+第三期已于 2026-07-20 通过发布门槛：Runtime 189 项、Renderer 19 项、Main/sidecar 15 项全部通过；production build、原生 MCP Seatbelt 权限矩阵、官方 SDK fixture、进程组子进程清理、超时/取消/崩溃注入和重启读取均通过。

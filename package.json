@@ -1,6 +1,7 @@
 {
   "name": "eidos",
-  "version": "0.1.0",
+  "productName": "Eidos",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "main": "dist/main/main.js",
@@ -15,12 +16,15 @@
     "build:renderer": "tsc -p tsconfig.renderer.json --noEmit && vite build",
     "start": "pnpm build && electron .",
     "test": "pnpm test:runtime && pnpm test:desktop",
-    "test:runtime": "python3 -m unittest discover -s runtime/tests -v",
-    "test:desktop": "pnpm build:main && node --test dist/main/runtime-client.test.js"
+    "test:runtime": ".venv/bin/python -m unittest discover -s runtime/tests -v",
+    "test:renderer-state": "tsc -p tsconfig.renderer-test.json && node --test dist/renderer-test/session-state.test.js dist/renderer-test/components/MarkdownContent.test.js dist/renderer-test/components/ExecutionFeed.test.js",
+    "test:desktop": "pnpm build && pnpm test:renderer-state && node --test dist/main/runtime-client.test.js"
   },
   "dependencies": {
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

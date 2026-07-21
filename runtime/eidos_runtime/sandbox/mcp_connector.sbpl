@@ -1,0 +1,44 @@
+(version 1)
+(deny default)
+
+(allow process-exec process-fork)
+(allow signal (target same-sandbox))
+(allow process-info* (target same-sandbox))
+(allow sysctl-read)
+(allow mach-lookup
+  (global-name "com.apple.system.opendirectoryd.libinfo")
+  (global-name "com.apple.system.opendirectoryd.membership"))
+
+(allow file-read* file-test-existence
+  (literal "/")
+  (subpath "/System")
+  (subpath "/Library/Apple")
+  (subpath "/Library/Developer")
+  (subpath "/usr")
+  (subpath "/bin")
+  (subpath "/sbin")
+  (subpath "/opt/homebrew")
+  (subpath "/usr/local")
+  (subpath "/private/etc")
+  (subpath "/dev/fd")
+  (literal "/dev/null")
+  (literal "/dev/zero")
+  (literal "/dev/random")
+  (literal "/dev/urandom"))
+
+(allow file-read-metadata file-test-existence
+  (path-ancestors "/Library/Developer/CommandLineTools/usr/bin/python3")
+  (path-ancestors "/opt/homebrew")
+  (path-ancestors "/usr/local")
+  (path-ancestors (param "PLUGIN_ROOT"))
+  (path-ancestors (param "SANDBOX_HOME"))
+  (path-ancestors (param "SANDBOX_TMP")))
+(allow file-read* file-test-existence (subpath (param "PLUGIN_ROOT")))
+(allow file-read* file-test-existence file-write*
+  (subpath (param "SANDBOX_HOME"))
+  (subpath (param "SANDBOX_TMP")))
+(allow file-write-data
+  (literal "/dev/null")
+  (literal "/dev/zero")
+  (subpath "/dev/fd"))
+(allow network*)

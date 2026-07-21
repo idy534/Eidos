@@ -1,46 +1,52 @@
 # 功能需求
 
-版本：v0.4
+版本：v0.4（探索草案）
 
-范围说明：本文件的 P0 是完整目标态优先级。第一期必须项和延期项以 [MVP Lite](../mvp-lite.md) 为准。
+范围说明：本文件是目标态功能合同索引。第一期、第二期与第三期范围分别以 [MVP Lite](../mvp-lite.md)、[第二期实施范围](../mvp-phase-2.md) 和 [第三期实施范围](../mvp-phase-3.md) 为准。
 
-## 1. P0 功能清单
+MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 `Session/Run/Item/ToolCall` 最小事实；✅ 串行 Agent Loop 与 20 Step 上限；✅ `list_files/read_file/search_text`；✅ 模型流、基础 Execution Feed 与真实 DeepSeek 联网闭环；✅ Cancel 与异常 `interrupted`；✅ 本机私有 DeepSeek 配置；✅ `write_file/apply_patch` 完整 diff、逐次审批、hash/CAS 复检和原子提交；✅ `run_shell` 逐次审批、Seatbelt 默认断网、环境隔离、Homebrew Toolchain、有界输出、timeout/取消。不能把这些 ✅ 外推为本文件目标态条目已全部满足。
+
+模块阅读索引：Desktop/Workspace `F001-F006,F140-F143`；Runtime 与恢复 `F007-F011,F023-F040,F127-F139`；文件、Shell 与安全 `F012-F022,F041-F073`；模型与上下文 `F028,F031,F033,F036-F039,F074-F096,F142`；工具契约与结果 `F097-F126`。编号保持稳定，阶段是否实施仍以 `mvp-lite.md` 和 `mvp-phase-2.md` 为准。
+
+## 1. 目标态功能清单
+
+实施标记只表示表内要求已在 MVP Lite 当前边界通过自动化、macOS 实机或真实模型验收；未打勾条目继续属于目标态候选或显式延期项。manifest、精确资源监管、跨重启恢复、复杂 Model Profile 和 Event Timeline 不因 MVP Lite 完成而视为已实现。
 
 | 编号 | 功能 | 要求 |
 |---|---|---|
-| F001 | macOS 桌面应用 | 启动 Electron 应用并拉起本地 sidecar |
+| F001 | ✅ macOS 桌面应用 | 启动 Electron 应用并拉起本地 sidecar |
 | F002 | 默认 Agent | 首次启动创建默认 Eidos Agent；不提供多 Agent UI |
 | F003 | Eidos Home | 初始化并校验 `~/.eidos` 权限与目录结构 |
-| F004 | Workspace Mode | 选择本地目录并创建 Workspace Session |
+| F004 | ✅ Workspace Mode | 选择本地目录并创建 Workspace Session |
 | F005 | Public Mode | 不选择项目目录也能创建 Session 和 Run |
 | F006 | Model Profile | 配置多个 OpenAI-compatible Profile；显式无任务数据能力测试通过后才可选择；Run 固化版本化配置与能力快照 |
 | F007 | Run 队列 | 多 Run 可保留；全局单执行器；持久化 FIFO |
 | F008 | Execution Segment | 单段最多 20 Steps/30 分钟；恢复创建新 Segment |
 | F009 | Run 硬上限 | 最多 80 Steps/120 分钟；到限进入 `stopped` |
-| F010 | Agent Loop | 模型调用、ToolCall、观察结果严格串行 |
-| F011 | Tool 批次校验 | 只读工具可批量；有副作用工具独占；非法组合零执行 |
-| F012 | list_files | 列出 active root 内受控文件结构 |
+| F010 | ✅ Agent Loop | 模型调用、ToolCall、观察结果严格串行 |
+| F011 | ✅ Tool 批次校验 | 只读工具可批量；有副作用工具独占；非法组合零执行 |
+| F012 | ✅ list_files | 列出 active root 内受控文件结构 |
 | F013 | read_file | 分级读取 active root 内普通文本文件 |
 | F014 | read_file_range | 按行读取局部内容 |
 | F015 | search_text | literal、大小写不敏感的受控搜索 |
-| F016 | write_file | 创建单个文件或完整生成单个文件；审批并展示 diff |
-| F017 | apply_patch | 修改单个已有文件；审批并展示 diff |
+| F016 | ✅ write_file | 创建单个文件或完整生成单个文件；审批并展示 diff |
+| F017 | ✅ apply_patch | 修改单个已有文件；审批并展示 diff |
 | F018 | delete_file | 删除单个普通文件；禁止目录、递归、通配符与批量 |
-| F019 | run_shell | macOS Seatbelt `workspace_write` Shell；每次调用审批 |
+| F019 | ✅ run_shell | macOS Seatbelt `workspace_write` Shell；每次调用审批 |
 | F020 | publish_artifact | 显式发布单个现有文件，生成不可变快照 |
-| F021 | Approval | 记录请求参数、权限、diff/命令与用户决定 |
+| F021 | ✅ Approval | 记录请求参数、权限、diff/命令与用户决定 |
 | F022 | 文件版本复检 | 审批后执行前验证 hash、目标不存在或删除前版本 |
 | F023 | Reject 恢复 | Reject 返回 Agent；连续 2 次后等待用户输入 |
 | F024 | 事实确认屏障 | 写或 Shell 失败后先只读核验，再允许下一次副作用 |
 | F025 | waiting_user_input | 用户补充信息后继续同一 Run 并重新排队 |
-| F026 | 崩溃恢复 | 不自动重放；运行中 ToolCall 标记 interrupted |
+| F026 | ✅ 崩溃恢复 | 不自动重放；运行中 ToolCall 标记 interrupted |
 | F027 | Cancel | 排队/等待立即取消；运行中协作式取消 |
-| F028 | Model Stream | 实时输出、分块持久化、保存最终响应 |
+| F028 | ✅ Model Stream | 实时输出、分块持久化、保存最终响应 |
 | F029 | Execution Feed | 展示消息、工具、审批、状态、错误和 Artifact |
 | F030 | Event Timeline | 所有关键事件与状态变更同事务持久化 |
 | F031 | Context Budget | P0 提供确定性的有界上下文裁剪 |
 | F032 | Redaction | 截断、展示、返回模型与持久化前按确定性规则分级处理 |
-| F033 | 有限重试 | 已验证 WebSocket 首 delta 前最多重连 5 次并降级 HTTP(S)，HTTP(S) 瞬时错误最多 2 次；只读瞬时错误 1 次 |
+| F033 | 有限重试 | 模型 HTTP/SSE 在首 delta 前遇瞬时错误最多重试 2 次；首 delta 后不重放；只读工具瞬时错误重试 1 次 |
 | F034 | Finalization | 硬停止前一次最长 60 秒、无工具的收尾调用 |
 | F035 | 系统 Terminal | Workspace 中只提供用户点击打开系统 Terminal |
 | F036 | 模型流中断恢复 | 首 delta 后中断不重试，保留未完成进度并等待用户输入 |
@@ -50,7 +56,7 @@
 | F040 | Durable Intent | 副作用执行前持久化意图，恢复时对账而不重放 |
 | F041 | 代理审计 | 只记录域名级元数据，不记录请求内容或解密 TLS |
 | F042 | Host 校验 | 精确 host/port、解析 IP 校验、拒绝通配符和跨 host redirect |
-| F043 | Hardlink 防护 | 写工具拒绝多链接文件；Writable Shell 前置扫描 fail closed |
+| F043 | ✅ Hardlink 防护 | 写工具拒绝多链接文件；Writable Shell 前置扫描 fail closed |
 | F044 | 文件元数据 | 修改已有文件保留 mode、ACL、xattr；新文件默认 0644 |
 | F045 | 敏感规则 | 版本化 `deny`/`redact`/`allow_with_audit`；MVP 不使用模型判断 |
 | F046 | 入口扫描 | 用户输入、文件/搜索、Shell/模型输出和持久化入口统一扫描 |
@@ -62,14 +68,14 @@
 | F052 | 文本编码 | 仅严格 UTF-8/可选 BOM；二进制与其他编码分类拒绝 |
 | F053 | 稳定搜索 | 单行 literal、ASCII 不区分大小写、稳定排序和受控 preview |
 | F054 | 受控文件树 | 有界深度/条目、不跟随 symlink、隐藏敏感条目 |
-| F055 | 写入/Diff 容量 | write/patch/候选文件和审批 Diff 均有硬上限 |
-| F056 | 目录边界 | write 不创建父目录；MVP 目录操作使用受审批 Shell |
-| F057 | 完整覆盖证据 | 仅完整读取的 <=256 KiB 同版本文件可被 write_file 覆盖 |
+| F055 | ✅ 写入/Diff 容量 | write/patch/候选文件和审批 Diff 均有硬上限 |
+| F056 | ✅ 目录边界 | write 不创建父目录；MVP 目录操作使用受审批 Shell |
+| F057 | ✅ 完整覆盖证据 | 仅完整读取的 <=256 KiB 同版本文件可被 write_file 覆盖 |
 | F058 | Patch 读取证据 | hunk 原文范围必须由当前 Run 同 hash 的读取结果覆盖 |
 | F059 | 受控删除 | 只删除可展示完整 Diff 的 <=512 KiB 普通 UTF-8 文件 |
 | F060 | 统一排除策略 | 安全排除不可绕过；固定性能排除；MVP 不解析 `.gitignore` |
 | F061 | 单文件一致读取 | 并发变化时丢弃单文件结果并有界重试；无 Workspace 快照 |
-| F062 | 严格 Unified Diff | 单文件、路径一致、零 Git 扩展、零 offset/fuzz、保留统一换行 |
+| F062 | ✅ 严格 Unified Diff | 单文件、路径一致、零 Git 扩展、零 offset/fuzz、保留统一换行 |
 | F063 | 写入换行 | 新文件 LF；覆盖显式匹配原 LF/CRLF；mixed 拒绝 |
 | F064 | 文件 no-op | 候选字节相同时 `skipped/no_changes`，零 Approval/intent/文件接触 |
 | F065 | Shell 审批时效 | 不绑定 Workspace 快照；参数/环境精确绑定；批准后 5 分钟过期 |
@@ -87,8 +93,8 @@
 | F077 | Provider 参数 | 允许有界扩展参数透传，禁止覆盖 Runtime 核心字段或注入传输层配置 |
 | F078 | Model 容量声明 | 用户必填 context/output token 上限；不按模型名推断；明确不匹配使 Run failed 并使 snapshot 失效 |
 | F079 | 凭证轮换 | Run 不固化密钥；既有 Run 每次模型调用读取 Profile 当前凭证，但保持创建时非密钥配置与能力快照 |
-| F080 | 模型传输降级 | WebSocket 是可选优化；瞬时失败使当前 Run 粘滞 HTTP(S)，明确不支持时按 snapshot 抑制后续 WebSocket，不影响 Profile 可选性 |
-| F081 | 模型请求周期 | 一个 Step 的初始请求、重试、降级和退避共享 10 分钟 deadline；首 delta 后禁止重放 |
+| F080 | 模型 HTTP/SSE 传输 | Runtime 只发送 HTTP 请求并消费 SSE 响应流；不在 Run 内切换为 WebSocket 或其他传输 |
+| F081 | 模型请求周期 | 一个 Step 的初始请求、重试和退避共享 10 分钟 deadline；首 delta 后禁止重放 |
 | F082 | 模型尝试透明度 | 每次网络发送独立记录 Attempt；已报告 usage 累计，未知 usage 明示，不假设服务端幂等 |
 | F083 | 上下文预检 | 使用版本化 UTF-8 字节与固定开销公式估算；发送前必须满足输入、输出预留和 safety margin 总预算 |
 | F084 | 本地输入超限 | 不可裁剪输入超限时零 Provider 请求并以 `context_input_too_large` 终止 Run，不失效 Profile snapshot |
@@ -100,7 +106,7 @@
 | F090 | ToolCall 流上限 | 单响应最多 16 calls，单 call 1 MiB、合计 2 MiB，并限制 delta 数、名称和 JSON 结构 |
 | F091 | 模型输出上限 | 可见文本、reasoning、单 Event 和总流量均有硬上限；超限保留安全进度并暂停，不重试 |
 | F092 | 完成语义 | 仅完整协议终态可完成；token 截断和内容过滤不执行 ToolCall并进入 waiting_user_input |
-| F093 | 无状态模型请求 | 每个 Step 从本地状态重建上下文；不依赖 Provider conversation、previous response 或服务端 history |
+| F093 | ✅ 无状态模型请求 | 每个 Step 从本地状态重建上下文；不依赖 Provider conversation、previous response 或服务端 history |
 | F094 | 输出字段协商 | Responses 固定字段；Chat 只在 Test Connection 有界协商并把结果固化到 snapshot |
 | F095 | 工具控制字段 | 工具集非空的普通/纠正请求固定 auto + parallel，空集固定 none；probe 两阶段受控；Finalization 固定无工具 |
 | F096 | 非 strict 生成 | 两种 wire 显式 `strict=false`；Provider strict 不替代 Runtime 本地校验 |
@@ -136,17 +142,36 @@
 | F126 | Canonical Unicode | ToolResult 使用版本化、跨实现一致的 Unicode 与转义规则，不静默规范化用户内容 |
 | F127 | 安全迁移 | 数据库只向前迁移；迁移前保留一致可验证备份，失败时不进入业务 Runtime |
 | F128 | Shell 异常清理 | Main 或 sidecar 异常退出后，有界清理受控 Shell 进程组和已识别后代，不把 Agent Shell 留作后台服务 |
-| F129 | Ready 屏障 | Runtime 完成状态、契约、安全自检与恢复后才开放业务 API 和调度；此前仅提供安全 health |
+| F129 | Ready 屏障 | Runtime 完成状态、契约、安全自检与恢复后才接受业务 JSON-RPC method 并启动调度；此前仅提供闭合诊断 method |
 | F130 | Workbench 一致启动 | Run 页面从同一事实快照与 Event 水位启动，重载不漏状态或把旧审批当作当前事实 |
 | F131 | Workspace 持久身份 | Workspace 移动、替换或身份不可验证时不继承旧授权；恢复必须由用户显式选择 |
 | F132 | 唯一执行权 | 同一用户状态目录任一时刻只有一个 sidecar 可以迁移、恢复、调度或执行 |
-| F133 | 服务端可执行动作 | UI 操作由服务端当前状态事实决定；不可恢复 Run 不显示或接受继续操作 |
+| F133 | Runtime 可执行动作 | UI 操作由 Runtime 当前状态事实决定；不可恢复 Run 不显示或接受继续操作 |
 | F134 | 事实确认 episode | 每次新副作用不确定性都要求之后至少一次成功只读观察，旧观察不能解除新的确认屏障 |
-| F135 | 写 API 幂等 | Renderer 写操作在断线、超时和重启重试时返回原提交结果或明确不确定，不重复产生领域状态或 Event |
-| F136 | 闭合 API/IPC | HTTP、Preload 与 Renderer 使用同源闭合 DTO；未知字段、非法分页和 Runtime 契约不匹配安全失败 |
+| F135 | 写请求幂等 | Renderer 发起的持久化 JSON-RPC 操作在超时和重启重试时返回原提交结果或明确不确定，不重复产生领域状态或 Event |
+| F136 | 闭合 Protocol/IPC | JSON-RPC、Preload 与 Renderer 使用同源闭合 DTO；未知字段、非法分页和 Runtime 契约不匹配安全失败 |
 | F137 | Event 前向兼容 | Timeline 新增可忽略事件不阻断旧 UI；状态语义不兼容时由版本握手和 snapshot 恢复阻断误解释 |
 | F138 | 统一时间 | 持久化/API 时间统一 UTC 毫秒，运行时预算和 deadline 不受系统墙钟回拨延长 |
 | F139 | 存储故障恢复 | 状态无法可靠提交时停止业务且不虚报成功；释放空间后先校验、对账再 ready，不自动删除或重放副作用 |
+| F140 | ✅ Workspace 任务导航与命名 | 同路径 Session 按 Workspace 分组；项目按首次 Session 创建时间倒序且新增任务不重排，可折叠并可从项目行直接新建 Session；首次 query 由本次选定模型生成一次性持久标题，失败时安全回退且不阻断 Run |
+| F141 | 紧凑任务状态 | 左侧任务为单行紧凑布局，不显示第二行状态文字；UI 以未读完成绿点、进行中转圈、失败红点表示，进入完成任务后绿点消失 |
+| F142 | 模型设置与任务前选择 | 左下角齿轮进入仅含模型列表/API Key 的第一版配置页；新任务开始前从 Runtime 模型列表选择，默认第一个可用项，Run 创建后锁定模型 |
+| F143 | Session 标题与任务管理 | 内容区顶部以较小字号显示标题与紧邻的紧凑三点菜单；内容区标题、三点菜单和左侧任务标题均可打开同一重命名/删除操作，删除需确认且不触碰 Workspace 文件；通用预览、路径和安全说明移出内容区 |
+| F144 | Session 排版与 Markdown 正文 | 右侧 Session 使用统一 UI/代码字体与 14px 正文、13px 代码、16px 标题的固定字号/行高 token；模型正文安全渲染 CommonMark 与 GFM 表格，原始 HTML、远程图片加载和正文内直接导航均不启用 |
+| F145 | 无闪烁导航与可折叠执行过程 | 项目折叠和当前任务点击不读取快照；任务切换即时更新选中态且后台原子安装目标快照，不全局淡出导航；有结构化执行时以计时过程组承载进度和可折叠工具结果，成功后默认折叠且不显示完成卡，无执行项时按敏感扫描确认的完整安全行流式输出最终回答并淡入最新语义块；Feed 位于底部时跟随新增内容，用户上滚后暂停、显示回到底部按钮，并在再次到底后恢复 |
+| F146 | 第三期动态 Tool Registry | ToolSpec、执行 Adapter 和 provenance 形成唯一不可变 entry；内置、Skill resource 与 MCP Tool 通过同一调度链执行 |
+| F147 | 能力快照 | Run 固化 Plugin/Skill/MCP 配置，Step 固化 direct/deferred/activated 工具及完整 schema hash；重试复用相同快照 |
+| F148 | 本地 Plugin v1 | 用户显式导入只含 Skill/MCP 配置的本地目录；严格校验并原子安装，支持幂等列出、启停和移除，不执行安装脚本 |
+| F149 | Skill v1 | 加载有来源的有界 Skill catalog；显式 mention 或只读工具加载 `SKILL.md`/包内资源，拒绝越界、symlink、二进制与超限内容 |
+| F150 | MCP Tools v1 | 通过官方 Python SDK 稳定 v1 管理 stdio Server 的初始化、分页工具发现、调用、列表变化与有界关闭 |
+| F151 | 外部工具审批 | MCP 工具统一为 external、单调用、逐次审批；Server 启用需展示完整命令、来源、env names 和权限档案并获得用户同意 |
+| F152 | MCP 最小权限沙箱 | connector 只有网络且无 Workspace；workspace_read 只有 Workspace 只读且无网络；两者拒绝真实 Home、状态目录和 Workspace 写入 |
+| F153 | 外部结果与恢复 | MCP 参数/结果统一扫描和限额；timeout、取消、断连与提交失败零自动重试并保留可能副作用事实 |
+| F154 | Tool Search | 大工具目录按 direct/deferred 有界暴露；本地确定性搜索命中的工具只能从下一 Step 激活并写入快照 |
+| F155 | 扩展设置与 Feed | Desktop 提供 Plugins、Skills、MCP Servers 受控设置，Feed 展示安全 provenance/审批/状态，不泄露 env value、内部路径或原始 stderr |
+| F156 | 系统与用户 Skill | Runtime 将随应用发布的系统 Skill 以精确私有权限原子部署到 `skills/.system`；发现同级且完整树归当前用户所有的用户 Skill，不因 Finder、Git 或 `cp` 产生的常见 mode 拒绝加载，并以稳定 namespace 和内容树 hash 合入 Run 快照；v0.3 不从 Agent Shell 写 Eidos Home |
+| F157 | Skill 创建 | `skill_create` 经逐次 Eidos State 审批创建 `SKILL.md` 与可选 UTF-8 `scripts/`、`references/`、`assets/` 等资源；Runtime 校验完整树并原子写入，拒绝时零副作用 |
+| F158 | GitHub Skill 安装 | `skill_install` 只接受单个公开 GitHub tree URL；先审批固定 `codeload.github.com:443` 网络下载，再验证完整包并审批 Eidos State 文件清单，原子安装后仅新 Run 可见 |
 
 ## 2. ToolCall 组合规则
 
@@ -155,6 +180,8 @@
 | 只读 | list_files/read_file/read_file_range/search_text | 1..N，按声明顺序串行 | 否 |
 | Workspace 副作用 | write_file/apply_patch/delete_file | 必须唯一 | 是 |
 | Shell 副作用 | run_shell | 必须唯一 | 是 |
+| Eidos Skill 副作用 | skill_create | 必须唯一 | 一次 Eidos State 审批 |
+| 网络 + Eidos Skill 副作用 | skill_install | 必须唯一 | 网络审批后再进行 Eidos State 审批 |
 | Eidos 本地副作用 | publish_artifact | 必须唯一 | 否 |
 
 其他规则：
@@ -191,9 +218,9 @@
 | 候选文件 | 32 MiB | 超限改用受审批 Shell |
 | 单文件敏感扫描 | 32 MiB | 超限不返回正文 |
 | 单次搜索扫描 | 256 MiB / 15 秒 | 可返回已完成整文件扫描的安全结果 |
-| 模型请求周期 | 10 分钟 | 含建连、流式、全部重试、退避和传输降级 |
+| 模型请求周期 | 10 分钟 | 含 HTTP 建连、SSE 流、全部重试和退避 |
 | 模型建连/首 delta/流空闲 | 15/180/120 秒 | 每次 Attempt，且不得越过请求周期 deadline |
-| WebSocket/HTTP(S) 重试 | 5/2 次 | 仅首个 delta 前；WebSocket 耗尽后降级原 endpoint 的 HTTP(S) streaming |
+| 模型 HTTP/SSE 重试 | 2 次 | 仅首个 delta 前；收到首个 delta 后禁止重放 |
 | 模型可见文本 | 64 KiB..4 MiB | `CLAMP(request_max_output_tokens*16,64 KiB,4 MiB)` |
 | discarded reasoning | 2 MiB | 只计数后丢弃，超限终止流 |
 | 单 Event/总模型流 | 1 MiB / 8 MiB | 按协议解码后 payload 字节 |

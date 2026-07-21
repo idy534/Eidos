@@ -1,73 +1,55 @@
 # 总体架构
 
-版本：v0.4
+版本：v0.4（探索草案）
 
-范围说明：本文描述完整目标态架构。第一期采用 [MVP Lite](../mvp-lite.md) 的 stdio JSON-RPC 双向协议，不实现本文件中的 loopback HTTP/SSE、Bearer Token 和完整目标态组件集合。
+本文描述跨阶段稳定的系统边界。第一期和后续目标态都使用 [MVP Lite](../mvp-lite.md) 已验证的 stdio JSON-RPC 2.0；本地不再规划 loopback HTTP/SSE、随机端口、Bearer Token 或 FastAPI 控制面。
+
+当前实现已具备 Renderer/Preload/Main/Python Runtime 四层骨架、双向 JSON-RPC、SQLite、远端模型 HTTP/SSE、文件工具、审批和 Seatbelt Shell。目标态章节描述的是演进方向，不表示模块已经全部落地。
 
 ## 1. 技术目标
 
-构建一个仅支持 macOS 的本地 Agent Runtime，优先保证以下主链路可运行、可审批、可追踪、可恢复：
+构建一个仅支持 macOS 的本地 Agent Runtime，优先保证主链路可运行、可审批、可追踪、可恢复：
 
 ```text
-Electron Renderer
-  -> Electron Main
-  -> Python FastAPI sidecar
-  -> Model Gateway / Runtime Engine
-  -> Tool Executor
-  -> macOS Seatbelt / File Tools
-  -> SQLite State + Timeline
+Renderer -> typed IPC -> Electron Main
+         -> stdio JSON-RPC -> Python Runtime
+         -> HTTP/SSE -> Remote Model Provider
+         -> Tool Registry -> Workspace Guard / Seatbelt
+         -> SQLite State + Event Timeline
 ```
 
-MVP 是单用户、单机、单 sidecar、单执行器。可以存在多个 Run，但不会并行调用模型或执行工具。
+系统是单用户、单机、单 sidecar、单执行器。可以持久化多个 Run，但模型调用和工具执行不并行。
 
 ## 2. 技术选型
 
 | 层 | 选型 | 说明 |
 |---|---|---|
 | Desktop | Electron + React + TypeScript | Workbench、审批、Diff、Artifact 和 Timeline |
-| Runtime | Python 3 + FastAPI + Pydantic | Agent Loop、API、模型与工具生态 |
-| Persistence | SQLite + SQLAlchemy 2.x + Alembic | 本地状态、队列、审批与事件 |
+| Local Control | JSON-RPC 2.0 over stdio/JSONL | Main 与 Runtime 的唯一控制通道；支持双向请求和通知 |
+| Runtime | Python 3 + Pydantic v2 边界模型 | Agent Loop、状态机、模型与工具；Pydantic 不替代业务状态机 |
+| Persistence | SQLite + 显式事务与前向 migration | 本地状态、队列、审批与 Event；是否引入 ORM 留到出现真实收益时决定 |
+| Remote Model | HTTP client + SSE decoder | 模型请求和流式响应；Provider 事件先归一化 |
 | Shell Sandbox | `/usr/bin/sandbox-exec` + Seatbelt policy | macOS 进程级文件和网络隔离 |
-| Network | Eidos loopback managed proxy | ToolCall 域名白名单 |
-| Streaming | sidecar SSE -> Main -> Renderer IPC | 模型、工具和状态事件 |
+| Tool Network | Eidos managed proxy（后续能力） | 仅约束获批 ToolCall 网络，不承载本地控制面 |
 
-MVP 不引入 Rust、Redis、PostgreSQL、Docker、内嵌 PTY 或后台 daemon。
+不引入 Rust、Redis、PostgreSQL、Docker、内嵌 PTY、后台 daemon 或本地 Web 服务。
 
 ## 3. 进程架构
 
-```text
-React Renderer
-  │ typed IPC only
-  ▼
-Electron Main
-  ├── spawn/stop sidecar
-  ├── hold runtime token and sidecar port
-  ├── proxy HTTP and SSE
-  ├── folder picker / open system Terminal
-  └── app lifecycle
-  │ bearer-authenticated loopback HTTP/SSE
-  ▼
-Python FastAPI Sidecar
-  ├── Run Scheduler (single executor)
-  ├── Runtime Engine / Context Builder
-  ├── Model Gateway / Responses + Chat Adapters / Transport Controller
-  ├── Model Profile / Capability Registry
-  ├── Versioned Tool Contract Registry / Tool Executor
-  ├── Approval / Resume / Recovery
-  ├── Seatbelt Policy Builder
-  ├── Toolchain Profile Registry
-  ├── Workspace Manifest / Shell Resource Monitor
-  ├── Shell Output Capture
-  ├── Managed Network Proxy
-  ├── Redaction Service
-  └── Repository / Event Outbox
-  │
-  ├── signed minimal Shell guardian per active Shell
-  ├── ~/.eidos/eidos.db
-  ├── ~/.eidos/config.toml
-  ├── workspace/public files
-  └── sandboxed child process tree
+```mermaid
+flowchart TD
+    R["React Renderer"] -->|"typed IPC"| M["Electron Main"]
+    M -->|"stdin: requests/responses"| P["Python Runtime"]
+    P -->|"stdout: requests/responses/notifications"| M
+    P -.->|"stderr: safe logs"| LOG["Local Logs"]
+    P -->|"HTTP request"| MODEL["Remote Model"]
+    MODEL -->|"SSE stream"| P
+    P --> DB["SQLite State + Event"]
+    P --> FILES["Workspace File Tools"]
+    P --> SHELL["Seatbelt Shell"]
 ```
+
+Electron Main 负责 sidecar 生命周期、JSON-RPC 客户端/服务端分流、类型化 IPC、文件夹选择和系统 Terminal。Runtime 负责 Scheduler、RuntimeEngine、Model Gateway、Tool Registry、Approval、Sandbox、Recovery、Redaction 和 Repository/Event Outbox。
 
 ## 4. 信任边界
 
@@ -75,76 +57,58 @@ Python FastAPI Sidecar
 
 Renderer 处理模型生成的 Markdown、代码和链接，属于不可信展示层：
 
-- 不知道 sidecar token 和随机端口。
-- 不直接访问本地文件或 sidecar。
-- 只能调用 Preload 暴露的类型化 API。
-- 不能传入任意 IPC channel。
+- 不直接持有 Runtime stdin/stdout，也不直接访问本地文件或进程。
+- 只能调用 Preload 暴露的命名方法，不能传入任意 IPC channel。
+- 只消费 Main 二次验证后的闭合 DTO，不消费 Provider 原始响应或 Runtime 自由字典。
 
 ### 4.2 Electron Main
 
-Main 是 Desktop 权限边界：
+Main 是 Desktop 权限边界和 Runtime 唯一客户端：
 
-- 生成每次 sidecar 生命周期独立的 runtime token。
-- 通过环境变量把 token 传给 sidecar；stdout 只把当前 child 的类型化 `listening`/`ready` 行作为控制消息，其他内容按安全日志处理。
-- 为 API/SSE 请求附加 token，并对响应做字段白名单转换。
+- 取得 Electron single-instance lock 后拉起唯一 sidecar，并持有其 stdin/stdout/stderr。
+- 校验每个 JSON-RPC envelope、方向、request id、method、消息大小和协议版本。
+- stdout 出现日志、banner、非法 JSON 或未知 response id 时终止当前 Runtime，不能猜测恢复 framing。
+- 将 Runtime 请求和通知投影到固定 Preload API；不实现 Agent Loop，不执行 Agent Shell。
 - 用户点击时调用文件夹选择器或打开系统 Terminal。
-- 不执行 Agent Shell。
 
-### 4.3 Python sidecar
+父子进程和私有 pipe 是本地通道的身份边界，因此不再额外生成端口 Token。协议安全依赖单实例、状态目录锁、不可继承的 pipe/fd、闭合 schema 和严格生命周期，而不是 CORS 或 Bearer 认证。
 
-Sidecar 是受信任 Runtime，但 Agent 输入、模型输出和 ToolCall 参数均不可信：
+### 4.3 Python Runtime
 
-- Tool Registry 以独立 `tool_contract_version` 固化模型可见定义、Tool Schema Dialect v1、effective arguments 归一化、ToolResult schema、mode applicability 和执行语义；Run 创建时固定版本，Step 再冻结确定性的 available tool set。
-- Provider 对工具参数的约束不是授权边界。所有 ToolCall 都由本地 Runtime 递归闭合 schema、组合、敏感、审批和权限校验；wire 请求显式使用 `strict=false`。
-- Tool Executor 只消费 effective arguments；ToolCall 保存唯一 immutable base ToolResult，Context Builder 生成冻结的有界 projection，两种 Adapter 只编码同一 Step projection，不生成额外自由文本结果。
-- 两种 wire Adapter 只负责确定性协议编解码；Provider conversation/response 状态不作为 Runtime 事实来源，stream/event/ToolCall assembler 在进入业务状态前执行硬容量限制。
-- 文件工具经 Workspace Guard。
-- Shell 只通过 Seatbelt 执行；沙箱不可用时 fail closed。
-- sidecar 可以读取 `~/.eidos/config.toml`，沙箱子进程不能读取真实 `~/.eidos`。
+Runtime 是受信任控制器，但用户输入、模型输出和 ToolCall 参数均不可信：
 
-## 5. 启动流程
+- JSON-RPC Server 只做 framing、初始化 gate、闭合 DTO 校验和方法分派。
+- RuntimeEngine 是 Agent Loop 唯一入口；状态迁移、模型运行、工具调度、审批、事件和错误映射各有单一职责。
+- Tool Registry 固化模型可见 schema、side effect、审批、timeout 和 ToolResult；Tool Executor 只消费 effective arguments。
+- Provider function calling 不是授权边界；本地 schema、安全扫描、状态、审批与 Sandbox 必须全部通过。
+- Model Adapter 只做 HTTP/SSE 编解码并输出内部事件；Provider conversation/response 状态不作为事实来源。
+- 文件工具经 Workspace Guard；Shell 只通过 Seatbelt 执行，沙箱不可用时 fail closed。
+- Runtime 可读取 `~/.eidos`，沙箱子进程不能读取真实 `~/.eidos`。
+
+## 5. 启动与诊断流程
 
 ```text
 Main acquire Electron single-instance lock
-  -> Main generate runtime token
-  -> spawn sidecar with token
-  -> sidecar verify/create ~/.eidos owner, symlink, mode and parent identity
-  -> sidecar acquire full-lifetime exclusive OS lock
-  -> sidecar bind 127.0.0.1:random_port and emit listening
-  -> health-only router gate
-  -> sidecar verify same-filesystem allocated emergency reserve and storage headroom
-  -> sidecar validate DB revision, backup/migrate if needed, and verify integrity
-  -> sidecar validate boot/continuous timebase and apply timed-Approval invalidation before accepting commands
-  -> sidecar reconcile profile credential revisions and invalidate stale Gateway capability snapshots
-  -> sidecar load/self-test current Tool Contract and Tool Schema Dialect
-  -> sidecar load ToolResult quarantine and run build-specific projector/serializer regression self-tests
-  -> sidecar load and self-test Redaction ruleset
-  -> sidecar run Seatbelt self-test
-  -> sidecar discover/validate Toolchain Profiles
-  -> sidecar self-test Shell guardian, limits, manifest monitor and output capture
-  -> sidecar reconcile guardian/intents/running state and rebuild FIFO
-  -> atomically flush unique ready {port, event/API contract versions, capability states}
-  -> release scheduler ready latch
-  -> Main starts API/SSE proxy
+  -> spawn sidecar with private stdio
+  -> send initialize {protocolVersion, clientVersion, supported contracts}
+  -> Runtime validate ~/.eidos identity and acquire lifetime OS lock
+  -> Runtime validate storage revision, backup/migrate and integrity
+  -> Runtime reconcile running state, durable intents and FIFO
+  -> Runtime self-test Tool Registry, serializers, redaction and Seatbelt
+  -> Runtime return initialized {runtimeVersion, contracts, mode, capabilities}
+  -> Main validate result and open typed business IPC
+  -> scheduler claims the first queued Run only after the same ready gate
 ```
 
-`listening` 只表示 loopback socket 已绑定，不表示 Runtime 可用。ready 前的路由 gate 必须早于业务路由匹配和 request body 解析：除固定、内存安全的 `/internal/health` 外，所有 API/SSE 固定返回 `503 runtime_not_ready`，不读取业务表、不占 idempotency key、不创建 Event。Main 只接受当前 child 的单个、匹配 schema 的 ready，之后才开放业务 IPC；scheduler 在同一 ready latch 释放前不得认领 Run。
+初始化完成前只接受 `initialize`、`runtime/status`、`runtime/recheck` 和 `runtime/shutdown`。业务请求固定返回 `RUNTIME_NOT_INITIALIZED` 或 `RUNTIME_UNAVAILABLE`，不得读取业务表、占用 operation id、创建 Event 或触发调度。
 
-可以在 ready 中降级的 capability 只有彼此隔离且不破坏安全主链路的能力：Shell guardian/Seatbelt/资源监控失败使 `run_shell` unavailable；单个 Toolchain/Profile 失败只禁用该项；per-tool/global ToolResult quarantine 分别禁用对应工具/全部工具；已安全持久化的未知 Shell 后置事实使相关 Run/Workspace 保持 reconciliation。状态目录/独占锁、storage reserve/headroom、DB revision/迁移/完整性/恢复、API/Event contract 握手、Redaction 核心自检、当前 Tool Registry/Schema Dialect/shared serializer 安全自检或 running/FIFO 对账不一致时保持 health-only，禁止发布 ready。
+`initialize` 返回的 `mode=ready|diagnostic`、`phase`、`reasonCode`、协议/Event contract version 和 capability 使用闭合 schema。storage、锁、迁移、核心契约、Redaction 或恢复失败时保持 `diagnostic`；Main 只开放诊断、重新检查和关闭。局部 Shell/Toolchain 故障只把对应 capability 标记为 unavailable，不降级为无保护执行。
 
-health 只返回闭合的 `phase,stage,reason_code,capabilities`；不得包含异常正文、SQL、用户路径内容、凭证或 stack。
+状态变化不得通过 stdout 的特殊文本行表达；所有控制消息都是 JSON-RPC response/request/notification。日志只写 stderr，且不得包含异常原文、SQL、用户正文、凭证或未扫描输出。
 
-Seatbelt 自检失败不阻止只读文件工具和模型回复，但 `run_shell` 必须报告 unavailable。
+当前 Tool Contract 或 serializer 自检失败时 Runtime 不进入 ready。升级后若非终态 Run 引用的旧 contract 已不可用或低于当前安全底线，该 Run 零模型/工具执行并进入 `waiting_user_input/runtime_contract_unsupported`。
 
-Redaction 规则 schema、重叠顺序、最大匹配长度或测试向量自检失败时，所有可能把不可信内容发送给模型/UI 或写入持久化的 API 不可用；只保留 health 和安全配置诊断能力，不存在未扫描回退。
-
-当前 Tool Contract、任一 input/result schema、静态 default 或 Dialect v1 固定 probe 自检失败时 Runtime 不进入 ready。升级后若非终态 Run 的旧 `tool_contract_version` 实现不存在或不再满足当前安全底线，该 Run 零模型/工具执行并进入 `waiting_user_input/runtime_contract_unsupported`；只能取消或创建新 Run。
-
-ToolResult quarantine 普通重启后仍有效。新 build 只可在对应 top-level serializer/shared mapping 或 per-tool projector 的确定性失败向量全部通过后清除相应 scope；未清除的 tool scope 从 available tool set 排除，global scope 禁止全部工具循环。
-
-MVP 只从随应用发布的只读资源加载一个规则集，不从网络、Workspace 或用户配置加载规则。
-
-Shell guardian、限制、Workspace manifest/磁盘增长监控或输出捕获任一自检失败时，与 Seatbelt 失败相同：只使 `run_shell` unavailable，不降级为无监控 Shell。
+ToolResult quarantine 跨重启保留。只有对应 deterministic regression vectors 全部通过后才能清除；未清除的 tool scope 从 Step 工具集排除，global scope 禁止全部工具循环。
 
 ## 6. Eidos Home
 
@@ -185,7 +149,7 @@ Eidos/
     preload/
     renderer/
   runtime/app/
-    api/
+    protocol/
     db/
     scheduler/
     runtime/
@@ -204,3 +168,43 @@ Eidos/
 ```
 
 Seatbelt profile 作为只读资源随 sidecar 打包。策略模板、参数绑定和 Shell 启动必须集中在 `sandbox/`，禁止业务代码自行 spawn Agent 命令。
+
+### 7.1 第二期 RuntimeEngine 模块
+
+第二期把现有 `eidos_runtime.runtime.loop.RuntimeLoop` 演进为 `eidos_runtime/runtime/` 包。目标是责任与测试 seam 的拆分，不是按行数切分文件；`RuntimeEngine.run(run_id, cancel)` 是 JSON-RPC Server 和测试唯一需要知道的执行接口。
+
+```text
+eidos_runtime/runtime/
+  loop.py              # RuntimeEngine：装配依赖、驱动一次 Run、无业务分支复制
+  state_machine.py     # Run/执行态合法迁移、allowed_actions、迁移原因
+  model_runner.py      # 单 Step 的上下文、流、Attempt、模型响应归一化
+  tool_dispatcher.py   # ToolSpec 选择、批次校验、effective arguments 与执行分派
+  approval.py          # Approval 请求、决策、失效、Reject 计数
+  events.py            # 状态事实与 Event 的同事务记录及安全通知投影
+  errors.py            # 闭合 Runtime/Tool 错误码与安全映射
+```
+
+- `loop.py` 只协调状态机给出的下一步，不直接解析模型流、执行工具或写 Approval/Event。
+- `state_machine.py` 是唯一允许从事件推导持久 Run 状态和瞬时 `RuntimeState` 的模块；Storage 仍负责事务与条件更新，不在状态机中嵌入 SQL。
+- `model_runner.py`、`tool_dispatcher.py` 和 `approval.py` 只返回闭合结果或领域事件，不能自行把任意字典写入 SQLite、Event 或 Renderer。
+- `events.py` 是 Runtime 内部事件 seam，不改变现有 stdio notification 通道；通知必须由已提交的事实投影生成。
+- 先迁移 `RuntimeLoop` 的职责与测试，再删除旧模块；不得保留两个可独立运行的 Loop。
+
+## 8. 第三期 Extension Catalog 与 Tool Registry
+
+第三期在既有 RuntimeEngine 内增加两个深模块，不增加第二条 Agent Loop：
+
+```text
+extensions/catalog
+  input: installed Plugin facts + enabled state + Run snapshot
+  output: immutable Plugin/Skill/MCP catalog snapshot
+
+tools/registry
+  input: builtin adapters + catalog snapshot + current MCP discovery
+  output: immutable ToolRegistrySnapshot and quarantined external entries
+```
+
+- Plugin import、Skill 读取和 MCP 连接都在 Runtime 进程；Renderer/Main 不解析 manifest 或重建工具定义。
+- Registry entry 同时持有闭合 ToolSpec、执行 Adapter 与 provenance；模型 schema、参数校验、side effect、审批、timeout、batch 和执行不得来自另一份按名称分支。
+- 内置 entry 不合法使 Runtime unavailable；单个 Plugin/Skill/MCP entry 不合法只隔离该 entry/source。
+- Run 创建时冻结 extension snapshot；Step 在 Provider 请求前冻结 tool snapshot；正在进行的 Step/Attempt 不响应全局 enable/list_changed。

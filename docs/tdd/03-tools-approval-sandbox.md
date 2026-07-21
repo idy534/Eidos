@@ -1,13 +1,17 @@
 # 工具、审批与沙箱
 
-版本：v0.4
+版本：v0.4（探索草案）
 
-范围说明：本文保留完整目标态工具契约。第一期工具集合、审批和安全底线以 [MVP Lite](../mvp-lite.md) 为准。
+范围说明：本文保留目标态工具契约草案。第一期工具集合、审批和安全底线以 [MVP Lite](../mvp-lite.md) 为准。
 
-## 1. ToolDefinition 与 ToolContext
+MVP Lite 当前实施状态：✅ 只读三工具；✅ `write_file/apply_patch` 候选与完整 diff；✅ Runtime→Main 双向审批、拒绝零副作用、取消/迟到响应；✅ fd-relative Workspace Guard；✅ Seatbelt 内 `RENAME_EXCL` 新建与 `RENAME_SWAP` 旧 hash CAS/回滚；✅ 原子提交读回与不确定副作用标记；✅ `run_shell` 逐次审批、默认断网、干净环境、敏感/硬链接预检、Workspace/cwd 身份复检、进程组 timeout/cancel/同组后台清理与有界输出。MVP Lite 不宣称 native guardian、脱离 PGID 的后代清理或对抗性同用户 TOCTOU 防护。
+
+第二期实施状态：✅ Pydantic ToolSpec Registry；✅ canonical ToolResult v1 与 Python/TypeScript 共享向量；✅ 分级 `read_file`、`read_file_range`、稳定 ASCII-insensitive `search_text` 和有界 `list_files`；✅ `delete_file` 完整 diff/审批/CAS/Durable Intent；✅ 版本化敏感规则覆盖参数、正文、流和结果。native guardian、manifest 与 Artifact 仍未实现。
+
+## 1. ToolSpec 与 ToolContext
 
 ```python
-class ToolDefinition(BaseModel):
+class ToolSpec(BaseModel):
     name: str
     description: str
     side_effect: Literal["none", "workspace", "eidos_state", "shell"]
@@ -34,6 +38,10 @@ class ToolContext(BaseModel):
     network_hosts: list[str] = []
     local_network: bool = False
 ```
+
+`ToolSpec`、`ToolContext`、Approval request/decision、Run/Item 投影、canonical ToolResult 和 Event envelope 均使用 Pydantic v2 的 strict、`extra="forbid"` 模型；它们在 JSON-RPC 输入、Storage 投影和 Renderer notification 三个 seam 使用同一字段语义。`input_schema` 与 `result_schemas` 仍由 Tool Schema Dialect 和每工具闭合 result schema 解释，Pydantic 不把自由 `dict` 变成可执行授权。
+
+`side_effect` 保持分级 Literal，不能降级为 bool：`workspace`、`eidos_state` 和 `shell` 的审批、Seatbelt、Durable Intent 与对账语义不同。调用方如只需要布尔判断，只能读取 `side_effect != "none"` 的派生值。
 
 ToolCall row 创建前，工具参数必须完成归一化、schema 校验、组合校验和敏感扫描。工具结果在投影为模型内容、参与 Context Builder 预算、交付 UI 和持久化前必须经过 Redaction Service。
 
@@ -243,7 +251,7 @@ Shell outcome/code 固定映射与优先级：
 
 ### 1.8 Error data registry
 
-ToolResult Error 与 API Error 是独立契约。ToolResult 禁止通用 `details|message|cause`、动态 map、raw stack/errno/Provider/OS message；每个 `(tool,error,code)` 默认 data=`{}`，只有模型确定性恢复所需且原 ToolCall 不含的安全事实才能进入 code 专属闭合 schema。API Error 可保留 `code,message,retryable,details,request_id` envelope，但 details 也必须按 API code 闭合、有界和安全，且绝不进入模型 ToolResult。内部诊断同样必须扫描、限长和访问隔离，不能默认原样持久化。
+ToolResult Error 与 JSON-RPC business error 是独立契约。ToolResult 禁止通用 `details|message|cause`、动态 map、raw stack/errno/Provider/OS message；每个 `(tool,error,code)` 默认 data=`{}`，只有模型确定性恢复所需且原 ToolCall 不含的安全事实才能进入 code 专属闭合 schema。JSON-RPC error 可在 `error.data` 中保留闭合的 `code,retryable,details`，但 details 也必须按 business code 闭合、有界和安全，且绝不进入模型 ToolResult。内部诊断同样必须扫描、限长和访问隔离，不能默认原样持久化。
 
 只读工具的非空 error data 只有：
 
@@ -558,12 +566,12 @@ summary
 
 ### 7.4 stdout/stderr 流
 
-- pipe reader 独立持续排空 stdout/stderr，不等待 SSE/Renderer/DB 消费。原始字节先执行字节凭证扫描，再增量 UTF-8 解码；非法序列以 `\xNN` 转义，文本规则再扫描解码结果。
+- pipe reader 独立持续排空 stdout/stderr，不等待 JSON-RPC notification、Renderer 或 DB 消费。原始字节先执行字节凭证扫描，再增量 UTF-8 解码；非法序列以 `\xNN` 转义，文本规则再扫描解码结果。
 - 安全文本按 100ms 或累计 4 KiB 合并，任一先到即 flush。每个 chunk 包含全局单调 `chunk_index`、流内 `stream_index`、`stream`、时间戳、redaction/truncation/tail_replay。全局序只表示 Runtime 观察交错，不声称 OS 同时写的绝对顺序。
 - 保留上限为 stdout 768 KiB、stderr 512 KiB、合计 1 MiB。先为 stderr 分配最多 512 KiB，stdout 使用剩余且不超过 768 KiB。流超限时在最终预算内等量保留 head/tail，不截断 UTF-8 字符或脱敏占位符。
 - UI 实时显示 head；达到 head 上限时只发一次中间省略标记，Runtime 继续排空管道并维护滚动 tail，结束时以 `tail_replay=true` 补发。持久化与最终 UI head/tail 完全一致。
 - 模型 observation 最多 32 KiB：stderr 优先最多 16 KiB，剩余给 stdout，流内仍 head/tail。内部审计保存 exit_code、duration、raw original/持久化 retained 字节数、termination_reason 和 redaction 元数据；ToolResult 只返回 1.6 定义的脱敏后 observation/returned 字节口径，raw counts 不进入 Event 或模型。
-- pipe reader -> 日志聚合器 -> Event publisher 使用有界队列。慢 SSE/Renderer 订阅断开后从最后 committed event id 回放，不增长无界内存，也不阻塞子进程。
+- pipe reader -> 日志聚合器 -> Event projector 使用有界队列。慢 Renderer 不增长无界内存，也不阻塞子进程；恢复时从最后 committed event id 通过 `run/readEvents` 补齐。
 - DB write/日志聚合故障终止进程组，返回 `output_capture_failed, side_effects_may_exist=true`并进入事实确认。cancel/timeout/resource limit 后在短暂宽限期内排空已产生管道字节，仍受同一上限。
 
 ### 7.5 Shell guardian
@@ -676,6 +684,14 @@ raw input/output
 
 ## 12. Fail Closed 与自检
 
+MVP Lite 当前实施状态：
+
+- ✅ 静态 Seatbelt profile 与 `-D` canonical path 参数已实现。
+- ✅ 实机自检已覆盖 active root、sandbox home/tmp、外部 sentinel、敏感 carve-out、`.git`、symlink 逃逸、子进程继承、loopback 拒绝和基础进程组 timeout。
+- ✅ 自检已接入 Runtime initialize；任何失败都保持 Shell unavailable，不存在无沙箱回退。
+- ✅ MVP Lite 的逐次审批、默认断网、干净环境、256 KiB 有界输出、timeout/cancel 与进程组清理已经实现；Seatbelt 自检通过时产品能力 `runShell=true`。
+- ⏳ 目标态候选的 managed proxy、可配置 Toolchain Profile、manifest、精确资源监控、guardian 与 Redaction Service 自检仍未实现，不外推为目标态 Shell 已完成。
+
 应用启动执行 Seatbelt 自检：
 
 - active root 测试目录可写。
@@ -691,3 +707,34 @@ raw input/output
 Redaction Service 同时校验规则 schema、唯一 rule id、重叠排序、8 KiB 长度上限、幂等性和全部 test vectors。自检失败时所有内容通路 unavailable，不仅限于 Shell。
 
 `sandbox-exec` 缺失、策略生成/编译失败、必需 Toolchain 或任一强制资源/manifest/输出捕获自检失败时，Shell capability 为 unavailable，审批和 API 都不能绕过。
+
+## 13. 第三期 Registry、Skill 与 MCP Adapter
+
+`ToolRegistryEntry v1` 是工具执行唯一事实源：
+
+```text
+spec: name, description, sideEffect, approvalRequired, timeoutSeconds,
+      inputSchema, resultSchema, batchPolicy, visibility
+provenance: kind=builtin|skill|mcp, sourceId, sourceVersion, contentHash,
+            optional pluginId/serverId/skillId
+adapter: validate/default/execute capability (Runtime-only, never serialized)
+```
+
+Tool Schema Dialect v1 仍只接受递归闭合 object、受控 scalar/array、required/default/min/max/enum/const；遇到 `$ref`、组合 schema、自由 map 或未知关键字时整个外部工具隔离，不能静默删除关键字。
+
+Skill 读取工具为 `skill_read` 与 `skill_read_resource`。Catalog 合并应用管理的 `system:<name>`、用户管理的 `user:<name>` 与 Plugin 的 `<plugin>:<name>`；读取路径必须位于该来源 root，逐段拒绝绝对路径、`..`、symlink、特殊文件、非 UTF-8、二进制和容量超限。系统 Skill 完整树要求当前 owner 与精确 `0700/0600`；用户 Skill 完整树要求当前 owner，但接受 Finder、Git 或 `cp` 产生的常见 mode。`scripts/` 只作为文本资源，不存在执行 Adapter。
+
+`skill_create` 是独立的 `sideEffect=eidos_state`、direct、single、approval-required Adapter，不经过 Agent Shell。它接受闭合的 `name`、`description`、`instructions` 与可选 UTF-8 `files[{path,content}]`；Runtime 生成 `SKILL.md` 并验证资源相对路径、文件/目录冲突、单文件/总容量和 system/user 同名。审批绑定完整树 diff 与 content hash，批准后以 Durable Intent、私有 staging 和原子 rename 写入 `${EIDOS_DATA_DIR}/skills/<name>`；commit 前再次检查碰撞，拒绝审批时零副作用，提交结果未知时进入 reconciliation。
+
+`skill_install` 是 `execution_kind=network_eidos_state` 的 direct、single 专用 Adapter，只接受一个公开 GitHub `/tree/<ref>/<path>` URL。Runtime 先生成 `network_access` Approval，权限固定为 `codeload.github.com:443` 且只在本次下载调用中有效；拒绝时零网络请求。批准后 Runtime 不继承 GitHub token，下载有界 zip，拒绝 redirect 到其他 host、路径穿越、symlink、特殊文件、超限和非法 metadata，并要求目录 basename 与 `SKILL.md.name` 一致。验证完成后生成第二个 `file_change` Approval，展示目标与每个文件的 size/hash；批准后复用 Eidos-state Durable Intent、私有 staging 和原子 rename 安装完整 Skill 树。任一拒绝不写 Eidos Home；当前 Run 的 Skill snapshot 不变，新 Run 才发现安装结果。该工具不开放 Agent Shell 网络或真实 Home，不支持私有仓库、更新或覆盖。
+
+所有 MCP Tool 固定 `sideEffect=external`、`approvalRequired=true`、`batchPolicy=single`。Server annotations 只用于展示，不能降低权限。参数在审批前补默认值、校验、敏感扫描并 canonical hash；Approval 只批准该 hash、Server、profile、timeout 和 env names，不能改写其中任何值。
+
+MCP Server 只能使用 `connector` 或 `workspace_read` profile：
+
+| profile | Workspace | 网络 | 真实 Home / `~/.eidos` | Plugin/runtime |
+|---|---|---|---|---|
+| connector | deny | allow | deny | read-only |
+| workspace_read | read-only | deny | deny | read-only |
+
+两种 profile 都无 Workspace 写权限。Sandbox、自检或结果扫描不可用时 MCP capability fail closed，但内置只读工具继续可用。

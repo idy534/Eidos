@@ -1,0 +1,87 @@
+(version 1)
+
+(deny default)
+
+; Every descendant inherits the same profile.
+(allow process-exec)
+(allow process-fork)
+(allow signal (target same-sandbox))
+(allow process-info* (target same-sandbox))
+
+; Minimal platform runtime required by system command-line tools.
+(allow file-read* file-test-existence
+  (literal "/")
+  (subpath "/System")
+  (subpath "/Library/Apple")
+  (subpath "/Library/Developer")
+  (subpath "/usr/lib")
+  (subpath "/usr/share")
+  (subpath "/bin")
+  (subpath "/sbin")
+  (subpath "/usr/bin")
+  (subpath "/usr/sbin")
+  (subpath "/usr/libexec")
+  (subpath "/opt/homebrew")
+  (subpath "/usr/local")
+  (subpath "/private/etc")
+  (literal "/private/var/select/sh")
+  (literal "/dev/null")
+  (literal "/dev/zero")
+  (literal "/dev/random")
+  (literal "/dev/urandom")
+  (subpath "/dev/fd"))
+
+(allow file-read* file-test-existence
+  (literal (param "FILE_COMMIT_HELPER")))
+
+(allow file-read-metadata file-test-existence
+  (path-ancestors "/Library/Developer/CommandLineTools/usr/bin/python3")
+  (path-ancestors "/opt/homebrew")
+  (path-ancestors "/usr/local"))
+
+(allow file-map-executable
+  (subpath "/System")
+  (subpath "/Library/Apple")
+  (subpath "/Library/Developer")
+  (subpath "/opt/homebrew")
+  (subpath "/usr/local")
+  (subpath "/usr/lib"))
+
+(allow file-write-data
+  (literal "/dev/null")
+  (literal "/dev/zero")
+  (subpath "/dev/fd"))
+
+(allow sysctl-read)
+(allow mach-lookup
+  (global-name "com.apple.system.opendirectoryd.libinfo")
+  (global-name "com.apple.system.opendirectoryd.membership"))
+
+; Permit traversal to parameterized roots without granting their parents.
+(allow file-read-metadata file-test-existence
+  (path-ancestors (param "WORKSPACE_ROOT"))
+  (path-ancestors (param "SANDBOX_HOME"))
+  (path-ancestors (param "SANDBOX_TMP")))
+
+; Workspace is readable except for the sensitive carve-out.
+(allow file-read* file-test-existence
+  (require-all
+    (subpath (param "WORKSPACE_ROOT"))
+    (require-not (literal (param "SENSITIVE_PATH")))
+    (require-not (subpath (param "SENSITIVE_PATH")))))
+
+; Workspace is writable except for .git and the sensitive carve-out.
+(allow file-write*
+  (require-all
+    (subpath (param "WORKSPACE_ROOT"))
+    (require-not (literal (param "GIT_DIR")))
+    (require-not (subpath (param "GIT_DIR")))
+    (require-not (literal (param "SENSITIVE_PATH")))
+    (require-not (subpath (param "SENSITIVE_PATH")))))
+
+; Runtime-owned disposable home and temp directories.
+(allow file-read* file-test-existence file-write*
+  (subpath (param "SANDBOX_HOME"))
+  (subpath (param "SANDBOX_TMP")))
+
+; Network, loopback, bind, and Unix sockets remain denied by default.

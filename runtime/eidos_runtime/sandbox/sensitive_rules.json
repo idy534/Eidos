@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "private_key",
+      "version": 1,
+      "priority": 10,
+      "action": "deny",
+      "pattern": "-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----"
+    },
+    {
+      "id": "api_credential",
+      "version": 1,
+      "priority": 20,
+      "action": "deny",
+      "pattern": "\\b(?:sk|ds)-[A-Za-z0-9_-]{16,}\\b"
+    },
+    {
+      "id": "secret_assignment",
+      "version": 1,
+      "priority": 30,
+      "action": "redact",
+      "pattern": "(?i)\\b(?:password|passwd|token|secret)\\s*[:=]\\s*[^\\s,;]+"
+    },
+    {
+      "id": "email_address",
+      "version": 1,
+      "priority": 40,
+      "action": "allow_with_audit",
+      "pattern": "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"
+    }
+  ]
+}
