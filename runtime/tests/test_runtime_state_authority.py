@@ -81,8 +81,11 @@ class RuntimeStateAuthorityTests(unittest.TestCase):
             EventProjector(),
         )
 
-        with self.assertRaisesRegex(OSError, "client closed"):
-            events.publish(mutation, run=mutation.value)
+        with self.assertLogs("eidos.runtime", level="WARNING"):
+            delivery = events.publish(mutation, run=mutation.value)
+
+        self.assertEqual(delivery.delivered, 0)
+        self.assertEqual(delivery.failures[0].error_type, "OSError")
 
         listed = self.store.list_events(self.session["id"], after_event_id=0)
         self.assertTrue(any(

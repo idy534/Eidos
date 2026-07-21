@@ -286,7 +286,7 @@ class RunSupervisor:
             logger.exception("Run worker failed")
             try:
                 run = self.store.read_run(run_id)
-                if run["status"] in {"running", "waiting_approval"}:
+                if run["status"] in {"running", "waiting_approval", "finalizing"}:
                     mutation = self.store.fail_run_committed(
                         run_id, "INTERNAL_ERROR"
                     )

@@ -441,7 +441,10 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
         )
 
     active_runs = connection.execute(
-        "SELECT id, status FROM runs WHERE status IN ('running', 'waiting_approval')"
+        """
+        SELECT id, status FROM runs
+        WHERE status IN ('running', 'waiting_approval', 'finalizing')
+        """
     ).fetchall()
     for row in active_runs:
         settle_run_children(connection, str(row["id"]), RunStatus.INTERRUPTED, now)

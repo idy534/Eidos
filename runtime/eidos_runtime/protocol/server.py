@@ -25,6 +25,7 @@ from eidos_runtime.model.config import (
 )
 from eidos_runtime.protocol.schemas import JsonRpcRequestDto, JsonRpcResponse
 from eidos_runtime.runtime.supervisor import RunSupervisor
+from eidos_runtime.runtime.events import RuntimeOutputClosedError
 from eidos_runtime.sandbox.sensitive import (
     SensitiveContentDenied,
     SensitiveScanError,
@@ -1017,7 +1018,16 @@ class RuntimeServer:
 
     def send(self, message: dict[str, object]) -> None:
         with self.output_lock:
-            write_message(self.output, message)
+            if self.output.closed:
+                raise RuntimeOutputClosedError("runtime output channel is closed")
+            try:
+                write_message(self.output, message)
+            except ValueError:
+                if self.output.closed:
+                    raise RuntimeOutputClosedError(
+                        "runtime output channel is closed"
+                    ) from None
+                raise
 
     def _scan_text(self, value: str) -> str:
         if self.sensitive is None:

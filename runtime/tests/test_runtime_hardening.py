@@ -383,7 +383,7 @@ class RuntimeHardeningTests(unittest.TestCase):
                 raise OSError("renderer disconnected")
 
         coordinator = self._coordinator("approve", RuntimeEvents(notify))
-        with self.assertRaisesRegex(OSError, "renderer disconnected"):
+        with self.assertLogs("eidos.runtime", level="WARNING"):
             coordinator.request(
                 run["id"], item, {"kind": "file_change"}, threading.Event(),
                 transition_reason="file_change_approval",
