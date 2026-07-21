@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import threading
 import time
 from typing import Callable
@@ -30,7 +31,7 @@ from eidos_runtime.runtime.contracts import (
 from eidos_runtime.runtime.decision import LoopDecisionEngine
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.finalizer import RunFinalizer
-from eidos_runtime.runtime.loop_guard import LoopGuard
+from eidos_runtime.runtime.loop_guard import LoopGuard, tool_call_fingerprint
 from eidos_runtime.runtime.run_resources import RunResourceError, RunResources
 from eidos_runtime.runtime.sampling import (
     SamplingAuthenticationFailed,
@@ -60,6 +61,8 @@ EMPTY_EXTENSION_SNAPSHOT = {
     "skillCatalogHash": "",
     "mcpConfigHash": "",
 }
+
+logger = logging.getLogger("eidos.runtime")
 
 
 class RuntimeEngine:
@@ -116,8 +119,15 @@ class RuntimeEngine:
                 self._drive(run_context, resources, cancel)
         except RunResourceError as error:
             self._fail(run_id, str(error))
-        except (RuntimeCancelled, SamplingCancelled, InvalidRunStateError):
+        except (RuntimeCancelled, SamplingCancelled):
             self._cancel(run_id)
+        except InvalidRunStateError:
+            logger.exception("Unexpected runtime state conflict")
+            current = self.store.read_run(run_id)
+            if current["status"] == "canceled":
+                self._cancel(run_id)
+            elif current["status"] != "interrupted":
+                self._fail(run_id, "RUNTIME_STATE_CONFLICT")
         finally:
             self._pause_effective_time(run_id)
 
@@ -128,7 +138,9 @@ class RuntimeEngine:
         cancel: threading.Event,
     ) -> None:
         decisions = LoopDecisionEngine()
-        guard = LoopGuard()
+        guard = LoopGuard.from_signatures(
+            self.store.recent_progress_signatures(run.run_id)
+        )
         context_builder = ContextBuilder(
             self.store,
             context_window_tokens=self.context_window_tokens,
@@ -161,8 +173,8 @@ class RuntimeEngine:
         while True:
             self._check_cancel(run.run_id, cancel)
             self._pause_effective_time(run.run_id)
-            self.store.consume_pending_inputs(run.run_id)
-            resources.refresh()
+            injected = self.store.consume_pending_input_facts(run.run_id)
+            resources.refresh(tuple(content for _item_id, content in injected))
             dispatcher = resources.dispatcher
             if dispatcher is None:
                 raise RuntimeError("run resources are not started")
@@ -212,6 +224,7 @@ class RuntimeEngine:
                     "max_effective_runtime"
                     if budget_fact["runEffectiveMsRemaining"] <= 0
                     else "max_total_steps",
+                    cancel,
                 )
                 return
             if context_decision.action == LoopAction.PAUSE:
@@ -232,6 +245,7 @@ class RuntimeEngine:
                     tool_snapshot=snapshot,
                     context_budget=built.budget,
                     workspace_version=built.facts.workspace_version,
+                    new_user_input_ids=tuple(item_id for item_id, _content in injected),
                 )
             except SegmentLimitReached as error:
                 self._pause_for_segment_limit(run.run_id, error)
@@ -242,11 +256,14 @@ class RuntimeEngine:
                     built.model_context,
                     "max_effective_runtime" if "time" in str(error)
                     else "max_total_steps",
+                    cancel,
                 )
                 return
             self._resume_effective_time()
             try:
                 sampled = sampling.sample(step, cancel)
+            except SamplingCancelled:
+                raise
             except SensitiveScanError:
                 self.store.complete_current_step(
                     run.run_id, "failed", reason="sensitive_scan_failed"
@@ -352,10 +369,24 @@ class RuntimeEngine:
                 self._pause_run(run.run_id, repeated)
                 return
             outcome = tools.execute(step, validation.tool_calls, cancel)
-            guard_reason = guard.observe_errors(outcome.error_fingerprints)
-            if guard_reason is None and outcome.status == "completed":
-                guard_reason = guard.observe_progress(
-                    outcome.workspace_version, outcome.diff_hash
+            signature = guard.make_signature(
+                workspace_version=outcome.workspace_version,
+                diff_hash=outcome.diff_hash,
+                successful_tool_result_hashes=outcome.successful_tool_result_hashes,
+                context_fact_ids=outcome.context_fact_ids,
+                error_fingerprints=outcome.error_fingerprints,
+                reconciliation_epoch=outcome.reconciliation_epoch,
+                new_user_input_ids=step.new_user_input_ids,
+                tool_call_fingerprint=tool_call_fingerprint(
+                    validation.tool_calls,
+                    step.workspace_version,
+                    step.reconciliation_epoch,
+                ),
+            )
+            guard_reason = guard.observe_progress(signature)
+            if outcome.status in {"completed", "paused"}:
+                self.store.complete_current_step(
+                    run.run_id, "completed", progress_signature=signature
                 )
             tool_decision = decisions.decide(
                 sampling=sampled,
@@ -492,7 +523,7 @@ class RuntimeEngine:
         self.state_machine.track(RuntimeState.CANCELED, "run_canceled")
         self.store.complete_current_step(run_id, "canceled", reason="canceled")
         completed = self.store.read_run(run_id)
-        if completed["status"] in {"running", "waiting_approval"}:
+        if completed["status"] in {"running", "waiting_approval", "finalizing"}:
             mutation = self.store.cancel_run_committed(run_id)
             items = {
                 str(item["id"]): item

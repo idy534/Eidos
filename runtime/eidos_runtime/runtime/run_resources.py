@@ -53,7 +53,7 @@ class RunResources:
                 sandbox=self.mcp_sandbox,
             )
             self._set_registry(self.mcp.start())
-            self._activate_mentions()
+            self._activate_mentions(self.user_input)
             self.skill_context = self.skills.context(
                 self.extension_snapshot, self.user_input
             )
@@ -65,12 +65,23 @@ class RunResources:
             self.close()
             raise
 
-    def refresh(self) -> None:
+    def refresh(self, new_inputs: tuple[str, ...] = ()) -> None:
         if self.mcp is None:
             raise RuntimeError("run resources are not started")
-        entries = self.mcp.refresh_if_changed()
-        if entries is not None:
-            self._set_registry(entries)
+        try:
+            entries = self.mcp.refresh_if_changed()
+            if entries is not None:
+                self._set_registry(entries)
+            if new_inputs:
+                added = "\n".join(new_inputs)
+                self.user_input = f"{self.user_input}\n{added}"
+                self._activate_mentions(added)
+                assert self.skills is not None
+                self.skill_context = self.skills.context(
+                    self.extension_snapshot, self.user_input
+                )
+        except SkillReadError:
+            raise RunResourceError("SKILL_SNAPSHOT_INVALID") from None
 
     def close(self) -> None:
         if self._closed:
@@ -102,14 +113,14 @@ class RunResources:
         self.registry = ToolRegistry((*base.entries, tool_search_entry(deferred)))
         self.dispatcher = ToolDispatcher(self.registry)
 
-    def _activate_mentions(self) -> None:
+    def _activate_mentions(self, user_input: str) -> None:
         if self.registry is None:
             return
         mentioned_plugins = {
             match.group(1)
             for match in re.finditer(
                 r"@([a-z][a-z0-9_-]{0,63})(?::[A-Za-z0-9_-]{1,64})?",
-                self.user_input,
+                user_input,
             )
         }
         mentioned_tools = tuple(

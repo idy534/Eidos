@@ -27,12 +27,13 @@ from eidos_runtime.runtime.state_machine import (
     ToolCallStatus,
     ensure_transition,
 )
+from eidos_runtime.runtime.loop_guard import ProgressSignature
 
 
 DATABASE_NAME = "eidos.db"
 LOCK_NAME = "runtime.lock"
 RESERVE_NAME = "emergency.reserve"
-SCHEMA_REVISION = 7
+SCHEMA_REVISION = 8
 RESERVE_BYTES = 1024 * 1024
 DEFAULT_LIST_LIMIT = 50
 MAX_LIST_LIMIT = 200
@@ -536,7 +537,7 @@ class SessionStore:
                     raise StorageError("schema_revision_missing")
             if revision > SCHEMA_REVISION or revision < 0:
                 raise StorageError("schema_revision_unsupported")
-            if revision in {1, 2, 3, 4, 5, 6}:
+            if revision in {1, 2, 3, 4, 5, 6, 7}:
                 _backup_database(connection, database_path, revision)
             if revision == 1:
                 _migrate_v1_to_v2(connection)
@@ -556,6 +557,9 @@ class SessionStore:
             if revision == 6:
                 _migrate_v6_to_v7(connection)
                 revision = 7
+            if revision == 7:
+                _migrate_v7_to_v8(connection)
+                revision = 8
             if revision not in {0, SCHEMA_REVISION}:
                 raise StorageError("schema_revision_unsupported")
 
@@ -695,6 +699,7 @@ class SessionStore:
                     observed_reconciliation_epoch INTEGER NOT NULL DEFAULT 0,
                     tool_snapshot_json TEXT,
                     tool_set_hash TEXT,
+                    progress_signature_json TEXT,
                     created_at INTEGER NOT NULL,
                     completed_at INTEGER,
                     UNIQUE(segment_id, ordinal)
@@ -1941,7 +1946,12 @@ class SessionStore:
         return CommittedMutation(run, (event,))
 
     def complete_current_step(
-        self, run_id: str, status_value: str, *, reason: str | None = None
+        self,
+        run_id: str,
+        status_value: str,
+        *,
+        reason: str | None = None,
+        progress_signature: ProgressSignature | None = None,
     ) -> None:
         if status_value not in {"completed", "failed", "canceled"}:
             raise ValueError("invalid step status")
@@ -1964,8 +1974,18 @@ class SessionStore:
                 (status_value, now, step["id"]),
             )
             connection.execute(
-                "UPDATE steps SET status = ?, completed_at = ? WHERE id = ? AND status = 'running'",
-                (status_value, now, step["id"]),
+                """
+                UPDATE steps
+                SET status = ?, completed_at = ?, progress_signature_json = ?
+                WHERE id = ? AND status = 'running'
+                """,
+                (
+                    status_value,
+                    now,
+                    progress_signature.model_dump_json()
+                    if progress_signature is not None else None,
+                    step["id"],
+                ),
             )
             run = connection.execute(
                 "SELECT session_id FROM runs WHERE id = ?", (run_id,)
@@ -2024,6 +2044,24 @@ class SessionStore:
                                 },
                                 session_id=run["session_id"], run_id=run_id,
                             )
+
+    def recent_progress_signatures(
+        self, run_id: str, limit: int = 8
+    ) -> tuple[ProgressSignature, ...]:
+        if not 1 <= limit <= 32:
+            raise ValueError("invalid signature history limit")
+        with self.lock:
+            rows = self._connection().execute(
+                """
+                SELECT progress_signature_json FROM steps
+                WHERE run_id = ? AND progress_signature_json IS NOT NULL
+                ORDER BY creation_seq DESC LIMIT ?
+                """,
+                (run_id, limit),
+            ).fetchall()
+        return tuple(
+            ProgressSignature.model_validate_json(row[0]) for row in reversed(rows)
+        )
 
     def retry_current_model_attempt(self, run_id: str) -> None:
         now = _now_ms()
@@ -2890,7 +2928,11 @@ class SessionStore:
             run, event = transition_run(
                 connection,
                 run_id,
-                frozenset({RunStatus.RUNNING, RunStatus.WAITING_APPROVAL}),
+                frozenset({
+                    RunStatus.RUNNING,
+                    RunStatus.WAITING_APPROVAL,
+                    RunStatus.FINALIZING,
+                }),
                 RunStatus.FAILED,
                 error_code,
             )
@@ -2948,6 +2990,7 @@ class SessionStore:
             RunStatus.RUNNING,
             RunStatus.WAITING_APPROVAL,
             RunStatus.WAITING_USER_INPUT,
+            RunStatus.FINALIZING,
         })
         current = RunStatus(row["status"])
         if current not in expected:
@@ -3024,22 +3067,6 @@ class SessionStore:
             ).fetchone()
             if run is None:
                 raise ResourceNotFoundError("run not found")
-            item_rows = connection.execute(
-                """
-                SELECT * FROM items
-                WHERE session_id = ? AND status IN ('completed', 'failed', 'declined')
-                  AND NOT (kind = 'assistant_message' AND incomplete = 1)
-                ORDER BY creation_seq ASC
-                """,
-                (run["session_id"],),
-            ).fetchall()
-            tool_rows: list[sqlite3.Row] = []
-            if item_rows:
-                placeholders = ",".join("?" for _ in item_rows)
-                tool_rows = connection.execute(
-                    f"SELECT * FROM tool_calls WHERE item_id IN ({placeholders})",
-                    [row["id"] for row in item_rows],
-                ).fetchall()
             summary_row = connection.execute(
                 """
                 SELECT * FROM compact_summaries
@@ -3047,11 +3074,95 @@ class SessionStore:
                 """,
                 (run_id,),
             ).fetchone()
+            source_ids = set(
+                _compact_summary_from_row(summary_row).source_item_ids
+                if summary_row is not None else ()
+            )
+            goal_row = connection.execute(
+                """
+                SELECT * FROM items
+                WHERE run_id = ? AND kind = 'user_message'
+                ORDER BY creation_seq ASC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+            excluded = set(source_ids)
+            if goal_row is not None:
+                excluded.add(str(goal_row["id"]))
+            excluded_sql = ""
+            excluded_values: tuple[object, ...] = ()
+            if excluded:
+                placeholders = ",".join("?" for _ in excluded)
+                excluded_sql = f" AND items.id NOT IN ({placeholders})"
+                excluded_values = tuple(excluded)
+            base = f"""
+                FROM items LEFT JOIN tool_calls ON tool_calls.item_id = items.id
+                WHERE items.session_id = ?
+                  AND items.status IN ('completed', 'failed', 'declined')
+                  AND NOT (items.kind = 'assistant_message' AND items.incomplete = 1)
+                  {excluded_sql}
+            """
+            size_expression = """
+                length(CAST(COALESCE(items.content, '') AS BLOB))
+                + length(CAST(COALESCE(tool_calls.arguments_json, '') AS BLOB))
+                + length(CAST(COALESCE(tool_calls.result_json, '') AS BLOB)) + 256
+            """
+            aggregate = connection.execute(
+                f"SELECT COUNT(*), COALESCE(SUM({size_expression}), 0) {base}",
+                (run["session_id"], *excluded_values),
+            ).fetchone()
+            metadata = connection.execute(
+                f"""
+                SELECT items.id, items.creation_seq, {size_expression} AS fact_bytes
+                {base}
+                ORDER BY items.creation_seq DESC LIMIT ?
+                """,
+                (run["session_id"], *excluded_values, MAX_CONTEXT_ITEMS + 1),
+            ).fetchall()
+            goal_size = (
+                len(str(goal_row["content"] or "").encode("utf-8")) + 256
+                if goal_row is not None else 0
+            )
+            remaining_bytes = max(0, MAX_CONTEXT_BYTES - goal_size)
+            remaining_items = MAX_CONTEXT_ITEMS - (1 if goal_row is not None else 0)
+            selected_ids: list[str] = []
+            selected_bytes = 0
+            for row in metadata:
+                fact_bytes = int(row["fact_bytes"])
+                if (
+                    len(selected_ids) >= remaining_items
+                    or selected_bytes + fact_bytes > remaining_bytes
+                ):
+                    break
+                selected_ids.append(str(row["id"]))
+                selected_bytes += fact_bytes
+            item_rows: list[sqlite3.Row] = []
+            if selected_ids:
+                placeholders = ",".join("?" for _ in selected_ids)
+                item_rows = connection.execute(
+                    f"SELECT * FROM items WHERE id IN ({placeholders})",
+                    selected_ids,
+                ).fetchall()
+            if goal_row is not None:
+                item_rows.append(goal_row)
+            item_rows.sort(key=lambda row: int(row["creation_seq"]))
+            tool_rows: list[sqlite3.Row] = []
+            if selected_ids:
+                placeholders = ",".join("?" for _ in selected_ids)
+                tool_rows = connection.execute(
+                    f"SELECT * FROM tool_calls WHERE item_id IN ({placeholders})",
+                    selected_ids,
+                ).fetchall()
+            candidate_overflow = (
+                int(aggregate[0]) > len(selected_ids)
+                or int(aggregate[1]) > remaining_bytes
+            )
         tools_by_item = {row["item_id"]: row for row in tool_rows}
         items: list[ContextItemFact] = []
+        serialized_bytes = 2
         for row in item_rows:
             tool = tools_by_item.get(row["id"])
-            items.append(ContextItemFact(
+            fact = ContextItemFact(
                 item_id=str(row["id"]),
                 run_id=str(row["run_id"]),
                 kind=str(row["kind"]),
@@ -3061,7 +3172,19 @@ class SessionStore:
                 tool_name=str(tool["tool_name"]) if tool else None,
                 arguments_json=str(tool["arguments_json"]) if tool else None,
                 result_json=str(tool["result_json"]) if tool and tool["result_json"] is not None else None,
-            ))
+            )
+            size = len(json.dumps(
+                fact.model_dump(),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")) + 1
+            if serialized_bytes + size > MAX_CONTEXT_BYTES:
+                candidate_overflow = True
+                if goal_row is not None and row["id"] == goal_row["id"]:
+                    raise ContextLimitExceeded("current user goal exceeds context limit")
+                continue
+            items.append(fact)
+            serialized_bytes += size
         return ContextFacts(
             run_id=run_id,
             session_id=str(run["session_id"]),
@@ -3071,6 +3194,10 @@ class SessionStore:
             workspace_version=int(run["workspace_version"]),
             reconciliation_epoch=int(run["reconciliation_epoch"]),
             last_diff_hash=run["last_diff_hash"],
+            candidate_overflow=candidate_overflow,
+            current_user_goal_id=(
+                str(goal_row["id"]) if goal_row is not None else None
+            ),
         )
 
     def latest_compact_summary(self, run_id: str) -> CompactSummary | None:
@@ -3172,7 +3299,13 @@ class SessionStore:
         return row is not None
 
     def consume_pending_inputs(self, run_id: str) -> int:
+        return len(self.consume_pending_input_facts(run_id))
+
+    def consume_pending_input_facts(
+        self, run_id: str
+    ) -> tuple[tuple[str, str], ...]:
         now = _now_ms()
+        injected: list[tuple[str, str]] = []
         with self.lock, self._connection() as connection:
             run = connection.execute(
                 "SELECT session_id FROM runs WHERE id = ? AND status = 'running'",
@@ -3215,7 +3348,8 @@ class SessionStore:
                     {"inputId": entry["id"]},
                     session_id=run["session_id"], run_id=run_id,
                 )
-        return len(pending)
+                injected.append((item_id, str(entry["content"])))
+        return tuple(injected)
 
     def _create_item(
         self, run_id: str, kind: str, model_step_index: int | None
@@ -3726,6 +3860,22 @@ def _migrate_v6_to_v7(connection: sqlite3.Connection) -> None:
         raise StorageError("migration_failed") from None
 
 
+def _migrate_v7_to_v8(connection: sqlite3.Connection) -> None:
+    try:
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(steps)").fetchall()
+        }
+        if columns and "progress_signature_json" not in columns:
+            connection.execute(
+                "ALTER TABLE steps ADD COLUMN progress_signature_json TEXT"
+            )
+        connection.execute("PRAGMA user_version = 8")
+        connection.commit()
+    except sqlite3.Error:
+        connection.rollback()
+        raise StorageError("migration_failed") from None
+
+
 def _prepare_private_directory(path: Path) -> None:
     if path.is_symlink():
         raise StorageError("data directory must not be a symlink")
@@ -4023,6 +4173,7 @@ def _run_from_row(
         "running": ["cancel"],
         "waiting_approval": ["approve", "reject", "cancel"],
         "waiting_user_input": ["continue", "cancel"],
+        "finalizing": ["cancel"],
     }.get(row["status"], [])
     if allowed_actions:
         run["allowedActions"] = allowed_actions

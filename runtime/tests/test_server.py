@@ -554,7 +554,7 @@ class RuntimeProtocolTests(unittest.TestCase):
             self.assertLessEqual(len(encoded), 1024 * 1024)
             self.assertEqual(snapshot["runs"][-1]["id"], latest_run_id)
 
-    def test_context_builder_reports_over_budget_without_dropping_history(self) -> None:
+    def test_context_builder_reports_candidate_overflow_without_unbounded_load(self) -> None:
         with (
             tempfile.TemporaryDirectory(prefix="eidos-context-data-") as data,
             tempfile.TemporaryDirectory(prefix="eidos-context-workspace-") as workspace,
@@ -572,7 +572,11 @@ class RuntimeProtocolTests(unittest.TestCase):
                 current, _ = store.create_run(session["id"], "continue")
                 built = ContextBuilder(store).build(current["id"])
                 self.assertFalse(built.budget.fits)
-                self.assertGreater(len(built.facts.items), 13)
+                self.assertTrue(built.facts.candidate_overflow)
+                self.assertLessEqual(len(built.facts.items), 200)
+                self.assertIn(
+                    "continue", [item.content for item in built.facts.items]
+                )
             finally:
                 store.close()
 

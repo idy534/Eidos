@@ -50,6 +50,7 @@ class StepContext(_FrozenModel):
     workspace_version: int = 0
     context_budget: ContextBudget | None = None
     extension_snapshot_hash: str
+    new_user_input_ids: tuple[str, ...] = ()
 
 
 class SamplingOutcome(_FrozenModel):
@@ -75,6 +76,9 @@ class ToolBatchOutcome(_FrozenModel):
     error_fingerprints: tuple[str, ...] = ()
     workspace_version: int = 0
     diff_hash: str | None = None
+    successful_tool_result_hashes: tuple[str, ...] = ()
+    context_fact_ids: tuple[str, ...] = ()
+    reconciliation_epoch: int = 0
 
 
 class LoopAction(StrEnum):

@@ -115,12 +115,14 @@ class ApprovalCoordinator:
         )
         self.check_cancel(run_id, cancel)
         decision = self._validated(result)
-        self.store.resolve_approval_committed(
+        mutation = self.store.resolve_approval_committed(
             str(item["id"]),
             decision.decision,
             decision.feedback,
             requeue=self.requeue,
         )
+        approval_run = self.store.read_run(run_id)
+        self.events.publish(mutation, run=approval_run, item=mutation.value)
         self.resume_execution_slot(run_id, cancel)
         self.resume_effective_time()
         approval_run = self.store.read_run(run_id)

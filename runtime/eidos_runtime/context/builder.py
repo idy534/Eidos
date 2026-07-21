@@ -64,7 +64,10 @@ class ContextBuilder:
                 ),
             })
         for item in facts.items:
-            if item.item_id in source_ids:
+            if (
+                item.item_id in source_ids
+                and item.item_id != facts.current_user_goal_id
+            ):
                 continue
             if item.kind == "user_message":
                 context.append({"type": "user", "content": item.content or ""})
@@ -116,4 +119,6 @@ class ContextBuilder:
             tool_call_count=tool_calls,
             tool_result_count=tool_results,
         )
+        if facts.candidate_overflow and budget.fits:
+            budget = budget.model_copy(update={"fits": False})
         return ContextBuild(model_context=tuple(context), budget=budget, facts=facts)

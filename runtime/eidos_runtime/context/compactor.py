@@ -28,6 +28,7 @@ class ContextCompactor:
         eligible = tuple(
             item for item in facts.items
             if item.item_id != latest_user_id
+            and item.item_id != facts.current_user_goal_id
             and (phase == "mid_turn" or item.run_id != run_id)
             and (existing is None or item.item_id not in existing.source_item_ids)
         )

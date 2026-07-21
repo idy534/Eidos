@@ -21,7 +21,7 @@ from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
 from eidos_runtime.runtime.contracts import LoopAction, RunBudget  # noqa: E402
 from eidos_runtime.runtime.decision import LoopDecisionEngine  # noqa: E402
 from eidos_runtime.runtime.tool_runtime import ReadOnlyToolHandler  # noqa: E402
-from eidos_runtime.runtime.loop_guard import LoopGuard  # noqa: E402
+from eidos_runtime.runtime.loop_guard import LoopGuard, ProgressSignature  # noqa: E402
 
 
 class ContextBudgetTests(unittest.TestCase):
@@ -72,18 +72,32 @@ class LoopGuardTests(unittest.TestCase):
 
     def test_no_progress_pauses_on_third_round(self) -> None:
         guard = LoopGuard()
-
-        self.assertIsNone(guard.observe_progress(0, None))
-        self.assertIsNone(guard.observe_progress(0, None))
-        self.assertEqual(guard.observe_progress(0, None), "no_progress")
-
-    def test_unchanged_diff_hash_counts_as_no_progress(self) -> None:
-        guard = LoopGuard()
-        self.assertIsNone(guard.observe_progress(1, "a" * 64))
-        self.assertIsNone(guard.observe_progress(2, "a" * 64))
-        self.assertEqual(
-            guard.observe_progress(3, "a" * 64), "no_progress"
+        signature = ProgressSignature(
+            workspace_version=0,
+            diff_hash=None,
+            successful_tool_result_hashes=(),
+            new_context_fact_ids=(),
+            error_fingerprints=(),
+            resolved_error_fingerprints=(),
+            reconciliation_epoch=0,
         )
+
+        self.assertIsNone(guard.observe_progress(signature))
+        self.assertIsNone(guard.observe_progress(signature))
+        self.assertEqual(guard.observe_progress(signature), "no_progress")
+
+    def test_workspace_change_is_progress_even_with_unchanged_diff_hash(self) -> None:
+        guard = LoopGuard()
+        for workspace_version in range(1, 5):
+            self.assertIsNone(guard.observe_progress(ProgressSignature(
+                workspace_version=workspace_version,
+                diff_hash="a" * 64,
+                successful_tool_result_hashes=(),
+                new_context_fact_ids=(),
+                error_fingerprints=(),
+                resolved_error_fingerprints=(),
+                reconciliation_epoch=0,
+            )))
 
     def test_same_error_pauses_on_third_occurrence(self) -> None:
         guard = LoopGuard()

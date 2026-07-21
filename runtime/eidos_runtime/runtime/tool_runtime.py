@@ -458,7 +458,7 @@ class EidosStateToolHandler:
 
 
 class ToolCallRuntime:
-    """Owns validated, serial ToolCall execution for one immutable Step."""
+    """Owns validated ToolCall execution for one immutable Step."""
 
     def __init__(
         self,
@@ -519,8 +519,11 @@ class ToolCallRuntime:
             self.dispatcher.is_parallel_read_batch(tool_calls)
             and self._parallel_arguments_are_safe(tool_calls)
         ):
+            self.store.clear_sensitive_tool_inputs(step.run_id)
             return self._execute_parallel_reads(step, tool_calls, cancel)
         errors: list[str] = []
+        successes: list[str] = []
+        context_facts: list[str] = []
         for batch_order, call in enumerate(tool_calls):
             self._check_cancel(step.run_id, cancel)
             try:
@@ -604,14 +607,15 @@ class ToolCallRuntime:
                     outcome = handler.execute(
                         step.run_id, item, effective_call, cancel
                     )
+            result_json = json.dumps(
+                outcome.result,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
             mutation = self.store.complete_tool_item_committed(
                 str(item["id"]),
-                json.dumps(
-                    outcome.result,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ),
+                result_json,
                 item_status=outcome.item_status,
                 tool_status=outcome.tool_status,
                 workspace_changed=outcome.workspace_changed,
@@ -624,6 +628,13 @@ class ToolCallRuntime:
                 self.store.activate_tools(step.run_id, outcome.activations)
             if outcome.result.get("outcome") != "success":
                 errors.append(_result_fingerprint(call.name, outcome.result))
+            else:
+                successes.append(_hash_json(outcome.result))
+            context_facts.append(_hash_json({
+                "toolName": call.name,
+                "arguments": arguments,
+                "result": outcome.result,
+            }))
             if (
                 outcome.result.get("reconciliationRequired") is True
                 and (plan.is_external or plan.is_eidos_state)
@@ -647,19 +658,26 @@ class ToolCallRuntime:
                     status="paused", pause_reason=pause_reason
                 )
 
-        self.store.complete_current_step(step.run_id, "completed")
         self.state_machine.track(RuntimeState.THINKING, "tool_batch_completed")
         updated = self.store.read_run(step.run_id)
-        if updated["status"] == "waiting_user_input":
-            return ToolBatchOutcome(
-                status="paused", pause_reason=str(updated.get("pauseReason"))
-            )
         facts = self.store.context_facts(step.run_id)
         return ToolBatchOutcome(
-            status="completed",
+            status=(
+                "paused"
+                if updated["status"] == "waiting_user_input"
+                else "completed"
+            ),
+            pause_reason=(
+                str(updated.get("pauseReason"))
+                if updated["status"] == "waiting_user_input"
+                else None
+            ),
             error_fingerprints=tuple(errors),
             workspace_version=facts.workspace_version,
             diff_hash=facts.last_diff_hash,
+            successful_tool_result_hashes=tuple(successes),
+            context_fact_ids=tuple(context_facts),
+            reconciliation_epoch=facts.reconciliation_epoch,
         )
 
     def _parallel_arguments_are_safe(
@@ -716,6 +734,8 @@ class ToolCallRuntime:
             outcomes = [future.result() for future in futures]
 
         errors: list[str] = []
+        successes: list[str] = []
+        context_facts: list[str] = []
         for (item, call), outcome in zip(pending, outcomes, strict=True):
             mutation = self.store.complete_tool_item_committed(
                 str(item["id"]),
@@ -733,8 +753,14 @@ class ToolCallRuntime:
                 self.store.activate_tools(step.run_id, outcome.activations)
             if outcome.result.get("outcome") != "success":
                 errors.append(_result_fingerprint(call.name, outcome.result))
+            else:
+                successes.append(_hash_json(outcome.result))
+            context_facts.append(_hash_json({
+                "toolName": call.name,
+                "arguments": call.arguments,
+                "result": outcome.result,
+            }))
             self._check_cancel(step.run_id, cancel)
-        self.store.complete_current_step(step.run_id, "completed")
         self.state_machine.track(RuntimeState.THINKING, "tool_batch_completed")
         facts = self.store.context_facts(step.run_id)
         return ToolBatchOutcome(
@@ -742,6 +768,9 @@ class ToolCallRuntime:
             error_fingerprints=tuple(errors),
             workspace_version=facts.workspace_version,
             diff_hash=facts.last_diff_hash,
+            successful_tool_result_hashes=tuple(successes),
+            context_fact_ids=tuple(context_facts),
+            reconciliation_epoch=facts.reconciliation_epoch,
         )
 
     def _check_cancel(self, run_id: str, cancel: threading.Event) -> None:
@@ -753,12 +782,18 @@ class ToolCallRuntime:
 
 
 def _result_fingerprint(tool_name: str, result: dict[str, object]) -> str:
-    return hashlib.sha256(json.dumps(
+    return _hash_json(
         {
             "toolName": tool_name,
             "outcome": result.get("outcome"),
             "code": result.get("code"),
-        },
+        }
+    )
+
+
+def _hash_json(value: object) -> str:
+    return hashlib.sha256(json.dumps(
+        value,
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,

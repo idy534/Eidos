@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import threading
-import time
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelClient
 from eidos_runtime.model.deepseek import ModelProviderError
+from eidos_runtime.runtime.assistant_stream import AssistantStreamWriter
 from eidos_runtime.runtime.contracts import SamplingOutcome, StepContext
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.model_runner import ModelRunner, ModelStreamInterrupted
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
 
 
-MAX_ASSISTANT_BYTES = 512 * 1024
 MAX_STREAM_RETRIES = 5
 
 
@@ -69,70 +68,30 @@ class SamplingRuntime:
     ) -> SamplingOutcome:
         retries = 0
         while True:
-            item: dict[str, object] | None = None
-            assistant_bytes = 0
-            delta_sequence = 0
-            pending_deltas: list[str] = []
-            pending_delta_bytes = 0
-            last_persisted_at = time.monotonic()
-
-            def flush_deltas() -> None:
-                nonlocal item, pending_delta_bytes, last_persisted_at
-                if item is None or not pending_deltas:
-                    return
-                mutation = self.store.append_item_deltas_committed(
-                    str(item["id"]),
-                    tuple(pending_deltas),
-                    delta_sequence - len(pending_deltas) + 1,
-                )
-                item = mutation.value
-                self.events.publish(mutation, item=item)
-                pending_deltas.clear()
-                pending_delta_bytes = 0
-                last_persisted_at = time.monotonic()
-
-            def on_text_delta(delta: str) -> None:
-                nonlocal item, assistant_bytes, delta_sequence, pending_delta_bytes
-                self._check_cancel(cancel)
-                if not isinstance(delta, str) or not delta:
-                    return
-                assistant_bytes += len(delta.encode("utf-8"))
-                if assistant_bytes > MAX_ASSISTANT_BYTES:
-                    raise SamplingProtocolError("assistant output is too large")
-                if item is None:
-                    mutation = self.store.create_assistant_item_committed(
-                        step.run_id, step.step_index
-                    )
-                    item = mutation.value
-                    self.events.publish(mutation, item=item)
-                delta_sequence += 1
-                pending_deltas.append(delta)
-                pending_delta_bytes += len(delta.encode("utf-8"))
-                if (
-                    pending_delta_bytes >= 4 * 1024
-                    or time.monotonic() - last_persisted_at >= 0.1
-                ):
-                    flush_deltas()
+            writer = AssistantStreamWriter(
+                self.store,
+                self.events,
+                step.run_id,
+                step.step_index,
+                check_cancel=lambda: self._check_cancel(cancel),
+            )
 
             try:
                 result = self.runner.run(
                     step.model_context,
                     cancel,
-                    on_text_delta,
+                    writer.write,
                     tool_definitions=step.tool_definitions,
                 )
             except ModelStreamInterrupted as interrupted:
                 if interrupted.text:
-                    on_text_delta(interrupted.text)
-                flush_deltas()
+                    writer.write(interrupted.text)
+                writer.flush()
                 self._check_cancel(cancel)
-                if item is not None:
-                    mutation = self.store.mark_assistant_incomplete_committed(
-                        str(item["id"])
-                    )
-                    self.events.publish(mutation, item=mutation.value)
+                if writer.item is not None:
+                    writer.fail()
                 error = _sampling_error(
-                    interrupted.cause, had_progress=item is not None
+                    interrupted.cause, had_progress=writer.item is not None
                 )
                 if isinstance(error, SensitiveScanError):
                     raise error
@@ -145,14 +104,14 @@ class SamplingRuntime:
                 raise error
 
             self._check_cancel(cancel)
-            flush_deltas()
-            if result.text and item is None:
-                on_text_delta(result.text)
-                flush_deltas()
+            writer.flush()
+            if result.text and writer.item is None:
+                writer.write(result.text)
+                writer.flush()
             return SamplingOutcome(
                 text=result.text,
                 tool_calls=result.tool_calls,
-                assistant_item=item,
+                assistant_item=writer.item,
                 retry_count=retries,
             )
 

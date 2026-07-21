@@ -106,6 +106,8 @@ TRANSITIONS: dict[type[StrEnum], dict[StrEnum, frozenset[StrEnum]]] = {
         RunStatus.WAITING_USER_INPUT: frozenset({RunStatus.QUEUED, RunStatus.CANCELED}),
         RunStatus.FINALIZING: frozenset({
             RunStatus.STOPPED,
+            RunStatus.FAILED,
+            RunStatus.CANCELED,
             RunStatus.WAITING_USER_INPUT,
             RunStatus.INTERRUPTED,
         }),
@@ -125,7 +127,9 @@ TRANSITIONS: dict[type[StrEnum], dict[StrEnum, frozenset[StrEnum]]] = {
             RuntimeState.FAILED, RuntimeState.CANCELED,
         }),
         RuntimeState.WAITING_USER_INPUT: frozenset({RuntimeState.THINKING, RuntimeState.CANCELED}),
-        RuntimeState.FINALIZING: frozenset({RuntimeState.COMPLETED, RuntimeState.FAILED}),
+        RuntimeState.FINALIZING: frozenset({
+            RuntimeState.COMPLETED, RuntimeState.FAILED, RuntimeState.CANCELED,
+        }),
     },
     SegmentStatus: {
         SegmentStatus.QUEUED: frozenset({SegmentStatus.RUNNING, SegmentStatus.CANCELED}),

@@ -39,3 +39,5 @@ class ContextFacts(_Fact):
     workspace_version: int = 0
     reconciliation_epoch: int = 0
     last_diff_hash: str | None = None
+    candidate_overflow: bool = False
+    current_user_goal_id: str | None = None

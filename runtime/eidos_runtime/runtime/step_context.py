@@ -27,6 +27,7 @@ class StepContextFactory:
         tool_snapshot: StepToolSnapshot | None = None,
         context_budget: ContextBudget | None = None,
         workspace_version: int = 0,
+        new_user_input_ids: tuple[str, ...] = (),
     ) -> StepContext:
         dispatcher = resources.dispatcher
         if dispatcher is None:
@@ -64,4 +65,5 @@ class StepContextFactory:
             workspace_version=workspace_version,
             context_budget=context_budget,
             extension_snapshot_hash=run.extension_snapshot_hash,
+            new_user_input_ids=new_user_input_ids,
         )
