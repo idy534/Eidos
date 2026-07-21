@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Callable
 
-from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.db.storage import InvalidRunStateError, SessionStore
 from eidos_runtime.runtime.events import RuntimeEvents
 
 
@@ -92,11 +92,20 @@ class AssistantStreamWriter:
         self.events.publish(mutation, item=self.item)
         return self.item
 
-    def fail(self) -> dict[str, object] | None:
-        self.flush()
+    def abort(self) -> dict[str, object] | None:
         if self.item is None:
             return None
-        mutation = self.store.mark_assistant_incomplete_committed(str(self.item["id"]))
+        try:
+            self.flush()
+        except InvalidRunStateError:
+            self._pending.clear()
+            self._pending_bytes = 0
+        mutation = self.store.mark_assistant_incomplete_if_active_committed(
+            str(self.item["id"])
+        )
+        if mutation is None:
+            self.item = self.store.read_item(str(self.item["id"]))
+            return None
         self.item = mutation.value
         self.events.publish(mutation, item=self.item)
         return self.item

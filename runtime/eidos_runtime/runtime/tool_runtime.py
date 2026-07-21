@@ -660,7 +660,7 @@ class ToolCallRuntime:
 
         self.state_machine.track(RuntimeState.THINKING, "tool_batch_completed")
         updated = self.store.read_run(step.run_id)
-        facts = self.store.context_facts(step.run_id)
+        facts = self.store.context_projection_facts(step.run_id)
         return ToolBatchOutcome(
             status=(
                 "paused"
@@ -762,7 +762,7 @@ class ToolCallRuntime:
             }))
             self._check_cancel(step.run_id, cancel)
         self.state_machine.track(RuntimeState.THINKING, "tool_batch_completed")
-        facts = self.store.context_facts(step.run_id)
+        facts = self.store.context_projection_facts(step.run_id)
         return ToolBatchOutcome(
             status="completed",
             error_fingerprints=tuple(errors),

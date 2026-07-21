@@ -14,7 +14,10 @@ import sys
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
-from eidos_runtime.db.storage import SessionStore  # noqa: E402
+from eidos_runtime.db.storage import (  # noqa: E402
+    InvalidRunStateError,
+    SessionStore,
+)
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
 from eidos_runtime.extensions.skills import SkillCatalog  # noqa: E402
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
@@ -22,7 +25,11 @@ from eidos_runtime.runtime.approval import (  # noqa: E402
     ApprovalCoordinator,
     ApprovalDecision,
 )
-from eidos_runtime.runtime.contracts import RuntimeCancelled  # noqa: E402
+from eidos_runtime.runtime.assistant_stream import AssistantStreamWriter  # noqa: E402
+from eidos_runtime.runtime.contracts import (  # noqa: E402
+    ProgressSignature,
+    RuntimeCancelled,
+)
 from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
 from eidos_runtime.runtime.events import RuntimeEvents  # noqa: E402
 from eidos_runtime.runtime.finalizer import RunFinalizer  # noqa: E402
@@ -182,6 +189,137 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertTrue(all(row["status"] != "in_progress" for row in rows))
         self.assertNotIn(secret, "".join(str(row["content"] or "") for row in rows))
 
+    def test_finalization_item_and_stopped_run_commit_atomically(self) -> None:
+        run, writer = self._pending_finalization("atomic finalization")
+
+        mutation = self.store.complete_finalization_and_stop_committed(
+            str(writer.item["id"]), run["id"], "max_total_steps"
+        )
+
+        item, stopped = mutation.value
+        self.assertEqual(item["status"], "completed")
+        self.assertEqual(stopped["status"], "stopped")
+        event_types = [event["eventType"] for event in mutation.events]
+        self.assertIn("item.completed", event_types)
+        self.assertIn("segment.status_changed", event_types)
+        self.assertIn("run.status_changed", event_types)
+
+    def test_finalization_terminal_event_failure_rolls_back_item_segment_and_run(self) -> None:
+        run, writer = self._pending_finalization("rollback finalization")
+        assert self.store.connection is not None
+        before_events = self.store.connection.execute(
+            "SELECT COUNT(*) FROM events WHERE run_id = ?", (run["id"],)
+        ).fetchone()[0]
+
+        with patch(
+            "eidos_runtime.db.storage.append_event",
+            side_effect=ValueError("fixture event failure"),
+        ):
+            with self.assertRaisesRegex(ValueError, "fixture event failure"):
+                self.store.complete_finalization_and_stop_committed(
+                    str(writer.item["id"]), run["id"], "max_total_steps"
+                )
+
+        self.assertEqual(self.store.read_run(run["id"])["status"], "finalizing")
+        self.assertEqual(
+            self.store.read_item(str(writer.item["id"]))["status"], "in_progress"
+        )
+        segment = self.store.connection.execute(
+            "SELECT status FROM execution_segments WHERE run_id = ?", (run["id"],)
+        ).fetchone()
+        self.assertEqual(segment["status"], "running")
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT COUNT(*) FROM events WHERE run_id = ?", (run["id"],)
+            ).fetchone()[0],
+            before_events,
+        )
+
+    def test_finalization_cancel_and_stop_cas_allow_only_cancel_to_win(self) -> None:
+        run, writer = self._pending_finalization("cancel wins")
+        stop_entered = threading.Event()
+        release_stop = threading.Event()
+        errors: list[Exception] = []
+        original = self.store.complete_finalization_and_stop_committed
+
+        def delayed_stop(*args):
+            stop_entered.set()
+            release_stop.wait(1)
+            return original(*args)
+
+        def stop() -> None:
+            try:
+                self.store.complete_finalization_and_stop_committed(
+                    str(writer.item["id"]), run["id"], "max_total_steps"
+                )
+            except Exception as error:
+                errors.append(error)
+
+        with patch.object(
+            self.store, "complete_finalization_and_stop_committed", delayed_stop
+        ):
+            thread = threading.Thread(target=stop)
+            thread.start()
+            self.assertTrue(stop_entered.wait(1))
+            self.store.cancel_run_committed(run["id"])
+            release_stop.set()
+            thread.join(1)
+
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], InvalidRunStateError)
+        self.assertEqual(self.store.read_run(run["id"])["status"], "canceled")
+        self.assertEqual(
+            self.store.read_item(str(writer.item["id"]))["status"], "canceled"
+        )
+        self.assertNotIn("errorCode", self.store.read_run(run["id"]))
+
+    def test_finalization_cancel_and_stop_cas_allow_only_stop_to_win(self) -> None:
+        run, writer = self._pending_finalization("stop wins")
+        cancel_entered = threading.Event()
+        release_cancel = threading.Event()
+        errors: list[Exception] = []
+        original = self.store.cancel_run_committed
+
+        def delayed_cancel(*args):
+            cancel_entered.set()
+            release_cancel.wait(1)
+            return original(*args)
+
+        def cancel() -> None:
+            try:
+                self.store.cancel_run_committed(run["id"])
+            except Exception as error:
+                errors.append(error)
+
+        with patch.object(self.store, "cancel_run_committed", delayed_cancel):
+            thread = threading.Thread(target=cancel)
+            thread.start()
+            self.assertTrue(cancel_entered.wait(1))
+            self.store.complete_finalization_and_stop_committed(
+                str(writer.item["id"]), run["id"], "max_total_steps"
+            )
+            release_cancel.set()
+            thread.join(1)
+
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], InvalidRunStateError)
+        self.assertEqual(self.store.read_run(run["id"])["status"], "stopped")
+        self.assertEqual(
+            self.store.read_item(str(writer.item["id"]))["status"], "completed"
+        )
+        self.assertNotIn("errorCode", self.store.read_run(run["id"]))
+
+    def test_assistant_stream_abort_never_rewrites_completed_item(self) -> None:
+        run, writer = self._pending_finalization("safe abort")
+        self.store.complete_finalization_and_stop_committed(
+            str(writer.item["id"]), run["id"], "max_total_steps"
+        )
+
+        self.assertIsNone(writer.abort())
+        self.assertEqual(
+            self.store.read_item(str(writer.item["id"]))["status"], "completed"
+        )
+
     def test_approval_resolve_immediately_projects_approve_run_update(self) -> None:
         run, item, coordinator, notifications = self._approval_fixture("approve")
 
@@ -318,7 +456,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertNotIn("fixture internal state detail", json.dumps(notifications))
 
     def test_progress_signature_requires_three_truly_empty_rounds(self) -> None:
-        from eidos_runtime.runtime.loop_guard import LoopGuard, ProgressSignature
+        from eidos_runtime.runtime.loop_guard import LoopGuard
 
         guard = LoopGuard()
         empty = ProgressSignature(
@@ -336,7 +474,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertEqual(guard.observe_progress(empty), "no_progress")
 
     def test_new_successful_read_results_never_count_as_no_progress(self) -> None:
-        from eidos_runtime.runtime.loop_guard import LoopGuard, ProgressSignature
+        from eidos_runtime.runtime.loop_guard import LoopGuard
 
         guard = LoopGuard()
         for index in range(4):
@@ -376,7 +514,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertEqual(guard._no_progress, 0)
 
     def test_loop_guard_recovers_recent_no_progress_rounds_from_steps(self) -> None:
-        from eidos_runtime.runtime.loop_guard import LoopGuard, ProgressSignature
+        from eidos_runtime.runtime.loop_guard import LoopGuard
 
         run, _ = self.store.create_run(self.session["id"], "recover loop guard")
         signatures = []
@@ -428,6 +566,61 @@ class RuntimeHardeningTests(unittest.TestCase):
 
         self.assertEqual(recovered.resolved_error_fingerprints, ("read-error",))
         self.assertIsNone(guard.observe_progress(recovered))
+
+    def test_repeated_error_counts_once_per_step_and_recovers_after_restart(self) -> None:
+        from eidos_runtime.runtime.loop_guard import LoopGuard
+
+        run, _ = self.store.create_run(self.session["id"], "error signatures")
+        duplicate_batch = ("same", "same", "same")
+        guard = LoopGuard()
+        for expected in (None, None):
+            self.store.increment_model_step(run["id"])
+            signature = guard.make_signature(
+                workspace_version=0,
+                diff_hash=None,
+                successful_tool_result_hashes=(),
+                context_fact_ids=(),
+                error_fingerprints=duplicate_batch,
+                reconciliation_epoch=0,
+            )
+            self.assertEqual(guard.observe_progress(signature), expected)
+            self.store.complete_current_step(
+                run["id"], "completed", progress_signature=signature
+            )
+
+        self.store.close()
+        self.store = SessionStore(self.data)
+        self.store.initialize()
+        recovered = LoopGuard.from_signatures(
+            self.store.recent_progress_signatures(run["id"])
+        )
+        third = recovered.make_signature(
+            workspace_version=0,
+            diff_hash=None,
+            successful_tool_result_hashes=(),
+            context_fact_ids=(),
+            error_fingerprints=duplicate_batch,
+            reconciliation_epoch=0,
+        )
+        self.assertEqual(third.error_fingerprints, ("same",))
+        self.assertEqual(recovered.observe_progress(third), "repeated_tool_error")
+
+    def test_error_signature_resets_on_success_and_switches_on_different_error(self) -> None:
+        from eidos_runtime.runtime.loop_guard import LoopGuard
+
+        guard = LoopGuard()
+        for errors in (("a",), ("a",), (), ("a",), ("b",), ("b",)):
+            signature = guard.make_signature(
+                workspace_version=0,
+                diff_hash=None,
+                successful_tool_result_hashes=(),
+                context_fact_ids=(),
+                error_fingerprints=errors,
+                reconciliation_epoch=0,
+            )
+            self.assertNotEqual(
+                guard.observe_progress(signature), "repeated_tool_error"
+            )
 
     def test_parallel_safe_reads_reset_sensitive_input_streak(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "sensitive streak")
@@ -481,7 +674,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.store.fail_run(old["id"], "fixture")
         current, _ = self.store.create_run(self.session["id"], "current goal")
 
-        facts = self.store.context_facts(current["id"])
+        facts = self.store.context_projection_facts(current["id"])
         encoded = json.dumps(
             [item.model_dump() for item in facts.items],
             ensure_ascii=False,
@@ -492,6 +685,46 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertLessEqual(len(facts.items), 200)
         self.assertLessEqual(len(encoded), 768 * 1024)
         self.assertIn("current goal", [item.content for item in facts.items])
+
+    def test_oversized_current_goal_fails_with_context_input_too_large(self) -> None:
+        run, item = self.store.create_run(self.session["id"], "small")
+        assert self.store.connection is not None
+        oversized = "x" * (800 * 1024)
+        self.store.connection.execute(
+            "UPDATE runs SET user_input = ? WHERE id = ?", (oversized, run["id"])
+        )
+        self.store.connection.execute(
+            "UPDATE items SET content = ? WHERE id = ?", (oversized, item["id"])
+        )
+        self.store.connection.commit()
+
+        RuntimeEngine(self.store, ScriptedModel([]), lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        failed = self.store.read_run(run["id"])
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(failed["errorCode"], "CONTEXT_INPUT_TOO_LARGE")
+
+    def test_two_compactions_still_over_budget_pauses_with_stable_reason(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "x" * 20_000)
+        assert self.store.connection is not None
+        self.store.connection.execute(
+            "UPDATE runs SET compaction_count = 2 WHERE id = ?", (run["id"],)
+        )
+        self.store.connection.commit()
+
+        RuntimeEngine(
+            self.store,
+            ScriptedModel([]),
+            lambda _message: None,
+            context_window_tokens=8_000,
+            request_max_output_tokens=1_000,
+        ).run(run["id"], threading.Event())
+
+        paused = self.store.read_run(run["id"])
+        self.assertEqual(paused["status"], "waiting_user_input")
+        self.assertEqual(paused["pauseReason"], "context_still_over_budget")
 
     def test_steer_refreshes_skill_context_and_deferred_tools_next_step(self) -> None:
         plugin_root = Path(self.temporary.name) / "plugin"
@@ -563,6 +796,24 @@ class RuntimeHardeningTests(unittest.TestCase):
         )
         self.store.connection.commit()
         return run
+
+    def _pending_finalization(
+        self, user_input: str
+    ) -> tuple[dict[str, object], AssistantStreamWriter]:
+        run, _ = self.store.create_run(self.session["id"], user_input)
+        self.store.increment_model_step(run["id"])
+        self.store.complete_current_step(run["id"], "completed")
+        self.store.begin_finalization(run["id"])
+        writer = AssistantStreamWriter(
+            self.store,
+            RuntimeEvents(lambda _message: None),
+            run["id"],
+            None,
+        )
+        writer.write("final delta")
+        writer.flush()
+        assert writer.item is not None
+        return run, writer
 
     def _approval_fixture(self, decision: str):
         run, _ = self.store.create_run(self.session["id"], decision)

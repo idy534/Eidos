@@ -19,16 +19,11 @@ class ContextCompactor:
     def compact(self, run_id: str, phase: str) -> CompactSummary:
         if phase not in {"pre_turn", "mid_turn"}:
             raise ValueError("invalid compaction phase")
-        facts = self.store.context_facts(run_id)
+        facts = self.store.compaction_candidate_facts(run_id)
         existing = facts.compact_summary
-        latest_user_id = next(
-            (item.item_id for item in reversed(facts.items) if item.kind == "user_message"),
-            None,
-        )
         eligible = tuple(
             item for item in facts.items
-            if item.item_id != latest_user_id
-            and item.item_id != facts.current_user_goal_id
+            if item.item_id != facts.current_user_goal_id
             and (phase == "mid_turn" or item.run_id != run_id)
             and (existing is None or item.item_id not in existing.source_item_ids)
         )

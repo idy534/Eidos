@@ -48,7 +48,7 @@ class ContextBuilder:
         skill_context: tuple[ModelContextItem, ...] = (),
         extra_context: tuple[ModelContextItem, ...] = (),
     ) -> ContextBuild:
-        facts = self.store.context_facts(run_id)
+        facts = self.store.context_projection_facts(run_id)
         source_ids = set(
             facts.compact_summary.source_item_ids if facts.compact_summary else ()
         )
@@ -90,6 +90,20 @@ class ContextBuilder:
                 ))
         context.extend(skill_context)
         context.extend(extra_context)
+        if facts.reconciliation_required or facts.active_error_fingerprints:
+            context.append({
+                "type": "user",
+                "content": "Runtime state: " + json.dumps(
+                    {
+                        "reconciliationRequired": facts.reconciliation_required,
+                        "reconciliationEpoch": facts.reconciliation_epoch,
+                        "unresolvedErrorFingerprints": facts.active_error_fingerprints,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            })
         workspace = self.store.workspace_for_run(run_id)
         context.insert(0, {
             "type": "user",

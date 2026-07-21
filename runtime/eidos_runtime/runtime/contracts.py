@@ -81,6 +81,18 @@ class ToolBatchOutcome(_FrozenModel):
     reconciliation_epoch: int = 0
 
 
+class ProgressSignature(_FrozenModel):
+    workspace_version: int
+    diff_hash: str | None
+    successful_tool_result_hashes: tuple[str, ...]
+    new_context_fact_ids: tuple[str, ...]
+    error_fingerprints: tuple[str, ...]
+    resolved_error_fingerprints: tuple[str, ...]
+    reconciliation_epoch: int
+    new_user_input_ids: tuple[str, ...] = ()
+    tool_call_fingerprint: str | None = None
+
+
 class LoopAction(StrEnum):
     CONTINUE = "continue"
     COMPACT = "compact"

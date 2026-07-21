@@ -41,3 +41,5 @@ class ContextFacts(_Fact):
     last_diff_hash: str | None = None
     candidate_overflow: bool = False
     current_user_goal_id: str | None = None
+    reconciliation_required: bool = False
+    active_error_fingerprints: tuple[str, ...] = ()

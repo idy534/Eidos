@@ -15,13 +15,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from eidos_runtime.context.budget import estimate_context_budget  # noqa: E402
 from eidos_runtime.context.builder import ContextBuilder  # noqa: E402
 from eidos_runtime.context.compactor import ContextCompactor  # noqa: E402
-from eidos_runtime.db.storage import ContextLimitExceeded, SessionStore  # noqa: E402
+from eidos_runtime.db.storage import (  # noqa: E402
+    ContextLimitExceeded,
+    RECENT_CONTEXT_STEPS,
+    SessionStore,
+)
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
 from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
-from eidos_runtime.runtime.contracts import LoopAction, RunBudget  # noqa: E402
+from eidos_runtime.runtime.contracts import (  # noqa: E402
+    LoopAction,
+    ProgressSignature,
+    RunBudget,
+)
 from eidos_runtime.runtime.decision import LoopDecisionEngine  # noqa: E402
 from eidos_runtime.runtime.tool_runtime import ReadOnlyToolHandler  # noqa: E402
-from eidos_runtime.runtime.loop_guard import LoopGuard, ProgressSignature  # noqa: E402
+from eidos_runtime.runtime.loop_guard import LoopGuard  # noqa: E402
 
 
 class ContextBudgetTests(unittest.TestCase):
@@ -190,8 +198,95 @@ class ContextPersistenceTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def test_session_store_exposes_facts_not_model_projection(self) -> None:
-        self.assertTrue(hasattr(SessionStore, "context_facts"))
+        self.assertTrue(hasattr(SessionStore, "context_projection_facts"))
+        self.assertTrue(hasattr(SessionStore, "compaction_candidate_facts"))
+        self.assertFalse(hasattr(SessionStore, "context_facts"))
         self.assertFalse(hasattr(SessionStore, "model_context"))
+
+    def test_compaction_summarizes_oldest_history_and_keeps_recent_facts_raw(self) -> None:
+        old, _ = self.store.create_run(self.session["id"], "old root")
+        assert self.store.connection is not None
+        now = int(time.time() * 1000)
+        self.store.connection.executemany(
+            """
+            INSERT INTO items (
+                id, session_id, run_id, ordinal, kind, status,
+                content, incomplete, created_at, completed_at
+            ) VALUES (?, ?, ?, ?, 'user_message', 'completed', ?, 0, ?, ?)
+            """,
+            (
+                (
+                    f"old-{index}", self.session["id"], old["id"], index + 2,
+                    f"old message {index} " + "x" * 4_000,
+                    now + index, now + index,
+                )
+                for index in range(1, 251)
+            ),
+        )
+        self.store.connection.commit()
+        self.store.fail_run(old["id"], "fixture")
+        current, _ = self.store.create_run(self.session["id"], "current goal")
+        recent_ids: list[str] = []
+        for index, value in enumerate(("A", "B", "C"), 1):
+            item = self.store.create_tool_item(
+                current["id"], index, 0, f"recent-{value}", "read_file", "{}"
+            )
+            self.store.complete_tool_item(
+                item["id"],
+                json.dumps({"outcome": "success", "data": {"value": value}}),
+            )
+            recent_ids.append(str(item["id"]))
+
+        summary = ContextCompactor(self.store).compact(current["id"], "pre_turn")
+        projected = self.store.context_projection_facts(current["id"])
+        encoded = json.dumps(
+            [item.model_dump() for item in projected.items], ensure_ascii=False
+        )
+
+        self.assertIn("old-1", summary.source_item_ids)
+        self.assertTrue(set(recent_ids).isdisjoint(summary.source_item_ids))
+        self.assertIn("current goal", encoded)
+        recent_values = {
+            json.loads(item.result_json)["data"]["value"]
+            for item in projected.items
+            if item.item_id in recent_ids
+        }
+        self.assertEqual(recent_values, {"A", "B", "C"})
+
+    def test_compaction_candidates_exclude_latest_input_recent_steps_and_reconciliation(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "current goal")
+        item_ids: dict[int, str] = {}
+        for step in range(1, RECENT_CONTEXT_STEPS + 3):
+            item = self.store.create_tool_item(
+                run["id"], step, 0, f"call-{step}", "read_file", "{}"
+            )
+            result = {
+                "outcome": "error" if step == 1 else "success",
+                "code": "uncertain" if step == 1 else "ok",
+                "reconciliationRequired": step == 1,
+            }
+            self.store.complete_tool_item(item["id"], json.dumps(result))
+            item_ids[step] = str(item["id"])
+        self.store.enqueue_input(run["id"], "latest steer")
+        self.store.consume_pending_inputs(run["id"])
+        assert self.store.connection is not None
+        self.store.connection.execute(
+            "UPDATE runs SET reconciliation_required = 1 WHERE id = ?", (run["id"],)
+        )
+        self.store.connection.commit()
+
+        candidates = self.store.compaction_candidate_facts(run["id"])
+        candidate_ids = {item.item_id for item in candidates.items}
+        latest_steps = range(3, RECENT_CONTEXT_STEPS + 3)
+
+        self.assertNotIn(item_ids[1], candidate_ids)
+        self.assertIn(item_ids[2], candidate_ids)
+        self.assertTrue(
+            all(item_ids[step] not in candidate_ids for step in latest_steps)
+        )
+        self.assertNotIn(
+            "latest steer", [item.content for item in candidates.items]
+        )
 
     def test_context_builder_keeps_tool_call_and_result_together(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "inspect")
@@ -213,6 +308,36 @@ class ContextPersistenceTests(unittest.TestCase):
             built.model_context[call_index]["callId"],
             built.model_context[call_index + 1]["callId"],
         )
+
+    def test_context_projection_keeps_unresolved_errors_and_reconciliation_state(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "inspect failure")
+        self.store.increment_model_step(run["id"])
+        signature = ProgressSignature(
+            workspace_version=0,
+            diff_hash=None,
+            successful_tool_result_hashes=(),
+            new_context_fact_ids=(),
+            error_fingerprints=("error-a",),
+            resolved_error_fingerprints=(),
+            reconciliation_epoch=1,
+        )
+        self.store.complete_current_step(
+            run["id"], "completed", progress_signature=signature
+        )
+        assert self.store.connection is not None
+        self.store.connection.execute(
+            """
+            UPDATE runs SET reconciliation_required = 1, reconciliation_epoch = 1
+            WHERE id = ?
+            """,
+            (run["id"],),
+        )
+        self.store.connection.commit()
+
+        built = ContextBuilder(self.store).build(run["id"])
+
+        self.assertIn("error-a", str(built.model_context))
+        self.assertIn('"reconciliationRequired":true', str(built.model_context))
 
     def test_pre_turn_compaction_persists_and_restores_structured_summary(self) -> None:
         old, _ = self.store.create_run(self.session["id"], "x" * 20_000)
@@ -251,7 +376,7 @@ class ContextPersistenceTests(unittest.TestCase):
         self.assertEqual(self.store.compaction_count(current["id"]), 1)
         self.assertIn("Compact summary:", str(model.contexts[0]))
 
-    def test_runtime_compacts_committed_tool_result_mid_turn(self) -> None:
+    def test_runtime_preserves_recent_tool_result_and_pauses_if_it_alone_is_too_large(self) -> None:
         workspace = Path(self.session["workspaceRoot"])
         (workspace / "large.txt").write_text("x" * 20_000)
         run, _ = self.store.create_run(self.session["id"], "read the large file")
@@ -270,9 +395,12 @@ class ContextPersistenceTests(unittest.TestCase):
             request_max_output_tokens=1_000,
         ).run(run["id"], threading.Event())
 
-        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
-        self.assertEqual(self.store.compaction_count(run["id"]), 1)
-        self.assertIn("Compact summary:", str(model.contexts[1]))
+        paused = self.store.read_run(run["id"])
+        self.assertEqual(paused["status"], "waiting_user_input")
+        self.assertEqual(paused["pauseReason"], "context_still_over_budget")
+        self.assertEqual(self.store.compaction_count(run["id"]), 0)
+        facts = self.store.context_projection_facts(run["id"])
+        self.assertTrue(any("x" * 1_000 in (item.result_json or "") for item in facts.items))
 
     def test_compaction_event_failure_rolls_back_summary_and_count(self) -> None:
         old, _ = self.store.create_run(self.session["id"], "old")
@@ -295,11 +423,14 @@ class ContextPersistenceTests(unittest.TestCase):
         current, _ = self.store.create_run(self.session["id"], "current")
         compactor = ContextCompactor(self.store)
         compactor.compact(current["id"], "pre_turn")
-        item = self.store.create_assistant_item(current["id"], 1)
-        self.store.append_item_content(item["id"], "progress")
-        self.store.complete_assistant_item(item["id"])
+        for step in range(1, RECENT_CONTEXT_STEPS + 2):
+            item = self.store.create_assistant_item(current["id"], step)
+            self.store.append_item_content(item["id"], f"progress {step}")
+            self.store.complete_assistant_item(item["id"])
         compactor.compact(current["id"], "mid_turn")
-        another = self.store.create_assistant_item(current["id"], 2)
+        another = self.store.create_assistant_item(
+            current["id"], RECENT_CONTEXT_STEPS + 2
+        )
         self.store.append_item_content(another["id"], "more")
         self.store.complete_assistant_item(another["id"])
 

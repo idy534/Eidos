@@ -89,7 +89,7 @@ class SamplingRuntime:
                 writer.flush()
                 self._check_cancel(cancel)
                 if writer.item is not None:
-                    writer.fail()
+                    writer.abort()
                 error = _sampling_error(
                     interrupted.cause, had_progress=writer.item is not None
                 )

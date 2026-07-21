@@ -3,23 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 
-from pydantic import BaseModel, ConfigDict
-
 from eidos_runtime.model.client import ModelToolCall
-
-
-class ProgressSignature(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
-    workspace_version: int
-    diff_hash: str | None
-    successful_tool_result_hashes: tuple[str, ...]
-    new_context_fact_ids: tuple[str, ...]
-    error_fingerprints: tuple[str, ...]
-    resolved_error_fingerprints: tuple[str, ...]
-    reconciliation_epoch: int
-    new_user_input_ids: tuple[str, ...] = ()
-    tool_call_fingerprint: str | None = None
+from eidos_runtime.runtime.contracts import ProgressSignature
 
 
 class LoopGuard:
@@ -37,7 +22,7 @@ class LoopGuard:
         self.max_compactions_per_run = max_compactions_per_run
         self._last_tool: str | None = None
         self._same_tool = 0
-        self._last_error: str | None = None
+        self._last_error: tuple[str, ...] | None = None
         self._same_error = 0
         self._last_progress: ProgressSignature | None = None
         self._no_progress = 0
@@ -76,6 +61,7 @@ class LoopGuard:
         new_user_input_ids: tuple[str, ...] = (),
         tool_call_fingerprint: str | None = None,
     ) -> ProgressSignature:
+        unique_errors = tuple(sorted(set(error_fingerprints)))
         return ProgressSignature(
             workspace_version=workspace_version,
             diff_hash=diff_hash,
@@ -86,9 +72,9 @@ class LoopGuard:
             new_context_fact_ids=tuple(
                 value for value in context_fact_ids if value not in self._seen_facts
             ),
-            error_fingerprints=error_fingerprints,
+            error_fingerprints=unique_errors,
             resolved_error_fingerprints=tuple(sorted(
-                self._active_errors - set(error_fingerprints)
+                self._active_errors - set(unique_errors)
             )),
             reconciliation_epoch=reconciliation_epoch,
             new_user_input_ids=new_user_input_ids,
@@ -113,15 +99,18 @@ class LoopGuard:
         )
 
     def observe_errors(self, errors: tuple[str, ...]) -> str | None:
-        for fingerprint in errors:
-            self._same_error = self._same_error + 1 if fingerprint == self._last_error else 1
-            self._last_error = fingerprint
-            if self._same_error >= self.max_same_error_fingerprint:
-                return "repeated_tool_error"
-        if not errors:
+        signature = tuple(sorted(set(errors)))
+        if not signature:
             self._last_error = None
             self._same_error = 0
-        return None
+            return None
+        self._same_error = self._same_error + 1 if signature == self._last_error else 1
+        self._last_error = signature
+        return (
+            "repeated_tool_error"
+            if self._same_error >= self.max_same_error_fingerprint
+            else None
+        )
 
     def observe_progress(self, signature: ProgressSignature) -> str | None:
         error_reason = self.observe_errors(signature.error_fingerprints)

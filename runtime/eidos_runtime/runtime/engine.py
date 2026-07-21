@@ -119,6 +119,16 @@ class RuntimeEngine:
                 self._drive(run_context, resources, cancel)
         except RunResourceError as error:
             self._fail(run_id, str(error))
+        except ContextLimitExceeded as error:
+            current = self.store.read_run(run_id)
+            if cancel.is_set() and current["status"] == "running":
+                self._cancel(run_id)
+            elif current["status"] != "running":
+                pass
+            elif error.reason == "current_user_goal":
+                self._fail(run_id, "CONTEXT_INPUT_TOO_LARGE")
+            else:
+                self._pause_run(run_id, "context_still_over_budget")
         except (RuntimeCancelled, SamplingCancelled):
             self._cancel(run_id)
         except InvalidRunStateError:
@@ -213,8 +223,10 @@ class RuntimeEngine:
                 ) else "pre_turn"
                 try:
                     compactor.compact(run.run_id, phase)
-                except (ContextCompactionError, ContextLimitExceeded):
-                    self._pause_run(run.run_id, "context_compaction_failed")
+                except ContextLimitExceeded:
+                    raise
+                except ContextCompactionError:
+                    self._pause_run(run.run_id, "context_still_over_budget")
                     return
                 continue
             if context_decision.action == LoopAction.FINALIZE:

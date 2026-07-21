@@ -34,7 +34,9 @@ class LoopDecisionEngine:
         if context_budget is not None and not context_budget.fits:
             if compaction_count < 2:
                 return LoopDecision(action=LoopAction.COMPACT, reason="context_over_budget")
-            return LoopDecision(action=LoopAction.PAUSE, reason="compaction_limit")
+            return LoopDecision(
+                action=LoopAction.PAUSE, reason="context_still_over_budget"
+            )
         if run_budget is not None:
             if run_budget.run_steps_remaining <= 0 or run_budget.run_effective_ms_remaining <= 0:
                 return LoopDecision(action=LoopAction.FINALIZE, reason="run_budget_exhausted")

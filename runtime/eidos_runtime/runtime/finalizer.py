@@ -106,7 +106,7 @@ class RunFinalizer:
             if timed_out.is_set():
                 failure_reason = "finalization_timeout"
             else:
-                item = writer.complete()
+                writer.flush()
         except SensitiveScanError:
             failure_reason = "finalization_sensitive_content_rejected"
         except ModelStreamInterrupted as error:
@@ -132,23 +132,37 @@ class RunFinalizer:
             timer.cancel()
 
         if (failure_reason is not None or canceled or cancel.is_set()) and writer.item is not None:
-            try:
-                item = writer.fail()
-            except InvalidRunStateError:
-                if self.store.read_run(run_id)["status"] != "canceled":
-                    raise
+            item = writer.abort()
         if canceled or cancel.is_set():
             raise RuntimeCancelled
         if failure_reason is not None:
             logger.warning("Finalization ended without an item: %s", failure_reason)
         try:
-            mutation = self.store.stop_run_committed(run_id, stop_reason)
+            mutation = self.store.complete_finalization_and_stop_committed(
+                str(writer.item["id"])
+                if failure_reason is None and writer.item is not None
+                else None,
+                run_id,
+                stop_reason,
+            )
         except InvalidRunStateError:
-            if cancel.is_set() or self.store.read_run(run_id)["status"] == "canceled":
+            current = self.store.read_run(run_id)
+            if current["status"] == "canceled":
+                writer.abort()
                 raise RuntimeCancelled from None
+            if current["status"] == "stopped":
+                item = (
+                    self.store.read_item(str(writer.item["id"]))
+                    if writer.item is not None else None
+                )
+                return FinalizationOutcome(
+                    run=current, item=item, failure_reason=failure_reason
+                )
             raise
-        stopped = mutation.value
-        self.events.publish(mutation, run=stopped)
+        completed_item, stopped = mutation.value
+        self.events.publish(mutation, run=stopped, item=completed_item)
+        if completed_item is not None:
+            item = completed_item
         self.state_machine.track(RuntimeState.COMPLETED, "finalization_stopped")
         return FinalizationOutcome(
             run=stopped, item=item, failure_reason=failure_reason

@@ -27,7 +27,7 @@ from eidos_runtime.runtime.state_machine import (
     ToolCallStatus,
     ensure_transition,
 )
-from eidos_runtime.runtime.loop_guard import ProgressSignature
+from eidos_runtime.runtime.contracts import ProgressSignature
 
 
 DATABASE_NAME = "eidos.db"
@@ -40,6 +40,7 @@ MAX_LIST_LIMIT = 200
 SESSION_CURSOR_PREFIX = "session-v2:"
 MAX_CONTEXT_BYTES = 768 * 1024
 MAX_CONTEXT_ITEMS = 200
+RECENT_CONTEXT_STEPS = 3
 MAX_SNAPSHOT_BYTES = 768 * 1024
 MAX_SNAPSHOT_TEXT_BYTES = 192 * 1024
 EMPTY_EXTENSION_SNAPSHOT = {
@@ -110,7 +111,9 @@ class InvalidRunStateError(RuntimeError):
 
 
 class ContextLimitExceeded(RuntimeError):
-    pass
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
 
 
 class OperationConflictError(RuntimeError):
@@ -2191,6 +2194,14 @@ class SessionStore:
     def mark_assistant_incomplete_committed(
         self, item_id: str
     ) -> CommittedMutation[dict[str, object]]:
+        mutation = self.mark_assistant_incomplete_if_active_committed(item_id)
+        if mutation is None:
+            raise InvalidRunStateError("assistant item is not active")
+        return mutation
+
+    def mark_assistant_incomplete_if_active_committed(
+        self, item_id: str
+    ) -> CommittedMutation[dict[str, object]] | None:
         with self.lock, self._connection() as connection:
             now = _now_ms()
             fact = connection.execute(
@@ -2209,7 +2220,7 @@ class SessionStore:
                 (now, item_id),
             )
             if updated.rowcount != 1:
-                raise InvalidRunStateError("assistant item is not active")
+                return None
             event = append_event(
                 connection,
                 EventType.ITEM_COMPLETED,
@@ -2914,6 +2925,81 @@ class SessionStore:
             )
         return CommittedMutation(run, (*segment_events, event))
 
+    def complete_finalization_and_stop_committed(
+        self,
+        item_id: str | None,
+        run_id: str,
+        stop_reason: str,
+    ) -> CommittedMutation[
+        tuple[dict[str, object] | None, dict[str, object]]
+    ]:
+        with self.lock, self._connection() as connection:
+            run_row = connection.execute(
+                "SELECT session_id, status FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if run_row is None:
+                raise ResourceNotFoundError("run not found")
+            if run_row["status"] != RunStatus.FINALIZING.value:
+                raise InvalidRunStateError("run status changed")
+            item: dict[str, object] | None = None
+            item_event: dict[str, object] | None = None
+            now = _now_ms()
+            if item_id is not None:
+                item_row = connection.execute(
+                    """
+                    SELECT * FROM items
+                    WHERE id = ? AND run_id = ? AND kind = 'assistant_message'
+                      AND model_step_index IS NULL AND status = 'in_progress'
+                    """,
+                    (item_id, run_id),
+                ).fetchone()
+                if item_row is None:
+                    raise InvalidRunStateError("finalization item is not active")
+                updated = connection.execute(
+                    """
+                    UPDATE items SET status = 'completed', completed_at = ?
+                    WHERE id = ? AND run_id = ? AND status = 'in_progress'
+                    """,
+                    (now, item_id, run_id),
+                )
+                if updated.rowcount != 1:
+                    raise InvalidRunStateError("finalization item is not active")
+                item_event = append_event(
+                    connection,
+                    EventType.ITEM_COMPLETED,
+                    now,
+                    {"item_id": item_id},
+                    session_id=run_row["session_id"],
+                    run_id=run_id,
+                )
+                item = _item_from_row(
+                    connection.execute(
+                        "SELECT * FROM items WHERE id = ?", (item_id,)
+                    ).fetchone(),
+                    None,
+                )
+            segment_events = transition_segments(
+                connection,
+                run_id,
+                frozenset({SegmentStatus.RUNNING}),
+                SegmentStatus.COMPLETED,
+                now,
+                "run_stopped",
+            )
+            run, run_event = transition_run(
+                connection,
+                run_id,
+                frozenset({RunStatus.FINALIZING}),
+                RunStatus.STOPPED,
+                stop_reason,
+            )
+        events = (
+            *((item_event,) if item_event is not None else ()),
+            *segment_events,
+            run_event,
+        )
+        return CommittedMutation((item, run), events)
+
     def fail_run(self, run_id: str, error_code: str) -> dict[str, object]:
         return self.fail_run_committed(run_id, error_code).value
 
@@ -3059,7 +3145,15 @@ class SessionStore:
             _item_from_row(row, tools_by_item.get(row["id"])) for row in rows
         ]
 
-    def context_facts(self, run_id: str) -> ContextFacts:
+    def context_projection_facts(self, run_id: str) -> ContextFacts:
+        return self._bounded_context_facts(run_id, newest=True)
+
+    def compaction_candidate_facts(self, run_id: str) -> ContextFacts:
+        return self._bounded_context_facts(run_id, newest=False)
+
+    def _bounded_context_facts(
+        self, run_id: str, *, newest: bool
+    ) -> ContextFacts:
         with self.lock:
             connection = self._connection()
             run = connection.execute(
@@ -3086,9 +3180,58 @@ class SessionStore:
                 """,
                 (run_id,),
             ).fetchone()
-            excluded = set(source_ids)
-            if goal_row is not None:
-                excluded.add(str(goal_row["id"]))
+            latest_user_row = connection.execute(
+                """
+                SELECT * FROM items
+                WHERE session_id = ? AND kind = 'user_message'
+                  AND status = 'completed'
+                ORDER BY creation_seq DESC LIMIT 1
+                """,
+                (run["session_id"],),
+            ).fetchone()
+            recent_steps = connection.execute(
+                """
+                SELECT DISTINCT model_step_index FROM items
+                WHERE run_id = ? AND model_step_index IS NOT NULL
+                ORDER BY model_step_index DESC LIMIT ?
+                """,
+                (run_id, RECENT_CONTEXT_STEPS),
+            ).fetchall()
+            recent_rows: list[sqlite3.Row] = []
+            if recent_steps:
+                placeholders = ",".join("?" for _ in recent_steps)
+                recent_rows = connection.execute(
+                    f"""
+                    SELECT * FROM items
+                    WHERE run_id = ? AND model_step_index IN ({placeholders})
+                      AND status IN ('completed', 'failed', 'declined')
+                      AND NOT (kind = 'assistant_message' AND incomplete = 1)
+                    """,
+                    (run_id, *(row[0] for row in recent_steps)),
+                ).fetchall()
+            reconciliation_rows: list[sqlite3.Row] = []
+            if bool(run["reconciliation_required"]):
+                reconciliation_rows = connection.execute(
+                    """
+                    SELECT items.* FROM items
+                    JOIN tool_calls ON tool_calls.item_id = items.id
+                    WHERE items.run_id = ?
+                      AND json_extract(tool_calls.result_json, '$.reconciliationRequired') = 1
+                    """,
+                    (run_id,),
+                ).fetchall()
+            protected_rows = {
+                str(row["id"]): row
+                for row in (
+                    goal_row,
+                    latest_user_row,
+                    *recent_rows,
+                    *reconciliation_rows,
+                )
+                if row is not None
+            }
+            protected_ids = set(protected_rows)
+            excluded = source_ids | protected_ids
             excluded_sql = ""
             excluded_values: tuple[object, ...] = ()
             if excluded:
@@ -3115,7 +3258,7 @@ class SessionStore:
                 f"""
                 SELECT items.id, items.creation_seq, {size_expression} AS fact_bytes
                 {base}
-                ORDER BY items.creation_seq DESC LIMIT ?
+                ORDER BY items.creation_seq {'DESC' if newest else 'ASC'} LIMIT ?
                 """,
                 (run["session_id"], *excluded_values, MAX_CONTEXT_ITEMS + 1),
             ).fetchall()
@@ -3123,19 +3266,34 @@ class SessionStore:
                 len(str(goal_row["content"] or "").encode("utf-8")) + 256
                 if goal_row is not None else 0
             )
-            remaining_bytes = max(0, MAX_CONTEXT_BYTES - goal_size)
-            remaining_items = MAX_CONTEXT_ITEMS - (1 if goal_row is not None else 0)
-            selected_ids: list[str] = []
-            selected_bytes = 0
+            if goal_size > MAX_CONTEXT_BYTES:
+                raise ContextLimitExceeded("current_user_goal")
+            selected_ids = list(protected_ids) if newest else []
+            protected_bytes = 0
+            if newest and protected_ids:
+                placeholders = ",".join("?" for _ in protected_ids)
+                protected_bytes = int(connection.execute(
+                    f"""
+                    SELECT COALESCE(SUM({size_expression}), 0)
+                    FROM items LEFT JOIN tool_calls ON tool_calls.item_id = items.id
+                    WHERE items.id IN ({placeholders})
+                    """,
+                    tuple(protected_ids),
+                ).fetchone()[0])
+            selected_bytes = protected_bytes
+            if len(selected_ids) > MAX_CONTEXT_ITEMS or selected_bytes > MAX_CONTEXT_BYTES:
+                raise ContextLimitExceeded("protected_context")
+            base_selected = 0
             for row in metadata:
                 fact_bytes = int(row["fact_bytes"])
                 if (
-                    len(selected_ids) >= remaining_items
-                    or selected_bytes + fact_bytes > remaining_bytes
+                    len(selected_ids) >= MAX_CONTEXT_ITEMS
+                    or selected_bytes + fact_bytes > MAX_CONTEXT_BYTES
                 ):
                     break
                 selected_ids.append(str(row["id"]))
                 selected_bytes += fact_bytes
+                base_selected += 1
             item_rows: list[sqlite3.Row] = []
             if selected_ids:
                 placeholders = ",".join("?" for _ in selected_ids)
@@ -3143,8 +3301,6 @@ class SessionStore:
                     f"SELECT * FROM items WHERE id IN ({placeholders})",
                     selected_ids,
                 ).fetchall()
-            if goal_row is not None:
-                item_rows.append(goal_row)
             item_rows.sort(key=lambda row: int(row["creation_seq"]))
             tool_rows: list[sqlite3.Row] = []
             if selected_ids:
@@ -3154,8 +3310,20 @@ class SessionStore:
                     selected_ids,
                 ).fetchall()
             candidate_overflow = (
-                int(aggregate[0]) > len(selected_ids)
-                or int(aggregate[1]) > remaining_bytes
+                int(aggregate[0]) > base_selected
+                or int(aggregate[1]) > MAX_CONTEXT_BYTES - protected_bytes
+            )
+            latest_signature = connection.execute(
+                """
+                SELECT progress_signature_json FROM steps
+                WHERE run_id = ? AND progress_signature_json IS NOT NULL
+                ORDER BY creation_seq DESC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+            active_errors = (
+                ProgressSignature.model_validate_json(latest_signature[0]).error_fingerprints
+                if latest_signature is not None else ()
             )
         tools_by_item = {row["item_id"]: row for row in tool_rows}
         items: list[ContextItemFact] = []
@@ -3181,7 +3349,9 @@ class SessionStore:
             if serialized_bytes + size > MAX_CONTEXT_BYTES:
                 candidate_overflow = True
                 if goal_row is not None and row["id"] == goal_row["id"]:
-                    raise ContextLimitExceeded("current user goal exceeds context limit")
+                    raise ContextLimitExceeded("current_user_goal")
+                if str(row["id"]) in protected_ids:
+                    raise ContextLimitExceeded("protected_context")
                 continue
             items.append(fact)
             serialized_bytes += size
@@ -3198,13 +3368,29 @@ class SessionStore:
             current_user_goal_id=(
                 str(goal_row["id"]) if goal_row is not None else None
             ),
+            reconciliation_required=bool(run["reconciliation_required"]),
+            active_error_fingerprints=tuple(active_errors),
         )
 
     def latest_compact_summary(self, run_id: str) -> CompactSummary | None:
-        return self.context_facts(run_id).compact_summary
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT * FROM compact_summaries
+                WHERE run_id = ? ORDER BY creation_seq DESC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        return _compact_summary_from_row(row)
 
     def compaction_count(self, run_id: str) -> int:
-        return self.context_facts(run_id).compaction_count
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT compaction_count FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        if row is None:
+            raise ResourceNotFoundError("run not found")
+        return int(row[0])
 
     def commit_compaction(
         self, run_id: str, phase: str, summary: CompactSummary
@@ -3221,7 +3407,7 @@ class SessionStore:
             if run is None:
                 raise InvalidRunStateError("run is not active")
             if int(run["compaction_count"]) >= 2:
-                raise ContextLimitExceeded("compaction limit reached")
+                raise ContextLimitExceeded("compaction_limit")
             connection.execute(
                 """
                 INSERT INTO compact_summaries (
