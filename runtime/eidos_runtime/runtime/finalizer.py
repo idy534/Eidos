@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelClient, ModelContextItem, ModelResponse
 from eidos_runtime.runtime.events import RuntimeEvents
-from eidos_runtime.runtime.state_machine import RuntimeState, StateMachine
+from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.sandbox.sensitive import (
     SensitiveScanError,
     SensitiveScanner,
@@ -38,7 +38,7 @@ class RunFinalizer:
         model: ModelClient,
         events: RuntimeEvents,
         sensitive: SensitiveScanner,
-        state_machine: StateMachine,
+        state_machine: RuntimePhaseTracker,
         *,
         timeout_seconds: float = FINALIZATION_SECONDS,
     ) -> None:
@@ -55,8 +55,9 @@ class RunFinalizer:
         context: tuple[ModelContextItem, ...],
         stop_reason: str,
     ) -> FinalizationOutcome:
-        self.state_machine.transition(RuntimeState.FINALIZING, stop_reason)
-        self.store.begin_finalization(run_id)
+        self.state_machine.track(RuntimeState.FINALIZING, stop_reason)
+        finalizing = self.store.begin_finalization_committed(run_id)
+        self.events.publish(finalizing, run=finalizing.value)
         timed_out = threading.Event()
         timer = threading.Timer(self.timeout_seconds, timed_out.set)
         timer.start()
@@ -93,8 +94,11 @@ class RunFinalizer:
                 if safe_text:
                     item = self.store.create_finalization_assistant_item(run_id)
                     self.store.append_item_content(str(item["id"]), safe_text)
-                    item = self.store.complete_assistant_item(str(item["id"]))
-                    self.events.item_completed(item)
+                    mutation = self.store.complete_assistant_item_committed(
+                        str(item["id"])
+                    )
+                    item = mutation.value
+                    self.events.publish(mutation, item=item)
         except SensitiveScanError:
             failure_reason = "finalization_sensitive_content_rejected"
         except Exception as error:
@@ -105,9 +109,10 @@ class RunFinalizer:
 
         if failure_reason is not None:
             logger.warning("Finalization ended without an item: %s", failure_reason)
-        stopped = self.store.stop_run(run_id, stop_reason)
-        self.events.run_completed(stopped)
-        self.state_machine.transition(RuntimeState.COMPLETED, "finalization_stopped")
+        mutation = self.store.stop_run_committed(run_id, stop_reason)
+        stopped = mutation.value
+        self.events.publish(mutation, run=stopped)
+        self.state_machine.track(RuntimeState.COMPLETED, "finalization_stopped")
         return FinalizationOutcome(
             run=stopped, item=item, failure_reason=failure_reason
         )

@@ -77,12 +77,16 @@ class SamplingRuntime:
             last_persisted_at = time.monotonic()
 
             def flush_deltas() -> None:
-                nonlocal pending_delta_bytes, last_persisted_at
+                nonlocal item, pending_delta_bytes, last_persisted_at
                 if item is None or not pending_deltas:
                     return
-                self.store.append_item_content(
-                    str(item["id"]), "".join(pending_deltas)
+                mutation = self.store.append_item_deltas_committed(
+                    str(item["id"]),
+                    tuple(pending_deltas),
+                    delta_sequence - len(pending_deltas) + 1,
                 )
+                item = mutation.value
+                self.events.publish(mutation, item=item)
                 pending_deltas.clear()
                 pending_delta_bytes = 0
                 last_persisted_at = time.monotonic()
@@ -96,17 +100,12 @@ class SamplingRuntime:
                 if assistant_bytes > MAX_ASSISTANT_BYTES:
                     raise SamplingProtocolError("assistant output is too large")
                 if item is None:
-                    item = self.store.create_assistant_item(
+                    mutation = self.store.create_assistant_item_committed(
                         step.run_id, step.step_index
                     )
-                    self.events.emit(
-                        "item/started",
-                        {
-                            "sessionId": step.session_id,
-                            "runId": step.run_id,
-                            "item": item,
-                        },
-                    )
+                    item = mutation.value
+                    self.events.publish(mutation, item=item)
+                delta_sequence += 1
                 pending_deltas.append(delta)
                 pending_delta_bytes += len(delta.encode("utf-8"))
                 if (
@@ -114,17 +113,6 @@ class SamplingRuntime:
                     or time.monotonic() - last_persisted_at >= 0.1
                 ):
                     flush_deltas()
-                delta_sequence += 1
-                self.events.emit(
-                    "item/delta",
-                    {
-                        "sessionId": step.session_id,
-                        "runId": step.run_id,
-                        "itemId": item["id"],
-                        "sequence": delta_sequence,
-                        "delta": delta,
-                    },
-                )
 
             try:
                 result = self.runner.run(
@@ -139,8 +127,10 @@ class SamplingRuntime:
                 flush_deltas()
                 self._check_cancel(cancel)
                 if item is not None:
-                    incomplete = self.store.mark_assistant_incomplete(str(item["id"]))
-                    self.events.item_completed(incomplete)
+                    mutation = self.store.mark_assistant_incomplete_committed(
+                        str(item["id"])
+                    )
+                    self.events.publish(mutation, item=mutation.value)
                 error = _sampling_error(
                     interrupted.cause, had_progress=item is not None
                 )

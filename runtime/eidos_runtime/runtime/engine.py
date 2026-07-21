@@ -35,7 +35,7 @@ from eidos_runtime.runtime.sampling import (
     SamplingRetryableError,
     SamplingRuntime,
 )
-from eidos_runtime.runtime.state_machine import RuntimeState, StateMachine
+from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.step_context import StepContextFactory
 from eidos_runtime.runtime.tool_runtime import ToolCallRuntime
 from eidos_runtime.sandbox.sensitive import (
@@ -79,7 +79,7 @@ class RuntimeEngine:
         self.sensitive = sensitive or default_scanner()
         self.wait_for_execution_slot = wait_for_execution_slot
         self.mcp_sandbox = mcp_sandbox
-        self.state_machine = StateMachine()
+        self.state_machine = RuntimePhaseTracker()
         self.active_started: float | None = None
 
     def run(self, run_id: str, cancel: threading.Event) -> None:
@@ -193,9 +193,10 @@ class RuntimeEngine:
                 or sampled.assistant_item is None
             ):
                 if sampled.assistant_item is not None:
-                    self.events.item_completed(self.store.complete_assistant_item(
+                    mutation = self.store.complete_assistant_item_committed(
                         str(sampled.assistant_item["id"])
-                    ))
+                    )
+                    self.events.publish(mutation, item=mutation.value)
                 protocol_errors = self.store.record_protocol_error(run.run_id)
                 reason = validation.error_code or "empty_response"
                 self.store.complete_current_step(run.run_id, "failed", reason=reason)
@@ -222,18 +223,19 @@ class RuntimeEngine:
             if decision.action == LoopAction.COMPLETE:
                 assert sampled.assistant_item is not None
                 self.store.complete_current_step(run.run_id, "completed")
-                item, completed = self.store.complete_assistant_and_run(
+                mutation = self.store.complete_assistant_and_run_committed(
                     str(sampled.assistant_item["id"]), run.run_id
                 )
-                self.events.item_completed(item)
-                self.events.run_completed(completed)
-                self.state_machine.transition(RuntimeState.COMPLETED, "run_succeeded")
+                item, completed = mutation.value
+                self.events.publish(mutation, item=item, run=completed)
+                self.state_machine.track(RuntimeState.COMPLETED, "run_succeeded")
                 return
 
             if sampled.assistant_item is not None:
-                self.events.item_completed(self.store.complete_assistant_item(
+                mutation = self.store.complete_assistant_item_committed(
                     str(sampled.assistant_item["id"])
-                ))
+                )
+                self.events.publish(mutation, item=mutation.value)
             outcome = tools.execute(step, validation.tool_calls, cancel)
             tool_decision = decisions.after_tools(outcome)
             if tool_decision.action == LoopAction.PAUSE:
@@ -246,12 +248,10 @@ class RuntimeEngine:
                     "model_context": (*run.model_context, *outcome.feedback)
                 })
                 continue
-            self._pause_effective_time(run.run_id)
+            mutation = self._pause_effective_time(run.run_id)
             updated = self.store.read_run(run.run_id)
-            self.events.emit(
-                "run/updated",
-                {"sessionId": updated["sessionId"], "run": updated},
-            )
+            if mutation is not None:
+                self.events.publish(mutation, run=mutation.value)
             if updated["status"] == "waiting_user_input":
                 return
             try:
@@ -284,18 +284,11 @@ class RuntimeEngine:
 
     def _emit_started(self, run_id: str, run: dict[str, object]) -> None:
         user_item = self.store.get_user_item(run_id)
-        self.events.emit("run/started", {"sessionId": run["sessionId"], "run": run})
-        self.events.emit("item/started", {
-            "sessionId": run["sessionId"],
-            "runId": run_id,
-            "item": {
-                **{key: value for key, value in user_item.items() if key != "completedAt"},
-                "status": "in_progress",
-            },
-        })
-        self.events.emit("item/completed", {
-            "sessionId": run["sessionId"], "runId": run_id, "item": user_item,
-        })
+        self.events.publish_event(
+            self.store.read_runtime_start_event(run_id),
+            run=run,
+            item=user_item,
+        )
 
     def _handle_sampling_failure(self, run_id: str, error: SamplingError) -> None:
         if isinstance(error, SamplingRetryableError) and error.had_progress:
@@ -324,11 +317,9 @@ class RuntimeEngine:
         self._pause_run(run_id, reason)
 
     def _pause_run(self, run_id: str, reason: str) -> None:
-        paused = self.store.pause_run(run_id, reason)
-        self.state_machine.transition(RuntimeState.WAITING_USER_INPUT, reason)
-        self.events.emit(
-            "run/updated", {"sessionId": paused["sessionId"], "run": paused}
-        )
+        mutation = self.store.pause_run_committed(run_id, reason)
+        self.state_machine.track(RuntimeState.WAITING_USER_INPUT, reason)
+        self.events.publish(mutation, run=mutation.value)
 
     def _check_cancel(self, run_id: str, cancel: threading.Event) -> None:
         if cancel.is_set() or self.store.read_run(run_id)["status"] in {
@@ -353,39 +344,37 @@ class RuntimeEngine:
     def _resume_effective_time(self) -> None:
         self.active_started = self.monotonic()
 
-    def _pause_effective_time(self, run_id: str) -> None:
+    def _pause_effective_time(self, run_id: str):
         if self.active_started is None:
-            return
+            return None
         elapsed_ms = max(
             0, int((self.monotonic() - self.active_started) * 1000 + 0.999)
         )
         self.active_started = None
-        self.store.add_effective_time(run_id, elapsed_ms)
+        return self.store.add_effective_time_committed(run_id, elapsed_ms)
 
     def _fail(self, run_id: str, error_code: str) -> None:
-        if self.state_machine.state != RuntimeState.FAILED:
-            self.state_machine.transition(RuntimeState.FAILED, error_code)
+        self.state_machine.track(RuntimeState.FAILED, error_code)
         self._pause_effective_time(run_id)
         self.store.complete_current_step(run_id, "failed", reason=error_code)
-        failed = self.store.fail_run(run_id, error_code)
-        self._emit_canceled_items(run_id)
-        self.events.run_completed(failed)
+        mutation = self.store.fail_run_committed(run_id, error_code)
+        items = {
+            str(item["id"]): item
+            for item in self.store.canceled_items_for_run(run_id)
+        }
+        self.events.publish(mutation, run=mutation.value, items=items)
 
     def _cancel(self, run_id: str) -> None:
-        if self.state_machine.state not in {
-            RuntimeState.COMPLETED, RuntimeState.FAILED, RuntimeState.CANCELED,
-        }:
-            self.state_machine.transition(RuntimeState.CANCELED, "run_canceled")
+        self.state_machine.track(RuntimeState.CANCELED, "run_canceled")
         self.store.complete_current_step(run_id, "canceled", reason="canceled")
         completed = self.store.read_run(run_id)
         if completed["status"] in {"running", "waiting_approval"}:
-            completed = self.store.cancel_run(run_id)
-        self._emit_canceled_items(run_id)
-        self.events.run_completed(completed)
-
-    def _emit_canceled_items(self, run_id: str) -> None:
-        for item in self.store.canceled_items_for_run(run_id):
-            self.events.item_completed(item)
+            mutation = self.store.cancel_run_committed(run_id)
+            items = {
+                str(item["id"]): item
+                for item in self.store.canceled_items_for_run(run_id)
+            }
+            self.events.publish(mutation, run=mutation.value, items=items)
 
 
 RuntimeLoop = RuntimeEngine

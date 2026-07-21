@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.protocol.schemas import ApprovalDecisionDto
 from eidos_runtime.runtime.events import RuntimeEvents
-from eidos_runtime.runtime.state_machine import RuntimeState, StateMachine
+from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 
 
 @dataclass(frozen=True)
@@ -64,7 +64,7 @@ class ApprovalCoordinator:
         store: SessionStore,
         request: Callable[[dict[str, object], threading.Event], object] | None,
         events: RuntimeEvents,
-        state_machine: StateMachine,
+        state_machine: RuntimePhaseTracker,
         pause_effective_time: Callable[[str], None],
         resume_effective_time: Callable[[], None],
         resume_execution_slot: Callable[[str, threading.Event], None],
@@ -93,15 +93,13 @@ class ApprovalCoordinator:
         base_sha256: str | None = None,
         transition_reason: str,
     ) -> ApprovalOutcome:
-        pending_item = self.store.begin_approval(
+        mutation = self.store.begin_approval_committed(
             str(item["id"]), diff, base_sha256
         )
+        pending_item = mutation.value
         approval_run = self.store.read_run(run_id)
-        self.events.emit(
-            "run/updated",
-            {"sessionId": approval_run["sessionId"], "run": approval_run},
-        )
-        self.state_machine.transition(RuntimeState.WAITING_APPROVAL, transition_reason)
+        self.events.publish(mutation, run=approval_run, item=pending_item)
+        self.state_machine.track(RuntimeState.WAITING_APPROVAL, transition_reason)
         self.pause_effective_time(run_id)
         tool_call = pending_item["toolCall"]
         assert isinstance(tool_call, dict)
@@ -117,7 +115,7 @@ class ApprovalCoordinator:
         )
         self.check_cancel(run_id, cancel)
         decision = self._validated(result)
-        self.store.resolve_approval(
+        self.store.resolve_approval_committed(
             str(item["id"]),
             decision.decision,
             decision.feedback,
@@ -126,7 +124,7 @@ class ApprovalCoordinator:
         self.resume_execution_slot(run_id, cancel)
         self.resume_effective_time()
         approval_run = self.store.read_run(run_id)
-        self.state_machine.transition(
+        self.state_machine.track(
             RuntimeState.WAITING_USER_INPUT
             if approval_run["status"] == "waiting_user_input"
             else RuntimeState.TOOL_EXECUTING,

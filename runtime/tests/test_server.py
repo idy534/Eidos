@@ -73,8 +73,7 @@ class RuntimeProtocolTests(unittest.TestCase):
             server.store.initialize()
             server.initialized = True
             server.sensitive = SensitiveScanner()
-            server._schedule_next = lambda: None  # type: ignore[method-assign]
-            server.worker = threading.current_thread()
+            server.supervisor.prepare_next = lambda: None  # type: ignore[method-assign]
             session = server.store.create_session(workspace)
 
             server.handle({
@@ -154,7 +153,7 @@ class RuntimeProtocolTests(unittest.TestCase):
             second, _ = server.store.enqueue_run(
                 second_session["id"], "answer now", extension_snapshot=snapshot
             )
-            server._schedule_next()
+            server.supervisor.schedule_next()
 
             approval_id = ""
             deadline = time.monotonic() + 5
@@ -244,11 +243,13 @@ class RuntimeProtocolTests(unittest.TestCase):
             def fail_approval(_params: object, _cancel: object) -> object:
                 raise RuntimeError("approval channel failed")
 
-            server.request_approval = fail_approval  # type: ignore[method-assign]
+            server.supervisor.request_approval = fail_approval  # type: ignore[method-assign]
             start_gate = threading.Event()
             start_gate.set()
             with self.assertLogs("eidos.runtime", level="ERROR"):
-                server._run_worker(run["id"], threading.Event(), start_gate)
+                server.supervisor._run_worker(
+                    run["id"], threading.Event(), start_gate
+                )
 
             failed = server.store.read_run(run["id"])
             self.assertEqual(failed["status"], "failed")

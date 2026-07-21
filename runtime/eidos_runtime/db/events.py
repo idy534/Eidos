@@ -38,11 +38,24 @@ class RunStatusChangedPayload(ClosedModel):
     reason: str | None = None
 
 
+class RunUpdatedPayload(ClosedModel):
+    reason: str
+
+
 class EntityStatusChangedPayload(ClosedModel):
     entity_id: str
     previous: str
     current: str
     reason: str | None = None
+
+
+class ItemEventPayload(ClosedModel):
+    item_id: str = Field(alias="itemId")
+
+
+class ItemDeltaEventPayload(ItemEventPayload):
+    sequence: int
+    delta: str
 
 
 class ToolCallEventPayload(ClosedModel):
@@ -72,9 +85,14 @@ EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.SESSION_CREATED: SessionCreatedPayload,
     EventType.SESSION_TITLE_UPDATED: SessionTitleUpdatedPayload,
     EventType.RUN_CREATED: RunCreatedPayload,
+    EventType.RUN_UPDATED: RunUpdatedPayload,
     EventType.RUN_STATUS_CHANGED: RunStatusChangedPayload,
     EventType.SEGMENT_CREATED: EntityStatusChangedPayload,
+    EventType.SEGMENT_STATUS_CHANGED: EntityStatusChangedPayload,
     EventType.STEP_STATUS_CHANGED: EntityStatusChangedPayload,
+    EventType.ITEM_STARTED: ItemEventPayload,
+    EventType.ITEM_DELTA: ItemDeltaEventPayload,
+    EventType.ITEM_COMPLETED: ItemEventPayload,
     EventType.APPROVAL_STATUS_CHANGED: EntityStatusChangedPayload,
     EventType.TOOL_CALL_STARTED: ToolCallEventPayload,
     EventType.TOOL_CALL_COMPLETED: ToolCallEventPayload,

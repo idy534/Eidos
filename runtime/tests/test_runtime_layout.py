@@ -14,6 +14,8 @@ class RuntimeLayoutTests(unittest.TestCase):
         from eidos_runtime.model.client import ModelResponse
         from eidos_runtime.protocol.schemas import JsonRpcRequestDto
         from eidos_runtime.runtime.loop import RuntimeEngine
+        from eidos_runtime.runtime.event_projector import EventProjector
+        from eidos_runtime.runtime.supervisor import RunSupervisor
         from eidos_runtime.sandbox.seatbelt import SeatbeltProfile
         from eidos_runtime.tools.workspace import ToolExecutor
 
@@ -22,6 +24,8 @@ class RuntimeLayoutTests(unittest.TestCase):
             ModelResponse,
             JsonRpcRequestDto,
             RuntimeEngine,
+            EventProjector,
+            RunSupervisor,
             SeatbeltProfile,
             ToolExecutor,
         )))

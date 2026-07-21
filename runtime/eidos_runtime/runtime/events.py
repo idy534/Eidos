@@ -2,44 +2,44 @@ from __future__ import annotations
 
 from typing import Callable
 
+from eidos_runtime.db.storage import CommittedMutation
+from eidos_runtime.runtime.event_projector import EventProjector
+
 
 class RuntimeEvents:
-    """The compatibility seam for existing runtime notifications.
+    """Publishes protocol notifications only from committed Event envelopes."""
 
-    It intentionally preserves the current JSON-RPC notification names and
-    payloads; committed-event projection remains a later, separate change.
-    """
-
-    def __init__(self, notify: Callable[[dict[str, object]], None]) -> None:
+    def __init__(
+        self,
+        notify: Callable[[dict[str, object]], None],
+        projector: EventProjector | None = None,
+    ) -> None:
         self._notify = notify
+        self._projector = projector or EventProjector()
 
-    def emit(self, method: str, params: dict[str, object]) -> None:
-        self._notify({"jsonrpc": "2.0", "method": method, "params": params})
+    def publish(
+        self,
+        mutation: CommittedMutation[object],
+        *,
+        run: dict[str, object] | None = None,
+        item: dict[str, object] | None = None,
+        items: dict[str, dict[str, object]] | None = None,
+    ) -> None:
+        for event in mutation.events:
+            event_item = item
+            payload = event.get("payload")
+            if items is not None and isinstance(payload, dict):
+                item_id = payload.get("itemId")
+                if isinstance(item_id, str):
+                    event_item = items.get(item_id)
+            self.publish_event(event, run=run, item=event_item)
 
-    def item_completed(self, item: dict[str, object]) -> None:
-        notification_item = item
-        if item["kind"] == "assistant_message" and "content" in item:
-            notification_item = {
-                key: value for key, value in item.items() if key != "content"
-            }
-        elif item["kind"] == "file_change" and isinstance(item.get("toolCall"), dict):
-            tool_call = {
-                key: value
-                for key, value in item["toolCall"].items()
-                if key not in {"argumentsJson", "approvalDiff"}
-            }
-            notification_item = {**item, "toolCall": tool_call}
-        self.emit(
-            "item/completed",
-            {
-                "sessionId": item["sessionId"],
-                "runId": item["runId"],
-                "item": notification_item,
-            },
-        )
-
-    def run_completed(self, run: dict[str, object]) -> None:
-        self.emit(
-            "run/completed",
-            {"sessionId": run["sessionId"], "run": run},
-        )
+    def publish_event(
+        self,
+        event: dict[str, object],
+        *,
+        run: dict[str, object] | None = None,
+        item: dict[str, object] | None = None,
+    ) -> None:
+        for notification in self._projector.project(event, run=run, item=item):
+            self._notify(notification)

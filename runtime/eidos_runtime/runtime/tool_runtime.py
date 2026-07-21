@@ -21,7 +21,7 @@ from eidos_runtime.runtime.errors import (
     tool_result,
 )
 from eidos_runtime.runtime.events import RuntimeEvents
-from eidos_runtime.runtime.state_machine import RuntimeState, StateMachine
+from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
 from eidos_runtime.sandbox.sensitive import (
     SensitiveScanError,
@@ -270,16 +270,10 @@ class ShellToolHandler:
                 "Shell output was withheld",
             )
         if safe_output:
-            self.dependencies.events.emit(
-                "item/delta",
-                {
-                    "sessionId": item["sessionId"],
-                    "runId": item["runId"],
-                    "itemId": item["id"],
-                    "sequence": 1,
-                    "delta": safe_output,
-                },
+            mutation = self.dependencies.store.append_item_deltas_committed(
+                str(item["id"]), (safe_output,), 1
             )
+            self.dependencies.events.publish(mutation, item=mutation.value)
         if result["outcome"] == "success":
             self.dependencies.store.clear_rejects(run_id)
         status = "completed" if result["outcome"] == "success" else "failed"
@@ -444,7 +438,7 @@ class ToolCallRuntime:
         approval: ApprovalCoordinator,
         events: RuntimeEvents,
         sensitive: SensitiveScanner,
-        state_machine: StateMachine,
+        state_machine: RuntimePhaseTracker,
         *,
         shell_available: bool,
     ) -> None:
@@ -491,7 +485,7 @@ class ToolCallRuntime:
         tool_calls: tuple[ModelToolCall, ...],
         cancel: threading.Event,
     ) -> ToolBatchOutcome:
-        self.state_machine.transition(RuntimeState.TOOL_EXECUTING, "model_tool_calls")
+        self.state_machine.track(RuntimeState.TOOL_EXECUTING, "model_tool_calls")
         for batch_order, call in enumerate(tool_calls):
             self._check_cancel(step.run_id, cancel)
             try:
@@ -504,14 +498,11 @@ class ToolCallRuntime:
                     step.run_id, "failed", reason="sensitive_tool_input"
                 )
                 if failures >= 2:
-                    paused = self.store.pause_run(
+                    mutation = self.store.pause_run_committed(
                         step.run_id, "repeated_sensitive_tool_input"
                     )
-                    self.events.emit(
-                        "run/updated",
-                        {"sessionId": paused["sessionId"], "run": paused},
-                    )
-                    self.state_machine.transition(
+                    self.events.publish(mutation, run=mutation.value)
+                    self.state_machine.track(
                         RuntimeState.WAITING_USER_INPUT,
                         "repeated_sensitive_tool_input",
                     )
@@ -519,7 +510,7 @@ class ToolCallRuntime:
                         status="paused",
                         pause_reason="repeated_sensitive_tool_input",
                     )
-                self.state_machine.transition(RuntimeState.THINKING, "safe_tool_feedback")
+                self.state_machine.track(RuntimeState.THINKING, "safe_tool_feedback")
                 return ToolBatchOutcome(
                     status="sensitive_rejected",
                     error_code="sensitive_tool_input_rejected",
@@ -530,7 +521,7 @@ class ToolCallRuntime:
                 )
             assert isinstance(arguments, dict)
             self.store.clear_sensitive_tool_inputs(step.run_id)
-            item = self.store.create_tool_item(
+            mutation = self.store.create_tool_item_committed(
                 step.run_id,
                 step.step_index,
                 batch_order,
@@ -545,14 +536,8 @@ class ToolCallRuntime:
                 provenance=self.dispatcher.provenance(call.name),
                 tool_set_hash=step.tool_snapshot.tool_set_hash,
             )
-            self.events.emit(
-                "item/started",
-                {
-                    "sessionId": item["sessionId"],
-                    "runId": step.run_id,
-                    "item": item,
-                },
-            )
+            item = mutation.value
+            self.events.publish(mutation, item=item)
             effective_call = ModelToolCall(
                 call.provider_call_id, call.name, arguments
             )
@@ -584,7 +569,7 @@ class ToolCallRuntime:
                     outcome = handler.execute(
                         step.run_id, item, effective_call, cancel
                     )
-            completed = self.store.complete_tool_item(
+            mutation = self.store.complete_tool_item_committed(
                 str(item["id"]),
                 json.dumps(
                     outcome.result,
@@ -595,7 +580,8 @@ class ToolCallRuntime:
                 item_status=outcome.item_status,
                 tool_status=outcome.tool_status,
             )
-            self.events.item_completed(completed)
+            completed = mutation.value
+            self.events.publish(mutation, item=completed)
             self._check_cancel(step.run_id, cancel)
             if outcome.activations:
                 self.store.activate_tools(step.run_id, outcome.activations)
@@ -613,20 +599,17 @@ class ToolCallRuntime:
                     if plan.is_external
                     else "eidos_state_reconciliation_required"
                 )
-                paused = self.store.pause_run(step.run_id, pause_reason)
-                self.state_machine.transition(
+                mutation = self.store.pause_run_committed(step.run_id, pause_reason)
+                self.state_machine.track(
                     RuntimeState.WAITING_USER_INPUT, pause_reason
                 )
-                self.events.emit(
-                    "run/updated",
-                    {"sessionId": paused["sessionId"], "run": paused},
-                )
+                self.events.publish(mutation, run=mutation.value)
                 return ToolBatchOutcome(
                     status="paused", pause_reason=pause_reason
                 )
 
         self.store.complete_current_step(step.run_id, "completed")
-        self.state_machine.transition(RuntimeState.THINKING, "tool_batch_completed")
+        self.state_machine.track(RuntimeState.THINKING, "tool_batch_completed")
         updated = self.store.read_run(step.run_id)
         if updated["status"] == "waiting_user_input":
             return ToolBatchOutcome(
