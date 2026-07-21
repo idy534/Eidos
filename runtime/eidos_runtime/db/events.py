@@ -81,6 +81,16 @@ class McpToolListChangedPayload(ClosedModel):
     server_id: str = Field(alias="serverId")
 
 
+class ContextCompactedPayload(ClosedModel):
+    summary_id: str = Field(alias="summaryId")
+    source_item_count: int = Field(alias="sourceItemCount")
+    phase: str
+
+
+class InputEventPayload(ClosedModel):
+    input_id: str = Field(alias="inputId")
+
+
 EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.SESSION_CREATED: SessionCreatedPayload,
     EventType.SESSION_TITLE_UPDATED: SessionTitleUpdatedPayload,
@@ -102,6 +112,9 @@ EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.PLUGIN_STATE_CHANGED: PluginEventPayload,
     EventType.MCP_SERVER_STATE_CHANGED: McpServerEventPayload,
     EventType.MCP_TOOL_LIST_CHANGED: McpToolListChangedPayload,
+    EventType.CONTEXT_COMPACTED: ContextCompactedPayload,
+    EventType.INPUT_QUEUED: InputEventPayload,
+    EventType.INPUT_INJECTED: InputEventPayload,
 }
 
 

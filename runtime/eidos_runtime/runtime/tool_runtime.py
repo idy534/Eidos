@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 import threading
 
@@ -38,6 +40,8 @@ class HandlerOutcome:
     item_status: str
     tool_status: str = "completed"
     activations: tuple[str, ...] = ()
+    workspace_changed: bool = False
+    diff_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -160,7 +164,17 @@ class FileChangeToolHandler:
         if result["outcome"] == "success" and result.get("code") != "no_changes":
             self.dependencies.store.clear_rejects(run_id)
         status = "completed" if result["outcome"] == "success" else "failed"
-        return HandlerOutcome(result, status, status)
+        changed = result["outcome"] == "success" and result.get("code") != "no_changes"
+        return HandlerOutcome(
+            result,
+            status,
+            status,
+            workspace_changed=changed,
+            diff_hash=(
+                hashlib.sha256(prepared.diff.encode("utf-8")).hexdigest()
+                if changed else None
+            ),
+        )
 
 
 class ShellToolHandler:
@@ -277,7 +291,22 @@ class ShellToolHandler:
         if result["outcome"] == "success":
             self.dependencies.store.clear_rejects(run_id)
         status = "completed" if result["outcome"] == "success" else "failed"
-        return HandlerOutcome(result, status, status)
+        changed = result["outcome"] == "success"
+        return HandlerOutcome(
+            result,
+            status,
+            status,
+            workspace_changed=changed,
+            diff_hash=(
+                hashlib.sha256(json.dumps(
+                    result,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")).hexdigest()
+                if changed else None
+            ),
+        )
 
 
 class ExternalToolHandler:
@@ -486,6 +515,12 @@ class ToolCallRuntime:
         cancel: threading.Event,
     ) -> ToolBatchOutcome:
         self.state_machine.track(RuntimeState.TOOL_EXECUTING, "model_tool_calls")
+        if (
+            self.dispatcher.is_parallel_read_batch(tool_calls)
+            and self._parallel_arguments_are_safe(tool_calls)
+        ):
+            return self._execute_parallel_reads(step, tool_calls, cancel)
+        errors: list[str] = []
         for batch_order, call in enumerate(tool_calls):
             self._check_cancel(step.run_id, cancel)
             try:
@@ -579,12 +614,16 @@ class ToolCallRuntime:
                 ),
                 item_status=outcome.item_status,
                 tool_status=outcome.tool_status,
+                workspace_changed=outcome.workspace_changed,
+                diff_hash=outcome.diff_hash,
             )
             completed = mutation.value
             self.events.publish(mutation, item=completed)
             self._check_cancel(step.run_id, cancel)
             if outcome.activations:
                 self.store.activate_tools(step.run_id, outcome.activations)
+            if outcome.result.get("outcome") != "success":
+                errors.append(_result_fingerprint(call.name, outcome.result))
             if (
                 outcome.result.get("reconciliationRequired") is True
                 and (plan.is_external or plan.is_eidos_state)
@@ -615,7 +654,95 @@ class ToolCallRuntime:
             return ToolBatchOutcome(
                 status="paused", pause_reason=str(updated.get("pauseReason"))
             )
-        return ToolBatchOutcome(status="completed")
+        facts = self.store.context_facts(step.run_id)
+        return ToolBatchOutcome(
+            status="completed",
+            error_fingerprints=tuple(errors),
+            workspace_version=facts.workspace_version,
+            diff_hash=facts.last_diff_hash,
+        )
+
+    def _parallel_arguments_are_safe(
+        self, calls: tuple[ModelToolCall, ...]
+    ) -> bool:
+        try:
+            return all(self.sensitive.scan_json(call.arguments) == call.arguments for call in calls)
+        except SensitiveScanError:
+            return False
+
+    def _execute_parallel_reads(
+        self,
+        step: StepContext,
+        calls: tuple[ModelToolCall, ...],
+        cancel: threading.Event,
+    ) -> ToolBatchOutcome:
+        handler = self.handlers["read"]
+        pending: list[tuple[dict[str, object], ModelToolCall]] = []
+        for batch_order, call in enumerate(calls):
+            self._check_cancel(step.run_id, cancel)
+            mutation = self.store.create_tool_item_committed(
+                step.run_id,
+                step.step_index,
+                batch_order,
+                call.provider_call_id,
+                call.name,
+                json.dumps(
+                    call.arguments,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                provenance=self.dispatcher.provenance(call.name),
+                tool_set_hash=step.tool_snapshot.tool_set_hash,
+            )
+            pending.append((mutation.value, call))
+            self.events.publish(mutation, item=mutation.value)
+
+        def run(entry: tuple[dict[str, object], ModelToolCall]) -> HandlerOutcome:
+            item, call = entry
+            try:
+                return handler.execute(step.run_id, item, call, cancel)
+            except RuntimeCancelled:
+                raise
+            except Exception:
+                return HandlerOutcome(
+                    tool_error(call.name, "tool_execution_failed", "Tool execution failed"),
+                    "failed",
+                    "failed",
+                )
+
+        with ThreadPoolExecutor(max_workers=len(pending)) as executor:
+            futures = [executor.submit(run, entry) for entry in pending]
+            outcomes = [future.result() for future in futures]
+
+        errors: list[str] = []
+        for (item, call), outcome in zip(pending, outcomes, strict=True):
+            mutation = self.store.complete_tool_item_committed(
+                str(item["id"]),
+                json.dumps(
+                    outcome.result,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                item_status=outcome.item_status,
+                tool_status=outcome.tool_status,
+            )
+            self.events.publish(mutation, item=mutation.value)
+            if outcome.activations:
+                self.store.activate_tools(step.run_id, outcome.activations)
+            if outcome.result.get("outcome") != "success":
+                errors.append(_result_fingerprint(call.name, outcome.result))
+            self._check_cancel(step.run_id, cancel)
+        self.store.complete_current_step(step.run_id, "completed")
+        self.state_machine.track(RuntimeState.THINKING, "tool_batch_completed")
+        facts = self.store.context_facts(step.run_id)
+        return ToolBatchOutcome(
+            status="completed",
+            error_fingerprints=tuple(errors),
+            workspace_version=facts.workspace_version,
+            diff_hash=facts.last_diff_hash,
+        )
 
     def _check_cancel(self, run_id: str, cancel: threading.Event) -> None:
         if cancel.is_set() or self.store.read_run(run_id)["status"] in {
@@ -623,3 +750,16 @@ class ToolCallRuntime:
             "interrupted",
         }:
             raise RuntimeCancelled
+
+
+def _result_fingerprint(tool_name: str, result: dict[str, object]) -> str:
+    return hashlib.sha256(json.dumps(
+        {
+            "toolName": tool_name,
+            "outcome": result.get("outcome"),
+            "code": result.get("code"),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")).hexdigest()

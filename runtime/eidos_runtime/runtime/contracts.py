@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from eidos_runtime.model.client import ModelContextItem, ModelToolCall, ModelToolDefinition
+from eidos_runtime.context.budget import ContextBudget
 from eidos_runtime.tools.registry import StepToolSnapshot
 
 
@@ -46,6 +47,8 @@ class StepContext(_FrozenModel):
     tool_definitions: tuple[ModelToolDefinition, ...]
     workspace_identity: WorkspaceIdentitySnapshot
     reconciliation_epoch: int
+    workspace_version: int = 0
+    context_budget: ContextBudget | None = None
     extension_snapshot_hash: str
 
 
@@ -69,11 +72,14 @@ class ToolBatchOutcome(_FrozenModel):
     error_code: str | None = None
     pause_reason: str | None = None
     feedback: tuple[ModelContextItem, ...] = ()
+    error_fingerprints: tuple[str, ...] = ()
+    workspace_version: int = 0
+    diff_hash: str | None = None
 
 
 class LoopAction(StrEnum):
     CONTINUE = "continue"
-    EXECUTE_TOOLS = "execute_tools"
+    COMPACT = "compact"
     PAUSE = "pause"
     FINALIZE = "finalize"
     COMPLETE = "complete"
@@ -91,6 +97,13 @@ class LoopDecision(_FrozenModel):
     action: LoopAction
     reason: str | None = None
     failure: RuntimeFailure | None = None
+
+
+class RunBudget(_FrozenModel):
+    segment_steps_remaining: int
+    run_steps_remaining: int
+    segment_effective_ms_remaining: int
+    run_effective_ms_remaining: int
 
 
 class RuntimeCancelled(RuntimeError):

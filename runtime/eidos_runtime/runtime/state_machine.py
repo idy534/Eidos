@@ -86,6 +86,9 @@ class EventType(StrEnum):
     PLUGIN_STATE_CHANGED = "plugin.state_changed"
     MCP_SERVER_STATE_CHANGED = "mcp_server.state_changed"
     MCP_TOOL_LIST_CHANGED = "mcp_tool_list.changed"
+    CONTEXT_COMPACTED = "context.compacted"
+    INPUT_QUEUED = "input.queued"
+    INPUT_INJECTED = "input.injected"
 
 
 TRANSITIONS: dict[type[StrEnum], dict[StrEnum, frozenset[StrEnum]]] = {

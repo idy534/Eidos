@@ -18,6 +18,7 @@ PROTOCOL_V1_FIXTURE = RUNTIME_ROOT.parent / "protocol" / "fixtures" / "v1.json"
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
+from eidos_runtime.context.builder import ContextBuilder  # noqa: E402
 from eidos_runtime.extensions.skills import SkillCatalog  # noqa: E402
 from eidos_runtime.sandbox.seatbelt import SeatbeltSelfTestResult  # noqa: E402
 from eidos_runtime.sandbox.sensitive import SensitiveScanner  # noqa: E402
@@ -26,11 +27,7 @@ from eidos_runtime.protocol.server import (  # noqa: E402
     clean_session_title,
     valid_request_id,
 )
-from eidos_runtime.db.storage import (  # noqa: E402
-    ContextLimitExceeded,
-    SessionStore,
-    WorkspaceBoundaryError,
-)
+from eidos_runtime.db.storage import SessionStore, WorkspaceBoundaryError  # noqa: E402
 
 
 def run_runtime(
@@ -557,7 +554,7 @@ class RuntimeProtocolTests(unittest.TestCase):
             self.assertLessEqual(len(encoded), 1024 * 1024)
             self.assertEqual(snapshot["runs"][-1]["id"], latest_run_id)
 
-    def test_model_context_fails_instead_of_silently_dropping_history(self) -> None:
+    def test_context_builder_reports_over_budget_without_dropping_history(self) -> None:
         with (
             tempfile.TemporaryDirectory(prefix="eidos-context-data-") as data,
             tempfile.TemporaryDirectory(prefix="eidos-context-workspace-") as workspace,
@@ -572,8 +569,10 @@ class RuntimeProtocolTests(unittest.TestCase):
                     )
                     store.fail_run(run["id"], "TEST_COMPLETE")
 
-                with self.assertRaises(ContextLimitExceeded):
-                    store.model_context(session["id"])
+                current, _ = store.create_run(session["id"], "continue")
+                built = ContextBuilder(store).build(current["id"])
+                self.assertFalse(built.budget.fits)
+                self.assertGreater(len(built.facts.items), 13)
             finally:
                 store.close()
 

@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
 from eidos_runtime.runtime.loop import RuntimeEngine  # noqa: E402
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
+from eidos_runtime.context.builder import ContextBuilder  # noqa: E402
 
 
 class PhaseTwoRuntimeTests(unittest.TestCase):
@@ -197,7 +198,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.assertFalse(final.get("incomplete", False))
         self.assertEqual(model.calls, 2)
         self.assertEqual(model.contexts[1], model.contexts[0])
-        future_context = self.store.model_context(self.session["id"])
+        future_context = ContextBuilder(self.store).build(run["id"]).model_context
         self.assertNotIn(
             "safe progress",
             [item.get("content") for item in future_context],

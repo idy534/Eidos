@@ -14,6 +14,7 @@ import time
 import uuid
 from typing import Callable, Generic, TypeVar
 
+from eidos_runtime.context.facts import CompactSummary, ContextFacts, ContextItemFact
 from eidos_runtime.protocol.schemas import ItemDto, RunDto, SessionDto
 from eidos_runtime.db.events import append_event, event_from_row
 from eidos_runtime.model.config import DEFAULT_MODEL_ID, SUPPORTED_MODELS
@@ -31,7 +32,7 @@ from eidos_runtime.runtime.state_machine import (
 DATABASE_NAME = "eidos.db"
 LOCK_NAME = "runtime.lock"
 RESERVE_NAME = "emergency.reserve"
-SCHEMA_REVISION = 6
+SCHEMA_REVISION = 7
 RESERVE_BYTES = 1024 * 1024
 DEFAULT_LIST_LIMIT = 50
 MAX_LIST_LIMIT = 200
@@ -372,6 +373,10 @@ def settle_run_children(
         now,
         "run_terminated",
     ))
+    connection.execute(
+        "UPDATE input_mailbox SET status = 'canceled' WHERE run_id = ? AND status = 'pending'",
+        (run_id,),
+    )
     return tuple(events)
 
 
@@ -531,7 +536,7 @@ class SessionStore:
                     raise StorageError("schema_revision_missing")
             if revision > SCHEMA_REVISION or revision < 0:
                 raise StorageError("schema_revision_unsupported")
-            if revision in {1, 2, 3, 4, 5}:
+            if revision in {1, 2, 3, 4, 5, 6}:
                 _backup_database(connection, database_path, revision)
             if revision == 1:
                 _migrate_v1_to_v2(connection)
@@ -548,6 +553,9 @@ class SessionStore:
             if revision == 5:
                 _migrate_v5_to_v6(connection)
                 revision = 6
+            if revision == 6:
+                _migrate_v6_to_v7(connection)
+                revision = 7
             if revision not in {0, SCHEMA_REVISION}:
                 raise StorageError("schema_revision_unsupported")
 
@@ -586,6 +594,9 @@ class SessionStore:
                     side_effects_may_exist INTEGER NOT NULL DEFAULT 0,
                     extension_snapshot_json TEXT NOT NULL DEFAULT '{}',
                     activated_tools_json TEXT NOT NULL DEFAULT '[]',
+                    compaction_count INTEGER NOT NULL DEFAULT 0,
+                    workspace_version INTEGER NOT NULL DEFAULT 0,
+                    last_diff_hash TEXT,
                     error_code TEXT,
                     created_at INTEGER NOT NULL,
                     started_at INTEGER,
@@ -753,6 +764,33 @@ class SessionStore:
                     error_code TEXT,
                     updated_at INTEGER NOT NULL,
                     PRIMARY KEY(plugin_id, server_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS compact_summaries (
+                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id TEXT NOT NULL UNIQUE,
+                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
+                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+                    task_goal TEXT NOT NULL,
+                    constraints_json TEXT NOT NULL,
+                    completed_actions_json TEXT NOT NULL,
+                    workspace_changes_json TEXT NOT NULL,
+                    important_facts_json TEXT NOT NULL,
+                    unresolved_problems_json TEXT NOT NULL,
+                    next_actions_json TEXT NOT NULL,
+                    source_item_ids_json TEXT NOT NULL,
+                    phase TEXT NOT NULL CHECK (phase IN ('pre_turn', 'mid_turn')),
+                    created_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS input_mailbox (
+                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id TEXT NOT NULL UNIQUE,
+                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+                    content TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('pending', 'injected', 'canceled')),
+                    created_at INTEGER NOT NULL,
+                    injected_at INTEGER
                 );
                 """
             )
@@ -983,6 +1021,13 @@ class SessionStore:
             connection.execute(
                 f"DELETE FROM execution_segments WHERE run_id IN ({run_ids})",
                 (session_id,),
+            )
+            connection.execute(
+                f"DELETE FROM input_mailbox WHERE run_id IN ({run_ids})",
+                (session_id,),
+            )
+            connection.execute(
+                "DELETE FROM compact_summaries WHERE session_id = ?", (session_id,)
             )
             connection.execute(
                 """
@@ -1278,6 +1323,32 @@ class SessionStore:
         if row is None:
             raise ResourceNotFoundError("run not found")
         return _run_from_row(row)
+
+    def run_budget(self, run_id: str) -> dict[str, int]:
+        with self.lock:
+            connection = self._connection()
+            run = connection.execute(
+                "SELECT model_step_count, total_effective_ms FROM runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+            segment = connection.execute(
+                """
+                SELECT step_count, effective_ms FROM execution_segments
+                WHERE run_id = ? AND status = 'running'
+                ORDER BY ordinal DESC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        if run is None:
+            raise ResourceNotFoundError("run not found")
+        return {
+            "segmentStepsRemaining": max(0, 20 - int(segment["step_count"] if segment else 0)),
+            "runStepsRemaining": max(0, 80 - int(run["model_step_count"])),
+            "segmentEffectiveMsRemaining": max(
+                0, 1_800_000 - int(segment["effective_ms"] if segment else 0)
+            ),
+            "runEffectiveMsRemaining": max(0, 7_200_000 - int(run["total_effective_ms"])),
+        }
 
     def read_runtime_start_event(self, run_id: str) -> dict[str, object]:
         with self.lock:
@@ -2281,12 +2352,16 @@ class SessionStore:
         *,
         item_status: str = "completed",
         tool_status: str = "completed",
+        workspace_changed: bool = False,
+        diff_hash: str | None = None,
     ) -> dict[str, object]:
         return self.complete_tool_item_committed(
             item_id,
             result_json,
             item_status=item_status,
             tool_status=tool_status,
+            workspace_changed=workspace_changed,
+            diff_hash=diff_hash,
         ).value
 
     def complete_tool_item_committed(
@@ -2296,11 +2371,17 @@ class SessionStore:
         *,
         item_status: str = "completed",
         tool_status: str = "completed",
+        workspace_changed: bool = False,
+        diff_hash: str | None = None,
     ) -> CommittedMutation[dict[str, object]]:
         if item_status not in {"completed", "failed", "declined", "canceled"}:
             raise ValueError("invalid item status")
         if tool_status not in {"completed", "failed", "canceled"}:
             raise ValueError("invalid tool status")
+        if diff_hash is not None and (
+            len(diff_hash) != 64 or any(value not in "0123456789abcdef" for value in diff_hash)
+        ):
+            raise ValueError("invalid diff hash")
         now = _now_ms()
         events: list[dict[str, object]] = []
         with self.lock, self._connection() as connection:
@@ -2336,6 +2417,15 @@ class SessionStore:
             )
             if tool_update.rowcount != 1 or item_update.rowcount != 1:
                 raise InvalidRunStateError("tool item is not active")
+            if workspace_changed:
+                connection.execute(
+                    """
+                    UPDATE runs SET workspace_version = workspace_version + 1,
+                                    last_diff_hash = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (diff_hash, now, fact["run_id"]),
+                )
             try:
                 result = json.loads(result_json)
             except json.JSONDecodeError:
@@ -2926,20 +3016,23 @@ class SessionStore:
             _item_from_row(row, tools_by_item.get(row["id"])) for row in rows
         ]
 
-    def model_context(self, session_id: str) -> tuple[dict[str, object], ...]:
+    def context_facts(self, run_id: str) -> ContextFacts:
         with self.lock:
             connection = self._connection()
+            run = connection.execute(
+                "SELECT * FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if run is None:
+                raise ResourceNotFoundError("run not found")
             item_rows = connection.execute(
                 """
                 SELECT * FROM items
                 WHERE session_id = ? AND status IN ('completed', 'failed', 'declined')
                   AND NOT (kind = 'assistant_message' AND incomplete = 1)
-                ORDER BY creation_seq DESC LIMIT ?
+                ORDER BY creation_seq ASC
                 """,
-                (session_id, MAX_CONTEXT_ITEMS + 1),
+                (run["session_id"],),
             ).fetchall()
-            if len(item_rows) > MAX_CONTEXT_ITEMS:
-                raise ContextLimitExceeded("model context item limit exceeded")
             tool_rows: list[sqlite3.Row] = []
             if item_rows:
                 placeholders = ",".join("?" for _ in item_rows)
@@ -2947,49 +3040,182 @@ class SessionStore:
                     f"SELECT * FROM tool_calls WHERE item_id IN ({placeholders})",
                     [row["id"] for row in item_rows],
                 ).fetchall()
+            summary_row = connection.execute(
+                """
+                SELECT * FROM compact_summaries
+                WHERE run_id = ? ORDER BY creation_seq DESC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
         tools_by_item = {row["item_id"]: row for row in tool_rows}
-        groups: list[list[dict[str, object]]] = []
-        context_bytes = 0
+        items: list[ContextItemFact] = []
         for row in item_rows:
-            item = _item_from_row(row, tools_by_item.get(row["id"]))
-            group: list[dict[str, object]] = []
-            if item["kind"] == "user_message":
-                group.append({"type": "user", "content": item.get("content", "")})
-            elif item["kind"] == "assistant_message":
-                group.append(
-                    {"type": "assistant", "content": item.get("content", "")}
-                )
-            elif item["kind"] in {"tool_call", "file_change", "command_execution"}:
-                tool_call = item["toolCall"]
-                group.append(
-                    {
-                        "type": "tool_call",
-                        "callId": tool_call["providerCallId"],
-                        "name": tool_call["toolName"],
-                        "arguments": tool_call["argumentsJson"],
-                    }
-                )
-                group.append(
-                    {
-                        "type": "tool_result",
-                        "callId": tool_call["providerCallId"],
-                        "name": tool_call["toolName"],
-                        "result": tool_call["resultJson"],
-                    }
-                )
-            group_bytes = len(
-                json.dumps(group, ensure_ascii=False, separators=(",", ":")).encode(
-                    "utf-8"
-                )
+            tool = tools_by_item.get(row["id"])
+            items.append(ContextItemFact(
+                item_id=str(row["id"]),
+                run_id=str(row["run_id"]),
+                kind=str(row["kind"]),
+                status=str(row["status"]),
+                content=row["content"],
+                provider_call_id=str(tool["provider_call_id"]) if tool else None,
+                tool_name=str(tool["tool_name"]) if tool else None,
+                arguments_json=str(tool["arguments_json"]) if tool else None,
+                result_json=str(tool["result_json"]) if tool and tool["result_json"] is not None else None,
+            ))
+        return ContextFacts(
+            run_id=run_id,
+            session_id=str(run["session_id"]),
+            items=tuple(items),
+            compact_summary=_compact_summary_from_row(summary_row),
+            compaction_count=int(run["compaction_count"]),
+            workspace_version=int(run["workspace_version"]),
+            reconciliation_epoch=int(run["reconciliation_epoch"]),
+            last_diff_hash=run["last_diff_hash"],
+        )
+
+    def latest_compact_summary(self, run_id: str) -> CompactSummary | None:
+        return self.context_facts(run_id).compact_summary
+
+    def compaction_count(self, run_id: str) -> int:
+        return self.context_facts(run_id).compaction_count
+
+    def commit_compaction(
+        self, run_id: str, phase: str, summary: CompactSummary
+    ) -> CommittedMutation[CompactSummary]:
+        if phase not in {"pre_turn", "mid_turn"}:
+            raise ValueError("invalid compaction phase")
+        summary_id = str(uuid.uuid4())
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            run = connection.execute(
+                "SELECT session_id, compaction_count FROM runs WHERE id = ? AND status = 'running'",
+                (run_id,),
+            ).fetchone()
+            if run is None:
+                raise InvalidRunStateError("run is not active")
+            if int(run["compaction_count"]) >= 2:
+                raise ContextLimitExceeded("compaction limit reached")
+            connection.execute(
+                """
+                INSERT INTO compact_summaries (
+                    id, session_id, run_id, task_goal, constraints_json,
+                    completed_actions_json, workspace_changes_json,
+                    important_facts_json, unresolved_problems_json,
+                    next_actions_json, source_item_ids_json, phase, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    summary_id, run["session_id"], run_id, summary.task_goal,
+                    _json_tuple(summary.constraints),
+                    _json_tuple(summary.completed_actions),
+                    _json_tuple(summary.workspace_changes),
+                    _json_tuple(summary.important_facts),
+                    _json_tuple(summary.unresolved_problems),
+                    _json_tuple(summary.next_actions),
+                    _json_tuple(summary.source_item_ids), phase, now,
+                ),
             )
-            if context_bytes + group_bytes > MAX_CONTEXT_BYTES:
-                raise ContextLimitExceeded("model context byte limit exceeded")
-            groups.append(group)
-            context_bytes += group_bytes
-        context: list[dict[str, object]] = []
-        for group in reversed(groups):
-            context.extend(group)
-        return tuple(context)
+            updated = connection.execute(
+                """
+                UPDATE runs SET compaction_count = compaction_count + 1, updated_at = ?
+                WHERE id = ? AND status = 'running' AND compaction_count < 2
+                """,
+                (now, run_id),
+            )
+            if updated.rowcount != 1:
+                raise InvalidRunStateError("compaction could not commit")
+            event = append_event(
+                connection,
+                EventType.CONTEXT_COMPACTED,
+                now,
+                {
+                    "summaryId": summary_id,
+                    "sourceItemCount": len(summary.source_item_ids),
+                    "phase": phase,
+                },
+                session_id=run["session_id"],
+                run_id=run_id,
+            )
+        return CommittedMutation(summary, (event,))
+
+    def enqueue_input(self, run_id: str, content: str) -> str:
+        if not content or len(content.encode("utf-8")) > 64 * 1024:
+            raise ValueError("input is invalid")
+        input_id = str(uuid.uuid4())
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            run = connection.execute(
+                "SELECT session_id FROM runs WHERE id = ? AND status = 'running'",
+                (run_id,),
+            ).fetchone()
+            if run is None:
+                raise InvalidRunStateError("run is not active")
+            connection.execute(
+                """
+                INSERT INTO input_mailbox (id, run_id, content, status, created_at)
+                VALUES (?, ?, ?, 'pending', ?)
+                """,
+                (input_id, run_id, content, now),
+            )
+            append_event(
+                connection, EventType.INPUT_QUEUED, now, {"inputId": input_id},
+                session_id=run["session_id"], run_id=run_id,
+            )
+        return input_id
+
+    def has_pending_input(self, run_id: str) -> bool:
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT 1 FROM input_mailbox WHERE run_id = ? AND status = 'pending' LIMIT 1",
+                (run_id,),
+            ).fetchone()
+        return row is not None
+
+    def consume_pending_inputs(self, run_id: str) -> int:
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            run = connection.execute(
+                "SELECT session_id FROM runs WHERE id = ? AND status = 'running'",
+                (run_id,),
+            ).fetchone()
+            if run is None:
+                raise InvalidRunStateError("run is not active")
+            pending = connection.execute(
+                """
+                SELECT * FROM input_mailbox
+                WHERE run_id = ? AND status = 'pending' ORDER BY creation_seq
+                """,
+                (run_id,),
+            ).fetchall()
+            for entry in pending:
+                item_id = str(uuid.uuid4())
+                connection.execute(
+                    """
+                    INSERT INTO items (
+                        id, session_id, run_id, ordinal, kind, status,
+                        content, created_at, completed_at
+                    ) VALUES (?, ?, ?, ?, 'user_message', 'completed', ?, ?, ?)
+                    """,
+                    (
+                        item_id, run["session_id"], run_id,
+                        self._next_ordinal(connection, run_id), entry["content"], now, now,
+                    ),
+                )
+                updated = connection.execute(
+                    """
+                    UPDATE input_mailbox SET status = 'injected', injected_at = ?
+                    WHERE id = ? AND status = 'pending'
+                    """,
+                    (now, entry["id"]),
+                )
+                if updated.rowcount != 1:
+                    raise InvalidRunStateError("pending input changed")
+                append_event(
+                    connection, EventType.INPUT_INJECTED, now,
+                    {"inputId": entry["id"]},
+                    session_id=run["session_id"], run_id=run_id,
+                )
+        return len(pending)
 
     def _create_item(
         self, run_id: str, kind: str, model_step_index: int | None
@@ -3446,6 +3672,60 @@ def _migrate_v5_to_v6(connection: sqlite3.Connection) -> None:
         raise StorageError("migration_failed") from None
 
 
+def _migrate_v6_to_v7(connection: sqlite3.Connection) -> None:
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        run_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(runs)").fetchall()
+        }
+        additions = {
+            "compaction_count": "INTEGER NOT NULL DEFAULT 0",
+            "workspace_version": "INTEGER NOT NULL DEFAULT 0",
+            "last_diff_hash": "TEXT",
+        }
+        for name, definition in additions.items():
+            if run_columns and name not in run_columns:
+                connection.execute(f"ALTER TABLE runs ADD COLUMN {name} {definition}")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS compact_summaries (
+                creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                id TEXT NOT NULL UNIQUE,
+                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
+                run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+                task_goal TEXT NOT NULL,
+                constraints_json TEXT NOT NULL,
+                completed_actions_json TEXT NOT NULL,
+                workspace_changes_json TEXT NOT NULL,
+                important_facts_json TEXT NOT NULL,
+                unresolved_problems_json TEXT NOT NULL,
+                next_actions_json TEXT NOT NULL,
+                source_item_ids_json TEXT NOT NULL,
+                phase TEXT NOT NULL CHECK (phase IN ('pre_turn', 'mid_turn')),
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS input_mailbox (
+                creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                id TEXT NOT NULL UNIQUE,
+                run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+                content TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('pending', 'injected', 'canceled')),
+                created_at INTEGER NOT NULL,
+                injected_at INTEGER
+            )
+            """
+        )
+        connection.execute("PRAGMA user_version = 7")
+        connection.commit()
+    except sqlite3.Error:
+        connection.rollback()
+        raise StorageError("migration_failed") from None
+
+
 def _prepare_private_directory(path: Path) -> None:
     if path.is_symlink():
         raise StorageError("data directory must not be a symlink")
@@ -3705,6 +3985,25 @@ def _truncate_snapshot_text(value: str) -> str:
             return prefix.decode("utf-8") + marker
         except UnicodeDecodeError as error:
             prefix = prefix[: error.start]
+
+
+def _json_tuple(values: tuple[str, ...]) -> str:
+    return json.dumps(values, ensure_ascii=False, separators=(",", ":"))
+
+
+def _compact_summary_from_row(row: sqlite3.Row | None) -> CompactSummary | None:
+    if row is None:
+        return None
+    return CompactSummary(
+        task_goal=str(row["task_goal"]),
+        constraints=tuple(json.loads(row["constraints_json"])),
+        completed_actions=tuple(json.loads(row["completed_actions_json"])),
+        workspace_changes=tuple(json.loads(row["workspace_changes_json"])),
+        important_facts=tuple(json.loads(row["important_facts_json"])),
+        unresolved_problems=tuple(json.loads(row["unresolved_problems_json"])),
+        next_actions=tuple(json.loads(row["next_actions_json"])),
+        source_item_ids=tuple(json.loads(row["source_item_ids_json"])),
+    )
 
 
 def _run_from_row(

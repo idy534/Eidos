@@ -6,6 +6,12 @@ import threading
 import time
 from typing import Callable
 
+from eidos_runtime.context.builder import (
+    ContextBuilder,
+    DEFAULT_CONTEXT_WINDOW_TOKENS,
+    DEFAULT_REQUEST_MAX_OUTPUT_TOKENS,
+)
+from eidos_runtime.context.compactor import ContextCompactionError, ContextCompactor
 from eidos_runtime.db.storage import (
     ContextLimitExceeded,
     InvalidRunStateError,
@@ -18,11 +24,13 @@ from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalDecision
 from eidos_runtime.runtime.contracts import (
     LoopAction,
     RunContext,
+    RunBudget,
     RuntimeCancelled,
 )
 from eidos_runtime.runtime.decision import LoopDecisionEngine
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.finalizer import RunFinalizer
+from eidos_runtime.runtime.loop_guard import LoopGuard
 from eidos_runtime.runtime.run_resources import RunResourceError, RunResources
 from eidos_runtime.runtime.sampling import (
     SamplingAuthenticationFailed,
@@ -69,6 +77,8 @@ class RuntimeEngine:
         sensitive: SensitiveScanner | None = None,
         wait_for_execution_slot: Callable[[str, threading.Event], bool] | None = None,
         mcp_sandbox: bool = True,
+        context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS,
+        request_max_output_tokens: int = DEFAULT_REQUEST_MAX_OUTPUT_TOKENS,
     ) -> None:
         self.store = store
         self.model = model
@@ -79,21 +89,18 @@ class RuntimeEngine:
         self.sensitive = sensitive or default_scanner()
         self.wait_for_execution_slot = wait_for_execution_slot
         self.mcp_sandbox = mcp_sandbox
+        self.context_window_tokens = context_window_tokens
+        self.request_max_output_tokens = request_max_output_tokens
         self.state_machine = RuntimePhaseTracker()
         self.active_started: float | None = None
 
     def run(self, run_id: str, cancel: threading.Event) -> None:
         run = self.store.read_run(run_id)
         self._emit_started(run_id, run)
-        try:
-            context = self.store.model_context(str(run["sessionId"]))
-        except ContextLimitExceeded:
-            self._fail(run_id, "CONTEXT_INPUT_TOO_LARGE")
-            return
         extension_snapshot = run.get("extensionSnapshot")
         if not isinstance(extension_snapshot, dict):
             extension_snapshot = dict(EMPTY_EXTENSION_SNAPSHOT)
-        run_context = self._run_context(run, context, extension_snapshot)
+        run_context = self._run_context(run, extension_snapshot)
 
         try:
             with RunResources(
@@ -121,6 +128,13 @@ class RuntimeEngine:
         cancel: threading.Event,
     ) -> None:
         decisions = LoopDecisionEngine()
+        guard = LoopGuard()
+        context_builder = ContextBuilder(
+            self.store,
+            context_window_tokens=self.context_window_tokens,
+            request_max_output_tokens=self.request_max_output_tokens,
+        )
+        compactor = ContextCompactor(self.store)
         step_factory = StepContextFactory(self.store)
         sampling = SamplingRuntime(
             self.store, self.model, self.events, self.sensitive
@@ -147,16 +161,85 @@ class RuntimeEngine:
         while True:
             self._check_cancel(run.run_id, cancel)
             self._pause_effective_time(run.run_id)
+            self.store.consume_pending_inputs(run.run_id)
             resources.refresh()
+            dispatcher = resources.dispatcher
+            if dispatcher is None:
+                raise RuntimeError("run resources are not started")
+            snapshot = dispatcher.snapshot(self.store.activated_tools(run.run_id))
+            tool_definitions = tuple(
+                dispatcher.model_definitions(snapshot.activated_names)
+            )
+            built = context_builder.build(
+                run.run_id,
+                tool_definitions=tool_definitions,
+                skill_context=resources.skill_context,
+                extra_context=run.model_context,
+            )
+            budget_fact = self.store.run_budget(run.run_id)
+            compaction_guard = guard.observe_compaction_overflow(
+                not built.budget.fits and built.facts.compaction_count > 0
+            )
+            context_decision = decisions.decide(
+                context_budget=built.budget,
+                run_budget=RunBudget.model_validate({
+                    "segment_steps_remaining": budget_fact["segmentStepsRemaining"],
+                    "run_steps_remaining": budget_fact["runStepsRemaining"],
+                    "segment_effective_ms_remaining": budget_fact["segmentEffectiveMsRemaining"],
+                    "run_effective_ms_remaining": budget_fact["runEffectiveMsRemaining"],
+                }),
+                compaction_count=built.facts.compaction_count,
+                loop_guard_result=compaction_guard,
+                pending_user_input=self.store.has_pending_input(run.run_id),
+                cancelled=cancel.is_set(),
+            )
+            if context_decision.action == LoopAction.CANCEL:
+                raise RuntimeCancelled
+            if context_decision.action == LoopAction.COMPACT:
+                phase = "mid_turn" if int(
+                    self.store.read_run(run.run_id)["modelStepCount"]
+                ) else "pre_turn"
+                try:
+                    compactor.compact(run.run_id, phase)
+                except (ContextCompactionError, ContextLimitExceeded):
+                    self._pause_run(run.run_id, "context_compaction_failed")
+                    return
+                continue
+            if context_decision.action == LoopAction.FINALIZE:
+                finalizer.finalize(
+                    run.run_id,
+                    built.model_context,
+                    "max_effective_runtime"
+                    if budget_fact["runEffectiveMsRemaining"] <= 0
+                    else "max_total_steps",
+                )
+                return
+            if context_decision.action == LoopAction.PAUSE:
+                reason = context_decision.reason or "context_over_budget"
+                if reason == "segment_budget_exhausted":
+                    reason = (
+                        "segment_time_limit"
+                        if budget_fact["segmentEffectiveMsRemaining"] <= 0
+                        else "segment_step_limit"
+                    )
+                self._pause_run(run.run_id, reason)
+                return
             try:
-                step = step_factory.create(run, resources)
+                step = step_factory.create(
+                    run,
+                    resources,
+                    model_context=built.model_context,
+                    tool_snapshot=snapshot,
+                    context_budget=built.budget,
+                    workspace_version=built.facts.workspace_version,
+                )
             except SegmentLimitReached as error:
                 self._pause_for_segment_limit(run.run_id, error)
                 return
             except RunLimitReached as error:
                 finalizer.finalize(
                     run.run_id,
-                    run.model_context,
+                    built.model_context,
                     "max_effective_runtime" if "time" in str(error)
                     else "max_total_steps",
                 )
@@ -174,9 +257,6 @@ class RuntimeEngine:
                 self._handle_sampling_failure(run.run_id, error)
                 return
 
-            dispatcher = resources.dispatcher
-            if dispatcher is None:
-                raise RuntimeError("run resources are not started")
             tools = ToolCallRuntime(
                 self.store,
                 dispatcher,
@@ -203,10 +283,30 @@ class RuntimeEngine:
             else:
                 self.store.clear_protocol_errors(run.run_id)
 
-            decision = decisions.after_validation(
-                sampled, validation, protocol_errors=protocol_errors
+            guard_reason = guard.observe_empty_response(
+                sampled.assistant_item is None and not sampled.tool_calls
+            ) or guard.observe_protocol_error(validation.status == "validation_failed")
+            decision = decisions.decide(
+                sampling=sampled,
+                tool_batch=validation,
+                pending_user_input=self.store.has_pending_input(run.run_id),
+                protocol_errors=protocol_errors,
+                loop_guard_result=guard_reason,
+                cancelled=cancel.is_set(),
             )
-            if decision.action == LoopAction.CONTINUE:
+            if decision.reason == "pending_input":
+                if sampled.assistant_item is not None:
+                    mutation = self.store.complete_assistant_item_committed(
+                        str(sampled.assistant_item["id"])
+                    )
+                    self.events.publish(mutation, item=mutation.value)
+                self.store.complete_current_step(run.run_id, "completed")
+                run = run.model_copy(update={"model_context": ()})
+                continue
+            if (
+                decision.action == LoopAction.CONTINUE
+                and validation.status != "ready"
+            ):
                 run = run.model_copy(update={
                     "model_context": (
                         *run.model_context,
@@ -214,6 +314,12 @@ class RuntimeEngine:
                     )
                 })
                 continue
+            if decision.action == LoopAction.PAUSE:
+                self.store.complete_current_step(
+                    run.run_id, "failed", reason=decision.reason
+                )
+                self._pause_run(run.run_id, decision.reason or "loop_guard")
+                return
             if decision.action == LoopAction.FAIL:
                 self._fail(
                     run.run_id,
@@ -236,9 +342,33 @@ class RuntimeEngine:
                     str(sampled.assistant_item["id"])
                 )
                 self.events.publish(mutation, item=mutation.value)
+            repeated = guard.observe_tool_calls(
+                validation.tool_calls,
+                step.workspace_version,
+                step.reconciliation_epoch,
+            )
+            if repeated is not None:
+                self.store.complete_current_step(run.run_id, "failed", reason=repeated)
+                self._pause_run(run.run_id, repeated)
+                return
             outcome = tools.execute(step, validation.tool_calls, cancel)
-            tool_decision = decisions.after_tools(outcome)
+            guard_reason = guard.observe_errors(outcome.error_fingerprints)
+            if guard_reason is None and outcome.status == "completed":
+                guard_reason = guard.observe_progress(
+                    outcome.workspace_version, outcome.diff_hash
+                )
+            tool_decision = decisions.decide(
+                sampling=sampled,
+                tool_batch=outcome,
+                pending_user_input=self.store.has_pending_input(run.run_id),
+                loop_guard_result=guard_reason,
+                cancelled=cancel.is_set(),
+            )
             if tool_decision.action == LoopAction.PAUSE:
+                if self.store.read_run(run.run_id)["status"] == "running":
+                    self._pause_run(
+                        run.run_id, tool_decision.reason or "loop_guard"
+                    )
                 return
             if tool_decision.action == LoopAction.FAIL:
                 self._fail(run.run_id, "INTERNAL_ERROR")
@@ -254,17 +384,11 @@ class RuntimeEngine:
                 self.events.publish(mutation, run=mutation.value)
             if updated["status"] == "waiting_user_input":
                 return
-            try:
-                context = self.store.model_context(run.session_id)
-            except ContextLimitExceeded:
-                self._fail(run.run_id, "CONTEXT_INPUT_TOO_LARGE")
-                return
-            run = run.model_copy(update={"model_context": context})
+            run = run.model_copy(update={"model_context": ()})
 
     def _run_context(
         self,
         run: dict[str, object],
-        context: tuple[dict[str, object], ...],
         extension_snapshot: dict[str, object],
     ) -> RunContext:
         encoded = json.dumps(
@@ -277,7 +401,7 @@ class RuntimeEngine:
             run_id=str(run["id"]),
             session_id=str(run["sessionId"]),
             model_id=str(run["modelId"]),
-            model_context=context,
+            model_context=(),
             extension_snapshot=extension_snapshot,
             extension_snapshot_hash=hashlib.sha256(encoded).hexdigest(),
         )

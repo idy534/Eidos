@@ -113,6 +113,14 @@ class ToolDispatcher:
             return ToolDispatchPlan(False, "unavailable")
         return ToolDispatchPlan(entry.spec.approval_required, entry.adapter.execution_kind)
 
+    def is_parallel_read_batch(self, calls: tuple[ModelToolCall, ...]) -> bool:
+        return len(calls) > 1 and all(
+            (entry := self._registry.get(call.name)) is not None
+            and entry.spec.batch_policy == "parallel"
+            and entry.adapter.execution_kind == "read"
+            for call in calls
+        )
+
     def execute_read_only(
         self, call: ModelToolCall, cancel: threading.Event
     ) -> dict[str, object]:
