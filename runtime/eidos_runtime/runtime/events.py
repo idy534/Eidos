@@ -79,9 +79,18 @@ class RuntimeEvents:
             try:
                 self._notify(notification)
                 delivered += 1
-            except (BrokenPipeError, ConnectionError, RuntimeOutputClosedError, OSError) as error:
+            except (
+                BrokenPipeError,
+                ConnectionError,
+                RuntimeOutputClosedError,
+                OSError,
+            ) as error:
                 failure = DeliveryFailure(
-                    event_id=event.get("eventId") if isinstance(event.get("eventId"), int) else None,
+                    event_id=(
+                        event.get("eventId")
+                        if isinstance(event.get("eventId"), int)
+                        else None
+                    ),
                     method=(
                         str(notification["method"])
                         if isinstance(notification.get("method"), str)

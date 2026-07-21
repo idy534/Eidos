@@ -422,6 +422,26 @@ class SupervisorFinalizingTests(unittest.TestCase):
 
         self.assertEqual(self.store.read_run(run["id"])["status"], "stopped")
 
+    def test_cleanup_projection_failure_keeps_committed_failure(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "projection")
+        supervisor = self._supervisor()
+        gate = threading.Event()
+        gate.set()
+
+        with (
+            patch.object(
+                supervisor.events._projector,
+                "project",
+                side_effect=RuntimeError("fixture projector failure"),
+            ),
+            self.assertLogs("eidos.runtime", level="ERROR"),
+        ):
+            supervisor._run_worker(run["id"], threading.Event(), gate)
+
+        failed = self.store.read_run(run["id"])
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(failed["errorCode"], "INTERNAL_ERROR")
+
 
 if __name__ == "__main__":
     unittest.main()
