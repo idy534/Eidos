@@ -497,7 +497,7 @@ class ToolCallRuntime:
         self, step: StepContext, sampling: SamplingOutcome
     ) -> ToolBatchOutcome:
         result = self.dispatcher.validate(
-            ModelResponse(sampling.text, sampling.tool_calls),
+            ModelResponse(text=sampling.text, tool_calls=sampling.tool_calls),
             step.tool_snapshot.available_names,
         )
         if result.error_code is not None:

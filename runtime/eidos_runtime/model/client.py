@@ -2,27 +2,94 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import threading
-from typing import Callable, Protocol, Sequence
+from typing import Callable, Literal, Protocol, Sequence
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 ModelContextItem = dict[str, object]
-ModelToolDefinition = dict[str, object]
 
 
-@dataclass(frozen=True)
-class ModelToolCall:
+class _FrozenModel(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+
+class ModelToolDefinition(_FrozenModel):
+    name: str
+    description: str
+    parameters_json_schema: dict[str, object]
+
+
+class ModelToolCall(_FrozenModel):
     provider_call_id: str
     name: str
     arguments: dict[str, object]
 
+    def __init__(
+        self,
+        provider_call_id: str,
+        name: str,
+        arguments: dict[str, object],
+    ) -> None:
+        super().__init__(
+            provider_call_id=provider_call_id,
+            name=name,
+            arguments=arguments,
+        )
 
-@dataclass(frozen=True)
-class ModelResponse:
+
+class ModelUsage(_FrozenModel):
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    cache_read_tokens: int | None = Field(default=None, ge=0)
+    cache_write_tokens: int | None = Field(default=None, ge=0)
+    details: dict[str, int] = Field(default_factory=dict)
+
+
+class ModelResponse(_FrozenModel):
     text: str = ""
     tool_calls: tuple[ModelToolCall, ...] = ()
+    usage: ModelUsage | None = None
+    provider_name: str | None = None
+    resolved_model_name: str | None = None
+    finish_reason: str | None = None
+    provider_response_id: str | None = None
+    response_state: str | None = None
+
+
+class ModelRequestFailure(_FrozenModel):
+    code: str
+    retryable: bool
+    status_code: int | None = None
+    retry_after_seconds: float | None = Field(default=None, ge=0)
+    provider_name: str | None = None
+    had_progress: bool = False
+
+
+class ModelRequestError(RuntimeError):
+    def __init__(self, failure: ModelRequestFailure) -> None:
+        self.failure = failure
+        super().__init__(failure.code)
+
+
+class ModelProfileSnapshot(_FrozenModel):
+    schema_version: int = 1
+    provider_id: str
+    model_id: str
+    wire_api: Literal["chat_completions"] = "chat_completions"
+    context_window_tokens: int = Field(gt=0)
+    max_output_tokens: int = Field(gt=0)
+    request_timeout_seconds: float = Field(gt=0)
+    supports_tools: bool
+    supports_json_schema_output: bool
+    supports_reasoning: bool
+    pydantic_ai_version: str = "2.13.0"
 
 
 class ModelClient(Protocol):
+    @property
+    def profile_snapshot(self) -> ModelProfileSnapshot: ...
+
     def generate_title(self, user_input: str, cancel: threading.Event) -> str: ...
 
     def complete(

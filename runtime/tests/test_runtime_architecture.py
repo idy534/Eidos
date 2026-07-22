@@ -116,7 +116,7 @@ class RuntimeArchitectureTests(unittest.TestCase):
                 "SELECT tool_name, tool_set_hash, result_json FROM tool_calls"
             ).fetchone()
             model_names = tuple(
-                value["function"]["name"]
+                value.name
                 for value in model.tool_definitions_history[0]
             )
             self.assertEqual(model_names, tuple(snapshot["availableNames"]))

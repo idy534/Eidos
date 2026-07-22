@@ -778,10 +778,10 @@ class RuntimeHardeningTests(unittest.TestCase):
             )
 
         first_tools = {
-            value["function"]["name"] for value in model.tool_definitions_history[0]
+            value.name for value in model.tool_definitions_history[0]
         }
         second_tools = {
-            value["function"]["name"] for value in model.tool_definitions_history[1]
+            value.name for value in model.tool_definitions_history[1]
         }
         self.assertNotIn("mcp__fixture__demo_deferred", first_tools)
         self.assertIn("mcp__fixture__demo_deferred", second_tools)

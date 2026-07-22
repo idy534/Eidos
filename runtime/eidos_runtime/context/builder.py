@@ -9,7 +9,7 @@ from eidos_runtime.context.budget import ContextBudget, estimate_context_budget
 from eidos_runtime.context.facts import ContextFacts
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelContextItem, ModelToolDefinition
-from eidos_runtime.model.deepseek import SYSTEM_PROMPT
+from eidos_runtime.model.prompts import SYSTEM_PROMPT
 
 
 DEFAULT_CONTEXT_WINDOW_TOKENS = 802_816
@@ -123,7 +123,7 @@ class ContextBuilder:
         payload = {
             "system": SYSTEM_PROMPT,
             "messages": context,
-            "tools": tool_definitions,
+            "tools": [tool.model_dump(mode="json") for tool in tool_definitions],
         }
         budget = estimate_context_budget(
             payload,
