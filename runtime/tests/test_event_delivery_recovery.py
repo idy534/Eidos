@@ -314,7 +314,7 @@ class FinalizingRecoveryTests(unittest.TestCase):
         self.store = SessionStore(self.data)
 
         with patch(
-            "eidos_runtime.db.storage.append_event",
+            "eidos_runtime.db.transitions.append_event",
             side_effect=RuntimeError("fixture recovery event failure"),
         ):
             with self.assertRaisesRegex(RuntimeError, "fixture recovery event failure"):

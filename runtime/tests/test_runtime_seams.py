@@ -9,7 +9,12 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
+from eidos_runtime.model.client import (  # noqa: E402
+    ModelResponse,
+    ModelToolCall,
+    ModelToolDefinition,
+    ScriptedModel,
+)
 from eidos_runtime.runtime.model_runner import ModelRunner  # noqa: E402
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher  # noqa: E402
 from eidos_runtime.runtime.approval import ApprovalAdapter, ApprovalRequest  # noqa: E402
@@ -55,18 +60,15 @@ class RuntimeSeamTests(unittest.TestCase):
 
     def test_model_runner_passes_the_step_tool_definitions_explicitly(self) -> None:
         model = ScriptedModel([ModelResponse(text="done")])
-        definitions = ({
-            "type": "function",
-            "function": {
-                "name": "memory_echo",
-                "description": "Echo.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": False,
-                },
+        definitions = (ModelToolDefinition(
+            name="memory_echo",
+            description="Echo.",
+            parameters_json_schema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
             },
-        },)
+        ),)
 
         ModelRunner(model).run(
             (), threading.Event(), lambda _delta: None,

@@ -16,6 +16,7 @@ from eidos_runtime.tools.registry import (  # noqa: E402
     ToolRegistryEntry,
     ToolSpec,
 )
+from eidos_runtime.model.client import ModelToolDefinition  # noqa: E402
 from eidos_runtime.tools.search import tool_search_entry  # noqa: E402
 
 
@@ -153,14 +154,13 @@ class ToolRegistryTests(unittest.TestCase):
     def test_model_definitions_are_stable_and_omit_runtime_metadata(self) -> None:
         registry = ToolRegistry((memory_entry(),))
 
-        self.assertEqual(registry.model_definitions(), [{
-            "type": "function",
-            "function": {
-                "name": "memory_echo",
-                "description": "Echo a value from memory.",
-                "parameters": memory_entry().spec.input_schema,
-            },
-        }])
+        self.assertEqual(registry.model_definitions(), (
+            ModelToolDefinition(
+                name="memory_echo",
+                description="Echo a value from memory.",
+                parameters_json_schema=memory_entry().spec.input_schema,
+            ),
+        ))
 
     def test_external_invalid_entry_is_quarantined_without_losing_builtins(self) -> None:
         external = memory_entry("mcp__demo__echo")

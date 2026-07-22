@@ -10,6 +10,7 @@ from typing import Literal, Protocol
 from pydantic import Field, StrictInt, StrictStr, field_validator
 
 from eidos_runtime.protocol.schemas import ClosedModel, StepToolSnapshotDto
+from eidos_runtime.model.client import ModelToolDefinition
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -168,15 +169,15 @@ class ToolRegistry:
 
     def model_definitions(
         self, activated_names: tuple[str, ...] = ()
-    ) -> list[dict[str, object]]:
+    ) -> tuple[ModelToolDefinition, ...]:
         active = set(self._bounded_activated(activated_names))
-        return [{"type": "function", "function": {
-            "name": entry.spec.name,
-            "description": entry.spec.description,
-            "parameters": entry.spec.input_schema,
-        }} for entry in self._entries if (
+        return tuple(ModelToolDefinition(
+            name=entry.spec.name,
+            description=entry.spec.description,
+            parameters_json_schema=entry.spec.input_schema,
+        ) for entry in self._entries if (
             entry.spec.visibility == "direct" or entry.spec.name in active
-        )]
+        ))
 
     def snapshot(
         self, *, activated_names: tuple[str, ...] = ()
@@ -197,7 +198,9 @@ class ToolRegistry:
             self._by_name[name].spec.model_dump(mode="json", by_alias=True)
         )) for name in available)
         definitions = self.model_definitions(activated)
-        definitions_hash = _hash_json(definitions)
+        definitions_hash = _hash_json([
+            definition.model_dump(mode="json") for definition in definitions
+        ])
         tool_set_hash = _hash_json({
             "availableNames": available,
             "directNames": direct,

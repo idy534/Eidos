@@ -21,6 +21,7 @@ from eidos_runtime.model.client import (  # noqa: E402
     ModelToolCall,
     ScriptedModel,
 )
+from eidos_runtime.model.config import default_profile_snapshot  # noqa: E402
 
 
 class RuntimeArchitectureTests(unittest.TestCase):
@@ -116,7 +117,7 @@ class RuntimeArchitectureTests(unittest.TestCase):
                 "SELECT tool_name, tool_set_hash, result_json FROM tool_calls"
             ).fetchone()
             model_names = tuple(
-                value["function"]["name"]
+                value.name
                 for value in model.tool_definitions_history[0]
             )
             self.assertEqual(model_names, tuple(snapshot["availableNames"]))
@@ -150,7 +151,7 @@ class RuntimeArchitectureTests(unittest.TestCase):
             close_mcp.assert_called_once()
 
     def test_non_retryable_sampling_error_creates_only_one_attempt(self) -> None:
-        from eidos_runtime.model.deepseek import ModelProviderError
+        from eidos_runtime.model.client import ModelRequestError, ModelRequestFailure
         from eidos_runtime.runtime.engine import RuntimeEngine
 
         class AuthenticationFailure:
@@ -158,7 +159,9 @@ class RuntimeArchitectureTests(unittest.TestCase):
 
             def complete(self, *_args, **_kwargs):
                 self.calls += 1
-                raise ModelProviderError("provider_http_401")
+                raise ModelRequestError(ModelRequestFailure(
+                    code="authentication_failed", retryable=False, status_code=401,
+                ))
 
         with self.runtime() as (store, session, _workspace):
             run, _ = store.create_run(session["id"], "authenticate")
@@ -212,7 +215,8 @@ class RuntimeArchitectureTests(unittest.TestCase):
         context = RunContext(
             run_id="run",
             session_id="session",
-            model_id="model",
+            model_id="deepseek-v4-flash",
+            model_profile=default_profile_snapshot("deepseek-v4-flash"),
             model_context=(),
             extension_snapshot={},
             extension_snapshot_hash="0" * 64,

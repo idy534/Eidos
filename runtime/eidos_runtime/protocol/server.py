@@ -14,7 +14,6 @@ from typing import Any, BinaryIO, TextIO
 from pydantic import ValidationError
 
 from eidos_runtime import __version__
-from eidos_runtime.model.deepseek import DeepSeekChatModel
 from eidos_runtime.model.client import ModelClient, ModelResponse, ModelToolCall, ScriptedModel
 from eidos_runtime.model.config import (
     DEFAULT_MODEL_ID,
@@ -23,6 +22,7 @@ from eidos_runtime.model.config import (
     ModelConfigStore,
     model_catalog,
 )
+from eidos_runtime.model.pydantic_ai_client import ModelClientFactory
 from eidos_runtime.protocol.schemas import JsonRpcRequestDto, JsonRpcResponse
 from eidos_runtime.runtime.supervisor import RunSupervisor
 from eidos_runtime.runtime.events import RuntimeOutputClosedError
@@ -160,6 +160,7 @@ class RuntimeServer:
         self.store = SessionStore(data_directory)
         self.model_config = ModelConfigStore(data_directory)
         self.model = model
+        self.model_factory: ModelClientFactory | None = None
         self.output_lock = threading.RLock()
         self.shell_available = False
         self.sensitive: SensitiveScanner | None = None
@@ -169,7 +170,7 @@ class RuntimeServer:
             self._model_for,
             self.send,
             self._scan_text,
-            lambda: self.model is not None,
+            lambda: self.model is not None or self.model_factory is not None,
             lambda: self.shell_available,
             lambda: self.sensitive,
             self._cleanup_extensions,
@@ -308,7 +309,7 @@ class RuntimeServer:
                 self.model_config.initialize()
                 configured_key = self.model_config.api_key()
                 if self.model is None and configured_key is not None:
-                    self.model = DeepSeekChatModel(configured_key)
+                    self.model_factory = ModelClientFactory(configured_key)
         except (StorageError, ModelConfigError, SensitiveScanError, SkillReadError):
             logger.exception("Runtime storage initialization failed")
             self.send(business_error(request_id, "INTERNAL_ERROR"))
@@ -334,7 +335,9 @@ class RuntimeServer:
                     "runtimeVersion": __version__,
                     "capabilities": {
                         "runShell": self.shell_available,
-                        "modelConfigured": self.model is not None,
+                        "modelConfigured": (
+                            self.model is not None or self.model_factory is not None
+                        ),
                     },
                 },
             )
@@ -521,7 +524,7 @@ class RuntimeServer:
         ):
             self.send(protocol_error(request_id, -32602, "Invalid params"))
             return
-        if self.model is None:
+        if self.model is None and self.model_factory is None:
             self.send(business_error(request_id, "INVALID_STATE"))
             return
         try:
@@ -594,6 +597,7 @@ class RuntimeServer:
                 operation_id=params.get("operationId"),
                 session_title=session_title,
                 model_id=model_id,
+                model_profile=getattr(run_model, "profile_snapshot", None),
                 extension_snapshot=extension_snapshot,
             )
         except ResourceNotFoundError:
@@ -706,7 +710,7 @@ class RuntimeServer:
         except ModelConfigError:
             self.send(business_error(request_id, "INTERNAL_ERROR"))
             return
-        if self.model is not None:
+        if self.model is not None or self.model_factory is not None:
             status["configured"] = True
         self.send(response(request_id, status))
 
@@ -715,7 +719,9 @@ class RuntimeServer:
             self.send(protocol_error(request_id, -32602, "Invalid params"))
             return
         self.send(response(
-            request_id, model_catalog(configured=self.model is not None)
+            request_id, model_catalog(configured=(
+                self.model is not None or self.model_factory is not None
+            ))
         ))
 
     def configure_model(self, request_id: str, params: object) -> None:
@@ -734,7 +740,9 @@ class RuntimeServer:
             key = self.model_config.api_key()
             if key is None:
                 raise ModelConfigError("model configuration was not saved")
-            self.model = DeepSeekChatModel(key)
+            self._close_model_factory()
+            self.model = None
+            self.model_factory = ModelClientFactory(key)
         except ValueError:
             self.send(protocol_error(request_id, -32602, "Invalid params"))
             return
@@ -1013,6 +1021,7 @@ class RuntimeServer:
             return
         self.shutting_down = True
         self.supervisor.shutdown()
+        self._close_model_factory()
         self.send(response(request_id, {}))
         logger.info("Runtime shutdown requested")
 
@@ -1047,13 +1056,19 @@ class RuntimeServer:
 
     def close(self) -> None:
         self.supervisor.close()
+        self._close_model_factory()
 
     def _model_for(self, model_id: str) -> ModelClient:
-        if isinstance(self.model, DeepSeekChatModel):
-            return DeepSeekChatModel(self.model.api_key, model_id)
-        if self.model is None:
+        if self.model is not None:
+            return self.model
+        if self.model_factory is None:
             raise ModelConfigError("model is not configured")
-        return self.model
+        return self.model_factory.client_for(model_id)
+
+    def _close_model_factory(self) -> None:
+        factory, self.model_factory = self.model_factory, None
+        if factory is not None:
+            factory.close()
 
     def _cleanup_extensions(self) -> None:
         if self.plugins is not None:

@@ -416,10 +416,10 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             ).run(run["id"], threading.Event())
 
             first_names = {
-                value["function"]["name"] for value in model.tool_definitions_history[0]
+                value.name for value in model.tool_definitions_history[0]
             }
             second_names = {
-                value["function"]["name"] for value in model.tool_definitions_history[1]
+                value.name for value in model.tool_definitions_history[1]
             }
             self.assertNotIn("mcp__fixture__echo", first_names)
             self.assertIn("mcp__fixture__echo", second_names)
@@ -495,7 +495,7 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
 
             self.assertIn("Use the checklist", json.dumps(model.contexts[0]))
             names = {
-                value["function"]["name"]
+                value.name
                 for value in model.tool_definitions_history[0]
             }
             self.assertIn("skill_read", names)

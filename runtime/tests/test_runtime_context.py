@@ -21,6 +21,7 @@ from eidos_runtime.db.storage import (  # noqa: E402
     SessionStore,
 )
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
+from eidos_runtime.model.config import default_profile_snapshot  # noqa: E402
 from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
 from eidos_runtime.runtime.contracts import (  # noqa: E402
     LoopAction,
@@ -342,10 +343,14 @@ class ContextPersistenceTests(unittest.TestCase):
     def test_pre_turn_compaction_persists_and_restores_structured_summary(self) -> None:
         old, _ = self.store.create_run(self.session["id"], "x" * 20_000)
         self.store.fail_run(old["id"], "fixture")
-        current, _ = self.store.create_run(self.session["id"], "continue")
-        builder = ContextBuilder(
-            self.store, context_window_tokens=8_000, request_max_output_tokens=1_000
+        current, _ = self.store.create_run(
+            self.session["id"],
+            "continue",
+            model_profile=default_profile_snapshot("deepseek-v4-flash").model_copy(
+                update={"context_window_tokens": 8_000, "max_output_tokens": 1_000}
+            ),
         )
+        builder = ContextBuilder(self.store)
         self.assertFalse(builder.build(current["id"]).budget.fits)
 
         summary = ContextCompactor(self.store).compact(current["id"], "pre_turn")
@@ -361,16 +366,18 @@ class ContextPersistenceTests(unittest.TestCase):
     def test_runtime_compacts_old_history_before_first_sampling(self) -> None:
         old, _ = self.store.create_run(self.session["id"], "x" * 20_000)
         self.store.fail_run(old["id"], "fixture")
-        current, _ = self.store.create_run(self.session["id"], "continue")
+        current, _ = self.store.create_run(
+            self.session["id"],
+            "continue",
+            model_profile=default_profile_snapshot("deepseek-v4-flash").model_copy(
+                update={"context_window_tokens": 20_000, "max_output_tokens": 1_000}
+            ),
+        )
         model = ScriptedModel([ModelResponse(text="done")])
 
-        RuntimeEngine(
-            self.store,
-            model,
-            lambda _message: None,
-            context_window_tokens=20_000,
-            request_max_output_tokens=1_000,
-        ).run(current["id"], threading.Event())
+        RuntimeEngine(self.store, model, lambda _message: None).run(
+            current["id"], threading.Event()
+        )
 
         self.assertEqual(self.store.read_run(current["id"])["status"], "succeeded")
         self.assertEqual(self.store.compaction_count(current["id"]), 1)
@@ -379,7 +386,13 @@ class ContextPersistenceTests(unittest.TestCase):
     def test_runtime_preserves_recent_tool_result_and_pauses_if_it_alone_is_too_large(self) -> None:
         workspace = Path(self.session["workspaceRoot"])
         (workspace / "large.txt").write_text("x" * 20_000)
-        run, _ = self.store.create_run(self.session["id"], "read the large file")
+        run, _ = self.store.create_run(
+            self.session["id"],
+            "read the large file",
+            model_profile=default_profile_snapshot("deepseek-v4-flash").model_copy(
+                update={"context_window_tokens": 25_000, "max_output_tokens": 1_000}
+            ),
+        )
         model = ScriptedModel([
             ModelResponse(tool_calls=(
                 ModelToolCall("read", "read_file", {"path": "large.txt"}),
@@ -387,13 +400,9 @@ class ContextPersistenceTests(unittest.TestCase):
             ModelResponse(text="done"),
         ])
 
-        RuntimeEngine(
-            self.store,
-            model,
-            lambda _message: None,
-            context_window_tokens=25_000,
-            request_max_output_tokens=1_000,
-        ).run(run["id"], threading.Event())
+        RuntimeEngine(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
 
         paused = self.store.read_run(run["id"])
         self.assertEqual(paused["status"], "waiting_user_input")
@@ -408,7 +417,7 @@ class ContextPersistenceTests(unittest.TestCase):
         current, _ = self.store.create_run(self.session["id"], "current")
 
         with patch(
-            "eidos_runtime.db.storage.append_event",
+            "eidos_runtime.db.repositories.context.append_event",
             side_effect=ValueError("fixture event failure"),
         ):
             with self.assertRaises(ValueError):

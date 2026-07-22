@@ -9,11 +9,7 @@ from eidos_runtime.context.budget import ContextBudget, estimate_context_budget
 from eidos_runtime.context.facts import ContextFacts
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelContextItem, ModelToolDefinition
-from eidos_runtime.model.deepseek import SYSTEM_PROMPT
-
-
-DEFAULT_CONTEXT_WINDOW_TOKENS = 802_816
-DEFAULT_REQUEST_MAX_OUTPUT_TOKENS = 8_192
+from eidos_runtime.model.prompts import SYSTEM_PROMPT
 
 
 class ContextBuild(BaseModel):
@@ -32,13 +28,8 @@ class ContextBuilder:
     def __init__(
         self,
         store: SessionStore,
-        *,
-        context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS,
-        request_max_output_tokens: int = DEFAULT_REQUEST_MAX_OUTPUT_TOKENS,
     ) -> None:
         self.store = store
-        self.context_window_tokens = context_window_tokens
-        self.request_max_output_tokens = request_max_output_tokens
 
     def build(
         self,
@@ -49,6 +40,7 @@ class ContextBuilder:
         extra_context: tuple[ModelContextItem, ...] = (),
     ) -> ContextBuild:
         facts = self.store.context_projection_facts(run_id)
+        profile = self.store.read_model_profile(run_id)
         source_ids = set(
             facts.compact_summary.source_item_ids if facts.compact_summary else ()
         )
@@ -123,12 +115,12 @@ class ContextBuilder:
         payload = {
             "system": SYSTEM_PROMPT,
             "messages": context,
-            "tools": tool_definitions,
+            "tools": [tool.model_dump(mode="json") for tool in tool_definitions],
         }
         budget = estimate_context_budget(
             payload,
-            context_window_tokens=self.context_window_tokens,
-            request_max_output_tokens=self.request_max_output_tokens,
+            context_window_tokens=profile.context_window_tokens,
+            request_max_output_tokens=profile.max_output_tokens,
             message_count=len(context),
             tool_call_count=tool_calls,
             tool_result_count=tool_results,

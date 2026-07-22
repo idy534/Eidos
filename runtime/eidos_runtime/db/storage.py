@@ -1,951 +1,132 @@
 from __future__ import annotations
 
-import base64
-from dataclasses import dataclass
-import fcntl
-import hashlib
-import json
-import os
 from pathlib import Path
 import sqlite3
-import stat
 import threading
-import time
-import uuid
-from typing import Callable, Generic, TypeVar
+from typing import TypeVar
 
-from eidos_runtime.context.facts import CompactSummary, ContextFacts, ContextItemFact
-from eidos_runtime.protocol.schemas import ItemDto, RunDto, SessionDto
-from eidos_runtime.db.events import append_event, event_from_row
-from eidos_runtime.model.config import DEFAULT_MODEL_ID, SUPPORTED_MODELS
-from eidos_runtime.runtime.state_machine import (
-    ApprovalStatus,
-    EventType,
-    RunStatus,
-    SegmentStatus,
-    StepStatus,
-    ToolCallStatus,
-    ensure_transition,
+from eidos_runtime.context.facts import CompactSummary, ContextFacts
+from eidos_runtime.db.database import (
+    DATABASE_NAME,
+    RESERVE_BYTES,
+    RESERVE_NAME,
+    CommittedMutation,
+    Database,
+    Repository,
+    WorkspaceIdentity,
 )
+from eidos_runtime.db.errors import (
+    ActiveRunError,
+    ContextLimitExceeded,
+    InvalidCursorError,
+    InvalidRunStateError,
+    OperationConflictError,
+    OperationInProgressError,
+    ResourceNotFoundError,
+    RunLimitReached,
+    SegmentLimitReached,
+    SessionActiveError,
+    StorageError,
+    WorkspaceBoundaryError,
+)
+from eidos_runtime.db.recovery import recover_runtime_facts
+from eidos_runtime.db.repositories import (
+    ContextRepository,
+    ExecutionRepository,
+    ExtensionRepository,
+    RunRepository,
+    SessionRepository,
+)
+from eidos_runtime.db.repositories.context import RECENT_CONTEXT_STEPS
+from eidos_runtime.db.repositories.sessions import DEFAULT_LIST_LIMIT
+from eidos_runtime.db.schema import SCHEMA_VERSION
+from eidos_runtime.model.client import ModelProfileSnapshot, ModelUsage
+from eidos_runtime.model.config import DEFAULT_MODEL_ID
 from eidos_runtime.runtime.contracts import ProgressSignature
 
 
-DATABASE_NAME = "eidos.db"
-LOCK_NAME = "runtime.lock"
-RESERVE_NAME = "emergency.reserve"
-SCHEMA_REVISION = 8
-RESERVE_BYTES = 1024 * 1024
-DEFAULT_LIST_LIMIT = 50
-MAX_LIST_LIMIT = 200
-SESSION_CURSOR_PREFIX = "session-v2:"
-MAX_CONTEXT_BYTES = 768 * 1024
-MAX_CONTEXT_ITEMS = 200
-RECENT_CONTEXT_STEPS = 3
-MAX_SNAPSHOT_BYTES = 768 * 1024
-MAX_SNAPSHOT_TEXT_BYTES = 192 * 1024
-EMPTY_EXTENSION_SNAPSHOT = {
-    "schemaVersion": 1,
-    "extensionContractVersion": 1,
-    "plugins": [],
-    "skillCatalogHash": "0" * 64,
-    "mcpConfigHash": "0" * 64,
-}
-
-SESSION_SELECT = """
-    SELECT s.creation_seq, s.id, s.workspace_root, s.title,
-           s.created_at, s.updated_at,
-           CASE
-             WHEN EXISTS (
-               SELECT 1 FROM runs active
-               WHERE active.session_id = s.id
-                 AND active.status IN (
-                   'queued', 'running', 'waiting_approval',
-                   'waiting_user_input', 'finalizing'
-                 )
-             ) THEN 'in_progress'
-             ELSE COALESCE((
-               SELECT CASE latest.status
-                 WHEN 'succeeded' THEN 'completed'
-                 WHEN 'failed' THEN 'failed'
-                 WHEN 'stopped' THEN 'failed'
-                 WHEN 'interrupted' THEN 'failed'
-                 WHEN 'canceled' THEN 'canceled'
-                 ELSE 'new'
-               END
-               FROM runs latest
-               WHERE latest.session_id = s.id
-               ORDER BY latest.creation_seq DESC
-               LIMIT 1
-             ), 'new')
-           END AS task_status
-    FROM sessions s
-"""
-
-
-class StorageError(RuntimeError):
-    pass
-
-
-class WorkspaceBoundaryError(ValueError):
-    pass
-
-
-class InvalidCursorError(ValueError):
-    pass
-
-
-class ActiveRunError(RuntimeError):
-    pass
-
-
-class SessionActiveError(RuntimeError):
-    pass
-
-
-class ResourceNotFoundError(LookupError):
-    pass
-
-
-class InvalidRunStateError(RuntimeError):
-    pass
-
-
-class ContextLimitExceeded(RuntimeError):
-    def __init__(self, reason: str) -> None:
-        self.reason = reason
-        super().__init__(reason)
-
-
-class OperationConflictError(RuntimeError):
-    pass
-
-
-class OperationInProgressError(RuntimeError):
-    pass
-
-
-class SegmentLimitReached(RuntimeError):
-    pass
-
-
-class RunLimitReached(RuntimeError):
-    pass
-
-
-T = TypeVar("T")
-
-
-@dataclass(frozen=True)
-class CommittedMutation(Generic[T]):
-    value: T
-    events: tuple[dict[str, object], ...]
-
-
-def transition_run(
-    connection: sqlite3.Connection,
-    run_id: str,
-    expected_statuses: frozenset[RunStatus],
-    target_status: RunStatus,
-    reason: str | None,
-) -> tuple[dict[str, object], dict[str, object]]:
-    """Validate, update, and event one persisted Run transition."""
-    row = connection.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
-    if row is None:
-        raise ResourceNotFoundError("run not found")
-    current = RunStatus(row["status"])
-    if current not in expected_statuses:
-        raise InvalidRunStateError("run status changed")
-    ensure_transition(current, target_status)
-    now = _now_ms()
-    updates: dict[str, object] = {"status": target_status.value, "updated_at": now}
-    if target_status is RunStatus.RUNNING:
-        updates.update({"started_at": row["started_at"] or now, "enqueued_at": None})
-    elif target_status is RunStatus.QUEUED:
-        updates["enqueued_at"] = now
-    elif target_status is RunStatus.WAITING_USER_INPUT:
-        updates["pause_reason"] = reason
-    elif target_status is RunStatus.FAILED:
-        updates.update({"error_code": reason, "completed_at": now})
-    elif target_status is RunStatus.STOPPED:
-        updates.update({"stop_reason": reason, "completed_at": now})
-    elif target_status is RunStatus.CANCELED:
-        updates["completed_at"] = now
-    elif target_status is RunStatus.INTERRUPTED:
-        updates.update({"error_code": "RUNTIME_INTERRUPTED", "completed_at": now})
-    elif target_status is RunStatus.SUCCEEDED:
-        updates["completed_at"] = now
-    assignments = ", ".join(f"{column} = ?" for column in updates)
-    changed = connection.execute(
-        f"UPDATE runs SET {assignments} WHERE id = ? AND status = ?",
-        (*updates.values(), run_id, current.value),
-    )
-    if changed.rowcount != 1:
-        raise InvalidRunStateError("run status changed")
-    run = _run_from_row(
-        connection.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
-    )
-    event = append_event(
-        connection,
-        EventType.RUN_STATUS_CHANGED,
-        now,
-        {"previous": current, "current": target_status, "reason": reason},
-        session_id=str(run["sessionId"]),
-        run_id=run_id,
-    )
-    return run, event
-
-
-def transition_segments(
-    connection: sqlite3.Connection,
-    run_id: str,
-    expected_statuses: frozenset[SegmentStatus],
-    target_status: SegmentStatus,
-    now: int,
-    reason: str,
-) -> tuple[dict[str, object], ...]:
-    run = connection.execute(
-        "SELECT session_id FROM runs WHERE id = ?", (run_id,)
-    ).fetchone()
-    if run is None:
-        raise ResourceNotFoundError("run not found")
-    placeholders = ",".join("?" for _ in expected_statuses)
-    rows = connection.execute(
-        f"SELECT id, status FROM execution_segments WHERE run_id = ? AND status IN ({placeholders})",
-        (run_id, *(status.value for status in expected_statuses)),
-    ).fetchall()
-    events: list[dict[str, object]] = []
-    for row in rows:
-        current = SegmentStatus(row["status"])
-        ensure_transition(current, target_status)
-        connection.execute(
-            "UPDATE execution_segments SET status = ?, completed_at = ? WHERE id = ? AND status = ?",
-            (target_status.value, now, row["id"], current.value),
-        )
-        events.append(append_event(
-            connection,
-            EventType.SEGMENT_STATUS_CHANGED,
-            now,
-            {
-                "entity_id": row["id"],
-                "previous": current.value,
-                "current": target_status.value,
-                "reason": reason,
-            },
-            session_id=run["session_id"],
-            run_id=run_id,
-        ))
-    return tuple(events)
-
-
-def settle_run_children(
-    connection: sqlite3.Connection,
-    run_id: str,
-    target_status: RunStatus,
-    now: int,
-) -> tuple[dict[str, object], ...]:
-    """Settle active child facts in the same transaction as a terminal Run."""
-    run = connection.execute(
-        "SELECT session_id FROM runs WHERE id = ?", (run_id,)
-    ).fetchone()
-    if run is None:
-        raise ResourceNotFoundError("run not found")
-    events: list[dict[str, object]] = []
-    tool_rows = connection.execute(
-        """
-        SELECT tool_calls.id FROM tool_calls
-        JOIN items ON items.id = tool_calls.item_id
-        WHERE items.run_id = ? AND tool_calls.status = 'running'
-        """,
-        (run_id,),
-    ).fetchall()
-    for tool in tool_rows:
-        ensure_transition(ToolCallStatus.RUNNING, ToolCallStatus.CANCELED)
-        connection.execute(
-            "UPDATE tool_calls SET status = 'canceled', completed_at = ? WHERE id = ? AND status = 'running'",
-            (now, tool["id"]),
-        )
-        events.append(append_event(
-            connection,
-            EventType.TOOL_CALL_COMPLETED,
-            now,
-            {"tool_call_id": tool["id"], "code": "run_terminated"},
-            session_id=run["session_id"],
-            run_id=run_id,
-        ))
-
-    approval_target = (
-        ApprovalStatus.CANCELED
-        if target_status is RunStatus.CANCELED
-        else ApprovalStatus.INVALIDATED
-    )
-    approvals = connection.execute(
-        "SELECT id FROM approvals WHERE run_id = ? AND status = 'pending'",
-        (run_id,),
-    ).fetchall()
-    for approval in approvals:
-        ensure_transition(ApprovalStatus.PENDING, approval_target)
-        connection.execute(
-            "UPDATE approvals SET status = ?, decided_at = ? WHERE id = ? AND status = 'pending'",
-            (approval_target.value, now, approval["id"]),
-        )
-        events.append(append_event(
-            connection,
-            EventType.APPROVAL_STATUS_CHANGED,
-            now,
-            {
-                "entity_id": approval["id"],
-                "previous": ApprovalStatus.PENDING.value,
-                "current": approval_target.value,
-            },
-            session_id=run["session_id"],
-            run_id=run_id,
-        ))
-    connection.execute(
-        """
-        UPDATE tool_calls SET approval_status = 'canceled'
-        WHERE approval_status = 'pending'
-          AND item_id IN (SELECT id FROM items WHERE run_id = ?)
-        """,
-        (run_id,),
-    )
-
-    item_rows = connection.execute(
-        "SELECT id FROM items WHERE run_id = ? AND status = 'in_progress'",
-        (run_id,),
-    ).fetchall()
-    for item in item_rows:
-        connection.execute(
-            "UPDATE items SET status = 'canceled', completed_at = ? WHERE id = ? AND status = 'in_progress'",
-            (now, item["id"]),
-        )
-        events.append(append_event(
-            connection,
-            EventType.ITEM_COMPLETED,
-            now,
-            {"item_id": item["id"]},
-            session_id=run["session_id"],
-            run_id=run_id,
-        ))
-
-    step_target = (
-        StepStatus.CANCELED
-        if target_status is RunStatus.CANCELED
-        else StepStatus.FAILED
-    )
-    steps = connection.execute(
-        "SELECT id FROM steps WHERE run_id = ? AND status = 'running'",
-        (run_id,),
-    ).fetchall()
-    for step in steps:
-        ensure_transition(StepStatus.RUNNING, step_target)
-        connection.execute(
-            "UPDATE model_attempts SET status = ?, completed_at = ? WHERE step_id = ? AND status = 'running'",
-            (step_target.value, now, step["id"]),
-        )
-        connection.execute(
-            "UPDATE steps SET status = ?, completed_at = ? WHERE id = ? AND status = 'running'",
-            (step_target.value, now, step["id"]),
-        )
-        events.append(append_event(
-            connection,
-            EventType.STEP_STATUS_CHANGED,
-            now,
-            {
-                "entity_id": step["id"],
-                "previous": StepStatus.RUNNING.value,
-                "current": step_target.value,
-                "reason": "run_terminated",
-            },
-            session_id=run["session_id"],
-            run_id=run_id,
-        ))
-
-    segment_target = (
-        SegmentStatus.CANCELED
-        if target_status is RunStatus.CANCELED
-        else SegmentStatus.FAILED
-    )
-    events.extend(transition_segments(
-        connection,
-        run_id,
-        frozenset({
-            SegmentStatus.QUEUED,
-            SegmentStatus.RUNNING,
-            SegmentStatus.WAITING_USER_INPUT,
-        }),
-        segment_target,
-        now,
-        "run_terminated",
-    ))
-    connection.execute(
-        "UPDATE input_mailbox SET status = 'canceled' WHERE run_id = ? AND status = 'pending'",
-        (run_id,),
-    )
-    return tuple(events)
-
-
-def recover_runtime_facts(connection: sqlite3.Connection) -> None:
-    """Recover abandoned persisted facts without consulting in-memory phases."""
-    now = _now_ms()
-    connection.execute(
-        "UPDATE durable_intents SET status = 'interrupted' WHERE status = 'running'"
-    )
-    reconciliation_runs = connection.execute(
-        """
-        SELECT DISTINCT runs.id, runs.status
-        FROM runs JOIN durable_intents ON durable_intents.run_id = runs.id
-        WHERE durable_intents.status = 'interrupted'
-          AND runs.status IN ('running', 'waiting_approval', 'finalizing')
-        """
-    ).fetchall()
-    for row in reconciliation_runs:
-        current = RunStatus(row["status"])
-        connection.execute(
-            """
-            UPDATE runs
-            SET reconciliation_required = 1,
-                reconciliation_epoch = reconciliation_epoch + 1,
-                side_effects_may_exist = 1
-            WHERE id = ? AND status = ?
-            """,
-            (row["id"], current.value),
-        )
-        transition_segments(
-            connection,
-            str(row["id"]),
-            frozenset({SegmentStatus.RUNNING}),
-            SegmentStatus.WAITING_USER_INPUT,
-            now,
-            "side_effect_reconciliation_required",
-        )
-        run, _event = transition_run(
-            connection,
-            str(row["id"]),
-            frozenset({current}),
-            RunStatus.WAITING_USER_INPUT,
-            "side_effect_reconciliation_required",
-        )
-        epoch = connection.execute(
-            "SELECT reconciliation_epoch FROM runs WHERE id = ?", (row["id"],)
-        ).fetchone()["reconciliation_epoch"]
-        append_event(
-            connection,
-            EventType.RECONCILIATION_REQUIRED,
-            now,
-            {
-                "epoch": int(epoch),
-                "reason": "runtime_restart",
-            },
-            session_id=str(run["sessionId"]),
-            run_id=str(run["id"]),
-        )
-
-    active_runs = connection.execute(
-        """
-        SELECT id, status FROM runs
-        WHERE status IN ('running', 'waiting_approval', 'finalizing')
-        """
-    ).fetchall()
-    for row in active_runs:
-        settle_run_children(connection, str(row["id"]), RunStatus.INTERRUPTED, now)
-        transition_run(
-            connection,
-            str(row["id"]),
-            frozenset({RunStatus(row["status"])}),
-            RunStatus.INTERRUPTED,
-            "runtime_interrupted",
-        )
-
-    approvals = connection.execute(
-        """
-        SELECT approvals.id, approvals.run_id, runs.session_id
-        FROM approvals JOIN runs ON runs.id = approvals.run_id
-        WHERE approvals.status = 'pending'
-        """
-    ).fetchall()
-    for approval in approvals:
-        ensure_transition(ApprovalStatus.PENDING, ApprovalStatus.INVALIDATED)
-        connection.execute(
-            "UPDATE approvals SET status = 'invalidated', decided_at = ? WHERE id = ? AND status = 'pending'",
-            (now, approval["id"]),
-        )
-        append_event(
-            connection,
-            EventType.APPROVAL_STATUS_CHANGED,
-            now,
-            {
-                "entity_id": approval["id"],
-                "previous": ApprovalStatus.PENDING.value,
-                "current": ApprovalStatus.INVALIDATED.value,
-                "reason": "runtime_restart",
-            },
-            session_id=approval["session_id"],
-            run_id=approval["run_id"],
-        )
-    connection.execute(
-        "UPDATE tool_calls SET approval_status = 'canceled' WHERE approval_status = 'pending'"
-    )
-
-
-@dataclass(frozen=True)
-class WorkspaceIdentity:
-    path: Path
-    device: int
-    inode: int
-    owner: int
+SCHEMA_REVISION = SCHEMA_VERSION
+TRepository = TypeVar("TRepository", bound=Repository)
 
 
 class SessionStore:
     def __init__(self, data_directory: Path | None = None) -> None:
-        self.data_directory = data_directory
-        self.connection: sqlite3.Connection | None = None
-        self.lock = threading.RLock()
-        self.lock_descriptor: int | None = None
-        self.health_state = "starting"
-        self.health_code: str | None = None
+        self._database = Database(data_directory)
+        self._sessions: SessionRepository | None = None
+        self._runs: RunRepository | None = None
+        self._execution: ExecutionRepository | None = None
+        self._extensions: ExtensionRepository | None = None
+        self._context: ContextRepository | None = None
 
     def initialize(self) -> None:
-        with self.lock:
-            if self.connection is not None or self.health_state != "starting":
-                raise StorageError("storage is already initialized")
-            try:
-                self._initialize()
-            except (OSError, sqlite3.Error, StorageError) as error:
-                self._close_resources()
-                self.health_state = "health_only"
-                self.health_code = _safe_health_code(error)
-
-    def _initialize(self) -> None:
-        data_directory = self.data_directory or _default_data_directory()
-        if not data_directory.is_absolute():
-            raise StorageError("data_directory_invalid")
-        _prepare_private_directory(data_directory)
-        data_directory = data_directory.resolve()
-        self.data_directory = data_directory
-        self.lock_descriptor = _acquire_state_lock(data_directory / LOCK_NAME)
-        _prepare_reserve(data_directory / RESERVE_NAME)
-        database_path = data_directory / DATABASE_NAME
-        _prepare_private_database(database_path)
-
-        connection = sqlite3.connect(database_path, check_same_thread=False)
+        self._database.initialize()
+        if self._database.health_state != "ready":
+            return
         try:
-            connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute("PRAGMA journal_mode = WAL")
-            connection.execute("PRAGMA busy_timeout = 5000")
-            _verify_pragmas(connection)
-            tables = _table_names(connection)
-            revision = connection.execute("PRAGMA user_version").fetchone()[0]
-            if revision == 0 and tables:
-                if {"sessions", "runs", "items", "tool_calls"} <= tables:
-                    revision = 1
-                else:
-                    raise StorageError("schema_revision_missing")
-            if revision > SCHEMA_REVISION or revision < 0:
-                raise StorageError("schema_revision_unsupported")
-            if revision in {1, 2, 3, 4, 5, 6, 7}:
-                _backup_database(connection, database_path, revision)
-            if revision == 1:
-                _migrate_v1_to_v2(connection)
-                revision = 2
-            if revision == 2:
-                _migrate_v2_to_v3(connection)
-                revision = 3
-            if revision == 3:
-                _migrate_v3_to_v4(connection)
-                revision = 4
-            if revision == 4:
-                _migrate_v4_to_v5(connection)
-                revision = 5
-            if revision == 5:
-                _migrate_v5_to_v6(connection)
-                revision = 6
-            if revision == 6:
-                _migrate_v6_to_v7(connection)
-                revision = 7
-            if revision == 7:
-                _migrate_v7_to_v8(connection)
-                revision = 8
-            if revision not in {0, SCHEMA_REVISION}:
-                raise StorageError("schema_revision_unsupported")
-
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS sessions (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    workspace_root TEXT NOT NULL,
-                    title TEXT,
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS runs (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
-                    user_input TEXT NOT NULL,
-                    model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash',
-                    status TEXT NOT NULL CHECK (status IN (
-                        'queued', 'running', 'waiting_approval', 'waiting_user_input',
-                        'finalizing', 'succeeded', 'failed', 'stopped', 'canceled',
-                        'interrupted'
-                    )),
-                    model_step_count INTEGER NOT NULL DEFAULT 0,
-                    consecutive_protocol_errors INTEGER NOT NULL DEFAULT 0,
-                    consecutive_rejects INTEGER NOT NULL DEFAULT 0,
-                    consecutive_sensitive_tool_inputs INTEGER NOT NULL DEFAULT 0,
-                    enqueued_at INTEGER,
-                    total_effective_ms INTEGER NOT NULL DEFAULT 0,
-                    pause_reason TEXT,
-                    stop_reason TEXT,
-                    reconciliation_required INTEGER NOT NULL DEFAULT 0,
-                    reconciliation_epoch INTEGER NOT NULL DEFAULT 0,
-                    side_effects_may_exist INTEGER NOT NULL DEFAULT 0,
-                    extension_snapshot_json TEXT NOT NULL DEFAULT '{}',
-                    activated_tools_json TEXT NOT NULL DEFAULT '[]',
-                    compaction_count INTEGER NOT NULL DEFAULT 0,
-                    workspace_version INTEGER NOT NULL DEFAULT 0,
-                    last_diff_hash TEXT,
-                    error_code TEXT,
-                    created_at INTEGER NOT NULL,
-                    started_at INTEGER,
-                    updated_at INTEGER NOT NULL,
-                    completed_at INTEGER
-                );
-
-                CREATE UNIQUE INDEX IF NOT EXISTS one_active_run
-                ON runs ((1))
-                WHERE status IN ('running', 'finalizing');
-
-                CREATE TABLE IF NOT EXISTS items (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
-                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                    ordinal INTEGER NOT NULL,
-                    model_step_index INTEGER,
-                    kind TEXT NOT NULL CHECK (kind IN (
-                        'user_message', 'assistant_message', 'file_change',
-                        'command_execution', 'tool_call'
-                    )),
-                    status TEXT NOT NULL CHECK (status IN (
-                        'in_progress', 'completed', 'failed', 'declined', 'canceled'
-                    )),
-                    content TEXT,
-                    incomplete INTEGER NOT NULL DEFAULT 0,
-                    created_at INTEGER NOT NULL,
-                    completed_at INTEGER,
-                    UNIQUE(run_id, ordinal)
-                );
-
-                CREATE TABLE IF NOT EXISTS tool_calls (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    item_id TEXT NOT NULL UNIQUE REFERENCES items(id) ON DELETE RESTRICT,
-                    model_step_index INTEGER NOT NULL,
-                    batch_order INTEGER NOT NULL,
-                    provider_call_id TEXT NOT NULL,
-                    tool_name TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK (status IN (
-                        'running', 'completed', 'failed', 'canceled'
-                    )),
-                    arguments_json TEXT NOT NULL,
-                    result_json TEXT,
-                    approval_status TEXT,
-                    approval_decision TEXT,
-                    approval_feedback TEXT,
-                    approval_diff TEXT,
-                    base_sha256 TEXT,
-                    provenance_json TEXT,
-                    tool_set_hash TEXT,
-                    started_at INTEGER NOT NULL,
-                    completed_at INTEGER
-                );
-
-                CREATE TABLE IF NOT EXISTS approvals (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    tool_call_id TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE RESTRICT,
-                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                    item_id TEXT NOT NULL REFERENCES items(id) ON DELETE RESTRICT,
-                    status TEXT NOT NULL,
-                    request_hash TEXT NOT NULL,
-                    decision TEXT,
-                    feedback TEXT,
-                    created_at INTEGER NOT NULL,
-                    decided_at INTEGER
-                );
-
-                CREATE UNIQUE INDEX IF NOT EXISTS one_pending_approval_per_item
-                ON approvals (item_id)
-                WHERE status = 'pending';
-
-                CREATE TABLE IF NOT EXISTS execution_segments (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                    ordinal INTEGER NOT NULL,
-                    status TEXT NOT NULL,
-                    step_count INTEGER NOT NULL DEFAULT 0,
-                    effective_ms INTEGER NOT NULL DEFAULT 0,
-                    created_at INTEGER NOT NULL,
-                    started_at INTEGER,
-                    completed_at INTEGER,
-                    UNIQUE(run_id, ordinal)
-                );
-
-                CREATE TABLE IF NOT EXISTS steps (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                    segment_id TEXT NOT NULL REFERENCES execution_segments(id) ON DELETE RESTRICT,
-                    ordinal INTEGER NOT NULL,
-                    status TEXT NOT NULL,
-                    observed_reconciliation_epoch INTEGER NOT NULL DEFAULT 0,
-                    tool_snapshot_json TEXT,
-                    tool_set_hash TEXT,
-                    progress_signature_json TEXT,
-                    created_at INTEGER NOT NULL,
-                    completed_at INTEGER,
-                    UNIQUE(segment_id, ordinal)
-                );
-
-                CREATE TABLE IF NOT EXISTS model_attempts (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    step_id TEXT NOT NULL REFERENCES steps(id) ON DELETE RESTRICT,
-                    ordinal INTEGER NOT NULL,
-                    status TEXT NOT NULL,
-                    started_at INTEGER NOT NULL,
-                    completed_at INTEGER,
-                    UNIQUE(step_id, ordinal)
-                );
-
-                CREATE TABLE IF NOT EXISTS events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    event_contract_version INTEGER NOT NULL,
-                    event_type TEXT NOT NULL,
-                    occurred_at INTEGER NOT NULL,
-                    session_id TEXT,
-                    run_id TEXT,
-                    payload_json TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS operations (
-                    id TEXT NOT NULL,
-                    scope TEXT NOT NULL,
-                    request_hash TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    result_json TEXT,
-                    created_at INTEGER NOT NULL,
-                    completed_at INTEGER,
-                    PRIMARY KEY(id, scope)
-                );
-
-                CREATE TABLE IF NOT EXISTS durable_intents (
-                    id TEXT PRIMARY KEY,
-                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                    tool_call_id TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE RESTRICT,
-                    execution_nonce TEXT NOT NULL UNIQUE,
-                    arguments_hash TEXT NOT NULL,
-                    preconditions_json TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    created_at INTEGER NOT NULL,
-                    reconciled_at INTEGER
-                );
-
-                CREATE TABLE IF NOT EXISTS plugins (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    version TEXT NOT NULL,
-                    description TEXT NOT NULL,
-                    manifest_json TEXT NOT NULL,
-                    content_hash TEXT NOT NULL,
-                    enabled INTEGER NOT NULL DEFAULT 0,
-                    status TEXT NOT NULL CHECK (status IN ('installed', 'removed')),
-                    installed_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS mcp_server_states (
-                    plugin_id TEXT NOT NULL,
-                    server_id TEXT NOT NULL,
-                    consented INTEGER NOT NULL DEFAULT 0,
-                    error_code TEXT,
-                    updated_at INTEGER NOT NULL,
-                    PRIMARY KEY(plugin_id, server_id)
-                );
-
-                CREATE TABLE IF NOT EXISTS compact_summaries (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
-                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                    task_goal TEXT NOT NULL,
-                    constraints_json TEXT NOT NULL,
-                    completed_actions_json TEXT NOT NULL,
-                    workspace_changes_json TEXT NOT NULL,
-                    important_facts_json TEXT NOT NULL,
-                    unresolved_problems_json TEXT NOT NULL,
-                    next_actions_json TEXT NOT NULL,
-                    source_item_ids_json TEXT NOT NULL,
-                    phase TEXT NOT NULL CHECK (phase IN ('pre_turn', 'mid_turn')),
-                    created_at INTEGER NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS input_mailbox (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                    content TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK (status IN ('pending', 'injected', 'canceled')),
-                    created_at INTEGER NOT NULL,
-                    injected_at INTEGER
-                );
-                """
-            )
-            connection.execute(f"PRAGMA user_version = {SCHEMA_REVISION}")
-            _ensure_session_identity_columns(connection)
-            _ensure_tool_call_approval_columns(connection)
-            _ensure_phase_two_columns(connection)
-            _ensure_phase_three_columns(connection)
-            _backfill_session_identities(connection)
-            recover_runtime_facts(connection)
-            connection.commit()
-            _verify_integrity(connection)
-            connection.close()
-            connection = sqlite3.connect(database_path, check_same_thread=False)
-            connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute("PRAGMA journal_mode = WAL")
-            connection.execute("PRAGMA busy_timeout = 5000")
-            _verify_pragmas(connection)
-            _verify_integrity(connection)
-            self.connection = connection
-            self.health_state = "ready"
-            self.health_code = None
+            with self._database.transaction() as connection:
+                recover_runtime_facts(connection)
+        except (OSError, sqlite3.Error, StorageError) as error:
+            self._database.mark_failed(error)
+            return
         except Exception:
-            connection.close()
+            self._database.close()
             raise
+        self._sessions = SessionRepository(self._database)
+        self._runs = RunRepository(self._database)
+        self._execution = ExecutionRepository(self._database)
+        self._extensions = ExtensionRepository(self._database)
+        self._context = ContextRepository(self._database)
+
+    @property
+    def data_directory(self) -> Path | None:
+        return self._database.data_directory
+
+    @property
+    def connection(self) -> sqlite3.Connection | None:
+        return self._database.raw_connection
+
+    @property
+    def lock(self) -> threading.RLock:
+        return self._database.lock
+
+    @property
+    def health_state(self) -> str:
+        return self._database.health_state
+
+    @property
+    def health_code(self) -> str | None:
+        return self._database.health_code
 
     def close(self) -> None:
-        with self.lock:
-            self._close_resources()
-
-    def _close_resources(self) -> None:
-        if self.connection is not None:
-            self.connection.close()
-            self.connection = None
-        if self.lock_descriptor is not None:
-            fcntl.flock(self.lock_descriptor, fcntl.LOCK_UN)
-            os.close(self.lock_descriptor)
-            self.lock_descriptor = None
+        self._database.close()
 
     def health(self) -> dict[str, object]:
-        result: dict[str, object] = {"state": self.health_state}
-        if self.health_code is not None:
-            result["code"] = self.health_code
-        return result
+        return self._database.health()
+
+    @staticmethod
+    def _repository(repository: TRepository | None) -> TRepository:
+        if repository is None:
+            raise StorageError("storage is not initialized")
+        return repository
 
     def create_session(
         self, workspace_root: str, *, operation_id: str | None = None
     ) -> dict[str, object]:
-        workspace = _canonical_workspace(workspace_root)
-        if self._workspace_overlaps_data(workspace):
-            raise WorkspaceBoundaryError("workspace overlaps runtime data")
-        metadata = workspace.stat()
-        session_id = str(uuid.uuid4())
-        now = time.time_ns() // 1_000_000
-        session = SessionDto.model_validate({
-            "id": session_id,
-            "workspaceRoot": str(workspace),
-            "title": None,
-            "taskStatus": "new",
-            "createdAt": now,
-            "updatedAt": now,
-        }).to_json_value()
-        def write(connection: sqlite3.Connection) -> dict[str, object]:
-            connection.execute(
-                """
-                INSERT INTO sessions (
-                    id, workspace_root, workspace_dev, workspace_inode,
-                    workspace_uid, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    session_id,
-                    str(workspace),
-                    metadata.st_dev,
-                    metadata.st_ino,
-                    metadata.st_uid,
-                    now,
-                    now,
-                ),
-            )
-            append_event(
-                connection,
-                EventType.SESSION_CREATED,
-                now,
-                {"session": session},
-                session_id=session_id,
-            )
-            return session
-        return self._write(
-            write,
+        return self._repository(self._sessions).create_session(
+            workspace_root,
             operation_id=operation_id,
-            operation_scope="session/create",
-            operation_request={"workspaceRoot": str(workspace)},
         )
 
     def list_sessions(
         self, *, limit: int = DEFAULT_LIST_LIMIT, cursor: str | None = None
     ) -> dict[str, object]:
-        cursor_state = _decode_cursor(cursor) if cursor is not None else None
-        sql = SESSION_SELECT
-        with self.lock:
-            connection = self._connection()
-            if cursor_state is None:
-                high_water = connection.execute(
-                    "SELECT COALESCE(MAX(creation_seq), 0) FROM sessions"
-                ).fetchone()[0]
-                before_sequence = high_water + 1
-            else:
-                high_water, before_sequence = cursor_state
-            rows = connection.execute(
-                sql
-                + " WHERE s.creation_seq <= ? AND s.creation_seq < ?"
-                + " ORDER BY s.creation_seq DESC LIMIT ?",
-                (high_water, before_sequence, limit + 1),
-            ).fetchall()
-        has_more = len(rows) > limit
-        page = rows[:limit]
-        result: dict[str, object] = {"items": [_session_from_row(row) for row in page]}
-        if has_more:
-            result["nextCursor"] = _encode_cursor(
-                high_water, page[-1]["creation_seq"]
-            )
-        return result
+        return self._repository(self._sessions).list_sessions(limit=limit, cursor=cursor)
 
     def read_session(self, session_id: str) -> dict[str, object] | None:
-        with self.lock:
-            row = self._connection().execute(
-                SESSION_SELECT + " WHERE s.id = ?",
-                (session_id,),
-            ).fetchone()
-        return _session_from_row(row) if row is not None else None
+        return self._repository(self._sessions).read_session(session_id)
 
     def session_model_id(self, session_id: str) -> str | None:
-        with self.lock:
-            row = self._connection().execute(
-                """
-                SELECT model_id FROM runs
-                WHERE session_id = ?
-                ORDER BY creation_seq LIMIT 1
-                """,
-                (session_id,),
-            ).fetchone()
-        return str(row["model_id"]) if row is not None else None
+        return self._repository(self._sessions).session_model_id(session_id)
 
     def rename_session(
         self,
@@ -954,34 +135,10 @@ class SessionStore:
         *,
         operation_id: str | None = None,
     ) -> dict[str, object]:
-        if not title or len(title) > 60 or len(title.encode("utf-8")) > 120:
-            raise ValueError("session title is invalid")
-        now = _now_ms()
-
-        def write(connection: sqlite3.Connection) -> dict[str, object]:
-            updated = connection.execute(
-                "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
-                (title, now, session_id),
-            )
-            if updated.rowcount != 1:
-                raise ResourceNotFoundError("session not found")
-            append_event(
-                connection,
-                EventType.SESSION_TITLE_UPDATED,
-                now,
-                {"title": title},
-                session_id=session_id,
-            )
-            row = connection.execute(
-                SESSION_SELECT + " WHERE s.id = ?", (session_id,)
-            ).fetchone()
-            return _session_from_row(row)
-
-        return self._write(
-            write,
+        return self._repository(self._sessions).rename_session(
+            session_id,
+            title,
             operation_id=operation_id,
-            operation_scope="session/rename",
-            operation_request={"sessionId": session_id, "title": title},
         )
 
     def delete_session(
@@ -990,75 +147,9 @@ class SessionStore:
         *,
         operation_id: str | None = None,
     ) -> dict[str, object]:
-        def write(connection: sqlite3.Connection) -> dict[str, object]:
-            session = connection.execute(
-                "SELECT id FROM sessions WHERE id = ?", (session_id,)
-            ).fetchone()
-            if session is None:
-                raise ResourceNotFoundError("session not found")
-            active = connection.execute(
-                """
-                SELECT 1 FROM runs
-                WHERE session_id = ? AND status IN (
-                    'queued', 'running', 'waiting_approval',
-                    'waiting_user_input', 'finalizing'
-                ) LIMIT 1
-                """,
-                (session_id,),
-            ).fetchone()
-            if active is not None:
-                raise SessionActiveError("session has an active run")
-            run_ids = "SELECT id FROM runs WHERE session_id = ?"
-            connection.execute(
-                f"DELETE FROM durable_intents WHERE run_id IN ({run_ids})",
-                (session_id,),
-            )
-            connection.execute(
-                f"DELETE FROM approvals WHERE run_id IN ({run_ids})", (session_id,)
-            )
-            connection.execute(
-                """
-                DELETE FROM model_attempts WHERE step_id IN (
-                    SELECT steps.id FROM steps
-                    JOIN runs ON runs.id = steps.run_id
-                    WHERE runs.session_id = ?
-                )
-                """,
-                (session_id,),
-            )
-            connection.execute(
-                f"DELETE FROM steps WHERE run_id IN ({run_ids})", (session_id,)
-            )
-            connection.execute(
-                f"DELETE FROM execution_segments WHERE run_id IN ({run_ids})",
-                (session_id,),
-            )
-            connection.execute(
-                f"DELETE FROM input_mailbox WHERE run_id IN ({run_ids})",
-                (session_id,),
-            )
-            connection.execute(
-                "DELETE FROM compact_summaries WHERE session_id = ?", (session_id,)
-            )
-            connection.execute(
-                """
-                DELETE FROM tool_calls WHERE item_id IN (
-                    SELECT id FROM items WHERE session_id = ?
-                )
-                """,
-                (session_id,),
-            )
-            connection.execute("DELETE FROM items WHERE session_id = ?", (session_id,))
-            connection.execute("DELETE FROM events WHERE session_id = ?", (session_id,))
-            connection.execute("DELETE FROM runs WHERE session_id = ?", (session_id,))
-            connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-            return {"deletedSessionId": session_id}
-
-        return self._write(
-            write,
+        return self._repository(self._sessions).delete_session(
+            session_id,
             operation_id=operation_id,
-            operation_scope="session/delete",
-            operation_request={"sessionId": session_id},
         )
 
     def create_run(
@@ -1070,105 +161,19 @@ class SessionStore:
         queued: bool = False,
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
+        model_profile: ModelProfileSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
-        if session_title is not None and (
-            not session_title
-            or len(session_title) > 60
-            or len(session_title.encode("utf-8")) > 120
-        ):
-            raise ValueError("session title is invalid")
-        if model_id not in SUPPORTED_MODELS:
-            raise ValueError("model is unsupported")
-        extension_snapshot_json = _bounded_canonical_json(
-            extension_snapshot or EMPTY_EXTENSION_SNAPSHOT,
-            code="extension_snapshot_invalid",
-        )
-        run_id = str(uuid.uuid4())
-        item_id = str(uuid.uuid4())
-        now = _now_ms()
-        def write(
-            connection: sqlite3.Connection,
-        ) -> dict[str, object]:
-            session = connection.execute(
-                "SELECT id, workspace_root, title FROM sessions WHERE id = ?", (session_id,)
-            ).fetchone()
-            if session is None:
-                raise ResourceNotFoundError("session not found")
-            if self._workspace_overlaps_data(Path(session["workspace_root"])):
-                raise WorkspaceBoundaryError("workspace overlaps runtime data")
-            if session["title"] is None and session_title is not None:
-                connection.execute(
-                    "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
-                    (session_title, now, session_id),
-                )
-                append_event(
-                    connection,
-                    EventType.SESSION_TITLE_UPDATED,
-                    now,
-                    {"title": session_title},
-                    session_id=session_id,
-                )
-            status = "queued" if queued else "running"
-            started_at = None if queued else now
-            try:
-                connection.execute(
-                    """
-                    INSERT INTO runs (
-                        id, session_id, user_input, model_id, status, enqueued_at,
-                        extension_snapshot_json, created_at, started_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        run_id, session_id, user_input, model_id, status,
-                        now if queued else None, extension_snapshot_json,
-                        now, started_at, now,
-                    ),
-                )
-            except sqlite3.IntegrityError as error:
-                if "one_active_run" in str(error) or "UNIQUE constraint failed" in str(error):
-                    raise ActiveRunError("another run is active") from None
-                raise
-            connection.execute(
-                """
-                INSERT INTO items (
-                    id, session_id, run_id, ordinal, kind, status,
-                    content, created_at, completed_at
-                ) VALUES (?, ?, ?, 1, 'user_message', 'completed', ?, ?, ?)
-                """,
-                (item_id, session_id, run_id, user_input, now, now),
-            )
-            connection.execute(
-                "UPDATE sessions SET updated_at = ? WHERE id = ?",
-                (now, session_id),
-            )
-            run = _run_from_row(connection.execute(
-                "SELECT * FROM runs WHERE id = ?", (run_id,)
-            ).fetchone())
-            append_event(
-                connection,
-                EventType.RUN_CREATED,
-                now,
-                {"run": run},
-                session_id=session_id,
-                run_id=run_id,
-            )
-            item_row = connection.execute(
-                "SELECT * FROM items WHERE id = ?", (item_id,)
-            ).fetchone()
-            return {"run": run, "item": _item_from_row(item_row, None)}
-        result = self._write(
-            write,
+        return self._repository(self._runs).create_run(
+            session_id,
+            user_input,
             operation_id=operation_id,
-            operation_scope="run/start",
-            operation_request={
-                "sessionId": session_id,
-                "userInput": user_input,
-                "modelId": model_id,
-                "extensionSnapshot": json.loads(extension_snapshot_json),
-            },
+            queued=queued,
+            session_title=session_title,
+            model_id=model_id,
+            model_profile=model_profile,
+            extension_snapshot=extension_snapshot,
         )
-        return result["run"], result["item"]
 
     def enqueue_run(
         self,
@@ -1178,15 +183,16 @@ class SessionStore:
         operation_id: str | None = None,
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
+        model_profile: ModelProfileSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
-        return self.create_run(
+        return self._repository(self._runs).enqueue_run(
             session_id,
             user_input,
             operation_id=operation_id,
-            queued=True,
             session_title=session_title,
             model_id=model_id,
+            model_profile=model_profile,
             extension_snapshot=extension_snapshot,
         )
 
@@ -1197,326 +203,65 @@ class SessionStore:
         *,
         operation_id: str | None = None,
     ) -> dict[str, object]:
-        now = _now_ms()
-        item_id = str(uuid.uuid4())
-        segment_id = str(uuid.uuid4())
-
-        def write(connection: sqlite3.Connection) -> dict[str, object]:
-            run_row = connection.execute(
-                "SELECT * FROM runs WHERE id = ? AND status = 'waiting_user_input'",
-                (run_id,),
-            ).fetchone()
-            if run_row is None:
-                raise InvalidRunStateError("run cannot continue")
-            item_ordinal = self._next_ordinal(connection, run_id)
-            segment_ordinal = connection.execute(
-                "SELECT COUNT(*) + 1 FROM execution_segments WHERE run_id = ?",
-                (run_id,),
-            ).fetchone()[0]
-            connection.execute(
-                """
-                INSERT INTO items (
-                    id, session_id, run_id, ordinal, kind, status,
-                    content, created_at, completed_at
-                ) VALUES (?, ?, ?, ?, 'user_message', 'completed', ?, ?, ?)
-                """,
-                (
-                    item_id, run_row["session_id"], run_id, item_ordinal,
-                    user_input, now, now,
-                ),
-            )
-            connection.execute(
-                """
-                INSERT INTO execution_segments (
-                    id, run_id, ordinal, status, created_at
-                ) VALUES (?, ?, ?, 'queued', ?)
-                """,
-                (segment_id, run_id, segment_ordinal, now),
-            )
-            connection.execute(
-                """
-                UPDATE runs SET pause_reason = NULL, consecutive_rejects = 0
-                WHERE id = ? AND status = 'waiting_user_input'
-                """,
-                (run_id,),
-            )
-            append_event(
-                connection, EventType.SEGMENT_CREATED, now,
-                {
-                    "entity_id": segment_id, "previous": "created",
-                    "current": "queued",
-                },
-                session_id=run_row["session_id"], run_id=run_id,
-            )
-            run, _run_event = transition_run(
-                connection,
-                run_id,
-                frozenset({RunStatus.WAITING_USER_INPUT}),
-                RunStatus.QUEUED,
-                "user_input",
-            )
-            return run
-
-        return self._write(
-            write,
+        return self._repository(self._runs).continue_run(
+            run_id,
+            user_input,
             operation_id=operation_id,
-            operation_scope="run/continue",
-            operation_request={"runId": run_id, "userInput": user_input},
         )
 
     def claim_next_run(self) -> dict[str, object] | None:
-        mutation = self.claim_next_run_committed()
-        return mutation.value if mutation is not None else None
+        return self._repository(self._runs).claim_next_run()
 
     def claim_next_run_committed(
         self,
     ) -> CommittedMutation[dict[str, object]] | None:
-        segment_id = str(uuid.uuid4())
-        with self.lock, self._connection() as connection:
-            now = _now_ms()
-            row = connection.execute(
-                """
-                SELECT id FROM runs
-                WHERE status = 'queued'
-                  AND NOT EXISTS (
-                    SELECT 1 FROM runs WHERE status IN ('running', 'finalizing')
-                  )
-                ORDER BY enqueued_at ASC, creation_seq ASC LIMIT 1
-                """
-            ).fetchone()
-            if row is None:
-                return None
-            existing_segment = connection.execute(
-                """
-                SELECT id, status FROM execution_segments
-                WHERE run_id = ? AND status IN ('queued', 'running')
-                ORDER BY ordinal DESC LIMIT 1
-                """,
-                (row["id"],),
-            ).fetchone()
-            if existing_segment is None:
-                ordinal = connection.execute(
-                    "SELECT COUNT(*) + 1 FROM execution_segments WHERE run_id = ?",
-                    (row["id"],),
-                ).fetchone()[0]
-                connection.execute(
-                    """
-                    INSERT INTO execution_segments (
-                        id, run_id, ordinal, status, created_at, started_at
-                    ) VALUES (?, ?, ?, 'running', ?, ?)
-                    """,
-                    (segment_id, row["id"], ordinal, now, now),
-                )
-            elif existing_segment["status"] == SegmentStatus.QUEUED.value:
-                ensure_transition(SegmentStatus.QUEUED, SegmentStatus.RUNNING)
-                connection.execute(
-                    """
-                    UPDATE execution_segments SET status = 'running',
-                        started_at = COALESCE(started_at, ?)
-                    WHERE id = ?
-                    """,
-                    (now, existing_segment["id"]),
-                )
-            run, event = transition_run(
-                connection,
-                str(row["id"]),
-                frozenset({RunStatus.QUEUED}),
-                RunStatus.RUNNING,
-                "fifo_claim",
-            )
-        return CommittedMutation(run, (event,))
+        return self._repository(self._runs).claim_next_run_committed()
 
     def read_run(self, run_id: str) -> dict[str, object]:
-        with self.lock:
-            row = self._connection().execute(
-                "SELECT * FROM runs WHERE id = ?", (run_id,)
-            ).fetchone()
-        if row is None:
-            raise ResourceNotFoundError("run not found")
-        return _run_from_row(row)
+        return self._repository(self._runs).read_run(run_id)
+
+    def read_model_profile(self, run_id: str) -> ModelProfileSnapshot:
+        return self._repository(self._runs).read_model_profile(run_id)
 
     def run_budget(self, run_id: str) -> dict[str, int]:
-        with self.lock:
-            connection = self._connection()
-            run = connection.execute(
-                "SELECT model_step_count, total_effective_ms FROM runs WHERE id = ?",
-                (run_id,),
-            ).fetchone()
-            segment = connection.execute(
-                """
-                SELECT step_count, effective_ms FROM execution_segments
-                WHERE run_id = ? AND status = 'running'
-                ORDER BY ordinal DESC LIMIT 1
-                """,
-                (run_id,),
-            ).fetchone()
-        if run is None:
-            raise ResourceNotFoundError("run not found")
-        return {
-            "segmentStepsRemaining": max(0, 20 - int(segment["step_count"] if segment else 0)),
-            "runStepsRemaining": max(0, 80 - int(run["model_step_count"])),
-            "segmentEffectiveMsRemaining": max(
-                0, 1_800_000 - int(segment["effective_ms"] if segment else 0)
-            ),
-            "runEffectiveMsRemaining": max(0, 7_200_000 - int(run["total_effective_ms"])),
-        }
+        return self._repository(self._runs).run_budget(run_id)
 
     def read_runtime_start_event(self, run_id: str) -> dict[str, object]:
-        with self.lock:
-            row = self._connection().execute(
-                """
-                SELECT * FROM events
-                WHERE run_id = ? AND event_type IN ('run.created', 'run.status_changed')
-                ORDER BY id DESC LIMIT 1
-                """,
-                (run_id,),
-            ).fetchone()
-        event = event_from_row(row) if row is not None else None
-        if event is None:
-            raise ResourceNotFoundError("run start event not found")
-        return event
+        return self._repository(self._runs).read_runtime_start_event(run_id)
 
     def plugin_record(self, plugin_id: str) -> dict[str, object] | None:
-        with self.lock:
-            row = self._connection().execute(
-                "SELECT * FROM plugins WHERE id = ?", (plugin_id,)
-            ).fetchone()
-        return _plugin_from_row(row) if row is not None else None
+        return self._repository(self._extensions).plugin_record(plugin_id)
 
     def list_plugin_records(
         self, *, include_removed: bool = False
     ) -> list[dict[str, object]]:
-        sql = "SELECT * FROM plugins"
-        if not include_removed:
-            sql += " WHERE status = 'installed'"
-        sql += " ORDER BY id"
-        with self.lock:
-            rows = self._connection().execute(sql).fetchall()
-        return [_plugin_from_row(row) for row in rows]
+        return self._repository(self._extensions).list_plugin_records(
+            include_removed=include_removed,
+        )
 
     def insert_plugin_record(self, record: dict[str, object]) -> dict[str, object]:
-        now = _now_ms()
-        with self.lock, self._connection() as connection:
-            connection.execute(
-                """
-                INSERT INTO plugins (
-                    id, name, version, description, manifest_json, content_hash,
-                    enabled, status, installed_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 0, 'installed', ?, ?)
-                """,
-                (
-                    record["id"], record["name"], record["version"],
-                    record["description"], record["manifestJson"],
-                    record["contentHash"], now, now,
-                ),
-            )
-            row = connection.execute(
-                "SELECT * FROM plugins WHERE id = ?", (record["id"],)
-            ).fetchone()
-            append_event(
-                connection,
-                EventType.PLUGIN_IMPORTED,
-                now,
-                {"plugin": _plugin_from_row(row)},
-            )
-        result = self.plugin_record(str(record["id"]))
-        assert result is not None
-        return result
+        return self._repository(self._extensions).insert_plugin_record(record)
 
     def set_plugin_enabled(
         self, plugin_id: str, enabled: bool
     ) -> dict[str, object]:
-        with self.lock, self._connection() as connection:
-            updated = connection.execute(
-                """
-                UPDATE plugins SET enabled = ?, updated_at = ?
-                WHERE id = ? AND status = 'installed'
-                """,
-                (int(enabled), _now_ms(), plugin_id),
-            )
-            if updated.rowcount != 1:
-                raise ResourceNotFoundError("plugin not found")
-            row = connection.execute(
-                "SELECT * FROM plugins WHERE id = ?", (plugin_id,)
-            ).fetchone()
-            append_event(
-                connection,
-                EventType.PLUGIN_STATE_CHANGED,
-                _now_ms(),
-                {"plugin": _plugin_from_row(row)},
-            )
-        result = self.plugin_record(plugin_id)
-        assert result is not None
-        return result
+        return self._repository(self._extensions).set_plugin_enabled(plugin_id, enabled)
 
     def remove_plugin_record(self, plugin_id: str) -> dict[str, object]:
-        current = self.plugin_record(plugin_id)
-        if current is None:
-            raise ResourceNotFoundError("plugin not found")
-        if current["status"] == "removed":
-            return current
-        with self.lock, self._connection() as connection:
-            connection.execute(
-                """
-                UPDATE plugins
-                SET enabled = 0, status = 'removed', updated_at = ?
-                WHERE id = ? AND status = 'installed'
-                """,
-                (_now_ms(), plugin_id),
-            )
-            row = connection.execute(
-                "SELECT * FROM plugins WHERE id = ?", (plugin_id,)
-            ).fetchone()
-            append_event(
-                connection,
-                EventType.PLUGIN_STATE_CHANGED,
-                _now_ms(),
-                {"plugin": _plugin_from_row(row)},
-            )
-        result = self.plugin_record(plugin_id)
-        assert result is not None
-        return result
+        return self._repository(self._extensions).remove_plugin_record(plugin_id)
 
     def plugin_referenced_by_nonterminal_run(
         self, plugin_id: str, content_hash: str
     ) -> bool:
-        terminal = {"succeeded", "failed", "stopped", "canceled", "interrupted"}
-        with self.lock:
-            rows = self._connection().execute(
-                "SELECT status, extension_snapshot_json FROM runs"
-            ).fetchall()
-        for row in rows:
-            if row["status"] in terminal:
-                continue
-            snapshot = _load_json_object(row["extension_snapshot_json"])
-            plugins = snapshot.get("plugins") if snapshot else None
-            if not isinstance(plugins, list):
-                continue
-            if any(
-                isinstance(plugin, dict)
-                and plugin.get("id") == plugin_id
-                and plugin.get("contentHash") == content_hash
-                for plugin in plugins
-            ):
-                return True
-        return False
+        return self._repository(self._extensions).plugin_referenced_by_nonterminal_run(
+            plugin_id,
+            content_hash,
+        )
 
     def mcp_server_state(
         self, plugin_id: str, server_id: str
     ) -> dict[str, object]:
-        with self.lock:
-            row = self._connection().execute(
-                """
-                SELECT consented, error_code, updated_at
-                FROM mcp_server_states WHERE plugin_id = ? AND server_id = ?
-                """,
-                (plugin_id, server_id),
-            ).fetchone()
-        return {
-            "consented": bool(row["consented"]) if row is not None else False,
-            "errorCode": row["error_code"] if row is not None else None,
-            "updatedAt": row["updated_at"] if row is not None else 0,
-        }
+        return self._repository(self._extensions).mcp_server_state(plugin_id, server_id)
 
     def set_mcp_server_state(
         self,
@@ -1525,116 +270,34 @@ class SessionStore:
         consented: bool,
         error_code: str | None = None,
     ) -> dict[str, object]:
-        now = _now_ms()
-        projection = {
-            **server,
-            "consented": consented,
-            "available": bool(server["declaredEnabled"]) and consented and error_code is None,
-            "errorCode": error_code,
-            "updatedAt": now,
-        }
-        if error_code is None:
-            projection.pop("errorCode")
-        with self.lock, self._connection() as connection:
-            connection.execute(
-                """
-                INSERT INTO mcp_server_states (
-                    plugin_id, server_id, consented, error_code, updated_at
-                ) VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(plugin_id, server_id) DO UPDATE SET
-                    consented = excluded.consented,
-                    error_code = excluded.error_code,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    server["pluginId"], server["serverId"], int(consented),
-                    error_code, now,
-                ),
-            )
-            append_event(
-                connection,
-                EventType.MCP_SERVER_STATE_CHANGED,
-                now,
-                {"server": projection},
-            )
-        return projection
+        return self._repository(self._extensions).set_mcp_server_state(
+            server,
+            consented=consented,
+            error_code=error_code,
+        )
 
     def activated_tools(self, run_id: str) -> tuple[str, ...]:
-        with self.lock:
-            row = self._connection().execute(
-                "SELECT activated_tools_json FROM runs WHERE id = ?", (run_id,)
-            ).fetchone()
-        if row is None:
-            raise ResourceNotFoundError("run not found")
-        try:
-            values = json.loads(row["activated_tools_json"])
-        except (TypeError, json.JSONDecodeError):
-            raise StorageError("activated_tools_invalid") from None
-        if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
-            raise StorageError("activated_tools_invalid")
-        return tuple(values)
+        return self._repository(self._extensions).activated_tools(run_id)
 
     def activate_tools(self, run_id: str, names: tuple[str, ...]) -> tuple[str, ...]:
-        current = set(self.activated_tools(run_id))
-        current.update(names)
-        ordered = tuple(sorted(current, key=lambda value: value.encode("utf-8")))[:32]
-        encoded = json.dumps(ordered, ensure_ascii=False, separators=(",", ":"))
-        with self.lock, self._connection() as connection:
-            updated = connection.execute(
-                "UPDATE runs SET activated_tools_json = ?, updated_at = ? WHERE id = ?",
-                (encoded, _now_ms(), run_id),
-            )
-            if updated.rowcount != 1:
-                raise ResourceNotFoundError("run not found")
-        return ordered
+        return self._repository(self._extensions).activate_tools(run_id, names)
 
     def record_mcp_tool_list_changed(self, plugin_id: str, server_id: str) -> None:
-        with self.lock, self._connection() as connection:
-            append_event(
-                connection,
-                EventType.MCP_TOOL_LIST_CHANGED,
-                _now_ms(),
-                {"plugin_id": plugin_id, "server_id": server_id},
-            )
+        return self._repository(self._extensions).record_mcp_tool_list_changed(plugin_id, server_id)
 
     def extension_event_waterline(self) -> int:
-        with self.lock:
-            row = self._connection().execute(
-                "SELECT COALESCE(MAX(id), 0) FROM events WHERE session_id IS NULL"
-            ).fetchone()
-        return int(row[0])
+        return self._repository(self._extensions).extension_event_waterline()
 
     def list_extension_events(
         self, *, after_event_id: int = 0, limit: int = 200
     ) -> dict[str, object]:
-        with self.lock:
-            rows = self._connection().execute(
-                """
-                SELECT * FROM events
-                WHERE session_id IS NULL AND id > ?
-                ORDER BY id ASC LIMIT ?
-                """,
-                (after_event_id, limit + 1),
-            ).fetchall()
-            waterline = self.extension_event_waterline()
-        events = [event_from_row(row) for row in rows[:limit]]
-        return {
-            "items": [event for event in events if event is not None],
-            "hasMore": len(rows) > limit,
-            "throughEventId": waterline,
-        }
+        return self._repository(self._extensions).list_extension_events(
+            after_event_id=after_event_id,
+            limit=limit,
+        )
 
     def read_item(self, item_id: str) -> dict[str, object]:
-        with self.lock:
-            row = self._connection().execute(
-                "SELECT * FROM items WHERE id = ?", (item_id,)
-            ).fetchone()
-            if row is None:
-                raise ResourceNotFoundError("item not found")
-            tool_row = self._connection().execute(
-                "SELECT * FROM tool_calls WHERE item_id = ?", (item_id,)
-            ).fetchone()
-        return _item_from_row(row, tool_row)
+        return self._repository(self._execution).read_item(item_id)
 
     def read_session_snapshot(
         self,
@@ -1643,139 +306,26 @@ class SessionStore:
         item_limit: int = 200,
         before_item_id: str | None = None,
     ) -> dict[str, object]:
-        with self.lock:
-            connection = self._connection()
-            session_row = connection.execute(
-                SESSION_SELECT + " WHERE s.id = ?", (session_id,)
-            ).fetchone()
-            if session_row is None:
-                raise ResourceNotFoundError("session not found")
-            before_sequence: int | None = None
-            if before_item_id is not None:
-                before_row = connection.execute(
-                    """
-                    SELECT creation_seq FROM items
-                    WHERE id = ? AND session_id = ?
-                    """,
-                    (before_item_id, session_id),
-                ).fetchone()
-                if before_row is None:
-                    raise ResourceNotFoundError("item not found")
-                before_sequence = before_row["creation_seq"]
-            run_rows = connection.execute(
-                """
-                SELECT * FROM runs WHERE session_id = ?
-                ORDER BY creation_seq DESC LIMIT 100
-                """,
-                (session_id,),
-            ).fetchall()
-            item_sql = "SELECT * FROM items WHERE session_id = ?"
-            item_parameters: list[object] = [session_id]
-            if before_sequence is not None:
-                item_sql += " AND creation_seq < ?"
-                item_parameters.append(before_sequence)
-            item_sql += " ORDER BY creation_seq DESC LIMIT ?"
-            item_parameters.append(item_limit + 1)
-            item_rows = connection.execute(item_sql, item_parameters).fetchall()
-            tool_rows: list[sqlite3.Row] = []
-            if item_rows:
-                placeholders = ",".join("?" for _ in item_rows)
-                tool_rows = connection.execute(
-                    f"SELECT * FROM tool_calls WHERE item_id IN ({placeholders})",
-                    [row["id"] for row in item_rows],
-                ).fetchall()
-            through_event_id = connection.execute(
-                "SELECT COALESCE(MAX(id), 0) FROM events WHERE session_id = ?",
-                (session_id,),
-            ).fetchone()[0]
-        session = _session_from_row(session_row)
-        selected_runs = [
-            _run_from_row(row, include_user_input=False)
-            for row in reversed(run_rows)
-        ]
-        tools_by_item = {row["item_id"]: row for row in tool_rows}
-        has_more = len(item_rows) > item_limit
-        selected_items: list[dict[str, object]] = []
-        selected_bytes = _json_bytes(session) + _json_bytes(selected_runs) + 1024
-        for row in item_rows[:item_limit]:
-            item = _snapshot_item(row, tools_by_item.get(row["id"]))
-            item_bytes = _json_bytes(item)
-            if selected_bytes + item_bytes > MAX_SNAPSHOT_BYTES:
-                has_more = True
-                break
-            selected_items.append(item)
-            selected_bytes += item_bytes
-        selected_items.reverse()
-        snapshot: dict[str, object] = {
-            "session": session,
-            "runs": selected_runs,
-            "items": selected_items,
-            "throughEventId": through_event_id,
-        }
-        if has_more and selected_items:
-            snapshot["previousItemId"] = selected_items[0]["id"]
-        return snapshot
+        return self._repository(self._sessions).read_session_snapshot(
+            session_id,
+            item_limit=item_limit,
+            before_item_id=before_item_id,
+        )
 
     def list_events(
         self, session_id: str, *, after_event_id: int, limit: int = 200
     ) -> dict[str, object]:
-        if after_event_id < 0 or not 1 <= limit <= 500:
-            raise ValueError("invalid event cursor")
-        with self.lock:
-            rows = self._connection().execute(
-                """
-                SELECT * FROM events
-                WHERE session_id = ? AND id > ?
-                ORDER BY id ASC LIMIT ?
-                """,
-                (session_id, after_event_id, limit + 1),
-            ).fetchall()
-        events = [event for row in rows[:limit] if (event := event_from_row(row)) is not None]
-        return {
-            "items": events,
-            "hasMore": len(rows) > limit,
-            "throughEventId": rows[min(len(rows), limit) - 1]["id"] if rows else after_event_id,
-        }
+        return self._repository(self._sessions).list_events(
+            session_id,
+            after_event_id=after_event_id,
+            limit=limit,
+        )
 
     def get_user_item(self, run_id: str) -> dict[str, object]:
-        with self.lock:
-            row = self._connection().execute(
-                """
-                SELECT * FROM items
-                WHERE run_id = ? AND kind = 'user_message'
-                ORDER BY ordinal ASC LIMIT 1
-                """,
-                (run_id,),
-            ).fetchone()
-        if row is None:
-            raise ResourceNotFoundError("user item not found")
-        return _item_from_row(row, None)
+        return self._repository(self._execution).get_user_item(run_id)
 
     def workspace_for_run(self, run_id: str) -> WorkspaceIdentity:
-        with self.lock:
-            row = self._connection().execute(
-                """
-                SELECT sessions.workspace_root, sessions.workspace_dev,
-                       sessions.workspace_inode, sessions.workspace_uid
-                FROM sessions
-                JOIN runs ON runs.session_id = sessions.id
-                WHERE runs.id = ?
-                """,
-                (run_id,),
-            ).fetchone()
-        if row is None:
-            raise ResourceNotFoundError("run not found")
-        if any(
-            row[field] is None
-            for field in ("workspace_dev", "workspace_inode", "workspace_uid")
-        ):
-            raise StorageError("workspace identity is unavailable")
-        return WorkspaceIdentity(
-            path=Path(row["workspace_root"]),
-            device=row["workspace_dev"],
-            inode=row["workspace_inode"],
-            owner=row["workspace_uid"],
-        )
+        return self._repository(self._execution).workspace_for_run(run_id)
 
     def increment_model_step(
         self,
@@ -1783,173 +333,26 @@ class SessionStore:
         *,
         tool_snapshot: dict[str, object] | None = None,
     ) -> int:
-        tool_snapshot_json = (
-            _bounded_canonical_json(tool_snapshot, code="tool_snapshot_invalid")
-            if tool_snapshot is not None else None
+        return self._repository(self._execution).increment_model_step(
+            run_id,
+            tool_snapshot=tool_snapshot,
         )
-        tool_set_hash = tool_snapshot.get("toolSetHash") if tool_snapshot else None
-        if tool_set_hash is not None and (
-            not isinstance(tool_set_hash, str) or len(tool_set_hash) != 64
-        ):
-            raise ValueError("tool_snapshot_invalid")
-        with self.lock, self._connection() as connection:
-            run = connection.execute(
-                "SELECT * FROM runs WHERE id = ? AND status = 'running'", (run_id,)
-            ).fetchone()
-            if run is None:
-                raise InvalidRunStateError("run is not active")
-            if run["model_step_count"] >= 80:
-                raise RunLimitReached("run step limit reached")
-            if run["total_effective_ms"] >= 7_200_000:
-                raise RunLimitReached("run time limit reached")
-            segment = connection.execute(
-                """
-                SELECT * FROM execution_segments
-                WHERE run_id = ? AND status = 'running'
-                ORDER BY ordinal DESC LIMIT 1
-                """,
-                (run_id,),
-            ).fetchone()
-            if segment is None:
-                segment_id = str(uuid.uuid4())
-                ordinal = connection.execute(
-                    "SELECT COUNT(*) + 1 FROM execution_segments WHERE run_id = ?",
-                    (run_id,),
-                ).fetchone()[0]
-                now = _now_ms()
-                connection.execute(
-                    """
-                    INSERT INTO execution_segments (
-                        id, run_id, ordinal, status, created_at, started_at
-                    ) VALUES (?, ?, ?, 'running', ?, ?)
-                    """,
-                    (segment_id, run_id, ordinal, now, now),
-                )
-                segment = connection.execute(
-                    "SELECT * FROM execution_segments WHERE id = ?", (segment_id,)
-                ).fetchone()
-            if segment["step_count"] >= 20:
-                raise SegmentLimitReached("segment step limit reached")
-            if segment["effective_ms"] >= 1_800_000:
-                raise SegmentLimitReached("segment time limit reached")
-            now = _now_ms()
-            step_id = str(uuid.uuid4())
-            attempt_id = str(uuid.uuid4())
-            step_ordinal = segment["step_count"] + 1
-            connection.execute(
-                """
-                INSERT INTO steps (
-                    id, run_id, segment_id, ordinal, status,
-                    observed_reconciliation_epoch, tool_snapshot_json,
-                    tool_set_hash, created_at
-                ) VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?)
-                """,
-                (
-                    step_id, run_id, segment["id"], step_ordinal,
-                    run["reconciliation_epoch"], tool_snapshot_json,
-                    tool_set_hash, now,
-                ),
-            )
-            connection.execute(
-                """
-                INSERT INTO model_attempts (
-                    id, step_id, ordinal, status, started_at
-                ) VALUES (?, ?, 1, 'running', ?)
-                """,
-                (attempt_id, step_id, now),
-            )
-            updated = connection.execute(
-                """
-                UPDATE runs
-                SET model_step_count = model_step_count + 1, updated_at = ?
-                WHERE id = ? AND status = 'running'
-                """,
-                (_now_ms(), run_id),
-            )
-            if updated.rowcount != 1:
-                raise InvalidRunStateError("run is not active")
-            connection.execute(
-                "UPDATE execution_segments SET step_count = step_count + 1 WHERE id = ?",
-                (segment["id"],),
-            )
-            row = connection.execute(
-                "SELECT model_step_count FROM runs WHERE id = ?", (run_id,)
-            ).fetchone()
-        return row["model_step_count"]
 
     def read_step_tool_snapshot(
         self, run_id: str, model_step_index: int
     ) -> dict[str, object]:
-        with self.lock:
-            row = self._connection().execute(
-                """
-                SELECT tool_snapshot_json FROM steps
-                WHERE run_id = ? ORDER BY creation_seq LIMIT 1 OFFSET ?
-                """,
-                (run_id, model_step_index - 1),
-            ).fetchone()
-        if row is None or row["tool_snapshot_json"] is None:
-            raise ResourceNotFoundError("tool snapshot not found")
-        value = json.loads(row["tool_snapshot_json"])
-        if not isinstance(value, dict):
-            raise StorageError("tool_snapshot_invalid")
-        return value
+        return self._repository(self._execution).read_step_tool_snapshot(run_id, model_step_index)
 
     def read_current_step_fact(self, run_id: str) -> dict[str, object]:
-        with self.lock:
-            row = self._connection().execute(
-                """
-                SELECT id, observed_reconciliation_epoch
-                FROM steps
-                WHERE run_id = ? AND status = 'running'
-                ORDER BY creation_seq DESC LIMIT 1
-                """,
-                (run_id,),
-            ).fetchone()
-        if row is None:
-            raise ResourceNotFoundError("current step not found")
-        return {
-            "stepId": row["id"],
-            "reconciliationEpoch": row["observed_reconciliation_epoch"],
-        }
+        return self._repository(self._execution).read_current_step_fact(run_id)
 
     def add_effective_time(self, run_id: str, elapsed_ms: int) -> None:
-        self.add_effective_time_committed(run_id, elapsed_ms)
+        return self._repository(self._execution).add_effective_time(run_id, elapsed_ms)
 
     def add_effective_time_committed(
         self, run_id: str, elapsed_ms: int
     ) -> CommittedMutation[dict[str, object]] | None:
-        if elapsed_ms <= 0:
-            return None
-        with self.lock, self._connection() as connection:
-            connection.execute(
-                "UPDATE runs SET total_effective_ms = total_effective_ms + ? WHERE id = ?",
-                (elapsed_ms, run_id),
-            )
-            connection.execute(
-                """
-                UPDATE execution_segments
-                SET effective_ms = effective_ms + ?
-                WHERE id = (
-                    SELECT id FROM execution_segments
-                    WHERE run_id = ? AND status = 'running'
-                    ORDER BY ordinal DESC LIMIT 1
-                )
-                """,
-                (elapsed_ms, run_id),
-            )
-            run = _run_from_row(connection.execute(
-                "SELECT * FROM runs WHERE id = ?", (run_id,)
-            ).fetchone())
-            event = append_event(
-                connection,
-                EventType.RUN_UPDATED,
-                _now_ms(),
-                {"reason": "effective_time"},
-                session_id=str(run["sessionId"]),
-                run_id=run_id,
-            )
-        return CommittedMutation(run, (event,))
+        return self._repository(self._execution).add_effective_time_committed(run_id, elapsed_ms)
 
     def complete_current_step(
         self,
@@ -1959,189 +362,82 @@ class SessionStore:
         reason: str | None = None,
         progress_signature: ProgressSignature | None = None,
     ) -> None:
-        if status_value not in {"completed", "failed", "canceled"}:
-            raise ValueError("invalid step status")
-        target_status = StepStatus(status_value)
-        now = _now_ms()
-        with self.lock, self._connection() as connection:
-            step = connection.execute(
-                """
-                SELECT * FROM steps
-                WHERE run_id = ? AND status = 'running'
-                ORDER BY creation_seq DESC LIMIT 1
-                """,
-                (run_id,),
-            ).fetchone()
-            if step is None:
-                return
-            ensure_transition(StepStatus.RUNNING, target_status)
-            connection.execute(
-                "UPDATE model_attempts SET status = ?, completed_at = ? WHERE step_id = ? AND status = 'running'",
-                (status_value, now, step["id"]),
-            )
-            connection.execute(
-                """
-                UPDATE steps
-                SET status = ?, completed_at = ?, progress_signature_json = ?
-                WHERE id = ? AND status = 'running'
-                """,
-                (
-                    status_value,
-                    now,
-                    progress_signature.model_dump_json()
-                    if progress_signature is not None else None,
-                    step["id"],
-                ),
-            )
-            run = connection.execute(
-                "SELECT session_id FROM runs WHERE id = ?", (run_id,)
-            ).fetchone()
-            append_event(
-                connection, EventType.STEP_STATUS_CHANGED, now,
-                {
-                    "entity_id": step["id"], "previous": "running",
-                    "current": status_value, "reason": reason,
-                },
-                session_id=run["session_id"], run_id=run_id,
-            )
-            if status_value == "completed":
-                run_state = connection.execute(
-                    "SELECT * FROM runs WHERE id = ?", (run_id,)
-                ).fetchone()
-                if (
-                    run_state["reconciliation_required"]
-                    and step["observed_reconciliation_epoch"]
-                    == run_state["reconciliation_epoch"]
-                ):
-                    observations = connection.execute(
-                        """
-                        SELECT tool_calls.result_json
-                        FROM tool_calls JOIN items ON items.id = tool_calls.item_id
-                        WHERE items.run_id = ?
-                          AND items.model_step_index = ?
-                          AND tool_calls.tool_name IN (
-                            'list_files', 'read_file', 'read_file_range', 'search_text'
-                          )
-                          AND tool_calls.status = 'completed'
-                        """,
-                        (run_id, run_state["model_step_count"]),
-                    ).fetchall()
-                    observed = any(
-                        isinstance(result, dict) and result.get("outcome") == "success"
-                        for row in observations
-                        for result in [_load_json_object(row["result_json"])]
-                    )
-
-                    if observed:
-                        cleared = connection.execute(
-                            """
-                            UPDATE runs SET reconciliation_required = 0, updated_at = ?
-                            WHERE id = ? AND reconciliation_required = 1
-                              AND reconciliation_epoch = ?
-                            """,
-                            (now, run_id, step["observed_reconciliation_epoch"]),
-                        )
-                        if cleared.rowcount == 1:
-                            append_event(
-                                connection, EventType.RECONCILIATION_CLEARED, now,
-                                {
-                                    "epoch": step["observed_reconciliation_epoch"],
-                                    "reason": "read_only_observation",
-                                },
-                                session_id=run["session_id"], run_id=run_id,
-                            )
+        return self._repository(self._execution).complete_current_step(
+            run_id,
+            status_value,
+            reason=reason,
+            progress_signature=progress_signature,
+        )
 
     def recent_progress_signatures(
         self, run_id: str, limit: int = 8
     ) -> tuple[ProgressSignature, ...]:
-        if not 1 <= limit <= 32:
-            raise ValueError("invalid signature history limit")
-        with self.lock:
-            rows = self._connection().execute(
-                """
-                SELECT progress_signature_json FROM steps
-                WHERE run_id = ? AND progress_signature_json IS NOT NULL
-                ORDER BY creation_seq DESC LIMIT ?
-                """,
-                (run_id, limit),
-            ).fetchall()
-        return tuple(
-            ProgressSignature.model_validate_json(row[0]) for row in reversed(rows)
+        return self._repository(self._execution).recent_progress_signatures(run_id, limit)
+
+    def complete_current_model_attempt(
+        self,
+        run_id: str,
+        status: str,
+        *,
+        usage: ModelUsage | None = None,
+        provider_name: str | None = None,
+        resolved_model_name: str | None = None,
+        finish_reason: str | None = None,
+        provider_response_id: str | None = None,
+        error_code: str | None = None,
+        http_status: int | None = None,
+        ttft_ms: int | None = None,
+        duration_ms: int | None = None,
+        had_progress: bool = False,
+    ) -> bool:
+        return self._repository(self._execution).complete_current_model_attempt(
+            run_id,
+            status,
+            usage=usage,
+            provider_name=provider_name,
+            resolved_model_name=resolved_model_name,
+            finish_reason=finish_reason,
+            provider_response_id=provider_response_id,
+            error_code=error_code,
+            http_status=http_status,
+            ttft_ms=ttft_ms,
+            duration_ms=duration_ms,
+            had_progress=had_progress,
         )
 
-    def retry_current_model_attempt(self, run_id: str) -> None:
-        now = _now_ms()
-        with self.lock, self._connection() as connection:
-            step = connection.execute(
-                """
-                SELECT steps.id FROM steps JOIN runs ON runs.id = steps.run_id
-                WHERE steps.run_id = ? AND steps.status = 'running'
-                  AND runs.status = 'running'
-                ORDER BY steps.creation_seq DESC LIMIT 1
-                """,
-                (run_id,),
-            ).fetchone()
-            if step is None:
-                raise InvalidRunStateError("model attempt cannot retry")
-            attempt = connection.execute(
-                """
-                SELECT ordinal FROM model_attempts
-                WHERE step_id = ? AND status = 'running'
-                ORDER BY ordinal DESC LIMIT 1
-                """,
-                (step["id"],),
-            ).fetchone()
-            if attempt is None:
-                raise InvalidRunStateError("model attempt cannot retry")
-            connection.execute(
-                """
-                UPDATE model_attempts SET status = 'failed', completed_at = ?
-                WHERE step_id = ? AND status = 'running'
-                """,
-                (now, step["id"]),
-            )
-            connection.execute(
-                """
-                INSERT INTO model_attempts (
-                    id, step_id, ordinal, status, started_at
-                ) VALUES (?, ?, ?, 'running', ?)
-                """,
-                (str(uuid.uuid4()), step["id"], attempt["ordinal"] + 1, now),
-            )
+    def start_retry_model_attempt(self, run_id: str) -> None:
+        return self._repository(self._execution).start_retry_model_attempt(run_id)
+
+    def read_model_attempts(self, run_id: str) -> list[dict[str, object]]:
+        return self._repository(self._execution).read_model_attempts(run_id)
 
     def create_assistant_item(
         self, run_id: str, model_step_index: int
     ) -> dict[str, object]:
-        return self.create_assistant_item_committed(run_id, model_step_index).value
+        return self._repository(self._execution).create_assistant_item(run_id, model_step_index)
 
     def create_assistant_item_committed(
         self, run_id: str, model_step_index: int
     ) -> CommittedMutation[dict[str, object]]:
-        return self._create_item_committed(run_id, "assistant_message", model_step_index)
+        return self._repository(self._execution).create_assistant_item_committed(
+            run_id,
+            model_step_index,
+        )
 
     def create_finalization_assistant_item(
         self, run_id: str
     ) -> dict[str, object]:
-        """Create an explicitly step-less Item while the Run is finalizing."""
-        return self.create_finalization_assistant_item_committed(run_id).value
+        return self._repository(self._execution).create_finalization_assistant_item(run_id)
 
     def create_finalization_assistant_item_committed(
         self, run_id: str
     ) -> CommittedMutation[dict[str, object]]:
-        return self._create_item_committed(run_id, "assistant_message", None)
+        return self._repository(self._execution).create_finalization_assistant_item_committed(
+            run_id,
+        )
 
     def append_item_content(self, item_id: str, delta: str) -> dict[str, object]:
-        with self.lock, self._connection() as connection:
-            updated = connection.execute(
-                """
-                UPDATE items SET content = COALESCE(content, '') || ?
-                WHERE id = ? AND status = 'in_progress'
-                """,
-                (delta, item_id),
-            )
-            if updated.rowcount != 1:
-                raise InvalidRunStateError("item is not active")
-        return self.read_item(item_id)
+        return self._repository(self._execution).append_item_content(item_id, delta)
 
     def append_item_deltas_committed(
         self,
@@ -2149,138 +445,46 @@ class SessionStore:
         deltas: tuple[str, ...],
         first_sequence: int,
     ) -> CommittedMutation[dict[str, object]]:
-        if not deltas:
-            raise ValueError("at least one delta is required")
-        with self.lock, self._connection() as connection:
-            fact = connection.execute(
-                "SELECT session_id, run_id FROM items WHERE id = ? AND status = 'in_progress'",
-                (item_id,),
-            ).fetchone()
-            if fact is None:
-                raise InvalidRunStateError("item is not active")
-            updated = connection.execute(
-                "UPDATE items SET content = COALESCE(content, '') || ? WHERE id = ? AND status = 'in_progress'",
-                ("".join(deltas), item_id),
-            )
-            if updated.rowcount != 1:
-                raise InvalidRunStateError("item is not active")
-            now = _now_ms()
-            events = tuple(
-                append_event(
-                    connection,
-                    EventType.ITEM_DELTA,
-                    now,
-                    {
-                        "item_id": item_id,
-                        "sequence": first_sequence + offset,
-                        "delta": delta,
-                    },
-                    session_id=fact["session_id"],
-                    run_id=fact["run_id"],
-                )
-                for offset, delta in enumerate(deltas)
-            )
-        item = self.read_item(item_id)
-        return CommittedMutation(item, events)
+        return self._repository(self._execution).append_item_deltas_committed(
+            item_id,
+            deltas,
+            first_sequence,
+        )
 
     def complete_assistant_item(self, item_id: str) -> dict[str, object]:
-        return self.complete_assistant_item_committed(item_id).value
+        return self._repository(self._execution).complete_assistant_item(item_id)
 
     def complete_assistant_item_committed(
         self, item_id: str
     ) -> CommittedMutation[dict[str, object]]:
-        return self._complete_item_committed(item_id, "completed")
+        return self._repository(self._execution).complete_assistant_item_committed(item_id)
 
     def mark_assistant_incomplete(self, item_id: str) -> dict[str, object]:
-        return self.mark_assistant_incomplete_committed(item_id).value
+        return self._repository(self._execution).mark_assistant_incomplete(item_id)
 
     def mark_assistant_incomplete_committed(
         self, item_id: str
     ) -> CommittedMutation[dict[str, object]]:
-        mutation = self.mark_assistant_incomplete_if_active_committed(item_id)
-        if mutation is None:
-            raise InvalidRunStateError("assistant item is not active")
-        return mutation
+        return self._repository(self._execution).mark_assistant_incomplete_committed(item_id)
 
     def mark_assistant_incomplete_if_active_committed(
         self, item_id: str
     ) -> CommittedMutation[dict[str, object]] | None:
-        with self.lock, self._connection() as connection:
-            now = _now_ms()
-            fact = connection.execute(
-                "SELECT session_id, run_id FROM items WHERE id = ?",
-                (item_id,),
-            ).fetchone()
-            if fact is None:
-                raise ResourceNotFoundError("item not found")
-            updated = connection.execute(
-                """
-                UPDATE items
-                SET status = 'failed', incomplete = 1, completed_at = ?
-                WHERE id = ? AND kind = 'assistant_message'
-                  AND status = 'in_progress'
-                """,
-                (now, item_id),
-            )
-            if updated.rowcount != 1:
-                return None
-            event = append_event(
-                connection,
-                EventType.ITEM_COMPLETED,
-                now,
-                {"item_id": item_id},
-                session_id=fact["session_id"],
-                run_id=fact["run_id"],
-            )
-        return CommittedMutation(self.read_item(item_id), (event,))
+        return self._repository(self._execution).mark_assistant_incomplete_if_active_committed(
+            item_id,
+        )
 
     def complete_assistant_and_run(
         self, item_id: str, run_id: str
     ) -> tuple[dict[str, object], dict[str, object]]:
-        return self.complete_assistant_and_run_committed(item_id, run_id).value
+        return self._repository(self._execution).complete_assistant_and_run(item_id, run_id)
 
     def complete_assistant_and_run_committed(
         self, item_id: str, run_id: str
     ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
-        with self.lock, self._connection() as connection:
-            now = _now_ms()
-            item_update = connection.execute(
-                """
-                UPDATE items SET status = 'completed', completed_at = ?
-                WHERE id = ? AND run_id = ? AND status = 'in_progress'
-                """,
-                (now, item_id, run_id),
-            )
-            if item_update.rowcount != 1:
-                raise InvalidRunStateError("assistant item is not active")
-            segment_events = transition_segments(
-                connection,
-                run_id,
-                frozenset({SegmentStatus.RUNNING}),
-                SegmentStatus.COMPLETED,
-                now,
-                "run_succeeded",
-            )
-            item_event = append_event(
-                connection,
-                EventType.ITEM_COMPLETED,
-                now,
-                {"item_id": item_id},
-                session_id=connection.execute(
-                    "SELECT session_id FROM runs WHERE id = ?", (run_id,)
-                ).fetchone()["session_id"],
-                run_id=run_id,
-            )
-            run, run_event = transition_run(
-                connection,
-                run_id,
-                frozenset({RunStatus.RUNNING}),
-                RunStatus.SUCCEEDED,
-                None,
-            )
-        item = self.read_item(item_id)
-        return CommittedMutation(
-            (item, run), (*segment_events, item_event, run_event)
+        return self._repository(self._execution).complete_assistant_and_run_committed(
+            item_id,
+            run_id,
         )
 
     def create_tool_item(
@@ -2295,7 +499,7 @@ class SessionStore:
         provenance: dict[str, object] | None = None,
         tool_set_hash: str | None = None,
     ) -> dict[str, object]:
-        return self.create_tool_item_committed(
+        return self._repository(self._execution).create_tool_item(
             run_id,
             model_step_index,
             batch_order,
@@ -2304,7 +508,7 @@ class SessionStore:
             arguments_json,
             provenance=provenance,
             tool_set_hash=tool_set_hash,
-        ).value
+        )
 
     def create_tool_item_committed(
         self,
@@ -2318,83 +522,15 @@ class SessionStore:
         provenance: dict[str, object] | None = None,
         tool_set_hash: str | None = None,
     ) -> CommittedMutation[dict[str, object]]:
-        provenance_json = (
-            _bounded_canonical_json(provenance, code="tool_provenance_invalid")
-            if provenance is not None else None
-        )
-        if tool_set_hash is not None and len(tool_set_hash) != 64:
-            raise ValueError("tool_set_hash_invalid")
-        item_id = str(uuid.uuid4())
-        tool_call_id = str(uuid.uuid4())
-        now = _now_ms()
-        item_kind = (
-            "file_change"
-            if tool_name in {"write_file", "apply_patch"}
-            else "command_execution"
-            if tool_name == "run_shell"
-            else "tool_call"
-        )
-        with self.lock, self._connection() as connection:
-            run = connection.execute(
-                "SELECT session_id FROM runs WHERE id = ? AND status = 'running'",
-                (run_id,),
-            ).fetchone()
-            if run is None:
-                raise InvalidRunStateError("run is not active")
-            ordinal = self._next_ordinal(connection, run_id)
-            connection.execute(
-                """
-                INSERT INTO items (
-                    id, session_id, run_id, ordinal, model_step_index,
-                    kind, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'in_progress', ?)
-                """,
-                (
-                    item_id,
-                    run["session_id"],
-                    run_id,
-                    ordinal,
-                    model_step_index,
-                    item_kind,
-                    now,
-                ),
-            )
-            connection.execute(
-                """
-                INSERT INTO tool_calls (
-                    id, item_id, model_step_index, batch_order, provider_call_id,
-                    tool_name, status, arguments_json, provenance_json,
-                    tool_set_hash, started_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)
-                """,
-                (
-                    tool_call_id,
-                    item_id,
-                    model_step_index,
-                    batch_order,
-                    provider_call_id,
-                    tool_name,
-                    arguments_json,
-                    provenance_json,
-                    tool_set_hash,
-                    now,
-                ),
-            )
-            tool_event = append_event(
-                connection, EventType.TOOL_CALL_STARTED, now,
-                {"tool_call_id": tool_call_id},
-                session_id=run["session_id"], run_id=run_id,
-            )
-            item_event = append_event(
-                connection,
-                EventType.ITEM_STARTED,
-                now,
-                {"item_id": item_id},
-                session_id=run["session_id"],
-                run_id=run_id,
-            )
-        return CommittedMutation(
-            self.read_item(item_id), (tool_event, item_event)
+        return self._repository(self._execution).create_tool_item_committed(
+            run_id,
+            model_step_index,
+            batch_order,
+            provider_call_id,
+            tool_name,
+            arguments_json,
+            provenance=provenance,
+            tool_set_hash=tool_set_hash,
         )
 
     def complete_tool_item(
@@ -2407,14 +543,14 @@ class SessionStore:
         workspace_changed: bool = False,
         diff_hash: str | None = None,
     ) -> dict[str, object]:
-        return self.complete_tool_item_committed(
+        return self._repository(self._execution).complete_tool_item(
             item_id,
             result_json,
             item_status=item_status,
             tool_status=tool_status,
             workspace_changed=workspace_changed,
             diff_hash=diff_hash,
-        ).value
+        )
 
     def complete_tool_item_committed(
         self,
@@ -2426,115 +562,14 @@ class SessionStore:
         workspace_changed: bool = False,
         diff_hash: str | None = None,
     ) -> CommittedMutation[dict[str, object]]:
-        if item_status not in {"completed", "failed", "declined", "canceled"}:
-            raise ValueError("invalid item status")
-        if tool_status not in {"completed", "failed", "canceled"}:
-            raise ValueError("invalid tool status")
-        if diff_hash is not None and (
-            len(diff_hash) != 64 or any(value not in "0123456789abcdef" for value in diff_hash)
-        ):
-            raise ValueError("invalid diff hash")
-        now = _now_ms()
-        events: list[dict[str, object]] = []
-        with self.lock, self._connection() as connection:
-            fact = connection.execute(
-                """
-                SELECT tool_calls.id AS tool_call_id, tool_calls.tool_name,
-                       tool_calls.status AS tool_status,
-                       items.run_id, items.session_id
-                FROM tool_calls JOIN items ON items.id = tool_calls.item_id
-                WHERE items.id = ?
-                """,
-                (item_id,),
-            ).fetchone()
-            if fact is None:
-                raise InvalidRunStateError("tool item is unavailable")
-            ensure_transition(
-                ToolCallStatus(fact["tool_status"]), ToolCallStatus(tool_status)
-            )
-            tool_update = connection.execute(
-                """
-                UPDATE tool_calls
-                SET status = ?, result_json = ?, completed_at = ?
-                WHERE item_id = ? AND status = 'running'
-                """,
-                (tool_status, result_json, now, item_id),
-            )
-            item_update = connection.execute(
-                """
-                UPDATE items SET status = ?, completed_at = ?
-                WHERE id = ? AND status = 'in_progress'
-                """,
-                (item_status, now, item_id),
-            )
-            if tool_update.rowcount != 1 or item_update.rowcount != 1:
-                raise InvalidRunStateError("tool item is not active")
-            if workspace_changed:
-                connection.execute(
-                    """
-                    UPDATE runs SET workspace_version = workspace_version + 1,
-                                    last_diff_hash = ?, updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (diff_hash, now, fact["run_id"]),
-                )
-            try:
-                result = json.loads(result_json)
-            except json.JSONDecodeError:
-                result = {}
-            reconciliation_codes = {
-                "file_commit_uncertain", "outcome_unknown", "nonzero_exit",
-                "shell_exit_nonzero", "timeout", "tool_timeout", "interrupted",
-                "background_process", "output_capture_failed",
-                "workspace_change_manifest_incomplete", "shell_resource_limit_exceeded",
-            }
-            reconciliation_required = (
-                result.get("reconciliationRequired") is True
-                or result.get("code") in reconciliation_codes
-            )
-            intent_status = "uncertain" if reconciliation_required else "completed"
-            connection.execute(
-                """
-                UPDATE durable_intents SET status = ?, reconciled_at = ?
-                WHERE tool_call_id = ? AND status = 'running'
-                """,
-                (intent_status, now, fact["tool_call_id"]),
-            )
-            events.append(append_event(
-                connection, EventType.TOOL_CALL_COMPLETED, now,
-                {"tool_call_id": fact["tool_call_id"], "code": result.get("code")},
-                session_id=fact["session_id"], run_id=fact["run_id"],
-            ))
-            events.append(append_event(
-                connection,
-                EventType.ITEM_COMPLETED,
-                now,
-                {"item_id": item_id},
-                session_id=fact["session_id"],
-                run_id=fact["run_id"],
-            ))
-            if reconciliation_required:
-                connection.execute(
-                    """
-                    UPDATE runs
-                    SET reconciliation_required = 1,
-                        reconciliation_epoch = reconciliation_epoch + 1,
-                        side_effects_may_exist = 1,
-                        updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (now, fact["run_id"]),
-                )
-                epoch = connection.execute(
-                    "SELECT reconciliation_epoch FROM runs WHERE id = ?",
-                    (fact["run_id"],),
-                ).fetchone()[0]
-                events.append(append_event(
-                    connection, EventType.RECONCILIATION_REQUIRED, now,
-                    {"epoch": epoch, "reason": str(result.get("code", "outcome_unknown"))},
-                    session_id=fact["session_id"], run_id=fact["run_id"],
-                ))
-        return CommittedMutation(self.read_item(item_id), tuple(events))
+        return self._repository(self._execution).complete_tool_item_committed(
+            item_id,
+            result_json,
+            item_status=item_status,
+            tool_status=tool_status,
+            workspace_changed=workspace_changed,
+            diff_hash=diff_hash,
+        )
 
     def begin_approval(
         self,
@@ -2542,7 +577,7 @@ class SessionStore:
         diff: str,
         base_sha256: str | None,
     ) -> dict[str, object]:
-        return self.begin_approval_committed(item_id, diff, base_sha256).value
+        return self._repository(self._execution).begin_approval(item_id, diff, base_sha256)
 
     def begin_approval_committed(
         self,
@@ -2550,64 +585,10 @@ class SessionStore:
         diff: str,
         base_sha256: str | None,
     ) -> CommittedMutation[dict[str, object]]:
-        now = _now_ms()
-        approval_id = str(uuid.uuid4())
-        with self.lock, self._connection() as connection:
-            row = connection.execute(
-                """
-                SELECT items.run_id, tool_calls.id AS tool_call_id,
-                       tool_calls.arguments_json
-                FROM items JOIN tool_calls ON tool_calls.item_id = items.id
-                WHERE items.id = ? AND items.status = 'in_progress'
-                """,
-                (item_id,),
-            ).fetchone()
-            if row is None:
-                raise InvalidRunStateError("tool item is not active")
-            tool_update = connection.execute(
-                """
-                UPDATE tool_calls
-                SET approval_status = 'pending', approval_diff = ?, base_sha256 = ?
-                WHERE item_id = ? AND status = 'running'
-                """,
-                (diff, base_sha256, item_id),
-            )
-            if tool_update.rowcount != 1:
-                raise InvalidRunStateError("approval cannot start")
-            connection.execute(
-                """
-                INSERT INTO approvals (
-                    id, tool_call_id, run_id, item_id, status,
-                    request_hash, created_at
-                ) VALUES (?, ?, ?, ?, 'pending', ?, ?)
-                """,
-                (
-                    approval_id, row["tool_call_id"], row["run_id"], item_id,
-                    _canonical_hash({
-                        "argumentsJson": row["arguments_json"],
-                        "diff": diff,
-                        "baseSha256": base_sha256,
-                    }),
-                    now,
-                ),
-            )
-            _run, run_event = transition_run(
-                connection,
-                str(row["run_id"]),
-                frozenset({RunStatus.RUNNING}),
-                RunStatus.WAITING_APPROVAL,
-                "approval_required",
-            )
-            approval_event = append_event(
-                connection, EventType.APPROVAL_STATUS_CHANGED, now,
-                {
-                    "entity_id": approval_id, "previous": "created",
-                    "current": "pending",
-                },
-                run_id=row["run_id"],
-            )
-        return CommittedMutation(
-            self.read_item(item_id), (run_event, approval_event)
+        return self._repository(self._execution).begin_approval_committed(
+            item_id,
+            diff,
+            base_sha256,
         )
 
     def resolve_approval(
@@ -2618,9 +599,12 @@ class SessionStore:
         *,
         requeue: bool = False,
     ) -> dict[str, object]:
-        return self.resolve_approval_committed(
-            item_id, decision, feedback, requeue=requeue
-        ).value
+        return self._repository(self._execution).resolve_approval(
+            item_id,
+            decision,
+            feedback,
+            requeue=requeue,
+        )
 
     def resolve_approval_committed(
         self,
@@ -2630,134 +614,24 @@ class SessionStore:
         *,
         requeue: bool = False,
     ) -> CommittedMutation[dict[str, object]]:
-        if decision not in {"approve", "reject"}:
-            raise ValueError("invalid approval decision")
-        now = _now_ms()
-        with self.lock, self._connection() as connection:
-            row = connection.execute(
-                "SELECT run_id FROM items WHERE id = ? AND status = 'in_progress'",
-                (item_id,),
-            ).fetchone()
-            if row is None:
-                raise InvalidRunStateError("tool item is not active")
-            tool_update = connection.execute(
-                """
-                UPDATE tool_calls
-                SET approval_status = 'resolved', approval_decision = ?,
-                    approval_feedback = ?
-                WHERE item_id = ? AND status = 'running'
-                  AND approval_status = 'pending'
-                """,
-                (decision, feedback, item_id),
-            )
-            approval = connection.execute(
-                "SELECT id FROM approvals WHERE item_id = ? AND status = 'pending'",
-                (item_id,),
-            ).fetchone()
-            if approval is None:
-                raise InvalidRunStateError("approval is no longer pending")
-            next_status = "approved" if decision == "approve" else "rejected"
-            ensure_transition(
-                ApprovalStatus.PENDING,
-                ApprovalStatus(next_status),
-            )
-            approval_update = connection.execute(
-                """
-                UPDATE approvals
-                SET status = ?, decision = ?, feedback = ?, decided_at = ?
-                WHERE id = ? AND status = 'pending'
-                """,
-                (next_status, decision, feedback, now, approval["id"]),
-            )
-            run_state = connection.execute(
-                "SELECT consecutive_rejects FROM runs WHERE id = ?",
-                (row["run_id"],),
-            ).fetchone()
-            rejects = run_state["consecutive_rejects"] + (1 if decision == "reject" else 0)
-            run_status = (
-                "waiting_user_input" if rejects >= 2
-                else "queued" if requeue else "running"
-            )
-            run_update = connection.execute(
-                """
-                UPDATE runs
-                SET consecutive_rejects = ?
-                WHERE id = ? AND status = 'waiting_approval'
-                """,
-                (rejects, row["run_id"]),
-            )
-            if (
-                tool_update.rowcount != 1
-                or approval_update.rowcount != 1
-                or run_update.rowcount != 1
-            ):
-                raise InvalidRunStateError("approval is no longer pending")
-            target = RunStatus(run_status)
-            reason = (
-                "repeated_approval_rejection"
-                if target is RunStatus.WAITING_USER_INPUT
-                else "approval_resolved"
-            )
-            _run, run_event = transition_run(
-                connection,
-                str(row["run_id"]),
-                frozenset({RunStatus.WAITING_APPROVAL}),
-                target,
-                reason,
-            )
-            approval_event = append_event(
-                connection, EventType.APPROVAL_STATUS_CHANGED, now,
-                {
-                    "entity_id": approval["id"], "previous": "pending",
-                    "current": next_status,
-                },
-                run_id=row["run_id"],
-            )
-        return CommittedMutation(
-            self.read_item(item_id), (approval_event, run_event)
+        return self._repository(self._execution).resolve_approval_committed(
+            item_id,
+            decision,
+            feedback,
+            requeue=requeue,
         )
 
     def clear_rejects(self, run_id: str) -> None:
-        with self.lock, self._connection() as connection:
-            connection.execute(
-                "UPDATE runs SET consecutive_rejects = 0 WHERE id = ?",
-                (run_id,),
-            )
+        return self._repository(self._runs).clear_rejects(run_id)
 
     def record_sensitive_tool_input(self, run_id: str) -> int:
-        with self.lock, self._connection() as connection:
-            connection.execute(
-                """
-                UPDATE runs SET consecutive_sensitive_tool_inputs =
-                    consecutive_sensitive_tool_inputs + 1
-                WHERE id = ? AND status = 'running'
-                """,
-                (run_id,),
-            )
-            row = connection.execute(
-                "SELECT consecutive_sensitive_tool_inputs FROM runs WHERE id = ?",
-                (run_id,),
-            ).fetchone()
-        if row is None:
-            raise ResourceNotFoundError("run not found")
-        return int(row["consecutive_sensitive_tool_inputs"])
+        return self._repository(self._runs).record_sensitive_tool_input(run_id)
 
     def clear_sensitive_tool_inputs(self, run_id: str) -> None:
-        with self.lock, self._connection() as connection:
-            connection.execute(
-                "UPDATE runs SET consecutive_sensitive_tool_inputs = 0 WHERE id = ?",
-                (run_id,),
-            )
+        return self._repository(self._runs).clear_sensitive_tool_inputs(run_id)
 
     def side_effects_blocked(self, run_id: str) -> bool:
-        with self.lock:
-            row = self._connection().execute(
-                "SELECT reconciliation_required FROM runs WHERE id = ?",
-                (run_id,),
-            ).fetchone()
-        if row is None:
-            raise ResourceNotFoundError("run not found")
-        return bool(row["reconciliation_required"])
+        return self._repository(self._runs).side_effects_blocked(run_id)
 
     def begin_durable_intent(
         self,
@@ -2765,168 +639,45 @@ class SessionStore:
         *,
         preconditions: dict[str, object],
     ) -> str:
-        intent_id = str(uuid.uuid4())
-        nonce = str(uuid.uuid4())
-        now = _now_ms()
-        with self.lock, self._connection() as connection:
-            row = connection.execute(
-                """
-                SELECT items.run_id, items.session_id, tool_calls.id AS tool_call_id,
-                       tool_calls.arguments_json
-                FROM items JOIN tool_calls ON tool_calls.item_id = items.id
-                JOIN approvals ON approvals.item_id = items.id
-                WHERE items.id = ? AND items.status = 'in_progress'
-                  AND tool_calls.status = 'running'
-                  AND approvals.status = 'approved'
-                """,
-                (item_id,),
-            ).fetchone()
-            if row is None:
-                raise InvalidRunStateError("approved intent is unavailable")
-            connection.execute(
-                """
-                INSERT INTO durable_intents (
-                    id, run_id, tool_call_id, execution_nonce,
-                    arguments_hash, preconditions_json, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?)
-                """,
-                (
-                    intent_id, row["run_id"], row["tool_call_id"], nonce,
-                    hashlib.sha256(row["arguments_json"].encode("utf-8")).hexdigest(),
-                    json.dumps(preconditions, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
-                    now,
-                ),
-            )
-            append_event(
-                connection, EventType.TOOL_CALL_STARTED, now,
-                {"tool_call_id": row["tool_call_id"]},
-                session_id=row["session_id"], run_id=row["run_id"],
-            )
-        return intent_id
+        return self._repository(self._execution).begin_durable_intent(
+            item_id,
+            preconditions=preconditions,
+        )
 
     def has_read_evidence(
         self, run_id: str, path: str, sha256: str
     ) -> bool:
-        with self.lock:
-            rows = self._connection().execute(
-                """
-                SELECT tool_calls.arguments_json, tool_calls.result_json
-                FROM tool_calls
-                JOIN items ON items.id = tool_calls.item_id
-                WHERE items.run_id = ? AND items.status = 'completed'
-                  AND tool_calls.tool_name = 'read_file'
-                  AND tool_calls.status = 'completed'
-                ORDER BY tool_calls.creation_seq DESC
-                """,
-                (run_id,),
-            ).fetchall()
-        for row in rows:
-            try:
-                arguments = json.loads(row["arguments_json"])
-                result = json.loads(row["result_json"])
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if (
-                arguments == {"path": path}
-                and result.get("outcome") == "success"
-                and result.get("data", {}).get("sha256") == sha256
-            ):
-                return True
-        return False
+        return self._repository(self._execution).has_read_evidence(run_id, path, sha256)
 
     def record_protocol_error(self, run_id: str) -> int:
-        with self.lock, self._connection() as connection:
-            updated = connection.execute(
-                """
-                UPDATE runs
-                SET consecutive_protocol_errors = consecutive_protocol_errors + 1,
-                    updated_at = ?
-                WHERE id = ? AND status = 'running'
-                """,
-                (_now_ms(), run_id),
-            )
-            if updated.rowcount != 1:
-                raise InvalidRunStateError("run is not active")
-            row = connection.execute(
-                "SELECT consecutive_protocol_errors FROM runs WHERE id = ?", (run_id,)
-            ).fetchone()
-        return row["consecutive_protocol_errors"]
+        return self._repository(self._runs).record_protocol_error(run_id)
 
     def clear_protocol_errors(self, run_id: str) -> None:
-        with self.lock, self._connection() as connection:
-            connection.execute(
-                """
-                UPDATE runs SET consecutive_protocol_errors = 0, updated_at = ?
-                WHERE id = ? AND status = 'running'
-                """,
-                (_now_ms(), run_id),
-            )
+        return self._repository(self._runs).clear_protocol_errors(run_id)
 
     def pause_run(self, run_id: str, reason: str) -> dict[str, object]:
-        return self.pause_run_committed(run_id, reason).value
+        return self._repository(self._runs).pause_run(run_id, reason)
 
     def pause_run_committed(
         self, run_id: str, reason: str
     ) -> CommittedMutation[dict[str, object]]:
-        with self.lock, self._connection() as connection:
-            now = _now_ms()
-            segment_events = transition_segments(
-                connection,
-                run_id,
-                frozenset({SegmentStatus.RUNNING}),
-                SegmentStatus.WAITING_USER_INPUT,
-                now,
-                reason,
-            )
-            run, event = transition_run(
-                connection,
-                run_id,
-                frozenset({RunStatus.RUNNING}),
-                RunStatus.WAITING_USER_INPUT,
-                reason,
-            )
-        return CommittedMutation(run, (*segment_events, event))
+        return self._repository(self._runs).pause_run_committed(run_id, reason)
 
     def begin_finalization(self, run_id: str) -> dict[str, object]:
-        return self.begin_finalization_committed(run_id).value
+        return self._repository(self._runs).begin_finalization(run_id)
 
     def begin_finalization_committed(
         self, run_id: str
     ) -> CommittedMutation[dict[str, object]]:
-        with self.lock, self._connection() as connection:
-            run, event = transition_run(
-                connection,
-                run_id,
-                frozenset({RunStatus.RUNNING}),
-                RunStatus.FINALIZING,
-                "run_limit",
-            )
-        return CommittedMutation(run, (event,))
+        return self._repository(self._runs).begin_finalization_committed(run_id)
 
     def stop_run(self, run_id: str, reason: str) -> dict[str, object]:
-        return self.stop_run_committed(run_id, reason).value
+        return self._repository(self._runs).stop_run(run_id, reason)
 
     def stop_run_committed(
         self, run_id: str, reason: str
     ) -> CommittedMutation[dict[str, object]]:
-        with self.lock, self._connection() as connection:
-            now = _now_ms()
-            segment_events = transition_segments(
-                connection,
-                run_id,
-                frozenset({SegmentStatus.RUNNING}),
-                SegmentStatus.COMPLETED,
-                now,
-                "run_stopped",
-            )
-            run, event = transition_run(
-                connection,
-                run_id,
-                frozenset({RunStatus.FINALIZING}),
-                RunStatus.STOPPED,
-                reason,
-            )
-        return CommittedMutation(run, (*segment_events, event))
+        return self._repository(self._runs).stop_run_committed(run_id, reason)
 
     def complete_finalization_and_stop_committed(
         self,
@@ -2936,763 +687,81 @@ class SessionStore:
     ) -> CommittedMutation[
         tuple[dict[str, object] | None, dict[str, object]]
     ]:
-        with self.lock, self._connection() as connection:
-            run_row = connection.execute(
-                "SELECT session_id, status FROM runs WHERE id = ?", (run_id,)
-            ).fetchone()
-            if run_row is None:
-                raise ResourceNotFoundError("run not found")
-            if run_row["status"] != RunStatus.FINALIZING.value:
-                raise InvalidRunStateError("run status changed")
-            item: dict[str, object] | None = None
-            item_event: dict[str, object] | None = None
-            now = _now_ms()
-            if item_id is not None:
-                item_row = connection.execute(
-                    """
-                    SELECT * FROM items
-                    WHERE id = ? AND run_id = ? AND kind = 'assistant_message'
-                      AND model_step_index IS NULL AND status = 'in_progress'
-                    """,
-                    (item_id, run_id),
-                ).fetchone()
-                if item_row is None:
-                    raise InvalidRunStateError("finalization item is not active")
-                updated = connection.execute(
-                    """
-                    UPDATE items SET status = 'completed', completed_at = ?
-                    WHERE id = ? AND run_id = ? AND status = 'in_progress'
-                    """,
-                    (now, item_id, run_id),
-                )
-                if updated.rowcount != 1:
-                    raise InvalidRunStateError("finalization item is not active")
-                item_event = append_event(
-                    connection,
-                    EventType.ITEM_COMPLETED,
-                    now,
-                    {"item_id": item_id},
-                    session_id=run_row["session_id"],
-                    run_id=run_id,
-                )
-                item = _item_from_row(
-                    connection.execute(
-                        "SELECT * FROM items WHERE id = ?", (item_id,)
-                    ).fetchone(),
-                    None,
-                )
-            segment_events = transition_segments(
-                connection,
-                run_id,
-                frozenset({SegmentStatus.RUNNING}),
-                SegmentStatus.COMPLETED,
-                now,
-                "run_stopped",
-            )
-            run, run_event = transition_run(
-                connection,
-                run_id,
-                frozenset({RunStatus.FINALIZING}),
-                RunStatus.STOPPED,
-                stop_reason,
-            )
-        events = (
-            *((item_event,) if item_event is not None else ()),
-            *segment_events,
-            run_event,
+        return self._repository(self._runs).complete_finalization_and_stop_committed(
+            item_id,
+            run_id,
+            stop_reason,
         )
-        return CommittedMutation((item, run), events)
 
     def fail_run(self, run_id: str, error_code: str) -> dict[str, object]:
-        return self.fail_run_committed(run_id, error_code).value
+        return self._repository(self._runs).fail_run(run_id, error_code)
 
     def fail_run_committed(
         self, run_id: str, error_code: str
     ) -> CommittedMutation[dict[str, object]]:
-        with self.lock, self._connection() as connection:
-            now = _now_ms()
-            events = list(settle_run_children(
-                connection, run_id, RunStatus.FAILED, now
-            ))
-            run, event = transition_run(
-                connection,
-                run_id,
-                frozenset({
-                    RunStatus.RUNNING,
-                    RunStatus.WAITING_APPROVAL,
-                    RunStatus.FINALIZING,
-                }),
-                RunStatus.FAILED,
-                error_code,
-            )
-            events.append(event)
-        return CommittedMutation(run, tuple(events))
+        return self._repository(self._runs).fail_run_committed(run_id, error_code)
 
     def cancel_run(
         self, run_id: str, *, operation_id: str | None = None
     ) -> dict[str, object]:
-        def write(connection: sqlite3.Connection) -> dict[str, object]:
-            return self._cancel_run_transaction(connection, run_id).value
-
-        return self._write(
-            write,
-            operation_id=operation_id,
-            operation_scope="run/cancel" if operation_id is not None else None,
-            operation_request={"runId": run_id} if operation_id is not None else None,
-        )
+        return self._repository(self._runs).cancel_run(run_id, operation_id=operation_id)
 
     def cancel_run_committed(
         self, run_id: str
     ) -> CommittedMutation[dict[str, object]]:
-        with self.lock, self._connection() as connection:
-            return self._cancel_run_transaction(connection, run_id)
+        return self._repository(self._runs).cancel_run_committed(run_id)
 
     def cancel_waiting_approval_committed(
         self, run_id: str
     ) -> CommittedMutation[dict[str, object]]:
-        with self.lock, self._connection() as connection:
-            return self._cancel_run_transaction(
-                connection,
-                run_id,
-                expected=frozenset({RunStatus.WAITING_APPROVAL}),
-            )
-
-    def _cancel_run_transaction(
-        self,
-        connection: sqlite3.Connection,
-        run_id: str,
-        *,
-        expected: frozenset[RunStatus] | None = None,
-    ) -> CommittedMutation[dict[str, object]]:
-        row = connection.execute(
-            "SELECT status FROM runs WHERE id = ?", (run_id,)
-        ).fetchone()
-        if row is None:
-            raise ResourceNotFoundError("run not found")
-        if row["status"] == RunStatus.CANCELED.value:
-            run = _run_from_row(connection.execute(
-                "SELECT * FROM runs WHERE id = ?", (run_id,)
-            ).fetchone())
-            return CommittedMutation(run, ())
-        expected = expected or frozenset({
-            RunStatus.QUEUED,
-            RunStatus.RUNNING,
-            RunStatus.WAITING_APPROVAL,
-            RunStatus.WAITING_USER_INPUT,
-            RunStatus.FINALIZING,
-        })
-        current = RunStatus(row["status"])
-        if current not in expected:
-            raise InvalidRunStateError("run cannot be canceled")
-        now = _now_ms()
-        events = list(settle_run_children(
-            connection, run_id, RunStatus.CANCELED, now
-        ))
-        run, event = transition_run(
-            connection, run_id, expected, RunStatus.CANCELED, "user_cancel"
-        )
-        events.append(event)
-        return CommittedMutation(run, tuple(events))
+        return self._repository(self._runs).cancel_waiting_approval_committed(run_id)
 
     def interrupt_run(self, run_id: str) -> dict[str, object]:
-        return self.interrupt_run_committed(run_id).value
+        return self._repository(self._runs).interrupt_run(run_id)
 
     def interrupt_run_committed(
         self, run_id: str
     ) -> CommittedMutation[dict[str, object]]:
-        with self.lock, self._connection() as connection:
-            row = connection.execute(
-                "SELECT status FROM runs WHERE id = ?", (run_id,)
-            ).fetchone()
-            if row is None:
-                raise ResourceNotFoundError("run not found")
-            if row["status"] == "interrupted":
-                return CommittedMutation(self.read_run(run_id), ())
-            if row["status"] not in {"running", "waiting_approval"}:
-                raise InvalidRunStateError("run cannot be interrupted")
-            now = _now_ms()
-            events = list(settle_run_children(
-                connection, run_id, RunStatus.INTERRUPTED, now
-            ))
-            run, event = transition_run(
-                connection,
-                run_id,
-                frozenset({RunStatus.RUNNING, RunStatus.WAITING_APPROVAL}),
-                RunStatus.INTERRUPTED,
-                "runtime_interrupted",
-            )
-            events.append(event)
-        return CommittedMutation(run, tuple(events))
+        return self._repository(self._runs).interrupt_run_committed(run_id)
 
     def canceled_items_for_run(self, run_id: str) -> list[dict[str, object]]:
-        with self.lock:
-            connection = self._connection()
-            rows = connection.execute(
-                """
-                SELECT * FROM items
-                WHERE run_id = ? AND status = 'canceled'
-                ORDER BY ordinal ASC
-                """,
-                (run_id,),
-            ).fetchall()
-            tool_rows = connection.execute(
-                """
-                SELECT tool_calls.* FROM tool_calls
-                JOIN items ON items.id = tool_calls.item_id
-                WHERE items.run_id = ? AND items.status = 'canceled'
-                """,
-                (run_id,),
-            ).fetchall()
-        tools_by_item = {row["item_id"]: row for row in tool_rows}
-        return [
-            _item_from_row(row, tools_by_item.get(row["id"])) for row in rows
-        ]
+        return self._repository(self._runs).canceled_items_for_run(run_id)
 
     def context_projection_facts(self, run_id: str) -> ContextFacts:
-        return self._bounded_context_facts(run_id, newest=True)
+        return self._repository(self._context).context_projection_facts(run_id)
 
     def compaction_candidate_facts(self, run_id: str) -> ContextFacts:
-        return self._bounded_context_facts(run_id, newest=False)
-
-    def _bounded_context_facts(
-        self, run_id: str, *, newest: bool
-    ) -> ContextFacts:
-        with self.lock:
-            connection = self._connection()
-            run = connection.execute(
-                "SELECT * FROM runs WHERE id = ?", (run_id,)
-            ).fetchone()
-            if run is None:
-                raise ResourceNotFoundError("run not found")
-            summary_row = connection.execute(
-                """
-                SELECT * FROM compact_summaries
-                WHERE run_id = ? ORDER BY creation_seq DESC LIMIT 1
-                """,
-                (run_id,),
-            ).fetchone()
-            source_ids = set(
-                _compact_summary_from_row(summary_row).source_item_ids
-                if summary_row is not None else ()
-            )
-            goal_row = connection.execute(
-                """
-                SELECT * FROM items
-                WHERE run_id = ? AND kind = 'user_message'
-                ORDER BY creation_seq ASC LIMIT 1
-                """,
-                (run_id,),
-            ).fetchone()
-            latest_user_row = connection.execute(
-                """
-                SELECT * FROM items
-                WHERE session_id = ? AND kind = 'user_message'
-                  AND status = 'completed'
-                ORDER BY creation_seq DESC LIMIT 1
-                """,
-                (run["session_id"],),
-            ).fetchone()
-            recent_steps = connection.execute(
-                """
-                SELECT DISTINCT model_step_index FROM items
-                WHERE run_id = ? AND model_step_index IS NOT NULL
-                ORDER BY model_step_index DESC LIMIT ?
-                """,
-                (run_id, RECENT_CONTEXT_STEPS),
-            ).fetchall()
-            recent_rows: list[sqlite3.Row] = []
-            if recent_steps:
-                placeholders = ",".join("?" for _ in recent_steps)
-                recent_rows = connection.execute(
-                    f"""
-                    SELECT * FROM items
-                    WHERE run_id = ? AND model_step_index IN ({placeholders})
-                      AND status IN ('completed', 'failed', 'declined')
-                      AND NOT (kind = 'assistant_message' AND incomplete = 1)
-                    """,
-                    (run_id, *(row[0] for row in recent_steps)),
-                ).fetchall()
-            reconciliation_rows: list[sqlite3.Row] = []
-            if bool(run["reconciliation_required"]):
-                reconciliation_rows = connection.execute(
-                    """
-                    SELECT items.* FROM items
-                    JOIN tool_calls ON tool_calls.item_id = items.id
-                    WHERE items.run_id = ?
-                      AND json_extract(tool_calls.result_json, '$.reconciliationRequired') = 1
-                    """,
-                    (run_id,),
-                ).fetchall()
-            protected_rows = {
-                str(row["id"]): row
-                for row in (
-                    goal_row,
-                    latest_user_row,
-                    *recent_rows,
-                    *reconciliation_rows,
-                )
-                if row is not None
-            }
-            protected_ids = set(protected_rows)
-            excluded = source_ids | protected_ids
-            excluded_sql = ""
-            excluded_values: tuple[object, ...] = ()
-            if excluded:
-                placeholders = ",".join("?" for _ in excluded)
-                excluded_sql = f" AND items.id NOT IN ({placeholders})"
-                excluded_values = tuple(excluded)
-            base = f"""
-                FROM items LEFT JOIN tool_calls ON tool_calls.item_id = items.id
-                WHERE items.session_id = ?
-                  AND items.status IN ('completed', 'failed', 'declined')
-                  AND NOT (items.kind = 'assistant_message' AND items.incomplete = 1)
-                  {excluded_sql}
-            """
-            size_expression = """
-                length(CAST(COALESCE(items.content, '') AS BLOB))
-                + length(CAST(COALESCE(tool_calls.arguments_json, '') AS BLOB))
-                + length(CAST(COALESCE(tool_calls.result_json, '') AS BLOB)) + 256
-            """
-            aggregate = connection.execute(
-                f"SELECT COUNT(*), COALESCE(SUM({size_expression}), 0) {base}",
-                (run["session_id"], *excluded_values),
-            ).fetchone()
-            metadata = connection.execute(
-                f"""
-                SELECT items.id, items.creation_seq, {size_expression} AS fact_bytes
-                {base}
-                ORDER BY items.creation_seq {'DESC' if newest else 'ASC'} LIMIT ?
-                """,
-                (run["session_id"], *excluded_values, MAX_CONTEXT_ITEMS + 1),
-            ).fetchall()
-            goal_size = (
-                len(str(goal_row["content"] or "").encode("utf-8")) + 256
-                if goal_row is not None else 0
-            )
-            if goal_size > MAX_CONTEXT_BYTES:
-                raise ContextLimitExceeded("current_user_goal")
-            selected_ids = list(protected_ids) if newest else []
-            protected_bytes = 0
-            if newest and protected_ids:
-                placeholders = ",".join("?" for _ in protected_ids)
-                protected_bytes = int(connection.execute(
-                    f"""
-                    SELECT COALESCE(SUM({size_expression}), 0)
-                    FROM items LEFT JOIN tool_calls ON tool_calls.item_id = items.id
-                    WHERE items.id IN ({placeholders})
-                    """,
-                    tuple(protected_ids),
-                ).fetchone()[0])
-            selected_bytes = protected_bytes
-            if len(selected_ids) > MAX_CONTEXT_ITEMS or selected_bytes > MAX_CONTEXT_BYTES:
-                raise ContextLimitExceeded("protected_context")
-            base_selected = 0
-            for row in metadata:
-                fact_bytes = int(row["fact_bytes"])
-                if (
-                    len(selected_ids) >= MAX_CONTEXT_ITEMS
-                    or selected_bytes + fact_bytes > MAX_CONTEXT_BYTES
-                ):
-                    break
-                selected_ids.append(str(row["id"]))
-                selected_bytes += fact_bytes
-                base_selected += 1
-            item_rows: list[sqlite3.Row] = []
-            if selected_ids:
-                placeholders = ",".join("?" for _ in selected_ids)
-                item_rows = connection.execute(
-                    f"SELECT * FROM items WHERE id IN ({placeholders})",
-                    selected_ids,
-                ).fetchall()
-            item_rows.sort(key=lambda row: int(row["creation_seq"]))
-            tool_rows: list[sqlite3.Row] = []
-            if selected_ids:
-                placeholders = ",".join("?" for _ in selected_ids)
-                tool_rows = connection.execute(
-                    f"SELECT * FROM tool_calls WHERE item_id IN ({placeholders})",
-                    selected_ids,
-                ).fetchall()
-            candidate_overflow = (
-                int(aggregate[0]) > base_selected
-                or int(aggregate[1]) > MAX_CONTEXT_BYTES - protected_bytes
-            )
-            latest_signature = connection.execute(
-                """
-                SELECT progress_signature_json FROM steps
-                WHERE run_id = ? AND progress_signature_json IS NOT NULL
-                ORDER BY creation_seq DESC LIMIT 1
-                """,
-                (run_id,),
-            ).fetchone()
-            active_errors = (
-                ProgressSignature.model_validate_json(latest_signature[0]).error_fingerprints
-                if latest_signature is not None else ()
-            )
-        tools_by_item = {row["item_id"]: row for row in tool_rows}
-        items: list[ContextItemFact] = []
-        serialized_bytes = 2
-        for row in item_rows:
-            tool = tools_by_item.get(row["id"])
-            fact = ContextItemFact(
-                item_id=str(row["id"]),
-                run_id=str(row["run_id"]),
-                kind=str(row["kind"]),
-                status=str(row["status"]),
-                content=row["content"],
-                provider_call_id=str(tool["provider_call_id"]) if tool else None,
-                tool_name=str(tool["tool_name"]) if tool else None,
-                arguments_json=str(tool["arguments_json"]) if tool else None,
-                result_json=str(tool["result_json"]) if tool and tool["result_json"] is not None else None,
-            )
-            size = len(json.dumps(
-                fact.model_dump(),
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ).encode("utf-8")) + 1
-            if serialized_bytes + size > MAX_CONTEXT_BYTES:
-                candidate_overflow = True
-                if goal_row is not None and row["id"] == goal_row["id"]:
-                    raise ContextLimitExceeded("current_user_goal")
-                if str(row["id"]) in protected_ids:
-                    raise ContextLimitExceeded("protected_context")
-                continue
-            items.append(fact)
-            serialized_bytes += size
-        return ContextFacts(
-            run_id=run_id,
-            session_id=str(run["session_id"]),
-            items=tuple(items),
-            compact_summary=_compact_summary_from_row(summary_row),
-            compaction_count=int(run["compaction_count"]),
-            workspace_version=int(run["workspace_version"]),
-            reconciliation_epoch=int(run["reconciliation_epoch"]),
-            last_diff_hash=run["last_diff_hash"],
-            candidate_overflow=candidate_overflow,
-            current_user_goal_id=(
-                str(goal_row["id"]) if goal_row is not None else None
-            ),
-            reconciliation_required=bool(run["reconciliation_required"]),
-            active_error_fingerprints=tuple(active_errors),
-        )
+        return self._repository(self._context).compaction_candidate_facts(run_id)
 
     def latest_compact_summary(self, run_id: str) -> CompactSummary | None:
-        with self.lock:
-            row = self._connection().execute(
-                """
-                SELECT * FROM compact_summaries
-                WHERE run_id = ? ORDER BY creation_seq DESC LIMIT 1
-                """,
-                (run_id,),
-            ).fetchone()
-        return _compact_summary_from_row(row)
+        return self._repository(self._context).latest_compact_summary(run_id)
 
     def compaction_count(self, run_id: str) -> int:
-        with self.lock:
-            row = self._connection().execute(
-                "SELECT compaction_count FROM runs WHERE id = ?", (run_id,)
-            ).fetchone()
-        if row is None:
-            raise ResourceNotFoundError("run not found")
-        return int(row[0])
+        return self._repository(self._context).compaction_count(run_id)
 
     def commit_compaction(
         self, run_id: str, phase: str, summary: CompactSummary
     ) -> CommittedMutation[CompactSummary]:
-        if phase not in {"pre_turn", "mid_turn"}:
-            raise ValueError("invalid compaction phase")
-        summary_id = str(uuid.uuid4())
-        now = _now_ms()
-        with self.lock, self._connection() as connection:
-            run = connection.execute(
-                "SELECT session_id, compaction_count FROM runs WHERE id = ? AND status = 'running'",
-                (run_id,),
-            ).fetchone()
-            if run is None:
-                raise InvalidRunStateError("run is not active")
-            if int(run["compaction_count"]) >= 2:
-                raise ContextLimitExceeded("compaction_limit")
-            connection.execute(
-                """
-                INSERT INTO compact_summaries (
-                    id, session_id, run_id, task_goal, constraints_json,
-                    completed_actions_json, workspace_changes_json,
-                    important_facts_json, unresolved_problems_json,
-                    next_actions_json, source_item_ids_json, phase, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    summary_id, run["session_id"], run_id, summary.task_goal,
-                    _json_tuple(summary.constraints),
-                    _json_tuple(summary.completed_actions),
-                    _json_tuple(summary.workspace_changes),
-                    _json_tuple(summary.important_facts),
-                    _json_tuple(summary.unresolved_problems),
-                    _json_tuple(summary.next_actions),
-                    _json_tuple(summary.source_item_ids), phase, now,
-                ),
-            )
-            updated = connection.execute(
-                """
-                UPDATE runs SET compaction_count = compaction_count + 1, updated_at = ?
-                WHERE id = ? AND status = 'running' AND compaction_count < 2
-                """,
-                (now, run_id),
-            )
-            if updated.rowcount != 1:
-                raise InvalidRunStateError("compaction could not commit")
-            event = append_event(
-                connection,
-                EventType.CONTEXT_COMPACTED,
-                now,
-                {
-                    "summaryId": summary_id,
-                    "sourceItemCount": len(summary.source_item_ids),
-                    "phase": phase,
-                },
-                session_id=run["session_id"],
-                run_id=run_id,
-            )
-        return CommittedMutation(summary, (event,))
+        return self._repository(self._context).commit_compaction(run_id, phase, summary)
 
     def enqueue_input(self, run_id: str, content: str) -> str:
-        if not content or len(content.encode("utf-8")) > 64 * 1024:
-            raise ValueError("input is invalid")
-        input_id = str(uuid.uuid4())
-        now = _now_ms()
-        with self.lock, self._connection() as connection:
-            run = connection.execute(
-                "SELECT session_id FROM runs WHERE id = ? AND status = 'running'",
-                (run_id,),
-            ).fetchone()
-            if run is None:
-                raise InvalidRunStateError("run is not active")
-            connection.execute(
-                """
-                INSERT INTO input_mailbox (id, run_id, content, status, created_at)
-                VALUES (?, ?, ?, 'pending', ?)
-                """,
-                (input_id, run_id, content, now),
-            )
-            append_event(
-                connection, EventType.INPUT_QUEUED, now, {"inputId": input_id},
-                session_id=run["session_id"], run_id=run_id,
-            )
-        return input_id
+        return self._repository(self._execution).enqueue_input(run_id, content)
 
     def has_pending_input(self, run_id: str) -> bool:
-        with self.lock:
-            row = self._connection().execute(
-                "SELECT 1 FROM input_mailbox WHERE run_id = ? AND status = 'pending' LIMIT 1",
-                (run_id,),
-            ).fetchone()
-        return row is not None
+        return self._repository(self._execution).has_pending_input(run_id)
 
     def consume_pending_inputs(self, run_id: str) -> int:
-        return len(self.consume_pending_input_facts(run_id))
+        return self._repository(self._execution).consume_pending_inputs(run_id)
 
     def consume_pending_input_facts(
         self, run_id: str
     ) -> tuple[tuple[str, str], ...]:
-        now = _now_ms()
-        injected: list[tuple[str, str]] = []
-        with self.lock, self._connection() as connection:
-            run = connection.execute(
-                "SELECT session_id FROM runs WHERE id = ? AND status = 'running'",
-                (run_id,),
-            ).fetchone()
-            if run is None:
-                raise InvalidRunStateError("run is not active")
-            pending = connection.execute(
-                """
-                SELECT * FROM input_mailbox
-                WHERE run_id = ? AND status = 'pending' ORDER BY creation_seq
-                """,
-                (run_id,),
-            ).fetchall()
-            for entry in pending:
-                item_id = str(uuid.uuid4())
-                connection.execute(
-                    """
-                    INSERT INTO items (
-                        id, session_id, run_id, ordinal, kind, status,
-                        content, created_at, completed_at
-                    ) VALUES (?, ?, ?, ?, 'user_message', 'completed', ?, ?, ?)
-                    """,
-                    (
-                        item_id, run["session_id"], run_id,
-                        self._next_ordinal(connection, run_id), entry["content"], now, now,
-                    ),
-                )
-                updated = connection.execute(
-                    """
-                    UPDATE input_mailbox SET status = 'injected', injected_at = ?
-                    WHERE id = ? AND status = 'pending'
-                    """,
-                    (now, entry["id"]),
-                )
-                if updated.rowcount != 1:
-                    raise InvalidRunStateError("pending input changed")
-                append_event(
-                    connection, EventType.INPUT_INJECTED, now,
-                    {"inputId": entry["id"]},
-                    session_id=run["session_id"], run_id=run_id,
-                )
-                injected.append((item_id, str(entry["content"])))
-        return tuple(injected)
-
-    def _create_item(
-        self, run_id: str, kind: str, model_step_index: int | None
-    ) -> dict[str, object]:
-        return self._create_item_committed(run_id, kind, model_step_index).value
-
-    def _create_item_committed(
-        self, run_id: str, kind: str, model_step_index: int | None
-    ) -> CommittedMutation[dict[str, object]]:
-        item_id = str(uuid.uuid4())
-        now = _now_ms()
-        with self.lock, self._connection() as connection:
-            run = connection.execute(
-                "SELECT session_id FROM runs WHERE id = ? AND status IN ('running', 'finalizing')",
-                (run_id,),
-            ).fetchone()
-            if run is None:
-                raise InvalidRunStateError("run is not active")
-            ordinal = self._next_ordinal(connection, run_id)
-            connection.execute(
-                """
-                INSERT INTO items (
-                    id, session_id, run_id, ordinal, model_step_index,
-                    kind, status, content, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'in_progress', '', ?)
-                """,
-                (
-                    item_id,
-                    run["session_id"],
-                    run_id,
-                    ordinal,
-                    model_step_index,
-                    kind,
-                    now,
-                ),
-            )
-            event = append_event(
-                connection,
-                EventType.ITEM_STARTED,
-                now,
-                {"item_id": item_id},
-                session_id=run["session_id"],
-                run_id=run_id,
-            )
-        return CommittedMutation(self.read_item(item_id), (event,))
-
-    def _complete_item(self, item_id: str, status_value: str) -> dict[str, object]:
-        return self._complete_item_committed(item_id, status_value).value
-
-    def _complete_item_committed(
-        self, item_id: str, status_value: str
-    ) -> CommittedMutation[dict[str, object]]:
-        with self.lock, self._connection() as connection:
-            fact = connection.execute(
-                "SELECT session_id, run_id FROM items WHERE id = ?",
-                (item_id,),
-            ).fetchone()
-            if fact is None:
-                raise ResourceNotFoundError("item not found")
-            now = _now_ms()
-            updated = connection.execute(
-                """
-                UPDATE items SET status = ?, completed_at = ?
-                WHERE id = ? AND status = 'in_progress'
-                """,
-                (status_value, now, item_id),
-            )
-            if updated.rowcount != 1:
-                raise InvalidRunStateError("item is not active")
-            event = append_event(
-                connection,
-                EventType.ITEM_COMPLETED,
-                now,
-                {"item_id": item_id},
-                session_id=fact["session_id"],
-                run_id=fact["run_id"],
-            )
-        return CommittedMutation(self.read_item(item_id), (event,))
-
-    @staticmethod
-    def _next_ordinal(connection: sqlite3.Connection, run_id: str) -> int:
-        row = connection.execute(
-            "SELECT COALESCE(MAX(ordinal), 0) + 1 AS next_ordinal FROM items WHERE run_id = ?",
-            (run_id,),
-        ).fetchone()
-        return row["next_ordinal"]
-
-    def _connection(self) -> sqlite3.Connection:
-        if self.connection is None:
-            raise StorageError("storage is not initialized")
-        return self.connection
-
-    def _write(
-        self,
-        action: Callable[[sqlite3.Connection], T],
-        *,
-        operation_id: str | None = None,
-        operation_scope: str | None = None,
-        operation_request: dict[str, object] | None = None,
-    ) -> T:
-        with self.lock, self._connection() as connection:
-            if operation_id is None:
-                return action(connection)
-            assert operation_scope is not None and operation_request is not None
-            request_hash = _canonical_hash(operation_request)
-            existing = connection.execute(
-                "SELECT * FROM operations WHERE id = ? AND scope = ?",
-                (operation_id, operation_scope),
-            ).fetchone()
-            if existing is not None:
-                if existing["request_hash"] != request_hash:
-                    raise OperationConflictError("operation id was reused")
-                if existing["status"] != "completed" or existing["result_json"] is None:
-                    raise OperationInProgressError("operation is still in progress")
-                return json.loads(existing["result_json"])
-            now = _now_ms()
-            connection.execute(
-                """
-                INSERT INTO operations (
-                    id, scope, request_hash, status, created_at
-                ) VALUES (?, ?, ?, 'in_progress', ?)
-                """,
-                (operation_id, operation_scope, request_hash, now),
-            )
-            result = action(connection)
-            connection.execute(
-                """
-                UPDATE operations
-                SET status = 'completed', result_json = ?, completed_at = ?
-                WHERE id = ? AND scope = ? AND status = 'in_progress'
-                """,
-                (
-                    json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
-                    _now_ms(), operation_id, operation_scope,
-                ),
-            )
-            return result
+        return self._repository(self._execution).consume_pending_input_facts(run_id)
 
     def operation_result(
         self, operation_id: str, scope: str, request: dict[str, object]
     ) -> object | None:
-        request_hash = _canonical_hash(request)
-        with self.lock:
-            row = self._connection().execute(
-                "SELECT * FROM operations WHERE id = ? AND scope = ?",
-                (operation_id, scope),
-            ).fetchone()
-        if row is None:
-            return None
-        if row["request_hash"] != request_hash:
-            raise OperationConflictError("operation id was reused")
-        if row["status"] != "completed" or row["result_json"] is None:
-            raise OperationInProgressError("operation is still in progress")
-        return json.loads(row["result_json"])
+        return self._database.operation_result(operation_id, scope, request)
 
     def record_operation_result(
         self,
@@ -3701,802 +770,9 @@ class SessionStore:
         request: dict[str, object],
         result: dict[str, object],
     ) -> dict[str, object]:
-        return self._write(
+        return self._database.execute_idempotent(
             lambda _connection: result,
             operation_id=operation_id,
             operation_scope=scope,
             operation_request=request,
         )
-
-    def _workspace_overlaps_data(self, workspace: Path) -> bool:
-        data_directory = self.data_directory
-        if data_directory is None:
-            raise StorageError("storage is not initialized")
-        workspace = workspace.resolve(strict=False)
-        return (
-            workspace == data_directory
-            or workspace in data_directory.parents
-            or data_directory in workspace.parents
-        )
-
-
-def _default_data_directory() -> Path:
-    configured = os.environ.get("EIDOS_DATA_DIR")
-    if configured:
-        return Path(configured).expanduser()
-    return Path.home() / ".eidos"
-
-
-def _safe_health_code(error: BaseException) -> str:
-    if isinstance(error, StorageError):
-        code = str(error)
-        if code in {
-            "state_locked", "schema_revision_missing", "schema_revision_unsupported",
-            "database_corrupt", "foreign_key_violation", "storage_pragmas_invalid",
-            "migration_failed", "backup_failed", "reserve_invalid",
-        }:
-            return code
-        return "state_security_invalid"
-    if isinstance(error, sqlite3.DatabaseError):
-        return "database_corrupt"
-    return "storage_io_error"
-
-
-def _acquire_state_lock(path: Path) -> int:
-    if path.is_symlink():
-        raise StorageError("state_security_invalid")
-    flags = os.O_CREAT | os.O_RDWR
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    descriptor = os.open(path, flags, 0o600)
-    try:
-        metadata = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
-            or stat.S_IMODE(metadata.st_mode) != 0o600
-        ):
-            raise StorageError("state_security_invalid")
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise StorageError("state_locked") from None
-        return descriptor
-    except Exception:
-        os.close(descriptor)
-        raise
-
-
-def _prepare_reserve(path: Path) -> None:
-    if path.is_symlink():
-        raise StorageError("reserve_invalid")
-    if not path.exists():
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        descriptor = os.open(path, flags, 0o600)
-        try:
-            block = b"\xa5" * 64 * 1024
-            for _ in range(RESERVE_BYTES // len(block)):
-                os.write(descriptor, block)
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-    metadata = path.stat()
-    allocated = getattr(metadata, "st_blocks", 0) * 512
-    if (
-        not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o600
-        or metadata.st_size != RESERVE_BYTES
-        or (allocated and allocated < RESERVE_BYTES)
-    ):
-        raise StorageError("reserve_invalid")
-
-
-def _table_names(connection: sqlite3.Connection) -> set[str]:
-    return {
-        row[0]
-        for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
-        ).fetchall()
-    }
-
-
-def _verify_pragmas(connection: sqlite3.Connection) -> None:
-    foreign_keys = connection.execute("PRAGMA foreign_keys").fetchone()[0]
-    journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
-    busy_timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
-    if foreign_keys != 1 or str(journal_mode).lower() != "wal" or busy_timeout < 5000:
-        raise StorageError("storage_pragmas_invalid")
-
-
-def _verify_integrity(connection: sqlite3.Connection) -> None:
-    result = connection.execute("PRAGMA integrity_check").fetchone()[0]
-    if result != "ok":
-        raise StorageError("database_corrupt")
-    if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-        raise StorageError("foreign_key_violation")
-
-
-def _backup_database(
-    connection: sqlite3.Connection, database_path: Path, revision: int
-) -> None:
-    stamp = _now_ms()
-    backup_path = database_path.with_name(f"{database_path.name}.rev{revision}.{stamp}.bak")
-    manifest_path = backup_path.with_suffix(backup_path.suffix + ".json")
-    try:
-        destination = sqlite3.connect(backup_path)
-        try:
-            connection.backup(destination)
-        finally:
-            destination.close()
-        os.chmod(backup_path, 0o600)
-        digest = hashlib.sha256(backup_path.read_bytes()).hexdigest()
-        manifest = {
-            "source": database_path.name,
-            "backup": backup_path.name,
-            "sourceRevision": revision,
-            "sha256": digest,
-            "createdAt": stamp,
-        }
-        descriptor = os.open(
-            manifest_path,
-            os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-        )
-        try:
-            os.write(descriptor, json.dumps(manifest, sort_keys=True).encode("ascii"))
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        if hashlib.sha256(backup_path.read_bytes()).hexdigest() != digest:
-            raise StorageError("backup_failed")
-    except (OSError, sqlite3.Error, StorageError):
-        raise StorageError("backup_failed") from None
-
-
-def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
-    try:
-        connection.commit()
-        connection.execute("PRAGMA foreign_keys = OFF")
-        connection.executescript(
-            """
-            BEGIN IMMEDIATE;
-            CREATE TABLE runs_v2 (
-                creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                id TEXT NOT NULL UNIQUE,
-                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
-                user_input TEXT NOT NULL,
-                status TEXT NOT NULL CHECK (status IN (
-                    'queued', 'running', 'waiting_approval', 'waiting_user_input',
-                    'finalizing', 'succeeded', 'failed', 'stopped', 'canceled',
-                    'interrupted'
-                )),
-                model_step_count INTEGER NOT NULL DEFAULT 0,
-                consecutive_protocol_errors INTEGER NOT NULL DEFAULT 0,
-                consecutive_rejects INTEGER NOT NULL DEFAULT 0,
-                consecutive_sensitive_tool_inputs INTEGER NOT NULL DEFAULT 0,
-                enqueued_at INTEGER,
-                total_effective_ms INTEGER NOT NULL DEFAULT 0,
-                pause_reason TEXT,
-                stop_reason TEXT,
-                reconciliation_required INTEGER NOT NULL DEFAULT 0,
-                reconciliation_epoch INTEGER NOT NULL DEFAULT 0,
-                side_effects_may_exist INTEGER NOT NULL DEFAULT 0,
-                error_code TEXT,
-                created_at INTEGER NOT NULL,
-                started_at INTEGER,
-                updated_at INTEGER NOT NULL,
-                completed_at INTEGER
-            );
-            INSERT INTO runs_v2 (
-                creation_seq, id, session_id, user_input, status,
-                model_step_count, consecutive_protocol_errors, error_code,
-                created_at, started_at, updated_at, completed_at
-            ) SELECT
-                creation_seq, id, session_id, user_input, status,
-                model_step_count, consecutive_protocol_errors, error_code,
-                created_at, started_at, updated_at, completed_at
-            FROM runs;
-            DROP TABLE runs;
-            ALTER TABLE runs_v2 RENAME TO runs;
-            PRAGMA user_version = 2;
-            COMMIT;
-            """
-        )
-        connection.execute("PRAGMA foreign_keys = ON")
-    except (sqlite3.Error, OSError):
-        connection.rollback()
-        connection.execute("PRAGMA foreign_keys = ON")
-        raise StorageError("migration_failed") from None
-
-
-def _migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
-    try:
-        columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(sessions)").fetchall()
-        }
-        if "title" not in columns:
-            connection.execute("ALTER TABLE sessions ADD COLUMN title TEXT")
-        connection.execute("PRAGMA user_version = 3")
-        connection.commit()
-    except sqlite3.Error:
-        connection.rollback()
-        raise StorageError("migration_failed") from None
-
-
-def _migrate_v3_to_v4(connection: sqlite3.Connection) -> None:
-    try:
-        tables = _table_names(connection)
-        if "runs" in tables:
-            columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info(runs)").fetchall()
-            }
-            if "model_id" not in columns:
-                connection.execute(
-                    """
-                    ALTER TABLE runs ADD COLUMN model_id TEXT NOT NULL
-                    DEFAULT 'deepseek-v4-flash'
-                    """
-                )
-        connection.execute("PRAGMA user_version = 4")
-        connection.commit()
-    except sqlite3.Error:
-        connection.rollback()
-        raise StorageError("migration_failed") from None
-
-
-def _migrate_v4_to_v5(connection: sqlite3.Connection) -> None:
-    try:
-        connection.execute("BEGIN IMMEDIATE")
-        _ensure_phase_three_columns(connection)
-        connection.execute("PRAGMA user_version = 5")
-        connection.commit()
-    except sqlite3.Error:
-        connection.rollback()
-        raise StorageError("migration_failed") from None
-
-
-def _migrate_v5_to_v6(connection: sqlite3.Connection) -> None:
-    try:
-        if "approvals" in _table_names(connection):
-            connection.executescript(
-                """
-                BEGIN IMMEDIATE;
-                CREATE TABLE approvals_v6 (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    tool_call_id TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE RESTRICT,
-                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                    item_id TEXT NOT NULL REFERENCES items(id) ON DELETE RESTRICT,
-                    status TEXT NOT NULL,
-                    request_hash TEXT NOT NULL,
-                    decision TEXT,
-                    feedback TEXT,
-                    created_at INTEGER NOT NULL,
-                    decided_at INTEGER
-                );
-                INSERT INTO approvals_v6 SELECT * FROM approvals;
-                DROP TABLE approvals;
-                ALTER TABLE approvals_v6 RENAME TO approvals;
-                CREATE UNIQUE INDEX one_pending_approval_per_item
-                ON approvals (item_id) WHERE status = 'pending';
-                PRAGMA user_version = 6;
-                COMMIT;
-                """
-            )
-        else:
-            connection.execute("PRAGMA user_version = 6")
-            connection.commit()
-    except sqlite3.Error:
-        connection.rollback()
-        raise StorageError("migration_failed") from None
-
-
-def _migrate_v6_to_v7(connection: sqlite3.Connection) -> None:
-    try:
-        connection.execute("BEGIN IMMEDIATE")
-        run_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(runs)").fetchall()
-        }
-        additions = {
-            "compaction_count": "INTEGER NOT NULL DEFAULT 0",
-            "workspace_version": "INTEGER NOT NULL DEFAULT 0",
-            "last_diff_hash": "TEXT",
-        }
-        for name, definition in additions.items():
-            if run_columns and name not in run_columns:
-                connection.execute(f"ALTER TABLE runs ADD COLUMN {name} {definition}")
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS compact_summaries (
-                creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                id TEXT NOT NULL UNIQUE,
-                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
-                run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                task_goal TEXT NOT NULL,
-                constraints_json TEXT NOT NULL,
-                completed_actions_json TEXT NOT NULL,
-                workspace_changes_json TEXT NOT NULL,
-                important_facts_json TEXT NOT NULL,
-                unresolved_problems_json TEXT NOT NULL,
-                next_actions_json TEXT NOT NULL,
-                source_item_ids_json TEXT NOT NULL,
-                phase TEXT NOT NULL CHECK (phase IN ('pre_turn', 'mid_turn')),
-                created_at INTEGER NOT NULL
-            )
-            """
-        )
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS input_mailbox (
-                creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                id TEXT NOT NULL UNIQUE,
-                run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                content TEXT NOT NULL,
-                status TEXT NOT NULL CHECK (status IN ('pending', 'injected', 'canceled')),
-                created_at INTEGER NOT NULL,
-                injected_at INTEGER
-            )
-            """
-        )
-        connection.execute("PRAGMA user_version = 7")
-        connection.commit()
-    except sqlite3.Error:
-        connection.rollback()
-        raise StorageError("migration_failed") from None
-
-
-def _migrate_v7_to_v8(connection: sqlite3.Connection) -> None:
-    try:
-        columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(steps)").fetchall()
-        }
-        if columns and "progress_signature_json" not in columns:
-            connection.execute(
-                "ALTER TABLE steps ADD COLUMN progress_signature_json TEXT"
-            )
-        connection.execute("PRAGMA user_version = 8")
-        connection.commit()
-    except sqlite3.Error:
-        connection.rollback()
-        raise StorageError("migration_failed") from None
-
-
-def _prepare_private_directory(path: Path) -> None:
-    if path.is_symlink():
-        raise StorageError("data directory must not be a symlink")
-    if not path.exists():
-        path.mkdir(mode=0o700, parents=True)
-    metadata = path.stat()
-    if not stat.S_ISDIR(metadata.st_mode):
-        raise StorageError("data directory must be a directory")
-    if metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
-        raise StorageError("data directory owner or mode is invalid")
-
-
-def _prepare_private_database(path: Path) -> None:
-    if path.is_symlink():
-        raise StorageError("database must not be a symlink")
-    if not path.exists():
-        flags = os.O_CREAT | os.O_EXCL | os.O_RDWR
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        descriptor = os.open(path, flags, 0o600)
-        os.close(descriptor)
-    metadata = path.stat()
-    if not stat.S_ISREG(metadata.st_mode):
-        raise StorageError("database must be a regular file")
-    if metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o600:
-        raise StorageError("database owner or mode is invalid")
-
-
-def _ensure_session_identity_columns(connection: sqlite3.Connection) -> None:
-    columns = {
-        row["name"] for row in connection.execute("PRAGMA table_info(sessions)").fetchall()
-    }
-    for name in ("workspace_dev", "workspace_inode", "workspace_uid"):
-        if name not in columns:
-            connection.execute(f"ALTER TABLE sessions ADD COLUMN {name} INTEGER")
-
-
-def _ensure_tool_call_approval_columns(connection: sqlite3.Connection) -> None:
-    columns = {
-        row["name"]
-        for row in connection.execute("PRAGMA table_info(tool_calls)").fetchall()
-    }
-    for name in (
-        "approval_status",
-        "approval_decision",
-        "approval_feedback",
-        "approval_diff",
-        "base_sha256",
-    ):
-        if name not in columns:
-            connection.execute(f"ALTER TABLE tool_calls ADD COLUMN {name} TEXT")
-
-
-def _ensure_phase_two_columns(connection: sqlite3.Connection) -> None:
-    item_columns = {
-        row["name"] for row in connection.execute("PRAGMA table_info(items)").fetchall()
-    }
-    if "incomplete" not in item_columns:
-        connection.execute(
-            "ALTER TABLE items ADD COLUMN incomplete INTEGER NOT NULL DEFAULT 0"
-        )
-
-
-def _ensure_phase_three_columns(connection: sqlite3.Connection) -> None:
-    tables = _table_names(connection)
-    run_columns = {
-        row["name"] for row in connection.execute("PRAGMA table_info(runs)").fetchall()
-    }
-    if "runs" in tables and "extension_snapshot_json" not in run_columns:
-        connection.execute(
-            """
-            ALTER TABLE runs ADD COLUMN extension_snapshot_json TEXT NOT NULL
-            DEFAULT '{"extensionContractVersion":1,"mcpConfigHash":"0000000000000000000000000000000000000000000000000000000000000000","plugins":[],"schemaVersion":1,"skillCatalogHash":"0000000000000000000000000000000000000000000000000000000000000000"}'
-            """
-        )
-    if "runs" in tables and "activated_tools_json" not in run_columns:
-        connection.execute(
-            "ALTER TABLE runs ADD COLUMN activated_tools_json TEXT NOT NULL DEFAULT '[]'"
-        )
-    step_columns = {
-        row["name"] for row in connection.execute("PRAGMA table_info(steps)").fetchall()
-    }
-    if "steps" in tables and "tool_snapshot_json" not in step_columns:
-        connection.execute("ALTER TABLE steps ADD COLUMN tool_snapshot_json TEXT")
-    if "steps" in tables and "tool_set_hash" not in step_columns:
-        connection.execute("ALTER TABLE steps ADD COLUMN tool_set_hash TEXT")
-    tool_columns = {
-        row["name"]
-        for row in connection.execute("PRAGMA table_info(tool_calls)").fetchall()
-    }
-    if "tool_calls" in tables and "provenance_json" not in tool_columns:
-        connection.execute("ALTER TABLE tool_calls ADD COLUMN provenance_json TEXT")
-    if "tool_calls" in tables and "tool_set_hash" not in tool_columns:
-        connection.execute("ALTER TABLE tool_calls ADD COLUMN tool_set_hash TEXT")
-
-
-def _backfill_session_identities(connection: sqlite3.Connection) -> None:
-    rows = connection.execute(
-        """
-        SELECT id, workspace_root FROM sessions
-        WHERE workspace_dev IS NULL OR workspace_inode IS NULL OR workspace_uid IS NULL
-        """
-    ).fetchall()
-    for row in rows:
-        try:
-            workspace = _canonical_workspace(row["workspace_root"])
-            metadata = workspace.stat()
-        except (OSError, WorkspaceBoundaryError):
-            continue
-        connection.execute(
-            """
-            UPDATE sessions
-            SET workspace_root = ?, workspace_dev = ?, workspace_inode = ?, workspace_uid = ?
-            WHERE id = ?
-            """,
-            (
-                str(workspace),
-                metadata.st_dev,
-                metadata.st_ino,
-                metadata.st_uid,
-                row["id"],
-            ),
-        )
-
-
-def _canonical_workspace(value: str) -> Path:
-    if not value or len(value) > 4096:
-        raise WorkspaceBoundaryError("workspace path is invalid")
-    path = Path(value)
-    if not path.is_absolute() or path.is_symlink() or not path.is_dir():
-        raise WorkspaceBoundaryError("workspace must be an existing absolute directory")
-    return path.resolve()
-
-
-def _session_from_row(row: sqlite3.Row) -> dict[str, object]:
-    return SessionDto.model_validate({
-        "id": row["id"],
-        "workspaceRoot": row["workspace_root"],
-        "title": row["title"],
-        "taskStatus": row["task_status"],
-        "createdAt": row["created_at"],
-        "updatedAt": row["updated_at"],
-    }).to_json_value()
-
-
-def _plugin_from_row(row: sqlite3.Row) -> dict[str, object]:
-    return {
-        "schemaVersion": 1,
-        "id": row["id"],
-        "name": row["name"],
-        "version": row["version"],
-        "description": row["description"],
-        "contentHash": row["content_hash"],
-        "enabled": bool(row["enabled"]),
-        "status": row["status"],
-        "installedAt": row["installed_at"],
-        "updatedAt": row["updated_at"],
-    }
-
-
-def _json_bytes(value: object) -> int:
-    return len(
-        json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    )
-
-
-def _canonical_hash(value: object) -> str:
-    encoded = json.dumps(
-        value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _bounded_canonical_json(value: object, *, code: str) -> str:
-    try:
-        encoded = json.dumps(
-            value, ensure_ascii=False, separators=(",", ":"), sort_keys=True,
-            allow_nan=False,
-        ).encode("utf-8")
-    except (TypeError, ValueError):
-        raise ValueError(code) from None
-    if not isinstance(value, dict) or len(encoded) > 256 * 1024:
-        raise ValueError(code)
-    return encoded.decode("utf-8")
-
-
-def _load_json_object(value: object) -> dict[str, object] | None:
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
-def _snapshot_item(
-    row: sqlite3.Row, tool_row: sqlite3.Row | None
-) -> dict[str, object]:
-    item = _item_from_row(row, tool_row)
-    content = item.get("content")
-    if isinstance(content, str):
-        item["content"] = _truncate_snapshot_text(content)
-    tool_call = item.get("toolCall")
-    if isinstance(tool_call, dict):
-        projected = dict(tool_call)
-        display_arguments = _snapshot_display_arguments(tool_call)
-        if display_arguments is None:
-            projected.pop("argumentsJson", None)
-        else:
-            projected["argumentsJson"] = display_arguments
-        projected.pop("approvalDiff", None)
-        result = projected.get("resultJson")
-        if isinstance(result, str):
-            projected["resultJson"] = _truncate_snapshot_text(result)
-        item["toolCall"] = projected
-    return item
-
-
-def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
-    fields_by_tool = {
-        "list_files": (),
-        "read_file": ("path",),
-        "read_file_range": ("path", "startLine", "endLine"),
-        "search_text": ("query",),
-        "write_file": ("path",),
-        "apply_patch": ("path",),
-        "delete_file": ("path",),
-        "run_shell": ("command", "cwd", "timeoutSeconds"),
-    }
-    fields = fields_by_tool.get(tool_call.get("toolName"))
-    arguments = _load_json_object(tool_call.get("argumentsJson"))
-    if fields is None or arguments is None:
-        return None
-    projected = {
-        field: arguments[field]
-        for field in fields
-        if field in arguments and isinstance(arguments[field], (str, int))
-    }
-    return json.dumps(
-        projected,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-
-
-def _truncate_snapshot_text(value: str) -> str:
-    encoded = value.encode("utf-8")
-    if len(encoded) <= MAX_SNAPSHOT_TEXT_BYTES:
-        return value
-    marker = "\n…[history truncated]"
-    budget = MAX_SNAPSHOT_TEXT_BYTES - len(marker.encode("utf-8"))
-    prefix = encoded[:budget]
-    while True:
-        try:
-            return prefix.decode("utf-8") + marker
-        except UnicodeDecodeError as error:
-            prefix = prefix[: error.start]
-
-
-def _json_tuple(values: tuple[str, ...]) -> str:
-    return json.dumps(values, ensure_ascii=False, separators=(",", ":"))
-
-
-def _compact_summary_from_row(row: sqlite3.Row | None) -> CompactSummary | None:
-    if row is None:
-        return None
-    return CompactSummary(
-        task_goal=str(row["task_goal"]),
-        constraints=tuple(json.loads(row["constraints_json"])),
-        completed_actions=tuple(json.loads(row["completed_actions_json"])),
-        workspace_changes=tuple(json.loads(row["workspace_changes_json"])),
-        important_facts=tuple(json.loads(row["important_facts_json"])),
-        unresolved_problems=tuple(json.loads(row["unresolved_problems_json"])),
-        next_actions=tuple(json.loads(row["next_actions_json"])),
-        source_item_ids=tuple(json.loads(row["source_item_ids_json"])),
-    )
-
-
-def _run_from_row(
-    row: sqlite3.Row, *, include_user_input: bool = True
-) -> dict[str, object]:
-    run: dict[str, object] = {
-        "id": row["id"],
-        "sessionId": row["session_id"],
-        "modelId": row["model_id"],
-        "status": row["status"],
-        "modelStepCount": row["model_step_count"],
-        "createdAt": row["created_at"],
-        "updatedAt": row["updated_at"],
-    }
-    allowed_actions = {
-        "queued": ["cancel"],
-        "running": ["cancel"],
-        "waiting_approval": ["approve", "reject", "cancel"],
-        "waiting_user_input": ["continue", "cancel"],
-        "finalizing": ["cancel"],
-    }.get(row["status"], [])
-    if allowed_actions:
-        run["allowedActions"] = allowed_actions
-    if row["started_at"] is not None:
-        run["startedAt"] = row["started_at"]
-    if include_user_input:
-        run["userInput"] = row["user_input"]
-    if row["completed_at"] is not None:
-        run["completedAt"] = row["completed_at"]
-    if row["error_code"] is not None:
-        run["errorCode"] = row["error_code"]
-    if "pause_reason" in row.keys() and row["pause_reason"] is not None:
-        run["pauseReason"] = row["pause_reason"]
-    if "stop_reason" in row.keys() and row["stop_reason"] is not None:
-        run["stopReason"] = row["stop_reason"]
-    if "side_effects_may_exist" in row.keys():
-        run["sideEffectsMayExist"] = bool(row["side_effects_may_exist"])
-    if (
-        "extension_snapshot_json" in row.keys()
-        and row["extension_snapshot_json"] is not None
-    ):
-        snapshot = json.loads(row["extension_snapshot_json"])
-        if isinstance(snapshot, dict):
-            run["extensionSnapshot"] = snapshot
-    if "activated_tools_json" in row.keys() and row["activated_tools_json"] is not None:
-        activated = json.loads(row["activated_tools_json"])
-        if isinstance(activated, list):
-            run["activatedTools"] = activated
-    return RunDto.model_validate(run).to_json_value()
-
-
-def _item_from_row(
-    row: sqlite3.Row, tool_row: sqlite3.Row | None
-) -> dict[str, object]:
-    item: dict[str, object] = {
-        "id": row["id"],
-        "sessionId": row["session_id"],
-        "runId": row["run_id"],
-        "ordinal": row["ordinal"],
-        "kind": row["kind"],
-        "status": row["status"],
-        "createdAt": row["created_at"],
-    }
-    if row["model_step_index"] is not None:
-        item["modelStepIndex"] = row["model_step_index"]
-    if row["content"] is not None:
-        item["content"] = row["content"]
-    if "incomplete" in row.keys() and row["incomplete"]:
-        item["incomplete"] = True
-    if row["completed_at"] is not None:
-        item["completedAt"] = row["completed_at"]
-    if tool_row is not None:
-        tool_call: dict[str, object] = {
-            "id": tool_row["id"],
-            "itemId": tool_row["item_id"],
-            "modelStepIndex": tool_row["model_step_index"],
-            "batchOrder": tool_row["batch_order"],
-            "providerCallId": tool_row["provider_call_id"],
-            "toolName": tool_row["tool_name"],
-            "status": tool_row["status"],
-            "argumentsJson": tool_row["arguments_json"],
-            "startedAt": tool_row["started_at"],
-        }
-        if tool_row["result_json"] is not None:
-            tool_call["resultJson"] = tool_row["result_json"]
-        if tool_row["completed_at"] is not None:
-            tool_call["completedAt"] = tool_row["completed_at"]
-        if tool_row["approval_status"] is not None:
-            tool_call["approvalStatus"] = tool_row["approval_status"]
-        if tool_row["approval_decision"] is not None:
-            tool_call["approvalDecision"] = tool_row["approval_decision"]
-        if tool_row["approval_feedback"] is not None:
-            tool_call["approvalFeedback"] = tool_row["approval_feedback"]
-        if tool_row["approval_diff"] is not None:
-            tool_call["approvalDiff"] = tool_row["approval_diff"]
-        if tool_row["base_sha256"] is not None:
-            tool_call["baseSha256"] = tool_row["base_sha256"]
-        if "provenance_json" in tool_row.keys() and tool_row["provenance_json"]:
-            provenance = json.loads(tool_row["provenance_json"])
-            if isinstance(provenance, dict):
-                tool_call["provenance"] = provenance
-        if "tool_set_hash" in tool_row.keys() and tool_row["tool_set_hash"]:
-            tool_call["toolSetHash"] = tool_row["tool_set_hash"]
-        item["toolCall"] = tool_call
-    return ItemDto.model_validate(item).to_json_value()
-
-
-def _now_ms() -> int:
-    return time.time_ns() // 1_000_000
-
-
-def _encode_cursor(high_water: int, before_sequence: int) -> str:
-    payload = (
-        SESSION_CURSOR_PREFIX
-        + json.dumps(
-            {
-                "scope": "sessions",
-                "order": "creation_seq_desc",
-                "highWater": high_water,
-                "before": before_sequence,
-            },
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-    ).encode("ascii")
-    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
-
-
-def _decode_cursor(cursor: str) -> tuple[int, int]:
-    if not cursor or len(cursor) > 512:
-        raise InvalidCursorError("cursor is invalid")
-    try:
-        padding = "=" * (-len(cursor) % 4)
-        decoded = base64.b64decode(
-            cursor + padding,
-            altchars=b"-_",
-            validate=True,
-        ).decode("ascii")
-        if not decoded.startswith(SESSION_CURSOR_PREFIX):
-            raise ValueError
-        state = json.loads(decoded.removeprefix(SESSION_CURSOR_PREFIX))
-        if (
-            not isinstance(state, dict)
-            or set(state) != {"scope", "order", "highWater", "before"}
-            or state["scope"] != "sessions"
-            or state["order"] != "creation_seq_desc"
-            or not isinstance(state["highWater"], int)
-            or not isinstance(state["before"], int)
-            or isinstance(state["highWater"], bool)
-            or isinstance(state["before"], bool)
-            or state["highWater"] < 0
-            or not 0 < state["before"] <= state["highWater"]
-        ):
-            raise ValueError
-        return state["highWater"], state["before"]
-    except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
-        raise InvalidCursorError("cursor is invalid") from None

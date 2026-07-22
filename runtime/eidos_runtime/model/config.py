@@ -5,6 +5,11 @@ import os
 from pathlib import Path
 import stat
 import tempfile
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from eidos_runtime.model.client import ModelProfileSnapshot
 
 
 CONFIG_NAME = "model.json"
@@ -16,6 +21,80 @@ MODEL_NAMES = {
     "deepseek-v4-flash": "DeepSeek V4 Flash",
     "deepseek-v4-pro": "DeepSeek V4 Pro",
 }
+DEFAULT_CONTEXT_WINDOW_TOKENS = 802_816
+DEFAULT_MAX_OUTPUT_TOKENS = 8_192
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 120.0
+
+
+class ModelProfileSpec(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    provider_id: str
+    model_id: str
+    wire_api: Literal["chat_completions"] = "chat_completions"
+    context_window_tokens: int = Field(gt=0)
+    max_output_tokens: int = Field(gt=0)
+    request_timeout_seconds: float = Field(gt=0)
+
+    def snapshot(self, resolved_profile: dict[str, object]) -> ModelProfileSnapshot:
+        return ModelProfileSnapshot(
+            provider_id=self.provider_id,
+            model_id=self.model_id,
+            context_window_tokens=self.context_window_tokens,
+            max_output_tokens=self.max_output_tokens,
+            request_timeout_seconds=self.request_timeout_seconds,
+            supports_tools=resolved_profile.get("supports_tools") is True,
+            supports_json_schema_output=(
+                resolved_profile.get("supports_json_schema_output") is True
+            ),
+            supports_reasoning=resolved_profile.get("supports_thinking") is True,
+        )
+
+
+class ModelCatalog:
+    def __init__(self) -> None:
+        self._profiles = {
+            model_id: ModelProfileSpec(
+                provider_id=PROVIDER,
+                model_id=model_id,
+                context_window_tokens=DEFAULT_CONTEXT_WINDOW_TOKENS,
+                max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
+                request_timeout_seconds=DEFAULT_REQUEST_TIMEOUT_SECONDS,
+            )
+            for model_id in SUPPORTED_MODELS
+        }
+
+    def profile(self, model_id: str) -> ModelProfileSpec:
+        try:
+            return self._profiles[model_id]
+        except KeyError:
+            raise ValueError("model is unsupported") from None
+
+    def public(self, *, configured: bool) -> dict[str, object]:
+        return {
+            "models": [
+                {
+                    "id": model_id,
+                    "provider": PROVIDER,
+                    "displayName": MODEL_NAMES[model_id],
+                    "configured": configured,
+                    "selectable": configured,
+                }
+                for model_id in SUPPORTED_MODELS
+            ],
+            "defaultModelId": DEFAULT_MODEL_ID,
+        }
+
+
+MODEL_CATALOG = ModelCatalog()
+
+
+def default_profile_snapshot(model_id: str) -> ModelProfileSnapshot:
+    return MODEL_CATALOG.profile(model_id).snapshot({
+        "supports_tools": True,
+        "supports_json_schema_output": False,
+        "supports_thinking": True,
+    })
 
 
 class ModelConfigError(RuntimeError):
@@ -130,19 +209,7 @@ class ModelConfigStore:
 
 
 def model_catalog(*, configured: bool) -> dict[str, object]:
-    return {
-        "models": [
-            {
-                "id": model_id,
-                "provider": PROVIDER,
-                "displayName": MODEL_NAMES[model_id],
-                "configured": configured,
-                "selectable": configured,
-            }
-            for model_id in SUPPORTED_MODELS
-        ],
-        "defaultModelId": DEFAULT_MODEL_ID,
-    }
+    return MODEL_CATALOG.public(configured=configured)
 
 
 def _validate_key(value: object) -> str:

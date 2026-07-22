@@ -46,6 +46,7 @@ class StepContextFactory:
             step_id=str(fact["stepId"]),
             step_index=step_index,
             model_id=run.model_id,
+            model_profile=run.model_profile,
             model_context=(
                 model_context
                 if model_context is not None

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import threading
 
-from eidos_runtime.model.client import ModelResponse, ModelToolCall
+from eidos_runtime.model.client import ModelResponse, ModelToolCall, ModelToolDefinition
 from eidos_runtime.extensions.skills import SkillCreation
 from eidos_runtime.tools.registry import StepToolSnapshot, ToolRegistry
 from eidos_runtime.tools.workspace import FileChange
@@ -89,7 +89,7 @@ class ToolDispatcher:
 
     def model_definitions(
         self, activated_names: tuple[str, ...] = ()
-    ) -> list[dict[str, object]]:
+    ) -> tuple[ModelToolDefinition, ...]:
         return self._registry.model_definitions(activated_names)
 
     def snapshot(

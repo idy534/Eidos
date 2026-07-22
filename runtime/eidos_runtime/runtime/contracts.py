@@ -5,7 +5,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from eidos_runtime.model.client import ModelContextItem, ModelToolCall, ModelToolDefinition
+from eidos_runtime.model.client import (
+    ModelContextItem,
+    ModelToolCall,
+    ModelToolDefinition,
+    ModelUsage,
+    ModelProfileSnapshot,
+)
 from eidos_runtime.context.budget import ContextBudget
 from eidos_runtime.tools.registry import StepToolSnapshot
 
@@ -30,6 +36,7 @@ class RunContext(_FrozenModel):
     run_id: str
     session_id: str
     model_id: str
+    model_profile: ModelProfileSnapshot
     model_context: tuple[ModelContextItem, ...]
     extension_snapshot: dict[str, object]
     extension_snapshot_hash: str
@@ -42,6 +49,7 @@ class StepContext(_FrozenModel):
     step_id: str
     step_index: int
     model_id: str
+    model_profile: ModelProfileSnapshot
     model_context: tuple[ModelContextItem, ...]
     tool_snapshot: StepToolSnapshot
     tool_definitions: tuple[ModelToolDefinition, ...]
@@ -58,6 +66,14 @@ class SamplingOutcome(_FrozenModel):
     tool_calls: tuple[ModelToolCall, ...]
     assistant_item: dict[str, object] | None = None
     retry_count: int = 0
+    usage: ModelUsage | None = None
+    provider_name: str | None = None
+    resolved_model_name: str | None = None
+    finish_reason: str | None = None
+    provider_response_id: str | None = None
+    response_state: str | None = None
+    ttft_ms: int | None = None
+    duration_ms: int | None = None
 
 
 class ToolBatchOutcome(_FrozenModel):

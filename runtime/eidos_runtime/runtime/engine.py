@@ -7,11 +7,7 @@ import threading
 import time
 from typing import Callable
 
-from eidos_runtime.context.builder import (
-    ContextBuilder,
-    DEFAULT_CONTEXT_WINDOW_TOKENS,
-    DEFAULT_REQUEST_MAX_OUTPUT_TOKENS,
-)
+from eidos_runtime.context.builder import ContextBuilder
 from eidos_runtime.context.compactor import ContextCompactionError, ContextCompactor
 from eidos_runtime.db.storage import (
     ContextLimitExceeded,
@@ -80,8 +76,6 @@ class RuntimeEngine:
         sensitive: SensitiveScanner | None = None,
         wait_for_execution_slot: Callable[[str, threading.Event], bool] | None = None,
         mcp_sandbox: bool = True,
-        context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS,
-        request_max_output_tokens: int = DEFAULT_REQUEST_MAX_OUTPUT_TOKENS,
     ) -> None:
         self.store = store
         self.model = model
@@ -92,8 +86,6 @@ class RuntimeEngine:
         self.sensitive = sensitive or default_scanner()
         self.wait_for_execution_slot = wait_for_execution_slot
         self.mcp_sandbox = mcp_sandbox
-        self.context_window_tokens = context_window_tokens
-        self.request_max_output_tokens = request_max_output_tokens
         self.state_machine = RuntimePhaseTracker()
         self.active_started: float | None = None
 
@@ -151,11 +143,7 @@ class RuntimeEngine:
         guard = LoopGuard.from_signatures(
             self.store.recent_progress_signatures(run.run_id)
         )
-        context_builder = ContextBuilder(
-            self.store,
-            context_window_tokens=self.context_window_tokens,
-            request_max_output_tokens=self.request_max_output_tokens,
-        )
+        context_builder = ContextBuilder(self.store)
         compactor = ContextCompactor(self.store)
         step_factory = StepContextFactory(self.store)
         sampling = SamplingRuntime(
@@ -444,6 +432,7 @@ class RuntimeEngine:
             run_id=str(run["id"]),
             session_id=str(run["sessionId"]),
             model_id=str(run["modelId"]),
+            model_profile=self.store.read_model_profile(str(run["id"])),
             model_context=(),
             extension_snapshot=extension_snapshot,
             extension_snapshot_hash=hashlib.sha256(encoded).hexdigest(),
