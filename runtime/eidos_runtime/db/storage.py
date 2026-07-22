@@ -1,23 +1,30 @@
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
-import fcntl
 import hashlib
 import json
-import os
 from pathlib import Path
 import sqlite3
-import stat
 import threading
 import time
 import uuid
-from typing import Callable, Generic, TypeVar
+from typing import Callable, TypeVar
 
 from eidos_runtime.context.facts import CompactSummary, ContextFacts, ContextItemFact
 from eidos_runtime.protocol.schemas import ItemDto, RunDto, SessionDto
+from eidos_runtime.db.database import (
+    DATABASE_NAME, RESERVE_BYTES, RESERVE_NAME, CommittedMutation, Database,
+    WorkspaceIdentity, canonical_hash as _canonical_hash, now_ms as _now_ms,
+    verify_integrity,
+)
+from eidos_runtime.db.errors import (
+    ActiveRunError, ContextLimitExceeded, InvalidCursorError, InvalidRunStateError,
+    OperationConflictError, OperationInProgressError, ResourceNotFoundError,
+    RunLimitReached, SegmentLimitReached, SessionActiveError, StorageError,
+    WorkspaceBoundaryError,
+)
 from eidos_runtime.db.events import append_event, event_from_row
-from eidos_runtime.db.schema import SCHEMA_SQL, SCHEMA_VERSION
+from eidos_runtime.db.schema import SCHEMA_VERSION
 from eidos_runtime.model.client import (
     ModelProfileSnapshot,
     ModelUsage,
@@ -39,11 +46,7 @@ from eidos_runtime.runtime.state_machine import (
 from eidos_runtime.runtime.contracts import ProgressSignature
 
 
-DATABASE_NAME = "eidos.db"
-LOCK_NAME = "runtime.lock"
-RESERVE_NAME = "emergency.reserve"
 SCHEMA_REVISION = SCHEMA_VERSION
-RESERVE_BYTES = 1024 * 1024
 DEFAULT_LIST_LIMIT = 50
 MAX_LIST_LIMIT = 200
 SESSION_CURSOR_PREFIX = "session-v2:"
@@ -91,64 +94,31 @@ SESSION_SELECT = """
 """
 
 
-class StorageError(RuntimeError):
-    pass
 
 
-class WorkspaceBoundaryError(ValueError):
-    pass
 
 
-class InvalidCursorError(ValueError):
-    pass
 
 
-class ActiveRunError(RuntimeError):
-    pass
 
 
-class SessionActiveError(RuntimeError):
-    pass
 
 
-class ResourceNotFoundError(LookupError):
-    pass
 
 
-class InvalidRunStateError(RuntimeError):
-    pass
 
 
-class ContextLimitExceeded(RuntimeError):
-    def __init__(self, reason: str) -> None:
-        self.reason = reason
-        super().__init__(reason)
 
 
-class OperationConflictError(RuntimeError):
-    pass
 
 
-class OperationInProgressError(RuntimeError):
-    pass
 
 
-class SegmentLimitReached(RuntimeError):
-    pass
 
 
-class RunLimitReached(RuntimeError):
-    pass
 
 
 T = TypeVar("T")
-
-
-@dataclass(frozen=True)
-class CommittedMutation(Generic[T]):
-    value: T
-    events: tuple[dict[str, object], ...]
-
 
 def transition_run(
     connection: sqlite3.Connection,
@@ -501,94 +471,48 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
     )
 
 
-@dataclass(frozen=True)
-class WorkspaceIdentity:
-    path: Path
-    device: int
-    inode: int
-    owner: int
-
-
 class SessionStore:
     def __init__(self, data_directory: Path | None = None) -> None:
-        self.data_directory = data_directory
-        self.connection: sqlite3.Connection | None = None
-        self.lock = threading.RLock()
-        self.lock_descriptor: int | None = None
-        self.health_state = "starting"
-        self.health_code: str | None = None
+        self._database = Database(data_directory)
 
     def initialize(self) -> None:
-        with self.lock:
-            if self.connection is not None or self.health_state != "starting":
-                raise StorageError("storage is already initialized")
-            try:
-                self._initialize()
-            except (OSError, sqlite3.Error, StorageError) as error:
-                self._close_resources()
-                self.health_state = "health_only"
-                self.health_code = _safe_health_code(error)
-
-    def _initialize(self) -> None:
-        data_directory = self.data_directory or _default_data_directory()
-        if not data_directory.is_absolute():
-            raise StorageError("data_directory_invalid")
-        _prepare_private_directory(data_directory)
-        data_directory = data_directory.resolve()
-        self.data_directory = data_directory
-        self.lock_descriptor = _acquire_state_lock(data_directory / LOCK_NAME)
-        _prepare_reserve(data_directory / RESERVE_NAME)
-        database_path = data_directory / DATABASE_NAME
-        _prepare_private_database(database_path)
-
-        connection = sqlite3.connect(database_path, check_same_thread=False)
+        self._database.initialize()
+        if self._database.health_state != "ready":
+            return
         try:
-            connection.row_factory = sqlite3.Row
-            tables = _table_names(connection)
-            revision = connection.execute("PRAGMA user_version").fetchone()[0]
-            if tables:
-                if revision != SCHEMA_VERSION:
-                    raise StorageError("schema_revision_unsupported")
-            elif revision != 0:
-                raise StorageError("schema_revision_unsupported")
-
-            connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute("PRAGMA journal_mode = WAL")
-            connection.execute("PRAGMA busy_timeout = 5000")
-            _verify_pragmas(connection)
-            if not tables:
-                connection.executescript(SCHEMA_SQL)
-                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-                connection.commit()
-            _verify_integrity(connection)
-            with connection:
+            with self._database.transaction() as connection:
                 recover_runtime_facts(connection)
-            _verify_integrity(connection)
-            self.connection = connection
-            self.health_state = "ready"
-            self.health_code = None
-        except Exception:
-            connection.close()
-            raise
+            verify_integrity(self._database.connection())
+        except (OSError, sqlite3.Error, StorageError) as error:
+            self._database.mark_failed(error)
+
+    @property
+    def data_directory(self) -> Path | None:
+        return self._database.data_directory
+
+    @property
+    def connection(self) -> sqlite3.Connection | None:
+        return self._database.raw_connection
+
+    @property
+    def lock(self) -> threading.RLock:
+        return self._database.lock
+
+    @property
+    def health_state(self) -> str:
+        return self._database.health_state
+
+    @property
+    def health_code(self) -> str | None:
+        return self._database.health_code
+
 
     def close(self) -> None:
-        with self.lock:
-            self._close_resources()
+        self._database.close()
 
-    def _close_resources(self) -> None:
-        if self.connection is not None:
-            self.connection.close()
-            self.connection = None
-        if self.lock_descriptor is not None:
-            fcntl.flock(self.lock_descriptor, fcntl.LOCK_UN)
-            os.close(self.lock_descriptor)
-            self.lock_descriptor = None
 
     def health(self) -> dict[str, object]:
-        result: dict[str, object] = {"state": self.health_state}
-        if self.health_code is not None:
-            result["code"] = self.health_code
-        return result
+        return self._database.health()
 
     def create_session(
         self, workspace_root: str, *, operation_id: str | None = None
@@ -3459,9 +3383,7 @@ class SessionStore:
         return row["next_ordinal"]
 
     def _connection(self) -> sqlite3.Connection:
-        if self.connection is None:
-            raise StorageError("storage is not initialized")
-        return self.connection
+        return self._database.connection()
 
     def _write(
         self,
@@ -3471,60 +3393,17 @@ class SessionStore:
         operation_scope: str | None = None,
         operation_request: dict[str, object] | None = None,
     ) -> T:
-        with self.lock, self._connection() as connection:
-            if operation_id is None:
-                return action(connection)
-            assert operation_scope is not None and operation_request is not None
-            request_hash = _canonical_hash(operation_request)
-            existing = connection.execute(
-                "SELECT * FROM operations WHERE id = ? AND scope = ?",
-                (operation_id, operation_scope),
-            ).fetchone()
-            if existing is not None:
-                if existing["request_hash"] != request_hash:
-                    raise OperationConflictError("operation id was reused")
-                if existing["status"] != "completed" or existing["result_json"] is None:
-                    raise OperationInProgressError("operation is still in progress")
-                return json.loads(existing["result_json"])
-            now = _now_ms()
-            connection.execute(
-                """
-                INSERT INTO operations (
-                    id, scope, request_hash, status, created_at
-                ) VALUES (?, ?, ?, 'in_progress', ?)
-                """,
-                (operation_id, operation_scope, request_hash, now),
-            )
-            result = action(connection)
-            connection.execute(
-                """
-                UPDATE operations
-                SET status = 'completed', result_json = ?, completed_at = ?
-                WHERE id = ? AND scope = ? AND status = 'in_progress'
-                """,
-                (
-                    json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
-                    _now_ms(), operation_id, operation_scope,
-                ),
-            )
-            return result
+        return self._database.execute_idempotent(
+            action,
+            operation_id=operation_id,
+            operation_scope=operation_scope,
+            operation_request=operation_request,
+        )
 
     def operation_result(
         self, operation_id: str, scope: str, request: dict[str, object]
     ) -> object | None:
-        request_hash = _canonical_hash(request)
-        with self.lock:
-            row = self._connection().execute(
-                "SELECT * FROM operations WHERE id = ? AND scope = ?",
-                (operation_id, scope),
-            ).fetchone()
-        if row is None:
-            return None
-        if row["request_hash"] != request_hash:
-            raise OperationConflictError("operation id was reused")
-        if row["status"] != "completed" or row["result_json"] is None:
-            raise OperationInProgressError("operation is still in progress")
-        return json.loads(row["result_json"])
+        return self._database.operation_result(operation_id, scope, request)
 
     def record_operation_result(
         self,
@@ -3533,7 +3412,7 @@ class SessionStore:
         request: dict[str, object],
         result: dict[str, object],
     ) -> dict[str, object]:
-        return self._write(
+        return self._database.execute_idempotent(
             lambda _connection: result,
             operation_id=operation_id,
             operation_scope=scope,
@@ -3541,114 +3420,7 @@ class SessionStore:
         )
 
     def _workspace_overlaps_data(self, workspace: Path) -> bool:
-        data_directory = self.data_directory
-        if data_directory is None:
-            raise StorageError("storage is not initialized")
-        workspace = workspace.resolve(strict=False)
-        return (
-            workspace == data_directory
-            or workspace in data_directory.parents
-            or data_directory in workspace.parents
-        )
-
-
-def _default_data_directory() -> Path:
-    configured = os.environ.get("EIDOS_DATA_DIR")
-    if configured:
-        return Path(configured).expanduser()
-    return Path.home() / ".eidos"
-
-
-def _safe_health_code(error: BaseException) -> str:
-    if isinstance(error, StorageError):
-        code = str(error)
-        if code in {
-            "state_locked", "schema_revision_unsupported",
-            "database_corrupt", "foreign_key_violation", "storage_pragmas_invalid",
-            "reserve_invalid",
-        }:
-            return code
-        return "state_security_invalid"
-    if isinstance(error, sqlite3.DatabaseError):
-        return "database_corrupt"
-    return "storage_io_error"
-
-
-def _acquire_state_lock(path: Path) -> int:
-    if path.is_symlink():
-        raise StorageError("state_security_invalid")
-    flags = os.O_CREAT | os.O_RDWR
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    descriptor = os.open(path, flags, 0o600)
-    try:
-        metadata = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
-            or stat.S_IMODE(metadata.st_mode) != 0o600
-        ):
-            raise StorageError("state_security_invalid")
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise StorageError("state_locked") from None
-        return descriptor
-    except Exception:
-        os.close(descriptor)
-        raise
-
-
-def _prepare_reserve(path: Path) -> None:
-    if path.is_symlink():
-        raise StorageError("reserve_invalid")
-    if not path.exists():
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        descriptor = os.open(path, flags, 0o600)
-        try:
-            block = b"\xa5" * 64 * 1024
-            for _ in range(RESERVE_BYTES // len(block)):
-                os.write(descriptor, block)
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-    metadata = path.stat()
-    allocated = getattr(metadata, "st_blocks", 0) * 512
-    if (
-        not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o600
-        or metadata.st_size != RESERVE_BYTES
-        or (allocated and allocated < RESERVE_BYTES)
-    ):
-        raise StorageError("reserve_invalid")
-
-
-def _table_names(connection: sqlite3.Connection) -> set[str]:
-    return {
-        row[0]
-        for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
-        ).fetchall()
-    }
-
-
-def _verify_pragmas(connection: sqlite3.Connection) -> None:
-    foreign_keys = connection.execute("PRAGMA foreign_keys").fetchone()[0]
-    journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
-    busy_timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
-    if foreign_keys != 1 or str(journal_mode).lower() != "wal" or busy_timeout < 5000:
-        raise StorageError("storage_pragmas_invalid")
-
-
-def _verify_integrity(connection: sqlite3.Connection) -> None:
-    result = connection.execute("PRAGMA integrity_check").fetchone()[0]
-    if result != "ok":
-        raise StorageError("database_corrupt")
-    if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-        raise StorageError("foreign_key_violation")
+        return self._database.workspace_overlaps_data(workspace)
 
 
 
@@ -3669,32 +3441,22 @@ def _verify_integrity(connection: sqlite3.Connection) -> None:
 
 
 
-def _prepare_private_directory(path: Path) -> None:
-    if path.is_symlink():
-        raise StorageError("data directory must not be a symlink")
-    if not path.exists():
-        path.mkdir(mode=0o700, parents=True)
-    metadata = path.stat()
-    if not stat.S_ISDIR(metadata.st_mode):
-        raise StorageError("data directory must be a directory")
-    if metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
-        raise StorageError("data directory owner or mode is invalid")
 
 
-def _prepare_private_database(path: Path) -> None:
-    if path.is_symlink():
-        raise StorageError("database must not be a symlink")
-    if not path.exists():
-        flags = os.O_CREAT | os.O_EXCL | os.O_RDWR
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        descriptor = os.open(path, flags, 0o600)
-        os.close(descriptor)
-    metadata = path.stat()
-    if not stat.S_ISREG(metadata.st_mode):
-        raise StorageError("database must be a regular file")
-    if metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o600:
-        raise StorageError("database owner or mode is invalid")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3748,11 +3510,6 @@ def _json_bytes(value: object) -> int:
     )
 
 
-def _canonical_hash(value: object) -> str:
-    encoded = json.dumps(
-        value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def _bounded_canonical_json(value: object, *, code: str) -> str:
@@ -3994,8 +3751,6 @@ def _item_from_row(
     return ItemDto.model_validate(item).to_json_value()
 
 
-def _now_ms() -> int:
-    return time.time_ns() // 1_000_000
 
 
 def _encode_cursor(high_water: int, before_sequence: int) -> str:

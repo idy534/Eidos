@@ -124,7 +124,7 @@ class PhaseTwoStorageTests(unittest.TestCase):
         self.assertIsNone(store.connection)
 
     def test_reserve_allocation_failure_starts_health_only_without_business_db(self) -> None:
-        with patch("eidos_runtime.db.storage._prepare_reserve", side_effect=OSError("disk full")):
+        with patch("eidos_runtime.db.database._prepare_reserve", side_effect=OSError("disk full")):
             store = SessionStore(self.data_directory)
             store.initialize()
         self.assertEqual(
