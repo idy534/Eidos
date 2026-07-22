@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-import sqlite3
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
 
 
 import sys
@@ -13,11 +11,7 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.context.builder import ContextBuilder  # noqa: E402
-from eidos_runtime.db.storage import (  # noqa: E402
-    DATABASE_NAME,
-    SCHEMA_REVISION,
-    SessionStore,
-)
+from eidos_runtime.db.storage import DATABASE_NAME, SessionStore  # noqa: E402
 from eidos_runtime.model.client import (  # noqa: E402
     ModelProfileSnapshot,
     ModelResponse,
@@ -233,69 +227,6 @@ class ModelPersistenceTests(unittest.TestCase):
         self.assertEqual(attempt["errorCode"], "sensitive_scan_failed")
 
 
-class RevisionNineMigrationTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="eidos-model-migration-")
-        self.data = Path(self.temporary.name) / "data"
-        self.data.mkdir(mode=0o700)
-
-    def tearDown(self) -> None:
-        self.temporary.cleanup()
-
-    def make_revision_eight(self) -> str:
-        workspace = Path(self.temporary.name) / "workspace"
-        workspace.mkdir(exist_ok=True)
-        store = SessionStore(self.data)
-        store.initialize()
-        session = store.create_session(str(workspace))
-        run, _ = store.create_run(
-            session["id"], "history", model_id="deepseek-v4-pro"
-        )
-        assert store.connection is not None
-        store.connection.execute("ALTER TABLE runs DROP COLUMN model_profile_json")
-        for column in (
-            "provider_name", "resolved_model_name", "finish_reason",
-            "provider_response_id", "usage_json", "error_code", "http_status",
-            "ttft_ms", "duration_ms", "had_progress",
-        ):
-            store.connection.execute(f"ALTER TABLE model_attempts DROP COLUMN {column}")
-        store.connection.execute("PRAGMA user_version = 8")
-        store.connection.commit()
-        store.close()
-        return run["id"]
-
-    def test_revision_eight_migrates_with_backup_and_historical_default(self) -> None:
-        run_id = self.make_revision_eight()
-        migrated = SessionStore(self.data)
-        migrated.initialize()
-
-        self.assertEqual(migrated.health(), {"state": "ready"})
-        self.assertEqual(SCHEMA_REVISION, 9)
-        self.assertEqual(
-            migrated.read_model_profile(run_id).model_id,
-            "deepseek-v4-pro",
-        )
-        self.assertEqual(len(list(self.data.glob("*.rev8.*.bak.json"))), 1)
-        migrated.close()
-
-    def test_revision_eight_migration_failure_rolls_back(self) -> None:
-        self.make_revision_eight()
-        with patch(
-            "eidos_runtime.db.storage._default_profile_json",
-            side_effect=ValueError("fixture"),
-        ):
-            failed = SessionStore(self.data)
-            failed.initialize()
-        self.assertEqual(
-            failed.health(), {"state": "health_only", "code": "migration_failed"}
-        )
-        connection = sqlite3.connect(self.data / DATABASE_NAME)
-        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 8)
-        columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(runs)").fetchall()
-        }
-        self.assertNotIn("model_profile_json", columns)
-        connection.close()
 
 
 if __name__ == "__main__":

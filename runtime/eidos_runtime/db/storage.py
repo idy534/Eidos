@@ -17,6 +17,7 @@ from typing import Callable, Generic, TypeVar
 from eidos_runtime.context.facts import CompactSummary, ContextFacts, ContextItemFact
 from eidos_runtime.protocol.schemas import ItemDto, RunDto, SessionDto
 from eidos_runtime.db.events import append_event, event_from_row
+from eidos_runtime.db.schema import SCHEMA_SQL, SCHEMA_VERSION
 from eidos_runtime.model.client import (
     ModelProfileSnapshot,
     ModelUsage,
@@ -41,7 +42,7 @@ from eidos_runtime.runtime.contracts import ProgressSignature
 DATABASE_NAME = "eidos.db"
 LOCK_NAME = "runtime.lock"
 RESERVE_NAME = "emergency.reserve"
-SCHEMA_REVISION = 9
+SCHEMA_REVISION = SCHEMA_VERSION
 RESERVE_BYTES = 1024 * 1024
 DEFAULT_LIST_LIMIT = 50
 MAX_LIST_LIMIT = 200
@@ -543,311 +544,25 @@ class SessionStore:
         connection = sqlite3.connect(database_path, check_same_thread=False)
         try:
             connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute("PRAGMA journal_mode = WAL")
-            connection.execute("PRAGMA busy_timeout = 5000")
-            _verify_pragmas(connection)
             tables = _table_names(connection)
             revision = connection.execute("PRAGMA user_version").fetchone()[0]
-            if revision == 0 and tables:
-                if {"sessions", "runs", "items", "tool_calls"} <= tables:
-                    revision = 1
-                else:
-                    raise StorageError("schema_revision_missing")
-            if revision > SCHEMA_REVISION or revision < 0:
-                raise StorageError("schema_revision_unsupported")
-            if revision in {1, 2, 3, 4, 5, 6, 7, 8}:
-                _backup_database(connection, database_path, revision)
-            if revision == 1:
-                _migrate_v1_to_v2(connection)
-                revision = 2
-            if revision == 2:
-                _migrate_v2_to_v3(connection)
-                revision = 3
-            if revision == 3:
-                _migrate_v3_to_v4(connection)
-                revision = 4
-            if revision == 4:
-                _migrate_v4_to_v5(connection)
-                revision = 5
-            if revision == 5:
-                _migrate_v5_to_v6(connection)
-                revision = 6
-            if revision == 6:
-                _migrate_v6_to_v7(connection)
-                revision = 7
-            if revision == 7:
-                _migrate_v7_to_v8(connection)
-                revision = 8
-            if revision == 8:
-                _migrate_v8_to_v9(connection)
-                revision = 9
-            if revision not in {0, SCHEMA_REVISION}:
+            if tables:
+                if revision != SCHEMA_VERSION:
+                    raise StorageError("schema_revision_unsupported")
+            elif revision != 0:
                 raise StorageError("schema_revision_unsupported")
 
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS sessions (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    workspace_root TEXT NOT NULL,
-                    title TEXT,
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS runs (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
-                    user_input TEXT NOT NULL,
-                    model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash',
-                    model_profile_json TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK (status IN (
-                        'queued', 'running', 'waiting_approval', 'waiting_user_input',
-                        'finalizing', 'succeeded', 'failed', 'stopped', 'canceled',
-                        'interrupted'
-                    )),
-                    model_step_count INTEGER NOT NULL DEFAULT 0,
-                    consecutive_protocol_errors INTEGER NOT NULL DEFAULT 0,
-                    consecutive_rejects INTEGER NOT NULL DEFAULT 0,
-                    consecutive_sensitive_tool_inputs INTEGER NOT NULL DEFAULT 0,
-                    enqueued_at INTEGER,
-                    total_effective_ms INTEGER NOT NULL DEFAULT 0,
-                    pause_reason TEXT,
-                    stop_reason TEXT,
-                    reconciliation_required INTEGER NOT NULL DEFAULT 0,
-                    reconciliation_epoch INTEGER NOT NULL DEFAULT 0,
-                    side_effects_may_exist INTEGER NOT NULL DEFAULT 0,
-                    extension_snapshot_json TEXT NOT NULL DEFAULT '{}',
-                    activated_tools_json TEXT NOT NULL DEFAULT '[]',
-                    compaction_count INTEGER NOT NULL DEFAULT 0,
-                    workspace_version INTEGER NOT NULL DEFAULT 0,
-                    last_diff_hash TEXT,
-                    error_code TEXT,
-                    created_at INTEGER NOT NULL,
-                    started_at INTEGER,
-                    updated_at INTEGER NOT NULL,
-                    completed_at INTEGER
-                );
-
-                CREATE UNIQUE INDEX IF NOT EXISTS one_active_run
-                ON runs ((1))
-                WHERE status IN ('running', 'finalizing');
-
-                CREATE TABLE IF NOT EXISTS items (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
-                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                    ordinal INTEGER NOT NULL,
-                    model_step_index INTEGER,
-                    kind TEXT NOT NULL CHECK (kind IN (
-                        'user_message', 'assistant_message', 'file_change',
-                        'command_execution', 'tool_call'
-                    )),
-                    status TEXT NOT NULL CHECK (status IN (
-                        'in_progress', 'completed', 'failed', 'declined', 'canceled'
-                    )),
-                    content TEXT,
-                    incomplete INTEGER NOT NULL DEFAULT 0,
-                    created_at INTEGER NOT NULL,
-                    completed_at INTEGER,
-                    UNIQUE(run_id, ordinal)
-                );
-
-                CREATE TABLE IF NOT EXISTS tool_calls (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    item_id TEXT NOT NULL UNIQUE REFERENCES items(id) ON DELETE RESTRICT,
-                    model_step_index INTEGER NOT NULL,
-                    batch_order INTEGER NOT NULL,
-                    provider_call_id TEXT NOT NULL,
-                    tool_name TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK (status IN (
-                        'running', 'completed', 'failed', 'canceled'
-                    )),
-                    arguments_json TEXT NOT NULL,
-                    result_json TEXT,
-                    approval_status TEXT,
-                    approval_decision TEXT,
-                    approval_feedback TEXT,
-                    approval_diff TEXT,
-                    base_sha256 TEXT,
-                    provenance_json TEXT,
-                    tool_set_hash TEXT,
-                    started_at INTEGER NOT NULL,
-                    completed_at INTEGER
-                );
-
-                CREATE TABLE IF NOT EXISTS approvals (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    tool_call_id TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE RESTRICT,
-                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                    item_id TEXT NOT NULL REFERENCES items(id) ON DELETE RESTRICT,
-                    status TEXT NOT NULL,
-                    request_hash TEXT NOT NULL,
-                    decision TEXT,
-                    feedback TEXT,
-                    created_at INTEGER NOT NULL,
-                    decided_at INTEGER
-                );
-
-                CREATE UNIQUE INDEX IF NOT EXISTS one_pending_approval_per_item
-                ON approvals (item_id)
-                WHERE status = 'pending';
-
-                CREATE TABLE IF NOT EXISTS execution_segments (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                    ordinal INTEGER NOT NULL,
-                    status TEXT NOT NULL,
-                    step_count INTEGER NOT NULL DEFAULT 0,
-                    effective_ms INTEGER NOT NULL DEFAULT 0,
-                    created_at INTEGER NOT NULL,
-                    started_at INTEGER,
-                    completed_at INTEGER,
-                    UNIQUE(run_id, ordinal)
-                );
-
-                CREATE TABLE IF NOT EXISTS steps (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                    segment_id TEXT NOT NULL REFERENCES execution_segments(id) ON DELETE RESTRICT,
-                    ordinal INTEGER NOT NULL,
-                    status TEXT NOT NULL,
-                    observed_reconciliation_epoch INTEGER NOT NULL DEFAULT 0,
-                    tool_snapshot_json TEXT,
-                    tool_set_hash TEXT,
-                    progress_signature_json TEXT,
-                    created_at INTEGER NOT NULL,
-                    completed_at INTEGER,
-                    UNIQUE(segment_id, ordinal)
-                );
-
-                CREATE TABLE IF NOT EXISTS model_attempts (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    step_id TEXT NOT NULL REFERENCES steps(id) ON DELETE RESTRICT,
-                    ordinal INTEGER NOT NULL,
-                    status TEXT NOT NULL,
-                    provider_name TEXT,
-                    resolved_model_name TEXT,
-                    finish_reason TEXT,
-                    provider_response_id TEXT,
-                    usage_json TEXT,
-                    error_code TEXT,
-                    http_status INTEGER,
-                    ttft_ms INTEGER,
-                    duration_ms INTEGER,
-                    had_progress INTEGER NOT NULL DEFAULT 0,
-                    started_at INTEGER NOT NULL,
-                    completed_at INTEGER,
-                    UNIQUE(step_id, ordinal)
-                );
-
-                CREATE TABLE IF NOT EXISTS events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    event_contract_version INTEGER NOT NULL,
-                    event_type TEXT NOT NULL,
-                    occurred_at INTEGER NOT NULL,
-                    session_id TEXT,
-                    run_id TEXT,
-                    payload_json TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS operations (
-                    id TEXT NOT NULL,
-                    scope TEXT NOT NULL,
-                    request_hash TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    result_json TEXT,
-                    created_at INTEGER NOT NULL,
-                    completed_at INTEGER,
-                    PRIMARY KEY(id, scope)
-                );
-
-                CREATE TABLE IF NOT EXISTS durable_intents (
-                    id TEXT PRIMARY KEY,
-                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                    tool_call_id TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE RESTRICT,
-                    execution_nonce TEXT NOT NULL UNIQUE,
-                    arguments_hash TEXT NOT NULL,
-                    preconditions_json TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    created_at INTEGER NOT NULL,
-                    reconciled_at INTEGER
-                );
-
-                CREATE TABLE IF NOT EXISTS plugins (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    version TEXT NOT NULL,
-                    description TEXT NOT NULL,
-                    manifest_json TEXT NOT NULL,
-                    content_hash TEXT NOT NULL,
-                    enabled INTEGER NOT NULL DEFAULT 0,
-                    status TEXT NOT NULL CHECK (status IN ('installed', 'removed')),
-                    installed_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS mcp_server_states (
-                    plugin_id TEXT NOT NULL,
-                    server_id TEXT NOT NULL,
-                    consented INTEGER NOT NULL DEFAULT 0,
-                    error_code TEXT,
-                    updated_at INTEGER NOT NULL,
-                    PRIMARY KEY(plugin_id, server_id)
-                );
-
-                CREATE TABLE IF NOT EXISTS compact_summaries (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
-                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                    task_goal TEXT NOT NULL,
-                    constraints_json TEXT NOT NULL,
-                    completed_actions_json TEXT NOT NULL,
-                    workspace_changes_json TEXT NOT NULL,
-                    important_facts_json TEXT NOT NULL,
-                    unresolved_problems_json TEXT NOT NULL,
-                    next_actions_json TEXT NOT NULL,
-                    source_item_ids_json TEXT NOT NULL,
-                    phase TEXT NOT NULL CHECK (phase IN ('pre_turn', 'mid_turn')),
-                    created_at INTEGER NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS input_mailbox (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                    content TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK (status IN ('pending', 'injected', 'canceled')),
-                    created_at INTEGER NOT NULL,
-                    injected_at INTEGER
-                );
-                """
-            )
-            connection.execute(f"PRAGMA user_version = {SCHEMA_REVISION}")
-            _ensure_session_identity_columns(connection)
-            _ensure_tool_call_approval_columns(connection)
-            _ensure_phase_two_columns(connection)
-            _ensure_phase_three_columns(connection)
-            _backfill_session_identities(connection)
-            recover_runtime_facts(connection)
-            connection.commit()
-            _verify_integrity(connection)
-            connection.close()
-            connection = sqlite3.connect(database_path, check_same_thread=False)
-            connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute("PRAGMA journal_mode = WAL")
             connection.execute("PRAGMA busy_timeout = 5000")
             _verify_pragmas(connection)
+            if not tables:
+                connection.executescript(SCHEMA_SQL)
+                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                connection.commit()
+            _verify_integrity(connection)
+            with connection:
+                recover_runtime_facts(connection)
             _verify_integrity(connection)
             self.connection = connection
             self.health_state = "ready"
@@ -3848,9 +3563,9 @@ def _safe_health_code(error: BaseException) -> str:
     if isinstance(error, StorageError):
         code = str(error)
         if code in {
-            "state_locked", "schema_revision_missing", "schema_revision_unsupported",
+            "state_locked", "schema_revision_unsupported",
             "database_corrupt", "foreign_key_violation", "storage_pragmas_invalid",
-            "migration_failed", "backup_failed", "reserve_invalid",
+            "reserve_invalid",
         }:
             return code
         return "state_security_invalid"
@@ -3936,295 +3651,22 @@ def _verify_integrity(connection: sqlite3.Connection) -> None:
         raise StorageError("foreign_key_violation")
 
 
-def _backup_database(
-    connection: sqlite3.Connection, database_path: Path, revision: int
-) -> None:
-    stamp = _now_ms()
-    backup_path = database_path.with_name(f"{database_path.name}.rev{revision}.{stamp}.bak")
-    manifest_path = backup_path.with_suffix(backup_path.suffix + ".json")
-    try:
-        destination = sqlite3.connect(backup_path)
-        try:
-            connection.backup(destination)
-        finally:
-            destination.close()
-        os.chmod(backup_path, 0o600)
-        digest = hashlib.sha256(backup_path.read_bytes()).hexdigest()
-        manifest = {
-            "source": database_path.name,
-            "backup": backup_path.name,
-            "sourceRevision": revision,
-            "sha256": digest,
-            "createdAt": stamp,
-        }
-        descriptor = os.open(
-            manifest_path,
-            os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-        )
-        try:
-            os.write(descriptor, json.dumps(manifest, sort_keys=True).encode("ascii"))
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        if hashlib.sha256(backup_path.read_bytes()).hexdigest() != digest:
-            raise StorageError("backup_failed")
-    except (OSError, sqlite3.Error, StorageError):
-        raise StorageError("backup_failed") from None
 
 
-def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
-    try:
-        connection.commit()
-        connection.execute("PRAGMA foreign_keys = OFF")
-        connection.executescript(
-            """
-            BEGIN IMMEDIATE;
-            CREATE TABLE runs_v2 (
-                creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                id TEXT NOT NULL UNIQUE,
-                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
-                user_input TEXT NOT NULL,
-                status TEXT NOT NULL CHECK (status IN (
-                    'queued', 'running', 'waiting_approval', 'waiting_user_input',
-                    'finalizing', 'succeeded', 'failed', 'stopped', 'canceled',
-                    'interrupted'
-                )),
-                model_step_count INTEGER NOT NULL DEFAULT 0,
-                consecutive_protocol_errors INTEGER NOT NULL DEFAULT 0,
-                consecutive_rejects INTEGER NOT NULL DEFAULT 0,
-                consecutive_sensitive_tool_inputs INTEGER NOT NULL DEFAULT 0,
-                enqueued_at INTEGER,
-                total_effective_ms INTEGER NOT NULL DEFAULT 0,
-                pause_reason TEXT,
-                stop_reason TEXT,
-                reconciliation_required INTEGER NOT NULL DEFAULT 0,
-                reconciliation_epoch INTEGER NOT NULL DEFAULT 0,
-                side_effects_may_exist INTEGER NOT NULL DEFAULT 0,
-                error_code TEXT,
-                created_at INTEGER NOT NULL,
-                started_at INTEGER,
-                updated_at INTEGER NOT NULL,
-                completed_at INTEGER
-            );
-            INSERT INTO runs_v2 (
-                creation_seq, id, session_id, user_input, status,
-                model_step_count, consecutive_protocol_errors, error_code,
-                created_at, started_at, updated_at, completed_at
-            ) SELECT
-                creation_seq, id, session_id, user_input, status,
-                model_step_count, consecutive_protocol_errors, error_code,
-                created_at, started_at, updated_at, completed_at
-            FROM runs;
-            DROP TABLE runs;
-            ALTER TABLE runs_v2 RENAME TO runs;
-            PRAGMA user_version = 2;
-            COMMIT;
-            """
-        )
-        connection.execute("PRAGMA foreign_keys = ON")
-    except (sqlite3.Error, OSError):
-        connection.rollback()
-        connection.execute("PRAGMA foreign_keys = ON")
-        raise StorageError("migration_failed") from None
 
 
-def _migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
-    try:
-        columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(sessions)").fetchall()
-        }
-        if "title" not in columns:
-            connection.execute("ALTER TABLE sessions ADD COLUMN title TEXT")
-        connection.execute("PRAGMA user_version = 3")
-        connection.commit()
-    except sqlite3.Error:
-        connection.rollback()
-        raise StorageError("migration_failed") from None
 
 
-def _migrate_v3_to_v4(connection: sqlite3.Connection) -> None:
-    try:
-        tables = _table_names(connection)
-        if "runs" in tables:
-            columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info(runs)").fetchall()
-            }
-            if "model_id" not in columns:
-                connection.execute(
-                    """
-                    ALTER TABLE runs ADD COLUMN model_id TEXT NOT NULL
-                    DEFAULT 'deepseek-v4-flash'
-                    """
-                )
-        connection.execute("PRAGMA user_version = 4")
-        connection.commit()
-    except sqlite3.Error:
-        connection.rollback()
-        raise StorageError("migration_failed") from None
 
 
-def _migrate_v4_to_v5(connection: sqlite3.Connection) -> None:
-    try:
-        connection.execute("BEGIN IMMEDIATE")
-        _ensure_phase_three_columns(connection)
-        connection.execute("PRAGMA user_version = 5")
-        connection.commit()
-    except sqlite3.Error:
-        connection.rollback()
-        raise StorageError("migration_failed") from None
 
 
-def _migrate_v5_to_v6(connection: sqlite3.Connection) -> None:
-    try:
-        if "approvals" in _table_names(connection):
-            connection.executescript(
-                """
-                BEGIN IMMEDIATE;
-                CREATE TABLE approvals_v6 (
-                    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
-                    tool_call_id TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE RESTRICT,
-                    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                    item_id TEXT NOT NULL REFERENCES items(id) ON DELETE RESTRICT,
-                    status TEXT NOT NULL,
-                    request_hash TEXT NOT NULL,
-                    decision TEXT,
-                    feedback TEXT,
-                    created_at INTEGER NOT NULL,
-                    decided_at INTEGER
-                );
-                INSERT INTO approvals_v6 SELECT * FROM approvals;
-                DROP TABLE approvals;
-                ALTER TABLE approvals_v6 RENAME TO approvals;
-                CREATE UNIQUE INDEX one_pending_approval_per_item
-                ON approvals (item_id) WHERE status = 'pending';
-                PRAGMA user_version = 6;
-                COMMIT;
-                """
-            )
-        else:
-            connection.execute("PRAGMA user_version = 6")
-            connection.commit()
-    except sqlite3.Error:
-        connection.rollback()
-        raise StorageError("migration_failed") from None
 
 
-def _migrate_v6_to_v7(connection: sqlite3.Connection) -> None:
-    try:
-        connection.execute("BEGIN IMMEDIATE")
-        run_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(runs)").fetchall()
-        }
-        additions = {
-            "compaction_count": "INTEGER NOT NULL DEFAULT 0",
-            "workspace_version": "INTEGER NOT NULL DEFAULT 0",
-            "last_diff_hash": "TEXT",
-        }
-        for name, definition in additions.items():
-            if run_columns and name not in run_columns:
-                connection.execute(f"ALTER TABLE runs ADD COLUMN {name} {definition}")
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS compact_summaries (
-                creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                id TEXT NOT NULL UNIQUE,
-                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
-                run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                task_goal TEXT NOT NULL,
-                constraints_json TEXT NOT NULL,
-                completed_actions_json TEXT NOT NULL,
-                workspace_changes_json TEXT NOT NULL,
-                important_facts_json TEXT NOT NULL,
-                unresolved_problems_json TEXT NOT NULL,
-                next_actions_json TEXT NOT NULL,
-                source_item_ids_json TEXT NOT NULL,
-                phase TEXT NOT NULL CHECK (phase IN ('pre_turn', 'mid_turn')),
-                created_at INTEGER NOT NULL
-            )
-            """
-        )
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS input_mailbox (
-                creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                id TEXT NOT NULL UNIQUE,
-                run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-                content TEXT NOT NULL,
-                status TEXT NOT NULL CHECK (status IN ('pending', 'injected', 'canceled')),
-                created_at INTEGER NOT NULL,
-                injected_at INTEGER
-            )
-            """
-        )
-        connection.execute("PRAGMA user_version = 7")
-        connection.commit()
-    except sqlite3.Error:
-        connection.rollback()
-        raise StorageError("migration_failed") from None
 
 
-def _migrate_v7_to_v8(connection: sqlite3.Connection) -> None:
-    try:
-        columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(steps)").fetchall()
-        }
-        if columns and "progress_signature_json" not in columns:
-            connection.execute(
-                "ALTER TABLE steps ADD COLUMN progress_signature_json TEXT"
-            )
-        connection.execute("PRAGMA user_version = 8")
-        connection.commit()
-    except sqlite3.Error:
-        connection.rollback()
-        raise StorageError("migration_failed") from None
 
 
-def _migrate_v8_to_v9(connection: sqlite3.Connection) -> None:
-    try:
-        connection.execute("BEGIN IMMEDIATE")
-        run_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(runs)").fetchall()
-        }
-        if run_columns and "model_profile_json" not in run_columns:
-            connection.execute(
-                "ALTER TABLE runs ADD COLUMN model_profile_json TEXT NOT NULL DEFAULT '{}'"
-            )
-        attempt_columns = {
-            row[1]
-            for row in connection.execute("PRAGMA table_info(model_attempts)").fetchall()
-        }
-        additions = {
-            "provider_name": "TEXT",
-            "resolved_model_name": "TEXT",
-            "finish_reason": "TEXT",
-            "provider_response_id": "TEXT",
-            "usage_json": "TEXT",
-            "error_code": "TEXT",
-            "http_status": "INTEGER",
-            "ttft_ms": "INTEGER",
-            "duration_ms": "INTEGER",
-            "had_progress": "INTEGER NOT NULL DEFAULT 0",
-        }
-        for name, definition in additions.items():
-            if attempt_columns and name not in attempt_columns:
-                connection.execute(
-                    f"ALTER TABLE model_attempts ADD COLUMN {name} {definition}"
-                )
-        if run_columns:
-            rows = connection.execute("SELECT id, model_id FROM runs").fetchall()
-            for row in rows:
-                connection.execute(
-                    "UPDATE runs SET model_profile_json = ? WHERE id = ?",
-                    (_default_profile_json(str(row["model_id"])), row["id"]),
-                )
-        connection.execute("PRAGMA user_version = 9")
-        connection.commit()
-    except (sqlite3.Error, ValueError):
-        connection.rollback()
-        raise StorageError("migration_failed") from None
 
 
 def _prepare_private_directory(path: Path) -> None:
@@ -4255,101 +3697,14 @@ def _prepare_private_database(path: Path) -> None:
         raise StorageError("database owner or mode is invalid")
 
 
-def _ensure_session_identity_columns(connection: sqlite3.Connection) -> None:
-    columns = {
-        row["name"] for row in connection.execute("PRAGMA table_info(sessions)").fetchall()
-    }
-    for name in ("workspace_dev", "workspace_inode", "workspace_uid"):
-        if name not in columns:
-            connection.execute(f"ALTER TABLE sessions ADD COLUMN {name} INTEGER")
 
 
-def _ensure_tool_call_approval_columns(connection: sqlite3.Connection) -> None:
-    columns = {
-        row["name"]
-        for row in connection.execute("PRAGMA table_info(tool_calls)").fetchall()
-    }
-    for name in (
-        "approval_status",
-        "approval_decision",
-        "approval_feedback",
-        "approval_diff",
-        "base_sha256",
-    ):
-        if name not in columns:
-            connection.execute(f"ALTER TABLE tool_calls ADD COLUMN {name} TEXT")
 
 
-def _ensure_phase_two_columns(connection: sqlite3.Connection) -> None:
-    item_columns = {
-        row["name"] for row in connection.execute("PRAGMA table_info(items)").fetchall()
-    }
-    if "incomplete" not in item_columns:
-        connection.execute(
-            "ALTER TABLE items ADD COLUMN incomplete INTEGER NOT NULL DEFAULT 0"
-        )
 
 
-def _ensure_phase_three_columns(connection: sqlite3.Connection) -> None:
-    tables = _table_names(connection)
-    run_columns = {
-        row["name"] for row in connection.execute("PRAGMA table_info(runs)").fetchall()
-    }
-    if "runs" in tables and "extension_snapshot_json" not in run_columns:
-        connection.execute(
-            """
-            ALTER TABLE runs ADD COLUMN extension_snapshot_json TEXT NOT NULL
-            DEFAULT '{"extensionContractVersion":1,"mcpConfigHash":"0000000000000000000000000000000000000000000000000000000000000000","plugins":[],"schemaVersion":1,"skillCatalogHash":"0000000000000000000000000000000000000000000000000000000000000000"}'
-            """
-        )
-    if "runs" in tables and "activated_tools_json" not in run_columns:
-        connection.execute(
-            "ALTER TABLE runs ADD COLUMN activated_tools_json TEXT NOT NULL DEFAULT '[]'"
-        )
-    step_columns = {
-        row["name"] for row in connection.execute("PRAGMA table_info(steps)").fetchall()
-    }
-    if "steps" in tables and "tool_snapshot_json" not in step_columns:
-        connection.execute("ALTER TABLE steps ADD COLUMN tool_snapshot_json TEXT")
-    if "steps" in tables and "tool_set_hash" not in step_columns:
-        connection.execute("ALTER TABLE steps ADD COLUMN tool_set_hash TEXT")
-    tool_columns = {
-        row["name"]
-        for row in connection.execute("PRAGMA table_info(tool_calls)").fetchall()
-    }
-    if "tool_calls" in tables and "provenance_json" not in tool_columns:
-        connection.execute("ALTER TABLE tool_calls ADD COLUMN provenance_json TEXT")
-    if "tool_calls" in tables and "tool_set_hash" not in tool_columns:
-        connection.execute("ALTER TABLE tool_calls ADD COLUMN tool_set_hash TEXT")
 
 
-def _backfill_session_identities(connection: sqlite3.Connection) -> None:
-    rows = connection.execute(
-        """
-        SELECT id, workspace_root FROM sessions
-        WHERE workspace_dev IS NULL OR workspace_inode IS NULL OR workspace_uid IS NULL
-        """
-    ).fetchall()
-    for row in rows:
-        try:
-            workspace = _canonical_workspace(row["workspace_root"])
-            metadata = workspace.stat()
-        except (OSError, WorkspaceBoundaryError):
-            continue
-        connection.execute(
-            """
-            UPDATE sessions
-            SET workspace_root = ?, workspace_dev = ?, workspace_inode = ?, workspace_uid = ?
-            WHERE id = ?
-            """,
-            (
-                str(workspace),
-                metadata.st_dev,
-                metadata.st_ino,
-                metadata.st_uid,
-                row["id"],
-            ),
-        )
 
 
 def _canonical_workspace(value: str) -> Path:
@@ -4581,8 +3936,6 @@ def _model_attempt_from_row(row: sqlite3.Row) -> dict[str, object]:
     }
 
 
-def _default_profile_json(model_id: str) -> str:
-    return default_profile_snapshot(model_id).model_dump_json()
 
 
 def _item_from_row(
