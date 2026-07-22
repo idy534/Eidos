@@ -206,7 +206,6 @@ class PydanticAIModelClient:
             max_tokens=self._profile_spec.max_output_tokens,
             timeout=self._profile_spec.request_timeout_seconds,
             parallel_tool_calls=True,
-            thinking=False,
             extra_body={"thinking": {"type": "disabled"}},
         )
         parameters = ModelRequestParameters(
@@ -215,7 +214,6 @@ class PydanticAIModelClient:
                 if allow_tools else []
             ),
             allow_text_output=True,
-            thinking=False,
         )
         async with model_request_stream(
             self._model,

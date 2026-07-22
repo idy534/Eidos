@@ -11,6 +11,7 @@ import threading
 import unittest
 
 import httpx
+from openai import AsyncOpenAI
 from pydantic_ai import ModelRequest as PAIModelRequest
 from pydantic_ai.messages import (
     ModelResponse as PAIModelResponse,
@@ -21,6 +22,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import DeltaThinkingPart, DeltaToolCall, FunctionModel
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.deepseek import DeepSeekProvider
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai.exceptions import (
     IncompleteToolCall,
@@ -277,6 +280,60 @@ class PydanticAIModelClientTests(unittest.TestCase):
         factory.close()
         names = {thread.name for thread in threading.enumerate()}
         self.assertFalse(any(name.startswith("eidos-model-") for name in names))
+
+    def test_deepseek_request_omits_unsupported_none_reasoning_effort(self) -> None:
+        payloads: list[dict[str, object]] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            payloads.append(json.loads(request.content))
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=(
+                    b'data: {"id":"response-1","object":"chat.completion.chunk",'
+                    b'"created":0,"model":"deepseek-v4-flash",'
+                    b'"choices":[{"index":0,"delta":{"content":"OK"},'
+                    b'"finish_reason":null}]}\n\n'
+                    b'data: {"id":"response-1","object":"chat.completion.chunk",'
+                    b'"created":0,"model":"deepseek-v4-flash",'
+                    b'"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n'
+                    b'data: [DONE]\n\n'
+                ),
+            )
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        openai_client = AsyncOpenAI(
+            api_key="sk-example-key-for-tests",
+            base_url="https://api.deepseek.com",
+            http_client=http_client,
+        )
+        client = PydanticAIModelClient(
+            OpenAIChatModel(
+                "deepseek-v4-flash",
+                provider=DeepSeekProvider(openai_client=openai_client),
+            ),
+            ModelProfileSpec(
+                provider_id="deepseek",
+                model_id="deepseek-v4-flash",
+                context_window_tokens=802_816,
+                max_output_tokens=8_192,
+                request_timeout_seconds=120.0,
+            ),
+            openai_client=openai_client,
+        )
+        self.addCleanup(client.close)
+        self.addCleanup(lambda: asyncio.run(http_client.aclose()))
+
+        response = client.complete(
+            ({"type": "user", "content": "Reply with OK."},),
+            threading.Event(),
+            lambda _delta: None,
+            allow_tools=False,
+        )
+
+        self.assertEqual(response.text, "OK")
+        self.assertNotIn("reasoning_effort", payloads[0])
+        self.assertEqual(payloads[0]["thinking"], {"type": "disabled"})
 
 
 async def _one_chunk(_messages, _info):
