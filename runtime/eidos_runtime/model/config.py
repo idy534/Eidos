@@ -89,6 +89,14 @@ class ModelCatalog:
 MODEL_CATALOG = ModelCatalog()
 
 
+def default_profile_snapshot(model_id: str) -> ModelProfileSnapshot:
+    return MODEL_CATALOG.profile(model_id).snapshot({
+        "supports_tools": True,
+        "supports_json_schema_output": False,
+        "supports_thinking": True,
+    })
+
+
 class ModelConfigError(RuntimeError):
     pass
 

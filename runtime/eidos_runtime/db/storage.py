@@ -17,7 +17,15 @@ from typing import Callable, Generic, TypeVar
 from eidos_runtime.context.facts import CompactSummary, ContextFacts, ContextItemFact
 from eidos_runtime.protocol.schemas import ItemDto, RunDto, SessionDto
 from eidos_runtime.db.events import append_event, event_from_row
-from eidos_runtime.model.config import DEFAULT_MODEL_ID, SUPPORTED_MODELS
+from eidos_runtime.model.client import (
+    ModelProfileSnapshot,
+    ModelUsage,
+)
+from eidos_runtime.model.config import (
+    DEFAULT_MODEL_ID,
+    SUPPORTED_MODELS,
+    default_profile_snapshot,
+)
 from eidos_runtime.runtime.state_machine import (
     ApprovalStatus,
     EventType,
@@ -33,7 +41,7 @@ from eidos_runtime.runtime.contracts import ProgressSignature
 DATABASE_NAME = "eidos.db"
 LOCK_NAME = "runtime.lock"
 RESERVE_NAME = "emergency.reserve"
-SCHEMA_REVISION = 8
+SCHEMA_REVISION = 9
 RESERVE_BYTES = 1024 * 1024
 DEFAULT_LIST_LIMIT = 50
 MAX_LIST_LIMIT = 200
@@ -339,7 +347,12 @@ def settle_run_children(
     for step in steps:
         ensure_transition(StepStatus.RUNNING, step_target)
         connection.execute(
-            "UPDATE model_attempts SET status = ?, completed_at = ? WHERE step_id = ? AND status = 'running'",
+            """
+            UPDATE model_attempts
+            SET status = ?, completed_at = ?,
+                error_code = COALESCE(error_code, 'run_terminated')
+            WHERE step_id = ? AND status = 'running'
+            """,
             (step_target.value, now, step["id"]),
         )
         connection.execute(
@@ -543,7 +556,7 @@ class SessionStore:
                     raise StorageError("schema_revision_missing")
             if revision > SCHEMA_REVISION or revision < 0:
                 raise StorageError("schema_revision_unsupported")
-            if revision in {1, 2, 3, 4, 5, 6, 7}:
+            if revision in {1, 2, 3, 4, 5, 6, 7, 8}:
                 _backup_database(connection, database_path, revision)
             if revision == 1:
                 _migrate_v1_to_v2(connection)
@@ -566,6 +579,9 @@ class SessionStore:
             if revision == 7:
                 _migrate_v7_to_v8(connection)
                 revision = 8
+            if revision == 8:
+                _migrate_v8_to_v9(connection)
+                revision = 9
             if revision not in {0, SCHEMA_REVISION}:
                 raise StorageError("schema_revision_unsupported")
 
@@ -586,6 +602,7 @@ class SessionStore:
                     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
                     user_input TEXT NOT NULL,
                     model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash',
+                    model_profile_json TEXT NOT NULL,
                     status TEXT NOT NULL CHECK (status IN (
                         'queued', 'running', 'waiting_approval', 'waiting_user_input',
                         'finalizing', 'succeeded', 'failed', 'stopped', 'canceled',
@@ -717,6 +734,16 @@ class SessionStore:
                     step_id TEXT NOT NULL REFERENCES steps(id) ON DELETE RESTRICT,
                     ordinal INTEGER NOT NULL,
                     status TEXT NOT NULL,
+                    provider_name TEXT,
+                    resolved_model_name TEXT,
+                    finish_reason TEXT,
+                    provider_response_id TEXT,
+                    usage_json TEXT,
+                    error_code TEXT,
+                    http_status INTEGER,
+                    ttft_ms INTEGER,
+                    duration_ms INTEGER,
+                    had_progress INTEGER NOT NULL DEFAULT 0,
                     started_at INTEGER NOT NULL,
                     completed_at INTEGER,
                     UNIQUE(step_id, ordinal)
@@ -1070,6 +1097,7 @@ class SessionStore:
         queued: bool = False,
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
+        model_profile: ModelProfileSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         if session_title is not None and (
@@ -1080,6 +1108,10 @@ class SessionStore:
             raise ValueError("session title is invalid")
         if model_id not in SUPPORTED_MODELS:
             raise ValueError("model is unsupported")
+        profile = model_profile or default_profile_snapshot(model_id)
+        if profile.provider_id != "deepseek" or profile.model_id != model_id:
+            raise ValueError("model profile does not match run")
+        model_profile_json = profile.model_dump_json()
         extension_snapshot_json = _bounded_canonical_json(
             extension_snapshot or EMPTY_EXTENSION_SNAPSHOT,
             code="extension_snapshot_invalid",
@@ -1115,12 +1147,14 @@ class SessionStore:
                 connection.execute(
                     """
                     INSERT INTO runs (
-                        id, session_id, user_input, model_id, status, enqueued_at,
+                        id, session_id, user_input, model_id, model_profile_json,
+                        status, enqueued_at,
                         extension_snapshot_json, created_at, started_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        run_id, session_id, user_input, model_id, status,
+                        run_id, session_id, user_input, model_id, model_profile_json,
+                        status,
                         now if queued else None, extension_snapshot_json,
                         now, started_at, now,
                     ),
@@ -1178,6 +1212,7 @@ class SessionStore:
         operation_id: str | None = None,
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
+        model_profile: ModelProfileSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         return self.create_run(
@@ -1187,6 +1222,7 @@ class SessionStore:
             queued=True,
             session_title=session_title,
             model_id=model_id,
+            model_profile=model_profile,
             extension_snapshot=extension_snapshot,
         )
 
@@ -1334,6 +1370,18 @@ class SessionStore:
         if row is None:
             raise ResourceNotFoundError("run not found")
         return _run_from_row(row)
+
+    def read_model_profile(self, run_id: str) -> ModelProfileSnapshot:
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT model_profile_json FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        if row is None:
+            raise ResourceNotFoundError("run not found")
+        try:
+            return ModelProfileSnapshot.model_validate_json(row["model_profile_json"])
+        except (TypeError, ValueError):
+            raise StorageError("model_profile_invalid") from None
 
     def run_budget(self, run_id: str) -> dict[str, int]:
         with self.lock:
@@ -1976,8 +2024,13 @@ class SessionStore:
                 return
             ensure_transition(StepStatus.RUNNING, target_status)
             connection.execute(
-                "UPDATE model_attempts SET status = ?, completed_at = ? WHERE step_id = ? AND status = 'running'",
-                (status_value, now, step["id"]),
+                """
+                UPDATE model_attempts
+                SET status = ?, completed_at = ?,
+                    error_code = COALESCE(error_code, ?)
+                WHERE step_id = ? AND status = 'running'
+                """,
+                (status_value, now, reason, step["id"]),
             )
             connection.execute(
                 """
@@ -2069,7 +2122,58 @@ class SessionStore:
             ProgressSignature.model_validate_json(row[0]) for row in reversed(rows)
         )
 
-    def retry_current_model_attempt(self, run_id: str) -> None:
+    def complete_current_model_attempt(
+        self,
+        run_id: str,
+        status: str,
+        *,
+        usage: ModelUsage | None = None,
+        provider_name: str | None = None,
+        resolved_model_name: str | None = None,
+        finish_reason: str | None = None,
+        provider_response_id: str | None = None,
+        error_code: str | None = None,
+        http_status: int | None = None,
+        ttft_ms: int | None = None,
+        duration_ms: int | None = None,
+        had_progress: bool = False,
+    ) -> bool:
+        if status not in {"completed", "failed", "canceled"}:
+            raise ValueError("invalid model attempt status")
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            attempt = connection.execute(
+                """
+                SELECT model_attempts.id FROM model_attempts
+                JOIN steps ON steps.id = model_attempts.step_id
+                WHERE steps.run_id = ? AND model_attempts.status = 'running'
+                ORDER BY model_attempts.creation_seq DESC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+            if attempt is None:
+                return False
+            changed = connection.execute(
+                """
+                UPDATE model_attempts
+                SET status = ?, completed_at = ?, provider_name = ?,
+                    resolved_model_name = ?, finish_reason = ?,
+                    provider_response_id = ?, usage_json = ?, error_code = ?,
+                    http_status = ?, ttft_ms = ?, duration_ms = ?, had_progress = ?
+                WHERE id = ? AND status = 'running'
+                """,
+                (
+                    status, now, provider_name, resolved_model_name, finish_reason,
+                    provider_response_id,
+                    usage.model_dump_json() if usage is not None else None,
+                    error_code, http_status, ttft_ms, duration_ms,
+                    int(had_progress), attempt["id"],
+                ),
+            )
+        return changed.rowcount == 1
+
+    def start_retry_model_attempt(self, run_id: str) -> None:
+        """Create the next Attempt immediately before its provider request."""
         now = _now_ms()
         with self.lock, self._connection() as connection:
             step = connection.execute(
@@ -2083,31 +2187,44 @@ class SessionStore:
             ).fetchone()
             if step is None:
                 raise InvalidRunStateError("model attempt cannot retry")
-            attempt = connection.execute(
+            running_attempt = connection.execute(
                 """
-                SELECT ordinal FROM model_attempts
+                SELECT id FROM model_attempts
                 WHERE step_id = ? AND status = 'running'
-                ORDER BY ordinal DESC LIMIT 1
+                LIMIT 1
                 """,
                 (step["id"],),
             ).fetchone()
-            if attempt is None:
+            if running_attempt is not None:
                 raise InvalidRunStateError("model attempt cannot retry")
-            connection.execute(
+            last = connection.execute(
                 """
-                UPDATE model_attempts SET status = 'failed', completed_at = ?
-                WHERE step_id = ? AND status = 'running'
+                SELECT COALESCE(MAX(ordinal), 0) AS ordinal FROM model_attempts
+                WHERE step_id = ?
                 """,
-                (now, step["id"]),
-            )
+                (step["id"],),
+            ).fetchone()
             connection.execute(
                 """
                 INSERT INTO model_attempts (
                     id, step_id, ordinal, status, started_at
                 ) VALUES (?, ?, ?, 'running', ?)
                 """,
-                (str(uuid.uuid4()), step["id"], attempt["ordinal"] + 1, now),
+                (str(uuid.uuid4()), step["id"], int(last["ordinal"]) + 1, now),
             )
+
+    def read_model_attempts(self, run_id: str) -> list[dict[str, object]]:
+        with self.lock:
+            rows = self._connection().execute(
+                """
+                SELECT model_attempts.* FROM model_attempts
+                JOIN steps ON steps.id = model_attempts.step_id
+                WHERE steps.run_id = ?
+                ORDER BY model_attempts.creation_seq
+                """,
+                (run_id,),
+            ).fetchall()
+        return [_model_attempt_from_row(row) for row in rows]
 
     def create_assistant_item(
         self, run_id: str, model_step_index: int
@@ -4065,6 +4182,51 @@ def _migrate_v7_to_v8(connection: sqlite3.Connection) -> None:
         raise StorageError("migration_failed") from None
 
 
+def _migrate_v8_to_v9(connection: sqlite3.Connection) -> None:
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        run_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(runs)").fetchall()
+        }
+        if run_columns and "model_profile_json" not in run_columns:
+            connection.execute(
+                "ALTER TABLE runs ADD COLUMN model_profile_json TEXT NOT NULL DEFAULT '{}'"
+            )
+        attempt_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(model_attempts)").fetchall()
+        }
+        additions = {
+            "provider_name": "TEXT",
+            "resolved_model_name": "TEXT",
+            "finish_reason": "TEXT",
+            "provider_response_id": "TEXT",
+            "usage_json": "TEXT",
+            "error_code": "TEXT",
+            "http_status": "INTEGER",
+            "ttft_ms": "INTEGER",
+            "duration_ms": "INTEGER",
+            "had_progress": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for name, definition in additions.items():
+            if attempt_columns and name not in attempt_columns:
+                connection.execute(
+                    f"ALTER TABLE model_attempts ADD COLUMN {name} {definition}"
+                )
+        if run_columns:
+            rows = connection.execute("SELECT id, model_id FROM runs").fetchall()
+            for row in rows:
+                connection.execute(
+                    "UPDATE runs SET model_profile_json = ? WHERE id = ?",
+                    (_default_profile_json(str(row["model_id"])), row["id"]),
+                )
+        connection.execute("PRAGMA user_version = 9")
+        connection.commit()
+    except (sqlite3.Error, ValueError):
+        connection.rollback()
+        raise StorageError("migration_failed") from None
+
+
 def _prepare_private_directory(path: Path) -> None:
     if path.is_symlink():
         raise StorageError("data directory must not be a symlink")
@@ -4392,6 +4554,35 @@ def _run_from_row(
         if isinstance(activated, list):
             run["activatedTools"] = activated
     return RunDto.model_validate(run).to_json_value()
+
+
+def _model_attempt_from_row(row: sqlite3.Row) -> dict[str, object]:
+    usage = (
+        ModelUsage.model_validate_json(row["usage_json"])
+        if row["usage_json"] is not None else None
+    )
+    return {
+        "id": row["id"],
+        "stepId": row["step_id"],
+        "ordinal": row["ordinal"],
+        "status": row["status"],
+        "providerName": row["provider_name"],
+        "resolvedModelName": row["resolved_model_name"],
+        "finishReason": row["finish_reason"],
+        "providerResponseId": row["provider_response_id"],
+        "usage": usage,
+        "errorCode": row["error_code"],
+        "httpStatus": row["http_status"],
+        "ttftMs": row["ttft_ms"],
+        "durationMs": row["duration_ms"],
+        "hadProgress": bool(row["had_progress"]),
+        "startedAt": row["started_at"],
+        "completedAt": row["completed_at"],
+    }
+
+
+def _default_profile_json(model_id: str) -> str:
+    return default_profile_snapshot(model_id).model_dump_json()
 
 
 def _item_from_row(

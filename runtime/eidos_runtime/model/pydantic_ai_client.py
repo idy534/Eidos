@@ -54,6 +54,12 @@ from eidos_runtime.model.prompts import SYSTEM_PROMPT, TITLE_PROMPT
 MAX_TOOL_CALL_ID_BYTES = 256
 MAX_TOOL_NAME_BYTES = 256
 MAX_TOOL_ARGUMENT_BYTES = 64 * 1024
+USAGE_DETAIL_KEYS = frozenset({
+    "accepted_prediction_tokens",
+    "audio_tokens",
+    "reasoning_tokens",
+    "rejected_prediction_tokens",
+})
 
 
 class _AsyncLoop:
@@ -176,6 +182,10 @@ class PydanticAIModelClient:
             APIStatusError,
         ) as error:
             failure = _cancelled_failure() if cancel.is_set() else map_model_error(error)
+            if failure.provider_name is None:
+                failure = failure.model_copy(update={
+                    "provider_name": self._profile_spec.provider_id
+                })
             raise ModelRequestError(failure) from None
         except (ValueError, AssertionError):
             raise ModelRequestError(ModelRequestFailure(
@@ -373,7 +383,9 @@ def _map_usage(usage: RequestUsage) -> ModelUsage:
         details={
             key: value
             for key, value in usage.details.items()
-            if isinstance(key, str) and isinstance(value, int) and value >= 0
+            if key in USAGE_DETAIL_KEYS
+            and isinstance(value, int)
+            and value >= 0
         },
     )
 

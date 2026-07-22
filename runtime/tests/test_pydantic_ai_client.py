@@ -22,7 +22,11 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import DeltaThinkingPart, DeltaToolCall, FunctionModel
 from pydantic_ai.usage import RequestUsage
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    IncompleteToolCall,
+    ModelHTTPError,
+    UnexpectedModelBehavior,
+)
 
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +45,7 @@ from eidos_runtime.model.prompts import SYSTEM_PROMPT  # noqa: E402
 from eidos_runtime.model.pydantic_ai_client import (  # noqa: E402
     ModelClientFactory,
     PydanticAIModelClient,
+    _cancel_when_requested,
     encode_context,
     map_model_error,
     map_model_response,
@@ -81,6 +86,13 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertEqual(response.text, "Hello")
         self.assertNotIn("private", response.text)
         self.assertEqual(response.resolved_model_name, "fixture")
+
+    def test_profile_capabilities_come_from_resolved_model_profile(self) -> None:
+        profile = self.client(_one_chunk).profile_snapshot
+
+        self.assertTrue(profile.supports_tools)
+        self.assertTrue(profile.supports_json_schema_output)
+        self.assertFalse(profile.supports_reasoning)
 
     def test_reassembles_fragmented_and_multiple_tool_calls(self) -> None:
         async def stream(_messages, _info):
@@ -220,6 +232,9 @@ class PydanticAIModelClientTests(unittest.TestCase):
             map_model_error(UnexpectedModelBehavior("malformed")).code,
             "protocol_error",
         )
+        incomplete = map_model_error(IncompleteToolCall("partial", "raw-secret"))
+        self.assertEqual(incomplete.code, "protocol_error")
+        self.assertNotIn("raw-secret", incomplete.model_dump_json())
 
     def test_explicit_cancel_does_not_become_provider_error(self) -> None:
         cancel = threading.Event()
@@ -227,6 +242,29 @@ class PydanticAIModelClientTests(unittest.TestCase):
         with self.assertRaises(ModelRequestError) as raised:
             self.client(_one_chunk).complete((), cancel, lambda _delta: None)
         self.assertEqual(raised.exception.failure.code, "sampling_canceled")
+
+    def test_cancel_bridge_calls_public_stream_cancel(self) -> None:
+        class CancelableStream:
+            canceled = False
+
+            async def cancel(self) -> None:
+                self.canceled = True
+
+        stream = CancelableStream()
+        cancel = threading.Event()
+        cancel.set()
+        asyncio.run(_cancel_when_requested(cancel, stream))  # type: ignore[arg-type]
+        self.assertTrue(stream.canceled)
+
+    def test_client_remains_reusable_after_cancelled_call(self) -> None:
+        client = self.client(_one_chunk)
+        cancel = threading.Event()
+        cancel.set()
+        with self.assertRaises(ModelRequestError):
+            client.complete((), cancel, lambda _delta: None)
+
+        response = client.complete((), threading.Event(), lambda _delta: None)
+        self.assertEqual(response.text, "done")
 
     def test_factory_disables_sdk_retries_reuses_clients_and_closes_threads(self) -> None:
         factory = ModelClientFactory("sk-example-key-for-tests")

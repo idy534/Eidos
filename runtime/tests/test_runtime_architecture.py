@@ -21,6 +21,7 @@ from eidos_runtime.model.client import (  # noqa: E402
     ModelToolCall,
     ScriptedModel,
 )
+from eidos_runtime.model.config import default_profile_snapshot  # noqa: E402
 
 
 class RuntimeArchitectureTests(unittest.TestCase):
@@ -214,7 +215,8 @@ class RuntimeArchitectureTests(unittest.TestCase):
         context = RunContext(
             run_id="run",
             session_id="session",
-            model_id="model",
+            model_id="deepseek-v4-flash",
+            model_profile=default_profile_snapshot("deepseek-v4-flash"),
             model_context=(),
             extension_snapshot={},
             extension_snapshot_hash="0" * 64,

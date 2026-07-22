@@ -597,6 +597,7 @@ class RuntimeServer:
                 operation_id=params.get("operationId"),
                 session_title=session_title,
                 model_id=model_id,
+                model_profile=getattr(run_model, "profile_snapshot", None),
                 extension_snapshot=extension_snapshot,
             )
         except ResourceNotFoundError:

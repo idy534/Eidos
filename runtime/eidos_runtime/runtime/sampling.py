@@ -97,27 +97,81 @@ class SamplingRuntime:
                 if interrupted.text:
                     writer.write(interrupted.text)
                 writer.flush()
-                self._check_cancel(cancel)
                 if writer.item is not None:
                     writer.abort()
                 error = _sampling_error(
                     interrupted.cause, had_progress=writer.item is not None
                 )
                 if isinstance(error, SensitiveScanError):
+                    self.store.complete_current_model_attempt(
+                        step.run_id,
+                        "failed",
+                        error_code="sensitive_scan_failed",
+                        ttft_ms=interrupted.ttft_ms,
+                        duration_ms=interrupted.duration_ms,
+                        had_progress=writer.item is not None,
+                    )
                     raise error
                 if isinstance(error, SamplingRetryableError) and retries < MAX_STREAM_RETRIES:
                     retries += 1
-                    self.store.retry_current_model_attempt(step.run_id)
+                    self.store.complete_current_model_attempt(
+                        step.run_id,
+                        "failed",
+                        provider_name=(
+                            error.failure.provider_name if error.failure else None
+                        ),
+                        error_code=(error.failure.code if error.failure else str(error)),
+                        http_status=(
+                            error.failure.status_code if error.failure else None
+                        ),
+                        ttft_ms=interrupted.ttft_ms,
+                        duration_ms=interrupted.duration_ms,
+                        had_progress=error.had_progress,
+                    )
                     if cancel.wait(min(0.2 * 2 ** (retries - 1), 2.0)):
                         raise SamplingCancelled("sampling canceled")
+                    self.store.start_retry_model_attempt(step.run_id)
                     continue
+                self.store.complete_current_model_attempt(
+                    step.run_id,
+                    "canceled" if isinstance(error, SamplingCancelled) else "failed",
+                    provider_name=(error.failure.provider_name if error.failure else None),
+                    error_code=(error.failure.code if error.failure else str(error)),
+                    http_status=(error.failure.status_code if error.failure else None),
+                    ttft_ms=interrupted.ttft_ms,
+                    duration_ms=interrupted.duration_ms,
+                    had_progress=error.had_progress,
+                )
                 raise error
 
-            self._check_cancel(cancel)
             writer.flush()
-            if result.response_state not in {None, "complete"} or result.finish_reason in {
-                "length", "content_filter", "error",
-            }:
+            invalid_completion = (
+                result.response_state not in {None, "complete"}
+                or result.finish_reason in {
+                    "length",
+                    "content_filter",
+                    "error",
+                }
+            )
+            self.store.complete_current_model_attempt(
+                step.run_id,
+                "failed" if invalid_completion else "completed",
+                usage=result.usage,
+                provider_name=result.provider_name,
+                resolved_model_name=result.resolved_model_name,
+                finish_reason=result.finish_reason,
+                provider_response_id=result.provider_response_id,
+                error_code=(
+                    (result.finish_reason or result.response_state)
+                    if invalid_completion
+                    else None
+                ),
+                ttft_ms=result.ttft_ms,
+                duration_ms=result.duration_ms,
+                had_progress=writer.item is not None,
+            )
+            self._check_cancel(cancel)
+            if invalid_completion:
                 if writer.item is not None:
                     writer.abort()
                 raise SamplingProtocolError(

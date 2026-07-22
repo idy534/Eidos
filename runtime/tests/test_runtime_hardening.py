@@ -21,6 +21,7 @@ from eidos_runtime.db.storage import (  # noqa: E402
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
 from eidos_runtime.extensions.skills import SkillCatalog  # noqa: E402
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
+from eidos_runtime.model.config import default_profile_snapshot  # noqa: E402
 from eidos_runtime.runtime.approval import (  # noqa: E402
     ApprovalCoordinator,
     ApprovalDecision,
@@ -707,20 +708,22 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertEqual(failed["errorCode"], "CONTEXT_INPUT_TOO_LARGE")
 
     def test_two_compactions_still_over_budget_pauses_with_stable_reason(self) -> None:
-        run, _ = self.store.create_run(self.session["id"], "x" * 20_000)
+        run, _ = self.store.create_run(
+            self.session["id"],
+            "x" * 20_000,
+            model_profile=default_profile_snapshot("deepseek-v4-flash").model_copy(
+                update={"context_window_tokens": 8_000, "max_output_tokens": 1_000}
+            ),
+        )
         assert self.store.connection is not None
         self.store.connection.execute(
             "UPDATE runs SET compaction_count = 2 WHERE id = ?", (run["id"],)
         )
         self.store.connection.commit()
 
-        RuntimeEngine(
-            self.store,
-            ScriptedModel([]),
-            lambda _message: None,
-            context_window_tokens=8_000,
-            request_max_output_tokens=1_000,
-        ).run(run["id"], threading.Event())
+        RuntimeEngine(self.store, ScriptedModel([]), lambda _message: None).run(
+            run["id"], threading.Event()
+        )
 
         paused = self.store.read_run(run["id"])
         self.assertEqual(paused["status"], "waiting_user_input")

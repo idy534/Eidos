@@ -10,6 +10,7 @@ from eidos_runtime.model.client import (
     ModelToolCall,
     ModelToolDefinition,
     ModelUsage,
+    ModelProfileSnapshot,
 )
 from eidos_runtime.context.budget import ContextBudget
 from eidos_runtime.tools.registry import StepToolSnapshot
@@ -35,6 +36,7 @@ class RunContext(_FrozenModel):
     run_id: str
     session_id: str
     model_id: str
+    model_profile: ModelProfileSnapshot
     model_context: tuple[ModelContextItem, ...]
     extension_snapshot: dict[str, object]
     extension_snapshot_hash: str
@@ -47,6 +49,7 @@ class StepContext(_FrozenModel):
     step_id: str
     step_index: int
     model_id: str
+    model_profile: ModelProfileSnapshot
     model_context: tuple[ModelContextItem, ...]
     tool_snapshot: StepToolSnapshot
     tool_definitions: tuple[ModelToolDefinition, ...]
