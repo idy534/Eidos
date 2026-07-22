@@ -11,7 +11,7 @@ import uuid
 from typing import Callable, TypeVar
 
 from eidos_runtime.context.facts import CompactSummary, ContextFacts, ContextItemFact
-from eidos_runtime.protocol.schemas import ItemDto, RunDto, SessionDto
+from eidos_runtime.protocol.schemas import SessionDto
 from eidos_runtime.db.database import (
     DATABASE_NAME, RESERVE_BYTES, RESERVE_NAME, CommittedMutation, Database,
     WorkspaceIdentity, canonical_hash as _canonical_hash, now_ms as _now_ms,
@@ -24,6 +24,21 @@ from eidos_runtime.db.errors import (
     WorkspaceBoundaryError,
 )
 from eidos_runtime.db.events import append_event, event_from_row
+from eidos_runtime.db.mappers import (
+    _compact_summary_from_row,
+    _item_from_row,
+    _model_attempt_from_row,
+    _plugin_from_row,
+    _run_from_row,
+    _session_from_row,
+    _snapshot_item,
+)
+from eidos_runtime.db.recovery import recover_runtime_facts
+from eidos_runtime.db.transitions import (
+    settle_run_children,
+    transition_run,
+    transition_segments,
+)
 from eidos_runtime.db.schema import SCHEMA_VERSION
 from eidos_runtime.model.client import (
     ModelProfileSnapshot,
@@ -120,355 +135,12 @@ SESSION_SELECT = """
 
 T = TypeVar("T")
 
-def transition_run(
-    connection: sqlite3.Connection,
-    run_id: str,
-    expected_statuses: frozenset[RunStatus],
-    target_status: RunStatus,
-    reason: str | None,
-) -> tuple[dict[str, object], dict[str, object]]:
-    """Validate, update, and event one persisted Run transition."""
-    row = connection.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
-    if row is None:
-        raise ResourceNotFoundError("run not found")
-    current = RunStatus(row["status"])
-    if current not in expected_statuses:
-        raise InvalidRunStateError("run status changed")
-    ensure_transition(current, target_status)
-    now = _now_ms()
-    updates: dict[str, object] = {"status": target_status.value, "updated_at": now}
-    if target_status is RunStatus.RUNNING:
-        updates.update({"started_at": row["started_at"] or now, "enqueued_at": None})
-    elif target_status is RunStatus.QUEUED:
-        updates["enqueued_at"] = now
-    elif target_status is RunStatus.WAITING_USER_INPUT:
-        updates["pause_reason"] = reason
-    elif target_status is RunStatus.FAILED:
-        updates.update({"error_code": reason, "completed_at": now})
-    elif target_status is RunStatus.STOPPED:
-        updates.update({"stop_reason": reason, "completed_at": now})
-    elif target_status is RunStatus.CANCELED:
-        updates["completed_at"] = now
-    elif target_status is RunStatus.INTERRUPTED:
-        updates.update({"error_code": "RUNTIME_INTERRUPTED", "completed_at": now})
-    elif target_status is RunStatus.SUCCEEDED:
-        updates["completed_at"] = now
-    assignments = ", ".join(f"{column} = ?" for column in updates)
-    changed = connection.execute(
-        f"UPDATE runs SET {assignments} WHERE id = ? AND status = ?",
-        (*updates.values(), run_id, current.value),
-    )
-    if changed.rowcount != 1:
-        raise InvalidRunStateError("run status changed")
-    run = _run_from_row(
-        connection.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
-    )
-    event = append_event(
-        connection,
-        EventType.RUN_STATUS_CHANGED,
-        now,
-        {"previous": current, "current": target_status, "reason": reason},
-        session_id=str(run["sessionId"]),
-        run_id=run_id,
-    )
-    return run, event
 
 
-def transition_segments(
-    connection: sqlite3.Connection,
-    run_id: str,
-    expected_statuses: frozenset[SegmentStatus],
-    target_status: SegmentStatus,
-    now: int,
-    reason: str,
-) -> tuple[dict[str, object], ...]:
-    run = connection.execute(
-        "SELECT session_id FROM runs WHERE id = ?", (run_id,)
-    ).fetchone()
-    if run is None:
-        raise ResourceNotFoundError("run not found")
-    placeholders = ",".join("?" for _ in expected_statuses)
-    rows = connection.execute(
-        f"SELECT id, status FROM execution_segments WHERE run_id = ? AND status IN ({placeholders})",
-        (run_id, *(status.value for status in expected_statuses)),
-    ).fetchall()
-    events: list[dict[str, object]] = []
-    for row in rows:
-        current = SegmentStatus(row["status"])
-        ensure_transition(current, target_status)
-        connection.execute(
-            "UPDATE execution_segments SET status = ?, completed_at = ? WHERE id = ? AND status = ?",
-            (target_status.value, now, row["id"], current.value),
-        )
-        events.append(append_event(
-            connection,
-            EventType.SEGMENT_STATUS_CHANGED,
-            now,
-            {
-                "entity_id": row["id"],
-                "previous": current.value,
-                "current": target_status.value,
-                "reason": reason,
-            },
-            session_id=run["session_id"],
-            run_id=run_id,
-        ))
-    return tuple(events)
 
 
-def settle_run_children(
-    connection: sqlite3.Connection,
-    run_id: str,
-    target_status: RunStatus,
-    now: int,
-) -> tuple[dict[str, object], ...]:
-    """Settle active child facts in the same transaction as a terminal Run."""
-    run = connection.execute(
-        "SELECT session_id FROM runs WHERE id = ?", (run_id,)
-    ).fetchone()
-    if run is None:
-        raise ResourceNotFoundError("run not found")
-    events: list[dict[str, object]] = []
-    tool_rows = connection.execute(
-        """
-        SELECT tool_calls.id FROM tool_calls
-        JOIN items ON items.id = tool_calls.item_id
-        WHERE items.run_id = ? AND tool_calls.status = 'running'
-        """,
-        (run_id,),
-    ).fetchall()
-    for tool in tool_rows:
-        ensure_transition(ToolCallStatus.RUNNING, ToolCallStatus.CANCELED)
-        connection.execute(
-            "UPDATE tool_calls SET status = 'canceled', completed_at = ? WHERE id = ? AND status = 'running'",
-            (now, tool["id"]),
-        )
-        events.append(append_event(
-            connection,
-            EventType.TOOL_CALL_COMPLETED,
-            now,
-            {"tool_call_id": tool["id"], "code": "run_terminated"},
-            session_id=run["session_id"],
-            run_id=run_id,
-        ))
-
-    approval_target = (
-        ApprovalStatus.CANCELED
-        if target_status is RunStatus.CANCELED
-        else ApprovalStatus.INVALIDATED
-    )
-    approvals = connection.execute(
-        "SELECT id FROM approvals WHERE run_id = ? AND status = 'pending'",
-        (run_id,),
-    ).fetchall()
-    for approval in approvals:
-        ensure_transition(ApprovalStatus.PENDING, approval_target)
-        connection.execute(
-            "UPDATE approvals SET status = ?, decided_at = ? WHERE id = ? AND status = 'pending'",
-            (approval_target.value, now, approval["id"]),
-        )
-        events.append(append_event(
-            connection,
-            EventType.APPROVAL_STATUS_CHANGED,
-            now,
-            {
-                "entity_id": approval["id"],
-                "previous": ApprovalStatus.PENDING.value,
-                "current": approval_target.value,
-            },
-            session_id=run["session_id"],
-            run_id=run_id,
-        ))
-    connection.execute(
-        """
-        UPDATE tool_calls SET approval_status = 'canceled'
-        WHERE approval_status = 'pending'
-          AND item_id IN (SELECT id FROM items WHERE run_id = ?)
-        """,
-        (run_id,),
-    )
-
-    item_rows = connection.execute(
-        "SELECT id FROM items WHERE run_id = ? AND status = 'in_progress'",
-        (run_id,),
-    ).fetchall()
-    for item in item_rows:
-        connection.execute(
-            "UPDATE items SET status = 'canceled', completed_at = ? WHERE id = ? AND status = 'in_progress'",
-            (now, item["id"]),
-        )
-        events.append(append_event(
-            connection,
-            EventType.ITEM_COMPLETED,
-            now,
-            {"item_id": item["id"]},
-            session_id=run["session_id"],
-            run_id=run_id,
-        ))
-
-    step_target = (
-        StepStatus.CANCELED
-        if target_status is RunStatus.CANCELED
-        else StepStatus.FAILED
-    )
-    steps = connection.execute(
-        "SELECT id FROM steps WHERE run_id = ? AND status = 'running'",
-        (run_id,),
-    ).fetchall()
-    for step in steps:
-        ensure_transition(StepStatus.RUNNING, step_target)
-        connection.execute(
-            """
-            UPDATE model_attempts
-            SET status = ?, completed_at = ?,
-                error_code = COALESCE(error_code, 'run_terminated')
-            WHERE step_id = ? AND status = 'running'
-            """,
-            (step_target.value, now, step["id"]),
-        )
-        connection.execute(
-            "UPDATE steps SET status = ?, completed_at = ? WHERE id = ? AND status = 'running'",
-            (step_target.value, now, step["id"]),
-        )
-        events.append(append_event(
-            connection,
-            EventType.STEP_STATUS_CHANGED,
-            now,
-            {
-                "entity_id": step["id"],
-                "previous": StepStatus.RUNNING.value,
-                "current": step_target.value,
-                "reason": "run_terminated",
-            },
-            session_id=run["session_id"],
-            run_id=run_id,
-        ))
-
-    segment_target = (
-        SegmentStatus.CANCELED
-        if target_status is RunStatus.CANCELED
-        else SegmentStatus.FAILED
-    )
-    events.extend(transition_segments(
-        connection,
-        run_id,
-        frozenset({
-            SegmentStatus.QUEUED,
-            SegmentStatus.RUNNING,
-            SegmentStatus.WAITING_USER_INPUT,
-        }),
-        segment_target,
-        now,
-        "run_terminated",
-    ))
-    connection.execute(
-        "UPDATE input_mailbox SET status = 'canceled' WHERE run_id = ? AND status = 'pending'",
-        (run_id,),
-    )
-    return tuple(events)
 
 
-def recover_runtime_facts(connection: sqlite3.Connection) -> None:
-    """Recover abandoned persisted facts without consulting in-memory phases."""
-    now = _now_ms()
-    connection.execute(
-        "UPDATE durable_intents SET status = 'interrupted' WHERE status = 'running'"
-    )
-    reconciliation_runs = connection.execute(
-        """
-        SELECT DISTINCT runs.id, runs.status
-        FROM runs JOIN durable_intents ON durable_intents.run_id = runs.id
-        WHERE durable_intents.status = 'interrupted'
-          AND runs.status IN ('running', 'waiting_approval', 'finalizing')
-        """
-    ).fetchall()
-    for row in reconciliation_runs:
-        current = RunStatus(row["status"])
-        connection.execute(
-            """
-            UPDATE runs
-            SET reconciliation_required = 1,
-                reconciliation_epoch = reconciliation_epoch + 1,
-                side_effects_may_exist = 1
-            WHERE id = ? AND status = ?
-            """,
-            (row["id"], current.value),
-        )
-        transition_segments(
-            connection,
-            str(row["id"]),
-            frozenset({SegmentStatus.RUNNING}),
-            SegmentStatus.WAITING_USER_INPUT,
-            now,
-            "side_effect_reconciliation_required",
-        )
-        run, _event = transition_run(
-            connection,
-            str(row["id"]),
-            frozenset({current}),
-            RunStatus.WAITING_USER_INPUT,
-            "side_effect_reconciliation_required",
-        )
-        epoch = connection.execute(
-            "SELECT reconciliation_epoch FROM runs WHERE id = ?", (row["id"],)
-        ).fetchone()["reconciliation_epoch"]
-        append_event(
-            connection,
-            EventType.RECONCILIATION_REQUIRED,
-            now,
-            {
-                "epoch": int(epoch),
-                "reason": "runtime_restart",
-            },
-            session_id=str(run["sessionId"]),
-            run_id=str(run["id"]),
-        )
-
-    active_runs = connection.execute(
-        """
-        SELECT id, status FROM runs
-        WHERE status IN ('running', 'waiting_approval', 'finalizing')
-        """
-    ).fetchall()
-    for row in active_runs:
-        settle_run_children(connection, str(row["id"]), RunStatus.INTERRUPTED, now)
-        transition_run(
-            connection,
-            str(row["id"]),
-            frozenset({RunStatus(row["status"])}),
-            RunStatus.INTERRUPTED,
-            "runtime_interrupted",
-        )
-
-    approvals = connection.execute(
-        """
-        SELECT approvals.id, approvals.run_id, runs.session_id
-        FROM approvals JOIN runs ON runs.id = approvals.run_id
-        WHERE approvals.status = 'pending'
-        """
-    ).fetchall()
-    for approval in approvals:
-        ensure_transition(ApprovalStatus.PENDING, ApprovalStatus.INVALIDATED)
-        connection.execute(
-            "UPDATE approvals SET status = 'invalidated', decided_at = ? WHERE id = ? AND status = 'pending'",
-            (now, approval["id"]),
-        )
-        append_event(
-            connection,
-            EventType.APPROVAL_STATUS_CHANGED,
-            now,
-            {
-                "entity_id": approval["id"],
-                "previous": ApprovalStatus.PENDING.value,
-                "current": ApprovalStatus.INVALIDATED.value,
-                "reason": "runtime_restart",
-            },
-            session_id=approval["session_id"],
-            run_id=approval["run_id"],
-        )
-    connection.execute(
-        "UPDATE tool_calls SET approval_status = 'canceled' WHERE approval_status = 'pending'"
-    )
 
 
 class SessionStore:
@@ -485,6 +157,9 @@ class SessionStore:
             verify_integrity(self._database.connection())
         except (OSError, sqlite3.Error, StorageError) as error:
             self._database.mark_failed(error)
+        except Exception:
+            self._database.close()
+            raise
 
     @property
     def data_directory(self) -> Path | None:
@@ -3478,30 +3153,8 @@ def _canonical_workspace(value: str) -> Path:
     return path.resolve()
 
 
-def _session_from_row(row: sqlite3.Row) -> dict[str, object]:
-    return SessionDto.model_validate({
-        "id": row["id"],
-        "workspaceRoot": row["workspace_root"],
-        "title": row["title"],
-        "taskStatus": row["task_status"],
-        "createdAt": row["created_at"],
-        "updatedAt": row["updated_at"],
-    }).to_json_value()
 
 
-def _plugin_from_row(row: sqlite3.Row) -> dict[str, object]:
-    return {
-        "schemaVersion": 1,
-        "id": row["id"],
-        "name": row["name"],
-        "version": row["version"],
-        "description": row["description"],
-        "contentHash": row["content_hash"],
-        "enabled": bool(row["enabled"]),
-        "status": row["status"],
-        "installedAt": row["installed_at"],
-        "updatedAt": row["updated_at"],
-    }
 
 
 def _json_bytes(value: object) -> int:
@@ -3525,230 +3178,26 @@ def _bounded_canonical_json(value: object, *, code: str) -> str:
     return encoded.decode("utf-8")
 
 
-def _load_json_object(value: object) -> dict[str, object] | None:
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
 
 
-def _snapshot_item(
-    row: sqlite3.Row, tool_row: sqlite3.Row | None
-) -> dict[str, object]:
-    item = _item_from_row(row, tool_row)
-    content = item.get("content")
-    if isinstance(content, str):
-        item["content"] = _truncate_snapshot_text(content)
-    tool_call = item.get("toolCall")
-    if isinstance(tool_call, dict):
-        projected = dict(tool_call)
-        display_arguments = _snapshot_display_arguments(tool_call)
-        if display_arguments is None:
-            projected.pop("argumentsJson", None)
-        else:
-            projected["argumentsJson"] = display_arguments
-        projected.pop("approvalDiff", None)
-        result = projected.get("resultJson")
-        if isinstance(result, str):
-            projected["resultJson"] = _truncate_snapshot_text(result)
-        item["toolCall"] = projected
-    return item
 
 
-def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
-    fields_by_tool = {
-        "list_files": (),
-        "read_file": ("path",),
-        "read_file_range": ("path", "startLine", "endLine"),
-        "search_text": ("query",),
-        "write_file": ("path",),
-        "apply_patch": ("path",),
-        "delete_file": ("path",),
-        "run_shell": ("command", "cwd", "timeoutSeconds"),
-    }
-    fields = fields_by_tool.get(tool_call.get("toolName"))
-    arguments = _load_json_object(tool_call.get("argumentsJson"))
-    if fields is None or arguments is None:
-        return None
-    projected = {
-        field: arguments[field]
-        for field in fields
-        if field in arguments and isinstance(arguments[field], (str, int))
-    }
-    return json.dumps(
-        projected,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
 
 
-def _truncate_snapshot_text(value: str) -> str:
-    encoded = value.encode("utf-8")
-    if len(encoded) <= MAX_SNAPSHOT_TEXT_BYTES:
-        return value
-    marker = "\n…[history truncated]"
-    budget = MAX_SNAPSHOT_TEXT_BYTES - len(marker.encode("utf-8"))
-    prefix = encoded[:budget]
-    while True:
-        try:
-            return prefix.decode("utf-8") + marker
-        except UnicodeDecodeError as error:
-            prefix = prefix[: error.start]
 
 
 def _json_tuple(values: tuple[str, ...]) -> str:
     return json.dumps(values, ensure_ascii=False, separators=(",", ":"))
 
 
-def _compact_summary_from_row(row: sqlite3.Row | None) -> CompactSummary | None:
-    if row is None:
-        return None
-    return CompactSummary(
-        task_goal=str(row["task_goal"]),
-        constraints=tuple(json.loads(row["constraints_json"])),
-        completed_actions=tuple(json.loads(row["completed_actions_json"])),
-        workspace_changes=tuple(json.loads(row["workspace_changes_json"])),
-        important_facts=tuple(json.loads(row["important_facts_json"])),
-        unresolved_problems=tuple(json.loads(row["unresolved_problems_json"])),
-        next_actions=tuple(json.loads(row["next_actions_json"])),
-        source_item_ids=tuple(json.loads(row["source_item_ids_json"])),
-    )
-
-
-def _run_from_row(
-    row: sqlite3.Row, *, include_user_input: bool = True
-) -> dict[str, object]:
-    run: dict[str, object] = {
-        "id": row["id"],
-        "sessionId": row["session_id"],
-        "modelId": row["model_id"],
-        "status": row["status"],
-        "modelStepCount": row["model_step_count"],
-        "createdAt": row["created_at"],
-        "updatedAt": row["updated_at"],
-    }
-    allowed_actions = {
-        "queued": ["cancel"],
-        "running": ["cancel"],
-        "waiting_approval": ["approve", "reject", "cancel"],
-        "waiting_user_input": ["continue", "cancel"],
-        "finalizing": ["cancel"],
-    }.get(row["status"], [])
-    if allowed_actions:
-        run["allowedActions"] = allowed_actions
-    if row["started_at"] is not None:
-        run["startedAt"] = row["started_at"]
-    if include_user_input:
-        run["userInput"] = row["user_input"]
-    if row["completed_at"] is not None:
-        run["completedAt"] = row["completed_at"]
-    if row["error_code"] is not None:
-        run["errorCode"] = row["error_code"]
-    if "pause_reason" in row.keys() and row["pause_reason"] is not None:
-        run["pauseReason"] = row["pause_reason"]
-    if "stop_reason" in row.keys() and row["stop_reason"] is not None:
-        run["stopReason"] = row["stop_reason"]
-    if "side_effects_may_exist" in row.keys():
-        run["sideEffectsMayExist"] = bool(row["side_effects_may_exist"])
-    if (
-        "extension_snapshot_json" in row.keys()
-        and row["extension_snapshot_json"] is not None
-    ):
-        snapshot = json.loads(row["extension_snapshot_json"])
-        if isinstance(snapshot, dict):
-            run["extensionSnapshot"] = snapshot
-    if "activated_tools_json" in row.keys() and row["activated_tools_json"] is not None:
-        activated = json.loads(row["activated_tools_json"])
-        if isinstance(activated, list):
-            run["activatedTools"] = activated
-    return RunDto.model_validate(run).to_json_value()
-
-
-def _model_attempt_from_row(row: sqlite3.Row) -> dict[str, object]:
-    usage = (
-        ModelUsage.model_validate_json(row["usage_json"])
-        if row["usage_json"] is not None else None
-    )
-    return {
-        "id": row["id"],
-        "stepId": row["step_id"],
-        "ordinal": row["ordinal"],
-        "status": row["status"],
-        "providerName": row["provider_name"],
-        "resolvedModelName": row["resolved_model_name"],
-        "finishReason": row["finish_reason"],
-        "providerResponseId": row["provider_response_id"],
-        "usage": usage,
-        "errorCode": row["error_code"],
-        "httpStatus": row["http_status"],
-        "ttftMs": row["ttft_ms"],
-        "durationMs": row["duration_ms"],
-        "hadProgress": bool(row["had_progress"]),
-        "startedAt": row["started_at"],
-        "completedAt": row["completed_at"],
-    }
 
 
 
 
-def _item_from_row(
-    row: sqlite3.Row, tool_row: sqlite3.Row | None
-) -> dict[str, object]:
-    item: dict[str, object] = {
-        "id": row["id"],
-        "sessionId": row["session_id"],
-        "runId": row["run_id"],
-        "ordinal": row["ordinal"],
-        "kind": row["kind"],
-        "status": row["status"],
-        "createdAt": row["created_at"],
-    }
-    if row["model_step_index"] is not None:
-        item["modelStepIndex"] = row["model_step_index"]
-    if row["content"] is not None:
-        item["content"] = row["content"]
-    if "incomplete" in row.keys() and row["incomplete"]:
-        item["incomplete"] = True
-    if row["completed_at"] is not None:
-        item["completedAt"] = row["completed_at"]
-    if tool_row is not None:
-        tool_call: dict[str, object] = {
-            "id": tool_row["id"],
-            "itemId": tool_row["item_id"],
-            "modelStepIndex": tool_row["model_step_index"],
-            "batchOrder": tool_row["batch_order"],
-            "providerCallId": tool_row["provider_call_id"],
-            "toolName": tool_row["tool_name"],
-            "status": tool_row["status"],
-            "argumentsJson": tool_row["arguments_json"],
-            "startedAt": tool_row["started_at"],
-        }
-        if tool_row["result_json"] is not None:
-            tool_call["resultJson"] = tool_row["result_json"]
-        if tool_row["completed_at"] is not None:
-            tool_call["completedAt"] = tool_row["completed_at"]
-        if tool_row["approval_status"] is not None:
-            tool_call["approvalStatus"] = tool_row["approval_status"]
-        if tool_row["approval_decision"] is not None:
-            tool_call["approvalDecision"] = tool_row["approval_decision"]
-        if tool_row["approval_feedback"] is not None:
-            tool_call["approvalFeedback"] = tool_row["approval_feedback"]
-        if tool_row["approval_diff"] is not None:
-            tool_call["approvalDiff"] = tool_row["approval_diff"]
-        if tool_row["base_sha256"] is not None:
-            tool_call["baseSha256"] = tool_row["base_sha256"]
-        if "provenance_json" in tool_row.keys() and tool_row["provenance_json"]:
-            provenance = json.loads(tool_row["provenance_json"])
-            if isinstance(provenance, dict):
-                tool_call["provenance"] = provenance
-        if "tool_set_hash" in tool_row.keys() and tool_row["tool_set_hash"]:
-            tool_call["toolSetHash"] = tool_row["tool_set_hash"]
-        item["toolCall"] = tool_call
-    return ItemDto.model_validate(item).to_json_value()
+
+
+
+
 
 
 

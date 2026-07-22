@@ -47,7 +47,7 @@ class RuntimeStateAuthorityTests(unittest.TestCase):
         before = self.store.list_events(self.session["id"], after_event_id=0)
 
         with patch(
-            "eidos_runtime.db.storage.append_event",
+            "eidos_runtime.db.transitions.append_event",
             side_effect=RuntimeError("fixture event failure"),
         ):
             with self.assertRaisesRegex(RuntimeError, "fixture event failure"):
