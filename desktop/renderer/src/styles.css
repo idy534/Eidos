@@ -159,8 +159,10 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   display: flex;
   gap: 0;
   align-items: center;
+  align-self: flex-end;
   width: fit-content;
   margin-top: auto;
+  margin-bottom: -0.75rem;
   border-color: transparent;
   padding: 0.5rem;
   color: var(--text);
