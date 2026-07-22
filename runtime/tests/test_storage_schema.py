@@ -150,6 +150,23 @@ class StorageSchemaTests(unittest.TestCase):
         )
         check.close()
 
+    def test_repositories_share_one_database_manager(self) -> None:
+        store = SessionStore(self.data)
+        store.initialize()
+
+        repositories = (
+            store._sessions,
+            store._runs,
+            store._execution,
+            store._extensions,
+            store._context,
+        )
+        self.assertTrue(all(repository is not None for repository in repositories))
+        self.assertTrue(
+            all(repository.database is store._database for repository in repositories if repository)
+        )
+        store.close()
+
 
 if __name__ == "__main__":
     unittest.main()

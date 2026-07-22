@@ -66,7 +66,7 @@ class EventAndOperationTests(unittest.TestCase):
 
     def test_event_failure_rolls_back_fact_and_operation(self) -> None:
         operation_id = "11111111-1111-4111-8111-111111111111"
-        with patch("eidos_runtime.db.storage.append_event", side_effect=ValueError("fixture")):
+        with patch("eidos_runtime.db.repositories.sessions.append_event", side_effect=ValueError("fixture")):
             with self.assertRaises(ValueError):
                 self.store.create_session(str(self.workspace), operation_id=operation_id)
         connection = self.store.connection

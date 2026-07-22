@@ -11,6 +11,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 class RuntimeLayoutTests(unittest.TestCase):
     def test_runtime_concerns_are_importable_from_their_owned_packages(self) -> None:
         from eidos_runtime.db.storage import SessionStore
+        from eidos_runtime.db.database import Database
+        from eidos_runtime.db.recovery import recover_runtime_facts
+        from eidos_runtime.db.repositories import SessionRepository
+        from eidos_runtime.db.schema import SCHEMA_SQL
+        from eidos_runtime.db.transitions import transition_run
         from eidos_runtime.context.builder import ContextBuilder
         from eidos_runtime.context.compactor import ContextCompactor
         from eidos_runtime.model.client import ModelResponse
@@ -24,6 +29,11 @@ class RuntimeLayoutTests(unittest.TestCase):
 
         self.assertTrue(all((
             SessionStore,
+            Database,
+            SessionRepository,
+            SCHEMA_SQL,
+            recover_runtime_facts,
+            transition_run,
             ContextBuilder,
             ContextCompactor,
             ModelResponse,

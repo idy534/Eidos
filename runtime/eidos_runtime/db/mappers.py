@@ -246,3 +246,24 @@ def _item_from_row(
             tool_call["toolSetHash"] = tool_row["tool_set_hash"]
         item["toolCall"] = tool_call
     return ItemDto.model_validate(item).to_json_value()
+
+
+def _json_bytes(value: object) -> int:
+    return len(
+        json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    )
+
+def _bounded_canonical_json(value: object, *, code: str) -> str:
+    try:
+        encoded = json.dumps(
+            value, ensure_ascii=False, separators=(",", ":"), sort_keys=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        raise ValueError(code) from None
+    if not isinstance(value, dict) or len(encoded) > 256 * 1024:
+        raise ValueError(code)
+    return encoded.decode("utf-8")
+
+def _json_tuple(values: tuple[str, ...]) -> str:
+    return json.dumps(values, ensure_ascii=False, separators=(",", ":"))

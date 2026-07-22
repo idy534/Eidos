@@ -1,0 +1,430 @@
+from __future__ import annotations
+
+import base64
+import json
+from pathlib import Path
+import sqlite3
+import time
+import uuid
+
+from eidos_runtime.db.database import Repository, now_ms as _now_ms
+from eidos_runtime.db.errors import (
+    InvalidCursorError,
+    ResourceNotFoundError,
+    SessionActiveError,
+    WorkspaceBoundaryError,
+)
+from eidos_runtime.db.events import append_event, event_from_row
+from eidos_runtime.db.mappers import (
+    _json_bytes,
+    _run_from_row,
+    _session_from_row,
+    _snapshot_item,
+)
+from eidos_runtime.protocol.schemas import SessionDto
+from eidos_runtime.runtime.state_machine import EventType
+
+DEFAULT_LIST_LIMIT = 50
+MAX_LIST_LIMIT = 200
+SESSION_CURSOR_PREFIX = "session-v2:"
+MAX_SNAPSHOT_BYTES = 768 * 1024
+
+SESSION_SELECT = """
+    SELECT s.creation_seq, s.id, s.workspace_root, s.title,
+           s.created_at, s.updated_at,
+           CASE
+             WHEN EXISTS (
+               SELECT 1 FROM runs active
+               WHERE active.session_id = s.id
+                 AND active.status IN (
+                   'queued', 'running', 'waiting_approval',
+                   'waiting_user_input', 'finalizing'
+                 )
+             ) THEN 'in_progress'
+             ELSE COALESCE((
+               SELECT CASE latest.status
+                 WHEN 'succeeded' THEN 'completed'
+                 WHEN 'failed' THEN 'failed'
+                 WHEN 'stopped' THEN 'failed'
+                 WHEN 'interrupted' THEN 'failed'
+                 WHEN 'canceled' THEN 'canceled'
+                 ELSE 'new'
+               END
+               FROM runs latest
+               WHERE latest.session_id = s.id
+               ORDER BY latest.creation_seq DESC
+               LIMIT 1
+             ), 'new')
+           END AS task_status
+    FROM sessions s
+"""
+
+class SessionRepository(Repository):
+    def create_session(
+        self, workspace_root: str, *, operation_id: str | None = None
+    ) -> dict[str, object]:
+        workspace = _canonical_workspace(workspace_root)
+        if self._workspace_overlaps_data(workspace):
+            raise WorkspaceBoundaryError("workspace overlaps runtime data")
+        metadata = workspace.stat()
+        session_id = str(uuid.uuid4())
+        now = time.time_ns() // 1_000_000
+        session = SessionDto.model_validate({
+            "id": session_id,
+            "workspaceRoot": str(workspace),
+            "title": None,
+            "taskStatus": "new",
+            "createdAt": now,
+            "updatedAt": now,
+        }).to_json_value()
+        def write(connection: sqlite3.Connection) -> dict[str, object]:
+            connection.execute(
+                """
+                INSERT INTO sessions (
+                    id, workspace_root, workspace_dev, workspace_inode,
+                    workspace_uid, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    str(workspace),
+                    metadata.st_dev,
+                    metadata.st_ino,
+                    metadata.st_uid,
+                    now,
+                    now,
+                ),
+            )
+            append_event(
+                connection,
+                EventType.SESSION_CREATED,
+                now,
+                {"session": session},
+                session_id=session_id,
+            )
+            return session
+        return self._write(
+            write,
+            operation_id=operation_id,
+            operation_scope="session/create",
+            operation_request={"workspaceRoot": str(workspace)},
+        )
+
+    def list_sessions(
+        self, *, limit: int = DEFAULT_LIST_LIMIT, cursor: str | None = None
+    ) -> dict[str, object]:
+        cursor_state = _decode_cursor(cursor) if cursor is not None else None
+        sql = SESSION_SELECT
+        with self.lock:
+            connection = self._connection()
+            if cursor_state is None:
+                high_water = connection.execute(
+                    "SELECT COALESCE(MAX(creation_seq), 0) FROM sessions"
+                ).fetchone()[0]
+                before_sequence = high_water + 1
+            else:
+                high_water, before_sequence = cursor_state
+            rows = connection.execute(
+                sql
+                + " WHERE s.creation_seq <= ? AND s.creation_seq < ?"
+                + " ORDER BY s.creation_seq DESC LIMIT ?",
+                (high_water, before_sequence, limit + 1),
+            ).fetchall()
+        has_more = len(rows) > limit
+        page = rows[:limit]
+        result: dict[str, object] = {"items": [_session_from_row(row) for row in page]}
+        if has_more:
+            result["nextCursor"] = _encode_cursor(
+                high_water, page[-1]["creation_seq"]
+            )
+        return result
+
+    def read_session(self, session_id: str) -> dict[str, object] | None:
+        with self.lock:
+            row = self._connection().execute(
+                SESSION_SELECT + " WHERE s.id = ?",
+                (session_id,),
+            ).fetchone()
+        return _session_from_row(row) if row is not None else None
+
+    def session_model_id(self, session_id: str) -> str | None:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT model_id FROM runs
+                WHERE session_id = ?
+                ORDER BY creation_seq LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+        return str(row["model_id"]) if row is not None else None
+
+    def rename_session(
+        self,
+        session_id: str,
+        title: str,
+        *,
+        operation_id: str | None = None,
+    ) -> dict[str, object]:
+        if not title or len(title) > 60 or len(title.encode("utf-8")) > 120:
+            raise ValueError("session title is invalid")
+        now = _now_ms()
+
+        def write(connection: sqlite3.Connection) -> dict[str, object]:
+            updated = connection.execute(
+                "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+                (title, now, session_id),
+            )
+            if updated.rowcount != 1:
+                raise ResourceNotFoundError("session not found")
+            append_event(
+                connection,
+                EventType.SESSION_TITLE_UPDATED,
+                now,
+                {"title": title},
+                session_id=session_id,
+            )
+            row = connection.execute(
+                SESSION_SELECT + " WHERE s.id = ?", (session_id,)
+            ).fetchone()
+            return _session_from_row(row)
+
+        return self._write(
+            write,
+            operation_id=operation_id,
+            operation_scope="session/rename",
+            operation_request={"sessionId": session_id, "title": title},
+        )
+
+    def delete_session(
+        self,
+        session_id: str,
+        *,
+        operation_id: str | None = None,
+    ) -> dict[str, object]:
+        def write(connection: sqlite3.Connection) -> dict[str, object]:
+            session = connection.execute(
+                "SELECT id FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            if session is None:
+                raise ResourceNotFoundError("session not found")
+            active = connection.execute(
+                """
+                SELECT 1 FROM runs
+                WHERE session_id = ? AND status IN (
+                    'queued', 'running', 'waiting_approval',
+                    'waiting_user_input', 'finalizing'
+                ) LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+            if active is not None:
+                raise SessionActiveError("session has an active run")
+            run_ids = "SELECT id FROM runs WHERE session_id = ?"
+            connection.execute(
+                f"DELETE FROM durable_intents WHERE run_id IN ({run_ids})",
+                (session_id,),
+            )
+            connection.execute(
+                f"DELETE FROM approvals WHERE run_id IN ({run_ids})", (session_id,)
+            )
+            connection.execute(
+                """
+                DELETE FROM model_attempts WHERE step_id IN (
+                    SELECT steps.id FROM steps
+                    JOIN runs ON runs.id = steps.run_id
+                    WHERE runs.session_id = ?
+                )
+                """,
+                (session_id,),
+            )
+            connection.execute(
+                f"DELETE FROM steps WHERE run_id IN ({run_ids})", (session_id,)
+            )
+            connection.execute(
+                f"DELETE FROM execution_segments WHERE run_id IN ({run_ids})",
+                (session_id,),
+            )
+            connection.execute(
+                f"DELETE FROM input_mailbox WHERE run_id IN ({run_ids})",
+                (session_id,),
+            )
+            connection.execute(
+                "DELETE FROM compact_summaries WHERE session_id = ?", (session_id,)
+            )
+            connection.execute(
+                """
+                DELETE FROM tool_calls WHERE item_id IN (
+                    SELECT id FROM items WHERE session_id = ?
+                )
+                """,
+                (session_id,),
+            )
+            connection.execute("DELETE FROM items WHERE session_id = ?", (session_id,))
+            connection.execute("DELETE FROM events WHERE session_id = ?", (session_id,))
+            connection.execute("DELETE FROM runs WHERE session_id = ?", (session_id,))
+            connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            return {"deletedSessionId": session_id}
+
+        return self._write(
+            write,
+            operation_id=operation_id,
+            operation_scope="session/delete",
+            operation_request={"sessionId": session_id},
+        )
+
+    def read_session_snapshot(
+        self,
+        session_id: str,
+        *,
+        item_limit: int = 200,
+        before_item_id: str | None = None,
+    ) -> dict[str, object]:
+        with self.lock:
+            connection = self._connection()
+            session_row = connection.execute(
+                SESSION_SELECT + " WHERE s.id = ?", (session_id,)
+            ).fetchone()
+            if session_row is None:
+                raise ResourceNotFoundError("session not found")
+            before_sequence: int | None = None
+            if before_item_id is not None:
+                before_row = connection.execute(
+                    """
+                    SELECT creation_seq FROM items
+                    WHERE id = ? AND session_id = ?
+                    """,
+                    (before_item_id, session_id),
+                ).fetchone()
+                if before_row is None:
+                    raise ResourceNotFoundError("item not found")
+                before_sequence = before_row["creation_seq"]
+            run_rows = connection.execute(
+                """
+                SELECT * FROM runs WHERE session_id = ?
+                ORDER BY creation_seq DESC LIMIT 100
+                """,
+                (session_id,),
+            ).fetchall()
+            item_sql = "SELECT * FROM items WHERE session_id = ?"
+            item_parameters: list[object] = [session_id]
+            if before_sequence is not None:
+                item_sql += " AND creation_seq < ?"
+                item_parameters.append(before_sequence)
+            item_sql += " ORDER BY creation_seq DESC LIMIT ?"
+            item_parameters.append(item_limit + 1)
+            item_rows = connection.execute(item_sql, item_parameters).fetchall()
+            tool_rows: list[sqlite3.Row] = []
+            if item_rows:
+                placeholders = ",".join("?" for _ in item_rows)
+                tool_rows = connection.execute(
+                    f"SELECT * FROM tool_calls WHERE item_id IN ({placeholders})",
+                    [row["id"] for row in item_rows],
+                ).fetchall()
+            through_event_id = connection.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM events WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()[0]
+        session = _session_from_row(session_row)
+        selected_runs = [
+            _run_from_row(row, include_user_input=False)
+            for row in reversed(run_rows)
+        ]
+        tools_by_item = {row["item_id"]: row for row in tool_rows}
+        has_more = len(item_rows) > item_limit
+        selected_items: list[dict[str, object]] = []
+        selected_bytes = _json_bytes(session) + _json_bytes(selected_runs) + 1024
+        for row in item_rows[:item_limit]:
+            item = _snapshot_item(row, tools_by_item.get(row["id"]))
+            item_bytes = _json_bytes(item)
+            if selected_bytes + item_bytes > MAX_SNAPSHOT_BYTES:
+                has_more = True
+                break
+            selected_items.append(item)
+            selected_bytes += item_bytes
+        selected_items.reverse()
+        snapshot: dict[str, object] = {
+            "session": session,
+            "runs": selected_runs,
+            "items": selected_items,
+            "throughEventId": through_event_id,
+        }
+        if has_more and selected_items:
+            snapshot["previousItemId"] = selected_items[0]["id"]
+        return snapshot
+
+    def list_events(
+        self, session_id: str, *, after_event_id: int, limit: int = 200
+    ) -> dict[str, object]:
+        if after_event_id < 0 or not 1 <= limit <= 500:
+            raise ValueError("invalid event cursor")
+        with self.lock:
+            rows = self._connection().execute(
+                """
+                SELECT * FROM events
+                WHERE session_id = ? AND id > ?
+                ORDER BY id ASC LIMIT ?
+                """,
+                (session_id, after_event_id, limit + 1),
+            ).fetchall()
+        events = [event for row in rows[:limit] if (event := event_from_row(row)) is not None]
+        return {
+            "items": events,
+            "hasMore": len(rows) > limit,
+            "throughEventId": rows[min(len(rows), limit) - 1]["id"] if rows else after_event_id,
+        }
+
+
+def _canonical_workspace(value: str) -> Path:
+    if not value or len(value) > 4096:
+        raise WorkspaceBoundaryError("workspace path is invalid")
+    path = Path(value)
+    if not path.is_absolute() or path.is_symlink() or not path.is_dir():
+        raise WorkspaceBoundaryError("workspace must be an existing absolute directory")
+    return path.resolve()
+
+def _encode_cursor(high_water: int, before_sequence: int) -> str:
+    payload = (
+        SESSION_CURSOR_PREFIX
+        + json.dumps(
+            {
+                "scope": "sessions",
+                "order": "creation_seq_desc",
+                "highWater": high_water,
+                "before": before_sequence,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    ).encode("ascii")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+def _decode_cursor(cursor: str) -> tuple[int, int]:
+    if not cursor or len(cursor) > 512:
+        raise InvalidCursorError("cursor is invalid")
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        decoded = base64.b64decode(
+            cursor + padding,
+            altchars=b"-_",
+            validate=True,
+        ).decode("ascii")
+        if not decoded.startswith(SESSION_CURSOR_PREFIX):
+            raise ValueError
+        state = json.loads(decoded.removeprefix(SESSION_CURSOR_PREFIX))
+        if (
+            not isinstance(state, dict)
+            or set(state) != {"scope", "order", "highWater", "before"}
+            or state["scope"] != "sessions"
+            or state["order"] != "creation_seq_desc"
+            or not isinstance(state["highWater"], int)
+            or not isinstance(state["before"], int)
+            or isinstance(state["highWater"], bool)
+            or isinstance(state["before"], bool)
+            or state["highWater"] < 0
+            or not 0 < state["before"] <= state["highWater"]
+        ):
+            raise ValueError
+        return state["highWater"], state["before"]
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+        raise InvalidCursorError("cursor is invalid") from None

@@ -213,7 +213,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         ).fetchone()[0]
 
         with patch(
-            "eidos_runtime.db.storage.append_event",
+            "eidos_runtime.db.repositories.runs.append_event",
             side_effect=ValueError("fixture event failure"),
         ):
             with self.assertRaisesRegex(ValueError, "fixture event failure"):
