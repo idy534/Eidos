@@ -215,7 +215,11 @@ class ContextRepository(Repository):
                 provider_call_id=str(tool["provider_call_id"]) if tool else None,
                 tool_name=str(tool["tool_name"]) if tool else None,
                 arguments_json=str(tool["arguments_json"]) if tool else None,
-                result_json=str(tool["result_json"]) if tool and tool["result_json"] is not None else None,
+                result_json=(
+                    str(tool["result_json"])
+                    if tool and tool["result_json"] is not None
+                    else None
+                ),
             )
             size = len(json.dumps(
                 fact.model_dump(),

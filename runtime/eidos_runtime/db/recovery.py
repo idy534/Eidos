@@ -100,7 +100,10 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
     for approval in approvals:
         ensure_transition(ApprovalStatus.PENDING, ApprovalStatus.INVALIDATED)
         connection.execute(
-            "UPDATE approvals SET status = 'invalidated', decided_at = ? WHERE id = ? AND status = 'pending'",
+            """
+            UPDATE approvals SET status = 'invalidated', decided_at = ?
+            WHERE id = ? AND status = 'pending'
+            """,
             (now, approval["id"]),
         )
         append_event(

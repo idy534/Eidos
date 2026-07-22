@@ -112,7 +112,10 @@ class SessionStore:
     def create_session(
         self, workspace_root: str, *, operation_id: str | None = None
     ) -> dict[str, object]:
-        return self._repository(self._sessions).create_session(workspace_root, operation_id=operation_id)
+        return self._repository(self._sessions).create_session(
+            workspace_root,
+            operation_id=operation_id,
+        )
 
     def list_sessions(
         self, *, limit: int = DEFAULT_LIST_LIMIT, cursor: str | None = None
@@ -132,7 +135,11 @@ class SessionStore:
         *,
         operation_id: str | None = None,
     ) -> dict[str, object]:
-        return self._repository(self._sessions).rename_session(session_id, title, operation_id=operation_id)
+        return self._repository(self._sessions).rename_session(
+            session_id,
+            title,
+            operation_id=operation_id,
+        )
 
     def delete_session(
         self,
@@ -140,7 +147,10 @@ class SessionStore:
         *,
         operation_id: str | None = None,
     ) -> dict[str, object]:
-        return self._repository(self._sessions).delete_session(session_id, operation_id=operation_id)
+        return self._repository(self._sessions).delete_session(
+            session_id,
+            operation_id=operation_id,
+        )
 
     def create_run(
         self,
@@ -154,7 +164,16 @@ class SessionStore:
         model_profile: ModelProfileSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
-        return self._repository(self._runs).create_run(session_id, user_input, operation_id=operation_id, queued=queued, session_title=session_title, model_id=model_id, model_profile=model_profile, extension_snapshot=extension_snapshot)
+        return self._repository(self._runs).create_run(
+            session_id,
+            user_input,
+            operation_id=operation_id,
+            queued=queued,
+            session_title=session_title,
+            model_id=model_id,
+            model_profile=model_profile,
+            extension_snapshot=extension_snapshot,
+        )
 
     def enqueue_run(
         self,
@@ -167,7 +186,15 @@ class SessionStore:
         model_profile: ModelProfileSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
-        return self._repository(self._runs).enqueue_run(session_id, user_input, operation_id=operation_id, session_title=session_title, model_id=model_id, model_profile=model_profile, extension_snapshot=extension_snapshot)
+        return self._repository(self._runs).enqueue_run(
+            session_id,
+            user_input,
+            operation_id=operation_id,
+            session_title=session_title,
+            model_id=model_id,
+            model_profile=model_profile,
+            extension_snapshot=extension_snapshot,
+        )
 
     def continue_run(
         self,
@@ -176,7 +203,11 @@ class SessionStore:
         *,
         operation_id: str | None = None,
     ) -> dict[str, object]:
-        return self._repository(self._runs).continue_run(run_id, user_input, operation_id=operation_id)
+        return self._repository(self._runs).continue_run(
+            run_id,
+            user_input,
+            operation_id=operation_id,
+        )
 
     def claim_next_run(self) -> dict[str, object] | None:
         return self._repository(self._runs).claim_next_run()
@@ -204,7 +235,9 @@ class SessionStore:
     def list_plugin_records(
         self, *, include_removed: bool = False
     ) -> list[dict[str, object]]:
-        return self._repository(self._extensions).list_plugin_records(include_removed=include_removed)
+        return self._repository(self._extensions).list_plugin_records(
+            include_removed=include_removed,
+        )
 
     def insert_plugin_record(self, record: dict[str, object]) -> dict[str, object]:
         return self._repository(self._extensions).insert_plugin_record(record)
@@ -220,7 +253,10 @@ class SessionStore:
     def plugin_referenced_by_nonterminal_run(
         self, plugin_id: str, content_hash: str
     ) -> bool:
-        return self._repository(self._extensions).plugin_referenced_by_nonterminal_run(plugin_id, content_hash)
+        return self._repository(self._extensions).plugin_referenced_by_nonterminal_run(
+            plugin_id,
+            content_hash,
+        )
 
     def mcp_server_state(
         self, plugin_id: str, server_id: str
@@ -234,7 +270,11 @@ class SessionStore:
         consented: bool,
         error_code: str | None = None,
     ) -> dict[str, object]:
-        return self._repository(self._extensions).set_mcp_server_state(server, consented=consented, error_code=error_code)
+        return self._repository(self._extensions).set_mcp_server_state(
+            server,
+            consented=consented,
+            error_code=error_code,
+        )
 
     def activated_tools(self, run_id: str) -> tuple[str, ...]:
         return self._repository(self._extensions).activated_tools(run_id)
@@ -251,7 +291,10 @@ class SessionStore:
     def list_extension_events(
         self, *, after_event_id: int = 0, limit: int = 200
     ) -> dict[str, object]:
-        return self._repository(self._extensions).list_extension_events(after_event_id=after_event_id, limit=limit)
+        return self._repository(self._extensions).list_extension_events(
+            after_event_id=after_event_id,
+            limit=limit,
+        )
 
     def read_item(self, item_id: str) -> dict[str, object]:
         return self._repository(self._execution).read_item(item_id)
@@ -263,12 +306,20 @@ class SessionStore:
         item_limit: int = 200,
         before_item_id: str | None = None,
     ) -> dict[str, object]:
-        return self._repository(self._sessions).read_session_snapshot(session_id, item_limit=item_limit, before_item_id=before_item_id)
+        return self._repository(self._sessions).read_session_snapshot(
+            session_id,
+            item_limit=item_limit,
+            before_item_id=before_item_id,
+        )
 
     def list_events(
         self, session_id: str, *, after_event_id: int, limit: int = 200
     ) -> dict[str, object]:
-        return self._repository(self._sessions).list_events(session_id, after_event_id=after_event_id, limit=limit)
+        return self._repository(self._sessions).list_events(
+            session_id,
+            after_event_id=after_event_id,
+            limit=limit,
+        )
 
     def get_user_item(self, run_id: str) -> dict[str, object]:
         return self._repository(self._execution).get_user_item(run_id)
@@ -282,7 +333,10 @@ class SessionStore:
         *,
         tool_snapshot: dict[str, object] | None = None,
     ) -> int:
-        return self._repository(self._execution).increment_model_step(run_id, tool_snapshot=tool_snapshot)
+        return self._repository(self._execution).increment_model_step(
+            run_id,
+            tool_snapshot=tool_snapshot,
+        )
 
     def read_step_tool_snapshot(
         self, run_id: str, model_step_index: int
@@ -308,7 +362,12 @@ class SessionStore:
         reason: str | None = None,
         progress_signature: ProgressSignature | None = None,
     ) -> None:
-        return self._repository(self._execution).complete_current_step(run_id, status_value, reason=reason, progress_signature=progress_signature)
+        return self._repository(self._execution).complete_current_step(
+            run_id,
+            status_value,
+            reason=reason,
+            progress_signature=progress_signature,
+        )
 
     def recent_progress_signatures(
         self, run_id: str, limit: int = 8
@@ -331,7 +390,20 @@ class SessionStore:
         duration_ms: int | None = None,
         had_progress: bool = False,
     ) -> bool:
-        return self._repository(self._execution).complete_current_model_attempt(run_id, status, usage=usage, provider_name=provider_name, resolved_model_name=resolved_model_name, finish_reason=finish_reason, provider_response_id=provider_response_id, error_code=error_code, http_status=http_status, ttft_ms=ttft_ms, duration_ms=duration_ms, had_progress=had_progress)
+        return self._repository(self._execution).complete_current_model_attempt(
+            run_id,
+            status,
+            usage=usage,
+            provider_name=provider_name,
+            resolved_model_name=resolved_model_name,
+            finish_reason=finish_reason,
+            provider_response_id=provider_response_id,
+            error_code=error_code,
+            http_status=http_status,
+            ttft_ms=ttft_ms,
+            duration_ms=duration_ms,
+            had_progress=had_progress,
+        )
 
     def start_retry_model_attempt(self, run_id: str) -> None:
         return self._repository(self._execution).start_retry_model_attempt(run_id)
@@ -347,7 +419,10 @@ class SessionStore:
     def create_assistant_item_committed(
         self, run_id: str, model_step_index: int
     ) -> CommittedMutation[dict[str, object]]:
-        return self._repository(self._execution).create_assistant_item_committed(run_id, model_step_index)
+        return self._repository(self._execution).create_assistant_item_committed(
+            run_id,
+            model_step_index,
+        )
 
     def create_finalization_assistant_item(
         self, run_id: str
@@ -357,7 +432,9 @@ class SessionStore:
     def create_finalization_assistant_item_committed(
         self, run_id: str
     ) -> CommittedMutation[dict[str, object]]:
-        return self._repository(self._execution).create_finalization_assistant_item_committed(run_id)
+        return self._repository(self._execution).create_finalization_assistant_item_committed(
+            run_id,
+        )
 
     def append_item_content(self, item_id: str, delta: str) -> dict[str, object]:
         return self._repository(self._execution).append_item_content(item_id, delta)
@@ -368,7 +445,11 @@ class SessionStore:
         deltas: tuple[str, ...],
         first_sequence: int,
     ) -> CommittedMutation[dict[str, object]]:
-        return self._repository(self._execution).append_item_deltas_committed(item_id, deltas, first_sequence)
+        return self._repository(self._execution).append_item_deltas_committed(
+            item_id,
+            deltas,
+            first_sequence,
+        )
 
     def complete_assistant_item(self, item_id: str) -> dict[str, object]:
         return self._repository(self._execution).complete_assistant_item(item_id)
@@ -389,7 +470,9 @@ class SessionStore:
     def mark_assistant_incomplete_if_active_committed(
         self, item_id: str
     ) -> CommittedMutation[dict[str, object]] | None:
-        return self._repository(self._execution).mark_assistant_incomplete_if_active_committed(item_id)
+        return self._repository(self._execution).mark_assistant_incomplete_if_active_committed(
+            item_id,
+        )
 
     def complete_assistant_and_run(
         self, item_id: str, run_id: str
@@ -399,7 +482,10 @@ class SessionStore:
     def complete_assistant_and_run_committed(
         self, item_id: str, run_id: str
     ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
-        return self._repository(self._execution).complete_assistant_and_run_committed(item_id, run_id)
+        return self._repository(self._execution).complete_assistant_and_run_committed(
+            item_id,
+            run_id,
+        )
 
     def create_tool_item(
         self,
@@ -413,7 +499,16 @@ class SessionStore:
         provenance: dict[str, object] | None = None,
         tool_set_hash: str | None = None,
     ) -> dict[str, object]:
-        return self._repository(self._execution).create_tool_item(run_id, model_step_index, batch_order, provider_call_id, tool_name, arguments_json, provenance=provenance, tool_set_hash=tool_set_hash)
+        return self._repository(self._execution).create_tool_item(
+            run_id,
+            model_step_index,
+            batch_order,
+            provider_call_id,
+            tool_name,
+            arguments_json,
+            provenance=provenance,
+            tool_set_hash=tool_set_hash,
+        )
 
     def create_tool_item_committed(
         self,
@@ -427,7 +522,16 @@ class SessionStore:
         provenance: dict[str, object] | None = None,
         tool_set_hash: str | None = None,
     ) -> CommittedMutation[dict[str, object]]:
-        return self._repository(self._execution).create_tool_item_committed(run_id, model_step_index, batch_order, provider_call_id, tool_name, arguments_json, provenance=provenance, tool_set_hash=tool_set_hash)
+        return self._repository(self._execution).create_tool_item_committed(
+            run_id,
+            model_step_index,
+            batch_order,
+            provider_call_id,
+            tool_name,
+            arguments_json,
+            provenance=provenance,
+            tool_set_hash=tool_set_hash,
+        )
 
     def complete_tool_item(
         self,
@@ -439,7 +543,14 @@ class SessionStore:
         workspace_changed: bool = False,
         diff_hash: str | None = None,
     ) -> dict[str, object]:
-        return self._repository(self._execution).complete_tool_item(item_id, result_json, item_status=item_status, tool_status=tool_status, workspace_changed=workspace_changed, diff_hash=diff_hash)
+        return self._repository(self._execution).complete_tool_item(
+            item_id,
+            result_json,
+            item_status=item_status,
+            tool_status=tool_status,
+            workspace_changed=workspace_changed,
+            diff_hash=diff_hash,
+        )
 
     def complete_tool_item_committed(
         self,
@@ -451,7 +562,14 @@ class SessionStore:
         workspace_changed: bool = False,
         diff_hash: str | None = None,
     ) -> CommittedMutation[dict[str, object]]:
-        return self._repository(self._execution).complete_tool_item_committed(item_id, result_json, item_status=item_status, tool_status=tool_status, workspace_changed=workspace_changed, diff_hash=diff_hash)
+        return self._repository(self._execution).complete_tool_item_committed(
+            item_id,
+            result_json,
+            item_status=item_status,
+            tool_status=tool_status,
+            workspace_changed=workspace_changed,
+            diff_hash=diff_hash,
+        )
 
     def begin_approval(
         self,
@@ -467,7 +585,11 @@ class SessionStore:
         diff: str,
         base_sha256: str | None,
     ) -> CommittedMutation[dict[str, object]]:
-        return self._repository(self._execution).begin_approval_committed(item_id, diff, base_sha256)
+        return self._repository(self._execution).begin_approval_committed(
+            item_id,
+            diff,
+            base_sha256,
+        )
 
     def resolve_approval(
         self,
@@ -477,7 +599,12 @@ class SessionStore:
         *,
         requeue: bool = False,
     ) -> dict[str, object]:
-        return self._repository(self._execution).resolve_approval(item_id, decision, feedback, requeue=requeue)
+        return self._repository(self._execution).resolve_approval(
+            item_id,
+            decision,
+            feedback,
+            requeue=requeue,
+        )
 
     def resolve_approval_committed(
         self,
@@ -487,7 +614,12 @@ class SessionStore:
         *,
         requeue: bool = False,
     ) -> CommittedMutation[dict[str, object]]:
-        return self._repository(self._execution).resolve_approval_committed(item_id, decision, feedback, requeue=requeue)
+        return self._repository(self._execution).resolve_approval_committed(
+            item_id,
+            decision,
+            feedback,
+            requeue=requeue,
+        )
 
     def clear_rejects(self, run_id: str) -> None:
         return self._repository(self._runs).clear_rejects(run_id)
@@ -507,7 +639,10 @@ class SessionStore:
         *,
         preconditions: dict[str, object],
     ) -> str:
-        return self._repository(self._execution).begin_durable_intent(item_id, preconditions=preconditions)
+        return self._repository(self._execution).begin_durable_intent(
+            item_id,
+            preconditions=preconditions,
+        )
 
     def has_read_evidence(
         self, run_id: str, path: str, sha256: str
@@ -552,7 +687,11 @@ class SessionStore:
     ) -> CommittedMutation[
         tuple[dict[str, object] | None, dict[str, object]]
     ]:
-        return self._repository(self._runs).complete_finalization_and_stop_committed(item_id, run_id, stop_reason)
+        return self._repository(self._runs).complete_finalization_and_stop_committed(
+            item_id,
+            run_id,
+            stop_reason,
+        )
 
     def fail_run(self, run_id: str, error_code: str) -> dict[str, object]:
         return self._repository(self._runs).fail_run(run_id, error_code)

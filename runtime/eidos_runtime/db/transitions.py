@@ -85,7 +85,10 @@ def transition_segments(
         raise ResourceNotFoundError("run not found")
     placeholders = ",".join("?" for _ in expected_statuses)
     rows = connection.execute(
-        f"SELECT id, status FROM execution_segments WHERE run_id = ? AND status IN ({placeholders})",
+        f"""
+        SELECT id, status FROM execution_segments
+        WHERE run_id = ? AND status IN ({placeholders})
+        """,
         (run_id, *(status.value for status in expected_statuses)),
     ).fetchall()
     events: list[dict[str, object]] = []
@@ -93,7 +96,10 @@ def transition_segments(
         current = SegmentStatus(row["status"])
         ensure_transition(current, target_status)
         connection.execute(
-            "UPDATE execution_segments SET status = ?, completed_at = ? WHERE id = ? AND status = ?",
+            """
+            UPDATE execution_segments SET status = ?, completed_at = ?
+            WHERE id = ? AND status = ?
+            """,
             (target_status.value, now, row["id"], current.value),
         )
         events.append(append_event(
@@ -135,7 +141,10 @@ def settle_run_children(
     for tool in tool_rows:
         ensure_transition(ToolCallStatus.RUNNING, ToolCallStatus.CANCELED)
         connection.execute(
-            "UPDATE tool_calls SET status = 'canceled', completed_at = ? WHERE id = ? AND status = 'running'",
+            """
+            UPDATE tool_calls SET status = 'canceled', completed_at = ?
+            WHERE id = ? AND status = 'running'
+            """,
             (now, tool["id"]),
         )
         events.append(append_event(
@@ -189,7 +198,10 @@ def settle_run_children(
     ).fetchall()
     for item in item_rows:
         connection.execute(
-            "UPDATE items SET status = 'canceled', completed_at = ? WHERE id = ? AND status = 'in_progress'",
+            """
+            UPDATE items SET status = 'canceled', completed_at = ?
+            WHERE id = ? AND status = 'in_progress'
+            """,
             (now, item["id"]),
         )
         events.append(append_event(

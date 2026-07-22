@@ -544,7 +544,10 @@ class ExecutionRepository(Repository):
             if fact is None:
                 raise InvalidRunStateError("item is not active")
             updated = connection.execute(
-                "UPDATE items SET content = COALESCE(content, '') || ? WHERE id = ? AND status = 'in_progress'",
+                """
+                UPDATE items SET content = COALESCE(content, '') || ?
+                WHERE id = ? AND status = 'in_progress'
+                """,
                 ("".join(deltas), item_id),
             )
             if updated.rowcount != 1:
@@ -1136,7 +1139,12 @@ class ExecutionRepository(Repository):
                 (
                     intent_id, row["run_id"], row["tool_call_id"], nonce,
                     hashlib.sha256(row["arguments_json"].encode("utf-8")).hexdigest(),
-                    json.dumps(preconditions, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+                    json.dumps(
+                        preconditions,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
                     now,
                 ),
             )
