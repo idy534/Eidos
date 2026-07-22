@@ -3,8 +3,11 @@ from __future__ import annotations
 import threading
 
 from eidos_runtime.db.storage import SessionStore
-from eidos_runtime.model.client import ModelClient
-from eidos_runtime.model.deepseek import ModelProviderError
+from eidos_runtime.model.client import (
+    ModelClient,
+    ModelRequestError,
+    ModelRequestFailure,
+)
 from eidos_runtime.runtime.assistant_stream import AssistantStreamWriter
 from eidos_runtime.runtime.contracts import SamplingOutcome, StepContext
 from eidos_runtime.runtime.events import RuntimeEvents
@@ -16,9 +19,16 @@ MAX_STREAM_RETRIES = 5
 
 
 class SamplingError(RuntimeError):
-    def __init__(self, message: str, *, had_progress: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        had_progress: bool = False,
+        failure: ModelRequestFailure | None = None,
+    ) -> None:
         super().__init__(message)
         self.had_progress = had_progress
+        self.failure = failure
 
 
 class SamplingRetryableError(SamplingError):
@@ -105,6 +115,15 @@ class SamplingRuntime:
 
             self._check_cancel(cancel)
             writer.flush()
+            if result.response_state not in {None, "complete"} or result.finish_reason in {
+                "length", "content_filter", "error",
+            }:
+                if writer.item is not None:
+                    writer.abort()
+                raise SamplingProtocolError(
+                    result.finish_reason or result.response_state or "incomplete_response",
+                    had_progress=writer.item is not None,
+                )
             if result.text and writer.item is None:
                 writer.write(result.text)
                 writer.flush()
@@ -113,6 +132,14 @@ class SamplingRuntime:
                 tool_calls=result.tool_calls,
                 assistant_item=writer.item,
                 retry_count=retries,
+                usage=result.usage,
+                provider_name=result.provider_name,
+                resolved_model_name=result.resolved_model_name,
+                finish_reason=result.finish_reason,
+                provider_response_id=result.provider_response_id,
+                response_state=result.response_state,
+                ttft_ms=result.ttft_ms,
+                duration_ms=result.duration_ms,
             )
 
     @staticmethod
@@ -129,35 +156,26 @@ def _sampling_error(
     if isinstance(error, SamplingError):
         error.had_progress = error.had_progress or had_progress
         return error
-    if isinstance(error, ModelProviderError):
-        code = str(error)
-        if code in {"provider_http_401", "provider_http_403"}:
-            return SamplingAuthenticationFailed(code, had_progress=had_progress)
-        if code == "provider_http_429":
-            return SamplingRateLimited(code, had_progress=had_progress)
-        if code in {"provider_http_413", "provider_http_431"}:
-            return SamplingContextExceeded(code, had_progress=had_progress)
-        if code in {"provider_http_400", "provider_http_404", "provider_http_422"}:
-            return SamplingInvalidRequest(code, had_progress=had_progress)
-        if code in {
-            "provider_protocol_error",
-            "provider_invalid_tool_arguments",
-            "provider_incomplete_response",
-            "provider_response_too_large",
-        }:
-            return SamplingProtocolError(code, had_progress=had_progress)
-        if code in {
-            "provider_unavailable",
-            "provider_timeout",
-            "provider_http_408",
-            "provider_http_425",
-            "provider_http_500",
-            "provider_http_502",
-            "provider_http_503",
-            "provider_http_504",
-        }:
-            return SamplingRetryableError(code, had_progress=had_progress)
-        return SamplingInvalidRequest(code, had_progress=had_progress)
+    if isinstance(error, ModelRequestError):
+        failure = error.failure.model_copy(update={
+            "had_progress": error.failure.had_progress or had_progress
+        })
+        options = {"had_progress": failure.had_progress, "failure": failure}
+        if failure.code == "sampling_canceled":
+            return SamplingCancelled(failure.code, **options)
+        if failure.code == "authentication_failed":
+            return SamplingAuthenticationFailed(failure.code, **options)
+        if failure.code == "rate_limited":
+            return SamplingRateLimited(failure.code, **options)
+        if failure.code == "context_exceeded":
+            return SamplingContextExceeded(failure.code, **options)
+        if failure.code == "invalid_request":
+            return SamplingInvalidRequest(failure.code, **options)
+        if failure.code == "protocol_error":
+            return SamplingProtocolError(failure.code, **options)
+        if failure.retryable:
+            return SamplingRetryableError(failure.code, **options)
+        return SamplingInvalidRequest(failure.code, **options)
     if isinstance(error, OSError):
         return SamplingRetryableError(str(error), had_progress=had_progress)
     return SamplingProtocolError(
