@@ -18,6 +18,7 @@ import { SettingsPage } from "./components/settings/SettingsPage";
 import { ExecutionFeed } from "./components/ExecutionFeed";
 import { EidosMark } from "./components/EidosMark";
 import { SessionSidebar } from "./components/SessionSidebar";
+import { PrimaryActionButton } from "./components/PrimaryActionButton";
 import {
   applyNotification,
   SnapshotReadCoordinator,
@@ -582,14 +583,14 @@ export function App() {
             <h2>让想法拥有可执行的形态</h2>
             <p className="empty-subtitle">面向未来的 Agent Runtime 桌面端，安全读取、分析与演进代码库</p>
             <div className="empty-actions">
-              <button
-                className="empty-primary-btn"
+              <PrimaryActionButton
+                size="large"
+                label="选择工作空间目录"
+                subtitle="打开一个本地项目开始使用 Eidos"
+                showArrow={true}
                 disabled={interactionBusy || runtime.storageHealth.state !== "ready"}
                 onClick={() => void createSession()}
-              >
-                <span>选择工作空间目录</span>
-                <span className="btn-hint">⌘N</span>
-              </button>
+              />
             </div>
           </div>
         )}

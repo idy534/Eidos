@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import type { Session } from "../contracts";
 import { groupSessionsByWorkspace, taskStatusPresentation } from "../session-state";
 import { EidosMark } from "./EidosMark";
+import { PrimaryActionButton } from "./PrimaryActionButton";
 import settingsIcon from "./settings.svg";
 
 
@@ -51,10 +52,13 @@ export function SessionSidebar({
           <span className="brand-badge">Desktop</span>
         </div>
       </div>
-      <button className="new-session" disabled={disabled} onClick={onCreate}>
-        <span className="new-session-label">＋ 新建任务</span>
-        <kbd className="new-session-kbd">⌘N</kbd>
-      </button>
+      <PrimaryActionButton
+        size="compact"
+        label="新建任务"
+        shortcut="⌘N"
+        disabled={disabled}
+        onClick={onCreate}
+      />
       <nav aria-label="工作空间与任务">
         <p className="nav-label">项目与任务</p>
         {sessions.length === 0 ? (

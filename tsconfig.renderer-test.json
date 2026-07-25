@@ -19,6 +19,8 @@
     "desktop/renderer/src/components/MarkdownContent.tsx",
     "desktop/renderer/src/components/MarkdownContent.test.tsx",
     "desktop/renderer/src/components/ExecutionFeed.tsx",
-    "desktop/renderer/src/components/ExecutionFeed.test.tsx"
+    "desktop/renderer/src/components/ExecutionFeed.test.tsx",
+    "desktop/renderer/src/components/PrimaryActionButton.tsx",
+    "desktop/renderer/src/components/PrimaryActionButton.test.tsx"
   ]
 }
