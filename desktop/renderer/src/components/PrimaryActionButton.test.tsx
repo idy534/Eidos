@@ -16,7 +16,7 @@ test("renders compact size PrimaryActionButton with label and shortcut", () => {
 
   assert.match(html, /class="primary-action-btn primary-action-btn--compact"/);
   assert.match(html, /新建任务/);
-  assert.match(html, /<kbd class="primary-action-kbd" aria-hidden="true">⌘N<\/kbd>/);
+  assert.match(html, /<span class="primary-action-shortcut" aria-hidden="true">⌘N<\/span>/);
   assert.match(html, /class="primary-action-icon"/);
 });
 

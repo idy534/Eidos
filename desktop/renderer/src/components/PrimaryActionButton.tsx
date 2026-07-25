@@ -61,10 +61,10 @@ export function PrimaryActionButton({
         </span>
       </span>
 
-      {shortcut && !loading && (
-        <kbd className="primary-action-kbd" aria-hidden="true">
+      {shortcut && size === "compact" && !loading && (
+        <span className="primary-action-shortcut" aria-hidden="true">
           {shortcut}
-        </kbd>
+        </span>
       )}
 
       {size === "large" && showArrow && !loading && (
@@ -76,8 +76,8 @@ export function PrimaryActionButton({
 
 function PlusIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" aria-hidden="true" className="primary-action-icon">
-      <path d="M8 3.25V12.75M3.25 8H12.75" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true" className="primary-action-icon">
+      <path d="M8 3.5V12.5M3.5 8H12.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -99,7 +99,7 @@ function FolderIcon() {
 
 function ArrowIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" aria-hidden="true" className="primary-action-arrow">
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true" className="primary-action-arrow">
       <path d="M3.5 8H12.5M8.5 4L12.5 8L8.5 12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
@@ -107,7 +107,7 @@ function ArrowIcon() {
 
 function SpinnerIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" aria-hidden="true" className="primary-action-spinner">
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true" className="primary-action-spinner">
       <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1.8" />
       <path d="M8 2.5C11.0376 2.5 13.5 4.96243 13.5 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
