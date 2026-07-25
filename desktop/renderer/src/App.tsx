@@ -481,7 +481,12 @@ export function App() {
 
         {settingsOpen ? (
           <section className="settings-page" aria-labelledby="settings-title">
-            <header className="workspace-header"><h1 id="settings-title">设置</h1></header>
+            <header className="workspace-header">
+              <h1 id="settings-title">设置</h1>
+              <button className="button-secondary close-settings-btn" onClick={() => setSettingsOpen(false)}>
+                返回主视图 ✕
+              </button>
+            </header>
             <div className="settings-content">
               <section className="settings-card">
                 <h2>模型配置</h2>
@@ -504,16 +509,16 @@ export function App() {
                 <p className="settings-note">API Key 仅保存在本机 ~/.eidos/model.json（权限 0600），不会写入项目。</p>
               </section>
               <section className="settings-card">
-                <h2>Runtime</h2>
+                <h2>Runtime 引擎环境</h2>
                 <dl className="runtime-details">
                   <div><dt>版本</dt><dd>{runtime.runtimeVersion}</dd></div>
-                  <div><dt>Shell</dt><dd>{runtime.runShell ? "可用" : "Seatbelt 自检未通过"}</dd></div>
+                  <div><dt>Shell</dt><dd>{runtime.runShell ? "Seatbelt 沙箱验证通过" : "Seatbelt 自检未通过"}</dd></div>
                   <div><dt>状态存储</dt><dd>{runtime.storageHealth.state}</dd></div>
                 </dl>
               </section>
               <section className="settings-card">
                 <div className="settings-card-heading">
-                  <div><h2>Plugins</h2><p>只导入本地配置包，不执行安装脚本。</p></div>
+                  <div><h2>Plugins 扩展</h2><p>只导入本地配置包，不执行安装脚本。</p></div>
                   <button disabled={interactionBusy} onClick={() => void importPlugin()}>导入本地 Plugin</button>
                 </div>
                 <ul className="extension-list">
@@ -530,7 +535,7 @@ export function App() {
                 </ul>
               </section>
               <section className="settings-card">
-                <h2>Skills</h2>
+                <h2>Skills 能力集</h2>
                 <ul className="extension-list">
                   {skills.map((skill) => (
                     <li key={skill.qualifiedId}>
@@ -542,7 +547,7 @@ export function App() {
                 </ul>
               </section>
               <section className="settings-card">
-                <h2>MCP Servers</h2>
+                <h2>MCP Servers 扩展</h2>
                 <ul className="extension-list extension-list--stacked">
                   {mcpServers.map((server) => (
                     <li key={`${server.pluginId}:${server.serverId}`}>
@@ -636,9 +641,21 @@ export function App() {
           </>
         ) : (
           <div className="empty-state">
-            <h2>我们该做点什么？</h2>
-            <p>Eidos 可以阅读、修改所选工作空间的文件</p>
-            <button disabled={interactionBusy || runtime.storageHealth.state !== "ready"} onClick={() => void createSession()}>选择目录</button>
+            <div className="empty-hero">
+              <EidosMark className="empty-logo" variant="hero" />
+            </div>
+            <h2>让想法拥有可执行的形态</h2>
+            <p className="empty-subtitle">面向未来的 Agent Runtime 桌面端，安全读取、分析与演进代码库</p>
+            <div className="empty-actions">
+              <button
+                className="empty-primary-btn"
+                disabled={interactionBusy || runtime.storageHealth.state !== "ready"}
+                onClick={() => void createSession()}
+              >
+                <span>选择工作空间目录</span>
+                <span className="btn-hint">⌘N</span>
+              </button>
+            </div>
           </div>
         )}
       </section>
@@ -675,10 +692,17 @@ function statusText(status: Run["status"]): string {
 function RuntimeGate({ status }: { status: RuntimeStatus }) {
   return (
     <main className="runtime-gate" role={status.state === "error" ? "alert" : "status"}>
-      <EidosMark className="runtime-logo" variant="icon" />
-      <p className="eyebrow">Eidos · Local Runtime</p>
-      <h1>{status.state === "error" ? "启动失败" : "正在启动"}</h1>
-      <p>{status.state === "error" ? status.message : "正在完成 Runtime 协议握手…"}</p>
+      <div className="runtime-gate-card">
+        <EidosMark className="runtime-logo" variant="hero" />
+        <p className="eyebrow">Eidos · Local Agent Runtime</p>
+        <h1>{status.state === "error" ? "启动失败" : "正在启动 Engine"}</h1>
+        <p className="runtime-gate-desc">{status.state === "error" ? status.message : "正在建立安全沙箱与本地 Runtime 协议握手…"}</p>
+        {status.state !== "error" && (
+          <div className="runtime-progress-bar">
+            <div className="runtime-progress-pulse" />
+          </div>
+        )}
+      </div>
     </main>
   );
 }

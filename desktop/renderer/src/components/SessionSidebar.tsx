@@ -46,13 +46,19 @@ export function SessionSidebar({
         <span className="brand-mark" aria-hidden="true">
           <EidosMark />
         </span>
-        <span>Eidos</span>
+        <div className="brand-titles">
+          <span className="brand-name">Eidos</span>
+          <span className="brand-badge">Desktop</span>
+        </div>
       </div>
-      <button className="new-session" disabled={disabled} onClick={onCreate}>＋ 新建任务</button>
+      <button className="new-session" disabled={disabled} onClick={onCreate}>
+        <span className="new-session-label">＋ 新建任务</span>
+        <kbd className="new-session-kbd">⌘N</kbd>
+      </button>
       <nav aria-label="工作空间与任务">
-        <p className="nav-label">项目</p>
+        <p className="nav-label">项目与任务</p>
         {sessions.length === 0 ? (
-          <p className="nav-empty">还没有任务</p>
+          <p className="nav-empty">还没有任务，点击上方按键创建</p>
         ) : (
           <ul className="workspace-list">
             {workspaces.map((workspace) => (
@@ -74,7 +80,7 @@ export function SessionSidebar({
                     >
                       <ChevronIcon open={!collapsedWorkspaces.has(workspace.workspaceRoot)} />
                       <FolderIcon open={!collapsedWorkspaces.has(workspace.workspaceRoot)} />
-                      <span>{basename(workspace.workspaceRoot)}</span>
+                      <span className="workspace-name">{basename(workspace.workspaceRoot)}</span>
                     </button>
                     <button
                       className="workspace-add"
@@ -96,10 +102,11 @@ export function SessionSidebar({
                         session.taskStatus,
                         readCompletedSessions.has(session.id),
                       );
+                      const isSelected = session.id === selectedId;
                       return <li className="session-item" key={session.id}>
                         <button
-                          className={session.id === selectedId ? "selected" : ""}
-                          aria-current={session.id === selectedId ? "page" : undefined}
+                          className={isSelected ? "selected" : ""}
+                          aria-current={isSelected ? "page" : undefined}
                           aria-haspopup="menu"
                           disabled={disabled}
                           onClick={() => {
@@ -136,10 +143,13 @@ export function SessionSidebar({
           </ul>
         )}
       </nav>
-      <button className="settings-entry" onClick={onOpenSettings} aria-label="打开设置">
-        <img src={settingsIcon} alt="" />
-        <span>设置</span>
-      </button>
+      <div className="sidebar-footer">
+        <button className="settings-entry" onClick={onOpenSettings} aria-label="打开设置">
+          <img src={settingsIcon} alt="" className="settings-icon" />
+          <span>设置</span>
+          <span className="runtime-pulse-dot" title="Runtime 就绪" />
+        </button>
+      </div>
       {contextMenu && createPortal(
         <div
           className="task-context-menu"
