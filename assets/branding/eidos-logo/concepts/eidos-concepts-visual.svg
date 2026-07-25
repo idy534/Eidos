@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" width="1200" height="800">
+  <style>
+    .bg { fill: #0F172A; }
+    .card-selected { fill: #1E293B; stroke: #38BDF8; stroke-width: 2; rx: 16px; }
+    .card { fill: #1E293B; stroke: #334155; stroke-width: 1.5; rx: 16px; }
+    .title { font-family: -apple-system, sans-serif; font-size: 28px; font-weight: 700; fill: #FFFFFF; }
+    .subtitle { font-family: -apple-system, sans-serif; font-size: 14px; fill: #94A3B8; }
+    .c-title { font-family: -apple-system, sans-serif; font-size: 18px; font-weight: 700; fill: #FFFFFF; }
+    .badge { font-family: -apple-system, sans-serif; font-size: 11px; font-weight: 700; fill: #38BDF8; letter-spacing: 0.1em; }
+    .desc { font-family: -apple-system, sans-serif; font-size: 12px; fill: #94A3B8; }
+  </style>
+
+  <rect width="1200" height="800" class="bg"/>
+
+  <g transform="translate(50, 40)">
+    <text x="0" y="28" class="title">Eidos Logo Design Concept Explorations (5 Directions)</text>
+    <text x="0" y="56" class="subtitle">5 组设计概念图形推演与最终 Selected 方案展示</text>
+  </g>
+
+  <!-- Concept 1 (SELECTED) -->
+  <g transform="translate(50, 110)">
+    <rect width="340" height="300" class="card-selected"/>
+    <text x="24" y="36" class="badge">SELECTED (SCORE: 96.70)</text>
+    <text x="24" y="64" class="c-title">1. Geometric Crystallization</text>
+    <!-- Mark -->
+    <g transform="translate(105, 90) scale(0.25)">
+      <path fill="#38BDF8" fill-rule="evenodd" d="
+        M 116 80 L 396 80 A 36 36 0 0 1 432 116 L 432 348 L 348 432 L 116 432 A 36 36 0 0 1 80 396 L 80 116 A 36 36 0 0 1 116 80 Z
+        M 432 172 L 224 172 A 24 24 0 0 0 224 220 L 432 220 Z
+        M 432 280 L 224 280 A 24 24 0 0 0 224 328 L 432 328 Z
+      "/>
+    </g>
+    <text x="24" y="248" class="desc">负空间 E + 45° 执行切口。兼具安定感</text>
+    <text x="24" y="268" class="desc">与开放响应能力，小尺寸表现优异。</text>
+  </g>
+
+  <!-- Concept 2 -->
+  <g transform="translate(430, 110)">
+    <rect width="340" height="300" class="card"/>
+    <text x="24" y="36" class="desc" font-weight="700">RUNNER-UP (SCORE: 94.10)</text>
+    <text x="24" y="64" class="c-title">2. The Eidos Monad</text>
+    <g transform="translate(105, 90) scale(0.25)">
+      <rect x="80" y="80" width="352" height="352" rx="36" fill="#F8FAFC"/>
+      <rect x="220" y="160" width="212" height="56" rx="20" fill="#1E293B"/>
+      <rect x="220" y="286" width="212" height="56" rx="20" fill="#1E293B"/>
+      <polygon points="340,432 432,340 432,432" fill="#1E293B"/>
+    </g>
+    <text x="24" y="248" class="desc">纯粹阳文切面雕刻，体块力量感强。</text>
+    <text x="24" y="268" class="desc">突出本地原生运行的沉静与安全。</text>
+  </g>
+
+  <!-- Concept 3 -->
+  <g transform="translate(810, 110)">
+    <rect width="340" height="300" class="card"/>
+    <text x="24" y="36" class="desc">CONCEPT DIRECTION 3</text>
+    <text x="24" y="64" class="c-title">3. Dual Helix Orbit</text>
+    <g transform="translate(105, 90) scale(0.25)">
+      <path d="M 120 120 L 320 120 L 320 200 L 200 200 L 200 320 L 390 320 L 390 400 L 120 400 Z" fill="#94A3B8"/>
+      <rect x="240" y="220" width="70" height="70" rx="16" fill="#38BDF8"/>
+    </g>
+    <text x="24" y="248" class="desc">双重轨交与智能核心，表现人与 AI</text>
+    <text x="24" y="268" class="desc">协同调度，微缩尺寸下细节受限。</text>
+  </g>
+
+  <!-- Concept 4 -->
+  <g transform="translate(240, 450)">
+    <rect width="340" height="300" class="card"/>
+    <text x="24" y="36" class="desc">CONCEPT DIRECTION 4</text>
+    <text x="24" y="64" class="c-title">4. Continuous Monolith</text>
+    <g transform="translate(105, 90) scale(0.25)">
+      <path d="M 100 100 H 400 V 170 H 180 V 240 H 340 V 310 H 180 V 380 H 320 L 400 300 V 410 H 100 Z" fill="#94A3B8"/>
+    </g>
+    <text x="24" y="248" class="desc">连续折叠逻辑带，展现任务链调用的</text>
+    <text x="24" y="268" class="desc">连续演化过程。</text>
+  </g>
+
+  <!-- Concept 5 -->
+  <g transform="translate(620, 450)">
+    <rect width="340" height="300" class="card"/>
+    <text x="24" y="36" class="desc">CONCEPT DIRECTION 5</text>
+    <text x="24" y="64" class="c-title">5. Aperture &amp; Facet</text>
+    <g transform="translate(105, 90) scale(0.25)">
+      <rect x="80" y="80" width="352" height="352" rx="80" fill="none" stroke="#94A3B8" stroke-width="32"/>
+      <line x1="80" y1="200" x2="432" y2="200" stroke="#94A3B8" stroke-width="24"/>
+      <line x1="80" y1="310" x2="432" y2="310" stroke="#94A3B8" stroke-width="24"/>
+    </g>
+    <text x="24" y="248" class="desc">智能透镜切面，表达透镜聚焦与意图</text>
+    <text x="24" y="268" class="desc">折射，外框稳定性强。</text>
+  </g>
+</svg>

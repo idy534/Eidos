@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" width="1600" height="1000">
+  <style>
+    .bg { fill: #0F172A; }
+    .card-bg { fill: #1E293B; stroke: #334155; stroke-width: 1.5; rx: 16px; }
+    .card-bg-light { fill: #FFFFFF; stroke: #E2E8F0; stroke-width: 1.5; rx: 16px; }
+    .title { font-family: -apple-system, sans-serif; font-size: 32px; font-weight: 700; fill: #FFFFFF; }
+    .subtitle { font-family: -apple-system, sans-serif; font-size: 16px; fill: #94A3B8; }
+    .label { font-family: -apple-system, sans-serif; font-size: 14px; font-weight: 600; fill: #94A3B8; letter-spacing: 0.08em; }
+    .label-dark { font-family: -apple-system, sans-serif; font-size: 14px; font-weight: 600; fill: #64748B; letter-spacing: 0.08em; }
+  </style>
+
+  <!-- Background -->
+  <rect width="1600" height="1000" class="bg"/>
+
+  <!-- Header -->
+  <g transform="translate(60, 60)">
+    <text x="0" y="32" class="title">Eidos Brand Identity Visual Specification</text>
+    <text x="0" y="64" class="subtitle">桌面端个人 AI Agent 品牌视觉与 App 图标设计展示规范</text>
+  </g>
+
+  <!-- Card 1: Primary Dark -->
+  <g transform="translate(60, 160)">
+    <rect width="450" height="340" class="card-bg"/>
+    <text x="32" y="44" class="label">PRIMARY LOGO (DARK MODE)</text>
+    <g transform="translate(133, 70) scale(0.36)">
+      <path fill="#FFFFFF" fill-rule="evenodd" clip-rule="evenodd" d="
+        M 116 80 L 396 80 A 36 36 0 0 1 432 116 L 432 348 L 348 432 L 116 432 A 36 36 0 0 1 80 396 L 80 116 A 36 36 0 0 1 116 80 Z
+        M 432 172 L 224 172 A 24 24 0 0 0 224 220 L 432 220 Z
+        M 432 280 L 224 280 A 24 24 0 0 0 224 328 L 432 328 Z
+      "/>
+    </g>
+  </g>
+
+  <!-- Card 2: Primary Light -->
+  <g transform="translate(575, 160)">
+    <rect width="450" height="340" class="card-bg-light"/>
+    <text x="32" y="44" class="label-dark">PRIMARY LOGO (LIGHT MODE)</text>
+    <g transform="translate(133, 70) scale(0.36)">
+      <path fill="#0F172A" fill-rule="evenodd" clip-rule="evenodd" d="
+        M 116 80 L 396 80 A 36 36 0 0 1 432 116 L 432 348 L 348 432 L 116 432 A 36 36 0 0 1 80 396 L 80 116 A 36 36 0 0 1 116 80 Z
+        M 432 172 L 224 172 A 24 24 0 0 0 224 220 L 432 220 Z
+        M 432 280 L 224 280 A 24 24 0 0 0 224 328 L 432 328 Z
+      "/>
+    </g>
+  </g>
+
+  <!-- Card 3: macOS App Icon -->
+  <g transform="translate(1090, 160)">
+    <rect width="450" height="340" class="card-bg"/>
+    <text x="32" y="44" class="label">MACOS APP ICON</text>
+    <!-- App Icon Preview -->
+    <g transform="translate(133, 70) scale(0.36)">
+      <rect x="32" y="32" width="448" height="448" rx="100" fill="#0F172A" stroke="#475569" stroke-width="4"/>
+      <g transform="translate(64, 64) scale(0.75)">
+        <path fill="#FFFFFF" fill-rule="evenodd" clip-rule="evenodd" d="
+          M 116 80 L 396 80 A 36 36 0 0 1 432 116 L 432 348 L 348 432 L 116 432 A 36 36 0 0 1 80 396 L 80 116 A 36 36 0 0 1 116 80 Z
+          M 432 172 L 224 172 A 24 24 0 0 0 224 220 L 432 220 Z
+          M 432 280 L 224 280 A 24 24 0 0 0 224 328 L 432 328 Z
+        "/>
+      </g>
+    </g>
+  </g>
+
+  <!-- Card 4: Horizontal Combination Mark -->
+  <g transform="translate(60, 540)">
+    <rect width="965" height="380" class="card-bg-light"/>
+    <text x="32" y="44" class="label-dark">HORIZONTAL COMBINATION MARK (WORDMARK)</text>
+    <g transform="translate(80, 100) scale(0.9)">
+      <g transform="translate(36, 36) scale(0.36)">
+        <path fill="#0F172A" fill-rule="evenodd" clip-rule="evenodd" d="
+          M 116 80 L 396 80 A 36 36 0 0 1 432 116 L 432 348 L 348 432 L 116 432 A 36 36 0 0 1 80 396 L 80 116 A 36 36 0 0 1 116 80 Z
+          M 432 172 L 224 172 A 24 24 0 0 0 224 220 L 432 220 Z
+          M 432 280 L 224 280 A 24 24 0 0 0 224 328 L 432 328 Z
+        "/>
+      </g>
+      <line x1="200" y1="52" x2="200" y2="148" stroke="#E2E8F0" stroke-width="2"/>
+      <g transform="translate(232, 0)">
+        <text x="0" y="110" font-family="-apple-system, sans-serif" font-size="58" font-weight="700" letter-spacing="0.12em" fill="#0F172A">EIDOS</text>
+        <text x="2" y="146" font-family="-apple-system, sans-serif" font-size="15" font-weight="600" letter-spacing="0.28em" fill="#64748B">PERSONAL AI AGENT</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Card 5: Micro Scale Clarity Test -->
+  <g transform="translate(1090, 540)">
+    <rect width="450" height="380" class="card-bg"/>
+    <text x="32" y="44" class="label">MICRO SCALE PERFORMANCE (16px - 64px)</text>
+    <g transform="translate(60, 140)">
+      <!-- 16px -->
+      <g transform="translate(0, 0)">
+        <rect width="40" height="40" fill="none" stroke="#334155" stroke-dasharray="2,2"/>
+        <g transform="translate(12, 12) scale(0.03125)">
+          <path fill="#FFFFFF" fill-rule="evenodd" d="M 116 80 L 396 80 A 36 36 0 0 1 432 116 L 432 348 L 348 432 L 116 432 A 36 36 0 0 1 80 396 L 80 116 A 36 36 0 0 1 116 80 Z M 432 172 L 224 172 A 24 24 0 0 0 224 220 L 432 220 Z M 432 280 L 224 280 A 24 24 0 0 0 224 328 L 432 328 Z"/>
+        </g>
+        <text x="0" y="64" class="label" font-size="12">16×16px</text>
+      </g>
+      <!-- 32px -->
+      <g transform="translate(90, 0)">
+        <rect width="56" height="56" fill="none" stroke="#334155" stroke-dasharray="2,2"/>
+        <g transform="translate(12, 12) scale(0.0625)">
+          <path fill="#FFFFFF" fill-rule="evenodd" d="M 116 80 L 396 80 A 36 36 0 0 1 432 116 L 432 348 L 348 432 L 116 432 A 36 36 0 0 1 80 396 L 80 116 A 36 36 0 0 1 116 80 Z M 432 172 L 224 172 A 24 24 0 0 0 224 220 L 432 220 Z M 432 280 L 224 280 A 24 24 0 0 0 224 328 L 432 328 Z"/>
+        </g>
+        <text x="0" y="80" class="label" font-size="12">32×32px</text>
+      </g>
+      <!-- 64px -->
+      <g transform="translate(200, 0)">
+        <rect width="90" height="90" fill="none" stroke="#334155" stroke-dasharray="2,2"/>
+        <g transform="translate(13, 13) scale(0.125)">
+          <path fill="#FFFFFF" fill-rule="evenodd" d="M 116 80 L 396 80 A 36 36 0 0 1 432 116 L 432 348 L 348 432 L 116 432 A 36 36 0 0 1 80 396 L 80 116 A 36 36 0 0 1 116 80 Z M 432 172 L 224 172 A 24 24 0 0 0 224 220 L 432 220 Z M 432 280 L 224 280 A 24 24 0 0 0 224 328 L 432 328 Z"/>
+        </g>
+        <text x="12" y="114" class="label" font-size="12">64×64px</text>
+      </g>
+    </g>
+  </g>
+</svg>

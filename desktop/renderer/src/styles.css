@@ -150,7 +150,8 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   width: 2.1rem;
   height: 2.1rem;
   flex: none;
-  filter: drop-shadow(0 2px 6px rgba(49, 95, 74, 0.18));
+  color: var(--text);
+  filter: drop-shadow(0 2px 8px rgba(15, 23, 42, 0.22));
   transition: transform 220ms var(--apple-spring);
 }
 
@@ -939,7 +940,7 @@ input:focus, textarea:focus {
 .empty-logo {
   width: 5.5rem;
   height: 5.5rem;
-  filter: drop-shadow(0 12px 24px rgba(49, 95, 74, 0.22));
+  filter: drop-shadow(0 12px 24px rgba(15, 23, 42, 0.28));
   transition: transform 300ms var(--apple-spring);
 }
 
@@ -1026,7 +1027,7 @@ input:focus, textarea:focus {
   width: 5rem;
   height: 5rem;
   margin-bottom: 1.25rem;
-  filter: drop-shadow(0 8px 20px rgba(49, 95, 74, 0.25));
+  filter: drop-shadow(0 8px 20px rgba(15, 23, 42, 0.3));
 }
 
 .runtime-gate h1 {

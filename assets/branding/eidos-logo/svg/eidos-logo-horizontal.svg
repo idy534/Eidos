@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200" width="800" height="200">
+  <style>
+    .wordmark-title {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Helvetica Neue", sans-serif;
+      font-size: 58px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      fill: #0F172A;
+    }
+    .wordmark-subtitle {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Helvetica Neue", sans-serif;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.28em;
+      fill: #64748B;
+    }
+  </style>
+
+  <!-- Left Icon Mark -->
+  <g id="eidos-horizontal-icon" transform="translate(36, 36) scale(0.36)">
+    <path fill="#0F172A" fill-rule="evenodd" clip-rule="evenodd" d="
+      M 116 80
+      L 396 80
+      A 36 36 0 0 1 432 116
+      L 432 348
+      L 348 432
+      L 116 432
+      A 36 36 0 0 1 80 396
+      L 80 116
+      A 36 36 0 0 1 116 80
+      Z
+      M 432 172
+      L 224 172
+      A 24 24 0 0 0 224 220
+      L 432 220
+      Z
+      M 432 280
+      L 224 280
+      A 24 24 0 0 0 224 328
+      L 432 328
+      Z
+    "/>
+  </g>
+
+  <!-- Vertical Divider Line -->
+  <line x1="200" y1="52" x2="200" y2="148" stroke="#E2E8F0" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Right Wordmark Text -->
+  <g id="eidos-horizontal-wordmark" transform="translate(232, 0)">
+    <text x="0" y="110" class="wordmark-title">EIDOS</text>
+    <text x="2" y="146" class="wordmark-subtitle">PERSONAL AI AGENT</text>
+  </g>
+</svg>
