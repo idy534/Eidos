@@ -13,6 +13,8 @@ import type {
   SessionSnapshot,
   SkillMetadata,
 } from "./contracts";
+import type { SettingsPendingAction } from "./components/settings/settings-types";
+import { SettingsPage } from "./components/settings/SettingsPage";
 import { ExecutionFeed } from "./components/ExecutionFeed";
 import { EidosMark } from "./components/EidosMark";
 import { SessionSidebar } from "./components/SessionSidebar";
@@ -43,12 +45,12 @@ export function App() {
   });
   const [snapshot, setSnapshot] = useState<SessionSnapshot>();
   const [input, setInput] = useState("");
-  const [apiKey, setApiKey] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [settingsPendingAction, setSettingsPendingAction] = useState<SettingsPendingAction>(undefined);
   const [error, setError] = useState<string>();
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [plugins, setPlugins] = useState<PluginRecord[]>([]);
@@ -166,55 +168,58 @@ export function App() {
   }
 
   async function importPlugin(): Promise<void> {
-    setBusy(true);
-    setError(undefined);
+    setSettingsPendingAction({ type: "import_plugin" });
     try {
       const imported = await window.eidosRuntime.importPlugin();
       if (imported) await refreshExtensions();
     } catch (cause) {
-      setError(messageFrom(cause));
+      const msg = messageFrom(cause);
+      setError(msg);
+      throw new Error(msg);
     } finally {
-      setBusy(false);
+      setSettingsPendingAction(undefined);
     }
   }
 
   async function setPluginEnabled(pluginId: string, enabled: boolean): Promise<void> {
-    setBusy(true);
+    setSettingsPendingAction({ type: "toggle_plugin", pluginId });
     try {
       await window.eidosRuntime.setPluginEnabled(pluginId, enabled);
       await refreshExtensions();
     } catch (cause) {
-      setError(messageFrom(cause));
+      const msg = messageFrom(cause);
+      setError(msg);
+      throw new Error(msg);
     } finally {
-      setBusy(false);
+      setSettingsPendingAction(undefined);
     }
   }
 
   async function removePlugin(pluginId: string): Promise<void> {
-    if (!window.confirm("移除这个本地 Plugin？历史 Run 的来源记录会保留。")) return;
-    setBusy(true);
+    setSettingsPendingAction({ type: "remove_plugin", pluginId });
     try {
       await window.eidosRuntime.removePlugin(pluginId);
       await refreshExtensions();
     } catch (cause) {
-      setError(messageFrom(cause));
+      const msg = messageFrom(cause);
+      setError(msg);
+      throw new Error(msg);
     } finally {
-      setBusy(false);
+      setSettingsPendingAction(undefined);
     }
   }
 
-  async function setMcpEnabled(server: McpServerRecord, enabled: boolean): Promise<void> {
-    if (enabled && !window.confirm(
-      `启用本地 MCP Server？\n\n命令：${[server.executable, ...server.argv].join(" ")}\nPlugin：${server.pluginId}@${server.pluginVersion}\n环境变量名：${server.envNames.join(", ") || "无"}\n权限：${server.permissionProfile}`,
-    )) return;
-    setBusy(true);
+  async function setMcpEnabled(pluginId: string, serverId: string, enabled: boolean): Promise<void> {
+    setSettingsPendingAction({ type: "toggle_mcp", pluginId, serverId });
     try {
-      await window.eidosRuntime.setMcpEnabled(server.pluginId, server.serverId, enabled);
+      await window.eidosRuntime.setMcpEnabled(pluginId, serverId, enabled);
       await refreshExtensions();
     } catch (cause) {
-      setError(messageFrom(cause));
+      const msg = messageFrom(cause);
+      setError(msg);
+      throw new Error(msg);
     } finally {
-      setBusy(false);
+      setSettingsPendingAction(undefined);
     }
   }
 
@@ -283,17 +288,17 @@ export function App() {
     }
   }
 
-  async function configureModel(): Promise<void> {
-    setBusy(true);
-    setError(undefined);
+  async function configureModel(key: string): Promise<void> {
+    setSettingsPendingAction({ type: "configure_model" });
     try {
-      setModel(await window.eidosRuntime.configureModel(apiKey));
+      setModel(await window.eidosRuntime.configureModel(key));
       setModelList(await window.eidosRuntime.listModels());
-      setApiKey("");
     } catch (cause) {
-      setError(messageFrom(cause));
+      const msg = messageFrom(cause);
+      setError(msg);
+      throw new Error(msg);
     } finally {
-      setBusy(false);
+      setSettingsPendingAction(undefined);
     }
   }
 
@@ -480,91 +485,21 @@ export function App() {
         {error && <p className="error-banner" role="alert">{error}</p>}
 
         {settingsOpen ? (
-          <section className="settings-page" aria-labelledby="settings-title">
-            <header className="workspace-header">
-              <h1 id="settings-title">设置</h1>
-              <button className="button-secondary close-settings-btn" onClick={() => setSettingsOpen(false)}>
-                返回主视图 ✕
-              </button>
-            </header>
-            <div className="settings-content">
-              <section className="settings-card">
-                <h2>模型配置</h2>
-                <p>支持的模型由 Runtime 返回；任务首次开始后将锁定本次使用的模型。</p>
-                <ul className="model-list">
-                  {modelList?.models.map((option) => (
-                    <li key={option.id}>
-                      <span><strong>{option.displayName}</strong><small>{option.id}</small></span>
-                      <span>{option.configured ? "可用" : "待配置"}</span>
-                    </li>
-                  ))}
-                </ul>
-                <div className="key-row">
-                  <label className="sr-only" htmlFor="api-key">DeepSeek API Key</label>
-                  <input id="api-key" type="password" autoComplete="off" placeholder="sk-…" value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
-                  <button disabled={interactionBusy || runtime.storageHealth.state !== "ready" || apiKey.length < 16} onClick={() => void configureModel()}>
-                    {model?.configured ? "更换 API Key" : "保存配置"}
-                  </button>
-                </div>
-                <p className="settings-note">API Key 仅保存在本机 ~/.eidos/model.json（权限 0600），不会写入项目。</p>
-              </section>
-              <section className="settings-card">
-                <h2>Runtime 引擎环境</h2>
-                <dl className="runtime-details">
-                  <div><dt>版本</dt><dd>{runtime.runtimeVersion}</dd></div>
-                  <div><dt>Shell</dt><dd>{runtime.runShell ? "Seatbelt 沙箱验证通过" : "Seatbelt 自检未通过"}</dd></div>
-                  <div><dt>状态存储</dt><dd>{runtime.storageHealth.state}</dd></div>
-                </dl>
-              </section>
-              <section className="settings-card">
-                <div className="settings-card-heading">
-                  <div><h2>Plugins 扩展</h2><p>只导入本地配置包，不执行安装脚本。</p></div>
-                  <button disabled={interactionBusy} onClick={() => void importPlugin()}>导入本地 Plugin</button>
-                </div>
-                <ul className="extension-list">
-                  {plugins.map((plugin) => (
-                    <li key={plugin.id}>
-                      <span><strong>{plugin.name}</strong><small>{plugin.id}@{plugin.version} · {plugin.contentHash.slice(0, 10)}</small></span>
-                      <span className="extension-actions">
-                        <button disabled={interactionBusy} onClick={() => void setPluginEnabled(plugin.id, !plugin.enabled)}>{plugin.enabled ? "停用" : "启用"}</button>
-                        <button className="button-secondary" disabled={interactionBusy} onClick={() => void removePlugin(plugin.id)}>移除</button>
-                      </span>
-                    </li>
-                  ))}
-                  {!plugins.length && <li className="empty-extension">尚未导入 Plugin</li>}
-                </ul>
-              </section>
-              <section className="settings-card">
-                <h2>Skills 能力集</h2>
-                <ul className="extension-list">
-                  {skills.map((skill) => (
-                    <li key={skill.qualifiedId}>
-                      <span><strong>{skill.qualifiedId}</strong><small>{skill.description}</small></span>
-                      <span>只读</span>
-                    </li>
-                  ))}
-                  {!skills.length && <li className="empty-extension">没有已启用的 Skill</li>}
-                </ul>
-              </section>
-              <section className="settings-card">
-                <h2>MCP Servers 扩展</h2>
-                <ul className="extension-list extension-list--stacked">
-                  {mcpServers.map((server) => (
-                    <li key={`${server.pluginId}:${server.serverId}`}>
-                      <span>
-                        <strong>{server.pluginId}:{server.serverId}</strong>
-                        <small>{[server.executable, ...server.argv].join(" ")}</small>
-                        <small>权限 {server.permissionProfile} · env {server.envNames.join(", ") || "无"}</small>
-                        {server.errorCode && <small className="extension-error">{server.errorCode}</small>}
-                      </span>
-                      <button disabled={interactionBusy || !server.declaredEnabled} onClick={() => void setMcpEnabled(server, !server.consented)}>{server.consented ? "停用" : "审阅并启用"}</button>
-                    </li>
-                  ))}
-                  {!mcpServers.length && <li className="empty-extension">没有 MCP Server 声明</li>}
-                </ul>
-              </section>
-            </div>
-          </section>
+          <SettingsPage
+            runtime={runtime}
+            model={model}
+            modelList={modelList}
+            plugins={plugins}
+            skills={skills}
+            mcpServers={mcpServers}
+            pendingAction={settingsPendingAction}
+            onClose={() => setSettingsOpen(false)}
+            onConfigureModel={configureModel}
+            onImportPlugin={importPlugin}
+            onTogglePlugin={setPluginEnabled}
+            onRemovePlugin={removePlugin}
+            onToggleMcp={setMcpEnabled}
+          />
         ) : snapshot ? (
           <>
             <header className="workspace-header session-header">

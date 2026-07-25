@@ -1,0 +1,100 @@
+import React from "react";
+import type { ModelStatus, RuntimeStatus } from "../../contracts";
+import { SettingSection } from "./SettingSection";
+import { SettingRow } from "./SettingRow";
+import { StatusBadge } from "./StatusBadge";
+
+interface RuntimeSettingsProps {
+  runtime: RuntimeStatus;
+  model?: ModelStatus | undefined;
+}
+
+export function RuntimeSettings({ runtime, model }: RuntimeSettingsProps) {
+  if (runtime.state !== "ready") {
+    return (
+      <div className="settings-panel">
+        <div className="settings-panel-header">
+          <h1>Runtime 状态</h1>
+          <p className="settings-panel-subtitle">系统引擎当前未准备就绪。</p>
+        </div>
+        <div className="runtime-error-banner" role="alert">
+          <StatusBadge tone="danger">引擎未连通</StatusBadge>
+          <p>{runtime.state === "error" ? runtime.message : "引擎初始化中…"}</p>
+        </div>
+      </div>
+    );
+  }
+
+  const isStorageReady = runtime.storageHealth.state === "ready";
+  const isModelReady = Boolean(model?.configured);
+
+  return (
+    <div className="settings-panel">
+      <div className="settings-panel-header">
+        <h1>Runtime 引擎环境</h1>
+        <p className="settings-panel-subtitle">
+          Eidos 本地沙箱与 Runtime 服务的运行指标与安全自检状态。
+        </p>
+      </div>
+
+      <SettingSection title="系统状态总览">
+        <SettingRow
+          title="Runtime 整体运行状态"
+          description="本地通信协议、存储数据库与执行沙箱握手状态"
+          action={
+            <StatusBadge tone="success">运行正常</StatusBadge>
+          }
+        />
+        <SettingRow
+          title="Runtime 版本"
+          description="当前引擎的二进制软件版本"
+          action={
+            <code className="runtime-version-tag">{runtime.runtimeVersion}</code>
+          }
+        />
+        <SettingRow
+          title="Protocol 协议版本"
+          description="IPC 通信与架构契约版本"
+          action={
+            <code className="runtime-version-tag">v{runtime.protocolVersion}</code>
+          }
+        />
+        <SettingRow
+          title="Seatbelt Shell 沙箱"
+          description="系统命令安全执行隔离机制"
+          action={
+            runtime.runShell ? (
+              <StatusBadge tone="success">验证通过</StatusBadge>
+            ) : (
+              <StatusBadge tone="warning">自检未通过</StatusBadge>
+            )
+          }
+        />
+        <SettingRow
+          title="状态存储健康度"
+          description="SQLite 任务数据库与 Read/Write 健康状态"
+          action={
+            isStorageReady ? (
+              <StatusBadge tone="success">Ready</StatusBadge>
+            ) : (
+              <StatusBadge tone="danger">
+                Health Only ({runtime.storageHealth.code ?? "UNKNOWN"})
+              </StatusBadge>
+            )
+          }
+        />
+        <SettingRow
+          title="模型服务配置"
+          description="DeepSeek LLM API Key 设置"
+          action={
+            isModelReady ? (
+              <StatusBadge tone="success">已配置</StatusBadge>
+            ) : (
+              <StatusBadge tone="warning">待配置</StatusBadge>
+            )
+          }
+        />
+      </SettingSection>
+    </div>
+  );
+}
