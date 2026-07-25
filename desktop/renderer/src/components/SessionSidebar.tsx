@@ -72,6 +72,7 @@ export function SessionSidebar({
                         return next;
                       })}
                     >
+                      <ChevronIcon open={!collapsedWorkspaces.has(workspace.workspaceRoot)} />
                       <FolderIcon open={!collapsedWorkspaces.has(workspace.workspaceRoot)} />
                       <span>{basename(workspace.workspaceRoot)}</span>
                     </button>
@@ -166,13 +167,26 @@ function basename(path: string): string {
 }
 
 function FolderIcon({ open }: { open: boolean }) {
+  return open ? (
+    <svg viewBox="0 0 20 20" aria-hidden="true" className="folder-icon folder-icon--open">
+      <path d="M2.5 4.75C2.5 3.78 3.28 3 4.25 3H7.8C8.3 3 8.77 3.22 9.08 3.6L10.3 5H15.75C16.72 5 17.5 5.78 17.5 6.75V8H2.5V4.75Z" fill="currentColor" fillOpacity="0.2" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M2 9.25C2 8.56 2.56 8 3.25 8H16.75C17.44 8 18 8.56 18 9.25L17.15 15.5C17.02 16.36 16.28 17 15.41 17H4.59C3.72 17 2.98 16.36 2.85 15.5L2 9.25Z" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    </svg>
+  ) : (
+    <svg viewBox="0 0 20 20" aria-hidden="true" className="folder-icon">
+      <path d="M2.5 4.75C2.5 3.78 3.28 3 4.25 3H7.8C8.3 3 8.77 3.22 9.08 3.6L10.3 5H15.75C16.72 5 17.5 5.78 17.5 6.75V15.25C17.5 16.22 16.72 17 15.75 17H4.25C3.28 17 2.5 16.22 2.5 15.25V4.75Z" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ open }: { open: boolean }) {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      {open ? (
-        <path d="M3.5 8.5h6l1.6-2h3.7a2 2 0 0 1 1.8 1.1l.45.9h2.15a1.8 1.8 0 0 1 1.7 2.4l-2.35 6.6a2 2 0 0 1-1.9 1.35H5.4a2 2 0 0 1-1.9-2.6l2.05-6.4A2 2 0 0 1 7.45 8.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-      ) : (
-        <path d="M3.5 6.5h6l1.7 2h7.3a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-10Z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-      )}
+    <svg
+      className={`sidebar-chevron ${open ? "sidebar-chevron--open" : ""}`}
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+    >
+      <path d="M6 3.5L10.5 8L6 12.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

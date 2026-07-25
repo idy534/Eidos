@@ -571,17 +571,19 @@ export function App() {
                   <button className="button-secondary" type="button" onClick={() => setRenaming(false)}>取消</button>
                 </form>
               ) : (
-                <h1 onContextMenu={(event) => { event.preventDefault(); setSessionMenuOpen(true); }}>{snapshot.session.title ?? "新任务"}</h1>
-              )}
-              <div className="session-menu">
-                <button className="icon-button" aria-label="任务菜单" aria-expanded={sessionMenuOpen} onClick={() => setSessionMenuOpen((open) => !open)}>•••</button>
-                {sessionMenuOpen && (
-                  <div className="session-menu-popover" role="menu">
-                    <button role="menuitem" onClick={() => void beginRename(snapshot.session)}>编辑标题</button>
-                    <button role="menuitem" className="danger-action" disabled={Boolean(activeRun)} onClick={() => void deleteSession(snapshot.session)}>删除任务</button>
+                <div className="session-title-group">
+                  <h1 onContextMenu={(event) => { event.preventDefault(); setSessionMenuOpen(true); }}>{snapshot.session.title ?? "新任务"}</h1>
+                  <div className="session-menu">
+                    <button className="icon-button" aria-label="任务菜单" aria-expanded={sessionMenuOpen} onClick={() => setSessionMenuOpen((open) => !open)}>•••</button>
+                    {sessionMenuOpen && (
+                      <div className="session-menu-popover" role="menu">
+                        <button role="menuitem" onClick={() => void beginRename(snapshot.session)}>编辑标题</button>
+                        <button role="menuitem" className="danger-action" disabled={Boolean(activeRun)} onClick={() => void deleteSession(snapshot.session)}>删除任务</button>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </header>
             <ExecutionFeed
               items={snapshot.items}
@@ -673,7 +675,7 @@ function statusText(status: Run["status"]): string {
 function RuntimeGate({ status }: { status: RuntimeStatus }) {
   return (
     <main className="runtime-gate" role={status.state === "error" ? "alert" : "status"}>
-      <EidosMark className="runtime-logo" />
+      <EidosMark className="runtime-logo" variant="icon" />
       <p className="eyebrow">Eidos · Local Runtime</p>
       <h1>{status.state === "error" ? "启动失败" : "正在启动"}</h1>
       <p>{status.state === "error" ? status.message : "正在完成 Runtime 协议握手…"}</p>
