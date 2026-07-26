@@ -164,6 +164,13 @@ def append_event(
             json.dumps(validated, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
         ),
     )
+    connection.execute(
+        """
+        INSERT INTO event_outbox (event_id, status)
+        VALUES (?, 'pending')
+        """,
+        (cursor.lastrowid,),
+    )
     return EventEnvelopeDto.model_validate({
         "eventContractVersion": EVENT_CONTRACT_VERSION,
         "eventId": cursor.lastrowid,

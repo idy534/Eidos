@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -235,6 +235,20 @@ CREATE TABLE events (
     payload_json TEXT NOT NULL
 );
 
+CREATE TABLE event_outbox (
+    event_id INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE RESTRICT,
+    status TEXT NOT NULL CHECK (
+        status IN ('pending', 'delivered', 'failed')
+    ),
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error_code TEXT,
+    delivered_at INTEGER
+);
+
+CREATE UNIQUE INDEX one_pending_outbox_delivery_per_event
+ON event_outbox(event_id)
+WHERE status = 'pending';
+
 CREATE TABLE operations (
     id TEXT NOT NULL,
     scope TEXT NOT NULL,
@@ -439,4 +453,25 @@ CREATE TRIGGER durable_intents_status_check_update
 BEFORE UPDATE OF status ON durable_intents
 WHEN NEW.status NOT IN ('running', 'completed', 'uncertain', 'interrupted')
 BEGIN SELECT RAISE(ABORT, 'invalid durable_intents status'); END;
+"""
+
+SCHEMA_V3_TO_V4_SQL = """
+CREATE TABLE IF NOT EXISTS event_outbox (
+    event_id INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE RESTRICT,
+    status TEXT NOT NULL CHECK (
+        status IN ('pending', 'delivered', 'failed')
+    ),
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error_code TEXT,
+    delivered_at INTEGER
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS one_pending_outbox_delivery_per_event
+ON event_outbox(event_id)
+WHERE status = 'pending';
+
+INSERT OR IGNORE INTO event_outbox (
+    event_id, status, attempt_count, delivered_at
+)
+SELECT id, 'delivered', 0, occurred_at FROM events;
 """

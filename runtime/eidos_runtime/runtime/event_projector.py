@@ -29,6 +29,13 @@ class EventProjector:
             and run.get("status") == "running"
             and run.get("modelStepCount") == 0
         ):
+            if (
+                event_type == "run.created"
+                and isinstance(payload, dict)
+                and isinstance(payload.get("run"), dict)
+                and payload["run"].get("status") != "running"
+            ):
+                return ()
             notifications = [self._notification("run/started", {
                 "sessionId": run["sessionId"], "run": run,
             })]

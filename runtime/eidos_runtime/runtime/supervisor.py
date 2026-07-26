@@ -135,7 +135,7 @@ class RunSupervisor:
         self.pending_approvals: dict[str, PendingApproval] = {}
         self.lifecycle = RuntimeLifecycle.RUNNING
         self.control_state = RuntimeControlState.RUNNING
-        self.events = RuntimeEvents(notify)
+        self.events = RuntimeEvents(notify, store=store)
 
     def prepare_next(self) -> WorkerStart | None:
         if (

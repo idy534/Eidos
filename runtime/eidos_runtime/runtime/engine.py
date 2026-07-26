@@ -83,7 +83,7 @@ class RuntimeEngine:
     ) -> None:
         self.store = store
         self.model = model
-        self.events = RuntimeEvents(notify)
+        self.events = RuntimeEvents(notify, store=store)
         self.request_approval = request_approval
         self.shell_available = shell_available
         self.monotonic = monotonic

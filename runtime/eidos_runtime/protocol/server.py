@@ -380,6 +380,8 @@ class RuntimeServer:
                 },
             )
         )
+        if self.store.health_state == "ready":
+            self.supervisor.events.deliver_pending()
         logger.info("Runtime initialized")
         self.supervisor.schedule_next()
 
@@ -1210,6 +1212,11 @@ class RuntimeServer:
             self._cleanup_extensions()
             self._close_model_factory()
             self.store.cancel_active_async_operations()
+            self.supervisor.events.deliver_pending()
+            if self.store.pending_outbox_count():
+                raise ResourceRegistryError(
+                    "event delivery is not quiescent"
+                )
             self.supervisor.resources.ensure_empty()
         except ModelFactoryCloseError as error:
             self.send(business_error(request_id, error.code))
@@ -1269,6 +1276,11 @@ class RuntimeServer:
             self._cleanup_extensions()
             self._close_model_factory()
             self.store.cancel_active_async_operations()
+            self.supervisor.events.deliver_pending()
+            if self.store.pending_outbox_count():
+                raise ResourceRegistryError(
+                    "event delivery is not quiescent"
+                )
             self.supervisor.resources.ensure_empty()
         except (
             RuntimeShutdownTimeout,
