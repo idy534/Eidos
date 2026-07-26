@@ -5,7 +5,7 @@
     "moduleResolution": "NodeNext",
     "jsx": "react-jsx",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "rootDir": "desktop/renderer/src",
+    "rootDir": "desktop",
     "outDir": "dist/renderer-test",
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -13,6 +13,8 @@
     "types": ["node", "react", "react-dom"]
   },
   "include": [
+    "desktop/shared/**/*.ts",
+    "desktop/shared/**/*.cts",
     "desktop/renderer/src/contracts.ts",
     "desktop/renderer/src/session-state.ts",
     "desktop/renderer/src/session-state.test.ts",

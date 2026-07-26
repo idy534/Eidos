@@ -1,44 +1,10 @@
 /**
- * Shared IPC contracts.
+ * Shared IPC channel definitions.
  *
- * This module is the SINGLE source of truth for types that cross the
- * Main ↔ Preload ↔ Renderer boundary. Import with `import type` in
- * CommonJS preload modules so no runtime code is emitted.
- *
- * IMPORTANT: Do NOT import runtime-only Electron or Node modules here.
+ * This module is the SINGLE source of truth for IPC channel strings.
+ * Main, Preload, and Renderer MUST all import this object.
  */
 
-export type RuntimeStatus =
-  | { state: "starting" }
-  | {
-      state: "ready";
-      protocolVersion: number;
-      runtimeVersion: string;
-      runShell: boolean;
-      modelConfigured: boolean;
-      storageHealth: RuntimeHealth;
-    }
-  | { state: "error"; message: string };
-
-export interface RuntimeHealth {
-  state: "ready" | "health_only";
-  code?: string;
-}
-
-/**
- * All valid model IDs. Validated both here (TypeScript) and at the IPC
- * boundary in Main (runtime validation). Do NOT delete the runtime check
- * in main.ts just because this type exists.
- */
-export type ModelId = "deepseek-v4-flash" | "deepseek-v4-pro";
-
-/** The set of valid model IDs for runtime validation in Main. */
-export const VALID_MODEL_IDS: ReadonlySet<string> = new Set<ModelId>([
-  "deepseek-v4-flash",
-  "deepseek-v4-pro",
-]);
-
-/** IPC channel names — centralised to prevent typos and drift. */
 export const IPC = {
   // Runtime
   RUNTIME_GET_STATUS: "runtime:get-status",
@@ -95,3 +61,5 @@ export const IPC = {
   APP_NEW_TASK: "app:new-task",
   APP_OPEN_WORKSPACE: "app:open-workspace",
 } as const;
+
+export type IPCChannel = (typeof IPC)[keyof typeof IPC];

@@ -16,3 +16,5 @@ build/
 *.egg-info/
 desktop/shared/*.js
 desktop/shared/*.js.map
+desktop/shared/*.cjs
+desktop/shared/*.cjs.map
