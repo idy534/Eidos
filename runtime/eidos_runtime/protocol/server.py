@@ -38,6 +38,7 @@ from eidos_runtime.runtime.supervisor import (
 )
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle
 from eidos_runtime.runtime.events import RuntimeOutputClosedError
+from eidos_runtime.runtime.resource_registry import ResourceRegistryError
 from eidos_runtime.sandbox.sensitive import (
     SensitiveContentDenied,
     SensitiveScanError,
@@ -342,7 +343,10 @@ class RuntimeServer:
                 self.model_config.initialize()
                 configured_key = self.model_config.api_key()
                 if self.model is None and configured_key is not None:
-                    self.model_factory = ModelClientFactory(configured_key)
+                    self.model_factory = ModelClientFactory(
+                        configured_key,
+                        resource_registry=self.supervisor.resources,
+                    )
         except (StorageError, ModelConfigError, SensitiveScanError, SkillReadError):
             logger.exception("Runtime storage initialization failed")
             self.send(business_error(request_id, "INTERNAL_ERROR"))
@@ -790,7 +794,10 @@ class RuntimeServer:
         candidate: ModelClientFactory | None = None
         try:
             previous_key = self.model_config.api_key()
-            candidate = ModelClientFactory(params["apiKey"])
+            candidate = ModelClientFactory(
+                params["apiKey"],
+                resource_registry=self.supervisor.resources,
+            )
             self.model_config.save_api_key(params["apiKey"])
             saved = True
             key = self.model_config.api_key()
@@ -1128,7 +1135,12 @@ class RuntimeServer:
             self.supervisor.shutdown()
             self._cleanup_extensions()
             self._close_model_factory()
-        except (RuntimeShutdownTimeout, ModelClientInUseError):
+            self.supervisor.resources.ensure_empty()
+        except (
+            RuntimeShutdownTimeout,
+            ModelClientInUseError,
+            ResourceRegistryError,
+        ):
             self.send(business_error(request_id, "RUNTIME_SHUTDOWN_TIMEOUT"))
             return
         self.store.close()
@@ -1178,7 +1190,12 @@ class RuntimeServer:
             self.supervisor.shutdown()
             self._cleanup_extensions()
             self._close_model_factory()
-        except (RuntimeShutdownTimeout, ModelClientInUseError):
+            self.supervisor.resources.ensure_empty()
+        except (
+            RuntimeShutdownTimeout,
+            ModelClientInUseError,
+            ResourceRegistryError,
+        ):
             raise
         self.store.close()
         self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
@@ -1192,7 +1209,11 @@ class RuntimeServer:
 
     def _model_lease_for(self, model_id: str) -> ModelClientLease:
         if self.model is not None:
-            return ModelClientLease(self.model)
+            return ModelClientLease(
+                self.model,
+                resource_registry=self.supervisor.resources,
+                owner_id=model_id,
+            )
         if self.model_factory is None:
             raise ModelConfigError("model is not configured")
         return self.model_factory.acquire(model_id)

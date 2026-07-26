@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import threading
@@ -24,6 +24,7 @@ from eidos_runtime.runtime.errors import (
     tool_result,
 )
 from eidos_runtime.runtime.events import RuntimeEvents
+from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
 from eidos_runtime.runtime.tool_execution import (
@@ -53,6 +54,7 @@ class _HandlerDependencies:
     sensitive: SensitiveScanner
     shell_available: bool
     begin_intent: Callable[[str, dict[str, object]], str]
+    resources: ResourceRegistry = field(default_factory=ResourceRegistry)
 
 class ReadOnlyToolHandler:
     def __init__(self, dependencies: _HandlerDependencies) -> None:
@@ -257,6 +259,8 @@ class ShellToolHandler:
                 timeout,
                 cancel,
                 output_stream.feed,
+                self.dependencies.resources,
+                str(item["id"]),
         )
         manifest_after = capture_workspace_manifest(
             self.dependencies.dispatcher.workspace.path
@@ -450,6 +454,7 @@ class ToolCallRuntime:
         state_machine: RuntimePhaseTracker,
         *,
         shell_available: bool,
+        resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self.store = store
         self.dispatcher = dispatcher
@@ -458,7 +463,12 @@ class ToolCallRuntime:
         self.state_machine = state_machine
         handlers = {}
         self.controller = ToolExecutionController(
-            store, dispatcher, handlers, events, sensitive
+            store,
+            dispatcher,
+            handlers,
+            events,
+            sensitive,
+            resource_registry=resource_registry,
         )
         dependencies = _HandlerDependencies(
             store,
@@ -468,6 +478,7 @@ class ToolCallRuntime:
             sensitive,
             shell_available,
             self.controller.begin_durable_intent,
+            self.controller.resources,
         )
         handlers.update({
             "read": ReadOnlyToolHandler(dependencies),

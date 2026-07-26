@@ -18,6 +18,10 @@ from eidos_runtime.runtime.errors import (
     tool_result,
 )
 from eidos_runtime.runtime.events import RuntimeEvents
+from eidos_runtime.runtime.resource_registry import (
+    ResourceRegistry,
+    RuntimeResourceKind,
+)
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
 
@@ -112,6 +116,7 @@ class ToolExecutionController:
         sensitive: SensitiveScanner,
         *,
         monotonic=time.monotonic,
+        resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self.store = store
         self.dispatcher = dispatcher
@@ -119,6 +124,7 @@ class ToolExecutionController:
         self.events = events
         self.sensitive = sensitive
         self.monotonic = monotonic
+        self.resources = resource_registry or ResourceRegistry()
         self._execution_state = threading.local()
 
     def begin_durable_intent(
@@ -149,6 +155,13 @@ class ToolExecutionController:
             cancel, effective_deadline, self.monotonic
         )
         self._execution_state.intent_started = False
+        resource = self.resources.register(
+            RuntimeResourceKind.TOOL_EXECUTION,
+            owner_id=str(item["id"]),
+            deadline=effective_deadline,
+            cancel=cancel.set,
+        )
+        resource.start()
         _execution_started()
         try:
             raise_after_commit = False
@@ -292,6 +305,7 @@ class ToolExecutionController:
         finally:
             self._execution_state.intent_started = False
             _execution_finished()
+            resource.close()
 
     @staticmethod
     def _interrupted(

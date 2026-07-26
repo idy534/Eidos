@@ -7,6 +7,7 @@ from eidos_runtime.extensions.mcp import McpManager
 from eidos_runtime.extensions.plugins import PluginCatalog
 from eidos_runtime.extensions.skills import SkillCatalog, SkillReadError
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
+from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
 from eidos_runtime.tools.search import tool_search_entry
 from eidos_runtime.tools.workspace import ToolExecutor
@@ -27,12 +28,14 @@ class RunResources:
         user_input: str = "",
         *,
         mcp_sandbox: bool = True,
+        resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self.store = store
         self.run_id = run_id
         self.extension_snapshot = extension_snapshot
         self.user_input = user_input
         self.mcp_sandbox = mcp_sandbox
+        self.resources = resource_registry or ResourceRegistry()
         self.tool_executor: ToolExecutor | None = None
         self.skills: SkillCatalog | None = None
         self.mcp: McpManager | None = None
@@ -51,6 +54,7 @@ class RunResources:
                 self.extension_snapshot,
                 workspace.path,
                 sandbox=self.mcp_sandbox,
+                resource_registry=self.resources,
             )
             self._set_registry(self.mcp.start())
             self._activate_mentions(self.user_input)

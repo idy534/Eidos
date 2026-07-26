@@ -50,6 +50,11 @@ from eidos_runtime.model.client import (
 )
 from eidos_runtime.model.config import MODEL_CATALOG, PROVIDER, ModelProfileSpec
 from eidos_runtime.model.prompts import SYSTEM_PROMPT, TITLE_PROMPT
+from eidos_runtime.runtime.resource_registry import (
+    ResourceRegistry,
+    RuntimeResource,
+    RuntimeResourceKind,
+)
 
 
 MAX_TOOL_CALL_ID_BYTES = 256
@@ -64,15 +69,29 @@ USAGE_DETAIL_KEYS = frozenset({
 
 
 class _AsyncLoop:
-    def __init__(self, name: str) -> None:
+    def __init__(
+        self,
+        name: str,
+        resource_registry: ResourceRegistry | None = None,
+    ) -> None:
         self.loop = asyncio.new_event_loop()
         self.ready = threading.Event()
         self.thread = threading.Thread(
             target=self._run,
             name=name,
-            daemon=True,
+            daemon=False,
+        )
+        self.resource = (
+            resource_registry.register(
+                RuntimeResourceKind.MODEL_LOOP,
+                owner_id=name,
+            )
+            if resource_registry is not None
+            else None
         )
         self.thread.start()
+        if self.resource is not None:
+            self.resource.start()
         self.ready.wait()
 
     def _run(self) -> None:
@@ -94,7 +113,11 @@ class _AsyncLoop:
         self.loop.call_soon_threadsafe(self.loop.stop)
         self.thread.join(timeout=5.0)
         if self.thread.is_alive():
+            if self.resource is not None:
+                self.resource.fail("MODEL_SHUTDOWN_TIMEOUT")
             raise RuntimeError("model event loop did not stop")
+        if self.resource is not None:
+            self.resource.close()
 
 
 class PydanticAIModelClient:
@@ -106,16 +129,26 @@ class PydanticAIModelClient:
         profile_spec: ModelProfileSpec,
         *,
         openai_client: AsyncOpenAI | None = None,
+        resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self._model = model
         self._profile_spec = profile_spec
         self._openai_client = openai_client
-        self._loop = _AsyncLoop(f"eidos-model-{profile_spec.provider_id}-{profile_spec.model_id}")
+        self._loop = _AsyncLoop(
+            f"eidos-model-{profile_spec.provider_id}-{profile_spec.model_id}",
+            resource_registry,
+        )
         self._closed = False
         self._profile_snapshot = profile_spec.snapshot(dict(model.profile))
 
     @classmethod
-    def deepseek(cls, api_key: str, model_id: str) -> PydanticAIModelClient:
+    def deepseek(
+        cls,
+        api_key: str,
+        model_id: str,
+        *,
+        resource_registry: ResourceRegistry | None = None,
+    ) -> PydanticAIModelClient:
         profile = MODEL_CATALOG.profile(model_id)
         timeout = httpx.Timeout(
             connect=10.0,
@@ -133,7 +166,12 @@ class PydanticAIModelClient:
             model_id,
             provider=DeepSeekProvider(openai_client=client),
         )
-        return cls(model, profile, openai_client=client)
+        return cls(
+            model,
+            profile,
+            openai_client=client,
+            resource_registry=resource_registry,
+        )
 
     @property
     def profile_snapshot(self) -> ModelProfileSnapshot:
@@ -263,11 +301,24 @@ class ModelClientLease:
         self,
         client: ModelClient,
         release: Callable[[], None] | None = None,
+        *,
+        resource_registry: ResourceRegistry | None = None,
+        owner_id: str = "model",
     ) -> None:
         self.client = client
         self._release = release
         self._lock = threading.Lock()
         self._closed = False
+        self._resource: RuntimeResource | None = (
+            resource_registry.register(
+                RuntimeResourceKind.MODEL_LEASE,
+                owner_id=owner_id,
+            )
+            if resource_registry is not None
+            else None
+        )
+        if self._resource is not None:
+            self._resource.start()
 
     @property
     def closed(self) -> bool:
@@ -283,6 +334,8 @@ class ModelClientLease:
             self._release = None
         if release is not None:
             release()
+        if self._resource is not None:
+            self._resource.close()
 
 
 @dataclass
@@ -293,11 +346,17 @@ class _ClientEntry:
 
 
 class ModelClientFactory:
-    def __init__(self, api_key: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        resource_registry: ResourceRegistry | None = None,
+    ) -> None:
         self._api_key = api_key
         self._clients: dict[tuple[str, str], _ClientEntry] = {}
         self._lock = threading.RLock()
         self._closed = False
+        self._resources = resource_registry
 
     def client_for(self, model_id: str) -> PydanticAIModelClient:
         key = (PROVIDER, model_id)
@@ -311,7 +370,12 @@ class ModelClientFactory:
             if entry.closing:
                 raise RuntimeError("model client is closing")
             entry.lease_count += 1
-        return ModelClientLease(entry.client, lambda: self._release(key, entry))
+        return ModelClientLease(
+            entry.client,
+            lambda: self._release(key, entry),
+            resource_registry=self._resources,
+            owner_id=model_id,
+        )
 
     @property
     def active_lease_count(self) -> int:
@@ -340,7 +404,11 @@ class ModelClientFactory:
         entry = self._clients.get(key)
         if entry is None:
             entry = _ClientEntry(
-                PydanticAIModelClient.deepseek(self._api_key, model_id)
+                PydanticAIModelClient.deepseek(
+                    self._api_key,
+                    model_id,
+                    resource_registry=self._resources,
+                )
             )
             self._clients[key] = entry
         return entry

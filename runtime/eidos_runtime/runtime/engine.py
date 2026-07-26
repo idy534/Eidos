@@ -29,6 +29,7 @@ from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.finalizer import RunFinalizer
 from eidos_runtime.runtime.loop_guard import LoopGuard, tool_call_fingerprint
 from eidos_runtime.runtime.run_resources import RunResourceError, RunResources
+from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.runtime.sampling import (
     SamplingAuthenticationFailed,
     SamplingCancelled,
@@ -77,6 +78,7 @@ class RuntimeEngine:
         wait_for_execution_slot: Callable[[str, threading.Event], bool] | None = None,
         mcp_sandbox: bool = True,
         terminalize_cancel: bool = True,
+        resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self.store = store
         self.model = model
@@ -88,6 +90,7 @@ class RuntimeEngine:
         self.wait_for_execution_slot = wait_for_execution_slot
         self.mcp_sandbox = mcp_sandbox
         self.terminalize_cancel = terminalize_cancel
+        self.resources = resource_registry or ResourceRegistry()
         self.state_machine = RuntimePhaseTracker()
         self.active_started: float | None = None
 
@@ -106,6 +109,7 @@ class RuntimeEngine:
                 extension_snapshot,
                 str(run.get("userInput") or ""),
                 mcp_sandbox=self.mcp_sandbox,
+                resource_registry=self.resources,
             ) as resources:
                 run_context = run_context.model_copy(
                     update={"skill_context": resources.skill_context}
@@ -160,6 +164,7 @@ class RuntimeEngine:
             self.events,
             self.sensitive,
             self.state_machine,
+            resource_registry=self.resources,
         )
         approval = ApprovalCoordinator(
             self.store,
@@ -287,6 +292,7 @@ class RuntimeEngine:
                 self.sensitive,
                 self.state_machine,
                 shell_available=self.shell_available,
+                resource_registry=self.resources,
             )
             validation = tools.validate(step, sampled)
             protocol_errors = 0

@@ -13,6 +13,10 @@ from typing import Callable
 
 from eidos_runtime.sandbox.seatbelt import SeatbeltProfile
 from eidos_runtime.db.storage import WorkspaceIdentity
+from eidos_runtime.runtime.resource_registry import (
+    ResourceRegistry,
+    RuntimeResourceKind,
+)
 
 
 MAX_OUTPUT_BYTES = 256 * 1024
@@ -27,6 +31,8 @@ def run_shell(
     timeout_seconds: int,
     cancel: threading.Event,
     on_delta: Callable[[str], None],
+    resource_registry: ResourceRegistry | None = None,
+    owner_id: str = "shell",
 ) -> dict[str, object]:
     started = time.monotonic()
     workspace_fd = -1
@@ -44,6 +50,8 @@ def run_shell(
             cancel,
             on_delta,
             started,
+            resource_registry,
+            owner_id,
         )
     except ValueError:
         return {
@@ -77,6 +85,8 @@ def _run_verified_shell(
     cancel: threading.Event,
     on_delta: Callable[[str], None],
     started: float,
+    resource_registry: ResourceRegistry | None,
+    owner_id: str,
 ) -> dict[str, object]:
     with tempfile.TemporaryDirectory(prefix="eidos-shell-") as temporary:
         root = Path(temporary)
@@ -111,6 +121,18 @@ def _run_verified_shell(
         termination = "exit"
         termination_started_at: float | None = None
         process_group = process.pid
+        resource = (
+            resource_registry.register(
+                RuntimeResourceKind.SHELL_PROCESS,
+                owner_id=owner_id,
+                cancel=lambda: _terminate_group(process_group),
+                is_quiescent=lambda: not _process_group_exists(process_group),
+            )
+            if resource_registry is not None
+            else None
+        )
+        if resource is not None:
+            resource.start()
         try:
             while selector.get_map() or process.poll() is None:
                 if cancel.is_set():
@@ -169,6 +191,8 @@ def _run_verified_shell(
                     pass
             process.stdout.close()
             process.stderr.close()
+            if resource is not None:
+                resource.close()
         stdout = bytes(outputs["stdout"]).decode("utf-8", errors="replace")
         stderr = bytes(outputs["stderr"]).decode("utf-8", errors="replace")
         outcome = "success" if returncode == 0 and termination == "exit" else "error"
