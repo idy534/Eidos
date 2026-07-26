@@ -1024,7 +1024,7 @@ class ToolExecutor:
             )
         except WorkspaceIndexIncomplete:
             raise WorkspacePathError(
-                "security_index_incomplete"
+                "WORKSPACE_INDEX_INCOMPLETE"
             ) from None
 
     def _validate_workspace_index_entry(

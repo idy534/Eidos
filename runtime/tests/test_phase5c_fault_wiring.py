@@ -132,7 +132,7 @@ class FaultWiringTests(unittest.TestCase):
             with (
                 injected_faults(injector),
                 self.assertRaisesRegex(
-                    WorkspacePathError, "security_index_incomplete"
+                    WorkspacePathError, "WORKSPACE_INDEX_INCOMPLETE"
                 ),
             ):
                 executor.refresh_workspace_index(threading.Event())
