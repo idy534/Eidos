@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
-import type { Session, SessionSnapshot } from "../contracts.js";
-import { SnapshotReadCoordinator, taskStatusFromRun, userFacingError } from "../session-state.js";
+import type { Run, Session, SessionSnapshot } from "../contracts.js";
+import { SnapshotReadCoordinator, taskStatusFromRun, upsertRun, userFacingError } from "../session-state.js";
 
 const READ_COMPLETIONS_KEY = "eidos.readCompletedSessionIds";
 
@@ -46,6 +46,7 @@ export interface SessionControllerActions {
   deleteSession: (session: Session) => Promise<{ confirmed: boolean }>;
   refreshExtensions: () => Promise<void>;
   setError: (error: string | undefined) => void;
+  projectRun: (sessionId: string, run: Run) => void;
   /** Called when a run notification arrives — updates sessions taskStatus */
   handleRunNotification: (run: { id: string; sessionId: string; status: string; updatedAt: number }) => void;
   /** Called when a session completes — triggers authoritative snapshot refresh */
@@ -233,6 +234,17 @@ export function useSessionController(): [SessionControllerState, SessionControll
     }
   }, []);
 
+  const projectRun = useCallback((sessionId: string, run: Run): void => {
+    const taskStatus = taskStatusFromRun(run);
+    setSessions((prev) => prev.map((s) => s.id === sessionId
+      ? { ...s, taskStatus, updatedAt: run.updatedAt }
+      : s));
+    setSnapshot((prev) => {
+      if (!prev || prev.session.id !== sessionId) return prev;
+      return { ...prev, runs: upsertRun(prev.runs, run) };
+    });
+  }, []);
+
   const handleRunNotification = useCallback((run: {
     id: string;
     sessionId: string;
@@ -285,6 +297,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     deleteSession,
     refreshExtensions,
     setError,
+    projectRun,
     handleRunNotification,
     refreshCompletedSession,
     setSnapshot,

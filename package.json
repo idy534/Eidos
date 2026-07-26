@@ -17,7 +17,7 @@
     "start": "pnpm build && electron .",
     "test": "pnpm test:runtime && pnpm test:desktop",
     "test:runtime": ".venv/bin/python -m unittest discover -s runtime/tests -v",
-    "test:renderer-state": "tsc -p tsconfig.renderer-test.json && node --test dist/renderer-test/session-state.test.js dist/renderer-test/composer-mode.test.js dist/renderer-test/runtime-presentation.test.js dist/renderer-test/app/model-controller.test.js dist/renderer-test/components/MarkdownContent.test.js dist/renderer-test/components/ExecutionFeed.test.js dist/renderer-test/components/PrimaryActionButton.test.js",
+    "test:renderer-state": "tsc -p tsconfig.renderer-test.json && node --test dist/renderer-test/session-state.test.js dist/renderer-test/composer-mode.test.js dist/renderer-test/runtime-presentation.test.js dist/renderer-test/app/model-controller.test.js dist/renderer-test/app/run-controller.test.js dist/renderer-test/components/MarkdownContent.test.js dist/renderer-test/components/ExecutionFeed.test.js dist/renderer-test/components/PrimaryActionButton.test.js",
     "test:desktop": "pnpm build && pnpm test:renderer-state && node --test dist/main/runtime-client.test.js"
   },
   "dependencies": {

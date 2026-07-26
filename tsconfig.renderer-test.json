@@ -20,6 +20,8 @@
     "desktop/renderer/src/runtime-presentation.test.ts",
     "desktop/renderer/src/app/useModelController.ts",
     "desktop/renderer/src/app/model-controller.test.ts",
+    "desktop/renderer/src/app/useRunController.ts",
+    "desktop/renderer/src/app/run-controller.test.ts",
     "desktop/renderer/src/components/MarkdownContent.tsx",
     "desktop/renderer/src/components/MarkdownContent.test.tsx",
     "desktop/renderer/src/components/ExecutionFeed.tsx",
