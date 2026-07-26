@@ -47,6 +47,8 @@ export interface SessionControllerActions {
   refreshExtensions: () => Promise<void>;
   setError: (error: string | undefined) => void;
   projectRun: (sessionId: string, run: Run) => void;
+  /** Called when a session title notification arrives — updates sessions title and open snapshot */
+  handleTitleNotification: (params: { sessionId: string; title: string }) => void;
   /** Called when a run notification arrives — updates sessions taskStatus */
   handleRunNotification: (run: { id: string; sessionId: string; status: string; updatedAt: number }) => void;
   /** Called when a session completes — triggers authoritative snapshot refresh */
@@ -126,6 +128,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
       const accepted = snapshotReads.accept(token, loaded);
       if (accepted) {
         setSnapshot(accepted);
+        setSessions((prev) => prev.map((s) => s.id === loaded.session.id ? loaded.session : s));
         return accepted;
       }
       return undefined;
@@ -245,6 +248,14 @@ export function useSessionController(): [SessionControllerState, SessionControll
     });
   }, []);
 
+  const handleTitleNotification = useCallback((params: { sessionId: string; title: string }): void => {
+    setSessions((prev) => prev.map((s) => s.id === params.sessionId ? { ...s, title: params.title } : s));
+    setSnapshot((prev) => {
+      if (!prev || prev.session.id !== params.sessionId) return prev;
+      return { ...prev, session: { ...prev.session, title: params.title } };
+    });
+  }, []);
+
   const handleRunNotification = useCallback((run: {
     id: string;
     sessionId: string;
@@ -272,7 +283,10 @@ export function useSessionController(): [SessionControllerState, SessionControll
     try {
       const loaded = await loadAuthoritativeSnapshot(sessionId);
       const accepted = snapshotReads.accept(token, loaded);
-      if (accepted) setSnapshot(accepted);
+      if (accepted) {
+        setSnapshot(accepted);
+        setSessions((prev) => prev.map((s) => s.id === loaded.session.id ? loaded.session : s));
+      }
     } catch (cause) {
       if (snapshotReads.isCurrent(token)) {
         setError(userFacingError(cause));
@@ -298,6 +312,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     refreshExtensions,
     setError,
     projectRun,
+    handleTitleNotification,
     handleRunNotification,
     refreshCompletedSession,
     setSnapshot,

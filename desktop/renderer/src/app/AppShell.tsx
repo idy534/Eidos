@@ -81,7 +81,9 @@ export function AppShell({ runtime }: AppShellProps) {
   // -----------------------------------------------------------------------
   useEffect(() => {
     const unsubNotifications = window.eidosRuntime.onNotification((notification) => {
-      if (
+      if (notification.method === "session/titleUpdated") {
+        sessionActions.handleTitleNotification(notification.params);
+      } else if (
         notification.method === "run/started"
         || notification.method === "run/updated"
         || notification.method === "run/completed"
