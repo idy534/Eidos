@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { Button } from "../Button.js";
 import type { McpServerRecord } from "../../contracts";
 import type { SettingsPendingAction } from "./settings-types";
 import { SettingSection } from "./SettingSection";
@@ -124,23 +125,25 @@ export function McpSettings({
                 }
                 action={
                   server.consented ? (
-                    <button
-                      type="button"
-                      className="button-secondary"
+                    <Button
+                      variant="ghost"
+                      size="medium"
                       disabled={isPending || !server.declaredEnabled}
+                      loading={isPending}
                       onClick={() => void handleDisable(server)}
                     >
-                      {isPending ? "停用中…" : "停用"}
-                    </button>
+                      停用
+                    </Button>
                   ) : (
-                    <button
-                      type="button"
-                      className="button-primary"
+                    <Button
+                      variant="primary"
+                      size="medium"
                       disabled={isPending || !server.declaredEnabled}
+                      loading={isPending}
                       onClick={() => setReviewingServer(server)}
                     >
-                      {isPending ? "处理中…" : "审阅并启用"}
-                    </button>
+                      审阅并启用
+                    </Button>
                   )
                 }
                 expandableDetails={

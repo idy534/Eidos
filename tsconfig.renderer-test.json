@@ -29,6 +29,10 @@
     "desktop/renderer/src/components/ExecutionFeed.tsx",
     "desktop/renderer/src/components/ExecutionFeed.test.tsx",
     "desktop/renderer/src/components/PrimaryActionButton.tsx",
-    "desktop/renderer/src/components/PrimaryActionButton.test.tsx"
+    "desktop/renderer/src/components/PrimaryActionButton.test.tsx",
+    "desktop/renderer/src/components/Button.tsx",
+    "desktop/renderer/src/components/Button.test.tsx",
+    "desktop/renderer/src/components/DropdownMenu.tsx",
+    "desktop/renderer/src/components/DropdownMenu.test.tsx"
   ]
 }

@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { Button } from "../Button.js";
 import type { ModelListResult, ModelStatus } from "../../contracts";
 import type { SettingsPendingAction } from "./settings-types";
 import { SettingSection } from "./SettingSection";
@@ -118,9 +119,9 @@ export function ModelSettings({
           description={apiKeyDescription}
           action={
             !editingKey && (
-              <button
-                type="button"
-                className="button-secondary"
+              <Button
+                variant="secondary"
+                size="medium"
                 disabled={!storageHealthReady || isSaving || modelLoading}
                 onClick={() => {
                   setEditingKey(true);
@@ -128,7 +129,7 @@ export function ModelSettings({
                 }}
               >
                 {model?.configured ? "更新凭证" : "配置 API Key"}
-              </button>
+              </Button>
             )
           }
         >
@@ -149,22 +150,23 @@ export function ModelSettings({
                     }
                   }}
                 />
-                <button
-                  type="button"
-                  className="button-primary"
+                <Button
+                  variant="primary"
+                  size="medium"
                   disabled={isSaving || !storageHealthReady || inputKey.length < 16}
+                  loading={isSaving}
                   onClick={() => void handleSave()}
                 >
-                  {isSaving ? "保存中…" : "保存配置"}
-                </button>
-                <button
-                  type="button"
-                  className="button-ghost"
+                  保存配置
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="medium"
                   disabled={isSaving}
                   onClick={handleCancel}
                 >
                   取消
-                </button>
+                </Button>
               </div>
               {effectiveError && <p className="setting-field-error" role="alert">{effectiveError}</p>}
             </div>

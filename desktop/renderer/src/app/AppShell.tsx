@@ -5,6 +5,8 @@ import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import { EidosMark } from "../components/EidosMark.js";
 import { SessionSidebar } from "../components/SessionSidebar.js";
+import { Button } from "../components/Button.js";
+import { DropdownMenu } from "../components/DropdownMenu.js";
 import { PrimaryActionButton } from "../components/PrimaryActionButton.js";
 import { ApprovalFeedbackDialog } from "../components/ApprovalFeedbackDialog.js";
 import { ConfirmDialog } from "../components/settings/ConfirmDialog.js";
@@ -43,7 +45,6 @@ export function AppShell({ runtime }: AppShellProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
-  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
   const [plugins, setPlugins] = useState<PluginRecord[]>([]);
   const [skills, setSkills] = useState<SkillMetadata[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerRecord[]>([]);
@@ -109,13 +110,20 @@ export function AppShell({ runtime }: AppShellProps) {
   // -----------------------------------------------------------------------
   // Keyboard shortcuts from Main process menu
   // -----------------------------------------------------------------------
+  const hasBlockingModal =
+    settingsOpen ||
+    Boolean(sessionToDelete) ||
+    Boolean(approvalState.feedbackDialogApproval) ||
+    deleteBusy ||
+    sessionState.pending.creatingSession === true;
+
   useEffect(() => {
     const unsubNewTask = window.eidosRuntime.onShortcut("app:new-task", () => {
-      if (settingsOpen || document.querySelector(".modal-backdrop")) return;
+      if (hasBlockingModal) return;
       void handleCreateSession();
     });
     const unsubOpenWorkspace = window.eidosRuntime.onShortcut("app:open-workspace", () => {
-      if (document.querySelector(".modal-backdrop")) return;
+      if (hasBlockingModal) return;
       void handleCreateSession();
     });
     return () => {
@@ -123,7 +131,7 @@ export function AppShell({ runtime }: AppShellProps) {
       unsubOpenWorkspace();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settingsOpen, sessionActions.createSession]);
+  }, [hasBlockingModal, sessionActions.createSession]);
 
   // -----------------------------------------------------------------------
   // Extension refresh when settings open
@@ -243,7 +251,6 @@ export function AppShell({ runtime }: AppShellProps) {
     }
     setTitleDraft(session.title ?? "新任务");
     setRenaming(true);
-    setSessionMenuOpen(false);
   }
 
   async function submitRename(): Promise<void> {
@@ -252,7 +259,6 @@ export function AppShell({ runtime }: AppShellProps) {
     try {
       await sessionActions.renameSession(sid, titleDraft.trim());
       setRenaming(false);
-      setSessionMenuOpen(false);
     } catch {
       // error surfaced via sessionState.error
     }
@@ -263,7 +269,6 @@ export function AppShell({ runtime }: AppShellProps) {
   // -----------------------------------------------------------------------
   function requestDeleteSession(session: Session): void {
     setSessionToDelete(session);
-    setSessionMenuOpen(false);
   }
 
   async function confirmDelete(): Promise<void> {
@@ -317,7 +322,6 @@ export function AppShell({ runtime }: AppShellProps) {
         onDelete={(session) => requestDeleteSession(session)}
         onOpenSettings={() => {
           setSettingsOpen(true);
-          setSessionMenuOpen(false);
           setRenaming(false);
         }}
       />
@@ -366,66 +370,47 @@ export function AppShell({ runtime }: AppShellProps) {
                     autoFocus
                     onChange={(e) => setTitleDraft(e.target.value)}
                   />
-                  <button
+                  <Button
                     type="submit"
-                    className="btn btn--primary btn--small"
+                    variant="primary"
+                    size="small"
                     disabled={
                       sessionState.pending.renamingSessionId === snapshot.session.id
                       || !titleDraft.trim()
                     }
+                    loading={sessionState.pending.renamingSessionId === snapshot.session.id}
                   >
                     保存
-                  </button>
-                  <button
-                    className="btn btn--ghost btn--small"
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="small"
                     onClick={() => setRenaming(false)}
                   >
                     取消
-                  </button>
+                  </Button>
                 </form>
               ) : (
                 <div className="session-title-group">
-                  <h1
-                    onContextMenu={(e) => { e.preventDefault(); setSessionMenuOpen(true); }}
-                  >
-                    {snapshot.session.title ?? "新任务"}
-                  </h1>
-                  <div className="session-menu">
-                    <button
-                      className="icon-button"
-                      aria-label="任务菜单"
-                      aria-expanded={sessionMenuOpen}
-                      aria-haspopup="menu"
-                      onClick={() => setSessionMenuOpen((open) => !open)}
-                    >
-                      •••
-                    </button>
-                    {sessionMenuOpen && (
-                      <div
-                        className="session-menu-popover"
-                        role="menu"
-                        onKeyDown={(e) => {
-                          if (e.key === "Escape") setSessionMenuOpen(false);
-                        }}
-                      >
-                        <button
-                          role="menuitem"
-                          onClick={() => void beginRename(snapshot.session)}
-                        >
-                          编辑标题
-                        </button>
-                        <button
-                          role="menuitem"
-                          className="danger-action"
-                          disabled={Boolean(activeRun)}
-                          onClick={() => requestDeleteSession(snapshot.session)}
-                        >
-                          删除任务
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  <h1>{snapshot.session.title ?? "新任务"}</h1>
+                  <DropdownMenu
+                    trigger="•••"
+                    label="任务菜单"
+                    items={[
+                      {
+                        key: "rename",
+                        label: "编辑标题",
+                        onClick: () => void beginRename(snapshot.session),
+                      },
+                      {
+                        key: "delete",
+                        label: "删除任务",
+                        danger: true,
+                        disabled: Boolean(activeRun),
+                        onClick: () => requestDeleteSession(snapshot.session),
+                      },
+                    ]}
+                  />
                 </div>
               )}
             </header>

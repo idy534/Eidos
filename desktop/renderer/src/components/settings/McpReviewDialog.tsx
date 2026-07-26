@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from "react";
+import { Button } from "../Button.js";
 import type { McpServerRecord } from "../../contracts";
 
 interface McpReviewDialogProps {
@@ -93,23 +94,24 @@ export function McpReviewDialog({
         </div>
 
         <div className="modal-footer">
-          <button
-            type="button"
-            className="button-ghost"
+          <Button
+            variant="ghost"
+            size="medium"
             disabled={busy}
             onClick={onCancel}
           >
             取消
-          </button>
-          <button
+          </Button>
+          <Button
             ref={confirmBtnRef}
-            type="button"
-            className="button-primary"
+            variant="primary"
+            size="medium"
             disabled={busy}
+            loading={busy}
             onClick={onConfirm}
           >
-            {busy ? "启用中…" : "确认并启用"}
-          </button>
+            确认并启用
+          </Button>
         </div>
       </div>
     </div>

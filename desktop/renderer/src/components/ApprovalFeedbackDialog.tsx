@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Button } from "./Button.js";
 import type { ApprovalRequest } from "../contracts.js";
 
 const MAX_FEEDBACK_BYTES = 2_000;
@@ -145,24 +146,24 @@ export function ApprovalFeedbackDialog({
           )}
         </div>
         <div className="modal-footer">
-          <button
+          <Button
             ref={cancelBtnRef}
-            type="button"
-            className="btn btn--ghost btn--medium"
+            variant="ghost"
+            size="medium"
             disabled={busy}
             onClick={onCancel}
           >
             取消
-          </button>
-          <button
-            type="button"
-            className="btn btn--danger btn--medium"
+          </Button>
+          <Button
+            variant="danger"
+            size="medium"
             disabled={busy || overLimit}
-            aria-busy={busy}
+            loading={busy}
             onClick={() => onConfirm(approval, feedback)}
           >
-            {busy ? "处理中…" : "拒绝并反馈"}
-          </button>
+            拒绝并反馈
+          </Button>
         </div>
       </div>
     </div>

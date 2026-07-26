@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 
 import type { ApprovalRequest, Item, Run, ToolCall } from "../contracts.js";
 import { terminalRunPresentation } from "../session-state.js";
+import { Button } from "./Button.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 
 
@@ -237,24 +238,24 @@ function ProcessItem({
                 : `$ ${approval.command}\n\ncwd: ${approval.cwd}\nnetwork: disabled\ntimeout: ${approval.timeoutSeconds}s`}
         </pre>
         <div className="approval-actions">
-          <button
-            type="button"
-            className="btn btn--ghost btn--medium"
+          <Button
+            variant="ghost"
+            size="medium"
             disabled={!canReject}
-            aria-busy={isResponding}
+            loading={isResponding}
             onClick={() => onReject(approval)}
           >
             拒绝
-          </button>
-          <button
-            type="button"
-            className="btn btn--primary btn--medium"
+          </Button>
+          <Button
+            variant="primary"
+            size="medium"
             disabled={!canApprove}
-            aria-busy={isResponding}
+            loading={isResponding}
             onClick={() => onApprove(approval)}
           >
             {approval.kind === "file_change" ? "批准并写入" : approval.kind === "external_tool" ? "批准调用" : approval.kind === "network_access" ? "批准联网" : "批准并运行"}
-          </button>
+          </Button>
         </div>
       </article>
     );
