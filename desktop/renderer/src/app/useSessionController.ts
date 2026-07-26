@@ -44,7 +44,6 @@ export interface SessionControllerActions {
   createSession: (workspaceRoot?: string) => Promise<SessionSnapshot | undefined>;
   renameSession: (sessionId: string, title: string) => Promise<void>;
   deleteSession: (session: Session) => Promise<{ confirmed: boolean }>;
-  refreshExtensions: () => Promise<void>;
   setError: (error: string | undefined) => void;
   projectRun: (sessionId: string, run: Run) => void;
   /** Called when a session title notification arrives — updates sessions title and open snapshot */
@@ -183,7 +182,9 @@ export function useSessionController(): [SessionControllerState, SessionControll
       setSessions((prev) => prev.map((s) => s.id === renamed.id ? renamed : s));
       setSnapshot((prev) => prev && ({ ...prev, session: renamed }));
     } catch (cause) {
-      throw new Error(userFacingError(cause));
+      const msg = userFacingError(cause);
+      setError(msg);
+      throw cause;
     } finally {
       clearPending("renamingSessionId");
     }
@@ -223,19 +224,6 @@ export function useSessionController(): [SessionControllerState, SessionControll
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions, snapshot, selectSession]);
-
-  const refreshExtensions = useCallback(async (): Promise<void> => {
-    try {
-      let snap = await window.eidosRuntime.readExtensions();
-      const events = await window.eidosRuntime.readExtensionEvents(snap.throughEventId);
-      if (events.items.length > 0) {
-        snap = await window.eidosRuntime.readExtensions();
-      }
-      return snap as unknown as void; // returned via state setters in consumer
-    } catch (cause) {
-      setError(userFacingError(cause));
-    }
-  }, []);
 
   const projectRun = useCallback((sessionId: string, run: Run): void => {
     const taskStatus = taskStatusFromRun(run);
@@ -309,7 +297,6 @@ export function useSessionController(): [SessionControllerState, SessionControll
     createSession,
     renameSession,
     deleteSession,
-    refreshExtensions,
     setError,
     projectRun,
     handleTitleNotification,

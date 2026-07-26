@@ -11,6 +11,7 @@ interface ConfirmDialogProps {
   /** If true, renders confirm button with danger variant and focuses cancel by default. */
   isDestructive?: boolean;
   busy?: boolean;
+  error?: string | undefined;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -34,6 +35,7 @@ export function ConfirmDialog({
   cancelLabel = "取消",
   isDestructive = false,
   busy = false,
+  error,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -62,18 +64,20 @@ export function ConfirmDialog({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Escape key closes the dialog
+  // Escape key closes the dialog when not busy
   useEffect(() => {
     if (!open) return;
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
-        onCancel();
+        if (!busy) {
+          onCancel();
+        }
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, onCancel]);
+  }, [open, busy, onCancel]);
 
   // Focus trap: keep Tab cycles inside the dialog
   useEffect(() => {
@@ -133,6 +137,7 @@ export function ConfirmDialog({
         </div>
         <div id="confirm-dialog-desc" className="modal-body">
           {typeof description === "string" ? <p>{description}</p> : description}
+          {error && <p className="setting-field-error" role="alert">{error}</p>}
         </div>
         <div className="modal-footer">
           <Button

@@ -6,14 +6,15 @@ import type {
   PluginRecord,
   RuntimeStatus,
   SkillMetadata,
-} from "../../contracts";
-import type { SettingsCategory, SettingsPendingAction, SettingsToast } from "./settings-types";
-import { SettingsCategoryItem, SettingsNavigation } from "./SettingsNavigation";
-import { ModelSettings } from "./ModelSettings";
-import { PluginSettings } from "./PluginSettings";
-import { SkillSettings } from "./SkillSettings";
-import { McpSettings } from "./McpSettings";
-import { RuntimeSettings } from "./RuntimeSettings";
+} from "../../contracts.js";
+import type { SettingsCategory, SettingsPendingAction, SettingsToast } from "./settings-types.js";
+import { SettingsCategoryItem, SettingsNavigation } from "./SettingsNavigation.js";
+import { ModelSettings } from "./ModelSettings.js";
+import { PluginSettings } from "./PluginSettings.js";
+import { SkillSettings } from "./SkillSettings.js";
+import { McpSettings } from "./McpSettings.js";
+import { RuntimeSettings } from "./RuntimeSettings.js";
+import { Button } from "../Button.js";
 
 interface SettingsPageProps {
   runtime: RuntimeStatus;
@@ -24,7 +25,9 @@ interface SettingsPageProps {
   plugins: PluginRecord[];
   skills: SkillMetadata[];
   mcpServers: McpServerRecord[];
+  extensionError?: string | undefined;
   pendingAction: SettingsPendingAction;
+  hasBlockingModal?: boolean | undefined;
   onClose: () => void;
   onConfigureModel: (apiKey: string) => Promise<void>;
   onImportPlugin: () => Promise<void>;
@@ -42,7 +45,9 @@ export function SettingsPage({
   plugins,
   skills,
   mcpServers,
+  extensionError,
   pendingAction,
+  hasBlockingModal = false,
   onClose,
   onConfigureModel,
   onImportPlugin,
@@ -55,17 +60,13 @@ export function SettingsPage({
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        // If no modal dialog is open
-        const activeModal = document.querySelector(".modal-backdrop");
-        if (!activeModal) {
-          onClose();
-        }
+      if (event.key === "Escape" && !hasBlockingModal) {
+        onClose();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [hasBlockingModal, onClose]);
 
   function showToast(message: string, type: "success" | "info" | "error" = "info") {
     const id = `${Date.now()}-${Math.random()}`;
@@ -96,15 +97,14 @@ export function SettingsPage({
     <div className="settings-page-wrapper">
       <header className="settings-page-header">
         <div className="header-left">
-          <button
-            type="button"
-            className="back-button"
+          <Button
+            variant="secondary"
+            size="small"
             onClick={onClose}
             aria-label="返回 Eidos"
           >
-            <span className="back-arrow">←</span>
-            <span>返回 Eidos</span>
-          </button>
+            ← 返回 Eidos
+          </Button>
         </div>
         <div className="header-center">
           <span className="settings-header-title">设置</span>
@@ -125,6 +125,10 @@ export function SettingsPage({
           </aside>
 
           <section className="settings-content-col">
+            {extensionError && (
+              <p className="error-banner" role="alert">{extensionError}</p>
+            )}
+
             {activeCategory === "model" && (
               <ModelSettings
                 model={model}

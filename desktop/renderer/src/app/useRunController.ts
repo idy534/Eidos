@@ -197,17 +197,21 @@ export function useRunController(
     }
   }, [inputs, isStarting]);
 
+  const cancelingRunIdRef = useRef<string | undefined>(undefined);
+
   const cancelRun = useCallback(async (runId: string): Promise<void> => {
-    if (cancelingRunId) return;
+    if (cancelingRunIdRef.current) return;
+    cancelingRunIdRef.current = runId;
     setCancelingRunId(runId);
     try {
       await window.eidosRuntime.cancelRun(runId);
     } catch (cause) {
       setError(userFacingError(cause));
     } finally {
+      cancelingRunIdRef.current = undefined;
       setCancelingRunId(undefined);
     }
-  }, [cancelingRunId]);
+  }, []);
 
   const state: RunControllerState = {
     composerMode,
