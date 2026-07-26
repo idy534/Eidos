@@ -32,6 +32,9 @@ export interface Run {
   updatedAt: number;
   completedAt?: number;
   errorCode?: string;
+  cancelRequestedAt?: number;
+  cancelCompletedAt?: number;
+  cancelFailureCode?: string;
   pauseReason?: string;
   stopReason?: string;
   sideEffectsMayExist?: boolean;

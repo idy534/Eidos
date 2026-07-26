@@ -76,6 +76,7 @@ class RuntimeEngine:
         sensitive: SensitiveScanner | None = None,
         wait_for_execution_slot: Callable[[str, threading.Event], bool] | None = None,
         mcp_sandbox: bool = True,
+        terminalize_cancel: bool = True,
     ) -> None:
         self.store = store
         self.model = model
@@ -86,6 +87,7 @@ class RuntimeEngine:
         self.sensitive = sensitive or default_scanner()
         self.wait_for_execution_slot = wait_for_execution_slot
         self.mcp_sandbox = mcp_sandbox
+        self.terminalize_cancel = terminalize_cancel
         self.state_machine = RuntimePhaseTracker()
         self.active_started: float | None = None
 
@@ -122,7 +124,10 @@ class RuntimeEngine:
             else:
                 self._pause_run(run_id, "context_still_over_budget")
         except (RuntimeCancelled, SamplingCancelled):
-            self._cancel(run_id)
+            if self.terminalize_cancel:
+                self._cancel(run_id)
+            else:
+                raise RuntimeCancelled from None
         except InvalidRunStateError:
             logger.exception("Unexpected runtime state conflict")
             current = self.store.read_run(run_id)

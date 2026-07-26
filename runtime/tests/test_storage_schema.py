@@ -42,6 +42,9 @@ EXPECTED_COLUMNS = {
         "workspace_version",
         "last_diff_hash",
         "model_profile_json",
+        "cancel_requested_at",
+        "cancel_completed_at",
+        "cancel_failure_code",
     },
     "steps": {"tool_snapshot_json", "tool_set_hash", "progress_signature_json"},
     "tool_calls": {
@@ -86,7 +89,16 @@ class StorageSchemaTests(unittest.TestCase):
         }
         self.assertEqual(tables, EXPECTED_TABLES)
         self.assertEqual(
-            indexes, {"one_active_run", "one_pending_approval_per_item"}
+            indexes,
+            {
+                "one_active_run",
+                "one_pending_approval_per_item",
+                "one_pending_approval_per_run",
+                "one_running_segment_per_run",
+                "one_active_segment_per_run",
+                "one_running_step_per_run",
+                "one_running_attempt_per_step",
+            },
         )
         for table, expected in EXPECTED_COLUMNS.items():
             columns = {

@@ -132,6 +132,9 @@ export interface Run {
   updatedAt: number;
   completedAt?: number;
   errorCode?: string;
+  cancelRequestedAt?: number;
+  cancelCompletedAt?: number;
+  cancelFailureCode?: string;
   pauseReason?: string;
   stopReason?: string;
   sideEffectsMayExist?: boolean;
@@ -954,6 +957,9 @@ function isRun(value: unknown): value is Run {
       "updatedAt",
       "completedAt",
       "errorCode",
+      "cancelRequestedAt",
+      "cancelCompletedAt",
+      "cancelFailureCode",
       "pauseReason",
       "stopReason",
       "sideEffectsMayExist",
@@ -984,6 +990,18 @@ function isRun(value: unknown): value is Run {
     && isNonNegativeInteger(value.updatedAt)
     && (value.completedAt === undefined || isNonNegativeInteger(value.completedAt))
     && (value.errorCode === undefined || typeof value.errorCode === "string")
+    && (
+      value.cancelRequestedAt === undefined
+      || isNonNegativeInteger(value.cancelRequestedAt)
+    )
+    && (
+      value.cancelCompletedAt === undefined
+      || isNonNegativeInteger(value.cancelCompletedAt)
+    )
+    && (
+      value.cancelFailureCode === undefined
+      || typeof value.cancelFailureCode === "string"
+    )
     && (value.pauseReason === undefined || typeof value.pauseReason === "string")
     && (value.stopReason === undefined || typeof value.stopReason === "string")
     && (value.sideEffectsMayExist === undefined || typeof value.sideEffectsMayExist === "boolean")

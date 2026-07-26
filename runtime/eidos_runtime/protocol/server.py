@@ -22,9 +22,19 @@ from eidos_runtime.model.config import (
     ModelConfigStore,
     model_catalog,
 )
-from eidos_runtime.model.pydantic_ai_client import ModelClientFactory
+from eidos_runtime.model.pydantic_ai_client import (
+    ModelClientFactory,
+    ModelClientInUseError,
+    ModelClientLease,
+)
 from eidos_runtime.protocol.schemas import JsonRpcRequestDto, JsonRpcResponse
-from eidos_runtime.runtime.supervisor import RunSupervisor
+from eidos_runtime.runtime.supervisor import (
+    RunCancelTimeout,
+    RunReconciliationRequired,
+    RunSupervisor,
+    RuntimeShutdownTimeout,
+)
+from eidos_runtime.runtime.state_machine import RuntimeLifecycle
 from eidos_runtime.runtime.events import RuntimeOutputClosedError
 from eidos_runtime.sandbox.sensitive import (
     SensitiveContentDenied,
@@ -167,7 +177,7 @@ class RuntimeServer:
         self.plugins: PluginCatalog | None = None
         self.supervisor = RunSupervisor(
             self.store,
-            self._model_for,
+            self._model_lease_for,
             self.send,
             self._scan_text,
             lambda: self.model is not None or self.model_factory is not None,
@@ -217,6 +227,20 @@ class RuntimeServer:
             return
         if self.store.health_state != "ready":
             self.send(business_error(request_id, "STORAGE_HEALTH_ONLY"))
+            return
+        if (
+            self.supervisor.lifecycle is not RuntimeLifecycle.RUNNING
+            and method in {
+                "run/start",
+                "run/continue",
+                "model/configure",
+                "plugin/import",
+                "plugin/setEnabled",
+                "plugin/remove",
+                "mcp/setEnabled",
+            }
+        ):
+            self.send(business_error(request_id, "RUNTIME_DRAINING"))
             return
 
         if method == "session/create":
@@ -644,7 +668,12 @@ class RuntimeServer:
             self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
             return
         if current["status"] not in {
-            "queued", "running", "waiting_approval", "waiting_user_input", "canceled"
+            "queued",
+            "running",
+            "waiting_approval",
+            "waiting_user_input",
+            "finalizing",
+            "canceled",
         }:
             self.send(business_error(request_id, "INVALID_STATE"))
             return
@@ -654,6 +683,17 @@ class RuntimeServer:
             )
         except InvalidRunStateError:
             current = self.store.read_run(params["runId"])
+            if current["status"] != "canceled":
+                self.send(business_error(request_id, "INVALID_STATE"))
+                return
+        except RunCancelTimeout:
+            self.send(business_error(request_id, "RUN_CANCEL_TIMEOUT"))
+            return
+        except RunReconciliationRequired:
+            self.send(
+                business_error(request_id, "RUN_RECONCILIATION_REQUIRED")
+            )
+            return
         except OperationConflictError:
             self.send(business_error(request_id, "OPERATION_ID_REUSED"))
             return
@@ -1019,10 +1059,22 @@ class RuntimeServer:
         if not isinstance(params, dict) or params:
             self.send(protocol_error(request_id, -32602, "Invalid params"))
             return
-        self.shutting_down = True
-        self.supervisor.shutdown()
-        self._close_model_factory()
+        if not self.initialized:
+            self.send(response(request_id, {}))
+            self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
+            self.shutting_down = True
+            return
+        try:
+            self.supervisor.shutdown()
+            self._cleanup_extensions()
+            self._close_model_factory()
+        except (RuntimeShutdownTimeout, ModelClientInUseError):
+            self.send(business_error(request_id, "RUNTIME_SHUTDOWN_TIMEOUT"))
+            return
+        self.store.close()
         self.send(response(request_id, {}))
+        self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
+        self.shutting_down = True
         logger.info("Runtime shutdown requested")
 
     def send(self, message: dict[str, object]) -> None:
@@ -1055,8 +1107,21 @@ class RuntimeServer:
         )
 
     def close(self) -> None:
-        self.supervisor.close()
-        self._close_model_factory()
+        if self.supervisor.lifecycle is RuntimeLifecycle.CLOSED:
+            return
+        if not self.initialized or self.store.health_state != "ready":
+            self._close_model_factory()
+            self.store.close()
+            self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
+            return
+        try:
+            self.supervisor.shutdown()
+            self._cleanup_extensions()
+            self._close_model_factory()
+        except (RuntimeShutdownTimeout, ModelClientInUseError):
+            return
+        self.store.close()
+        self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
 
     def _model_for(self, model_id: str) -> ModelClient:
         if self.model is not None:
@@ -1065,10 +1130,19 @@ class RuntimeServer:
             raise ModelConfigError("model is not configured")
         return self.model_factory.client_for(model_id)
 
+    def _model_lease_for(self, model_id: str) -> ModelClientLease:
+        if self.model is not None:
+            return ModelClientLease(self.model)
+        if self.model_factory is None:
+            raise ModelConfigError("model is not configured")
+        return self.model_factory.acquire(model_id)
+
     def _close_model_factory(self) -> None:
-        factory, self.model_factory = self.model_factory, None
+        factory = self.model_factory
         if factory is not None:
             factory.close()
+            if self.model_factory is factory:
+                self.model_factory = None
 
     def _cleanup_extensions(self) -> None:
         if self.plugins is not None:

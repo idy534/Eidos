@@ -27,11 +27,14 @@ from eidos_runtime.db.mappers import (
     _model_attempt_from_row,
     _run_from_row,
 )
-from eidos_runtime.db.transitions import transition_run, transition_segments
+from eidos_runtime.db.transitions import (
+    resolve_approval_and_transition,
+    transition_run,
+    transition_segments,
+)
 from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.runtime.contracts import ProgressSignature
 from eidos_runtime.runtime.state_machine import (
-    ApprovalStatus,
     EventType,
     RunStatus,
     SegmentStatus,
@@ -39,6 +42,7 @@ from eidos_runtime.runtime.state_machine import (
     ToolCallStatus,
     ensure_transition,
 )
+
 
 class ExecutionRepository(Repository):
     def read_item(self, item_id: str) -> dict[str, object]:
@@ -879,6 +883,10 @@ class ExecutionRepository(Repository):
             reconciliation_required = (
                 result.get("reconciliationRequired") is True
                 or result.get("code") in reconciliation_codes
+                or (
+                    result.get("sideEffectsMayExist") is True
+                    and result.get("outcome") != "success"
+                )
             )
             intent_status = "uncertain" if reconciliation_required else "completed"
             connection.execute(
@@ -1018,91 +1026,16 @@ class ExecutionRepository(Repository):
         *,
         requeue: bool = False,
     ) -> CommittedMutation[dict[str, object]]:
-        if decision not in {"approve", "reject"}:
-            raise ValueError("invalid approval decision")
-        now = _now_ms()
         with self.lock, self._connection() as connection:
-            row = connection.execute(
-                "SELECT run_id FROM items WHERE id = ? AND status = 'in_progress'",
-                (item_id,),
-            ).fetchone()
-            if row is None:
-                raise InvalidRunStateError("tool item is not active")
-            tool_update = connection.execute(
-                """
-                UPDATE tool_calls
-                SET approval_status = 'resolved', approval_decision = ?,
-                    approval_feedback = ?
-                WHERE item_id = ? AND status = 'running'
-                  AND approval_status = 'pending'
-                """,
-                (decision, feedback, item_id),
-            )
-            approval = connection.execute(
-                "SELECT id FROM approvals WHERE item_id = ? AND status = 'pending'",
-                (item_id,),
-            ).fetchone()
-            if approval is None:
-                raise InvalidRunStateError("approval is no longer pending")
-            next_status = "approved" if decision == "approve" else "rejected"
-            ensure_transition(
-                ApprovalStatus.PENDING,
-                ApprovalStatus(next_status),
-            )
-            approval_update = connection.execute(
-                """
-                UPDATE approvals
-                SET status = ?, decision = ?, feedback = ?, decided_at = ?
-                WHERE id = ? AND status = 'pending'
-                """,
-                (next_status, decision, feedback, now, approval["id"]),
-            )
-            run_state = connection.execute(
-                "SELECT consecutive_rejects FROM runs WHERE id = ?",
-                (row["run_id"],),
-            ).fetchone()
-            rejects = run_state["consecutive_rejects"] + (1 if decision == "reject" else 0)
-            run_status = (
-                "waiting_user_input" if rejects >= 2
-                else "queued" if requeue else "running"
-            )
-            run_update = connection.execute(
-                """
-                UPDATE runs
-                SET consecutive_rejects = ?
-                WHERE id = ? AND status = 'waiting_approval'
-                """,
-                (rejects, row["run_id"]),
-            )
-            if (
-                tool_update.rowcount != 1
-                or approval_update.rowcount != 1
-                or run_update.rowcount != 1
-            ):
-                raise InvalidRunStateError("approval is no longer pending")
-            target = RunStatus(run_status)
-            reason = (
-                "repeated_approval_rejection"
-                if target is RunStatus.WAITING_USER_INPUT
-                else "approval_resolved"
-            )
-            _run, run_event = transition_run(
+            resolution = resolve_approval_and_transition(
                 connection,
-                str(row["run_id"]),
-                frozenset({RunStatus.WAITING_APPROVAL}),
-                target,
-                reason,
-            )
-            approval_event = append_event(
-                connection, EventType.APPROVAL_STATUS_CHANGED, now,
-                {
-                    "entity_id": approval["id"], "previous": "pending",
-                    "current": next_status,
-                },
-                run_id=row["run_id"],
+                item_id=item_id,
+                decision=decision,
+                feedback=feedback,
+                requeue=requeue,
             )
         return CommittedMutation(
-            self.read_item(item_id), (approval_event, run_event)
+            self.read_item(item_id), resolution.events
         )
 
     def begin_durable_intent(

@@ -706,6 +706,26 @@ class SessionStore:
     ) -> dict[str, object]:
         return self._repository(self._runs).cancel_run(run_id, operation_id=operation_id)
 
+    def request_cancel_committed(
+        self, run_id: str
+    ) -> CommittedMutation[dict[str, object]]:
+        return self._repository(self._runs).request_cancel_committed(run_id)
+
+    def mark_cancel_failed_committed(
+        self, run_id: str, failure_code: str
+    ) -> CommittedMutation[dict[str, object]]:
+        return self._repository(self._runs).mark_cancel_failed_committed(
+            run_id, failure_code
+        )
+
+    def complete_requested_cancel_committed(
+        self, run_id: str
+    ) -> CommittedMutation[dict[str, object]]:
+        return self._repository(self._runs).complete_requested_cancel_committed(run_id)
+
+    def nonterminal_run_ids(self) -> tuple[str, ...]:
+        return self._repository(self._runs).nonterminal_run_ids()
+
     def cancel_run_committed(
         self, run_id: str
     ) -> CommittedMutation[dict[str, object]]:

@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import Future
 from contextlib import suppress
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import threading
-from typing import Any, Coroutine
+from typing import Any, Callable, Coroutine
 
 import httpx
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
@@ -38,6 +38,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from eidos_runtime.model.client import (
+    ModelClient,
     ModelContextItem,
     ModelProfileSnapshot,
     ModelRequestError,
@@ -253,27 +254,107 @@ class PydanticAIModelClient:
             self._loop.close()
 
 
+class ModelClientInUseError(RuntimeError):
+    pass
+
+
+class ModelClientLease:
+    def __init__(
+        self,
+        client: ModelClient,
+        release: Callable[[], None] | None = None,
+    ) -> None:
+        self.client = client
+        self._release = release
+        self._lock = threading.Lock()
+        self._closed = False
+
+    @property
+    def closed(self) -> bool:
+        with self._lock:
+            return self._closed
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            release = self._release
+            self._release = None
+        if release is not None:
+            release()
+
+
+@dataclass
+class _ClientEntry:
+    client: PydanticAIModelClient
+    lease_count: int = 0
+    closing: bool = False
+
+
 class ModelClientFactory:
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
-        self._clients: dict[tuple[str, str], PydanticAIModelClient] = {}
+        self._clients: dict[tuple[str, str], _ClientEntry] = {}
         self._lock = threading.RLock()
+        self._closed = False
 
     def client_for(self, model_id: str) -> PydanticAIModelClient:
         key = (PROVIDER, model_id)
         with self._lock:
-            client = self._clients.get(key)
-            if client is None:
-                client = PydanticAIModelClient.deepseek(self._api_key, model_id)
-                self._clients[key] = client
-            return client
+            return self._entry(key, model_id).client
+
+    def acquire(self, model_id: str) -> ModelClientLease:
+        key = (PROVIDER, model_id)
+        with self._lock:
+            entry = self._entry(key, model_id)
+            if entry.closing:
+                raise RuntimeError("model client is closing")
+            entry.lease_count += 1
+        return ModelClientLease(entry.client, lambda: self._release(key, entry))
+
+    @property
+    def active_lease_count(self) -> int:
+        with self._lock:
+            return sum(entry.lease_count for entry in self._clients.values())
 
     def close(self) -> None:
         with self._lock:
-            clients = tuple(self._clients.values())
+            if any(entry.lease_count for entry in self._clients.values()):
+                raise ModelClientInUseError("model client has active leases")
+            self._closed = True
+            entries = tuple(self._clients.values())
+            for entry in entries:
+                entry.closing = True
             self._clients.clear()
-        for client in clients:
-            client.close()
+        for entry in entries:
+            entry.client.close()
+
+    def _entry(
+        self,
+        key: tuple[str, str],
+        model_id: str,
+    ) -> _ClientEntry:
+        if self._closed:
+            raise RuntimeError("model client factory is closed")
+        entry = self._clients.get(key)
+        if entry is None:
+            entry = _ClientEntry(
+                PydanticAIModelClient.deepseek(self._api_key, model_id)
+            )
+            self._clients[key] = entry
+        return entry
+
+    def _release(
+        self,
+        key: tuple[str, str],
+        expected: _ClientEntry,
+    ) -> None:
+        with self._lock:
+            entry = self._clients.get(key)
+            if entry is not expected or entry.lease_count <= 0:
+                return
+            entry.lease_count -= 1
 
 
 def encode_context(context: tuple[ModelContextItem, ...]) -> list[ModelMessage]:

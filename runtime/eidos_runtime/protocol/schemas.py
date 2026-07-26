@@ -162,6 +162,15 @@ class RunDto(ClosedModel):
     updated_at: StrictInt = Field(alias="updatedAt")
     completed_at: StrictInt | None = Field(default=None, alias="completedAt")
     error_code: StrictStr | None = Field(default=None, alias="errorCode")
+    cancel_requested_at: StrictInt | None = Field(
+        default=None, alias="cancelRequestedAt"
+    )
+    cancel_completed_at: StrictInt | None = Field(
+        default=None, alias="cancelCompletedAt"
+    )
+    cancel_failure_code: StrictStr | None = Field(
+        default=None, alias="cancelFailureCode"
+    )
     pause_reason: StrictStr | None = Field(default=None, alias="pauseReason")
     stop_reason: StrictStr | None = Field(default=None, alias="stopReason")
     side_effects_may_exist: bool = Field(default=False, alias="sideEffectsMayExist")
