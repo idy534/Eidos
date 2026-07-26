@@ -110,16 +110,24 @@ class ApprovalCoordinator:
         self.pause_effective_time(run_id)
         tool_call = pending_item["toolCall"]
         assert isinstance(tool_call, dict)
-        result = self.transport.request(
-            ApprovalRequest({
-                "sessionId": pending_item["sessionId"],
-                "runId": pending_item["runId"],
-                "itemId": pending_item["id"],
-                "toolCallId": tool_call["id"],
-                **description,
-            }),
-            cancel,
-        )
+        suspend_deadline = getattr(cancel, "suspend_deadline", None)
+        resume_deadline = getattr(cancel, "resume_deadline", None)
+        if callable(suspend_deadline):
+            suspend_deadline()
+        try:
+            result = self.transport.request(
+                ApprovalRequest({
+                    "sessionId": pending_item["sessionId"],
+                    "runId": pending_item["runId"],
+                    "itemId": pending_item["id"],
+                    "toolCallId": tool_call["id"],
+                    **description,
+                }),
+                cancel,
+            )
+        finally:
+            if callable(resume_deadline):
+                resume_deadline()
         self.check_cancel(run_id, cancel)
         decision = self._validated(result)
         mutation = self.store.resolve_approval_committed(

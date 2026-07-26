@@ -13,7 +13,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.model.client import ModelToolCall  # noqa: E402
+from eidos_runtime.runtime.approval import (  # noqa: E402
+    ApprovalCoordinator,
+    ApprovalDecision,
+)
 from eidos_runtime.runtime.events import RuntimeEvents  # noqa: E402
+from eidos_runtime.runtime.state_machine import RuntimePhaseTracker  # noqa: E402
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan  # noqa: E402
 from eidos_runtime.runtime.tool_execution import (  # noqa: E402
     HandlerOutcome,
@@ -47,6 +52,23 @@ class _WaitForCancellationHandler(_Handler):
         self.calls += 1
         while not cancel.is_set():
             cancel.wait(0.005)
+        return HandlerOutcome(self.result, "completed")
+
+
+class _ApprovalHandler(_Handler):
+    def __init__(self, approval: ApprovalCoordinator) -> None:
+        super().__init__()
+        self.approval = approval
+
+    def execute(self, run_id, item, _call, cancel) -> HandlerOutcome:
+        self.calls += 1
+        self.approval.request(
+            run_id,
+            item,
+            {"kind": "file_change", "summary": "Modify a.txt", "diff": ""},
+            cancel,
+            transition_reason="file_approval",
+        )
         return HandlerOutcome(self.result, "completed")
 
 
@@ -95,6 +117,47 @@ class ToolExecutionControllerTests(unittest.TestCase):
             RuntimeEvents(lambda _message: None),
             default_scanner(),
         )
+
+    def test_approval_wait_does_not_consume_tool_timeout(self) -> None:
+        now = [0.0]
+
+        def approve(_request, cancel):
+            now[0] = 10.0
+            self.assertFalse(cancel.is_set())
+            return ApprovalDecision("approve")
+
+        approval = ApprovalCoordinator(
+            self.store,
+            approve,
+            RuntimeEvents(lambda _message: None),
+            RuntimePhaseTracker(),
+            lambda _run_id: None,
+            lambda: None,
+            lambda _run_id, _cancel: None,
+            lambda _run_id, _cancel: None,
+            requeue=False,
+        )
+        handler = _ApprovalHandler(approval)
+        controller = ToolExecutionController(
+            self.store,
+            _Dispatcher(),
+            {"file": handler},
+            RuntimeEvents(lambda _message: None),
+            default_scanner(),
+            monotonic=lambda: now[0],
+        )
+
+        outcome = controller.execute(
+            run_id=self.run["id"],
+            item=self._item(),
+            call=self.call,
+            plan=ToolDispatchPlan(True, "file", 5, "workspace"),
+            cancel=threading.Event(),
+            deadline=None,
+        )
+
+        self.assertEqual(outcome.result["outcome"], "success")
+        self.assertEqual(handler.calls, 1)
 
     def test_all_tool_kinds_route_through_controller(self) -> None:
         kinds = (

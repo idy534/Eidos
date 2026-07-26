@@ -164,6 +164,33 @@ test("shows safe MCP provenance and duration without internal diagnostics", () =
   assert.doesNotMatch(html, /stderr|internal path|SECRET_VALUE/);
 });
 
+test("does not describe a failed file write as edited", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({
+        id: "failed-write", ordinal: 1, kind: "file_change", status: "failed",
+        toolCall: {
+          id: "tool-write", itemId: "failed-write", modelStepIndex: 1, batchOrder: 0,
+          providerCallId: "provider-write", toolName: "write_file",
+          status: "failed", startedAt: 1_000, completedAt: 2_000,
+          argumentsJson: JSON.stringify({ path: "summary.txt" }),
+          resultJson: JSON.stringify({
+            outcome: "error", code: "TOOL_TIMEOUT", summary: "Tool timed out", data: {},
+          }),
+        },
+      })]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalId={undefined}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(html, /失败 summary\.txt/);
+  assert.doesNotMatch(html, /已编辑 summary\.txt/);
+});
+
 test("shows the exact host and target for network approval", () => {
   const { completedAt: _completedAt, ...runWithoutCompletion } = run;
   const waitingRun: Run = {

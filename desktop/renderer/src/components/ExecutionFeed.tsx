@@ -422,6 +422,9 @@ function toolSummary(toolCall: ToolCall, status: Item["status"]): string {
   const path = stringField(args, "path") || stringField(args, "filePath");
   const query = stringField(args, "query") || stringField(args, "pattern");
   const running = status === "in_progress";
+  if (!running && status !== "completed") {
+    return `${statusLabel(status)} ${path || query || toolCall.toolName}`;
+  }
   const labels: Record<string, string> = {
     list_files: running ? "正在列出文件" : "已列出文件",
     read_file: running ? `正在读取 ${path || "文件"}` : `已读取 ${path || "文件"}`,
