@@ -226,32 +226,52 @@ export type RuntimeNotification =
   | { method: "item/completed"; params: { sessionId: string; runId: string; item: Item } }
   | { method: "item/delta"; params: { sessionId: string; runId: string; itemId: string; sequence: number; delta: string } };
 
+/** App-level shortcut channel names matching the Electron Menu accelerators. */
+export type AppShortcutChannel = "app:new-task" | "app:open-workspace";
+
 declare global {
   interface Window {
     eidosRuntime: {
+      // Runtime
       getStatus: () => Promise<RuntimeStatus>;
       getHealth: () => Promise<RuntimeHealth>;
       onStatus: (callback: (status: RuntimeStatus) => void) => () => void;
+
+      // Workspace
       selectWorkspace: () => Promise<string | null>;
+
+      // Sessions
       listSessions: () => Promise<{ items: Session[] }>;
       readSession: (sessionId: string) => Promise<SessionSnapshot>;
       listEvents: (sessionId: string, afterEventId: number) => Promise<EventListResult>;
       createSession: (workspaceRoot: string) => Promise<Session>;
       renameSession: (sessionId: string, title: string) => Promise<Session>;
       deleteSession: (sessionId: string) => Promise<{ deletedSessionId: string }>;
+
+      // Runs
       startRun: (sessionId: string, userInput: string, modelId: ModelId) => Promise<Run>;
       cancelRun: (runId: string) => Promise<Run>;
       continueRun: (runId: string, userInput: string) => Promise<Run>;
+
+      // Models
       getModelStatus: () => Promise<ModelStatus>;
       listModels: () => Promise<ModelListResult>;
       configureModel: (apiKey: string) => Promise<ModelStatus>;
+
+      // Plugins
       listPlugins: () => Promise<{ plugins: PluginRecord[] }>;
       importPlugin: () => Promise<PluginRecord | null>;
       setPluginEnabled: (pluginId: string, enabled: boolean) => Promise<PluginRecord>;
       removePlugin: (pluginId: string) => Promise<PluginRecord>;
+
+      // Skills
       listSkills: () => Promise<{ skills: SkillMetadata[] }>;
+
+      // MCP
       listMcpServers: () => Promise<{ servers: McpServerRecord[] }>;
       setMcpEnabled: (pluginId: string, serverId: string, enabled: boolean) => Promise<McpServerRecord>;
+
+      // Extensions
       readExtensions: () => Promise<{
         plugins: PluginRecord[];
         skills: SkillMetadata[];
@@ -259,10 +279,17 @@ declare global {
         throughEventId: number;
       }>;
       readExtensionEvents: (afterEventId: number) => Promise<EventListResult>;
+
+      // Approvals
       listPendingApprovals: () => Promise<ApprovalRequest[]>;
-      onNotification: (callback: (notification: RuntimeNotification) => void) => () => void;
       onApprovalRequest: (callback: (request: ApprovalRequest) => void) => () => void;
       respondApproval: (id: string, decision: "approve" | "reject", feedback?: string) => Promise<boolean>;
+
+      // Notifications
+      onNotification: (callback: (notification: RuntimeNotification) => void) => () => void;
+
+      // App-level shortcuts from Main process menu
+      onShortcut: (channel: AppShortcutChannel, callback: () => void) => () => void;
     };
   }
 }

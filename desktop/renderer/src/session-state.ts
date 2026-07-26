@@ -2,6 +2,7 @@ import type {
   Item,
   Run,
   RuntimeNotification,
+  RuntimeStatus,
   Session,
   SessionSnapshot,
 } from "./contracts.js";
@@ -220,6 +221,129 @@ export function terminalRunPresentation(
       return undefined;
   }
 }
+
+// ---------------------------------------------------------------------------
+// ComposerMode state machine
+// ---------------------------------------------------------------------------
+
+/**
+ * Represents the UI state of the Composer input area.
+ *
+ * State constraints:
+ * - A session MUST have at most one activeRun at a time.
+ * - `starting` is a transient state while the IPC call is in-flight.
+ * - `read_only` takes precedence over all run-based states.
+ * - `idle` is the only state where a new Run can be started.
+ * - `waiting_user_input` is the only state where `continueRun` is called.
+ */
+export type ComposerMode =
+  | "idle"               // No active run; can input and start
+  | "starting"           // startRun IPC call in-flight; block double submit
+  | "running"            // Run is executing; show cancel if allowed
+  | "waiting_approval"   // Approval card is the primary entry point
+  | "waiting_user_input" // Run paused; submit calls continueRun
+  | "finalizing"         // Run wrapping up; block all input
+  | "read_only";         // storageHealth = health_only; block all writes
+
+const ACTIVE_RUN_STATUSES = new Set<Run["status"]>([
+  "queued", "running", "waiting_approval", "waiting_user_input", "finalizing",
+]);
+
+/**
+ * Derives the Composer UI mode from observable state.
+ * This is a pure function — no side effects, fully testable.
+ *
+ * @param storageHealthy - true when storageHealth.state === "ready"
+ * @param activeRun - the active (non-terminal) run for the current session, if any
+ * @param isStarting - true while startRun IPC call is in-flight
+ */
+export function deriveComposerMode(
+  storageHealthy: boolean,
+  activeRun: Run | undefined,
+  isStarting: boolean,
+): ComposerMode {
+  // read_only takes precedence over everything
+  if (!storageHealthy) return "read_only";
+
+  // Transient starting state (IPC in-flight, no activeRun yet)
+  if (isStarting && !activeRun) return "starting";
+
+  if (!activeRun) return "idle";
+
+  // Map Run status → ComposerMode
+  switch (activeRun.status) {
+    case "waiting_user_input":
+      return "waiting_user_input";
+    case "waiting_approval":
+      return "waiting_approval";
+    case "finalizing":
+      return "finalizing";
+    case "queued":
+    case "running":
+    default:
+      return "running";
+  }
+}
+
+/**
+ * Find the active (non-terminal) run in a list of runs.
+ * Returns the most recent active run (last in array order).
+ */
+export function findActiveRun(runs: Run[]): Run | undefined {
+  return [...runs].reverse().find((run) => ACTIVE_RUN_STATUSES.has(run.status));
+}
+
+// ---------------------------------------------------------------------------
+// Runtime Presentation — unified across Sidebar, Settings, and RuntimeGate
+// ---------------------------------------------------------------------------
+
+/**
+ * A unified presentation record for the Runtime connection state.
+ * Used in Sidebar indicator, RuntimeSettings, and the startup gate.
+ */
+export interface RuntimePresentation {
+  /** Short label, accessible text for status dot */
+  label: string;
+  /** Colour tone for the indicator */
+  tone: "success" | "warning" | "danger" | "neutral";
+  /** Optional extended description */
+  description?: string;
+  /** Whether to show an animation (connecting, reconnecting) */
+  animated?: boolean;
+}
+
+export function deriveRuntimePresentation(status: RuntimeStatus): RuntimePresentation {
+  switch (status.state) {
+    case "starting":
+      return {
+        label: "正在启动",
+        tone: "neutral",
+        description: "正在建立安全沙箱与 Runtime 协议握手…",
+        animated: true,
+      };
+    case "error":
+      return {
+        label: "连接失败",
+        tone: "danger",
+        description: status.message,
+      };
+    case "ready": {
+      const health = status.storageHealth;
+      if (health.state === "health_only") {
+        return {
+          label: "只读模式",
+          tone: "warning",
+          description: `状态存储处于只读健康模式（${health.code ?? "unknown"}），不会执行 Run 或写入状态。`,
+        };
+      }
+      return {
+        label: "Runtime 就绪",
+        tone: "success",
+      };
+    }
+  }
+}
+
 
 function upsertRun(runs: Run[], incoming: Run): Run[] {
   const existing = runs.findIndex((run) => run.id === incoming.id);
