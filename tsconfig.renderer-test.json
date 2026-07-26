@@ -16,6 +16,8 @@
     "desktop/renderer/src/contracts.ts",
     "desktop/renderer/src/session-state.ts",
     "desktop/renderer/src/session-state.test.ts",
+    "desktop/renderer/src/composer-mode.test.ts",
+    "desktop/renderer/src/runtime-presentation.test.ts",
     "desktop/renderer/src/components/MarkdownContent.tsx",
     "desktop/renderer/src/components/MarkdownContent.test.tsx",
     "desktop/renderer/src/components/ExecutionFeed.tsx",

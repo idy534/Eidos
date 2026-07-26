@@ -98,7 +98,7 @@ export function ModelSettings({
           title="DeepSeek API Key"
           description={
             model?.configured
-              ? "凭证已保存在加密存储中"
+              ? "凭证已保存在仅当前用户可读的本地配置中（~/.eidos/model.json）"
               : "尚未配置有效的 API Key，请填入凭证后启动 Agent"
           }
           action={

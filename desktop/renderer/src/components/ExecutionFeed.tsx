@@ -10,8 +10,10 @@ interface Props {
   items: Item[];
   runs: Run[];
   approvals: ApprovalRequest[];
-  disabled: boolean;
-  onApproval: (request: ApprovalRequest, decision: "approve" | "reject") => void;
+  /** ID of the approval currently being responded to (per-card loading) */
+  respondingApprovalId: string | undefined;
+  onApprove: (request: ApprovalRequest) => void;
+  onReject: (request: ApprovalRequest) => void;
 }
 
 interface Segment {
@@ -29,7 +31,7 @@ const TERMINAL_RUN_STATUSES = new Set<Run["status"]>([
 ]);
 
 
-export function ExecutionFeed({ items, runs, approvals, disabled, onApproval }: Props) {
+export function ExecutionFeed({ items, runs, approvals, respondingApprovalId, onApprove, onReject }: Props) {
   const feedRef = useRef<HTMLElement>(null);
   const [atBottom, setAtBottom] = useState(true);
 
@@ -71,8 +73,9 @@ export function ExecutionFeed({ items, runs, approvals, disabled, onApproval }: 
                   run={run}
                   isLast={index === segments.length - 1}
                   approvals={approvals}
-                  disabled={disabled}
-                  onApproval={onApproval}
+                  respondingApprovalId={respondingApprovalId}
+                  onApprove={onApprove}
+                  onReject={onReject}
                 />
               ))}
               <RunNotice run={run} />
@@ -104,15 +107,17 @@ function RunSegment({
   run,
   isLast,
   approvals,
-  disabled,
-  onApproval,
+  respondingApprovalId,
+  onApprove,
+  onReject,
 }: {
   segment: Segment;
   run: Run;
   isLast: boolean;
   approvals: ApprovalRequest[];
-  disabled: boolean;
-  onApproval: Props["onApproval"];
+  respondingApprovalId: string | undefined;
+  onApprove: Props["onApprove"];
+  onReject: Props["onReject"];
 }) {
   const showThinking = isLast
     && ACTIVE_RUN_STATUSES.has(run.status)
@@ -133,8 +138,9 @@ function RunSegment({
               item={item}
               run={run}
               approval={approvals.find((request) => request.itemId === item.id)}
-              disabled={disabled}
-              onApproval={onApproval}
+              respondingApprovalId={respondingApprovalId}
+              onApprove={onApprove}
+              onReject={onReject}
             />
           ))}
         </ProcessGroup>
@@ -190,14 +196,16 @@ function ProcessItem({
   item,
   run,
   approval,
-  disabled,
-  onApproval,
+  respondingApprovalId,
+  onApprove,
+  onReject,
 }: {
   item: Item;
   run: Run;
   approval: ApprovalRequest | undefined;
-  disabled: boolean;
-  onApproval: Props["onApproval"];
+  respondingApprovalId: string | undefined;
+  onApprove: Props["onApprove"];
+  onReject: Props["onReject"];
 }) {
   if (item.kind === "assistant_message") {
     if (!item.content) return null;
@@ -206,6 +214,10 @@ function ProcessItem({
   if (!item.toolCall) return null;
 
   if (approval) {
+    const isResponding = respondingApprovalId === approval.id;
+    const canApprove = run.allowedActions?.includes("approve") && !isResponding;
+    const canReject = run.allowedActions?.includes("reject") && !isResponding;
+
     return (
       <article className="approval-card" aria-labelledby={`approval-${approval.id}`}>
         <div className="approval-heading">
@@ -222,11 +234,27 @@ function ProcessItem({
               ? `${approval.toolName}\n\nPlugin: ${approval.provenance.pluginId ?? "unknown"}\nServer: ${approval.provenance.serverId ?? "unknown"}\nprofile: ${approval.permissionProfile}\ntimeout: ${approval.timeoutSeconds}s\nenv names: ${approval.envNames.join(", ") || "none"}\narguments: ${JSON.stringify(approval.arguments, null, 2)}`
               : approval.kind === "network_access"
                 ? `tool: ${approval.toolName}\ntarget: ${approval.target}\napproved hosts: ${approval.hosts.join(", ")}`
-              : `$ ${approval.command}\n\ncwd: ${approval.cwd}\nnetwork: disabled\ntimeout: ${approval.timeoutSeconds}s`}
+                : `$ ${approval.command}\n\ncwd: ${approval.cwd}\nnetwork: disabled\ntimeout: ${approval.timeoutSeconds}s`}
         </pre>
         <div className="approval-actions">
-          <button className="button-secondary" disabled={disabled || !run.allowedActions?.includes("reject")} onClick={() => onApproval(approval, "reject")}>拒绝</button>
-          <button disabled={disabled || !run.allowedActions?.includes("approve")} onClick={() => onApproval(approval, "approve")}>{approval.kind === "file_change" ? "批准并写入" : approval.kind === "external_tool" ? "批准调用" : approval.kind === "network_access" ? "批准联网" : "批准并运行"}</button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--medium"
+            disabled={!canReject}
+            aria-busy={isResponding}
+            onClick={() => onReject(approval)}
+          >
+            拒绝
+          </button>
+          <button
+            type="button"
+            className="btn btn--primary btn--medium"
+            disabled={!canApprove}
+            aria-busy={isResponding}
+            onClick={() => onApprove(approval)}
+          >
+            {approval.kind === "file_change" ? "批准并写入" : approval.kind === "external_tool" ? "批准调用" : approval.kind === "network_access" ? "批准联网" : "批准并运行"}
+          </button>
         </div>
       </article>
     );
