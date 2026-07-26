@@ -16,9 +16,5 @@
     "desktop/main/**/*.cts",
     "desktop/shared/**/*.ts",
     "desktop/shared/**/*.cts"
-  ],
-  "exclude": [
-    "desktop/**/*.test.ts",
-    "desktop/**/*.test.tsx"
   ]
 }
