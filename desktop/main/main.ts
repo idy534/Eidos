@@ -8,7 +8,7 @@ import type {
   ApprovalRequest,
   RuntimeNotification,
 } from "./runtime-client.js";
-import type { RuntimeStatus } from "../shared/index.js";
+import type { AppShortcut, RuntimeStatus } from "../shared/index.js";
 import { IPC, VALID_MODEL_IDS, MAX_APPROVAL_FEEDBACK_BYTES } from "../shared/index.js";
 
 
@@ -124,7 +124,7 @@ function clientOrThrow(): RuntimeClient {
 }
 
 // ---------------------------------------------------------------------------
-// Window creation
+// Window creation & command dispatch
 // ---------------------------------------------------------------------------
 
 function createWindow(): BrowserWindow {
@@ -149,33 +149,35 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
+export function ensureMainWindow(): BrowserWindow {
+  const existing = BrowserWindow.getAllWindows()[0];
+  if (existing) {
+    if (existing.isMinimized()) {
+      existing.restore();
+    }
+    existing.show();
+    existing.focus();
+    return existing;
+  }
+  return createWindow();
+}
+
+export async function dispatchAppCommand(command: AppShortcut): Promise<void> {
+  const window = ensureMainWindow();
+  if (window.webContents.isLoading()) {
+    await new Promise<void>((resolve) => {
+      window.webContents.once("did-finish-load", () => resolve());
+    });
+  }
+  window.webContents.send(command);
+}
+
 // ---------------------------------------------------------------------------
 // Application Menu with real keyboard shortcuts
 // ---------------------------------------------------------------------------
 
 function buildMenu(): void {
   const isMac = process.platform === "darwin";
-
-  /**
-   * Sends a shortcut event to the focused renderer window.
-   * No-ops if no window is focused or if a modal-equivalent overlay is
-   * present (checked via the Renderer's own guard logic).
-   */
-  function dispatchShortcut(channel: string): void {
-    const focused = BrowserWindow.getFocusedWindow();
-    if (focused) {
-      focused.webContents.send(channel);
-    } else {
-      // No focused window — create or activate one
-      const existing = BrowserWindow.getAllWindows()[0];
-      if (existing) {
-        existing.show();
-        existing.focus();
-      } else {
-        createWindow();
-      }
-    }
-  }
 
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(isMac ? [{
@@ -198,12 +200,12 @@ function buildMenu(): void {
         {
           label: "新建任务",
           accelerator: "CmdOrCtrl+N",
-          click: () => dispatchShortcut(IPC.APP_NEW_TASK),
+          click: () => { void dispatchAppCommand("app:new-task"); },
         },
         {
           label: "打开工作空间",
           accelerator: "CmdOrCtrl+O",
-          click: () => dispatchShortcut(IPC.APP_OPEN_WORKSPACE),
+          click: () => { void dispatchAppCommand("app:open-workspace"); },
         },
         { type: "separator" },
         isMac ? { role: "close" as const } : { role: "quit" as const },

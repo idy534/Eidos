@@ -1,5 +1,7 @@
 import React, { useEffect, useRef } from "react";
 
+import { Button } from "../Button.js";
+
 interface ConfirmDialogProps {
   open: boolean;
   title: string;
@@ -133,25 +135,25 @@ export function ConfirmDialog({
           {typeof description === "string" ? <p>{description}</p> : description}
         </div>
         <div className="modal-footer">
-          <button
+          <Button
             ref={cancelBtnRef}
-            type="button"
-            className="btn btn--ghost btn--medium"
+            variant="ghost"
+            size="medium"
             disabled={busy}
             onClick={onCancel}
           >
             {cancelLabel}
-          </button>
-          <button
+          </Button>
+          <Button
             ref={confirmBtnRef}
-            type="button"
-            className={isDestructive ? "btn btn--danger btn--medium" : "btn btn--primary btn--medium"}
+            variant={isDestructive ? "danger" : "primary"}
+            size="medium"
             disabled={busy}
-            aria-busy={busy}
+            loading={busy}
             onClick={onConfirm}
           >
-            {busy ? "处理中…" : confirmLabel}
-          </button>
+            {confirmLabel}
+          </Button>
         </div>
       </div>
     </div>

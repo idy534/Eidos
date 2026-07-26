@@ -30,6 +30,7 @@ interface ContextMenuState {
   session: Session;
   x: number;
   y: number;
+  element?: HTMLElement | null;
 }
 
 export function SessionSidebar({
@@ -135,13 +136,23 @@ export function SessionSidebar({
                               }}
                               onContextMenu={(event) => {
                                 event.preventDefault();
-                                setContextMenu({ session, x: event.clientX, y: event.clientY });
+                                setContextMenu({
+                                  session,
+                                  x: event.clientX,
+                                  y: event.clientY,
+                                  element: event.currentTarget,
+                                });
                               }}
                               onKeyDown={(event) => {
-                                if (event.shiftKey && event.key === "F10") {
+                                if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
                                   event.preventDefault();
                                   const bounds = event.currentTarget.getBoundingClientRect();
-                                  setContextMenu({ session, x: bounds.left, y: bounds.bottom });
+                                  setContextMenu({
+                                    session,
+                                    x: bounds.left,
+                                    y: bounds.bottom,
+                                    element: event.currentTarget,
+                                  });
                                 }
                               }}
                             >
@@ -186,6 +197,7 @@ export function SessionSidebar({
           x={contextMenu.x}
           y={contextMenu.y}
           label={`任务操作：${contextMenu.session.title ?? "新任务"}`}
+          restoreFocusElement={contextMenu.element}
           onClose={() => setContextMenu(undefined)}
           items={[
             {

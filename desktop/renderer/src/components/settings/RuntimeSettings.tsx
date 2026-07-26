@@ -1,5 +1,6 @@
 import React from "react";
 import type { ModelStatus, RuntimeStatus } from "../../contracts";
+import { deriveRuntimePresentation } from "../../session-state";
 import { SettingSection } from "./SettingSection";
 import { SettingRow } from "./SettingRow";
 import { StatusBadge } from "./StatusBadge";
@@ -10,6 +11,8 @@ interface RuntimeSettingsProps {
 }
 
 export function RuntimeSettings({ runtime, model }: RuntimeSettingsProps) {
+  const presentation = deriveRuntimePresentation(runtime);
+
   if (runtime.state !== "ready") {
     return (
       <div className="settings-panel">
@@ -18,8 +21,8 @@ export function RuntimeSettings({ runtime, model }: RuntimeSettingsProps) {
           <p className="settings-panel-subtitle">系统引擎当前未准备就绪。</p>
         </div>
         <div className="runtime-error-banner" role="alert">
-          <StatusBadge tone="danger">引擎未连通</StatusBadge>
-          <p>{runtime.state === "error" ? runtime.message : "引擎初始化中…"}</p>
+          <StatusBadge tone={presentation.tone}>{presentation.label}</StatusBadge>
+          <p>{presentation.description ?? "引擎初始化中…"}</p>
         </div>
       </div>
     );
@@ -42,7 +45,7 @@ export function RuntimeSettings({ runtime, model }: RuntimeSettingsProps) {
           title="Runtime 整体运行状态"
           description="本地通信协议、存储数据库与执行沙箱握手状态"
           action={
-            <StatusBadge tone="success">运行正常</StatusBadge>
+            <StatusBadge tone={presentation.tone}>{presentation.label}</StatusBadge>
           }
         />
         <SettingRow
@@ -77,7 +80,7 @@ export function RuntimeSettings({ runtime, model }: RuntimeSettingsProps) {
             isStorageReady ? (
               <StatusBadge tone="success">Ready</StatusBadge>
             ) : (
-              <StatusBadge tone="danger">
+              <StatusBadge tone="warning">
                 Health Only ({runtime.storageHealth.code ?? "UNKNOWN"})
               </StatusBadge>
             )
