@@ -10,7 +10,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eidos_runtime.db.schema import SCHEMA_VERSION  # noqa: E402
+from eidos_runtime.db.schema import SCHEMA_SQL, SCHEMA_VERSION  # noqa: E402
 from eidos_runtime.db.storage import DATABASE_NAME, SessionStore  # noqa: E402
 
 
@@ -23,6 +23,7 @@ EXPECTED_TABLES = {
     "execution_segments",
     "steps",
     "model_attempts",
+    "finalization_attempts",
     "events",
     "operations",
     "durable_intents",
@@ -55,6 +56,7 @@ EXPECTED_COLUMNS = {
         "base_sha256",
         "provenance_json",
         "tool_set_hash",
+        "duration_ms",
     },
 }
 
@@ -98,6 +100,7 @@ class StorageSchemaTests(unittest.TestCase):
                 "one_active_segment_per_run",
                 "one_running_step_per_run",
                 "one_running_attempt_per_step",
+                "one_running_finalization_attempt_per_run",
             },
         )
         for table, expected in EXPECTED_COLUMNS.items():
@@ -106,7 +109,10 @@ class StorageSchemaTests(unittest.TestCase):
                 for row in connection.execute(f"PRAGMA table_info({table})")
             }
             self.assertTrue(expected <= columns, (table, expected - columns))
-        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.assertEqual(
+            connection.execute("PRAGMA user_version").fetchone()[0],
+            SCHEMA_VERSION,
+        )
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
@@ -116,7 +122,8 @@ class StorageSchemaTests(unittest.TestCase):
         database = self.data / DATABASE_NAME
         connection = sqlite3.connect(database)
         connection.executescript(
-            "CREATE TABLE legacy_marker (value TEXT); PRAGMA user_version = 2;"
+            f"CREATE TABLE legacy_marker (value TEXT); "
+            f"PRAGMA user_version = {SCHEMA_VERSION + 1};"
         )
         connection.close()
         os.chmod(database, 0o600)
@@ -129,7 +136,10 @@ class StorageSchemaTests(unittest.TestCase):
             {"state": "health_only", "code": "schema_revision_unsupported"},
         )
         check = sqlite3.connect(database)
-        self.assertEqual(check.execute("PRAGMA user_version").fetchone()[0], 2)
+        self.assertEqual(
+            check.execute("PRAGMA user_version").fetchone()[0],
+            SCHEMA_VERSION + 1,
+        )
         self.assertEqual(
             check.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'legacy_marker'"
@@ -149,7 +159,7 @@ class StorageSchemaTests(unittest.TestCase):
         store = SessionStore(self.data)
         store.initialize()
 
-        self.assertEqual(SCHEMA_VERSION, 1)
+        self.assertEqual(SCHEMA_VERSION, 2)
         self.assertEqual(
             store.health(),
             {"state": "health_only", "code": "schema_revision_unsupported"},
@@ -161,6 +171,51 @@ class StorageSchemaTests(unittest.TestCase):
             1,
         )
         check.close()
+
+    def test_revision_one_database_migrates_atomically(self) -> None:
+        database = self.data / DATABASE_NAME
+        finalization_start = SCHEMA_SQL.index(
+            "CREATE TABLE finalization_attempts"
+        )
+        finalization_end = SCHEMA_SQL.index(
+            "CREATE TABLE events", finalization_start
+        )
+        revision_one_sql = (
+            SCHEMA_SQL[:finalization_start]
+            + SCHEMA_SQL[finalization_end:]
+        ).replace("    duration_ms INTEGER,\n", "")
+        connection = sqlite3.connect(database)
+        connection.executescript(revision_one_sql)
+        connection.execute("PRAGMA user_version = 1")
+        connection.commit()
+        connection.close()
+        os.chmod(database, 0o600)
+
+        store = SessionStore(self.data)
+        store.initialize()
+
+        self.assertEqual(store.health(), {"state": "ready"})
+        assert store.connection is not None
+        self.assertEqual(
+            store.connection.execute("PRAGMA user_version").fetchone()[0],
+            SCHEMA_VERSION,
+        )
+        self.assertIsNotNone(
+            store.connection.execute(
+                """
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'finalization_attempts'
+                """
+            ).fetchone()
+        )
+        tool_columns = {
+            row[1]
+            for row in store.connection.execute(
+                "PRAGMA table_info(tool_calls)"
+            )
+        }
+        self.assertIn("duration_ms", tool_columns)
+        store.close()
 
     def test_repositories_share_one_database_manager(self) -> None:
         store = SessionStore(self.data)

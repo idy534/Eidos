@@ -28,6 +28,14 @@ class SessionTitleUpdatedPayload(ClosedModel):
     title: str
 
 
+class SessionTitleGenerationStartedPayload(ClosedModel):
+    pass
+
+
+class SessionTitleGenerationFailedPayload(ClosedModel):
+    reason: str
+
+
 class RunCreatedPayload(ClosedModel):
     run: RunDto
 
@@ -94,6 +102,8 @@ class InputEventPayload(ClosedModel):
 EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.SESSION_CREATED: SessionCreatedPayload,
     EventType.SESSION_TITLE_UPDATED: SessionTitleUpdatedPayload,
+    EventType.SESSION_TITLE_GENERATION_STARTED: SessionTitleGenerationStartedPayload,
+    EventType.SESSION_TITLE_GENERATION_FAILED: SessionTitleGenerationFailedPayload,
     EventType.RUN_CREATED: RunCreatedPayload,
     EventType.RUN_UPDATED: RunUpdatedPayload,
     EventType.RUN_STATUS_CHANGED: RunStatusChangedPayload,
@@ -106,6 +116,7 @@ EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.APPROVAL_STATUS_CHANGED: EntityStatusChangedPayload,
     EventType.TOOL_CALL_STARTED: ToolCallEventPayload,
     EventType.TOOL_CALL_COMPLETED: ToolCallEventPayload,
+    EventType.FINALIZATION_STATUS_CHANGED: EntityStatusChangedPayload,
     EventType.RECONCILIATION_REQUIRED: ReconciliationEventPayload,
     EventType.RECONCILIATION_CLEARED: ReconciliationEventPayload,
     EventType.PLUGIN_IMPORTED: PluginEventPayload,

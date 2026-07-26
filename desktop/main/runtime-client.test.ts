@@ -257,8 +257,18 @@ test("routes runtime notifications during a fake model read loop", async () => {
 
     assert.equal(started.status, "running");
     assert.equal(completed.method, "run/completed");
+    assert.equal(
+      notifications.filter(
+        (notification) => notification.method === "session/titleUpdated",
+      ).length,
+      1,
+    );
     assert.deepEqual(
-      notifications.map((notification) => notification.method),
+      notifications
+        .filter(
+          (notification) => notification.method !== "session/titleUpdated",
+        )
+        .map((notification) => notification.method),
       [
         "run/started",
         "item/started",

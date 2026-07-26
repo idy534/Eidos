@@ -77,8 +77,12 @@ class RunFinalizer:
         cancel: threading.Event,
     ) -> FinalizationOutcome:
         self.state_machine.track(RuntimeState.FINALIZING, stop_reason)
-        finalizing = self.store.begin_finalization_committed(run_id)
-        self.events.publish(finalizing, run=finalizing.value)
+        current_run = self.store.read_run(run_id)
+        started = self.store.begin_finalization_attempt_committed(
+            run_id, model_id=str(current_run["modelId"])
+        )
+        attempt, finalizing_run = started.value
+        self.events.publish(started, run=finalizing_run)
         timed_out = threading.Event()
         request_cancel = _CombinedCancellation(cancel, timed_out)
         timer = threading.Timer(self.timeout_seconds, timed_out.set)
@@ -144,6 +148,9 @@ class RunFinalizer:
                 else None,
                 run_id,
                 stop_reason,
+                attempt_id=str(attempt["id"]),
+                attempt_status=_attempt_status(failure_reason),
+                error_code=failure_reason,
             )
         except InvalidRunStateError:
             current = self.store.read_run(run_id)
@@ -172,3 +179,11 @@ class RunFinalizer:
 def _raise_finalization_cancel(cancel: threading.Event) -> None:
     if cancel.is_set():
         raise RuntimeCancelled
+
+
+def _attempt_status(failure_reason: str | None) -> str:
+    return {
+        None: "completed",
+        "finalization_timeout": "timed_out",
+        "finalization_sensitive_content_rejected": "sensitive_rejected",
+    }.get(failure_reason, "model_failed")

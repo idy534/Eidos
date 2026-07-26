@@ -14,6 +14,16 @@ class EventProjector:
         event_type = event.get("eventType")
         payload = event.get("payload")
         if (
+            event_type == "session.title_updated"
+            and isinstance(payload, dict)
+            and isinstance(payload.get("title"), str)
+            and isinstance(event.get("sessionId"), str)
+        ):
+            return (self._notification("session/titleUpdated", {
+                "sessionId": event["sessionId"],
+                "title": payload["title"],
+            }),)
+        if (
             event_type in {"run.created", "run.status_changed"}
             and run is not None
             and run.get("status") == "running"

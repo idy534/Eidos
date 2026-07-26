@@ -40,6 +40,19 @@ def verify_runtime_invariants(connection: sqlite3.Connection) -> None:
             """,
         ),
         (
+            "terminal_run_has_active_finalization_attempt",
+            """
+            SELECT 1 FROM runs
+            JOIN finalization_attempts
+              ON finalization_attempts.run_id = runs.id
+            WHERE runs.status IN (
+                'succeeded', 'failed', 'stopped', 'canceled', 'interrupted'
+            )
+              AND finalization_attempts.status = 'running'
+            LIMIT 1
+            """,
+        ),
+        (
             "terminal_run_has_pending_approval",
             """
             SELECT 1 FROM runs JOIN approvals ON approvals.run_id = runs.id

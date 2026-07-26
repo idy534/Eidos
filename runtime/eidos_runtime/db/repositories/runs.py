@@ -45,6 +45,24 @@ EMPTY_EXTENSION_SNAPSHOT = {
     "mcpConfigHash": "0" * 64,
 }
 
+
+def _finalization_attempt(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "id": row["id"],
+        "runId": row["run_id"],
+        "stepId": row["step_id"],
+        "status": row["status"],
+        "startedAt": row["started_at"],
+        "completedAt": row["completed_at"],
+        "errorCode": row["error_code"],
+        "errorMessage": row["error_message"],
+        "modelId": row["model_id"],
+        "outputItemId": row["output_item_id"],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+    }
+
+
 class RunRepository(Repository):
     def create_run(
         self,
@@ -282,6 +300,7 @@ class RunRepository(Repository):
                 """
                 SELECT id FROM runs
                 WHERE status = 'queued'
+                  AND cancel_requested_at IS NULL
                   AND NOT EXISTS (
                     SELECT 1 FROM runs WHERE status IN ('running', 'finalizing')
                   )
@@ -503,6 +522,65 @@ class RunRepository(Repository):
             )
         return CommittedMutation(run, (event,))
 
+    def begin_finalization_attempt_committed(
+        self, run_id: str, *, model_id: str
+    ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
+        attempt_id = str(uuid.uuid4())
+        with self.lock, self._connection() as connection:
+            run_row = connection.execute(
+                "SELECT session_id, status FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if run_row is None:
+                raise ResourceNotFoundError("run not found")
+            if run_row["status"] != RunStatus.RUNNING.value:
+                raise InvalidRunStateError("run status changed")
+            now = _now_ms()
+            connection.execute(
+                """
+                INSERT INTO finalization_attempts (
+                    id, run_id, status, started_at, model_id, created_at, updated_at
+                ) VALUES (?, ?, 'running', ?, ?, ?, ?)
+                """,
+                (attempt_id, run_id, now, model_id, now, now),
+            )
+            attempt_event = append_event(
+                connection,
+                EventType.FINALIZATION_STATUS_CHANGED,
+                now,
+                {
+                    "entity_id": attempt_id,
+                    "previous": "created",
+                    "current": "running",
+                },
+                session_id=run_row["session_id"],
+                run_id=run_id,
+            )
+            run, run_event = transition_run(
+                connection,
+                run_id,
+                frozenset({RunStatus.RUNNING}),
+                RunStatus.FINALIZING,
+                "run_limit",
+            )
+            attempt = _finalization_attempt(connection.execute(
+                "SELECT * FROM finalization_attempts WHERE id = ?",
+                (attempt_id,),
+            ).fetchone())
+        return CommittedMutation((attempt, run), (attempt_event, run_event))
+
+    def read_finalization_attempts(
+        self, run_id: str
+    ) -> tuple[dict[str, object], ...]:
+        with self.lock:
+            rows = self._connection().execute(
+                """
+                SELECT * FROM finalization_attempts
+                WHERE run_id = ? ORDER BY creation_seq
+                """,
+                (run_id,),
+            ).fetchall()
+        return tuple(_finalization_attempt(row) for row in rows)
+
     def stop_run(self, run_id: str, reason: str) -> dict[str, object]:
         return self.stop_run_committed(run_id, reason).value
 
@@ -533,6 +611,11 @@ class RunRepository(Repository):
         item_id: str | None,
         run_id: str,
         stop_reason: str,
+        *,
+        attempt_id: str | None = None,
+        attempt_status: str | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
     ) -> CommittedMutation[
         tuple[dict[str, object] | None, dict[str, object]]
     ]:
@@ -546,7 +629,51 @@ class RunRepository(Repository):
                 raise InvalidRunStateError("run status changed")
             item: dict[str, object] | None = None
             item_event: dict[str, object] | None = None
+            attempt_event: dict[str, object] | None = None
             now = _now_ms()
+            if attempt_id is not None:
+                if attempt_status not in {
+                    "completed",
+                    "timed_out",
+                    "model_failed",
+                    "sensitive_rejected",
+                }:
+                    raise ValueError("invalid finalization attempt status")
+                updated = connection.execute(
+                    """
+                    UPDATE finalization_attempts
+                    SET status = ?, completed_at = ?, error_code = ?,
+                        error_message = ?, output_item_id = ?, updated_at = ?
+                    WHERE id = ? AND run_id = ? AND status = 'running'
+                    """,
+                    (
+                        attempt_status,
+                        now,
+                        error_code,
+                        error_message,
+                        item_id,
+                        now,
+                        attempt_id,
+                        run_id,
+                    ),
+                )
+                if updated.rowcount != 1:
+                    raise InvalidRunStateError(
+                        "finalization attempt is not active"
+                    )
+                attempt_event = append_event(
+                    connection,
+                    EventType.FINALIZATION_STATUS_CHANGED,
+                    now,
+                    {
+                        "entity_id": attempt_id,
+                        "previous": "running",
+                        "current": attempt_status,
+                        "reason": error_code,
+                    },
+                    session_id=run_row["session_id"],
+                    run_id=run_id,
+                )
             if item_id is not None:
                 item_row = connection.execute(
                     """
@@ -597,6 +724,7 @@ class RunRepository(Repository):
                 stop_reason,
             )
         events = (
+            *((attempt_event,) if attempt_event is not None else ()),
             *((item_event,) if item_event is not None else ()),
             *segment_events,
             run_event,

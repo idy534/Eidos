@@ -263,6 +263,20 @@ class ToolResultDataDto(ClosedModel):
     )
     hits: list[ToolSearchHitDto] | None = None
     total_matches: StrictInt | None = Field(default=None, alias="totalMatches")
+    command_outcome: StrictStr | None = Field(default=None, alias="commandOutcome")
+    workspace_changed: bool | None = Field(default=None, alias="workspaceChanged")
+    workspace_diff_hash: StrictStr | None = Field(
+        default=None, alias="workspaceDiffHash"
+    )
+    workspace_manifest_complete: bool | None = Field(
+        default=None, alias="workspaceManifestComplete"
+    )
+    workspace_manifest_truncated: bool | None = Field(
+        default=None, alias="workspaceManifestTruncated"
+    )
+    created: list[StrictStr] | None = None
+    modified: list[StrictStr] | None = None
+    deleted: list[StrictStr] | None = None
 
 
 class ToolResultDto(ClosedModel):

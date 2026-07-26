@@ -23,6 +23,7 @@ from eidos_runtime.runtime.contracts import RuntimeCancelled
 from eidos_runtime.runtime.engine import RuntimeEngine
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle
+from eidos_runtime.runtime.tool_execution import active_tool_execution_count
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
 
 
@@ -51,6 +52,12 @@ class RunWorkerState(StrEnum):
     FINISHED = "finished"
 
 
+class RuntimeControlState(StrEnum):
+    RUNNING = "running"
+    RECONFIGURING = "reconfiguring"
+    DRAINING = "draining"
+
+
 @dataclass
 class RunHandle:
     run_id: str
@@ -66,6 +73,14 @@ class PendingApproval:
     run_id: str
     event: threading.Event
     decision: ApprovalDecision | None = None
+
+
+@dataclass
+class ManagedTask:
+    task_id: str
+    kind: str
+    thread: threading.Thread
+    cancellation: threading.Event
 
 
 @dataclass(frozen=True)
@@ -105,10 +120,12 @@ class RunSupervisor:
         self.shutdown_timeout = shutdown_timeout
         self.lock = threading.RLock()
         self._handles: dict[str, RunHandle] = {}
+        self._managed_tasks: dict[str, ManagedTask] = {}
         self._active_slot_run_id: str | None = None
         self.approval_lock = threading.RLock()
         self.pending_approvals: dict[str, PendingApproval] = {}
         self.lifecycle = RuntimeLifecycle.RUNNING
+        self.control_state = RuntimeControlState.RUNNING
         self.events = RuntimeEvents(notify)
 
     def prepare_next(self) -> WorkerStart | None:
@@ -119,7 +136,11 @@ class RunSupervisor:
         ):
             return None
         with self.lock:
-            if self._active_slot_run_id is not None:
+            if (
+                self.lifecycle is not RuntimeLifecycle.RUNNING
+                or self.control_state is not RuntimeControlState.RUNNING
+                or self._active_slot_run_id is not None
+            ):
                 return None
             claimed = self.store.claim_next_run_committed()
             if claimed is None:
@@ -157,11 +178,14 @@ class RunSupervisor:
         self.store.read_run(run_id)
         with self.lock:
             handle = self._handles.get(run_id)
-        if handle is None:
-            return self.store.cancel_run(run_id, operation_id=operation_id)
-        mutation = self.store.request_cancel_committed(run_id)
+            if handle is None:
+                return self.store.cancel_run(run_id, operation_id=operation_id)
+            mutation = self.store.request_cancel_committed(run_id)
+            handle.state = RunWorkerState.CANCEL_REQUESTED
+            handle.cancellation.set()
+            handle.resume.set()
         self.events.publish(mutation, run=mutation.value)
-        self.request_cancel(run_id)
+        self._release_approval_waits(run_id)
         handle.thread.join(timeout=self.cancel_timeout)
         if handle.thread.is_alive():
             failed = self.store.mark_cancel_failed_committed(
@@ -256,6 +280,7 @@ class RunSupervisor:
             }:
                 return
             self.lifecycle = RuntimeLifecycle.DRAINING
+            self.control_state = RuntimeControlState.DRAINING
         run_ids = self.store.nonterminal_run_ids()
         with self.lock:
             handled = frozenset(self._handles)
@@ -275,9 +300,20 @@ class RunSupervisor:
                     pass
         with self.lock:
             active_ids = tuple(self._handles)
+            tasks = tuple(self._managed_tasks.values())
+            for task in tasks:
+                task.cancellation.set()
         self._release_approval_waits()
         self.wait(self.shutdown_timeout)
-        if self.has_active_workers() or self.has_active_model_leases():
+        self.wait_managed_tasks(self.shutdown_timeout)
+        live_threads = self._live_managed_threads()
+        if (
+            self.has_active_workers()
+            or self.has_active_model_leases()
+            or self.has_active_managed_tasks()
+            or active_tool_execution_count()
+            or live_threads
+        ):
             for run_id in active_ids:
                 try:
                     failed = self.store.mark_cancel_failed_committed(
@@ -291,6 +327,12 @@ class RunSupervisor:
                 resources.append("run_handle")
             if self.has_active_model_leases():
                 resources.append("model_lease")
+            if self.has_active_managed_tasks():
+                resources.append("managed_task")
+            if active_tool_execution_count():
+                resources.append("tool_execution")
+            if live_threads:
+                resources.append("managed_thread")
             logger.warning(
                 "Runtime shutdown timed out; active resources: %s",
                 ",".join(resources),
@@ -304,10 +346,7 @@ class RunSupervisor:
             self.lifecycle = RuntimeLifecycle.QUIESCENT
 
     def close(self) -> None:
-        try:
-            self.shutdown()
-        except RuntimeShutdownTimeout:
-            return
+        self.shutdown()
         self.store.close()
         with self.lock:
             self.lifecycle = RuntimeLifecycle.CLOSED
@@ -330,6 +369,98 @@ class RunSupervisor:
         with self.lock:
             handle = self._handles.get(run_id)
             return handle.state if handle is not None else None
+
+    def start_managed_task(
+        self,
+        kind: str,
+        target: Callable[[threading.Event], None],
+    ) -> bool:
+        task_id = str(uuid.uuid4())
+        cancellation = threading.Event()
+
+        def run() -> None:
+            try:
+                target(cancellation)
+            except Exception:
+                logger.exception("Runtime managed task failed: %s", kind)
+            finally:
+                with self.lock:
+                    self._managed_tasks.pop(task_id, None)
+
+        thread = threading.Thread(
+            target=run,
+            name=f"eidos-{kind}-{task_id}",
+            daemon=False,
+        )
+        with self.lock:
+            if (
+                self.lifecycle is not RuntimeLifecycle.RUNNING
+                or self.control_state is not RuntimeControlState.RUNNING
+            ):
+                return False
+            self._managed_tasks[task_id] = ManagedTask(
+                task_id, kind, thread, cancellation
+            )
+            thread.start()
+        return True
+
+    def has_active_managed_tasks(self) -> bool:
+        with self.lock:
+            return any(
+                task.thread.is_alive() for task in self._managed_tasks.values()
+            )
+
+    def wait_managed_tasks(self, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        with self.lock:
+            tasks = tuple(self._managed_tasks.values())
+        for task in tasks:
+            task.thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        return not self.has_active_managed_tasks()
+
+    def begin_reconfiguration(self) -> bool:
+        with self.lock:
+            if (
+                self.lifecycle is not RuntimeLifecycle.RUNNING
+                or self.control_state is not RuntimeControlState.RUNNING
+                or any(
+                    handle.state is not RunWorkerState.FINISHED
+                    or (
+                        handle.model_lease is not None
+                        and not handle.model_lease.closed
+                    )
+                    for handle in self._handles.values()
+                )
+                or any(
+                    task.thread.is_alive()
+                    for task in self._managed_tasks.values()
+                )
+            ):
+                return False
+            self.control_state = RuntimeControlState.RECONFIGURING
+            return True
+
+    def end_reconfiguration(self) -> None:
+        with self.lock:
+            if self.control_state is RuntimeControlState.RECONFIGURING:
+                self.control_state = RuntimeControlState.RUNNING
+
+    @staticmethod
+    def _live_managed_threads() -> tuple[threading.Thread, ...]:
+        current = threading.current_thread()
+        prefixes = (
+            "eidos-mcp-",
+            "eidos-tool-",
+            "eidos-title-",
+            "eidos-finalization-",
+        )
+        return tuple(
+            thread
+            for thread in threading.enumerate()
+            if thread is not current
+            and thread.is_alive()
+            and thread.name.startswith(prefixes)
+        )
 
     def _release_approval_waits(self, run_id: str | None = None) -> None:
         with self.approval_lock:

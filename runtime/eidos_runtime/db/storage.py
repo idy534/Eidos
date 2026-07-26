@@ -141,6 +141,26 @@ class SessionStore:
             operation_id=operation_id,
         )
 
+    def begin_title_generation_committed(
+        self, session_id: str
+    ) -> CommittedMutation[dict[str, object]]:
+        return self._repository(
+            self._sessions
+        ).begin_title_generation_committed(session_id)
+
+    def finish_title_generation_committed(
+        self,
+        session_id: str,
+        title: str,
+        *,
+        failure_reason: str | None = None,
+    ) -> CommittedMutation[dict[str, object]]:
+        return self._repository(
+            self._sessions
+        ).finish_title_generation_committed(
+            session_id, title, failure_reason=failure_reason
+        )
+
     def delete_session(
         self,
         session_id: str,
@@ -561,6 +581,7 @@ class SessionStore:
         tool_status: str = "completed",
         workspace_changed: bool = False,
         diff_hash: str | None = None,
+        duration_ms: int | None = None,
     ) -> CommittedMutation[dict[str, object]]:
         return self._repository(self._execution).complete_tool_item_committed(
             item_id,
@@ -569,6 +590,30 @@ class SessionStore:
             tool_status=tool_status,
             workspace_changed=workspace_changed,
             diff_hash=diff_hash,
+            duration_ms=duration_ms,
+        )
+
+    def complete_tool_item_once_committed(
+        self,
+        item_id: str,
+        result_json: str,
+        *,
+        item_status: str,
+        tool_status: str,
+        workspace_changed: bool = False,
+        diff_hash: str | None = None,
+        duration_ms: int | None = None,
+    ) -> CommittedMutation[dict[str, object]]:
+        return self._repository(
+            self._execution
+        ).complete_tool_item_once_committed(
+            item_id,
+            result_json,
+            item_status=item_status,
+            tool_status=tool_status,
+            workspace_changed=workspace_changed,
+            diff_hash=diff_hash,
+            duration_ms=duration_ms,
         )
 
     def begin_approval(
@@ -671,6 +716,18 @@ class SessionStore:
     ) -> CommittedMutation[dict[str, object]]:
         return self._repository(self._runs).begin_finalization_committed(run_id)
 
+    def begin_finalization_attempt_committed(
+        self, run_id: str, *, model_id: str
+    ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
+        return self._repository(
+            self._runs
+        ).begin_finalization_attempt_committed(run_id, model_id=model_id)
+
+    def read_finalization_attempts(
+        self, run_id: str
+    ) -> tuple[dict[str, object], ...]:
+        return self._repository(self._runs).read_finalization_attempts(run_id)
+
     def stop_run(self, run_id: str, reason: str) -> dict[str, object]:
         return self._repository(self._runs).stop_run(run_id, reason)
 
@@ -684,6 +741,11 @@ class SessionStore:
         item_id: str | None,
         run_id: str,
         stop_reason: str,
+        *,
+        attempt_id: str | None = None,
+        attempt_status: str | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
     ) -> CommittedMutation[
         tuple[dict[str, object] | None, dict[str, object]]
     ]:
@@ -691,6 +753,10 @@ class SessionStore:
             item_id,
             run_id,
             stop_reason,
+            attempt_id=attempt_id,
+            attempt_status=attempt_status,
+            error_code=error_code,
+            error_message=error_message,
         )
 
     def fail_run(self, run_id: str, error_code: str) -> dict[str, object]:

@@ -29,6 +29,10 @@ class ApprovalResult:
     feedback: str | None = None
 
 
+class ApprovalTransportError(RuntimeError):
+    pass
+
+
 class ApprovalOutcome(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
@@ -49,7 +53,10 @@ class ApprovalAdapter:
     def request(self, request: ApprovalRequest, cancel: threading.Event) -> ApprovalResult:
         if self._request is None:
             return ApprovalResult("reject")
-        value = self._request(request.payload, cancel)
+        try:
+            value = self._request(request.payload, cancel)
+        except Exception as error:
+            raise ApprovalTransportError("approval transport failed") from error
         return ApprovalResult(
             str(getattr(value, "decision", "reject")),
             getattr(value, "feedback", None),

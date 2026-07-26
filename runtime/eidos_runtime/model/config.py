@@ -162,6 +162,18 @@ class ModelConfigStore:
             temporary_path.unlink(missing_ok=True)
             raise
 
+    def restore_api_key(self, value: str | None) -> None:
+        if value is not None:
+            self.save_api_key(value)
+            return
+        path = self._path()
+        path.unlink(missing_ok=True)
+        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
     def public_status(self) -> dict[str, object]:
         return {
             "provider": PROVIDER,
