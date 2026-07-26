@@ -7,16 +7,17 @@ import type { RuntimeStatus } from "./contracts.js";
 /**
  * App is the outermost shell that handles the runtime gate.
  *
- * Once the runtime is ready, it renders AppShell which owns all domain logic.
+ * It holds the single authoritative subscription to the Runtime lifecycle.
+ * Once the runtime is ready, it renders AppShell.
  */
 export function App() {
-  const { status } = useRuntimeLifecycle();
+  const runtime = useRuntimeLifecycle();
 
-  if (status.state !== "ready") {
-    return <RuntimeGate status={status} />;
+  if (runtime.status.state !== "ready") {
+    return <RuntimeGate status={runtime.status} />;
   }
 
-  return <AppShell />;
+  return <AppShell runtime={runtime} />;
 }
 
 function RuntimeGate({ status }: { status: RuntimeStatus }) {
