@@ -345,12 +345,17 @@ export function deriveRuntimePresentation(status: RuntimeStatus): RuntimePresent
 }
 
 
-function upsertRun(runs: Run[], incoming: Run): Run[] {
-  const existing = runs.findIndex((run) => run.id === incoming.id);
-  if (existing < 0) {
+export function upsertRun(runs: Run[], incoming: Run): Run[] {
+  const existingIndex = runs.findIndex((run) => run.id === incoming.id);
+  if (existingIndex < 0) {
     return [...runs, incoming];
   }
-  return runs.map((run, index) => index === existing ? incoming : run);
+  const existing = runs[existingIndex];
+  if (existing && incoming.updatedAt < existing.updatedAt) {
+    // Ignore stale incoming run
+    return runs;
+  }
+  return runs.map((run, index) => index === existingIndex ? incoming : run);
 }
 
 function upsertItem(items: Item[], incoming: Item): Item[] {

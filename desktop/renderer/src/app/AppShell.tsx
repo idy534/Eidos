@@ -286,6 +286,7 @@ export function AppShell({ runtime }: AppShellProps) {
       snapshot: sessionState.snapshot,
       selectedModelId: modelState.selectedModelId,
       isStorageReady,
+      onRunProjected: sessionActions.projectRun,
     });
   }
 
@@ -446,6 +447,8 @@ export function AppShell({ runtime }: AppShellProps) {
               selectedModelId={modelState.selectedModelId ?? "deepseek-v4-flash"}
               modelConfigured={modelState.status?.configured ?? false}
               modelLoading={modelState.loading}
+              isSubmitting={runState.isSubmitting}
+              submitKind={runState.submitKind}
               hasRuns={snapshot.runs.length > 0}
               cancelingRunId={runState.cancelingRunId}
               onInputChange={runActions.setInput}
@@ -512,6 +515,8 @@ interface ComposerProps {
   selectedModelId: ModelId;
   modelConfigured: boolean;
   modelLoading: boolean;
+  isSubmitting: boolean;
+  submitKind: "start" | "continue" | undefined;
   hasRuns: boolean;
   cancelingRunId: string | undefined;
   onInputChange: (value: string) => void;
@@ -528,6 +533,8 @@ function Composer({
   selectedModelId,
   modelConfigured,
   modelLoading,
+  isSubmitting,
+  submitKind,
   hasRuns,
   cancelingRunId,
   onInputChange,
@@ -539,7 +546,7 @@ function Composer({
   const isIdle = composerMode === "idle";
   const isContinuing = composerMode === "waiting_user_input";
   const canCancel = (composerMode === "running" || composerMode === "starting") && activeRun?.allowedActions?.includes("cancel");
-  const inputDisabled = modelLoading || !modelConfigured || isReadOnly || composerMode === "finalizing" || composerMode === "waiting_approval";
+  const inputDisabled = modelLoading || isSubmitting || !modelConfigured || isReadOnly || composerMode === "finalizing" || composerMode === "waiting_approval";
 
   const placeholder = modelLoading
     ? "正在加载模型配置…"
@@ -554,15 +561,27 @@ function Composer({
   const showModelSelect = isIdle && !hasRuns;
   const statusLabel = modelLoading
     ? "正在加载模型…"
-    : composerMode === "running" || composerMode === "starting"
-      ? statusText(activeRun?.status ?? "queued")
-      : isContinuing
-        ? "等待你的补充"
-        : composerMode === "waiting_approval"
-          ? "等待批准"
-          : composerMode === "finalizing"
-            ? "正在收尾"
-            : selectedModelId;
+    : submitKind === "continue"
+      ? "继续中…"
+      : composerMode === "running" || composerMode === "starting"
+        ? statusText(activeRun?.status ?? "queued")
+        : isContinuing
+          ? "等待你的补充"
+          : composerMode === "waiting_approval"
+            ? "等待批准"
+            : composerMode === "finalizing"
+              ? "正在收尾"
+              : selectedModelId;
+
+  const buttonLabel = modelLoading
+    ? "加载中…"
+    : submitKind === "continue"
+      ? "继续中…"
+      : submitKind === "start" || composerMode === "starting"
+        ? "启动中…"
+        : isContinuing
+          ? "继续"
+          : "开始";
 
   return (
     <form
@@ -592,7 +611,7 @@ function Composer({
               <select
                 id="run-model"
                 value={selectedModelId}
-                disabled={composerMode !== "idle" || modelLoading}
+                disabled={composerMode !== "idle" || modelLoading || isSubmitting}
                 onChange={(e) => onModelChange(e.target.value as ModelId)}
               >
                 {modelList?.models.map((option) => (
@@ -623,6 +642,7 @@ function Composer({
             className="btn btn--primary btn--medium"
             disabled={
               modelLoading
+              || isSubmitting
               || composerMode === "starting"
               || composerMode === "running"
               || composerMode === "finalizing"
@@ -631,15 +651,9 @@ function Composer({
               || !modelConfigured
               || !input.trim()
             }
-            aria-busy={composerMode === "starting"}
+            aria-busy={isSubmitting || composerMode === "starting"}
           >
-            {modelLoading
-              ? "加载中…"
-              : composerMode === "starting"
-                ? "启动中…"
-                : isContinuing
-                  ? "继续"
-                  : "开始"}
+            {buttonLabel}
           </button>
         )}
       </div>
