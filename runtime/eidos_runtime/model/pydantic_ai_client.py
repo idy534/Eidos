@@ -4,6 +4,7 @@ import asyncio
 from concurrent.futures import Future
 from contextlib import suppress
 from dataclasses import dataclass, replace
+from enum import StrEnum
 import hashlib
 import json
 import threading
@@ -48,7 +49,12 @@ from eidos_runtime.model.client import (
     ModelToolDefinition,
     ModelUsage,
 )
-from eidos_runtime.model.config import MODEL_CATALOG, PROVIDER, ModelProfileSpec
+from eidos_runtime.model.config import (
+    MODEL_CATALOG,
+    PROVIDER,
+    ModelProfileSpec,
+    _validate_key,
+)
 from eidos_runtime.model.prompts import SYSTEM_PROMPT, TITLE_PROMPT
 from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
@@ -284,16 +290,27 @@ class PydanticAIModelClient:
     def close(self) -> None:
         if self._closed:
             return
+        if self._openai_client is not None:
+            self._loop.run(self._openai_client.close())
+        self._loop.close()
         self._closed = True
-        try:
-            if self._openai_client is not None:
-                self._loop.run(self._openai_client.close())
-        finally:
-            self._loop.close()
 
 
 class ModelClientInUseError(RuntimeError):
     pass
+
+
+class ModelFactoryCloseError(RuntimeError):
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+class ModelFactoryState(StrEnum):
+    OPEN = "open"
+    CLOSING = "closing"
+    CLOSED = "closed"
+    FAILED = "failed"
 
 
 class ModelClientLease:
@@ -352,10 +369,10 @@ class ModelClientFactory:
         *,
         resource_registry: ResourceRegistry | None = None,
     ) -> None:
-        self._api_key = api_key
+        self._api_key = _validate_key(api_key)
         self._clients: dict[tuple[str, str], _ClientEntry] = {}
         self._lock = threading.RLock()
-        self._closed = False
+        self._state = ModelFactoryState.OPEN
         self._resources = resource_registry
 
     def client_for(self, model_id: str) -> PydanticAIModelClient:
@@ -382,24 +399,56 @@ class ModelClientFactory:
         with self._lock:
             return sum(entry.lease_count for entry in self._clients.values())
 
+    @property
+    def state(self) -> ModelFactoryState:
+        with self._lock:
+            return self._state
+
     def close(self) -> None:
         with self._lock:
+            if self._state is ModelFactoryState.CLOSED:
+                return
             if any(entry.lease_count for entry in self._clients.values()):
                 raise ModelClientInUseError("model client has active leases")
-            self._closed = True
-            entries = tuple(self._clients.values())
-            for entry in entries:
+            self._state = ModelFactoryState.CLOSING
+            entries = tuple(self._clients.items())
+            for _key, entry in entries:
                 entry.closing = True
-            self._clients.clear()
-        for entry in entries:
-            entry.client.close()
+        failures: list[BaseException] = []
+        for key, entry in entries:
+            try:
+                entry.client.close()
+            except Exception as error:
+                failures.append(error)
+                continue
+            with self._lock:
+                if self._clients.get(key) is entry:
+                    self._clients.pop(key)
+        with self._lock:
+            self._state = (
+                ModelFactoryState.FAILED
+                if failures
+                else ModelFactoryState.CLOSED
+            )
+        if failures:
+            code = (
+                "MODEL_SHUTDOWN_TIMEOUT"
+                if any(
+                    "event loop did not stop" in str(error)
+                    for error in failures
+                )
+                else "MODEL_RECONFIGURATION_FAILED"
+            )
+            raise ModelFactoryCloseError(
+                code
+            ) from failures[0]
 
     def _entry(
         self,
         key: tuple[str, str],
         model_id: str,
     ) -> _ClientEntry:
-        if self._closed:
+        if self._state is not ModelFactoryState.OPEN:
             raise RuntimeError("model client factory is closed")
         entry = self._clients.get(key)
         if entry is None:

@@ -27,6 +27,7 @@ from eidos_runtime.model.pydantic_ai_client import (
     ModelClientFactory,
     ModelClientInUseError,
     ModelClientLease,
+    ModelFactoryCloseError,
 )
 from eidos_runtime.protocol.schemas import JsonRpcRequestDto, JsonRpcResponse
 from eidos_runtime.runtime.supervisor import (
@@ -791,6 +792,7 @@ class RuntimeServer:
         previous_model = self.model
         previous_key: str | None = None
         saved = False
+        previous_closed = False
         candidate: ModelClientFactory | None = None
         try:
             previous_key = self.model_config.api_key()
@@ -798,13 +800,14 @@ class RuntimeServer:
                 params["apiKey"],
                 resource_registry=self.supervisor.resources,
             )
+            if previous_factory is not None:
+                previous_factory.close()
+                previous_closed = True
             self.model_config.save_api_key(params["apiKey"])
             saved = True
             key = self.model_config.api_key()
             if key is None:
                 raise ModelConfigError("model configuration was not saved")
-            if previous_factory is not None:
-                previous_factory.close()
             self.model = None
             self.model_factory = candidate
             candidate = None
@@ -820,18 +823,39 @@ class RuntimeServer:
                 candidate.close()
             self.send(business_error(request_id, "MODEL_CLIENT_IN_USE"))
             return
+        except ModelFactoryCloseError as error:
+            if candidate is not None:
+                candidate.close()
+            self.send(
+                business_error(
+                    request_id, error.code
+                )
+            )
+            return
         except (OSError, ModelConfigError):
             if saved:
                 try:
                     self.model_config.restore_api_key(previous_key)
                 except (OSError, ModelConfigError):
                     logger.exception("Model configuration rollback failed")
-            self.model = previous_model
-            self.model_factory = previous_factory
+            if previous_closed and candidate is not None:
+                self.model = None
+                self.model_factory = candidate
+                candidate = None
+            else:
+                self.model = previous_model
+                self.model_factory = previous_factory
             if candidate is not None:
                 candidate.close()
             logger.exception("Model configuration failed")
-            self.send(business_error(request_id, "INTERNAL_ERROR"))
+            self.send(
+                business_error(
+                    request_id,
+                    "MODEL_CONFIG_COMMIT_FAILED"
+                    if previous_closed
+                    else "MODEL_RECONFIGURATION_FAILED",
+                )
+            )
             return
         finally:
             self.supervisor.end_reconfiguration()
@@ -1136,6 +1160,9 @@ class RuntimeServer:
             self._cleanup_extensions()
             self._close_model_factory()
             self.supervisor.resources.ensure_empty()
+        except ModelFactoryCloseError as error:
+            self.send(business_error(request_id, error.code))
+            return
         except (
             RuntimeShutdownTimeout,
             ModelClientInUseError,
@@ -1194,6 +1221,7 @@ class RuntimeServer:
         except (
             RuntimeShutdownTimeout,
             ModelClientInUseError,
+            ModelFactoryCloseError,
             ResourceRegistryError,
         ):
             raise
