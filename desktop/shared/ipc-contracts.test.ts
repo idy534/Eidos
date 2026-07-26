@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { EidosRuntimeAPI } from "./ipc-api.js";
-import { IPC } from "./ipc-channels.cjs";
+import { IPC } from "./ipc-channels.js";
 import { VALID_MODEL_IDS, MAX_APPROVAL_FEEDBACK_BYTES } from "./constants.js";
 import type { ModelId, RuntimeStatus } from "./domain-contracts.js";
 
