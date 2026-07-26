@@ -22,7 +22,40 @@ import type {
   RuntimeNotification,
   AppShortcut,
 } from "../shared/domain-contracts.js";
-import { IPC } from "../shared/ipc-channels.cjs";
+
+const IPC = {
+  RUNTIME_GET_STATUS: "runtime:get-status",
+  RUNTIME_HEALTH: "runtime:health",
+  RUNTIME_STATUS_EVENT: "runtime:status",
+  RUNTIME_NOTIFICATION_EVENT: "runtime:notification",
+  WORKSPACE_SELECT: "workspace:select",
+  SESSION_LIST: "session:list",
+  SESSION_READ: "session:read",
+  SESSION_CREATE: "session:create",
+  SESSION_RENAME: "session:rename",
+  SESSION_DELETE: "session:delete",
+  EVENT_LIST: "event:list",
+  RUN_START: "run:start",
+  RUN_CANCEL: "run:cancel",
+  RUN_CONTINUE: "run:continue",
+  MODEL_STATUS: "model:status",
+  MODEL_LIST: "model:list",
+  MODEL_CONFIGURE: "model:configure",
+  PLUGIN_LIST: "plugin:list",
+  PLUGIN_IMPORT: "plugin:import",
+  PLUGIN_SET_ENABLED: "plugin:set-enabled",
+  PLUGIN_REMOVE: "plugin:remove",
+  SKILL_LIST: "skill:list",
+  MCP_LIST: "mcp:list",
+  MCP_SET_ENABLED: "mcp:set-enabled",
+  EXTENSION_READ: "extension:read",
+  EXTENSION_READ_EVENTS: "extension:read-events",
+  APPROVAL_LIST: "approval:list",
+  APPROVAL_RESPOND: "approval:respond",
+  APPROVAL_REQUESTED_EVENT: "approval:requested",
+  APP_NEW_TASK: "app:new-task",
+  APP_OPEN_WORKSPACE: "app:open-workspace",
+} as const;
 
 const api: EidosRuntimeAPI = {
   // Runtime status
