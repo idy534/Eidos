@@ -6,8 +6,12 @@ from eidos_runtime.db.repositories.sessions import SessionRepository
 
 __all__ = [
     "ContextRepository",
+    "AsyncOperationRepository",
     "ExecutionRepository",
     "ExtensionRepository",
     "RunRepository",
     "SessionRepository",
 ]
+from eidos_runtime.db.repositories.async_operations import (
+    AsyncOperationRepository,
+)

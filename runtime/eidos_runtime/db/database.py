@@ -21,6 +21,7 @@ from eidos_runtime.db.errors import (
 from eidos_runtime.db.schema import (
     SCHEMA_SQL,
     SCHEMA_V1_TO_V2_SQL,
+    SCHEMA_V2_TO_V3_SQL,
     SCHEMA_VERSION,
 )
 
@@ -95,7 +96,7 @@ class Database:
             tables = _table_names(connection)
             revision = connection.execute("PRAGMA user_version").fetchone()[0]
             if (
-                (tables and revision not in {1, SCHEMA_VERSION})
+                (tables and revision not in {1, 2, SCHEMA_VERSION})
                 or (not tables and revision != 0)
             ):
                 raise StorageError("schema_revision_unsupported")
@@ -112,6 +113,13 @@ class Database:
                 connection.executescript(
                     "BEGIN IMMEDIATE;\n"
                     + SCHEMA_V1_TO_V2_SQL
+                    + "\nPRAGMA user_version = 2;\nCOMMIT;"
+                )
+                revision = 2
+            if tables and revision == 2:
+                connection.executescript(
+                    "BEGIN IMMEDIATE;\n"
+                    + SCHEMA_V2_TO_V3_SQL
                     + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
                 )
             _verify_integrity(connection)

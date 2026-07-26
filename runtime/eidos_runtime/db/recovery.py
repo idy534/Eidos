@@ -21,6 +21,16 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
     """Recover abandoned persisted facts without consulting in-memory phases."""
     now = _now_ms()
     connection.execute(
+        """
+        UPDATE async_operations
+        SET status = 'interrupted',
+            error_code = 'ASYNC_OPERATION_INTERRUPTED',
+            completed_at = ?
+        WHERE status IN ('accepted', 'running')
+        """,
+        (now,),
+    )
+    connection.execute(
         "UPDATE durable_intents SET status = 'interrupted' WHERE status = 'running'"
     )
     reconciliation_runs = connection.execute(

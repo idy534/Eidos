@@ -31,6 +31,7 @@ EXPECTED_TABLES = {
     "mcp_server_states",
     "compact_summaries",
     "input_mailbox",
+    "async_operations",
 }
 
 EXPECTED_COLUMNS = {
@@ -101,6 +102,7 @@ class StorageSchemaTests(unittest.TestCase):
                 "one_running_step_per_run",
                 "one_running_attempt_per_step",
                 "one_running_finalization_attempt_per_run",
+                "one_running_async_operation_per_operation_id",
             },
         )
         for table, expected in EXPECTED_COLUMNS.items():
@@ -159,7 +161,7 @@ class StorageSchemaTests(unittest.TestCase):
         store = SessionStore(self.data)
         store.initialize()
 
-        self.assertEqual(SCHEMA_VERSION, 2)
+        self.assertEqual(SCHEMA_VERSION, 3)
         self.assertEqual(
             store.health(),
             {"state": "health_only", "code": "schema_revision_unsupported"},

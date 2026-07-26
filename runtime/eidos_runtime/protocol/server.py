@@ -887,48 +887,98 @@ class RuntimeServer:
             self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
             return
         operation_request = {"sourcePath": params["sourcePath"]}
-        if self._extension_replay(
-            request_id, params.get("operationId"), "plugin/import", operation_request
-        ):
+        operation_key = (
+            str(params["operationId"])
+            if isinstance(params.get("operationId"), str)
+            else str(uuid.uuid4())
+        )
+        try:
+            operation, created = self.store.accept_async_operation(
+                request_id=request_id,
+                operation_id=operation_key,
+                scope="plugin/import",
+                request=operation_request,
+            )
+        except OperationConflictError:
+            self.send(business_error(request_id, "OPERATION_ID_REUSED"))
+            return
+        if not created:
+            if operation.status == "completed" and operation.result is not None:
+                self.send(response(request_id, operation.result))
+            elif operation.status in {"accepted", "running"}:
+                self.send(
+                    business_error(request_id, "OPERATION_IN_PROGRESS")
+                )
+            else:
+                self.send(
+                    business_error(
+                        request_id,
+                        operation.error_code
+                        or (
+                            "ASYNC_OPERATION_INTERRUPTED"
+                            if operation.status == "interrupted"
+                            else "ASYNC_OPERATION_CANCELED"
+                        ),
+                    )
+                )
             return
         scheduled = self.supervisor.start_managed_task(
             "plugin-import",
             lambda cancel: self._import_plugin_task(
-                request_id, dict(params), operation_request, cancel
+                request_id, dict(params), operation.id, cancel
             ),
+            operation_id=operation.id,
         )
         if not scheduled:
+            self.store.cancel_async_operation(operation.id)
             self.send(business_error(request_id, "RUNTIME_DRAINING"))
 
     def _import_plugin_task(
         self,
         request_id: str,
         params: dict[str, object],
-        operation_request: dict[str, object],
+        async_operation_id: str,
         cancel: threading.Event,
     ) -> None:
         if cancel.is_set() or self.plugins is None:
+            self.store.cancel_async_operation(async_operation_id)
+            self.send(
+                business_error(request_id, "ASYNC_OPERATION_CANCELED")
+            )
             return
+        self.store.start_async_operation(async_operation_id)
         try:
             plugin = self.plugins.import_directory(Path(params["sourcePath"]))
         except PluginImportError as error:
             if cancel.is_set():
+                self.store.cancel_async_operation(async_operation_id)
+                self.send(
+                    business_error(request_id, "ASYNC_OPERATION_CANCELED")
+                )
                 return
             code = {
                 "plugin_version_conflict": "PLUGIN_VERSION_CONFLICT",
                 "plugin_id_conflict": "PLUGIN_ID_CONFLICT",
             }.get(str(error), "PLUGIN_IMPORT_REJECTED")
+            self.store.fail_async_operation(async_operation_id, code)
             self.send(business_error(request_id, code))
             return
         except (OSError, StorageError):
-            if not cancel.is_set():
-                self.send(business_error(request_id, "PLUGIN_IMPORT_FAILED"))
+            code = (
+                "ASYNC_OPERATION_CANCELED"
+                if cancel.is_set()
+                else "PLUGIN_IMPORT_FAILED"
+            )
+            if cancel.is_set():
+                self.store.cancel_async_operation(async_operation_id)
+            else:
+                self.store.fail_async_operation(
+                    async_operation_id, code
+                )
+            self.send(business_error(request_id, code))
             return
-        plugin = self._record_extension_operation(
-            params.get("operationId"), "plugin/import", operation_request, plugin
-        )
-        if not cancel.is_set():
-            self.send(response(request_id, plugin))
+        self.store.complete_async_operation(async_operation_id, plugin)
+        self.send(response(request_id, plugin))
 
     def set_plugin_enabled(self, request_id: str, params: object) -> None:
         if (
@@ -1159,6 +1209,7 @@ class RuntimeServer:
             self.supervisor.shutdown()
             self._cleanup_extensions()
             self._close_model_factory()
+            self.store.cancel_active_async_operations()
             self.supervisor.resources.ensure_empty()
         except ModelFactoryCloseError as error:
             self.send(business_error(request_id, error.code))
@@ -1217,6 +1268,7 @@ class RuntimeServer:
             self.supervisor.shutdown()
             self._cleanup_extensions()
             self._close_model_factory()
+            self.store.cancel_active_async_operations()
             self.supervisor.resources.ensure_empty()
         except (
             RuntimeShutdownTimeout,
@@ -1249,20 +1301,44 @@ class RuntimeServer:
     def _schedule_title_generation(
         self, session_id: str, user_input: str, model_id: str
     ) -> None:
-        self.supervisor.start_managed_task(
+        operation, created = self.store.accept_async_operation(
+            request_id=None,
+            operation_id=f"title:{session_id}",
+            scope="session/title",
+            request={
+                "sessionId": session_id,
+                "userInput": user_input,
+                "modelId": model_id,
+            },
+        )
+        if not created:
+            return
+        scheduled = self.supervisor.start_managed_task(
             "title",
             lambda cancel: self._generate_title(
-                session_id, user_input, model_id, cancel
+                session_id,
+                user_input,
+                model_id,
+                operation.id,
+                cancel,
             ),
+            operation_id=operation.id,
         )
+        if not scheduled:
+            self.store.cancel_async_operation(operation.id)
 
     def _generate_title(
         self,
         session_id: str,
         user_input: str,
         model_id: str,
+        async_operation_id: str,
         cancel: threading.Event,
     ) -> None:
+        if cancel.is_set():
+            self.store.cancel_async_operation(async_operation_id)
+            return
+        self.store.start_async_operation(async_operation_id)
         started = self.store.begin_title_generation_committed(session_id)
         self.supervisor.events.publish(started)
         lease: ModelClientLease | None = None
@@ -1283,6 +1359,7 @@ class RuntimeServer:
                 title = clean_session_title(self._scan_text(title))
         except Exception as error:
             if cancel.is_set():
+                self.store.cancel_async_operation(async_operation_id)
                 return
             failure_reason = (
                 "title_generation_timeout"
@@ -1296,12 +1373,21 @@ class RuntimeServer:
             if lease is not None:
                 lease.close()
         if cancel.is_set():
+            self.store.cancel_async_operation(async_operation_id)
             return
         title = title or clean_session_title(user_input) or "新任务"
         completed = self.store.finish_title_generation_committed(
             session_id, title, failure_reason=failure_reason
         )
         self.supervisor.events.publish(completed)
+        self.store.complete_async_operation(
+            async_operation_id,
+            {
+                "sessionId": session_id,
+                "title": title,
+                "failureReason": failure_reason,
+            },
+        )
 
     def _close_model_factory(self) -> None:
         factory = self.model_factory

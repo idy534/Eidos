@@ -393,6 +393,8 @@ class RunSupervisor:
         self,
         kind: str,
         target: Callable[[threading.Event], None],
+        *,
+        operation_id: str | None = None,
     ) -> bool:
         task_id = str(uuid.uuid4())
         cancellation = threading.Event()
@@ -403,6 +405,8 @@ class RunSupervisor:
             except Exception:
                 logger.exception("Runtime managed task failed: %s", kind)
             finally:
+                if async_resource is not None:
+                    async_resource.close()
                 resource.close()
                 with self.lock:
                     self._managed_tasks.pop(task_id, None)
@@ -417,11 +421,22 @@ class RunSupervisor:
             owner_id=task_id,
             cancel=cancellation.set,
         )
+        async_resource = (
+            self.resources.register(
+                RuntimeResourceKind.ASYNC_REQUEST,
+                owner_id=operation_id,
+                cancel=cancellation.set,
+            )
+            if operation_id is not None
+            else None
+        )
         with self.lock:
             if (
                 self.lifecycle is not RuntimeLifecycle.RUNNING
                 or self.control_state is not RuntimeControlState.RUNNING
             ):
+                if async_resource is not None:
+                    async_resource.close()
                 resource.close()
                 return False
             self._managed_tasks[task_id] = ManagedTask(
@@ -429,6 +444,8 @@ class RunSupervisor:
             )
             thread.start()
             resource.start()
+            if async_resource is not None:
+                async_resource.start()
         return True
 
     def has_active_managed_tasks(self) -> bool:
