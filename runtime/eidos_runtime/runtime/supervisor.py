@@ -158,7 +158,10 @@ class RunSupervisor:
             run_id = str(claimed.value["id"])
             handle = self._handles.get(run_id)
             if handle is not None:
-                if handle.state is not RunWorkerState.WAITING_SLOT:
+                if handle.state not in {
+                    RunWorkerState.WAITING_APPROVAL,
+                    RunWorkerState.WAITING_SLOT,
+                }:
                     raise RuntimeError("run already has a worker")
                 self._active_slot_run_id = run_id
                 handle.state = RunWorkerState.RUNNING
@@ -677,6 +680,9 @@ class RunSupervisor:
             handle = self._handles.get(run_id)
             if handle is None:
                 return False
+            if self._active_slot_run_id == run_id:
+                handle.state = RunWorkerState.RUNNING
+                return True
             handle.state = RunWorkerState.WAITING_SLOT
             handle.resume.clear()
         self.schedule_next()
