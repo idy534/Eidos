@@ -225,6 +225,17 @@ class ShellToolHandler:
             },
         )
         workspace_diff = None
+        delta_sequence = 0
+
+        def stream_safe_output(text: str) -> None:
+            nonlocal delta_sequence
+            if cancel.is_set():
+                return
+            delta_sequence += 1
+            mutation = self.dependencies.store.append_item_deltas_committed(
+                str(item["id"]), (text,), delta_sequence
+            )
+            self.dependencies.events.publish(mutation, item=mutation.value)
 
         def execute_shell() -> dict[str, object]:
             nonlocal workspace_diff
@@ -243,8 +254,20 @@ class ShellToolHandler:
                     "Shell workspace changed after approval",
                 )
             output_stream = StreamingSensitiveScanner(
-                self.dependencies.sensitive
+                self.dependencies.sensitive,
+                on_safe_text=stream_safe_output,
             )
+            output_scan_failed = False
+
+            def scan_shell_output(text: str) -> None:
+                nonlocal output_scan_failed
+                if output_scan_failed:
+                    return
+                try:
+                    output_stream.feed(text)
+                except SensitiveScanError:
+                    output_scan_failed = True
+
             manifest_before = (
                 self.dependencies.dispatcher.workspace_index.manifest()
             )
@@ -254,7 +277,7 @@ class ShellToolHandler:
                 approved_cwd,
                 timeout,
                 cancel,
-                output_stream.feed,
+                scan_shell_output,
                 self.dependencies.resources,
                 str(item["id"]),
             )
@@ -275,25 +298,17 @@ class ShellToolHandler:
                 call.name, attach_workspace_diff(raw_result, workspace_diff)
             )
             try:
-                safe_output = output_stream.finish().text
+                if output_scan_failed:
+                    raise SensitiveScanError("shell output scan failed")
+                output_stream.finish()
                 result = safe_tool_result(
                     self.dependencies.sensitive, call.name, result
                 )
             except SensitiveScanError:
-                safe_output = ""
                 result = tool_error(
                     call.name,
                     "sensitive_content_rejected",
                     "Shell output was withheld",
-                )
-            if safe_output and not cancel.is_set():
-                mutation = (
-                    self.dependencies.store.append_item_deltas_committed(
-                        str(item["id"]), (safe_output,), 1
-                    )
-                )
-                self.dependencies.events.publish(
-                    mutation, item=mutation.value
                 )
             return result
 

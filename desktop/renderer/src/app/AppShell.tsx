@@ -94,6 +94,11 @@ export function AppShell({ runtime }: AppShellProps) {
           approvalActions.clearApprovalsForRun(run.id);
           void sessionActions.refreshCompletedSession(notification.params.sessionId);
         }
+      } else if (
+        notification.method === "approval/resolved"
+        || notification.method === "approval/canceled"
+      ) {
+        approvalActions.clearApprovalsForRun(notification.params.runId);
       }
       sessionActions.setSnapshot((prev) => applyNotification(prev, notification));
     });

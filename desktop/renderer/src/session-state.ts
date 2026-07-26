@@ -155,6 +155,16 @@ export function applyNotification(
         : item),
     };
   }
+  if (
+    notification.method === "approval/requested"
+    || notification.method === "approval/resolved"
+    || notification.method === "approval/canceled"
+  ) {
+    return snapshot;
+  }
+  if (!("item" in notification.params)) {
+    return snapshot;
+  }
   const incoming = notification.params.item;
   const existing = snapshot.items.find((item) => item.id === incoming.id);
   let merged: Item = existing?.content !== undefined && incoming.content === undefined

@@ -430,8 +430,20 @@ class RuntimeHardeningTests(unittest.TestCase):
             )
 
         self.assertEqual(
-            [message["params"]["run"]["status"] for message in notifications],
+            [
+                message["params"]["run"]["status"]
+                for message in notifications
+                if message["method"].startswith("run/")
+            ],
             ["waiting_approval"],
+        )
+        self.assertEqual(
+            [
+                message["method"]
+                for message in notifications
+                if message["method"].startswith("approval/")
+            ],
+            ["approval/requested"],
         )
 
     def test_unexpected_state_conflict_fails_run_without_renderer_detail(self) -> None:

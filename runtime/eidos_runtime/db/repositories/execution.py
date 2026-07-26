@@ -983,7 +983,8 @@ class ExecutionRepository(Repository):
         with self.lock, self._connection() as connection:
             row = connection.execute(
                 """
-                SELECT items.run_id, tool_calls.id AS tool_call_id,
+                SELECT items.run_id, items.session_id,
+                       tool_calls.id AS tool_call_id,
                        tool_calls.arguments_json
                 FROM items JOIN tool_calls ON tool_calls.item_id = items.id
                 WHERE items.id = ? AND items.status = 'in_progress'
@@ -1032,6 +1033,7 @@ class ExecutionRepository(Repository):
                     "entity_id": approval_id, "previous": "created",
                     "current": "pending",
                 },
+                session_id=row["session_id"],
                 run_id=row["run_id"],
             )
         return CommittedMutation(

@@ -94,6 +94,42 @@ class RuntimeStateAuthorityTests(unittest.TestCase):
             for event in listed["items"]
         ))
 
+    def test_approval_lifecycle_has_explicit_protocol_notifications(self) -> None:
+        projector = EventProjector()
+        run, _ = self.store.create_run(self.session["id"], "approval")
+        item = self.store.create_tool_item(
+            run["id"], 1, 0, "provider-approval", "write_file", "{}"
+        )
+        requested = self.store.begin_approval_committed(item["id"], "", None)
+        requested_event = next(
+            event for event in requested.events
+            if event["eventType"] == "approval.status_changed"
+        )
+        requested_notification = projector.project(requested_event)[0]
+        self.assertEqual(
+            requested_notification["params"]["sessionId"],
+            self.session["id"],
+        )
+
+        methods = [
+            projector.project({
+                "eventType": "approval.status_changed",
+                "sessionId": self.session["id"],
+                "runId": "run",
+                "payload": {
+                    "entity_id": "approval",
+                    "previous": "created",
+                    "current": status,
+                },
+            })[0]["method"]
+            for status in ("pending", "approved", "canceled")
+        ]
+
+        self.assertEqual(
+            methods,
+            ["approval/requested", "approval/resolved", "approval/canceled"],
+        )
+
     def test_persisted_run_status_wins_over_runtime_phase_tracker(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "pause")
         tracker = RuntimePhaseTracker(state=RuntimeState.CANCELED)
