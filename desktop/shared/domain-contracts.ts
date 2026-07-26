@@ -1,4 +1,5 @@
 import type { ModelId } from "./constants.js";
+import { IPC } from "./ipc-channels.js";
 
 export type { ModelId };
 
@@ -281,4 +282,4 @@ export type RuntimeNotification =
       params: { sessionId: string; runId: string; itemId: string; sequence: number; delta: string };
     };
 
-export type AppShortcut = "app:new-task" | "app:open-workspace";
+export type AppShortcut = typeof IPC.APP_NEW_TASK | typeof IPC.APP_OPEN_WORKSPACE;

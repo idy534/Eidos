@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { ModelId, ModelListResult, ModelOption, ModelStatus } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
 
@@ -27,10 +27,10 @@ export function resolveSelectedModel(
   list: ModelListResult | undefined,
   currentSessionModelId?: ModelId,
   currentSelectedModelId?: ModelId,
-): { selectedModelId: ModelId; error?: string } {
+): { selectedModelId?: ModelId | undefined; error?: string | undefined } {
   if (!list || !Array.isArray(list.models) || list.models.length === 0) {
     return {
-      selectedModelId: "deepseek-v4-flash",
+      selectedModelId: undefined,
       error: "Runtime returned invalid or empty model list",
     };
   }
@@ -63,9 +63,9 @@ export function resolveSelectedModel(
     return { selectedModelId: firstSelectable.id };
   }
 
-  // 5. Hardcoded fallback only when Runtime response is invalid / no selectable models
+  // 5. No selectable model available from Runtime
   return {
-    selectedModelId: "deepseek-v4-flash",
+    selectedModelId: undefined,
     error: "No selectable model available from Runtime",
   };
 }
@@ -78,6 +78,12 @@ export function useModelController(): [ModelControllerState, ModelControllerActi
   const [configuring, setConfiguring] = useState<boolean>(false);
   const [error, setError] = useState<string | undefined>(undefined);
 
+  const configuringRef = useRef(false);
+  const selectedModelIdRef = useRef<ModelId | undefined>(selectedModelId);
+  selectedModelIdRef.current = selectedModelId;
+  const listRef = useRef<ModelListResult | undefined>(list);
+  listRef.current = list;
+
   const initialize = useCallback((
     newStatus: ModelStatus,
     newList: ModelListResult,
@@ -88,7 +94,7 @@ export function useModelController(): [ModelControllerState, ModelControllerActi
     const { selectedModelId: computed, error: selectionError } = resolveSelectedModel(
       newList,
       currentSessionModelId,
-      selectedModelId,
+      selectedModelIdRef.current,
     );
     setSelectedModelId(computed);
     if (selectionError) {
@@ -96,7 +102,7 @@ export function useModelController(): [ModelControllerState, ModelControllerActi
     } else {
       setError(undefined);
     }
-  }, [selectedModelId]);
+  }, []);
 
   const load = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -111,7 +117,7 @@ export function useModelController(): [ModelControllerState, ModelControllerActi
       const { selectedModelId: computed, error: selectionError } = resolveSelectedModel(
         fetchedList,
         undefined,
-        selectedModelId,
+        selectedModelIdRef.current,
       );
       setSelectedModelId(computed);
       if (selectionError) {
@@ -123,9 +129,11 @@ export function useModelController(): [ModelControllerState, ModelControllerActi
     } finally {
       setLoading(false);
     }
-  }, [selectedModelId]);
+  }, []);
 
   const configure = useCallback(async (apiKey: string): Promise<void> => {
+    if (configuringRef.current) return;
+    configuringRef.current = true;
     setConfiguring(true);
     setError(undefined);
     try {
@@ -136,7 +144,7 @@ export function useModelController(): [ModelControllerState, ModelControllerActi
       const { selectedModelId: computed, error: selectionError } = resolveSelectedModel(
         updatedList,
         undefined,
-        selectedModelId,
+        selectedModelIdRef.current,
       );
       setSelectedModelId(computed);
       if (selectionError) {
@@ -147,12 +155,22 @@ export function useModelController(): [ModelControllerState, ModelControllerActi
       setError(userFacingError(cause));
       throw cause;
     } finally {
+      configuringRef.current = false;
       setConfiguring(false);
     }
-  }, [selectedModelId]);
+  }, []);
 
   const selectModel = useCallback((modelId: ModelId): void => {
+    const currentList = listRef.current;
+    if (!currentList || !Array.isArray(currentList.models)) return;
+    const target = currentList.models.find((m) => m.id === modelId);
+    if (!target || !target.selectable) {
+      setError(`Model ${modelId} is not selectable`);
+      return;
+    }
+    setError(undefined);
     setSelectedModelId(modelId);
+    selectedModelIdRef.current = modelId;
   }, []);
 
   const clearError = useCallback((): void => {

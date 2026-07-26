@@ -113,7 +113,7 @@ void test("Defensive fallback when no model is selectable produces a diagnostic 
   };
 
   const { selectedModelId, error } = resolveSelectedModel(listAllDisabled);
-  assert.equal(selectedModelId, "deepseek-v4-flash");
+  assert.equal(selectedModelId, undefined);
   assert.equal(error, "No selectable model available from Runtime");
 });
 

@@ -12,13 +12,57 @@ import type { AppShortcut, RuntimeStatus } from "../shared/index.js";
 import { IPC, VALID_MODEL_IDS, MAX_APPROVAL_FEEDBACK_BYTES } from "../shared/index.js";
 
 
+import { redactLogLine } from "./log-redaction.js";
+import { shutdownRuntime, type ShutdownResult } from "./runtime-shutdown.js";
+
 // ---------------------------------------------------------------------------
 // Logging helpers — never log API keys, full prompts, or sensitive env vars
 // ---------------------------------------------------------------------------
 
+const SENSITIVE_META_KEYS = [
+  "prompt",
+  "input",
+  "content",
+  "body",
+  "feedback",
+  "arguments",
+  "argumentsjson",
+  "resultjson",
+  "command",
+  "environment",
+  "env",
+  "apikey",
+  "api_key",
+  "authorization",
+  "cookie",
+  "token",
+  "secret",
+  "password",
+  "credential",
+];
+
+export function sanitizeLogMeta(meta?: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!meta) return undefined;
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(meta)) {
+    const lowerKey = key.toLowerCase();
+    const isSensitive = SENSITIVE_META_KEYS.some((sensitive) => lowerKey.includes(sensitive));
+    if (isSensitive) {
+      sanitized[key] = "[REDACTED]";
+    } else if (typeof value === "string") {
+      sanitized[key] = redactLogLine(value);
+    } else {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
 function log(level: "info" | "warn" | "error", context: string, message: string, meta?: Record<string, unknown>): void {
   const ts = new Date().toISOString();
-  const entry = { ts, level, ctx: context, msg: message, ...meta };
+  const safeMessage = redactLogLine(message);
+  const safeMeta = sanitizeLogMeta(meta);
+  const entry = { ts, level, ctx: context, msg: safeMessage, ...safeMeta };
   if (level === "error") {
     console.error(JSON.stringify(entry));
   } else {
@@ -200,12 +244,12 @@ function buildMenu(): void {
         {
           label: "新建任务",
           accelerator: "CmdOrCtrl+N",
-          click: () => { void dispatchAppCommand("app:new-task"); },
+          click: () => { void dispatchAppCommand(IPC.APP_NEW_TASK); },
         },
         {
-          label: "打开工作空间",
+          label: "打开工作空间...",
           accelerator: "CmdOrCtrl+O",
-          click: () => { void dispatchAppCommand("app:open-workspace"); },
+          click: () => { void dispatchAppCommand(IPC.APP_OPEN_WORKSPACE); },
         },
         { type: "separator" },
         isMac ? { role: "close" as const } : { role: "quit" as const },
@@ -279,7 +323,8 @@ async function startRuntime(): Promise<void> {
     onApprovalRequest: requestApproval,
     onStderr: (line) => {
       // Forward stderr but never log API keys or sensitive env vars
-      console.error(`[runtime] ${line}`);
+      const safeLine = redactLogLine(line);
+      console.error(`[runtime] ${safeLine}`);
     },
   });
   runtimeClient = client;
@@ -311,8 +356,10 @@ async function startRuntime(): Promise<void> {
       storageHealth,
     });
   } catch (error) {
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const safeMessage = redactLogLine(rawMessage);
     log("error", "runtime", "Runtime initialization failed", {
-      message: error instanceof Error ? error.message : String(error),
+      message: safeMessage,
     });
     publishStatus({
       state: "error",
@@ -498,29 +545,26 @@ function activeRunCount(): number {
   return activeRunProjection.size;
 }
 
-async function performShutdown(client: RuntimeClient): Promise<void> {
-  const SHUTDOWN_TIMEOUT_MS = 8_000;
-  log("info", "quit", "Beginning Runtime shutdown");
-  const forceStop = new Promise<void>((resolve) => {
-    setTimeout(() => {
-      log("warn", "quit", "Shutdown timeout reached — forcing terminate");
-      client.terminate();
-      resolve();
-    }, SHUTDOWN_TIMEOUT_MS);
-  });
-  const gracefulStop = client
-    .shutdown()
-    .then(() => client.waitForExit())
-    .then(() => undefined)
-    .catch((err: unknown) => {
-      log("error", "quit", "Graceful shutdown failed", {
-        message: err instanceof Error ? err.message : String(err),
-      });
-      client.terminate();
-    });
+let runtimeTerminated = false;
 
-  await Promise.race([gracefulStop, forceStop]);
-  log("info", "quit", "Runtime shutdown complete");
+function terminateRuntimeOnce(): void {
+  if (runtimeTerminated) return;
+  runtimeTerminated = true;
+  runtimeClient?.terminate();
+}
+
+async function performShutdown(client: RuntimeClient): Promise<ShutdownResult> {
+  return shutdownRuntime(
+    {
+      shutdown: () => client.shutdown(),
+      waitForExit: () => client.waitForExit(),
+      terminate: () => terminateRuntimeOnce(),
+    },
+    {
+      timeoutMs: 8_000,
+      onDiagnostic: (level, message) => log(level, "quit", message),
+    },
+  );
 }
 
 app.on("before-quit", (event) => {
@@ -605,7 +649,7 @@ app.on("before-quit", (event) => {
   });
 });
 
-app.on("will-quit", () => runtimeClient?.terminate());
+app.on("will-quit", () => terminateRuntimeOnce());
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

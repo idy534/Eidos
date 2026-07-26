@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "./Button.js";
 import type { ApprovalRequest } from "../contracts.js";
-
-const MAX_FEEDBACK_BYTES = 2_000;
+import { MAX_APPROVAL_FEEDBACK_BYTES } from "../../../shared/constants.js";
 
 interface ApprovalFeedbackDialogProps {
   /** The approval being rejected. null means the dialog is closed. */
@@ -24,9 +23,9 @@ function utf8ByteLength(str: string): number {
  *
  * Behaviour:
  * - Feedback is optional (may submit with empty string).
- * - Validate that feedback does not exceed 2000 UTF-8 bytes.
+ * - Validate that feedback does not exceed MAX_APPROVAL_FEEDBACK_BYTES UTF-8 bytes.
  * - Submit button is disabled when over the byte limit.
- * - Escape cancels the dialog.
+ * - Escape cancels the dialog when not busy.
  * - Focus is trapped inside the dialog.
  * - On open, focus goes to the textarea.
  * - On close, focus returns to the trigger element.
@@ -45,7 +44,7 @@ export function ApprovalFeedbackDialog({
   const triggerRef = useRef<HTMLElement | null>(null);
 
   const byteLength = utf8ByteLength(feedback);
-  const overLimit = byteLength > MAX_FEEDBACK_BYTES;
+  const overLimit = byteLength > MAX_APPROVAL_FEEDBACK_BYTES;
   const isOpen = approval !== null;
 
   // Store trigger, focus textarea on open, restore on close
@@ -60,18 +59,20 @@ export function ApprovalFeedbackDialog({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  // Escape closes the dialog
+  // Escape closes the dialog when not busy
   useEffect(() => {
     if (!isOpen) return;
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
-        onCancel();
+        if (!busy) {
+          onCancel();
+        }
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onCancel]);
+  }, [isOpen, busy, onCancel]);
 
   // Focus trap
   useEffect(() => {
@@ -102,11 +103,11 @@ export function ApprovalFeedbackDialog({
   if (!isOpen || !approval) return null;
 
   return (
-    <div className="modal-backdrop" onClick={onCancel}>
+    <div className="modal-backdrop" onClick={busy ? undefined : onCancel}>
       <div
         ref={dialogRef}
         className="modal-dialog approval-feedback-dialog"
-        role="alertdialog"
+        role="dialog"
         aria-modal="true"
         aria-labelledby="feedback-dialog-title"
         aria-describedby="feedback-dialog-desc"
@@ -133,11 +134,11 @@ export function ApprovalFeedbackDialog({
           <div className="approval-feedback-meta">
             {overLimit ? (
               <span className="approval-feedback-overcount" role="alert">
-                超出限制 {byteLength - MAX_FEEDBACK_BYTES} 字节
+                超出限制 {byteLength - MAX_APPROVAL_FEEDBACK_BYTES} 字节
               </span>
             ) : (
               <span className="approval-feedback-remaining">
-                {MAX_FEEDBACK_BYTES - byteLength} 字节剩余
+                {MAX_APPROVAL_FEEDBACK_BYTES - byteLength} 字节剩余
               </span>
             )}
           </div>
