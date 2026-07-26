@@ -42,7 +42,6 @@ from eidos_runtime.sandbox.sensitive import (
 from eidos_runtime.sandbox.shell import run_shell
 from eidos_runtime.sandbox.workspace_manifest import (
     attach_workspace_diff,
-    capture_workspace_manifest,
     diff_workspace_manifests,
 )
 from eidos_runtime.tools.workspace import ToolCancelled, WorkspacePathError
@@ -246,8 +245,8 @@ class ShellToolHandler:
             output_stream = StreamingSensitiveScanner(
                 self.dependencies.sensitive
             )
-            manifest_before = capture_workspace_manifest(
-                self.dependencies.dispatcher.workspace.path
+            manifest_before = (
+                self.dependencies.dispatcher.workspace_index.manifest()
             )
             raw_result = run_shell(
                 self.dependencies.dispatcher.workspace,
@@ -259,9 +258,16 @@ class ShellToolHandler:
                 self.dependencies.resources,
                 str(item["id"]),
             )
-            manifest_after = capture_workspace_manifest(
-                self.dependencies.dispatcher.workspace.path
-            )
+            try:
+                manifest_after = (
+                    self.dependencies.dispatcher.refresh_workspace_index(
+                        cancel
+                    )
+                )
+            except WorkspacePathError:
+                manifest_after = (
+                    self.dependencies.dispatcher.workspace_index.manifest()
+                )
             workspace_diff = diff_workspace_manifests(
                 manifest_before, manifest_after
             )

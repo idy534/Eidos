@@ -22,6 +22,10 @@ from eidos_runtime.protocol.schemas import ToolResultDto
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 from eidos_runtime.db.storage import WorkspaceIdentity
 from eidos_runtime.sandbox.seatbelt import secure_workspace_move
+from eidos_runtime.sandbox.workspace_index import (
+    WorkspaceIndex,
+    WorkspaceIndexIncomplete,
+)
 from eidos_runtime.tools.registry import (
     ToolProvenance,
     ToolRegistry,
@@ -352,6 +356,7 @@ class ToolExecutor:
 
         self.workspace = identity
         self.root_fd = root_fd
+        self.workspace_index = WorkspaceIndex(identity)
         self.registry = builtin_tool_registry(self)
 
     def __enter__(self) -> ToolExecutor:
@@ -422,6 +427,13 @@ class ToolExecutor:
         cwd = self.shell_cwd(value)
         self._verify_root()
         return cwd
+
+    def refresh_workspace_index(
+        self, cancel: threading.Event
+    ):
+        self._verify_root()
+        self._verify_shell_workspace(cancel)
+        return self.workspace_index.manifest()
 
     def execute_read(
         self,
@@ -999,75 +1011,58 @@ class ToolExecutor:
             raise WorkspacePathError("workspace_identity_changed")
 
     def _verify_shell_workspace(self, cancel: threading.Event) -> None:
-        deadline = time.monotonic() + SHELL_PREFLIGHT_DEADLINE_SECONDS
-        entry_count = 0
-
-        def visit(directory_fd: int, depth: int, in_git: bool = False) -> None:
-            nonlocal entry_count
-            try:
-                with os.scandir(directory_fd) as entries:
-                    for entry in entries:
-                        _check_budget(cancel, deadline)
-                        entry_count += 1
-                        if entry_count > MAX_SHELL_PREFLIGHT_ENTRIES:
-                            raise WorkspacePathError("workspace_scan_limit")
-                        name = entry.name
-                        try:
-                            metadata = os.stat(
-                                name, dir_fd=directory_fd, follow_symlinks=False
-                            )
-                        except OSError:
-                            raise WorkspacePathError("workspace_changed") from None
-                        if depth == 0 and name == ".git":
-                            if stat.S_ISLNK(metadata.st_mode):
-                                raise WorkspacePathError("unsupported_workspace_entry")
-                            if stat.S_ISREG(metadata.st_mode):
-                                if metadata.st_nlink != 1:
-                                    raise WorkspacePathError(
-                                        "unsupported_workspace_hardlink"
-                                    )
-                                continue
-                            if not stat.S_ISDIR(metadata.st_mode):
-                                raise WorkspacePathError("unsupported_workspace_entry")
-                            child_fd = self._open_directory(directory_fd, name)
-                            try:
-                                visit(child_fd, depth + 1, True)
-                            finally:
-                                os.close(child_fd)
-                            continue
-                        root_env = depth == 0 and name.lower() == ".env"
-                        if not in_git and not root_env and (
-                            _is_shell_sensitive_name(name)
-                            or _is_sensitive_directory(name)
-                        ):
-                            raise WorkspacePathError("sensitive_workspace_content")
-                        if stat.S_ISLNK(metadata.st_mode):
-                            continue
-                        if stat.S_ISDIR(metadata.st_mode):
-                            child_fd = self._open_directory(directory_fd, name)
-                            try:
-                                visit(child_fd, depth + 1, in_git)
-                            finally:
-                                os.close(child_fd)
-                            continue
-                        if not stat.S_ISREG(metadata.st_mode):
-                            raise WorkspacePathError("unsupported_workspace_entry")
-                        if metadata.st_nlink != 1:
-                            raise WorkspacePathError("unsupported_workspace_hardlink")
-                        if not in_git and _contains_sensitive_pem(
-                            directory_fd, name, metadata
-                        ):
-                            raise WorkspacePathError("sensitive_workspace_content")
-            except WorkspacePathError:
-                raise
-            except OSError:
-                raise WorkspacePathError("workspace_changed") from None
-
-        descriptor = os.dup(self.root_fd)
         try:
-            visit(descriptor, 0)
-        finally:
-            os.close(descriptor)
+            self.workspace_index.refresh(
+                self.root_fd,
+                cancel,
+                validate=self._validate_workspace_index_entry,
+                open_directory=self._open_directory,
+                deadline=(
+                    time.monotonic()
+                    + SHELL_PREFLIGHT_DEADLINE_SECONDS
+                ),
+            )
+        except WorkspaceIndexIncomplete:
+            raise WorkspacePathError(
+                "security_index_incomplete"
+            ) from None
+
+    def _validate_workspace_index_entry(
+        self,
+        directory_fd: int,
+        name: str,
+        metadata: os.stat_result,
+        relative: str,
+        is_git: bool,
+    ) -> None:
+        if is_git:
+            if stat.S_ISLNK(metadata.st_mode):
+                raise WorkspacePathError("unsupported_workspace_entry")
+            if stat.S_ISREG(metadata.st_mode):
+                if metadata.st_nlink != 1:
+                    raise WorkspacePathError(
+                        "unsupported_workspace_hardlink"
+                    )
+            elif not stat.S_ISDIR(metadata.st_mode):
+                raise WorkspacePathError("unsupported_workspace_entry")
+            if metadata.st_uid != self.workspace.owner:
+                raise WorkspacePathError("unsupported_workspace_entry")
+            return
+        if relative != ".env" and (
+            _is_shell_sensitive_name(name)
+            or _is_sensitive_directory(name)
+        ):
+            raise WorkspacePathError("sensitive_workspace_content")
+        if stat.S_ISLNK(metadata.st_mode):
+            return
+        if stat.S_ISDIR(metadata.st_mode):
+            return
+        if not stat.S_ISREG(metadata.st_mode):
+            raise WorkspacePathError("unsupported_workspace_entry")
+        if metadata.st_nlink != 1:
+            raise WorkspacePathError("unsupported_workspace_hardlink")
+        if _contains_sensitive_pem(directory_fd, name, metadata):
+            raise WorkspacePathError("sensitive_workspace_content")
 
     def _read_existing_for_change(
         self, path: str, cancel: threading.Event

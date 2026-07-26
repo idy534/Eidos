@@ -132,7 +132,8 @@ class WorkspaceManifestTests(unittest.TestCase):
         self.assertFalse(attached["data"]["workspaceChanged"])
         self.assertEqual(attached["data"]["workspaceDiffHash"], diff.diff_hash)
         self.assertFalse(attached["data"]["workspaceManifestComplete"])
-        self.assertTrue(attached["reconciliationRequired"])
+        self.assertTrue(attached["data"]["workspaceDiffIncomplete"])
+        self.assertFalse(attached["reconciliationRequired"])
 
 
 class ShellManifestIntegrationTests(unittest.TestCase):
