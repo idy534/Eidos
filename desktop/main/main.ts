@@ -8,8 +8,8 @@ import type {
   ApprovalRequest,
   RuntimeNotification,
 } from "./runtime-client.js";
-import type { RuntimeStatus } from "../shared/ipc-contracts.js";
-import { IPC, VALID_MODEL_IDS } from "../shared/ipc-contracts.js";
+import type { RuntimeStatus } from "../shared/index.js";
+import { IPC, VALID_MODEL_IDS, MAX_APPROVAL_FEEDBACK_BYTES } from "../shared/index.js";
 
 
 // ---------------------------------------------------------------------------
@@ -437,7 +437,7 @@ ipcMain.handle(IPC.APPROVAL_RESPOND, (_event, id: unknown, decision: unknown, fe
     typeof id !== "string"
     || !["approve", "reject"].includes(String(decision))
     || (feedback !== undefined && typeof feedback !== "string")
-    || (typeof feedback === "string" && Buffer.byteLength(feedback, "utf8") > 2_000)
+    || (typeof feedback === "string" && Buffer.byteLength(feedback, "utf8") > MAX_APPROVAL_FEEDBACK_BYTES)
     || (decision === "approve" && feedback !== undefined)
   ) {
     throw new Error("审批参数无效。");
