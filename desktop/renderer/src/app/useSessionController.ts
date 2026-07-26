@@ -1,7 +1,6 @@
 import { useCallback, useRef, useState } from "react";
-import type { ModelId, ModelListResult, ModelStatus, Session, SessionSnapshot } from "../contracts.js";
+import type { Session, SessionSnapshot } from "../contracts.js";
 import { SnapshotReadCoordinator, taskStatusFromRun, userFacingError } from "../session-state.js";
-
 
 const READ_COMPLETIONS_KEY = "eidos.readCompletedSessionIds";
 
@@ -36,21 +35,16 @@ export interface SessionControllerState {
   snapshot: SessionSnapshot | undefined;
   navigationSessionId: string | undefined;
   readCompletedSessions: ReadonlySet<string>;
-  model: ModelStatus | undefined;
-  modelList: ModelListResult | undefined;
-  selectedModelId: ModelId;
   pending: PendingOperations;
   error: string | undefined;
 }
 
 export interface SessionControllerActions {
-  selectSession: (session: Session) => Promise<void>;
-  createSession: (workspaceRoot?: string) => Promise<void>;
+  selectSession: (session: Session) => Promise<SessionSnapshot | undefined>;
+  createSession: (workspaceRoot?: string) => Promise<SessionSnapshot | undefined>;
   renameSession: (sessionId: string, title: string) => Promise<void>;
   deleteSession: (session: Session) => Promise<{ confirmed: boolean }>;
-  configureModel: (apiKey: string) => Promise<void>;
   refreshExtensions: () => Promise<void>;
-  setSelectedModelId: (id: ModelId) => void;
   setError: (error: string | undefined) => void;
   /** Called when a run notification arrives — updates sessions taskStatus */
   handleRunNotification: (run: { id: string; sessionId: string; status: string; updatedAt: number }) => void;
@@ -65,9 +59,6 @@ export function useSessionController(): [SessionControllerState, SessionControll
   const [snapshot, setSnapshot] = useState<SessionSnapshot | undefined>(undefined);
   const [navigationSessionId, setNavigationSessionId] = useState<string | undefined>(undefined);
   const [readCompletedSessions, setReadCompletedSessions] = useState<Set<string>>(loadReadCompletedSessions);
-  const [model, setModel] = useState<ModelStatus | undefined>(undefined);
-  const [modelList, setModelList] = useState<ModelListResult | undefined>(undefined);
-  const [selectedModelId, setSelectedModelId] = useState<ModelId>("deepseek-v4-flash");
   const [pending, setPending] = useState<PendingOperations>({});
   const [error, setError] = useState<string | undefined>(undefined);
 
@@ -108,7 +99,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     return loaded;
   }
 
-  const selectSession = useCallback(async (session: Session): Promise<void> => {
+  const selectSession = useCallback(async (session: Session): Promise<SessionSnapshot | undefined> => {
     setNavigationSessionId(session.id);
 
     if (
@@ -118,7 +109,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
       if (session.taskStatus === "completed") {
         updateReadCompleted((prev) => new Set(prev).add(session.id));
       }
-      return;
+      return snapshot;
     }
 
     const token = snapshotReads.select(session.id);
@@ -134,8 +125,9 @@ export function useSessionController(): [SessionControllerState, SessionControll
       const accepted = snapshotReads.accept(token, loaded);
       if (accepted) {
         setSnapshot(accepted);
-        setSelectedModelId(accepted.runs[0]?.modelId ?? modelList?.defaultModelId ?? "deepseek-v4-flash");
+        return accepted;
       }
+      return undefined;
     } catch (cause) {
       if (snapshotReads.isCurrent(token)) {
         const fallback = snapshot?.session.id;
@@ -144,15 +136,16 @@ export function useSessionController(): [SessionControllerState, SessionControll
         setNavigationSessionId(fallback);
         setError(userFacingError(cause));
       }
+      return undefined;
     } finally {
       clearPending("selectingSessionId");
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot, modelList]);
+  }, [snapshot]);
 
-  const createSession = useCallback(async (workspaceRoot?: string): Promise<void> => {
+  const createSession = useCallback(async (workspaceRoot?: string): Promise<SessionSnapshot | undefined> => {
     const workspace = workspaceRoot ?? await window.eidosRuntime.selectWorkspace();
-    if (!workspace) return;
+    if (!workspace) return undefined;
 
     setPending((prev) => ({ ...prev, creatingSession: true }));
     setError(undefined);
@@ -166,15 +159,17 @@ export function useSessionController(): [SessionControllerState, SessionControll
       const accepted = snapshotReads.accept(token, loaded);
       if (accepted) {
         setSnapshot(accepted);
-        setSelectedModelId(modelList?.defaultModelId ?? "deepseek-v4-flash");
+        return accepted;
       }
+      return undefined;
     } catch (cause) {
       setError(userFacingError(cause));
+      return undefined;
     } finally {
       setPending((prev) => ({ ...prev, creatingSession: false }));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelList]);
+  }, []);
 
   const renameSession = useCallback(async (sessionId: string, title: string): Promise<void> => {
     setPending((prev) => ({ ...prev, renamingSessionId: sessionId }));
@@ -224,15 +219,6 @@ export function useSessionController(): [SessionControllerState, SessionControll
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions, snapshot, selectSession]);
-
-  const configureModel = useCallback(async (apiKey: string): Promise<void> => {
-    try {
-      setModel(await window.eidosRuntime.configureModel(apiKey));
-      setModelList(await window.eidosRuntime.listModels());
-    } catch (cause) {
-      throw new Error(userFacingError(cause));
-    }
-  }, []);
 
   const refreshExtensions = useCallback(async (): Promise<void> => {
     try {
@@ -288,9 +274,6 @@ export function useSessionController(): [SessionControllerState, SessionControll
     snapshot,
     navigationSessionId,
     readCompletedSessions,
-    model,
-    modelList,
-    selectedModelId,
     pending,
     error,
   };
@@ -300,9 +283,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     createSession,
     renameSession,
     deleteSession,
-    configureModel,
     refreshExtensions,
-    setSelectedModelId,
     setError,
     handleRunNotification,
     refreshCompletedSession,

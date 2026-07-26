@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ModelId, PluginRecord, Run, SkillMetadata, McpServerRecord } from "../contracts.js";
+import type { ModelId, PluginRecord, Run, SkillMetadata, McpServerRecord, Session } from "../contracts.js";
 import type { SettingsPendingAction } from "../components/settings/settings-types.js";
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
@@ -8,13 +8,16 @@ import { SessionSidebar } from "../components/SessionSidebar.js";
 import { PrimaryActionButton } from "../components/PrimaryActionButton.js";
 import { ApprovalFeedbackDialog } from "../components/ApprovalFeedbackDialog.js";
 import { ConfirmDialog } from "../components/settings/ConfirmDialog.js";
-import { useRuntimeLifecycle } from "./useRuntimeLifecycle.js";
+import type { RuntimeLifecycleState } from "./useRuntimeLifecycle.js";
 import { useSessionController } from "./useSessionController.js";
 import { useRunController } from "./useRunController.js";
 import { useApprovalController } from "./useApprovalController.js";
+import { useModelController } from "./useModelController.js";
 import { applyNotification } from "../session-state.js";
-import type { Session } from "../contracts.js";
 
+interface AppShellProps {
+  runtime: RuntimeLifecycleState;
+}
 
 /**
  * AppShell wires together domain controllers and renders the main layout.
@@ -27,12 +30,14 @@ import type { Session } from "../contracts.js";
  *
  * Each domain hook owns its own state; AppShell only coordinates.
  */
-export function AppShell() {
+export function AppShell({ runtime }: AppShellProps) {
+  const { status: runtimeStatus, presentation: runtimePresentation, isStorageReady } = runtime;
+
   // Domain controllers
-  const { status: runtime, presentation: runtimePresentation, isStorageReady } = useRuntimeLifecycle();
   const [sessionState, sessionActions] = useSessionController();
   const [runState, runActions] = useRunController(sessionState.snapshot, isStorageReady);
   const [approvalState, approvalActions] = useApprovalController();
+  const [modelState, modelActions] = useModelController();
 
   // UI-only state (not domain state)
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -53,7 +58,7 @@ export function AppShell() {
   // Bootstrap: load sessions, model, approvals when runtime is ready
   // -----------------------------------------------------------------------
   useEffect(() => {
-    if (runtime.state !== "ready" || runtime.storageHealth.state !== "ready") return;
+    if (runtimeStatus.state !== "ready" || runtimeStatus.storageHealth.state !== "ready") return;
     void Promise.all([
       window.eidosRuntime.listSessions(),
       window.eidosRuntime.getModelStatus(),
@@ -61,18 +66,14 @@ export function AppShell() {
       window.eidosRuntime.listPendingApprovals(),
     ]).then(([sessionPage, modelStatus, availableModels, pendingApprovals]) => {
       sessionActions.setSessions(sessionPage.items);
-      const sessionIds = new Set(sessionPage.items.map((s) => s.id));
-      // prune stale read markers
-      void sessionIds; // used by session controller internally
       approvalActions.mergeApprovals(pendingApprovals);
-      // inject model state via a lightweight side-channel
-      // (useSessionController doesn't own model state directly — we pass it back)
+      modelActions.initialize(modelStatus, availableModels, sessionState.snapshot?.runs[0]?.modelId);
     }).catch((cause: unknown) => {
       const msg = cause instanceof Error ? cause.message : String(cause);
       sessionActions.setError(msg);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runtime.state, runtime.state === "ready" ? runtime.storageHealth.state : null]);
+  }, [runtimeStatus.state, runtimeStatus.state === "ready" ? runtimeStatus.storageHealth.state : null]);
 
   // -----------------------------------------------------------------------
   // Runtime notifications
@@ -110,13 +111,12 @@ export function AppShell() {
   // -----------------------------------------------------------------------
   useEffect(() => {
     const unsubNewTask = window.eidosRuntime.onShortcut("app:new-task", () => {
-      // Guard: don't start new session if a modal overlay is open
       if (settingsOpen || document.querySelector(".modal-backdrop")) return;
-      void sessionActions.createSession();
+      void handleCreateSession();
     });
     const unsubOpenWorkspace = window.eidosRuntime.onShortcut("app:open-workspace", () => {
       if (document.querySelector(".modal-backdrop")) return;
-      void sessionActions.createSession();
+      void handleCreateSession();
     });
     return () => {
       unsubNewTask();
@@ -129,7 +129,7 @@ export function AppShell() {
   // Extension refresh when settings open
   // -----------------------------------------------------------------------
   useEffect(() => {
-    if (!settingsOpen || runtime.state !== "ready" || !isStorageReady) return;
+    if (!settingsOpen || runtimeStatus.state !== "ready" || !isStorageReady) return;
     void (async () => {
       try {
         let snap = await window.eidosRuntime.readExtensions();
@@ -142,10 +142,27 @@ export function AppShell() {
         console.error("[extensions]", cause);
       }
     })();
-  }, [settingsOpen, runtime.state, isStorageReady]);
+  }, [settingsOpen, runtimeStatus.state, isStorageReady]);
 
   // -----------------------------------------------------------------------
-  // Settings operations (pass-through to session controller + local state)
+  // Session Selection & Creation with Model re-eval
+  // -----------------------------------------------------------------------
+  async function handleSelectSession(session: Session): Promise<void> {
+    const loaded = await sessionActions.selectSession(session);
+    if (loaded && modelState.status && modelState.list) {
+      modelActions.initialize(modelState.status, modelState.list, loaded.runs[0]?.modelId);
+    }
+  }
+
+  async function handleCreateSession(workspaceRoot?: string): Promise<void> {
+    const loaded = await sessionActions.createSession(workspaceRoot);
+    if (loaded && modelState.status && modelState.list) {
+      modelActions.initialize(modelState.status, modelState.list, loaded.runs[0]?.modelId);
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Settings operations
   // -----------------------------------------------------------------------
   async function importPlugin(): Promise<void> {
     setSettingsPendingAction({ type: "import_plugin" });
@@ -222,7 +239,7 @@ export function AppShell() {
   // -----------------------------------------------------------------------
   async function beginRename(session: Session): Promise<void> {
     if (sessionState.snapshot?.session.id !== session.id) {
-      await sessionActions.selectSession(session);
+      await handleSelectSession(session);
     }
     setTitleDraft(session.title ?? "新任务");
     setRenaming(true);
@@ -242,7 +259,7 @@ export function AppShell() {
   }
 
   // -----------------------------------------------------------------------
-  // Delete flow — uses ConfirmDialog instead of window.confirm
+  // Delete flow
   // -----------------------------------------------------------------------
   function requestDeleteSession(session: Session): void {
     setSessionToDelete(session);
@@ -264,10 +281,10 @@ export function AppShell() {
   // Composer submit
   // -----------------------------------------------------------------------
   async function handleSubmit(): Promise<void> {
-    if (!sessionState.snapshot) return;
+    if (!sessionState.snapshot || !modelState.selectedModelId) return;
     await runActions.submitInput({
       snapshot: sessionState.snapshot,
-      selectedModelId: sessionState.selectedModelId,
+      selectedModelId: modelState.selectedModelId,
       isStorageReady,
     });
   }
@@ -292,9 +309,9 @@ export function AppShell() {
         readCompletedSessions={sessionState.readCompletedSessions}
         runtimePresentation={runtimePresentation}
         isSelectingSessionId={sessionState.pending.selectingSessionId}
-        onCreate={() => void sessionActions.createSession()}
-        onCreateInWorkspace={(root) => void sessionActions.createSession(root)}
-        onSelect={(session) => void sessionActions.selectSession(session)}
+        onCreate={() => void handleCreateSession()}
+        onCreateInWorkspace={(root) => void handleCreateSession(root)}
+        onSelect={(session) => void handleSelectSession(session)}
         onRename={(session) => void beginRename(session)}
         onDelete={(session) => requestDeleteSession(session)}
         onOpenSettings={() => {
@@ -305,26 +322,28 @@ export function AppShell() {
       />
 
       <section className="workspace" aria-label="Agent 工作区">
-        {/* Global Runtime error banner (replaces inline storage health check) */}
+        {/* Global Runtime error banner */}
         {runtimePresentation.tone === "warning" && runtimePresentation.description && (
           <p className="error-banner" role="alert">{runtimePresentation.description}</p>
         )}
 
-        {/* Domain error banner — only for session/run errors, NOT approval errors */}
+        {/* Domain error banner */}
         {topError && <p className="error-banner" role="alert">{topError}</p>}
 
         {settingsOpen ? (
           <SettingsPage
-            runtime={runtime}
-            model={sessionState.model}
-            modelList={sessionState.modelList}
+            runtime={runtimeStatus}
+            model={modelState.status}
+            modelList={modelState.list}
+            modelLoading={modelState.loading}
+            modelError={modelState.error}
             plugins={plugins}
             skills={skills}
             mcpServers={mcpServers}
             pendingAction={settingsPendingAction}
             onClose={() => setSettingsOpen(false)}
             onConfigureModel={async (key) => {
-              await sessionActions.configureModel(key);
+              await modelActions.configure(key);
             }}
             onImportPlugin={importPlugin}
             onTogglePlugin={setPluginEnabled}
@@ -423,15 +442,16 @@ export function AppShell() {
               composerMode={composerMode}
               activeRun={activeRun}
               input={input}
-              modelList={sessionState.modelList}
-              selectedModelId={sessionState.selectedModelId}
-              modelConfigured={sessionState.model?.configured ?? false}
+              modelList={modelState.list}
+              selectedModelId={modelState.selectedModelId ?? "deepseek-v4-flash"}
+              modelConfigured={modelState.status?.configured ?? false}
+              modelLoading={modelState.loading}
               hasRuns={snapshot.runs.length > 0}
               cancelingRunId={runState.cancelingRunId}
               onInputChange={runActions.setInput}
               onSubmit={handleSubmit}
               onCancel={() => activeRun && void runActions.cancelRun(activeRun.id)}
-              onModelChange={(id) => sessionActions.setSelectedModelId(id)}
+              onModelChange={(id) => modelActions.selectModel(id)}
             />
           </>
         ) : (
@@ -448,14 +468,14 @@ export function AppShell() {
                 subtitle="打开一个本地项目开始使用 Eidos"
                 showArrow={true}
                 disabled={sessionState.pending.creatingSession || !isStorageReady}
-                onClick={() => void sessionActions.createSession()}
+                onClick={() => void handleCreateSession()}
               />
             </div>
           </div>
         )}
       </section>
 
-      {/* Delete confirm dialog — replaces window.confirm */}
+      {/* Delete confirm dialog */}
       <ConfirmDialog
         open={Boolean(sessionToDelete)}
         title={`删除任务"${sessionToDelete?.title ?? "新任务"}"？`}
@@ -491,6 +511,7 @@ interface ComposerProps {
   modelList: import("../contracts.js").ModelListResult | undefined;
   selectedModelId: ModelId;
   modelConfigured: boolean;
+  modelLoading: boolean;
   hasRuns: boolean;
   cancelingRunId: string | undefined;
   onInputChange: (value: string) => void;
@@ -506,6 +527,7 @@ function Composer({
   modelList,
   selectedModelId,
   modelConfigured,
+  modelLoading,
   hasRuns,
   cancelingRunId,
   onInputChange,
@@ -517,26 +539,30 @@ function Composer({
   const isIdle = composerMode === "idle";
   const isContinuing = composerMode === "waiting_user_input";
   const canCancel = (composerMode === "running" || composerMode === "starting") && activeRun?.allowedActions?.includes("cancel");
-  const inputDisabled = !modelConfigured || isReadOnly || composerMode === "finalizing" || composerMode === "waiting_approval";
+  const inputDisabled = modelLoading || !modelConfigured || isReadOnly || composerMode === "finalizing" || composerMode === "waiting_approval";
 
-  const placeholder = isReadOnly
-    ? "存储只读，暂无法启动 Run"
-    : isContinuing
-      ? "补充信息后继续这个 Run"
-      : modelConfigured
-        ? "例如：阅读这个项目并说明如何启动"
-        : "请先配置 DeepSeek API Key";
+  const placeholder = modelLoading
+    ? "正在加载模型配置…"
+    : isReadOnly
+      ? "存储只读，暂无法启动 Run"
+      : isContinuing
+        ? "补充信息后继续这个 Run"
+        : modelConfigured
+          ? "例如：阅读这个项目并说明如何启动"
+          : "请先配置 DeepSeek API Key";
 
   const showModelSelect = isIdle && !hasRuns;
-  const statusLabel = composerMode === "running" || composerMode === "starting"
-    ? statusText(activeRun?.status ?? "queued")
-    : isContinuing
-      ? "等待你的补充"
-      : composerMode === "waiting_approval"
-        ? "等待批准"
-        : composerMode === "finalizing"
-          ? "正在收尾"
-          : selectedModelId;
+  const statusLabel = modelLoading
+    ? "正在加载模型…"
+    : composerMode === "running" || composerMode === "starting"
+      ? statusText(activeRun?.status ?? "queued")
+      : isContinuing
+        ? "等待你的补充"
+        : composerMode === "waiting_approval"
+          ? "等待批准"
+          : composerMode === "finalizing"
+            ? "正在收尾"
+            : selectedModelId;
 
   return (
     <form
@@ -566,7 +592,7 @@ function Composer({
               <select
                 id="run-model"
                 value={selectedModelId}
-                disabled={composerMode !== "idle"}
+                disabled={composerMode !== "idle" || modelLoading}
                 onChange={(e) => onModelChange(e.target.value as ModelId)}
               >
                 {modelList?.models.map((option) => (
@@ -596,7 +622,8 @@ function Composer({
             type="submit"
             className="btn btn--primary btn--medium"
             disabled={
-              composerMode === "starting"
+              modelLoading
+              || composerMode === "starting"
               || composerMode === "running"
               || composerMode === "finalizing"
               || composerMode === "waiting_approval"
@@ -606,11 +633,13 @@ function Composer({
             }
             aria-busy={composerMode === "starting"}
           >
-            {composerMode === "starting"
-              ? "启动中…"
-              : isContinuing
-                ? "继续"
-                : "开始"}
+            {modelLoading
+              ? "加载中…"
+              : composerMode === "starting"
+                ? "启动中…"
+                : isContinuing
+                  ? "继续"
+                  : "开始"}
           </button>
         )}
       </div>
