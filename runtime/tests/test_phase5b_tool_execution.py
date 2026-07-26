@@ -22,6 +22,7 @@ from eidos_runtime.runtime.state_machine import RuntimePhaseTracker  # noqa: E40
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan  # noqa: E402
 from eidos_runtime.runtime.tool_execution import (  # noqa: E402
     HandlerOutcome,
+    PreparedToolExecution,
     ToolExecutionController,
     active_tool_execution_count,
 )
@@ -59,17 +60,34 @@ class _ApprovalHandler(_Handler):
     def __init__(self, approval: ApprovalCoordinator) -> None:
         super().__init__()
         self.approval = approval
+        self.execute_side_effect = None
 
     def execute(self, run_id, item, _call, cancel) -> HandlerOutcome:
         self.calls += 1
-        self.approval.request(
-            run_id,
-            item,
-            {"kind": "file_change", "summary": "Modify a.txt", "diff": ""},
-            cancel,
-            transition_reason="file_approval",
+        assert self.execute_side_effect is not None
+        approval, verified = self.execute_side_effect(
+            run_id=run_id,
+            item=item,
+            prepared=PreparedToolExecution(
+                approval_description={
+                    "kind": "file_change",
+                    "summary": "Modify a.txt",
+                    "diff": "",
+                },
+                intent_preconditions={"path": "a.txt"},
+                transition_reason="file_approval",
+            ),
+            cancel=cancel,
+            execute=lambda: self.result,
         )
-        return HandlerOutcome(self.result, "completed")
+        self.assert_approved(approval.decision)
+        assert verified is not None
+        return HandlerOutcome(verified.result, "completed")
+
+    @staticmethod
+    def assert_approved(decision: str) -> None:
+        if decision != "approve":
+            raise AssertionError("approval fixture rejected")
 
 
 class _Dispatcher:
@@ -144,8 +162,10 @@ class ToolExecutionControllerTests(unittest.TestCase):
             {"file": handler},
             RuntimeEvents(lambda _message: None),
             default_scanner(),
+            approval=approval,
             monotonic=lambda: now[0],
         )
+        handler.execute_side_effect = controller.execute_side_effect
 
         outcome = controller.execute(
             run_id=self.run["id"],

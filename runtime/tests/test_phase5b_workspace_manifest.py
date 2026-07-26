@@ -170,15 +170,15 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             handlers,
             self.events,
             default_scanner(),
+            approval=approval,
         )
         dependencies = _HandlerDependencies(
             self.store,
             self.dispatcher,
-            approval,
             self.events,
             default_scanner(),
             True,
-            self.controller.begin_durable_intent,
+            self.controller.execute_side_effect,
         )
         handlers["shell"] = ShellToolHandler(dependencies)
 

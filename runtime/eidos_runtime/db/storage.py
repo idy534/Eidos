@@ -689,6 +689,9 @@ class SessionStore:
             preconditions=preconditions,
         )
 
+    def side_effect_authorized(self, item_id: str) -> bool:
+        return self._repository(self._execution).side_effect_authorized(item_id)
+
     def has_read_evidence(
         self, run_id: str, path: str, sha256: str
     ) -> bool:
