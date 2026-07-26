@@ -61,6 +61,7 @@ from eidos_runtime.runtime.resource_registry import (
     RuntimeResource,
     RuntimeResourceKind,
 )
+from eidos_runtime.runtime.fault_injection import hit_fault
 
 
 MAX_TOOL_CALL_ID_BYTES = 256
@@ -247,6 +248,7 @@ class PydanticAIModelClient:
         allow_tools: bool,
         tool_definitions: tuple[ModelToolDefinition, ...],
     ) -> ModelResponse:
+        hit_fault("model_stream_block")
         settings = ModelSettings(
             max_tokens=self._profile_spec.max_output_tokens,
             timeout=self._profile_spec.request_timeout_seconds,
@@ -652,6 +654,7 @@ async def _cancel_when_requested(
 ) -> None:
     while not cancel.is_set():
         await asyncio.sleep(0.025)
+    hit_fault("model_cancel_delay")
     await stream.cancel()
 
 

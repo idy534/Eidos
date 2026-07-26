@@ -25,6 +25,7 @@ from eidos_runtime.db.schema import (
     SCHEMA_V3_TO_V4_SQL,
     SCHEMA_VERSION,
 )
+from eidos_runtime.runtime.fault_injection import hit_fault
 
 
 DATABASE_NAME = "eidos.db"
@@ -150,6 +151,7 @@ class Database:
     def transaction(self) -> Iterator[sqlite3.Connection]:
         with self.lock, self.connection() as connection:
             yield connection
+            hit_fault("sqlite_commit_failure")
 
     def close(self) -> None:
         with self.lock:

@@ -16,6 +16,7 @@ from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
     RuntimeResourceKind,
 )
+from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.sandbox.sensitive import (
     SensitiveScanError,
@@ -123,6 +124,7 @@ class RunFinalizer:
         )
 
         try:
+            hit_fault("finalization_model_failure")
             ModelRunner(self.model, self.sensitive).run(
                 (*context, {"type": "finalization", "toolsAllowed": False}),
                 request_cancel,
@@ -165,6 +167,7 @@ class RunFinalizer:
             raise RuntimeCancelled
         if failure_reason is not None:
             logger.warning("Finalization ended without an item: %s", failure_reason)
+        hit_fault("cancel_finalization_race")
         try:
             mutation = self.store.complete_finalization_and_stop_committed(
                 str(writer.item["id"])

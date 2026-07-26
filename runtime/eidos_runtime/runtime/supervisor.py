@@ -27,6 +27,7 @@ from eidos_runtime.runtime.resource_registry import (
     RuntimeResource,
     RuntimeResourceKind,
 )
+from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle
 from eidos_runtime.runtime.tool_execution import active_tool_execution_count
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
@@ -184,6 +185,7 @@ class RunSupervisor:
     def cancel_run(
         self, run_id: str, *, operation_id: str | None = None
     ) -> dict[str, object]:
+        hit_fault("cancel_claim_race")
         self.store.read_run(run_id)
         with self.lock:
             handle = self._handles.get(run_id)
@@ -312,6 +314,7 @@ class RunSupervisor:
             tasks = tuple(self._managed_tasks.values())
             for task in tasks:
                 task.cancellation.set()
+        hit_fault("shutdown_tool_completion_race")
         self._release_approval_waits()
         self.wait(self.shutdown_timeout)
         self.wait_managed_tasks(self.shutdown_timeout)
@@ -463,6 +466,7 @@ class RunSupervisor:
         return not self.has_active_managed_tasks()
 
     def begin_reconfiguration(self) -> bool:
+        hit_fault("configure_worker_race")
         with self.lock:
             if (
                 self.lifecycle is not RuntimeLifecycle.RUNNING

@@ -17,6 +17,7 @@ from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
     RuntimeResourceKind,
 )
+from eidos_runtime.runtime.fault_injection import hit_fault
 
 
 MAX_OUTPUT_BYTES = 256 * 1024
@@ -195,6 +196,7 @@ def _run_verified_shell(
                 resource.close()
         stdout = bytes(outputs["stdout"]).decode("utf-8", errors="replace")
         stderr = bytes(outputs["stderr"]).decode("utf-8", errors="replace")
+        hit_fault("shell_modify_then_fail")
         outcome = "success" if returncode == 0 and termination == "exit" else "error"
         code = "ok" if outcome == "success" else termination if termination != "exit" else "nonzero_exit"
         return {
@@ -216,6 +218,7 @@ def _run_verified_shell(
 
 
 def _terminate_group(process_group: int) -> None:
+    hit_fault("shell_ignore_sigterm")
     try:
         os.killpg(process_group, signal.SIGTERM)
     except (ProcessLookupError, PermissionError):

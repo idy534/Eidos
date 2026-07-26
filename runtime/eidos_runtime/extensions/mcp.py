@@ -28,6 +28,7 @@ from eidos_runtime.runtime.resource_registry import (
     RuntimeResource,
     RuntimeResourceKind,
 )
+from eidos_runtime.runtime.fault_injection import hit_fault
 
 
 MAX_LIST_PAGES = 32
@@ -161,6 +162,7 @@ class McpConnection:
         return self.tools
 
     def close(self) -> bool:
+        hit_fault("mcp_thread_stuck")
         if not self.closed.is_set():
             self.closed.set()
             self.commands.put(None)
@@ -521,6 +523,7 @@ async def _call_tool(
         nonlocal canceled
         while not command.cancel.is_set():
             await anyio.sleep(0.05)
+        hit_fault("mcp_ignore_protocol_cancel")
         canceled = True
         group.cancel_scope.cancel()
 

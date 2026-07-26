@@ -16,6 +16,7 @@ from eidos_runtime.sandbox.workspace_manifest import (
     WorkspaceManifest,
     WorkspaceManifestEntry,
 )
+from eidos_runtime.runtime.fault_injection import hit_fault
 
 
 class WorkspaceIndexIncomplete(RuntimeError):
@@ -93,6 +94,7 @@ class WorkspaceIndex:
         open_directory: DirectoryOpener,
         deadline: float,
     ) -> WorkspaceIndexSnapshot:
+        hit_fault("workspace_manifest_timeout")
         entries: list[WorkspaceManifestEntry] = []
         fingerprints: dict[
             str, tuple[int, int, int, int, int, int]

@@ -33,6 +33,7 @@ from eidos_runtime.runtime.resource_registry import (
     ResourceRegistryError,
     RuntimeResourceKind,
 )
+from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
 
@@ -309,9 +310,11 @@ class ToolExecutionController:
                     )
                 else:
                     try:
+                        hit_fault("tool_block")
                         outcome = handler.execute(
                             run_id, item, call, controlled_cancel
                         )
+                        hit_fault("tool_late_result")
                         if (
                             plan.side_effect != "none"
                             and self._execution_state.authorized_effects == 0

@@ -40,6 +40,7 @@ from eidos_runtime.runtime.supervisor import (
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle
 from eidos_runtime.runtime.events import RuntimeOutputClosedError
 from eidos_runtime.runtime.resource_registry import ResourceRegistryError
+from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.sandbox.sensitive import (
     SensitiveContentDenied,
     SensitiveScanError,
@@ -1236,6 +1237,7 @@ class RuntimeServer:
 
     def send(self, message: dict[str, object]) -> None:
         with self.output_lock:
+            hit_fault("jsonrpc_output_disconnect")
             if self.output.closed:
                 raise RuntimeOutputClosedError("runtime output channel is closed")
             try:
