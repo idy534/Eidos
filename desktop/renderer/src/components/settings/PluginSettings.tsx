@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import type { PluginRecord } from "../../contracts";
 import type { SettingsPendingAction } from "./settings-types";
+import { Button } from "../Button.js";
+import { DropdownMenu } from "../DropdownMenu.js";
 import { SettingSection } from "./SettingSection";
 import { SettingRow } from "./SettingRow";
 import { Toggle } from "./Toggle";
@@ -80,14 +82,15 @@ export function PluginSettings({
               导入并管理本地配置文件包。只读取配置，不自动执行第三方安装脚本。
             </p>
           </div>
-          <button
-            type="button"
-            className="button-primary"
+          <Button
+            variant="primary"
+            size="medium"
             disabled={isImporting}
+            loading={isImporting}
             onClick={() => void handleImport()}
           >
-            {isImporting ? "导入中…" : "导入本地 Plugin"}
-          </button>
+            导入本地 Plugin
+          </Button>
         </div>
       </div>
 
@@ -104,14 +107,15 @@ export function PluginSettings({
             title="尚未导入任何 Plugin"
             description="导入 Plugin 后，相关的 Skills 能力和 MCP Servers 将显示在设置列表中。"
             action={
-              <button
-                type="button"
-                className="button-secondary"
+              <Button
+                variant="secondary"
+                size="medium"
                 disabled={isImporting}
+                loading={isImporting}
                 onClick={() => void handleImport()}
               >
                 导入本地 Plugin
-              </button>
+              </Button>
             }
           />
         ) : (
@@ -155,34 +159,19 @@ export function PluginSettings({
                       label={`启用或停用 ${plugin.name}`}
                       onChange={(next) => void handleToggle(plugin, next)}
                     />
-                    <div className="menu-dropdown-wrapper">
-                      <button
-                        type="button"
-                        className="icon-button"
-                        aria-label="Plugin 更多选项"
-                        disabled={isRowPending}
-                        onClick={() =>
-                          setOpenMenuId(openMenuId === plugin.id ? null : plugin.id)
-                        }
-                      >
-                        ⋯
-                      </button>
-                      {openMenuId === plugin.id && (
-                        <div className="dropdown-menu" role="menu">
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="danger-action"
-                            onClick={() => {
-                              setOpenMenuId(null);
-                              setPluginToRemove(plugin);
-                            }}
-                          >
-                            移除 Plugin
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                    <DropdownMenu
+                      trigger="⋯"
+                      label={`${plugin.name} 选项`}
+                      items={[
+                        {
+                          key: "remove",
+                          label: "移除 Plugin",
+                          danger: true,
+                          disabled: isRowPending,
+                          onClick: () => setPluginToRemove(plugin),
+                        },
+                      ]}
+                    />
                   </div>
                 }
               />

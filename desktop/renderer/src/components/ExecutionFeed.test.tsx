@@ -41,8 +41,9 @@ test("provides an accessible jump to the latest content control", () => {
       items={[item({ id: "user", ordinal: 1, kind: "user_message", content: "向上浏览" })]}
       runs={[run]}
       approvals={[]}
-      disabled={false}
-      onApproval={() => {}}
+      respondingApprovalId={undefined}
+      onApprove={() => {}}
+      onReject={() => {}}
     />,
   );
 
@@ -82,7 +83,7 @@ test("folds tool execution before the final answer and omits the success pill", 
   ];
 
   const html = renderToStaticMarkup(
-    <ExecutionFeed items={items} runs={[run]} approvals={[]} disabled={false} onApproval={() => {}} />,
+    <ExecutionFeed items={items} runs={[run]} approvals={[]} respondingApprovalId={undefined} onApprove={() => {}} onReject={() => {}} />,
   );
 
   assert.match(html, /<details class="process-group">/);
@@ -102,8 +103,9 @@ test("streams a tool-free answer without a process group", () => {
       ]}
       runs={[run]}
       approvals={[]}
-      disabled={false}
-      onApproval={() => {}}
+      respondingApprovalId={undefined}
+      onApprove={() => {}}
+      onReject={() => {}}
     />,
   );
 
@@ -119,8 +121,9 @@ test("shows a thinking indicator before the first model item", () => {
       items={[item({ id: "user", ordinal: 1, kind: "user_message", content: "开始任务" })]}
       runs={[activeRun]}
       approvals={[]}
-      disabled={false}
-      onApproval={() => {}}
+      respondingApprovalId={undefined}
+      onApprove={() => {}}
+      onReject={() => {}}
     />,
   );
 
@@ -150,8 +153,9 @@ test("shows safe MCP provenance and duration without internal diagnostics", () =
       ]}
       runs={[run]}
       approvals={[]}
-      disabled={false}
-      onApproval={() => {}}
+      respondingApprovalId={undefined}
+      onApprove={() => {}}
+      onReject={() => {}}
     />,
   );
 
@@ -185,8 +189,9 @@ test("shows the exact host and target for network approval", () => {
         summary: "Download a public GitHub skill", toolName: "skill_install",
         target: "example/skills@main:grilling", hosts: ["codeload.github.com:443"],
       }]}
-      disabled={false}
-      onApproval={() => {}}
+      respondingApprovalId={undefined}
+      onApprove={() => {}}
+      onReject={() => {}}
     />,
   );
 

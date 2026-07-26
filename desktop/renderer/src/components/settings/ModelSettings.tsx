@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { Button } from "../Button.js";
 import type { ModelListResult, ModelStatus } from "../../contracts";
 import type { SettingsPendingAction } from "./settings-types";
 import { SettingSection } from "./SettingSection";
@@ -8,6 +9,8 @@ import { StatusBadge } from "./StatusBadge";
 interface ModelSettingsProps {
   model?: ModelStatus | undefined;
   modelList?: ModelListResult | undefined;
+  modelLoading?: boolean | undefined;
+  modelError?: string | undefined;
   pendingAction: SettingsPendingAction;
   storageHealthReady: boolean;
   onConfigureModel: (apiKey: string) => Promise<void>;
@@ -17,6 +20,8 @@ interface ModelSettingsProps {
 export function ModelSettings({
   model,
   modelList,
+  modelLoading,
+  modelError,
   pendingAction,
   storageHealthReady,
   onConfigureModel,
@@ -27,6 +32,7 @@ export function ModelSettings({
   const [localError, setLocalError] = useState<string>();
 
   const isSaving = pendingAction?.type === "configure_model";
+  const effectiveError = localError ?? modelError;
 
   async function handleSave() {
     if (inputKey.length < 16) {
@@ -51,6 +57,12 @@ export function ModelSettings({
     setLocalError(undefined);
   }
 
+  const apiKeyDescription = modelLoading
+    ? "正在加载模型配置…"
+    : model?.configured
+      ? "凭证已保存在仅当前用户可读的本地配置中（~/.eidos/model.json）"
+      : "尚未配置有效的 API Key，请填入凭证后启动 Agent";
+
   return (
     <div className="settings-panel">
       <div className="settings-panel-header">
@@ -64,30 +76,38 @@ export function ModelSettings({
         title="DeepSeek 模型服务"
         description="系统默认的 LLM 执行引擎与功能推理模型。"
       >
-        {modelList?.models.map((option) => {
-          const isDefault = option.id === modelList.defaultModelId;
-          return (
-            <SettingRow
-              key={option.id}
-              title={
-                <div className="model-row-title">
-                  <span className="model-name">{option.displayName}</span>
-                  <code className="model-id">{option.id}</code>
-                </div>
-              }
-              action={
-                <div className="model-row-badges">
-                  {isDefault && <StatusBadge tone="info" dot={false}>默认</StatusBadge>}
-                  {option.configured ? (
-                    <StatusBadge tone="success">可用</StatusBadge>
-                  ) : (
-                    <StatusBadge tone="warning">待配置</StatusBadge>
-                  )}
-                </div>
-              }
-            />
-          );
-        })}
+        {modelLoading ? (
+          <SettingRow
+            title="模型列表"
+            description="正在从 Local Runtime 获取可用模型列表…"
+            action={<StatusBadge tone="neutral">加载中</StatusBadge>}
+          />
+        ) : (
+          modelList?.models.map((option) => {
+            const isDefault = option.id === modelList.defaultModelId;
+            return (
+              <SettingRow
+                key={option.id}
+                title={
+                  <div className="model-row-title">
+                    <span className="model-name">{option.displayName}</span>
+                    <code className="model-id">{option.id}</code>
+                  </div>
+                }
+                action={
+                  <div className="model-row-badges">
+                    {isDefault && <StatusBadge tone="info" dot={false}>默认</StatusBadge>}
+                    {option.configured ? (
+                      <StatusBadge tone="success">可用</StatusBadge>
+                    ) : (
+                      <StatusBadge tone="warning">待配置</StatusBadge>
+                    )}
+                  </div>
+                }
+              />
+            );
+          })
+        )}
       </SettingSection>
 
       <SettingSection
@@ -96,24 +116,20 @@ export function ModelSettings({
       >
         <SettingRow
           title="DeepSeek API Key"
-          description={
-            model?.configured
-              ? "凭证已保存在加密存储中"
-              : "尚未配置有效的 API Key，请填入凭证后启动 Agent"
-          }
+          description={apiKeyDescription}
           action={
             !editingKey && (
-              <button
-                type="button"
-                className="button-secondary"
-                disabled={!storageHealthReady || isSaving}
+              <Button
+                variant="secondary"
+                size="medium"
+                disabled={!storageHealthReady || isSaving || modelLoading}
                 onClick={() => {
                   setEditingKey(true);
                   setLocalError(undefined);
                 }}
               >
                 {model?.configured ? "更新凭证" : "配置 API Key"}
-              </button>
+              </Button>
             )
           }
         >
@@ -134,28 +150,30 @@ export function ModelSettings({
                     }
                   }}
                 />
-                <button
-                  type="button"
-                  className="button-primary"
+                <Button
+                  variant="primary"
+                  size="medium"
                   disabled={isSaving || !storageHealthReady || inputKey.length < 16}
+                  loading={isSaving}
                   onClick={() => void handleSave()}
                 >
-                  {isSaving ? "保存中…" : "保存配置"}
-                </button>
-                <button
-                  type="button"
-                  className="button-ghost"
+                  保存配置
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="medium"
                   disabled={isSaving}
                   onClick={handleCancel}
                 >
                   取消
-                </button>
+                </Button>
               </div>
-              {localError && <p className="setting-field-error" role="alert">{localError}</p>}
+              {effectiveError && <p className="setting-field-error" role="alert">{effectiveError}</p>}
             </div>
           ) : (
             <div className="api-key-masked-display">
               <code>{model?.configured ? "••••••••••••••••••••••••••••••••" : "未配置"}</code>
+              {effectiveError && <p className="setting-field-error" role="alert">{effectiveError}</p>}
             </div>
           )}
         </SettingRow>

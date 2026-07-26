@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 
-import type { Session } from "../contracts";
-import { groupSessionsByWorkspace, taskStatusPresentation } from "../session-state";
-import { EidosMark } from "./EidosMark";
-import { PrimaryActionButton } from "./PrimaryActionButton";
+import type { Session } from "../contracts.js";
+import type { RuntimePresentation } from "../session-state.js";
+import { groupSessionsByWorkspace, taskStatusPresentation } from "../session-state.js";
+import { ContextMenu } from "./DropdownMenu.js";
+import { EidosMark } from "./EidosMark.js";
+import { PrimaryActionButton } from "./PrimaryActionButton.js";
 import settingsIcon from "./settings.svg";
 
 
@@ -13,6 +14,10 @@ interface Props {
   selectedId: string | undefined;
   disabled: boolean;
   readCompletedSessions: ReadonlySet<string>;
+  /** Real Runtime status presentation — used for the status indicator dot */
+  runtimePresentation: RuntimePresentation;
+  /** Session ID currently being selected (shows local loading) */
+  isSelectingSessionId?: string | undefined;
   onCreate: () => void;
   onCreateInWorkspace: (workspaceRoot: string) => void;
   onSelect: (session: Session) => void;
@@ -21,26 +26,34 @@ interface Props {
   onOpenSettings: () => void;
 }
 
+interface ContextMenuState {
+  session: Session;
+  x: number;
+  y: number;
+  element?: HTMLElement | null;
+}
+
 export function SessionSidebar({
   sessions, selectedId, disabled, readCompletedSessions,
+  runtimePresentation, isSelectingSessionId,
   onCreate, onCreateInWorkspace, onSelect, onRename, onDelete, onOpenSettings,
 }: Props) {
   const workspaces = groupSessionsByWorkspace(sessions);
   const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Set<string>>(new Set());
-  const [contextMenu, setContextMenu] = useState<ContextMenu>();
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | undefined>(undefined);
+
   useEffect(() => {
     if (!contextMenu) return;
-    const close = () => setContextMenu(undefined);
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
+      if (event.key === "Escape") setContextMenu(undefined);
     };
-    window.addEventListener("pointerdown", close);
     window.addEventListener("keydown", closeOnEscape);
-    return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("keydown", closeOnEscape);
-    };
+    return () => window.removeEventListener("keydown", closeOnEscape);
   }, [contextMenu]);
+
+  // Dot CSS class derived from real RuntimePresentation tone
+  const dotClass = `runtime-pulse-dot runtime-pulse-dot--${runtimePresentation.tone}${runtimePresentation.animated ? " runtime-pulse-dot--animated" : ""}`;
+
   return (
     <aside className="sidebar" aria-label="任务导航">
       <div className="brand-row">
@@ -100,47 +113,66 @@ export function SessionSidebar({
                       }}
                     >＋</button>
                   </div>
-                  {!collapsedWorkspaces.has(workspace.workspaceRoot) && <ul className="session-list">
-                    {workspace.sessions.map((session) => {
-                      const status = taskStatusPresentation(
-                        session.taskStatus,
-                        readCompletedSessions.has(session.id),
-                      );
-                      const isSelected = session.id === selectedId;
-                      return <li className="session-item" key={session.id}>
-                        <button
-                          className={isSelected ? "selected" : ""}
-                          aria-current={isSelected ? "page" : undefined}
-                          aria-haspopup="menu"
-                          disabled={disabled}
-                          onClick={() => {
-                            setContextMenu(undefined);
-                            onSelect(session);
-                          }}
-                          onContextMenu={(event) => {
-                            event.preventDefault();
-                            setContextMenu({ session, x: event.clientX, y: event.clientY });
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.shiftKey && event.key === "F10") {
-                              event.preventDefault();
-                              const bounds = event.currentTarget.getBoundingClientRect();
-                              setContextMenu({ session, x: bounds.left, y: bounds.bottom });
-                            }
-                          }}
-                        >
-                          <span className="session-title">{session.title ?? "新任务"}</span>
-                          {status && (
-                            <span
-                              className={`task-indicator task-indicator--${status.tone}${status.spinning ? " task-indicator--spinning" : ""}`}
-                              title={status.label}
-                              aria-label={status.label}
-                            />
-                          )}
-                        </button>
-                      </li>
-                    })}
-                  </ul>}
+                  {!collapsedWorkspaces.has(workspace.workspaceRoot) && (
+                    <ul className="session-list">
+                      {workspace.sessions.map((session) => {
+                        const status = taskStatusPresentation(
+                          session.taskStatus,
+                          readCompletedSessions.has(session.id),
+                        );
+                        const isSelected = session.id === selectedId;
+                        const isLoading = session.id === isSelectingSessionId;
+                        return (
+                          <li className="session-item" key={session.id}>
+                            <button
+                              className={isSelected ? "selected" : ""}
+                              aria-current={isSelected ? "page" : undefined}
+                              aria-busy={isLoading}
+                              aria-haspopup="menu"
+                              disabled={disabled}
+                              onClick={() => {
+                                setContextMenu(undefined);
+                                onSelect(session);
+                              }}
+                              onContextMenu={(event) => {
+                                event.preventDefault();
+                                setContextMenu({
+                                  session,
+                                  x: event.clientX,
+                                  y: event.clientY,
+                                  element: event.currentTarget,
+                                });
+                              }}
+                              onKeyDown={(event) => {
+                                if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
+                                  event.preventDefault();
+                                  const bounds = event.currentTarget.getBoundingClientRect();
+                                  setContextMenu({
+                                    session,
+                                    x: bounds.left,
+                                    y: bounds.bottom,
+                                    element: event.currentTarget,
+                                  });
+                                }
+                              }}
+                            >
+                              <span className="session-title">{session.title ?? "新任务"}</span>
+                              {isLoading && (
+                                <span className="session-loading-dot" aria-label="加载中" />
+                              )}
+                              {status && !isLoading && (
+                                <span
+                                  className={`task-indicator task-indicator--${status.tone}${status.spinning ? " task-indicator--spinning" : ""}`}
+                                  title={status.label}
+                                  aria-label={status.label}
+                                />
+                              )}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                 </section>
               </li>
             ))}
@@ -151,29 +183,46 @@ export function SessionSidebar({
         <button className="settings-entry" onClick={onOpenSettings} aria-label="打开设置">
           <img src={settingsIcon} alt="" className="settings-icon" />
           <span>设置</span>
-          <span className="runtime-pulse-dot" title="Runtime 就绪" />
+          {/* Real status dot — no longer hardcoded green */}
+          <span
+            className={dotClass}
+            title={runtimePresentation.label}
+            aria-label={runtimePresentation.label}
+          />
         </button>
       </div>
-      {contextMenu && createPortal(
-        <div
-          className="task-context-menu"
-          role="menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          <button role="menuitem" onClick={() => { setContextMenu(undefined); onRename(contextMenu.session); }}>编辑标题</button>
-          <button role="menuitem" className="danger-action" disabled={contextMenu.session.taskStatus === "in_progress"} onClick={() => { setContextMenu(undefined); onDelete(contextMenu.session); }}>删除任务</button>
-        </div>,
-        document.body,
+
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          label={`任务操作：${contextMenu.session.title ?? "新任务"}`}
+          restoreFocusElement={contextMenu.element}
+          onClose={() => setContextMenu(undefined)}
+          items={[
+            {
+              key: "rename",
+              label: "编辑标题",
+              onClick: () => {
+                setContextMenu(undefined);
+                onRename(contextMenu.session);
+              },
+            },
+            {
+              key: "delete",
+              label: "删除任务",
+              danger: true,
+              disabled: contextMenu.session.taskStatus === "in_progress",
+              onClick: () => {
+                setContextMenu(undefined);
+                onDelete(contextMenu.session);
+              },
+            },
+          ]}
+        />
       )}
     </aside>
   );
-}
-
-interface ContextMenu {
-  session: Session;
-  x: number;
-  y: number;
 }
 
 function basename(path: string): string {

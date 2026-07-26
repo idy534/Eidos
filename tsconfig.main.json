@@ -3,13 +3,22 @@
     "target": "ES2023",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "rootDir": "desktop/main",
-    "outDir": "dist/main",
+    "rootDir": "desktop",
+    "outDir": "dist",
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "sourceMap": true,
     "types": ["node"]
   },
-  "include": ["desktop/main/**/*.ts", "desktop/main/**/*.cts"]
+  "include": [
+    "desktop/main/**/*.ts",
+    "desktop/main/**/*.cts",
+    "desktop/shared/**/*.ts",
+    "desktop/shared/**/*.cts"
+  ],
+  "exclude": [
+    "desktop/**/*.test.ts",
+    "desktop/**/*.test.tsx"
+  ]
 }

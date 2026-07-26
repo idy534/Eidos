@@ -19,6 +19,8 @@ interface SettingsPageProps {
   runtime: RuntimeStatus;
   model?: ModelStatus | undefined;
   modelList?: ModelListResult | undefined;
+  modelLoading?: boolean | undefined;
+  modelError?: string | undefined;
   plugins: PluginRecord[];
   skills: SkillMetadata[];
   mcpServers: McpServerRecord[];
@@ -35,6 +37,8 @@ export function SettingsPage({
   runtime,
   model,
   modelList,
+  modelLoading,
+  modelError,
   plugins,
   skills,
   mcpServers,
@@ -125,6 +129,8 @@ export function SettingsPage({
               <ModelSettings
                 model={model}
                 modelList={modelList}
+                modelLoading={modelLoading}
+                modelError={modelError}
                 pendingAction={pendingAction}
                 storageHealthReady={storageReady}
                 onConfigureModel={onConfigureModel}
