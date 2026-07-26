@@ -45,6 +45,9 @@ CREATE TABLE runs (
     workspace_version INTEGER NOT NULL DEFAULT 0,
     last_diff_hash TEXT,
     error_code TEXT,
+    cancel_requested_at INTEGER,
+    cancel_completed_at INTEGER,
+    cancel_failure_code TEXT,
     created_at INTEGER NOT NULL,
     started_at INTEGER,
     updated_at INTEGER NOT NULL,
@@ -118,6 +121,10 @@ CREATE UNIQUE INDEX one_pending_approval_per_item
 ON approvals (item_id)
 WHERE status = 'pending';
 
+CREATE UNIQUE INDEX one_pending_approval_per_run
+ON approvals (run_id)
+WHERE status = 'pending';
+
 CREATE TABLE execution_segments (
     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
@@ -148,6 +155,18 @@ CREATE TABLE steps (
     UNIQUE(segment_id, ordinal)
 );
 
+CREATE UNIQUE INDEX one_running_segment_per_run
+ON execution_segments(run_id)
+WHERE status = 'running';
+
+CREATE UNIQUE INDEX one_active_segment_per_run
+ON execution_segments(run_id)
+WHERE status IN ('queued', 'running', 'waiting_user_input');
+
+CREATE UNIQUE INDEX one_running_step_per_run
+ON steps(run_id)
+WHERE status = 'running';
+
 CREATE TABLE model_attempts (
     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
@@ -168,6 +187,10 @@ CREATE TABLE model_attempts (
     completed_at INTEGER,
     UNIQUE(step_id, ordinal)
 );
+
+CREATE UNIQUE INDEX one_running_attempt_per_step
+ON model_attempts(step_id)
+WHERE status = 'running';
 
 CREATE TABLE events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

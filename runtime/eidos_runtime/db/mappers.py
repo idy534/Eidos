@@ -149,6 +149,12 @@ def _run_from_row(
         run["completedAt"] = row["completed_at"]
     if row["error_code"] is not None:
         run["errorCode"] = row["error_code"]
+    if "cancel_requested_at" in row.keys() and row["cancel_requested_at"] is not None:
+        run["cancelRequestedAt"] = row["cancel_requested_at"]
+    if "cancel_completed_at" in row.keys() and row["cancel_completed_at"] is not None:
+        run["cancelCompletedAt"] = row["cancel_completed_at"]
+    if "cancel_failure_code" in row.keys() and row["cancel_failure_code"] is not None:
+        run["cancelFailureCode"] = row["cancel_failure_code"]
     if "pause_reason" in row.keys() and row["pause_reason"] is not None:
         run["pauseReason"] = row["pause_reason"]
     if "stop_reason" in row.keys() and row["stop_reason"] is not None:

@@ -91,6 +91,8 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
 
     def test_two_rejections_pause_and_user_input_creates_a_new_segment(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "change")
+        self.store.increment_model_step(run["id"])
+        self.store.complete_current_step(run["id"], "completed")
         for index in range(2):
             item = self.store.create_tool_item(
                 run["id"], index + 1, 0, f"call-{index}", "write_file",
@@ -111,8 +113,17 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         connection = self.store.connection
         assert connection is not None
         self.assertEqual(
-            connection.execute("SELECT COUNT(*) FROM execution_segments WHERE run_id = ?", (run["id"],)).fetchone()[0],
-            1,
+            [
+                row["status"]
+                for row in connection.execute(
+                    """
+                    SELECT status FROM execution_segments
+                    WHERE run_id = ? ORDER BY ordinal
+                    """,
+                    (run["id"],),
+                )
+            ],
+            ["completed", "queued"],
         )
 
     def test_crashed_durable_intent_is_reconciled_without_replay(self) -> None:

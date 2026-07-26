@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 import logging
 import threading
+import time
 import uuid
 from typing import Callable
 
@@ -14,27 +16,56 @@ from eidos_runtime.db.storage import (
     SessionStore,
 )
 from eidos_runtime.model.client import ModelClient
+from eidos_runtime.model.pydantic_ai_client import ModelClientLease
 from eidos_runtime.protocol.schemas import ApprovalDecisionDto
 from eidos_runtime.runtime.approval import ApprovalDecision
+from eidos_runtime.runtime.contracts import RuntimeCancelled
 from eidos_runtime.runtime.engine import RuntimeEngine
 from eidos_runtime.runtime.events import RuntimeEvents
+from eidos_runtime.runtime.state_machine import RuntimeLifecycle
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
 
 
 logger = logging.getLogger("eidos.runtime")
 
 
-@dataclass
-class PendingApproval:
-    event: threading.Event
-    decision: ApprovalDecision | None = None
+class RunCancelTimeout(RuntimeError):
+    pass
+
+
+class RunReconciliationRequired(RuntimeError):
+    pass
+
+
+class RuntimeShutdownTimeout(RuntimeError):
+    pass
+
+
+class RunWorkerState(StrEnum):
+    STARTING = "starting"
+    RUNNING = "running"
+    WAITING_APPROVAL = "waiting_approval"
+    WAITING_SLOT = "waiting_slot"
+    CANCEL_REQUESTED = "cancel_requested"
+    CANCELING = "canceling"
+    FINISHED = "finished"
 
 
 @dataclass
-class WaitingWorker:
+class RunHandle:
+    run_id: str
     thread: threading.Thread
     cancellation: threading.Event
     resume: threading.Event
+    state: RunWorkerState
+    model_lease: ModelClientLease | None = None
+
+
+@dataclass
+class PendingApproval:
+    run_id: str
+    event: threading.Event
+    decision: ApprovalDecision | None = None
 
 
 @dataclass(frozen=True)
@@ -44,12 +75,12 @@ class WorkerStart:
 
 
 class RunSupervisor:
-    """Owns FIFO execution, worker lifetime, approval waits, and cleanup."""
+    """Owns FIFO execution and every Run worker control resource."""
 
     def __init__(
         self,
         store: SessionStore,
-        model_for: Callable[[str], ModelClient],
+        model_for: Callable[[str], ModelClient | ModelClientLease],
         notify: Callable[[dict[str, object]], None],
         scan_feedback: Callable[[str], str],
         can_run: Callable[[], bool],
@@ -57,6 +88,9 @@ class RunSupervisor:
         sensitive: Callable[[], SensitiveScanner | None],
         cleanup: Callable[[], None] | None = None,
         engine_factory: type[RuntimeEngine] = RuntimeEngine,
+        *,
+        cancel_timeout: float = 6.0,
+        shutdown_timeout: float = 6.0,
     ) -> None:
         self.store = store
         self.model_for = model_for
@@ -67,32 +101,37 @@ class RunSupervisor:
         self.sensitive = sensitive
         self.cleanup = cleanup
         self.engine_factory = engine_factory
+        self.cancel_timeout = cancel_timeout
+        self.shutdown_timeout = shutdown_timeout
         self.lock = threading.RLock()
-        self.worker: threading.Thread | None = None
-        self.active_run_id: str | None = None
-        self.active_cancel: threading.Event | None = None
-        self.waiting_workers: dict[str, WaitingWorker] = {}
+        self._handles: dict[str, RunHandle] = {}
+        self._active_slot_run_id: str | None = None
         self.approval_lock = threading.RLock()
         self.pending_approvals: dict[str, PendingApproval] = {}
-        self.shutting_down = False
+        self.lifecycle = RuntimeLifecycle.RUNNING
         self.events = RuntimeEvents(notify)
 
     def prepare_next(self) -> WorkerStart | None:
-        if not self.can_run() or self.store.health_state != "ready":
+        if (
+            self.lifecycle is not RuntimeLifecycle.RUNNING
+            or not self.can_run()
+            or self.store.health_state != "ready"
+        ):
             return None
         with self.lock:
-            if self.worker is not None and self.worker.is_alive():
+            if self._active_slot_run_id is not None:
                 return None
             claimed = self.store.claim_next_run_committed()
             if claimed is None:
                 return None
             run_id = str(claimed.value["id"])
-            waiting = self.waiting_workers.pop(run_id, None)
-            if waiting is not None:
-                self.active_run_id = run_id
-                self.active_cancel = waiting.cancellation
-                self.worker = waiting.thread
-                waiting.resume.set()
+            handle = self._handles.get(run_id)
+            if handle is not None:
+                if handle.state is not RunWorkerState.WAITING_SLOT:
+                    raise RuntimeError("run already has a worker")
+                self._active_slot_run_id = run_id
+                handle.state = RunWorkerState.RUNNING
+                handle.resume.set()
                 return None
             return self._start_worker_locked(run_id)
 
@@ -109,60 +148,62 @@ class RunSupervisor:
     def abort(self, start: WorkerStart | None) -> None:
         if start is None:
             return
-        with self.lock:
-            if self.active_run_id == start.run_id and self.active_cancel is not None:
-                self.active_cancel.set()
+        self.request_cancel(start.run_id)
         start.gate.set()
 
     def cancel_run(
         self, run_id: str, *, operation_id: str | None = None
     ) -> dict[str, object]:
-        current = self.store.read_run(run_id)
-        if current["status"] == "waiting_approval":
-            try:
-                mutation = self.store.cancel_waiting_approval_committed(run_id)
-            except InvalidRunStateError:
-                return self.store.read_run(run_id)
-            with self.lock:
-                if self.active_run_id == run_id and self.active_cancel is not None:
-                    self.active_cancel.set()
-                waiting = self.waiting_workers.get(run_id)
-                if waiting is not None:
-                    waiting.cancellation.set()
-            items = {
-                str(item["id"]): item
-                for item in self.store.canceled_items_for_run(run_id)
-            }
-            self.events.publish(mutation, run=mutation.value, items=items)
-            return mutation.value
+        self.store.read_run(run_id)
         with self.lock:
-            if self.active_run_id == run_id and self.active_cancel is not None:
-                self.active_cancel.set()
-                worker = self.worker
-            elif run_id in self.waiting_workers:
-                waiting = self.waiting_workers[run_id]
-                waiting.cancellation.set()
-                worker = waiting.thread
-            else:
-                worker = None
-        if worker is not None:
-            worker.join(timeout=6.0)
-        current = self.store.read_run(run_id)
-        if current["status"] in {
-            "queued", "running", "waiting_approval", "waiting_user_input"
-        }:
+            handle = self._handles.get(run_id)
+        if handle is None:
             return self.store.cancel_run(run_id, operation_id=operation_id)
+        mutation = self.store.request_cancel_committed(run_id)
+        self.events.publish(mutation, run=mutation.value)
+        self.request_cancel(run_id)
+        handle.thread.join(timeout=self.cancel_timeout)
+        if handle.thread.is_alive():
+            failed = self.store.mark_cancel_failed_committed(
+                run_id, "RUN_CANCEL_TIMEOUT"
+            )
+            self.events.publish(failed, run=failed.value)
+            raise RunCancelTimeout("RUN_CANCEL_TIMEOUT")
+        current = self.store.read_run(run_id)
+        if operation_id is not None:
+            current = self.store.record_operation_result(
+                operation_id,
+                "run/cancel",
+                {"runId": run_id},
+                current,
+            )
+        if current.get("cancelFailureCode") == "RECONCILIATION_REQUIRED":
+            raise RunReconciliationRequired("RECONCILIATION_REQUIRED")
+        if current["status"] != "canceled":
+            raise InvalidRunStateError("run cancellation did not complete")
         return current
+
+    def request_cancel(self, run_id: str) -> bool:
+        with self.lock:
+            handle = self._handles.get(run_id)
+            if handle is None or handle.state is RunWorkerState.FINISHED:
+                return False
+            handle.state = RunWorkerState.CANCEL_REQUESTED
+            handle.cancellation.set()
+            handle.resume.set()
+        self._release_approval_waits(run_id)
+        return True
 
     def request_approval(
         self, params: dict[str, object], cancel: threading.Event
     ) -> ApprovalDecision:
+        run_id = str(params["runId"])
         request_id = f"server-approval-{uuid.uuid4()}"
-        pending = PendingApproval(threading.Event())
+        pending = PendingApproval(run_id, threading.Event())
         with self.approval_lock:
             self.pending_approvals[request_id] = pending
         try:
-            self._park_active_worker(str(params["runId"]), cancel)
+            self._park_active_worker(run_id)
             self.notify({
                 "jsonrpc": "2.0",
                 "id": request_id,
@@ -170,7 +211,10 @@ class RunSupervisor:
                 "params": params,
             })
             while not pending.event.wait(0.1):
-                if cancel.is_set() or self.shutting_down:
+                if (
+                    cancel.is_set()
+                    or self.lifecycle is not RuntimeLifecycle.RUNNING
+                ):
                     return ApprovalDecision("reject")
             return pending.decision or ApprovalDecision("reject")
         finally:
@@ -189,7 +233,8 @@ class RunSupervisor:
                 parsed = ApprovalDecisionDto.model_validate(message.get("result"))
                 feedback = (
                     self.scan_feedback(parsed.feedback)
-                    if parsed.feedback is not None else None
+                    if parsed.feedback is not None
+                    else None
                 )
                 pending.decision = ApprovalDecision(parsed.decision, feedback)
             except (ValidationError, SensitiveScanError):
@@ -197,70 +242,123 @@ class RunSupervisor:
             pending.event.set()
 
     def wait(self, timeout: float = 5.0) -> None:
+        deadline = time.monotonic() + timeout
         with self.lock:
-            workers = [self.worker] + [
-                entry.thread for entry in self.waiting_workers.values()
-            ]
-        for worker in {worker for worker in workers if worker is not None}:
-            worker.join(timeout=timeout)
+            workers = tuple(handle.thread for handle in self._handles.values())
+        for worker in workers:
+            worker.join(timeout=max(0.0, deadline - time.monotonic()))
 
     def shutdown(self) -> None:
-        self.shutting_down = True
-        self._cancel_waits()
-        self.wait(6.0)
-        if not self._workers_alive():
-            self.store.close()
+        with self.lock:
+            if self.lifecycle in {
+                RuntimeLifecycle.QUIESCENT,
+                RuntimeLifecycle.CLOSED,
+            }:
+                return
+            self.lifecycle = RuntimeLifecycle.DRAINING
+        run_ids = self.store.nonterminal_run_ids()
+        with self.lock:
+            handled = frozenset(self._handles)
+        for run_id in run_ids:
+            if run_id in handled:
+                try:
+                    mutation = self.store.request_cancel_committed(run_id)
+                    self.events.publish(mutation, run=mutation.value)
+                except InvalidRunStateError:
+                    pass
+                self.request_cancel(run_id)
+            else:
+                try:
+                    mutation = self.store.cancel_run_committed(run_id)
+                    self.events.publish(mutation, run=mutation.value)
+                except InvalidRunStateError:
+                    pass
+        with self.lock:
+            active_ids = tuple(self._handles)
+        self._release_approval_waits()
+        self.wait(self.shutdown_timeout)
+        if self.has_active_workers() or self.has_active_model_leases():
+            for run_id in active_ids:
+                try:
+                    failed = self.store.mark_cancel_failed_committed(
+                        run_id, "RUNTIME_SHUTDOWN_TIMEOUT"
+                    )
+                    self.events.publish(failed, run=failed.value)
+                except (InvalidRunStateError, ResourceNotFoundError):
+                    pass
+            resources = []
+            if self.has_active_workers():
+                resources.append("run_handle")
+            if self.has_active_model_leases():
+                resources.append("model_lease")
+            logger.warning(
+                "Runtime shutdown timed out; active resources: %s",
+                ",".join(resources),
+            )
+            raise RuntimeShutdownTimeout("RUNTIME_SHUTDOWN_TIMEOUT")
+        with self.store.lock:
+            connection = self.store.connection
+            if connection is not None:
+                connection.execute("SELECT 1").fetchone()
+        with self.lock:
+            self.lifecycle = RuntimeLifecycle.QUIESCENT
 
     def close(self) -> None:
+        try:
+            self.shutdown()
+        except RuntimeShutdownTimeout:
+            return
+        self.store.close()
         with self.lock:
-            active_run_id = self.active_run_id
-        self._cancel_waits()
-        if active_run_id is not None and not self.shutting_down:
-            try:
-                self.store.interrupt_run(active_run_id)
-            except (ResourceNotFoundError, InvalidRunStateError):
-                pass
-        self.wait(6.0)
-        if not self._workers_alive():
-            self.store.close()
+            self.lifecycle = RuntimeLifecycle.CLOSED
 
     def has_active_workers(self) -> bool:
         with self.lock:
-            return self.worker is not None and self.worker.is_alive()
+            return any(
+                handle.state is not RunWorkerState.FINISHED
+                for handle in self._handles.values()
+            )
 
-    def _cancel_waits(self) -> None:
+    def has_active_model_leases(self) -> bool:
         with self.lock:
-            if self.active_cancel is not None:
-                self.active_cancel.set()
-            waiting = tuple(self.waiting_workers.values())
-            for entry in waiting:
-                entry.cancellation.set()
+            return any(
+                handle.model_lease is not None and not handle.model_lease.closed
+                for handle in self._handles.values()
+            )
+
+    def handle_state(self, run_id: str) -> RunWorkerState | None:
+        with self.lock:
+            handle = self._handles.get(run_id)
+            return handle.state if handle is not None else None
+
+    def _release_approval_waits(self, run_id: str | None = None) -> None:
         with self.approval_lock:
-            approvals = tuple(self.pending_approvals.values())
-            for pending in approvals:
+            for pending in tuple(self.pending_approvals.values()):
+                if run_id is not None and pending.run_id != run_id:
+                    continue
                 if not pending.event.is_set():
                     pending.decision = ApprovalDecision("reject")
                     pending.event.set()
 
-    def _workers_alive(self) -> bool:
-        with self.lock:
-            workers = [self.worker] + [
-                entry.thread for entry in self.waiting_workers.values()
-            ]
-        return any(worker is not None and worker.is_alive() for worker in workers)
-
     def _start_worker_locked(self, run_id: str) -> WorkerStart:
+        if run_id in self._handles:
+            raise RuntimeError("run already has a worker")
         cancellation = threading.Event()
+        resume = threading.Event()
         gate = threading.Event()
         worker = threading.Thread(
             target=self._run_worker,
             args=(run_id, cancellation, gate),
             name=f"eidos-run-{run_id}",
-            daemon=True,
         )
-        self.active_run_id = run_id
-        self.active_cancel = cancellation
-        self.worker = worker
+        self._handles[run_id] = RunHandle(
+            run_id=run_id,
+            thread=worker,
+            cancellation=cancellation,
+            resume=resume,
+            state=RunWorkerState.STARTING,
+        )
+        self._active_slot_run_id = run_id
         worker.start()
         return WorkerStart(run_id, gate)
 
@@ -270,28 +368,62 @@ class RunSupervisor:
         cancellation: threading.Event,
         start_gate: threading.Event,
     ) -> None:
+        with self.lock:
+            handle = self._handles.get(run_id)
+            if handle is None:
+                handle = RunHandle(
+                    run_id,
+                    threading.current_thread(),
+                    cancellation,
+                    threading.Event(),
+                    RunWorkerState.STARTING,
+                )
+                self._handles[run_id] = handle
+                self._active_slot_run_id = run_id
         start_gate.wait()
         try:
             run = self.store.read_run(run_id)
-            self.engine_factory(
+            leased = self.model_for(str(run["modelId"]))
+            lease = (
+                leased
+                if isinstance(leased, ModelClientLease)
+                else ModelClientLease(leased)
+            )
+            with self.lock:
+                handle.model_lease = lease
+                handle.state = RunWorkerState.RUNNING
+            engine = self.engine_factory(
                 self.store,
-                self.model_for(str(run["modelId"])),
+                lease.client,
                 self.notify,
                 self.request_approval,
                 self.shell_available(),
                 sensitive=self.sensitive(),
                 wait_for_execution_slot=self._wait_for_execution_slot,
-            ).run(run_id, cancellation)
+            )
+            if isinstance(engine, RuntimeEngine):
+                engine.terminalize_cancel = False
+            engine.run(run_id, cancellation)
+        except RuntimeCancelled:
+            with self.lock:
+                handle.state = RunWorkerState.CANCELING
         except Exception:
-            logger.exception("Run worker failed")
+            if cancellation.is_set():
+                with self.lock:
+                    handle.state = RunWorkerState.CANCELING
+            else:
+                self._fail_worker(run_id)
+        finally:
             try:
-                run = self.store.read_run(run_id)
-                if run["status"] in {
-                    "running", "waiting_approval", "finalizing"
-                }:
-                    mutation = self.store.fail_run_committed(
-                        run_id, "INTERNAL_ERROR"
-                    )
+                if self.cleanup is not None:
+                    self.cleanup()
+            finally:
+                lease = handle.model_lease
+                if lease is not None:
+                    lease.close()
+            if cancellation.is_set():
+                try:
+                    mutation = self.store.complete_requested_cancel_committed(run_id)
                     items = {
                         str(item["id"]): item
                         for item in self.store.canceled_items_for_run(run_id)
@@ -299,52 +431,69 @@ class RunSupervisor:
                     self.events.publish(
                         mutation, run=mutation.value, items=items
                     )
-            except Exception:
-                logger.exception("Run worker cleanup failed")
-        finally:
-            if self.cleanup is not None:
-                self.cleanup()
+                except InvalidRunStateError:
+                    pass
+                except Exception:
+                    logger.exception("Run cancellation finalization failed")
             should_schedule = False
             with self.lock:
-                if self.active_run_id == run_id:
-                    self.active_run_id = None
-                    self.active_cancel = None
-                    self.worker = None
-                    should_schedule = not self.shutting_down
-                waiting = self.waiting_workers.pop(run_id, None)
-                if waiting is not None:
-                    should_schedule = should_schedule or not self.shutting_down
+                handle.state = RunWorkerState.FINISHED
+                if self._active_slot_run_id == run_id:
+                    self._active_slot_run_id = None
+                self._handles.pop(run_id, None)
+                should_schedule = self.lifecycle is RuntimeLifecycle.RUNNING
             if should_schedule:
                 self.schedule_next()
 
-    def _park_active_worker(
-        self, run_id: str, cancellation: threading.Event
-    ) -> None:
+    def _fail_worker(self, run_id: str) -> None:
+        try:
+            logger.exception("Run worker failed")
+            run = self.store.read_run(run_id)
+            if run["status"] in {
+                "running",
+                "waiting_approval",
+                "finalizing",
+            }:
+                mutation = self.store.fail_run_committed(
+                    run_id, "INTERNAL_ERROR"
+                )
+                items = {
+                    str(item["id"]): item
+                    for item in self.store.canceled_items_for_run(run_id)
+                }
+                self.events.publish(
+                    mutation, run=mutation.value, items=items
+                )
+        except Exception:
+            logger.exception("Run worker cleanup failed")
+
+    def _park_active_worker(self, run_id: str) -> None:
         with self.lock:
+            handle = self._handles.get(run_id)
             if (
-                self.active_run_id != run_id
-                or self.worker is not threading.current_thread()
+                handle is None
+                or handle.thread is not threading.current_thread()
+                or self._active_slot_run_id != run_id
             ):
                 return
-            self.waiting_workers[run_id] = WaitingWorker(
-                thread=self.worker,
-                cancellation=cancellation,
-                resume=threading.Event(),
-            )
-            self.active_run_id = None
-            self.active_cancel = None
-            self.worker = None
+            handle.state = RunWorkerState.WAITING_APPROVAL
+            self._active_slot_run_id = None
         self.schedule_next()
 
     def _wait_for_execution_slot(
         self, run_id: str, cancellation: threading.Event
     ) -> bool:
         with self.lock:
-            waiting = self.waiting_workers.get(run_id)
-        if waiting is None:
-            return False
+            handle = self._handles.get(run_id)
+            if handle is None:
+                return False
+            handle.state = RunWorkerState.WAITING_SLOT
+            handle.resume.clear()
         self.schedule_next()
-        while not waiting.resume.wait(0.1):
-            if cancellation.is_set() or self.shutting_down:
+        while not handle.resume.wait(0.1):
+            if (
+                cancellation.is_set()
+                or self.lifecycle is not RuntimeLifecycle.RUNNING
+            ):
                 return False
         return not cancellation.is_set()

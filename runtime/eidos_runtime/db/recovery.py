@@ -7,13 +7,12 @@ from eidos_runtime.db.events import append_event
 from eidos_runtime.db.transitions import (
     settle_run_children,
     transition_run,
-    transition_segments,
 )
+from eidos_runtime.db.invariants import verify_runtime_invariants
 from eidos_runtime.runtime.state_machine import (
     ApprovalStatus,
     EventType,
     RunStatus,
-    SegmentStatus,
     ensure_transition,
 )
 
@@ -44,13 +43,11 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
             """,
             (row["id"], current.value),
         )
-        transition_segments(
+        settle_run_children(
             connection,
             str(row["id"]),
-            frozenset({SegmentStatus.RUNNING}),
-            SegmentStatus.WAITING_USER_INPUT,
+            RunStatus.WAITING_USER_INPUT,
             now,
-            "side_effect_reconciliation_required",
         )
         run, _event = transition_run(
             connection,
@@ -58,6 +55,13 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
             frozenset({current}),
             RunStatus.WAITING_USER_INPUT,
             "side_effect_reconciliation_required",
+        )
+        connection.execute(
+            """
+            UPDATE runs SET cancel_failure_code = 'RECONCILIATION_REQUIRED'
+            WHERE id = ? AND cancel_requested_at IS NOT NULL
+            """,
+            (row["id"],),
         )
         epoch = connection.execute(
             "SELECT reconciliation_epoch FROM runs WHERE id = ?", (row["id"],)
@@ -74,6 +78,28 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
             run_id=str(run["id"]),
         )
 
+    cancel_requested = connection.execute(
+        """
+        SELECT id, status FROM runs
+        WHERE cancel_requested_at IS NOT NULL
+          AND cancel_completed_at IS NULL
+          AND reconciliation_required = 0
+          AND status IN (
+              'queued', 'running', 'waiting_approval',
+              'waiting_user_input', 'finalizing'
+          )
+        """
+    ).fetchall()
+    for row in cancel_requested:
+        settle_run_children(connection, str(row["id"]), RunStatus.CANCELED, now)
+        transition_run(
+            connection,
+            str(row["id"]),
+            frozenset({RunStatus(row["status"])}),
+            RunStatus.CANCELED,
+            "cancel_recovered",
+        )
+
     active_runs = connection.execute(
         """
         SELECT id, status FROM runs
@@ -88,6 +114,17 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
             frozenset({RunStatus(row["status"])}),
             RunStatus.INTERRUPTED,
             "runtime_interrupted",
+        )
+
+    paused_runs = connection.execute(
+        "SELECT id FROM runs WHERE status = 'waiting_user_input'"
+    ).fetchall()
+    for row in paused_runs:
+        settle_run_children(
+            connection,
+            str(row["id"]),
+            RunStatus.WAITING_USER_INPUT,
+            now,
         )
 
     approvals = connection.execute(
@@ -122,3 +159,4 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
     connection.execute(
         "UPDATE tool_calls SET approval_status = 'canceled' WHERE approval_status = 'pending'"
     )
+    verify_runtime_invariants(connection)

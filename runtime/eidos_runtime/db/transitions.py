@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import sqlite3
 
 from eidos_runtime.db.database import now_ms as _now_ms
@@ -15,6 +16,14 @@ from eidos_runtime.runtime.state_machine import (
     ToolCallStatus,
     ensure_transition,
 )
+
+
+@dataclass(frozen=True)
+class ApprovalResolution:
+    run: dict[str, object]
+    approval_id: str
+    approval_status: ApprovalStatus
+    events: tuple[dict[str, object], ...]
 
 
 def transition_run(
@@ -45,7 +54,11 @@ def transition_run(
     elif target_status is RunStatus.STOPPED:
         updates.update({"stop_reason": reason, "completed_at": now})
     elif target_status is RunStatus.CANCELED:
-        updates["completed_at"] = now
+        updates.update({
+            "completed_at": now,
+            "cancel_completed_at": now,
+            "cancel_failure_code": None,
+        })
     elif target_status is RunStatus.INTERRUPTED:
         updates.update({"error_code": "RUNTIME_INTERRUPTED", "completed_at": now})
     elif target_status is RunStatus.SUCCEEDED:
@@ -95,12 +108,33 @@ def transition_segments(
     for row in rows:
         current = SegmentStatus(row["status"])
         ensure_transition(current, target_status)
+        completed_at = (
+            now
+            if target_status in {
+                SegmentStatus.COMPLETED,
+                SegmentStatus.FAILED,
+                SegmentStatus.CANCELED,
+            }
+            else None
+        )
         connection.execute(
             """
-            UPDATE execution_segments SET status = ?, completed_at = ?
+            UPDATE execution_segments
+            SET status = ?, completed_at = ?,
+                started_at = CASE
+                    WHEN ? = 'running' THEN COALESCE(started_at, ?)
+                    ELSE started_at
+                END
             WHERE id = ? AND status = ?
             """,
-            (target_status.value, now, row["id"], current.value),
+            (
+                target_status.value,
+                completed_at,
+                target_status.value,
+                now,
+                row["id"],
+                current.value,
+            ),
         )
         events.append(append_event(
             connection,
@@ -116,6 +150,137 @@ def transition_segments(
             run_id=run_id,
         ))
     return tuple(events)
+
+
+def resolve_approval_and_transition(
+    connection: sqlite3.Connection,
+    *,
+    item_id: str,
+    decision: str,
+    feedback: str | None,
+    requeue: bool,
+) -> ApprovalResolution:
+    if decision not in {"approve", "reject"}:
+        raise ValueError("invalid approval decision")
+    fact = connection.execute(
+        """
+        SELECT items.run_id, runs.consecutive_rejects, approvals.id AS approval_id
+        FROM items
+        JOIN runs ON runs.id = items.run_id
+        JOIN approvals ON approvals.item_id = items.id
+        WHERE items.id = ? AND items.status = 'in_progress'
+          AND runs.status = 'waiting_approval'
+          AND approvals.status = 'pending'
+        """,
+        (item_id,),
+    ).fetchone()
+    if fact is None:
+        raise InvalidRunStateError("approval is no longer pending")
+
+    now = _now_ms()
+    target_approval = (
+        ApprovalStatus.APPROVED
+        if decision == "approve"
+        else ApprovalStatus.REJECTED
+    )
+    ensure_transition(ApprovalStatus.PENDING, target_approval)
+    tool_update = connection.execute(
+        """
+        UPDATE tool_calls
+        SET approval_status = 'resolved', approval_decision = ?,
+            approval_feedback = ?
+        WHERE item_id = ? AND status = 'running'
+          AND approval_status = 'pending'
+        """,
+        (decision, feedback, item_id),
+    )
+    approval_update = connection.execute(
+        """
+        UPDATE approvals
+        SET status = ?, decision = ?, feedback = ?, decided_at = ?
+        WHERE id = ? AND status = 'pending'
+        """,
+        (
+            target_approval.value,
+            decision,
+            feedback,
+            now,
+            fact["approval_id"],
+        ),
+    )
+    rejects = int(fact["consecutive_rejects"]) + (
+        1 if decision == "reject" else 0
+    )
+    reject_update = connection.execute(
+        """
+        UPDATE runs SET consecutive_rejects = ?
+        WHERE id = ? AND status = 'waiting_approval'
+        """,
+        (rejects, fact["run_id"]),
+    )
+    if (
+        tool_update.rowcount != 1
+        or approval_update.rowcount != 1
+        or reject_update.rowcount != 1
+    ):
+        raise InvalidRunStateError("approval is no longer pending")
+
+    target_run = (
+        RunStatus.WAITING_USER_INPUT
+        if rejects >= 2
+        else RunStatus.QUEUED
+        if requeue
+        else RunStatus.RUNNING
+    )
+    reason = (
+        "repeated_approval_rejection"
+        if target_run is RunStatus.WAITING_USER_INPUT
+        else "approval_resolved"
+    )
+    events: list[dict[str, object]] = []
+    if target_run is RunStatus.WAITING_USER_INPUT:
+        events.extend(transition_segments(
+            connection,
+            str(fact["run_id"]),
+            frozenset({SegmentStatus.RUNNING}),
+            SegmentStatus.WAITING_USER_INPUT,
+            now,
+            reason,
+        ))
+    elif target_run is RunStatus.QUEUED:
+        events.extend(transition_segments(
+            connection,
+            str(fact["run_id"]),
+            frozenset({SegmentStatus.RUNNING}),
+            SegmentStatus.QUEUED,
+            now,
+            reason,
+        ))
+    run, run_event = transition_run(
+        connection,
+        str(fact["run_id"]),
+        frozenset({RunStatus.WAITING_APPROVAL}),
+        target_run,
+        reason,
+    )
+    approval_event = append_event(
+        connection,
+        EventType.APPROVAL_STATUS_CHANGED,
+        now,
+        {
+            "entity_id": fact["approval_id"],
+            "previous": ApprovalStatus.PENDING.value,
+            "current": target_approval.value,
+        },
+        session_id=str(run["sessionId"]),
+        run_id=str(fact["run_id"]),
+    )
+    return ApprovalResolution(
+        run=run,
+        approval_id=str(fact["approval_id"]),
+        approval_status=target_approval,
+        events=(approval_event, *events, run_event),
+    )
 
 def settle_run_children(
     connection: sqlite3.Connection,
@@ -251,23 +416,33 @@ def settle_run_children(
             run_id=run_id,
         ))
 
-    segment_target = (
-        SegmentStatus.CANCELED
-        if target_status is RunStatus.CANCELED
-        else SegmentStatus.FAILED
-    )
-    events.extend(transition_segments(
-        connection,
-        run_id,
-        frozenset({
-            SegmentStatus.QUEUED,
-            SegmentStatus.RUNNING,
+    if target_status is RunStatus.WAITING_USER_INPUT:
+        events.extend(transition_segments(
+            connection,
+            run_id,
+            frozenset({SegmentStatus.RUNNING}),
             SegmentStatus.WAITING_USER_INPUT,
-        }),
-        segment_target,
-        now,
-        "run_terminated",
-    ))
+            now,
+            "run_paused",
+        ))
+    else:
+        segment_target = (
+            SegmentStatus.CANCELED
+            if target_status is RunStatus.CANCELED
+            else SegmentStatus.FAILED
+        )
+        events.extend(transition_segments(
+            connection,
+            run_id,
+            frozenset({
+                SegmentStatus.QUEUED,
+                SegmentStatus.RUNNING,
+                SegmentStatus.WAITING_USER_INPUT,
+            }),
+            segment_target,
+            now,
+            "run_terminated",
+        ))
     connection.execute(
         "UPDATE input_mailbox SET status = 'canceled' WHERE run_id = ? AND status = 'pending'",
         (run_id,),

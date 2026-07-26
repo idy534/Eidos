@@ -207,6 +207,16 @@ class RunRepository(Repository):
                 "SELECT COUNT(*) + 1 FROM execution_segments WHERE run_id = ?",
                 (run_id,),
             ).fetchone()[0]
+            old_segment_events = transition_segments(
+                connection,
+                run_id,
+                frozenset({SegmentStatus.WAITING_USER_INPUT}),
+                SegmentStatus.COMPLETED,
+                now,
+                "run_continued",
+            )
+            if len(old_segment_events) != 1:
+                raise InvalidRunStateError("run has no paused segment")
             connection.execute(
                 """
                 INSERT INTO items (
@@ -631,6 +641,184 @@ class RunRepository(Repository):
             operation_request={"runId": run_id} if operation_id is not None else None,
         )
 
+    def request_cancel_committed(
+        self, run_id: str
+    ) -> CommittedMutation[dict[str, object]]:
+        with self.lock, self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise ResourceNotFoundError("run not found")
+            if row["status"] not in {
+                "queued",
+                "running",
+                "waiting_approval",
+                "waiting_user_input",
+                "finalizing",
+                "canceled",
+            }:
+                raise InvalidRunStateError("run cannot be canceled")
+            if row["status"] == "canceled":
+                return CommittedMutation(_run_from_row(row), ())
+            now = _now_ms()
+            connection.execute(
+                """
+                UPDATE runs
+                SET cancel_requested_at = COALESCE(cancel_requested_at, ?),
+                    cancel_failure_code = NULL,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now, now, run_id),
+            )
+            run = _run_from_row(connection.execute(
+                "SELECT * FROM runs WHERE id = ?", (run_id,)
+            ).fetchone())
+            event = append_event(
+                connection,
+                EventType.RUN_UPDATED,
+                now,
+                {"reason": "cancel_requested"},
+                session_id=str(run["sessionId"]),
+                run_id=run_id,
+            )
+        return CommittedMutation(run, (event,))
+
+    def mark_cancel_failed_committed(
+        self, run_id: str, failure_code: str
+    ) -> CommittedMutation[dict[str, object]]:
+        with self.lock, self._connection() as connection:
+            row = connection.execute(
+                "SELECT session_id FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise ResourceNotFoundError("run not found")
+            now = _now_ms()
+            changed = connection.execute(
+                """
+                UPDATE runs
+                SET cancel_failure_code = ?, updated_at = ?
+                WHERE id = ? AND cancel_requested_at IS NOT NULL
+                  AND cancel_completed_at IS NULL
+                """,
+                (failure_code, now, run_id),
+            )
+            if changed.rowcount != 1:
+                raise InvalidRunStateError("cancel is not pending")
+            run = _run_from_row(connection.execute(
+                "SELECT * FROM runs WHERE id = ?", (run_id,)
+            ).fetchone())
+            event = append_event(
+                connection,
+                EventType.RUN_UPDATED,
+                now,
+                {"reason": "cancel_failed"},
+                session_id=row["session_id"],
+                run_id=run_id,
+            )
+        return CommittedMutation(run, (event,))
+
+    def complete_requested_cancel_committed(
+        self, run_id: str
+    ) -> CommittedMutation[dict[str, object]]:
+        with self.lock, self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise ResourceNotFoundError("run not found")
+            if row["status"] == RunStatus.CANCELED.value:
+                return CommittedMutation(_run_from_row(row), ())
+            if row["cancel_requested_at"] is None:
+                raise InvalidRunStateError("cancel was not requested")
+            current = RunStatus(row["status"])
+            expected = frozenset({
+                RunStatus.QUEUED,
+                RunStatus.RUNNING,
+                RunStatus.WAITING_APPROVAL,
+                RunStatus.WAITING_USER_INPUT,
+                RunStatus.FINALIZING,
+            })
+            if current not in expected:
+                raise InvalidRunStateError("run cannot finish cancellation")
+            now = _now_ms()
+            if row["reconciliation_required"] or row["side_effects_may_exist"]:
+                events = list(settle_run_children(
+                    connection, run_id, RunStatus.WAITING_USER_INPUT, now
+                ))
+                if current is RunStatus.WAITING_USER_INPUT:
+                    connection.execute(
+                        """
+                        UPDATE runs
+                        SET pause_reason = 'side_effect_reconciliation_required',
+                            cancel_failure_code = 'RECONCILIATION_REQUIRED',
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (now, run_id),
+                    )
+                    run = _run_from_row(connection.execute(
+                        "SELECT * FROM runs WHERE id = ?", (run_id,)
+                    ).fetchone())
+                    events.append(append_event(
+                        connection,
+                        EventType.RUN_UPDATED,
+                        now,
+                        {
+                            "reason": "cancel_reconciliation_required",
+                        },
+                        session_id=str(run["sessionId"]),
+                        run_id=run_id,
+                    ))
+                else:
+                    run, event = transition_run(
+                        connection,
+                        run_id,
+                        frozenset({current}),
+                        RunStatus.WAITING_USER_INPUT,
+                        "side_effect_reconciliation_required",
+                    )
+                    events.append(event)
+                    connection.execute(
+                        """
+                        UPDATE runs
+                        SET cancel_failure_code = 'RECONCILIATION_REQUIRED'
+                        WHERE id = ?
+                        """,
+                        (run_id,),
+                    )
+                    run = _run_from_row(connection.execute(
+                        "SELECT * FROM runs WHERE id = ?", (run_id,)
+                    ).fetchone())
+                return CommittedMutation(run, tuple(events))
+            events = list(settle_run_children(
+                connection, run_id, RunStatus.CANCELED, now
+            ))
+            run, event = transition_run(
+                connection,
+                run_id,
+                frozenset({current}),
+                RunStatus.CANCELED,
+                "user_cancel",
+            )
+            events.append(event)
+        return CommittedMutation(run, tuple(events))
+
+    def nonterminal_run_ids(self) -> tuple[str, ...]:
+        with self.lock:
+            rows = self._connection().execute(
+                """
+                SELECT id FROM runs
+                WHERE status IN (
+                    'queued', 'running', 'waiting_approval',
+                    'waiting_user_input', 'finalizing'
+                )
+                ORDER BY creation_seq
+                """
+            ).fetchall()
+        return tuple(str(row["id"]) for row in rows)
+
     def cancel_run_committed(
         self, run_id: str
     ) -> CommittedMutation[dict[str, object]]:
@@ -675,6 +863,14 @@ class RunRepository(Repository):
         if current not in expected:
             raise InvalidRunStateError("run cannot be canceled")
         now = _now_ms()
+        connection.execute(
+            """
+            UPDATE runs
+            SET cancel_requested_at = COALESCE(cancel_requested_at, ?)
+            WHERE id = ?
+            """,
+            (now, run_id),
+        )
         events = list(settle_run_children(
             connection, run_id, RunStatus.CANCELED, now
         ))

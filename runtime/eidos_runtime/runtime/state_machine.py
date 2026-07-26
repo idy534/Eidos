@@ -28,6 +28,13 @@ class RuntimeState(StrEnum):
     CANCELED = "canceled"
 
 
+class RuntimeLifecycle(StrEnum):
+    RUNNING = "running"
+    DRAINING = "draining"
+    QUIESCENT = "quiescent"
+    CLOSED = "closed"
+
+
 class SegmentStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -134,7 +141,7 @@ TRANSITIONS: dict[type[StrEnum], dict[StrEnum, frozenset[StrEnum]]] = {
     SegmentStatus: {
         SegmentStatus.QUEUED: frozenset({SegmentStatus.RUNNING, SegmentStatus.CANCELED}),
         SegmentStatus.RUNNING: frozenset({
-            SegmentStatus.WAITING_USER_INPUT, SegmentStatus.COMPLETED,
+            SegmentStatus.QUEUED, SegmentStatus.WAITING_USER_INPUT, SegmentStatus.COMPLETED,
             SegmentStatus.FAILED, SegmentStatus.CANCELED,
         }),
         SegmentStatus.WAITING_USER_INPUT: frozenset({SegmentStatus.COMPLETED, SegmentStatus.CANCELED}),
