@@ -29,6 +29,7 @@ from eidos_runtime.runtime.tool_execution import (  # noqa: E402
     HandlerOutcome,
     PreparedToolExecution,
     ToolExecutionController,
+    ToolInfrastructureError,
 )
 from eidos_runtime.sandbox.sensitive import default_scanner  # noqa: E402
 
@@ -178,10 +179,10 @@ class ToolStateMachineTests(unittest.TestCase):
             "begin_durable_intent",
             side_effect=InvalidRunStateError("missing intent"),
         ):
-            outcome = self._execute(controller)
+            with self.assertRaises(ToolInfrastructureError):
+                self._execute(controller)
 
         self.assertFalse(handler.effect_called)
-        self.assertEqual(outcome.result["outcome"], "error")
 
     def test_contract_gate_reads_authorization_from_sqlite(self) -> None:
         controller, handler = self._controller("approve")

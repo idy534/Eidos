@@ -44,6 +44,7 @@ from eidos_runtime.runtime.sampling import (
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.step_context import StepContextFactory
 from eidos_runtime.runtime.tool_runtime import ToolCallRuntime
+from eidos_runtime.runtime.tool_execution import ToolInfrastructureError
 from eidos_runtime.sandbox.sensitive import (
     SensitiveScanError,
     SensitiveScanner,
@@ -139,6 +140,15 @@ class RuntimeEngine:
                 self._cancel(run_id)
             elif current["status"] != "interrupted":
                 self._fail(run_id, "RUNTIME_STATE_CONFLICT")
+        except ToolInfrastructureError:
+            logger.exception("Tool infrastructure failed")
+            current = self.store.read_run(run_id)
+            if current["status"] in {
+                "running",
+                "waiting_approval",
+                "finalizing",
+            }:
+                self._fail(run_id, "TOOL_INFRASTRUCTURE_FAILURE")
         finally:
             self._pause_effective_time(run_id)
 

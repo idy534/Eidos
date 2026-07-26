@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 import hashlib
 import json
@@ -31,6 +31,7 @@ from eidos_runtime.runtime.tool_execution import (
     HandlerOutcome,
     PreparedToolExecution,
     ToolExecutionController,
+    ToolInfrastructureError,
     VerifiedToolExecutionResult,
 )
 from eidos_runtime.sandbox.sensitive import (
@@ -726,6 +727,25 @@ class ToolCallRuntime:
             pending.append((mutation.value, call))
             self.events.publish(mutation, item=mutation.value)
 
+        batch_cancel = threading.Event()
+
+        class BatchCancellation(threading.Event):
+            def is_set(self) -> bool:
+                return (
+                    super().is_set()
+                    or cancel.is_set()
+                    or batch_cancel.is_set()
+                )
+
+            def wait(self, timeout: float | None = None) -> bool:
+                if self.is_set():
+                    return True
+                return batch_cancel.wait(
+                    0.05 if timeout is None else min(timeout, 0.05)
+                ) or self.is_set()
+
+        controlled_cancel = BatchCancellation()
+
         def run(entry: tuple[dict[str, object], ModelToolCall]) -> HandlerOutcome:
             item, call = entry
             try:
@@ -734,10 +754,12 @@ class ToolCallRuntime:
                     item=item,
                     call=call,
                     plan=self.dispatcher.plan(call),
-                    cancel=cancel,
+                    cancel=controlled_cancel,
                     deadline=None,
                 )
             except RuntimeCancelled:
+                raise
+            except ToolInfrastructureError:
                 raise
             except Exception:
                 return HandlerOutcome(
@@ -747,8 +769,37 @@ class ToolCallRuntime:
                 )
 
         with ThreadPoolExecutor(max_workers=len(pending)) as executor:
-            futures = [executor.submit(run, entry) for entry in pending]
-            outcomes = [future.result() for future in futures]
+            futures: dict[
+                Future[HandlerOutcome],
+                tuple[dict[str, object], ModelToolCall],
+            ] = {
+                executor.submit(run, entry): entry for entry in pending
+            }
+            results: dict[str, HandlerOutcome] = {}
+            infrastructure_error: ToolInfrastructureError | None = None
+            runtime_cancelled = False
+            for future in as_completed(futures):
+                item, _call = futures[future]
+                try:
+                    results[str(item["id"])] = future.result()
+                except ToolInfrastructureError as error:
+                    infrastructure_error = error
+                    batch_cancel.set()
+                except RuntimeCancelled:
+                    batch_cancel.set()
+                    runtime_cancelled = True
+            if infrastructure_error is not None:
+                self.store.complete_current_step(
+                    step.run_id,
+                    "failed",
+                    reason="TOOL_INFRASTRUCTURE_FAILURE",
+                )
+                raise infrastructure_error
+            if runtime_cancelled:
+                raise RuntimeCancelled
+            outcomes = [
+                results[str(item["id"])] for item, _call in pending
+            ]
 
         errors: list[str] = []
         successes: list[str] = []

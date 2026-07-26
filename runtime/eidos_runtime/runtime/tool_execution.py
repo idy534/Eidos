@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 import json
 import logging
+import sqlite3
 import threading
 import time
 from typing import Callable, Mapping, Protocol
@@ -11,6 +12,8 @@ from typing import Callable, Mapping, Protocol
 from pydantic import BaseModel, ConfigDict
 
 from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.db.errors import InvalidRunStateError, StorageError
+from eidos_runtime.db.invariants import RuntimeInvariantError
 from eidos_runtime.model.client import ModelToolCall
 from eidos_runtime.runtime.approval import (
     ApprovalCoordinator,
@@ -27,6 +30,7 @@ from eidos_runtime.runtime.errors import (
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
+    ResourceRegistryError,
     RuntimeResourceKind,
 )
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
@@ -36,6 +40,19 @@ from eidos_runtime.sandbox.sensitive import SensitiveScanner
 _active_lock = threading.Lock()
 _active_executions = 0
 logger = logging.getLogger("eidos.runtime")
+
+
+class ToolInfrastructureError(RuntimeError):
+    pass
+
+
+_INFRASTRUCTURE_ERRORS = (
+    StorageError,
+    sqlite3.Error,
+    InvalidRunStateError,
+    RuntimeInvariantError,
+    ResourceRegistryError,
+)
 
 
 @dataclass(frozen=True)
@@ -326,6 +343,10 @@ class ToolExecutionController:
                         )
                     except ApprovalTransportError:
                         raise
+                    except _INFRASTRUCTURE_ERRORS as error:
+                        raise ToolInfrastructureError(
+                            "TOOL_INFRASTRUCTURE_FAILURE"
+                        ) from error
                     except Exception as error:
                         logger.exception("Tool execution failed")
                         contract_violation = (
@@ -427,6 +448,45 @@ class ToolExecutionController:
             if raise_after_commit:
                 raise RuntimeCancelled
             return replace(outcome, item=mutation.value)
+        except ToolInfrastructureError:
+            try:
+                mutation = self.store.complete_tool_item_once_committed(
+                    str(item["id"]),
+                    json.dumps(
+                        tool_result(
+                            call.name,
+                            "error",
+                            "TOOL_INFRASTRUCTURE_FAILURE",
+                            "Tool infrastructure failed",
+                            side_effects_may_exist=(
+                                plan.side_effect != "none"
+                            ),
+                            reconciliation_required=(
+                                plan.side_effect != "none"
+                            ),
+                        ),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    item_status="failed",
+                    tool_status="failed",
+                    workspace_changed=False,
+                    diff_hash=None,
+                    duration_ms=max(
+                        0, int((self.monotonic() - started) * 1000)
+                    ),
+                )
+                self.events.publish(mutation, item=mutation.value)
+            except _INFRASTRUCTURE_ERRORS:
+                logger.exception(
+                    "Tool infrastructure terminalization failed"
+                )
+            raise
+        except _INFRASTRUCTURE_ERRORS as error:
+            raise ToolInfrastructureError(
+                "TOOL_INFRASTRUCTURE_FAILURE"
+            ) from error
         finally:
             self._execution_state.intent_started = False
             self._execution_state.authorized_effects = 0
