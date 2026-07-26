@@ -80,10 +80,11 @@ class RuntimeEngine:
         mcp_sandbox: bool = True,
         terminalize_cancel: bool = True,
         resource_registry: ResourceRegistry | None = None,
+        events: RuntimeEvents | None = None,
     ) -> None:
         self.store = store
         self.model = model
-        self.events = RuntimeEvents(notify, store=store)
+        self.events = events or RuntimeEvents(notify, store=store)
         self.request_approval = request_approval
         self.shell_available = shell_available
         self.monotonic = monotonic

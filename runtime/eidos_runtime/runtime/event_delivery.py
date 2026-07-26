@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import threading
 from typing import Callable
 
 from pydantic import BaseModel, ConfigDict
@@ -55,6 +56,7 @@ class EventDelivery:
         self.store = store
         self.notify = notify
         self.projector = projector or EventProjector()
+        self._lock = threading.RLock()
 
     def deliver(
         self,
@@ -62,6 +64,20 @@ class EventDelivery:
         through_event_id: int | None = None,
         runs: dict[int, dict[str, object]] | None = None,
         items: dict[int, dict[str, object]] | None = None,
+    ) -> DeliveryResult:
+        with self._lock:
+            return self._deliver_locked(
+                through_event_id=through_event_id,
+                runs=runs,
+                items=items,
+            )
+
+    def _deliver_locked(
+        self,
+        *,
+        through_event_id: int | None,
+        runs: dict[int, dict[str, object]] | None,
+        items: dict[int, dict[str, object]] | None,
     ) -> DeliveryResult:
         attempted = 0
         delivered = 0
@@ -162,4 +178,10 @@ class EventDelivery:
             item_id = payload.get("itemId")
             if isinstance(item_id, str):
                 item = self.store.read_item(item_id)
+            elif (
+                event.get("eventType") == "run.status_changed"
+                and payload.get("current") == "running"
+                and isinstance(run_id, str)
+            ):
+                item = self.store.get_user_item(run_id)
         return run, item

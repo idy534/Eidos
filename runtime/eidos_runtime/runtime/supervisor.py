@@ -587,6 +587,7 @@ class RunSupervisor:
                 sensitive=self.sensitive(),
                 wait_for_execution_slot=self._wait_for_execution_slot,
                 resource_registry=self.resources,
+                events=self.events,
             )
             if isinstance(engine, RuntimeEngine):
                 engine.terminalize_cancel = False

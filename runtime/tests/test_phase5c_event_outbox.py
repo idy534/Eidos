@@ -4,6 +4,7 @@ from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+import threading
 import unittest
 
 
@@ -143,6 +144,50 @@ class EventOutboxTests(unittest.TestCase):
         self.store.initialize()
 
         self.assertEqual(self.store.pending_outbox_count(), pending)
+
+    def test_concurrent_delivery_projects_each_event_once(self) -> None:
+        mutation = self._title_mutation("concurrent")
+        entered = threading.Event()
+        release = threading.Event()
+        delivered: list[str] = []
+
+        def notify(message):
+            delivered.append(str(message["params"]["title"]))
+            entered.set()
+            release.wait(2)
+
+        events = RuntimeEvents(notify, store=self.store)
+        first = threading.Thread(target=lambda: events.publish(mutation))
+        second = threading.Thread(target=lambda: events.publish(mutation))
+        first.start()
+        self.assertTrue(entered.wait(2))
+        second.start()
+        release.set()
+        first.join(2)
+        second.join(2)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(delivered, ["title-concurrent"])
+
+    def test_delayed_run_start_recovers_user_item_context(self) -> None:
+        session = self.store.create_session(str(self.workspace))
+        self.store.enqueue_run(session["id"], "inspect")
+        self.store.claim_next_run_committed()
+        notifications: list[dict[str, object]] = []
+
+        RuntimeEvents(
+            notifications.append, store=self.store
+        ).deliver_pending()
+
+        self.assertEqual(
+            [
+                message["method"]
+                for message in notifications
+                if message["method"] != "session/titleUpdated"
+            ],
+            ["run/started", "item/started", "item/completed"],
+        )
 
 
 if __name__ == "__main__":
