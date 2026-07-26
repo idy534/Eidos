@@ -75,6 +75,8 @@ class OperationStatus(StrEnum):
 class EventType(StrEnum):
     SESSION_CREATED = "session.created"
     SESSION_TITLE_UPDATED = "session.title_updated"
+    SESSION_TITLE_GENERATION_STARTED = "session.title_generation_started"
+    SESSION_TITLE_GENERATION_FAILED = "session.title_generation_failed"
     RUN_CREATED = "run.created"
     RUN_UPDATED = "run.updated"
     RUN_STATUS_CHANGED = "run.status_changed"
@@ -87,6 +89,7 @@ class EventType(StrEnum):
     APPROVAL_STATUS_CHANGED = "approval.status_changed"
     TOOL_CALL_STARTED = "tool_call.started"
     TOOL_CALL_COMPLETED = "tool_call.completed"
+    FINALIZATION_STATUS_CHANGED = "finalization.status_changed"
     RECONCILIATION_REQUIRED = "reconciliation.required"
     RECONCILIATION_CLEARED = "reconciliation.cleared"
     PLUGIN_IMPORTED = "plugin.imported"

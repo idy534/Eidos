@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import sys
 import threading
+import time
 import unicodedata
 import uuid
 from typing import Any, BinaryIO, TextIO
@@ -32,6 +33,7 @@ from eidos_runtime.runtime.supervisor import (
     RunCancelTimeout,
     RunReconciliationRequired,
     RunSupervisor,
+    RuntimeControlState,
     RuntimeShutdownTimeout,
 )
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle
@@ -70,6 +72,7 @@ MAX_REQUEST_ID_BYTES = 128
 PROTOCOL_VERSION = 1
 CLIENT_REQUEST_ID = re.compile(r"client-[A-Za-z0-9._-]+")
 MAX_SESSION_TITLE_BYTES = 120
+TITLE_TIMEOUT_SECONDS = 10.0
 
 logger = logging.getLogger("eidos.runtime")
 
@@ -241,6 +244,12 @@ class RuntimeServer:
             }
         ):
             self.send(business_error(request_id, "RUNTIME_DRAINING"))
+            return
+        if (
+            self.supervisor.control_state is RuntimeControlState.RECONFIGURING
+            and method in {"run/start", "run/continue", "model/configure"}
+        ):
+            self.send(business_error(request_id, "RUNTIME_RECONFIGURING"))
             return
 
         if method == "session/create":
@@ -603,23 +612,12 @@ class RuntimeServer:
             if isinstance(replay, dict) and isinstance(replay.get("run"), dict):
                 self.send(response(request_id, replay["run"]))
                 return
-        session_title: str | None = None
-        if "title" not in session:
-            try:
-                session_title = clean_session_title(
-                    run_model.generate_title(user_input, threading.Event())
-                )
-                if session_title:
-                    session_title = clean_session_title(self._scan_text(session_title))
-            except Exception:
-                logger.warning("Session title generation failed; using query fallback")
-                session_title = ""
-            session_title = session_title or clean_session_title(user_input) or "新任务"
+        needs_title = "title" not in session
         try:
             run, _user_item = self.store.enqueue_run(
                 params["sessionId"], user_input,
                 operation_id=params.get("operationId"),
-                session_title=session_title,
+                session_title=None,
                 model_id=model_id,
                 model_profile=getattr(run_model, "profile_snapshot", None),
                 extension_snapshot=extension_snapshot,
@@ -651,6 +649,10 @@ class RuntimeServer:
             raise
         finally:
             self.supervisor.release(start)
+        if needs_title:
+            self._schedule_title_generation(
+                params["sessionId"], user_input, model_id
+            )
 
     def cancel_run(self, request_id: str, params: object) -> None:
         if (
@@ -772,24 +774,60 @@ class RuntimeServer:
         ):
             self.send(protocol_error(request_id, -32602, "Invalid params"))
             return
-        if self.supervisor.has_active_workers():
-            self.send(business_error(request_id, "RUN_ALREADY_ACTIVE"))
+        if not self.supervisor.begin_reconfiguration():
+            code = (
+                "RUNTIME_RECONFIGURING"
+                if self.supervisor.control_state
+                is RuntimeControlState.RECONFIGURING
+                else "RUN_ALREADY_ACTIVE"
+            )
+            self.send(business_error(request_id, code))
             return
+        previous_factory = self.model_factory
+        previous_model = self.model
+        previous_key: str | None = None
+        saved = False
+        candidate: ModelClientFactory | None = None
         try:
+            previous_key = self.model_config.api_key()
+            candidate = ModelClientFactory(params["apiKey"])
             self.model_config.save_api_key(params["apiKey"])
+            saved = True
             key = self.model_config.api_key()
             if key is None:
                 raise ModelConfigError("model configuration was not saved")
-            self._close_model_factory()
+            if previous_factory is not None:
+                previous_factory.close()
             self.model = None
-            self.model_factory = ModelClientFactory(key)
+            self.model_factory = candidate
+            candidate = None
         except ValueError:
             self.send(protocol_error(request_id, -32602, "Invalid params"))
             return
+        except ModelClientInUseError:
+            if saved:
+                self.model_config.restore_api_key(previous_key)
+            self.model = previous_model
+            self.model_factory = previous_factory
+            if candidate is not None:
+                candidate.close()
+            self.send(business_error(request_id, "MODEL_CLIENT_IN_USE"))
+            return
         except (OSError, ModelConfigError):
+            if saved:
+                try:
+                    self.model_config.restore_api_key(previous_key)
+                except (OSError, ModelConfigError):
+                    logger.exception("Model configuration rollback failed")
+            self.model = previous_model
+            self.model_factory = previous_factory
+            if candidate is not None:
+                candidate.close()
             logger.exception("Model configuration failed")
             self.send(business_error(request_id, "INTERNAL_ERROR"))
             return
+        finally:
+            self.supervisor.end_reconfiguration()
         self.supervisor.schedule_next()
         self.send(response(request_id, self.model_config.public_status()))
 
@@ -822,9 +860,29 @@ class RuntimeServer:
             request_id, params.get("operationId"), "plugin/import", operation_request
         ):
             return
+        scheduled = self.supervisor.start_managed_task(
+            "plugin-import",
+            lambda cancel: self._import_plugin_task(
+                request_id, dict(params), operation_request, cancel
+            ),
+        )
+        if not scheduled:
+            self.send(business_error(request_id, "RUNTIME_DRAINING"))
+
+    def _import_plugin_task(
+        self,
+        request_id: str,
+        params: dict[str, object],
+        operation_request: dict[str, object],
+        cancel: threading.Event,
+    ) -> None:
+        if cancel.is_set() or self.plugins is None:
+            return
         try:
             plugin = self.plugins.import_directory(Path(params["sourcePath"]))
         except PluginImportError as error:
+            if cancel.is_set():
+                return
             code = {
                 "plugin_version_conflict": "PLUGIN_VERSION_CONFLICT",
                 "plugin_id_conflict": "PLUGIN_ID_CONFLICT",
@@ -832,12 +890,14 @@ class RuntimeServer:
             self.send(business_error(request_id, code))
             return
         except (OSError, StorageError):
-            self.send(business_error(request_id, "PLUGIN_IMPORT_FAILED"))
+            if not cancel.is_set():
+                self.send(business_error(request_id, "PLUGIN_IMPORT_FAILED"))
             return
         plugin = self._record_extension_operation(
             params.get("operationId"), "plugin/import", operation_request, plugin
         )
-        self.send(response(request_id, plugin))
+        if not cancel.is_set():
+            self.send(response(request_id, plugin))
 
     def set_plugin_enabled(self, request_id: str, params: object) -> None:
         if (
@@ -1119,7 +1179,7 @@ class RuntimeServer:
             self._cleanup_extensions()
             self._close_model_factory()
         except (RuntimeShutdownTimeout, ModelClientInUseError):
-            return
+            raise
         self.store.close()
         self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
 
@@ -1137,6 +1197,63 @@ class RuntimeServer:
             raise ModelConfigError("model is not configured")
         return self.model_factory.acquire(model_id)
 
+    def _schedule_title_generation(
+        self, session_id: str, user_input: str, model_id: str
+    ) -> None:
+        self.supervisor.start_managed_task(
+            "title",
+            lambda cancel: self._generate_title(
+                session_id, user_input, model_id, cancel
+            ),
+        )
+
+    def _generate_title(
+        self,
+        session_id: str,
+        user_input: str,
+        model_id: str,
+        cancel: threading.Event,
+    ) -> None:
+        started = self.store.begin_title_generation_committed(session_id)
+        self.supervisor.events.publish(started)
+        lease: ModelClientLease | None = None
+        failure_reason: str | None = None
+        title = ""
+        deadline_cancel = _TitleCancellation(
+            cancel, time.monotonic() + TITLE_TIMEOUT_SECONDS
+        )
+        try:
+            lease = self._model_lease_for(model_id)
+            title = clean_session_title(
+                lease.client.generate_title(user_input, deadline_cancel)
+            )
+            if deadline_cancel.timed_out:
+                failure_reason = "title_generation_timeout"
+                title = ""
+            elif title:
+                title = clean_session_title(self._scan_text(title))
+        except Exception as error:
+            if cancel.is_set():
+                return
+            failure_reason = (
+                "title_generation_timeout"
+                if deadline_cancel.timed_out
+                else "title_generation_failed"
+            )
+            logger.warning(
+                "Session title generation failed: %s", type(error).__name__
+            )
+        finally:
+            if lease is not None:
+                lease.close()
+        if cancel.is_set():
+            return
+        title = title or clean_session_title(user_input) or "新任务"
+        completed = self.store.finish_title_generation_committed(
+            session_id, title, failure_reason=failure_reason
+        )
+        self.supervisor.events.publish(completed)
+
     def _close_model_factory(self) -> None:
         factory = self.model_factory
         if factory is not None:
@@ -1147,6 +1264,28 @@ class RuntimeServer:
     def _cleanup_extensions(self) -> None:
         if self.plugins is not None:
             self.plugins.cleanup_removed()
+
+
+class _TitleCancellation(threading.Event):
+    def __init__(self, cancel: threading.Event, deadline: float) -> None:
+        super().__init__()
+        self.cancel = cancel
+        self.deadline = deadline
+
+    def is_set(self) -> bool:
+        return self.cancel.is_set() or self.timed_out
+
+    def wait(self, timeout: float | None = None) -> bool:
+        if self.is_set():
+            return True
+        remaining = max(0.0, self.deadline - time.monotonic())
+        return self.cancel.wait(
+            remaining if timeout is None else min(timeout, remaining)
+        ) or self.is_set()
+
+    @property
+    def timed_out(self) -> bool:
+        return time.monotonic() >= self.deadline
 
 
 def _is_canonical_uuid(value: object) -> bool:

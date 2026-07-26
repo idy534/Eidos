@@ -222,6 +222,7 @@ export interface ModelListResult {
 }
 
 export type RuntimeNotification =
+  | { method: "session/titleUpdated"; params: { sessionId: string; title: string } }
   | { method: "run/started"; params: { sessionId: string; run: Run } }
   | { method: "run/updated"; params: { sessionId: string; run: Run } }
   | { method: "run/completed"; params: { sessionId: string; run: Run } }

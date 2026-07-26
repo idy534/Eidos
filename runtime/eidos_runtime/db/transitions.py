@@ -279,7 +279,7 @@ def resolve_approval_and_transition(
         run=run,
         approval_id=str(fact["approval_id"]),
         approval_status=target_approval,
-        events=(approval_event, *events, run_event),
+        events=(*events, run_event, approval_event),
     )
 
 def settle_run_children(
@@ -356,6 +356,50 @@ def settle_run_children(
         """,
         (run_id,),
     )
+
+    finalization_target = (
+        "canceled" if target_status is RunStatus.CANCELED else "interrupted"
+    )
+    attempts = connection.execute(
+        """
+        SELECT id FROM finalization_attempts
+        WHERE run_id = ? AND status = 'running'
+        """,
+        (run_id,),
+    ).fetchall()
+    for attempt in attempts:
+        error_code = (
+            "finalization_canceled"
+            if finalization_target == "canceled"
+            else "finalization_interrupted"
+        )
+        connection.execute(
+            """
+            UPDATE finalization_attempts
+            SET status = ?, completed_at = ?, error_code = ?, updated_at = ?
+            WHERE id = ? AND status = 'running'
+            """,
+            (
+                finalization_target,
+                now,
+                error_code,
+                now,
+                attempt["id"],
+            ),
+        )
+        events.append(append_event(
+            connection,
+            EventType.FINALIZATION_STATUS_CHANGED,
+            now,
+            {
+                "entity_id": attempt["id"],
+                "previous": "running",
+                "current": finalization_target,
+                "reason": error_code,
+            },
+            session_id=run["session_id"],
+            run_id=run_id,
+        ))
 
     item_rows = connection.execute(
         "SELECT id FROM items WHERE run_id = ? AND status = 'in_progress'",

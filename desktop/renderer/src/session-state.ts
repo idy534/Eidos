@@ -130,6 +130,15 @@ export function applyNotification(
   if (!snapshot || notification.params.sessionId !== snapshot.session.id) {
     return snapshot;
   }
+  if (notification.method === "session/titleUpdated") {
+    return {
+      ...snapshot,
+      session: {
+        ...snapshot.session,
+        title: notification.params.title,
+      },
+    };
+  }
   if (
     notification.method === "run/started"
     || notification.method === "run/updated"

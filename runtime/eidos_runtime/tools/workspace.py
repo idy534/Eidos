@@ -124,7 +124,16 @@ _RESULT_SCHEMA = _object_schema({
     "outcome": {"type": "string"},
     "code": {"type": "string"},
     "summary": {"type": "string"},
-    "data": {"type": "object", "additionalProperties": False, "properties": {}},
+    "data": _object_schema({
+        "commandOutcome": {"type": "string"},
+        "workspaceChanged": {"type": "boolean"},
+        "workspaceDiffHash": {"type": "string"},
+        "workspaceManifestComplete": {"type": "boolean"},
+        "workspaceManifestTruncated": {"type": "boolean"},
+        "created": {"type": "array", "items": {"type": "string"}},
+        "modified": {"type": "array", "items": {"type": "string"}},
+        "deleted": {"type": "array", "items": {"type": "string"}},
+    }),
     "sideEffectsMayExist": {"type": "boolean"},
     "reconciliationRequired": {"type": "boolean"},
 }, [

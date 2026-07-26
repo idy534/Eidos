@@ -82,6 +82,15 @@ test("a snapshot below the accepted event waterline is rejected", () => {
   );
 });
 
+test("a committed background title update refreshes the open session", () => {
+  const result = applyNotification(snapshot("running", "working"), {
+    method: "session/titleUpdated",
+    params: { sessionId: session.id, title: "后台标题" },
+  });
+
+  assert.equal(result?.session.title, "后台标题");
+});
+
 test("a completed assistant item without content preserves streamed text", () => {
   const streaming = snapshot("running", "Done.");
   const completedItem = assistant("", "completed");

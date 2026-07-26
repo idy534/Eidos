@@ -7,6 +7,9 @@ import readline from "node:readline";
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 const RUNTIME_BUSINESS_CODES = new Set([
   "RUNTIME_NOT_INITIALIZED",
+  "RUNTIME_DRAINING",
+  "RUNTIME_RECONFIGURING",
+  "RUNTIME_SHUTDOWN_TIMEOUT",
   "PROTOCOL_VERSION_UNSUPPORTED",
   "RUN_ALREADY_ACTIVE",
   "RESOURCE_NOT_FOUND",
@@ -24,6 +27,9 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "SESSION_HAS_ACTIVE_RUN",
   "MODEL_NOT_AVAILABLE",
   "MODEL_CHANGE_NOT_ALLOWED",
+  "MODEL_CLIENT_IN_USE",
+  "RUN_CANCEL_TIMEOUT",
+  "RUN_RECONCILIATION_REQUIRED",
   "EXTENSIONS_UNAVAILABLE",
   "PLUGIN_IMPORT_REJECTED",
   "PLUGIN_IMPORT_FAILED",
@@ -290,6 +296,7 @@ export interface Item {
 }
 
 export type RuntimeNotification =
+  | { method: "session/titleUpdated"; params: { sessionId: string; title: string } }
   | { method: "run/started"; params: { sessionId: string; run: Run } }
   | { method: "run/updated"; params: { sessionId: string; run: Run } }
   | {
@@ -770,6 +777,14 @@ function isNotification(value: unknown): value is RuntimeNotification {
     return false;
   }
   const params = value.params;
+  if (value.method === "session/titleUpdated") {
+    return (
+      hasOnlyKeys(params, ["sessionId", "title"])
+      && typeof params.sessionId === "string"
+      && typeof params.title === "string"
+      && params.title.length > 0
+    );
+  }
   if (
     value.method === "run/started"
     || value.method === "run/updated"

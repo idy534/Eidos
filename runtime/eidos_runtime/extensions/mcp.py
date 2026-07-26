@@ -43,6 +43,10 @@ class McpUnavailable(RuntimeError):
     pass
 
 
+class McpShutdownTimeout(RuntimeError):
+    pass
+
+
 @dataclass
 class _Command:
     name: str
@@ -78,7 +82,7 @@ class McpConnection:
         self.thread = threading.Thread(
             target=self._thread_main,
             name=f"eidos-mcp-{config.id}",
-            daemon=True,
+            daemon=False,
         )
 
     def start(self) -> tuple[mcp_types.Tool, ...]:
@@ -109,7 +113,13 @@ class McpConnection:
                 return _uncertain("mcp_connection_lost")
         if self.error_code == "mcp_stdout_pollution":
             return _uncertain("mcp_stdout_pollution")
-        return command.result or _uncertain("mcp_connection_lost")
+        result = command.result or _uncertain("mcp_connection_lost")
+        if result.get("code") in {"mcp_tool_canceled", "mcp_tool_timeout"}:
+            try:
+                self.close()
+            except McpShutdownTimeout:
+                return _uncertain("MCP_SHUTDOWN_TIMEOUT")
+        return result
 
     def refresh_tools(self) -> tuple[mcp_types.Tool, ...]:
         command = _Command("\x00list", {}, self.config.startup_timeout_seconds, threading.Event())
@@ -120,15 +130,19 @@ class McpConnection:
             raise McpUnavailable("mcp_tool_list_failed")
         return self.tools
 
-    def close(self) -> None:
+    def close(self) -> bool:
         if not self.closed.is_set():
             self.closed.set()
             self.commands.put(None)
+        process_group_exited = self._terminate_process_group()
         if self.thread.is_alive() and self.thread is not threading.current_thread():
             self.thread.join(timeout=5)
-        self._terminate_process_group()
+        if not process_group_exited:
+            process_group_exited = self._terminate_process_group()
         if self.thread.is_alive() and self.thread is not threading.current_thread():
             self.thread.join(timeout=2)
+        if self.thread.is_alive() or not process_group_exited:
+            raise McpShutdownTimeout("MCP_SHUTDOWN_TIMEOUT")
         try:
             resolved = self.runtime_root.resolve(strict=False)
             parent = self.runtime_root.parent.resolve(strict=False)
@@ -136,35 +150,49 @@ class McpConnection:
                 shutil.rmtree(resolved, ignore_errors=True)
         except OSError:
             pass
+        return True
 
-    def _terminate_process_group(self) -> None:
+    def _terminate_process_group(self) -> bool:
         pid_path = self.runtime_root / "server.pid"
         try:
             stat = pid_path.lstat()
             if not stat or not pid_path.is_file() or pid_path.is_symlink():
-                return
+                return True
             raw_pid = pid_path.read_text(encoding="ascii")
             if len(raw_pid) > 16 or not raw_pid.isdecimal():
-                return
+                return False
             process_group = int(raw_pid)
             if process_group <= 1 or process_group == os.getpgrp():
-                return
+                return False
             try:
                 os.killpg(process_group, signal.SIGTERM)
             except ProcessLookupError:
-                return
+                return True
             for _ in range(10):
                 try:
                     os.killpg(process_group, 0)
                 except ProcessLookupError:
-                    return
+                    return True
                 threading.Event().wait(0.05)
             try:
                 os.killpg(process_group, signal.SIGKILL)
             except ProcessLookupError:
-                pass
+                return True
+            for _ in range(20):
+                try:
+                    os.killpg(process_group, 0)
+                except ProcessLookupError:
+                    return True
+                threading.Event().wait(0.05)
+            return False
+        except FileNotFoundError:
+            return True
+        except PermissionError:
+            # The MCP stdio owner already reaped its child before this fallback
+            # on restricted macOS runners; the thread exit is the remaining proof.
+            return not self.thread.is_alive()
         except (OSError, ValueError, UnicodeError):
-            return
+            return False
 
     def _thread_main(self) -> None:
         try:
@@ -393,9 +421,16 @@ class McpManager:
         self._entries = tuple(entries)
         return self._entries
 
-    def close(self) -> None:
+    def close(self) -> bool:
+        failure: McpShutdownTimeout | None = None
         for connection in self.connections:
-            connection.close()
+            try:
+                connection.close()
+            except McpShutdownTimeout as error:
+                failure = failure or error
+        if failure is not None:
+            raise failure
+        return True
 
     def _list_changed(self, plugin_id: str, server_id: str) -> None:
         self._dirty.set()

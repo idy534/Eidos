@@ -19,6 +19,8 @@ class ToolValidationResult:
 class ToolDispatchPlan:
     requires_approval: bool
     execution_kind: str
+    timeout_seconds: int = 600
+    side_effect: str = "external"
 
     @property
     def is_shell(self) -> bool:
@@ -111,7 +113,24 @@ class ToolDispatcher:
         entry = self._registry.get(call.name)
         if entry is None:
             return ToolDispatchPlan(False, "unavailable")
-        return ToolDispatchPlan(entry.spec.approval_required, entry.adapter.execution_kind)
+        return ToolDispatchPlan(
+            entry.spec.approval_required,
+            entry.adapter.execution_kind,
+            entry.spec.timeout_seconds,
+            entry.spec.side_effect,
+        )
+
+    def validate_execution(
+        self, call: ModelToolCall, plan: ToolDispatchPlan
+    ) -> bool:
+        entry = self._registry.get(call.name)
+        return (
+            entry is not None
+            and entry.adapter.execution_kind == plan.execution_kind
+            and entry.spec.timeout_seconds == plan.timeout_seconds
+            and entry.spec.side_effect == plan.side_effect
+            and entry.adapter.effective_arguments(call.arguments) == call.arguments
+        )
 
     def is_parallel_read_batch(self, calls: tuple[ModelToolCall, ...]) -> bool:
         return len(calls) > 1 and all(

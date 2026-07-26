@@ -18,7 +18,11 @@ from eidos_runtime.db.errors import (
     OperationInProgressError,
     StorageError,
 )
-from eidos_runtime.db.schema import SCHEMA_SQL, SCHEMA_VERSION
+from eidos_runtime.db.schema import (
+    SCHEMA_SQL,
+    SCHEMA_V1_TO_V2_SQL,
+    SCHEMA_VERSION,
+)
 
 
 DATABASE_NAME = "eidos.db"
@@ -33,6 +37,18 @@ T = TypeVar("T")
 class CommittedMutation(Generic[T]):
     value: T
     events: tuple[dict[str, object], ...]
+
+    def __post_init__(self) -> None:
+        previous = 0
+        for event in self.events:
+            event_id = event.get("eventId")
+            if (
+                not isinstance(event_id, int)
+                or isinstance(event_id, bool)
+                or event_id <= previous
+            ):
+                raise ValueError("committed mutation events are not monotonic")
+            previous = event_id
 
 
 @dataclass(frozen=True)
@@ -78,7 +94,10 @@ class Database:
             connection.row_factory = sqlite3.Row
             tables = _table_names(connection)
             revision = connection.execute("PRAGMA user_version").fetchone()[0]
-            if (tables and revision != SCHEMA_VERSION) or (not tables and revision != 0):
+            if (
+                (tables and revision not in {1, SCHEMA_VERSION})
+                or (not tables and revision != 0)
+            ):
                 raise StorageError("schema_revision_unsupported")
 
             connection.execute("PRAGMA foreign_keys = ON")
@@ -89,6 +108,12 @@ class Database:
                 connection.executescript(SCHEMA_SQL)
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 connection.commit()
+            elif revision == 1:
+                connection.executescript(
+                    "BEGIN IMMEDIATE;\n"
+                    + SCHEMA_V1_TO_V2_SQL
+                    + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
+                )
             _verify_integrity(connection)
             self._connection = connection
             self.health_state = "ready"

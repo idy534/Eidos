@@ -132,6 +132,7 @@ class RuntimeSeamTests(unittest.TestCase):
         messages: list[dict[str, object]] = []
         run = {"id": "run", "sessionId": "session", "status": "running"}
         event = {
+            "eventId": 1,
             "eventType": "run.updated",
             "payload": {"reason": "fixture"},
         }

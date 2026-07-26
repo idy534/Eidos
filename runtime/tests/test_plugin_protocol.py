@@ -54,6 +54,7 @@ class PluginProtocolTests(unittest.TestCase):
                     "operationId": "00000000-0000-4000-8000-000000000001",
                 },
             })
+            self.assertTrue(server.supervisor.wait_managed_tasks(2))
             server.handle({
                 "jsonrpc": "2.0", "id": "client-import-replay", "method": "plugin/import",
                 "params": {

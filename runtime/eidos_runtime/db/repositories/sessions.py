@@ -7,7 +7,11 @@ import sqlite3
 import time
 import uuid
 
-from eidos_runtime.db.database import Repository, now_ms as _now_ms
+from eidos_runtime.db.database import (
+    CommittedMutation,
+    Repository,
+    now_ms as _now_ms,
+)
 from eidos_runtime.db.errors import (
     InvalidCursorError,
     ResourceNotFoundError,
@@ -196,6 +200,70 @@ class SessionRepository(Repository):
             operation_request={"sessionId": session_id, "title": title},
         )
 
+    def begin_title_generation_committed(
+        self, session_id: str
+    ) -> CommittedMutation[dict[str, object]]:
+        with self.lock, self._connection() as connection:
+            row = connection.execute(
+                "SELECT id FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            if row is None:
+                raise ResourceNotFoundError("session not found")
+            event = append_event(
+                connection,
+                EventType.SESSION_TITLE_GENERATION_STARTED,
+                _now_ms(),
+                {},
+                session_id=session_id,
+            )
+        session = self.read_session(session_id)
+        assert session is not None
+        return CommittedMutation(session, (event,))
+
+    def finish_title_generation_committed(
+        self,
+        session_id: str,
+        title: str,
+        *,
+        failure_reason: str | None = None,
+    ) -> CommittedMutation[dict[str, object]]:
+        if not title or len(title) > 60 or len(title.encode("utf-8")) > 120:
+            raise ValueError("session title is invalid")
+        events: list[dict[str, object]] = []
+        with self.lock, self._connection() as connection:
+            row = connection.execute(
+                "SELECT title FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            if row is None:
+                raise ResourceNotFoundError("session not found")
+            now = _now_ms()
+            if failure_reason is not None:
+                events.append(append_event(
+                    connection,
+                    EventType.SESSION_TITLE_GENERATION_FAILED,
+                    now,
+                    {"reason": failure_reason},
+                    session_id=session_id,
+                ))
+            if row["title"] is None:
+                connection.execute(
+                    """
+                    UPDATE sessions SET title = ?, updated_at = ?
+                    WHERE id = ? AND title IS NULL
+                    """,
+                    (title, now, session_id),
+                )
+                events.append(append_event(
+                    connection,
+                    EventType.SESSION_TITLE_UPDATED,
+                    now,
+                    {"title": title},
+                    session_id=session_id,
+                ))
+        session = self.read_session(session_id)
+        assert session is not None
+        return CommittedMutation(session, tuple(events))
+
     def delete_session(
         self,
         session_id: str,
@@ -227,6 +295,10 @@ class SessionRepository(Repository):
             )
             connection.execute(
                 f"DELETE FROM approvals WHERE run_id IN ({run_ids})", (session_id,)
+            )
+            connection.execute(
+                f"DELETE FROM finalization_attempts WHERE run_id IN ({run_ids})",
+                (session_id,),
             )
             connection.execute(
                 """

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 import hashlib
 import json
 import threading
+from typing import Callable
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.skills import SkillCreation
@@ -25,23 +26,22 @@ from eidos_runtime.runtime.errors import (
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
+from eidos_runtime.runtime.tool_execution import (
+    HandlerOutcome,
+    ToolExecutionController,
+)
 from eidos_runtime.sandbox.sensitive import (
     SensitiveScanError,
     SensitiveScanner,
     StreamingSensitiveScanner,
 )
 from eidos_runtime.sandbox.shell import run_shell
+from eidos_runtime.sandbox.workspace_manifest import (
+    attach_workspace_diff,
+    capture_workspace_manifest,
+    diff_workspace_manifests,
+)
 from eidos_runtime.tools.workspace import ToolCancelled, WorkspacePathError
-
-
-@dataclass(frozen=True)
-class HandlerOutcome:
-    result: dict[str, object]
-    item_status: str
-    tool_status: str = "completed"
-    activations: tuple[str, ...] = ()
-    workspace_changed: bool = False
-    diff_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -52,14 +52,7 @@ class _HandlerDependencies:
     events: RuntimeEvents
     sensitive: SensitiveScanner
     shell_available: bool
-
-    def safe_result(
-        self, tool_name: str, result: dict[str, object]
-    ) -> dict[str, object]:
-        return safe_tool_result(
-            self.sensitive, tool_name, bounded_tool_result(tool_name, result)
-        )
-
+    begin_intent: Callable[[str, dict[str, object]], str]
 
 class ReadOnlyToolHandler:
     def __init__(self, dependencies: _HandlerDependencies) -> None:
@@ -72,10 +65,7 @@ class ReadOnlyToolHandler:
         call: ModelToolCall,
         cancel: threading.Event,
     ) -> HandlerOutcome:
-        result = self.dependencies.safe_result(
-            call.name,
-            self.dependencies.dispatcher.execute_read_only(call, cancel),
-        )
+        result = self.dependencies.dispatcher.execute_read_only(call, cancel)
         return HandlerOutcome(
             result,
             "completed",
@@ -148,18 +138,14 @@ class FileChangeToolHandler:
                 ),
                 "declined",
             )
-        self.dependencies.store.begin_durable_intent(
-            str(item["id"]),
-            preconditions={
+        self.dependencies.begin_intent(
+            str(item["id"]), {
                 "path": prepared.path,
                 "baseSha256": prepared.base_sha256,
             },
         )
-        result = self.dependencies.safe_result(
-            call.name,
-            self.dependencies.dispatcher.commit_file_change(
-                call.name, prepared, cancel
-            ),
+        result = self.dependencies.dispatcher.commit_file_change(
+            call.name, prepared, cancel
         )
         if result["outcome"] == "success" and result.get("code") != "no_changes":
             self.dependencies.store.clear_rejects(run_id)
@@ -239,9 +225,8 @@ class ShellToolHandler:
                 "declined",
                 "failed",
             )
-        self.dependencies.store.begin_durable_intent(
-            str(item["id"]),
-            preconditions={"cwd": cwd_value, "timeoutSeconds": timeout},
+        self.dependencies.begin_intent(
+            str(item["id"]), {"cwd": cwd_value, "timeoutSeconds": timeout},
         )
         try:
             approved_cwd = self.dependencies.dispatcher.prepare_shell(
@@ -262,16 +247,25 @@ class ShellToolHandler:
                 "failed",
             )
         output_stream = StreamingSensitiveScanner(self.dependencies.sensitive)
-        result = bounded_tool_result(
-            call.name,
-            run_shell(
+        manifest_before = capture_workspace_manifest(
+            self.dependencies.dispatcher.workspace.path
+        )
+        raw_result = run_shell(
                 self.dependencies.dispatcher.workspace,
                 command,
                 approved_cwd,
                 timeout,
                 cancel,
                 output_stream.feed,
-            ),
+        )
+        manifest_after = capture_workspace_manifest(
+            self.dependencies.dispatcher.workspace.path
+        )
+        workspace_diff = diff_workspace_manifests(
+            manifest_before, manifest_after
+        )
+        result = bounded_tool_result(
+            call.name, attach_workspace_diff(raw_result, workspace_diff)
         )
         try:
             safe_output = output_stream.finish().text
@@ -291,20 +285,14 @@ class ShellToolHandler:
         if result["outcome"] == "success":
             self.dependencies.store.clear_rejects(run_id)
         status = "completed" if result["outcome"] == "success" else "failed"
-        changed = result["outcome"] == "success"
+        changed = workspace_diff.changed
         return HandlerOutcome(
             result,
             status,
             status,
             workspace_changed=changed,
             diff_hash=(
-                hashlib.sha256(json.dumps(
-                    result,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ).encode("utf-8")).hexdigest()
-                if changed else None
+                workspace_diff.diff_hash if changed else None
             ),
         )
 
@@ -345,19 +333,15 @@ class ExternalToolHandler:
                 "declined",
                 "failed",
             )
-        self.dependencies.store.begin_durable_intent(
-            str(item["id"]),
-            preconditions={
+        self.dependencies.begin_intent(
+            str(item["id"]), {
                 "toolName": call.name,
                 "provenance": details.get("provenance"),
                 "permissionProfile": details.get("permissionProfile"),
                 "timeoutSeconds": details.get("timeoutSeconds"),
             },
         )
-        result = self.dependencies.safe_result(
-            call.name,
-            self.dependencies.dispatcher.execute_external(call, cancel),
-        )
+        result = self.dependencies.dispatcher.execute_external(call, cancel)
         if result["outcome"] == "success":
             self.dependencies.store.clear_rejects(run_id)
         status = "completed" if result["outcome"] == "success" else "failed"
@@ -437,19 +421,15 @@ class EidosStateToolHandler:
                 ),
                 "declined",
             )
-        self.dependencies.store.begin_durable_intent(
-            str(item["id"]),
-            preconditions={
+        self.dependencies.begin_intent(
+            str(item["id"]), {
                 "path": prepared.path,
                 "qualifiedId": f"user:{prepared.name}",
                 "contentHash": prepared.content_hash,
             },
         )
-        result = self.dependencies.safe_result(
-            call.name,
-            self.dependencies.dispatcher.commit_eidos_state(
-                call.name, prepared, cancel
-            ),
+        result = self.dependencies.dispatcher.commit_eidos_state(
+            call.name, prepared, cancel
         )
         if result["outcome"] == "success":
             self.dependencies.store.clear_rejects(run_id)
@@ -476,6 +456,10 @@ class ToolCallRuntime:
         self.events = events
         self.sensitive = sensitive
         self.state_machine = state_machine
+        handlers = {}
+        self.controller = ToolExecutionController(
+            store, dispatcher, handlers, events, sensitive
+        )
         dependencies = _HandlerDependencies(
             store,
             dispatcher,
@@ -483,15 +467,17 @@ class ToolCallRuntime:
             events,
             sensitive,
             shell_available,
+            self.controller.begin_durable_intent,
         )
-        self.handlers = {
+        handlers.update({
             "read": ReadOnlyToolHandler(dependencies),
             "file": FileChangeToolHandler(dependencies),
             "shell": ShellToolHandler(dependencies),
             "external": ExternalToolHandler(dependencies),
             "eidos_state": EidosStateToolHandler(dependencies),
             "network_eidos_state": EidosStateToolHandler(dependencies),
-        }
+        })
+        self.handlers = handlers
 
     def validate(
         self, step: StepContext, sampling: SamplingOutcome
@@ -580,49 +566,15 @@ class ToolCallRuntime:
                 call.provider_call_id, call.name, arguments
             )
             plan = self.dispatcher.plan(effective_call)
-            if plan.execution_kind != "read" and self.store.side_effects_blocked(
-                step.run_id
-            ):
-                summary = (
-                    "External outcome must be reconciled"
-                    if plan.is_external
-                    else "A successful read-only observation is required"
-                )
-                outcome = HandlerOutcome(
-                    tool_error(call.name, "reconciliation_required", summary),
-                    "failed",
-                    "failed",
-                )
-            else:
-                handler = self.handlers.get(plan.execution_kind)
-                if handler is None:
-                    outcome = HandlerOutcome(
-                        tool_error(
-                            call.name, "tool_unavailable", "Tool is unavailable"
-                        ),
-                        "failed",
-                        "failed",
-                    )
-                else:
-                    outcome = handler.execute(
-                        step.run_id, item, effective_call, cancel
-                    )
-            result_json = json.dumps(
-                outcome.result,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
+            outcome = self.controller.execute(
+                run_id=step.run_id,
+                item=item,
+                call=effective_call,
+                plan=plan,
+                cancel=cancel,
+                deadline=None,
             )
-            mutation = self.store.complete_tool_item_committed(
-                str(item["id"]),
-                result_json,
-                item_status=outcome.item_status,
-                tool_status=outcome.tool_status,
-                workspace_changed=outcome.workspace_changed,
-                diff_hash=outcome.diff_hash,
-            )
-            completed = mutation.value
-            self.events.publish(mutation, item=completed)
+            completed = outcome.item or item
             self._check_cancel(step.run_id, cancel)
             if outcome.activations:
                 self.store.activate_tools(step.run_id, outcome.activations)
@@ -637,7 +589,7 @@ class ToolCallRuntime:
             }))
             if (
                 outcome.result.get("reconciliationRequired") is True
-                and (plan.is_external or plan.is_eidos_state)
+                and (plan.is_external or plan.is_eidos_state or plan.is_shell)
             ):
                 self.store.complete_current_step(
                     step.run_id,
@@ -647,6 +599,8 @@ class ToolCallRuntime:
                 pause_reason = (
                     "external_tool_reconciliation_required"
                     if plan.is_external
+                    else "shell_reconciliation_required"
+                    if plan.is_shell
                     else "eidos_state_reconciliation_required"
                 )
                 mutation = self.store.pause_run_committed(step.run_id, pause_reason)
@@ -694,7 +648,6 @@ class ToolCallRuntime:
         calls: tuple[ModelToolCall, ...],
         cancel: threading.Event,
     ) -> ToolBatchOutcome:
-        handler = self.handlers["read"]
         pending: list[tuple[dict[str, object], ModelToolCall]] = []
         for batch_order, call in enumerate(calls):
             self._check_cancel(step.run_id, cancel)
@@ -719,7 +672,14 @@ class ToolCallRuntime:
         def run(entry: tuple[dict[str, object], ModelToolCall]) -> HandlerOutcome:
             item, call = entry
             try:
-                return handler.execute(step.run_id, item, call, cancel)
+                return self.controller.execute(
+                    run_id=step.run_id,
+                    item=item,
+                    call=call,
+                    plan=self.dispatcher.plan(call),
+                    cancel=cancel,
+                    deadline=None,
+                )
             except RuntimeCancelled:
                 raise
             except Exception:
@@ -737,18 +697,6 @@ class ToolCallRuntime:
         successes: list[str] = []
         context_facts: list[str] = []
         for (item, call), outcome in zip(pending, outcomes, strict=True):
-            mutation = self.store.complete_tool_item_committed(
-                str(item["id"]),
-                json.dumps(
-                    outcome.result,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ),
-                item_status=outcome.item_status,
-                tool_status=outcome.tool_status,
-            )
-            self.events.publish(mutation, item=mutation.value)
             if outcome.activations:
                 self.store.activate_tools(step.run_id, outcome.activations)
             if outcome.result.get("outcome") != "success":

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -100,6 +100,7 @@ CREATE TABLE tool_calls (
     provenance_json TEXT,
     tool_set_hash TEXT,
     started_at INTEGER NOT NULL,
+    duration_ms INTEGER,
     completed_at INTEGER
 );
 
@@ -192,6 +193,29 @@ CREATE UNIQUE INDEX one_running_attempt_per_step
 ON model_attempts(step_id)
 WHERE status = 'running';
 
+CREATE TABLE finalization_attempts (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    step_id TEXT REFERENCES steps(id) ON DELETE RESTRICT,
+    status TEXT NOT NULL CHECK (status IN (
+        'running', 'completed', 'timed_out', 'model_failed',
+        'sensitive_rejected', 'canceled', 'interrupted'
+    )),
+    started_at INTEGER NOT NULL,
+    completed_at INTEGER,
+    error_code TEXT,
+    error_message TEXT,
+    model_id TEXT NOT NULL,
+    output_item_id TEXT REFERENCES items(id) ON DELETE RESTRICT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX one_running_finalization_attempt_per_run
+ON finalization_attempts(run_id)
+WHERE status = 'running';
+
 CREATE TABLE events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event_contract_version INTEGER NOT NULL,
@@ -273,4 +297,31 @@ CREATE TABLE input_mailbox (
     created_at INTEGER NOT NULL,
     injected_at INTEGER
 );
+"""
+
+SCHEMA_V1_TO_V2_SQL = """
+ALTER TABLE tool_calls ADD COLUMN duration_ms INTEGER;
+
+CREATE TABLE finalization_attempts (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    step_id TEXT REFERENCES steps(id) ON DELETE RESTRICT,
+    status TEXT NOT NULL CHECK (status IN (
+        'running', 'completed', 'timed_out', 'model_failed',
+        'sensitive_rejected', 'canceled', 'interrupted'
+    )),
+    started_at INTEGER NOT NULL,
+    completed_at INTEGER,
+    error_code TEXT,
+    error_message TEXT,
+    model_id TEXT NOT NULL,
+    output_item_id TEXT REFERENCES items(id) ON DELETE RESTRICT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX one_running_finalization_attempt_per_run
+ON finalization_attempts(run_id)
+WHERE status = 'running';
 """

@@ -817,6 +817,7 @@ class ExecutionRepository(Repository):
         tool_status: str = "completed",
         workspace_changed: bool = False,
         diff_hash: str | None = None,
+        duration_ms: int | None = None,
     ) -> CommittedMutation[dict[str, object]]:
         if item_status not in {"completed", "failed", "declined", "canceled"}:
             raise ValueError("invalid item status")
@@ -826,6 +827,8 @@ class ExecutionRepository(Repository):
             len(diff_hash) != 64 or any(value not in "0123456789abcdef" for value in diff_hash)
         ):
             raise ValueError("invalid diff hash")
+        if duration_ms is not None and duration_ms < 0:
+            raise ValueError("invalid tool duration")
         now = _now_ms()
         events: list[dict[str, object]] = []
         with self.lock, self._connection() as connection:
@@ -847,10 +850,10 @@ class ExecutionRepository(Repository):
             tool_update = connection.execute(
                 """
                 UPDATE tool_calls
-                SET status = ?, result_json = ?, completed_at = ?
+                SET status = ?, result_json = ?, duration_ms = ?, completed_at = ?
                 WHERE item_id = ? AND status = 'running'
                 """,
-                (tool_status, result_json, now, item_id),
+                (tool_status, result_json, duration_ms, now, item_id),
             )
             item_update = connection.execute(
                 """
@@ -931,6 +934,35 @@ class ExecutionRepository(Repository):
                     session_id=fact["session_id"], run_id=fact["run_id"],
                 ))
         return CommittedMutation(self.read_item(item_id), tuple(events))
+
+    def complete_tool_item_once_committed(
+        self,
+        item_id: str,
+        result_json: str,
+        *,
+        item_status: str,
+        tool_status: str,
+        workspace_changed: bool = False,
+        diff_hash: str | None = None,
+        duration_ms: int | None = None,
+    ) -> CommittedMutation[dict[str, object]]:
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT status FROM tool_calls WHERE item_id = ?", (item_id,)
+            ).fetchone()
+            if row is None:
+                raise InvalidRunStateError("tool item is unavailable")
+            if row["status"] != "running":
+                return CommittedMutation(self.read_item(item_id), ())
+            return self.complete_tool_item_committed(
+                item_id,
+                result_json,
+                item_status=item_status,
+                tool_status=tool_status,
+                workspace_changed=workspace_changed,
+                diff_hash=diff_hash,
+                duration_ms=duration_ms,
+            )
 
     def begin_approval(
         self,
