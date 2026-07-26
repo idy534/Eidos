@@ -284,7 +284,9 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
   return (
     <details className="tool-item tool-item--shell" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>
-        <span className="tool-icon tool-icon--terminal" aria-hidden="true">›_</span>
+        <span className="tool-icon tool-icon--terminal" aria-hidden="true">
+          <ShellIcon />
+        </span>
         <span>{shellSummary(item.status, command)}</span>
       </summary>
       <div className="shell-result">
@@ -432,11 +434,100 @@ function toolSummary(toolCall: ToolCall, status: Item["status"]): string {
   return labels[toolCall.toolName] ?? `${running ? "正在运行" : "已运行"} ${toolCall.toolName}`;
 }
 
-function toolIcon(name: string): string {
-  if (["read_file", "read_file_range", "list_files"].includes(name)) return "▱";
-  if (name === "search_text") return "⌕";
-  if (["write_file", "apply_patch", "delete_file"].includes(name)) return "✎";
-  return "◇";
+function FileReadIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 2h5.5L13 5.5V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" />
+      <path d="M9.5 2v3.5H13" />
+      <path d="M6 8.5h4" />
+      <path d="M6 11.5h3" />
+    </svg>
+  );
+}
+
+function FileListIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 2.5h10a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z" />
+      <path d="M5.5 6h5" />
+      <path d="M5.5 8.5h5" />
+      <path d="M5.5 11h3" />
+    </svg>
+  );
+}
+
+function FileWriteIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10.5 2.5l3 3L5 14H2v-3L10.5 2.5z" />
+      <path d="M9 4l3 3" />
+    </svg>
+  );
+}
+
+function FileDeleteIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2.5 4h11" />
+      <path d="M5.5 4V2.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V4" />
+      <path d="M4 4v9a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4" />
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="6.75" cy="6.75" r="4.25" />
+      <path d="M10 10l3.75 3.75" />
+    </svg>
+  );
+}
+
+function SkillIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 1.5C8 5 11 8 14.5 8C11 8 8 11 8 14.5C8 11 5 8 1.5 8C5 8 8 5 8 1.5Z" />
+    </svg>
+  );
+}
+
+function ShellIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3.5 4.5L7 8l-3.5 3.5" />
+      <path d="M8.5 11.5h4" />
+    </svg>
+  );
+}
+
+function McpIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5.5 2v3M10.5 2v3" />
+      <path d="M3.5 5h9v3.5a4.5 4.5 0 0 1-9 0V5z" />
+      <path d="M8 13v1.5" />
+    </svg>
+  );
+}
+
+function DefaultToolIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 2L14 8L8 14L2 8Z" />
+    </svg>
+  );
+}
+
+function toolIcon(name: string): ReactNode {
+  if (name === "list_files") return <FileListIcon />;
+  if (["read_file", "read_file_range"].includes(name)) return <FileReadIcon />;
+  if (["search_text", "tool_search"].includes(name)) return <SearchIcon />;
+  if (["write_file", "apply_patch"].includes(name)) return <FileWriteIcon />;
+  if (name === "delete_file") return <FileDeleteIcon />;
+  if (name.startsWith("skill_")) return <SkillIcon />;
+  if (name.startsWith("mcp") || name.includes("__")) return <McpIcon />;
+  return <DefaultToolIcon />;
 }
 
 function statusLabel(status: Item["status"]): string {

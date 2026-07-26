@@ -2018,8 +2018,20 @@ input:focus, textarea:focus {
   list-style: none;
 }
 .tool-item > summary > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tool-icon { color: #747a75; font-family: var(--font-code); text-align: center; }
-.tool-icon--terminal { font-size: var(--font-size-xs); }
+.tool-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #747a75;
+  width: 1.15rem;
+  height: 1.15rem;
+}
+.tool-icon svg {
+  display: block;
+  width: 0.875rem;
+  height: 0.875rem;
+  flex-shrink: 0;
+}
 .tool-body { padding: 0.3rem 0 0.4rem 1.5rem; }
 .tool-body p { margin: 0; color: var(--muted); font-size: var(--font-size-caption); }
 

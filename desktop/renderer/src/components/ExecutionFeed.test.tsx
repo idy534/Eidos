@@ -200,3 +200,37 @@ test("shows the exact host and target for network approval", () => {
   assert.match(html, /approved hosts: codeload.github.com:443/);
   assert.match(html, /批准联网/);
 });
+
+test("renders minimalist SVG icons for file operations, skills, and shell calls", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "tool-1", ordinal: 1, kind: "tool_call",
+          toolCall: {
+            id: "tc-1", itemId: "tool-1", modelStepIndex: 1, batchOrder: 0,
+            providerCallId: "p-1", toolName: "list_files", status: "completed",
+            startedAt: 1000, completedAt: 1100, argumentsJson: "{}", resultJson: "{}",
+          },
+        }),
+        item({
+          id: "tool-2", ordinal: 2, kind: "tool_call",
+          toolCall: {
+            id: "tc-2", itemId: "tool-2", modelStepIndex: 1, batchOrder: 1,
+            providerCallId: "p-2", toolName: "skill_read", status: "completed",
+            startedAt: 1100, completedAt: 1200, argumentsJson: "{}", resultJson: "{}",
+          },
+        }),
+      ]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalId={undefined}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(html, /<span class="tool-icon" aria-hidden="true"><svg/);
+  assert.match(html, /已列出文件/);
+  assert.match(html, /已运行 skill_read/);
+});
