@@ -90,7 +90,7 @@ EIDOS_DATA_DIR=/private/tmp/eidos-smoke-data EIDOS_FAKE_MODEL=1 pnpm start
 然后按以下步骤验收 L1：
 
 1. 点击“新建 Session”，选择一个不含敏感数据的测试项目。
-2. 输入“请先列出文件，读取 README.md，然后概括如何启动这个项目”，按 `Command + Enter`。
+2. 输入“请先列出文件，读取 README.md，然后概括如何启动这个项目”，按 `Enter`。
 3. Feed 应依次出现用户消息、`list_files`/`read_file` 工具项、模型可见文本和最终回答。
 4. 退出并重新启动 Eidos，左侧应保留 Session；打开后应看到已完成的 Run 与 Item。
 5. 再发起一个任务并立即点击“取消 Run”，状态应停止，不能在稍后被迟到模型结果改写为成功。
