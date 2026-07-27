@@ -29,6 +29,13 @@ class EventProjector:
             and run.get("status") == "running"
             and run.get("modelStepCount") == 0
         ):
+            if (
+                event_type == "run.created"
+                and isinstance(payload, dict)
+                and isinstance(payload.get("run"), dict)
+                and payload["run"].get("status") != "running"
+            ):
+                return ()
             notifications = [self._notification("run/started", {
                 "sessionId": run["sessionId"], "run": run,
             })]
@@ -52,11 +59,20 @@ class EventProjector:
                     }),
                 ))
             return tuple(notifications)
-        if event_type == "run.updated" and run is not None:
+        if (
+            event_type == "run.updated"
+            and run is not None
+            and run.get("status") in {
+                "queued", "running", "waiting_approval",
+                "waiting_user_input", "finalizing",
+            }
+        ):
             return (self._notification("run/updated", {
                 "sessionId": run["sessionId"], "run": run,
             }),)
         if event_type == "run.status_changed" and run is not None and isinstance(payload, dict):
+            if payload.get("current") != run.get("status"):
+                return ()
             method = (
                 "run/completed"
                 if payload.get("current") in {
@@ -68,8 +84,22 @@ class EventProjector:
                 "sessionId": run["sessionId"], "run": run,
             }),)
         if event_type == "item.started" and item is not None:
+            started_item = (
+                item
+                if item.get("status") == "in_progress"
+                else {
+                    **{
+                        key: value
+                        for key, value in item.items()
+                        if key != "completedAt"
+                    },
+                    "status": "in_progress",
+                }
+            )
             return (self._notification("item/started", {
-                "sessionId": item["sessionId"], "runId": item["runId"], "item": item,
+                "sessionId": item["sessionId"],
+                "runId": item["runId"],
+                "item": started_item,
             }),)
         if event_type == "item.completed" and item is not None:
             return (self._notification("item/completed", {
@@ -84,6 +114,21 @@ class EventProjector:
                 "itemId": payload["itemId"],
                 "sequence": payload["sequence"],
                 "delta": payload["delta"],
+            }),)
+        if event_type == "approval.status_changed" and isinstance(payload, dict):
+            current = payload.get("current")
+            method = (
+                "approval/requested"
+                if current == "pending"
+                else "approval/canceled"
+                if current in {"canceled", "invalidated"}
+                else "approval/resolved"
+            )
+            return (self._notification(method, {
+                "sessionId": event.get("sessionId"),
+                "runId": event.get("runId"),
+                "approvalId": payload.get("entity_id"),
+                "status": current,
             }),)
         return ()
 

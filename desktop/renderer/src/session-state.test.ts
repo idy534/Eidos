@@ -91,6 +91,21 @@ test("a committed background title update refreshes the open session", () => {
   assert.equal(result?.session.title, "后台标题");
 });
 
+test("approval lifecycle notifications do not mutate session facts", () => {
+  const current = snapshot("running", "working");
+  const notification: RuntimeNotification = {
+    method: "approval/canceled",
+    params: {
+      sessionId: session.id,
+      runId: "run-1",
+      approvalId: "approval-1",
+      status: "canceled",
+    },
+  };
+
+  assert.equal(applyNotification(current, notification), current);
+});
+
 test("a completed assistant item without content preserves streamed text", () => {
   const streaming = snapshot("running", "Done.");
   const completedItem = assistant("", "completed");

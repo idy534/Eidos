@@ -22,6 +22,12 @@ from eidos_runtime.runtime.approval import ApprovalDecision
 from eidos_runtime.runtime.contracts import RuntimeCancelled
 from eidos_runtime.runtime.engine import RuntimeEngine
 from eidos_runtime.runtime.events import RuntimeEvents
+from eidos_runtime.runtime.resource_registry import (
+    ResourceRegistry,
+    RuntimeResource,
+    RuntimeResourceKind,
+)
+from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle
 from eidos_runtime.runtime.tool_execution import active_tool_execution_count
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
@@ -66,6 +72,7 @@ class RunHandle:
     resume: threading.Event
     state: RunWorkerState
     model_lease: ModelClientLease | None = None
+    resource: RuntimeResource | None = None
 
 
 @dataclass
@@ -81,6 +88,7 @@ class ManagedTask:
     kind: str
     thread: threading.Thread
     cancellation: threading.Event
+    resource: RuntimeResource
 
 
 @dataclass(frozen=True)
@@ -106,6 +114,7 @@ class RunSupervisor:
         *,
         cancel_timeout: float = 6.0,
         shutdown_timeout: float = 6.0,
+        resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self.store = store
         self.model_for = model_for
@@ -118,6 +127,7 @@ class RunSupervisor:
         self.engine_factory = engine_factory
         self.cancel_timeout = cancel_timeout
         self.shutdown_timeout = shutdown_timeout
+        self.resources = resource_registry or ResourceRegistry()
         self.lock = threading.RLock()
         self._handles: dict[str, RunHandle] = {}
         self._managed_tasks: dict[str, ManagedTask] = {}
@@ -126,7 +136,7 @@ class RunSupervisor:
         self.pending_approvals: dict[str, PendingApproval] = {}
         self.lifecycle = RuntimeLifecycle.RUNNING
         self.control_state = RuntimeControlState.RUNNING
-        self.events = RuntimeEvents(notify)
+        self.events = RuntimeEvents(notify, store=store)
 
     def prepare_next(self) -> WorkerStart | None:
         if (
@@ -148,7 +158,10 @@ class RunSupervisor:
             run_id = str(claimed.value["id"])
             handle = self._handles.get(run_id)
             if handle is not None:
-                if handle.state is not RunWorkerState.WAITING_SLOT:
+                if handle.state not in {
+                    RunWorkerState.WAITING_APPROVAL,
+                    RunWorkerState.WAITING_SLOT,
+                }:
                     raise RuntimeError("run already has a worker")
                 self._active_slot_run_id = run_id
                 handle.state = RunWorkerState.RUNNING
@@ -175,6 +188,7 @@ class RunSupervisor:
     def cancel_run(
         self, run_id: str, *, operation_id: str | None = None
     ) -> dict[str, object]:
+        hit_fault("cancel_claim_race")
         self.store.read_run(run_id)
         with self.lock:
             handle = self._handles.get(run_id)
@@ -303,16 +317,23 @@ class RunSupervisor:
             tasks = tuple(self._managed_tasks.values())
             for task in tasks:
                 task.cancellation.set()
+        hit_fault("shutdown_tool_completion_race")
         self._release_approval_waits()
         self.wait(self.shutdown_timeout)
         self.wait_managed_tasks(self.shutdown_timeout)
         live_threads = self._live_managed_threads()
+        registered = tuple(
+            resource
+            for resource in self.resources.active_resources()
+            if resource.kind is not RuntimeResourceKind.MODEL_LOOP
+        )
         if (
             self.has_active_workers()
             or self.has_active_model_leases()
             or self.has_active_managed_tasks()
             or active_tool_execution_count()
             or live_threads
+            or registered
         ):
             for run_id in active_ids:
                 try:
@@ -333,6 +354,10 @@ class RunSupervisor:
                 resources.append("tool_execution")
             if live_threads:
                 resources.append("managed_thread")
+            resources.extend(
+                f"{resource.kind.value}:{resource.owner_id}"
+                for resource in registered
+            )
             logger.warning(
                 "Runtime shutdown timed out; active resources: %s",
                 ",".join(resources),
@@ -374,6 +399,8 @@ class RunSupervisor:
         self,
         kind: str,
         target: Callable[[threading.Event], None],
+        *,
+        operation_id: str | None = None,
     ) -> bool:
         task_id = str(uuid.uuid4())
         cancellation = threading.Event()
@@ -384,6 +411,9 @@ class RunSupervisor:
             except Exception:
                 logger.exception("Runtime managed task failed: %s", kind)
             finally:
+                if async_resource is not None:
+                    async_resource.close()
+                resource.close()
                 with self.lock:
                     self._managed_tasks.pop(task_id, None)
 
@@ -392,16 +422,36 @@ class RunSupervisor:
             name=f"eidos-{kind}-{task_id}",
             daemon=False,
         )
+        resource = self.resources.register(
+            RuntimeResourceKind.MANAGED_TASK,
+            owner_id=task_id,
+            cancel=cancellation.set,
+        )
+        async_resource = (
+            self.resources.register(
+                RuntimeResourceKind.ASYNC_REQUEST,
+                owner_id=operation_id,
+                cancel=cancellation.set,
+            )
+            if operation_id is not None
+            else None
+        )
         with self.lock:
             if (
                 self.lifecycle is not RuntimeLifecycle.RUNNING
                 or self.control_state is not RuntimeControlState.RUNNING
             ):
+                if async_resource is not None:
+                    async_resource.close()
+                resource.close()
                 return False
             self._managed_tasks[task_id] = ManagedTask(
-                task_id, kind, thread, cancellation
+                task_id, kind, thread, cancellation, resource
             )
             thread.start()
+            resource.start()
+            if async_resource is not None:
+                async_resource.start()
         return True
 
     def has_active_managed_tasks(self) -> bool:
@@ -419,6 +469,7 @@ class RunSupervisor:
         return not self.has_active_managed_tasks()
 
     def begin_reconfiguration(self) -> bool:
+        hit_fault("configure_worker_race")
         with self.lock:
             if (
                 self.lifecycle is not RuntimeLifecycle.RUNNING
@@ -482,15 +533,22 @@ class RunSupervisor:
             args=(run_id, cancellation, gate),
             name=f"eidos-run-{run_id}",
         )
+        resource = self.resources.register(
+            RuntimeResourceKind.RUN_WORKER,
+            owner_id=run_id,
+            cancel=cancellation.set,
+        )
         self._handles[run_id] = RunHandle(
             run_id=run_id,
             thread=worker,
             cancellation=cancellation,
             resume=resume,
             state=RunWorkerState.STARTING,
+            resource=resource,
         )
         self._active_slot_run_id = run_id
         worker.start()
+        resource.start()
         return WorkerStart(run_id, gate)
 
     def _run_worker(
@@ -531,6 +589,8 @@ class RunSupervisor:
                 self.shell_available(),
                 sensitive=self.sensitive(),
                 wait_for_execution_slot=self._wait_for_execution_slot,
+                resource_registry=self.resources,
+                events=self.events,
             )
             if isinstance(engine, RuntimeEngine):
                 engine.terminalize_cancel = False
@@ -573,6 +633,8 @@ class RunSupervisor:
                     self._active_slot_run_id = None
                 self._handles.pop(run_id, None)
                 should_schedule = self.lifecycle is RuntimeLifecycle.RUNNING
+            if handle.resource is not None:
+                handle.resource.close()
             if should_schedule:
                 self.schedule_next()
 
@@ -618,6 +680,9 @@ class RunSupervisor:
             handle = self._handles.get(run_id)
             if handle is None:
                 return False
+            if self._active_slot_run_id == run_id:
+                handle.state = RunWorkerState.RUNNING
+                return True
             handle.state = RunWorkerState.WAITING_SLOT
             handle.resume.clear()
         self.schedule_next()

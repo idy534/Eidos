@@ -54,6 +54,9 @@ class FaultInjectionHarness:
         if not self._release[point].wait(timeout):
             raise TimeoutError(f"fault point did not release: {point}")
 
+    def hit(self, point: str) -> None:
+        self.trigger(point)
+
     def wait_until_entered(self, point: str, timeout: float = 2.0) -> bool:
         self._check(point)
         return self._entered[point].wait(timeout)
@@ -80,8 +83,26 @@ def assert_runtime_converged(store, supervisor=None) -> None:
                 "SELECT id FROM events ORDER BY id"
             ).fetchall()
         ]
+        missing_outbox = connection.execute(
+            """
+            SELECT COUNT(*) FROM events
+            LEFT JOIN event_outbox
+              ON event_outbox.event_id = events.id
+            WHERE event_outbox.event_id IS NULL
+            """
+        ).fetchone()[0]
+        active_operations = connection.execute(
+            """
+            SELECT COUNT(*) FROM async_operations
+            WHERE status IN ('accepted', 'running')
+            """
+        ).fetchone()[0]
     if event_ids != sorted(set(event_ids)):
         raise AssertionError("event ids are not strictly monotonic")
+    if missing_outbox:
+        raise AssertionError("committed event is missing from outbox")
+    if active_operations:
+        raise AssertionError("live async operation")
     if active_tool_execution_count():
         raise AssertionError("live tool execution")
     if supervisor is not None and (
@@ -90,6 +111,8 @@ def assert_runtime_converged(store, supervisor=None) -> None:
         or supervisor.has_active_managed_tasks()
     ):
         raise AssertionError("live supervisor resource")
+    if supervisor is not None and supervisor.resources.active_resources():
+        raise AssertionError("live registered runtime resource")
     if any(
         thread.is_alive()
         and thread.name.startswith(("eidos-mcp-", "eidos-title-"))

@@ -21,8 +21,11 @@ from eidos_runtime.db.errors import (
 from eidos_runtime.db.schema import (
     SCHEMA_SQL,
     SCHEMA_V1_TO_V2_SQL,
+    SCHEMA_V2_TO_V3_SQL,
+    SCHEMA_V3_TO_V4_SQL,
     SCHEMA_VERSION,
 )
+from eidos_runtime.runtime.fault_injection import hit_fault
 
 
 DATABASE_NAME = "eidos.db"
@@ -38,17 +41,16 @@ class CommittedMutation(Generic[T]):
     value: T
     events: tuple[dict[str, object], ...]
 
-    def __post_init__(self) -> None:
-        previous = 0
-        for event in self.events:
-            event_id = event.get("eventId")
-            if (
-                not isinstance(event_id, int)
-                or isinstance(event_id, bool)
-                or event_id <= previous
-            ):
-                raise ValueError("committed mutation events are not monotonic")
-            previous = event_id
+    @property
+    def event_ids(self) -> tuple[int, ...]:
+        return tuple(
+            event_id
+            for event in self.events
+            if isinstance(
+                event_id := event.get("eventId"), int
+            )
+            and not isinstance(event_id, bool)
+        )
 
 
 @dataclass(frozen=True)
@@ -95,7 +97,7 @@ class Database:
             tables = _table_names(connection)
             revision = connection.execute("PRAGMA user_version").fetchone()[0]
             if (
-                (tables and revision not in {1, SCHEMA_VERSION})
+                (tables and revision not in {1, 2, 3, SCHEMA_VERSION})
                 or (not tables and revision != 0)
             ):
                 raise StorageError("schema_revision_unsupported")
@@ -112,6 +114,20 @@ class Database:
                 connection.executescript(
                     "BEGIN IMMEDIATE;\n"
                     + SCHEMA_V1_TO_V2_SQL
+                    + "\nPRAGMA user_version = 2;\nCOMMIT;"
+                )
+                revision = 2
+            if tables and revision == 2:
+                connection.executescript(
+                    "BEGIN IMMEDIATE;\n"
+                    + SCHEMA_V2_TO_V3_SQL
+                    + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
+                )
+                revision = 3
+            if tables and revision == 3:
+                connection.executescript(
+                    "BEGIN IMMEDIATE;\n"
+                    + SCHEMA_V3_TO_V4_SQL
                     + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
                 )
             _verify_integrity(connection)
@@ -135,6 +151,7 @@ class Database:
     def transaction(self) -> Iterator[sqlite3.Connection]:
         with self.lock, self.connection() as connection:
             yield connection
+            hit_fault("sqlite_commit_failure")
 
     def close(self) -> None:
         with self.lock:

@@ -298,6 +298,7 @@ test("routes a runtime approval request and commits only after approval", async 
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-workspace-"));
   const approvals: string[] = [];
+  const approvalNotifications: string[] = [];
 
   try {
     let completeRun: ((notification: RuntimeNotification) => void) | undefined;
@@ -317,6 +318,9 @@ test("routes a runtime approval request and commits only after approval", async 
         return { decision: "approve" };
       },
       onNotification: (notification) => {
+        if (notification.method.startsWith("approval/")) {
+          approvalNotifications.push(notification.method);
+        }
         if (notification.method === "run/completed") {
           completeRun?.(notification);
         }
@@ -333,6 +337,10 @@ test("routes a runtime approval request and commits only after approval", async 
     assert.equal(completed.method, "run/completed");
     assert.equal(await readFile(path.join(workspaceRoot, "approved.txt"), "utf8"), "approved\n");
     assert.equal(approvals.length, 1);
+    assert.deepEqual(
+      approvalNotifications,
+      ["approval/requested", "approval/resolved"],
+    );
     assert.match(approvals[0] ?? "", /\+\+\+ b\/approved\.txt/);
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });

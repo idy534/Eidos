@@ -225,6 +225,16 @@ class ToolDispatcher:
             raise RuntimeError("tool_unavailable")
         return prepare(cwd, cancel)
 
+    def refresh_workspace_index(self, cancel: threading.Event):
+        for entry in self._registry.entries:
+            executor = getattr(entry.adapter, "executor", None)
+            refresh = getattr(
+                executor, "refresh_workspace_index", None
+            )
+            if refresh is not None:
+                return refresh(cancel)
+        raise RuntimeError("workspace_index_unavailable")
+
     @property
     def workspace(self):
         for entry in self._registry.entries:
@@ -232,6 +242,15 @@ class ToolDispatcher:
             if workspace is not None:
                 return workspace
         raise RuntimeError("workspace_unavailable")
+
+    @property
+    def workspace_index(self):
+        for entry in self._registry.entries:
+            executor = getattr(entry.adapter, "executor", None)
+            index = getattr(executor, "workspace_index", None)
+            if index is not None:
+                return index
+        raise RuntimeError("workspace_index_unavailable")
 
 
 def _unavailable(tool_name: str) -> dict[str, object]:

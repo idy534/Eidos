@@ -313,6 +313,15 @@ export type RuntimeNotification =
         delta: string;
       };
     }
+  | {
+      method: "approval/requested" | "approval/resolved" | "approval/canceled";
+      params: {
+        sessionId: string;
+        runId: string;
+        approvalId: string;
+        status: "pending" | "approved" | "rejected" | "canceled" | "invalidated";
+      };
+    }
   | { method: "run/completed"; params: { sessionId: string; run: Run } };
 
 interface RuntimeClientOptions {
@@ -835,6 +844,30 @@ function isNotification(value: unknown): value is RuntimeNotification {
       && typeof params.itemId === "string"
       && isPositiveInteger(params.sequence)
       && typeof params.delta === "string"
+    );
+  }
+  if (
+    value.method === "approval/requested"
+    || value.method === "approval/resolved"
+    || value.method === "approval/canceled"
+  ) {
+    const status = String(params.status);
+    return (
+      hasOnlyKeys(params, ["sessionId", "runId", "approvalId", "status"])
+      && typeof params.sessionId === "string"
+      && typeof params.runId === "string"
+      && typeof params.approvalId === "string"
+      && (
+        (value.method === "approval/requested" && status === "pending")
+        || (
+          value.method === "approval/resolved"
+          && ["approved", "rejected"].includes(status)
+        )
+        || (
+          value.method === "approval/canceled"
+          && ["canceled", "invalidated"].includes(status)
+        )
+      )
     );
   }
   return false;

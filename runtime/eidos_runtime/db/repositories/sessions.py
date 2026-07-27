@@ -333,7 +333,18 @@ class SessionRepository(Repository):
                 (session_id,),
             )
             connection.execute("DELETE FROM items WHERE session_id = ?", (session_id,))
-            connection.execute("DELETE FROM events WHERE session_id = ?", (session_id,))
+            connection.execute(
+                """
+                DELETE FROM event_outbox
+                WHERE event_id IN (
+                    SELECT id FROM events WHERE session_id = ?
+                )
+                """,
+                (session_id,),
+            )
+            connection.execute(
+                "DELETE FROM events WHERE session_id = ?", (session_id,)
+            )
             connection.execute("DELETE FROM runs WHERE session_id = ?", (session_id,))
             connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             return {"deletedSessionId": session_id}

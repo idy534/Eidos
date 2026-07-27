@@ -1,15 +1,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from enum import StrEnum
 import json
 import logging
+import sqlite3
 import threading
 import time
-from typing import Mapping, Protocol
+from typing import Callable, Mapping, Protocol
+
+from pydantic import BaseModel, ConfigDict
 
 from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.db.errors import InvalidRunStateError, StorageError
+from eidos_runtime.db.invariants import RuntimeInvariantError
 from eidos_runtime.model.client import ModelToolCall
-from eidos_runtime.runtime.approval import ApprovalTransportError
+from eidos_runtime.runtime.approval import (
+    ApprovalCoordinator,
+    ApprovalOutcome,
+    ApprovalTransportError,
+)
 from eidos_runtime.runtime.contracts import RuntimeCancelled
 from eidos_runtime.runtime.errors import (
     bounded_tool_result,
@@ -18,6 +28,12 @@ from eidos_runtime.runtime.errors import (
     tool_result,
 )
 from eidos_runtime.runtime.events import RuntimeEvents
+from eidos_runtime.runtime.resource_registry import (
+    ResourceRegistry,
+    ResourceRegistryError,
+    RuntimeResourceKind,
+)
+from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
 
@@ -25,6 +41,19 @@ from eidos_runtime.sandbox.sensitive import SensitiveScanner
 _active_lock = threading.Lock()
 _active_executions = 0
 logger = logging.getLogger("eidos.runtime")
+
+
+class ToolInfrastructureError(RuntimeError):
+    pass
+
+
+_INFRASTRUCTURE_ERRORS = (
+    StorageError,
+    sqlite3.Error,
+    InvalidRunStateError,
+    RuntimeInvariantError,
+    ResourceRegistryError,
+)
 
 
 @dataclass(frozen=True)
@@ -36,6 +65,36 @@ class HandlerOutcome:
     workspace_changed: bool = False
     diff_hash: str | None = None
     item: dict[str, object] | None = None
+
+
+class ToolExecutionPhase(StrEnum):
+    VALIDATING = "validating"
+    PREPARING = "preparing"
+    WAITING_APPROVAL = "waiting_approval"
+    INTENT_COMMITTED = "intent_committed"
+    EXECUTING = "executing"
+    VERIFYING = "verifying"
+    COMMITTING = "committing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELED = "canceled"
+    UNCERTAIN = "uncertain"
+
+
+class PreparedToolExecution(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    approval_description: dict[str, object]
+    intent_preconditions: dict[str, object]
+    transition_reason: str
+    approval_diff: str = ""
+    base_sha256: str | None = None
+
+
+class VerifiedToolExecutionResult(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    result: dict[str, object]
 
 
 class ToolHandler(Protocol):
@@ -111,15 +170,23 @@ class ToolExecutionController:
         events: RuntimeEvents,
         sensitive: SensitiveScanner,
         *,
+        approval: ApprovalCoordinator | None = None,
         monotonic=time.monotonic,
+        resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self.store = store
         self.dispatcher = dispatcher
         self.handlers = handlers
         self.events = events
         self.sensitive = sensitive
+        self.approval = approval
         self.monotonic = monotonic
+        self.resources = resource_registry or ResourceRegistry()
         self._execution_state = threading.local()
+
+    @property
+    def current_phase(self) -> ToolExecutionPhase | None:
+        return getattr(self._execution_state, "phase", None)
 
     def begin_durable_intent(
         self, item_id: str, preconditions: dict[str, object]
@@ -129,6 +196,45 @@ class ToolExecutionController:
         )
         self._execution_state.intent_started = True
         return intent_id
+
+    def execute_side_effect(
+        self,
+        *,
+        run_id: str,
+        item: dict[str, object],
+        prepared: PreparedToolExecution,
+        cancel: threading.Event,
+        execute: Callable[[], dict[str, object]],
+        verify: Callable[[dict[str, object]], VerifiedToolExecutionResult] | None = None,
+    ) -> tuple[ApprovalOutcome, VerifiedToolExecutionResult | None]:
+        if self.approval is None:
+            raise RuntimeError("tool execution approval coordinator is unavailable")
+        self._execution_state.phase = ToolExecutionPhase.WAITING_APPROVAL
+        approval = self.approval.request(
+            run_id,
+            item,
+            prepared.approval_description,
+            cancel,
+            diff=prepared.approval_diff,
+            base_sha256=prepared.base_sha256,
+            transition_reason=prepared.transition_reason,
+        )
+        if approval.decision != "approve":
+            return approval, None
+        self.begin_durable_intent(
+            str(item["id"]), prepared.intent_preconditions
+        )
+        self._execution_state.phase = ToolExecutionPhase.INTENT_COMMITTED
+        if not self.store.side_effect_authorized(str(item["id"])):
+            raise RuntimeError("tool execution contract violation")
+        self._execution_state.authorized_effects += 1
+        self._execution_state.phase = ToolExecutionPhase.EXECUTING
+        raw = execute()
+        self._execution_state.phase = ToolExecutionPhase.VERIFYING
+        return approval, (
+            verify(raw) if verify is not None
+            else VerifiedToolExecutionResult(result=raw)
+        )
 
     def execute(
         self,
@@ -149,6 +255,15 @@ class ToolExecutionController:
             cancel, effective_deadline, self.monotonic
         )
         self._execution_state.intent_started = False
+        self._execution_state.authorized_effects = 0
+        self._execution_state.phase = ToolExecutionPhase.VALIDATING
+        resource = self.resources.register(
+            RuntimeResourceKind.TOOL_EXECUTION,
+            owner_id=str(item["id"]),
+            deadline=effective_deadline,
+            cancel=cancel.set,
+        )
+        resource.start()
         _execution_started()
         try:
             raise_after_commit = False
@@ -181,6 +296,7 @@ class ToolExecutionController:
                     "failed",
                 )
             else:
+                self._execution_state.phase = ToolExecutionPhase.PREPARING
                 handler = self.handlers.get(plan.execution_kind)
                 if handler is None:
                     outcome = HandlerOutcome(
@@ -194,9 +310,30 @@ class ToolExecutionController:
                     )
                 else:
                     try:
+                        hit_fault("tool_block")
                         outcome = handler.execute(
                             run_id, item, call, controlled_cancel
                         )
+                        hit_fault("tool_late_result")
+                        if (
+                            plan.side_effect != "none"
+                            and self._execution_state.authorized_effects == 0
+                            and (
+                                outcome.result.get("outcome") == "success"
+                                or outcome.result.get(
+                                    "sideEffectsMayExist"
+                                ) is True
+                            )
+                        ):
+                            outcome = HandlerOutcome(
+                                tool_error(
+                                    call.name,
+                                    "TOOL_EXECUTION_CONTRACT_VIOLATION",
+                                    "Tool execution contract was violated",
+                                ),
+                                "failed",
+                                "failed",
+                            )
                     except RuntimeCancelled:
                         raise_after_commit = True
                         outcome = self._interrupted(
@@ -209,14 +346,29 @@ class ToolExecutionController:
                         )
                     except ApprovalTransportError:
                         raise
-                    except Exception:
+                    except _INFRASTRUCTURE_ERRORS as error:
+                        raise ToolInfrastructureError(
+                            "TOOL_INFRASTRUCTURE_FAILURE"
+                        ) from error
+                    except Exception as error:
                         logger.exception("Tool execution failed")
+                        contract_violation = (
+                            "tool execution contract violation" in str(error)
+                        )
                         outcome = HandlerOutcome(
                             tool_result(
                                 call.name,
                                 "error",
-                                "TOOL_EXECUTION_FAILED",
-                                "Tool execution failed",
+                                (
+                                    "TOOL_EXECUTION_CONTRACT_VIOLATION"
+                                    if contract_violation
+                                    else "TOOL_EXECUTION_FAILED"
+                                ),
+                                (
+                                    "Tool execution contract was violated"
+                                    if contract_violation
+                                    else "Tool execution failed"
+                                ),
                                 side_effects_may_exist=(
                                     plan.side_effect != "none"
                                 ),
@@ -270,6 +422,7 @@ class ToolExecutionController:
                 )
                 outcome = replace(outcome, item_status="failed", tool_status="failed")
             outcome = replace(outcome, result=result)
+            self._execution_state.phase = ToolExecutionPhase.COMMITTING
             duration_ms = max(0, int((self.monotonic() - started) * 1000))
             mutation = self.store.complete_tool_item_once_committed(
                 str(item["id"]),
@@ -286,12 +439,62 @@ class ToolExecutionController:
                 duration_ms=duration_ms,
             )
             self.events.publish(mutation, item=mutation.value)
+            self._execution_state.phase = (
+                ToolExecutionPhase.COMPLETED
+                if outcome.tool_status == "completed"
+                else ToolExecutionPhase.CANCELED
+                if outcome.result.get("code") == "TOOL_CANCELED"
+                else ToolExecutionPhase.UNCERTAIN
+                if outcome.result.get("reconciliationRequired") is True
+                else ToolExecutionPhase.FAILED
+            )
             if raise_after_commit:
                 raise RuntimeCancelled
             return replace(outcome, item=mutation.value)
+        except ToolInfrastructureError:
+            try:
+                mutation = self.store.complete_tool_item_once_committed(
+                    str(item["id"]),
+                    json.dumps(
+                        tool_result(
+                            call.name,
+                            "error",
+                            "TOOL_INFRASTRUCTURE_FAILURE",
+                            "Tool infrastructure failed",
+                            side_effects_may_exist=(
+                                plan.side_effect != "none"
+                            ),
+                            reconciliation_required=(
+                                plan.side_effect != "none"
+                            ),
+                        ),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    item_status="failed",
+                    tool_status="failed",
+                    workspace_changed=False,
+                    diff_hash=None,
+                    duration_ms=max(
+                        0, int((self.monotonic() - started) * 1000)
+                    ),
+                )
+                self.events.publish(mutation, item=mutation.value)
+            except _INFRASTRUCTURE_ERRORS:
+                logger.exception(
+                    "Tool infrastructure terminalization failed"
+                )
+            raise
+        except _INFRASTRUCTURE_ERRORS as error:
+            raise ToolInfrastructureError(
+                "TOOL_INFRASTRUCTURE_FAILURE"
+            ) from error
         finally:
             self._execution_state.intent_started = False
+            self._execution_state.authorized_effects = 0
             _execution_finished()
+            resource.close()
 
     @staticmethod
     def _interrupted(
