@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { ModelId, ModelListResult, ModelOption, ModelStatus } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
 
@@ -18,7 +18,7 @@ export interface ModelControllerActions {
     currentSessionModelId?: ModelId,
   ): void;
   load(): Promise<void>;
-  configure(apiKey: string): Promise<void>;
+  configure(apiKey: string): Promise<boolean>;
   selectModel(modelId: ModelId): void;
   clearError(): void;
 }
@@ -77,6 +77,7 @@ export function useModelController(): [ModelControllerState, ModelControllerActi
   const [loading, setLoading] = useState<boolean>(false);
   const [configuring, setConfiguring] = useState<boolean>(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  const configuringRef = useRef<boolean>(false);
 
   const initialize = useCallback((
     newStatus: ModelStatus,
@@ -125,7 +126,11 @@ export function useModelController(): [ModelControllerState, ModelControllerActi
     }
   }, [selectedModelId]);
 
-  const configure = useCallback(async (apiKey: string): Promise<void> => {
+  const configure = useCallback(async (apiKey: string): Promise<boolean> => {
+    if (configuringRef.current) {
+      return false;
+    }
+    configuringRef.current = true;
     setConfiguring(true);
     setError(undefined);
     try {
@@ -142,11 +147,13 @@ export function useModelController(): [ModelControllerState, ModelControllerActi
       if (selectionError) {
         setError(selectionError);
       }
+      return true;
     } catch (cause) {
       // Preserve previously valid model state on failure, set local error
       setError(userFacingError(cause));
       throw cause;
     } finally {
+      configuringRef.current = false;
       setConfiguring(false);
     }
   }, [selectedModelId]);

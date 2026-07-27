@@ -15,6 +15,7 @@ import { useSessionController } from "./useSessionController.js";
 import { useRunController } from "./useRunController.js";
 import { useApprovalController } from "./useApprovalController.js";
 import { useModelController } from "./useModelController.js";
+import { resolveSessionModelId } from "./session-model-resolver.js";
 import { applyNotification } from "../session-state.js";
 
 interface AppShellProps {
@@ -68,7 +69,7 @@ export function AppShell({ runtime }: AppShellProps) {
     ]).then(([sessionPage, modelStatus, availableModels, pendingApprovals]) => {
       sessionActions.setSessions(sessionPage.items);
       approvalActions.mergeApprovals(pendingApprovals);
-      modelActions.initialize(modelStatus, availableModels, sessionState.snapshot?.runs[0]?.modelId);
+      modelActions.initialize(modelStatus, availableModels, resolveSessionModelId(sessionState.snapshot?.runs ?? []));
     }).catch((cause: unknown) => {
       const msg = cause instanceof Error ? cause.message : String(cause);
       sessionActions.setError(msg);
@@ -160,14 +161,14 @@ export function AppShell({ runtime }: AppShellProps) {
   async function handleSelectSession(session: Session): Promise<void> {
     const loaded = await sessionActions.selectSession(session);
     if (loaded && modelState.status && modelState.list) {
-      modelActions.initialize(modelState.status, modelState.list, loaded.runs[0]?.modelId);
+      modelActions.initialize(modelState.status, modelState.list, resolveSessionModelId(loaded.runs));
     }
   }
 
   async function handleCreateSession(workspaceRoot?: string): Promise<void> {
     const loaded = await sessionActions.createSession(workspaceRoot);
     if (loaded && modelState.status && modelState.list) {
-      modelActions.initialize(modelState.status, modelState.list, loaded.runs[0]?.modelId);
+      modelActions.initialize(modelState.status, modelState.list, resolveSessionModelId(loaded.runs));
     }
   }
 
@@ -344,14 +345,13 @@ export function AppShell({ runtime }: AppShellProps) {
             modelList={modelState.list}
             modelLoading={modelState.loading}
             modelError={modelState.error}
+            modelConfiguring={modelState.configuring}
             plugins={plugins}
             skills={skills}
             mcpServers={mcpServers}
             pendingAction={settingsPendingAction}
             onClose={() => setSettingsOpen(false)}
-            onConfigureModel={async (key) => {
-              await modelActions.configure(key);
-            }}
+            onConfigureModel={(key) => modelActions.configure(key)}
             onImportPlugin={importPlugin}
             onTogglePlugin={setPluginEnabled}
             onRemovePlugin={removePlugin}
@@ -422,6 +422,8 @@ export function AppShell({ runtime }: AppShellProps) {
               runs={snapshot.runs}
               approvals={approvals.filter((a) => a.sessionId === snapshot.session.id)}
               respondingApprovalId={respondingApprovalId}
+              expiredApprovalIds={approvalState.expiredApprovalIds}
+              errorsByApprovalId={approvalState.errorsByApprovalId}
               onApprove={(request) => void approvalActions.approve(request)}
               onReject={(request) => approvalActions.openRejectDialog(request)}
             />

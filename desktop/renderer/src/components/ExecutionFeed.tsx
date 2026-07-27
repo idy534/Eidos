@@ -13,6 +13,8 @@ interface Props {
   approvals: ApprovalRequest[];
   /** ID of the approval currently being responded to (per-card loading) */
   respondingApprovalId: string | undefined;
+  expiredApprovalIds?: ReadonlySet<string> | undefined;
+  errorsByApprovalId?: Readonly<Record<string, string>> | undefined;
   onApprove: (request: ApprovalRequest) => void;
   onReject: (request: ApprovalRequest) => void;
 }
@@ -32,7 +34,16 @@ const TERMINAL_RUN_STATUSES = new Set<Run["status"]>([
 ]);
 
 
-export function ExecutionFeed({ items, runs, approvals, respondingApprovalId, onApprove, onReject }: Props) {
+export function ExecutionFeed({
+  items,
+  runs,
+  approvals,
+  respondingApprovalId,
+  expiredApprovalIds,
+  errorsByApprovalId,
+  onApprove,
+  onReject,
+}: Props) {
   const feedRef = useRef<HTMLElement>(null);
   const [atBottom, setAtBottom] = useState(true);
 
@@ -75,6 +86,8 @@ export function ExecutionFeed({ items, runs, approvals, respondingApprovalId, on
                   isLast={index === segments.length - 1}
                   approvals={approvals}
                   respondingApprovalId={respondingApprovalId}
+                  expiredApprovalIds={expiredApprovalIds}
+                  errorsByApprovalId={errorsByApprovalId}
                   onApprove={onApprove}
                   onReject={onReject}
                 />
@@ -109,6 +122,8 @@ function RunSegment({
   isLast,
   approvals,
   respondingApprovalId,
+  expiredApprovalIds,
+  errorsByApprovalId,
   onApprove,
   onReject,
 }: {
@@ -117,6 +132,8 @@ function RunSegment({
   isLast: boolean;
   approvals: ApprovalRequest[];
   respondingApprovalId: string | undefined;
+  expiredApprovalIds?: ReadonlySet<string> | undefined;
+  errorsByApprovalId?: Readonly<Record<string, string>> | undefined;
   onApprove: Props["onApprove"];
   onReject: Props["onReject"];
 }) {
@@ -140,6 +157,8 @@ function RunSegment({
               run={run}
               approval={approvals.find((request) => request.itemId === item.id)}
               respondingApprovalId={respondingApprovalId}
+              expiredApprovalIds={expiredApprovalIds}
+              errorsByApprovalId={errorsByApprovalId}
               onApprove={onApprove}
               onReject={onReject}
             />
@@ -178,17 +197,12 @@ function AssistantMessage({ item }: { item: Item }) {
     ) return;
     const block = contentRef.current?.querySelector<HTMLElement>(".markdown-body > :last-child");
     const latest = block?.querySelector<HTMLElement>("tbody tr:last-child, li:last-child") ?? block;
-    latest?.animate(
-      [{ opacity: 0.55, transform: "translateY(0.15rem)" }, { opacity: 1, transform: "translateY(0)" }],
-      { duration: 220, easing: "ease-out" },
-    );
+    latest?.scrollIntoView({ block: "end" });
   }, [item.content, item.status]);
 
   return (
-    <article className="feed-item feed-item--assistant">
-      <div ref={contentRef} className={item.status === "in_progress" ? "streaming" : ""}>
-        <MarkdownContent content={item.content || ""} />
-      </div>
+    <article className="feed-item feed-item--assistant" ref={contentRef}>
+      <MarkdownContent content={item.content || ""} />
     </article>
   );
 }
@@ -198,6 +212,8 @@ function ProcessItem({
   run,
   approval,
   respondingApprovalId,
+  expiredApprovalIds,
+  errorsByApprovalId,
   onApprove,
   onReject,
 }: {
@@ -205,6 +221,8 @@ function ProcessItem({
   run: Run;
   approval: ApprovalRequest | undefined;
   respondingApprovalId: string | undefined;
+  expiredApprovalIds?: ReadonlySet<string> | undefined;
+  errorsByApprovalId?: Readonly<Record<string, string>> | undefined;
   onApprove: Props["onApprove"];
   onReject: Props["onReject"];
 }) {
@@ -215,18 +233,20 @@ function ProcessItem({
   if (!item.toolCall) return null;
 
   if (approval) {
+    const isExpired = Boolean(expiredApprovalIds?.has(approval.id));
+    const localError = errorsByApprovalId?.[approval.id];
     const isResponding = respondingApprovalId === approval.id;
-    const canApprove = run.allowedActions?.includes("approve") && !isResponding;
-    const canReject = run.allowedActions?.includes("reject") && !isResponding;
+    const canApprove = !isExpired && run.allowedActions?.includes("approve") && !isResponding;
+    const canReject = !isExpired && run.allowedActions?.includes("reject") && !isResponding;
 
     return (
-      <article className="approval-card" aria-labelledby={`approval-${approval.id}`}>
+      <article className={`approval-card ${isExpired ? "approval-card--expired" : ""}`} aria-labelledby={`approval-${approval.id}`}>
         <div className="approval-heading">
           <div>
-            <p className="feed-label">需要你的批准</p>
+            <p className="feed-label">{isExpired ? "已过期" : "需要你的批准"}</p>
             <h3 id={`approval-${approval.id}`}>{approval.summary}</h3>
           </div>
-          <span>{approval.kind === "file_change" ? "文件变更" : approval.kind === "external_tool" ? "MCP 工具" : approval.kind === "network_access" ? "网络访问" : "Shell 命令"}</span>
+          <span>{isExpired ? "已过期" : approval.kind === "file_change" ? "文件变更" : approval.kind === "external_tool" ? "MCP 工具" : approval.kind === "network_access" ? "网络访问" : "Shell 命令"}</span>
         </div>
         <pre className="diff-view">
           {approval.kind === "file_change"
@@ -237,6 +257,7 @@ function ProcessItem({
                 ? `tool: ${approval.toolName}\ntarget: ${approval.target}\napproved hosts: ${approval.hosts.join(", ")}`
                 : `$ ${approval.command}\n\ncwd: ${approval.cwd}\nnetwork: disabled\ntimeout: ${approval.timeoutSeconds}s`}
         </pre>
+        {localError && <p className="approval-error" role="alert">{localError}</p>}
         <div className="approval-actions">
           <Button
             variant="ghost"

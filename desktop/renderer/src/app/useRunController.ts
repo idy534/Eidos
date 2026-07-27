@@ -55,8 +55,12 @@ export function useRunController(
 ): [RunControllerState, RunControllerActions] {
   // Session-scoped draft inputs
   const [inputs, setInputs] = useState<Record<string, string>>({});
-  const [isStarting, setIsStarting] = useState(false);
-  const [submitKind, setSubmitKind] = useState<"start" | "continue" | undefined>(undefined);
+  const [submissionOperation, setSubmissionOperation] = useState<{
+    token: symbol;
+    sessionId: string;
+    kind: "start" | "continue";
+    runId?: string;
+  } | undefined>(undefined);
   const [cancelingRunId, setCancelingRunId] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
 
@@ -66,8 +70,14 @@ export function useRunController(
   const currentSessionId = snapshot?.session.id;
   const input = currentSessionId ? (inputs[currentSessionId] ?? "") : "";
 
+  const currentSubmission = submissionOperation?.sessionId === currentSessionId
+    ? submissionOperation
+    : undefined;
+  const isSubmitting = currentSubmission !== undefined;
+  const submitKind = currentSubmission?.kind;
+
   const activeRun = snapshot ? findActiveRun(snapshot.runs) : undefined;
-  const composerMode = deriveComposerMode(isStorageReady, activeRun, isStarting);
+  const composerMode = deriveComposerMode(isStorageReady, activeRun, isSubmitting);
 
   const setInputForSession = useCallback((sessionId: string, value: string): void => {
     setInputs((prev) => ({
@@ -105,7 +115,8 @@ export function useRunController(
     if (!sessionInput.trim()) return;
 
     const currentActiveRun = findActiveRun(currentSnapshot.runs);
-    const mode = deriveComposerMode(storageReady, currentActiveRun, isStarting);
+    // Evaluate eligibility using target session's state
+    const mode = deriveComposerMode(storageReady, currentActiveRun, false);
 
     // Only "idle" and "waiting_user_input" allow submission
     if (mode !== "idle" && mode !== "waiting_user_input") return;
@@ -114,8 +125,9 @@ export function useRunController(
       // continueRun path
       if (!currentActiveRun?.allowedActions?.includes("continue")) return;
 
+      const token = Symbol("run-submission");
       const operation: SubmissionOperation = {
-        token: Symbol("run-submission"),
+        token,
         sessionId,
         kind: "continue",
         runId: currentActiveRun.id,
@@ -123,8 +135,7 @@ export function useRunController(
 
       // Synchronously acquire lock before async operations
       submissionLockRef.current = operation;
-      setIsStarting(true);
-      setSubmitKind("continue");
+      setSubmissionOperation({ token, sessionId, kind: "continue", runId: currentActiveRun.id });
       setError(undefined);
 
       try {
@@ -148,8 +159,7 @@ export function useRunController(
       } finally {
         if (submissionLockRef.current?.token === operation.token) {
           submissionLockRef.current = undefined;
-          setIsStarting(false);
-          setSubmitKind(undefined);
+          setSubmissionOperation(undefined);
         }
       }
     } else if (mode === "idle") {
@@ -157,16 +167,16 @@ export function useRunController(
       const freshActiveRun = findActiveRun(currentSnapshot.runs);
       if (freshActiveRun) return;
 
+      const token = Symbol("run-submission");
       const operation: SubmissionOperation = {
-        token: Symbol("run-submission"),
+        token,
         sessionId,
         kind: "start",
       };
 
       // Synchronously acquire lock before async operations
       submissionLockRef.current = operation;
-      setIsStarting(true);
-      setSubmitKind("start");
+      setSubmissionOperation({ token, sessionId, kind: "start" });
       setError(undefined);
 
       try {
@@ -190,12 +200,11 @@ export function useRunController(
       } finally {
         if (submissionLockRef.current?.token === operation.token) {
           submissionLockRef.current = undefined;
-          setIsStarting(false);
-          setSubmitKind(undefined);
+          setSubmissionOperation(undefined);
         }
       }
     }
-  }, [inputs, isStarting]);
+  }, [inputs]);
 
   const cancelRun = useCallback(async (runId: string): Promise<void> => {
     if (cancelingRunId) return;
@@ -214,9 +223,9 @@ export function useRunController(
     activeRun,
     input,
     inputs,
-    isSubmitting: isStarting,
+    isSubmitting,
     submitKind,
-    cancelingRunId,
+    cancelingRunId: cancelingRunId === activeRun?.id ? cancelingRunId : undefined,
     error,
   };
 
