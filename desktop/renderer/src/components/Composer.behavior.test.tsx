@@ -170,4 +170,20 @@ describe("Composer DOM interaction & state behavior", () => {
     fireEvent.keyDown(textarea, { key: "Enter", isComposing: false });
     expect(onSubmitSpy).toHaveBeenCalledTimes(1);
   });
+
+  it("automatically focuses textarea when input transitions from disabled to enabled after run completion", async () => {
+    const { rerender } = render(
+      <Composer {...defaultProps} composerMode="finalizing" input="" />,
+    );
+
+    const textarea = screen.getByRole("textbox");
+    expect(textarea).toBeDisabled();
+
+    // Rerender when run finishes and composerMode returns to idle
+    rerender(<Composer {...defaultProps} composerMode="idle" input="" />);
+
+    expect(textarea).not.toBeDisabled();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(textarea).toHaveFocus();
+  });
 });

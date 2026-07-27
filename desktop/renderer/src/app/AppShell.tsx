@@ -482,6 +482,19 @@ export function Composer({
   const canCancel = (composerMode === "running" || composerMode === "starting") && activeRun?.allowedActions?.includes("cancel");
   const inputDisabled = modelLoading || isSubmitting || !modelConfigured || !selectedModelId || isReadOnly || composerMode === "finalizing" || composerMode === "waiting_approval";
 
+  const prevDisabledRef = useRef(inputDisabled);
+
+  useEffect(() => {
+    // When input becomes enabled after being disabled (e.g. task completion, run completion),
+    // automatically focus the textarea so the user can type immediately without clicking.
+    if ((prevDisabledRef.current || prevDisabledRef.current === undefined) && !inputDisabled) {
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+      });
+    }
+    prevDisabledRef.current = inputDisabled;
+  }, [inputDisabled]);
+
   const placeholder = modelLoading
     ? "正在加载模型配置…"
     : isReadOnly
