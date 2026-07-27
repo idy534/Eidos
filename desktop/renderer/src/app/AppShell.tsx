@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ModelId, Run, Session } from "../contracts.js";
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
@@ -464,6 +464,18 @@ export function Composer({
   onCancel,
   onModelChange,
 }: ComposerProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const minHeight = 56;
+    const maxHeight = 168;
+    const targetHeight = Math.min(Math.max(el.scrollHeight, minHeight), maxHeight);
+    el.style.height = `${targetHeight}px`;
+  }, [input]);
+
   const isReadOnly = composerMode === "read_only";
   const isIdle = composerMode === "idle";
   const isContinuing = composerMode === "waiting_user_input";
@@ -505,6 +517,18 @@ export function Composer({
           ? "继续"
           : "开始";
 
+  const isSubmitDisabled =
+    modelLoading
+    || isSubmitting
+    || composerMode === "starting"
+    || composerMode === "running"
+    || composerMode === "finalizing"
+    || composerMode === "waiting_approval"
+    || composerMode === "read_only"
+    || !modelConfigured
+    || !selectedModelId
+    || !input.trim();
+
   return (
     <form
       className="composer"
@@ -512,6 +536,7 @@ export function Composer({
     >
       <label className="sr-only" htmlFor="task-input">告诉 Eidos 要做什么</label>
       <textarea
+        ref={textareaRef}
         id="task-input"
         rows={2}
         placeholder={placeholder}
@@ -550,38 +575,62 @@ export function Composer({
 
         {canCancel ? (
           <Button
-            variant="ghost"
+            type="button"
+            variant="primary"
             size="medium"
+            className="composer-submit-btn composer-cancel-btn"
             disabled={Boolean(cancelingRunId)}
             loading={Boolean(cancelingRunId)}
             onClick={onCancel}
+            aria-label={cancelingRunId ? "取消中…" : "取消 Run"}
+            title={cancelingRunId ? "取消中…" : "取消 Run"}
+            icon={!cancelingRunId ? <StopSquareIcon /> : undefined}
           >
-            {cancelingRunId ? "取消中…" : "取消 Run"}
+            <span className="sr-only">{cancelingRunId ? "取消中…" : "取消 Run"}</span>
           </Button>
         ) : (
           <Button
             type="submit"
             variant="primary"
             size="medium"
-            disabled={
-              modelLoading
-              || isSubmitting
-              || composerMode === "starting"
-              || composerMode === "running"
-              || composerMode === "finalizing"
-              || composerMode === "waiting_approval"
-              || composerMode === "read_only"
-              || !modelConfigured
-              || !selectedModelId
-              || !input.trim()
-            }
+            className={`composer-submit-btn${!input.trim() ? " composer-submit-btn--empty" : ""}`}
+            disabled={isSubmitDisabled}
             loading={isSubmitting || composerMode === "starting"}
+            aria-label={buttonLabel}
+            title={buttonLabel}
+            icon={
+              !isSubmitting && composerMode !== "starting" ? (
+                <UpArrowIcon />
+              ) : undefined
+            }
           >
-            {buttonLabel}
+            <span className="sr-only">{buttonLabel}</span>
           </Button>
         )}
       </div>
     </form>
+  );
+}
+
+function UpArrowIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true">
+      <path
+        d="M8 13.5V2.5M3.5 7L8 2.5L12.5 7"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function StopSquareIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true">
+      <rect x="3" y="3" width="10" height="10" rx="1.8" fill="currentColor" />
+    </svg>
   );
 }
 

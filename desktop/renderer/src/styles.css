@@ -1868,6 +1868,49 @@ input:focus, textarea:focus {
   font-family: var(--font-ui);
   font-size: var(--font-size-body);
   line-height: var(--line-height-body);
+  scrollbar-color: rgba(106, 111, 103, 0.28) transparent;
+  scrollbar-width: thin;
+}
+
+.feed,
+.feed-empty,
+.composer textarea {
+  scrollbar-color: rgba(106, 111, 103, 0.28) transparent;
+  scrollbar-width: thin;
+}
+
+.feed::-webkit-scrollbar,
+.feed-empty::-webkit-scrollbar,
+.composer textarea::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+  background: transparent;
+}
+
+.feed::-webkit-scrollbar-track,
+.feed::-webkit-scrollbar-corner,
+.feed-empty::-webkit-scrollbar-track,
+.feed-empty::-webkit-scrollbar-corner,
+.composer textarea::-webkit-scrollbar-track,
+.composer textarea::-webkit-scrollbar-corner {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.feed::-webkit-scrollbar-thumb,
+.feed-empty::-webkit-scrollbar-thumb,
+.composer textarea::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(106, 111, 103, 0.28);
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.feed::-webkit-scrollbar-thumb:hover,
+.feed-empty::-webkit-scrollbar-thumb:hover,
+.composer textarea::-webkit-scrollbar-thumb:hover {
+  background: rgba(106, 111, 103, 0.45);
 }
 
 .feed-jump-to-bottom {
@@ -2090,23 +2133,80 @@ input:focus, textarea:focus {
 }
 
 .composer textarea {
-  min-height: 4.25rem;
-  max-height: 10rem;
+  min-height: 3.5rem;
+  max-height: 10.5rem;
   resize: none;
   border: 0;
   padding: 0.875rem 1rem 0.375rem;
   background: transparent;
   font-size: var(--font-size-body);
   line-height: var(--line-height-body);
+  overflow-y: auto;
+  box-sizing: border-box;
 }
 
 .composer textarea:focus-visible { outline: none; box-shadow: none; }
-.composer-actions { display: flex; min-height: 2.75rem; justify-content: space-between; align-items: center; padding: 0.375rem 0.5rem; border-top: 1px solid #e5e4df; }
+.composer-actions { display: flex; min-height: 2.75rem; justify-content: space-between; align-items: center; padding: 0.375rem 0.65rem 0.5rem 0.5rem; border-top: none; }
 .composer-actions span { padding-left: 0.5rem; color: var(--muted); font-size: var(--font-size-xs); }
 .composer-meta { display: flex; gap: 0.45rem; align-items: center; min-width: 0; color: var(--muted); font-size: var(--font-size-xs); }
 .composer-meta label { padding-left: 0.5rem; }
 .composer-meta select { max-width: 15rem; border: 1px solid var(--line); border-radius: 0.45rem; padding: 0.3rem 1.8rem 0.3rem 0.45rem; color: var(--text); background: white; font-size: var(--font-size-caption); }
 .composer-actions button { min-height: 2rem; padding: 0.25rem 0.75rem; border-radius: 0.625rem; font-size: var(--font-size-sidebar); }
+
+/* Circular Up-Arrow / Stop Action Button */
+.composer-submit-btn {
+  width: 32px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  border-radius: 50% !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex: none;
+  background: var(--primary-action-bg) !important;
+  color: var(--primary-action-icon) !important;
+  border: 1px solid var(--primary-action-border) !important;
+  box-shadow: var(--primary-action-shadow) !important;
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 100ms var(--apple-spring);
+}
+
+.composer-submit-btn:hover:not(:disabled):not(.composer-submit-btn--empty) {
+  background: var(--primary-action-bg-hover) !important;
+  border-color: var(--primary-action-border-hover) !important;
+  box-shadow: var(--primary-action-shadow-hover) !important;
+  color: var(--primary-action-text) !important;
+}
+
+.composer-submit-btn:active:not(:disabled):not(.composer-submit-btn--empty) {
+  background: var(--primary-action-bg-active) !important;
+  transform: scale(0.94);
+}
+
+.composer-submit-btn:disabled:not(.composer-cancel-btn),
+.composer-submit-btn--empty {
+  background: rgba(223, 233, 226, 0.55) !important;
+  color: rgba(48, 70, 58, 0.42) !important;
+  border-color: rgba(49, 95, 74, 0.08) !important;
+  box-shadow: none !important;
+  opacity: 0.75;
+  cursor: not-allowed;
+}
+
+.composer-submit-btn .btn-icon {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 16px !important;
+  height: 16px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1 !important;
+}
+
+.composer-submit-btn .btn-label {
+  display: none !important;
+}
 
 /* Empty State / Welcome Canvas */
 .empty-state {
