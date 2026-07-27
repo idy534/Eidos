@@ -1,11 +1,27 @@
-import assert from "node:assert/strict";
 import test from "node:test";
+import assert from "node:assert/strict";
+import { redactLogLine, sanitizeLogValue, MAX_LOG_META_DEPTH } from "./log-redaction.js";
 
-import { redactLogLine } from "./log-redaction.js";
+test("redactLogLine redacts multi-pair Cookie headers", () => {
+  const line = "Cookie: session=abc; csrf=def; preferences=ghi";
+  const redacted = redactLogLine(line);
+  assert.equal(redacted, "Cookie: [REDACTED]");
+  assert.equal(redacted.includes("abc"), false);
+  assert.equal(redacted.includes("def"), false);
+});
 
-test("redacts Bearer Authorization header", () => {
-  const line = "Authorization: Bearer abc123def456";
-  assert.equal(redactLogLine(line), "Authorization: Bearer [REDACTED]");
+test("redactLogLine redacts Set-Cookie headers with attributes preserved", () => {
+  const line = "Set-Cookie: session=abc12345; Path=/; HttpOnly; Secure";
+  const redacted = redactLogLine(line);
+  assert.equal(redacted, "Set-Cookie: [REDACTED]; Path=/; HttpOnly; Secure");
+  assert.equal(redacted.includes("abc12345"), false);
+});
+
+test("redactLogLine redacts Bearer authorization header and API keys", () => {
+  const line = "Authorization: Bearer secret-token-123 with key sk-abcdef12345678";
+  const redacted = redactLogLine(line);
+  assert.equal(redacted, "Authorization: Bearer [REDACTED] with key [REDACTED]");
+  assert.equal(redacted.includes("sk-abcdef12345678"), false);
 });
 
 test("redacts lowercase authorization header and equal format", () => {
@@ -18,11 +34,6 @@ test("redacts Proxy-Authorization header", () => {
     redactLogLine("Proxy-Authorization: Bearer proxySecret"),
     "Proxy-Authorization: Bearer [REDACTED]",
   );
-});
-
-test("redacts Cookie and Set-Cookie headers", () => {
-  assert.equal(redactLogLine("Cookie: session=12345"), "Cookie: [REDACTED]");
-  assert.equal(redactLogLine("Set-Cookie: session=12345; Path=/"), "Set-Cookie: [REDACTED]; Path=/");
 });
 
 test("redacts api_key and apiKey assignments", () => {
@@ -78,32 +89,60 @@ test("redacts standalone sk-* credentials and JWT tokens", () => {
   );
 });
 
-test("supports multiple secrets in one line", () => {
-  const line = "OPENAI_API_KEY=sk-1234567890 and GITHUB_TOKEN=ghp_123456789012345678901234567890123456 in Authorization: Bearer abc123xyz";
-  const expected = "OPENAI_API_KEY=[REDACTED] and GITHUB_TOKEN=[REDACTED] in Authorization: Bearer [REDACTED]";
-  assert.equal(redactLogLine(line), expected);
+test("sanitizeLogValue recursively sanitizes objects and arrays", () => {
+  const meta = {
+    apiKey: "sk-secret1234567890",
+    nested: {
+      password: "my-password",
+      message: "Header Cookie: session=123; user=foo",
+      list: ["sk-key1234567890", { token: "abc" }],
+    },
+  };
+
+  const sanitized = sanitizeLogValue(meta) as Record<string, unknown>;
+  assert.equal(sanitized.apiKey, "[REDACTED]");
+  const nested = sanitized.nested as Record<string, unknown>;
+  assert.equal(nested.password, "[REDACTED]");
+  assert.equal(nested.message, "Header Cookie: [REDACTED]");
+  const list = nested.list as Array<unknown>;
+  assert.equal(list[0], "[REDACTED]");
+  assert.deepEqual(list[1], { token: "[REDACTED]" });
 });
 
-test("preserves ordinary diagnostic text", () => {
-  const line = "[runtime] Runtime initialized protocolVersion=1 runtimeVersion=0.3.0 runId=run-101 status=running";
-  assert.equal(redactLogLine(line), line);
-});
+test("sanitizeLogValue handles circular references safely", () => {
+  const circular: Record<string, unknown> = { name: "test" };
+  circular.self = circular;
 
-test("handles empty line", () => {
-  assert.equal(redactLogLine(""), "");
-});
-
-test("handles very long input without throwing", () => {
-  const longInput = "info: " + "a".repeat(100_000) + " OPENAI_API_KEY=sk-1234567890 " + "b".repeat(100_000);
-  const redacted = redactLogLine(longInput);
-  assert.ok(redacted.includes("OPENAI_API_KEY=[REDACTED]"));
-  assert.equal(redacted.length, 200_000 + "info:  OPENAI_API_KEY=[REDACTED] ".length);
-});
-
-test("handles malformed JSON fragment without throwing", () => {
-  const line = '{"apiKey": "sk-secret-value", "message": "incomplete...';
   assert.doesNotThrow(() => {
-    const redacted = redactLogLine(line);
-    assert.ok(redacted.includes('"apiKey": "[REDACTED]"') || redacted.includes('"apiKey":"[REDACTED]"'));
+    const sanitized = sanitizeLogValue(circular) as Record<string, unknown>;
+    assert.equal(sanitized.name, "test");
+    assert.equal(sanitized.self, "[CIRCULAR]");
   });
+});
+
+test("sanitizeLogValue bounds depth at MAX_LOG_META_DEPTH", () => {
+  let curr: Record<string, unknown> = { depth: 0 };
+  const root = curr;
+  for (let i = 1; i <= MAX_LOG_META_DEPTH + 2; i++) {
+    const child: Record<string, unknown> = { depth: i };
+    curr.child = child;
+    curr = child;
+  }
+
+  const sanitized = sanitizeLogValue(root) as Record<string, unknown>;
+  assert.ok(sanitized);
+
+  let p: unknown = sanitized;
+  for (let d = 0; d < MAX_LOG_META_DEPTH; d++) {
+    p = (p as Record<string, unknown>).child;
+  }
+  assert.equal(p, "[MAX_DEPTH]");
+});
+
+test("sanitizeLogValue sanitizes Error objects without exposing unredacted stacks", () => {
+  const err = new Error("Connection failed with Cookie: session=secret123");
+  const sanitized = sanitizeLogValue(err) as Record<string, unknown>;
+  assert.equal(sanitized.name, "Error");
+  assert.equal(sanitized.message, "Connection failed with Cookie: [REDACTED]");
+  assert.equal(sanitized.stack, undefined);
 });

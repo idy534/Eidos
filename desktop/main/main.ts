@@ -1,68 +1,33 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, MenuItem } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { RuntimeClient } from "./runtime-client.js";
+import { redactLogLine, sanitizeLogValue } from "./log-redaction.js";
+import { dispatchAppCommand as dispatchCommand, ensureAppWindow as ensureWindow } from "./app-command-dispatch.js";
+import { QuitFlowController, type ActiveRunProjection, type QuitFlowDependencies } from "./quit-flow.js";
 import type {
   ApprovalDecision,
   ApprovalRequest,
+  AppShortcut,
   RuntimeNotification,
-} from "./runtime-client.js";
-import type { AppShortcut, RuntimeStatus } from "../shared/index.js";
+  RuntimeStatus,
+} from "../shared/index.js";
 import { IPC, VALID_MODEL_IDS, MAX_APPROVAL_FEEDBACK_BYTES } from "../shared/index.js";
-
-
-import { redactLogLine } from "./log-redaction.js";
-import { shutdownRuntime, type ShutdownResult } from "./runtime-shutdown.js";
 
 // ---------------------------------------------------------------------------
 // Logging helpers — never log API keys, full prompts, or sensitive env vars
 // ---------------------------------------------------------------------------
 
-const SENSITIVE_META_KEYS = [
-  "prompt",
-  "input",
-  "content",
-  "body",
-  "feedback",
-  "arguments",
-  "argumentsjson",
-  "resultjson",
-  "command",
-  "environment",
-  "env",
-  "apikey",
-  "api_key",
-  "authorization",
-  "cookie",
-  "token",
-  "secret",
-  "password",
-  "credential",
-];
-
-export function sanitizeLogMeta(meta?: Record<string, unknown>): Record<string, unknown> | undefined {
-  if (!meta) return undefined;
-  const sanitized: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(meta)) {
-    const lowerKey = key.toLowerCase();
-    const isSensitive = SENSITIVE_META_KEYS.some((sensitive) => lowerKey.includes(sensitive));
-    if (isSensitive) {
-      sanitized[key] = "[REDACTED]";
-    } else if (typeof value === "string") {
-      sanitized[key] = redactLogLine(value);
-    } else {
-      sanitized[key] = value;
-    }
-  }
-  return sanitized;
-}
-
 function log(level: "info" | "warn" | "error", context: string, message: string, meta?: Record<string, unknown>): void {
   const ts = new Date().toISOString();
-  const safeMessage = redactLogLine(message);
-  const safeMeta = sanitizeLogMeta(meta);
-  const entry = { ts, level, ctx: context, msg: safeMessage, ...safeMeta };
+  const entry = {
+    ts,
+    level,
+    ctx: context,
+    msg: redactLogLine(message),
+    ...(meta ? (sanitizeLogValue(meta) as Record<string, unknown>) : {}),
+  };
   if (level === "error") {
     console.error(JSON.stringify(entry));
   } else {
@@ -79,10 +44,6 @@ app.setName("Eidos");
 
 let runtimeStatus: RuntimeStatus = { state: "starting" };
 let runtimeClient: RuntimeClient | undefined;
-let isQuitting = false;
-let quitCanContinue = false;
-let shutdownStarted = false;
-let isShowingQuitDialog = false;
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -93,11 +54,8 @@ const pendingApprovals = new Map<
 
 /**
  * Projection of active (non-terminal) runs known to Main.
- * Updated by run/started, run/updated, run/completed notifications.
- * Terminal-state runs are removed immediately.
- * Only fields needed for quit-dialog display are stored; no user input.
  */
-const activeRunProjection = new Map<string, {
+const activeRunProjectionMap = new Map<string, {
   sessionId: string;
   status: string;
   title?: string;
@@ -115,15 +73,82 @@ function updateActiveRunProjection(notification: RuntimeNotification): void {
   ) {
     const { run } = notification.params;
     if (TERMINAL_RUN_STATUSES.has(run.status)) {
-      activeRunProjection.delete(run.id);
+      activeRunProjectionMap.delete(run.id);
     } else {
-      activeRunProjection.set(run.id, {
+      activeRunProjectionMap.set(run.id, {
         sessionId: run.sessionId,
         status: run.status,
       });
     }
   }
 }
+
+const activeRunProjection: ActiveRunProjection = {
+  runIds: () => Array.from(activeRunProjectionMap.keys()),
+  count: () => activeRunProjectionMap.size,
+};
+
+async function performShutdown(client: RuntimeClient): Promise<void> {
+  const SHUTDOWN_TIMEOUT_MS = 8_000;
+  log("info", "quit", "Beginning Runtime shutdown");
+  const forceStop = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      log("warn", "quit", "Shutdown timeout reached — forcing terminate");
+      client.terminate();
+      resolve();
+    }, SHUTDOWN_TIMEOUT_MS);
+  });
+  const gracefulStop = client
+    .shutdown()
+    .then(() => client.waitForExit())
+    .then(() => undefined)
+    .catch((err: unknown) => {
+      log("error", "quit", "Graceful shutdown failed", {
+        message: err instanceof Error ? err.message : String(err),
+      });
+      client.terminate();
+    });
+
+  await Promise.race([gracefulStop, forceStop]);
+  log("info", "quit", "Runtime shutdown complete");
+}
+
+const quitFlowDeps: QuitFlowDependencies = {
+  hasRuntimeClient: () => Boolean(runtimeClient),
+  showQuitDialog: async (activeCount) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    const { response } = await dialog.showMessageBox(
+      window ?? new BrowserWindow({ show: false }),
+      {
+        type: "question",
+        buttons: ["返回 Eidos", "停止任务并退出"],
+        defaultId: 0,
+        cancelId: 0,
+        title: "退出 Eidos",
+        message: "当前有任务正在执行",
+        detail: `有 ${activeCount} 个活动任务正在运行。\n退出前将请求取消这些任务，数据可能不完整。`,
+      },
+    );
+    return response === 1 ? "stop_and_exit" : "return_to_eidos";
+  },
+  cancelRun: async (runId) => {
+    if (runtimeClient) {
+      log("info", "quit", "Canceling run before quit", { runId });
+      await runtimeClient.cancelRun(runId);
+    }
+  },
+  shutdownRuntime: async () => {
+    if (runtimeClient) {
+      await performShutdown(runtimeClient);
+    }
+  },
+  requestFinalQuit: () => {
+    app.quit();
+  },
+  log: (level, message, meta) => log(level, "quit", message, meta),
+};
+
+const quitFlowController = new QuitFlowController(activeRunProjection, quitFlowDeps);
 
 // ---------------------------------------------------------------------------
 // IPC helpers
@@ -193,27 +218,17 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
+const windowDeps = {
+  getExistingWindow: () => BrowserWindow.getAllWindows()[0],
+  createWindow,
+};
+
 export function ensureMainWindow(): BrowserWindow {
-  const existing = BrowserWindow.getAllWindows()[0];
-  if (existing) {
-    if (existing.isMinimized()) {
-      existing.restore();
-    }
-    existing.show();
-    existing.focus();
-    return existing;
-  }
-  return createWindow();
+  return ensureWindow(windowDeps) as BrowserWindow;
 }
 
 export async function dispatchAppCommand(command: AppShortcut): Promise<void> {
-  const window = ensureMainWindow();
-  if (window.webContents.isLoading()) {
-    await new Promise<void>((resolve) => {
-      window.webContents.once("did-finish-load", () => resolve());
-    });
-  }
-  window.webContents.send(command);
+  await dispatchCommand(command, windowDeps);
 }
 
 // ---------------------------------------------------------------------------
@@ -322,15 +337,13 @@ async function startRuntime(): Promise<void> {
     onNotification: publishNotification,
     onApprovalRequest: requestApproval,
     onStderr: (line) => {
-      // Forward stderr but never log API keys or sensitive env vars
-      const safeLine = redactLogLine(line);
-      console.error(`[runtime] ${safeLine}`);
+      console.error(`[runtime] ${redactLogLine(line)}`);
     },
   });
   runtimeClient = client;
 
   void client.waitForExit().then((code) => {
-    if (!isQuitting && runtimeStatus.state !== "error") {
+    if (!quitFlowController.getState().isQuitting && runtimeStatus.state !== "error") {
       log("error", "runtime", "Runtime exited unexpectedly", { code });
       publishStatus({
         state: "error",
@@ -417,7 +430,6 @@ ipcMain.handle(IPC.RUN_START, (_event, sessionId: unknown, userInput: unknown, m
   ) {
     throw new Error("Run 参数无效。");
   }
-  // Do NOT log userInput — may contain sensitive content
   return clientOrThrow().startRun(
     sessionId,
     userInput,
@@ -440,7 +452,6 @@ ipcMain.handle(IPC.MODEL_STATUS, () => clientOrThrow().modelStatus());
 ipcMain.handle(IPC.MODEL_LIST, () => clientOrThrow().listModels());
 ipcMain.handle(IPC.MODEL_CONFIGURE, (_event, apiKey: unknown) => {
   if (typeof apiKey !== "string") throw new Error("API Key 参数无效。");
-  // Never log the key itself
   return clientOrThrow().configureModel(apiKey);
 });
 
@@ -494,7 +505,6 @@ ipcMain.handle(IPC.APPROVAL_RESPOND, (_event, id: unknown, decision: unknown, fe
   const pending = pendingApprovals.get(id);
   if (!pending) return false;
   pendingApprovals.delete(id);
-  // Do NOT log feedback content — may contain sensitive context
   log("info", "approval", "Approval responded", { id, decision });
   const result: ApprovalDecision = decision === "approve"
     ? { decision: "approve" }
@@ -537,14 +547,6 @@ if (!hasSingleInstanceLock) {
 // Graceful quit with active-run awareness
 // ---------------------------------------------------------------------------
 
-/**
- * Returns the number of currently active (non-terminal) runs tracked in
- * the Main process projection.
- */
-function activeRunCount(): number {
-  return activeRunProjection.size;
-}
-
 let runtimeTerminated = false;
 
 function terminateRuntimeOnce(): void {
@@ -553,100 +555,8 @@ function terminateRuntimeOnce(): void {
   runtimeClient?.terminate();
 }
 
-async function performShutdown(client: RuntimeClient): Promise<ShutdownResult> {
-  return shutdownRuntime(
-    {
-      shutdown: () => client.shutdown(),
-      waitForExit: () => client.waitForExit(),
-      terminate: () => terminateRuntimeOnce(),
-    },
-    {
-      timeoutMs: 8_000,
-      onDiagnostic: (level, message) => log(level, "quit", message),
-    },
-  );
-}
-
 app.on("before-quit", (event) => {
-  // If already allowed to quit, do nothing
-  if (!runtimeClient || quitCanContinue) return;
-
-  event.preventDefault();
-  isQuitting = true;
-
-  // Prevent multiple quit dialogs from stacking
-  if (shutdownStarted || isShowingQuitDialog) return;
-
-  const hasActiveRuns = activeRunCount() > 0;
-
-  if (!hasActiveRuns) {
-    // No active runs — proceed directly to shutdown
-    shutdownStarted = true;
-    const client = runtimeClient;
-    void performShutdown(client).finally(() => {
-      quitCanContinue = true;
-      app.quit();
-    });
-    return;
-  }
-
-  // Active runs exist — ask the user
-  isShowingQuitDialog = true;
-  const window = BrowserWindow.getAllWindows()[0];
-
-  void dialog.showMessageBox(window ?? new BrowserWindow({ show: false }), {
-    type: "question",
-    buttons: ["返回 Eidos", "停止任务并退出"],
-    defaultId: 0,
-    cancelId: 0,
-    title: "退出 Eidos",
-    message: "当前有任务正在执行",
-    detail: `有 ${activeRunCount()} 个活动任务正在运行。\n退出前将请求取消这些任务，数据可能不完整。`,
-  }).then(({ response }) => {
-    isShowingQuitDialog = false;
-
-    if (response === 0) {
-      // "返回 Eidos" — cancel quit
-      log("info", "quit", "User chose to return to Eidos");
-      isQuitting = false;
-    } else {
-      // "停止任务并退出"
-      log("info", "quit", "User confirmed quit with active runs", {
-        activeRunCount: activeRunCount(),
-      });
-      shutdownStarted = true;
-      const client = runtimeClient;
-      if (!client) {
-        quitCanContinue = true;
-        app.quit();
-        return;
-      }
-
-      // Request cancel for all tracked active runs (best-effort)
-      const cancelPromises = Array.from(activeRunProjection.keys()).map((runId) =>
-        client.cancelRun(runId).catch((err: unknown) => {
-          log("warn", "quit", "Failed to cancel run before quit", {
-            runId,
-            message: err instanceof Error ? err.message : String(err),
-          });
-        }),
-      );
-
-      void Promise.allSettled(cancelPromises).then(() =>
-        performShutdown(client),
-      ).finally(() => {
-        quitCanContinue = true;
-        app.quit();
-      });
-    }
-  }).catch((err: unknown) => {
-    isShowingQuitDialog = false;
-    log("error", "quit", "Quit dialog error", {
-      message: err instanceof Error ? err.message : String(err),
-    });
-    // On dialog error, default to safe: don't quit
-    isQuitting = false;
-  });
+  quitFlowController.handleBeforeQuit(event);
 });
 
 app.on("will-quit", () => terminateRuntimeOnce());

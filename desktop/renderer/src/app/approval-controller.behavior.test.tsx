@@ -118,7 +118,7 @@ describe("useApprovalController real behavior", () => {
       await result.current[1].approve(mockApprovalA);
     });
 
-    expect(result.current[0].errorsByApprovalId["app-A"]).toBe("This approval has expired or was already resolved.");
+    expect(result.current[0].errorsByApprovalId["app-A"]).toBe("该审批已过期或已被处理。");
   });
 
   it("Reject opens feedback dialog and UTF-8 feedback limit handles Chinese and emoji", async () => {

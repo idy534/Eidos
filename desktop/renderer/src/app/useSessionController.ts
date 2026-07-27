@@ -76,6 +76,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
   // Refs for concurrency safety
   const snapshotReads = useRef(new SnapshotReadCoordinator()).current;
   const selectedSessionIdRef = useRef<string | undefined>(undefined);
+  const creatingSessionRef = useRef<boolean>(false);
 
   function updateReadCompleted(updater: (prev: Set<string>) => Set<string>): void {
     setReadCompletedSessions((prev) => {
@@ -147,12 +148,17 @@ export function useSessionController(): [SessionControllerState, SessionControll
   }, [snapshot]);
 
   const createSession = useCallback(async (workspaceRoot?: string): Promise<SessionSnapshot | undefined> => {
-    const workspace = workspaceRoot ?? await window.eidosRuntime.selectWorkspace();
-    if (!workspace) return undefined;
-
+    if (creatingSessionRef.current) {
+      return undefined;
+    }
+    creatingSessionRef.current = true;
     setPending((prev) => ({ ...prev, creatingSession: true }));
     setError(undefined);
+
     try {
+      const workspace = workspaceRoot ?? await window.eidosRuntime.selectWorkspace();
+      if (!workspace) return undefined;
+
       const session = await window.eidosRuntime.createSession(workspace);
       const token = snapshotReads.select(session.id);
       selectedSessionIdRef.current = session.id;
@@ -169,7 +175,8 @@ export function useSessionController(): [SessionControllerState, SessionControll
       setError(userFacingError(cause));
       return undefined;
     } finally {
-      setPending((prev) => ({ ...prev, creatingSession: false }));
+      creatingSessionRef.current = false;
+      clearPending("creatingSession");
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

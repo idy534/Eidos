@@ -11,9 +11,9 @@ interface ModelSettingsProps {
   modelList?: ModelListResult | undefined;
   modelLoading?: boolean | undefined;
   modelError?: string | undefined;
-  pendingAction: SettingsPendingAction;
+  modelConfiguring: boolean;
   storageHealthReady: boolean;
-  onConfigureModel: (apiKey: string) => Promise<void>;
+  onConfigureModel: (apiKey: string) => Promise<boolean>;
   onShowToast: (message: string, type: "success" | "info" | "error") => void;
 }
 
@@ -22,7 +22,7 @@ export function ModelSettings({
   modelList,
   modelLoading,
   modelError,
-  pendingAction,
+  modelConfiguring,
   storageHealthReady,
   onConfigureModel,
   onShowToast,
@@ -31,7 +31,7 @@ export function ModelSettings({
   const [inputKey, setInputKey] = useState("");
   const [localError, setLocalError] = useState<string>();
 
-  const isSaving = pendingAction?.type === "configure_model";
+  const isSaving = modelConfiguring;
   const effectiveError = localError ?? modelError;
 
   async function handleSave() {
@@ -41,10 +41,12 @@ export function ModelSettings({
     }
     setLocalError(undefined);
     try {
-      await onConfigureModel(inputKey);
-      setInputKey("");
-      setEditingKey(false);
-      onShowToast("API Key 保存成功", "success");
+      const success = await onConfigureModel(inputKey);
+      if (success) {
+        setInputKey("");
+        setEditingKey(false);
+        onShowToast("API Key 保存成功", "success");
+      }
     } catch (cause) {
       const msg = cause instanceof Error ? cause.message : "保存 API Key 失败";
       setLocalError(msg);

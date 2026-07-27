@@ -14,6 +14,7 @@ import { useSessionController } from "./useSessionController.js";
 import { useRunController } from "./useRunController.js";
 import { useApprovalController } from "./useApprovalController.js";
 import { useModelController } from "./useModelController.js";
+import { resolveSessionModelId } from "./session-model-resolver.js";
 import { useExtensionController } from "./useExtensionController.js";
 import { applyNotification, userFacingError } from "../session-state.js";
 import { IPC } from "../../../shared/ipc-channels.js";
@@ -60,27 +61,19 @@ export function AppShell({ runtime }: AppShellProps) {
   // -----------------------------------------------------------------------
   useEffect(() => {
     if (runtimeStatus.state !== "ready" || runtimeStatus.storageHealth.state !== "ready") return;
-    void (async () => {
-      await Promise.allSettled([
-        (async () => {
-          try {
-            const sessionPage = await window.eidosRuntime.listSessions();
-            sessionActions.setSessions(sessionPage.items);
-          } catch (cause) {
-            sessionActions.setError(userFacingError(cause));
-          }
-        })(),
-        modelActions.load(),
-        (async () => {
-          try {
-            const pendingApprovals = await window.eidosRuntime.listPendingApprovals();
-            approvalActions.mergeApprovals(pendingApprovals);
-          } catch {
-            // Approval load error non-fatal
-          }
-        })(),
-      ]);
-    })();
+    void Promise.all([
+      window.eidosRuntime.listSessions(),
+      window.eidosRuntime.getModelStatus(),
+      window.eidosRuntime.listModels(),
+      window.eidosRuntime.listPendingApprovals(),
+    ]).then(([sessionPage, modelStatus, availableModels, pendingApprovals]) => {
+      sessionActions.setSessions(sessionPage.items);
+      approvalActions.mergeApprovals(pendingApprovals);
+      modelActions.initialize(modelStatus, availableModels, resolveSessionModelId(sessionState.snapshot?.runs ?? []));
+    }).catch((cause: unknown) => {
+      const msg = cause instanceof Error ? cause.message : String(cause);
+      sessionActions.setError(msg);
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runtimeStatus.state, runtimeStatus.state === "ready" ? runtimeStatus.storageHealth.state : null]);
 
@@ -162,14 +155,14 @@ export function AppShell({ runtime }: AppShellProps) {
   async function handleSelectSession(session: Session): Promise<void> {
     const loaded = await sessionActions.selectSession(session);
     if (loaded && modelState.status && modelState.list) {
-      modelActions.initialize(modelState.status, modelState.list, loaded.runs[0]?.modelId);
+      modelActions.initialize(modelState.status, modelState.list, resolveSessionModelId(loaded.runs));
     }
   }
 
   async function handleCreateSession(workspaceRoot?: string): Promise<void> {
     const loaded = await sessionActions.createSession(workspaceRoot);
     if (loaded && modelState.status && modelState.list) {
-      modelActions.initialize(modelState.status, modelState.list, loaded.runs[0]?.modelId);
+      modelActions.initialize(modelState.status, modelState.list, resolveSessionModelId(loaded.runs));
     }
   }
 
@@ -279,6 +272,7 @@ export function AppShell({ runtime }: AppShellProps) {
             modelList={modelState.list}
             modelLoading={modelState.loading}
             modelError={modelState.error}
+            modelConfiguring={modelState.configuring}
             plugins={extensionState.plugins}
             skills={extensionState.skills}
             mcpServers={extensionState.mcpServers}
@@ -286,9 +280,7 @@ export function AppShell({ runtime }: AppShellProps) {
             pendingAction={extensionState.pendingAction}
             hasBlockingModal={hasBlockingModal}
             onClose={() => setSettingsOpen(false)}
-            onConfigureModel={async (key) => {
-              await modelActions.configure(key);
-            }}
+            onConfigureModel={(key) => modelActions.configure(key)}
             onImportPlugin={() => extensionActions.importPlugin()}
             onTogglePlugin={(id, enabled) => extensionActions.setPluginEnabled(id, enabled)}
             onRemovePlugin={(id) => extensionActions.removePlugin(id)}
@@ -359,9 +351,11 @@ export function AppShell({ runtime }: AppShellProps) {
               items={snapshot.items}
               runs={snapshot.runs}
               approvals={approvals.filter((a) => a.sessionId === snapshot.session.id)}
+              respondingApprovalId={approvalState.respondingApprovalId}
               respondingApprovalIds={respondingApprovalIds}
               respondingKindByApprovalId={respondingKindByApprovalId}
-              approvalErrors={errorsByApprovalId}
+              expiredApprovalIds={approvalState.expiredApprovalIds}
+              errorsByApprovalId={errorsByApprovalId}
               onApprove={(request) => void approvalActions.approve(request)}
               onReject={(request) => approvalActions.openRejectDialog(request)}
             />

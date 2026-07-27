@@ -22,6 +22,7 @@ interface SettingsPageProps {
   modelList?: ModelListResult | undefined;
   modelLoading?: boolean | undefined;
   modelError?: string | undefined;
+  modelConfiguring?: boolean | undefined;
   plugins: PluginRecord[];
   skills: SkillMetadata[];
   mcpServers: McpServerRecord[];
@@ -29,7 +30,7 @@ interface SettingsPageProps {
   pendingAction: SettingsPendingAction;
   hasBlockingModal?: boolean | undefined;
   onClose: () => void;
-  onConfigureModel: (apiKey: string) => Promise<void>;
+  onConfigureModel: (apiKey: string) => Promise<boolean>;
   onImportPlugin: () => Promise<void>;
   onTogglePlugin: (pluginId: string, enabled: boolean) => Promise<void>;
   onRemovePlugin: (pluginId: string) => Promise<void>;
@@ -42,6 +43,7 @@ export function SettingsPage({
   modelList,
   modelLoading,
   modelError,
+  modelConfiguring = false,
   plugins,
   skills,
   mcpServers,
@@ -135,7 +137,7 @@ export function SettingsPage({
                 modelList={modelList}
                 modelLoading={modelLoading}
                 modelError={modelError}
-                pendingAction={pendingAction}
+                modelConfiguring={modelConfiguring}
                 storageHealthReady={storageReady}
                 onConfigureModel={onConfigureModel}
                 onShowToast={showToast}

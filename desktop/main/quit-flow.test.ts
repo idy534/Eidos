@@ -1,107 +1,198 @@
-import assert from "node:assert/strict";
 import test from "node:test";
-import { QuitFlowManager, type QuitFlowDeps, type ActiveRunInfo } from "./quit-flow.js";
-import type { BrowserWindow, MessageBoxOptions } from "electron";
+import assert from "node:assert/strict";
+import {
+  QuitFlowController,
+  type ActiveRunProjection,
+  type QuitFlowDependencies,
+} from "./quit-flow.js";
 
-const mockActiveRun: ActiveRunInfo = {
-  id: "run-1",
-  sessionId: "session-1",
-  status: "running",
-};
-
-test("Zero active Runs allows quit immediately and triggers graceful shutdown", async () => {
-  const manager = new QuitFlowManager();
-  let gracefulCalled = false;
-
-  const deps: QuitFlowDeps = {
-    getActiveRuns: async () => [],
-    showMessageBox: async () => ({ response: 1, checkboxChecked: false }),
-    gracefulShutdown: async () => { gracefulCalled = true; },
-    quitApp: () => {},
+function createHarness(options: {
+  hasRuntime?: boolean;
+  activeRunIds?: string[];
+  dialogChoice?: "return_to_eidos" | "stop_and_exit";
+  dialogReject?: boolean;
+} = {}) {
+  const calls = {
+    preventDefault: 0,
+    dialogShown: 0,
+    canceledRunIds: [] as string[],
+    shutdownCalls: 0,
+    finalQuitCalls: 0,
+    logs: [] as { level: string; msg: string; meta?: unknown }[],
   };
 
-  const decision = await manager.evaluateQuit(null, deps);
+  let hasRuntime = options.hasRuntime ?? true;
+  let runIds = [...(options.activeRunIds ?? [])];
 
-  assert.equal(decision, "quit_immediately");
-  assert.equal(gracefulCalled, true);
-  assert.equal(manager.quitting, true);
-});
+  let dialogResolver: ((choice: "return_to_eidos" | "stop_and_exit") => void) | undefined;
+  let dialogRejecter: ((err: Error) => void) | undefined;
 
-test("One or more active Runs presents confirmation dialog", async () => {
-  const manager = new QuitFlowManager();
-  let boxOpts: MessageBoxOptions | undefined;
-  let gracefulCalled = false;
+  const projection: ActiveRunProjection = {
+    runIds: () => [...runIds],
+    count: () => runIds.length,
+  };
 
-  const deps: QuitFlowDeps = {
-    getActiveRuns: async () => [mockActiveRun],
-    showMessageBox: async (_win, opts) => {
-      boxOpts = opts;
-      return { response: 1, checkboxChecked: false };
+  const deps: QuitFlowDependencies = {
+    hasRuntimeClient: () => hasRuntime,
+    showQuitDialog: (count) => {
+      calls.dialogShown++;
+      return new Promise((resolve, reject) => {
+        dialogResolver = resolve;
+        dialogRejecter = reject;
+        if (options.dialogReject) {
+          reject(new Error("Dialog closed unexpectedly"));
+        } else if (options.dialogChoice) {
+          resolve(options.dialogChoice);
+        }
+      });
     },
-    gracefulShutdown: async () => { gracefulCalled = true; },
-    quitApp: () => {},
+    cancelRun: async (id) => {
+      calls.canceledRunIds.push(id);
+    },
+    shutdownRuntime: async () => {
+      calls.shutdownCalls++;
+    },
+    requestFinalQuit: () => {
+      calls.finalQuitCalls++;
+    },
+    log: (level, msg, meta) => {
+      calls.logs.push({ level, msg, meta });
+    },
   };
 
-  const decision = await manager.evaluateQuit(null, deps);
+  const controller = new QuitFlowController(projection, deps);
+  const event = {
+    preventDefault: () => {
+      calls.preventDefault++;
+    },
+  };
 
-  assert.ok(boxOpts);
-  assert.equal(boxOpts?.type, "warning");
-  assert.deepEqual(boxOpts?.buttons, ["终止任务并退出", "取消"]);
-  assert.ok(boxOpts?.message.includes("尚有 1 个运行中的 Agent 任务"));
-  assert.equal(decision, "cancel_quit");
-  assert.equal(gracefulCalled, false);
-  assert.equal(manager.quitting, false);
+  return {
+    controller,
+    event,
+    calls,
+    resolveDialog: (choice: "return_to_eidos" | "stop_and_exit") => dialogResolver?.(choice),
+    rejectDialog: (err: Error) => dialogRejecter?.(err),
+    setRunIds: (ids: string[]) => {
+      runIds = ids;
+    },
+    setHasRuntime: (val: boolean) => {
+      hasRuntime = val;
+    },
+  };
+}
+
+test("no Runtime Client permits quit without preventing default or shutting down", () => {
+  const h = createHarness({ hasRuntime: false });
+  h.controller.handleBeforeQuit(h.event);
+
+  assert.equal(h.calls.preventDefault, 0);
+  assert.equal(h.calls.shutdownCalls, 0);
+  assert.equal(h.calls.finalQuitCalls, 0);
 });
 
-test("Dialog response Confirm (index 0) proceeds with Graceful Shutdown", async () => {
-  const manager = new QuitFlowManager();
-  let gracefulCalled = false;
+test("no active runs starts shutdown once and calls final quit once", async () => {
+  const h = createHarness({ activeRunIds: [] });
+  h.controller.handleBeforeQuit(h.event);
 
-  const deps: QuitFlowDeps = {
-    getActiveRuns: async () => [mockActiveRun],
-    showMessageBox: async () => ({ response: 0, checkboxChecked: false }),
-    gracefulShutdown: async () => { gracefulCalled = true; },
-    quitApp: () => {},
-  };
+  assert.equal(h.calls.preventDefault, 1);
+  assert.equal(h.calls.dialogShown, 0);
 
-  const decision = await manager.evaluateQuit(null, deps);
+  // Wait microtask for async shutdown
+  await new Promise((r) => setTimeout(r, 0));
 
-  assert.equal(decision, "confirm_quit");
-  assert.equal(gracefulCalled, true);
-  assert.equal(manager.quitting, true);
+  assert.equal(h.calls.shutdownCalls, 1);
+  assert.equal(h.calls.finalQuitCalls, 1);
+
+  // Second beforeQuit during shutdown does nothing
+  h.controller.handleBeforeQuit(h.event);
+  assert.equal(h.calls.shutdownCalls, 1);
 });
 
-test("Dialog failure fallback aborts quit safely", async () => {
-  const manager = new QuitFlowManager();
+test("active runs shows dialog once and repeated quit events do not stack dialogs", () => {
+  const h = createHarness({ activeRunIds: ["run-1", "run-2"] });
+  h.controller.handleBeforeQuit(h.event);
 
-  const deps: QuitFlowDeps = {
-    getActiveRuns: async () => { throw new Error("RPC Timeout"); },
-    showMessageBox: async () => ({ response: 0, checkboxChecked: false }),
-    gracefulShutdown: async () => {},
-    quitApp: () => {},
-  };
+  assert.equal(h.calls.preventDefault, 1);
+  assert.equal(h.calls.dialogShown, 1);
 
-  const decision = await manager.evaluateQuit(null, deps);
-
-  assert.equal(decision, "cancel_quit");
-  assert.equal(manager.quitting, false);
+  // Repeated quit during dialog does not open second dialog
+  h.controller.handleBeforeQuit(h.event);
+  assert.equal(h.calls.preventDefault, 2);
+  assert.equal(h.calls.dialogShown, 1);
 });
 
-test("Quit flag state machine prevents double-triggering on app.quit()", async () => {
-  const manager = new QuitFlowManager();
-  let shutdownCount = 0;
+test("Return to Eidos resets quit state, sends no cancellation and no shutdown", async () => {
+  const h = createHarness({ activeRunIds: ["run-1"] });
+  h.controller.handleBeforeQuit(h.event);
+  assert.equal(h.controller.getState().isQuitting, true);
 
-  const deps: QuitFlowDeps = {
-    getActiveRuns: async () => [],
-    showMessageBox: async () => ({ response: 0, checkboxChecked: false }),
-    gracefulShutdown: async () => { shutdownCount++; },
-    quitApp: () => {},
+  h.resolveDialog("return_to_eidos");
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.equal(h.controller.getState().isQuitting, false);
+  assert.equal(h.calls.canceledRunIds.length, 0);
+  assert.equal(h.calls.shutdownCalls, 0);
+  assert.equal(h.calls.finalQuitCalls, 0);
+});
+
+test("Stop Tasks cancels all active run IDs, shuts down runtime and requests final quit once", async () => {
+  const h = createHarness({ activeRunIds: ["run-1", "run-2"] });
+  h.controller.handleBeforeQuit(h.event);
+
+  h.resolveDialog("stop_and_exit");
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.deepEqual(h.calls.canceledRunIds, ["run-1", "run-2"]);
+  assert.equal(h.calls.shutdownCalls, 1);
+  assert.equal(h.calls.finalQuitCalls, 1);
+});
+
+test("cancellation failure does not block other cancellations or shutdown", async () => {
+  const canceled: string[] = [];
+  const projection: ActiveRunProjection = {
+    runIds: () => ["failing-run", "ok-run"],
+    count: () => 2,
+  };
+  let shutdownDone = false;
+  let finalQuitDone = false;
+
+  const deps: QuitFlowDependencies = {
+    hasRuntimeClient: () => true,
+    showQuitDialog: async () => "stop_and_exit",
+    cancelRun: async (id) => {
+      canceled.push(id);
+      if (id === "failing-run") {
+        throw new Error("Cancel network error");
+      }
+    },
+    shutdownRuntime: async () => {
+      shutdownDone = true;
+    },
+    requestFinalQuit: () => {
+      finalQuitDone = true;
+    },
+    log: () => {},
   };
 
-  await manager.evaluateQuit(null, deps);
-  assert.equal(manager.quitting, true);
+  const controller = new QuitFlowController(projection, deps);
+  const event = { preventDefault: () => {} };
 
-  const secondDecision = await manager.evaluateQuit(null, deps);
-  assert.equal(secondDecision, "quit_immediately");
-  assert.equal(shutdownCount, 1);
+  controller.handleBeforeQuit(event);
+  await new Promise((r) => setTimeout(r, 10));
+
+  assert.deepEqual(canceled, ["failing-run", "ok-run"]);
+  assert.equal(shutdownDone, true);
+  assert.equal(finalQuitDone, true);
+});
+
+test("dialog rejection safely cancels quit", async () => {
+  const h = createHarness({ activeRunIds: ["run-1"], dialogReject: true });
+  h.controller.handleBeforeQuit(h.event);
+
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.equal(h.controller.getState().isQuitting, false);
+  assert.equal(h.calls.shutdownCalls, 0);
+  assert.equal(h.calls.finalQuitCalls, 0);
 });
