@@ -41,7 +41,9 @@ test("provides an accessible jump to the latest content control", () => {
       items={[item({ id: "user", ordinal: 1, kind: "user_message", content: "向上浏览" })]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalId={undefined}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      approvalErrors={{}}
       onApprove={() => {}}
       onReject={() => {}}
     />,
@@ -83,7 +85,16 @@ test("folds tool execution before the final answer and omits the success pill", 
   ];
 
   const html = renderToStaticMarkup(
-    <ExecutionFeed items={items} runs={[run]} approvals={[]} respondingApprovalId={undefined} onApprove={() => {}} onReject={() => {}} />,
+    <ExecutionFeed
+      items={items}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      approvalErrors={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
   );
 
   assert.match(html, /<details class="process-group">/);
@@ -103,7 +114,9 @@ test("streams a tool-free answer without a process group", () => {
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalId={undefined}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      approvalErrors={{}}
       onApprove={() => {}}
       onReject={() => {}}
     />,
@@ -121,7 +134,9 @@ test("shows a thinking indicator before the first model item", () => {
       items={[item({ id: "user", ordinal: 1, kind: "user_message", content: "开始任务" })]}
       runs={[activeRun]}
       approvals={[]}
-      respondingApprovalId={undefined}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      approvalErrors={{}}
       onApprove={() => {}}
       onReject={() => {}}
     />,
@@ -153,7 +168,9 @@ test("shows safe MCP provenance and duration without internal diagnostics", () =
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalId={undefined}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      approvalErrors={{}}
       onApprove={() => {}}
       onReject={() => {}}
     />,
@@ -181,7 +198,9 @@ test("does not describe a failed file write as edited", () => {
       })]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalId={undefined}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      approvalErrors={{}}
       onApprove={() => {}}
       onReject={() => {}}
     />,
@@ -216,7 +235,9 @@ test("shows the exact host and target for network approval", () => {
         summary: "Download a public GitHub skill", toolName: "skill_install",
         target: "example/skills@main:grilling", hosts: ["codeload.github.com:443"],
       }]}
-      respondingApprovalId={undefined}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      approvalErrors={{}}
       onApprove={() => {}}
       onReject={() => {}}
     />,
@@ -251,7 +272,9 @@ test("renders minimalist SVG icons for file operations, skills, and shell calls"
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalId={undefined}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      approvalErrors={{}}
       onApprove={() => {}}
       onReject={() => {}}
     />,

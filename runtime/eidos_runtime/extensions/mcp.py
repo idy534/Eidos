@@ -23,6 +23,12 @@ from mcp import types as mcp_types
 from eidos_runtime.extensions.contracts import McpServerConfigV1
 from eidos_runtime.extensions.plugins import PluginCatalog
 from eidos_runtime.tools.registry import ToolProvenance, ToolRegistryEntry, ToolSpec
+from eidos_runtime.runtime.resource_registry import (
+    ResourceRegistry,
+    RuntimeResource,
+    RuntimeResourceKind,
+)
+from eidos_runtime.runtime.fault_injection import hit_fault
 
 
 MAX_LIST_PAGES = 32
@@ -67,6 +73,7 @@ class McpConnection:
         config: McpServerConfigV1,
         on_list_changed: Callable[[], None],
         sandbox: bool = True,
+        resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self.plugin_root = plugin_root
         self.workspace_root = workspace_root
@@ -84,8 +91,17 @@ class McpConnection:
             name=f"eidos-mcp-{config.id}",
             daemon=False,
         )
+        self.resources = resource_registry
+        self.resource: RuntimeResource | None = None
 
     def start(self) -> tuple[mcp_types.Tool, ...]:
+        if self.resources is not None:
+            self.resource = self.resources.register(
+                RuntimeResourceKind.MCP_CONNECTION,
+                owner_id=self.config.id,
+                cancel=self.closed.set,
+            )
+            self.resource.start()
         self.runtime_root.mkdir(mode=0o700, parents=True)
         os.chmod(self.runtime_root, 0o700)
         self.thread.start()
@@ -105,21 +121,36 @@ class McpConnection:
         if self.error_code is not None or not self.thread.is_alive():
             return _unavailable()
         command = _Command(name, arguments, self.config.tool_timeout_seconds, cancel)
-        self.commands.put(command)
-        while not command.completed.wait(0.05):
-            if cancel.is_set():
-                continue
-            if not self.thread.is_alive():
-                return _uncertain("mcp_connection_lost")
-        if self.error_code == "mcp_stdout_pollution":
-            return _uncertain("mcp_stdout_pollution")
-        result = command.result or _uncertain("mcp_connection_lost")
-        if result.get("code") in {"mcp_tool_canceled", "mcp_tool_timeout"}:
-            try:
-                self.close()
-            except McpShutdownTimeout:
-                return _uncertain("MCP_SHUTDOWN_TIMEOUT")
-        return result
+        resource = (
+            self.resources.register(
+                RuntimeResourceKind.MCP_COMMAND,
+                owner_id=self.config.id,
+                cancel=cancel.set,
+            )
+            if self.resources is not None
+            else None
+        )
+        if resource is not None:
+            resource.start()
+        try:
+            self.commands.put(command)
+            while not command.completed.wait(0.05):
+                if cancel.is_set():
+                    continue
+                if not self.thread.is_alive():
+                    return _uncertain("mcp_connection_lost")
+            if self.error_code == "mcp_stdout_pollution":
+                return _uncertain("mcp_stdout_pollution")
+            result = command.result or _uncertain("mcp_connection_lost")
+            if result.get("code") in {"mcp_tool_canceled", "mcp_tool_timeout"}:
+                try:
+                    self.close()
+                except McpShutdownTimeout:
+                    return _uncertain("MCP_SHUTDOWN_TIMEOUT")
+            return result
+        finally:
+            if resource is not None:
+                resource.close()
 
     def refresh_tools(self) -> tuple[mcp_types.Tool, ...]:
         command = _Command("\x00list", {}, self.config.startup_timeout_seconds, threading.Event())
@@ -131,6 +162,7 @@ class McpConnection:
         return self.tools
 
     def close(self) -> bool:
+        hit_fault("mcp_thread_stuck")
         if not self.closed.is_set():
             self.closed.set()
             self.commands.put(None)
@@ -142,6 +174,9 @@ class McpConnection:
         if self.thread.is_alive() and self.thread is not threading.current_thread():
             self.thread.join(timeout=2)
         if self.thread.is_alive() or not process_group_exited:
+            resource = getattr(self, "resource", None)
+            if resource is not None:
+                resource.fail("MCP_CANCEL_TIMEOUT")
             raise McpShutdownTimeout("MCP_SHUTDOWN_TIMEOUT")
         try:
             resolved = self.runtime_root.resolve(strict=False)
@@ -150,6 +185,9 @@ class McpConnection:
                 shutil.rmtree(resolved, ignore_errors=True)
         except OSError:
             pass
+        resource = getattr(self, "resource", None)
+        if resource is not None:
+            resource.close()
         return True
 
     def _terminate_process_group(self) -> bool:
@@ -349,11 +387,13 @@ class McpManager:
         workspace_root: Path,
         *,
         sandbox: bool = True,
+        resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self.plugins = plugins
         self.snapshot = snapshot
         self.workspace_root = workspace_root
         self.sandbox = sandbox
+        self.resources = resource_registry
         self.connections: list[McpConnection] = []
         self._entries: tuple[ToolRegistryEntry, ...] = ()
         self._dirty = threading.Event()
@@ -383,6 +423,7 @@ class McpManager:
                     plugin_id, server_id
                 ),
                 sandbox=self.sandbox,
+                resource_registry=self.resources,
             )
             try:
                 tools = connection.start()
@@ -482,6 +523,7 @@ async def _call_tool(
         nonlocal canceled
         while not command.cancel.is_set():
             await anyio.sleep(0.05)
+        hit_fault("mcp_ignore_protocol_cancel")
         canceled = True
         group.cancel_scope.cancel()
 

@@ -132,7 +132,8 @@ class WorkspaceManifestTests(unittest.TestCase):
         self.assertFalse(attached["data"]["workspaceChanged"])
         self.assertEqual(attached["data"]["workspaceDiffHash"], diff.diff_hash)
         self.assertFalse(attached["data"]["workspaceManifestComplete"])
-        self.assertTrue(attached["reconciliationRequired"])
+        self.assertTrue(attached["data"]["workspaceDiffIncomplete"])
+        self.assertFalse(attached["reconciliationRequired"])
 
 
 class ShellManifestIntegrationTests(unittest.TestCase):
@@ -170,15 +171,15 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             handlers,
             self.events,
             default_scanner(),
+            approval=approval,
         )
         dependencies = _HandlerDependencies(
             self.store,
             self.dispatcher,
-            approval,
             self.events,
             default_scanner(),
             True,
-            self.controller.begin_durable_intent,
+            self.controller.execute_side_effect,
         )
         handlers["shell"] = ShellToolHandler(dependencies)
 
@@ -187,7 +188,9 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         self.store.close()
         self.temporary.cleanup()
 
-    def _execute(self, result, *, mutate=None):
+    def _execute(
+        self, result, *, mutate=None, output=(), cancel=None, observe=None
+    ):
         item = self.store.create_tool_item(
             self.run["id"], 1, 0, "shell-call", "run_shell",
             json.dumps({"command": "fixture"}),
@@ -197,9 +200,16 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             {"command": "fixture", "cwd": ".", "timeoutSeconds": 120},
         )
 
-        def fake_shell(*_args, **_kwargs):
+        def fake_shell(*args, **_kwargs):
             if mutate is not None:
                 mutate()
+            on_delta = args[5]
+            for index, delta in enumerate(output):
+                on_delta(delta)
+                if observe is not None:
+                    observe()
+                if cancel is not None and index == 0:
+                    cancel.set()
             return result
 
         with patch(
@@ -211,7 +221,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
                 item=item,
                 call=call,
                 plan=self.dispatcher.plan(call),
-                cancel=threading.Event(),
+                cancel=cancel or threading.Event(),
                 deadline=None,
             )
 
@@ -247,6 +257,116 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             1,
         )
         self.assertTrue(self.store.read_run(self.run["id"])["sideEffectsMayExist"])
+
+    def test_shell_safe_lines_stream_before_process_exit(self) -> None:
+        seen_during_process = []
+
+        def inspect_stream():
+            item = self.store.connection.execute(
+                """
+                SELECT items.content FROM items
+                JOIN tool_calls ON tool_calls.item_id = items.id
+                WHERE tool_calls.provider_call_id = 'shell-call'
+                """
+            ).fetchone()
+            seen_during_process.append(item["content"])
+
+        result = {
+            "outcome": "success", "code": "ok", "summary": "done",
+            "data": {"exitCode": 0, "stdout": "first\nsecond\n", "stderr": ""},
+            "sideEffectsMayExist": True,
+        }
+        self._execute(result, output=("first\n",), observe=inspect_stream)
+
+        self.assertEqual(seen_during_process, ["first\n"])
+        item = self.store.connection.execute(
+            """
+            SELECT items.content FROM items
+            JOIN tool_calls ON tool_calls.item_id = items.id
+            WHERE tool_calls.provider_call_id = 'shell-call'
+            """
+        ).fetchone()
+        self.assertEqual(item["content"], "first\n")
+
+    def test_shell_sensitive_output_is_not_streamed(self) -> None:
+        outcome = self._execute(
+            {
+                "outcome": "success", "code": "ok", "summary": "done",
+                "data": {"exitCode": 0, "stdout": "sk-1234567890123456\n", "stderr": ""},
+                "sideEffectsMayExist": True,
+            },
+            output=("sk-1234567890123456\n",),
+        )
+
+        item = self.store.connection.execute(
+            """
+            SELECT items.content FROM items
+            JOIN tool_calls ON tool_calls.item_id = items.id
+            WHERE tool_calls.provider_call_id = 'shell-call'
+            """
+        ).fetchone()
+        self.assertIsNone(item["content"])
+        self.assertEqual(outcome.result["code"], "sensitive_content_rejected")
+
+    def test_shell_delta_order_is_monotonic(self) -> None:
+        self._execute(
+            {
+                "outcome": "success", "code": "ok", "summary": "done",
+                "data": {"exitCode": 0, "stdout": "one\ntwo\n", "stderr": ""},
+                "sideEffectsMayExist": True,
+            },
+            output=("one\n", "two\n"),
+        )
+
+        rows = self.store.connection.execute(
+            """
+            SELECT payload_json FROM events
+            WHERE event_type = 'item.delta' ORDER BY id
+            """
+        ).fetchall()
+        payloads = [json.loads(row["payload_json"]) for row in rows]
+        self.assertEqual([payload["sequence"] for payload in payloads], [1, 2])
+        self.assertEqual([payload["delta"] for payload in payloads], ["one\n", "two\n"])
+
+    def test_shell_cancel_stops_future_deltas(self) -> None:
+        cancel = threading.Event()
+        self._execute(
+            {
+                "outcome": "error", "code": "canceled", "summary": "canceled",
+                "data": {"exitCode": None, "stdout": "one\ntwo\n", "stderr": ""},
+                "sideEffectsMayExist": True,
+            },
+            output=("one\n", "two\n"),
+            cancel=cancel,
+        )
+
+        item = self.store.connection.execute(
+            """
+            SELECT items.content FROM items
+            JOIN tool_calls ON tool_calls.item_id = items.id
+            WHERE tool_calls.provider_call_id = 'shell-call'
+            """
+        ).fetchone()
+        self.assertEqual(item["content"], "one\n")
+
+    def test_shell_final_result_matches_streamed_output(self) -> None:
+        outcome = self._execute(
+            {
+                "outcome": "success", "code": "ok", "summary": "done",
+                "data": {"exitCode": 0, "stdout": "one\ntwo\n", "stderr": ""},
+                "sideEffectsMayExist": True,
+            },
+            output=("one\n", "two\n"),
+        )
+
+        item = self.store.connection.execute(
+            """
+            SELECT items.content FROM items
+            JOIN tool_calls ON tool_calls.item_id = items.id
+            WHERE tool_calls.provider_call_id = 'shell-call'
+            """
+        ).fetchone()
+        self.assertEqual(item["content"], outcome.result["data"]["stdout"])
 
 
 if __name__ == "__main__":

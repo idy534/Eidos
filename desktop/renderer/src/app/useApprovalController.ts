@@ -1,6 +1,7 @@
 import { useReducer, useCallback, useRef } from "react";
 import type { ApprovalRequest } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
+import { MAX_APPROVAL_FEEDBACK_BYTES } from "../../../shared/constants.js";
 
 export interface ApprovalState {
   approvals: ApprovalRequest[];
@@ -22,7 +23,9 @@ export type ApprovalAction =
   | { type: "response_finished"; approvalId: string }
   | { type: "run_completed"; runId: string }
   | { type: "dialog_opened"; approval: ApprovalRequest }
-  | { type: "dialog_closed" };
+  | { type: "dialog_closed" }
+  | { type: "set_error"; approvalId: string; error: string }
+  | { type: "clear_error"; approvalId: string };
 
 export const initialApprovalState: ApprovalState = {
   approvals: [],
@@ -191,6 +194,23 @@ export function approvalReducer(state: ApprovalState, action: ApprovalAction): A
         feedbackDialogError: undefined,
       };
     }
+    case "set_error": {
+      return {
+        ...state,
+        errorsByApprovalId: {
+          ...state.errorsByApprovalId,
+          [action.approvalId]: action.error,
+        },
+      };
+    }
+    case "clear_error": {
+      const nextErrors = { ...state.errorsByApprovalId };
+      delete nextErrors[action.approvalId];
+      return {
+        ...state,
+        errorsByApprovalId: nextErrors,
+      };
+    }
     default:
       return state;
   }
@@ -200,6 +220,7 @@ export interface ApprovalControllerState {
   approvals: ApprovalRequest[];
   respondingApprovalId: string | undefined;
   respondingApprovalIds: ReadonlySet<string>;
+  respondingKindByApprovalId: Readonly<Record<string, "approve" | "reject">>;
   expiredApprovalIds: ReadonlySet<string>;
   errorsByApprovalId: Readonly<Record<string, string>>;
   feedbackDialogApproval: ApprovalRequest | null;
@@ -214,6 +235,8 @@ export interface ApprovalControllerActions {
   openRejectDialog: (request: ApprovalRequest) => void;
   closeFeedbackDialog: () => void;
   submitReject: (request: ApprovalRequest, feedback: string) => Promise<void>;
+  setApprovalError: (approvalId: string, message: string) => void;
+  clearApprovalError: (approvalId: string) => void;
 }
 
 export function useApprovalController(): [ApprovalControllerState, ApprovalControllerActions] {
@@ -230,6 +253,14 @@ export function useApprovalController(): [ApprovalControllerState, ApprovalContr
 
   const clearApprovalsForRun = useCallback((runId: string): void => {
     dispatch({ type: "run_completed", runId });
+  }, []);
+
+  const setApprovalError = useCallback((approvalId: string, message: string): void => {
+    dispatch({ type: "set_error", approvalId, error: message });
+  }, []);
+
+  const clearApprovalError = useCallback((approvalId: string): void => {
+    dispatch({ type: "clear_error", approvalId });
   }, []);
 
   const approve = useCallback(async (request: ApprovalRequest): Promise<void> => {
@@ -277,11 +308,22 @@ export function useApprovalController(): [ApprovalControllerState, ApprovalContr
     if (activeLockRef.current.has(request.id) || state.expiredApprovalIds.has(request.id)) {
       return;
     }
+
+    const trimmedFeedback = feedback.trim();
+    const utf8Length = new TextEncoder().encode(trimmedFeedback).byteLength;
+    if (utf8Length > MAX_APPROVAL_FEEDBACK_BYTES) {
+      dispatch({
+        type: "response_failed",
+        approvalId: request.id,
+        error: `反馈长度超过限制 (${MAX_APPROVAL_FEEDBACK_BYTES} 字节)`,
+      });
+      return;
+    }
+
     activeLockRef.current.add(request.id);
     dispatch({ type: "response_started", approvalId: request.id, kind: "reject" });
 
     try {
-      const trimmedFeedback = feedback.trim();
       const accepted = await window.eidosRuntime.respondApproval(
         request.id,
         "reject",
@@ -311,6 +353,7 @@ export function useApprovalController(): [ApprovalControllerState, ApprovalContr
     approvals: state.approvals,
     respondingApprovalId: Array.from(state.respondingApprovalIds)[0],
     respondingApprovalIds: state.respondingApprovalIds,
+    respondingKindByApprovalId: state.respondingKindByApprovalId,
     expiredApprovalIds: state.expiredApprovalIds,
     errorsByApprovalId: state.errorsByApprovalId,
     feedbackDialogApproval: state.feedbackDialogApproval,
@@ -325,6 +368,8 @@ export function useApprovalController(): [ApprovalControllerState, ApprovalContr
     openRejectDialog,
     closeFeedbackDialog,
     submitReject,
+    setApprovalError,
+    clearApprovalError,
   };
 
   return [controllerState, actions];

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 import hashlib
 import json
 import threading
@@ -10,7 +10,7 @@ from typing import Callable
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.skills import SkillCreation
 from eidos_runtime.model.client import ModelResponse, ModelToolCall
-from eidos_runtime.runtime.approval import ApprovalCoordinator
+from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalOutcome
 from eidos_runtime.runtime.contracts import (
     RuntimeCancelled,
     SamplingOutcome,
@@ -24,11 +24,15 @@ from eidos_runtime.runtime.errors import (
     tool_result,
 )
 from eidos_runtime.runtime.events import RuntimeEvents
+from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
 from eidos_runtime.runtime.tool_execution import (
     HandlerOutcome,
+    PreparedToolExecution,
     ToolExecutionController,
+    ToolInfrastructureError,
+    VerifiedToolExecutionResult,
 )
 from eidos_runtime.sandbox.sensitive import (
     SensitiveScanError,
@@ -38,7 +42,6 @@ from eidos_runtime.sandbox.sensitive import (
 from eidos_runtime.sandbox.shell import run_shell
 from eidos_runtime.sandbox.workspace_manifest import (
     attach_workspace_diff,
-    capture_workspace_manifest,
     diff_workspace_manifests,
 )
 from eidos_runtime.tools.workspace import ToolCancelled, WorkspacePathError
@@ -48,11 +51,14 @@ from eidos_runtime.tools.workspace import ToolCancelled, WorkspacePathError
 class _HandlerDependencies:
     store: SessionStore
     dispatcher: ToolDispatcher
-    approval: ApprovalCoordinator
     events: RuntimeEvents
     sensitive: SensitiveScanner
     shell_available: bool
-    begin_intent: Callable[[str, dict[str, object]], str]
+    execute_side_effect: Callable[
+        ...,
+        tuple[ApprovalOutcome, VerifiedToolExecutionResult | None],
+    ]
+    resources: ResourceRegistry = field(default_factory=ResourceRegistry)
 
 class ReadOnlyToolHandler:
     def __init__(self, dependencies: _HandlerDependencies) -> None:
@@ -114,18 +120,28 @@ class FileChangeToolHandler:
                 ),
                 "completed",
             )
-        approval = self.dependencies.approval.request(
-            run_id,
-            item,
-            {
+        prepared_execution = PreparedToolExecution(
+            approval_description={
                 "kind": "file_change",
                 "summary": f"Modify {prepared.path}",
                 "diff": prepared.diff,
             },
-            cancel,
-            diff=prepared.diff,
+            approval_diff=prepared.diff,
             base_sha256=prepared.base_sha256,
             transition_reason="file_approval",
+            intent_preconditions={
+                "path": prepared.path,
+                "baseSha256": prepared.base_sha256,
+            },
+        )
+        approval, verified = self.dependencies.execute_side_effect(
+            run_id=run_id,
+            item=item,
+            prepared=prepared_execution,
+            cancel=cancel,
+            execute=lambda: self.dependencies.dispatcher.commit_file_change(
+                call.name, prepared, cancel
+            ),
         )
         if approval.decision == "reject":
             return HandlerOutcome(
@@ -138,15 +154,8 @@ class FileChangeToolHandler:
                 ),
                 "declined",
             )
-        self.dependencies.begin_intent(
-            str(item["id"]), {
-                "path": prepared.path,
-                "baseSha256": prepared.base_sha256,
-            },
-        )
-        result = self.dependencies.dispatcher.commit_file_change(
-            call.name, prepared, cancel
-        )
+        assert verified is not None
+        result = verified.result
         if result["outcome"] == "success" and result.get("code") != "no_changes":
             self.dependencies.store.clear_rejects(run_id)
         status = "completed" if result["outcome"] == "success" else "failed"
@@ -200,10 +209,8 @@ class ShellToolHandler:
                 "failed",
                 "failed",
             )
-        approval = self.dependencies.approval.request(
-            run_id,
-            item,
-            {
+        prepared_execution = PreparedToolExecution(
+            approval_description={
                 "kind": "command_execution",
                 "summary": "Run shell command",
                 "command": command,
@@ -211,8 +218,106 @@ class ShellToolHandler:
                 "networkEnabled": False,
                 "timeoutSeconds": timeout,
             },
-            cancel,
             transition_reason="shell_approval",
+            intent_preconditions={
+                "cwd": cwd_value,
+                "timeoutSeconds": timeout,
+            },
+        )
+        workspace_diff = None
+        delta_sequence = 0
+
+        def stream_safe_output(text: str) -> None:
+            nonlocal delta_sequence
+            if cancel.is_set():
+                return
+            delta_sequence += 1
+            mutation = self.dependencies.store.append_item_deltas_committed(
+                str(item["id"]), (text,), delta_sequence
+            )
+            self.dependencies.events.publish(mutation, item=mutation.value)
+
+        def execute_shell() -> dict[str, object]:
+            nonlocal workspace_diff
+            try:
+                approved_cwd = self.dependencies.dispatcher.prepare_shell(
+                    call.name, cwd_value, cancel
+                )
+                if approved_cwd != cwd:
+                    raise WorkspacePathError("workspace_identity_changed")
+            except ToolCancelled:
+                raise RuntimeCancelled from None
+            except WorkspacePathError as error:
+                return tool_error(
+                    call.name,
+                    error.code,
+                    "Shell workspace changed after approval",
+                )
+            output_stream = StreamingSensitiveScanner(
+                self.dependencies.sensitive,
+                on_safe_text=stream_safe_output,
+            )
+            output_scan_failed = False
+
+            def scan_shell_output(text: str) -> None:
+                nonlocal output_scan_failed
+                if output_scan_failed:
+                    return
+                try:
+                    output_stream.feed(text)
+                except SensitiveScanError:
+                    output_scan_failed = True
+
+            manifest_before = (
+                self.dependencies.dispatcher.workspace_index.manifest()
+            )
+            raw_result = run_shell(
+                self.dependencies.dispatcher.workspace,
+                command,
+                approved_cwd,
+                timeout,
+                cancel,
+                scan_shell_output,
+                self.dependencies.resources,
+                str(item["id"]),
+            )
+            try:
+                manifest_after = (
+                    self.dependencies.dispatcher.refresh_workspace_index(
+                        cancel
+                    )
+                )
+            except WorkspacePathError:
+                manifest_after = (
+                    self.dependencies.dispatcher.workspace_index.manifest()
+                )
+            workspace_diff = diff_workspace_manifests(
+                manifest_before, manifest_after
+            )
+            result = bounded_tool_result(
+                call.name, attach_workspace_diff(raw_result, workspace_diff)
+            )
+            try:
+                if output_scan_failed:
+                    raise SensitiveScanError("shell output scan failed")
+                output_stream.finish()
+                result = safe_tool_result(
+                    self.dependencies.sensitive, call.name, result
+                )
+            except SensitiveScanError:
+                result = tool_error(
+                    call.name,
+                    "sensitive_content_rejected",
+                    "Shell output was withheld",
+                )
+            return result
+
+        approval, verified = self.dependencies.execute_side_effect(
+            run_id=run_id,
+            item=item,
+            prepared=prepared_execution,
+            cancel=cancel,
+            execute=execute_shell,
         )
         if approval.decision != "approve":
             return HandlerOutcome(
@@ -225,74 +330,21 @@ class ShellToolHandler:
                 "declined",
                 "failed",
             )
-        self.dependencies.begin_intent(
-            str(item["id"]), {"cwd": cwd_value, "timeoutSeconds": timeout},
-        )
-        try:
-            approved_cwd = self.dependencies.dispatcher.prepare_shell(
-                call.name, cwd_value, cancel
-            )
-            if approved_cwd != cwd:
-                raise WorkspacePathError("workspace_identity_changed")
-        except ToolCancelled:
-            raise RuntimeCancelled from None
-        except WorkspacePathError as error:
-            return HandlerOutcome(
-                tool_error(
-                    call.name,
-                    error.code,
-                    "Shell workspace changed after approval",
-                ),
-                "failed",
-                "failed",
-            )
-        output_stream = StreamingSensitiveScanner(self.dependencies.sensitive)
-        manifest_before = capture_workspace_manifest(
-            self.dependencies.dispatcher.workspace.path
-        )
-        raw_result = run_shell(
-                self.dependencies.dispatcher.workspace,
-                command,
-                approved_cwd,
-                timeout,
-                cancel,
-                output_stream.feed,
-        )
-        manifest_after = capture_workspace_manifest(
-            self.dependencies.dispatcher.workspace.path
-        )
-        workspace_diff = diff_workspace_manifests(
-            manifest_before, manifest_after
-        )
-        result = bounded_tool_result(
-            call.name, attach_workspace_diff(raw_result, workspace_diff)
-        )
-        try:
-            safe_output = output_stream.finish().text
-            result = safe_tool_result(self.dependencies.sensitive, call.name, result)
-        except SensitiveScanError:
-            safe_output = ""
-            result = tool_error(
-                call.name,
-                "sensitive_content_rejected",
-                "Shell output was withheld",
-            )
-        if safe_output:
-            mutation = self.dependencies.store.append_item_deltas_committed(
-                str(item["id"]), (safe_output,), 1
-            )
-            self.dependencies.events.publish(mutation, item=mutation.value)
+        assert verified is not None
+        result = verified.result
         if result["outcome"] == "success":
             self.dependencies.store.clear_rejects(run_id)
         status = "completed" if result["outcome"] == "success" else "failed"
-        changed = workspace_diff.changed
+        changed = workspace_diff.changed if workspace_diff is not None else False
         return HandlerOutcome(
             result,
             status,
             status,
             workspace_changed=changed,
             diff_hash=(
-                workspace_diff.diff_hash if changed else None
+                workspace_diff.diff_hash
+                if changed and workspace_diff is not None
+                else None
             ),
         )
 
@@ -309,18 +361,30 @@ class ExternalToolHandler:
         cancel: threading.Event,
     ) -> HandlerOutcome:
         details = self.dependencies.dispatcher.external_approval_details(call.name)
-        approval = self.dependencies.approval.request(
-            run_id,
-            item,
-            {
+        prepared = PreparedToolExecution(
+            approval_description={
                 "kind": "external_tool",
                 "summary": "Call an external MCP tool",
                 "toolName": call.name,
                 "arguments": call.arguments,
                 **details,
             },
-            cancel,
             transition_reason="external_approval",
+            intent_preconditions={
+                "toolName": call.name,
+                "provenance": details.get("provenance"),
+                "permissionProfile": details.get("permissionProfile"),
+                "timeoutSeconds": details.get("timeoutSeconds"),
+            },
+        )
+        approval, verified = self.dependencies.execute_side_effect(
+            run_id=run_id,
+            item=item,
+            prepared=prepared,
+            cancel=cancel,
+            execute=lambda: self.dependencies.dispatcher.execute_external(
+                call, cancel
+            ),
         )
         if approval.decision != "approve":
             return HandlerOutcome(
@@ -333,15 +397,8 @@ class ExternalToolHandler:
                 "declined",
                 "failed",
             )
-        self.dependencies.begin_intent(
-            str(item["id"]), {
-                "toolName": call.name,
-                "provenance": details.get("provenance"),
-                "permissionProfile": details.get("permissionProfile"),
-                "timeoutSeconds": details.get("timeoutSeconds"),
-            },
-        )
-        result = self.dependencies.dispatcher.execute_external(call, cancel)
+        assert verified is not None
+        result = verified.result
         if result["outcome"] == "success":
             self.dependencies.store.clear_rejects(run_id)
         status = "completed" if result["outcome"] == "success" else "failed"
@@ -363,18 +420,31 @@ class EidosStateToolHandler:
             details = self.dependencies.dispatcher.network_approval_details(
                 call.name, call.arguments
             )
-            approval = self.dependencies.approval.request(
-                run_id,
-                item,
-                {
+            network_execution = PreparedToolExecution(
+                approval_description={
                     "kind": "network_access",
                     "summary": "Download a public GitHub skill",
                     "toolName": call.name,
                     "hosts": details.get("hosts", []),
                     "target": details.get("target", ""),
                 },
-                cancel,
                 transition_reason="network_approval",
+                intent_preconditions={
+                    "toolName": call.name,
+                    "hosts": details.get("hosts", []),
+                    "target": details.get("target", ""),
+                },
+            )
+            approval, verified = self.dependencies.execute_side_effect(
+                run_id=run_id,
+                item=item,
+                prepared=network_execution,
+                cancel=cancel,
+                execute=lambda: {
+                    "prepared": self.dependencies.dispatcher.download_eidos_state(
+                        call.name, call.arguments, cancel
+                    )
+                },
             )
             if approval.decision != "approve":
                 return HandlerOutcome(
@@ -386,9 +456,8 @@ class EidosStateToolHandler:
                     ),
                     "declined",
                 )
-            prepared = self.dependencies.dispatcher.download_eidos_state(
-                call.name, call.arguments, cancel
-            )
+            assert verified is not None
+            prepared = verified.result["prepared"]
         else:
             prepared = self.dependencies.dispatcher.prepare_eidos_state(
                 call.name, call.arguments, cancel
@@ -398,17 +467,28 @@ class EidosStateToolHandler:
                 bounded_tool_result(call.name, prepared), "failed", "failed"
             )
         assert isinstance(prepared, SkillCreation)
-        approval = self.dependencies.approval.request(
-            run_id,
-            item,
-            {
+        state_execution = PreparedToolExecution(
+            approval_description={
                 "kind": "file_change",
                 "summary": f"Write {prepared.path}",
                 "diff": prepared.diff,
             },
-            cancel,
-            diff=prepared.diff,
+            approval_diff=prepared.diff,
             transition_reason="eidos_state_approval",
+            intent_preconditions={
+                "path": prepared.path,
+                "qualifiedId": f"user:{prepared.name}",
+                "contentHash": prepared.content_hash,
+            },
+        )
+        approval, verified = self.dependencies.execute_side_effect(
+            run_id=run_id,
+            item=item,
+            prepared=state_execution,
+            cancel=cancel,
+            execute=lambda: self.dependencies.dispatcher.commit_eidos_state(
+                call.name, prepared, cancel
+            ),
         )
         if approval.decision == "reject":
             return HandlerOutcome(
@@ -421,16 +501,8 @@ class EidosStateToolHandler:
                 ),
                 "declined",
             )
-        self.dependencies.begin_intent(
-            str(item["id"]), {
-                "path": prepared.path,
-                "qualifiedId": f"user:{prepared.name}",
-                "contentHash": prepared.content_hash,
-            },
-        )
-        result = self.dependencies.dispatcher.commit_eidos_state(
-            call.name, prepared, cancel
-        )
+        assert verified is not None
+        result = verified.result
         if result["outcome"] == "success":
             self.dependencies.store.clear_rejects(run_id)
         status = "completed" if result["outcome"] == "success" else "failed"
@@ -450,6 +522,7 @@ class ToolCallRuntime:
         state_machine: RuntimePhaseTracker,
         *,
         shell_available: bool,
+        resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self.store = store
         self.dispatcher = dispatcher
@@ -458,16 +531,22 @@ class ToolCallRuntime:
         self.state_machine = state_machine
         handlers = {}
         self.controller = ToolExecutionController(
-            store, dispatcher, handlers, events, sensitive
+            store,
+            dispatcher,
+            handlers,
+            events,
+            sensitive,
+            approval=approval,
+            resource_registry=resource_registry,
         )
         dependencies = _HandlerDependencies(
             store,
             dispatcher,
-            approval,
             events,
             sensitive,
             shell_available,
-            self.controller.begin_durable_intent,
+            self.controller.execute_side_effect,
+            self.controller.resources,
         )
         handlers.update({
             "read": ReadOnlyToolHandler(dependencies),
@@ -669,6 +748,25 @@ class ToolCallRuntime:
             pending.append((mutation.value, call))
             self.events.publish(mutation, item=mutation.value)
 
+        batch_cancel = threading.Event()
+
+        class BatchCancellation(threading.Event):
+            def is_set(self) -> bool:
+                return (
+                    super().is_set()
+                    or cancel.is_set()
+                    or batch_cancel.is_set()
+                )
+
+            def wait(self, timeout: float | None = None) -> bool:
+                if self.is_set():
+                    return True
+                return batch_cancel.wait(
+                    0.05 if timeout is None else min(timeout, 0.05)
+                ) or self.is_set()
+
+        controlled_cancel = BatchCancellation()
+
         def run(entry: tuple[dict[str, object], ModelToolCall]) -> HandlerOutcome:
             item, call = entry
             try:
@@ -677,10 +775,12 @@ class ToolCallRuntime:
                     item=item,
                     call=call,
                     plan=self.dispatcher.plan(call),
-                    cancel=cancel,
+                    cancel=controlled_cancel,
                     deadline=None,
                 )
             except RuntimeCancelled:
+                raise
+            except ToolInfrastructureError:
                 raise
             except Exception:
                 return HandlerOutcome(
@@ -690,8 +790,37 @@ class ToolCallRuntime:
                 )
 
         with ThreadPoolExecutor(max_workers=len(pending)) as executor:
-            futures = [executor.submit(run, entry) for entry in pending]
-            outcomes = [future.result() for future in futures]
+            futures: dict[
+                Future[HandlerOutcome],
+                tuple[dict[str, object], ModelToolCall],
+            ] = {
+                executor.submit(run, entry): entry for entry in pending
+            }
+            results: dict[str, HandlerOutcome] = {}
+            infrastructure_error: ToolInfrastructureError | None = None
+            runtime_cancelled = False
+            for future in as_completed(futures):
+                item, _call = futures[future]
+                try:
+                    results[str(item["id"])] = future.result()
+                except ToolInfrastructureError as error:
+                    infrastructure_error = error
+                    batch_cancel.set()
+                except RuntimeCancelled:
+                    batch_cancel.set()
+                    runtime_cancelled = True
+            if infrastructure_error is not None:
+                self.store.complete_current_step(
+                    step.run_id,
+                    "failed",
+                    reason="TOOL_INFRASTRUCTURE_FAILURE",
+                )
+                raise infrastructure_error
+            if runtime_cancelled:
+                raise RuntimeCancelled
+            outcomes = [
+                results[str(item["id"])] for item, _call in pending
+            ]
 
         errors: list[str] = []
         successes: list[str] = []

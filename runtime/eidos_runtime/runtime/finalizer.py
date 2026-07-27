@@ -12,6 +12,11 @@ from eidos_runtime.runtime.assistant_stream import AssistantStreamWriter
 from eidos_runtime.runtime.contracts import RuntimeCancelled
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.model_runner import ModelRunner, ModelStreamInterrupted
+from eidos_runtime.runtime.resource_registry import (
+    ResourceRegistry,
+    RuntimeResourceKind,
+)
+from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.sandbox.sensitive import (
     SensitiveScanError,
@@ -61,6 +66,7 @@ class RunFinalizer:
         state_machine: RuntimePhaseTracker,
         *,
         timeout_seconds: float = FINALIZATION_SECONDS,
+        resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self.store = store
         self.model = model
@@ -68,8 +74,27 @@ class RunFinalizer:
         self.sensitive = sensitive
         self.state_machine = state_machine
         self.timeout_seconds = timeout_seconds
+        self.resources = resource_registry or ResourceRegistry()
 
     def finalize(
+        self,
+        run_id: str,
+        context: tuple[ModelContextItem, ...],
+        stop_reason: str,
+        cancel: threading.Event,
+    ) -> FinalizationOutcome:
+        resource = self.resources.register(
+            RuntimeResourceKind.FINALIZATION,
+            owner_id=run_id,
+            cancel=cancel.set,
+        )
+        resource.start()
+        try:
+            return self._finalize(run_id, context, stop_reason, cancel)
+        finally:
+            resource.close()
+
+    def _finalize(
         self,
         run_id: str,
         context: tuple[ModelContextItem, ...],
@@ -99,6 +124,7 @@ class RunFinalizer:
         )
 
         try:
+            hit_fault("finalization_model_failure")
             ModelRunner(self.model, self.sensitive).run(
                 (*context, {"type": "finalization", "toolsAllowed": False}),
                 request_cancel,
@@ -141,6 +167,7 @@ class RunFinalizer:
             raise RuntimeCancelled
         if failure_reason is not None:
             logger.warning("Finalization ended without an item: %s", failure_reason)
+        hit_fault("cancel_finalization_race")
         try:
             mutation = self.store.complete_finalization_and_stop_committed(
                 str(writer.item["id"])

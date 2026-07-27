@@ -29,6 +29,7 @@ from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.finalizer import RunFinalizer
 from eidos_runtime.runtime.loop_guard import LoopGuard, tool_call_fingerprint
 from eidos_runtime.runtime.run_resources import RunResourceError, RunResources
+from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.runtime.sampling import (
     SamplingAuthenticationFailed,
     SamplingCancelled,
@@ -43,6 +44,7 @@ from eidos_runtime.runtime.sampling import (
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.step_context import StepContextFactory
 from eidos_runtime.runtime.tool_runtime import ToolCallRuntime
+from eidos_runtime.runtime.tool_execution import ToolInfrastructureError
 from eidos_runtime.sandbox.sensitive import (
     SensitiveScanError,
     SensitiveScanner,
@@ -77,10 +79,12 @@ class RuntimeEngine:
         wait_for_execution_slot: Callable[[str, threading.Event], bool] | None = None,
         mcp_sandbox: bool = True,
         terminalize_cancel: bool = True,
+        resource_registry: ResourceRegistry | None = None,
+        events: RuntimeEvents | None = None,
     ) -> None:
         self.store = store
         self.model = model
-        self.events = RuntimeEvents(notify)
+        self.events = events or RuntimeEvents(notify, store=store)
         self.request_approval = request_approval
         self.shell_available = shell_available
         self.monotonic = monotonic
@@ -88,6 +92,7 @@ class RuntimeEngine:
         self.wait_for_execution_slot = wait_for_execution_slot
         self.mcp_sandbox = mcp_sandbox
         self.terminalize_cancel = terminalize_cancel
+        self.resources = resource_registry or ResourceRegistry()
         self.state_machine = RuntimePhaseTracker()
         self.active_started: float | None = None
 
@@ -106,6 +111,7 @@ class RuntimeEngine:
                 extension_snapshot,
                 str(run.get("userInput") or ""),
                 mcp_sandbox=self.mcp_sandbox,
+                resource_registry=self.resources,
             ) as resources:
                 run_context = run_context.model_copy(
                     update={"skill_context": resources.skill_context}
@@ -135,6 +141,15 @@ class RuntimeEngine:
                 self._cancel(run_id)
             elif current["status"] != "interrupted":
                 self._fail(run_id, "RUNTIME_STATE_CONFLICT")
+        except ToolInfrastructureError:
+            logger.exception("Tool infrastructure failed")
+            current = self.store.read_run(run_id)
+            if current["status"] in {
+                "running",
+                "waiting_approval",
+                "finalizing",
+            }:
+                self._fail(run_id, "TOOL_INFRASTRUCTURE_FAILURE")
         finally:
             self._pause_effective_time(run_id)
 
@@ -160,6 +175,7 @@ class RuntimeEngine:
             self.events,
             self.sensitive,
             self.state_machine,
+            resource_registry=self.resources,
         )
         approval = ApprovalCoordinator(
             self.store,
@@ -287,6 +303,7 @@ class RuntimeEngine:
                 self.sensitive,
                 self.state_machine,
                 shell_available=self.shell_available,
+                resource_registry=self.resources,
             )
             validation = tools.validate(step, sampled)
             protocol_errors = 0

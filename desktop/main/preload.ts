@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { IPC } from "../shared/index.js";
 import type { EidosRuntimeAPI, Unsubscribe } from "../shared/ipc-api.js";
 import type {
   RuntimeStatus,
@@ -22,8 +23,6 @@ import type {
   RuntimeNotification,
   AppShortcut,
 } from "../shared/domain-contracts.js";
-
-import { IPC } from "../shared/index.js";
 
 const api: EidosRuntimeAPI = {
   // Runtime status

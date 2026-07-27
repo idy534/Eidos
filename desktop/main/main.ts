@@ -259,12 +259,12 @@ function buildMenu(): void {
         {
           label: "新建任务",
           accelerator: "CmdOrCtrl+N",
-          click: () => { void dispatchAppCommand("app:new-task"); },
+          click: () => { void dispatchAppCommand(IPC.APP_NEW_TASK); },
         },
         {
-          label: "打开工作空间",
+          label: "打开工作空间...",
           accelerator: "CmdOrCtrl+O",
-          click: () => { void dispatchAppCommand("app:open-workspace"); },
+          click: () => { void dispatchAppCommand(IPC.APP_OPEN_WORKSPACE); },
         },
         { type: "separator" },
         isMac ? { role: "close" as const } : { role: "quit" as const },
@@ -369,8 +369,10 @@ async function startRuntime(): Promise<void> {
       storageHealth,
     });
   } catch (error) {
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const safeMessage = redactLogLine(rawMessage);
     log("error", "runtime", "Runtime initialization failed", {
-      message: error instanceof Error ? error.message : String(error),
+      message: safeMessage,
     });
     publishStatus({
       state: "error",
@@ -545,15 +547,22 @@ if (!hasSingleInstanceLock) {
 // Graceful quit with active-run awareness
 // ---------------------------------------------------------------------------
 
+let runtimeTerminated = false;
+
+function terminateRuntimeOnce(): void {
+  if (runtimeTerminated) return;
+  runtimeTerminated = true;
+  runtimeClient?.terminate();
+}
+
 app.on("before-quit", (event) => {
   quitFlowController.handleBeforeQuit(event);
 });
 
-app.on("will-quit", () => runtimeClient?.terminate());
+app.on("will-quit", () => terminateRuntimeOnce());
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
 });
-

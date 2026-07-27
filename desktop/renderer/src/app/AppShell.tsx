@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ModelId, PluginRecord, Run, SkillMetadata, McpServerRecord, Session } from "../contracts.js";
-import type { SettingsPendingAction } from "../components/settings/settings-types.js";
+import type { ModelId, Run, Session } from "../contracts.js";
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import { EidosMark } from "../components/EidosMark.js";
@@ -16,7 +15,9 @@ import { useRunController } from "./useRunController.js";
 import { useApprovalController } from "./useApprovalController.js";
 import { useModelController } from "./useModelController.js";
 import { resolveSessionModelId } from "./session-model-resolver.js";
-import { applyNotification } from "../session-state.js";
+import { useExtensionController } from "./useExtensionController.js";
+import { applyNotification, userFacingError } from "../session-state.js";
+import { IPC } from "../../../shared/ipc-channels.js";
 
 interface AppShellProps {
   runtime: RuntimeLifecycleState;
@@ -41,23 +42,22 @@ export function AppShell({ runtime }: AppShellProps) {
   const [runState, runActions] = useRunController(sessionState.snapshot, isStorageReady);
   const [approvalState, approvalActions] = useApprovalController();
   const [modelState, modelActions] = useModelController();
+  const [extensionState, extensionActions] = useExtensionController();
 
   // UI-only state (not domain state)
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
-  const [plugins, setPlugins] = useState<PluginRecord[]>([]);
-  const [skills, setSkills] = useState<SkillMetadata[]>([]);
-  const [mcpServers, setMcpServers] = useState<McpServerRecord[]>([]);
-  const [settingsPendingAction, setSettingsPendingAction] = useState<SettingsPendingAction>(undefined);
+  const [renameError, setRenameError] = useState<string | undefined>(undefined);
   const [sessionToDelete, setSessionToDelete] = useState<Session | undefined>(undefined);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | undefined>(undefined);
 
   // Aggregate error display (inline errors take priority in their domain)
-  const topError = sessionState.error ?? runState.error;
+  const topError = sessionState.error ?? runState.error ?? modelState.error ?? extensionState.error;
 
   // -----------------------------------------------------------------------
-  // Bootstrap: load sessions, model, approvals when runtime is ready
+  // Bootstrap: load sessions, model, approvals independently
   // -----------------------------------------------------------------------
   useEffect(() => {
     if (runtimeStatus.state !== "ready" || runtimeStatus.storageHealth.state !== "ready") return;
@@ -95,6 +95,11 @@ export function AppShell({ runtime }: AppShellProps) {
           approvalActions.clearApprovalsForRun(run.id);
           void sessionActions.refreshCompletedSession(notification.params.sessionId);
         }
+      } else if (
+        notification.method === "approval/resolved"
+        || notification.method === "approval/canceled"
+      ) {
+        approvalActions.clearApprovalsForRun(notification.params.runId);
       }
       sessionActions.setSnapshot((prev) => applyNotification(prev, notification));
     });
@@ -114,19 +119,18 @@ export function AppShell({ runtime }: AppShellProps) {
   // Keyboard shortcuts from Main process menu
   // -----------------------------------------------------------------------
   const hasBlockingModal =
-    settingsOpen ||
     Boolean(sessionToDelete) ||
     Boolean(approvalState.feedbackDialogApproval) ||
     deleteBusy ||
     sessionState.pending.creatingSession === true;
 
   useEffect(() => {
-    const unsubNewTask = window.eidosRuntime.onShortcut("app:new-task", () => {
-      if (hasBlockingModal) return;
+    const unsubNewTask = window.eidosRuntime.onShortcut(IPC.APP_NEW_TASK, () => {
+      if (hasBlockingModal || settingsOpen) return;
       void handleCreateSession();
     });
-    const unsubOpenWorkspace = window.eidosRuntime.onShortcut("app:open-workspace", () => {
-      if (hasBlockingModal) return;
+    const unsubOpenWorkspace = window.eidosRuntime.onShortcut(IPC.APP_OPEN_WORKSPACE, () => {
+      if (hasBlockingModal || settingsOpen) return;
       void handleCreateSession();
     });
     return () => {
@@ -134,25 +138,15 @@ export function AppShell({ runtime }: AppShellProps) {
       unsubOpenWorkspace();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasBlockingModal, sessionActions.createSession]);
+  }, [hasBlockingModal, settingsOpen, sessionActions.createSession]);
 
   // -----------------------------------------------------------------------
   // Extension refresh when settings open
   // -----------------------------------------------------------------------
   useEffect(() => {
     if (!settingsOpen || runtimeStatus.state !== "ready" || !isStorageReady) return;
-    void (async () => {
-      try {
-        let snap = await window.eidosRuntime.readExtensions();
-        const events = await window.eidosRuntime.readExtensionEvents(snap.throughEventId);
-        if (events.items.length > 0) snap = await window.eidosRuntime.readExtensions();
-        setPlugins(snap.plugins);
-        setSkills(snap.skills);
-        setMcpServers(snap.servers);
-      } catch (cause: unknown) {
-        console.error("[extensions]", cause);
-      }
-    })();
+    void extensionActions.load();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsOpen, runtimeStatus.state, isStorageReady]);
 
   // -----------------------------------------------------------------------
@@ -173,79 +167,6 @@ export function AppShell({ runtime }: AppShellProps) {
   }
 
   // -----------------------------------------------------------------------
-  // Settings operations
-  // -----------------------------------------------------------------------
-  async function importPlugin(): Promise<void> {
-    setSettingsPendingAction({ type: "import_plugin" });
-    try {
-      const imported = await window.eidosRuntime.importPlugin();
-      if (imported) {
-        let snap = await window.eidosRuntime.readExtensions();
-        const events = await window.eidosRuntime.readExtensionEvents(snap.throughEventId);
-        if (events.items.length > 0) snap = await window.eidosRuntime.readExtensions();
-        setPlugins(snap.plugins);
-        setSkills(snap.skills);
-        setMcpServers(snap.servers);
-      }
-    } catch (cause) {
-      throw new Error(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSettingsPendingAction(undefined);
-    }
-  }
-
-  async function setPluginEnabled(pluginId: string, enabled: boolean): Promise<void> {
-    setSettingsPendingAction({ type: "toggle_plugin", pluginId });
-    try {
-      await window.eidosRuntime.setPluginEnabled(pluginId, enabled);
-      let snap = await window.eidosRuntime.readExtensions();
-      const events = await window.eidosRuntime.readExtensionEvents(snap.throughEventId);
-      if (events.items.length > 0) snap = await window.eidosRuntime.readExtensions();
-      setPlugins(snap.plugins);
-      setSkills(snap.skills);
-      setMcpServers(snap.servers);
-    } catch (cause) {
-      throw new Error(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSettingsPendingAction(undefined);
-    }
-  }
-
-  async function removePlugin(pluginId: string): Promise<void> {
-    setSettingsPendingAction({ type: "remove_plugin", pluginId });
-    try {
-      await window.eidosRuntime.removePlugin(pluginId);
-      let snap = await window.eidosRuntime.readExtensions();
-      const events = await window.eidosRuntime.readExtensionEvents(snap.throughEventId);
-      if (events.items.length > 0) snap = await window.eidosRuntime.readExtensions();
-      setPlugins(snap.plugins);
-      setSkills(snap.skills);
-      setMcpServers(snap.servers);
-    } catch (cause) {
-      throw new Error(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSettingsPendingAction(undefined);
-    }
-  }
-
-  async function setMcpEnabled(pluginId: string, serverId: string, enabled: boolean): Promise<void> {
-    setSettingsPendingAction({ type: "toggle_mcp", pluginId, serverId });
-    try {
-      await window.eidosRuntime.setMcpEnabled(pluginId, serverId, enabled);
-      let snap = await window.eidosRuntime.readExtensions();
-      const events = await window.eidosRuntime.readExtensionEvents(snap.throughEventId);
-      if (events.items.length > 0) snap = await window.eidosRuntime.readExtensions();
-      setPlugins(snap.plugins);
-      setSkills(snap.skills);
-      setMcpServers(snap.servers);
-    } catch (cause) {
-      throw new Error(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSettingsPendingAction(undefined);
-    }
-  }
-
-  // -----------------------------------------------------------------------
   // Rename flow
   // -----------------------------------------------------------------------
   async function beginRename(session: Session): Promise<void> {
@@ -253,17 +174,20 @@ export function AppShell({ runtime }: AppShellProps) {
       await handleSelectSession(session);
     }
     setTitleDraft(session.title ?? "新任务");
+    setRenameError(undefined);
     setRenaming(true);
   }
 
   async function submitRename(): Promise<void> {
     const sid = sessionState.snapshot?.session.id;
     if (!sid || !titleDraft.trim()) return;
+    setRenameError(undefined);
     try {
       await sessionActions.renameSession(sid, titleDraft.trim());
       setRenaming(false);
-    } catch {
-      // error surfaced via sessionState.error
+    } catch (cause) {
+      setRenameError(userFacingError(cause));
+      // Rename mode remains open so user can retry!
     }
   }
 
@@ -271,17 +195,20 @@ export function AppShell({ runtime }: AppShellProps) {
   // Delete flow
   // -----------------------------------------------------------------------
   function requestDeleteSession(session: Session): void {
+    setDeleteError(undefined);
     setSessionToDelete(session);
   }
 
   async function confirmDelete(): Promise<void> {
     if (!sessionToDelete) return;
     setDeleteBusy(true);
-    try {
-      await sessionActions.deleteSession(sessionToDelete);
+    setDeleteError(undefined);
+    const result = await sessionActions.deleteSession(sessionToDelete);
+    setDeleteBusy(false);
+    if (result.confirmed) {
       setSessionToDelete(undefined);
-    } finally {
-      setDeleteBusy(false);
+    } else {
+      setDeleteError(sessionState.error || "删除任务失败，请重试。");
     }
   }
 
@@ -303,7 +230,7 @@ export function AppShell({ runtime }: AppShellProps) {
   // -----------------------------------------------------------------------
   const { composerMode, activeRun, input } = runState;
   const { snapshot } = sessionState;
-  const { approvals, respondingApprovalId, feedbackDialogApproval, feedbackDialogError } = approvalState;
+  const { approvals, respondingApprovalIds, respondingKindByApprovalId, feedbackDialogApproval, feedbackDialogError, errorsByApprovalId } = approvalState;
 
   const sidebarDisabled =
     sessionState.pending.creatingSession === true
@@ -346,16 +273,18 @@ export function AppShell({ runtime }: AppShellProps) {
             modelLoading={modelState.loading}
             modelError={modelState.error}
             modelConfiguring={modelState.configuring}
-            plugins={plugins}
-            skills={skills}
-            mcpServers={mcpServers}
-            pendingAction={settingsPendingAction}
+            plugins={extensionState.plugins}
+            skills={extensionState.skills}
+            mcpServers={extensionState.mcpServers}
+            extensionError={extensionState.error}
+            pendingAction={extensionState.pendingAction}
+            hasBlockingModal={hasBlockingModal}
             onClose={() => setSettingsOpen(false)}
             onConfigureModel={(key) => modelActions.configure(key)}
-            onImportPlugin={importPlugin}
-            onTogglePlugin={setPluginEnabled}
-            onRemovePlugin={removePlugin}
-            onToggleMcp={setMcpEnabled}
+            onImportPlugin={() => extensionActions.importPlugin()}
+            onTogglePlugin={(id, enabled) => extensionActions.setPluginEnabled(id, enabled)}
+            onRemovePlugin={(id) => extensionActions.removePlugin(id)}
+            onToggleMcp={(pId, sId, enabled) => extensionActions.setMcpEnabled(pId, sId, enabled)}
           />
         ) : snapshot ? (
           <>
@@ -387,10 +316,11 @@ export function AppShell({ runtime }: AppShellProps) {
                   <Button
                     variant="ghost"
                     size="small"
-                    onClick={() => setRenaming(false)}
+                    onClick={() => { setRenaming(false); setRenameError(undefined); }}
                   >
                     取消
                   </Button>
+                  {renameError && <span className="approval-error" role="alert">{renameError}</span>}
                 </form>
               ) : (
                 <div className="session-title-group">
@@ -421,9 +351,11 @@ export function AppShell({ runtime }: AppShellProps) {
               items={snapshot.items}
               runs={snapshot.runs}
               approvals={approvals.filter((a) => a.sessionId === snapshot.session.id)}
-              respondingApprovalId={respondingApprovalId}
+              respondingApprovalId={approvalState.respondingApprovalId}
+              respondingApprovalIds={respondingApprovalIds}
+              respondingKindByApprovalId={respondingKindByApprovalId}
               expiredApprovalIds={approvalState.expiredApprovalIds}
-              errorsByApprovalId={approvalState.errorsByApprovalId}
+              errorsByApprovalId={errorsByApprovalId}
               onApprove={(request) => void approvalActions.approve(request)}
               onReject={(request) => approvalActions.openRejectDialog(request)}
             />
@@ -433,7 +365,7 @@ export function AppShell({ runtime }: AppShellProps) {
               activeRun={activeRun}
               input={input}
               modelList={modelState.list}
-              selectedModelId={modelState.selectedModelId ?? "deepseek-v4-flash"}
+              selectedModelId={modelState.selectedModelId}
               modelConfigured={modelState.status?.configured ?? false}
               modelLoading={modelState.loading}
               isSubmitting={runState.isSubmitting}
@@ -476,14 +408,15 @@ export function AppShell({ runtime }: AppShellProps) {
         cancelLabel="取消"
         isDestructive
         busy={deleteBusy}
+        error={deleteError}
         onConfirm={() => void confirmDelete()}
-        onCancel={() => setSessionToDelete(undefined)}
+        onCancel={() => { setSessionToDelete(undefined); setDeleteError(undefined); }}
       />
 
       {/* Approval reject feedback dialog */}
       <ApprovalFeedbackDialog
         approval={feedbackDialogApproval}
-        busy={Boolean(respondingApprovalId && feedbackDialogApproval && respondingApprovalId === feedbackDialogApproval.id)}
+        busy={Boolean(feedbackDialogApproval && respondingApprovalIds.has(feedbackDialogApproval.id))}
         error={feedbackDialogError}
         onConfirm={(request, feedback) => void approvalActions.submitReject(request, feedback)}
         onCancel={() => approvalActions.closeFeedbackDialog()}
@@ -493,15 +426,15 @@ export function AppShell({ runtime }: AppShellProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Composer — extracted to avoid crowding AppShell render
+// Composer — exported for direct behavior testing
 // ---------------------------------------------------------------------------
 
-interface ComposerProps {
+export interface ComposerProps {
   composerMode: import("../session-state.js").ComposerMode;
   activeRun: Run | undefined;
   input: string;
   modelList: import("../contracts.js").ModelListResult | undefined;
-  selectedModelId: ModelId;
+  selectedModelId: ModelId | undefined;
   modelConfigured: boolean;
   modelLoading: boolean;
   isSubmitting: boolean;
@@ -514,7 +447,7 @@ interface ComposerProps {
   onModelChange: (id: ModelId) => void;
 }
 
-function Composer({
+export function Composer({
   composerMode,
   activeRun,
   input,
@@ -535,7 +468,7 @@ function Composer({
   const isIdle = composerMode === "idle";
   const isContinuing = composerMode === "waiting_user_input";
   const canCancel = (composerMode === "running" || composerMode === "starting") && activeRun?.allowedActions?.includes("cancel");
-  const inputDisabled = modelLoading || isSubmitting || !modelConfigured || isReadOnly || composerMode === "finalizing" || composerMode === "waiting_approval";
+  const inputDisabled = modelLoading || isSubmitting || !modelConfigured || !selectedModelId || isReadOnly || composerMode === "finalizing" || composerMode === "waiting_approval";
 
   const placeholder = modelLoading
     ? "正在加载模型配置…"
@@ -560,7 +493,7 @@ function Composer({
             ? "等待批准"
             : composerMode === "finalizing"
               ? "正在收尾"
-              : selectedModelId;
+              : selectedModelId ?? "无可用模型";
 
   const buttonLabel = modelLoading
     ? "加载中…"
@@ -599,7 +532,7 @@ function Composer({
               <label htmlFor="run-model">本次模型</label>
               <select
                 id="run-model"
-                value={selectedModelId}
+                value={selectedModelId ?? ""}
                 disabled={composerMode !== "idle" || modelLoading || isSubmitting}
                 onChange={(e) => onModelChange(e.target.value as ModelId)}
               >
@@ -616,19 +549,20 @@ function Composer({
         </div>
 
         {canCancel ? (
-          <button
-            type="button"
-            className="btn btn--ghost btn--medium"
+          <Button
+            variant="ghost"
+            size="medium"
             disabled={Boolean(cancelingRunId)}
-            aria-busy={Boolean(cancelingRunId)}
+            loading={Boolean(cancelingRunId)}
             onClick={onCancel}
           >
             {cancelingRunId ? "取消中…" : "取消 Run"}
-          </button>
+          </Button>
         ) : (
-          <button
+          <Button
             type="submit"
-            className="btn btn--primary btn--medium"
+            variant="primary"
+            size="medium"
             disabled={
               modelLoading
               || isSubmitting
@@ -638,12 +572,13 @@ function Composer({
               || composerMode === "waiting_approval"
               || composerMode === "read_only"
               || !modelConfigured
+              || !selectedModelId
               || !input.trim()
             }
-            aria-busy={isSubmitting || composerMode === "starting"}
+            loading={isSubmitting || composerMode === "starting"}
           >
             {buttonLabel}
-          </button>
+          </Button>
         )}
       </div>
     </form>

@@ -15,6 +15,7 @@ from eidos_runtime.protocol.schemas import (
 )
 from eidos_runtime.sandbox.sensitive import default_scanner
 from eidos_runtime.runtime.state_machine import EventType, RunStatus
+from eidos_runtime.runtime.fault_injection import hit_fault
 
 
 EVENT_CONTRACT_VERSION = 1
@@ -142,6 +143,7 @@ def append_event(
     session_id: str | None = None,
     run_id: str | None = None,
 ) -> dict[str, object]:
+    hit_fault("sqlite_append_event_failure")
     validated = EVENT_PAYLOADS[event_type].model_validate(payload).to_json_value()
     scanned = default_scanner().scan_json(validated)
     assert isinstance(scanned, dict)
@@ -163,6 +165,13 @@ def append_event(
             run_id,
             json.dumps(validated, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
         ),
+    )
+    connection.execute(
+        """
+        INSERT INTO event_outbox (event_id, status)
+        VALUES (?, 'pending')
+        """,
+        (cursor.lastrowid,),
     )
     return EventEnvelopeDto.model_validate({
         "eventContractVersion": EVENT_CONTRACT_VERSION,

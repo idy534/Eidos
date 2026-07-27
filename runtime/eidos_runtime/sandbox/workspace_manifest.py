@@ -177,16 +177,15 @@ def attach_workspace_diff(
         "workspaceDiffHash": diff.diff_hash,
         "workspaceManifestComplete": diff.complete,
         "workspaceManifestTruncated": diff.truncated,
+        "workspaceDiffIncomplete": not diff.complete,
         "created": list(diff.created),
         "modified": list(diff.modified),
         "deleted": list(diff.deleted),
     })
     attached["data"] = data
-    uncertain = diff.changed or not diff.complete
-    attached["sideEffectsMayExist"] = uncertain
+    attached["sideEffectsMayExist"] = diff.changed
     attached["reconciliationRequired"] = (
-        not diff.complete
-        or (result.get("outcome") != "success" and diff.changed)
+        result.get("outcome") != "success" and diff.changed
     )
     return attached
 

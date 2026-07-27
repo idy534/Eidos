@@ -10,6 +10,7 @@ from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.protocol.schemas import ApprovalDecisionDto
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
+from eidos_runtime.runtime.fault_injection import hit_fault
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,7 @@ class ApprovalCoordinator:
         approval_run = self.store.read_run(run_id)
         self.events.publish(mutation, run=approval_run, item=pending_item)
         self.state_machine.track(RuntimeState.WAITING_APPROVAL, transition_reason)
+        hit_fault("cancel_approval_race")
         self.pause_effective_time(run_id)
         tool_call = pending_item["toolCall"]
         assert isinstance(tool_call, dict)

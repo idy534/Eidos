@@ -983,7 +983,8 @@ class ExecutionRepository(Repository):
         with self.lock, self._connection() as connection:
             row = connection.execute(
                 """
-                SELECT items.run_id, tool_calls.id AS tool_call_id,
+                SELECT items.run_id, items.session_id,
+                       tool_calls.id AS tool_call_id,
                        tool_calls.arguments_json
                 FROM items JOIN tool_calls ON tool_calls.item_id = items.id
                 WHERE items.id = ? AND items.status = 'in_progress'
@@ -1032,6 +1033,7 @@ class ExecutionRepository(Repository):
                     "entity_id": approval_id, "previous": "created",
                     "current": "pending",
                 },
+                session_id=row["session_id"],
                 run_id=row["run_id"],
             )
         return CommittedMutation(
@@ -1119,6 +1121,27 @@ class ExecutionRepository(Repository):
                 session_id=row["session_id"], run_id=row["run_id"],
             )
         return intent_id
+
+    def side_effect_authorized(self, item_id: str) -> bool:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT 1
+                FROM items
+                JOIN tool_calls ON tool_calls.item_id = items.id
+                JOIN approvals ON approvals.item_id = items.id
+                JOIN durable_intents
+                  ON durable_intents.tool_call_id = tool_calls.id
+                WHERE items.id = ?
+                  AND items.status = 'in_progress'
+                  AND tool_calls.status = 'running'
+                  AND approvals.status = 'approved'
+                  AND durable_intents.status = 'running'
+                LIMIT 1
+                """,
+                (item_id,),
+            ).fetchone()
+        return row is not None
 
     def has_read_evidence(
         self, run_id: str, path: str, sha256: str

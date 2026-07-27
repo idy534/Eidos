@@ -273,17 +273,19 @@ class CommittedMutationOrderTests(unittest.TestCase):
         ids = tuple(event["eventId"] for event in mutation.events)
         self.assertEqual(ids, tuple(sorted(ids)))
 
-    def test_all_committed_mutation_events_are_monotonic(self) -> None:
-        with self.assertRaises(ValueError):
-            CommittedMutation(
-                {},
-                (
-                    {"eventId": 2},
-                    {"eventId": 1},
-                ),
-            )
-        with self.assertRaises(ValueError):
-            CommittedMutation({}, ({"eventId": True},))
+    def test_committed_mutation_does_not_validate_order_after_commit(
+        self,
+    ) -> None:
+        mutation = CommittedMutation(
+            {},
+            (
+                {"eventId": 2},
+                {"eventId": 1},
+                {"eventId": True},
+            ),
+        )
+
+        self.assertEqual(mutation.event_ids, (2, 1))
 
     def test_event_projection_preserves_commit_order(self) -> None:
         from eidos_runtime.runtime.events import RuntimeEvents

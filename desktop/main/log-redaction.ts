@@ -2,6 +2,18 @@ const SENSITIVE_KEY_REGEX = /api[-_]?key|secret|password|auth|token|cookie|crede
 
 export const MAX_LOG_META_DEPTH = 6;
 
+const HEADERS_BEARER_REGEX = /((?:Authorization|authorization|Proxy-Authorization|proxy-authorization)\s*:\s*Bearer\s+)\S+/gi;
+const HEADERS_GENERIC_REGEX = /((?:Authorization|authorization|Proxy-Authorization|proxy-authorization)\s*[:=]\s*)(?!Bearer\s+)\S+/gi;
+
+const ENV_KEY_VALUE_REGEX = /((?:api_key|api-key|apiKey|OPENAI_API_KEY|DEEPSEEK_API_KEY|ANTHROPIC_API_KEY|GITHUB_TOKEN|GH_TOKEN|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN)\s*[:=]\s*)\S+/gi;
+const JSON_FIELD_REGEX = /("(?:apiKey|api_key|authorization|token|accessToken|refreshToken)"\s*:\s*)("(?:[^"\\]|\\.)*"|[^\s,\}\]]+)/gi;
+
+const SK_SECRET_REGEX = /\bsk-[A-Za-z0-9_-]{8,}\b/g;
+const BEARER_STANDALONE_REGEX = /\bBearer\s+[A-Za-z0-9\-._~+/]+=*/g;
+const JWT_REGEX = /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
+const AWS_ID_REGEX = /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g;
+const OPAQUE_TOKEN_REGEX = /\b(?:ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{82}|glpat-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9_-]{10,})\b/g;
+
 /**
  * Redacts secrets, authorization tokens, API keys, and complete Cookie headers from a log line.
  */
@@ -10,15 +22,23 @@ export function redactLogLine(line: string): string {
 
   let redacted = line;
 
-  // Redact Complete Cookie / Set-Cookie header values
+  // 1. JSON fields
+  redacted = redacted.replace(JSON_FIELD_REGEX, '$1"[REDACTED]"');
+
+  // 2. Key-value env / config pairs
+  redacted = redacted.replace(ENV_KEY_VALUE_REGEX, '$1[REDACTED]');
+
+  // 3. Headers (Bearer & generic auth)
+  redacted = redacted.replace(HEADERS_BEARER_REGEX, '$1[REDACTED]');
+  redacted = redacted.replace(HEADERS_GENERIC_REGEX, '$1[REDACTED]');
+
+  // 4. Redact Complete Cookie / Set-Cookie header values with attribute preservation
   redacted = redacted.replace(
     /((?:Set-)?Cookie:\s*)([^\r\n]+)/gi,
     (_match, prefix, value) => {
-      // Check if there are attributes like ; Path=/; Secure after cookie value in Set-Cookie
       const semPos = value.indexOf(";");
       if (semPos !== -1) {
         const rest = value.slice(semPos);
-        // If rest only contains attributes like Path=, HttpOnly, Secure, SameSite, Domain, Max-Age, Expires
         if (/\b(?:Path|HttpOnly|Secure|SameSite|Domain|Max-Age|Expires)=/i.test(rest) || /;\s*(?:HttpOnly|Secure)\b/i.test(rest)) {
           return `${prefix}[REDACTED]${rest}`;
         }
@@ -27,17 +47,12 @@ export function redactLogLine(line: string): string {
     },
   );
 
-  // Redact Bearer / Authorization tokens
-  redacted = redacted.replace(
-    /(Authorization:\s*Bearer\s+)[^\r\n]+/gi,
-    "$1[REDACTED]",
-  );
-
-  // Redact API keys (sk-..., etc.)
-  redacted = redacted.replace(
-    /\b(sk-[a-zA-Z0-9_-]{8,})\b/g,
-    "[REDACTED]",
-  );
+  // 5. Standalone token patterns
+  redacted = redacted.replace(JWT_REGEX, '[REDACTED]');
+  redacted = redacted.replace(SK_SECRET_REGEX, '[REDACTED]');
+  redacted = redacted.replace(AWS_ID_REGEX, '[REDACTED]');
+  redacted = redacted.replace(OPAQUE_TOKEN_REGEX, '[REDACTED]');
+  redacted = redacted.replace(BEARER_STANDALONE_REGEX, 'Bearer [REDACTED]');
 
   return redacted;
 }

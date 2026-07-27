@@ -274,6 +274,9 @@ class ToolResultDataDto(ClosedModel):
     workspace_manifest_truncated: bool | None = Field(
         default=None, alias="workspaceManifestTruncated"
     )
+    workspace_diff_incomplete: bool | None = Field(
+        default=None, alias="workspaceDiffIncomplete"
+    )
     created: list[StrictStr] | None = None
     modified: list[StrictStr] | None = None
     deleted: list[StrictStr] | None = None

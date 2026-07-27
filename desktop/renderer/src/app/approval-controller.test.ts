@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { ApprovalRequest } from "../contracts.js";
-import { approvalReducer, initialApprovalState, type ApprovalState } from "./useApprovalController.js";
+import { approvalReducer, initialApprovalState } from "./useApprovalController.js";
+import { MAX_APPROVAL_FEEDBACK_BYTES } from "../../../shared/constants.js";
 
 function makeApproval(id: string, runId = "run-1"): ApprovalRequest {
   return {
@@ -75,4 +76,14 @@ test("approvalReducer preserves immutability and returns new references on chang
 
   const s2 = approvalReducer(s1, { type: "response_started", approvalId: "app-1", kind: "reject" });
   assert.notEqual(s2.respondingApprovalIds, s1.respondingApprovalIds);
+});
+
+test("MAX_APPROVAL_FEEDBACK_BYTES utf8 byte calculation boundary", () => {
+  const shortText = "OK";
+  const shortBytes = new TextEncoder().encode(shortText).byteLength;
+  assert.ok(shortBytes <= MAX_APPROVAL_FEEDBACK_BYTES);
+
+  const unicodeText = "测试".repeat(1000); // 3000 bytes
+  const unicodeBytes = new TextEncoder().encode(unicodeText).byteLength;
+  assert.ok(unicodeBytes > MAX_APPROVAL_FEEDBACK_BYTES);
 });

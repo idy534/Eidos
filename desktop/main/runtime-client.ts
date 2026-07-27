@@ -633,6 +633,30 @@ function isNotification(value: unknown): value is RuntimeNotification {
       && typeof params.delta === "string"
     );
   }
+  if (
+    value.method === "approval/requested"
+    || value.method === "approval/resolved"
+    || value.method === "approval/canceled"
+  ) {
+    const status = String(params.status);
+    return (
+      hasOnlyKeys(params, ["sessionId", "runId", "approvalId", "status"])
+      && typeof params.sessionId === "string"
+      && typeof params.runId === "string"
+      && typeof params.approvalId === "string"
+      && (
+        (value.method === "approval/requested" && status === "pending")
+        || (
+          value.method === "approval/resolved"
+          && ["approved", "rejected"].includes(status)
+        )
+        || (
+          value.method === "approval/canceled"
+          && ["canceled", "invalidated"].includes(status)
+        )
+      )
+    );
+  }
   return false;
 }
 

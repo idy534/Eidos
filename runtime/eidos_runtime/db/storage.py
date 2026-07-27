@@ -14,6 +14,7 @@ from eidos_runtime.db.database import (
     Database,
     Repository,
     WorkspaceIdentity,
+    now_ms as _now_ms,
 )
 from eidos_runtime.db.errors import (
     ActiveRunError,
@@ -30,7 +31,9 @@ from eidos_runtime.db.errors import (
     WorkspaceBoundaryError,
 )
 from eidos_runtime.db.recovery import recover_runtime_facts
+from eidos_runtime.db.events import event_from_row
 from eidos_runtime.db.repositories import (
+    AsyncOperationRepository,
     ContextRepository,
     ExecutionRepository,
     ExtensionRepository,
@@ -38,6 +41,7 @@ from eidos_runtime.db.repositories import (
     SessionRepository,
 )
 from eidos_runtime.db.repositories.context import RECENT_CONTEXT_STEPS
+from eidos_runtime.db.repositories.async_operations import AsyncOperation
 from eidos_runtime.db.repositories.sessions import DEFAULT_LIST_LIMIT
 from eidos_runtime.db.schema import SCHEMA_VERSION
 from eidos_runtime.model.client import ModelProfileSnapshot, ModelUsage
@@ -57,6 +61,7 @@ class SessionStore:
         self._execution: ExecutionRepository | None = None
         self._extensions: ExtensionRepository | None = None
         self._context: ContextRepository | None = None
+        self._async_operations: AsyncOperationRepository | None = None
 
     def initialize(self) -> None:
         self._database.initialize()
@@ -76,6 +81,7 @@ class SessionStore:
         self._execution = ExecutionRepository(self._database)
         self._extensions = ExtensionRepository(self._database)
         self._context = ContextRepository(self._database)
+        self._async_operations = AsyncOperationRepository(self._database)
 
     @property
     def data_directory(self) -> Path | None:
@@ -102,6 +108,115 @@ class SessionStore:
 
     def health(self) -> dict[str, object]:
         return self._database.health()
+
+    def pending_outbox_events(
+        self, *, through_event_id: int | None = None
+    ) -> tuple[dict[str, object], ...]:
+        sql = """
+            SELECT events.* FROM event_outbox
+            JOIN events ON events.id = event_outbox.event_id
+            WHERE event_outbox.status = 'pending'
+        """
+        parameters: tuple[object, ...] = ()
+        if through_event_id is not None:
+            sql += " AND event_outbox.event_id <= ?"
+            parameters = (through_event_id,)
+        sql += " ORDER BY event_outbox.event_id ASC"
+        with self.lock:
+            rows = self._database.connection().execute(
+                sql, parameters
+            ).fetchall()
+        return tuple(
+            event
+            for row in rows
+            if (event := event_from_row(row)) is not None
+        )
+
+    def mark_outbox_delivered(self, event_id: int) -> None:
+        with self.lock, self._database.connection() as connection:
+            update = connection.execute(
+                """
+                UPDATE event_outbox
+                SET status = 'delivered',
+                    attempt_count = attempt_count + 1,
+                    last_error_code = NULL,
+                    delivered_at = ?
+                WHERE event_id = ? AND status = 'pending'
+                """,
+                (_now_ms(), event_id),
+            )
+            if update.rowcount not in {0, 1}:
+                raise StorageError("event outbox update failed")
+
+    def record_outbox_failure(
+        self, event_id: int, error_code: str
+    ) -> None:
+        with self.lock, self._database.connection() as connection:
+            connection.execute(
+                """
+                UPDATE event_outbox
+                SET attempt_count = attempt_count + 1,
+                    last_error_code = ?
+                WHERE event_id = ? AND status = 'pending'
+                """,
+                (error_code, event_id),
+            )
+
+    def pending_outbox_count(self) -> int:
+        with self.lock:
+            row = self._database.connection().execute(
+                """
+                SELECT COUNT(*) FROM event_outbox
+                WHERE status = 'pending'
+                """
+            ).fetchone()
+        return int(row[0])
+
+    def accept_async_operation(
+        self,
+        *,
+        request_id: str | None,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+    ) -> tuple[AsyncOperation, bool]:
+        return self._repository(self._async_operations).accept(
+            request_id=request_id,
+            operation_id=operation_id,
+            scope=scope,
+            request=request,
+        )
+
+    def start_async_operation(
+        self, operation_id: str
+    ) -> AsyncOperation:
+        return self._repository(self._async_operations).start(operation_id)
+
+    def complete_async_operation(
+        self, operation_id: str, result: dict[str, object]
+    ) -> AsyncOperation:
+        return self._repository(self._async_operations).complete(
+            operation_id, result
+        )
+
+    def fail_async_operation(
+        self, operation_id: str, error_code: str
+    ) -> AsyncOperation:
+        return self._repository(self._async_operations).fail(
+            operation_id, error_code
+        )
+
+    def cancel_async_operation(
+        self, operation_id: str
+    ) -> AsyncOperation:
+        return self._repository(self._async_operations).cancel(operation_id)
+
+    def cancel_active_async_operations(
+        self,
+    ) -> tuple[AsyncOperation, ...]:
+        return self._repository(
+            self._async_operations
+        ).cancel_active()
 
     @staticmethod
     def _repository(repository: TRepository | None) -> TRepository:
@@ -688,6 +803,9 @@ class SessionStore:
             item_id,
             preconditions=preconditions,
         )
+
+    def side_effect_authorized(self, item_id: str) -> bool:
+        return self._repository(self._execution).side_effect_authorized(item_id)
 
     def has_read_evidence(
         self, run_id: str, path: str, sha256: str

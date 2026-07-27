@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 
 const errors = [];
@@ -44,29 +45,40 @@ for (const name of forbiddenDeclarations) {
 }
 
 // Verify runtime-client.ts imports from shared
-if (!/import\s+type\s+\{[\s\S]*\}\s+from\s+["']\.\.\/shared\/index\.js["']/.test(runtimeClientContent)) {
-  errors.push(`runtime-client.ts must import domain contracts from ../shared/index.js`);
+if (!/import\s+type\s+\{[\s\S]*\}\s+from\s+["']\.\.\/shared\/(?:index|domain-contracts)\.js["']/.test(runtimeClientContent)) {
+  errors.push(`runtime-client.ts must import domain contracts from ../shared/index.js or ../shared/domain-contracts.js`);
 }
 
 // 2. Verify Preload file
-const preloadContent = readFile("desktop/main/preload.cts");
-if (!preloadContent.includes('import { IPC } from "../shared/index.js"')) {
-  errors.push("preload.cts must import IPC from ../shared/index.js");
+const preloadPath = path.join(rootDir, "desktop/main/preload.ts");
+const preloadContent = fs.existsSync(preloadPath) ? fs.readFileSync(preloadPath, "utf8") : readFile("desktop/main/preload.cts");
+if (!preloadContent.includes('import { IPC } from "../shared/index.js"') && !preloadContent.includes('import { IPC } from "../shared/ipc-channels.js"')) {
+  errors.push("preload.ts must import IPC from shared");
 }
 if (/const\s+IPC\s*=/.test(preloadContent)) {
-  errors.push("preload.cts must not declare a local IPC object.");
+  errors.push("preload.ts must not declare a local IPC object.");
 }
 if (!preloadContent.includes("EidosRuntimeAPI")) {
-  errors.push("preload.cts must expose typed EidosRuntimeAPI.");
+  errors.push("preload.ts must expose typed EidosRuntimeAPI.");
 }
 
 // 3. Verify main.ts imports shared IPC and contracts
 const mainContent = readFile("desktop/main/main.ts");
-if (!/import\s+[\s\S]*IPC[\s\S]*from\s+["']\.\.\/shared\/index\.js["']/.test(mainContent)) {
-  errors.push("main.ts must import IPC channels from ../shared/index.js");
+if (!/import\s+[\s\S]*IPC[\s\S]*from\s+["']\.\.\/shared\/(?:index|ipc-channels)\.js["']/.test(mainContent)) {
+  errors.push("main.ts must import IPC channels from shared");
 }
 
-// 4. Verify no raw IPC channel string literals in renderer production code
+// 4. Check for raw string literals of known channels outside shared and test files
+const KNOWN_CHANNELS = [
+  "runtime:get-status",
+  "runtime:health",
+  "run:start",
+  "run:continue",
+  "approval:respond",
+  "app:new-task",
+  "app:open-workspace",
+];
+
 const rendererSrcDir = path.join(rootDir, "desktop/renderer/src");
 function scanForRawChannels(dir) {
   if (!fs.existsSync(dir)) return;
@@ -74,12 +86,16 @@ function scanForRawChannels(dir) {
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      scanForRawChannels(full);
+      if (entry.name !== "node_modules" && entry.name !== ".git") {
+        scanForRawChannels(full);
+      }
     } else if (entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) {
-      if (entry.name.endsWith(".test.ts") || entry.name.endsWith(".test.tsx")) continue;
+      if (entry.name.includes(".test.") || entry.name.includes("/test/")) continue;
       const content = fs.readFileSync(full, "utf8");
-      if (/["']eidos:[a-z_-]+:[a-z_-]+["']/.test(content)) {
-        errors.push(`Raw IPC channel string literal found in renderer production file: ${path.relative(rootDir, full)}`);
+      for (const channel of KNOWN_CHANNELS) {
+        if (content.includes(`"${channel}"`) || content.includes(`'${channel}'`)) {
+          errors.push(`Raw channel string literal "${channel}" found in production file ${path.relative(rootDir, full)}`);
+        }
       }
     }
   }
