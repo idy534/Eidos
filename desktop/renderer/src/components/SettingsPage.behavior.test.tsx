@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SettingsPage } from "./settings/SettingsPage.js";
 import type { ModelListResult, ModelStatus, RuntimeStatus } from "../contracts.js";
@@ -170,5 +170,48 @@ describe("SettingsPage DOM interaction & state behavior", () => {
     expect(cancelBtn).not.toBeDisabled();
 
     expect(screen.getByRole("alert")).toHaveTextContent("API Key 无效");
+  });
+
+  it("Integrates with useModelController: configure failure sets modelError and returns false safely without crashing", async () => {
+    const { useModelController } = await import("../app/useModelController.js");
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = {
+      getModelStatus: vi.fn().mockResolvedValue(mockModelStatus),
+      listModels: vi.fn().mockResolvedValue(mockModelList),
+      configureModel: vi.fn().mockRejectedValue(new Error("API Key verification failed")),
+    } as unknown as EidosRuntimeAPI;
+
+    function TestHarness() {
+      const [state, actions] = useModelController();
+      return (
+        <div>
+          <span data-testid="model-error">{state.error ?? "no-error"}</span>
+          <SettingsPage
+            {...defaultProps}
+            model={state.status ?? { provider: "deepseek", model: "v4", configured: false }}
+            modelList={state.list ?? mockModelList}
+            modelLoading={state.loading}
+            modelError={state.error}
+            modelConfiguring={state.configuring}
+            onConfigureModel={(key) => actions.configure(key)}
+          />
+        </div>
+      );
+    }
+
+    render(<TestHarness />);
+
+    const configBtn = screen.getByRole("button", { name: "配置 API Key" });
+    fireEvent.click(configBtn);
+
+    const input = screen.getByPlaceholderText("sk-…");
+    fireEvent.change(input, { target: { value: "sk-invalid-key-12345" } });
+
+    const saveBtn = screen.getByRole("button", { name: "保存配置" });
+
+    await act(async () => {
+      fireEvent.click(saveBtn);
+    });
+
+    expect(screen.getByTestId("model-error")).toHaveTextContent("操作失败，请查看 Runtime 日志。");
   });
 });

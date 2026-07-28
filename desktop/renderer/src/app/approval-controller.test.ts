@@ -23,7 +23,7 @@ test("approvalReducer adds and merges approvals without duplicates", () => {
 
   let state = approvalReducer(initialApprovalState, { type: "added", approval: app1 });
   assert.equal(state.approvals.length, 1);
-  assert.equal(state.approvals[0].id, "app-1");
+  assert.equal(state.approvals[0]?.id, "app-1");
 
   state = approvalReducer(state, { type: "merge", approvals: [app1, app2] });
   assert.equal(state.approvals.length, 2);
@@ -62,7 +62,7 @@ test("approvalReducer run_completed removes approvals, responding state, errors,
   state = approvalReducer(state, { type: "run_completed", runId: "run-1" });
 
   assert.equal(state.approvals.length, 1);
-  assert.equal(state.approvals[0].id, "app-2");
+  assert.equal(state.approvals[0]?.id, "app-2");
   assert.equal(state.expiredApprovalIds.has("app-1"), false);
   assert.equal(state.errorsByApprovalId["app-1"], undefined);
   assert.equal(state.feedbackDialogApproval, null);

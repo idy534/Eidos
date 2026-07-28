@@ -85,7 +85,7 @@ describe("DropdownMenu & ContextMenu DOM interaction behavior", () => {
     const item1 = screen.getByRole("menuitem", { name: "Item 1" });
     item1.focus();
 
-    fireEvent.click(item1);
+    await user.keyboard(" ");
     expect(mockItems[0].onClick).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });

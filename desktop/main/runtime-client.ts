@@ -948,10 +948,6 @@ function isToolCall(value: unknown): value is ToolCall {
 function isToolProvenance(value: unknown): value is ToolProvenance {
   return (
     isRecord(value)
-    && hasOnlyKeys(value, [
-      "kind", "sourceId", "sourceVersion", "contentHash",
-      "pluginId", "serverId", "skillId",
-    ])
     && ["builtin", "skill", "mcp"].includes(String(value.kind))
     && typeof value.sourceId === "string"
     && typeof value.sourceVersion === "string"
@@ -1107,7 +1103,16 @@ function approvalRequestFrom(
     if (typeof params.diff !== "string") {
       return undefined;
     }
-    return { ...params, id: message.id } as FileApprovalRequest;
+    return {
+      id: message.id,
+      sessionId: params.sessionId as string,
+      runId: params.runId as string,
+      itemId: params.itemId as string,
+      toolCallId: params.toolCallId as string,
+      kind: "file_change",
+      summary: params.summary as string,
+      diff: params.diff as string,
+    };
   }
   if (params.kind === "external_tool") {
     if (
@@ -1121,7 +1126,31 @@ function approvalRequestFrom(
     ) {
       return undefined;
     }
-    return { ...params, id: message.id } as ExternalToolApprovalRequest;
+    const provenance = params.provenance as ToolProvenance;
+    const projectedProvenance: ToolProvenance = {
+      kind: provenance.kind,
+      sourceId: provenance.sourceId,
+      sourceVersion: provenance.sourceVersion,
+      contentHash: provenance.contentHash,
+      ...(provenance.pluginId !== undefined ? { pluginId: provenance.pluginId } : {}),
+      ...(provenance.serverId !== undefined ? { serverId: provenance.serverId } : {}),
+      ...(provenance.skillId !== undefined ? { skillId: provenance.skillId } : {}),
+    };
+    return {
+      id: message.id,
+      sessionId: params.sessionId as string,
+      runId: params.runId as string,
+      itemId: params.itemId as string,
+      toolCallId: params.toolCallId as string,
+      kind: "external_tool",
+      summary: params.summary as string,
+      toolName: params.toolName as string,
+      arguments: params.arguments as Record<string, unknown>,
+      provenance: projectedProvenance,
+      permissionProfile: params.permissionProfile as "connector" | "workspace_read",
+      timeoutSeconds: params.timeoutSeconds as number,
+      envNames: [...(params.envNames as string[])],
+    };
   }
   if (params.kind === "network_access") {
     if (
@@ -1133,7 +1162,18 @@ function approvalRequestFrom(
     ) {
       return undefined;
     }
-    return { ...params, id: message.id } as NetworkApprovalRequest;
+    return {
+      id: message.id,
+      sessionId: params.sessionId as string,
+      runId: params.runId as string,
+      itemId: params.itemId as string,
+      toolCallId: params.toolCallId as string,
+      kind: "network_access",
+      summary: params.summary as string,
+      toolName: params.toolName as string,
+      hosts: [...(params.hosts as string[])],
+      target: params.target as string,
+    };
   }
   if (
     params.kind === "command_execution"
@@ -1142,7 +1182,19 @@ function approvalRequestFrom(
     && params.networkEnabled === false
     && isPositiveInteger(params.timeoutSeconds)
   ) {
-    return { ...params, id: message.id } as CommandApprovalRequest;
+    return {
+      id: message.id,
+      sessionId: params.sessionId as string,
+      runId: params.runId as string,
+      itemId: params.itemId as string,
+      toolCallId: params.toolCallId as string,
+      kind: "command_execution",
+      summary: params.summary as string,
+      command: params.command as string,
+      cwd: params.cwd as string,
+      networkEnabled: false,
+      timeoutSeconds: params.timeoutSeconds as number,
+    };
   }
   return undefined;
 }

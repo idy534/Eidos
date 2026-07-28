@@ -355,6 +355,9 @@ export function AppShell({ runtime }: AppShellProps) {
               respondingKindByApprovalId={respondingKindByApprovalId}
               expiredApprovalIds={approvalState.expiredApprovalIds}
               errorsByApprovalId={errorsByApprovalId}
+              approvalLoadError={approvalState.pendingApprovalsLoadError}
+              loadingPendingApprovals={approvalState.loadingPendingApprovals}
+              onRetryLoadPending={() => void approvalActions.loadPending()}
               onApprove={(request) => void approvalActions.approve(request)}
               onReject={(request) => approvalActions.openRejectDialog(request)}
             />

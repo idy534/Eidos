@@ -192,4 +192,70 @@ describe("useApprovalController real behavior", () => {
 
     expect(result.current[0].approvals).toEqual([]);
   });
+
+  it("loadPending manages loading state, deduplicates synchronous calls, preserves cards, handles failure and recovery", async () => {
+    let resolveListPending!: (approvals: ApprovalRequest[]) => void;
+    let rejectListPending!: (err: Error) => void;
+
+    const listPendingMock = vi.fn().mockImplementation(() => {
+      return new Promise<ApprovalRequest[]>((resolve, reject) => {
+        resolveListPending = resolve;
+        rejectListPending = reject;
+      });
+    });
+
+    setupMockRuntime({
+      listPendingApprovals: listPendingMock,
+    });
+
+    const { result } = renderHook(() => useApprovalController());
+
+    expect(result.current[0].loadingPendingApprovals).toBe(false);
+    expect(result.current[0].pendingApprovalsLoadError).toBeUndefined();
+
+    act(() => {
+      result.current[1].mergeApprovals([mockApprovalA]);
+    });
+
+    let p1!: Promise<boolean>;
+    let p2!: Promise<boolean>;
+    act(() => {
+      p1 = result.current[1].loadPending();
+      p2 = result.current[1].loadPending();
+    });
+
+    expect(listPendingMock).toHaveBeenCalledTimes(1);
+    expect(result.current[0].loadingPendingApprovals).toBe(true);
+    expect(result.current[0].approvals).toEqual([mockApprovalA]);
+
+    await act(async () => {
+      rejectListPending(new Error("IPC list failed"));
+      const [res1, res2] = await Promise.all([p1, p2]);
+      expect(res1).toBe(false);
+      expect(res2).toBe(false);
+    });
+
+    expect(result.current[0].loadingPendingApprovals).toBe(false);
+    expect(result.current[0].pendingApprovalsLoadError).toBe("审批状态加载失败，当前任务可能仍在等待你的处理。");
+    expect(result.current[0].approvals).toEqual([mockApprovalA]);
+
+    let p3!: Promise<boolean>;
+    act(() => {
+      p3 = result.current[1].loadPending();
+    });
+
+    expect(listPendingMock).toHaveBeenCalledTimes(2);
+    expect(result.current[0].loadingPendingApprovals).toBe(true);
+    expect(result.current[0].approvals).toEqual([mockApprovalA]);
+
+    await act(async () => {
+      resolveListPending([mockApprovalA, mockApprovalB]);
+      const res3 = await p3;
+      expect(res3).toBe(true);
+    });
+
+    expect(result.current[0].loadingPendingApprovals).toBe(false);
+    expect(result.current[0].pendingApprovalsLoadError).toBeUndefined();
+    expect(result.current[0].approvals).toEqual([mockApprovalA, mockApprovalB]);
+  });
 });

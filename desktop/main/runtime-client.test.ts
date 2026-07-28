@@ -677,3 +677,101 @@ test("drains a bounded notification burst even when its consumer is slow", async
     await rm(runtimeRoot, { recursive: true, force: true });
   }
 });
+
+test("projects Approval requests strictly, strips unknown fields, and respects message.id authority", async () => {
+  const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-approval-proj-runtime-"));
+  const packageRoot = path.join(runtimeRoot, "eidos_runtime");
+  await mkdir(packageRoot);
+  await writeFile(path.join(packageRoot, "__init__.py"), "", "utf8");
+
+  await writeFile(
+    path.join(packageRoot, "__main__.py"),
+    [
+      "import json, sys",
+      "def send(message): print(json.dumps(message, separators=(',', ':')), flush=True)",
+      "json.loads(sys.stdin.readline())",
+      "send({'jsonrpc':'2.0','id':'client-1','result':{'protocolVersion':1,'runtimeVersion':'0.3.0','capabilities':{'runShell':True,'modelConfigured':False}}})",
+      "send({'jsonrpc':'2.0','id':'server-file-1','method':'item/requestApproval','params':{'id':'forged-id','sessionId':'s1','runId':'r1','itemId':'i1','toolCallId':'tc1','summary':'file summary','kind':'file_change','diff':'diff text','apiKey':'secret-key','environment':{'PRIVATE_TOKEN':'secret'}}})",
+      "sys.stdin.readline()",
+      "send({'jsonrpc':'2.0','id':'server-cmd-1','method':'item/requestApproval','params':{'id':'forged-id','sessionId':'s1','runId':'r1','itemId':'i2','toolCallId':'tc2','summary':'cmd summary','kind':'command_execution','command':'ls','cwd':'/tmp','networkEnabled':False,'timeoutSeconds':30,'token':'secret-token'}})",
+      "sys.stdin.readline()",
+      "send({'jsonrpc':'2.0','id':'server-ext-1','method':'item/requestApproval','params':{'id':'forged-id','sessionId':'s1','runId':'r1','itemId':'i3','toolCallId':'tc3','summary':'ext summary','kind':'external_tool','toolName':'my_tool','arguments':{'foo':'bar'},'provenance':{'kind':'mcp','sourceId':'srv1','sourceVersion':'1.0','contentHash':'h1','extraProvField':'secret'},'permissionProfile':'connector','timeoutSeconds':60,'envNames':['PATH'],'internalDiagnostics':{'stack':'path'}}})",
+      "sys.stdin.readline()",
+      "send({'jsonrpc':'2.0','id':'server-net-1','method':'item/requestApproval','params':{'id':'forged-id','sessionId':'s1','runId':'r1','itemId':'i4','toolCallId':'tc4','summary':'net summary','kind':'network_access','toolName':'fetch','hosts':['api.example.com'],'target':'https://api.example.com','secretHeader':'Bearer ...'}})",
+      "sys.stdin.readline()",
+      "json.loads(sys.stdin.readline())",
+      "send({'jsonrpc':'2.0','id':'client-2','result':None})",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const receivedRequests: Array<Record<string, unknown>> = [];
+  try {
+    const client = new RuntimeClient({
+      pythonExecutable: pythonExecutable,
+      runtimeRoot,
+      onApprovalRequest: async (req) => {
+        receivedRequests.push(req as unknown as Record<string, unknown>);
+        return { decision: "approve" };
+      },
+    });
+
+    await client.initialize();
+    for (let i = 0; i < 50 && receivedRequests.length < 4; i += 1) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+
+    assert.equal(receivedRequests.length, 4);
+
+    // 1. file_change
+    const req1 = receivedRequests[0]!;
+    assert.equal(req1.id, "server-file-1");
+    assert.equal(req1.kind, "file_change");
+    assert.equal(req1.diff, "diff text");
+    assert.equal(req1.apiKey, undefined);
+    assert.equal(req1.environment, undefined);
+    assert.deepEqual(Object.keys(req1).sort(), [
+      "diff", "id", "itemId", "kind", "runId", "sessionId", "summary", "toolCallId",
+    ]);
+
+    // 2. command_execution
+    const req2 = receivedRequests[1]!;
+    assert.equal(req2.id, "server-cmd-1");
+    assert.equal(req2.kind, "command_execution");
+    assert.equal(req2.command, "ls");
+    assert.equal(req2.networkEnabled, false);
+    assert.equal(req2.token, undefined);
+    assert.deepEqual(Object.keys(req2).sort(), [
+      "command", "cwd", "id", "itemId", "kind", "networkEnabled", "runId", "sessionId", "summary", "timeoutSeconds", "toolCallId",
+    ]);
+
+    // 3. external_tool
+    const req3 = receivedRequests[2]!;
+    assert.equal(req3.id, "server-ext-1");
+    assert.equal(req3.kind, "external_tool");
+    assert.deepEqual(req3.arguments, { foo: "bar" });
+    assert.deepEqual(req3.envNames, ["PATH"]);
+    assert.equal(req3.internalDiagnostics, undefined);
+    const prov = req3.provenance as Record<string, unknown>;
+    assert.equal(prov.extraProvField, undefined);
+    assert.deepEqual(Object.keys(req3).sort(), [
+      "arguments", "envNames", "id", "itemId", "kind", "permissionProfile", "provenance", "runId", "sessionId", "summary", "timeoutSeconds", "toolCallId", "toolName",
+    ]);
+
+    // 4. network_access
+    const req4 = receivedRequests[3]!;
+    assert.equal(req4.id, "server-net-1");
+    assert.equal(req4.kind, "network_access");
+    assert.deepEqual(req4.hosts, ["api.example.com"]);
+    assert.equal(req4.secretHeader, undefined);
+    assert.deepEqual(Object.keys(req4).sort(), [
+      "hosts", "id", "itemId", "kind", "runId", "sessionId", "summary", "target", "toolCallId", "toolName",
+    ]);
+
+    await client.shutdown();
+    await client.waitForExit();
+  } finally {
+    await rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+

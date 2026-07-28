@@ -268,7 +268,8 @@ describe("useModelController real behavior", () => {
     api.configureModel = vi.fn().mockRejectedValue(new Error("Invalid API key"));
 
     await act(async () => {
-      await expect(result.current[1].configure("bad-key")).rejects.toThrow("Invalid API key");
+      const res = await result.current[1].configure("bad-key");
+      expect(res).toBe(false);
     });
 
     expect(result.current[0].error).toBe("操作失败，请查看 Runtime 日志。");
