@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import threading
 
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ModelToolDefinition
-from eidos_runtime.extensions.skills import SkillCreation
-from eidos_runtime.tools.registry import StepToolSnapshot, ToolRegistry
-from eidos_runtime.tools.contracts import ToolResultProjection, project_tool_result
-from eidos_runtime.tools.workspace import FileChange
+from eidos_runtime.tools.registry import (
+    StepToolBinding,
+    StepToolSnapshot,
+    ToolDescriptor,
+    ToolRegistry,
+)
+from eidos_runtime.tools.contracts import ToolResultProjection
 
 
 @dataclass(frozen=True)
@@ -18,27 +20,62 @@ class ToolValidationResult:
 
 @dataclass(frozen=True)
 class ToolDispatchPlan:
-    requires_approval: bool
-    execution_kind: str
-    timeout_seconds: int = 600
-    side_effect: str = "external"
-    contract_hash: str | None = None
+    binding: StepToolBinding | None
+
+    @property
+    def descriptor(self) -> ToolDescriptor | None:
+        return self.binding.descriptor if self.binding is not None else None
+
+    @property
+    def requires_approval(self) -> bool:
+        return bool(
+            self.descriptor
+            and self.descriptor.execution_policy
+            and self.descriptor.execution_policy.approval_required
+        )
+
+    @property
+    def timeout_seconds(self) -> int:
+        return (
+            self.descriptor.execution_policy.timeout_seconds
+            if self.descriptor is not None
+            and self.descriptor.execution_policy is not None
+            else 600
+        )
+
+    @property
+    def side_effect(self) -> str:
+        return (
+            self.descriptor.execution_policy.side_effect
+            if self.descriptor is not None
+            and self.descriptor.execution_policy is not None
+            else "external"
+        )
+
+    @property
+    def contract_hash(self) -> str | None:
+        return (
+            self.binding.contract_fingerprint
+            if self.binding is not None else None
+        )
 
     @property
     def is_shell(self) -> bool:
-        return self.execution_kind == "shell"
+        return self.side_effect == "shell"
 
     @property
     def is_external(self) -> bool:
-        return self.execution_kind == "external"
+        return self.side_effect == "external"
 
     @property
     def is_eidos_state(self) -> bool:
-        return self.execution_kind == "eidos_state"
+        return self.side_effect == "eidos_state"
 
     @property
     def is_network_eidos_state(self) -> bool:
-        return self.execution_kind == "network_eidos_state"
+        return bool(
+            self.descriptor and self.descriptor.spec.name == "skill_install"
+        )
 
 
 class ToolDispatcher:
@@ -64,14 +101,14 @@ class ToolDispatcher:
             entry = self._registry.get(call.name) if isinstance(call, ModelToolCall) else None
             if available_names is not None and isinstance(call, ModelToolCall) and call.name not in available_names:
                 entry = None
-            contract_arguments = (
+            contract = (
                 entry.validate_arguments(call.arguments)
-                if entry is not None and entry.input_model is not None
-                else call.arguments
+                if entry is not None
+                else None
             )
             effective = (
-                entry.adapter.effective_arguments(contract_arguments)
-                if entry is not None and contract_arguments is not None
+                contract.normalized_arguments
+                if contract is not None and contract.valid
                 else None
             )
             if (
@@ -88,7 +125,9 @@ class ToolDispatcher:
                     (),
                     (
                         "TOOL_ARGUMENT_CONTRACT_VIOLATION"
-                        if entry is not None and contract_arguments is None
+                        if entry is not None and (
+                            contract is None or not contract.valid
+                        )
                         else "invalid_tool_call"
                     ),
                 )
@@ -125,34 +164,48 @@ class ToolDispatcher:
     def plan(
         self,
         call: ModelToolCall,
-        expected_contract_hash: str | None = None,
+        expected_binding: StepToolBinding | str | None = None,
     ) -> ToolDispatchPlan:
-        """Classify the validated call without exposing ToolExecutor metadata."""
-        entry = self._registry.get(call.name)
-        if entry is None:
-            return ToolDispatchPlan(False, "unavailable")
-        return ToolDispatchPlan(
-            entry.spec.approval_required,
-            entry.adapter.execution_kind,
-            entry.spec.timeout_seconds,
-            entry.spec.side_effect,
-            expected_contract_hash or _spec_hash(entry),
-        )
+        """Bind the call to the exact immutable descriptor advertised for its Step."""
+        if isinstance(expected_binding, StepToolBinding):
+            binding = (
+                expected_binding
+                if expected_binding.tool_name == call.name
+                else None
+            )
+        else:
+            entry = self._registry.get(call.name)
+            expected_hash = (
+                expected_binding if isinstance(expected_binding, str) else None
+            )
+            binding = (
+                StepToolBinding(call.name, entry.contract_fingerprint, entry)
+                if entry is not None
+                and (
+                    expected_hash is None
+                    or entry.contract_fingerprint == expected_hash
+                )
+                else None
+            )
+        return ToolDispatchPlan(binding)
 
     def validate_execution(
         self, call: ModelToolCall, plan: ToolDispatchPlan
     ) -> bool:
-        entry = self._registry.get(call.name)
+        validation = (
+            plan.descriptor.validate_arguments(call.arguments)
+            if plan.descriptor is not None
+            else None
+        )
         return (
-            entry is not None
-            and entry.adapter.execution_kind == plan.execution_kind
-            and entry.spec.timeout_seconds == plan.timeout_seconds
-            and entry.spec.side_effect == plan.side_effect
-            and (
-                plan.contract_hash is None
-                or _spec_hash(entry) == plan.contract_hash
-            )
-            and entry.adapter.effective_arguments(call.arguments) == call.arguments
+            plan.binding is not None
+            and plan.descriptor is not None
+            and plan.binding.tool_name == call.name
+            and plan.binding.contract_fingerprint
+            == plan.descriptor.contract_fingerprint
+            and validation is not None
+            and validation.valid
+            and validation.normalized_arguments == call.arguments
         )
 
     def validate_result(
@@ -172,154 +225,17 @@ class ToolDispatcher:
         entry = self._registry.get(tool_name)
         if entry is None:
             raise ValueError("tool_contract_unavailable")
-        return project_tool_result(tool_name, result)
+        assert entry.projector is not None
+        return entry.projector.project(entry, result)
 
     def is_parallel_read_batch(self, calls: tuple[ModelToolCall, ...]) -> bool:
         return len(calls) > 1 and all(
             (entry := self._registry.get(call.name)) is not None
             and entry.spec.batch_policy == "parallel"
-            and entry.adapter.execution_kind == "read"
+            and entry.execution_policy is not None
+            and entry.execution_policy.concurrency.mode == "parallel_safe"
             for call in calls
         )
-
-    def execute_read_only(
-        self, call: ModelToolCall, cancel: threading.Event
-    ) -> dict[str, object]:
-        """Execute only the tools whose existing spec has no side effect."""
-        entry = self._registry.get(call.name)
-        if entry is None:
-            return _unavailable(call.name)
-        return entry.adapter.execute(call.arguments, cancel)
-
-    def execute_external(
-        self, call: ModelToolCall, cancel: threading.Event
-    ) -> dict[str, object]:
-        entry = self._registry.get(call.name)
-        if entry is None or entry.adapter.execution_kind != "external":
-            return _unavailable(call.name)
-        return entry.adapter.execute(call.arguments, cancel)
-
-    def external_approval_details(self, tool_name: str) -> dict[str, object]:
-        entry = self._registry.get(tool_name)
-        if entry is None:
-            return {}
-        adapter = entry.adapter
-        connection = getattr(adapter, "connection", None)
-        config = getattr(connection, "config", None)
-        return {
-            "provenance": self.provenance(tool_name),
-            "permissionProfile": getattr(config, "permission_profile", None),
-            "timeoutSeconds": entry.spec.timeout_seconds,
-            "envNames": list(getattr(config, "env_names", ())),
-        }
-
-    def consume_activations(self, tool_name: str) -> tuple[str, ...]:
-        entry = self._registry.get(tool_name)
-        consume = getattr(entry.adapter, "consume_activations", None) if entry else None
-        return consume() if consume is not None else ()
-
-    def prepare_file_change(
-        self, tool_name: str, arguments: dict[str, object], cancel: threading.Event
-    ) -> FileChange | dict[str, object]:
-        entry = self._registry.get(tool_name)
-        prepare = getattr(entry.adapter, "prepare_file_change", None) if entry else None
-        return prepare(arguments, cancel) if prepare else _unavailable(tool_name)
-
-    def commit_file_change(
-        self, tool_name: str, change: FileChange, cancel: threading.Event
-    ) -> dict[str, object]:
-        entry = self._registry.get(tool_name)
-        commit = getattr(entry.adapter, "commit_file_change", None) if entry else None
-        return commit(change, cancel) if commit else _unavailable(tool_name)
-
-    def prepare_eidos_state(
-        self, tool_name: str, arguments: dict[str, object], cancel: threading.Event
-    ) -> SkillCreation | dict[str, object]:
-        entry = self._registry.get(tool_name)
-        prepare = getattr(entry.adapter, "prepare_eidos_state", None) if entry else None
-        return prepare(arguments, cancel) if prepare else _unavailable(tool_name)
-
-    def commit_eidos_state(
-        self, tool_name: str, change: SkillCreation, cancel: threading.Event
-    ) -> dict[str, object]:
-        entry = self._registry.get(tool_name)
-        commit = getattr(entry.adapter, "commit_eidos_state", None) if entry else None
-        return commit(change, cancel) if commit else _unavailable(tool_name)
-
-    def network_approval_details(
-        self, tool_name: str, arguments: dict[str, object]
-    ) -> dict[str, object]:
-        entry = self._registry.get(tool_name)
-        details = getattr(entry.adapter, "network_approval_details", None) if entry else None
-        return details(arguments) if details else {}
-
-    def download_eidos_state(
-        self, tool_name: str, arguments: dict[str, object], cancel: threading.Event
-    ) -> SkillCreation | dict[str, object]:
-        entry = self._registry.get(tool_name)
-        download = getattr(entry.adapter, "download_eidos_state", None) if entry else None
-        return download(arguments, cancel) if download else _unavailable(tool_name)
-
-    def prepare_shell(self, tool_name: str, cwd: str, cancel: threading.Event):
-        entry = self._registry.get(tool_name)
-        prepare = getattr(entry.adapter, "prepare_shell", None) if entry else None
-        if prepare is None:
-            raise RuntimeError("tool_unavailable")
-        return prepare(cwd, cancel)
-
-    def refresh_workspace_index(self, cancel: threading.Event):
-        for entry in self._registry.entries:
-            executor = getattr(entry.adapter, "executor", None)
-            refresh = getattr(
-                executor, "refresh_workspace_index", None
-            )
-            if refresh is not None:
-                return refresh(cancel)
-        raise RuntimeError("workspace_index_unavailable")
-
-    @property
-    def workspace(self):
-        for entry in self._registry.entries:
-            workspace = getattr(entry.adapter, "workspace", None)
-            if workspace is not None:
-                return workspace
-        raise RuntimeError("workspace_unavailable")
-
-    @property
-    def workspace_index(self):
-        for entry in self._registry.entries:
-            executor = getattr(entry.adapter, "executor", None)
-            index = getattr(executor, "workspace_index", None)
-            if index is not None:
-                return index
-        raise RuntimeError("workspace_index_unavailable")
-
-
-def _unavailable(tool_name: str) -> dict[str, object]:
-    return {
-        "schemaVersion": 1,
-        "toolContractVersion": 1,
-        "toolName": tool_name,
-        "outcome": "unavailable",
-        "code": "tool_unavailable",
-        "summary": "Tool is unavailable",
-        "data": {},
-        "sideEffectsMayExist": False,
-        "reconciliationRequired": False,
-    }
-
-
-def _spec_hash(entry) -> str:
-    import hashlib
-    import json
-
-    return hashlib.sha256(json.dumps(
-        entry.spec.model_dump(mode="json", by_alias=True),
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")).hexdigest()
-
 
 def _valid_arguments(value: object) -> bool:
     if not isinstance(value, dict):

@@ -7,7 +7,7 @@ import logging
 import sqlite3
 import threading
 import time
-from typing import Callable, Mapping, Protocol
+from typing import Callable
 
 from pydantic import BaseModel, ConfigDict
 
@@ -36,7 +36,8 @@ from eidos_runtime.runtime.resource_registry import (
 from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
-from eidos_runtime.tools.contracts import project_tool_result
+from eidos_runtime.tools.contracts import GENERIC_PROJECTOR
+from eidos_runtime.tools.registry import ToolConcurrencyPolicy
 
 
 _active_lock = threading.Lock()
@@ -46,6 +47,66 @@ logger = logging.getLogger("eidos.runtime")
 
 class ToolInfrastructureError(RuntimeError):
     pass
+
+
+class ToolConcurrencyGate:
+    """Small cancellation-aware gate for immutable descriptor policies."""
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._active = 0
+        self._exclusive = False
+        self._keys: set[str] = set()
+
+    def acquire(
+        self,
+        policy: ToolConcurrencyPolicy,
+        cancel: threading.Event,
+    ) -> "_ToolPermit":
+        keys = set((*policy.resource_keys, *policy.exclusive_keys))
+        with self._condition:
+            while (
+                self._exclusive
+                or policy.mode == "exclusive" and self._active > 0
+                or bool(self._keys & keys)
+                or self._active >= policy.max_concurrency
+            ):
+                if cancel.is_set():
+                    raise RuntimeCancelled
+                self._condition.wait(0.05)
+            if cancel.is_set():
+                raise RuntimeCancelled
+            self._active += 1
+            self._exclusive = policy.mode == "exclusive"
+            self._keys.update(keys)
+        return _ToolPermit(self, keys)
+
+    def _release(self, keys: set[str]) -> None:
+        with self._condition:
+            self._active -= 1
+            self._exclusive = False
+            self._keys.difference_update(keys)
+            self._condition.notify_all()
+
+    @property
+    def active_permits(self) -> int:
+        with self._condition:
+            return self._active
+
+
+class _ToolPermit:
+    def __init__(self, gate: ToolConcurrencyGate, keys: set[str]) -> None:
+        self._gate = gate
+        self._keys = keys
+        self._closed = False
+
+    def __enter__(self) -> "_ToolPermit":
+        return self
+
+    def __exit__(self, *_error: object) -> None:
+        if not self._closed:
+            self._closed = True
+            self._gate._release(self._keys)
 
 
 _INFRASTRUCTURE_ERRORS = (
@@ -97,16 +158,6 @@ class VerifiedToolExecutionResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
     result: dict[str, object]
-
-
-class ToolHandler(Protocol):
-    def execute(
-        self,
-        run_id: str,
-        item: dict[str, object],
-        call: ModelToolCall,
-        cancel: threading.Event,
-    ) -> HandlerOutcome: ...
 
 
 class _DeadlineCancellation(threading.Event):
@@ -168,7 +219,7 @@ class ToolExecutionController:
         self,
         store: SessionStore,
         dispatcher: ToolDispatcher,
-        handlers: Mapping[str, ToolHandler],
+        runtime_context: object,
         events: RuntimeEvents,
         sensitive: SensitiveScanner,
         *,
@@ -178,7 +229,7 @@ class ToolExecutionController:
     ) -> None:
         self.store = store
         self.dispatcher = dispatcher
-        self.handlers = handlers
+        self.runtime_context = runtime_context
         self.events = events
         self.sensitive = sensitive
         self.approval = approval
@@ -256,8 +307,13 @@ class ToolExecutionController:
         controlled_cancel = _DeadlineCancellation(
             cancel, effective_deadline, self.monotonic
         )
+        runtime = (
+            plan.descriptor.runtime
+            if plan.descriptor is not None else None
+        )
         self._execution_state.intent_started = False
         self._execution_state.authorized_effects = 0
+        self._execution_state.cleanup_attempted = False
         self._execution_state.phase = ToolExecutionPhase.VALIDATING
         resource = self.resources.register(
             RuntimeResourceKind.TOOL_EXECUTION,
@@ -299,8 +355,7 @@ class ToolExecutionController:
                 )
             else:
                 self._execution_state.phase = ToolExecutionPhase.PREPARING
-                handler = self.handlers.get(plan.execution_kind)
-                if handler is None:
+                if runtime is None:
                     outcome = HandlerOutcome(
                         tool_error(
                             call.name,
@@ -313,9 +368,15 @@ class ToolExecutionController:
                 else:
                     try:
                         hit_fault("tool_block")
-                        outcome = handler.execute(
-                            run_id, item, call, controlled_cancel
+                        outcome = runtime.invoke(
+                            self.runtime_context,
+                            run_id,
+                            item,
+                            call,
+                            controlled_cancel,
                         )
+                        if not isinstance(outcome, HandlerOutcome):
+                            raise RuntimeError("invalid tool runtime outcome")
                         hit_fault("tool_late_result")
                         if (
                             plan.side_effect != "none"
@@ -414,7 +475,7 @@ class ToolExecutionController:
             try:
                 outcome = replace(
                     outcome,
-                    result=self._validate_result(call.name, outcome.result),
+                    result=self._validate_result(plan, outcome.result),
                 )
             except (TypeError, ValueError):
                 effects_possible = (
@@ -473,9 +534,9 @@ class ToolExecutionController:
             try:
                 outcome = replace(
                     outcome,
-                    result=self._validate_result(call.name, outcome.result),
+                    result=self._validate_result(plan, outcome.result),
                 )
-                projection = self._project_result(call.name, outcome.result)
+                projection = self._project_result(plan, outcome.result)
             except (TypeError, ValueError):
                 effects_possible = (
                     self._execution_state.authorized_effects > 0
@@ -496,13 +557,26 @@ class ToolExecutionController:
                 )
                 outcome = replace(
                     outcome,
-                    result=self._validate_result(call.name, outcome.result),
+                    result=self._validate_result(plan, outcome.result),
                 )
-                projection = project_tool_result(call.name, outcome.result)
+                projection = GENERIC_PROJECTOR.project(
+                    plan.descriptor, outcome.result
+                )
             outcome = replace(
                 outcome,
                 progress_fingerprint=projection.progress_fingerprint,
             )
+            if runtime is not None:
+                self._execution_state.cleanup_attempted = True
+                try:
+                    runtime.cleanup(
+                        self.runtime_context,
+                        str(self.current_phase or ToolExecutionPhase.VERIFYING),
+                    )
+                except Exception as error:
+                    raise ToolInfrastructureError(
+                        "TOOL_CLEANUP_FAILED"
+                    ) from error
             self._execution_state.phase = ToolExecutionPhase.COMMITTING
             duration_ms = max(0, int((self.monotonic() - started) * 1000))
             mutation = self.store.complete_tool_item_once_committed(
@@ -519,6 +593,13 @@ class ToolExecutionController:
                     separators=(",", ":"),
                     sort_keys=True,
                 ),
+                ui_result_json=json.dumps(
+                    projection.ui_result,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                progress_fingerprint=projection.progress_fingerprint,
                 item_status=outcome.item_status,
                 tool_status=outcome.tool_status,
                 workspace_changed=outcome.workspace_changed,
@@ -527,7 +608,7 @@ class ToolExecutionController:
             )
             self.events.publish(
                 mutation,
-                item=_ui_item(mutation.value, projection.ui_result),
+                item=mutation.value,
             )
             self._execution_state.phase = (
                 ToolExecutionPhase.COMPLETED
@@ -555,8 +636,8 @@ class ToolExecutionController:
                         plan.side_effect != "none"
                     ),
                 )
-                infrastructure_projection = project_tool_result(
-                    call.name, infrastructure_result
+                infrastructure_projection = self._project_result(
+                    plan, infrastructure_result
                 )
                 mutation = self.store.complete_tool_item_once_committed(
                     str(item["id"]),
@@ -572,6 +653,15 @@ class ToolExecutionController:
                         separators=(",", ":"),
                         sort_keys=True,
                     ),
+                    ui_result_json=json.dumps(
+                        infrastructure_projection.ui_result,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    progress_fingerprint=(
+                        infrastructure_projection.progress_fingerprint
+                    ),
                     item_status="failed",
                     tool_status="failed",
                     workspace_changed=False,
@@ -582,9 +672,7 @@ class ToolExecutionController:
                 )
                 self.events.publish(
                     mutation,
-                    item=_ui_item(
-                        mutation.value, infrastructure_projection.ui_result
-                    ),
+                    item=mutation.value,
                 )
             except _INFRASTRUCTURE_ERRORS:
                 logger.exception(
@@ -596,20 +684,44 @@ class ToolExecutionController:
                 "TOOL_INFRASTRUCTURE_FAILURE"
             ) from error
         finally:
+            if (
+                runtime is not None
+                and not getattr(
+                    self._execution_state, "cleanup_attempted", False
+                )
+            ):
+                try:
+                    runtime.cleanup(
+                        self.runtime_context,
+                        str(
+                            self.current_phase
+                            or ToolExecutionPhase.FAILED
+                        ),
+                    )
+                except Exception:
+                    logger.exception("Tool runtime cleanup failed")
             self._execution_state.intent_started = False
             self._execution_state.authorized_effects = 0
+            self._execution_state.cleanup_attempted = False
             _execution_finished()
             resource.close()
 
     def _validate_result(
-        self, tool_name: str, result: dict[str, object]
+        self, plan: ToolDispatchPlan, result: dict[str, object]
     ) -> dict[str, object]:
-        return self.dispatcher.validate_result(tool_name, result)
+        if plan.descriptor is None:
+            raise ValueError("tool_contract_unavailable")
+        validated = plan.descriptor.validate_result(result)
+        if validated.get("toolName") != plan.descriptor.spec.name:
+            raise ValueError("tool_result_name_mismatch")
+        return validated
 
     def _project_result(
-        self, tool_name: str, result: dict[str, object]
+        self, plan: ToolDispatchPlan, result: dict[str, object]
     ):
-        return self.dispatcher.project_result(tool_name, result)
+        if plan.descriptor is None or plan.descriptor.projector is None:
+            raise ValueError("tool_contract_unavailable")
+        return plan.descriptor.projector.project(plan.descriptor, result)
 
     @staticmethod
     def _interrupted(
@@ -644,23 +756,6 @@ def _already_interrupted(result: dict[str, object], reason: str) -> bool:
         reason == "timeout"
         and ("timeout" in code or "timed_out" in code)
     )
-
-
-def _ui_item(
-    item: dict[str, object], ui_result: dict[str, object]
-) -> dict[str, object]:
-    projected = dict(item)
-    tool_call = item.get("toolCall")
-    if isinstance(tool_call, dict):
-        projected_call = dict(tool_call)
-        projected_call["resultJson"] = json.dumps(
-            ui_result,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        projected["toolCall"] = projected_call
-    return projected
 
 
 def active_tool_execution_count() -> int:

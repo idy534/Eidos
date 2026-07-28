@@ -34,8 +34,15 @@ from eidos_runtime.runtime.tool_execution import (  # noqa: E402
 from eidos_runtime.sandbox.sensitive import default_scanner  # noqa: E402
 from eidos_runtime.tools.contracts import (  # noqa: E402
     EmptyResultData,
+    ListFilesInput,
     project_tool_result,
     result_model,
+)
+from eidos_runtime.tools.registry import (  # noqa: E402
+    StepToolBinding,
+    ToolProvenance,
+    ToolRegistryEntry,
+    ToolSpec,
 )
 
 
@@ -107,6 +114,47 @@ class _ControlledEffect:
         return _SUCCESS
 
 
+class _RuntimeContext:
+    def __init__(self, handler: _ControlledEffect) -> None:
+        self.handler = handler
+
+    def invoke_external(self, _runtime, run_id, item, call, cancel):
+        return self.handler.execute(run_id, item, call, cancel)
+
+
+class _EffectAdapter:
+    def execute(self, _arguments, _cancel):
+        return _SUCCESS
+
+
+def _effect_plan() -> ToolDispatchPlan:
+    spec = ToolSpec.model_validate({
+        "name": "effect",
+        "description": "fixture",
+        "sideEffect": "external",
+        "approvalRequired": True,
+        "timeoutSeconds": 5,
+        "batchPolicy": "single",
+        "visibility": "direct",
+        "inputSchema": ListFilesInput.model_json_schema(by_alias=True),
+        "resultSchema": result_model(
+            EmptyResultData
+        ).model_json_schema(by_alias=True),
+    })
+    provenance = ToolProvenance.model_validate({
+        "kind": "builtin",
+        "sourceId": "fixture",
+        "sourceVersion": "1",
+        "contentHash": "a" * 64,
+    })
+    descriptor = ToolRegistryEntry(
+        spec, provenance, _EffectAdapter(), ListFilesInput, EmptyResultData
+    )
+    return ToolDispatchPlan(StepToolBinding(
+        "effect", descriptor.contract_fingerprint, descriptor
+    ))
+
+
 class ToolStateMachineTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(
@@ -157,7 +205,7 @@ class ToolStateMachineTests(unittest.TestCase):
         controller = ToolExecutionController(
             self.store,
             _Dispatcher(),
-            {"external": handler},
+            _RuntimeContext(handler),
             events,
             default_scanner(),
             approval=approval,
@@ -172,7 +220,7 @@ class ToolStateMachineTests(unittest.TestCase):
             run_id=self.run["id"],
             item=self._item(),
             call=self.call,
-            plan=ToolDispatchPlan(True, "external", 5, "external"),
+            plan=_effect_plan(),
             cancel=threading.Event(),
             deadline=None,
         )

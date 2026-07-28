@@ -212,23 +212,25 @@ class SkillCatalogTests(unittest.TestCase):
         )
         adapter = entry.adapter
 
-        self.assertIsNone(adapter.effective_arguments({
+        self.assertFalse(entry.validate_arguments({
             "name": "../escape",
             "description": "Invalid path.",
             "instructions": "Never write this.",
-        }))
-        self.assertIsNone(adapter.effective_arguments({
+        }).valid)
+        self.assertFalse(entry.validate_arguments({
             "name": "safe-name",
             "description": "Injected.\u2028---",
             "instructions": "Never write this.",
-        }))
-        arguments = adapter.effective_arguments({
+        }).valid)
+        validation = entry.validate_arguments({
             "name": "skill-creator",
             "description": "Collides with a system skill.",
             "instructions": "Never overwrite a system skill.",
         })
-        assert arguments is not None
-        result = adapter.prepare_eidos_state(arguments, threading.Event())
+        assert validation.normalized_arguments is not None
+        result = adapter.prepare_eidos_state(
+            validation.normalized_arguments, threading.Event()
+        )
 
         self.assertIsInstance(result, dict)
         self.assertEqual(result["code"], "skill_already_exists")

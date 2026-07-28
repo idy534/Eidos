@@ -857,11 +857,6 @@ class RuntimeHardeningTests(unittest.TestCase):
 
 
 class _DeferredAdapter:
-    execution_kind = "read"
-
-    def effective_arguments(self, arguments: object) -> dict[str, object] | None:
-        return {} if arguments == {} else None
-
     def execute(
         self, _arguments: dict[str, object], _cancel: threading.Event
     ) -> dict[str, object]:

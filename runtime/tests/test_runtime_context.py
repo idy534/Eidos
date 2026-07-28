@@ -613,10 +613,10 @@ class ContextPersistenceTests(unittest.TestCase):
         ])
         original = ReadOnlyToolHandler.execute
 
-        def fail_one(handler, run_id, item, call, cancel):
+        def fail_one(handler, run_id, item, call, cancel, runtime):
             if call.provider_call_id == "bad":
                 raise OSError("fixture failure")
-            return original(handler, run_id, item, call, cancel)
+            return original(handler, run_id, item, call, cancel, runtime)
 
         with patch.object(ReadOnlyToolHandler, "execute", fail_one):
             RuntimeEngine(self.store, model, lambda _message: None).run(

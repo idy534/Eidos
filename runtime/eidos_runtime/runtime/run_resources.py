@@ -9,6 +9,7 @@ from eidos_runtime.extensions.plugins import PluginCatalog
 from eidos_runtime.extensions.skills import (
     RetainedContextSection,
     SkillCatalog,
+    SkillCatalogSnapshot,
     SkillReadError,
 )
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
@@ -48,6 +49,7 @@ class RunResources:
         self.dispatcher: ToolDispatcher | None = None
         self.retained_context: tuple[RetainedContextSection, ...] = ()
         self.selected_skill_context: tuple[RetainedContextSection, ...] = ()
+        self.skill_catalog_snapshot: SkillCatalogSnapshot | None = None
         self._closed = False
 
     def __enter__(self) -> "RunResources":
@@ -62,10 +64,15 @@ class RunResources:
                 sandbox=self.mcp_sandbox,
                 resource_registry=self.resources,
             )
-            self._set_registry(self.mcp.start())
+            external_entries = self.mcp.start()
+            self.skill_catalog_snapshot = self.skills.catalog_snapshot(
+                self.extension_snapshot
+            )
+            self._set_registry(external_entries)
             self._activate_mentions(self.user_input)
-            catalog = self.skills.catalog_snapshot(self.extension_snapshot)
-            self.retained_context = (self.skills.render_catalog(catalog),)
+            self.retained_context = (
+                self.skills.render_catalog(self.skill_catalog_snapshot),
+            )
             self._select_skills(self.user_input, turn_id=self.run_id)
             return self
         except SkillReadError as error:
@@ -119,12 +126,16 @@ class RunResources:
     def _set_registry(
         self, external_entries: tuple[ToolRegistryEntry, ...]
     ) -> None:
-        if self.tool_executor is None or self.skills is None:
+        if (
+            self.tool_executor is None
+            or self.skills is None
+            or self.skill_catalog_snapshot is None
+        ):
             raise RuntimeError("run resources are not started")
         base = ToolRegistry.build(
             builtin_entries=(
                 *self.tool_executor.registry.entries,
-                *self.skills.tool_entries(self.extension_snapshot),
+                *self.skills.tool_entries(self.skill_catalog_snapshot),
             ),
             external_entries=external_entries,
         )
@@ -154,12 +165,12 @@ class RunResources:
             self.store.activate_tools(self.run_id, mentioned_tools)
 
     def _select_skills(self, user_input: str, *, turn_id: str) -> None:
-        if self.skills is None:
+        if self.skills is None or self.skill_catalog_snapshot is None:
             raise RuntimeError("run resources are not started")
         selected = self.skills.select_explicit(
-            self.extension_snapshot, turn_id, user_input
+            self.skill_catalog_snapshot, turn_id, user_input
         )
         self.selected_skill_context = (
-            (self.skills.render_selected(self.extension_snapshot, selected),)
+            (self.skills.render_selected(self.skill_catalog_snapshot, selected),)
             if selected.selected_qualified_ids else ()
         )

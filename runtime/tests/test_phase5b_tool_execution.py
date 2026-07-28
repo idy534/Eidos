@@ -29,8 +29,15 @@ from eidos_runtime.runtime.tool_execution import (  # noqa: E402
 from eidos_runtime.sandbox.sensitive import default_scanner  # noqa: E402
 from eidos_runtime.tools.contracts import (  # noqa: E402
     ReadFileResultData,
+    ReadFileInput,
     project_tool_result,
     result_model,
+)
+from eidos_runtime.tools.registry import (  # noqa: E402
+    StepToolBinding,
+    ToolProvenance,
+    ToolRegistryEntry,
+    ToolSpec,
 )
 
 
@@ -103,10 +110,7 @@ class _ApprovalHandler(_Handler):
 
 class _Dispatcher:
     def validate_execution(self, call, plan) -> bool:
-        return call.name == "read_file" and plan.execution_kind in {
-            "read", "file", "shell", "external", "eidos_state",
-            "network_eidos_state",
-        }
+        return call.name == "read_file" and plan.descriptor is not None
 
     def validate_result(self, _tool_name, result):
         return result_model(ReadFileResultData).model_validate(
@@ -115,6 +119,59 @@ class _Dispatcher:
 
     def project_result(self, tool_name, result):
         return project_tool_result(tool_name, result)
+
+
+class _HandlerRuntimeContext:
+    def __init__(self, handlers):
+        self.handlers = handlers
+
+    def invoke_read(self, _runtime, run_id, item, call, cancel):
+        return self.handlers["read"].execute(run_id, item, call, cancel)
+
+    def invoke_workspace_mutation(self, _runtime, run_id, item, call, cancel):
+        return self.handlers["file"].execute(run_id, item, call, cancel)
+
+    def invoke_shell(self, _runtime, run_id, item, call, cancel):
+        return self.handlers["shell"].execute(run_id, item, call, cancel)
+
+    def invoke_external(self, _runtime, run_id, item, call, cancel):
+        return self.handlers["external"].execute(run_id, item, call, cancel)
+
+    def invoke_eidos_state(self, _runtime, run_id, item, call, cancel):
+        key = (
+            "network_eidos_state"
+            if "network_eidos_state" in self.handlers
+            else "eidos_state"
+        )
+        return self.handlers[key].execute(run_id, item, call, cancel)
+
+
+def _plan(kind: str, timeout: int, side_effect: str, approval: bool) -> ToolDispatchPlan:
+    spec = ToolSpec.model_validate({
+        "name": "read_file",
+        "description": "fixture",
+        "sideEffect": side_effect,
+        "approvalRequired": approval,
+        "timeoutSeconds": timeout,
+        "batchPolicy": "parallel" if kind == "read" else "single",
+        "visibility": "direct",
+        "inputSchema": ReadFileInput.model_json_schema(by_alias=True),
+        "resultSchema": result_model(
+            ReadFileResultData
+        ).model_json_schema(by_alias=True),
+    })
+    provenance = ToolProvenance.model_validate({
+        "kind": "builtin",
+        "sourceId": "fixture",
+        "sourceVersion": "1",
+        "contentHash": "a" * 64,
+    })
+    descriptor = ToolRegistryEntry(
+        spec, provenance, _Handler(), ReadFileInput, ReadFileResultData
+    )
+    return ToolDispatchPlan(StepToolBinding(
+        "read_file", descriptor.contract_fingerprint, descriptor
+    ))
 
 
 class ToolExecutionControllerTests(unittest.TestCase):
@@ -150,7 +207,7 @@ class ToolExecutionControllerTests(unittest.TestCase):
         return ToolExecutionController(
             self.store,
             _Dispatcher(),
-            handlers,
+            _HandlerRuntimeContext(handlers),
             RuntimeEvents(lambda _message: None),
             default_scanner(),
         )
@@ -178,7 +235,7 @@ class ToolExecutionControllerTests(unittest.TestCase):
         controller = ToolExecutionController(
             self.store,
             _Dispatcher(),
-            {"file": handler},
+            _HandlerRuntimeContext({"file": handler}),
             RuntimeEvents(lambda _message: None),
             default_scanner(),
             approval=approval,
@@ -190,7 +247,7 @@ class ToolExecutionControllerTests(unittest.TestCase):
             run_id=self.run["id"],
             item=self._item(),
             call=self.call,
-            plan=ToolDispatchPlan(True, "file", 5, "workspace"),
+            plan=_plan("file", 5, "workspace", True),
             cancel=threading.Event(),
             deadline=None,
         )
@@ -198,24 +255,35 @@ class ToolExecutionControllerTests(unittest.TestCase):
         self.assertEqual(outcome.result["outcome"], "success")
         self.assertEqual(handler.calls, 1)
 
-    def test_all_tool_kinds_route_through_controller(self) -> None:
-        kinds = (
-            "read", "file", "shell", "external",
-            "eidos_state", "network_eidos_state",
+    def test_each_execution_policy_binds_a_per_tool_runtime(self) -> None:
+        side_effects = {
+            "read": "none",
+            "file": "workspace",
+            "shell": "shell",
+            "external": "external",
+            "eidos_state": "eidos_state",
+            "network_eidos_state": "eidos_state",
+        }
+        runtimes = {
+            kind: type(_plan(
+                kind,
+                5,
+                side_effect,
+                side_effect != "none",
+            ).descriptor.runtime).__name__  # type: ignore[union-attr]
+            for kind, side_effect in side_effects.items()
+        }
+        self.assertEqual(
+            runtimes,
+            {
+                "read": "AdapterToolRuntime",
+                "file": "WorkspaceMutationRuntime",
+                "shell": "ShellToolRuntime",
+                "external": "ExternalToolRuntime",
+                "eidos_state": "EidosStateToolRuntime",
+                "network_eidos_state": "EidosStateToolRuntime",
+            },
         )
-        handlers = {kind: _Handler() for kind in kinds}
-        controller = self._controller(handlers)
-        for order, kind in enumerate(kinds):
-            outcome = controller.execute(
-                run_id=self.run["id"],
-                item=self._item(order),
-                call=self.call,
-                plan=ToolDispatchPlan(False, kind, 5, "none"),
-                cancel=threading.Event(),
-                deadline=None,
-            )
-            self.assertEqual(outcome.result["outcome"], "success")
-        self.assertTrue(all(handler.calls == 1 for handler in handlers.values()))
 
     def test_tool_spec_timeout_is_enforced_without_abandoning_thread(self) -> None:
         handler = _WaitForCancellationHandler()
@@ -226,7 +294,7 @@ class ToolExecutionControllerTests(unittest.TestCase):
             run_id=self.run["id"],
             item=self._item(),
             call=self.call,
-            plan=ToolDispatchPlan(False, "read", 1, "none"),
+            plan=_plan("read", 1, "none", False),
             cancel=threading.Event(),
             deadline=started + 0.03,
         )
@@ -242,7 +310,7 @@ class ToolExecutionControllerTests(unittest.TestCase):
             run_id=self.run["id"],
             item=self._item(),
             call=self.call,
-            plan=ToolDispatchPlan(False, "read", 1, "none"),
+            plan=_plan("read", 1, "none", False),
             cancel=cancel,
             deadline=time.monotonic() - 1,
         )
@@ -255,7 +323,7 @@ class ToolExecutionControllerTests(unittest.TestCase):
             run_id=self.run["id"],
             item=self._item(),
             call=self.call,
-            plan=ToolDispatchPlan(False, "read", 1, "none"),
+            plan=_plan("read", 1, "none", False),
             cancel=threading.Event(),
             deadline=time.monotonic() + 0.02,
         )
@@ -271,7 +339,7 @@ class ToolExecutionControllerTests(unittest.TestCase):
             run_id=self.run["id"],
             item=item,
             call=self.call,
-            plan=ToolDispatchPlan(False, "read", 5, "none"),
+            plan=_plan("read", 5, "none", False),
             cancel=threading.Event(),
             deadline=None,
         )
@@ -279,7 +347,7 @@ class ToolExecutionControllerTests(unittest.TestCase):
             run_id=self.run["id"],
             item=item,
             call=self.call,
-            plan=ToolDispatchPlan(False, "read", 5, "none"),
+            plan=_plan("read", 5, "none", False),
             cancel=threading.Event(),
             deadline=None,
         )
@@ -292,7 +360,7 @@ class ToolExecutionControllerTests(unittest.TestCase):
             run_id=self.run["id"],
             item=self._item(),
             call=self.call,
-            plan=ToolDispatchPlan(True, "external", 1, "external"),
+            plan=_plan("external", 1, "external", True),
             cancel=threading.Event(),
             deadline=time.monotonic() + 0.02,
         )

@@ -42,7 +42,6 @@ MAX_CATALOG_BYTES = 16 * 1024
 MAX_SKILL_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_SKILL_ARCHIVE_EXPANDED_BYTES = 256 * 1024 * 1024
 _SKILL_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-_USER_SKILL_NAME = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 BUNDLED_SYSTEM_SKILLS = (
     Path(__file__).resolve().parents[1] / "resources" / "skills" / ".system"
 )
@@ -167,8 +166,28 @@ def deploy_system_skills(data_directory: Path) -> None:
 class SkillCatalog:
     def __init__(self, plugins: PluginCatalog) -> None:
         self.plugins = plugins
+        self._pinned_sources: dict[str, tuple[_SkillSource, ...]] = {}
+        self._pinned_skill_content: dict[
+            str, dict[str, str]
+        ] = {}
 
-    def catalog(self, snapshot: dict[str, object]) -> list[dict[str, object]]:
+    def catalog(
+        self, snapshot: dict[str, object] | SkillCatalogSnapshot
+    ) -> list[dict[str, object]]:
+        if isinstance(snapshot, SkillCatalogSnapshot):
+            return [
+                SkillMetadataDto.model_validate({
+                    "schemaVersion": 1,
+                    "qualifiedId": entry.qualified_id,
+                    "name": entry.name,
+                    "description": entry.description,
+                    "pluginId": entry.source_identity,
+                    "pluginVersion": entry.source_version,
+                    "pluginHash": entry.source_hash,
+                    "contentHash": entry.content_hash,
+                }).to_json_value()
+                for entry in snapshot.entries
+            ]
         entries: list[dict[str, object]] = []
         used_bytes = 2
         sources = self._sources(snapshot)
@@ -212,6 +231,13 @@ class SkillCatalog:
             catalog_hash = str(expected_hash)
         elif expected_hash != catalog_hash:
             raise SkillReadError("skill_snapshot_invalid")
+        self._pinned_sources[catalog_hash] = tuple(sources)
+        self._pinned_skill_content[catalog_hash] = {
+            source.qualified_id: _scan(
+                _read_text(source.root / "SKILL.md", MAX_SKILL_BYTES)
+            )
+            for source in sources
+        }
         return SkillCatalogSnapshot(
             catalog_hash=catalog_hash,
             entries=tuple(sorted(
@@ -256,7 +282,7 @@ class SkillCatalog:
 
     def select_explicit(
         self,
-        snapshot: dict[str, object],
+        snapshot: dict[str, object] | SkillCatalogSnapshot,
         turn_id: str,
         user_input: str,
     ) -> SelectedSkillSet:
@@ -297,7 +323,7 @@ class SkillCatalog:
 
     def render_selected(
         self,
-        snapshot: dict[str, object],
+        snapshot: dict[str, object] | SkillCatalogSnapshot,
         selected: SelectedSkillSet,
     ) -> RetainedContextSection:
         parts = [
@@ -328,11 +354,22 @@ class SkillCatalog:
         return snapshot
 
     def read_skill(
-        self, snapshot: dict[str, object], qualified_id: str
+        self,
+        snapshot: dict[str, object] | SkillCatalogSnapshot,
+        qualified_id: str,
     ) -> dict[str, object]:
         metadata, source = self._resolve(snapshot, qualified_id)
-        root = source.root
-        content = _scan(_read_text(root / "SKILL.md", MAX_SKILL_BYTES))
+        content = (
+            self._pinned_skill_content.get(snapshot.catalog_hash, {}).get(
+                qualified_id
+            )
+            if isinstance(snapshot, SkillCatalogSnapshot)
+            else None
+        )
+        if content is None:
+            content = _scan(
+                _read_text(source.root / "SKILL.md", MAX_SKILL_BYTES)
+            )
         return {
             "qualifiedId": qualified_id,
             "content": content,
@@ -346,7 +383,7 @@ class SkillCatalog:
 
     def read_resource(
         self,
-        snapshot: dict[str, object],
+        snapshot: dict[str, object] | SkillCatalogSnapshot,
         qualified_id: str,
         resource_path: str,
     ) -> dict[str, object]:
@@ -373,7 +410,9 @@ class SkillCatalog:
         return tuple(section.as_model_item() for section in sections)
 
     def _resolve(
-        self, snapshot: dict[str, object], qualified_id: str
+        self,
+        snapshot: dict[str, object] | SkillCatalogSnapshot,
+        qualified_id: str,
     ) -> tuple[dict[str, object], _SkillSource]:
         metadata = next(
             (entry for entry in self.catalog(snapshot) if entry["qualifiedId"] == qualified_id),
@@ -381,7 +420,12 @@ class SkillCatalog:
         )
         if metadata is None:
             raise SkillReadError("skill_unavailable")
-        for source in self._sources(snapshot):
+        sources = (
+            self._pinned_sources.get(snapshot.catalog_hash, ())
+            if isinstance(snapshot, SkillCatalogSnapshot)
+            else self._sources(snapshot)
+        )
+        for source in sources:
             if source.qualified_id == qualified_id:
                 return metadata, source
         raise SkillReadError("skill_unavailable")
@@ -424,7 +468,9 @@ class SkillCatalog:
         except PluginImportError:
             raise SkillReadError("skill_unavailable") from None
 
-    def tool_entries(self, snapshot: dict[str, object]) -> tuple[ToolRegistryEntry, ...]:
+    def tool_entries(
+        self, snapshot: dict[str, object] | SkillCatalogSnapshot
+    ) -> tuple[ToolRegistryEntry, ...]:
         return (
             _skill_entry("skill_read", _SkillReadAdapter(self, snapshot)),
             _skill_entry(
@@ -436,20 +482,13 @@ class SkillCatalog:
 
 
 class _SkillReadAdapter:
-    execution_kind = "read"
-
-    def __init__(self, catalog: SkillCatalog, snapshot: dict[str, object]) -> None:
+    def __init__(
+        self,
+        catalog: SkillCatalog,
+        snapshot: dict[str, object] | SkillCatalogSnapshot,
+    ) -> None:
         self.catalog = catalog
         self.snapshot = snapshot
-
-    def effective_arguments(self, arguments: object) -> dict[str, object] | None:
-        if (
-            not isinstance(arguments, dict)
-            or set(arguments) != {"qualifiedId"}
-            or not isinstance(arguments.get("qualifiedId"), str)
-        ):
-            return None
-        return {"qualifiedId": arguments["qualifiedId"]}
 
     def execute(
         self, arguments: dict[str, object], cancel: threading.Event
@@ -475,24 +514,13 @@ class _SkillReadAdapter:
 
 
 class _SkillResourceAdapter:
-    execution_kind = "read"
-
-    def __init__(self, catalog: SkillCatalog, snapshot: dict[str, object]) -> None:
+    def __init__(
+        self,
+        catalog: SkillCatalog,
+        snapshot: dict[str, object] | SkillCatalogSnapshot,
+    ) -> None:
         self.catalog = catalog
         self.snapshot = snapshot
-
-    def effective_arguments(self, arguments: object) -> dict[str, object] | None:
-        if (
-            not isinstance(arguments, dict)
-            or set(arguments) != {"qualifiedId", "resourcePath"}
-            or not isinstance(arguments.get("qualifiedId"), str)
-            or not isinstance(arguments.get("resourcePath"), str)
-        ):
-            return None
-        return {
-            "qualifiedId": arguments["qualifiedId"],
-            "resourcePath": arguments["resourcePath"],
-        }
 
     def execute(
         self, arguments: dict[str, object], cancel: threading.Event
@@ -523,81 +551,8 @@ class _SkillResourceAdapter:
 
 
 class _SkillCreateAdapter:
-    execution_kind = "eidos_state"
-
     def __init__(self, catalog: SkillCatalog) -> None:
         self.catalog = catalog
-
-    def effective_arguments(self, arguments: object) -> dict[str, object] | None:
-        if (
-            not isinstance(arguments, dict)
-            or not {"name", "description", "instructions"} <= set(arguments)
-            or not set(arguments) <= {"name", "description", "instructions", "files"}
-        ):
-            return None
-        name = arguments.get("name")
-        description = arguments.get("description")
-        instructions = arguments.get("instructions")
-        files = arguments.get("files", [])
-        if (
-            not isinstance(name, str)
-            or not _USER_SKILL_NAME.fullmatch(name)
-            or not isinstance(description, str)
-            or description.strip() != description
-            or not description
-            or len(description.splitlines()) != 1
-            or "\x00" in description
-            or description[0] in "\"'"
-            or description[-1] in "\"'"
-            or len(description.encode("utf-8")) > 1024
-            or not isinstance(instructions, str)
-            or not instructions.strip()
-            or "\x00" in instructions
-            or not isinstance(files, list)
-            or len(files) > 64
-        ):
-            return None
-        normalized = instructions.strip() + "\n"
-        tree = {"SKILL.md": _skill_document(name, description, normalized)}
-        for resource in files:
-            if (
-                not isinstance(resource, dict)
-                or set(resource) != {"path", "content"}
-                or not isinstance(resource.get("path"), str)
-                or not isinstance(resource.get("content"), str)
-                or "\x00" in str(resource["content"])
-            ):
-                return None
-            try:
-                relative = _safe_relative(str(resource["path"]))
-            except SkillReadError:
-                return None
-            relative_name = relative.as_posix()
-            content = str(resource["content"]).encode("utf-8")
-            if (
-                relative_name == "SKILL.md"
-                or relative_name in tree
-                or len(content) > MAX_RESOURCE_BYTES
-                or any(parent.as_posix() in tree for parent in relative.parents if parent.as_posix() != ".")
-                or any(existing.startswith(relative_name + "/") for existing in tree)
-            ):
-                return None
-            tree[relative_name] = content
-        if (
-            len(tree["SKILL.md"]) > MAX_SKILL_BYTES
-            or len(tree) > 512
-            or sum(len(content) for content in tree.values()) > 8 * 1024 * 1024
-        ):
-            return None
-        return {
-            "name": name,
-            "description": description,
-            "instructions": normalized,
-            "files": [
-                {"path": path, "content": content.decode("utf-8")}
-                for path, content in tree.items() if path != "SKILL.md"
-            ],
-        }
 
     def execute(
         self, arguments: dict[str, object], cancel: threading.Event
@@ -642,25 +597,8 @@ class _SkillCreateAdapter:
 
 
 class _SkillInstallAdapter:
-    execution_kind = "network_eidos_state"
-
     def __init__(self, catalog: SkillCatalog) -> None:
         self.catalog = catalog
-
-    def effective_arguments(self, arguments: object) -> dict[str, object] | None:
-        if (
-            not isinstance(arguments, dict)
-            or set(arguments) != {"url"}
-            or not isinstance(arguments.get("url"), str)
-        ):
-            return None
-        try:
-            owner, repo, ref, path = _parse_github_skill_url(str(arguments["url"]))
-        except SkillReadError:
-            return None
-        return {
-            "url": f"https://github.com/{owner}/{repo}/tree/{ref}/{path}",
-        }
 
     def execute(
         self, arguments: dict[str, object], cancel: threading.Event

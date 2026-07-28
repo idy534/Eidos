@@ -90,16 +90,19 @@ class RuntimeSeamTests(unittest.TestCase):
 
         self.assertEqual(result.error_code, "invalid_tool_batch")
 
-    def test_tool_dispatcher_executes_a_read_only_call(self) -> None:
+    def test_descriptor_runtime_executes_a_read_only_call(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "a.txt").write_text("ok", encoding="utf-8")
             tools = ToolExecutor(root)
             try:
-                result = ToolDispatcher(tools.registry).execute_read_only(
-                    ModelToolCall("read", "read_file", {"path": "a.txt"}),
-                    threading.Event(),
+                descriptor = tools.registry.get("read_file")
+                assert descriptor is not None and descriptor.runtime is not None
+                cancel = threading.Event()
+                prepared = descriptor.runtime.prepare(
+                    None, {"path": "a.txt"}, cancel
                 )
+                result = descriptor.runtime.execute(None, prepared, cancel)
             finally:
                 tools.close()
 

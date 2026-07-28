@@ -11,6 +11,11 @@ from pydantic import BaseModel, Field, StrictInt, StrictStr, field_validator
 
 from eidos_runtime.protocol.schemas import ClosedModel, StepToolSnapshotDto
 from eidos_runtime.model.client import ModelToolDefinition
+from eidos_runtime.tools.contracts import (
+    GENERIC_PROJECTOR,
+    PROJECTORS,
+    ToolResultProjector,
+)
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -69,27 +74,246 @@ class ToolProvenance(ClosedModel):
         return value
 
 
-class ToolAdapter(Protocol):
-    execution_kind: Literal[
-        "read", "file", "shell", "external", "eidos_state", "network_eidos_state"
-    ]
-
-    def effective_arguments(self, arguments: object) -> dict[str, object] | None: ...
-
+class ToolImplementation(Protocol):
     def execute(
         self, arguments: dict[str, object], cancel: threading.Event
     ) -> dict[str, object]: ...
+
+
+class ToolCancellationPolicy(ClosedModel):
+    mode: Literal["cancel_safe", "await_cleanup", "uncertain_after_intent"]
+
+
+class ToolConcurrencyPolicy(ClosedModel):
+    mode: Literal["parallel_safe", "exclusive"]
+    max_concurrency: StrictInt = Field(default=1, ge=1, le=64)
+    resource_keys: tuple[StrictStr, ...] = ()
+    exclusive_keys: tuple[StrictStr, ...] = ()
+
+
+class ToolExecutionPolicy(ClosedModel):
+    side_effect: Literal[
+        "none", "workspace", "eidos_state", "shell", "external"
+    ]
+    approval_required: bool
+    timeout_seconds: StrictInt = Field(ge=1, le=600)
+    cancellation: ToolCancellationPolicy
+    concurrency: ToolConcurrencyPolicy
+
+
+@dataclass(frozen=True)
+class PreparedToolInvocation:
+    arguments: dict[str, object]
+
+
+@dataclass(frozen=True)
+class VerifiedToolOutput:
+    result: dict[str, object]
+    activated_tool_names: tuple[str, ...] = ()
+    workspace_change: object | None = None
+
+
+class ToolRuntime(Protocol):
+    def prepare(
+        self,
+        context: object,
+        arguments: dict[str, object],
+        cancel: threading.Event,
+    ) -> PreparedToolInvocation: ...
+
+    def execute(
+        self,
+        context: object,
+        prepared: PreparedToolInvocation,
+        cancel: threading.Event,
+    ) -> dict[str, object]: ...
+
+    def verify(
+        self,
+        context: object,
+        prepared: PreparedToolInvocation,
+        raw: dict[str, object],
+        cancel: threading.Event,
+    ) -> VerifiedToolOutput: ...
+
+    def cleanup(self, context: object, reason: str) -> None: ...
+
+    def invoke(
+        self,
+        context: object,
+        run_id: str,
+        item: dict[str, object],
+        call: object,
+        cancel: threading.Event,
+    ) -> object: ...
+
+
+@dataclass(frozen=True)
+class AdapterToolRuntime:
+    """Default immutable per-tool runtime for simple prepare/execute/verify tools."""
+
+    implementation: ToolImplementation
+    spec: ToolSpec
+    provenance: ToolProvenance
+
+    def prepare(
+        self,
+        _context: object,
+        arguments: dict[str, object],
+        _cancel: threading.Event,
+    ) -> PreparedToolInvocation:
+        return PreparedToolInvocation(arguments)
+
+    def execute(
+        self,
+        _context: object,
+        prepared: PreparedToolInvocation,
+        cancel: threading.Event,
+    ) -> dict[str, object]:
+        return self.implementation.execute(prepared.arguments, cancel)
+
+    def verify(
+        self,
+        _context: object,
+        _prepared: PreparedToolInvocation,
+        raw: dict[str, object],
+        _cancel: threading.Event,
+    ) -> VerifiedToolOutput:
+        return VerifiedToolOutput(raw)
+
+    def cleanup(self, _context: object, _reason: str) -> None:
+        return None
+
+    def invoke(
+        self,
+        context: object,
+        run_id: str,
+        item: dict[str, object],
+        call: object,
+        cancel: threading.Event,
+    ) -> object:
+        return context.invoke_read(  # type: ignore[attr-defined]
+            self, run_id, item, call, cancel
+        )
+
+
+@dataclass(frozen=True)
+class WorkspaceMutationRuntime(AdapterToolRuntime):
+    def invoke(
+        self, context: object, run_id: str, item: dict[str, object],
+        call: object, cancel: threading.Event,
+    ) -> object:
+        return context.invoke_workspace_mutation(  # type: ignore[attr-defined]
+            self, run_id, item, call, cancel
+        )
+
+
+@dataclass(frozen=True)
+class ShellToolRuntime(AdapterToolRuntime):
+    def invoke(
+        self, context: object, run_id: str, item: dict[str, object],
+        call: object, cancel: threading.Event,
+    ) -> object:
+        return context.invoke_shell(  # type: ignore[attr-defined]
+            self, run_id, item, call, cancel
+        )
+
+
+@dataclass(frozen=True)
+class ExternalToolRuntime(AdapterToolRuntime):
+    def invoke(
+        self, context: object, run_id: str, item: dict[str, object],
+        call: object, cancel: threading.Event,
+    ) -> object:
+        return context.invoke_external(  # type: ignore[attr-defined]
+            self, run_id, item, call, cancel
+        )
+
+
+@dataclass(frozen=True)
+class EidosStateToolRuntime(AdapterToolRuntime):
+    network_prepare: bool = False
+
+    def invoke(
+        self, context: object, run_id: str, item: dict[str, object],
+        call: object, cancel: threading.Event,
+    ) -> object:
+        return context.invoke_eidos_state(  # type: ignore[attr-defined]
+            self, run_id, item, call, cancel
+        )
+
+
+class ToolArgumentValidationResult(ClosedModel):
+    valid: bool
+    normalized_arguments: dict[str, object] | None = None
+    code: StrictStr | None = None
+    path: StrictStr | None = None
 
 
 @dataclass(frozen=True)
 class ToolRegistryEntry:
     spec: ToolSpec
     provenance: ToolProvenance
-    adapter: ToolAdapter
+    adapter: ToolImplementation
     input_model: type[BaseModel] | None = None
     result_data_model: type[BaseModel] | None = None
     input_schema_validator: object | None = None
     output_schema_validator: object | None = None
+    runtime: ToolRuntime | None = None
+    projector: ToolResultProjector | None = None
+    execution_policy: ToolExecutionPolicy | None = None
+
+    def __post_init__(self) -> None:
+        if self.input_model is None and self.input_schema_validator is None:
+            from eidos_runtime.tools.json_schema import BoundedJsonSchema
+
+            try:
+                validator = BoundedJsonSchema(self.spec.input_schema)
+            except ValueError:
+                validator = None
+            object.__setattr__(self, "input_schema_validator", validator)
+        if self.runtime is None:
+            runtime_type: type[AdapterToolRuntime]
+            if self.spec.side_effect == "workspace":
+                runtime_type = WorkspaceMutationRuntime
+            elif self.spec.side_effect == "shell":
+                runtime_type = ShellToolRuntime
+            elif self.spec.side_effect == "external":
+                runtime_type = ExternalToolRuntime
+            elif self.spec.side_effect == "eidos_state":
+                object.__setattr__(
+                    self,
+                    "runtime",
+                    EidosStateToolRuntime(
+                        self.adapter,
+                        self.spec,
+                        self.provenance,
+                        network_prepare=self.spec.name == "skill_install",
+                    ),
+                )
+                runtime_type = AdapterToolRuntime
+            else:
+                runtime_type = AdapterToolRuntime
+            if self.runtime is None:
+                object.__setattr__(
+                    self,
+                    "runtime",
+                    runtime_type(self.adapter, self.spec, self.provenance),
+                )
+        if self.projector is None:
+            object.__setattr__(
+                self,
+                "projector",
+                PROJECTORS.get(
+                    self.spec.model_projection_policy, GENERIC_PROJECTOR
+                ),
+            )
+        if self.execution_policy is None:
+            object.__setattr__(
+                self,
+                "execution_policy",
+                _execution_policy(self.spec),
+            )
 
     def result_model_json_schema(self) -> dict[str, object]:
         if self.result_data_model is None:
@@ -98,22 +322,63 @@ class ToolRegistryEntry:
 
         return result_model(self.result_data_model).model_json_schema(by_alias=True)
 
-    def validate_arguments(self, value: object) -> dict[str, object] | None:
-        if self.input_model is None:
-            return None
+    def validate_arguments(
+        self, value: object
+    ) -> ToolArgumentValidationResult:
         try:
-            encoded = json.dumps(
-                value,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-                allow_nan=False,
-            )
-            validated = self.input_model.model_validate_json(encoded)
+            if self.input_model is not None:
+                encoded = json.dumps(
+                    value,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                    allow_nan=False,
+                )
+                normalized = self.input_model.model_validate_json(
+                    encoded
+                ).model_dump(mode="json", by_alias=True)
+            elif self.input_schema_validator is not None:
+                validated = self.input_schema_validator.validate(
+                    value, apply_defaults=True
+                )
+                if not isinstance(validated, dict):
+                    raise ValueError("arguments_not_object")
+                normalized = validated
+            else:
+                raise ValueError("missing_argument_contract")
         except (TypeError, ValueError):
-            return None
-        return validated.model_dump(mode="json", by_alias=True)
+            return ToolArgumentValidationResult(
+                valid=False,
+                code="TOOL_ARGUMENT_CONTRACT_VIOLATION",
+            )
+        return ToolArgumentValidationResult(
+            valid=True, normalized_arguments=normalized
+        )
 
+    @property
+    def contract_fingerprint(self) -> str:
+        assert self.projector is not None
+        assert self.execution_policy is not None
+        output_schema = getattr(self.output_schema_validator, "schema", None)
+        return _hash_json({
+            "contractVersion": self.spec.contract_version,
+            "model": {
+                "name": self.spec.name,
+                "description": self.spec.description,
+                "visibility": self.spec.visibility,
+                "inputSchema": self.spec.input_schema,
+            },
+            "resultSchema": self.spec.result_schema,
+            "dynamicOutputSchema": output_schema,
+            "executionPolicy": self.execution_policy.model_dump(
+                mode="json", by_alias=True
+            ),
+            "projectionPolicy": {
+                "id": self.projector.policy_id,
+                "version": self.projector.policy_version,
+            },
+            "provenanceContentHash": self.provenance.content_hash,
+        })
     def validate_result(self, value: object) -> dict[str, object]:
         if self.result_data_model is None:
             raise ValueError("missing_result_model")
@@ -133,6 +398,9 @@ class ToolRegistryEntry:
         )
 
 
+ToolDescriptor = ToolRegistryEntry
+
+
 @dataclass(frozen=True)
 class QuarantinedTool:
     name: str
@@ -148,6 +416,8 @@ class StepToolSnapshot:
     spec_hashes: tuple[tuple[str, str], ...]
     definitions_hash: str
     tool_set_hash: str
+    # Executable bindings are Run-local and deliberately absent from as_dict().
+    bindings: tuple[object, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
         return StepToolSnapshotDto.model_validate({
@@ -160,6 +430,24 @@ class StepToolSnapshot:
             "definitionsHash": self.definitions_hash,
             "toolSetHash": self.tool_set_hash,
         }).to_json_value()
+
+    def binding(self, name: str) -> StepToolBinding | None:
+        return next(
+            (
+                binding
+                for binding in self.bindings
+                if isinstance(binding, StepToolBinding)
+                and binding.tool_name == name
+            ),
+            None,
+        )
+
+
+@dataclass(frozen=True)
+class StepToolBinding:
+    tool_name: str
+    contract_fingerprint: str
+    descriptor: ToolDescriptor
 
 
 class ToolRegistry:
@@ -243,9 +531,18 @@ class ToolRegistry:
         available = tuple(sorted(
             (*direct, *activated), key=lambda value: value.encode("utf-8")
         ))
-        spec_hashes = tuple((name, _hash_json(
-            self._by_name[name].spec.model_dump(mode="json", by_alias=True)
-        )) for name in available)
+        bindings = tuple(
+            StepToolBinding(
+                name,
+                self._by_name[name].contract_fingerprint,
+                self._by_name[name],
+            )
+            for name in available
+        )
+        spec_hashes = tuple(
+            (binding.tool_name, binding.contract_fingerprint)
+            for binding in bindings
+        )
         definitions = self.model_definitions(activated)
         definitions_hash = _hash_json({
             "definitions": [
@@ -263,7 +560,7 @@ class ToolRegistry:
         })
         return StepToolSnapshot(
             available, direct, deferred, activated, spec_hashes,
-            definitions_hash, tool_set_hash,
+            definitions_hash, tool_set_hash, bindings,
         )
 
     def _bounded_activated(self, activated_names: tuple[str, ...]) -> tuple[str, ...]:
@@ -293,10 +590,13 @@ class ToolRegistry:
 
 
 def _validate_entry(entry: ToolRegistryEntry) -> None:
-    if not hasattr(entry.adapter, "effective_arguments") or not hasattr(
-        entry.adapter, "execute"
+    if entry.runtime is None or not all(
+        hasattr(entry.runtime, method)
+        for method in ("prepare", "execute", "verify", "cleanup", "invoke")
     ):
-        raise ValueError("missing_tool_adapter")
+        raise ValueError("missing_tool_runtime")
+    if entry.projector is None or entry.execution_policy is None:
+        raise ValueError("missing_tool_contract")
     if entry.input_model is not None and (
         entry.spec.input_schema
         != entry.input_model.model_json_schema(by_alias=True)
@@ -328,6 +628,26 @@ def _validate_entry(entry: ToolRegistryEntry) -> None:
         not entry.provenance.plugin_id or not entry.provenance.skill_id
     ):
         raise ValueError("invalid_skill_provenance")
+
+
+def _execution_policy(spec: ToolSpec) -> ToolExecutionPolicy:
+    if spec.side_effect == "none":
+        cancellation = "cancel_safe"
+    elif spec.side_effect in {"shell", "external"}:
+        cancellation = "await_cleanup"
+    else:
+        cancellation = "uncertain_after_intent"
+    parallel = spec.batch_policy == "parallel" and spec.side_effect == "none"
+    return ToolExecutionPolicy.model_validate({
+        "side_effect": spec.side_effect,
+        "approval_required": spec.approval_required,
+        "timeout_seconds": spec.timeout_seconds,
+        "cancellation": {"mode": cancellation},
+        "concurrency": {
+            "mode": "parallel_safe" if parallel else "exclusive",
+            "max_concurrency": 16 if parallel else 1,
+        },
+    })
 
 
 def _hash_json(value: object) -> str:

@@ -28,14 +28,6 @@ RESULT_SCHEMA = {
 
 
 class MemoryAdapter:
-    execution_kind = "read"
-
-    def effective_arguments(self, arguments: object) -> dict[str, object] | None:
-        if not isinstance(arguments, dict) or set(arguments) != {"value"}:
-            return None
-        value = arguments.get("value")
-        return {"value": value} if isinstance(value, str) else None
-
     def execute(
         self, arguments: dict[str, object], _cancel: threading.Event
     ) -> dict[str, object]:
@@ -106,8 +98,16 @@ class ToolRegistryTests(unittest.TestCase):
             ),)),
             first.available_names,
         )
-        dispatcher.execute_read_only(validated.tool_calls[0], threading.Event())
-        activated = dispatcher.consume_activations("tool_search")
+        search_entry = registry.get("tool_search")
+        assert search_entry is not None and search_entry.runtime is not None
+        cancel = threading.Event()
+        prepared = search_entry.runtime.prepare(
+            None, validated.tool_calls[0].arguments, cancel
+        )
+        raw = search_entry.runtime.execute(None, prepared, cancel)
+        activated = search_entry.runtime.verify(
+            None, prepared, raw, cancel
+        ).activated_tool_names
         second = dispatcher.snapshot(activated)
 
         self.assertEqual(first.available_names, ("tool_search",))
@@ -126,7 +126,13 @@ class ToolRegistryTests(unittest.TestCase):
         call = ModelToolCall("call-1", "memory_echo", {"value": "hello"})
 
         validated = dispatcher.validate(ModelResponse(tool_calls=(call,)))
-        result = dispatcher.execute_read_only(validated.tool_calls[0], threading.Event())
+        entry = dispatcher._registry.get("memory_echo")
+        assert entry is not None and entry.runtime is not None
+        cancel = threading.Event()
+        prepared = entry.runtime.prepare(
+            None, validated.tool_calls[0].arguments, cancel
+        )
+        result = entry.runtime.execute(None, prepared, cancel)
 
         self.assertIsNone(validated.error_code)
         self.assertEqual(result["data"], {"value": "hello"})

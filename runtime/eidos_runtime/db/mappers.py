@@ -230,8 +230,14 @@ def _item_from_row(
             "argumentsJson": tool_row["arguments_json"],
             "startedAt": tool_row["started_at"],
         }
-        if tool_row["result_json"] is not None:
-            tool_call["resultJson"] = tool_row["result_json"]
+        public_result = (
+            tool_row["ui_result_json"]
+            if "ui_result_json" in tool_row.keys()
+            and tool_row["ui_result_json"] is not None
+            else tool_row["result_json"]
+        )
+        if public_result is not None:
+            tool_call["resultJson"] = public_result
         if tool_row["completed_at"] is not None:
             tool_call["completedAt"] = tool_row["completed_at"]
         if tool_row["approval_status"] is not None:

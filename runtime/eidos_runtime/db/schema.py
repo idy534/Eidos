@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -93,6 +93,8 @@ CREATE TABLE tool_calls (
     arguments_json TEXT NOT NULL,
     result_json TEXT,
     model_result_json TEXT,
+    ui_result_json TEXT,
+    progress_fingerprint TEXT,
     approval_status TEXT,
     approval_decision TEXT,
     approval_feedback TEXT,
@@ -344,139 +346,4 @@ CREATE TABLE IF NOT EXISTS async_operations (
 CREATE UNIQUE INDEX IF NOT EXISTS one_running_async_operation_per_operation_id
 ON async_operations(scope, operation_id)
 WHERE status IN ('accepted', 'running');
-"""
-
-SCHEMA_V1_TO_V2_SQL = """
-ALTER TABLE tool_calls ADD COLUMN duration_ms INTEGER;
-
-CREATE TABLE finalization_attempts (
-    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-    id TEXT NOT NULL UNIQUE,
-    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-    step_id TEXT REFERENCES steps(id) ON DELETE RESTRICT,
-    status TEXT NOT NULL CHECK (status IN (
-        'running', 'completed', 'timed_out', 'model_failed',
-        'sensitive_rejected', 'canceled', 'interrupted'
-    )),
-    started_at INTEGER NOT NULL,
-    completed_at INTEGER,
-    error_code TEXT,
-    error_message TEXT,
-    model_id TEXT NOT NULL,
-    output_item_id TEXT REFERENCES items(id) ON DELETE RESTRICT,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
-
-CREATE UNIQUE INDEX one_running_finalization_attempt_per_run
-ON finalization_attempts(run_id)
-WHERE status = 'running';
-"""
-
-SCHEMA_V2_TO_V3_SQL = """
-CREATE TABLE IF NOT EXISTS async_operations (
-    id TEXT PRIMARY KEY,
-    request_id TEXT,
-    operation_id TEXT NOT NULL,
-    scope TEXT NOT NULL,
-    request_hash TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN (
-        'accepted', 'running', 'completed', 'failed',
-        'canceled', 'interrupted'
-    )),
-    result_json TEXT,
-    error_code TEXT,
-    created_at INTEGER NOT NULL,
-    started_at INTEGER,
-    completed_at INTEGER
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS one_running_async_operation_per_operation_id
-ON async_operations(scope, operation_id)
-WHERE status IN ('accepted', 'running');
-
-CREATE TRIGGER approvals_status_check_insert
-BEFORE INSERT ON approvals
-WHEN NEW.status NOT IN (
-    'pending', 'approved', 'rejected', 'invalidated', 'canceled'
-)
-BEGIN SELECT RAISE(ABORT, 'invalid approvals status'); END;
-
-CREATE TRIGGER approvals_status_check_update
-BEFORE UPDATE OF status ON approvals
-WHEN NEW.status NOT IN (
-    'pending', 'approved', 'rejected', 'invalidated', 'canceled'
-)
-BEGIN SELECT RAISE(ABORT, 'invalid approvals status'); END;
-
-CREATE TRIGGER execution_segments_status_check_insert
-BEFORE INSERT ON execution_segments
-WHEN NEW.status NOT IN (
-    'queued', 'running', 'waiting_user_input',
-    'completed', 'failed', 'canceled'
-)
-BEGIN SELECT RAISE(ABORT, 'invalid execution_segments status'); END;
-
-CREATE TRIGGER execution_segments_status_check_update
-BEFORE UPDATE OF status ON execution_segments
-WHEN NEW.status NOT IN (
-    'queued', 'running', 'waiting_user_input',
-    'completed', 'failed', 'canceled'
-)
-BEGIN SELECT RAISE(ABORT, 'invalid execution_segments status'); END;
-
-CREATE TRIGGER steps_status_check_insert
-BEFORE INSERT ON steps
-WHEN NEW.status NOT IN ('running', 'completed', 'failed', 'canceled')
-BEGIN SELECT RAISE(ABORT, 'invalid steps status'); END;
-
-CREATE TRIGGER steps_status_check_update
-BEFORE UPDATE OF status ON steps
-WHEN NEW.status NOT IN ('running', 'completed', 'failed', 'canceled')
-BEGIN SELECT RAISE(ABORT, 'invalid steps status'); END;
-
-CREATE TRIGGER model_attempts_status_check_insert
-BEFORE INSERT ON model_attempts
-WHEN NEW.status NOT IN ('running', 'completed', 'failed', 'canceled')
-BEGIN SELECT RAISE(ABORT, 'invalid model_attempts status'); END;
-
-CREATE TRIGGER model_attempts_status_check_update
-BEFORE UPDATE OF status ON model_attempts
-WHEN NEW.status NOT IN ('running', 'completed', 'failed', 'canceled')
-BEGIN SELECT RAISE(ABORT, 'invalid model_attempts status'); END;
-
-CREATE TRIGGER durable_intents_status_check_insert
-BEFORE INSERT ON durable_intents
-WHEN NEW.status NOT IN ('running', 'completed', 'uncertain', 'interrupted')
-BEGIN SELECT RAISE(ABORT, 'invalid durable_intents status'); END;
-
-CREATE TRIGGER durable_intents_status_check_update
-BEFORE UPDATE OF status ON durable_intents
-WHEN NEW.status NOT IN ('running', 'completed', 'uncertain', 'interrupted')
-BEGIN SELECT RAISE(ABORT, 'invalid durable_intents status'); END;
-"""
-
-SCHEMA_V3_TO_V4_SQL = """
-CREATE TABLE IF NOT EXISTS event_outbox (
-    event_id INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE RESTRICT,
-    status TEXT NOT NULL CHECK (
-        status IN ('pending', 'delivered', 'failed')
-    ),
-    attempt_count INTEGER NOT NULL DEFAULT 0,
-    last_error_code TEXT,
-    delivered_at INTEGER
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS one_pending_outbox_delivery_per_event
-ON event_outbox(event_id)
-WHERE status = 'pending';
-
-INSERT OR IGNORE INTO event_outbox (
-    event_id, status, attempt_count, delivered_at
-)
-SELECT id, 'delivered', 0, occurred_at FROM events;
-"""
-
-SCHEMA_V4_TO_V5_SQL = """
-ALTER TABLE tool_calls ADD COLUMN model_result_json TEXT;
 """
