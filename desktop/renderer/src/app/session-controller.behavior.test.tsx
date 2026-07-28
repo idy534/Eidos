@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useSessionController } from "./useSessionController.js";
 import type { EidosRuntimeAPI, Session, SessionSnapshot } from "../contracts.js";
@@ -32,10 +32,15 @@ const mockSnapshot2: SessionSnapshot = {
   runs: [],
   items: [],
 };
+const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
 
 describe("useSessionController real Hook behavior", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+  afterEach(() => {
+    if (runtimeDescriptor) Object.defineProperty(window, "eidosRuntime", runtimeDescriptor);
+    else delete (window as Partial<Window>).eidosRuntime;
   });
 
   function setupMockRuntime(overrides: Partial<EidosRuntimeAPI> = {}) {

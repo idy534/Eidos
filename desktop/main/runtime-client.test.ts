@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import test from "node:test";
 
-import { RuntimeClient, RuntimeRequestError, isToolProvenance, projectApprovalToolProvenance } from "./runtime-client.js";
+import { RuntimeClient, RuntimeRequestError } from "./runtime-client.js";
 import type { RuntimeNotification } from "./runtime-client.js";
 
 
@@ -403,7 +403,58 @@ test("cancel while awaiting approval ignores a late approve response", async () 
   }
 });
 
-test("routes shell approval and streams sandboxed command completion", async () => {
+test("degraded Shell capability rejects execution without approval or workspace mutation", async () => {
+  const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-shell-unavailable-runtime-"));
+  const packageRoot = path.join(runtimeRoot, "eidos_runtime");
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-shell-unavailable-workspace-"));
+  const sentinel = path.join(workspaceRoot, "sentinel.txt");
+  await mkdir(packageRoot);
+  await writeFile(path.join(packageRoot, "__init__.py"), "", "utf8");
+  await writeFile(sentinel, "unchanged\n", "utf8");
+  await writeFile(
+    path.join(packageRoot, "__main__.py"),
+    [
+      "import json, sys",
+      "request = json.loads(sys.stdin.readline())",
+      "print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':{'protocolVersion':1,'runtimeVersion':'fixture','capabilities':{'runShell':False,'modelConfigured':False}}}), flush=True)",
+      "request = json.loads(sys.stdin.readline())",
+      "print(json.dumps({'jsonrpc':'2.0','id':request['id'],'error':{'code':-32000,'message':'Request failed','data':{'code':'SANDBOX_UNAVAILABLE','retryable':False}}}), flush=True)",
+      "request = json.loads(sys.stdin.readline())",
+      "print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':None}), flush=True)",
+    ].join("\n"),
+    "utf8",
+  );
+
+  try {
+    const approvals: unknown[] = [];
+    const client = new RuntimeClient({
+      pythonExecutable,
+      runtimeRoot,
+      onApprovalRequest: async (request) => {
+        approvals.push(request);
+        return { decision: "approve" };
+      },
+    });
+    const initialized = await client.initialize();
+    assert.equal(initialized.capabilities.runShell, false);
+    await assert.rejects(
+      client.startRun("session-1", "Run printf"),
+      (error: unknown) => (
+        error instanceof RuntimeRequestError
+        && error.businessCode === "SANDBOX_UNAVAILABLE"
+      ),
+    );
+    assert.deepEqual(approvals, []);
+    assert.equal(await readFile(sentinel, "utf8"), "unchanged\n");
+    await client.shutdown();
+    assert.equal(await client.waitForExit(), 0);
+  } finally {
+    await rm(runtimeRoot, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("routes shell approval and streams sandboxed command completion", async (context) => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-workspace-"));
   const approvals: string[] = [];
@@ -435,7 +486,8 @@ test("routes shell approval and streams sandboxed command completion", async () 
     });
 
     const initialized = await client.initialize();
-    if (!initialized.capabilities.runShell) {
+    if (initialized.capabilities.runShell === false) {
+      context.skip("real Seatbelt Self-Test is unavailable in this environment");
       await client.shutdown();
       assert.equal(await client.waitForExit(), 0);
       return;
@@ -779,56 +831,44 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
   }
 });
 
-test("rejects ordinary ToolCall with undeclared provenance fields as invalid protocol data", () => {
-  const invalidProvenance = {
-    kind: "mcp",
-    sourceId: "server-a",
-    sourceVersion: "1",
-    contentHash: "hash",
-    apiKey: "secret",
-    internalDiagnostics: { path: "/private/path" },
-  };
+test("rejects ordinary ToolCall unknown provenance at the Runtime Client boundary", async () => {
+  const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-invalid-tool-runtime-"));
+  const packageRoot = path.join(runtimeRoot, "eidos_runtime");
+  await mkdir(packageRoot);
+  await writeFile(path.join(packageRoot, "__init__.py"), "", "utf8");
+  await writeFile(
+    path.join(packageRoot, "__main__.py"),
+    [
+      "import json, sys",
+      "request = json.loads(sys.stdin.readline())",
+      "print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':{'protocolVersion':1,'runtimeVersion':'fixture','capabilities':{'runShell':False,'modelConfigured':False}}}), flush=True)",
+      "request = json.loads(sys.stdin.readline())",
+      "snapshot = {'session':{'id':'session-1','workspaceRoot':'/tmp','taskStatus':'new','createdAt':0,'updatedAt':0},'runs':[],'items':[{'id':'item-1','sessionId':'session-1','runId':'run-1','ordinal':0,'modelStepIndex':0,'kind':'tool_call','status':'completed','createdAt':0,'completedAt':1,'toolCall':{'id':'tool-1','itemId':'item-1','modelStepIndex':0,'batchOrder':0,'providerCallId':'provider-1','toolName':'mcp__server__tool','status':'completed','startedAt':0,'completedAt':1,'provenance':{'kind':'mcp','sourceId':'server-a','sourceVersion':'1','contentHash':'hash','apiKey':'secret','internalDiagnostics':{'path':'/private/path'}}}}],'throughEventId':1}",
+      "print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':snapshot}), flush=True)",
+      "sys.stdin.read()",
+    ].join("\n"),
+    "utf8",
+  );
 
-  assert.equal(isToolProvenance(invalidProvenance), false);
+  try {
+    const notifications: RuntimeNotification[] = [];
+    const client = new RuntimeClient({
+      pythonExecutable,
+      runtimeRoot,
+      onNotification: (notification) => notifications.push(notification),
+    });
+    await client.initialize();
+
+    let snapshot: unknown;
+    await assert.rejects(
+      client.readSession("session-1").then((value) => { snapshot = value; }),
+      /invalid result for session\/read/,
+    );
+    assert.equal(snapshot, undefined);
+    assert.deepEqual(notifications, []);
+    assert.notEqual(await client.waitForExit(), 0);
+    await assert.rejects(client.health(), /Runtime (client is closed|process is not available)/);
+  } finally {
+    await rm(runtimeRoot, { recursive: true, force: true });
+  }
 });
-
-test("Approval projection strips unknown provenance fields while preserving authority", () => {
-  const inputProvenance = {
-    kind: "mcp",
-    sourceId: "server-a",
-    sourceVersion: "1",
-    contentHash: "hash",
-    apiKey: "secret",
-    internalDiagnostics: { path: "/private/path" },
-  };
-
-  const projected = projectApprovalToolProvenance(inputProvenance);
-  assert.notEqual(projected, undefined);
-  assert.deepEqual(projected, {
-    kind: "mcp",
-    sourceId: "server-a",
-    sourceVersion: "1",
-    contentHash: "hash",
-  });
-  assert.equal((projected as unknown as Record<string, unknown>).apiKey, undefined);
-  assert.equal((projected as unknown as Record<string, unknown>).internalDiagnostics, undefined);
-});
-
-test("proves Approval forward compatibility does not weaken ordinary ToolCall validation", () => {
-  const rawProvenance = {
-    kind: "mcp",
-    sourceId: "server-a",
-    sourceVersion: "1",
-    contentHash: "hash",
-    extraField: "should_fail_ordinary_validation",
-  };
-
-  const approvalProjected = projectApprovalToolProvenance(rawProvenance);
-  assert.ok(approvalProjected);
-  assert.equal((approvalProjected as unknown as Record<string, unknown>).extraField, undefined);
-
-  assert.equal(isToolProvenance(rawProvenance), false);
-  assert.equal(isToolProvenance(approvalProjected), true);
-});
-
-

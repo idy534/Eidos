@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "./Button.js";
+import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
 import type { ApprovalRequest } from "../contracts.js";
 import { MAX_APPROVAL_FEEDBACK_BYTES } from "../../../shared/constants.js";
 
@@ -10,6 +11,7 @@ interface ApprovalFeedbackDialogProps {
   busy?: boolean | undefined;
   /** Error from the last submission attempt */
   error?: string | undefined;
+  getFallbackFocus?: (() => HTMLElement | null) | undefined;
   onConfirm: (request: ApprovalRequest, feedback: string) => void;
   onCancel: () => void;
 }
@@ -34,6 +36,7 @@ export function ApprovalFeedbackDialog({
   approval,
   busy = false,
   error,
+  getFallbackFocus,
   onConfirm,
   onCancel,
 }: ApprovalFeedbackDialogProps) {
@@ -41,53 +44,19 @@ export function ApprovalFeedbackDialog({
   const dialogRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
-  const triggerRef = useRef<HTMLElement | null>(null);
 
   const byteLength = utf8ByteLength(feedback);
   const overLimit = byteLength > MAX_APPROVAL_FEEDBACK_BYTES;
   const isOpen = approval !== null;
 
-  const rafIdRef = useRef<number | null>(null);
+  useDialogFocusLifecycle({
+    open: isOpen,
+    initialFocusRef: textareaRef,
+    getFallbackFocus,
+  });
 
-function restoreFocus(trigger: HTMLElement | null) {
-  if (trigger && trigger.isConnected) {
-    trigger.focus();
-    return;
-  }
-  const fallback = document.querySelector<HTMLElement>("[data-workspace-root]")
-    ?? document.querySelector<HTMLElement>("main")
-    ?? document.querySelector<HTMLElement>(".app-layout")
-    ?? document.body;
-  if (fallback && fallback.isConnected) {
-    if (fallback !== document.body && !fallback.hasAttribute("tabindex")) {
-      fallback.setAttribute("tabindex", "-1");
-    }
-    fallback.focus();
-  }
-}
-
-  // Store trigger, focus textarea on open, restore on close with fallback
   useEffect(() => {
-    if (isOpen) {
-      if (document.activeElement && (document.activeElement as HTMLElement).isConnected) {
-        triggerRef.current = document.activeElement as HTMLElement;
-      }
-      setFeedback(""); // reset on each open
-      rafIdRef.current = requestAnimationFrame(() => {
-        if (textareaRef.current?.isConnected) {
-          textareaRef.current.focus();
-        }
-      });
-    } else {
-      restoreFocus(triggerRef.current);
-    }
-    return () => {
-      if (rafIdRef.current !== null) {
-        cancelAnimationFrame(rafIdRef.current);
-        rafIdRef.current = null;
-      }
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (isOpen) setFeedback("");
   }, [isOpen]);
 
   // Escape closes the dialog when not busy

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 import os
 from pathlib import Path
 import signal
@@ -18,15 +17,16 @@ PROFILE_PATH = Path(__file__).with_name("seatbelt.sbpl")
 FILE_COMMIT_HELPER = Path(__file__).with_name("file_commit_helper.py")
 SYSTEM_PYTHON = "/Library/Developer/CommandLineTools/usr/bin/python3"
 
-_SEATBELT_USABLE: bool | None = None
+class SeatbeltUnavailableError(RuntimeError):
+    pass
 
 
 def is_seatbelt_usable() -> bool:
-    global _SEATBELT_USABLE
-    if _SEATBELT_USABLE is not None:
-        return _SEATBELT_USABLE
-    if sys.platform != "darwin" or not Path(SANDBOX_EXECUTABLE).is_file():
-        _SEATBELT_USABLE = False
+    if (
+        sys.platform != "darwin"
+        or not Path(SANDBOX_EXECUTABLE).is_file()
+        or not os.access(SANDBOX_EXECUTABLE, os.X_OK)
+    ):
         return False
     try:
         completed = subprocess.run(
@@ -37,11 +37,17 @@ def is_seatbelt_usable() -> bool:
             timeout=2,
             check=False,
         )
-        _SEATBELT_USABLE = completed.returncode == 0
+        return completed.returncode == 0
     except Exception:
-        _SEATBELT_USABLE = False
-    return _SEATBELT_USABLE
+        return False
 
+
+def is_seatbelt_ready() -> bool:
+    return (
+        is_seatbelt_usable()
+        and PROFILE_PATH.is_file()
+        and FILE_COMMIT_HELPER.is_file()
+    )
 
 
 @dataclass(frozen=True)
@@ -89,8 +95,8 @@ class SeatbeltProfile:
     def command(self, command: Sequence[str]) -> list[str]:
         if not command or any(not isinstance(argument, str) for argument in command):
             raise ValueError("sandbox command must contain string arguments")
-        if not is_seatbelt_usable():
-            return list(command)
+        if not is_seatbelt_ready():
+            raise SeatbeltUnavailableError("seatbelt is unavailable")
         return [
             SANDBOX_EXECUTABLE,
             "-f",
@@ -177,7 +183,7 @@ def secure_workspace_move(
     target: Path,
     expected_sha256: str | None,
 ) -> str:
-    """Perform the final rename under Seatbelt; fall back safely if seatbelt is unavailable."""
+    """Perform the final rename under Seatbelt."""
     workspace = workspace_root.absolute()
     try:
         source.absolute().relative_to(workspace)
@@ -185,21 +191,12 @@ def secure_workspace_move(
     except ValueError:
         return "failed"
 
-    if not is_seatbelt_usable():
-        try:
-            if target.exists():
-                if expected_sha256 is None or expected_sha256 == "new":
-                    return "conflict"
-                current_sha256 = hashlib.sha256(target.read_bytes()).hexdigest()
-                if current_sha256 != expected_sha256:
-                    return "conflict"
-            elif expected_sha256 is not None and expected_sha256 != "new":
-                return "conflict"
-            target.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(source, target)
-            return "committed"
-        except OSError:
-            return "failed"
+    if (
+        sys.platform != "darwin"
+        or not is_seatbelt_ready()
+        or not os.access(SYSTEM_PYTHON, os.X_OK)
+    ):
+        return "failed"
     command = [
         SANDBOX_EXECUTABLE,
         "-f",
@@ -250,7 +247,7 @@ def secure_workspace_move(
 def run_seatbelt_self_test() -> SeatbeltSelfTestResult:
     if sys.platform != "darwin":
         return SeatbeltSelfTestResult(False, (), ("unsupported_platform",))
-    if not Path(SANDBOX_EXECUTABLE).is_file() or not PROFILE_PATH.is_file():
+    if not is_seatbelt_ready():
         return SeatbeltSelfTestResult(False, (), ("seatbelt_unavailable",))
 
     passed: list[str] = []

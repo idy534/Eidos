@@ -48,7 +48,6 @@ export function approvalReducer(state: ApprovalState, action: ApprovalAction): A
       return {
         ...state,
         loadingPendingApprovals: true,
-        pendingApprovalsLoadError: undefined,
       };
     }
     case "pending_load_succeeded": {

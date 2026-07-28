@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { Composer, type ComposerProps } from "./Composer.js";
 import type { ModelListResult, Run } from "../contracts.js";
@@ -30,6 +30,9 @@ const defaultProps: ComposerProps = {
 
 describe("Composer DOM interaction & state behavior", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+  afterEach(() => {
     vi.restoreAllMocks();
   });
 

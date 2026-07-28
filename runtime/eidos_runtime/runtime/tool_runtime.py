@@ -40,7 +40,8 @@ from eidos_runtime.sandbox.sensitive import (
     SensitiveScanner,
     StreamingSensitiveScanner,
 )
-from eidos_runtime.sandbox.shell import run_shell
+from eidos_runtime.sandbox.seatbelt import is_seatbelt_ready
+from eidos_runtime.sandbox.shell import run_shell, sandbox_unavailable_result
 from eidos_runtime.sandbox.workspace_manifest import (
     attach_workspace_diff,
     diff_workspace_manifests,
@@ -219,6 +220,12 @@ class ShellToolHandler:
         except WorkspacePathError as error:
             return HandlerOutcome(
                 tool_error(call.name, error.code, "Shell workspace is unsafe"),
+                "failed",
+                "failed",
+            )
+        if not is_seatbelt_ready():
+            return HandlerOutcome(
+                sandbox_unavailable_result(),
                 "failed",
                 "failed",
             )

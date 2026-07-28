@@ -945,7 +945,7 @@ function isToolCall(value: unknown): value is ToolCall {
   );
 }
 
-export function isToolProvenance(value: unknown): value is ToolProvenance {
+function isToolProvenance(value: unknown): value is ToolProvenance {
   return (
     isRecord(value)
     && hasOnlyKeys(value, [
@@ -962,7 +962,7 @@ export function isToolProvenance(value: unknown): value is ToolProvenance {
   );
 }
 
-export function projectApprovalToolProvenance(
+function projectApprovalToolProvenance(
   value: unknown,
 ): ToolProvenance | undefined {
   if (

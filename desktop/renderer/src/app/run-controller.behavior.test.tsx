@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useRunController } from "./useRunController.js";
 import type { EidosRuntimeAPI, Run, SessionSnapshot } from "../contracts.js";
@@ -38,10 +38,15 @@ const mockRunB: Run = {
   updatedAt: 2000,
   allowedActions: ["cancel"],
 };
+const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
 
 describe("useRunController real behavior", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+  afterEach(() => {
+    if (runtimeDescriptor) Object.defineProperty(window, "eidosRuntime", runtimeDescriptor);
+    else delete (window as Partial<Window>).eidosRuntime;
   });
 
   function setupMockRuntime(overrides: Partial<EidosRuntimeAPI> = {}) {

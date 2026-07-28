@@ -1,7 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, renderHook, screen, fireEvent, act } from "@testing-library/react";
+import { useEffect } from "react";
 import { useApprovalController } from "./useApprovalController.js";
-import type { ApprovalRequest, EidosRuntimeAPI } from "../contracts.js";
+import { ExecutionFeed } from "../components/ExecutionFeed.js";
+import type { ApprovalRequest, EidosRuntimeAPI, Item, Run } from "../contracts.js";
 import { MAX_APPROVAL_FEEDBACK_BYTES } from "../../../shared/constants.js";
 
 const mockApprovalA: ApprovalRequest = {
@@ -29,10 +31,15 @@ const mockApprovalB: ApprovalRequest = {
   target: "https://api.github.com",
   hosts: ["api.github.com"],
 };
+const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
 
 describe("useApprovalController real behavior", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+  afterEach(() => {
+    if (runtimeDescriptor) Object.defineProperty(window, "eidosRuntime", runtimeDescriptor);
+    else delete (window as Partial<Window>).eidosRuntime;
   });
 
   function setupMockRuntime(overrides: Partial<EidosRuntimeAPI> = {}) {
@@ -257,5 +264,104 @@ describe("useApprovalController real behavior", () => {
     expect(result.current[0].loadingPendingApprovals).toBe(false);
     expect(result.current[0].pendingApprovalsLoadError).toBeUndefined();
     expect(result.current[0].approvals).toEqual([mockApprovalA, mockApprovalB]);
+  });
+
+  it("Approval Controller and UI recover pending approvals without hiding existing cards", async () => {
+    let rejectInitial!: (error: Error) => void;
+    let resolveRetry!: (approvals: ApprovalRequest[]) => void;
+    const listPendingApprovals = vi.fn()
+      .mockImplementationOnce(() => new Promise<ApprovalRequest[]>((_resolve, reject) => {
+        rejectInitial = reject;
+      }))
+      .mockImplementationOnce(() => new Promise<ApprovalRequest[]>((resolve) => {
+        resolveRetry = resolve;
+      }));
+    setupMockRuntime({ listPendingApprovals });
+
+    const run: Run = {
+      id: "run-1",
+      sessionId: "session-1",
+      status: "waiting_approval",
+      modelId: "deepseek-v4-flash",
+      modelStepCount: 1,
+      allowedActions: ["approve", "reject"],
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const items: Item[] = [mockApprovalA, mockApprovalB].map((approval, index) => ({
+      id: approval.itemId,
+      sessionId: approval.sessionId,
+      runId: approval.runId,
+      ordinal: index,
+      modelStepIndex: 0,
+      kind: "command_execution",
+      status: "in_progress",
+      createdAt: index + 1,
+      toolCall: {
+        id: approval.toolCallId,
+        itemId: approval.itemId,
+        modelStepIndex: 0,
+        batchOrder: index,
+        providerCallId: `provider-${index}`,
+        toolName: approval.kind === "command_execution" ? "run_shell" : "network_access",
+        status: "running",
+        startedAt: index + 1,
+      },
+    }));
+
+    function Harness() {
+      const [state, actions] = useApprovalController();
+      useEffect(() => {
+        actions.mergeApprovals([mockApprovalA]);
+        void actions.loadPending();
+      }, []);
+      return (
+        <ExecutionFeed
+          items={items}
+          runs={[run]}
+          approvals={state.approvals}
+          respondingApprovalIds={state.respondingApprovalIds}
+          respondingKindByApprovalId={state.respondingKindByApprovalId}
+          expiredApprovalIds={state.expiredApprovalIds}
+          errorsByApprovalId={state.errorsByApprovalId}
+          approvalLoadError={state.pendingApprovalsLoadError}
+          loadingPendingApprovals={state.loadingPendingApprovals}
+          onRetryLoadPending={() => { void actions.loadPending(); }}
+          onApprove={(request) => { void actions.approve(request); }}
+          onReject={actions.openRejectDialog}
+        />
+      );
+    }
+
+    render(<Harness />);
+    expect(screen.getByText(mockApprovalA.summary)).toBeInTheDocument();
+    expect(listPendingApprovals).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      rejectInitial(new Error("raw pending failure"));
+      await Promise.resolve();
+    });
+    const banner = screen.getByRole("alert");
+    expect(banner).toHaveTextContent("审批状态加载失败");
+    expect(banner).not.toHaveTextContent("raw pending failure");
+    expect(screen.getByText(mockApprovalA.summary)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试加载审批" })).toBeInTheDocument();
+    expect(screen.getByText("等待批准")).toBeInTheDocument();
+
+    const retry = screen.getByRole("button", { name: "重试加载审批" });
+    fireEvent.click(retry);
+    fireEvent.click(retry);
+    expect(listPendingApprovals).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "重试加载审批" })).toBeDisabled();
+    expect(screen.getByText("加载中…")).toBeInTheDocument();
+    expect(screen.getByText(mockApprovalA.summary)).toBeInTheDocument();
+
+    await act(async () => {
+      resolveRetry([mockApprovalB]);
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText(mockApprovalA.summary)).not.toBeInTheDocument();
+    expect(screen.getByText(mockApprovalB.summary)).toBeInTheDocument();
   });
 });

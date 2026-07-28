@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import type { ModelId, Run } from "../contracts.js";
 import type { ComposerMode } from "../session-state.js";
 import { Button } from "./Button.js";
@@ -21,7 +21,7 @@ export interface ComposerProps {
   onModelChange: (id: ModelId) => void;
 }
 
-export function Composer({
+export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function Composer({
   composerMode,
   activeRun,
   input,
@@ -37,8 +37,9 @@ export function Composer({
   onSubmit,
   onCancel,
   onModelChange,
-}: ComposerProps) {
+}, forwardedRef) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useImperativeHandle(forwardedRef, () => textareaRef.current as HTMLTextAreaElement);
 
   useLayoutEffect(() => {
     const el = textareaRef.current;
@@ -203,7 +204,7 @@ export function Composer({
       </div>
     </form>
   );
-}
+});
 
 export function UpArrowIcon() {
   return (

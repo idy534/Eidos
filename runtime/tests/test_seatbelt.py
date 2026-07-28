@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
@@ -11,10 +13,12 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.sandbox.seatbelt import (  # noqa: E402
     SANDBOX_EXECUTABLE,
+    SeatbeltUnavailableError,
     SeatbeltProfile,
     is_seatbelt_usable,
     run_sandboxed,
     run_seatbelt_self_test,
+    secure_workspace_move,
 )
 
 
@@ -37,9 +41,8 @@ class SeatbeltProfileTests(unittest.TestCase):
                 sandbox_tmp=sandbox_tmp,
                 sensitive_path=sensitive_path,
             )
-            command = profile.command(["/usr/bin/true"])
-
             if is_seatbelt_usable():
+                command = profile.command(["/usr/bin/true"])
                 self.assertEqual(command[0], SANDBOX_EXECUTABLE)
                 self.assertEqual(command[1], "-f")
                 self.assertTrue(command[2].endswith("seatbelt.sbpl"))
@@ -50,7 +53,8 @@ class SeatbeltProfileTests(unittest.TestCase):
                 self.assertIn(f"-DSANDBOX_TMP={sandbox_tmp.resolve()}", command)
                 self.assertEqual(command[-2:], ["--", "/usr/bin/true"])
             else:
-                self.assertEqual(command, ["/usr/bin/true"])
+                with self.assertRaises(SeatbeltUnavailableError):
+                    profile.command(["/usr/bin/true"])
             self.assertEqual(
                 set(profile.environment()),
                 {
@@ -63,6 +67,50 @@ class SeatbeltProfileTests(unittest.TestCase):
                     "PNPM_CONFIG_PM_ON_FAIL",
                 },
             )
+
+    def test_unavailable_seatbelt_fails_before_process_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            workspace = root / "workspace"
+            sandbox_home = root / "home"
+            sandbox_tmp = root / "tmp"
+            for directory in (workspace, sandbox_home, sandbox_tmp, workspace / ".git"):
+                directory.mkdir(parents=True, exist_ok=True)
+            profile = SeatbeltProfile.create(
+                workspace_root=workspace,
+                sandbox_home=sandbox_home,
+                sandbox_tmp=sandbox_tmp,
+                sensitive_path=workspace / ".env",
+            )
+
+            with (
+                patch("eidos_runtime.sandbox.seatbelt.is_seatbelt_usable", return_value=False),
+                patch("eidos_runtime.sandbox.seatbelt.subprocess.Popen") as popen,
+                self.assertRaises(SeatbeltUnavailableError),
+            ):
+                run_sandboxed(profile, ["/usr/bin/true"])
+
+            popen.assert_not_called()
+
+    def test_unavailable_seatbelt_never_moves_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workspace = Path(temporary_directory)
+            target = workspace / "target.txt"
+            target.write_text("base\n", encoding="utf-8")
+            source = workspace / ".candidate.tmp"
+            source.write_text("candidate\n", encoding="utf-8")
+            expected = hashlib.sha256(b"base\n").hexdigest()
+
+            with (
+                patch("eidos_runtime.sandbox.seatbelt.is_seatbelt_usable", return_value=False),
+                patch("eidos_runtime.sandbox.seatbelt.os.replace") as replace,
+            ):
+                status = secure_workspace_move(workspace, source, target, expected)
+
+            self.assertEqual(status, "failed")
+            replace.assert_not_called()
+            self.assertEqual(target.read_text(encoding="utf-8"), "base\n")
+            self.assertEqual(source.read_text(encoding="utf-8"), "candidate\n")
 
     def test_profile_rejects_workspace_relative_sensitive_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

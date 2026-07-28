@@ -138,6 +138,12 @@ class WorkspaceManifestTests(unittest.TestCase):
 
 class ShellManifestIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.seatbelt_ready = patch(
+            "eidos_runtime.runtime.tool_runtime.is_seatbelt_ready",
+            return_value=True,
+        )
+        self.seatbelt_ready.start()
+        self.addCleanup(self.seatbelt_ready.stop)
         self.temporary = tempfile.TemporaryDirectory(prefix="eidos-shell-manifest-")
         root = Path(self.temporary.name)
         data = root / "data"

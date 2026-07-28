@@ -11,7 +11,10 @@ import threading
 import time
 from typing import Callable
 
-from eidos_runtime.sandbox.seatbelt import SeatbeltProfile
+from eidos_runtime.sandbox.seatbelt import (
+    SeatbeltProfile,
+    SeatbeltUnavailableError,
+)
 from eidos_runtime.db.storage import WorkspaceIdentity
 from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
@@ -71,11 +74,37 @@ def run_shell(
             },
             "sideEffectsMayExist": False,
         }
+    except SeatbeltUnavailableError:
+        return sandbox_unavailable_result(started)
     finally:
         if cwd_fd >= 0:
             os.close(cwd_fd)
         if workspace_fd >= 0:
             os.close(workspace_fd)
+
+
+def sandbox_unavailable_result(started: float | None = None) -> dict[str, object]:
+    duration_ms = (
+        0
+        if started is None
+        else max(0, int((time.monotonic() - started) * 1000))
+    )
+    return {
+        "schemaVersion": 1,
+        "toolName": "run_shell",
+        "outcome": "error",
+        "code": "sandbox_unavailable",
+        "summary": "Command was not started because the Shell sandbox is unavailable",
+        "data": {
+            "exitCode": None,
+            "stdout": "",
+            "stderr": "",
+            "truncated": False,
+            "termination": "not_started",
+            "durationMs": duration_ms,
+        },
+        "sideEffectsMayExist": False,
+    }
 
 
 def _run_verified_shell(

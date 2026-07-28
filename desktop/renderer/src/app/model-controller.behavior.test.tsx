@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useModelController } from "./useModelController.js";
 import type { EidosRuntimeAPI, ModelListResult, ModelStatus } from "../contracts.js";
@@ -34,10 +34,15 @@ const mockList: ModelListResult = {
     },
   ],
 };
+const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
 
 describe("useModelController real behavior", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+  afterEach(() => {
+    if (runtimeDescriptor) Object.defineProperty(window, "eidosRuntime", runtimeDescriptor);
+    else delete (window as Partial<Window>).eidosRuntime;
   });
 
   function setupMockRuntime(overrides: Partial<EidosRuntimeAPI> = {}) {

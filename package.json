@@ -18,8 +18,8 @@
     "start": "pnpm build && electron .",
     "test": "pnpm test:runtime && pnpm test:contracts && pnpm test:renderer-state && pnpm test:main && pnpm test:renderer-behavior",
     "test:runtime": ".venv/bin/python -m unittest discover -s runtime/tests -v",
-    "test:contracts": "node scripts/check-desktop-contracts.mjs",
-    "test:renderer-state": "tsc -p tsconfig.renderer-test.json && node --test \"dist/renderer-test/**/*.test.js\"",
+    "test:contracts": "node --test scripts/check-desktop-contracts.test.mjs && node scripts/check-desktop-contracts.mjs",
+    "test:renderer-state": "node scripts/check-renderer-test-discovery.mjs && node --test \"dist/renderer-test/**/*.test.js\"",
     "test:renderer-behavior": "vitest run --config vitest.renderer.config.ts",
     "test:main": "pnpm build:main && node --test \"dist/main/*.test.js\"",
     "test:desktop": "pnpm build && pnpm test:contracts && pnpm test:renderer-state && pnpm test:renderer-behavior && pnpm test:main"

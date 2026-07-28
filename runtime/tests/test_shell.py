@@ -13,6 +13,7 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.sandbox.shell import _terminate_group, run_shell  # noqa: E402
+from eidos_runtime.sandbox.seatbelt import is_seatbelt_ready  # noqa: E402
 from eidos_runtime.db.storage import WorkspaceIdentity  # noqa: E402
 
 
@@ -75,6 +76,10 @@ class ShellLifecycleUnitTests(unittest.TestCase):
 @unittest.skipUnless(sys.platform == "darwin", "Seatbelt is macOS-only")
 class ShellProcessGroupTests(unittest.TestCase):
     def setUp(self) -> None:
+        if not is_seatbelt_ready():
+            self.skipTest(
+                "Seatbelt process-group integration requires a currently usable sandbox-exec and static resources"
+            )
         self.temporary_directory = tempfile.TemporaryDirectory(prefix="eidos-shell-test-")
         self.workspace = Path(self.temporary_directory.name) / "workspace"
         self.workspace.mkdir()
