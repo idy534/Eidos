@@ -589,6 +589,7 @@ class ToolCallRuntime:
         errors: list[str] = []
         successes: list[str] = []
         context_facts: list[str] = []
+        snapshot_hashes = dict(step.tool_snapshot.spec_hashes)
         for batch_order, call in enumerate(tool_calls):
             self._check_cancel(step.run_id, cancel)
             try:
@@ -644,7 +645,9 @@ class ToolCallRuntime:
             effective_call = ModelToolCall(
                 call.provider_call_id, call.name, arguments
             )
-            plan = self.dispatcher.plan(effective_call)
+            plan = self.dispatcher.plan(
+                effective_call, snapshot_hashes.get(call.name)
+            )
             outcome = self.controller.execute(
                 run_id=step.run_id,
                 item=item,
@@ -660,11 +663,15 @@ class ToolCallRuntime:
             if outcome.result.get("outcome") != "success":
                 errors.append(_result_fingerprint(call.name, outcome.result))
             else:
-                successes.append(_hash_json(outcome.result))
+                successes.append(
+                    outcome.progress_fingerprint or _hash_json(outcome.result)
+                )
             context_facts.append(_hash_json({
                 "toolName": call.name,
                 "arguments": arguments,
-                "result": outcome.result,
+                "resultFingerprint": (
+                    outcome.progress_fingerprint or _hash_json(outcome.result)
+                ),
             }))
             if (
                 outcome.result.get("reconciliationRequired") is True
@@ -774,7 +781,9 @@ class ToolCallRuntime:
                     run_id=step.run_id,
                     item=item,
                     call=call,
-                    plan=self.dispatcher.plan(call),
+                    plan=self.dispatcher.plan(
+                        call, dict(step.tool_snapshot.spec_hashes).get(call.name)
+                    ),
                     cancel=controlled_cancel,
                     deadline=None,
                 )
@@ -831,11 +840,15 @@ class ToolCallRuntime:
             if outcome.result.get("outcome") != "success":
                 errors.append(_result_fingerprint(call.name, outcome.result))
             else:
-                successes.append(_hash_json(outcome.result))
+                successes.append(
+                    outcome.progress_fingerprint or _hash_json(outcome.result)
+                )
             context_facts.append(_hash_json({
                 "toolName": call.name,
                 "arguments": call.arguments,
-                "result": outcome.result,
+                "resultFingerprint": (
+                    outcome.progress_fingerprint or _hash_json(outcome.result)
+                ),
             }))
             self._check_cancel(step.run_id, cancel)
         self.state_machine.track(RuntimeState.THINKING, "tool_batch_completed")

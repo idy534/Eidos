@@ -794,6 +794,7 @@ class ExecutionRepository(Repository):
         item_id: str,
         result_json: str,
         *,
+        model_result_json: str | None = None,
         item_status: str = "completed",
         tool_status: str = "completed",
         workspace_changed: bool = False,
@@ -802,6 +803,7 @@ class ExecutionRepository(Repository):
         return self.complete_tool_item_committed(
             item_id,
             result_json,
+            model_result_json=model_result_json,
             item_status=item_status,
             tool_status=tool_status,
             workspace_changed=workspace_changed,
@@ -813,6 +815,7 @@ class ExecutionRepository(Repository):
         item_id: str,
         result_json: str,
         *,
+        model_result_json: str | None = None,
         item_status: str = "completed",
         tool_status: str = "completed",
         workspace_changed: bool = False,
@@ -850,10 +853,18 @@ class ExecutionRepository(Repository):
             tool_update = connection.execute(
                 """
                 UPDATE tool_calls
-                SET status = ?, result_json = ?, duration_ms = ?, completed_at = ?
+                SET status = ?, result_json = ?, model_result_json = ?,
+                    duration_ms = ?, completed_at = ?
                 WHERE item_id = ? AND status = 'running'
                 """,
-                (tool_status, result_json, duration_ms, now, item_id),
+                (
+                    tool_status,
+                    result_json,
+                    model_result_json or result_json,
+                    duration_ms,
+                    now,
+                    item_id,
+                ),
             )
             item_update = connection.execute(
                 """
@@ -940,6 +951,7 @@ class ExecutionRepository(Repository):
         item_id: str,
         result_json: str,
         *,
+        model_result_json: str | None = None,
         item_status: str,
         tool_status: str,
         workspace_changed: bool = False,
@@ -957,6 +969,7 @@ class ExecutionRepository(Repository):
             return self.complete_tool_item_committed(
                 item_id,
                 result_json,
+                model_result_json=model_result_json,
                 item_status=item_status,
                 tool_status=tool_status,
                 workspace_changed=workspace_changed,

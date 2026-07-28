@@ -40,7 +40,6 @@ class RunContext(_FrozenModel):
     model_context: tuple[ModelContextItem, ...]
     extension_snapshot: dict[str, object]
     extension_snapshot_hash: str
-    skill_context: tuple[ModelContextItem, ...] = ()
 
 
 class StepContext(_FrozenModel):

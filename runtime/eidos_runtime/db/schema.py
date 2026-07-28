@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -92,6 +92,7 @@ CREATE TABLE tool_calls (
     )),
     arguments_json TEXT NOT NULL,
     result_json TEXT,
+    model_result_json TEXT,
     approval_status TEXT,
     approval_decision TEXT,
     approval_feedback TEXT,
@@ -474,4 +475,8 @@ INSERT OR IGNORE INTO event_outbox (
     event_id, status, attempt_count, delivered_at
 )
 SELECT id, 'delivered', 0, occurred_at FROM events;
+"""
+
+SCHEMA_V4_TO_V5_SQL = """
+ALTER TABLE tool_calls ADD COLUMN model_result_json TEXT;
 """

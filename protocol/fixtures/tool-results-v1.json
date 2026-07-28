@@ -10,11 +10,11 @@
         "outcome": "success",
         "code": "ok",
         "summary": "Read file range",
-        "data": {"content": "Eidos 世界\n", "nextLine": null, "sizeBytes": 9007199254740991},
+        "data": {"path": "README.md", "content": "Eidos 世界\n", "startLine": 1, "endLine": 1, "nextLine": null, "sizeBytes": 9007199254740991, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
         "sideEffectsMayExist": false,
         "reconciliationRequired": false
       },
-      "canonicalJson": "{\"code\":\"ok\",\"data\":{\"content\":\"Eidos 世界\\n\",\"nextLine\":null,\"sizeBytes\":9007199254740991},\"outcome\":\"success\",\"reconciliationRequired\":false,\"schemaVersion\":1,\"sideEffectsMayExist\":false,\"summary\":\"Read file range\",\"toolContractVersion\":1,\"toolName\":\"read_file_range\"}"
+      "canonicalJson": "{\"code\":\"ok\",\"data\":{\"content\":\"Eidos 世界\\n\",\"endLine\":1,\"nextLine\":null,\"path\":\"README.md\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"sizeBytes\":9007199254740991,\"startLine\":1},\"outcome\":\"success\",\"reconciliationRequired\":false,\"schemaVersion\":1,\"sideEffectsMayExist\":false,\"summary\":\"Read file range\",\"toolContractVersion\":1,\"toolName\":\"read_file_range\"}"
     }
   ]
 }

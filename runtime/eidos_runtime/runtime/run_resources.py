@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import re
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.mcp import McpManager
 from eidos_runtime.extensions.plugins import PluginCatalog
-from eidos_runtime.extensions.skills import SkillCatalog, SkillReadError
+from eidos_runtime.extensions.skills import (
+    RetainedContextSection,
+    SkillCatalog,
+    SkillReadError,
+)
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
@@ -41,7 +46,8 @@ class RunResources:
         self.mcp: McpManager | None = None
         self.registry: ToolRegistry | None = None
         self.dispatcher: ToolDispatcher | None = None
-        self.skill_context: tuple[dict[str, object], ...] = ()
+        self.retained_context: tuple[RetainedContextSection, ...] = ()
+        self.selected_skill_context: tuple[RetainedContextSection, ...] = ()
         self._closed = False
 
     def __enter__(self) -> "RunResources":
@@ -58,13 +64,17 @@ class RunResources:
             )
             self._set_registry(self.mcp.start())
             self._activate_mentions(self.user_input)
-            self.skill_context = self.skills.context(
-                self.extension_snapshot, self.user_input
-            )
+            catalog = self.skills.catalog_snapshot(self.extension_snapshot)
+            self.retained_context = (self.skills.render_catalog(catalog),)
+            self._select_skills(self.user_input, turn_id=self.run_id)
             return self
-        except SkillReadError:
+        except SkillReadError as error:
             self.close()
-            raise RunResourceError("SKILL_SNAPSHOT_INVALID") from None
+            raise RunResourceError(
+                "SKILL_REFERENCE_AMBIGUOUS"
+                if str(error) == "skill_reference_ambiguous"
+                else "SKILL_SNAPSHOT_INVALID"
+            ) from None
         except Exception:
             self.close()
             raise
@@ -78,14 +88,21 @@ class RunResources:
                 self._set_registry(entries)
             if new_inputs:
                 added = "\n".join(new_inputs)
-                self.user_input = f"{self.user_input}\n{added}"
+                self.user_input = added
                 self._activate_mentions(added)
-                assert self.skills is not None
-                self.skill_context = self.skills.context(
-                    self.extension_snapshot, self.user_input
+                self._select_skills(
+                    added,
+                    turn_id=(
+                        f"{self.run_id}:"
+                        f"{hashlib.sha256(added.encode('utf-8')).hexdigest()}"
+                    ),
                 )
-        except SkillReadError:
-            raise RunResourceError("SKILL_SNAPSHOT_INVALID") from None
+        except SkillReadError as error:
+            raise RunResourceError(
+                "SKILL_REFERENCE_AMBIGUOUS"
+                if str(error) == "skill_reference_ambiguous"
+                else "SKILL_SNAPSHOT_INVALID"
+            ) from None
 
     def close(self) -> None:
         if self._closed:
@@ -135,3 +152,14 @@ class RunResources:
         )
         if mentioned_tools:
             self.store.activate_tools(self.run_id, mentioned_tools)
+
+    def _select_skills(self, user_input: str, *, turn_id: str) -> None:
+        if self.skills is None:
+            raise RuntimeError("run resources are not started")
+        selected = self.skills.select_explicit(
+            self.extension_snapshot, turn_id, user_input
+        )
+        self.selected_skill_context = (
+            (self.skills.render_selected(self.extension_snapshot, selected),)
+            if selected.selected_qualified_ids else ()
+        )

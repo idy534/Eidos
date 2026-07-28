@@ -7,7 +7,7 @@ import re
 import threading
 from typing import Literal, Protocol
 
-from pydantic import Field, StrictInt, StrictStr, field_validator
+from pydantic import BaseModel, Field, StrictInt, StrictStr, field_validator
 
 from eidos_runtime.protocol.schemas import ClosedModel, StepToolSnapshotDto
 from eidos_runtime.model.client import ModelToolDefinition
@@ -39,6 +39,10 @@ class ToolSpec(ClosedModel):
     visibility: Literal["direct", "deferred"] = "direct"
     input_schema: dict[str, object] = Field(alias="inputSchema")
     result_schema: dict[str, object] = Field(alias="resultSchema")
+    model_projection_policy: StrictStr = Field(
+        default="generic", alias="modelProjectionPolicy"
+    )
+    contract_version: Literal[1] = Field(default=1, alias="contractVersion")
 
     @field_validator("name")
     @classmethod
@@ -82,6 +86,51 @@ class ToolRegistryEntry:
     spec: ToolSpec
     provenance: ToolProvenance
     adapter: ToolAdapter
+    input_model: type[BaseModel] | None = None
+    result_data_model: type[BaseModel] | None = None
+    input_schema_validator: object | None = None
+    output_schema_validator: object | None = None
+
+    def result_model_json_schema(self) -> dict[str, object]:
+        if self.result_data_model is None:
+            return self.spec.result_schema
+        from eidos_runtime.tools.contracts import result_model
+
+        return result_model(self.result_data_model).model_json_schema(by_alias=True)
+
+    def validate_arguments(self, value: object) -> dict[str, object] | None:
+        if self.input_model is None:
+            return None
+        try:
+            encoded = json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+                allow_nan=False,
+            )
+            validated = self.input_model.model_validate_json(encoded)
+        except (TypeError, ValueError):
+            return None
+        return validated.model_dump(mode="json", by_alias=True)
+
+    def validate_result(self, value: object) -> dict[str, object]:
+        if self.result_data_model is None:
+            raise ValueError("missing_result_model")
+        from eidos_runtime.tools.contracts import result_model
+
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+            allow_nan=False,
+        )
+        return result_model(self.result_data_model).model_validate_json(encoded).model_dump(
+            mode="json",
+            by_alias=True,
+            exclude_none=True,
+        )
 
 
 @dataclass(frozen=True)
@@ -198,9 +247,12 @@ class ToolRegistry:
             self._by_name[name].spec.model_dump(mode="json", by_alias=True)
         )) for name in available)
         definitions = self.model_definitions(activated)
-        definitions_hash = _hash_json([
-            definition.model_dump(mode="json") for definition in definitions
-        ])
+        definitions_hash = _hash_json({
+            "definitions": [
+                definition.model_dump(mode="json") for definition in definitions
+            ],
+            "contracts": dict(spec_hashes),
+        })
         tool_set_hash = _hash_json({
             "availableNames": available,
             "directNames": direct,
@@ -245,8 +297,22 @@ def _validate_entry(entry: ToolRegistryEntry) -> None:
         entry.adapter, "execute"
     ):
         raise ValueError("missing_tool_adapter")
-    if not _valid_schema(entry.spec.input_schema) or not _valid_schema(
-        entry.spec.result_schema
+    if entry.input_model is not None and (
+        entry.spec.input_schema
+        != entry.input_model.model_json_schema(by_alias=True)
+    ):
+        raise ValueError("input_schema_model_mismatch")
+    if entry.result_data_model is not None and (
+        entry.spec.result_schema != entry.result_model_json_schema()
+    ):
+        raise ValueError("result_schema_model_mismatch")
+    if (
+        entry.input_model is None
+        and entry.input_schema_validator is None
+        and not _valid_schema(entry.spec.input_schema)
+    ) or (
+        entry.result_data_model is None
+        and not _valid_schema(entry.spec.result_schema)
     ):
         raise ValueError("invalid_tool_schema")
     if entry.provenance.kind == "mcp":

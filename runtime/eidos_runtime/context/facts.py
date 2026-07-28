@@ -17,6 +17,7 @@ class ContextItemFact(_Fact):
     tool_name: str | None = None
     arguments_json: str | None = None
     result_json: str | None = None
+    model_result_json: str | None = None
 
 
 class CompactSummary(_Fact):

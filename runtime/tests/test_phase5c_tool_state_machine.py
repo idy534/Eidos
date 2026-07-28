@@ -32,10 +32,16 @@ from eidos_runtime.runtime.tool_execution import (  # noqa: E402
     ToolInfrastructureError,
 )
 from eidos_runtime.sandbox.sensitive import default_scanner  # noqa: E402
+from eidos_runtime.tools.contracts import (  # noqa: E402
+    EmptyResultData,
+    project_tool_result,
+    result_model,
+)
 
 
 _SUCCESS = {
     "schemaVersion": 1,
+    "toolContractVersion": 1,
     "toolName": "effect",
     "outcome": "success",
     "code": "ok",
@@ -50,6 +56,16 @@ class _Dispatcher:
     @staticmethod
     def validate_execution(_call, _plan) -> bool:
         return True
+
+    @staticmethod
+    def validate_result(_tool_name, result):
+        return result_model(EmptyResultData).model_validate(
+            result
+        ).model_dump(mode="json", by_alias=True, exclude_none=True)
+
+    @staticmethod
+    def project_result(tool_name, result):
+        return project_tool_result(tool_name, result)
 
 
 class _ControlledEffect:
