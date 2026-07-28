@@ -176,15 +176,7 @@ class _BuiltinAdapter:
         self.executor = executor
         self.spec = spec
         self.operation = operation
-        self.execution_kind = (
-            "read" if spec.side_effect == "none"
-            else "file" if spec.side_effect == "workspace"
-            else "shell"
-        )
         self.workspace = executor.workspace
-
-    def effective_arguments(self, arguments: object) -> dict[str, object] | None:
-        return _effective_builtin_arguments(self.operation, arguments)
 
     def execute(
         self, arguments: dict[str, object], cancel: threading.Event
@@ -236,64 +228,6 @@ def builtin_tool_registry(executor: ToolExecutor) -> ToolRegistry:
             contract[7],
         ))
     return ToolRegistry(tuple(entries))
-
-
-def _effective_builtin_arguments(
-    operation: str, arguments: object
-) -> dict[str, object] | None:
-    if not isinstance(arguments, dict):
-        return None
-    if operation == "list":
-        return {} if not arguments else None
-    if operation in {"read", "delete"}:
-        return dict(arguments) if (
-            set(arguments) == {"path"} and isinstance(arguments.get("path"), str)
-        ) else None
-    if operation == "range":
-        start = arguments.get("startLine")
-        end = arguments.get("endLine")
-        return dict(arguments) if (
-            set(arguments) == {"path", "startLine", "endLine"}
-            and isinstance(arguments.get("path"), str)
-            and isinstance(start, int) and not isinstance(start, bool)
-            and isinstance(end, int) and not isinstance(end, bool)
-            and 1 <= start <= end
-            and end - start < MAX_RANGE_LINES
-        ) else None
-    if operation == "search":
-        query = arguments.get("query")
-        return dict(arguments) if (
-            set(arguments) == {"query"}
-            and isinstance(query, str) and bool(query)
-            and "\n" not in query and "\r" not in query
-            and len(query.encode("utf-8")) <= 512
-        ) else None
-    if operation in {"write", "patch"}:
-        content_key = "content" if operation == "write" else "patch"
-        content = arguments.get(content_key)
-        limit = MAX_FILE_CHANGE_BYTES if operation == "write" else MAX_DIFF_BYTES
-        return dict(arguments) if (
-            set(arguments) == {"path", content_key}
-            and isinstance(arguments.get("path"), str)
-            and isinstance(content, str)
-            and len(content.encode("utf-8")) <= limit
-        ) else None
-    if operation == "shell":
-        command = arguments.get("command")
-        cwd = arguments.get("cwd", ".")
-        timeout = arguments.get("timeoutSeconds", 120)
-        if not (
-            set(arguments) <= {"command", "cwd", "timeoutSeconds"}
-            and "command" in arguments
-            and isinstance(command, str) and bool(command)
-            and len(command.encode("utf-8")) <= 16 * 1024
-            and isinstance(cwd, str)
-            and isinstance(timeout, int) and not isinstance(timeout, bool)
-            and 1 <= timeout <= 600
-        ):
-            return None
-        return {"command": command, "cwd": cwd, "timeoutSeconds": timeout}
-    return None
 
 
 def canonical_tool_result(
@@ -385,10 +319,15 @@ class ToolExecutor:
         cancel: threading.Event,
     ) -> dict[str, object]:
         entry = self.registry.get(tool_name)
-        effective = entry.adapter.effective_arguments(arguments) if entry else None
-        if entry is None or effective is None:
+        validation = entry.validate_arguments(arguments) if entry else None
+        if (
+            entry is None
+            or validation is None
+            or not validation.valid
+            or validation.normalized_arguments is None
+        ):
             return _error(tool_name, "invalid_arguments", "Invalid arguments")
-        return entry.adapter.execute(effective, cancel)
+        return entry.adapter.execute(validation.normalized_arguments, cancel)
 
     def prepare_file_change(
         self,
@@ -397,11 +336,16 @@ class ToolExecutor:
         cancel: threading.Event,
     ) -> FileChange | dict[str, object]:
         entry = self.registry.get(tool_name)
-        effective = entry.adapter.effective_arguments(arguments) if entry else None
+        validation = entry.validate_arguments(arguments) if entry else None
         prepare = getattr(entry.adapter, "prepare_file_change", None) if entry else None
-        if effective is None or prepare is None:
+        if (
+            validation is None
+            or not validation.valid
+            or validation.normalized_arguments is None
+            or prepare is None
+        ):
             return _error(tool_name, "invalid_arguments", "Invalid arguments")
-        return prepare(effective, cancel)
+        return prepare(validation.normalized_arguments, cancel)
 
     def shell_cwd(self, value: str) -> WorkspaceIdentity:
         self._verify_root()

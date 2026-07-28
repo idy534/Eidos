@@ -20,10 +20,6 @@ from eidos_runtime.db.errors import (
 )
 from eidos_runtime.db.schema import (
     SCHEMA_SQL,
-    SCHEMA_V1_TO_V2_SQL,
-    SCHEMA_V2_TO_V3_SQL,
-    SCHEMA_V3_TO_V4_SQL,
-    SCHEMA_V4_TO_V5_SQL,
     SCHEMA_VERSION,
 )
 from eidos_runtime.runtime.fault_injection import hit_fault
@@ -98,7 +94,7 @@ class Database:
             tables = _table_names(connection)
             revision = connection.execute("PRAGMA user_version").fetchone()[0]
             if (
-                (tables and revision not in {1, 2, 3, 4, SCHEMA_VERSION})
+                (tables and revision != SCHEMA_VERSION)
                 or (not tables and revision != 0)
             ):
                 raise StorageError("schema_revision_unsupported")
@@ -108,34 +104,9 @@ class Database:
             connection.execute("PRAGMA busy_timeout = 5000")
             _verify_pragmas(connection)
             if not tables:
-                connection.executescript(SCHEMA_SQL)
-                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-                connection.commit()
-            elif revision == 1:
                 connection.executescript(
                     "BEGIN IMMEDIATE;\n"
-                    + SCHEMA_V1_TO_V2_SQL
-                    + "\nPRAGMA user_version = 2;\nCOMMIT;"
-                )
-                revision = 2
-            if tables and revision == 2:
-                connection.executescript(
-                    "BEGIN IMMEDIATE;\n"
-                    + SCHEMA_V2_TO_V3_SQL
-                    + "\nPRAGMA user_version = 3;\nCOMMIT;"
-                )
-                revision = 3
-            if tables and revision == 3:
-                connection.executescript(
-                    "BEGIN IMMEDIATE;\n"
-                    + SCHEMA_V3_TO_V4_SQL
-                    + "\nPRAGMA user_version = 4;\nCOMMIT;"
-                )
-                revision = 4
-            if tables and revision == 4:
-                connection.executescript(
-                    "BEGIN IMMEDIATE;\n"
-                    + SCHEMA_V4_TO_V5_SQL
+                    + SCHEMA_SQL
                     + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
                 )
             _verify_integrity(connection)

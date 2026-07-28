@@ -31,6 +31,7 @@ from eidos_runtime.runtime.tool_execution import (
     HandlerOutcome,
     PreparedToolExecution,
     ToolExecutionController,
+    ToolConcurrencyGate,
     ToolInfrastructureError,
     VerifiedToolExecutionResult,
 )
@@ -45,6 +46,13 @@ from eidos_runtime.sandbox.workspace_manifest import (
     diff_workspace_manifests,
 )
 from eidos_runtime.tools.workspace import ToolCancelled, WorkspacePathError
+from eidos_runtime.tools.registry import (
+    AdapterToolRuntime,
+    EidosStateToolRuntime,
+    ExternalToolRuntime,
+    ShellToolRuntime,
+    WorkspaceMutationRuntime,
+)
 
 
 @dataclass(frozen=True)
@@ -70,12 +78,15 @@ class ReadOnlyToolHandler:
         _item: dict[str, object],
         call: ModelToolCall,
         cancel: threading.Event,
+        runtime: AdapterToolRuntime,
     ) -> HandlerOutcome:
-        result = self.dependencies.dispatcher.execute_read_only(call, cancel)
+        prepared = runtime.prepare(self, call.arguments, cancel)
+        raw = runtime.execute(self, prepared, cancel)
+        verified = runtime.verify(self, prepared, raw, cancel)
         return HandlerOutcome(
-            result,
+            verified.result,
             "completed",
-            activations=self.dependencies.dispatcher.consume_activations(call.name),
+            activations=verified.activated_tool_names,
         )
 
 
@@ -89,9 +100,10 @@ class FileChangeToolHandler:
         item: dict[str, object],
         call: ModelToolCall,
         cancel: threading.Event,
+        runtime: WorkspaceMutationRuntime,
     ) -> HandlerOutcome:
-        prepared = self.dependencies.dispatcher.prepare_file_change(
-            call.name, call.arguments, cancel
+        prepared = runtime.implementation.prepare_file_change(
+            call.arguments, cancel  # type: ignore[attr-defined]
         )
         if isinstance(prepared, dict):
             return HandlerOutcome(
@@ -139,8 +151,8 @@ class FileChangeToolHandler:
             item=item,
             prepared=prepared_execution,
             cancel=cancel,
-            execute=lambda: self.dependencies.dispatcher.commit_file_change(
-                call.name, prepared, cancel
+            execute=lambda: runtime.implementation.commit_file_change(  # type: ignore[attr-defined]
+                prepared, cancel
             ),
         )
         if approval.decision == "reject":
@@ -182,6 +194,7 @@ class ShellToolHandler:
         item: dict[str, object],
         call: ModelToolCall,
         cancel: threading.Event,
+        runtime: ShellToolRuntime,
     ) -> HandlerOutcome:
         if not self.dependencies.shell_available:
             return HandlerOutcome(
@@ -198,8 +211,8 @@ class ShellToolHandler:
         assert isinstance(cwd_value, str)
         assert isinstance(timeout, int)
         try:
-            cwd = self.dependencies.dispatcher.prepare_shell(
-                call.name, cwd_value, cancel
+            cwd = runtime.implementation.prepare_shell(  # type: ignore[attr-defined]
+                cwd_value, cancel
             )
         except ToolCancelled:
             raise RuntimeCancelled from None
@@ -240,8 +253,8 @@ class ShellToolHandler:
         def execute_shell() -> dict[str, object]:
             nonlocal workspace_diff
             try:
-                approved_cwd = self.dependencies.dispatcher.prepare_shell(
-                    call.name, cwd_value, cancel
+                approved_cwd = runtime.implementation.prepare_shell(  # type: ignore[attr-defined]
+                    cwd_value, cancel
                 )
                 if approved_cwd != cwd:
                     raise WorkspacePathError("workspace_identity_changed")
@@ -269,10 +282,10 @@ class ShellToolHandler:
                     output_scan_failed = True
 
             manifest_before = (
-                self.dependencies.dispatcher.workspace_index.manifest()
+                runtime.implementation.executor.workspace_index.manifest()  # type: ignore[attr-defined]
             )
             raw_result = run_shell(
-                self.dependencies.dispatcher.workspace,
+                runtime.implementation.executor.workspace,  # type: ignore[attr-defined]
                 command,
                 approved_cwd,
                 timeout,
@@ -283,13 +296,13 @@ class ShellToolHandler:
             )
             try:
                 manifest_after = (
-                    self.dependencies.dispatcher.refresh_workspace_index(
+                    runtime.implementation.executor.refresh_workspace_index(  # type: ignore[attr-defined]
                         cancel
                     )
                 )
             except WorkspacePathError:
                 manifest_after = (
-                    self.dependencies.dispatcher.workspace_index.manifest()
+                    runtime.implementation.executor.workspace_index.manifest()  # type: ignore[attr-defined]
                 )
             workspace_diff = diff_workspace_manifests(
                 manifest_before, manifest_after
@@ -359,8 +372,19 @@ class ExternalToolHandler:
         item: dict[str, object],
         call: ModelToolCall,
         cancel: threading.Event,
+        runtime: ExternalToolRuntime,
     ) -> HandlerOutcome:
-        details = self.dependencies.dispatcher.external_approval_details(call.name)
+        implementation = runtime.implementation
+        connection = implementation.connection  # type: ignore[attr-defined]
+        config = connection.config
+        details = {
+            "provenance": runtime.provenance.model_dump(
+                mode="json", by_alias=True, exclude_none=True
+            ),
+            "permissionProfile": config.permission_profile,
+            "timeoutSeconds": runtime.spec.timeout_seconds,
+            "envNames": list(config.env_names),
+        }
         prepared = PreparedToolExecution(
             approval_description={
                 "kind": "external_tool",
@@ -382,9 +406,7 @@ class ExternalToolHandler:
             item=item,
             prepared=prepared,
             cancel=cancel,
-            execute=lambda: self.dependencies.dispatcher.execute_external(
-                call, cancel
-            ),
+            execute=lambda: implementation.execute(call.arguments, cancel),
         )
         if approval.decision != "approve":
             return HandlerOutcome(
@@ -415,10 +437,12 @@ class EidosStateToolHandler:
         item: dict[str, object],
         call: ModelToolCall,
         cancel: threading.Event,
+        runtime: EidosStateToolRuntime,
     ) -> HandlerOutcome:
-        if self.dependencies.dispatcher.plan(call).is_network_eidos_state:
-            details = self.dependencies.dispatcher.network_approval_details(
-                call.name, call.arguments
+        implementation = runtime.implementation
+        if runtime.network_prepare:
+            details = implementation.network_approval_details(  # type: ignore[attr-defined]
+                call.arguments
             )
             network_execution = PreparedToolExecution(
                 approval_description={
@@ -441,8 +465,8 @@ class EidosStateToolHandler:
                 prepared=network_execution,
                 cancel=cancel,
                 execute=lambda: {
-                    "prepared": self.dependencies.dispatcher.download_eidos_state(
-                        call.name, call.arguments, cancel
+                    "prepared": implementation.download_eidos_state(  # type: ignore[attr-defined]
+                        call.arguments, cancel
                     )
                 },
             )
@@ -459,8 +483,8 @@ class EidosStateToolHandler:
             assert verified is not None
             prepared = verified.result["prepared"]
         else:
-            prepared = self.dependencies.dispatcher.prepare_eidos_state(
-                call.name, call.arguments, cancel
+            prepared = implementation.prepare_eidos_state(  # type: ignore[attr-defined]
+                call.arguments, cancel
             )
         if isinstance(prepared, dict):
             return HandlerOutcome(
@@ -486,8 +510,8 @@ class EidosStateToolHandler:
             item=item,
             prepared=state_execution,
             cancel=cancel,
-            execute=lambda: self.dependencies.dispatcher.commit_eidos_state(
-                call.name, prepared, cancel
+            execute=lambda: implementation.commit_eidos_state(  # type: ignore[attr-defined]
+                prepared, cancel
             ),
         )
         if approval.decision == "reject":
@@ -529,11 +553,11 @@ class ToolCallRuntime:
         self.events = events
         self.sensitive = sensitive
         self.state_machine = state_machine
-        handlers = {}
+        self.concurrency = ToolConcurrencyGate()
         self.controller = ToolExecutionController(
             store,
             dispatcher,
-            handlers,
+            self,
             events,
             sensitive,
             approval=approval,
@@ -548,15 +572,52 @@ class ToolCallRuntime:
             self.controller.execute_side_effect,
             self.controller.resources,
         )
-        handlers.update({
-            "read": ReadOnlyToolHandler(dependencies),
-            "file": FileChangeToolHandler(dependencies),
-            "shell": ShellToolHandler(dependencies),
-            "external": ExternalToolHandler(dependencies),
-            "eidos_state": EidosStateToolHandler(dependencies),
-            "network_eidos_state": EidosStateToolHandler(dependencies),
-        })
-        self.handlers = handlers
+        self.read_runtime = ReadOnlyToolHandler(dependencies)
+        self.workspace_runtime = FileChangeToolHandler(dependencies)
+        self.shell_runtime = ShellToolHandler(dependencies)
+        self.external_runtime = ExternalToolHandler(dependencies)
+        self.eidos_state_runtime = EidosStateToolHandler(dependencies)
+
+    def invoke_read(
+        self, runtime: AdapterToolRuntime, run_id: str,
+        item: dict[str, object], call: ModelToolCall,
+        cancel: threading.Event,
+    ) -> HandlerOutcome:
+        return self.read_runtime.execute(run_id, item, call, cancel, runtime)
+
+    def invoke_workspace_mutation(
+        self, runtime: WorkspaceMutationRuntime, run_id: str,
+        item: dict[str, object], call: ModelToolCall,
+        cancel: threading.Event,
+    ) -> HandlerOutcome:
+        return self.workspace_runtime.execute(
+            run_id, item, call, cancel, runtime
+        )
+
+    def invoke_shell(
+        self, runtime: ShellToolRuntime, run_id: str,
+        item: dict[str, object], call: ModelToolCall,
+        cancel: threading.Event,
+    ) -> HandlerOutcome:
+        return self.shell_runtime.execute(run_id, item, call, cancel, runtime)
+
+    def invoke_external(
+        self, runtime: ExternalToolRuntime, run_id: str,
+        item: dict[str, object], call: ModelToolCall,
+        cancel: threading.Event,
+    ) -> HandlerOutcome:
+        return self.external_runtime.execute(
+            run_id, item, call, cancel, runtime
+        )
+
+    def invoke_eidos_state(
+        self, runtime: EidosStateToolRuntime, run_id: str,
+        item: dict[str, object], call: ModelToolCall,
+        cancel: threading.Event,
+    ) -> HandlerOutcome:
+        return self.eidos_state_runtime.execute(
+            run_id, item, call, cancel, runtime
+        )
 
     def validate(
         self, step: StepContext, sampling: SamplingOutcome
@@ -589,7 +650,6 @@ class ToolCallRuntime:
         errors: list[str] = []
         successes: list[str] = []
         context_facts: list[str] = []
-        snapshot_hashes = dict(step.tool_snapshot.spec_hashes)
         for batch_order, call in enumerate(tool_calls):
             self._check_cancel(step.run_id, cancel)
             try:
@@ -646,16 +706,23 @@ class ToolCallRuntime:
                 call.provider_call_id, call.name, arguments
             )
             plan = self.dispatcher.plan(
-                effective_call, snapshot_hashes.get(call.name)
+                effective_call, step.tool_snapshot.binding(call.name)
             )
-            outcome = self.controller.execute(
-                run_id=step.run_id,
-                item=item,
-                call=effective_call,
-                plan=plan,
-                cancel=cancel,
-                deadline=None,
+            assert (
+                plan.descriptor is not None
+                and plan.descriptor.execution_policy is not None
             )
+            with self.concurrency.acquire(
+                plan.descriptor.execution_policy.concurrency, cancel
+            ):
+                outcome = self.controller.execute(
+                    run_id=step.run_id,
+                    item=item,
+                    call=effective_call,
+                    plan=plan,
+                    cancel=cancel,
+                    deadline=None,
+                )
             completed = outcome.item or item
             self._check_cancel(step.run_id, cancel)
             if outcome.activations:
@@ -777,16 +844,25 @@ class ToolCallRuntime:
         def run(entry: tuple[dict[str, object], ModelToolCall]) -> HandlerOutcome:
             item, call = entry
             try:
-                return self.controller.execute(
-                    run_id=step.run_id,
-                    item=item,
-                    call=call,
-                    plan=self.dispatcher.plan(
-                        call, dict(step.tool_snapshot.spec_hashes).get(call.name)
-                    ),
-                    cancel=controlled_cancel,
-                    deadline=None,
+                plan = self.dispatcher.plan(
+                    call, step.tool_snapshot.binding(call.name)
                 )
+                assert (
+                    plan.descriptor is not None
+                    and plan.descriptor.execution_policy is not None
+                )
+                with self.concurrency.acquire(
+                    plan.descriptor.execution_policy.concurrency,
+                    controlled_cancel,
+                ):
+                    return self.controller.execute(
+                        run_id=step.run_id,
+                        item=item,
+                        call=call,
+                        plan=plan,
+                        cancel=controlled_cancel,
+                        deadline=None,
+                    )
             except RuntimeCancelled:
                 raise
             except ToolInfrastructureError:

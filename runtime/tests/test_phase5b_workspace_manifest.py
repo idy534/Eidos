@@ -164,11 +164,20 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             lambda _run_id, _cancel: None,
             requeue=False,
         )
-        handlers = {}
+        class RuntimeContext:
+            handler = None
+
+            def invoke_shell(inner, runtime, run_id, item, call, cancel):
+                assert inner.handler is not None
+                return inner.handler.execute(
+                    run_id, item, call, cancel, runtime
+                )
+
+        runtime_context = RuntimeContext()
         self.controller = ToolExecutionController(
             self.store,
             self.dispatcher,
-            handlers,
+            runtime_context,
             self.events,
             default_scanner(),
             approval=approval,
@@ -181,7 +190,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             True,
             self.controller.execute_side_effect,
         )
-        handlers["shell"] = ShellToolHandler(dependencies)
+        runtime_context.handler = ShellToolHandler(dependencies)
 
     def tearDown(self) -> None:
         self.executor.close()

@@ -366,8 +366,6 @@ class McpConnection:
 
 
 class McpToolAdapter:
-    execution_kind = "external"
-
     def __init__(
         self,
         connection: McpConnection,
@@ -381,15 +379,6 @@ class McpToolAdapter:
         self.local_name = local_name
         self.input_validator = input_validator
         self.output_validator = output_validator
-
-    def effective_arguments(self, arguments: object) -> dict[str, object] | None:
-        try:
-            validated = self.input_validator.validate(
-                arguments, apply_defaults=True
-            )
-        except JsonSchemaValidationError:
-            return None
-        return validated if isinstance(validated, dict) else None
 
     def execute(
         self, arguments: dict[str, object], cancel: threading.Event
@@ -420,11 +409,6 @@ class McpToolAdapter:
 
 
 class _RejectedMcpAdapter:
-    execution_kind = "external"
-
-    def effective_arguments(self, _arguments: object) -> None:
-        return None
-
     def execute(
         self, _arguments: dict[str, object], _cancel: threading.Event
     ) -> dict[str, object]:

@@ -656,7 +656,7 @@ class ToolExecutorTests(unittest.TestCase):
         )
 
         self.assertEqual(sensitive["code"], "sensitive_path")
-        self.assertEqual(escaping["code"], "workspace_boundary_violation")
+        self.assertEqual(escaping["code"], "invalid_arguments")
 
     def test_sensitive_file_content_is_withheld_as_a_whole(self) -> None:
         (self.workspace / "notes.txt").write_text(

@@ -54,7 +54,7 @@ class ParallelToolConvergenceTests(unittest.TestCase):
             )),
             ModelResponse(text="must not be sampled"),
         ])
-        def injected(handler, run_id, item, call, cancel):
+        def injected(handler, run_id, item, call, cancel, _runtime):
             if call.provider_call_id == "bad":
                 raise StorageError("fixture database failure")
             while not cancel.is_set():

@@ -101,6 +101,46 @@ class Phase4ASkillContextTests(unittest.TestCase):
             self.skills.render_selected(self.snapshot, selected).content,
         )
 
+    def test_materialized_catalog_ignores_new_skills_until_next_run(self) -> None:
+        catalog_a = self.skills.catalog_snapshot(self.snapshot)
+        assert self.store.data_directory is not None
+        new_skill = self.store.data_directory / "skills" / "new-skill"
+        new_skill.mkdir(parents=True)
+        (new_skill / "SKILL.md").write_text(
+            "---\nname: new-skill\ndescription: New skill.\n---\nNew.\n",
+            encoding="utf-8",
+        )
+
+        same_run = self.skills.select_explicit(
+            catalog_a, "turn-2", "@user:new-skill"
+        )
+        installed_skill = (
+            self.skills.plugins.installed_root("demo")
+            / "skills"
+            / "review"
+            / "SKILL.md"
+        )
+        installed_skill.write_text(
+            "---\nname: review\ndescription: Changed.\n---\nChanged.\n",
+            encoding="utf-8",
+        )
+        existing = self.skills.select_explicit(
+            catalog_a, "turn-3", "@demo:review"
+        )
+        self.assertEqual(same_run.selected_qualified_ids, ())
+        self.assertIn(
+            "Use the checklist.",
+            self.skills.render_selected(catalog_a, existing).content,
+        )
+
+        snapshot_b = self.skills.extension_snapshot()
+        catalog_b = self.skills.catalog_snapshot(snapshot_b)
+        self.assertNotEqual(catalog_a.catalog_hash, catalog_b.catalog_hash)
+        self.assertIn(
+            "user:new-skill",
+            {entry.qualified_id for entry in catalog_b.entries},
+        )
+
     def test_context_builder_places_one_catalog_before_history_and_uses_projection(self) -> None:
         session = self.store.create_session(str(self.workspace))
         run, _ = self.store.create_run(session["id"], "Use @demo:review")
@@ -268,7 +308,7 @@ class Phase4ASkillContextTests(unittest.TestCase):
                     },
                     "read_file_range": {
                         "path": "a", "content": "", "sizeBytes": 0,
-                        "sha256": "a" * 64, "startLine": 1, "endLine": 0,
+                        "sha256": "a" * 64, "startLine": 1, "endLine": 1,
                     },
                     "search_text": {
                         "matches": [], "scannedBytes": 0, "truncated": False,
@@ -502,10 +542,15 @@ class Phase4ASideEffectContractTests(unittest.TestCase):
                     "completed",
                 )
 
+        handler = Handler()
+        class RuntimeContext:
+            def invoke_read(inner, _runtime, run_id, item, call, cancel):
+                return handler.execute(run_id, item, call, cancel)
+
         controller = ToolExecutionController(
             self.store,
             self.dispatcher,
-            {"read": Handler()},
+            RuntimeContext(),
             self.events,
             default_scanner(),
         )
@@ -553,10 +598,16 @@ class Phase4ASideEffectContractTests(unittest.TestCase):
                 return HandlerOutcome(verified.result, "completed")
 
         handler = Handler()
+        class RuntimeContext:
+            def invoke_workspace_mutation(
+                inner, _runtime, run_id, item, call, cancel
+            ):
+                return handler.execute(run_id, item, call, cancel)
+
         controller = ToolExecutionController(
             self.store,
             self.dispatcher,
-            {"file": handler},
+            RuntimeContext(),
             self.events,
             default_scanner(),
             approval=self.approval,
@@ -567,16 +618,19 @@ class Phase4ASideEffectContractTests(unittest.TestCase):
             "write_file",
             {"path": "a.txt", "content": "hello"},
         )
+        plan = self.dispatcher.plan(call)
+        assert plan.descriptor is not None
+        assert plan.descriptor.projector is not None
         with patch.object(
-            self.dispatcher,
-            "project_result",
+            plan.descriptor.projector,
+            "project",
             side_effect=ValueError("projection"),
         ):
             outcome = controller.execute(
                 run_id=self.run["id"],
                 item=self._item("write_file", call.arguments),
                 call=call,
-                plan=self.dispatcher.plan(call),
+                plan=plan,
                 cancel=threading.Event(),
                 deadline=None,
             )
