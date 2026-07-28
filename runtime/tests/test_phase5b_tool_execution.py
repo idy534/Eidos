@@ -27,6 +27,11 @@ from eidos_runtime.runtime.tool_execution import (  # noqa: E402
     active_tool_execution_count,
 )
 from eidos_runtime.sandbox.sensitive import default_scanner  # noqa: E402
+from eidos_runtime.tools.contracts import (  # noqa: E402
+    ReadFileResultData,
+    project_tool_result,
+    result_model,
+)
 
 
 class _Handler:
@@ -38,7 +43,13 @@ class _Handler:
             "outcome": "success",
             "code": "ok",
             "summary": "ok",
-            "data": {},
+            "data": {
+                "path": "a.txt",
+                "content": "",
+                "sizeBytes": 0,
+                "sha256": "a" * 64,
+                "truncated": False,
+            },
             "sideEffectsMayExist": False,
             "reconciliationRequired": False,
         }
@@ -96,6 +107,14 @@ class _Dispatcher:
             "read", "file", "shell", "external", "eidos_state",
             "network_eidos_state",
         }
+
+    def validate_result(self, _tool_name, result):
+        return result_model(ReadFileResultData).model_validate(
+            result
+        ).model_dump(mode="json", by_alias=True, exclude_none=True)
+
+    def project_result(self, tool_name, result):
+        return project_tool_result(tool_name, result)
 
 
 class ToolExecutionControllerTests(unittest.TestCase):

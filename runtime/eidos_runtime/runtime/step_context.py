@@ -50,7 +50,7 @@ class StepContextFactory:
             model_context=(
                 model_context
                 if model_context is not None
-                else (*run.model_context, *run.skill_context)
+                else run.model_context
             ),
             tool_snapshot=snapshot,
             tool_definitions=tuple(

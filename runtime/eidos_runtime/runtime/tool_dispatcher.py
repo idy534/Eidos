@@ -6,6 +6,7 @@ import threading
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ModelToolDefinition
 from eidos_runtime.extensions.skills import SkillCreation
 from eidos_runtime.tools.registry import StepToolSnapshot, ToolRegistry
+from eidos_runtime.tools.contracts import ToolResultProjection, project_tool_result
 from eidos_runtime.tools.workspace import FileChange
 
 
@@ -21,6 +22,7 @@ class ToolDispatchPlan:
     execution_kind: str
     timeout_seconds: int = 600
     side_effect: str = "external"
+    contract_hash: str | None = None
 
     @property
     def is_shell(self) -> bool:
@@ -62,9 +64,14 @@ class ToolDispatcher:
             entry = self._registry.get(call.name) if isinstance(call, ModelToolCall) else None
             if available_names is not None and isinstance(call, ModelToolCall) and call.name not in available_names:
                 entry = None
+            contract_arguments = (
+                entry.validate_arguments(call.arguments)
+                if entry is not None and entry.input_model is not None
+                else call.arguments
+            )
             effective = (
-                entry.adapter.effective_arguments(call.arguments)
-                if entry is not None
+                entry.adapter.effective_arguments(contract_arguments)
+                if entry is not None and contract_arguments is not None
                 else None
             )
             if (
@@ -77,7 +84,14 @@ class ToolDispatcher:
                 or effective is None
                 or not _valid_arguments(call.arguments)
             ):
-                return ToolValidationResult((), "invalid_tool_call")
+                return ToolValidationResult(
+                    (),
+                    (
+                        "TOOL_ARGUMENT_CONTRACT_VIOLATION"
+                        if entry is not None and contract_arguments is None
+                        else "invalid_tool_call"
+                    ),
+                )
             provider_ids.add(call.provider_call_id)
             effective_calls.append(ModelToolCall(
                 call.provider_call_id, call.name, effective
@@ -108,7 +122,11 @@ class ToolDispatcher:
             if entry is not None else None
         )
 
-    def plan(self, call: ModelToolCall) -> ToolDispatchPlan:
+    def plan(
+        self,
+        call: ModelToolCall,
+        expected_contract_hash: str | None = None,
+    ) -> ToolDispatchPlan:
         """Classify the validated call without exposing ToolExecutor metadata."""
         entry = self._registry.get(call.name)
         if entry is None:
@@ -118,6 +136,7 @@ class ToolDispatcher:
             entry.adapter.execution_kind,
             entry.spec.timeout_seconds,
             entry.spec.side_effect,
+            expected_contract_hash or _spec_hash(entry),
         )
 
     def validate_execution(
@@ -129,8 +148,31 @@ class ToolDispatcher:
             and entry.adapter.execution_kind == plan.execution_kind
             and entry.spec.timeout_seconds == plan.timeout_seconds
             and entry.spec.side_effect == plan.side_effect
+            and (
+                plan.contract_hash is None
+                or _spec_hash(entry) == plan.contract_hash
+            )
             and entry.adapter.effective_arguments(call.arguments) == call.arguments
         )
+
+    def validate_result(
+        self, tool_name: str, result: object
+    ) -> dict[str, object]:
+        entry = self._registry.get(tool_name)
+        if entry is None:
+            raise ValueError("tool_contract_unavailable")
+        validated = entry.validate_result(result)
+        if validated.get("toolName") != tool_name:
+            raise ValueError("tool_result_name_mismatch")
+        return validated
+
+    def project_result(
+        self, tool_name: str, result: dict[str, object]
+    ) -> ToolResultProjection:
+        entry = self._registry.get(tool_name)
+        if entry is None:
+            raise ValueError("tool_contract_unavailable")
+        return project_tool_result(tool_name, result)
 
     def is_parallel_read_batch(self, calls: tuple[ModelToolCall, ...]) -> bool:
         return len(calls) > 1 and all(
@@ -265,6 +307,18 @@ def _unavailable(tool_name: str) -> dict[str, object]:
         "sideEffectsMayExist": False,
         "reconciliationRequired": False,
     }
+
+
+def _spec_hash(entry) -> str:
+    import hashlib
+    import json
+
+    return hashlib.sha256(json.dumps(
+        entry.spec.model_dump(mode="json", by_alias=True),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")).hexdigest()
 
 
 def _valid_arguments(value: object) -> bool:

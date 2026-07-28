@@ -673,6 +673,7 @@ class SessionStore:
         item_id: str,
         result_json: str,
         *,
+        model_result_json: str | None = None,
         item_status: str = "completed",
         tool_status: str = "completed",
         workspace_changed: bool = False,
@@ -681,6 +682,7 @@ class SessionStore:
         return self._repository(self._execution).complete_tool_item(
             item_id,
             result_json,
+            model_result_json=model_result_json,
             item_status=item_status,
             tool_status=tool_status,
             workspace_changed=workspace_changed,
@@ -692,6 +694,7 @@ class SessionStore:
         item_id: str,
         result_json: str,
         *,
+        model_result_json: str | None = None,
         item_status: str = "completed",
         tool_status: str = "completed",
         workspace_changed: bool = False,
@@ -701,6 +704,7 @@ class SessionStore:
         return self._repository(self._execution).complete_tool_item_committed(
             item_id,
             result_json,
+            model_result_json=model_result_json,
             item_status=item_status,
             tool_status=tool_status,
             workspace_changed=workspace_changed,
@@ -713,6 +717,7 @@ class SessionStore:
         item_id: str,
         result_json: str,
         *,
+        model_result_json: str | None = None,
         item_status: str,
         tool_status: str,
         workspace_changed: bool = False,
@@ -724,6 +729,7 @@ class SessionStore:
         ).complete_tool_item_once_committed(
             item_id,
             result_json,
+            model_result_json=model_result_json,
             item_status=item_status,
             tool_status=tool_status,
             workspace_changed=workspace_changed,

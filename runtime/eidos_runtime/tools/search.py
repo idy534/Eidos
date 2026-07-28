@@ -8,6 +8,11 @@ from eidos_runtime.tools.registry import (
     ToolRegistryEntry,
     ToolSpec,
 )
+from eidos_runtime.tools.contracts import (
+    ToolSearchInput,
+    ToolSearchResultData,
+    result_model,
+)
 
 
 class ToolSearchAdapter:
@@ -112,19 +117,11 @@ def tool_search_entry(candidates: tuple[ToolRegistryEntry, ...]) -> ToolRegistry
             "timeoutSeconds": 5,
             "batchPolicy": "single",
             "visibility": "direct",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "maxLength": 256},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 16, "default": 10},
-                },
-                "required": ["query"],
-                "additionalProperties": False,
-            },
-            "resultSchema": {
-                "type": "object", "properties": {}, "required": [],
-                "additionalProperties": False,
-            },
+            "inputSchema": ToolSearchInput.model_json_schema(by_alias=True),
+            "resultSchema": result_model(
+                ToolSearchResultData
+            ).model_json_schema(by_alias=True),
+            "modelProjectionPolicy": "tool_search",
         }),
         provenance=ToolProvenance.model_validate({
             "kind": "builtin",
@@ -133,6 +130,8 @@ def tool_search_entry(candidates: tuple[ToolRegistryEntry, ...]) -> ToolRegistry
             "contentHash": hashlib.sha256(name.encode("utf-8")).hexdigest(),
         }),
         adapter=ToolSearchAdapter(candidates),
+        input_model=ToolSearchInput,
+        result_data_model=ToolSearchResultData,
     )
 
 

@@ -23,6 +23,12 @@ from mcp import types as mcp_types
 from eidos_runtime.extensions.contracts import McpServerConfigV1
 from eidos_runtime.extensions.plugins import PluginCatalog
 from eidos_runtime.tools.registry import ToolProvenance, ToolRegistryEntry, ToolSpec
+from eidos_runtime.tools.contracts import McpResultData, result_model
+from eidos_runtime.tools.json_schema import (
+    BoundedJsonSchema,
+    JsonSchemaValidationError,
+    validate_bounded_json_value,
+)
 from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
     RuntimeResource,
@@ -35,7 +41,6 @@ MAX_LIST_PAGES = 32
 MAX_TOOLS = 512
 MAX_SCHEMA_BYTES = 256 * 1024
 MAX_RESULT_BYTES = 256 * 1024
-MAX_STRUCTURED_ITEMS = 4096
 SANDBOX_EXECUTABLE = "/usr/bin/sandbox-exec"
 SANDBOX_DIR = Path(__file__).resolve().parents[1] / "sandbox"
 LAUNCHER = Path(__file__).with_name("mcp_launcher.py")
@@ -364,19 +369,66 @@ class McpToolAdapter:
     execution_kind = "external"
 
     def __init__(
-        self, connection: McpConnection, remote_name: str, input_schema: dict[str, object]
+        self,
+        connection: McpConnection,
+        remote_name: str,
+        local_name: str,
+        input_validator: BoundedJsonSchema,
+        output_validator: BoundedJsonSchema | None,
     ) -> None:
         self.connection = connection
         self.remote_name = remote_name
-        self.input_schema = input_schema
+        self.local_name = local_name
+        self.input_validator = input_validator
+        self.output_validator = output_validator
 
     def effective_arguments(self, arguments: object) -> dict[str, object] | None:
-        return _effective_arguments(self.input_schema, arguments)
+        try:
+            validated = self.input_validator.validate(
+                arguments, apply_defaults=True
+            )
+        except JsonSchemaValidationError:
+            return None
+        return validated if isinstance(validated, dict) else None
 
     def execute(
         self, arguments: dict[str, object], cancel: threading.Event
     ) -> dict[str, object]:
-        return self.connection.call(self.remote_name, arguments, cancel)
+        result = dict(self.connection.call(self.remote_name, arguments, cancel))
+        result["toolName"] = self.local_name
+        if self.output_validator is None:
+            return result
+        data = result.get("data")
+        structured = (
+            data.get("structuredContent") if isinstance(data, dict) else None
+        )
+        try:
+            self.output_validator.validate(structured)
+        except JsonSchemaValidationError:
+            return {
+                "toolContractVersion": 1,
+                "schemaVersion": 1,
+                "toolName": self.local_name,
+                "outcome": "error",
+                "code": "TOOL_RESULT_CONTRACT_VIOLATION",
+                "summary": "MCP structured content violated its output schema",
+                "data": {},
+                "sideEffectsMayExist": True,
+                "reconciliationRequired": True,
+            }
+        return result
+
+
+class _RejectedMcpAdapter:
+    execution_kind = "external"
+
+    def effective_arguments(self, _arguments: object) -> None:
+        return None
+
+    def execute(
+        self, _arguments: dict[str, object], _cancel: threading.Event
+    ) -> dict[str, object]:
+        return _unavailable()
 
 
 class McpManager:
@@ -543,13 +595,17 @@ async def _call_tool(
         texts.append(content.text)
     text = "\n".join(texts)
     structured = result.structuredContent
-    if structured is not None and not _bounded_json(structured):
-        return _result("error", "mcp_result_too_large", {})
+    if structured is not None:
+        try:
+            validate_bounded_json_value(structured)
+        except JsonSchemaValidationError:
+            return _result("error", "mcp_result_too_large", {})
     data: dict[str, object] = {}
     if text:
         data["text"] = text
     if structured is not None:
         data["structuredContent"] = structured
+    data["isError"] = bool(result.isError)
     if len(json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > MAX_RESULT_BYTES:
         return _result("error", "mcp_result_too_large", {})
     return _result("error" if result.isError else "success", "mcp_tool_error" if result.isError else "ok", data)
@@ -561,6 +617,11 @@ def _tool_entry(
     server: dict[str, object],
 ) -> ToolRegistryEntry:
     input_schema = tool.inputSchema
+    input_validator = BoundedJsonSchema(input_schema)
+    output_schema = tool.outputSchema
+    output_validator = (
+        BoundedJsonSchema(output_schema) if output_schema is not None else None
+    )
     serialized = json.dumps(
         tool.model_dump(mode="json", by_alias=True, exclude_none=True),
         ensure_ascii=False, separators=(",", ":"), sort_keys=True,
@@ -577,10 +638,10 @@ def _tool_entry(
             "batchPolicy": "single",
             "visibility": "deferred",
             "inputSchema": input_schema,
-            "resultSchema": {
-                "type": "object", "properties": {}, "required": [],
-                "additionalProperties": False,
-            },
+            "resultSchema": result_model(
+                McpResultData
+            ).model_json_schema(by_alias=True),
+            "modelProjectionPolicy": "mcp",
         }),
         provenance=ToolProvenance.model_validate({
             "kind": "mcp",
@@ -590,7 +651,12 @@ def _tool_entry(
             "pluginId": server["pluginId"],
             "serverId": server["serverId"],
         }),
-        adapter=McpToolAdapter(connection, tool.name, input_schema),
+        adapter=McpToolAdapter(
+            connection, tool.name, name, input_validator, output_validator
+        ),
+        result_data_model=McpResultData,
+        input_schema_validator=input_validator,
+        output_schema_validator=output_validator,
     )
 
 
@@ -604,78 +670,54 @@ def _valid_tool_entries(
         try:
             entries.append(_tool_entry(connection, tool, server))
         except (TypeError, ValueError):
-            continue
+            entries.append(_rejected_tool_entry(connection, tool, server))
     return entries
 
 
-def _effective_arguments(
-    schema: dict[str, object], arguments: object
-) -> dict[str, object] | None:
-    if not isinstance(arguments, dict) or schema.get("type") != "object":
-        return None
-    properties = schema.get("properties")
-    required = schema.get("required", [])
-    if (
-        not isinstance(properties, dict)
-        or schema.get("additionalProperties") is not False
-        or not isinstance(required, list)
-        or not set(arguments) <= set(properties)
-        or not set(required) <= set(arguments)
-    ):
-        return None
-    effective = dict(arguments)
-    for key, child in properties.items():
-        if key not in effective and isinstance(child, dict) and "default" in child:
-            effective[key] = child["default"]
-    if not set(required) <= set(effective):
-        return None
-    return effective if all(
-        _schema_value(properties[key], value) for key, value in effective.items()
-    ) else None
-
-
-def _schema_value(schema: object, value: object) -> bool:
-    if not isinstance(schema, dict):
-        return False
-    if "enum" in schema and value not in schema["enum"]:
-        return False
-    if "const" in schema and value != schema["const"]:
-        return False
-    kind = schema.get("type")
-    if kind == "string":
-        return isinstance(value, str) and (
-            "minLength" not in schema or len(value) >= schema["minLength"]
-        ) and ("maxLength" not in schema or len(value) <= schema["maxLength"])
-    if kind == "boolean":
-        return isinstance(value, bool)
-    if kind == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
-    if kind == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
-    if kind == "array":
-        return isinstance(value, list) and all(
-            _schema_value(schema.get("items"), item) for item in value
-        )
-    if kind == "object":
-        return _effective_arguments(schema, value) is not None
-    return False
-
-
-def _bounded_json(value: object, depth: int = 0, count: list[int] | None = None) -> bool:
-    count = count or [0]
-    count[0] += 1
-    if depth > 16 or count[0] > MAX_STRUCTURED_ITEMS:
-        return False
-    if value is None or isinstance(value, (str, bool, int, float)):
-        return not isinstance(value, float) or (value == value and abs(value) != float("inf"))
-    if isinstance(value, list):
-        return all(_bounded_json(item, depth + 1, count) for item in value)
-    if isinstance(value, dict):
-        return all(
-            isinstance(key, str) and _bounded_json(item, depth + 1, count)
-            for key, item in value.items()
-        )
-    return False
+def _rejected_tool_entry(
+    connection: McpConnection,
+    tool: mcp_types.Tool,
+    server: dict[str, object],
+) -> ToolRegistryEntry:
+    name = f"mcp__{server['serverId']}__{tool.name}"
+    serialized = json.dumps(
+        tool.model_dump(mode="json", by_alias=True, exclude_none=True),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return ToolRegistryEntry(
+        spec=ToolSpec.model_validate({
+            "name": name,
+            "description": tool.description or f"MCP tool {tool.name}",
+            "sideEffect": "external",
+            "approvalRequired": True,
+            "timeoutSeconds": connection.config.tool_timeout_seconds,
+            "batchPolicy": "single",
+            "visibility": "deferred",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": True,
+            },
+            "resultSchema": result_model(
+                McpResultData
+            ).model_json_schema(by_alias=True),
+            "modelProjectionPolicy": "mcp",
+        }),
+        provenance=ToolProvenance.model_validate({
+            "kind": "mcp",
+            "sourceId": f"{server['pluginId']}:{server['serverId']}",
+            "sourceVersion": server["pluginVersion"],
+            "contentHash": hashlib.sha256(
+                serialized.encode("utf-8")
+            ).hexdigest(),
+            "pluginId": server["pluginId"],
+            "serverId": server["serverId"],
+        }),
+        adapter=_RejectedMcpAdapter(),
+        result_data_model=McpResultData,
+    )
 
 
 def _snapshot_has_plugin(snapshot: dict[str, object], plugin_id: str, content_hash: str) -> bool:

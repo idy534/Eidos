@@ -113,9 +113,6 @@ class RuntimeEngine:
                 mcp_sandbox=self.mcp_sandbox,
                 resource_registry=self.resources,
             ) as resources:
-                run_context = run_context.model_copy(
-                    update={"skill_context": resources.skill_context}
-                )
                 self._drive(run_context, resources, cancel)
         except RunResourceError as error:
             self._fail(run_id, str(error))
@@ -204,7 +201,8 @@ class RuntimeEngine:
             built = context_builder.build(
                 run.run_id,
                 tool_definitions=tool_definitions,
-                skill_context=resources.skill_context,
+                retained_context=resources.retained_context,
+                selected_skill_context=resources.selected_skill_context,
                 extra_context=run.model_context,
             )
             budget_fact = self.store.run_budget(run.run_id)

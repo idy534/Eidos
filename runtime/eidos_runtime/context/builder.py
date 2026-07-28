@@ -10,6 +10,7 @@ from eidos_runtime.context.facts import ContextFacts
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelContextItem, ModelToolDefinition
 from eidos_runtime.model.prompts import SYSTEM_PROMPT
+from eidos_runtime.extensions.skills import RetainedContextSection
 
 
 class ContextBuild(BaseModel):
@@ -36,7 +37,8 @@ class ContextBuilder:
         run_id: str,
         *,
         tool_definitions: tuple[ModelToolDefinition, ...] = (),
-        skill_context: tuple[ModelContextItem, ...] = (),
+        retained_context: tuple[RetainedContextSection, ...] = (),
+        selected_skill_context: tuple[RetainedContextSection, ...] = (),
         extra_context: tuple[ModelContextItem, ...] = (),
     ) -> ContextBuild:
         facts = self.store.context_projection_facts(run_id)
@@ -44,7 +46,32 @@ class ContextBuilder:
         source_ids = set(
             facts.compact_summary.source_item_ids if facts.compact_summary else ()
         )
-        context: list[ModelContextItem] = []
+        workspace = self.store.workspace_for_run(run_id)
+        context: list[ModelContextItem] = [{
+            "type": "user",
+            "sectionId": "workspace-environment",
+            "version": str(facts.workspace_version),
+            "content": "Workspace/environment context: " + json.dumps(
+                {
+                    "workspace": str(workspace.path),
+                    "workspaceVersion": facts.workspace_version,
+                    "platform": platform.system(),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        }]
+        retained_by_id = {
+            section.section_id: section for section in retained_context
+        }
+        context.extend(
+            retained_by_id[key].as_model_item()
+            for key in sorted(retained_by_id)
+        )
+        context.extend(
+            section.as_model_item() for section in selected_skill_context
+        )
         if facts.compact_summary is not None:
             context.append({
                 "type": "user",
@@ -77,10 +104,9 @@ class ContextBuilder:
                         "type": "tool_result",
                         "callId": item.provider_call_id,
                         "name": item.tool_name or "",
-                        "result": item.result_json or "{}",
+                        "result": item.model_result_json or item.result_json or "{}",
                     },
                 ))
-        context.extend(skill_context)
         context.extend(extra_context)
         if facts.reconciliation_required or facts.active_error_fingerprints:
             context.append({
@@ -96,20 +122,6 @@ class ContextBuilder:
                     sort_keys=True,
                 ),
             })
-        workspace = self.store.workspace_for_run(run_id)
-        context.insert(0, {
-            "type": "user",
-            "content": "Workspace/environment context: " + json.dumps(
-                {
-                    "workspace": str(workspace.path),
-                    "workspaceVersion": facts.workspace_version,
-                    "platform": platform.system(),
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ),
-        })
         tool_calls = sum(item.get("type") == "tool_call" for item in context)
         tool_results = sum(item.get("type") == "tool_result" for item in context)
         payload = {

@@ -124,7 +124,9 @@ class ContextRepository(Repository):
             size_expression = """
                 length(CAST(COALESCE(items.content, '') AS BLOB))
                 + length(CAST(COALESCE(tool_calls.arguments_json, '') AS BLOB))
-                + length(CAST(COALESCE(tool_calls.result_json, '') AS BLOB)) + 256
+                + length(CAST(COALESCE(
+                    tool_calls.model_result_json, tool_calls.result_json, ''
+                ) AS BLOB)) + 256
             """
             aggregate = connection.execute(
                 f"SELECT COUNT(*), COALESCE(SUM({size_expression}), 0) {base}",
@@ -218,6 +220,11 @@ class ContextRepository(Repository):
                 result_json=(
                     str(tool["result_json"])
                     if tool and tool["result_json"] is not None
+                    else None
+                ),
+                model_result_json=(
+                    str(tool["model_result_json"])
+                    if tool and tool["model_result_json"] is not None
                     else None
                 ),
             )

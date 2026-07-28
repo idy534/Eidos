@@ -36,6 +36,7 @@ from eidos_runtime.runtime.resource_registry import (
 from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
+from eidos_runtime.tools.contracts import project_tool_result
 
 
 _active_lock = threading.Lock()
@@ -65,6 +66,7 @@ class HandlerOutcome:
     workspace_changed: bool = False
     diff_hash: str | None = None
     item: dict[str, object] | None = None
+    progress_fingerprint: str | None = None
 
 
 class ToolExecutionPhase(StrEnum):
@@ -396,6 +398,45 @@ class ToolExecutionController:
                                 ) is True
                             ),
                         )
+            if outcome.workspace_changed or outcome.diff_hash is not None:
+                enriched = dict(outcome.result)
+                data = dict(
+                    enriched.get("data")
+                    if isinstance(enriched.get("data"), dict)
+                    else {}
+                )
+                data["workspaceChanged"] = outcome.workspace_changed
+                if outcome.diff_hash is not None:
+                    data["workspaceDiffHash"] = outcome.diff_hash
+                enriched["data"] = data
+                outcome = replace(outcome, result=enriched)
+            # Contract failure cannot erase an already-authorized side effect.
+            try:
+                outcome = replace(
+                    outcome,
+                    result=self._validate_result(call.name, outcome.result),
+                )
+            except (TypeError, ValueError):
+                effects_possible = (
+                    self._execution_state.authorized_effects > 0
+                    or outcome.result.get("sideEffectsMayExist") is True
+                )
+                outcome = replace(
+                    outcome,
+                    result=tool_result(
+                        call.name,
+                        "error",
+                        "TOOL_RESULT_CONTRACT_VIOLATION",
+                        "Tool returned data that violated its contract",
+                        side_effects_may_exist=effects_possible,
+                        reconciliation_required=effects_possible,
+                    ),
+                    item_status="failed",
+                    tool_status="failed",
+                    workspace_changed=(
+                        outcome.workspace_changed if effects_possible else False
+                    ),
+                )
             result = safe_tool_result(
                 self.sensitive,
                 call.name,
@@ -415,13 +456,53 @@ class ToolExecutionController:
                     outcome, item_status="failed", tool_status="failed"
                 )
             if result.get("code") == "tool_result_too_large":
-                result = tool_error(
+                effects_possible = (
+                    self._execution_state.authorized_effects > 0
+                    or outcome.result.get("sideEffectsMayExist") is True
+                )
+                result = tool_result(
                     call.name,
+                    "error",
                     "TOOL_OUTPUT_TOO_LARGE",
                     "Tool result exceeded the safe size limit",
+                    side_effects_may_exist=effects_possible,
+                    reconciliation_required=effects_possible,
                 )
                 outcome = replace(outcome, item_status="failed", tool_status="failed")
             outcome = replace(outcome, result=result)
+            try:
+                outcome = replace(
+                    outcome,
+                    result=self._validate_result(call.name, outcome.result),
+                )
+                projection = self._project_result(call.name, outcome.result)
+            except (TypeError, ValueError):
+                effects_possible = (
+                    self._execution_state.authorized_effects > 0
+                    or outcome.result.get("sideEffectsMayExist") is True
+                )
+                outcome = replace(
+                    outcome,
+                    result=tool_result(
+                        call.name,
+                        "error",
+                        "TOOL_RESULT_PROJECTION_FAILED",
+                        "Tool result could not be projected safely",
+                        side_effects_may_exist=effects_possible,
+                        reconciliation_required=effects_possible,
+                    ),
+                    item_status="failed",
+                    tool_status="failed",
+                )
+                outcome = replace(
+                    outcome,
+                    result=self._validate_result(call.name, outcome.result),
+                )
+                projection = project_tool_result(call.name, outcome.result)
+            outcome = replace(
+                outcome,
+                progress_fingerprint=projection.progress_fingerprint,
+            )
             self._execution_state.phase = ToolExecutionPhase.COMMITTING
             duration_ms = max(0, int((self.monotonic() - started) * 1000))
             mutation = self.store.complete_tool_item_once_committed(
@@ -432,13 +513,22 @@ class ToolExecutionController:
                     separators=(",", ":"),
                     sort_keys=True,
                 ),
+                model_result_json=json.dumps(
+                    projection.model_result,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
                 item_status=outcome.item_status,
                 tool_status=outcome.tool_status,
                 workspace_changed=outcome.workspace_changed,
                 diff_hash=outcome.diff_hash,
                 duration_ms=duration_ms,
             )
-            self.events.publish(mutation, item=mutation.value)
+            self.events.publish(
+                mutation,
+                item=_ui_item(mutation.value, projection.ui_result),
+            )
             self._execution_state.phase = (
                 ToolExecutionPhase.COMPLETED
                 if outcome.tool_status == "completed"
@@ -453,21 +543,31 @@ class ToolExecutionController:
             return replace(outcome, item=mutation.value)
         except ToolInfrastructureError:
             try:
+                infrastructure_result = tool_result(
+                    call.name,
+                    "error",
+                    "TOOL_INFRASTRUCTURE_FAILURE",
+                    "Tool infrastructure failed",
+                    side_effects_may_exist=(
+                        plan.side_effect != "none"
+                    ),
+                    reconciliation_required=(
+                        plan.side_effect != "none"
+                    ),
+                )
+                infrastructure_projection = project_tool_result(
+                    call.name, infrastructure_result
+                )
                 mutation = self.store.complete_tool_item_once_committed(
                     str(item["id"]),
                     json.dumps(
-                        tool_result(
-                            call.name,
-                            "error",
-                            "TOOL_INFRASTRUCTURE_FAILURE",
-                            "Tool infrastructure failed",
-                            side_effects_may_exist=(
-                                plan.side_effect != "none"
-                            ),
-                            reconciliation_required=(
-                                plan.side_effect != "none"
-                            ),
-                        ),
+                        infrastructure_result,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    model_result_json=json.dumps(
+                        infrastructure_projection.model_result,
                         ensure_ascii=False,
                         separators=(",", ":"),
                         sort_keys=True,
@@ -480,7 +580,12 @@ class ToolExecutionController:
                         0, int((self.monotonic() - started) * 1000)
                     ),
                 )
-                self.events.publish(mutation, item=mutation.value)
+                self.events.publish(
+                    mutation,
+                    item=_ui_item(
+                        mutation.value, infrastructure_projection.ui_result
+                    ),
+                )
             except _INFRASTRUCTURE_ERRORS:
                 logger.exception(
                     "Tool infrastructure terminalization failed"
@@ -495,6 +600,16 @@ class ToolExecutionController:
             self._execution_state.authorized_effects = 0
             _execution_finished()
             resource.close()
+
+    def _validate_result(
+        self, tool_name: str, result: dict[str, object]
+    ) -> dict[str, object]:
+        return self.dispatcher.validate_result(tool_name, result)
+
+    def _project_result(
+        self, tool_name: str, result: dict[str, object]
+    ):
+        return self.dispatcher.project_result(tool_name, result)
 
     @staticmethod
     def _interrupted(
@@ -529,6 +644,23 @@ def _already_interrupted(result: dict[str, object], reason: str) -> bool:
         reason == "timeout"
         and ("timeout" in code or "timed_out" in code)
     )
+
+
+def _ui_item(
+    item: dict[str, object], ui_result: dict[str, object]
+) -> dict[str, object]:
+    projected = dict(item)
+    tool_call = item.get("toolCall")
+    if isinstance(tool_call, dict):
+        projected_call = dict(tool_call)
+        projected_call["resultJson"] = json.dumps(
+            ui_result,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        projected["toolCall"] = projected_call
+    return projected
 
 
 def active_tool_execution_count() -> int:

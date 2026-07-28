@@ -210,7 +210,15 @@ class ShellManifestIntegrationTests(unittest.TestCase):
                     observe()
                 if cancel is not None and index == 0:
                     cancel.set()
-            return result
+            normalized = dict(result)
+            data = dict(result.get("data", {}))
+            data.setdefault("truncated", False)
+            data.setdefault(
+                "termination",
+                "exit" if result.get("outcome") == "success" else "fixture",
+            )
+            normalized["data"] = data
+            return normalized
 
         with patch(
             "eidos_runtime.runtime.tool_runtime.run_shell",

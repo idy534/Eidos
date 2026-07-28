@@ -163,7 +163,7 @@ class StorageSchemaTests(unittest.TestCase):
         store = SessionStore(self.data)
         store.initialize()
 
-        self.assertEqual(SCHEMA_VERSION, 4)
+        self.assertEqual(SCHEMA_VERSION, 5)
         self.assertEqual(
             store.health(),
             {"state": "health_only", "code": "schema_revision_unsupported"},
@@ -187,7 +187,9 @@ class StorageSchemaTests(unittest.TestCase):
         revision_one_sql = (
             SCHEMA_SQL[:finalization_start]
             + SCHEMA_SQL[finalization_end:]
-        ).replace("    duration_ms INTEGER,\n", "")
+        ).replace("    duration_ms INTEGER,\n", "").replace(
+            "    model_result_json TEXT,\n", ""
+        )
         connection = sqlite3.connect(database)
         connection.executescript(revision_one_sql)
         connection.execute("PRAGMA user_version = 1")

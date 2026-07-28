@@ -261,6 +261,7 @@ class ToolResultDataDto(ClosedModel):
     structured_content: dict[str, JsonValue] | None = Field(
         default=None, alias="structuredContent"
     )
+    is_error: bool | None = Field(default=None, alias="isError")
     hits: list[ToolSearchHitDto] | None = None
     total_matches: StrictInt | None = Field(default=None, alias="totalMatches")
     command_outcome: StrictStr | None = Field(default=None, alias="commandOutcome")

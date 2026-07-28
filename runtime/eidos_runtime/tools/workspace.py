@@ -32,6 +32,23 @@ from eidos_runtime.tools.registry import (
     ToolRegistryEntry,
     ToolSpec,
 )
+from eidos_runtime.tools.contracts import (
+    ApplyPatchInput,
+    DeleteFileInput,
+    ListFilesInput,
+    ListFilesResultData,
+    ReadFileInput,
+    ReadFileRangeInput,
+    ReadFileRangeResultData,
+    ReadFileResultData,
+    RunShellInput,
+    RunShellResultData,
+    SearchTextInput,
+    SearchTextResultData,
+    WorkspaceResultData,
+    WriteFileInput,
+    result_model,
+)
 
 
 MAX_FILE_BYTES = 256 * 1024
@@ -112,58 +129,34 @@ class FileChange:
     delete: bool = False
 
 
-def _object_schema(properties: dict[str, object], required: list[str] | None = None) -> dict[str, object]:
-    schema: dict[str, object] = {
-        "type": "object", "properties": properties, "additionalProperties": False,
-    }
-    if required:
-        schema["required"] = required
-    return schema
-
-
-_RESULT_SCHEMA = _object_schema({
-    "schemaVersion": {"type": "integer", "const": 1},
-    "toolContractVersion": {"type": "integer", "const": 1},
-    "toolName": {"type": "string"},
-    "outcome": {"type": "string"},
-    "code": {"type": "string"},
-    "summary": {"type": "string"},
-    "data": _object_schema({
-        "commandOutcome": {"type": "string"},
-        "workspaceChanged": {"type": "boolean"},
-        "workspaceDiffHash": {"type": "string"},
-        "workspaceManifestComplete": {"type": "boolean"},
-        "workspaceManifestTruncated": {"type": "boolean"},
-        "created": {"type": "array", "items": {"type": "string"}},
-        "modified": {"type": "array", "items": {"type": "string"}},
-        "deleted": {"type": "array", "items": {"type": "string"}},
-    }),
-    "sideEffectsMayExist": {"type": "boolean"},
-    "reconciliationRequired": {"type": "boolean"},
-}, [
-    "schemaVersion", "toolContractVersion", "toolName", "outcome", "code",
-    "summary", "data", "sideEffectsMayExist", "reconciliationRequired",
-])
-TOOL_SPECS = tuple(ToolSpec.model_validate(spec) for spec in (
-    {"name": "list_files", "description": "List bounded regular files under the workspace.", "sideEffect": "none", "approvalRequired": False, "timeoutSeconds": 5, "batchPolicy": "parallel", "visibility": "direct", "inputSchema": _object_schema({}), "resultSchema": _RESULT_SCHEMA},
-    {"name": "read_file", "description": "Read one bounded UTF-8 file.", "sideEffect": "none", "approvalRequired": False, "timeoutSeconds": 5, "batchPolicy": "parallel", "visibility": "direct", "inputSchema": _object_schema({"path": {"type": "string"}}, ["path"]), "resultSchema": _RESULT_SCHEMA},
-    {"name": "read_file_range", "description": "Read a bounded inclusive line range from one UTF-8 file.", "sideEffect": "none", "approvalRequired": False, "timeoutSeconds": 5, "batchPolicy": "parallel", "visibility": "direct", "inputSchema": _object_schema({"path": {"type": "string"}, "startLine": {"type": "integer", "minimum": 1}, "endLine": {"type": "integer", "minimum": 1}}, ["path", "startLine", "endLine"]), "resultSchema": _RESULT_SCHEMA},
-    {"name": "search_text", "description": "Search for one literal single-line string.", "sideEffect": "none", "approvalRequired": False, "timeoutSeconds": 5, "batchPolicy": "parallel", "visibility": "direct", "inputSchema": _object_schema({"query": {"type": "string"}}, ["query"]), "resultSchema": _RESULT_SCHEMA},
-    {"name": "write_file", "description": "Create or replace one UTF-8 file after approval.", "sideEffect": "workspace", "approvalRequired": True, "timeoutSeconds": 5, "batchPolicy": "single", "visibility": "direct", "inputSchema": _object_schema({"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"]), "resultSchema": _RESULT_SCHEMA},
-    {"name": "apply_patch", "description": "Apply one strict unified diff after approval.", "sideEffect": "workspace", "approvalRequired": True, "timeoutSeconds": 5, "batchPolicy": "single", "visibility": "direct", "inputSchema": _object_schema({"path": {"type": "string"}, "patch": {"type": "string"}}, ["path", "patch"]), "resultSchema": _RESULT_SCHEMA},
-    {"name": "delete_file", "description": "Delete one regular UTF-8 file after approval.", "sideEffect": "workspace", "approvalRequired": True, "timeoutSeconds": 5, "batchPolicy": "single", "visibility": "direct", "inputSchema": _object_schema({"path": {"type": "string"}}, ["path"]), "resultSchema": _RESULT_SCHEMA},
-    {"name": "run_shell", "description": "Run one network-disabled shell command after approval.", "sideEffect": "shell", "approvalRequired": True, "timeoutSeconds": 600, "batchPolicy": "single", "visibility": "direct", "inputSchema": _object_schema({"command": {"type": "string"}, "cwd": {"type": "string", "default": "."}, "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 600, "default": 120}}, ["command"]), "resultSchema": _RESULT_SCHEMA},
-))
+_BUILTIN_CONTRACTS = (
+    ("list_files", "List bounded regular files. Results may be truncated; refine the workspace path when needed.", "none", False, 5, "parallel", ListFilesInput, ListFilesResultData, "list_files"),
+    ("read_file", "Read one bounded UTF-8 file. Large files return head/tail content; use read_file_range to continue.", "none", False, 5, "parallel", ReadFileInput, ReadFileResultData, "read_file"),
+    ("read_file_range", "Read an inclusive bounded line range from one UTF-8 file. Continue from nextLine when present.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
+    ("search_text", "Search workspace text for one literal single-line query. Results are bounded and may be truncated.", "none", False, 5, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
+    ("write_file", "Create or replace one UTF-8 file after approval and verify the final hash. Modifies the workspace.", "workspace", True, 5, "single", WriteFileInput, WorkspaceResultData, "file_change"),
+    ("apply_patch", "Apply one strict unified diff to one previously read file after approval. Modifies the workspace.", "workspace", True, 5, "single", ApplyPatchInput, WorkspaceResultData, "file_change"),
+    ("delete_file", "Delete one previously read regular UTF-8 file after approval. Modifies the workspace.", "workspace", True, 5, "single", DeleteFileInput, WorkspaceResultData, "file_change"),
+    ("run_shell", "Run one network-disabled shell command after approval. Output and workspace changes are bounded and verified.", "shell", True, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
+)
+TOOL_SPECS = tuple(ToolSpec.model_validate({
+    "name": name,
+    "description": description,
+    "sideEffect": side_effect,
+    "approvalRequired": approval,
+    "timeoutSeconds": timeout,
+    "batchPolicy": batch,
+    "visibility": "direct",
+    "inputSchema": input_model.model_json_schema(by_alias=True),
+    "resultSchema": result_model(data_model).model_json_schema(by_alias=True),
+    "modelProjectionPolicy": projection,
+    "contractVersion": 1,
+}) for (
+    name, description, side_effect, approval, timeout, batch,
+    input_model, data_model, projection,
+) in _BUILTIN_CONTRACTS)
 if len({spec.name for spec in TOOL_SPECS}) != len(TOOL_SPECS):
     raise RuntimeError("duplicate tool spec")
-for _spec in TOOL_SPECS:
-    if (
-        _spec.input_schema.get("type") != "object"
-        or _spec.input_schema.get("additionalProperties") is not False
-        or _spec.result_schema.get("type") != "object"
-        or _spec.result_schema.get("additionalProperties") is not False
-    ):
-        raise RuntimeError("tool schemas must be closed objects")
 
 
 def model_tool_definitions() -> list[dict[str, object]]:
@@ -221,7 +214,9 @@ def builtin_tool_registry(executor: ToolExecutor) -> ToolRegistry:
         "list", "read", "range", "search", "write", "patch", "delete", "shell"
     )
     entries: list[ToolRegistryEntry] = []
-    for spec, operation in zip(TOOL_SPECS, operations, strict=True):
+    for spec, operation, contract in zip(
+        TOOL_SPECS, operations, _BUILTIN_CONTRACTS, strict=True
+    ):
         encoded = json.dumps(
             spec.model_dump(mode="json", by_alias=True),
             ensure_ascii=False,
@@ -237,6 +232,8 @@ def builtin_tool_registry(executor: ToolExecutor) -> ToolRegistry:
                 "contentHash": hashlib.sha256(encoded).hexdigest(),
             }),
             _BuiltinAdapter(executor, spec, operation),
+            contract[6],
+            contract[7],
         ))
     return ToolRegistry(tuple(entries))
 
@@ -313,10 +310,21 @@ def canonical_tool_result(
         "sideEffectsMayExist": bool(result.get("sideEffectsMayExist", False)),
         "reconciliationRequired": bool(result.get("reconciliationRequired", result.get("sideEffectsMayExist", False))),
     }
-    validated = ToolResultDto.model_validate(normalized).model_dump(
-        mode="json", by_alias=True, exclude_none=False, exclude_defaults=False,
-        exclude_unset=True,
+    data_model = next(
+        (contract[7] for contract in _BUILTIN_CONTRACTS if contract[0] == tool_name),
+        None,
     )
+    validated = (
+        result_model(data_model).model_validate_json(json.dumps(
+            normalized,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+            allow_nan=False,
+        ))
+        if data_model is not None
+        else ToolResultDto.model_validate(normalized)
+    ).model_dump(mode="json", by_alias=True, exclude_unset=True)
     encoded = json.dumps(
         validated, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     ).encode("utf-8")
