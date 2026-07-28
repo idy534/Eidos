@@ -270,4 +270,145 @@ describe("useSessionController real Hook behavior", () => {
     expect(deleteRes?.confirmed).toBe(false);
     expect(deleteRes?.error).toBe("操作失败，请查看 Runtime 日志。");
   });
+
+  it("Same-Session selection deduplication: A1 and A2 share one Promise and call readSession once", async () => {
+    let resolveRead!: (snapshot: SessionSnapshot) => void;
+    const readSpy = vi.fn().mockImplementation(() => new Promise((r) => { resolveRead = r; }));
+
+    setupMockRuntime({ readSession: readSpy });
+    const { result } = renderHook(() => useSessionController());
+
+    let pA1!: Promise<SessionSnapshot | undefined>;
+    let pA2!: Promise<SessionSnapshot | undefined>;
+
+    act(() => {
+      pA1 = result.current[1].selectSession(mockSession1);
+      pA2 = result.current[1].selectSession(mockSession1);
+    });
+
+    expect(readSpy).toHaveBeenCalledTimes(1);
+    expect(result.current[0].pending.selectingSessionId).toBe("session-1");
+
+    await act(async () => {
+      resolveRead(mockSnapshot1);
+      const [res1, res2] = await Promise.all([pA1, pA2]);
+      expect(res1).toEqual(mockSnapshot1);
+      expect(res2).toEqual(mockSnapshot1);
+    });
+
+    expect(result.current[0].pending.selectingSessionId).toBeUndefined();
+    expect(result.current[0].snapshot).toEqual(mockSnapshot1);
+  });
+
+  it("A -> B -> A sequence creates a new operation and accepts only the final A result", async () => {
+    const reads: Array<{ id: string; resolve: (s: SessionSnapshot) => void }> = [];
+    const readSpy = vi.fn().mockImplementation((id: string) => {
+      return new Promise<SessionSnapshot>((resolve) => {
+        reads.push({ id, resolve });
+      });
+    });
+
+    setupMockRuntime({ readSession: readSpy });
+    const { result } = renderHook(() => useSessionController());
+
+    let pA1!: Promise<SessionSnapshot | undefined>;
+    let pB!: Promise<SessionSnapshot | undefined>;
+    let pA2!: Promise<SessionSnapshot | undefined>;
+
+    // 1. Select A1
+    act(() => {
+      pA1 = result.current[1].selectSession(mockSession1);
+    });
+
+    // 2. Select B
+    act(() => {
+      pB = result.current[1].selectSession(mockSession2);
+    });
+
+    // 3. Select A2 (new token for A)
+    act(() => {
+      pA2 = result.current[1].selectSession(mockSession1);
+    });
+
+    expect(readSpy).toHaveBeenCalledTimes(3);
+    expect(pA1).not.toBe(pA2);
+
+    // Resolve A1 (stale)
+    await act(async () => {
+      reads[0]?.resolve(mockSnapshot1);
+      const resA1 = await pA1;
+      expect(resA1).toBeUndefined();
+    });
+
+    // Resolve B (stale)
+    await act(async () => {
+      reads[1]?.resolve(mockSnapshot2);
+      const resB = await pB;
+      expect(resB).toBeUndefined();
+    });
+
+    // Resolve A2 (current)
+    await act(async () => {
+      reads[2]?.resolve(mockSnapshot1);
+      const resA2 = await pA2;
+      expect(resA2).toEqual(mockSnapshot1);
+    });
+
+    expect(result.current[0].snapshot).toEqual(mockSnapshot1);
+    expect(result.current[0].navigationSessionId).toBe("session-1");
+  });
+
+  it("Stale failures do not set error on current selection, and retry works", async () => {
+    let rejectA!: (err: Error) => void;
+    let resolveB!: (val: SessionSnapshot) => void;
+
+    const readSpy = vi.fn().mockImplementation((id: string) => {
+      if (id === "session-1") {
+        return new Promise((_, reject) => { rejectA = reject; });
+      }
+      return new Promise((resolve) => { resolveB = resolve; });
+    });
+
+    setupMockRuntime({ readSession: readSpy });
+    const { result } = renderHook(() => useSessionController());
+
+    let pA!: Promise<SessionSnapshot | undefined>;
+    let pB!: Promise<SessionSnapshot | undefined>;
+
+    act(() => {
+      pA = result.current[1].selectSession(mockSession1);
+      pB = result.current[1].selectSession(mockSession2);
+    });
+
+    // Reject stale A
+    await act(async () => {
+      rejectA(new Error("Network failure A"));
+      await pA;
+    });
+
+    // Error must NOT be displayed for current selection B
+    expect(result.current[0].error).toBeUndefined();
+
+    // Resolve B
+    await act(async () => {
+      resolveB(mockSnapshot2);
+      await pB;
+    });
+
+    expect(result.current[0].snapshot).toEqual(mockSnapshot2);
+    expect(result.current[0].error).toBeUndefined();
+
+    // Retry A after B settles
+    setupMockRuntime({
+      readSession: vi.fn().mockResolvedValue(mockSnapshot1),
+    });
+
+    let pA_retry!: Promise<SessionSnapshot | undefined>;
+    await act(async () => {
+      pA_retry = await result.current[1].selectSession(mockSession1);
+    });
+
+    expect(pA_retry).toEqual(mockSnapshot1);
+    expect(result.current[0].snapshot).toEqual(mockSnapshot1);
+  });
 });

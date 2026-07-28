@@ -156,7 +156,7 @@ export function useModelController(): [ModelControllerState, ModelControllerActi
     } catch (cause) {
       // Preserve previously valid model state on failure, set local error
       setError(userFacingError(cause));
-      throw cause;
+      return false;
     } finally {
       configuringRef.current = false;
       setConfiguring(false);

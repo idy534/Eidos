@@ -49,9 +49,9 @@ describe("DialogFocus & Trap behavior", () => {
     const cancelBtn = screen.getByRole("button", { name: "取消" });
     const confirmBtn = screen.getByRole("button", { name: "确认" });
 
-    // Wait for initial focus timer (16ms)
+    // Wait for requestAnimationFrame focus scheduling
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 30));
+      await new Promise((r) => requestAnimationFrame(r));
     });
 
     expect(cancelBtn).toHaveFocus();
@@ -69,7 +69,7 @@ describe("DialogFocus & Trap behavior", () => {
     expect(confirmBtn).toHaveFocus();
   });
 
-  it("ConfirmDialog non-destructive initially focuses Confirm button", async () => {
+  it("ConfirmDialog non-destructive initially focuses Confirm button via requestAnimationFrame", async () => {
     render(
       <ConfirmDialog
         open={true}
@@ -84,7 +84,7 @@ describe("DialogFocus & Trap behavior", () => {
     const confirmBtn = screen.getByRole("button", { name: "确认" });
 
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 30));
+      await new Promise((r) => requestAnimationFrame(r));
     });
 
     expect(confirmBtn).toHaveFocus();
@@ -216,5 +216,70 @@ describe("DialogFocus & Trap behavior", () => {
 
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("反馈不能超过 1024 字节");
+  });
+
+  it("Disconnecting trigger element before close does not throw error or focus unmounted node", async () => {
+    let showTrigger = true;
+    const { rerender } = render(
+      <div>
+        {showTrigger && <button type="button" id="trigger-btn" autoFocus>Trigger</button>}
+        <ConfirmDialog
+          open={true}
+          title="Title"
+          description="Desc"
+          onCancel={vi.fn()}
+          onConfirm={vi.fn()}
+        />
+      </div>,
+    );
+
+    // Unmount trigger button while dialog is open
+    showTrigger = false;
+    rerender(
+      <div>
+        {showTrigger && <button type="button" id="trigger-btn">Trigger</button>}
+        <ConfirmDialog
+          open={true}
+          title="Title"
+          description="Desc"
+          onCancel={vi.fn()}
+          onConfirm={vi.fn()}
+        />
+      </div>,
+    );
+
+    // Close dialog
+    expect(() => {
+      rerender(
+        <div>
+          <ConfirmDialog
+            open={false}
+            title="Title"
+            description="Desc"
+            onCancel={vi.fn()}
+            onConfirm={vi.fn()}
+          />
+        </div>,
+      );
+    }).not.toThrow();
+  });
+
+  it("Quick unmount before requestAnimationFrame fires cancels pending animation frame cleanly", () => {
+    const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
+
+    const { unmount } = render(
+      <ConfirmDialog
+        open={true}
+        title="Title"
+        description="Desc"
+        onCancel={vi.fn()}
+        onConfirm={vi.fn()}
+      />,
+    );
+
+    // Unmount synchronously before RAF frame executes
+    unmount();
+
+    expect(cancelSpy).toHaveBeenCalled();
   });
 });

@@ -17,23 +17,20 @@
     "desktop/shared/**/*.cts",
     "desktop/renderer/src/contracts.ts",
     "desktop/renderer/src/session-state.ts",
-    "desktop/renderer/src/session-state.test.ts",
-    "desktop/renderer/src/composer-mode.test.ts",
-    "desktop/renderer/src/runtime-presentation.test.ts",
+    "desktop/renderer/src/app/useApprovalController.ts",
     "desktop/renderer/src/app/useModelController.ts",
-    "desktop/renderer/src/app/model-controller.test.ts",
     "desktop/renderer/src/app/useRunController.ts",
-    "desktop/renderer/src/app/run-controller.test.ts",
     "desktop/renderer/src/components/MarkdownContent.tsx",
-    "desktop/renderer/src/components/MarkdownContent.test.tsx",
     "desktop/renderer/src/components/ExecutionFeed.tsx",
-    "desktop/renderer/src/components/ExecutionFeed.test.tsx",
     "desktop/renderer/src/components/PrimaryActionButton.tsx",
-    "desktop/renderer/src/components/PrimaryActionButton.test.tsx",
     "desktop/renderer/src/components/Button.tsx",
-    "desktop/renderer/src/components/Button.test.tsx",
     "desktop/renderer/src/components/Composer.tsx",
     "desktop/renderer/src/components/DropdownMenu.tsx",
-    "desktop/renderer/src/components/DropdownMenu.test.tsx"
+    "desktop/renderer/src/**/*.test.ts",
+    "desktop/renderer/src/**/*.test.tsx"
+  ],
+  "exclude": [
+    "desktop/renderer/src/**/*.behavior.test.ts",
+    "desktop/renderer/src/**/*.behavior.test.tsx"
   ]
 }

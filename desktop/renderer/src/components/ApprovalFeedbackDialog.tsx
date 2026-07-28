@@ -47,15 +47,31 @@ export function ApprovalFeedbackDialog({
   const overLimit = byteLength > MAX_APPROVAL_FEEDBACK_BYTES;
   const isOpen = approval !== null;
 
+  const rafIdRef = useRef<number | null>(null);
+
   // Store trigger, focus textarea on open, restore on close
   useEffect(() => {
     if (isOpen) {
-      triggerRef.current = document.activeElement as HTMLElement;
+      if (document.activeElement && (document.activeElement as HTMLElement).isConnected) {
+        triggerRef.current = document.activeElement as HTMLElement;
+      }
       setFeedback(""); // reset on each open
-      setTimeout(() => textareaRef.current?.focus(), 16);
+      rafIdRef.current = requestAnimationFrame(() => {
+        if (textareaRef.current?.isConnected) {
+          textareaRef.current.focus();
+        }
+      });
     } else {
-      triggerRef.current?.focus();
+      if (triggerRef.current && triggerRef.current.isConnected) {
+        triggerRef.current.focus();
+      }
     }
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 

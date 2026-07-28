@@ -57,6 +57,12 @@ export interface SessionControllerActions {
   setSessions: (sessions: Session[]) => void;
 }
 
+interface SessionSelectionOperation {
+  token: symbol;
+  sessionId: string;
+  promise: Promise<SessionSnapshot | undefined>;
+}
+
 export function useSessionController(): [SessionControllerState, SessionControllerActions] {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [snapshot, setSnapshot] = useState<SessionSnapshot | undefined>(undefined);
@@ -78,6 +84,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
   const snapshotReads = useRef(new SnapshotReadCoordinator()).current;
   const selectedSessionIdRef = useRef<string | undefined>(undefined);
   const creatingSessionRef = useRef<boolean>(false);
+  const activeSelectionRef = useRef<SessionSelectionOperation | undefined>(undefined);
 
   function updateReadCompleted(updater: (prev: Set<string>) => Set<string>): void {
     setReadCompletedSessions((prev) => {
@@ -116,6 +123,10 @@ export function useSessionController(): [SessionControllerState, SessionControll
   const selectSession = useCallback(async (session: Session): Promise<SessionSnapshot | undefined> => {
     setNavigationSessionId(session.id);
 
+    if (activeSelectionRef.current?.sessionId === session.id) {
+      return activeSelectionRef.current.promise;
+    }
+
     if (
       selectedSessionIdRef.current === session.id
       && snapshot?.session.id === session.id
@@ -126,7 +137,8 @@ export function useSessionController(): [SessionControllerState, SessionControll
       return snapshot;
     }
 
-    const token = snapshotReads.select(session.id);
+    const tokenSymbol = Symbol("session_selection");
+    const snapshotToken = snapshotReads.select(session.id);
     selectedSessionIdRef.current = session.id;
     if (session.taskStatus === "completed") {
       updateReadCompleted((prev) => new Set(prev).add(session.id));
@@ -134,32 +146,43 @@ export function useSessionController(): [SessionControllerState, SessionControll
     setError(undefined);
     setPending((prev) => ({ ...prev, selectingSessionId: session.id }));
 
-    try {
-      const loaded = await loadAuthoritativeSnapshot(session.id);
-      const accepted = snapshotReads.accept(token, loaded);
-      if (accepted) {
-        setSnapshot(accepted);
-        setSessions((prev) => prev.map((s) => s.id === loaded.session.id ? loaded.session : s));
-        return accepted;
+    const promise = (async (): Promise<SessionSnapshot | undefined> => {
+      try {
+        const loaded = await loadAuthoritativeSnapshot(session.id);
+        if (activeSelectionRef.current?.token !== tokenSymbol) {
+          return undefined;
+        }
+        const accepted = snapshotReads.accept(snapshotToken, loaded);
+        if (accepted) {
+          setSnapshot(accepted);
+          setSessions((prev) => prev.map((s) => s.id === loaded.session.id ? loaded.session : s));
+          return accepted;
+        }
+        return undefined;
+      } catch (cause) {
+        if (activeSelectionRef.current?.token === tokenSymbol && snapshotReads.isCurrent(snapshotToken)) {
+          const fallback = snapshot?.session.id;
+          selectedSessionIdRef.current = fallback;
+          snapshotReads.select(fallback ?? "");
+          setNavigationSessionId(fallback);
+          setError(userFacingError(cause));
+        }
+        return undefined;
+      } finally {
+        if (activeSelectionRef.current?.token === tokenSymbol) {
+          activeSelectionRef.current = undefined;
+          clearPending("selectingSessionId");
+        }
       }
-      return undefined;
-    } catch (cause) {
-      if (snapshotReads.isCurrent(token)) {
-        const fallback = snapshot?.session.id;
-        selectedSessionIdRef.current = fallback;
-        snapshotReads.select(fallback ?? "");
-        setNavigationSessionId(fallback);
-        setError(userFacingError(cause));
-      }
-      return undefined;
-    } finally {
-      setPending((prev) => {
-        if (prev.selectingSessionId !== session.id) return prev;
-        const next = { ...prev };
-        delete next.selectingSessionId;
-        return next;
-      });
-    }
+    })();
+
+    activeSelectionRef.current = {
+      token: tokenSymbol,
+      sessionId: session.id,
+      promise,
+    };
+
+    return promise;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot]);
 

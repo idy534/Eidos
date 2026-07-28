@@ -11,10 +11,15 @@ export interface ApprovalState {
   expiredApprovalIds: ReadonlySet<string>;
   feedbackDialogApproval: ApprovalRequest | null;
   feedbackDialogError: string | undefined;
+  loadingPendingApprovals: boolean;
+  pendingApprovalsLoadError: string | undefined;
 }
 
 export type ApprovalAction =
   | { type: "merge"; approvals: ApprovalRequest[] }
+  | { type: "pending_load_started" }
+  | { type: "pending_load_succeeded"; approvals: ApprovalRequest[] }
+  | { type: "pending_load_failed"; error: string }
   | { type: "added"; approval: ApprovalRequest }
   | { type: "approval_removed"; approvalId: string }
   | { type: "response_started"; approvalId: string; kind: "approve" | "reject" }
@@ -33,10 +38,34 @@ export const initialApprovalState: ApprovalState = {
   expiredApprovalIds: new Set<string>(),
   feedbackDialogApproval: null,
   feedbackDialogError: undefined,
+  loadingPendingApprovals: false,
+  pendingApprovalsLoadError: undefined,
 };
 
 export function approvalReducer(state: ApprovalState, action: ApprovalAction): ApprovalState {
   switch (action.type) {
+    case "pending_load_started": {
+      return {
+        ...state,
+        loadingPendingApprovals: true,
+        pendingApprovalsLoadError: undefined,
+      };
+    }
+    case "pending_load_succeeded": {
+      const merged = approvalReducer(state, { type: "merge", approvals: action.approvals });
+      return {
+        ...merged,
+        loadingPendingApprovals: false,
+        pendingApprovalsLoadError: undefined,
+      };
+    }
+    case "pending_load_failed": {
+      return {
+        ...state,
+        loadingPendingApprovals: false,
+        pendingApprovalsLoadError: action.error,
+      };
+    }
     case "added": {
       const filtered = state.approvals.filter((a) => a.id !== action.approval.id);
       return {
@@ -232,13 +261,15 @@ export interface ApprovalControllerState {
   errorsByApprovalId: Readonly<Record<string, string>>;
   feedbackDialogApproval: ApprovalRequest | null;
   feedbackDialogError: string | undefined;
+  loadingPendingApprovals: boolean;
+  pendingApprovalsLoadError: string | undefined;
 }
 
 export interface ApprovalControllerActions {
   addApproval: (request: ApprovalRequest) => void;
   removeApproval: (approvalId: string) => void;
   mergeApprovals: (incoming: ApprovalRequest[]) => void;
-  loadPending: () => Promise<void>;
+  loadPending: () => Promise<boolean>;
   clearApprovalsForRun: (runId: string) => void;
   approve: (request: ApprovalRequest) => Promise<void>;
   openRejectDialog: (request: ApprovalRequest) => void;
@@ -249,6 +280,7 @@ export interface ApprovalControllerActions {
 export function useApprovalController(): [ApprovalControllerState, ApprovalControllerActions] {
   const [state, dispatch] = useReducer(approvalReducer, initialApprovalState);
   const activeLockRef = useRef<Set<string>>(new Set());
+  const pendingLoadRef = useRef<Promise<boolean> | undefined>(undefined);
 
   const addApproval = useCallback((request: ApprovalRequest): void => {
     dispatch({ type: "added", approval: request });
@@ -262,13 +294,30 @@ export function useApprovalController(): [ApprovalControllerState, ApprovalContr
     dispatch({ type: "merge", approvals: incoming });
   }, []);
 
-  const loadPending = useCallback(async (): Promise<void> => {
-    try {
-      const pending = await window.eidosRuntime.listPendingApprovals();
-      dispatch({ type: "merge", approvals: pending });
-    } catch {
-      // Preserve existing state on load failure
+  const loadPending = useCallback(async (): Promise<boolean> => {
+    if (pendingLoadRef.current) {
+      return pendingLoadRef.current;
     }
+    dispatch({ type: "pending_load_started" });
+
+    const promise = (async () => {
+      try {
+        const pending = await window.eidosRuntime.listPendingApprovals();
+        dispatch({ type: "pending_load_succeeded", approvals: pending });
+        return true;
+      } catch (cause) {
+        dispatch({
+          type: "pending_load_failed",
+          error: "审批状态加载失败，当前任务可能仍在等待你的处理。",
+        });
+        return false;
+      } finally {
+        pendingLoadRef.current = undefined;
+      }
+    })();
+
+    pendingLoadRef.current = promise;
+    return promise;
   }, []);
 
   const clearApprovalsForRun = useCallback((runId: string): void => {
@@ -369,6 +418,8 @@ export function useApprovalController(): [ApprovalControllerState, ApprovalContr
     errorsByApprovalId: state.errorsByApprovalId,
     feedbackDialogApproval: state.feedbackDialogApproval,
     feedbackDialogError: state.feedbackDialogError,
+    loadingPendingApprovals: state.loadingPendingApprovals,
+    pendingApprovalsLoadError: state.pendingApprovalsLoadError,
   };
 
   const actions: ApprovalControllerActions = {

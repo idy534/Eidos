@@ -68,4 +68,43 @@ describe("SessionSidebar ContextMenu DOM interaction behavior", () => {
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     expect(sessionBtn).toHaveFocus();
   });
+
+  it("ContextMenu keyboard navigation and viewport collision boundary positioning", async () => {
+    const user = userEvent.setup();
+    const onCloseSpy = vi.fn();
+    const mockItems = [
+      { key: "item-1", label: "Option 1", onClick: vi.fn() },
+      { key: "item-2", label: "Option 2 Disabled", disabled: true, onClick: vi.fn() },
+      { key: "item-3", label: "Option 3", onClick: vi.fn() },
+    ];
+
+    const { ContextMenu } = await import("./DropdownMenu.js");
+
+    Object.defineProperty(window, "innerWidth", { value: 1920, writable: true, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: 1080, writable: true, configurable: true });
+
+    render(
+      <ContextMenu
+        x={1910}
+        y={1070}
+        items={mockItems}
+        onClose={onCloseSpy}
+      />,
+    );
+
+    const menu = screen.getByRole("menu");
+    expect(menu).toBeInTheDocument();
+
+    const menuItems = screen.getAllByRole("menuitem");
+    expect(menuItems[0]).toHaveFocus();
+
+    await user.keyboard("{ArrowDown}");
+    expect(menuItems[2]).toHaveFocus();
+
+    await user.keyboard("{ArrowUp}");
+    expect(menuItems[0]).toHaveFocus();
+
+    await user.keyboard("{Tab}");
+    expect(onCloseSpy).toHaveBeenCalledTimes(1);
+  });
 });

@@ -95,7 +95,13 @@ export function DropdownMenu({ trigger, items, label, className = "" }: Dropdown
         && triggerRef.current && !triggerRef.current.contains(event.target as Node)
       ) {
         setOpen(false);
-        triggerRef.current?.focus();
+        const target = event.target as HTMLElement | null;
+        const isInteractiveOutside = Boolean(
+          target && typeof target.closest === "function" && target.closest("button, input, select, textarea, a, [tabindex]"),
+        );
+        if (!isInteractiveOutside && triggerRef.current && triggerRef.current.isConnected) {
+          triggerRef.current.focus();
+        }
       }
     }
 

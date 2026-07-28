@@ -44,25 +44,33 @@ export function ConfirmDialog({
   const dialogRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
 
+  const rafIdRef = useRef<number | null>(null);
+
   // Store the element that opened the dialog, restore focus on close
   useEffect(() => {
     if (open) {
-      triggerRef.current = document.activeElement as HTMLElement;
-      // Focus initial element after render
-      const timer = setTimeout(() => {
-        if (isDestructive) {
-          cancelBtnRef.current?.focus();
-        } else {
-          confirmBtnRef.current?.focus();
+      if (document.activeElement && (document.activeElement as HTMLElement).isConnected) {
+        triggerRef.current = document.activeElement as HTMLElement;
+      }
+      rafIdRef.current = requestAnimationFrame(() => {
+        const target = isDestructive ? cancelBtnRef.current : confirmBtnRef.current;
+        if (target?.isConnected) {
+          target.focus();
         }
-      }, 16);
-      return () => clearTimeout(timer);
+      });
     } else {
-      // Return focus to the element that triggered the dialog
-      triggerRef.current?.focus();
+      if (triggerRef.current && triggerRef.current.isConnected) {
+        triggerRef.current.focus();
+      }
     }
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, isDestructive]);
 
   // Escape key closes the dialog when not busy
   useEffect(() => {

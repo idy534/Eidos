@@ -5,6 +5,7 @@ import type { ApprovalRequest, Item, Run, ToolCall } from "../contracts.js";
 import { terminalRunPresentation } from "../session-state.js";
 import { Button } from "./Button.js";
 import { MarkdownContent } from "./MarkdownContent.js";
+import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
 
 
 interface Props {
@@ -15,6 +16,9 @@ interface Props {
   respondingKindByApprovalId?: Readonly<Record<string, "approve" | "reject">> | undefined;
   expiredApprovalIds?: ReadonlySet<string> | undefined;
   errorsByApprovalId?: Readonly<Record<string, string>> | undefined;
+  approvalLoadError?: string | undefined;
+  loadingPendingApprovals?: boolean | undefined;
+  onRetryLoadPending?: (() => void) | undefined;
   onApprove: (request: ApprovalRequest) => void;
   onReject: (request: ApprovalRequest) => void;
 }
@@ -42,6 +46,9 @@ export function ExecutionFeed({
   respondingKindByApprovalId,
   expiredApprovalIds,
   errorsByApprovalId,
+  approvalLoadError,
+  loadingPendingApprovals,
+  onRetryLoadPending,
   onApprove,
   onReject,
 }: Props) {
@@ -56,6 +63,13 @@ export function ExecutionFeed({
   if (items.length === 0) {
     return (
       <div className="feed-empty" role="status">
+        {approvalLoadError && onRetryLoadPending && (
+          <ApprovalRecoveryBanner
+            error={approvalLoadError}
+            loading={loadingPendingApprovals}
+            onRetry={onRetryLoadPending}
+          />
+        )}
         <p>这个 Session 还没有执行记录。</p>
       </div>
     );
@@ -66,6 +80,13 @@ export function ExecutionFeed({
 
   return (
     <div className="feed-shell">
+      {approvalLoadError && onRetryLoadPending && (
+        <ApprovalRecoveryBanner
+          error={approvalLoadError}
+          loading={loadingPendingApprovals}
+          onRetry={onRetryLoadPending}
+        />
+      )}
       <section
         ref={feedRef}
         className="feed"
