@@ -18,11 +18,21 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
 from eidos_runtime.runtime.loop import ApprovalDecision, RuntimeLoop  # noqa: E402
 from eidos_runtime.db.storage import ActiveRunError, SessionStore  # noqa: E402
+from eidos_runtime.sandbox.seatbelt import (  # noqa: E402
+    SeatbeltUnavailableError,
+    is_seatbelt_ready,
+)
 from eidos_runtime.tools.workspace import ToolCancelled, ToolExecutor  # noqa: E402
 
 
 class RuntimeLoopTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.seatbelt_ready = mock_patch(
+            "eidos_runtime.runtime.tool_runtime.is_seatbelt_ready",
+            return_value=True,
+        )
+        self.seatbelt_ready.start()
+        self.addCleanup(self.seatbelt_ready.stop)
         self.temporary_directory = tempfile.TemporaryDirectory(prefix="eidos-loop-")
         root = Path(self.temporary_directory.name)
         self.data_directory = root / "data"
@@ -367,6 +377,10 @@ class RuntimeLoopTests(unittest.TestCase):
         )
 
     def test_approved_shell_runs_in_sandbox_and_returns_output(self) -> None:
+        if not is_seatbelt_ready():
+            self.skipTest(
+                "Seatbelt Shell integration requires a currently usable sandbox-exec and static resources"
+            )
         run, _ = self.store.create_run(self.session["id"], "Run a command")
         model = ScriptedModel(
             [
@@ -444,6 +458,137 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertFalse(result["sideEffectsMayExist"])
         self.assertEqual(approvals, [])
         self.assertFalse(sentinel.exists())
+
+    def test_dynamic_seatbelt_unavailable_before_approval_starts_nothing(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Run a command")
+        sentinel = self.workspace / "must-not-exist"
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "call-shell",
+                            "run_shell",
+                            {
+                                "command": f"/usr/bin/touch {sentinel}",
+                                "timeoutSeconds": 5,
+                            },
+                        ),
+                    )
+                ),
+                ModelResponse(text="Shell is unavailable."),
+            ]
+        )
+        approvals: list[object] = []
+
+        with (
+            mock_patch(
+                "eidos_runtime.runtime.tool_runtime.is_seatbelt_ready",
+                return_value=False,
+            ),
+            mock_patch(
+                "eidos_runtime.sandbox.shell.subprocess.Popen",
+                side_effect=AssertionError("process must not start"),
+            ),
+        ):
+            RuntimeLoop(
+                self.store,
+                model,
+                lambda _message: None,
+                lambda request, _cancel: approvals.append(request)
+                or ApprovalDecision("approve"),
+                shell_available=True,
+            ).run(run["id"], threading.Event())
+
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        command_item = next(
+            item for item in snapshot["items"] if item["kind"] == "command_execution"
+        )
+        result = json.loads(command_item["toolCall"]["resultJson"])
+        self.assertEqual(result["code"], "sandbox_unavailable")
+        self.assertFalse(result["sideEffectsMayExist"])
+        self.assertFalse(result["reconciliationRequired"])
+        self.assertEqual(result["data"]["termination"], "not_started")
+        self.assertEqual(approvals, [])
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT COUNT(*) FROM durable_intents WHERE run_id = ?",
+                (run["id"],),
+            ).fetchone()[0],
+            0,
+        )
+        self.assertFalse(sentinel.exists())
+
+    def test_dynamic_seatbelt_unavailable_after_approval_never_spawns(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Run a command")
+        sentinel = self.workspace / "must-not-exist"
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "call-shell",
+                            "run_shell",
+                            {
+                                "command": f"/usr/bin/touch {sentinel}",
+                                "timeoutSeconds": 5,
+                            },
+                        ),
+                    )
+                ),
+                ModelResponse(text="Shell is unavailable."),
+            ]
+        )
+        approvals: list[object] = []
+
+        with (
+            mock_patch(
+                "eidos_runtime.runtime.tool_runtime.is_seatbelt_ready",
+                return_value=True,
+            ),
+            mock_patch(
+                "eidos_runtime.sandbox.seatbelt.SeatbeltProfile.command",
+                side_effect=SeatbeltUnavailableError(
+                    "internal seatbelt diagnostic must stay private"
+                ),
+            ),
+            mock_patch(
+                "eidos_runtime.sandbox.shell.subprocess.Popen",
+                side_effect=AssertionError("process must not start"),
+            ) as popen,
+        ):
+            RuntimeLoop(
+                self.store,
+                model,
+                lambda _message: None,
+                lambda request, _cancel: approvals.append(request)
+                or ApprovalDecision("approve"),
+                shell_available=True,
+            ).run(run["id"], threading.Event())
+
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        command_item = next(
+            item for item in snapshot["items"] if item["kind"] == "command_execution"
+        )
+        result_json = command_item["toolCall"]["resultJson"]
+        result = json.loads(result_json)
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(result["code"], "sandbox_unavailable")
+        self.assertFalse(result["sideEffectsMayExist"])
+        self.assertFalse(result["reconciliationRequired"])
+        self.assertEqual(result["data"]["termination"], "not_started")
+        self.assertNotIn("internal seatbelt diagnostic", result_json)
+        self.assertNotEqual(result["code"], "TOOL_EXECUTION_FAILED")
+        self.assertFalse(self.store.side_effects_blocked(run["id"]))
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT status FROM durable_intents WHERE run_id = ?",
+                (run["id"],),
+            ).fetchone()[0],
+            "completed",
+        )
+        self.assertFalse(sentinel.exists())
+        popen.assert_not_called()
 
     def test_rejected_shell_has_zero_side_effects(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Reject a command")

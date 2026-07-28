@@ -17,19 +17,16 @@ PROFILE_PATH = Path(__file__).with_name("seatbelt.sbpl")
 FILE_COMMIT_HELPER = Path(__file__).with_name("file_commit_helper.py")
 SYSTEM_PYTHON = "/Library/Developer/CommandLineTools/usr/bin/python3"
 
-_SEATBELT_USABLE: bool | None = None
-
-
 class SeatbeltUnavailableError(RuntimeError):
     pass
 
 
 def is_seatbelt_usable() -> bool:
-    global _SEATBELT_USABLE
-    if _SEATBELT_USABLE is not None:
-        return _SEATBELT_USABLE
-    if sys.platform != "darwin" or not Path(SANDBOX_EXECUTABLE).is_file():
-        _SEATBELT_USABLE = False
+    if (
+        sys.platform != "darwin"
+        or not Path(SANDBOX_EXECUTABLE).is_file()
+        or not os.access(SANDBOX_EXECUTABLE, os.X_OK)
+    ):
         return False
     try:
         completed = subprocess.run(
@@ -40,11 +37,17 @@ def is_seatbelt_usable() -> bool:
             timeout=2,
             check=False,
         )
-        _SEATBELT_USABLE = completed.returncode == 0
+        return completed.returncode == 0
     except Exception:
-        _SEATBELT_USABLE = False
-    return _SEATBELT_USABLE
+        return False
 
+
+def is_seatbelt_ready() -> bool:
+    return (
+        is_seatbelt_usable()
+        and PROFILE_PATH.is_file()
+        and FILE_COMMIT_HELPER.is_file()
+    )
 
 
 @dataclass(frozen=True)
@@ -92,11 +95,7 @@ class SeatbeltProfile:
     def command(self, command: Sequence[str]) -> list[str]:
         if not command or any(not isinstance(argument, str) for argument in command):
             raise ValueError("sandbox command must contain string arguments")
-        if (
-            not is_seatbelt_usable()
-            or not PROFILE_PATH.is_file()
-            or not FILE_COMMIT_HELPER.is_file()
-        ):
+        if not is_seatbelt_ready():
             raise SeatbeltUnavailableError("seatbelt is unavailable")
         return [
             SANDBOX_EXECUTABLE,
@@ -194,10 +193,7 @@ def secure_workspace_move(
 
     if (
         sys.platform != "darwin"
-        or not is_seatbelt_usable()
-        or not os.access(SANDBOX_EXECUTABLE, os.X_OK)
-        or not PROFILE_PATH.is_file()
-        or not FILE_COMMIT_HELPER.is_file()
+        or not is_seatbelt_ready()
         or not os.access(SYSTEM_PYTHON, os.X_OK)
     ):
         return "failed"
@@ -251,7 +247,7 @@ def secure_workspace_move(
 def run_seatbelt_self_test() -> SeatbeltSelfTestResult:
     if sys.platform != "darwin":
         return SeatbeltSelfTestResult(False, (), ("unsupported_platform",))
-    if not Path(SANDBOX_EXECUTABLE).is_file() or not PROFILE_PATH.is_file():
+    if not is_seatbelt_ready():
         return SeatbeltSelfTestResult(False, (), ("seatbelt_unavailable",))
 
     passed: list[str] = []

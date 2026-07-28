@@ -5,7 +5,9 @@ import ts from "typescript";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const rootDir = path.resolve(__dirname, "..");
+const rootDir = process.argv[2] === "--root" && process.argv[3]
+  ? path.resolve(process.argv[3])
+  : path.resolve(__dirname, "..");
 
 const errors = [];
 
@@ -52,6 +54,48 @@ function objectPropertyNames(object) {
         ? [property.name.text]
         : []
   )));
+}
+
+function isWithin(node, ancestor) {
+  for (let current = node; current; current = current.parent) {
+    if (current === ancestor) return true;
+  }
+  return false;
+}
+
+function notificationMethods(condition, sourceFile) {
+  if (
+    ts.isBinaryExpression(condition)
+    && condition.operatorToken.kind === ts.SyntaxKind.BarBarToken
+  ) {
+    const left = notificationMethods(condition.left, sourceFile);
+    const right = notificationMethods(condition.right, sourceFile);
+    return left && right ? new Set([...left, ...right]) : undefined;
+  }
+  if (
+    ts.isBinaryExpression(condition)
+    && condition.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken
+    && condition.left.getText(sourceFile) === "notification.method"
+    && ts.isStringLiteral(condition.right)
+  ) {
+    return new Set([condition.right.text]);
+  }
+  return undefined;
+}
+
+function isGuardedByNotificationMethods(call, expected, sourceFile) {
+  for (let current = call.parent; current; current = current.parent) {
+    if (!ts.isIfStatement(current) || !isWithin(call, current.thenStatement)) continue;
+    const methods = notificationMethods(current.expression, sourceFile);
+    if (
+      methods
+      && methods.size === expected.size
+      && [...methods].every((method) => expected.has(method))
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // 1. Verify runtime-client.ts AST declarations
@@ -132,10 +176,14 @@ if (runtimeClientText) {
       approvalRequest,
       (node) => ts.isReturnStatement(node) && ts.isObjectLiteralExpression(node.expression),
     ).map((node) => node.expression);
+    const seenKinds = new Map();
     for (const object of returns) {
       if (object.properties.some(ts.isSpreadAssignment)) {
         errors.push("approvalRequestFrom AST error: Approval return objects must not contain spreads");
       }
+      const explicitProperties = object.properties.filter((property) => (
+        ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)
+      ));
       const properties = objectPropertyNames(object);
       const id = object.properties.find((property) => (
         ts.isPropertyAssignment(property) && property.name.getText(sf) === "id"
@@ -149,10 +197,31 @@ if (runtimeClientText) {
       const kindName = kind && ts.isPropertyAssignment(kind) && ts.isStringLiteral(kind.initializer)
         ? kind.initializer.text
         : undefined;
-      for (const field of kindName ? expected[kindName] ?? [] : []) {
-        if (!properties.has(field)) {
-          errors.push(`approvalRequestFrom AST error: ${kindName} is missing ${field}`);
-        }
+      const expectedFields = kindName ? expected[kindName] : undefined;
+      if (expectedFields) {
+        seenKinds.set(kindName, (seenKinds.get(kindName) ?? 0) + 1);
+      }
+      const hasStaticNames = explicitProperties.every((property) => (
+        ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)
+      ));
+      if (
+        !expectedFields
+        || explicitProperties.length !== object.properties.length
+        || !hasStaticNames
+        || properties.size !== expectedFields.length
+        || explicitProperties.length !== expectedFields.length
+        || expectedFields.some((field) => !properties.has(field))
+      ) {
+        errors.push(
+          `approvalRequestFrom AST error: ${kindName ?? "unknown kind"} must use exact fields`,
+        );
+      }
+    }
+    for (const kindName of Object.keys(expected)) {
+      if (seenKinds.get(kindName) !== 1) {
+        errors.push(
+          `approvalRequestFrom AST error: ${kindName} must have exactly one return branch`,
+        );
       }
     }
   }
@@ -348,6 +417,12 @@ if (appShellText) {
   );
   if (clearCalls.length !== 1 || clearCalls[0].arguments[0]?.getText(sf) !== "run.id") {
     errors.push("AppShell.tsx AST error: only run/completed may clear Approvals by run.id");
+  } else if (!isGuardedByNotificationMethods(
+    clearCalls[0],
+    new Set(["run/completed"]),
+    sf,
+  )) {
+    errors.push("AppShell.tsx AST error: clearApprovalsForRun must be guarded by run/completed");
   }
   const removeCalls = descendants(
     sf,
@@ -355,6 +430,12 @@ if (appShellText) {
   );
   if (removeCalls.length !== 1 || removeCalls[0].arguments[0]?.getText(sf) !== "notification.params.approvalId") {
     errors.push("AppShell.tsx AST error: resolved/canceled Approval removal must use approvalId");
+  } else if (!isGuardedByNotificationMethods(
+    removeCalls[0],
+    new Set(["approval/resolved", "approval/canceled"]),
+    sf,
+  )) {
+    errors.push("AppShell.tsx AST error: removeApproval must be guarded by approval/resolved or approval/canceled");
   }
   const topError = descendants(
     sf,

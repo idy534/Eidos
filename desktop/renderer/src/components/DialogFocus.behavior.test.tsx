@@ -499,54 +499,73 @@ describe("DialogFocus & Trap behavior", () => {
     expect(cancelSpy).toHaveBeenCalled();
   });
 
-  it("ApprovalFeedbackDialog restores focus to connected fallback target when trigger element disappears", () => {
-    const getFallbackFocus = () => document.getElementById("main-container");
-    const { rerender } = render(
-      <main data-workspace-root id="main-container" tabIndex={-1}>
-        <div><button type="button" id="trigger-btn">Reject Button</button></div>
-        <ApprovalFeedbackDialog
-          approval={null}
-          getFallbackFocus={getFallbackFocus}
-          onCancel={vi.fn()}
-          onConfirm={vi.fn()}
-        />
-      </main>,
-    );
+  it.each([
+    ["enabled Composer", true, false, "Composer"],
+    ["Workspace when Composer is disabled", true, true, "Workspace"],
+    ["no target when Composer and Workspace are unavailable", false, false, null],
+  ] as const)(
+    "ApprovalFeedbackDialog closes from a removed Approval card to %s",
+    async (_variant, renderFallbacks, composerDisabled, expectedFocus) => {
+      const frames = controlAnimationFrames();
+      const user = userEvent.setup();
+      let removeApprovalCard = () => {};
 
-    const trigger = screen.getByRole("button", { name: "Reject Button" });
-    trigger.focus();
-    const triggerFocus = vi.spyOn(trigger, "focus");
-    const fallbackFocus = vi.spyOn(
-      document.getElementById("main-container") as HTMLElement,
-      "focus",
-    );
-    rerender(
-      <main data-workspace-root id="main-container" tabIndex={-1}>
-        <div><button type="button" id="trigger-btn">Reject Button</button></div>
-        <ApprovalFeedbackDialog
-          approval={mockApproval}
-          getFallbackFocus={getFallbackFocus}
-          onCancel={vi.fn()}
-          onConfirm={vi.fn()}
-        />
-      </main>,
-    );
+      function Harness() {
+        const [approval, setApproval] = useState<ApprovalRequest | null>(null);
+        const [cardVisible, setCardVisible] = useState(true);
+        const composerRef = useRef<HTMLTextAreaElement>(null);
+        const workspaceRef = useRef<HTMLElement>(null);
+        removeApprovalCard = () => setCardVisible(false);
+        return (
+          <main>
+            {cardVisible && (
+              <article aria-label="Shell Approval">
+                <p>{mockApproval.summary}</p>
+                <button type="button" onClick={() => setApproval(mockApproval)}>
+                  Reject
+                </button>
+              </article>
+            )}
+            {renderFallbacks && (
+              <>
+                <textarea
+                  ref={composerRef}
+                  aria-label="Composer"
+                  disabled={composerDisabled}
+                />
+                <section ref={workspaceRef} aria-label="Workspace" tabIndex={-1} />
+              </>
+            )}
+            <ApprovalFeedbackDialog
+              approval={approval}
+              getFallbackFocus={() => {
+                const composer = composerRef.current;
+                return composer?.isConnected && !composer.disabled
+                  ? composer
+                  : workspaceRef.current;
+              }}
+              onCancel={() => setApproval(null)}
+              onConfirm={() => setApproval(null)}
+            />
+          </main>
+        );
+      }
 
-    rerender(
-      <main data-workspace-root id="main-container" tabIndex={-1}>
-        <div />
-        <ApprovalFeedbackDialog
-          approval={null}
-          getFallbackFocus={getFallbackFocus}
-          onCancel={vi.fn()}
-          onConfirm={vi.fn()}
-        />
-      </main>,
-    );
-
-    const mainContainer = document.getElementById("main-container");
-    expect(triggerFocus).not.toHaveBeenCalled();
-    expect(fallbackFocus).toHaveBeenCalled();
-    expect(mainContainer).toHaveFocus();
-  });
+      render(<Harness />);
+      await user.click(screen.getByRole("button", { name: "Reject" }));
+      frames.flush();
+      expect(screen.getByRole("textbox", { name: "拒绝原因（可选）" })).toHaveFocus();
+      act(removeApprovalCard);
+      expect(screen.queryByRole("article", { name: "Shell Approval" })).not.toBeInTheDocument();
+      await expect(
+        user.click(screen.getByRole("button", { name: "取消" })),
+      ).resolves.toBeUndefined();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      if (expectedFocus) {
+        expect(screen.getByRole(expectedFocus === "Composer" ? "textbox" : "region", {
+          name: expectedFocus,
+        })).toHaveFocus();
+      }
+    },
+  );
 });
