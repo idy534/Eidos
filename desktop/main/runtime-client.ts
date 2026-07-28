@@ -1104,22 +1104,14 @@ function approvalRequestFrom(
     return undefined;
   }
   if (params.kind === "file_change") {
-    if (
-      !hasOnlyKeys(params, ["sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "diff"])
-      || typeof params.diff !== "string"
-    ) {
+    if (typeof params.diff !== "string") {
       return undefined;
     }
-    return { id: message.id, ...params } as FileApprovalRequest;
+    return { ...params, id: message.id } as FileApprovalRequest;
   }
   if (params.kind === "external_tool") {
     if (
-      !hasOnlyKeys(params, [
-        "sessionId", "runId", "itemId", "toolCallId", "kind", "summary",
-        "toolName", "arguments", "provenance", "permissionProfile",
-        "timeoutSeconds", "envNames",
-      ])
-      || typeof params.toolName !== "string"
+      typeof params.toolName !== "string"
       || !isRecord(params.arguments)
       || !isToolProvenance(params.provenance)
       || !["connector", "workspace_read"].includes(String(params.permissionProfile))
@@ -1129,15 +1121,11 @@ function approvalRequestFrom(
     ) {
       return undefined;
     }
-    return { id: message.id, ...params } as ExternalToolApprovalRequest;
+    return { ...params, id: message.id } as ExternalToolApprovalRequest;
   }
   if (params.kind === "network_access") {
     if (
-      !hasOnlyKeys(params, [
-        "sessionId", "runId", "itemId", "toolCallId", "kind", "summary",
-        "toolName", "hosts", "target",
-      ])
-      || typeof params.toolName !== "string"
+      typeof params.toolName !== "string"
       || !Array.isArray(params.hosts)
       || params.hosts.length === 0
       || !params.hosts.every((host) => typeof host === "string")
@@ -1145,28 +1133,16 @@ function approvalRequestFrom(
     ) {
       return undefined;
     }
-    return { id: message.id, ...params } as NetworkApprovalRequest;
+    return { ...params, id: message.id } as NetworkApprovalRequest;
   }
   if (
-    !hasOnlyKeys(params, [
-      "sessionId",
-      "runId",
-      "itemId",
-      "toolCallId",
-      "kind",
-      "summary",
-      "command",
-      "cwd",
-      "networkEnabled",
-      "timeoutSeconds",
-    ])
-    || params.kind !== "command_execution"
-    || typeof params.command !== "string"
-    || typeof params.cwd !== "string"
-    || params.networkEnabled !== false
-    || !isPositiveInteger(params.timeoutSeconds)
+    params.kind === "command_execution"
+    && typeof params.command === "string"
+    && typeof params.cwd === "string"
+    && params.networkEnabled === false
+    && isPositiveInteger(params.timeoutSeconds)
   ) {
-    return undefined;
+    return { ...params, id: message.id } as CommandApprovalRequest;
   }
-  return { id: message.id, ...params } as CommandApprovalRequest;
+  return undefined;
 }

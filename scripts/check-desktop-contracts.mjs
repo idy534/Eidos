@@ -62,13 +62,42 @@ if (!preloadContent.includes("EidosRuntimeAPI")) {
   errors.push("preload.ts must expose typed EidosRuntimeAPI.");
 }
 
-// 3. Verify main.ts imports shared IPC and contracts
+// 3. Verify main.ts shutdown architecture
 const mainContent = readFile("desktop/main/main.ts");
 if (!/import\s+[\s\S]*IPC[\s\S]*from\s+["']\.\.\/shared\/(?:index|ipc-channels)\.js["']/.test(mainContent)) {
   errors.push("main.ts must import IPC channels from shared");
 }
+if (!mainContent.includes('import { shutdownRuntime } from "./runtime-shutdown.js"') && !mainContent.includes("shutdownRuntime")) {
+  errors.push("main.ts must import shutdownRuntime from ./runtime-shutdown.js");
+}
+if (/performShutdown/.test(mainContent)) {
+  errors.push("main.ts must not declare or call inline performShutdown; use shutdownRuntime from ./runtime-shutdown.js");
+}
+if (/Promise\.race\(\s*\[\s*gracefulStop\s*,\s*forceStop\s*\]\s*\)/.test(mainContent)) {
+  errors.push("main.ts must not implement inline Promise.race shutdown logic.");
+}
 
-// 4. Check for raw string literals of known channels outside shared and test files
+// 4. Verify obsolete shortcut-dispatch file is completely removed
+const shortcutDispatchPath = path.join(rootDir, "desktop/main/shortcut-dispatch.ts");
+if (fs.existsSync(shortcutDispatchPath)) {
+  errors.push("Obsolete shortcut-dispatch.ts must be deleted.");
+}
+
+// 5. Verify AppShell exports and Composer component extraction
+const appShellContent = readFile("desktop/renderer/src/app/AppShell.tsx");
+if (/export\s+function\s+Composer\b/.test(appShellContent)) {
+  errors.push("AppShell.tsx must not export Composer component; extract it to components/Composer.tsx.");
+}
+if (!/import\s+\{\s*Composer\s*\}\s+from\s+["']\.\.\/components\/Composer\.js["']/.test(appShellContent)) {
+  errors.push("AppShell.tsx must import Composer from ../components/Composer.js");
+}
+
+// 6. Verify approval notification routing in AppShell uses approvalId
+if (!/approvalActions\.removeApproval\(\s*notification\.params\.approvalId\s*\)/.test(appShellContent)) {
+  errors.push("AppShell.tsx must route approval/resolved and approval/canceled notifications using approvalActions.removeApproval(notification.params.approvalId)");
+}
+
+// 7. Check for raw string literals of known channels outside shared and test files
 const KNOWN_CHANNELS = [
   "runtime:get-status",
   "runtime:health",

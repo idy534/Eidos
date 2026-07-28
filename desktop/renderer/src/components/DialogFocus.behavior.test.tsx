@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ConfirmDialog } from "./settings/ConfirmDialog.js";
 import { ApprovalFeedbackDialog } from "./ApprovalFeedbackDialog.js";
@@ -121,6 +121,82 @@ describe("DialogFocus & Trap behavior", () => {
 
     await user.keyboard("{Escape}");
     expect(onCancelSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("ConfirmDialog restores trigger focus on close", async () => {
+    const onCancelSpy = vi.fn();
+
+    const { rerender } = render(
+      <div>
+        <button type="button" id="trigger-btn">Open Dialog</button>
+        <ConfirmDialog
+          open={true}
+          title="Delete session"
+          description="Are you sure?"
+          onCancel={onCancelSpy}
+          onConfirm={vi.fn()}
+        />
+      </div>,
+    );
+
+    const triggerBtn = screen.getByRole("button", { name: "Open Dialog" });
+    triggerBtn.focus();
+
+    // Close dialog
+    rerender(
+      <div>
+        <button type="button" id="trigger-btn">Open Dialog</button>
+        <ConfirmDialog
+          open={false}
+          title="Delete session"
+          description="Are you sure?"
+          onCancel={onCancelSpy}
+          onConfirm={vi.fn()}
+        />
+      </div>,
+    );
+
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("Backdrop click calls onCancel when not busy", () => {
+    const onCancelSpy = vi.fn();
+
+    const { container } = render(
+      <ConfirmDialog
+        open={true}
+        busy={false}
+        title="Confirm"
+        description="Details"
+        onCancel={onCancelSpy}
+        onConfirm={vi.fn()}
+      />,
+    );
+
+    const backdrop = container.querySelector(".modal-backdrop");
+    expect(backdrop).toBeInTheDocument();
+
+    fireEvent.click(backdrop!);
+    expect(onCancelSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("Backdrop click is ignored when busy", () => {
+    const onCancelSpy = vi.fn();
+
+    const { container } = render(
+      <ConfirmDialog
+        open={true}
+        busy={true}
+        title="Confirm"
+        description="Details"
+        onCancel={onCancelSpy}
+        onConfirm={vi.fn()}
+      />,
+    );
+
+    const backdrop = container.querySelector(".modal-backdrop");
+    fireEvent.click(backdrop!);
+    expect(onCancelSpy).not.toHaveBeenCalled();
   });
 
   it("ApprovalFeedbackDialog renders role=dialog, aria-modal=true, and alert role for errors", async () => {

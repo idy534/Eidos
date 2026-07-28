@@ -40,10 +40,11 @@ export interface SessionControllerState {
 }
 
 export interface SessionControllerActions {
+  loadSessions: () => Promise<void>;
   selectSession: (session: Session) => Promise<SessionSnapshot | undefined>;
   createSession: (workspaceRoot?: string) => Promise<SessionSnapshot | undefined>;
   renameSession: (sessionId: string, title: string) => Promise<void>;
-  deleteSession: (session: Session) => Promise<{ confirmed: boolean }>;
+  deleteSession: (session: Session) => Promise<{ confirmed: true } | { confirmed: false; error: string }>;
   setError: (error: string | undefined) => void;
   projectRun: (sessionId: string, run: Run) => void;
   /** Called when a session title notification arrives — updates sessions title and open snapshot */
@@ -102,6 +103,16 @@ export function useSessionController(): [SessionControllerState, SessionControll
     return loaded;
   }
 
+  const loadSessions = useCallback(async (): Promise<void> => {
+    setError(undefined);
+    try {
+      const page = await window.eidosRuntime.listSessions();
+      setSessions(page.items);
+    } catch (cause) {
+      setError(userFacingError(cause));
+    }
+  }, []);
+
   const selectSession = useCallback(async (session: Session): Promise<SessionSnapshot | undefined> => {
     setNavigationSessionId(session.id);
 
@@ -142,7 +153,12 @@ export function useSessionController(): [SessionControllerState, SessionControll
       }
       return undefined;
     } finally {
-      clearPending("selectingSessionId");
+      setPending((prev) => {
+        if (prev.selectingSessionId !== session.id) return prev;
+        const next = { ...prev };
+        delete next.selectingSessionId;
+        return next;
+      });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot]);
@@ -197,11 +213,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     }
   }, []);
 
-  /**
-   * Initiates delete, returns whether the delete was performed.
-   * The caller is responsible for showing the confirm dialog before calling.
-   */
-  const deleteSession = useCallback(async (session: Session): Promise<{ confirmed: boolean }> => {
+  const deleteSession = useCallback(async (session: Session): Promise<{ confirmed: true } | { confirmed: false; error: string }> => {
     setPending((prev) => ({ ...prev, deletingSessionId: session.id }));
     setError(undefined);
     try {
@@ -224,8 +236,9 @@ export function useSessionController(): [SessionControllerState, SessionControll
       }
       return { confirmed: true };
     } catch (cause) {
-      setError(userFacingError(cause));
-      return { confirmed: false };
+      const errMsg = userFacingError(cause);
+      setError(errMsg);
+      return { confirmed: false, error: errMsg };
     } finally {
       clearPending("deletingSessionId");
     }
@@ -300,6 +313,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
   };
 
   const actions: SessionControllerActions = {
+    loadSessions,
     selectSession,
     createSession,
     renameSession,

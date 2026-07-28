@@ -11,13 +11,10 @@ interface Props {
   items: Item[];
   runs: Run[];
   approvals: ApprovalRequest[];
-  /** ID of the approval currently being responded to (per-card loading) */
-  respondingApprovalId?: string | undefined;
   respondingApprovalIds?: ReadonlySet<string> | undefined;
   respondingKindByApprovalId?: Readonly<Record<string, "approve" | "reject">> | undefined;
   expiredApprovalIds?: ReadonlySet<string> | undefined;
   errorsByApprovalId?: Readonly<Record<string, string>> | undefined;
-  approvalErrors?: Readonly<Record<string, string>> | undefined;
   onApprove: (request: ApprovalRequest) => void;
   onReject: (request: ApprovalRequest) => void;
 }
@@ -41,12 +38,10 @@ export function ExecutionFeed({
   items,
   runs,
   approvals,
-  respondingApprovalId,
   respondingApprovalIds,
   respondingKindByApprovalId,
   expiredApprovalIds,
   errorsByApprovalId,
-  approvalErrors,
   onApprove,
   onReject,
 }: Props) {
@@ -91,12 +86,10 @@ export function ExecutionFeed({
                   run={run}
                   isLast={index === segments.length - 1}
                   approvals={approvals}
-                  respondingApprovalId={respondingApprovalId}
                   respondingApprovalIds={respondingApprovalIds}
                   respondingKindByApprovalId={respondingKindByApprovalId}
                   expiredApprovalIds={expiredApprovalIds}
                   errorsByApprovalId={errorsByApprovalId}
-                  approvalErrors={approvalErrors}
                   onApprove={onApprove}
                   onReject={onReject}
                 />
@@ -130,12 +123,10 @@ function RunSegment({
   run,
   isLast,
   approvals,
-  respondingApprovalId,
   respondingApprovalIds,
   respondingKindByApprovalId,
   expiredApprovalIds,
   errorsByApprovalId,
-  approvalErrors,
   onApprove,
   onReject,
 }: {
@@ -143,12 +134,10 @@ function RunSegment({
   run: Run;
   isLast: boolean;
   approvals: ApprovalRequest[];
-  respondingApprovalId?: string | undefined;
   respondingApprovalIds?: ReadonlySet<string> | undefined;
   respondingKindByApprovalId?: Readonly<Record<string, "approve" | "reject">> | undefined;
   expiredApprovalIds?: ReadonlySet<string> | undefined;
   errorsByApprovalId?: Readonly<Record<string, string>> | undefined;
-  approvalErrors?: Readonly<Record<string, string>> | undefined;
   onApprove: Props["onApprove"];
   onReject: Props["onReject"];
 }) {
@@ -171,12 +160,10 @@ function RunSegment({
               item={item}
               run={run}
               approval={approvals.find((request) => request.itemId === item.id)}
-              respondingApprovalId={respondingApprovalId}
               respondingApprovalIds={respondingApprovalIds}
               respondingKindByApprovalId={respondingKindByApprovalId}
               expiredApprovalIds={expiredApprovalIds}
               errorsByApprovalId={errorsByApprovalId}
-              approvalErrors={approvalErrors}
               onApprove={onApprove}
               onReject={onReject}
             />
@@ -229,24 +216,20 @@ function ProcessItem({
   item,
   run,
   approval,
-  respondingApprovalId,
   respondingApprovalIds,
   respondingKindByApprovalId,
   expiredApprovalIds,
   errorsByApprovalId,
-  approvalErrors,
   onApprove,
   onReject,
 }: {
   item: Item;
   run: Run;
   approval: ApprovalRequest | undefined;
-  respondingApprovalId?: string | undefined;
   respondingApprovalIds?: ReadonlySet<string> | undefined;
   respondingKindByApprovalId?: Readonly<Record<string, "approve" | "reject">> | undefined;
   expiredApprovalIds?: ReadonlySet<string> | undefined;
   errorsByApprovalId?: Readonly<Record<string, string>> | undefined;
-  approvalErrors?: Readonly<Record<string, string>> | undefined;
   onApprove: Props["onApprove"];
   onReject: Props["onReject"];
 }) {
@@ -258,11 +241,8 @@ function ProcessItem({
 
   if (approval) {
     const isExpired = Boolean(expiredApprovalIds?.has(approval.id));
-    const localError = errorsByApprovalId?.[approval.id] ?? approvalErrors?.[approval.id];
-    const isResponding = Boolean(
-      (respondingApprovalId && respondingApprovalId === approval.id) ||
-      (respondingApprovalIds && respondingApprovalIds.has(approval.id))
-    );
+    const localError = errorsByApprovalId?.[approval.id];
+    const isResponding = Boolean(respondingApprovalIds && respondingApprovalIds.has(approval.id));
     const isApproving = isResponding && respondingKindByApprovalId?.[approval.id] === "approve";
     const isRejecting = isResponding && respondingKindByApprovalId?.[approval.id] === "reject";
     const canApprove = !isExpired && run.allowedActions?.includes("approve") && !isResponding;

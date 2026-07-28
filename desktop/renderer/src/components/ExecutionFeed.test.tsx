@@ -43,7 +43,6 @@ test("provides an accessible jump to the latest content control", () => {
       approvals={[]}
       respondingApprovalIds={new Set()}
       respondingKindByApprovalId={{}}
-      approvalErrors={{}}
       onApprove={() => {}}
       onReject={() => {}}
     />,
@@ -91,7 +90,6 @@ test("folds tool execution before the final answer and omits the success pill", 
       approvals={[]}
       respondingApprovalIds={new Set()}
       respondingKindByApprovalId={{}}
-      approvalErrors={{}}
       onApprove={() => {}}
       onReject={() => {}}
     />,
@@ -116,7 +114,6 @@ test("streams a tool-free answer without a process group", () => {
       approvals={[]}
       respondingApprovalIds={new Set()}
       respondingKindByApprovalId={{}}
-      approvalErrors={{}}
       onApprove={() => {}}
       onReject={() => {}}
     />,
@@ -136,7 +133,6 @@ test("shows a thinking indicator before the first model item", () => {
       approvals={[]}
       respondingApprovalIds={new Set()}
       respondingKindByApprovalId={{}}
-      approvalErrors={{}}
       onApprove={() => {}}
       onReject={() => {}}
     />,
@@ -170,7 +166,6 @@ test("shows safe MCP provenance and duration without internal diagnostics", () =
       approvals={[]}
       respondingApprovalIds={new Set()}
       respondingKindByApprovalId={{}}
-      approvalErrors={{}}
       onApprove={() => {}}
       onReject={() => {}}
     />,
@@ -200,7 +195,6 @@ test("does not describe a failed file write as edited", () => {
       approvals={[]}
       respondingApprovalIds={new Set()}
       respondingKindByApprovalId={{}}
-      approvalErrors={{}}
       onApprove={() => {}}
       onReject={() => {}}
     />,
@@ -237,7 +231,6 @@ test("shows the exact host and target for network approval", () => {
       }]}
       respondingApprovalIds={new Set()}
       respondingKindByApprovalId={{}}
-      approvalErrors={{}}
       onApprove={() => {}}
       onReject={() => {}}
     />,
@@ -274,7 +267,6 @@ test("renders minimalist SVG icons for file operations, skills, and shell calls"
       approvals={[]}
       respondingApprovalIds={new Set()}
       respondingKindByApprovalId={{}}
-      approvalErrors={{}}
       onApprove={() => {}}
       onReject={() => {}}
     />,

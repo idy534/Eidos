@@ -16,16 +16,14 @@ export interface ApprovalState {
 export type ApprovalAction =
   | { type: "merge"; approvals: ApprovalRequest[] }
   | { type: "added"; approval: ApprovalRequest }
+  | { type: "approval_removed"; approvalId: string }
   | { type: "response_started"; approvalId: string; kind: "approve" | "reject" }
   | { type: "response_succeeded"; approvalId: string }
   | { type: "response_failed"; approvalId: string; error: string }
   | { type: "response_expired"; approvalId: string; error: string }
-  | { type: "response_finished"; approvalId: string }
   | { type: "run_completed"; runId: string }
   | { type: "dialog_opened"; approval: ApprovalRequest }
-  | { type: "dialog_closed" }
-  | { type: "set_error"; approvalId: string; error: string }
-  | { type: "clear_error"; approvalId: string };
+  | { type: "dialog_closed" };
 
 export const initialApprovalState: ApprovalState = {
   approvals: [],
@@ -46,20 +44,58 @@ export function approvalReducer(state: ApprovalState, action: ApprovalAction): A
         approvals: [...filtered, action.approval],
       };
     }
+    case "approval_removed": {
+      const nextResponding = new Set(state.respondingApprovalIds);
+      nextResponding.delete(action.approvalId);
+      const nextRespondingKind = { ...state.respondingKindByApprovalId };
+      delete nextRespondingKind[action.approvalId];
+      const nextExpired = new Set(state.expiredApprovalIds);
+      nextExpired.delete(action.approvalId);
+      const nextErrors = { ...state.errorsByApprovalId };
+      delete nextErrors[action.approvalId];
+
+      const closeDialog = state.feedbackDialogApproval?.id === action.approvalId;
+
+      return {
+        ...state,
+        approvals: state.approvals.filter((a) => a.id !== action.approvalId),
+        respondingApprovalIds: nextResponding,
+        respondingKindByApprovalId: nextRespondingKind,
+        expiredApprovalIds: nextExpired,
+        errorsByApprovalId: nextErrors,
+        feedbackDialogApproval: closeDialog ? null : state.feedbackDialogApproval,
+        feedbackDialogError: closeDialog ? undefined : state.feedbackDialogError,
+      };
+    }
     case "merge": {
       const incomingIds = new Set(action.approvals.map((a) => a.id));
-      const nextExpired = new Set(Array.from(state.expiredApprovalIds).filter((id) => incomingIds.has(id)));
-      const nextErrors = { ...state.errorsByApprovalId };
-      for (const id of Object.keys(nextErrors)) {
-        if (!incomingIds.has(id)) {
-          delete nextErrors[id];
+      const nextResponding = new Set(Array.from(state.respondingApprovalIds).filter((id) => incomingIds.has(id)));
+      const nextRespondingKind: Record<string, "approve" | "reject"> = {};
+      for (const [id, kind] of Object.entries(state.respondingKindByApprovalId)) {
+        if (incomingIds.has(id)) {
+          nextRespondingKind[id] = kind;
         }
       }
+      const nextExpired = new Set(Array.from(state.expiredApprovalIds).filter((id) => incomingIds.has(id)));
+      const nextErrors: Record<string, string> = {};
+      for (const [id, err] of Object.entries(state.errorsByApprovalId)) {
+        if (incomingIds.has(id)) {
+          nextErrors[id] = err;
+        }
+      }
+      const closeDialog = Boolean(
+        state.feedbackDialogApproval && !incomingIds.has(state.feedbackDialogApproval.id),
+      );
+
       return {
         ...state,
         approvals: action.approvals,
+        respondingApprovalIds: nextResponding,
+        respondingKindByApprovalId: nextRespondingKind,
         expiredApprovalIds: nextExpired,
         errorsByApprovalId: nextErrors,
+        feedbackDialogApproval: closeDialog ? null : state.feedbackDialogApproval,
+        feedbackDialogError: closeDialog ? undefined : state.feedbackDialogError,
       };
     }
     case "response_started": {
@@ -136,17 +172,6 @@ export function approvalReducer(state: ApprovalState, action: ApprovalAction): A
         feedbackDialogError: isDialogTarget ? undefined : state.feedbackDialogError,
       };
     }
-    case "response_finished": {
-      const nextResponding = new Set(state.respondingApprovalIds);
-      nextResponding.delete(action.approvalId);
-      const nextRespondingKind = { ...state.respondingKindByApprovalId };
-      delete nextRespondingKind[action.approvalId];
-      return {
-        ...state,
-        respondingApprovalIds: nextResponding,
-        respondingKindByApprovalId: nextRespondingKind,
-      };
-    }
     case "run_completed": {
       const removedIds = new Set(
         state.approvals.filter((a) => a.runId === action.runId).map((a) => a.id),
@@ -194,23 +219,6 @@ export function approvalReducer(state: ApprovalState, action: ApprovalAction): A
         feedbackDialogError: undefined,
       };
     }
-    case "set_error": {
-      return {
-        ...state,
-        errorsByApprovalId: {
-          ...state.errorsByApprovalId,
-          [action.approvalId]: action.error,
-        },
-      };
-    }
-    case "clear_error": {
-      const nextErrors = { ...state.errorsByApprovalId };
-      delete nextErrors[action.approvalId];
-      return {
-        ...state,
-        errorsByApprovalId: nextErrors,
-      };
-    }
     default:
       return state;
   }
@@ -218,7 +226,6 @@ export function approvalReducer(state: ApprovalState, action: ApprovalAction): A
 
 export interface ApprovalControllerState {
   approvals: ApprovalRequest[];
-  respondingApprovalId: string | undefined;
   respondingApprovalIds: ReadonlySet<string>;
   respondingKindByApprovalId: Readonly<Record<string, "approve" | "reject">>;
   expiredApprovalIds: ReadonlySet<string>;
@@ -229,14 +236,14 @@ export interface ApprovalControllerState {
 
 export interface ApprovalControllerActions {
   addApproval: (request: ApprovalRequest) => void;
+  removeApproval: (approvalId: string) => void;
   mergeApprovals: (incoming: ApprovalRequest[]) => void;
+  loadPending: () => Promise<void>;
   clearApprovalsForRun: (runId: string) => void;
   approve: (request: ApprovalRequest) => Promise<void>;
   openRejectDialog: (request: ApprovalRequest) => void;
   closeFeedbackDialog: () => void;
   submitReject: (request: ApprovalRequest, feedback: string) => Promise<void>;
-  setApprovalError: (approvalId: string, message: string) => void;
-  clearApprovalError: (approvalId: string) => void;
 }
 
 export function useApprovalController(): [ApprovalControllerState, ApprovalControllerActions] {
@@ -247,20 +254,25 @@ export function useApprovalController(): [ApprovalControllerState, ApprovalContr
     dispatch({ type: "added", approval: request });
   }, []);
 
+  const removeApproval = useCallback((approvalId: string): void => {
+    dispatch({ type: "approval_removed", approvalId });
+  }, []);
+
   const mergeApprovals = useCallback((incoming: ApprovalRequest[]): void => {
     dispatch({ type: "merge", approvals: incoming });
   }, []);
 
+  const loadPending = useCallback(async (): Promise<void> => {
+    try {
+      const pending = await window.eidosRuntime.listPendingApprovals();
+      dispatch({ type: "merge", approvals: pending });
+    } catch {
+      // Preserve existing state on load failure
+    }
+  }, []);
+
   const clearApprovalsForRun = useCallback((runId: string): void => {
     dispatch({ type: "run_completed", runId });
-  }, []);
-
-  const setApprovalError = useCallback((approvalId: string, message: string): void => {
-    dispatch({ type: "set_error", approvalId, error: message });
-  }, []);
-
-  const clearApprovalError = useCallback((approvalId: string): void => {
-    dispatch({ type: "clear_error", approvalId });
   }, []);
 
   const approve = useCallback(async (request: ApprovalRequest): Promise<void> => {
@@ -351,7 +363,6 @@ export function useApprovalController(): [ApprovalControllerState, ApprovalContr
 
   const controllerState: ApprovalControllerState = {
     approvals: state.approvals,
-    respondingApprovalId: Array.from(state.respondingApprovalIds)[0],
     respondingApprovalIds: state.respondingApprovalIds,
     respondingKindByApprovalId: state.respondingKindByApprovalId,
     expiredApprovalIds: state.expiredApprovalIds,
@@ -362,14 +373,14 @@ export function useApprovalController(): [ApprovalControllerState, ApprovalContr
 
   const actions: ApprovalControllerActions = {
     addApproval,
+    removeApproval,
     mergeApprovals,
+    loadPending,
     clearApprovalsForRun,
     approve,
     openRejectDialog,
     closeFeedbackDialog,
     submitReject,
-    setApprovalError,
-    clearApprovalError,
   };
 
   return [controllerState, actions];

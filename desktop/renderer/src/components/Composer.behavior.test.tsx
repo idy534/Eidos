@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { Composer, type ComposerProps } from "../app/AppShell.js";
+import { Composer, type ComposerProps } from "./Composer.js";
 import type { ModelListResult, Run } from "../contracts.js";
 
 const mockModelList: ModelListResult = {
@@ -171,7 +170,23 @@ describe("Composer DOM interaction & state behavior", () => {
     expect(onSubmitSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("automatically focuses textarea when input transitions from disabled to enabled after run completion", async () => {
+  it("Shift+Enter does not submit", () => {
+    const onSubmitSpy = vi.fn();
+    render(<Composer {...defaultProps} input="Line 1" onSubmit={onSubmitSpy} />);
+
+    const textarea = screen.getByRole("textbox");
+    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
+
+    expect(onSubmitSpy).not.toHaveBeenCalled();
+  });
+
+  it("automatically focuses textarea when input transitions from disabled to enabled after run completion", () => {
+    let rafCallback: FrameRequestCallback | undefined;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      rafCallback = cb;
+      return 123;
+    });
+
     const { rerender } = render(
       <Composer {...defaultProps} composerMode="finalizing" input="" />,
     );
@@ -183,7 +198,51 @@ describe("Composer DOM interaction & state behavior", () => {
     rerender(<Composer {...defaultProps} composerMode="idle" input="" />);
 
     expect(textarea).not.toBeDisabled();
-    await new Promise((r) => setTimeout(r, 20));
+    expect(rafCallback).toBeDefined();
+
+    rafCallback!(100);
     expect(textarea).toHaveFocus();
+  });
+
+  it("unmount cancels pending focus animation frame", () => {
+    let rafCallback: FrameRequestCallback | undefined;
+    const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      rafCallback = cb;
+      return 456;
+    });
+
+    const { rerender, unmount } = render(
+      <Composer {...defaultProps} composerMode="finalizing" input="" />,
+    );
+
+    rerender(<Composer {...defaultProps} composerMode="idle" input="" />);
+    expect(rafCallback).toBeDefined();
+
+    unmount();
+    expect(cancelSpy).toHaveBeenCalledWith(456);
+  });
+
+  it("auto-resizes textarea height bounded between min 56px and max 168px", () => {
+    const { rerender } = render(<Composer {...defaultProps} input="Short text" />);
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+
+    // Simulate scrollHeight properties
+    Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 30 });
+    rerender(<Composer {...defaultProps} input="Text step 1" />);
+    expect(textarea.style.height).toBe("56px"); // clamped to minHeight 56px
+
+    Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 120 });
+    rerender(<Composer {...defaultProps} input="Text step 2" />);
+    expect(textarea.style.height).toBe("120px");
+
+    Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 250 });
+    rerender(<Composer {...defaultProps} input="Very long multi line text" />);
+    expect(textarea.style.height).toBe("168px"); // clamped to maxHeight 168px
+
+    // Clearing input restores min height 56px
+    Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 20 });
+    rerender(<Composer {...defaultProps} input="" />);
+    expect(textarea.style.height).toBe("56px");
   });
 });

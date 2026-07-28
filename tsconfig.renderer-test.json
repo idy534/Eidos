@@ -32,6 +32,7 @@
     "desktop/renderer/src/components/PrimaryActionButton.test.tsx",
     "desktop/renderer/src/components/Button.tsx",
     "desktop/renderer/src/components/Button.test.tsx",
+    "desktop/renderer/src/components/Composer.tsx",
     "desktop/renderer/src/components/DropdownMenu.tsx",
     "desktop/renderer/src/components/DropdownMenu.test.tsx"
   ]
