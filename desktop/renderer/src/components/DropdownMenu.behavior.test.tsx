@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { DropdownMenu, ContextMenu } from "./DropdownMenu.js";
 
 describe("DropdownMenu & ContextMenu DOM interaction behavior", () => {
@@ -235,5 +236,77 @@ describe("DropdownMenu & ContextMenu DOM interaction behavior", () => {
 
     await user.keyboard("{Escape}");
     expect(onCloseSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["button", "input"] as const)(
+    "ContextMenu outside click leaves the external %s focused",
+    async (kind) => {
+      const user = userEvent.setup();
+      function Harness() {
+        const [open, setOpen] = useState(true);
+        return (
+          <>
+            {open && <ContextMenu x={10} y={10} items={mockItems} onClose={() => setOpen(false)} />}
+            {kind === "button"
+              ? <button type="button">Outside target</button>
+              : <input aria-label="Outside target" />}
+          </>
+        );
+      }
+      render(<Harness />);
+      const outside = screen.getByRole(kind === "button" ? "button" : "textbox", { name: "Outside target" });
+      await user.click(outside);
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      expect(outside).toHaveFocus();
+    },
+  );
+
+  it.each([
+    ["Tab", { key: "Tab" }],
+    ["Shift+Tab", { key: "Tab", shiftKey: true }],
+    ["resize", null],
+    ["scroll", null],
+  ] as const)("ContextMenu %s closes without restoring its trigger", (kind, key) => {
+    const trigger = document.createElement("button");
+    document.body.append(trigger);
+    trigger.focus();
+    const onClose = vi.fn();
+    render(
+      <ContextMenu
+        x={10}
+        y={10}
+        items={mockItems}
+        restoreFocusElement={trigger}
+        onClose={onClose}
+      />,
+    );
+    if (key) fireEvent.keyDown(screen.getByRole("menu"), key);
+    else fireEvent(window, new Event(kind));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(trigger).not.toHaveFocus();
+    trigger.remove();
+  });
+
+  it("ContextMenu disabled item cannot activate and enabled item activates exactly once", async () => {
+    const user = userEvent.setup();
+    const disabled = vi.fn();
+    const enabled = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <ContextMenu
+        x={10}
+        y={10}
+        items={[
+          { key: "disabled", label: "Disabled", disabled: true, onClick: disabled },
+          { key: "enabled", label: "Enabled", onClick: enabled },
+        ]}
+        onClose={onClose}
+      />,
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Disabled" }));
+    expect(disabled).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("menuitem", { name: "Enabled" }));
+    expect(enabled).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

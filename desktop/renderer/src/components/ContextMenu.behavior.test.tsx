@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SessionSidebar } from "./SessionSidebar.js";
@@ -8,10 +8,17 @@ import type { Session } from "../contracts.js";
 const mockSessions: Session[] = [
   { id: "session-1", title: "Session One", workspaceRoot: "/ws/project1", createdAt: 1000, updatedAt: 1000 },
 ];
+const innerWidthDescriptor = Object.getOwnPropertyDescriptor(window, "innerWidth");
+const innerHeightDescriptor = Object.getOwnPropertyDescriptor(window, "innerHeight");
 
 describe("SessionSidebar ContextMenu DOM interaction behavior", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (innerWidthDescriptor) Object.defineProperty(window, "innerWidth", innerWidthDescriptor);
+    if (innerHeightDescriptor) Object.defineProperty(window, "innerHeight", innerHeightDescriptor);
   });
 
   it("Mouse right-click opens ContextMenu at pointer coordinates", async () => {

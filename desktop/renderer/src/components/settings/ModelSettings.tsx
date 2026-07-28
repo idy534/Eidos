@@ -159,7 +159,7 @@ export function ModelSettings({
                   loading={isSaving}
                   onClick={() => void handleSave()}
                 >
-                  保存配置
+                  {isSaving ? "保存中…" : "保存配置"}
                 </Button>
                 <Button
                   variant="ghost"

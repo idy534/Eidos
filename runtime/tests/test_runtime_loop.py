@@ -404,6 +404,47 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result["data"]["stdout"], "shell-ok")
         self.assertEqual(result["data"]["stderr"], "")
 
+    def test_unavailable_shell_fails_before_approval_or_execution(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Run a command")
+        sentinel = self.workspace / "must-not-exist"
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "call-shell",
+                            "run_shell",
+                            {
+                                "command": f"/usr/bin/touch {sentinel}",
+                                "timeoutSeconds": 5,
+                            },
+                        ),
+                    )
+                ),
+                ModelResponse(text="Shell is unavailable."),
+            ]
+        )
+        approvals: list[object] = []
+
+        RuntimeLoop(
+            self.store,
+            model,
+            lambda _message: None,
+            lambda request, _cancel: approvals.append(request)
+            or ApprovalDecision("approve"),
+            shell_available=False,
+        ).run(run["id"], threading.Event())
+
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        command_item = next(
+            item for item in snapshot["items"] if item["kind"] == "command_execution"
+        )
+        result = json.loads(command_item["toolCall"]["resultJson"])
+        self.assertEqual(result["code"], "sandbox_unavailable")
+        self.assertFalse(result["sideEffectsMayExist"])
+        self.assertEqual(approvals, [])
+        self.assertFalse(sentinel.exists())
+
     def test_rejected_shell_has_zero_side_effects(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Reject a command")
         model = ScriptedModel(
@@ -646,6 +687,36 @@ class ToolExecutorTests(unittest.TestCase):
         self.assertIn("src/app.py", listed["data"]["paths"])
         self.assertEqual(read["data"]["content"], "print('needle')\n")
         self.assertEqual(searched["data"]["matches"][0]["path"], "src/app.py")
+
+    def test_unavailable_seatbelt_leaves_new_and_existing_targets_unchanged(self) -> None:
+        existing = self.workspace / "existing.txt"
+        existing.write_text("base\n", encoding="utf-8")
+
+        with mock_patch(
+            "eidos_runtime.sandbox.seatbelt.is_seatbelt_usable",
+            return_value=False,
+        ):
+            for path, content in (
+                ("new.txt", "new\n"),
+                ("existing.txt", "changed\n"),
+            ):
+                with self.subTest(path=path):
+                    prepared = self.executor.prepare_file_change(
+                        "write_file",
+                        {"path": path, "content": content},
+                        threading.Event(),
+                    )
+                    assert not isinstance(prepared, dict)
+                    result = self.executor.commit_file_change(
+                        "write_file", prepared, threading.Event()
+                    )
+
+                    self.assertEqual(result["code"], "sandbox_unavailable")
+                    self.assertFalse(result["sideEffectsMayExist"])
+                    self.assertEqual(list(self.workspace.glob(".eidos-*.tmp")), [])
+
+        self.assertFalse((self.workspace / "new.txt").exists())
+        self.assertEqual(existing.read_text(encoding="utf-8"), "base\n")
 
     def test_sensitive_and_escaping_paths_are_rejected(self) -> None:
         sensitive = self.executor.execute(

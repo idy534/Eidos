@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Session } from "../contracts.js";
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
@@ -53,6 +53,14 @@ export function AppShell({ runtime }: AppShellProps) {
   const [sessionToDelete, setSessionToDelete] = useState<Session | undefined>(undefined);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | undefined>(undefined);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const workspaceRef = useRef<HTMLElement>(null);
+  const getDialogFallbackFocus = useCallback((): HTMLElement | null => {
+    const composer = composerRef.current;
+    return composer?.isConnected && !composer.disabled
+      ? composer
+      : workspaceRef.current;
+  }, []);
 
   // Aggregate workbench error display (domain-scoped errors remain in their respective components/pages)
   const topError = sessionState.error ?? runState.error;
@@ -256,7 +264,7 @@ export function AppShell({ runtime }: AppShellProps) {
         }}
       />
 
-      <section className="workspace" aria-label="Agent 工作区">
+      <section ref={workspaceRef} className="workspace" aria-label="Agent 工作区" tabIndex={-1}>
         {/* Global Runtime error banner */}
         {runtimePresentation.tone === "warning" && runtimePresentation.description && (
           <p className="error-banner" role="alert">{runtimePresentation.description}</p>
@@ -363,6 +371,7 @@ export function AppShell({ runtime }: AppShellProps) {
             />
 
             <Composer
+              ref={composerRef}
               composerMode={composerMode}
               activeRun={activeRun}
               input={input}
@@ -411,6 +420,7 @@ export function AppShell({ runtime }: AppShellProps) {
         isDestructive
         busy={deleteBusy}
         error={deleteError}
+        getFallbackFocus={getDialogFallbackFocus}
         onConfirm={() => void confirmDelete()}
         onCancel={() => { setSessionToDelete(undefined); setDeleteError(undefined); }}
       />
@@ -420,6 +430,7 @@ export function AppShell({ runtime }: AppShellProps) {
         approval={feedbackDialogApproval}
         busy={Boolean(feedbackDialogApproval && respondingApprovalIds.has(feedbackDialogApproval.id))}
         error={feedbackDialogError}
+        getFallbackFocus={getDialogFallbackFocus}
         onConfirm={(request, feedback) => void approvalActions.submitReject(request, feedback)}
         onCancel={() => approvalActions.closeFeedbackDialog()}
       />

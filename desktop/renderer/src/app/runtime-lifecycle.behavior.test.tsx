@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, act, waitFor } from "@testing-library/react";
 import { App } from "../App.js";
 import type { EidosRuntimeAPI, RuntimeStatus } from "../contracts.js";
@@ -16,10 +16,15 @@ const mockHealthOnlyStatus: RuntimeStatus = {
   runtimeVersion: "0.3.0",
   storageHealth: { state: "health_only", code: "READ_ONLY_STORAGE" },
 };
+const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
 
 describe("App & Runtime Lifecycle behavior", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+  afterEach(() => {
+    if (runtimeDescriptor) Object.defineProperty(window, "eidosRuntime", runtimeDescriptor);
+    else delete (window as Partial<Window>).eidosRuntime;
   });
 
   function setupMockRuntime(overrides: Partial<EidosRuntimeAPI> = {}) {
@@ -77,7 +82,7 @@ describe("App & Runtime Lifecycle behavior", () => {
 
   it("starting renders RuntimeGate with status role", () => {
     setupMockRuntime({
-      getStatus: vi.fn().mockReturnValue(new Promise(() => {})), // Stays starting
+      getStatus: vi.fn().mockReturnValue(Promise.withResolvers<RuntimeStatus>().promise),
     });
 
     const { container } = render(<App />);

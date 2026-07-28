@@ -27,6 +27,33 @@ function parseAST(filePath, text) {
   return ts.createSourceFile(filePath, text, ts.ScriptTarget.Latest, true, kind);
 }
 
+function descendants(node, predicate) {
+  const found = [];
+  function visit(current) {
+    if (predicate(current)) found.push(current);
+    ts.forEachChild(current, visit);
+  }
+  visit(node);
+  return found;
+}
+
+function namedFunction(sourceFile, name) {
+  return descendants(
+    sourceFile,
+    (node) => ts.isFunctionDeclaration(node) && node.name?.text === name,
+  )[0];
+}
+
+function objectPropertyNames(object) {
+  return new Set(object.properties.flatMap((property) => (
+    ts.isPropertyAssignment(property) && property.name
+      ? [property.name.getText(object.getSourceFile()).replaceAll(/['"]/g, "")]
+      : ts.isShorthandPropertyAssignment(property)
+        ? [property.name.text]
+        : []
+  )));
+}
+
 // 1. Verify runtime-client.ts AST declarations
 const runtimeClientPath = "desktop/main/runtime-client.ts";
 const runtimeClientText = readFile(runtimeClientPath);
@@ -79,6 +106,88 @@ if (runtimeClientText) {
     errors.push(
       "runtime-client.ts must import domain contracts from ../shared/index.js or ../shared/domain-contracts.js",
     );
+  }
+
+  const approvalRequest = namedFunction(sf, "approvalRequestFrom");
+  const provenanceValidator = namedFunction(sf, "isToolProvenance");
+  const provenanceProjector = namedFunction(sf, "projectApprovalToolProvenance");
+  const toolCallValidator = namedFunction(sf, "isToolCall");
+  for (const [name, node] of [
+    ["approvalRequestFrom", approvalRequest],
+    ["isToolProvenance", provenanceValidator],
+    ["projectApprovalToolProvenance", provenanceProjector],
+    ["isToolCall", toolCallValidator],
+  ]) {
+    if (!node) errors.push(`runtime-client.ts AST error: missing ${name}`);
+  }
+
+  if (approvalRequest) {
+    const expected = {
+      file_change: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "diff"],
+      external_tool: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "toolName", "arguments", "provenance", "permissionProfile", "timeoutSeconds", "envNames"],
+      network_access: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "toolName", "hosts", "target"],
+      command_execution: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "command", "cwd", "networkEnabled", "timeoutSeconds"],
+    };
+    const returns = descendants(
+      approvalRequest,
+      (node) => ts.isReturnStatement(node) && ts.isObjectLiteralExpression(node.expression),
+    ).map((node) => node.expression);
+    for (const object of returns) {
+      if (object.properties.some(ts.isSpreadAssignment)) {
+        errors.push("approvalRequestFrom AST error: Approval return objects must not contain spreads");
+      }
+      const properties = objectPropertyNames(object);
+      const id = object.properties.find((property) => (
+        ts.isPropertyAssignment(property) && property.name.getText(sf) === "id"
+      ));
+      if (!id || !ts.isPropertyAssignment(id) || id.initializer.getText(sf) !== "message.id") {
+        errors.push("approvalRequestFrom AST error: every Approval id must be message.id");
+      }
+      const kind = object.properties.find((property) => (
+        ts.isPropertyAssignment(property) && property.name.getText(sf) === "kind"
+      ));
+      const kindName = kind && ts.isPropertyAssignment(kind) && ts.isStringLiteral(kind.initializer)
+        ? kind.initializer.text
+        : undefined;
+      for (const field of kindName ? expected[kindName] ?? [] : []) {
+        if (!properties.has(field)) {
+          errors.push(`approvalRequestFrom AST error: ${kindName} is missing ${field}`);
+        }
+      }
+    }
+  }
+  if (provenanceValidator && !descendants(
+    provenanceValidator,
+    (node) => ts.isCallExpression(node) && node.expression.getText(sf) === "hasOnlyKeys",
+  ).length) {
+    errors.push("isToolProvenance AST error: must use exact-key validation");
+  }
+  if (provenanceProjector) {
+    const returns = descendants(provenanceProjector, ts.isReturnStatement);
+    if (!returns.some((node) => ts.isObjectLiteralExpression(node.expression))) {
+      errors.push("projectApprovalToolProvenance AST error: must return a new object literal");
+    }
+    if (returns.some((node) => node.expression?.getText(sf) === "value")) {
+      errors.push("projectApprovalToolProvenance AST error: must not return raw input");
+    }
+    if (descendants(
+      provenanceProjector,
+      (node) => ts.isSpreadAssignment(node) && node.expression.getText(sf) === "value",
+    ).length) {
+      errors.push("projectApprovalToolProvenance AST error: must not spread raw input");
+    }
+  }
+  if (toolCallValidator && !descendants(
+    toolCallValidator,
+    (node) => ts.isCallExpression(node) && node.expression.getText(sf) === "isToolProvenance",
+  ).length) {
+    errors.push("isToolCall AST error: must use strict isToolProvenance");
+  }
+  if (approvalRequest && !descendants(
+    approvalRequest,
+    (node) => ts.isCallExpression(node) && node.expression.getText(sf) === "projectApprovalToolProvenance",
+  ).length) {
+    errors.push("approvalRequestFrom AST error: External Tool Approval must use provenance projector");
   }
 }
 
@@ -177,6 +286,24 @@ if (mainText) {
   if (definesPerformShutdown) {
     errors.push("main.ts AST error: must not declare inline performShutdown; use shutdownRuntime from ./runtime-shutdown.js");
   }
+  if (descendants(
+    sf,
+    (node) => ts.isCallExpression(node) && node.expression.getText(sf) === "Promise.race",
+  ).length) {
+    errors.push("main.ts AST error: must not duplicate shutdown Promise.race");
+  }
+  const security = new Map();
+  for (const property of descendants(sf, ts.isPropertyAssignment)) {
+    const name = property.name.getText(sf);
+    if (["contextIsolation", "nodeIntegration", "sandbox"].includes(name)) {
+      security.set(name, property.initializer.kind === ts.SyntaxKind.TrueKeyword);
+    }
+  }
+  if (security.get("contextIsolation") !== true
+    || security.get("nodeIntegration") !== false
+    || security.get("sandbox") !== true) {
+    errors.push("main.ts AST error: Renderer security settings must remain isolated, sandboxed, and without Node integration");
+  }
 }
 
 // 4. Verify obsolete shortcut-dispatch file is completely removed
@@ -215,9 +342,123 @@ if (appShellText) {
   if (!importsComposer) {
     errors.push("AppShell.tsx AST error: must import Composer from ../components/Composer.js");
   }
+  const clearCalls = descendants(
+    sf,
+    (node) => ts.isCallExpression(node) && node.expression.getText(sf).endsWith(".clearApprovalsForRun"),
+  );
+  if (clearCalls.length !== 1 || clearCalls[0].arguments[0]?.getText(sf) !== "run.id") {
+    errors.push("AppShell.tsx AST error: only run/completed may clear Approvals by run.id");
+  }
+  const removeCalls = descendants(
+    sf,
+    (node) => ts.isCallExpression(node) && node.expression.getText(sf).endsWith(".removeApproval"),
+  );
+  if (removeCalls.length !== 1 || removeCalls[0].arguments[0]?.getText(sf) !== "notification.params.approvalId") {
+    errors.push("AppShell.tsx AST error: resolved/canceled Approval removal must use approvalId");
+  }
+  const topError = descendants(
+    sf,
+    (node) => ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "topError",
+  )[0];
+  if (!topError || topError.initializer?.getText(sf) !== "sessionState.error ?? runState.error") {
+    errors.push("AppShell.tsx AST error: topError must only combine Session and Run errors");
+  }
+  const jsxAttributes = descendants(sf, ts.isJsxAttribute);
+  const hasAttribute = (name, expression) => jsxAttributes.some((attribute) => (
+    attribute.name.getText(sf) === name
+    && ts.isJsxExpression(attribute.initializer)
+    && attribute.initializer.expression?.getText(sf) === expression
+  ));
+  if (!hasAttribute("modelError", "modelState.error")) {
+    errors.push("AppShell.tsx AST error: Model error must stay local to Settings");
+  }
+  if (!hasAttribute("extensionError", "extensionState.error")) {
+    errors.push("AppShell.tsx AST error: Extension error must stay local to Settings");
+  }
+  if (jsxAttributes.filter((attribute) => (
+    attribute.name.getText(sf) === "getFallbackFocus"
+    && ts.isJsxExpression(attribute.initializer)
+    && attribute.initializer.expression?.getText(sf) === "getDialogFallbackFocus"
+  )).length < 2) {
+    errors.push("AppShell.tsx AST error: both Dialogs must receive explicit fallback ownership");
+  }
 }
 
-// 6. AST verification of EidosRuntimeAPI contract methods
+// 6. Dialog focus ownership and transition checks
+for (const dialogPath of [
+  "desktop/renderer/src/components/ApprovalFeedbackDialog.tsx",
+  "desktop/renderer/src/components/settings/ConfirmDialog.tsx",
+]) {
+  const text = readFile(dialogPath);
+  if (!text) continue;
+  const sf = parseAST(dialogPath, text);
+  if (descendants(
+    sf,
+    (node) => ts.isCallExpression(node) && node.expression.getText(sf) === "document.querySelector",
+  ).length || descendants(
+    sf,
+    (node) => ts.isPropertyAccessExpression(node) && node.getText(sf) === "document.body",
+  ).length) {
+    errors.push(`${dialogPath} AST error: Dialog must not query or own a global fallback`);
+  }
+  if (!descendants(
+    sf,
+    (node) => ts.isPropertySignature(node) && node.name.getText(sf) === "getFallbackFocus",
+  ).length) {
+    errors.push(`${dialogPath} AST error: Dialog must receive fallback focus through props`);
+  }
+  if (!descendants(
+    sf,
+    (node) => ts.isCallExpression(node) && node.expression.getText(sf) === "useDialogFocusLifecycle",
+  ).length) {
+    errors.push(`${dialogPath} AST error: Dialog must use transition-aware focus lifecycle`);
+  }
+}
+const focusLifecyclePath = "desktop/renderer/src/components/useDialogFocusLifecycle.ts";
+const focusLifecycleText = readFile(focusLifecyclePath);
+if (focusLifecycleText) {
+  const sf = parseAST(focusLifecyclePath, focusLifecycleText);
+  const hasPreviousOpen = descendants(
+    sf,
+    (node) => ts.isVariableDeclaration(node) && node.name.getText(sf) === "wasOpenRef",
+  ).length > 0;
+  const hasCloseTransition = descendants(
+    sf,
+    (node) => ts.isBinaryExpression(node)
+      && node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+      && node.left.getText(sf) === "wasOpen"
+      && node.right.getText(sf) === "!open",
+  ).length > 0;
+  if (!hasPreviousOpen || !hasCloseTransition) {
+    errors.push("useDialogFocusLifecycle.ts AST error: focus restoration must require a real open-to-close transition");
+  }
+}
+
+// 7. Renderer pure-test discovery configuration
+const rendererTestConfig = JSON.parse(readFile("tsconfig.renderer-test.json"));
+for (const pattern of [
+  "desktop/renderer/src/**/*.test.ts",
+  "desktop/renderer/src/**/*.test.tsx",
+]) {
+  if (!rendererTestConfig.include?.includes(pattern)) {
+    errors.push(`tsconfig.renderer-test.json error: missing include ${pattern}`);
+  }
+}
+for (const pattern of [
+  "desktop/renderer/src/**/*.behavior.test.ts",
+  "desktop/renderer/src/**/*.behavior.test.tsx",
+]) {
+  if (!rendererTestConfig.exclude?.includes(pattern)) {
+    errors.push(`tsconfig.renderer-test.json error: missing exclude ${pattern}`);
+  }
+}
+if (rendererTestConfig.include?.some((pattern) => (
+  /\.test\.tsx?$/.test(pattern) && !pattern.includes("**")
+))) {
+  errors.push("tsconfig.renderer-test.json error: pure tests must be glob-discovered, not individually listed");
+}
+
+// 8. AST verification of EidosRuntimeAPI contract methods
 const contractsPath = "desktop/shared/ipc-api.ts";
 const contractsText = readFile(contractsPath);
 if (contractsText) {
@@ -280,7 +521,7 @@ if (contractsText) {
   }
 }
 
-// 7. Check for raw string literals of known channels outside shared and test files via AST
+// 9. Check for raw string literals of known channels outside shared and test files via AST
 const KNOWN_CHANNELS = new Set([
   "runtime:get-status",
   "runtime:health",
@@ -335,5 +576,5 @@ if (errors.length > 0) {
   }
   process.exit(1);
 } else {
-  console.log("✓ All Desktop domain and IPC contract checks passed (AST verified).");
+  console.log("All Desktop structural, domain and IPC contract checks passed.");
 }

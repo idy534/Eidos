@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 
 import { Button } from "../Button.js";
+import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -12,6 +13,7 @@ interface ConfirmDialogProps {
   isDestructive?: boolean;
   busy?: boolean;
   error?: string | undefined;
+  getFallbackFocus?: (() => HTMLElement | null) | undefined;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -36,56 +38,15 @@ export function ConfirmDialog({
   isDestructive = false,
   busy = false,
   error,
+  getFallbackFocus,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
   const confirmBtnRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLElement | null>(null);
-
-  const rafIdRef = useRef<number | null>(null);
-
-function restoreFocus(trigger: HTMLElement | null) {
-  if (trigger && trigger.isConnected) {
-    trigger.focus();
-    return;
-  }
-  const fallback = document.querySelector<HTMLElement>("[data-workspace-root]")
-    ?? document.querySelector<HTMLElement>("main")
-    ?? document.querySelector<HTMLElement>(".app-layout")
-    ?? document.body;
-  if (fallback && fallback.isConnected) {
-    if (fallback !== document.body && !fallback.hasAttribute("tabindex")) {
-      fallback.setAttribute("tabindex", "-1");
-    }
-    fallback.focus();
-  }
-}
-
-  // Store the element that opened the dialog, restore focus on close
-  useEffect(() => {
-    if (open) {
-      if (document.activeElement && (document.activeElement as HTMLElement).isConnected) {
-        triggerRef.current = document.activeElement as HTMLElement;
-      }
-      rafIdRef.current = requestAnimationFrame(() => {
-        const target = isDestructive ? cancelBtnRef.current : confirmBtnRef.current;
-        if (target?.isConnected) {
-          target.focus();
-        }
-      });
-    } else {
-      restoreFocus(triggerRef.current);
-    }
-    return () => {
-      if (rafIdRef.current !== null) {
-        cancelAnimationFrame(rafIdRef.current);
-        rafIdRef.current = null;
-      }
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, isDestructive]);
+  const initialFocusRef = isDestructive ? cancelBtnRef : confirmBtnRef;
+  useDialogFocusLifecycle({ open, initialFocusRef, getFallbackFocus });
 
   // Escape key closes the dialog when not busy
   useEffect(() => {
