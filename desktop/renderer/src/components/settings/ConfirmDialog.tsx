@@ -119,8 +119,8 @@ export function ConfirmDialog({
   return (
     <div
       className="modal-backdrop"
-      // Destructive dialogs don't close on backdrop click to prevent accidents
-      onClick={isDestructive ? undefined : onCancel}
+      // Destructive or busy dialogs don't close on backdrop click to prevent accidents
+      onClick={isDestructive || busy ? undefined : onCancel}
       aria-hidden={!open}
     >
       <div

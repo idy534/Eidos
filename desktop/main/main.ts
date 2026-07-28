@@ -6,6 +6,7 @@ import { RuntimeClient } from "./runtime-client.js";
 import { redactLogLine, sanitizeLogValue } from "./log-redaction.js";
 import { dispatchAppCommand as dispatchCommand, ensureAppWindow as ensureWindow } from "./app-command-dispatch.js";
 import { QuitFlowController, type ActiveRunProjection, type QuitFlowDependencies } from "./quit-flow.js";
+import { shutdownRuntime } from "./runtime-shutdown.js";
 import type {
   ApprovalDecision,
   ApprovalRequest,
@@ -44,6 +45,13 @@ app.setName("Eidos");
 
 let runtimeStatus: RuntimeStatus = { state: "starting" };
 let runtimeClient: RuntimeClient | undefined;
+let runtimeTerminated = false;
+
+function terminateRuntimeOnce(): void {
+  if (runtimeTerminated) return;
+  runtimeTerminated = true;
+  runtimeClient?.terminate();
+}
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -88,47 +96,22 @@ const activeRunProjection: ActiveRunProjection = {
   count: () => activeRunProjectionMap.size,
 };
 
-async function performShutdown(client: RuntimeClient): Promise<void> {
-  const SHUTDOWN_TIMEOUT_MS = 8_000;
-  log("info", "quit", "Beginning Runtime shutdown");
-  const forceStop = new Promise<void>((resolve) => {
-    setTimeout(() => {
-      log("warn", "quit", "Shutdown timeout reached — forcing terminate");
-      client.terminate();
-      resolve();
-    }, SHUTDOWN_TIMEOUT_MS);
-  });
-  const gracefulStop = client
-    .shutdown()
-    .then(() => client.waitForExit())
-    .then(() => undefined)
-    .catch((err: unknown) => {
-      log("error", "quit", "Graceful shutdown failed", {
-        message: err instanceof Error ? err.message : String(err),
-      });
-      client.terminate();
-    });
-
-  await Promise.race([gracefulStop, forceStop]);
-  log("info", "quit", "Runtime shutdown complete");
-}
-
 const quitFlowDeps: QuitFlowDependencies = {
   hasRuntimeClient: () => Boolean(runtimeClient),
   showQuitDialog: async (activeCount) => {
     const window = BrowserWindow.getAllWindows()[0];
-    const { response } = await dialog.showMessageBox(
-      window ?? new BrowserWindow({ show: false }),
-      {
-        type: "question",
-        buttons: ["返回 Eidos", "停止任务并退出"],
-        defaultId: 0,
-        cancelId: 0,
-        title: "退出 Eidos",
-        message: "当前有任务正在执行",
-        detail: `有 ${activeCount} 个活动任务正在运行。\n退出前将请求取消这些任务，数据可能不完整。`,
-      },
-    );
+    const options: Electron.MessageBoxOptions = {
+      type: "question",
+      buttons: ["返回 Eidos", "停止任务并退出"],
+      defaultId: 0,
+      cancelId: 0,
+      title: "退出 Eidos",
+      message: "当前有任务正在执行",
+      detail: `有 ${activeCount} 个活动任务正在运行。\n退出前将请求取消这些任务，数据可能不完整。`,
+    };
+    const { response } = window
+      ? await dialog.showMessageBox(window, options)
+      : await dialog.showMessageBox(options);
     return response === 1 ? "stop_and_exit" : "return_to_eidos";
   },
   cancelRun: async (runId) => {
@@ -139,7 +122,15 @@ const quitFlowDeps: QuitFlowDependencies = {
   },
   shutdownRuntime: async () => {
     if (runtimeClient) {
-      await performShutdown(runtimeClient);
+      const client = runtimeClient;
+      const shutdownClient = {
+        shutdown: () => client.shutdown(),
+        waitForExit: () => client.waitForExit(),
+        terminate: terminateRuntimeOnce,
+      };
+      await shutdownRuntime(shutdownClient, {
+        onDiagnostic: (level, message) => log(level, "quit", message),
+      });
     }
   },
   requestFinalQuit: () => {
@@ -546,14 +537,6 @@ if (!hasSingleInstanceLock) {
 // ---------------------------------------------------------------------------
 // Graceful quit with active-run awareness
 // ---------------------------------------------------------------------------
-
-let runtimeTerminated = false;
-
-function terminateRuntimeOnce(): void {
-  if (runtimeTerminated) return;
-  runtimeTerminated = true;
-  runtimeClient?.terminate();
-}
 
 app.on("before-quit", (event) => {
   quitFlowController.handleBeforeQuit(event);

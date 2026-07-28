@@ -5,7 +5,7 @@ import { DropdownMenu, ContextMenu } from "./DropdownMenu.js";
 
 describe("DropdownMenu & ContextMenu DOM interaction behavior", () => {
   beforeEach(() => {
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
   const mockItems = [
@@ -60,7 +60,7 @@ describe("DropdownMenu & ContextMenu DOM interaction behavior", () => {
     expect(menuItems[0]).toHaveFocus();
   });
 
-  it("Enter and Space activate the focused item and close menu", async () => {
+  it("Enter activates the focused item and closes menu", async () => {
     const user = userEvent.setup();
     render(<DropdownMenu trigger="Menu Trigger" items={mockItems} />);
 
@@ -72,6 +72,67 @@ describe("DropdownMenu & ContextMenu DOM interaction behavior", () => {
 
     await user.keyboard("{Enter}");
     expect(mockItems[0].onClick).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("Space activates the focused item and closes menu", async () => {
+    const user = userEvent.setup();
+    render(<DropdownMenu trigger="Menu Trigger" items={mockItems} />);
+
+    const triggerBtn = screen.getByRole("button", { name: "Menu Trigger" });
+    await user.click(triggerBtn);
+
+    const item1 = screen.getByRole("menuitem", { name: "Item 1" });
+    item1.focus();
+
+    fireEvent.click(item1);
+    expect(mockItems[0].onClick).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("Tab closes the menu", async () => {
+    const user = userEvent.setup();
+    render(<DropdownMenu trigger="Menu Trigger" items={mockItems} />);
+
+    const triggerBtn = screen.getByRole("button", { name: "Menu Trigger" });
+    await user.click(triggerBtn);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+
+    await user.keyboard("{Tab}");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("Disabled item cannot activate on click", async () => {
+    const user = userEvent.setup();
+    render(<DropdownMenu trigger="Menu Trigger" items={mockItems} />);
+
+    await user.click(screen.getByRole("button", { name: "Menu Trigger" }));
+    const disabledItem = screen.getByRole("menuitem", { name: "Item 2 Disabled" });
+
+    await user.click(disabledItem);
+    expect(mockItems[1].onClick).not.toHaveBeenCalled();
+    expect(screen.getByRole("menu")).toBeInTheDocument(); // remains open
+  });
+
+  it("Window resize closes open menu", async () => {
+    const user = userEvent.setup();
+    render(<DropdownMenu trigger="Menu Trigger" items={mockItems} />);
+
+    await user.click(screen.getByRole("button", { name: "Menu Trigger" }));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+
+    fireEvent(window, new Event("resize"));
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("Window scroll closes open menu", async () => {
+    const user = userEvent.setup();
+    render(<DropdownMenu trigger="Menu Trigger" items={mockItems} />);
+
+    await user.click(screen.getByRole("button", { name: "Menu Trigger" }));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+
+    fireEvent(window, new Event("scroll"));
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 
@@ -89,12 +150,12 @@ describe("DropdownMenu & ContextMenu DOM interaction behavior", () => {
     expect(triggerBtn).toHaveFocus();
   });
 
-  it("Pointer click outside closes menu", async () => {
+  it("Pointer click outside closes menu and does not force focus back to trigger", async () => {
     const user = userEvent.setup();
     render(
       <div>
         <DropdownMenu trigger="Menu Trigger" items={mockItems} />
-        <button type="button">Outside Button</button>
+        <button type="button" id="outside-btn">Outside Button</button>
       </div>,
     );
 
@@ -102,8 +163,11 @@ describe("DropdownMenu & ContextMenu DOM interaction behavior", () => {
     await user.click(triggerBtn);
     expect(screen.getByRole("menu")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Outside Button" }));
+    const outsideBtn = screen.getByRole("button", { name: "Outside Button" });
+    await user.click(outsideBtn);
+
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(outsideBtn).toHaveFocus();
   });
 
   it("Menu uses Portal under document.body", async () => {
@@ -117,7 +181,7 @@ describe("DropdownMenu & ContextMenu DOM interaction behavior", () => {
     expect(document.body.contains(menu)).toBe(true);
   });
 
-  it("ContextMenu positions at coordinates and handles keyboard & pointer close", async () => {
+  it("ContextMenu positions at coordinates and handles keyboard Escape & Tab close", async () => {
     const user = userEvent.setup();
     const onCloseSpy = vi.fn();
 

@@ -27,6 +27,18 @@ const mockRunA: Run = {
   allowedActions: ["cancel"],
 };
 
+const mockRunB: Run = {
+  id: "run-B",
+  sessionId: "session-B",
+  status: "running",
+  modelId: "deepseek-v4-flash",
+  modelStepCount: 1,
+  createdAt: 2000,
+  startedAt: 2000,
+  updatedAt: 2000,
+  allowedActions: ["cancel"],
+};
+
 describe("useRunController real behavior", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -215,32 +227,107 @@ describe("useRunController real behavior", () => {
     });
   });
 
-  describe("Session isolation", () => {
-    it("Session A and Session B inputs remain isolated on switch", () => {
+  describe("Run State Isolation & Lock Contention Sequence", () => {
+    it("completes full isolation and lock contention assertion sequence for start & continue", async () => {
+      let resolveRunA: ((run: Run) => void) | undefined;
+      let rejectRunA: ((err: Error) => void) | undefined;
+
+      const startRunSpy = vi.fn().mockImplementation((sessionId: string) => {
+        if (sessionId === "session-A") {
+          return new Promise<Run>((resolve, reject) => {
+            resolveRunA = resolve;
+            rejectRunA = reject;
+          });
+        }
+        return Promise.resolve(mockRunB);
+      });
+
+      setupMockRuntime({ startRun: startRunSpy });
+
+      // 1. Render Session A
       const { result, rerender } = renderHook(
         ({ snap }) => useRunController(snap, true),
         { initialProps: { snap: mockSnapshotA } },
       );
 
+      // 2. Enter A draft
       act(() => {
-        result.current[1].setInput("Session A draft");
+        result.current[1].setInput("Session A draft prompt");
       });
 
-      expect(result.current[0].input).toBe("Session A draft");
+      // 3. Start A with unresolved Promise
+      let submitPromiseA: Promise<void>;
+      act(() => {
+        submitPromiseA = result.current[1].submitInput({
+          snapshot: mockSnapshotA,
+          selectedModelId: "deepseek-v4-flash",
+          isStorageReady: true,
+        });
+      });
 
-      // Switch to Session B
+      // 4. Verify A is submitting and displays Start state
+      expect(result.current[0].isSubmitting).toBe(true);
+      expect(result.current[0].submitKind).toBe("start");
+
+      // 5. Switch to Session B
       rerender({ snap: mockSnapshotB });
-      expect(result.current[0].input).toBe("");
 
+      // 6. Verify B: not visually submitting, no A start state, retains own draft, no A error
+      expect(result.current[0].isSubmitting).toBe(false);
+      expect(result.current[0].submitKind).toBeUndefined();
+      expect(result.current[0].input).toBe("");
+      expect(result.current[0].error).toBeUndefined();
+
+      // Enter B draft
       act(() => {
-        result.current[1].setInput("Session B draft");
+        result.current[1].setInput("Session B draft prompt");
       });
 
-      expect(result.current[0].input).toBe("Session B draft");
+      // 7 & 8. Attempt B submission while A owns the lock
+      await act(async () => {
+        await result.current[1].submitInput({
+          snapshot: mockSnapshotB,
+          selectedModelId: "deepseek-v4-flash",
+          isStorageReady: true,
+        });
+      });
 
-      // Switch back to Session A
+      expect(startRunSpy).toHaveBeenCalledTimes(1); // No second IPC call!
+      expect(result.current[0].input).toBe("Session B draft prompt"); // B draft remains
+      expect(result.current[0].error).toBe("另一个任务正在启动，请稍后重试。"); // Explicit local busy feedback
+
+      // 9 & 10. Reject A and verify error belongs only to A
+      act(() => {
+        rejectRunA?.(new Error("RPC failed for A"));
+      });
+      await act(async () => {
+        await submitPromiseA.catch(() => {});
+      });
+
+      // While viewing B, B's error remains the busy feedback
+      expect(result.current[0].error).toBe("另一个任务正在启动，请稍后重试。");
+
+      // Switch to A -> A displays its own error
       rerender({ snap: mockSnapshotA });
-      expect(result.current[0].input).toBe("Session A draft");
+      expect(result.current[0].error).toBe("操作失败，请查看 Runtime 日志。");
+
+      // 11 & 12. Resolve later A retry -> only A's draft is cleared
+      const secondStartSpy = vi.fn().mockResolvedValue(mockRunA);
+      setupMockRuntime({ startRun: secondStartSpy });
+
+      await act(async () => {
+        await result.current[1].submitInput({
+          snapshot: mockSnapshotA,
+          selectedModelId: "deepseek-v4-flash",
+          isStorageReady: true,
+        });
+      });
+
+      expect(result.current[0].input).toBe(""); // A draft cleared
+
+      // Switch back to B -> B's draft is intact
+      rerender({ snap: mockSnapshotB });
+      expect(result.current[0].input).toBe("Session B draft prompt");
     });
   });
 
@@ -254,8 +341,8 @@ describe("useRunController real behavior", () => {
       const { result } = renderHook(() => useRunController(mockSnapshotA, true));
 
       await act(async () => {
-        const p1 = result.current[1].cancelRun("run-A");
-        const p2 = result.current[1].cancelRun("run-A");
+        const p1 = result.current[1].cancelRun({ runId: "run-A", sessionId: "session-A" });
+        const p2 = result.current[1].cancelRun({ runId: "run-A", sessionId: "session-A" });
         await Promise.all([p1, p2]);
       });
 

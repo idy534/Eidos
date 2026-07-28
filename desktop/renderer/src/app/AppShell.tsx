@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import type { ModelId, Run, Session } from "../contracts.js";
+import { useEffect, useState } from "react";
+import type { Session } from "../contracts.js";
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import { EidosMark } from "../components/EidosMark.js";
@@ -9,6 +9,7 @@ import { DropdownMenu } from "../components/DropdownMenu.js";
 import { PrimaryActionButton } from "../components/PrimaryActionButton.js";
 import { ApprovalFeedbackDialog } from "../components/ApprovalFeedbackDialog.js";
 import { ConfirmDialog } from "../components/settings/ConfirmDialog.js";
+import { Composer } from "../components/Composer.js";
 import type { RuntimeLifecycleState } from "./useRuntimeLifecycle.js";
 import { useSessionController } from "./useSessionController.js";
 import { useRunController } from "./useRunController.js";
@@ -46,34 +47,26 @@ export function AppShell({ runtime }: AppShellProps) {
 
   // UI-only state (not domain state)
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [renaming, setRenaming] = useState(false);
+  const [renamingSessionId, setRenamingSessionId] = useState<string | undefined>(undefined);
   const [titleDraft, setTitleDraft] = useState("");
   const [renameError, setRenameError] = useState<string | undefined>(undefined);
   const [sessionToDelete, setSessionToDelete] = useState<Session | undefined>(undefined);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | undefined>(undefined);
 
-  // Aggregate error display (inline errors take priority in their domain)
-  const topError = sessionState.error ?? runState.error ?? modelState.error ?? extensionState.error;
+  // Aggregate workbench error display (domain-scoped errors remain in their respective components/pages)
+  const topError = sessionState.error ?? runState.error;
 
   // -----------------------------------------------------------------------
   // Bootstrap: load sessions, model, approvals independently
   // -----------------------------------------------------------------------
   useEffect(() => {
     if (runtimeStatus.state !== "ready" || runtimeStatus.storageHealth.state !== "ready") return;
-    void Promise.all([
-      window.eidosRuntime.listSessions(),
-      window.eidosRuntime.getModelStatus(),
-      window.eidosRuntime.listModels(),
-      window.eidosRuntime.listPendingApprovals(),
-    ]).then(([sessionPage, modelStatus, availableModels, pendingApprovals]) => {
-      sessionActions.setSessions(sessionPage.items);
-      approvalActions.mergeApprovals(pendingApprovals);
-      modelActions.initialize(modelStatus, availableModels, resolveSessionModelId(sessionState.snapshot?.runs ?? []));
-    }).catch((cause: unknown) => {
-      const msg = cause instanceof Error ? cause.message : String(cause);
-      sessionActions.setError(msg);
-    });
+    void Promise.allSettled([
+      sessionActions.loadSessions(),
+      modelActions.load(),
+      approvalActions.loadPending(),
+    ]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runtimeStatus.state, runtimeStatus.state === "ready" ? runtimeStatus.storageHealth.state : null]);
 
@@ -99,7 +92,7 @@ export function AppShell({ runtime }: AppShellProps) {
         notification.method === "approval/resolved"
         || notification.method === "approval/canceled"
       ) {
-        approvalActions.clearApprovalsForRun(notification.params.runId);
+        approvalActions.removeApproval(notification.params.approvalId);
       }
       sessionActions.setSnapshot((prev) => applyNotification(prev, notification));
     });
@@ -152,42 +145,47 @@ export function AppShell({ runtime }: AppShellProps) {
   // -----------------------------------------------------------------------
   // Session Selection & Creation with Model re-eval
   // -----------------------------------------------------------------------
-  async function handleSelectSession(session: Session): Promise<void> {
+  async function handleSelectSession(session: Session) {
     const loaded = await sessionActions.selectSession(session);
     if (loaded && modelState.status && modelState.list) {
       modelActions.initialize(modelState.status, modelState.list, resolveSessionModelId(loaded.runs));
     }
+    return loaded;
   }
 
-  async function handleCreateSession(workspaceRoot?: string): Promise<void> {
+  async function handleCreateSession(workspaceRoot?: string) {
     const loaded = await sessionActions.createSession(workspaceRoot);
     if (loaded && modelState.status && modelState.list) {
       modelActions.initialize(modelState.status, modelState.list, resolveSessionModelId(loaded.runs));
     }
+    return loaded;
   }
 
   // -----------------------------------------------------------------------
   // Rename flow
   // -----------------------------------------------------------------------
   async function beginRename(session: Session): Promise<void> {
-    if (sessionState.snapshot?.session.id !== session.id) {
-      await handleSelectSession(session);
+    let targetSnapshot = sessionState.snapshot;
+    if (targetSnapshot?.session.id !== session.id) {
+      targetSnapshot = await handleSelectSession(session);
     }
-    setTitleDraft(session.title ?? "新任务");
+    if (!targetSnapshot || targetSnapshot.session.id !== session.id) {
+      return;
+    }
+    setTitleDraft(targetSnapshot.session.title ?? "新任务");
     setRenameError(undefined);
-    setRenaming(true);
+    setRenamingSessionId(session.id);
   }
 
   async function submitRename(): Promise<void> {
     const sid = sessionState.snapshot?.session.id;
-    if (!sid || !titleDraft.trim()) return;
+    if (!sid || renamingSessionId !== sid || !titleDraft.trim()) return;
     setRenameError(undefined);
     try {
       await sessionActions.renameSession(sid, titleDraft.trim());
-      setRenaming(false);
+      setRenamingSessionId(undefined);
     } catch (cause) {
       setRenameError(userFacingError(cause));
-      // Rename mode remains open so user can retry!
     }
   }
 
@@ -208,7 +206,7 @@ export function AppShell({ runtime }: AppShellProps) {
     if (result.confirmed) {
       setSessionToDelete(undefined);
     } else {
-      setDeleteError(sessionState.error || "删除任务失败，请重试。");
+      setDeleteError(result.error);
     }
   }
 
@@ -232,6 +230,8 @@ export function AppShell({ runtime }: AppShellProps) {
   const { snapshot } = sessionState;
   const { approvals, respondingApprovalIds, respondingKindByApprovalId, feedbackDialogApproval, feedbackDialogError, errorsByApprovalId } = approvalState;
 
+  const isRenamingThisSession = Boolean(snapshot && renamingSessionId === snapshot.session.id);
+
   const sidebarDisabled =
     sessionState.pending.creatingSession === true
     || !isStorageReady;
@@ -252,7 +252,7 @@ export function AppShell({ runtime }: AppShellProps) {
         onDelete={(session) => requestDeleteSession(session)}
         onOpenSettings={() => {
           setSettingsOpen(true);
-          setRenaming(false);
+          setRenamingSessionId(undefined);
         }}
       />
 
@@ -289,7 +289,7 @@ export function AppShell({ runtime }: AppShellProps) {
         ) : snapshot ? (
           <>
             <header className="workspace-header session-header">
-              {renaming ? (
+              {isRenamingThisSession ? (
                 <form
                   className="rename-form"
                   onSubmit={(e) => { e.preventDefault(); void submitRename(); }}
@@ -316,7 +316,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   <Button
                     variant="ghost"
                     size="small"
-                    onClick={() => { setRenaming(false); setRenameError(undefined); }}
+                    onClick={() => { setRenamingSessionId(undefined); setRenameError(undefined); }}
                   >
                     取消
                   </Button>
@@ -351,7 +351,6 @@ export function AppShell({ runtime }: AppShellProps) {
               items={snapshot.items}
               runs={snapshot.runs}
               approvals={approvals.filter((a) => a.sessionId === snapshot.session.id)}
-              respondingApprovalId={approvalState.respondingApprovalId}
               respondingApprovalIds={respondingApprovalIds}
               respondingKindByApprovalId={respondingKindByApprovalId}
               expiredApprovalIds={approvalState.expiredApprovalIds}
@@ -374,7 +373,7 @@ export function AppShell({ runtime }: AppShellProps) {
               cancelingRunId={runState.cancelingRunId}
               onInputChange={runActions.setInput}
               onSubmit={handleSubmit}
-              onCancel={() => activeRun && void runActions.cancelRun(activeRun.id)}
+              onCancel={() => activeRun && snapshot && void runActions.cancelRun({ runId: activeRun.id, sessionId: snapshot.session.id })}
               onModelChange={(id) => modelActions.selectModel(id)}
             />
           </>
@@ -423,234 +422,4 @@ export function AppShell({ runtime }: AppShellProps) {
       />
     </main>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Composer — exported for direct behavior testing
-// ---------------------------------------------------------------------------
-
-export interface ComposerProps {
-  composerMode: import("../session-state.js").ComposerMode;
-  activeRun: Run | undefined;
-  input: string;
-  modelList: import("../contracts.js").ModelListResult | undefined;
-  selectedModelId: ModelId | undefined;
-  modelConfigured: boolean;
-  modelLoading: boolean;
-  isSubmitting: boolean;
-  submitKind: "start" | "continue" | undefined;
-  hasRuns: boolean;
-  cancelingRunId: string | undefined;
-  onInputChange: (value: string) => void;
-  onSubmit: () => void;
-  onCancel: () => void;
-  onModelChange: (id: ModelId) => void;
-}
-
-export function Composer({
-  composerMode,
-  activeRun,
-  input,
-  modelList,
-  selectedModelId,
-  modelConfigured,
-  modelLoading,
-  isSubmitting,
-  submitKind,
-  hasRuns,
-  cancelingRunId,
-  onInputChange,
-  onSubmit,
-  onCancel,
-  onModelChange,
-}: ComposerProps) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    const minHeight = 56;
-    const maxHeight = 168;
-    const targetHeight = Math.min(Math.max(el.scrollHeight, minHeight), maxHeight);
-    el.style.height = `${targetHeight}px`;
-  }, [input]);
-
-  const isReadOnly = composerMode === "read_only";
-  const isIdle = composerMode === "idle";
-  const isContinuing = composerMode === "waiting_user_input";
-  const canCancel = (composerMode === "running" || composerMode === "starting") && activeRun?.allowedActions?.includes("cancel");
-  const inputDisabled = modelLoading || isSubmitting || !modelConfigured || !selectedModelId || isReadOnly || composerMode === "finalizing" || composerMode === "waiting_approval";
-
-  const prevDisabledRef = useRef(inputDisabled);
-
-  useEffect(() => {
-    // When input becomes enabled after being disabled (e.g. task completion, run completion),
-    // automatically focus the textarea so the user can type immediately without clicking.
-    if ((prevDisabledRef.current || prevDisabledRef.current === undefined) && !inputDisabled) {
-      requestAnimationFrame(() => {
-        textareaRef.current?.focus();
-      });
-    }
-    prevDisabledRef.current = inputDisabled;
-  }, [inputDisabled]);
-
-  const placeholder = modelLoading
-    ? "正在加载模型配置…"
-    : isReadOnly
-      ? "存储只读，暂无法启动 Run"
-      : isContinuing
-        ? "补充信息后继续这个 Run"
-        : modelConfigured
-          ? "例如：阅读这个项目并说明如何启动"
-          : "请先配置 DeepSeek API Key";
-
-  const showModelSelect = isIdle && !hasRuns;
-  const statusLabel = modelLoading
-    ? "正在加载模型…"
-    : submitKind === "continue"
-      ? "继续中…"
-      : composerMode === "running" || composerMode === "starting"
-        ? statusText(activeRun?.status ?? "queued")
-        : isContinuing
-          ? "等待你的补充"
-          : composerMode === "waiting_approval"
-            ? "等待批准"
-            : composerMode === "finalizing"
-              ? "正在收尾"
-              : selectedModelId ?? "无可用模型";
-
-  const buttonLabel = modelLoading
-    ? "加载中…"
-    : submitKind === "continue"
-      ? "继续中…"
-      : submitKind === "start" || composerMode === "starting"
-        ? "启动中…"
-        : isContinuing
-          ? "继续"
-          : "开始";
-
-  const isSubmitDisabled =
-    modelLoading
-    || isSubmitting
-    || composerMode === "starting"
-    || composerMode === "running"
-    || composerMode === "finalizing"
-    || composerMode === "waiting_approval"
-    || composerMode === "read_only"
-    || !modelConfigured
-    || !selectedModelId
-    || !input.trim();
-
-  return (
-    <form
-      className="composer"
-      onSubmit={(e) => { e.preventDefault(); onSubmit(); }}
-    >
-      <label className="sr-only" htmlFor="task-input">告诉 Eidos 要做什么</label>
-      <textarea
-        ref={textareaRef}
-        id="task-input"
-        rows={2}
-        placeholder={placeholder}
-        value={input}
-        disabled={inputDisabled}
-        onChange={(e) => onInputChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-            e.preventDefault();
-            onSubmit();
-          }
-        }}
-      />
-      <div className="composer-actions">
-        <div className="composer-meta">
-          {showModelSelect ? (
-            <>
-              <label htmlFor="run-model">本次模型</label>
-              <select
-                id="run-model"
-                value={selectedModelId ?? ""}
-                disabled={composerMode !== "idle" || modelLoading || isSubmitting}
-                onChange={(e) => onModelChange(e.target.value as ModelId)}
-              >
-                {modelList?.models.map((option) => (
-                  <option key={option.id} value={option.id} disabled={!option.selectable}>
-                    {option.displayName}
-                  </option>
-                ))}
-              </select>
-            </>
-          ) : (
-            <span>{statusLabel}</span>
-          )}
-        </div>
-
-        {canCancel ? (
-          <Button
-            type="button"
-            variant="primary"
-            size="medium"
-            className="composer-submit-btn composer-cancel-btn"
-            disabled={Boolean(cancelingRunId)}
-            loading={Boolean(cancelingRunId)}
-            onClick={onCancel}
-            aria-label={cancelingRunId ? "取消中…" : "取消 Run"}
-            title={cancelingRunId ? "取消中…" : "取消 Run"}
-            icon={!cancelingRunId ? <StopSquareIcon /> : undefined}
-          >
-            <span className="sr-only">{cancelingRunId ? "取消中…" : "取消 Run"}</span>
-          </Button>
-        ) : (
-          <Button
-            type="submit"
-            variant="primary"
-            size="medium"
-            className={`composer-submit-btn${!input.trim() ? " composer-submit-btn--empty" : ""}`}
-            disabled={isSubmitDisabled}
-            loading={isSubmitting || composerMode === "starting"}
-            aria-label={buttonLabel}
-            title={buttonLabel}
-            icon={
-              !isSubmitting && composerMode !== "starting" ? (
-                <UpArrowIcon />
-              ) : undefined
-            }
-          >
-            <span className="sr-only">{buttonLabel}</span>
-          </Button>
-        )}
-      </div>
-    </form>
-  );
-}
-
-function UpArrowIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true">
-      <path
-        d="M8 13.5V2.5M3.5 7L8 2.5L12.5 7"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function StopSquareIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true">
-      <rect x="3" y="3" width="10" height="10" rx="1.8" fill="currentColor" />
-    </svg>
-  );
-}
-
-function statusText(status: Run["status"]): string {
-  return ({
-    queued: "已排队", running: "正在执行", waiting_approval: "等待批准",
-    waiting_user_input: "等待输入", finalizing: "正在收尾", stopped: "已停止",
-    succeeded: "已完成", failed: "失败", canceled: "已取消", interrupted: "已中断",
-  } as const)[status];
 }

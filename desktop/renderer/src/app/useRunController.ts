@@ -22,6 +22,7 @@ export interface RunControllerState {
   isSubmitting: boolean;
   submitKind: "start" | "continue" | undefined;
   cancelingRunId: string | undefined;
+  errorsBySessionId: Readonly<Record<string, string>>;
   error: string | undefined;
 }
 
@@ -34,8 +35,8 @@ export interface RunControllerActions {
     isStorageReady: boolean;
     onRunProjected?: (sessionId: string, run: Run) => void;
   }) => Promise<void>;
-  cancelRun: (runId: string) => Promise<void>;
-  clearError: () => void;
+  cancelRun: (params: { runId: string; sessionId: string } | string) => Promise<void>;
+  clearError: (sessionId?: string) => void;
 }
 
 /**
@@ -47,7 +48,8 @@ export interface RunControllerActions {
  * 3. Returned Run objects are projected immediately upon IPC resolution.
  * 4. Stale responses (wrong sessionId) do not mutate other session inputs or states.
  * 5. waiting_user_input strictly calls continueRun; idle strictly calls startRun.
- * 6. All locks are released in `finally` blocks.
+ * 6. Errors are Session-scoped (Record<sessionId, string>).
+ * 7. All locks are released in `finally` blocks.
  */
 export function useRunController(
   snapshot: SessionSnapshot | undefined,
@@ -55,20 +57,16 @@ export function useRunController(
 ): [RunControllerState, RunControllerActions] {
   // Session-scoped draft inputs
   const [inputs, setInputs] = useState<Record<string, string>>({});
-  const [submissionOperation, setSubmissionOperation] = useState<{
-    token: symbol;
-    sessionId: string;
-    kind: "start" | "continue";
-    runId?: string;
-  } | undefined>(undefined);
+  const [submissionOperation, setSubmissionOperation] = useState<SubmissionOperation | undefined>(undefined);
   const [cancelingRunId, setCancelingRunId] = useState<string | undefined>(undefined);
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [errorsBySessionId, setErrorsBySessionId] = useState<Record<string, string>>({});
 
   // Synchronous lock ref to prevent race conditions during rapid shortcut/click dispatch
   const submissionLockRef = useRef<SubmissionOperation | undefined>(undefined);
 
   const currentSessionId = snapshot?.session.id;
   const input = currentSessionId ? (inputs[currentSessionId] ?? "") : "";
+  const error = currentSessionId ? errorsBySessionId[currentSessionId] : undefined;
 
   const currentSubmission = submissionOperation?.sessionId === currentSessionId
     ? submissionOperation
@@ -79,12 +77,22 @@ export function useRunController(
   const activeRun = snapshot ? findActiveRun(snapshot.runs) : undefined;
   const composerMode = deriveComposerMode(isStorageReady, activeRun, isSubmitting);
 
+  const clearSessionError = useCallback((sessionId: string): void => {
+    setErrorsBySessionId((prev) => {
+      if (!prev[sessionId]) return prev;
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+  }, []);
+
   const setInputForSession = useCallback((sessionId: string, value: string): void => {
     setInputs((prev) => ({
       ...prev,
       [sessionId]: value,
     }));
-  }, []);
+    clearSessionError(sessionId);
+  }, [clearSessionError]);
 
   const setInput = useCallback((value: string): void => {
     if (!currentSessionId) return;
@@ -102,13 +110,19 @@ export function useRunController(
     isStorageReady: boolean;
     onRunProjected?: (sessionId: string, run: Run) => void;
   }): Promise<void> => {
-    // 1. Synchronous lock check
-    if (submissionLockRef.current) {
-      return;
-    }
-
     const sessionId = currentSnapshot.session.id;
     const sessionInput = inputs[sessionId] ?? "";
+
+    // Synchronous lock check — if another session owns the lock, present explicit local busy feedback
+    if (submissionLockRef.current) {
+      if (submissionLockRef.current.sessionId !== sessionId) {
+        setErrorsBySessionId((prev) => ({
+          ...prev,
+          [sessionId]: "另一个任务正在启动，请稍后重试。",
+        }));
+      }
+      return;
+    }
 
     // Defensive guards
     if (!storageReady) return;
@@ -135,8 +149,8 @@ export function useRunController(
 
       // Synchronously acquire lock before async operations
       submissionLockRef.current = operation;
-      setSubmissionOperation({ token, sessionId, kind: "continue", runId: currentActiveRun.id });
-      setError(undefined);
+      setSubmissionOperation(operation);
+      clearSessionError(sessionId);
 
       try {
         const returnedRun = await window.eidosRuntime.continueRun(currentActiveRun.id, sessionInput.trim());
@@ -154,7 +168,11 @@ export function useRunController(
         }
       } catch (cause) {
         if (submissionLockRef.current?.token === operation.token) {
-          setError(userFacingError(cause));
+          const errMsg = userFacingError(cause);
+          setErrorsBySessionId((prev) => ({
+            ...prev,
+            [sessionId]: errMsg,
+          }));
         }
       } finally {
         if (submissionLockRef.current?.token === operation.token) {
@@ -176,8 +194,8 @@ export function useRunController(
 
       // Synchronously acquire lock before async operations
       submissionLockRef.current = operation;
-      setSubmissionOperation({ token, sessionId, kind: "start" });
-      setError(undefined);
+      setSubmissionOperation(operation);
+      clearSessionError(sessionId);
 
       try {
         const returnedRun = await window.eidosRuntime.startRun(sessionId, sessionInput.trim(), selectedModelId);
@@ -195,7 +213,11 @@ export function useRunController(
         }
       } catch (cause) {
         if (submissionLockRef.current?.token === operation.token) {
-          setError(userFacingError(cause));
+          const errMsg = userFacingError(cause);
+          setErrorsBySessionId((prev) => ({
+            ...prev,
+            [sessionId]: errMsg,
+          }));
         }
       } finally {
         if (submissionLockRef.current?.token === operation.token) {
@@ -204,23 +226,38 @@ export function useRunController(
         }
       }
     }
-  }, [inputs]);
+  }, [inputs, clearSessionError]);
 
   const cancelingRunIdRef = useRef<string | undefined>(undefined);
 
-  const cancelRun = useCallback(async (runId: string): Promise<void> => {
+  const cancelRun = useCallback(async (params: { runId: string; sessionId: string } | string): Promise<void> => {
+    const runId = typeof params === "string" ? params : params.runId;
+    const targetSessionId = typeof params === "string" ? (currentSessionId ?? "") : params.sessionId;
+
     if (cancelingRunIdRef.current) return;
     cancelingRunIdRef.current = runId;
     setCancelingRunId(runId);
     try {
       await window.eidosRuntime.cancelRun(runId);
     } catch (cause) {
-      setError(userFacingError(cause));
+      if (targetSessionId) {
+        setErrorsBySessionId((prev) => ({
+          ...prev,
+          [targetSessionId]: userFacingError(cause),
+        }));
+      }
     } finally {
       cancelingRunIdRef.current = undefined;
       setCancelingRunId(undefined);
     }
-  }, []);
+  }, [currentSessionId]);
+
+  const clearErrorAction = useCallback((sessionId?: string): void => {
+    const sid = sessionId ?? currentSessionId;
+    if (sid) {
+      clearSessionError(sid);
+    }
+  }, [currentSessionId, clearSessionError]);
 
   const state: RunControllerState = {
     composerMode,
@@ -230,6 +267,7 @@ export function useRunController(
     isSubmitting,
     submitKind,
     cancelingRunId: cancelingRunId === activeRun?.id ? cancelingRunId : undefined,
+    errorsBySessionId,
     error,
   };
 
@@ -238,7 +276,7 @@ export function useRunController(
     setInputForSession,
     submitInput,
     cancelRun,
-    clearError: () => setError(undefined),
+    clearError: clearErrorAction,
   };
 
   return [state, actions];

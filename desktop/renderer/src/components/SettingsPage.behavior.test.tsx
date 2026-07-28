@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SettingsPage } from "./settings/SettingsPage.js";
 import type { ModelListResult, ModelStatus, RuntimeStatus } from "../contracts.js";
@@ -35,6 +35,7 @@ describe("SettingsPage DOM interaction & state behavior", () => {
     modelList: mockModelList,
     modelLoading: false,
     modelError: undefined,
+    modelConfiguring: false,
     plugins: [],
     skills: [],
     mcpServers: [],
@@ -42,7 +43,7 @@ describe("SettingsPage DOM interaction & state behavior", () => {
     pendingAction: undefined,
     hasBlockingModal: false,
     onClose: vi.fn(),
-    onConfigureModel: vi.fn().mockResolvedValue(undefined),
+    onConfigureModel: vi.fn().mockResolvedValue(true),
     onImportPlugin: vi.fn().mockResolvedValue(undefined),
     onTogglePlugin: vi.fn().mockResolvedValue(undefined),
     onRemovePlugin: vi.fn().mockResolvedValue(undefined),
@@ -78,7 +79,7 @@ describe("SettingsPage DOM interaction & state behavior", () => {
 
   it("Model loading and pendingAction states are displayed in ModelSettings", async () => {
     const user = userEvent.setup();
-    const onConfigureSpy = vi.fn().mockImplementation(() => new Promise((r) => setTimeout(r, 100)));
+    const onConfigureSpy = vi.fn().mockResolvedValue(true);
 
     render(
       <SettingsPage
@@ -99,5 +100,75 @@ describe("SettingsPage DOM interaction & state behavior", () => {
     await user.click(saveBtn);
 
     expect(onConfigureSpy).toHaveBeenCalledWith("sk-test-key-12345");
+  });
+
+  it("Model configuration pending state disables input, save, cancel, and double submit", async () => {
+    const onConfigureSpy = vi.fn().mockReturnValue(new Promise(() => {})); // unresolved promise
+
+    const { rerender } = render(
+      <SettingsPage
+        {...defaultProps}
+        model={{ ...mockModelStatus, configured: false }}
+        modelConfiguring={false}
+        onConfigureModel={onConfigureSpy}
+      />,
+    );
+
+    // Open edit mode
+    const configBtn = screen.getByRole("button", { name: "配置 API Key" });
+    fireEvent.click(configBtn);
+
+    const input = screen.getByPlaceholderText("sk-…") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "sk-pending-key-123456" } });
+
+    // Submit configuration (length >= 16)
+    const saveBtn = screen.getByRole("button", { name: "保存配置" });
+    fireEvent.click(saveBtn);
+    expect(onConfigureSpy).toHaveBeenCalledTimes(1);
+
+    // Update modelConfiguring prop to true (simulating controller state while unresolved)
+    rerender(
+      <SettingsPage
+        {...defaultProps}
+        model={{ ...mockModelStatus, configured: false }}
+        modelConfiguring={true}
+        onConfigureModel={onConfigureSpy}
+      />,
+    );
+
+    expect(input).toBeDisabled();
+
+    const cancelBtn = screen.getByRole("button", { name: "取消" });
+    expect(cancelBtn).toBeDisabled();
+
+    // 2nd click does not issue 2nd IPC request
+    fireEvent.click(saveBtn);
+    expect(onConfigureSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("Model configuration failure preserves input, keeps edit mode open, and re-enables controls for retry", async () => {
+    const onConfigureSpy = vi.fn().mockResolvedValue(false);
+
+    render(
+      <SettingsPage
+        {...defaultProps}
+        model={{ ...mockModelStatus, configured: false }}
+        modelConfiguring={false}
+        modelError="API Key 无效"
+        onConfigureModel={onConfigureSpy}
+      />,
+    );
+
+    // Open edit mode
+    const configBtn = screen.getByRole("button", { name: "配置 API Key" });
+    fireEvent.click(configBtn);
+
+    const inputAfter = screen.getByPlaceholderText("sk-…");
+    expect(inputAfter).not.toBeDisabled();
+
+    const cancelBtn = screen.getByRole("button", { name: "取消" });
+    expect(cancelBtn).not.toBeDisabled();
+
+    expect(screen.getByRole("alert")).toHaveTextContent("API Key 无效");
   });
 });
