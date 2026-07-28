@@ -282,4 +282,34 @@ describe("DialogFocus & Trap behavior", () => {
 
     expect(cancelSpy).toHaveBeenCalled();
   });
+
+  it("ApprovalFeedbackDialog restores focus to connected fallback target when trigger element disappears", () => {
+    let showTrigger = true;
+    const { rerender } = render(
+      <main data-workspace-root id="main-container">
+        {showTrigger && <button type="button" id="trigger-btn" autoFocus>Reject Button</button>}
+        <ApprovalFeedbackDialog
+          approval={showTrigger ? mockApproval : null}
+          onCancel={vi.fn()}
+          onConfirm={vi.fn()}
+        />
+      </main>,
+    );
+
+    // Unmount trigger button and close dialog
+    showTrigger = false;
+    rerender(
+      <main data-workspace-root id="main-container">
+        <ApprovalFeedbackDialog
+          approval={null}
+          onCancel={vi.fn()}
+          onConfirm={vi.fn()}
+        />
+      </main>,
+    );
+
+    const mainContainer = document.getElementById("main-container");
+    expect(mainContainer).toHaveFocus();
+  });
 });
+

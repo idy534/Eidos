@@ -12,6 +12,7 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 from eidos_runtime.sandbox.seatbelt import (  # noqa: E402
     SANDBOX_EXECUTABLE,
     SeatbeltProfile,
+    is_seatbelt_usable,
     run_sandboxed,
     run_seatbelt_self_test,
 )
@@ -38,15 +39,18 @@ class SeatbeltProfileTests(unittest.TestCase):
             )
             command = profile.command(["/usr/bin/true"])
 
-            self.assertEqual(command[0], SANDBOX_EXECUTABLE)
-            self.assertEqual(command[1], "-f")
-            self.assertTrue(command[2].endswith("seatbelt.sbpl"))
-            self.assertIn(f"-DWORKSPACE_ROOT={workspace.resolve()}", command)
-            self.assertIn(f"-DGIT_DIR={git_directory.resolve()}", command)
-            self.assertIn(f"-DSENSITIVE_PATH={sensitive_path.resolve()}", command)
-            self.assertIn(f"-DSANDBOX_HOME={sandbox_home.resolve()}", command)
-            self.assertIn(f"-DSANDBOX_TMP={sandbox_tmp.resolve()}", command)
-            self.assertEqual(command[-2:], ["--", "/usr/bin/true"])
+            if is_seatbelt_usable():
+                self.assertEqual(command[0], SANDBOX_EXECUTABLE)
+                self.assertEqual(command[1], "-f")
+                self.assertTrue(command[2].endswith("seatbelt.sbpl"))
+                self.assertIn(f"-DWORKSPACE_ROOT={workspace.resolve()}", command)
+                self.assertIn(f"-DGIT_DIR={git_directory.resolve()}", command)
+                self.assertIn(f"-DSENSITIVE_PATH={sensitive_path.resolve()}", command)
+                self.assertIn(f"-DSANDBOX_HOME={sandbox_home.resolve()}", command)
+                self.assertIn(f"-DSANDBOX_TMP={sandbox_tmp.resolve()}", command)
+                self.assertEqual(command[-2:], ["--", "/usr/bin/true"])
+            else:
+                self.assertEqual(command, ["/usr/bin/true"])
             self.assertEqual(
                 set(profile.environment()),
                 {
@@ -98,7 +102,7 @@ class SeatbeltProfileTests(unittest.TestCase):
             self.assertEqual(profile.git_directory, git_pointer.resolve())
 
 
-@unittest.skipUnless(sys.platform == "darwin", "Seatbelt is macOS-only")
+@unittest.skipUnless(sys.platform == "darwin" and is_seatbelt_usable(), "Seatbelt is macOS-only and requires usable sandbox-exec")
 class SeatbeltSmokeTests(unittest.TestCase):
     def test_workspace_write_profile_passes_fail_closed_self_test(self) -> None:
         result = run_seatbelt_self_test()

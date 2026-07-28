@@ -46,6 +46,23 @@ export function ConfirmDialog({
 
   const rafIdRef = useRef<number | null>(null);
 
+function restoreFocus(trigger: HTMLElement | null) {
+  if (trigger && trigger.isConnected) {
+    trigger.focus();
+    return;
+  }
+  const fallback = document.querySelector<HTMLElement>("[data-workspace-root]")
+    ?? document.querySelector<HTMLElement>("main")
+    ?? document.querySelector<HTMLElement>(".app-layout")
+    ?? document.body;
+  if (fallback && fallback.isConnected) {
+    if (fallback !== document.body && !fallback.hasAttribute("tabindex")) {
+      fallback.setAttribute("tabindex", "-1");
+    }
+    fallback.focus();
+  }
+}
+
   // Store the element that opened the dialog, restore focus on close
   useEffect(() => {
     if (open) {
@@ -59,9 +76,7 @@ export function ConfirmDialog({
         }
       });
     } else {
-      if (triggerRef.current && triggerRef.current.isConnected) {
-        triggerRef.current.focus();
-      }
+      restoreFocus(triggerRef.current);
     }
     return () => {
       if (rafIdRef.current !== null) {

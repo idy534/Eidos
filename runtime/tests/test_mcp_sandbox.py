@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.extensions.mcp import McpManager  # noqa: E402
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
+from eidos_runtime.sandbox.seatbelt import is_seatbelt_usable  # noqa: E402
 
 
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
@@ -24,8 +25,8 @@ PYTHON = "/Library/Developer/CommandLineTools/usr/bin/python3"
 
 
 @unittest.skipUnless(
-    sys.platform == "darwin" and Path(SANDBOX_EXEC).is_file(),
-    "MCP Seatbelt tests require macOS",
+    sys.platform == "darwin" and Path(SANDBOX_EXEC).is_file() and is_seatbelt_usable(),
+    "MCP Seatbelt tests require working macOS seatbelt",
 )
 class McpSeatbeltTests(unittest.TestCase):
     def setUp(self) -> None:

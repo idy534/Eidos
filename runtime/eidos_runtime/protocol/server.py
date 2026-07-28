@@ -46,7 +46,10 @@ from eidos_runtime.sandbox.sensitive import (
     SensitiveScanError,
     SensitiveScanner,
 )
-from eidos_runtime.sandbox.seatbelt import run_seatbelt_self_test
+from eidos_runtime.sandbox.seatbelt import (
+    is_seatbelt_usable,
+    run_seatbelt_self_test,
+)
 from eidos_runtime.db.storage import (
     ActiveRunError,
     InvalidCursorError,

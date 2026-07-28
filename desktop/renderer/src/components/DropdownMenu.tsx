@@ -95,13 +95,6 @@ export function DropdownMenu({ trigger, items, label, className = "" }: Dropdown
         && triggerRef.current && !triggerRef.current.contains(event.target as Node)
       ) {
         setOpen(false);
-        const target = event.target as HTMLElement | null;
-        const isInteractiveOutside = Boolean(
-          target && typeof target.closest === "function" && target.closest("button, input, select, textarea, a, [tabindex]"),
-        );
-        if (!isInteractiveOutside && triggerRef.current && triggerRef.current.isConnected) {
-          triggerRef.current.focus();
-        }
       }
     }
 
@@ -157,7 +150,9 @@ export function DropdownMenu({ trigger, items, label, className = "" }: Dropdown
     if (event.key === "Escape") {
       event.preventDefault();
       setOpen(false);
-      triggerRef.current?.focus();
+      if (triggerRef.current && triggerRef.current.isConnected) {
+        triggerRef.current.focus();
+      }
     } else if (event.key === "ArrowDown") {
       event.preventDefault();
       const nextPos = (currentPos + 1) % enabledIndices.length;
@@ -220,7 +215,9 @@ export function DropdownMenu({ trigger, items, label, className = "" }: Dropdown
               tabIndex={focusedIndex === index ? 0 : -1}
               onClick={() => {
                 setOpen(false);
-                triggerRef.current?.focus();
+                if (triggerRef.current && triggerRef.current.isConnected) {
+                  triggerRef.current.focus();
+                }
                 item.onClick();
               }}
             >
@@ -297,17 +294,28 @@ export function ContextMenu({
     });
   }, [x, y]);
 
-  // Close on outside click
+  // Close on outside pointer, window resize, or scroll
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         onClose();
-        restoreFocusElement?.focus();
       }
     }
+
+    function handleWindowClose() {
+      onClose();
+    }
+
     window.addEventListener("pointerdown", handlePointerDown);
-    return () => window.removeEventListener("pointerdown", handlePointerDown);
-  }, [onClose, restoreFocusElement]);
+    window.addEventListener("resize", handleWindowClose);
+    window.addEventListener("scroll", handleWindowClose, true);
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("resize", handleWindowClose);
+      window.removeEventListener("scroll", handleWindowClose, true);
+    };
+  }, [onClose]);
 
   // Synchronize focus to focusedIndex item
   useEffect(() => {
@@ -325,7 +333,9 @@ export function ContextMenu({
     if (event.key === "Escape") {
       event.preventDefault();
       onClose();
-      restoreFocusElement?.focus();
+      if (restoreFocusElement && restoreFocusElement.isConnected) {
+        restoreFocusElement.focus();
+      }
     } else if (event.key === "ArrowDown") {
       event.preventDefault();
       const nextPos = (currentPos + 1) % enabledIndices.length;
@@ -346,7 +356,6 @@ export function ContextMenu({
       if (lastIdx !== undefined) setFocusedIndex(lastIdx);
     } else if (event.key === "Tab") {
       onClose();
-      restoreFocusElement?.focus();
     }
   }
 
@@ -370,7 +379,9 @@ export function ContextMenu({
           tabIndex={focusedIndex === index ? 0 : -1}
           onClick={() => {
             onClose();
-            restoreFocusElement?.focus();
+            if (restoreFocusElement && restoreFocusElement.isConnected) {
+              restoreFocusElement.focus();
+            }
             item.onClick();
           }}
         >

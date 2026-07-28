@@ -945,9 +945,13 @@ function isToolCall(value: unknown): value is ToolCall {
   );
 }
 
-function isToolProvenance(value: unknown): value is ToolProvenance {
+export function isToolProvenance(value: unknown): value is ToolProvenance {
   return (
     isRecord(value)
+    && hasOnlyKeys(value, [
+      "kind", "sourceId", "sourceVersion", "contentHash",
+      "pluginId", "serverId", "skillId",
+    ])
     && ["builtin", "skill", "mcp"].includes(String(value.kind))
     && typeof value.sourceId === "string"
     && typeof value.sourceVersion === "string"
@@ -956,6 +960,32 @@ function isToolProvenance(value: unknown): value is ToolProvenance {
     && (value.serverId === undefined || typeof value.serverId === "string")
     && (value.skillId === undefined || typeof value.skillId === "string")
   );
+}
+
+export function projectApprovalToolProvenance(
+  value: unknown,
+): ToolProvenance | undefined {
+  if (
+    !isRecord(value)
+    || !["builtin", "skill", "mcp"].includes(String(value.kind))
+    || typeof value.sourceId !== "string"
+    || typeof value.sourceVersion !== "string"
+    || typeof value.contentHash !== "string"
+    || (value.pluginId !== undefined && typeof value.pluginId !== "string")
+    || (value.serverId !== undefined && typeof value.serverId !== "string")
+    || (value.skillId !== undefined && typeof value.skillId !== "string")
+  ) {
+    return undefined;
+  }
+  return {
+    kind: value.kind as "builtin" | "skill" | "mcp",
+    sourceId: value.sourceId,
+    sourceVersion: value.sourceVersion,
+    contentHash: value.contentHash,
+    ...(value.pluginId !== undefined ? { pluginId: value.pluginId } : {}),
+    ...(value.serverId !== undefined ? { serverId: value.serverId } : {}),
+    ...(value.skillId !== undefined ? { skillId: value.skillId } : {}),
+  };
 }
 
 function isExtensionSnapshot(value: unknown): value is Record<string, unknown> {
@@ -1115,10 +1145,11 @@ function approvalRequestFrom(
     };
   }
   if (params.kind === "external_tool") {
+    const provenance = projectApprovalToolProvenance(params.provenance);
     if (
       typeof params.toolName !== "string"
       || !isRecord(params.arguments)
-      || !isToolProvenance(params.provenance)
+      || provenance === undefined
       || !["connector", "workspace_read"].includes(String(params.permissionProfile))
       || !isPositiveInteger(params.timeoutSeconds)
       || !Array.isArray(params.envNames)
@@ -1126,16 +1157,6 @@ function approvalRequestFrom(
     ) {
       return undefined;
     }
-    const provenance = params.provenance as ToolProvenance;
-    const projectedProvenance: ToolProvenance = {
-      kind: provenance.kind,
-      sourceId: provenance.sourceId,
-      sourceVersion: provenance.sourceVersion,
-      contentHash: provenance.contentHash,
-      ...(provenance.pluginId !== undefined ? { pluginId: provenance.pluginId } : {}),
-      ...(provenance.serverId !== undefined ? { serverId: provenance.serverId } : {}),
-      ...(provenance.skillId !== undefined ? { skillId: provenance.skillId } : {}),
-    };
     return {
       id: message.id,
       sessionId: params.sessionId as string,
@@ -1146,7 +1167,7 @@ function approvalRequestFrom(
       summary: params.summary as string,
       toolName: params.toolName as string,
       arguments: params.arguments as Record<string, unknown>,
-      provenance: projectedProvenance,
+      provenance,
       permissionProfile: params.permissionProfile as "connector" | "workspace_read",
       timeoutSeconds: params.timeoutSeconds as number,
       envNames: [...(params.envNames as string[])],

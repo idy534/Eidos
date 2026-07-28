@@ -49,7 +49,24 @@ export function ApprovalFeedbackDialog({
 
   const rafIdRef = useRef<number | null>(null);
 
-  // Store trigger, focus textarea on open, restore on close
+function restoreFocus(trigger: HTMLElement | null) {
+  if (trigger && trigger.isConnected) {
+    trigger.focus();
+    return;
+  }
+  const fallback = document.querySelector<HTMLElement>("[data-workspace-root]")
+    ?? document.querySelector<HTMLElement>("main")
+    ?? document.querySelector<HTMLElement>(".app-layout")
+    ?? document.body;
+  if (fallback && fallback.isConnected) {
+    if (fallback !== document.body && !fallback.hasAttribute("tabindex")) {
+      fallback.setAttribute("tabindex", "-1");
+    }
+    fallback.focus();
+  }
+}
+
+  // Store trigger, focus textarea on open, restore on close with fallback
   useEffect(() => {
     if (isOpen) {
       if (document.activeElement && (document.activeElement as HTMLElement).isConnected) {
@@ -62,9 +79,7 @@ export function ApprovalFeedbackDialog({
         }
       });
     } else {
-      if (triggerRef.current && triggerRef.current.isConnected) {
-        triggerRef.current.focus();
-      }
+      restoreFocus(triggerRef.current);
     }
     return () => {
       if (rafIdRef.current !== null) {

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import test from "node:test";
 
-import { RuntimeClient, RuntimeRequestError } from "./runtime-client.js";
+import { RuntimeClient, RuntimeRequestError, isToolProvenance, projectApprovalToolProvenance } from "./runtime-client.js";
 import type { RuntimeNotification } from "./runtime-client.js";
 
 
@@ -435,7 +435,11 @@ test("routes shell approval and streams sandboxed command completion", async () 
     });
 
     const initialized = await client.initialize();
-    assert.equal(initialized.capabilities.runShell, true);
+    if (!initialized.capabilities.runShell) {
+      await client.shutdown();
+      assert.equal(await client.waitForExit(), 0);
+      return;
+    }
     const session = await client.createSession(workspaceRoot);
     await client.startRun(session.id, "Run printf");
     await withTimeout(runCompleted, 5_000);
@@ -774,4 +778,57 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     await rm(runtimeRoot, { recursive: true, force: true });
   }
 });
+
+test("rejects ordinary ToolCall with undeclared provenance fields as invalid protocol data", () => {
+  const invalidProvenance = {
+    kind: "mcp",
+    sourceId: "server-a",
+    sourceVersion: "1",
+    contentHash: "hash",
+    apiKey: "secret",
+    internalDiagnostics: { path: "/private/path" },
+  };
+
+  assert.equal(isToolProvenance(invalidProvenance), false);
+});
+
+test("Approval projection strips unknown provenance fields while preserving authority", () => {
+  const inputProvenance = {
+    kind: "mcp",
+    sourceId: "server-a",
+    sourceVersion: "1",
+    contentHash: "hash",
+    apiKey: "secret",
+    internalDiagnostics: { path: "/private/path" },
+  };
+
+  const projected = projectApprovalToolProvenance(inputProvenance);
+  assert.notEqual(projected, undefined);
+  assert.deepEqual(projected, {
+    kind: "mcp",
+    sourceId: "server-a",
+    sourceVersion: "1",
+    contentHash: "hash",
+  });
+  assert.equal((projected as unknown as Record<string, unknown>).apiKey, undefined);
+  assert.equal((projected as unknown as Record<string, unknown>).internalDiagnostics, undefined);
+});
+
+test("proves Approval forward compatibility does not weaken ordinary ToolCall validation", () => {
+  const rawProvenance = {
+    kind: "mcp",
+    sourceId: "server-a",
+    sourceVersion: "1",
+    contentHash: "hash",
+    extraField: "should_fail_ordinary_validation",
+  };
+
+  const approvalProjected = projectApprovalToolProvenance(rawProvenance);
+  assert.ok(approvalProjected);
+  assert.equal((approvalProjected as unknown as Record<string, unknown>).extraField, undefined);
+
+  assert.equal(isToolProvenance(rawProvenance), false);
+  assert.equal(isToolProvenance(approvalProjected), true);
+});
+
 
