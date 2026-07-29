@@ -242,7 +242,12 @@ def canonical_tool_result(
         "summary": result.get("summary", "Tool request failed"),
         "data": result.get("data", {}),
         "sideEffectsMayExist": bool(result.get("sideEffectsMayExist", False)),
-        "reconciliationRequired": bool(result.get("reconciliationRequired", result.get("sideEffectsMayExist", False))),
+        "reconciliationRequired": bool(result.get(
+            "reconciliationRequired",
+            result.get("sideEffectsMayExist", False)
+            if result.get("outcome", "error") != "success"
+            else False,
+        )),
     }
     data_model = next(
         (contract[7] for contract in _BUILTIN_CONTRACTS if contract[0] == tool_name),

@@ -11,6 +11,9 @@ import tempfile
 import time
 from typing import Sequence
 
+from eidos_runtime.sandbox.permissions import EffectivePermissionProfile
+from eidos_runtime.sandbox.seatbelt_policy import SeatbeltPolicyCompiler
+
 
 SANDBOX_EXECUTABLE = "/usr/bin/sandbox-exec"
 PROFILE_PATH = Path(__file__).with_name("seatbelt.sbpl")
@@ -57,6 +60,7 @@ class SeatbeltProfile:
     sandbox_tmp: Path
     git_directory: Path
     sensitive_path: Path
+    effective_permissions: EffectivePermissionProfile | None = None
 
     @classmethod
     def create(
@@ -66,6 +70,7 @@ class SeatbeltProfile:
         sandbox_home: Path,
         sandbox_tmp: Path,
         sensitive_path: Path,
+        effective_permissions: EffectivePermissionProfile | None = None,
     ) -> SeatbeltProfile:
         workspace = _existing_directory(workspace_root, "workspace root")
         home = _existing_directory(sandbox_home, "sandbox home")
@@ -90,6 +95,7 @@ class SeatbeltProfile:
             sandbox_tmp=temporary,
             git_directory=git_directory,
             sensitive_path=sensitive,
+            effective_permissions=effective_permissions,
         )
 
     def command(self, command: Sequence[str]) -> list[str]:
@@ -97,16 +103,32 @@ class SeatbeltProfile:
             raise ValueError("sandbox command must contain string arguments")
         if not is_seatbelt_ready():
             raise SeatbeltUnavailableError("seatbelt is unavailable")
+        profile_arguments = ["-f", str(PROFILE_PATH)]
+        additional_definitions: list[str] = []
+        if self.effective_permissions is not None:
+            try:
+                compiled = SeatbeltPolicyCompiler().compile(
+                    self.effective_permissions
+                )
+            except ValueError as error:
+                raise SeatbeltUnavailableError(
+                    "seatbelt policy compilation failed"
+                ) from error
+            profile_arguments = ["-p", compiled.policy]
+            additional_definitions = [
+                f"-D{key}={value}"
+                for key, value in compiled.parameters.items()
+            ]
         return [
             SANDBOX_EXECUTABLE,
-            "-f",
-            str(PROFILE_PATH),
+            *profile_arguments,
             f"-DWORKSPACE_ROOT={self.workspace_root}",
             f"-DGIT_DIR={self.git_directory}",
             f"-DSENSITIVE_PATH={self.sensitive_path}",
             f"-DSANDBOX_HOME={self.sandbox_home}",
             f"-DSANDBOX_TMP={self.sandbox_tmp}",
             f"-DFILE_COMMIT_HELPER={FILE_COMMIT_HELPER}",
+            *additional_definitions,
             "--",
             *command,
         ]

@@ -133,7 +133,8 @@ class WorkspaceManifestTests(unittest.TestCase):
         self.assertEqual(attached["data"]["workspaceDiffHash"], diff.diff_hash)
         self.assertFalse(attached["data"]["workspaceManifestComplete"])
         self.assertTrue(attached["data"]["workspaceDiffIncomplete"])
-        self.assertFalse(attached["reconciliationRequired"])
+        self.assertEqual(attached["data"]["workspaceChangeState"], "unknown")
+        self.assertTrue(attached["reconciliationRequired"])
 
 
 class ShellManifestIntegrationTests(unittest.TestCase):
@@ -195,6 +196,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             default_scanner(),
             True,
             self.controller.execute_side_effect,
+            self.controller.authorize_side_effect,
         )
         runtime_context.handler = ShellToolHandler(dependencies)
 
@@ -212,7 +214,14 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         )
         call = ModelToolCall(
             "shell-call", "run_shell",
-            {"command": "fixture", "cwd": ".", "timeoutSeconds": 120},
+            {
+                "command": "fixture",
+                "cwd": ".",
+                "timeoutSeconds": 120,
+                "sandboxPermissions": "use_default",
+                "additionalPermissions": None,
+                "justification": None,
+            },
         )
 
         def fake_shell(*args, **_kwargs):

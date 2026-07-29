@@ -100,9 +100,17 @@ class ApprovalCoordinator:
         diff: str = "",
         base_sha256: str | None = None,
         transition_reason: str,
+        request: dict[str, object] | None = None,
+        attempt_ordinal: int = 0,
+        approval_kind: str = "tool",
     ) -> ApprovalOutcome:
         mutation = self.store.begin_approval_committed(
-            str(item["id"]), diff, base_sha256
+            str(item["id"]),
+            diff,
+            base_sha256,
+            request=request,
+            attempt_ordinal=attempt_ordinal,
+            approval_kind=approval_kind,
         )
         pending_item = mutation.value
         approval_run = self.store.read_run(run_id)

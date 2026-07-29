@@ -754,19 +754,46 @@ class SessionStore:
         item_id: str,
         diff: str,
         base_sha256: str | None,
+        *,
+        request: dict[str, object] | None = None,
+        attempt_ordinal: int = 0,
+        approval_kind: str = "tool",
     ) -> dict[str, object]:
-        return self._repository(self._execution).begin_approval(item_id, diff, base_sha256)
+        return self._repository(self._execution).begin_approval(
+            item_id,
+            diff,
+            base_sha256,
+            request=request,
+            attempt_ordinal=attempt_ordinal,
+            approval_kind=approval_kind,
+        )
 
     def begin_approval_committed(
         self,
         item_id: str,
         diff: str,
         base_sha256: str | None,
+        *,
+        request: dict[str, object] | None = None,
+        attempt_ordinal: int = 0,
+        approval_kind: str = "tool",
     ) -> CommittedMutation[dict[str, object]]:
         return self._repository(self._execution).begin_approval_committed(
             item_id,
             diff,
             base_sha256,
+            request=request,
+            attempt_ordinal=attempt_ordinal,
+            approval_kind=approval_kind,
+        )
+
+    def record_tool_attempt(
+        self,
+        item_id: str,
+        **values: object,
+    ) -> None:
+        self._repository(self._execution).record_tool_attempt(
+            item_id, **values
         )
 
     def resolve_approval(

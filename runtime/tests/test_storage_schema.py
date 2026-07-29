@@ -20,6 +20,7 @@ EXPECTED_TABLES = {
     "items",
     "tool_calls",
     "approvals",
+    "tool_attempts",
     "execution_segments",
     "steps",
     "model_attempts",
@@ -64,6 +65,14 @@ EXPECTED_COLUMNS = {
         "ui_result_json",
         "progress_fingerprint",
     },
+    "approvals": {
+        "request_json", "attempt_ordinal", "approval_kind",
+    },
+    "tool_attempts": {
+        "tool_call_id", "ordinal", "sandbox_type", "sandbox_requested",
+        "effective_permissions_json", "profile_hash", "escalation_reason",
+        "status", "result_code",
+    },
 }
 
 
@@ -102,6 +111,7 @@ class StorageSchemaTests(unittest.TestCase):
                 "one_active_run",
                 "one_pending_approval_per_item",
                 "one_pending_approval_per_run",
+                "one_running_tool_attempt_per_tool_call",
                 "one_running_segment_per_run",
                 "one_active_segment_per_run",
                 "one_running_step_per_run",

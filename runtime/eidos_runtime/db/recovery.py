@@ -33,6 +33,15 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
     connection.execute(
         "UPDATE durable_intents SET status = 'interrupted' WHERE status = 'running'"
     )
+    connection.execute(
+        """
+        UPDATE tool_attempts
+        SET status = 'uncertain', completed_at = ?,
+            result_code = 'runtime_interrupted'
+        WHERE status = 'running'
+        """,
+        (now,),
+    )
     reconciliation_runs = connection.execute(
         """
         SELECT DISTINCT runs.id, runs.status

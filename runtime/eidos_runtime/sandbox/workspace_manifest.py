@@ -171,6 +171,9 @@ def attach_workspace_diff(
 ) -> dict[str, object]:
     attached = dict(result)
     data = dict(result.get("data") if isinstance(result.get("data"), dict) else {})
+    change_state = (
+        "changed" if diff.changed else "unchanged" if diff.complete else "unknown"
+    )
     data.update({
         "commandOutcome": str(result.get("outcome", "error")),
         "workspaceChanged": diff.changed,
@@ -178,14 +181,20 @@ def attach_workspace_diff(
         "workspaceManifestComplete": diff.complete,
         "workspaceManifestTruncated": diff.truncated,
         "workspaceDiffIncomplete": not diff.complete,
+        "workspaceChangeState": change_state,
         "created": list(diff.created),
         "modified": list(diff.modified),
         "deleted": list(diff.deleted),
     })
     attached["data"] = data
-    attached["sideEffectsMayExist"] = diff.changed
+    attached["sideEffectsMayExist"] = (
+        result.get("sideEffectsMayExist") is True
+        or change_state != "unchanged"
+    )
     attached["reconciliationRequired"] = (
-        result.get("outcome") != "success" and diff.changed
+        result.get("reconciliationRequired") is True
+        or change_state == "unknown"
+        or result.get("outcome") != "success" and diff.changed
     )
     return attached
 

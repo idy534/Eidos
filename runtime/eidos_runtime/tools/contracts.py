@@ -21,6 +21,11 @@ from pydantic import (
     model_validator,
 )
 
+from eidos_runtime.sandbox.permissions import (
+    AdditionalPermissionProfile,
+    SandboxPermissions,
+)
+
 
 class StrictToolModel(BaseModel):
     model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
@@ -112,6 +117,9 @@ class RunShellInput(StrictToolModel):
     command: StrictStr = Field(min_length=1, max_length=16 * 1024)
     cwd: StrictStr = "."
     timeoutSeconds: StrictInt = Field(default=120, ge=1, le=600)
+    sandboxPermissions: SandboxPermissions = SandboxPermissions.USE_DEFAULT
+    additionalPermissions: AdditionalPermissionProfile | None = None
+    justification: StrictStr | None = Field(default=None, max_length=2_000)
 
     @field_validator("command")
     @classmethod
@@ -122,6 +130,23 @@ class RunShellInput(StrictToolModel):
     @classmethod
     def validate_cwd(cls, value: str) -> str:
         return _relative_path(value, allow_dot=True)
+
+    @model_validator(mode="after")
+    def validate_permissions(self):
+        if self.additionalPermissions is None:
+            if (
+                self.sandboxPermissions
+                is SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS
+            ):
+                raise ValueError("additional_permissions_required")
+        else:
+            self.additionalPermissions.validate_for(self.sandboxPermissions)
+        if (
+            self.sandboxPermissions is not SandboxPermissions.USE_DEFAULT
+            and not self.justification
+        ):
+            raise ValueError("sandbox_override_justification_required")
+        return self
 
 
 class SkillReadInput(StrictToolModel):
@@ -351,6 +376,7 @@ class WorkspaceResultData(StrictToolModel):
     workspaceManifestComplete: bool | None = None
     workspaceManifestTruncated: bool | None = None
     workspaceDiffIncomplete: bool | None = None
+    workspaceChangeState: Literal["unchanged", "changed", "unknown"] | None = None
     created: tuple[StrictStr, ...] | None = None
     modified: tuple[StrictStr, ...] | None = None
     deleted: tuple[StrictStr, ...] | None = None
@@ -368,6 +394,22 @@ class RunShellResultData(WorkspaceResultData):
     truncationReason: StrictStr | None = None
     termination: StrictStr | None = None
     durationMs: StrictInt | None = Field(default=None, ge=0)
+    attemptCount: StrictInt | None = Field(default=None, ge=0, le=2)
+    sandboxed: bool | None = None
+    sandboxPermissions: SandboxPermissions | None = None
+    escalated: bool | None = None
+    profileHash: StrictStr | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+    sandboxDenialCategory: Literal[
+        "filesystem_read",
+        "filesystem_write",
+        "network",
+        "execution",
+        "process",
+        "unknown",
+    ] | None = None
+    effectivePermissionsSummary: dict[str, object] | None = None
 
 
 class SkillReadResultData(StrictToolModel):
@@ -463,7 +505,7 @@ def result_model(data_model: type[BaseModel]) -> type[BaseModel]:
             __base__=CanonicalToolResultBase,
             outcome=(Literal["success"], "success"),
             data=(success_data_model, ...),
-            sideEffectsMayExist=(Literal[False], False),
+            sideEffectsMayExist=(bool, False),
             reconciliationRequired=(Literal[False], False),
         )
         failure_envelope = create_model(

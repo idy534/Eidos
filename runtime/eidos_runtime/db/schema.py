@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -117,6 +117,15 @@ CREATE TABLE approvals (
         'pending', 'approved', 'rejected', 'invalidated', 'canceled'
     )),
     request_hash TEXT NOT NULL,
+    request_json TEXT NOT NULL,
+    attempt_ordinal INTEGER NOT NULL DEFAULT 0 CHECK (
+        attempt_ordinal IN (0, 1)
+    ),
+    approval_kind TEXT NOT NULL DEFAULT 'tool' CHECK (
+        approval_kind IN (
+            'tool', 'default', 'additional_permissions', 'escalated'
+        )
+    ),
     decision TEXT,
     feedback TEXT,
     created_at INTEGER NOT NULL,
@@ -130,6 +139,31 @@ WHERE status = 'pending';
 CREATE UNIQUE INDEX one_pending_approval_per_run
 ON approvals (run_id)
 WHERE status = 'pending';
+
+CREATE TABLE tool_attempts (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    tool_call_id TEXT NOT NULL REFERENCES tool_calls(id) ON DELETE RESTRICT,
+    ordinal INTEGER NOT NULL CHECK (ordinal IN (0, 1)),
+    sandbox_type TEXT NOT NULL CHECK (
+        sandbox_type IN ('macos_seatbelt', 'none')
+    ),
+    sandbox_requested INTEGER NOT NULL CHECK (sandbox_requested IN (0, 1)),
+    effective_permissions_json TEXT NOT NULL,
+    profile_hash TEXT,
+    escalation_reason TEXT,
+    status TEXT NOT NULL CHECK (
+        status IN ('running', 'completed', 'failed', 'canceled', 'uncertain')
+    ),
+    started_at INTEGER NOT NULL,
+    completed_at INTEGER,
+    result_code TEXT,
+    UNIQUE(tool_call_id, ordinal)
+);
+
+CREATE UNIQUE INDEX one_running_tool_attempt_per_tool_call
+ON tool_attempts(tool_call_id)
+WHERE status = 'running';
 
 CREATE TABLE execution_segments (
     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
