@@ -12,7 +12,10 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.tools.contracts import RunShellInput  # noqa: E402
-from eidos_runtime.tools.workspace import TOOL_SPECS, canonical_tool_result  # noqa: E402
+from eidos_runtime.tools.workspace import (  # noqa: E402
+    TOOL_SPECS,
+    canonical_tool_result,
+)
 
 
 class ToolContractTests(unittest.TestCase):
@@ -97,6 +100,15 @@ class ToolContractTests(unittest.TestCase):
                 "command": "make",
                 "unknownPermission": True,
             }))
+
+    def test_shell_tool_tells_model_how_to_request_network_access(self) -> None:
+        description = next(
+            spec.description for spec in TOOL_SPECS if spec.name == "run_shell"
+        )
+
+        self.assertIn("with_additional_permissions", description)
+        self.assertIn("additionalPermissions.network.enabled", description)
+        self.assertNotIn("network-disabled", description)
 
 
 if __name__ == "__main__":
