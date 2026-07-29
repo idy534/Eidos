@@ -3,21 +3,6 @@ import { render, screen, act, fireEvent } from "@testing-library/react";
 import { useRef, useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { ConfirmDialog } from "./settings/ConfirmDialog.js";
-import { ApprovalFeedbackDialog } from "./ApprovalFeedbackDialog.js";
-import type { ApprovalRequest } from "../contracts.js";
-
-const mockApproval: ApprovalRequest = {
-  id: "app-1",
-  sessionId: "session-1",
-  runId: "run-1",
-  itemId: "item-1",
-  toolCallId: "tc-1",
-  kind: "command_execution",
-  summary: "Delete database table",
-  command: "drop table users",
-  cwd: "/workspace",
-  timeoutSeconds: 30,
-};
 
 function controlAnimationFrames() {
   let nextId = 1;
@@ -49,47 +34,35 @@ describe("DialogFocus & Trap behavior", () => {
     vi.restoreAllMocks();
   });
 
-  it.each(["confirm", "approval"] as const)(
-    "%s dialog initial closed mount does not move focus or schedule work",
-    (kind) => {
-      const requestFrame = vi.spyOn(window, "requestAnimationFrame");
-      const focus = vi.spyOn(HTMLElement.prototype, "focus");
+  it("Confirm dialog initial closed mount does not move focus or schedule work", () => {
+    const requestFrame = vi.spyOn(window, "requestAnimationFrame");
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
 
-      function Harness() {
-        const fallbackRef = useRef<HTMLDivElement>(null);
-        return (
-          <>
-            <input aria-label="External input" autoFocus />
-            <div ref={fallbackRef}>Workspace</div>
-            {kind === "confirm" ? (
-              <ConfirmDialog
-                open={false}
-                title="Title"
-                description="Description"
-                getFallbackFocus={() => fallbackRef.current}
-                onCancel={vi.fn()}
-                onConfirm={vi.fn()}
-              />
-            ) : (
-              <ApprovalFeedbackDialog
-                approval={null}
-                getFallbackFocus={() => fallbackRef.current}
-                onCancel={vi.fn()}
-                onConfirm={vi.fn()}
-              />
-            )}
-          </>
-        );
-      }
+    function Harness() {
+      const fallbackRef = useRef<HTMLDivElement>(null);
+      return (
+        <>
+          <input aria-label="External input" autoFocus />
+          <div ref={fallbackRef}>Workspace</div>
+          <ConfirmDialog
+            open={false}
+            title="Title"
+            description="Description"
+            getFallbackFocus={() => fallbackRef.current}
+            onCancel={vi.fn()}
+            onConfirm={vi.fn()}
+          />
+        </>
+      );
+    }
 
-      render(<Harness />);
+    render(<Harness />);
 
-      expect(screen.getByRole("textbox", { name: "External input" })).toHaveFocus();
-      expect(requestFrame).not.toHaveBeenCalled();
-      expect(focus).toHaveBeenCalledTimes(1);
-      expect(screen.getByText("Workspace")).not.toHaveAttribute("tabindex");
-    },
-  );
+    expect(screen.getByRole("textbox", { name: "External input" })).toHaveFocus();
+    expect(requestFrame).not.toHaveBeenCalled();
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Workspace")).not.toHaveAttribute("tabindex");
+  });
 
   it("ConfirmDialog destructive initially focuses Cancel button and wraps Tab focus", async () => {
     const frames = controlAnimationFrames();
@@ -328,112 +301,6 @@ describe("DialogFocus & Trap behavior", () => {
     expect(onCancel).not.toHaveBeenCalled();
   });
 
-  it("ApprovalFeedbackDialog renders role=dialog, aria-modal=true, and alert role for errors", async () => {
-    render(
-      <ApprovalFeedbackDialog
-        approval={mockApproval}
-        busy={false}
-        error="反馈不能超过 1024 字节"
-        onCancel={vi.fn()}
-        onConfirm={vi.fn()}
-      />,
-    );
-
-    const dialog = screen.getByRole("dialog");
-    expect(dialog).toBeInTheDocument();
-    expect(dialog).toHaveAttribute("aria-modal", "true");
-
-    const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent("反馈不能超过 1024 字节");
-  });
-
-  it("ApprovalFeedbackDialog opens on textarea, traps Tab, and cancel restores trigger", async () => {
-    const frames = controlAnimationFrames();
-    const user = userEvent.setup();
-
-    function Harness() {
-      const [approval, setApproval] = useState<ApprovalRequest | null>(null);
-      const fallbackRef = useRef<HTMLDivElement>(null);
-      return (
-        <>
-          <button type="button" onClick={() => setApproval(mockApproval)}>Reject operation</button>
-          <div ref={fallbackRef} tabIndex={-1}>Workspace</div>
-          <ApprovalFeedbackDialog
-            approval={approval}
-            getFallbackFocus={() => fallbackRef.current}
-            onCancel={() => setApproval(null)}
-            onConfirm={() => setApproval(null)}
-          />
-        </>
-      );
-    }
-
-    render(<Harness />);
-    const trigger = screen.getByRole("button", { name: "Reject operation" });
-    await user.click(trigger);
-    frames.flush();
-    const textarea = screen.getByRole("textbox", { name: "拒绝原因（可选）" });
-    expect(textarea).toHaveFocus();
-    textarea.focus();
-    await user.keyboard("{Shift>}{Tab}{/Shift}");
-    expect(screen.getByRole("button", { name: "拒绝并反馈" })).toHaveFocus();
-    await user.keyboard("{Tab}");
-    expect(textarea).toHaveFocus();
-    await user.click(screen.getByRole("button", { name: "取消" }));
-    expect(trigger).toHaveFocus();
-  });
-
-  it("ApprovalFeedbackDialog busy state blocks Escape and backdrop and disables all controls", async () => {
-    const user = userEvent.setup();
-    const onCancel = vi.fn();
-    const { container, rerender } = render(
-      <ApprovalFeedbackDialog
-        approval={mockApproval}
-        busy
-        onCancel={onCancel}
-        onConfirm={vi.fn()}
-      />,
-    );
-    expect(screen.getByRole("textbox")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "拒绝并反馈" })).toBeDisabled();
-    await user.keyboard("{Escape}");
-    fireEvent.click(container.querySelector(".modal-backdrop")!);
-    expect(onCancel).not.toHaveBeenCalled();
-
-    rerender(
-      <ApprovalFeedbackDialog
-        approval={mockApproval}
-        busy={false}
-        onCancel={onCancel}
-        onConfirm={vi.fn()}
-      />,
-    );
-    await user.keyboard("{Escape}");
-    expect(onCancel).toHaveBeenCalledTimes(1);
-  });
-
-  it("ApprovalFeedbackDialog idle backdrop closes and rapid close/unmount cancel RAF", () => {
-    const frames = controlAnimationFrames();
-    const onCancel = vi.fn();
-    const props = {
-      onCancel,
-      onConfirm: vi.fn(),
-    };
-    const { container, rerender, unmount } = render(
-      <ApprovalFeedbackDialog {...props} approval={null} />,
-    );
-    rerender(<ApprovalFeedbackDialog {...props} approval={mockApproval} />);
-    expect(frames.pending()).toBe(1);
-    fireEvent.click(container.querySelector(".modal-backdrop")!);
-    expect(onCancel).toHaveBeenCalledTimes(1);
-    rerender(<ApprovalFeedbackDialog {...props} approval={null} />);
-    expect(frames.cancel).toHaveBeenCalledTimes(1);
-    rerender(<ApprovalFeedbackDialog {...props} approval={mockApproval} />);
-    unmount();
-    expect(frames.cancel).toHaveBeenCalledTimes(2);
-  });
-
   it("Disconnecting trigger element before close is safe", async () => {
     let showTrigger = true;
     const { rerender } = render(
@@ -499,73 +366,4 @@ describe("DialogFocus & Trap behavior", () => {
     expect(cancelSpy).toHaveBeenCalled();
   });
 
-  it.each([
-    ["enabled Composer", true, false, "Composer"],
-    ["Workspace when Composer is disabled", true, true, "Workspace"],
-    ["no target when Composer and Workspace are unavailable", false, false, null],
-  ] as const)(
-    "ApprovalFeedbackDialog closes from a removed Approval card to %s",
-    async (_variant, renderFallbacks, composerDisabled, expectedFocus) => {
-      const frames = controlAnimationFrames();
-      const user = userEvent.setup();
-      let removeApprovalCard = () => {};
-
-      function Harness() {
-        const [approval, setApproval] = useState<ApprovalRequest | null>(null);
-        const [cardVisible, setCardVisible] = useState(true);
-        const composerRef = useRef<HTMLTextAreaElement>(null);
-        const workspaceRef = useRef<HTMLElement>(null);
-        removeApprovalCard = () => setCardVisible(false);
-        return (
-          <main>
-            {cardVisible && (
-              <article aria-label="Shell Approval">
-                <p>{mockApproval.summary}</p>
-                <button type="button" onClick={() => setApproval(mockApproval)}>
-                  Reject
-                </button>
-              </article>
-            )}
-            {renderFallbacks && (
-              <>
-                <textarea
-                  ref={composerRef}
-                  aria-label="Composer"
-                  disabled={composerDisabled}
-                />
-                <section ref={workspaceRef} aria-label="Workspace" tabIndex={-1} />
-              </>
-            )}
-            <ApprovalFeedbackDialog
-              approval={approval}
-              getFallbackFocus={() => {
-                const composer = composerRef.current;
-                return composer?.isConnected && !composer.disabled
-                  ? composer
-                  : workspaceRef.current;
-              }}
-              onCancel={() => setApproval(null)}
-              onConfirm={() => setApproval(null)}
-            />
-          </main>
-        );
-      }
-
-      render(<Harness />);
-      await user.click(screen.getByRole("button", { name: "Reject" }));
-      frames.flush();
-      expect(screen.getByRole("textbox", { name: "拒绝原因（可选）" })).toHaveFocus();
-      act(removeApprovalCard);
-      expect(screen.queryByRole("article", { name: "Shell Approval" })).not.toBeInTheDocument();
-      await expect(
-        user.click(screen.getByRole("button", { name: "取消" })),
-      ).resolves.toBeUndefined();
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-      if (expectedFocus) {
-        expect(screen.getByRole(expectedFocus === "Composer" ? "textbox" : "region", {
-          name: expectedFocus,
-        })).toHaveFocus();
-      }
-    },
-  );
 });

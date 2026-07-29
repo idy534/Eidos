@@ -465,14 +465,13 @@ if (appShellText) {
     attribute.name.getText(sf) === "getFallbackFocus"
     && ts.isJsxExpression(attribute.initializer)
     && attribute.initializer.expression?.getText(sf) === "getDialogFallbackFocus"
-  )).length < 2) {
-    errors.push("AppShell.tsx AST error: both Dialogs must receive explicit fallback ownership");
+  )).length < 1) {
+    errors.push("AppShell.tsx AST error: Dialog must receive explicit fallback ownership");
   }
 }
 
 // 6. Dialog focus ownership and transition checks
 for (const dialogPath of [
-  "desktop/renderer/src/components/ApprovalFeedbackDialog.tsx",
   "desktop/renderer/src/components/settings/ConfirmDialog.tsx",
 ]) {
   const text = readFile(dialogPath);
