@@ -550,7 +550,10 @@ class RuntimeServer:
                         "modelConfigured": (
                             self.model is not None
                             or self.model_factory is not None
-                            or bool(self.store.list_model_profiles())
+                            or (
+                                self.store.health_state == "ready"
+                                and bool(self.store.list_model_profiles())
+                            )
                         ),
                     },
                 },
