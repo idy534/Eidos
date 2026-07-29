@@ -212,7 +212,7 @@ export function userFacingError(cause: unknown): string {
   if (message === "这个审批已经失效。") {
     return message;
   }
-  return "操作失败";
+  return "操作失败，请查看 Runtime 日志。";
 }
 
 export function terminalRunPresentation(
