@@ -15,9 +15,6 @@ from eidos_runtime.runtime.model_runner import ModelRunner, ModelStreamInterrupt
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
 
 
-MAX_STREAM_RETRIES = 5
-
-
 class SamplingError(RuntimeError):
     def __init__(
         self,
@@ -112,7 +109,10 @@ class SamplingRuntime:
                         had_progress=writer.item is not None,
                     )
                     raise error
-                if isinstance(error, SamplingRetryableError) and retries < MAX_STREAM_RETRIES:
+                if (
+                    isinstance(error, SamplingRetryableError)
+                    and retries < step.model_profile.retry_max_attempts - 1
+                ):
                     retries += 1
                     self.store.complete_current_model_attempt(
                         step.run_id,
@@ -132,7 +132,17 @@ class SamplingRuntime:
                             "reason": "transient_error",
                         },
                     )
-                    if cancel.wait(min(0.2 * 2 ** (retries - 1), 2.0)):
+                    backoff = min(
+                        step.model_profile.retry_initial_backoff_seconds
+                        * 2 ** (retries - 1),
+                        step.model_profile.retry_max_backoff_seconds,
+                    )
+                    if error.failure and error.failure.retry_after_seconds is not None:
+                        backoff = max(
+                            backoff,
+                            error.failure.retry_after_seconds,
+                        )
+                    if cancel.wait(backoff):
                         raise SamplingCancelled("sampling canceled")
                     self.store.start_retry_model_attempt(step.run_id)
                     continue

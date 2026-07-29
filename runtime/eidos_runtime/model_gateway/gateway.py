@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import logging
 import uuid
 
 from anthropic import AsyncAnthropic
@@ -21,6 +22,9 @@ from eidos_runtime.model_gateway.auth import ModelSecretStore
 from eidos_runtime.model_gateway.models import RunModelSnapshot, WireAPI
 from eidos_runtime.model_gateway.registry import AdapterRegistry
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
+
+
+logger = logging.getLogger("eidos.runtime.model_gateway")
 
 
 class ModelGatewayLease(ModelClientLease):
@@ -47,6 +51,18 @@ class ModelGatewayLease(ModelClientLease):
             resource_registry=resource_registry,
             owner_id=self.lease_id,
         )
+
+    def close(self) -> None:
+        if not self.closed:
+            logger.info(
+                "Model lease released lease_id=%s profile_id=%s provider=%s wire_api=%s model_id=%s",
+                self.lease_id,
+                self.profile_snapshot.id,
+                self.profile_snapshot.provider,
+                self.profile_snapshot.wire_api.value,
+                self.profile_snapshot.model_id,
+            )
+        super().close()
 
 
 class ModelGateway:
@@ -125,6 +141,11 @@ class ModelGateway:
                 snapshot.capability.supports_structured_output
             ),
             supports_reasoning=profile.reasoning_mode.value != "none",
+            retry_max_attempts=profile.retry_policy.max_attempts,
+            retry_initial_backoff_seconds=(
+                profile.retry_policy.initial_backoff_seconds
+            ),
+            retry_max_backoff_seconds=profile.retry_policy.max_backoff_seconds,
         )
         spec = ModelProfileSpec(
             provider_id=profile.provider,
@@ -160,12 +181,21 @@ class ModelGateway:
             ),
             resource_registry=self.resources,
         )
-        return ModelGatewayLease(
+        lease = ModelGatewayLease(
             client,
             snapshot,
             registry=self.registry,
             resource_registry=self.resources,
         )
+        logger.info(
+            "Model lease acquired lease_id=%s profile_id=%s provider=%s wire_api=%s model_id=%s",
+            lease.lease_id,
+            profile.id,
+            profile.provider,
+            profile.wire_api.value,
+            profile.model_id,
+        )
+        return lease
 
 
 def legacy_profile_snapshot(snapshot: RunModelSnapshot) -> ModelProfileSnapshot:
@@ -192,4 +222,9 @@ def legacy_profile_snapshot(snapshot: RunModelSnapshot) -> ModelProfileSnapshot:
             snapshot.capability.supports_structured_output
         ),
         supports_reasoning=profile.reasoning_mode.value != "none",
+        retry_max_attempts=profile.retry_policy.max_attempts,
+        retry_initial_backoff_seconds=(
+            profile.retry_policy.initial_backoff_seconds
+        ),
+        retry_max_backoff_seconds=profile.retry_policy.max_backoff_seconds,
     )

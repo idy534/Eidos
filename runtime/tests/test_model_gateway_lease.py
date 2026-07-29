@@ -108,6 +108,10 @@ class ModelGatewayLeaseTests(unittest.TestCase):
                     ))
                     self.assertEqual(lease.wire_adapter.wire_api, frozen.profile.wire_api)
                     self.assertEqual(lease.auth_reference, frozen.profile.auth_reference)
+                    self.assertEqual(
+                        lease.client.profile_snapshot.retry_max_attempts,
+                        frozen.profile.retry_policy.max_attempts,
+                    )
                     self.assertNotIn("provider-key-value", repr(lease))
                     self.assertFalse(lease.closed)
                 finally:

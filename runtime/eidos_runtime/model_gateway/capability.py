@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+import logging
 import threading
 import time
 import uuid
@@ -17,6 +18,9 @@ from eidos_runtime.model_gateway.models import (
     WireAPI,
 )
 from eidos_runtime.model_gateway.registry import AdapterRegistry
+
+
+logger = logging.getLogger("eidos.runtime.model_gateway")
 
 
 class CapabilityProbeError(RuntimeError):
@@ -55,7 +59,22 @@ class CapabilityProbe:
     ) -> CapabilitySnapshot:
         if cancel.is_set():
             raise RuntimeError("MODEL_PROBE_CANCELLED")
-        return asyncio.run(self._probe(profile, api_key, cancel))
+        logger.info(
+            "Capability probe started profile_id=%s provider=%s wire_api=%s model_id=%s",
+            profile.id,
+            profile.provider,
+            profile.wire_api.value,
+            profile.model_id,
+        )
+        snapshot = asyncio.run(self._probe(profile, api_key, cancel))
+        logger.info(
+            "Capability probe succeeded profile_id=%s provider=%s wire_api=%s model_id=%s",
+            profile.id,
+            profile.provider,
+            profile.wire_api.value,
+            profile.model_id,
+        )
+        return snapshot
 
     def test_connection(
         self,
