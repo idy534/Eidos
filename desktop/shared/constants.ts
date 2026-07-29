@@ -1,4 +1,4 @@
-export type ModelId = "deepseek-v4-flash" | "deepseek-v4-pro";
+export type ModelId = string;
 
 export const VALID_MODEL_IDS: ReadonlySet<string> = new Set<ModelId>([
   "deepseek-v4-flash",

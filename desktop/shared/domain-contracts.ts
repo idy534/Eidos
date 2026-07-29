@@ -60,6 +60,7 @@ export interface Run {
     | "finalizing"
     | "terminal";
   modelId: ModelId;
+  profileId?: string;
   allowedActions?: Array<"cancel" | "approve" | "reject">;
   modelStepCount: number;
   createdAt: number;
@@ -154,7 +155,7 @@ export interface ModelStatus {
 
 export interface ModelOption {
   id: ModelId;
-  provider: "deepseek";
+  provider: string;
   displayName: string;
   configured: boolean;
   selectable: boolean;
@@ -163,6 +164,93 @@ export interface ModelOption {
 export interface ModelListResult {
   models: ModelOption[];
   defaultModelId: ModelId;
+}
+
+export type WireAPI =
+  | "openai_responses"
+  | "anthropic_messages"
+  | "openai_chat_completions";
+
+export interface RetryPolicy {
+  maxAttempts: number;
+  initialBackoffSeconds: number;
+  maxBackoffSeconds: number;
+}
+
+export interface ModelProfile {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  provider: string;
+  baseUrl?: string | null;
+  authReference: string;
+  wireApi: WireAPI;
+  modelId: string;
+  contextWindow?: number | null;
+  maxOutputTokens?: number | null;
+  reasoningMode: "none" | "native" | "compatible";
+  reasoningEffort?: "low" | "medium" | "high" | null;
+  supportsTools?: boolean | null;
+  supportsParallelTools?: boolean | null;
+  supportsImages?: boolean | null;
+  supportsStructuredOutput?: boolean | null;
+  supportsPromptCache?: boolean | null;
+  requestTimeout: number;
+  retryPolicy: RetryPolicy;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ModelProfileDraft {
+  name: string;
+  provider: string;
+  baseUrl?: string | undefined;
+  authReference?: string | undefined;
+  wireApi?: WireAPI | undefined;
+  modelId: string;
+  contextWindow?: number | undefined;
+  maxOutputTokens?: number | undefined;
+  reasoningMode?: "none" | "native" | "compatible" | undefined;
+  supportsTools?: boolean | undefined;
+  supportsParallelTools?: boolean | undefined;
+  supportsImages?: boolean | undefined;
+  supportsStructuredOutput?: boolean | undefined;
+  supportsPromptCache?: boolean | undefined;
+  requestTimeout?: number | undefined;
+  retryPolicy?: Partial<RetryPolicy> | undefined;
+}
+
+export interface CapabilityWarning {
+  code: string;
+  capability?: string;
+  message: string;
+  source: string;
+}
+
+export interface CapabilitySnapshot {
+  id: string;
+  profileId: string;
+  provider: string;
+  wireApi: WireAPI;
+  modelId: string;
+  reachable: boolean;
+  authenticated: boolean;
+  supportsTools: boolean;
+  supportsParallelTools: boolean;
+  supportsImages: boolean;
+  supportsStructuredOutput: boolean;
+  supportsPromptCache: boolean;
+  warnings: CapabilityWarning[];
+}
+
+export interface ModelTestConnectionResult {
+  success: boolean;
+  profileValid: boolean;
+  endpointIdentity: string;
+  capabilitySnapshot?: CapabilitySnapshot | null;
+  warnings: CapabilityWarning[];
+  error?: { code: string; message: string; retryable: boolean } | null;
+  probeDurationMs: number;
 }
 
 export interface ApprovalDecision {

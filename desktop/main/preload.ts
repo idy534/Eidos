@@ -13,6 +13,9 @@ import type {
   ModelId,
   ModelStatus,
   ModelListResult,
+  ModelProfile,
+  ModelProfileDraft,
+  ModelTestConnectionResult,
   ApprovalRequest,
   PluginListResult,
   PluginRecord,
@@ -58,6 +61,19 @@ const api: EidosRuntimeAPI = {
   getModelStatus: (): Promise<ModelStatus> => ipcRenderer.invoke(IPC.MODEL_STATUS),
   listModels: (): Promise<ModelListResult> => ipcRenderer.invoke(IPC.MODEL_LIST),
   configureModel: (apiKey: string): Promise<ModelStatus> => ipcRenderer.invoke(IPC.MODEL_CONFIGURE, apiKey),
+  listModelProfiles: (): Promise<ModelProfile[]> => ipcRenderer.invoke(IPC.MODEL_PROFILE_LIST),
+  createModelProfile: (profile: ModelProfileDraft, apiKey?: string): Promise<ModelProfile> =>
+    ipcRenderer.invoke(IPC.MODEL_PROFILE_CREATE, profile, apiKey),
+  updateModelProfile: (
+    profileId: string,
+    profile: ModelProfileDraft,
+    apiKey?: string,
+  ): Promise<ModelProfile> =>
+    ipcRenderer.invoke(IPC.MODEL_PROFILE_UPDATE, profileId, profile, apiKey),
+  deleteModelProfile: (profileId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.MODEL_PROFILE_DELETE, profileId),
+  testModelProfile: (profileId: string): Promise<ModelTestConnectionResult> =>
+    ipcRenderer.invoke(IPC.MODEL_PROFILE_TEST, profileId),
 
   // Plugins
   listPlugins: (): Promise<PluginListResult> => ipcRenderer.invoke(IPC.PLUGIN_LIST),

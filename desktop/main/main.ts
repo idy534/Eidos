@@ -13,8 +13,9 @@ import type {
   AppShortcut,
   RuntimeNotification,
   RuntimeStatus,
+  ModelProfileDraft,
 } from "../shared/index.js";
-import { IPC, VALID_MODEL_IDS, MAX_APPROVAL_FEEDBACK_BYTES } from "../shared/index.js";
+import { IPC, MAX_APPROVAL_FEEDBACK_BYTES } from "../shared/index.js";
 
 // ---------------------------------------------------------------------------
 // Logging helpers — never log API keys, full prompts, or sensitive env vars
@@ -420,14 +421,16 @@ ipcMain.handle(IPC.RUN_START, (_event, sessionId: unknown, userInput: unknown, m
   if (
     typeof sessionId !== "string"
     || typeof userInput !== "string"
-    || !VALID_MODEL_IDS.has(String(modelId))
+    || typeof modelId !== "string"
+    || modelId.length === 0
+    || modelId.length > 256
   ) {
     throw new Error("Run 参数无效。");
   }
   return clientOrThrow().startRun(
     sessionId,
     userInput,
-    modelId as "deepseek-v4-flash" | "deepseek-v4-pro",
+    modelId,
   );
 });
 ipcMain.handle(IPC.RUN_CANCEL, (_event, runId: unknown) => {
@@ -441,6 +444,45 @@ ipcMain.handle(IPC.MODEL_LIST, () => clientOrThrow().listModels());
 ipcMain.handle(IPC.MODEL_CONFIGURE, (_event, apiKey: unknown) => {
   if (typeof apiKey !== "string") throw new Error("API Key 参数无效。");
   return clientOrThrow().configureModel(apiKey);
+});
+ipcMain.handle(IPC.MODEL_PROFILE_LIST, () => clientOrThrow().listModelProfiles());
+ipcMain.handle(IPC.MODEL_PROFILE_CREATE, (
+  _event,
+  profile: unknown,
+  apiKey: unknown,
+) => {
+  if (!profile || typeof profile !== "object" || (apiKey !== undefined && typeof apiKey !== "string")) {
+    throw new Error("Model Profile 参数无效。");
+  }
+  return clientOrThrow().createModelProfile(profile as ModelProfileDraft, apiKey as string | undefined);
+});
+ipcMain.handle(IPC.MODEL_PROFILE_UPDATE, (
+  _event,
+  profileId: unknown,
+  profile: unknown,
+  apiKey: unknown,
+) => {
+  if (
+    typeof profileId !== "string"
+    || !profile
+    || typeof profile !== "object"
+    || (apiKey !== undefined && typeof apiKey !== "string")
+  ) {
+    throw new Error("Model Profile 参数无效。");
+  }
+  return clientOrThrow().updateModelProfile(
+    profileId,
+    profile as ModelProfileDraft,
+    apiKey as string | undefined,
+  );
+});
+ipcMain.handle(IPC.MODEL_PROFILE_DELETE, (_event, profileId: unknown) => {
+  if (typeof profileId !== "string") throw new Error("Model Profile 参数无效。");
+  return clientOrThrow().deleteModelProfile(profileId);
+});
+ipcMain.handle(IPC.MODEL_PROFILE_TEST, (_event, profileId: unknown) => {
+  if (typeof profileId !== "string") throw new Error("Model Profile 参数无效。");
+  return clientOrThrow().testModelProfile(profileId);
 });
 
 ipcMain.handle(IPC.PLUGIN_LIST, () => clientOrThrow().listPlugins());
