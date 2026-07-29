@@ -91,6 +91,7 @@ flowchart TD
 | Process & Trust Boundary | 进程、stdio、初始化、单实例和信任边界 | JSON-RPC envelope、capability handshake | [总体架构](01-architecture.md) |
 | Runtime & StateMachine | Run 队列、Step、暂停、取消、终态与恢复 | command/domain event → legal state transition | [Runtime、队列与状态机](02-runtime-state-machine.md) |
 | Tool Orchestrator | ToolSpec、参数、审批、沙箱、执行与结果 | effective arguments → canonical ToolResult | [工具、审批与沙箱](03-tools-approval-sandbox.md) |
+| Sandbox Execution | Base/overlay profile、动态 Seatbelt、attempt、升级和审计 | permission request → approved SandboxAttempt | [Sandbox 权限升级与统一工具编排](08-sandbox-permission-orchestration.md) |
 | Model & Context | StepContext、HTTP/SSE Adapter、上下文和流归一化 | local facts → model request/internal events | [模型、上下文与流式输出](04-model-context-streaming.md) |
 | Protocol / Event / Storage | JSON-RPC 方法、闭合 DTO、Event、水位和 SQLite | request/fact ↔ result/notification/snapshot | [协议、事件与存储](05-api-events-storage.md) |
 | Desktop | Main、Preload、Renderer、审批 UI 和生命周期 | typed IPC ↔ validated JSON-RPC | [桌面端安全与生命周期](06-desktop-security-lifecycle.md) |
