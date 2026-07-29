@@ -69,6 +69,8 @@ class ModelContractTests(unittest.TestCase):
 
     def test_prompts_are_provider_neutral_model_resources(self) -> None:
         self.assertIn("Eidos", SYSTEM_PROMPT)
+        self.assertIn("do not request another approval", SYSTEM_PROMPT)
+        self.assertIn("safe manual strategy", SYSTEM_PROMPT)
         self.assertIn("task title", TITLE_PROMPT)
 
 

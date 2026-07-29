@@ -225,29 +225,10 @@ def resolve_approval_and_transition(
     ):
         raise InvalidRunStateError("approval is no longer pending")
 
-    target_run = (
-        RunStatus.WAITING_USER_INPUT
-        if rejects >= 2
-        else RunStatus.QUEUED
-        if requeue
-        else RunStatus.RUNNING
-    )
-    reason = (
-        "repeated_approval_rejection"
-        if target_run is RunStatus.WAITING_USER_INPUT
-        else "approval_resolved"
-    )
+    target_run = RunStatus.QUEUED if requeue else RunStatus.RUNNING
+    reason = "approval_resolved"
     events: list[dict[str, object]] = []
-    if target_run is RunStatus.WAITING_USER_INPUT:
-        events.extend(transition_segments(
-            connection,
-            str(fact["run_id"]),
-            frozenset({SegmentStatus.RUNNING}),
-            SegmentStatus.WAITING_USER_INPUT,
-            now,
-            reason,
-        ))
-    elif target_run is RunStatus.QUEUED:
+    if target_run is RunStatus.QUEUED:
         events.extend(transition_segments(
             connection,
             str(fact["run_id"]),

@@ -829,6 +829,9 @@ class SessionStore:
     def clear_rejects(self, run_id: str) -> None:
         return self._repository(self._runs).clear_rejects(run_id)
 
+    def approval_prompt_blocked(self, run_id: str) -> bool:
+        return self._repository(self._runs).approval_prompt_blocked(run_id)
+
     def record_sensitive_tool_input(self, run_id: str) -> int:
         return self._repository(self._runs).record_sensitive_tool_input(run_id)
 

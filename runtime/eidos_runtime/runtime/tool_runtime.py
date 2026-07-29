@@ -12,7 +12,11 @@ from typing import Callable
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.skills import SkillCreation
 from eidos_runtime.model.client import ModelResponse, ModelToolCall
-from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalOutcome
+from eidos_runtime.runtime.approval import (
+    APPROVAL_REJECTION_GUIDANCE,
+    ApprovalCoordinator,
+    ApprovalOutcome,
+)
 from eidos_runtime.runtime.contracts import (
     RuntimeCancelled,
     SamplingOutcome,
@@ -186,7 +190,7 @@ class FileChangeToolHandler:
                     call.name,
                     "declined",
                     "user_rejected",
-                    "User rejected the file change",
+                    approval.feedback or APPROVAL_REJECTION_GUIDANCE,
                     {"path": prepared.path},
                 ),
                 "declined",
@@ -536,7 +540,7 @@ class ShellToolHandler:
                     call.name,
                     "declined",
                     "user_rejected",
-                    "User rejected the command",
+                    APPROVAL_REJECTION_GUIDANCE,
                     result.get("data")
                     if isinstance(result.get("data"), dict)
                     else None,
@@ -619,7 +623,7 @@ class ExternalToolHandler:
                     call.name,
                     "declined",
                     "user_rejected",
-                    "User rejected the external tool",
+                    approval.feedback or APPROVAL_REJECTION_GUIDANCE,
                 ),
                 "declined",
                 "failed",
@@ -681,7 +685,7 @@ class EidosStateToolHandler:
                         call.name,
                         "declined",
                         "user_rejected_network",
-                        "User rejected network access",
+                        approval.feedback or APPROVAL_REJECTION_GUIDANCE,
                     ),
                     "declined",
                 )
@@ -725,7 +729,7 @@ class EidosStateToolHandler:
                     call.name,
                     "declined",
                     "user_rejected",
-                    "User rejected the Eidos state change",
+                    approval.feedback or APPROVAL_REJECTION_GUIDANCE,
                     {"path": prepared.path},
                 ),
                 "declined",

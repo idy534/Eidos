@@ -306,6 +306,15 @@ class RuntimeLoopTests(unittest.TestCase):
         snapshot = self.store.read_session_snapshot(self.session["id"])
         file_item = next(item for item in snapshot["items"] if item["kind"] == "file_change")
         self.assertEqual(file_item["status"], "declined")
+        rejection = next(
+            item for item in model.contexts[-1]
+            if item.get("type") == "tool_result"
+            and item.get("name") == "write_file"
+        )
+        self.assertIn(
+            "Do not request another approval",
+            json.loads(str(rejection["result"]))["summary"],
+        )
 
     def test_approval_version_conflict_preserves_external_change(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Change hello.txt")

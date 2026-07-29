@@ -418,6 +418,16 @@ class RunRepository(Repository):
                 (run_id,),
             )
 
+    def approval_prompt_blocked(self, run_id: str) -> bool:
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT consecutive_rejects FROM runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            raise ResourceNotFoundError("run not found")
+        return int(row["consecutive_rejects"]) > 0
+
     def record_sensitive_tool_input(self, run_id: str) -> int:
         with self.lock, self._connection() as connection:
             connection.execute(

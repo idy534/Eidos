@@ -89,7 +89,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(item)
         self.assertIsNone(item["model_step_index"])
 
-    def test_two_rejections_pause_and_user_input_creates_a_new_segment(self) -> None:
+    def test_rejections_do_not_pause_for_more_user_input(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "change")
         self.store.increment_model_step(run["id"])
         self.store.complete_current_step(run["id"], "completed")
@@ -105,26 +105,9 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
                 json.dumps({"outcome": "declined", "code": "user_rejected"}),
                 item_status="declined",
             )
-        paused = self.store.read_run(run["id"])
-        self.assertEqual(paused["status"], "waiting_user_input")
-        self.assertEqual(paused["pauseReason"], "repeated_approval_rejection")
-        continued = self.store.continue_run(run["id"], "try a different plan")
-        self.assertEqual(continued["status"], "queued")
-        connection = self.store.connection
-        assert connection is not None
-        self.assertEqual(
-            [
-                row["status"]
-                for row in connection.execute(
-                    """
-                    SELECT status FROM execution_segments
-                    WHERE run_id = ? ORDER BY ordinal
-                    """,
-                    (run["id"],),
-                )
-            ],
-            ["completed", "queued"],
-        )
+        current = self.store.read_run(run["id"])
+        self.assertEqual(current["status"], "running")
+        self.assertNotIn("pauseReason", current)
 
     def test_crashed_durable_intent_is_reconciled_without_replay(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "write")

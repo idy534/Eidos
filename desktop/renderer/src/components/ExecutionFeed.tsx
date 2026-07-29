@@ -488,7 +488,6 @@ function activeRunPresentation(run: Run) {
 
 function pauseLabel(reason: string | undefined): string {
   return ({
-    repeated_approval_rejection: "连续拒绝，请补充新的处理方式",
     model_stream_interrupted: "模型输出中断，请确认后继续",
     sensitive_scan_failed: "安全扫描未完成，原文未展示",
     repeated_sensitive_tool_input: "模型重复生成受保护参数，请改写任务",

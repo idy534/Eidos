@@ -69,7 +69,7 @@ class RuntimeStateConsistencyTests(unittest.TestCase):
         )
         return item
 
-    def test_second_rejection_transitions_segment_to_waiting_user_input(self) -> None:
+    def test_rejections_keep_agent_and_segment_running(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "change")
         self.store.increment_model_step(run["id"])
         self.store.complete_current_step(run["id"], "completed")
@@ -78,55 +78,13 @@ class RuntimeStateConsistencyTests(unittest.TestCase):
 
         connection = self.store.connection
         assert connection is not None
-        self.assertEqual(self.store.read_run(run["id"])["status"], "waiting_user_input")
+        self.assertEqual(self.store.read_run(run["id"])["status"], "running")
         self.assertEqual(
             connection.execute(
                 "SELECT status FROM execution_segments WHERE run_id = ?",
                 (run["id"],),
             ).fetchone()["status"],
-            "waiting_user_input",
-        )
-
-    def test_continue_after_rejection_closes_previous_segment(self) -> None:
-        run, _ = self.store.create_run(self.session["id"], "change")
-        self.store.increment_model_step(run["id"])
-        self.store.complete_current_step(run["id"], "completed")
-        self._reject(run["id"], 1)
-        self._reject(run["id"], 2)
-
-        self.store.continue_run(run["id"], "different plan")
-
-        connection = self.store.connection
-        assert connection is not None
-        statuses = [
-            row["status"]
-            for row in connection.execute(
-                "SELECT status FROM execution_segments WHERE run_id = ? ORDER BY ordinal",
-                (run["id"],),
-            )
-        ]
-        self.assertEqual(statuses, ["completed", "queued"])
-
-    def test_continue_after_rejection_creates_one_new_segment(self) -> None:
-        run, _ = self.store.create_run(self.session["id"], "change")
-        self.store.increment_model_step(run["id"])
-        self.store.complete_current_step(run["id"], "completed")
-        self._reject(run["id"], 1)
-        self._reject(run["id"], 2)
-
-        self.store.continue_run(run["id"], "different plan")
-
-        connection = self.store.connection
-        assert connection is not None
-        self.assertEqual(
-            connection.execute(
-                """
-                SELECT COUNT(*) FROM execution_segments
-                WHERE run_id = ? AND status IN ('queued', 'running', 'waiting_user_input')
-                """,
-                (run["id"],),
-            ).fetchone()[0],
-            1,
+            "running",
         )
 
     def test_only_one_running_segment_per_run(self) -> None:

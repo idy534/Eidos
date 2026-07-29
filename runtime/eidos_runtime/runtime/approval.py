@@ -13,6 +13,12 @@ from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeStat
 from eidos_runtime.runtime.fault_injection import hit_fault
 
 
+APPROVAL_REJECTION_GUIDANCE = (
+    "User rejected an approval. Do not request another approval in this run; "
+    "try a non-approval alternative or provide a safe manual strategy and finish."
+)
+
+
 @dataclass(frozen=True)
 class ApprovalDecision:
     decision: str
@@ -104,6 +110,12 @@ class ApprovalCoordinator:
         attempt_ordinal: int = 0,
         approval_kind: str = "tool",
     ) -> ApprovalOutcome:
+        if self.store.approval_prompt_blocked(run_id):
+            return ApprovalOutcome(
+                decision="reject",
+                feedback=APPROVAL_REJECTION_GUIDANCE,
+                item=item,
+            )
         mutation = self.store.begin_approval_committed(
             str(item["id"]),
             diff,
@@ -159,7 +171,11 @@ class ApprovalCoordinator:
         )
         return ApprovalOutcome(
             decision=decision.decision,
-            feedback=decision.feedback,
+            feedback=(
+                decision.feedback
+                if decision.decision == "approve" or decision.feedback
+                else APPROVAL_REJECTION_GUIDANCE
+            ),
             item=pending_item,
         )
 

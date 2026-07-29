@@ -347,8 +347,30 @@ class RuntimeHardeningTests(unittest.TestCase):
         ]
         self.assertEqual(updates[-1]["params"]["run"]["status"], "running")
 
-    def test_second_reject_projects_waiting_user_input(self) -> None:
-        run, first, coordinator, notifications = self._approval_fixture("reject")
+    def test_rejection_blocks_later_approval_prompt_and_keeps_agent_running(self) -> None:
+        transport_calls = 0
+
+        def reject(_request, _cancel):
+            nonlocal transport_calls
+            transport_calls += 1
+            return ApprovalDecision("reject")
+
+        run, _ = self.store.create_run(self.session["id"], "reject")
+        step = self.store.increment_model_step(run["id"])
+        first = self.store.create_tool_item(
+            run["id"], step, 0, "call-1", "write_file", "{}"
+        )
+        coordinator = ApprovalCoordinator(
+            self.store,
+            reject,
+            RuntimeEvents(lambda _message: None),
+            RuntimePhaseTracker(),
+            lambda _run_id: None,
+            lambda: None,
+            lambda _run_id, _cancel: None,
+            lambda _run_id, _cancel: None,
+            requeue=False,
+        )
         coordinator.request(
             run["id"], first, {"kind": "file_change"}, threading.Event(),
             transition_reason="file_change_approval",
@@ -357,16 +379,16 @@ class RuntimeHardeningTests(unittest.TestCase):
             run["id"], 2, 0, "call-2", "write_file", "{}"
         )
 
-        coordinator.request(
+        outcome = coordinator.request(
             run["id"], second, {"kind": "file_change"}, threading.Event(),
             transition_reason="file_change_approval",
         )
 
-        updates = [
-            message for message in notifications if message["method"] == "run/updated"
-        ]
-        self.assertEqual(
-            updates[-1]["params"]["run"]["status"], "waiting_user_input"
+        self.assertEqual(transport_calls, 1)
+        self.assertEqual(self.store.read_run(run["id"])["status"], "running")
+        self.assertIn(
+            "Do not request another approval",
+            outcome.feedback or "",
         )
 
     def test_approval_notification_failure_does_not_roll_back_resolution(self) -> None:
