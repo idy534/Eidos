@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import sqlite3
 import uuid
 
 from eidos_runtime.db.database import (
@@ -42,6 +43,29 @@ from eidos_runtime.runtime.state_machine import (
     ToolCallStatus,
     ensure_transition,
 )
+
+
+def _attempt_metadata(
+    connection: sqlite3.Connection,
+    run_id: str,
+) -> tuple[str | None, str | None, str | None, float | None]:
+    row = connection.execute(
+        "SELECT snapshot_json FROM run_model_snapshots WHERE run_id = ?",
+        (run_id,),
+    ).fetchone()
+    if row is None:
+        return None, None, None, None
+    try:
+        snapshot = json.loads(row["snapshot_json"])
+        profile = snapshot["profile"]
+        return (
+            snapshot.get("lease_id"),
+            profile.get("wire_api"),
+            profile.get("model_id"),
+            profile.get("request_timeout"),
+        )
+    except (KeyError, TypeError, json.JSONDecodeError):
+        raise StorageError("run_model_snapshot_invalid") from None
 
 
 class ExecutionRepository(Repository):
@@ -173,10 +197,16 @@ class ExecutionRepository(Repository):
             connection.execute(
                 """
                 INSERT INTO model_attempts (
-                    id, step_id, ordinal, status, started_at
-                ) VALUES (?, ?, 1, 'running', ?)
+                    id, step_id, ordinal, status, lease_id, wire_api,
+                    model_id, request_timeout, started_at
+                ) VALUES (?, ?, 1, 'running', ?, ?, ?, ?, ?)
                 """,
-                (attempt_id, step_id, now),
+                (
+                    attempt_id,
+                    step_id,
+                    *_attempt_metadata(connection, run_id),
+                    now,
+                ),
             )
             updated = connection.execute(
                 """
@@ -409,6 +439,7 @@ class ExecutionRepository(Repository):
         ttft_ms: int | None = None,
         duration_ms: int | None = None,
         had_progress: bool = False,
+        retry_decision: dict[str, object] | None = None,
     ) -> bool:
         if status not in {"completed", "failed", "canceled"}:
             raise ValueError("invalid model attempt status")
@@ -431,7 +462,8 @@ class ExecutionRepository(Repository):
                 SET status = ?, completed_at = ?, provider_name = ?,
                     resolved_model_name = ?, finish_reason = ?,
                     provider_response_id = ?, usage_json = ?, error_code = ?,
-                    http_status = ?, ttft_ms = ?, duration_ms = ?, had_progress = ?
+                    http_status = ?, ttft_ms = ?, duration_ms = ?, had_progress = ?,
+                    retry_decision_json = ?
                 WHERE id = ? AND status = 'running'
                 """,
                 (
@@ -439,7 +471,17 @@ class ExecutionRepository(Repository):
                     provider_response_id,
                     usage.model_dump_json() if usage is not None else None,
                     error_code, http_status, ttft_ms, duration_ms,
-                    int(had_progress), attempt["id"],
+                    int(had_progress),
+                    (
+                        json.dumps(
+                            retry_decision,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        )
+                        if retry_decision is not None else None
+                    ),
+                    attempt["id"],
                 ),
             )
         return changed.rowcount == 1
@@ -479,10 +521,17 @@ class ExecutionRepository(Repository):
             connection.execute(
                 """
                 INSERT INTO model_attempts (
-                    id, step_id, ordinal, status, started_at
-                ) VALUES (?, ?, ?, 'running', ?)
+                    id, step_id, ordinal, status, lease_id, wire_api,
+                    model_id, request_timeout, started_at
+                ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?)
                 """,
-                (str(uuid.uuid4()), step["id"], int(last["ordinal"]) + 1, now),
+                (
+                    str(uuid.uuid4()),
+                    step["id"],
+                    int(last["ordinal"]) + 1,
+                    *_attempt_metadata(connection, run_id),
+                    now,
+                ),
             )
 
     def read_model_attempts(self, run_id: str) -> list[dict[str, object]]:
@@ -497,7 +546,6 @@ class ExecutionRepository(Repository):
                 (run_id,),
             ).fetchall()
         return [_model_attempt_from_row(row) for row in rows]
-
     def create_assistant_item(
         self, run_id: str, model_step_index: int
     ) -> dict[str, object]:
@@ -625,7 +673,6 @@ class ExecutionRepository(Repository):
                 run_id=fact["run_id"],
             )
         return CommittedMutation(self.read_item(item_id), (event,))
-
     def complete_assistant_and_run(
         self, item_id: str, run_id: str
     ) -> tuple[dict[str, object], dict[str, object]]:

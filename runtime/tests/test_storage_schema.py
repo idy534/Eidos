@@ -55,6 +55,7 @@ EXPECTED_COLUMNS = {
         "workspace_version",
         "last_diff_hash",
         "model_profile_json",
+        "model_profile_id",
         "cancel_requested_at",
         "cancel_completed_at",
         "cancel_failure_code",

@@ -25,6 +25,7 @@ from eidos_runtime.db.transitions import (
     transition_segments,
 )
 from eidos_runtime.model.client import ModelProfileSnapshot
+from eidos_runtime.model_gateway.models import RunModelSnapshot
 from eidos_runtime.model.config import (
     DEFAULT_MODEL_ID,
     SUPPORTED_MODELS,
@@ -74,6 +75,7 @@ class RunRepository(Repository):
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
+        run_model_snapshot: RunModelSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         if session_title is not None and (
@@ -82,11 +84,22 @@ class RunRepository(Repository):
             or len(session_title.encode("utf-8")) > 120
         ):
             raise ValueError("session title is invalid")
-        if model_id not in SUPPORTED_MODELS:
+        if run_model_snapshot is None and model_id not in SUPPORTED_MODELS:
             raise ValueError("model is unsupported")
         profile = model_profile or default_profile_snapshot(model_id)
-        if profile.provider_id != "deepseek" or profile.model_id != model_id:
+        if (
+            profile.model_id != model_id
+            or (
+                run_model_snapshot is None
+                and profile.provider_id != "deepseek"
+            )
+        ):
             raise ValueError("model profile does not match run")
+        if (
+            run_model_snapshot is not None
+            and run_model_snapshot.profile.model_id != model_id
+        ):
+            raise ValueError("run model snapshot does not match run")
         model_profile_json = profile.model_dump_json()
         extension_snapshot_json = _bounded_canonical_json(
             extension_snapshot or EMPTY_EXTENSION_SNAPSHOT,
@@ -123,13 +136,19 @@ class RunRepository(Repository):
                 connection.execute(
                     """
                     INSERT INTO runs (
-                        id, session_id, user_input, model_id, model_profile_json,
+                        id, session_id, user_input, model_id, model_profile_id,
+                        model_profile_json,
                         status, enqueued_at,
                         extension_snapshot_json, created_at, started_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        run_id, session_id, user_input, model_id, model_profile_json,
+                        run_id, session_id, user_input, model_id,
+                        (
+                            run_model_snapshot.profile.id
+                            if run_model_snapshot is not None else None
+                        ),
+                        model_profile_json,
                         status,
                         now if queued else None, extension_snapshot_json,
                         now, started_at, now,
@@ -148,6 +167,22 @@ class RunRepository(Repository):
                 """,
                 (item_id, session_id, run_id, user_input, now, now),
             )
+            if run_model_snapshot is not None:
+                connection.execute(
+                    """
+                    INSERT INTO run_model_snapshots (
+                        run_id, profile_id, capability_snapshot_id,
+                        snapshot_json, frozen_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        run_id,
+                        run_model_snapshot.profile.id,
+                        run_model_snapshot.capability.id,
+                        run_model_snapshot.model_dump_json(),
+                        int(run_model_snapshot.frozen_at.timestamp() * 1000),
+                    ),
+                )
             connection.execute(
                 "UPDATE sessions SET updated_at = ? WHERE id = ?",
                 (now, session_id),
@@ -175,6 +210,10 @@ class RunRepository(Repository):
                 "sessionId": session_id,
                 "userInput": user_input,
                 "modelId": model_id,
+                "profileId": (
+                    run_model_snapshot.profile.id
+                    if run_model_snapshot is not None else None
+                ),
                 "extensionSnapshot": json.loads(extension_snapshot_json),
             },
         )
@@ -189,6 +228,7 @@ class RunRepository(Repository):
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
+        run_model_snapshot: RunModelSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         return self.create_run(
@@ -199,6 +239,7 @@ class RunRepository(Repository):
             session_title=session_title,
             model_id=model_id,
             model_profile=model_profile,
+            run_model_snapshot=run_model_snapshot,
             extension_snapshot=extension_snapshot,
         )
 

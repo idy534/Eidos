@@ -340,6 +340,7 @@ class SessionStore:
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
+        run_model_snapshot: RunModelSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         return self._repository(self._runs).create_run(
@@ -350,6 +351,7 @@ class SessionStore:
             session_title=session_title,
             model_id=model_id,
             model_profile=model_profile,
+            run_model_snapshot=run_model_snapshot,
             extension_snapshot=extension_snapshot,
         )
 
@@ -362,6 +364,7 @@ class SessionStore:
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
+        run_model_snapshot: RunModelSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         return self._repository(self._runs).enqueue_run(
@@ -371,6 +374,7 @@ class SessionStore:
             session_title=session_title,
             model_id=model_id,
             model_profile=model_profile,
+            run_model_snapshot=run_model_snapshot,
             extension_snapshot=extension_snapshot,
         )
 
@@ -554,6 +558,7 @@ class SessionStore:
         ttft_ms: int | None = None,
         duration_ms: int | None = None,
         had_progress: bool = False,
+        retry_decision: dict[str, object] | None = None,
     ) -> bool:
         return self._repository(self._execution).complete_current_model_attempt(
             run_id,
@@ -568,6 +573,7 @@ class SessionStore:
             ttft_ms=ttft_ms,
             duration_ms=duration_ms,
             had_progress=had_progress,
+            retry_decision=retry_decision,
         )
 
     def start_retry_model_attempt(self, run_id: str) -> None:

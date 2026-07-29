@@ -127,6 +127,10 @@ class SamplingRuntime:
                         ttft_ms=interrupted.ttft_ms,
                         duration_ms=interrupted.duration_ms,
                         had_progress=error.had_progress,
+                        retry_decision={
+                            "retry": True,
+                            "reason": "transient_error",
+                        },
                     )
                     if cancel.wait(min(0.2 * 2 ** (retries - 1), 2.0)):
                         raise SamplingCancelled("sampling canceled")
@@ -141,6 +145,14 @@ class SamplingRuntime:
                     ttft_ms=interrupted.ttft_ms,
                     duration_ms=interrupted.duration_ms,
                     had_progress=error.had_progress,
+                    retry_decision={
+                        "retry": False,
+                        "reason": (
+                            "canceled"
+                            if isinstance(error, SamplingCancelled)
+                            else "non_retryable_or_exhausted"
+                        ),
+                    },
                 )
                 raise error
 
@@ -169,6 +181,13 @@ class SamplingRuntime:
                 ttft_ms=result.ttft_ms,
                 duration_ms=result.duration_ms,
                 had_progress=writer.item is not None,
+                retry_decision={
+                    "retry": False,
+                    "reason": (
+                        "invalid_completion"
+                        if invalid_completion else "completed"
+                    ),
+                },
             )
             self._check_cancel(cancel)
             if invalid_completion:

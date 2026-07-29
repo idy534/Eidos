@@ -22,6 +22,7 @@ CREATE TABLE runs (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
     user_input TEXT NOT NULL,
     model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash',
+    model_profile_id TEXT,
     model_profile_json TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN (
         'queued', 'running', 'waiting_approval', 'finalizing',

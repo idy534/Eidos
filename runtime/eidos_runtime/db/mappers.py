@@ -132,6 +132,8 @@ def _run_from_row(
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }
+    if "model_profile_id" in row.keys() and row["model_profile_id"] is not None:
+        run["profileId"] = row["model_profile_id"]
     allowed_actions = {
         "queued": ["cancel"],
         "running": ["cancel"],
@@ -185,6 +187,14 @@ def _model_attempt_from_row(row: sqlite3.Row) -> dict[str, object]:
         "resolvedModelName": row["resolved_model_name"],
         "finishReason": row["finish_reason"],
         "providerResponseId": row["provider_response_id"],
+        "leaseId": row["lease_id"],
+        "wireApi": row["wire_api"],
+        "modelId": row["model_id"],
+        "requestTimeout": row["request_timeout"],
+        "retryDecision": (
+            json.loads(row["retry_decision_json"])
+            if row["retry_decision_json"] is not None else None
+        ),
         "usage": usage,
         "errorCode": row["error_code"],
         "httpStatus": row["http_status"],

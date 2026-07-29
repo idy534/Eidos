@@ -23,6 +23,7 @@ from eidos_runtime.model_gateway.models import (  # noqa: E402
     RunModelSnapshot,
     WireAPI,
 )
+from eidos_runtime.model_gateway.gateway import legacy_profile_snapshot  # noqa: E402
 
 
 NOW = datetime(2026, 7, 30, tzinfo=UTC)
@@ -37,6 +38,8 @@ def profile(*, name: str = "DeepSeek", model_id: str = "deepseek-chat") -> Model
         auth_reference="local:credential-1",
         wire_api=WireAPI.OPENAI_CHAT_COMPLETIONS,
         model_id=model_id,
+        context_window=128_000,
+        max_output_tokens=4_096,
         reasoning_mode=ReasoningMode.NONE,
         request_timeout=30.0,
         retry_policy=RetryPolicy(max_attempts=3),
@@ -122,6 +125,36 @@ class ModelGatewayPersistenceTests(unittest.TestCase):
         )
         assert secrets.path is not None
         self.assertEqual(oct(secrets.path.stat().st_mode & 0o777), "0o600")
+
+    def test_attempts_reference_the_frozen_lease_wire_model_and_retry_decision(self) -> None:
+        value = profile()
+        verified = capability(value)
+        frozen = RunModelSnapshot(profile=value, capability=verified, frozen_at=NOW)
+        session = self.store.create_session(str(self.workspace))
+        run, _ = self.store.create_run(
+            session["id"],
+            "attempt metadata",
+            model_id=value.model_id,
+            model_profile=legacy_profile_snapshot(frozen),
+            run_model_snapshot=frozen,
+        )
+        self.store.increment_model_step(run["id"])
+        self.store.complete_current_model_attempt(
+            run["id"],
+            "failed",
+            error_code="MODEL_PROVIDER_UNAVAILABLE",
+            retry_decision={"retry": True, "reason": "transient_error"},
+        )
+
+        attempt = self.store.read_model_attempts(run["id"])[0]
+        self.assertEqual(attempt["leaseId"], frozen.lease_id)
+        self.assertEqual(attempt["wireApi"], "openai_chat_completions")
+        self.assertEqual(attempt["modelId"], value.model_id)
+        self.assertEqual(attempt["requestTimeout"], 30.0)
+        self.assertEqual(
+            attempt["retryDecision"],
+            {"retry": True, "reason": "transient_error"},
+        )
 
     def test_environment_secret_reference_never_writes_secret_file(self) -> None:
         secrets = ModelSecretStore(self.data)

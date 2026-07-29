@@ -166,3 +166,30 @@ class ModelGateway:
             registry=self.registry,
             resource_registry=self.resources,
         )
+
+
+def legacy_profile_snapshot(snapshot: RunModelSnapshot) -> ModelProfileSnapshot:
+    profile = snapshot.profile
+    context_window = snapshot.capability.context_window or profile.context_window
+    max_output_tokens = (
+        snapshot.capability.max_output_tokens or profile.max_output_tokens
+    )
+    if context_window is None or max_output_tokens is None:
+        raise ValueError("effective model limits are required")
+    return ModelProfileSnapshot(
+        provider_id=profile.provider,
+        model_id=profile.model_id,
+        wire_api={
+            WireAPI.OPENAI_RESPONSES: "openai_responses",
+            WireAPI.ANTHROPIC_MESSAGES: "anthropic_messages",
+            WireAPI.OPENAI_CHAT_COMPLETIONS: "chat_completions",
+        }[profile.wire_api],
+        context_window_tokens=context_window,
+        max_output_tokens=max_output_tokens,
+        request_timeout_seconds=profile.request_timeout,
+        supports_tools=snapshot.capability.supports_tools,
+        supports_json_schema_output=(
+            snapshot.capability.supports_structured_output
+        ),
+        supports_reasoning=profile.reasoning_mode.value != "none",
+    )
