@@ -2,7 +2,7 @@
 
 版本：v0.4（探索草案）
 
-Eidos 仍处于早期设计与实施阶段。本 PRD 描述产品方向和目标态约束；已实现能力以 [MVP Lite](../mvp-lite.md)、已完成的 [第二期实施范围](../mvp-phase-2.md) 与已完成的 [第三期实施范围](../mvp-phase-3.md) 为准。
+本 PRD 描述产品方向和目标态约束，不代表当前代码已经实现。当前能力与限制以 [当前能力](../current-capabilities.md)、[当前限制](../current-limitations.md)、代码和测试为准；旧阶段记录已归档到 [`archive/phases/`](../archive/phases/README.md)。
 
 ## 1. 产品总览
 

@@ -2,7 +2,7 @@
 
 版本：v0.4（探索草案）
 
-范围说明：本文描述目标态状态机草案。第一期基线见 [MVP Lite](../mvp-lite.md)；Execution Segment、持久 FIFO、暂停/继续、`stopped` 与对账恢复的第二期子集已按 [第二期清单](../mvp-phase-2.md) 实现。
+范围说明：本文描述目标态状态机草案。历史第一期基线见 [MVP Lite](../archive/phases/mvp-lite.md)；第二期记录见 [第二期清单](../archive/phases/mvp-phase-2.md)。当前实现以 `docs/current-*.md`、代码和测试为准。
 
 MVP Lite 当前实施状态：✅ 全局单活动 Run；✅ `running/waiting_approval/succeeded/failed/canceled/interrupted`；✅ 串行模型/工具循环与 20 Step 上限；✅ 连续两次非法响应失败；✅ Cancel、迟到审批和 worker 异常收敛；✅ 未完成 Run 启动时标记 `interrupted` 且不重放。
 

@@ -23,10 +23,11 @@ jobs:
           node-version: "22"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Test
+      - name: Create Python environment
         run: |
-          python -m venv .venv
-          source .venv/bin/activate
-          python -m pip install -r runtime/requirements.txt
-          python -m unittest discover -s runtime/tests
-          pnpm test
+          python3 -m venv .venv
+          .venv/bin/python -m pip install -r runtime/requirements.txt
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm test:seatbelt-native
+      - run: pnpm test:electron-smoke

@@ -359,6 +359,9 @@ async function startRuntime(): Promise<void> {
       modelConfigured: initialized.capabilities.modelConfigured,
       storageHealth,
     });
+    if (process.env.EIDOS_ELECTRON_SMOKE === "1") {
+      app.quit();
+    }
   } catch (error) {
     const rawMessage = error instanceof Error ? error.message : String(error);
     const safeMessage = redactLogLine(rawMessage);

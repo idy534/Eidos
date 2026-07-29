@@ -2,7 +2,7 @@
 
 版本：v0.4（探索草案）
 
-范围说明：本文描述目标态 Desktop 生命周期。Main/Runtime 通信跨阶段固定使用 [MVP Lite](../mvp-lite.md) 的 stdio JSON-RPC 边界。
+范围说明：本文描述目标态 Desktop 生命周期。历史 stdio JSON-RPC 边界见 [MVP Lite 归档](../archive/phases/mvp-lite.md)；当前实现以 `docs/current-*.md`、代码和测试为准。
 
 MVP Lite 当前实施状态：✅ Electron single-instance lock；✅ 默认 1180×800、最小 800×600 窗口；✅ Renderer 仅通过类型化 Preload 调用 Runtime；✅ Runtime stdout 协议/stderr 日志隔离；✅ Composer 固定在窗口底部、Execution Feed 独立滚动；✅ Run 完成后权威 SessionSnapshot 刷新与安全业务错误提示；✅ 退出时有界 shutdown/terminate。
 

@@ -31,6 +31,7 @@ export interface Session {
 
 export interface SessionListResult {
   items: Session[];
+  nextCursor?: string;
 }
 
 export interface DeleteSessionResult {
@@ -51,6 +52,13 @@ export interface Run {
     | "failed"
     | "canceled"
     | "interrupted";
+  runtimeState?:
+    | "queued"
+    | "thinking"
+    | "tool_executing"
+    | "waiting_approval"
+    | "finalizing"
+    | "terminal";
   modelId: ModelId;
   allowedActions?: Array<"cancel" | "approve" | "reject">;
   modelStepCount: number;
@@ -104,6 +112,7 @@ export interface Item {
   sessionId: string;
   runId: string;
   ordinal: number;
+  modelStepIndex?: number;
   kind: "user_message" | "assistant_message" | "file_change" | "command_execution" | "tool_call";
   status: "in_progress" | "completed" | "failed" | "declined" | "canceled";
   createdAt: number;
