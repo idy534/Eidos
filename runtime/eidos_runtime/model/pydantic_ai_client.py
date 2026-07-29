@@ -136,17 +136,36 @@ class PydanticAIModelClient:
         profile_spec: ModelProfileSpec,
         *,
         openai_client: AsyncOpenAI | None = None,
+        provider_client: Any | None = None,
+        profile_snapshot: ModelProfileSnapshot | None = None,
+        settings_extra_body: dict[str, object] | None = None,
+        parallel_tool_calls: bool | None = True,
+        reasoning_effort: str | None = None,
         resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self._model = model
         self._profile_spec = profile_spec
         self._openai_client = openai_client
+        self._provider_client = provider_client or openai_client
+        self._settings_extra_body = (
+            settings_extra_body
+            if settings_extra_body is not None
+            else (
+                {"thinking": {"type": "disabled"}}
+                if profile_spec.provider_id == "deepseek"
+                else None
+            )
+        )
+        self._parallel_tool_calls = parallel_tool_calls
+        self._reasoning_effort = reasoning_effort
         self._loop = _AsyncLoop(
             f"eidos-model-{profile_spec.provider_id}-{profile_spec.model_id}",
             resource_registry,
         )
         self._closed = False
-        self._profile_snapshot = profile_spec.snapshot(dict(model.profile))
+        self._profile_snapshot = (
+            profile_snapshot or profile_spec.snapshot(dict(model.profile))
+        )
 
     @classmethod
     def deepseek(
@@ -177,6 +196,7 @@ class PydanticAIModelClient:
             model,
             profile,
             openai_client=client,
+            settings_extra_body={"thinking": {"type": "disabled"}},
             resource_registry=resource_registry,
         )
 
@@ -249,12 +269,17 @@ class PydanticAIModelClient:
         tool_definitions: tuple[ModelToolDefinition, ...],
     ) -> ModelResponse:
         hit_fault("model_stream_block")
-        settings = ModelSettings(
-            max_tokens=self._profile_spec.max_output_tokens,
-            timeout=self._profile_spec.request_timeout_seconds,
-            parallel_tool_calls=True,
-            extra_body={"thinking": {"type": "disabled"}},
-        )
+        settings_values: dict[str, object] = {
+            "max_tokens": self._profile_spec.max_output_tokens,
+            "timeout": self._profile_spec.request_timeout_seconds,
+        }
+        if self._parallel_tool_calls is not None:
+            settings_values["parallel_tool_calls"] = self._parallel_tool_calls
+        if self._settings_extra_body is not None:
+            settings_values["extra_body"] = self._settings_extra_body
+        if self._reasoning_effort is not None:
+            settings_values["reasoning_effort"] = self._reasoning_effort
+        settings = ModelSettings(**settings_values)
         parameters = ModelRequestParameters(
             function_tools=(
                 [encode_tool_definition(tool) for tool in tool_definitions]
@@ -292,8 +317,8 @@ class PydanticAIModelClient:
     def close(self) -> None:
         if self._closed:
             return
-        if self._openai_client is not None:
-            self._loop.run(self._openai_client.close())
+        if self._provider_client is not None:
+            self._loop.run(self._provider_client.close())
         self._loop.close()
         self._closed = True
 

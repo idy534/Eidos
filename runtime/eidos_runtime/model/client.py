@@ -76,7 +76,11 @@ class ModelProfileSnapshot(_FrozenModel):
     schema_version: int = 1
     provider_id: str
     model_id: str
-    wire_api: Literal["chat_completions"] = "chat_completions"
+    wire_api: Literal[
+        "chat_completions",
+        "openai_responses",
+        "anthropic_messages",
+    ] = "chat_completions"
     context_window_tokens: int = Field(gt=0)
     max_output_tokens: int = Field(gt=0)
     request_timeout_seconds: float = Field(gt=0)
