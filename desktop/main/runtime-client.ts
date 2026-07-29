@@ -1200,8 +1200,21 @@ function approvalRequestFrom(
     params.kind === "command_execution"
     && typeof params.command === "string"
     && typeof params.cwd === "string"
-    && params.networkEnabled === false
+    && typeof params.networkEnabled === "boolean"
     && isPositiveInteger(params.timeoutSeconds)
+    && (
+      params.executionMode === undefined
+      || ["default_sandbox", "expanded_sandbox", "unsandboxed"].includes(String(params.executionMode))
+    )
+    && (
+      params.sandboxPermissions === undefined
+      || ["use_default", "with_additional_permissions", "require_escalated"].includes(String(params.sandboxPermissions))
+    )
+    && [params.additionalReadAccess, params.additionalWriteAccess, params.additionalExecutableAccess]
+      .every((paths) => paths === undefined || (Array.isArray(paths) && paths.every((path) => typeof path === "string")))
+    && (params.reason === undefined || typeof params.reason === "string")
+    && (params.escalationReason === undefined || typeof params.escalationReason === "string")
+    && (params.attemptOrdinal === undefined || params.attemptOrdinal === 0 || params.attemptOrdinal === 1)
   ) {
     return {
       id: message.id,
@@ -1213,8 +1226,16 @@ function approvalRequestFrom(
       summary: params.summary as string,
       command: params.command as string,
       cwd: params.cwd as string,
-      networkEnabled: false,
+      networkEnabled: params.networkEnabled as boolean,
       timeoutSeconds: params.timeoutSeconds as number,
+      executionMode: (params.executionMode ?? "default_sandbox") as NonNullable<CommandApprovalRequest["executionMode"]>,
+      sandboxPermissions: (params.sandboxPermissions ?? "use_default") as NonNullable<CommandApprovalRequest["sandboxPermissions"]>,
+      additionalReadAccess: [...(params.additionalReadAccess as string[] | undefined ?? [])],
+      additionalWriteAccess: [...(params.additionalWriteAccess as string[] | undefined ?? [])],
+      additionalExecutableAccess: [...(params.additionalExecutableAccess as string[] | undefined ?? [])],
+      reason: (params.reason as string | undefined) ?? "",
+      escalationReason: (params.escalationReason as string | undefined) ?? "",
+      attemptOrdinal: (params.attemptOrdinal ?? 0) as 0 | 1,
     };
   }
   return undefined;

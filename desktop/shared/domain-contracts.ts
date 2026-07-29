@@ -181,8 +181,16 @@ export interface CommandApprovalRequest extends ApprovalRequestBase {
   kind: "command_execution";
   command: string;
   cwd: string;
-  networkEnabled: false;
+  networkEnabled: boolean;
   timeoutSeconds: number;
+  executionMode?: "default_sandbox" | "expanded_sandbox" | "unsandboxed";
+  sandboxPermissions?: "use_default" | "with_additional_permissions" | "require_escalated";
+  additionalReadAccess?: string[];
+  additionalWriteAccess?: string[];
+  additionalExecutableAccess?: string[];
+  reason?: string;
+  escalationReason?: string;
+  attemptOrdinal?: 0 | 1;
 }
 
 export interface ExternalToolApprovalRequest extends ApprovalRequestBase {

@@ -170,7 +170,12 @@ if (runtimeClientText) {
       file_change: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "diff"],
       external_tool: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "toolName", "arguments", "provenance", "permissionProfile", "timeoutSeconds", "envNames"],
       network_access: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "toolName", "hosts", "target"],
-      command_execution: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "command", "cwd", "networkEnabled", "timeoutSeconds"],
+      command_execution: [
+        "id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary",
+        "command", "cwd", "networkEnabled", "timeoutSeconds", "executionMode",
+        "sandboxPermissions", "additionalReadAccess", "additionalWriteAccess",
+        "additionalExecutableAccess", "reason", "escalationReason", "attemptOrdinal",
+      ],
     };
     const returns = descendants(
       approvalRequest,

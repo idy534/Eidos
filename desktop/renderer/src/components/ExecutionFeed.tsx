@@ -268,9 +268,18 @@ function ProcessItem({
     const isRejecting = isResponding && respondingKindByApprovalId?.[approval.id] === "reject";
     const canApprove = !isExpired && run.allowedActions?.includes("approve") && !isResponding;
     const canReject = !isExpired && run.allowedActions?.includes("reject") && !isResponding;
+    const isUnsandboxed = approval.kind === "command_execution"
+      && approval.executionMode === "unsandboxed";
 
     return (
-      <article className={`approval-card ${isExpired ? "approval-card--expired" : ""}`} aria-labelledby={`approval-${approval.id}`}>
+      <article
+        className={[
+          "approval-card",
+          isExpired ? "approval-card--expired" : "",
+          isUnsandboxed ? "approval-card--unsandboxed" : "",
+        ].filter(Boolean).join(" ")}
+        aria-labelledby={`approval-${approval.id}`}
+      >
         <div className="approval-heading">
           <div>
             <p className="feed-label">{isExpired ? "已过期" : "需要你的批准"}</p>
@@ -285,7 +294,7 @@ function ProcessItem({
               ? `${approval.toolName}\n\nPlugin: ${approval.provenance.pluginId ?? "unknown"}\nServer: ${approval.provenance.serverId ?? "unknown"}\nprofile: ${approval.permissionProfile}\ntimeout: ${approval.timeoutSeconds}s\nenv names: ${approval.envNames.join(", ") || "none"}\narguments: ${JSON.stringify(approval.arguments, null, 2)}`
               : approval.kind === "network_access"
                 ? `tool: ${approval.toolName}\ntarget: ${approval.target}\napproved hosts: ${approval.hosts.join(", ")}`
-                : `$ ${approval.command}\n\ncwd: ${approval.cwd}\nnetwork: disabled\ntimeout: ${approval.timeoutSeconds}s`}
+                : commandApprovalDetails(approval)}
         </pre>
         {localError && <p className="approval-error" role="alert">{localError}</p>}
         <div className="approval-actions">
@@ -315,6 +324,35 @@ function ProcessItem({
   return item.toolCall.toolName === "run_shell"
     ? <ShellItem item={item} toolCall={item.toolCall} />
     : <ToolItem item={item} toolCall={item.toolCall} />;
+}
+
+function commandApprovalDetails(
+  approval: Extract<ApprovalRequest, { kind: "command_execution" }>,
+): string {
+  const executionMode = approval.executionMode ?? "default_sandbox";
+  const mode = executionMode === "unsandboxed"
+    ? "Unsandboxed"
+    : executionMode === "expanded_sandbox"
+      ? "Expanded sandbox"
+      : "Default sandbox";
+  const warning = executionMode === "unsandboxed"
+    ? "\nWARNING: This command runs with the current macOS user's permissions and may access or modify files outside the workspace, connect to services, and alter host state.\n"
+    : "";
+  return [
+    `Execution mode: ${mode}`,
+    warning,
+    `$ ${approval.command}`,
+    `cwd: ${approval.cwd}`,
+    `network: ${approval.networkEnabled ? "enabled" : "disabled"}`,
+    `timeout: ${approval.timeoutSeconds}s`,
+    `additional read: ${(approval.additionalReadAccess ?? []).join(", ") || "none"}`,
+    `additional write: ${(approval.additionalWriteAccess ?? []).join(", ") || "none"}`,
+    `additional execute: ${(approval.additionalExecutableAccess ?? []).join(", ") || "none"}`,
+    `reason: ${approval.reason || "none"}`,
+    ...(approval.escalationReason
+      ? [`escalation reason: ${approval.escalationReason}`]
+      : []),
+  ].filter(Boolean).join("\n");
 }
 
 function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
