@@ -1,0 +1,50 @@
+# Eidos 当前能力
+
+本文只列出当前代码已经实现并有测试入口的能力。
+
+## Desktop 与任务
+
+- macOS Electron Desktop，Renderer/Main 隔离，typed preload IPC。
+- 创建、分页列出、读取、重命名和删除 Session。
+- 创建、排队、执行和取消 Run；持久 FIFO 与全局单执行 slot。
+- 展示模型流式文本、ToolCall、审批、终态和恢复后的历史快照。
+- 正常退出时取消活动任务、关闭 Runtime，并在有界等待后收敛资源。
+
+## 模型与循环
+
+- DeepSeek `deepseek-v4-flash` 与 `deepseek-v4-pro`。
+- OpenAI-compatible Chat Completions/SSE，通过 Pydantic AI Direct Model API 接入。
+- 模型配置私有文件、Run 固化模型与扩展快照、模型尝试记录、usage 和有限重试。
+- 上下文构建、压缩、Run/Segment 预算、协议错误反馈、Loop Guard 和最终化。
+- `parallel_tool_calls=true` 允许模型声明多调用；Runtime 只并发安全只读批次并保持声明顺序。
+
+## 内置工具
+
+- 安全只读：`list_files`、`read_file`、`read_file_range`、`search_text`。
+- Workspace 变更：`write_file`、`apply_patch`、`delete_file`，均要求审批、版本复检和安全提交。
+- Shell：`run_shell`，要求审批，默认经 macOS Seatbelt 执行并记录有界输出、进程终态和 Workspace 变化。
+- 工具发现：`tool_search`。
+- Skill 管理：`skill_create`、`skill_install`，使用专用 Eidos-state 路径和审批。
+
+## 工具安全与结果
+
+- Pydantic/JSON Schema 输入校验、闭合 ToolSpec、Step 固化 tool set/hash。
+- ToolCall 单生命周期控制、deadline/cancel 仲裁、Durable Intent、结果验证和敏感信息扫描。
+- Canonical ToolResult、模型投影与 UI 投影；副作用不确定时保留 `sideEffectsMayExist` 和 reconciliation。
+- Workspace 路径/身份检查、敏感路径拒绝、原子文件提交和变更 manifest。
+- Shell Seatbelt fail-closed、动态权限物化、显式审批和最多一次权限升级。
+
+## 扩展
+
+- 导入、启用、禁用和移除本地 Plugin v1。
+- 内置、用户和 Plugin Skill Catalog；Run/Step 固化来源与内容 hash。
+- stdio MCP Tools、显式 Server consent、`connector`/`workspace_read` 权限档案、逐次外部工具审批。
+- MCP 和延迟工具进入统一 Registry、ToolSpec、ToolResult 与 provenance。
+
+## 持久化、事件与恢复
+
+- SQLite schema v7，私有数据目录、单实例状态锁、WAL、完整性检查和 health-only 失败模式。
+- Session/Run/Item/ToolCall、审批、Segment/Step/Attempt、Durable Intent、事件/Outbox、异步操作和扩展状态持久化。
+- 业务事件与 Outbox 原子提交，按数据库 event ID 投影通知；发送失败保留待投递事实。
+- 启动时收敛未完成 Run、ToolCall、审批和资源状态，不自动重放可能产生副作用的操作。
+- `ResourceRegistry` 跟踪 Run worker、模型循环、工具、Shell、MCP、finalization 和异步任务；成功 shutdown 要求资源清空。

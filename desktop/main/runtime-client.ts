@@ -778,6 +778,7 @@ function isRun(value: unknown): value is Run {
       "sessionId",
       "userInput",
       "status",
+      "runtimeState",
       "modelId",
       "modelStepCount",
       "allowedActions",
@@ -805,6 +806,13 @@ function isRun(value: unknown): value is Run {
       "queued", "running", "waiting_approval",
       "finalizing", "stopped", "succeeded", "failed", "canceled", "interrupted",
     ].includes(String(value.status))
+    && (
+      value.runtimeState === undefined
+      || [
+        "queued", "thinking", "tool_executing",
+        "waiting_approval", "finalizing", "terminal",
+      ].includes(String(value.runtimeState))
+    )
     && isModelId(value.modelId)
     && isNonNegativeInteger(value.modelStepCount)
     && (value.allowedActions === undefined || (

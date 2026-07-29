@@ -3,7 +3,7 @@
 版本：v0.4
 范围：Grilling Q1-Q165；第三期实施与补充 Q166-Q185
 
-本文件记录已经由产品与技术共同确认的目标态设计结论。它们仍可能被后续显式决策覆盖；只有进入 [MVP Lite](mvp-lite.md) 或阶段实施清单的条目才构成当前交付范围。PRD/TDD 与本文件冲突时应先统一文档再实现。
+本文件记录产品与技术决策的演进背景，包含历史阶段结论和目标态约束。它不是当前实现清单；判断当前行为请以 [当前架构](current-architecture.md)、[当前能力](current-capabilities.md)、[当前限制](current-limitations.md)、代码和测试为准。PRD、TDD 与归档 Phase 文档同样不能替代当前实现依据。
 
 | 编号 | 已确认决策 | 主要落点 |
 |---|---|---|
@@ -117,7 +117,7 @@
 | Q108 | Responses 只以 `response.completed` 完成；Chat 必须有合法 finish reason、完整分片、usage 和 `[DONE]`；截断/过滤暂停 Run，不执行任何 ToolCall。 | PRD 输出状态；TDD 完成判定 |
 | Q109 | MVP 固定语义无状态模型请求：Responses `store=false`，不依赖 previous response/conversation；每个 Step 从本地状态重建完整上下文。 | PRD 隐私/可恢复性；TDD Context Adapter |
 | Q110 | Responses 固定 `max_output_tokens`；Chat 仅在 Test Connection 中按确定性错误协商 `max_completion_tokens`/`max_tokens` 并把结果固化到 snapshot。 | PRD 兼容性；TDD 参数协商 |
-| Q111 | 工具集非空的普通/协议纠正请求在两种 wire API 中固定 `parallel_tool_calls=true`；这只允许模型同响应提出多调用，Runtime 仍串行执行并强制批次规则。 | PRD 工具效率；TDD 请求控制 |
+| Q111 | 工具集非空的普通/协议纠正请求固定 `parallel_tool_calls=true`；它只允许模型同响应提出多调用。Runtime 仅并发 `parallel_safe` 的安全只读批次，Shell、副作用和外部工具保持独占，结果按模型声明顺序返回。 | 当前 Tool Dispatcher/ToolCallRuntime；TDD 请求控制 |
 | Q112 | Test Connection 使用严格两阶段 ToolCall/ToolResult probe：首阶段单一工具 `required` 且禁止 parallel，次阶段回传固定结果并使用 `tool_choice=none`。 | PRD 能力测试；TDD probe 协议 |
 | Q113 | 工具集非空的普通/纠正请求固定 `tool_choice=auto`；空工具集与 Finalization 不发 tools、固定 `tool_choice=none` 且不发 `parallel_tool_calls`；Profile 不得覆盖。 | PRD Agent Loop；TDD 请求构造 |
 | Q114 | 两种 wire API 的 function tool 定义都显式发送 `strict=false`；Provider strict 不是安全边界，Runtime 本地 schema 校验始终是执行授权依据。 | PRD 兼容性；TDD Tool schema |

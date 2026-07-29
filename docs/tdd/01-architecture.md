@@ -2,7 +2,7 @@
 
 版本：v0.4（探索草案）
 
-本文描述跨阶段稳定的系统边界。第一期和后续目标态都使用 [MVP Lite](../mvp-lite.md) 已验证的 stdio JSON-RPC 2.0；本地不再规划 loopback HTTP/SSE、随机端口、Bearer Token 或 FastAPI 控制面。
+本文描述目标态系统边界。历史 [MVP Lite](../archive/phases/mvp-lite.md) 记录了 stdio JSON-RPC 2.0 的早期验证；当前实现以 `docs/current-*.md`、代码和测试为准。
 
 当前实现已具备 Renderer/Preload/Main/Python Runtime 四层骨架、双向 JSON-RPC、SQLite、远端模型 HTTP/SSE、文件工具、审批和 Seatbelt Shell。目标态章节描述的是演进方向，不表示模块已经全部落地。
 

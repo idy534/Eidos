@@ -5,7 +5,7 @@
 ## 版本
 
 - Git commit：`697208d7cf33dedf0f3508246ac4bcaae7e655ec`
-- MVP Lite：`docs/mvp-lite.md` 当前已完成版本
+- MVP Lite：`mvp-lite.md` 历史完成版本
 - JSON-RPC：v1
 - Runtime：0.1.0
 - SQLite schema：一期隐式 schema，无 revision row

@@ -2,7 +2,7 @@
 
 版本：v0.4（探索草案）
 
-范围说明：本文描述目标态用户体验草案。第一期只实现 [MVP Lite](../mvp-lite.md) 定义的 Workspace Mode、单活动 Run 和最小 Execution Feed。
+范围说明：本文描述目标态用户体验草案。第一期历史范围见 [MVP Lite 归档](../archive/phases/mvp-lite.md)；当前实现以 `docs/current-*.md`、代码和测试为准。
 
 ## 1. Workbench 信息架构
 

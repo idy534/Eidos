@@ -2,7 +2,7 @@
 
 版本：v0.4（探索草案）
 
-范围说明：本文保留目标态工具契约草案。第一期工具集合、审批和安全底线以 [MVP Lite](../mvp-lite.md) 为准。
+范围说明：本文保留目标态工具契约草案。第一期历史工具集合、审批和安全底线见 [MVP Lite 归档](../archive/phases/mvp-lite.md)；当前实现以 `docs/current-*.md`、代码和测试为准。
 
 MVP Lite 当前实施状态：✅ 只读三工具；✅ `write_file/apply_patch` 候选与完整 diff；✅ Runtime→Main 双向审批、拒绝零副作用、取消/迟到响应；✅ fd-relative Workspace Guard；✅ Seatbelt 内 `RENAME_EXCL` 新建与 `RENAME_SWAP` 旧 hash CAS/回滚；✅ 原子提交读回与不确定副作用标记；✅ `run_shell` 逐次审批、默认断网、干净环境、敏感/硬链接预检、Workspace/cwd 身份复检、进程组 timeout/cancel/同组后台清理与有界输出。MVP Lite 不宣称 native guardian、脱离 PGID 的后代清理或对抗性同用户 TOCTOU 防护。
 

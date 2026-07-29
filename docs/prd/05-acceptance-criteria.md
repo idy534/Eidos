@@ -2,7 +2,7 @@
 
 版本：v0.4（探索草案）
 
-范围说明：本文是目标态验收集合，不是当前阶段退出清单。第一期、第二期和第三期验收分别见 [MVP Lite](../mvp-lite.md)、[第二期实施范围](../mvp-phase-2.md) 与 [第三期实施范围](../mvp-phase-3.md)。
+范围说明：本文是目标态验收集合，不是当前实现验收清单。第一期、第二期和第三期历史验收分别见 [MVP Lite](../archive/phases/mvp-lite.md)、[第二期实施范围](../archive/phases/mvp-phase-2.md) 与 [第三期实施范围](../archive/phases/mvp-phase-3.md)。
 
 ## 1. 产品闭环
 

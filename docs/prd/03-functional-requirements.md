@@ -2,11 +2,11 @@
 
 版本：v0.4（探索草案）
 
-范围说明：本文件是目标态功能合同索引。第一期、第二期与第三期范围分别以 [MVP Lite](../mvp-lite.md)、[第二期实施范围](../mvp-phase-2.md) 和 [第三期实施范围](../mvp-phase-3.md) 为准。
+范围说明：本文件是目标态功能合同索引。第一期、第二期与第三期历史范围分别见 [MVP Lite](../archive/phases/mvp-lite.md)、[第二期实施范围](../archive/phases/mvp-phase-2.md) 和 [第三期实施范围](../archive/phases/mvp-phase-3.md)；当前实现以 `docs/current-*.md`、代码和测试为准。
 
-MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 `Session/Run/Item/ToolCall` 最小事实；✅ 串行 Agent Loop 与 20 Step 上限；✅ `list_files/read_file/search_text`；✅ 模型流、基础 Execution Feed 与真实 DeepSeek 联网闭环；✅ Cancel 与异常 `interrupted`；✅ 本机私有 DeepSeek 配置；✅ `write_file/apply_patch` 完整 diff、逐次审批、hash/CAS 复检和原子提交；✅ `run_shell` 逐次审批、Seatbelt 默认断网、环境隔离、Homebrew Toolchain、有界输出、timeout/取消。不能把这些 ✅ 外推为本文件目标态条目已全部满足。
+旧 MVP Lite 状态说明已移入历史归档，不再用于判断当前实现。本文件中的 F 编号是目标态需求；当前能力与限制以 `docs/current-*.md`、代码和测试为准。
 
-模块阅读索引：Desktop/Workspace `F001-F006,F140-F143`；Runtime 与恢复 `F007-F011,F023-F040,F127-F139`；文件、Shell 与安全 `F012-F022,F041-F073`；模型与上下文 `F028,F031,F033,F036-F039,F074-F096,F142`；工具契约与结果 `F097-F126`。编号保持稳定，阶段是否实施仍以 `mvp-lite.md` 和 `mvp-phase-2.md` 为准。
+模块阅读索引：Desktop/Workspace `F001-F006,F140-F143`；Runtime 与恢复 `F007-F011,F023-F040,F127-F139`；文件、Shell 与安全 `F012-F022,F041-F073`；模型与上下文 `F028,F031,F033,F036-F039,F074-F096,F142`；工具契约与结果 `F097-F126`。编号保持稳定；当前是否实现以 `docs/current-*.md`、代码和测试为准。
 
 ## 1. 目标态功能清单
 

@@ -22,7 +22,9 @@
     "test:renderer-state": "node scripts/check-renderer-test-discovery.mjs && node --test \"dist/renderer-test/**/*.test.js\"",
     "test:renderer-behavior": "vitest run --config vitest.renderer.config.ts",
     "test:main": "pnpm build:main && node --test \"dist/main/*.test.js\"",
-    "test:desktop": "pnpm build && pnpm test:contracts && pnpm test:renderer-state && pnpm test:renderer-behavior && pnpm test:main"
+    "test:desktop": "pnpm build && pnpm test:contracts && pnpm test:renderer-state && pnpm test:renderer-behavior && pnpm test:main",
+    "test:seatbelt-native": ".venv/bin/python scripts/test-seatbelt-native.py",
+    "test:electron-smoke": "node scripts/electron-smoke.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",

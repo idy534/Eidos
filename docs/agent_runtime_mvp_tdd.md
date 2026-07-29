@@ -2,7 +2,7 @@
 
 版本：v0.4
 
-第一期实现范围请先阅读 [MVP Lite](mvp-lite.md)。
+当前实现请先阅读 [当前架构](current-architecture.md)；第一期历史范围见 [MVP Lite 归档](archive/phases/mvp-lite.md)。
 
 TDD 已按实现边界拆分，请从 [TDD 索引](tdd/README.md) 开始阅读。
 

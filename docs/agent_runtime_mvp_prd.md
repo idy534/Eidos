@@ -2,7 +2,7 @@
 
 版本：v0.4
 
-第一期实现范围请先阅读 [MVP Lite](mvp-lite.md)。
+当前实现请先阅读 [当前能力](current-capabilities.md)；第一期历史范围见 [MVP Lite 归档](archive/phases/mvp-lite.md)。
 
 PRD 已按职责拆分，请从 [PRD 索引](prd/README.md) 开始阅读。
 

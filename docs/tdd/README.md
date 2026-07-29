@@ -2,7 +2,7 @@
 
 版本：v0.4（探索草案）
 
-本 TDD 先定义稳定边界和模块关系，再由各章节描述模块内部合同。已实现能力以 [MVP Lite](../mvp-lite.md)、已完成的 [第二期清单](../mvp-phase-2.md) 与已完成的 [第三期清单](../mvp-phase-3.md) 为准；清单外合同仍是目标态草案。
+本 TDD 描述目标技术设计和长期约束，不代表当前代码已经实现。当前架构以 [当前架构](../current-architecture.md)、代码和测试为准；旧阶段记录已归档到 [`archive/phases/`](../archive/phases/README.md)。
 
 ## 1. 系统全景
 
