@@ -40,6 +40,9 @@ EXPECTED_TABLES = {
     "input_mailbox",
     "async_operations",
     "event_outbox",
+    "model_profiles",
+    "model_capability_snapshots",
+    "run_model_snapshots",
 }
 
 EXPECTED_COLUMNS = {
@@ -73,6 +76,10 @@ EXPECTED_COLUMNS = {
     },
     "approvals": {
         "request_json", "attempt_ordinal", "approval_kind",
+    },
+    "model_attempts": {
+        "lease_id", "wire_api", "model_id", "request_timeout",
+        "retry_decision_json",
     },
     "tool_attempts": {
         "tool_call_id", "ordinal", "sandbox_type", "sandbox_requested",

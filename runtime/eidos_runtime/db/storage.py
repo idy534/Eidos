@@ -37,6 +37,7 @@ from eidos_runtime.db.repositories import (
     ContextRepository,
     ExecutionRepository,
     ExtensionRepository,
+    ModelProfileRepository,
     RunRepository,
     SessionRepository,
 )
@@ -46,6 +47,11 @@ from eidos_runtime.db.repositories.sessions import DEFAULT_LIST_LIMIT
 from eidos_runtime.db.schema import SCHEMA_VERSION
 from eidos_runtime.model.client import ModelProfileSnapshot, ModelUsage
 from eidos_runtime.model.config import DEFAULT_MODEL_ID
+from eidos_runtime.model_gateway.models import (
+    CapabilitySnapshot,
+    ModelProfile,
+    RunModelSnapshot,
+)
 from eidos_runtime.runtime.contracts import ProgressSignature
 
 
@@ -62,6 +68,7 @@ class SessionStore:
         self._extensions: ExtensionRepository | None = None
         self._context: ContextRepository | None = None
         self._async_operations: AsyncOperationRepository | None = None
+        self._model_profiles: ModelProfileRepository | None = None
 
     def initialize(self) -> None:
         self._database.initialize()
@@ -82,6 +89,42 @@ class SessionStore:
         self._extensions = ExtensionRepository(self._database)
         self._context = ContextRepository(self._database)
         self._async_operations = AsyncOperationRepository(self._database)
+        self._model_profiles = ModelProfileRepository(self._database)
+
+    def create_model_profile(self, profile: ModelProfile) -> ModelProfile:
+        return self._repository(self._model_profiles).create(profile)
+
+    def update_model_profile(self, profile: ModelProfile) -> ModelProfile:
+        return self._repository(self._model_profiles).update(profile)
+
+    def get_model_profile(self, profile_id: str) -> ModelProfile | None:
+        return self._repository(self._model_profiles).get(profile_id)
+
+    def list_model_profiles(self) -> list[ModelProfile]:
+        return self._repository(self._model_profiles).list()
+
+    def delete_model_profile(self, profile_id: str) -> None:
+        self._repository(self._model_profiles).delete(profile_id)
+
+    def save_model_capability_snapshot(
+        self, snapshot: CapabilitySnapshot
+    ) -> CapabilitySnapshot:
+        return self._repository(self._model_profiles).save_capability(snapshot)
+
+    def get_model_capability_snapshot(
+        self, profile_id: str
+    ) -> CapabilitySnapshot | None:
+        return self._repository(self._model_profiles).latest_capability(profile_id)
+
+    def save_run_model_snapshot(
+        self, run_id: str, snapshot: RunModelSnapshot
+    ) -> RunModelSnapshot:
+        return self._repository(self._model_profiles).save_run_snapshot(
+            run_id, snapshot
+        )
+
+    def read_run_model_snapshot(self, run_id: str) -> RunModelSnapshot:
+        return self._repository(self._model_profiles).read_run_snapshot(run_id)
 
     @property
     def data_directory(self) -> Path | None:

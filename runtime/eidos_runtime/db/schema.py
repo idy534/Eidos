@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -55,6 +55,31 @@ CREATE TABLE runs (
 CREATE UNIQUE INDEX one_active_run
 ON runs ((1))
 WHERE status IN ('running', 'finalizing');
+
+CREATE TABLE model_profiles (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL UNIQUE,
+    profile_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE model_capability_snapshots (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    profile_id TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    probed_at INTEGER NOT NULL
+);
+
+CREATE TABLE run_model_snapshots (
+    run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE RESTRICT,
+    profile_id TEXT NOT NULL,
+    capability_snapshot_id TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    frozen_at INTEGER NOT NULL
+);
 
 CREATE TABLE items (
     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -221,6 +246,11 @@ CREATE TABLE model_attempts (
     resolved_model_name TEXT,
     finish_reason TEXT,
     provider_response_id TEXT,
+    lease_id TEXT,
+    wire_api TEXT,
+    model_id TEXT,
+    request_timeout REAL,
+    retry_decision_json TEXT,
     usage_json TEXT,
     error_code TEXT,
     http_status INTEGER,
