@@ -212,7 +212,7 @@ export function userFacingError(cause: unknown): string {
   if (message === "这个审批已经失效。") {
     return message;
   }
-  return "操作失败，请查看 Runtime 日志。";
+  return "操作失败";
 }
 
 export function terminalRunPresentation(
@@ -220,18 +220,18 @@ export function terminalRunPresentation(
 ): RunStatusPresentation | undefined {
   switch (run.status) {
     case "succeeded":
-      return { label: "Run 已完成", tone: "success" };
+      return { label: "已完成", tone: "success" };
     case "failed":
       return {
-        label: `Run 失败：${run.errorCode ?? "UNKNOWN_ERROR"}`,
+        label: `失败：${run.errorCode ?? "UNKNOWN_ERROR"}`,
         tone: "error",
       };
     case "canceled":
-      return { label: "Run 已取消", tone: "neutral" };
+      return { label: "已取消", tone: "neutral" };
     case "interrupted":
-      return { label: "Run 已中断，未自动恢复", tone: "warning" };
+      return { label: "已中断，未自动恢复", tone: "warning" };
     case "stopped":
-      return { label: "Run 已达到执行上限", tone: "warning" };
+      return { label: "已达到执行上限", tone: "warning" };
     case "queued":
     case "finalizing":
     case "running":

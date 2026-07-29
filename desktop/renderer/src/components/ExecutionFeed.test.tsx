@@ -99,7 +99,7 @@ test("folds tool execution before the final answer and omits the success pill", 
   assert.match(html, /已处理 1m 5s/);
   assert.match(html, /已运行 git diff --check/);
   assert.match(html, /无输出/);
-  assert.doesNotMatch(html, /Run 已完成/);
+  assert.doesNotMatch(html, /已完成/);
   assert.ok(html.indexOf("</details>") < html.indexOf("<h1>检查完成</h1>"));
 });
 
