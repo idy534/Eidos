@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -80,6 +80,23 @@ CREATE TABLE run_model_snapshots (
     capability_snapshot_id TEXT NOT NULL,
     snapshot_json TEXT NOT NULL,
     frozen_at INTEGER NOT NULL
+);
+
+CREATE TABLE run_resolution_snapshots (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    run_id TEXT NOT NULL UNIQUE REFERENCES runs(id) ON DELETE RESTRICT,
+    snapshot_hash TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE rule_resolution_snapshots (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    snapshot_hash TEXT NOT NULL UNIQUE,
+    snapshot_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
 );
 
 CREATE TABLE items (
@@ -205,6 +222,18 @@ CREATE TABLE execution_segments (
     UNIQUE(run_id, ordinal)
 );
 
+CREATE TABLE step_resolution_snapshots (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    run_snapshot_id TEXT NOT NULL
+        REFERENCES run_resolution_snapshots(id) ON DELETE RESTRICT,
+    rule_snapshot_id TEXT NOT NULL
+        REFERENCES rule_resolution_snapshots(id) ON DELETE RESTRICT,
+    snapshot_hash TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
 CREATE TABLE steps (
     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
@@ -215,6 +244,8 @@ CREATE TABLE steps (
         'running', 'completed', 'failed', 'canceled'
     )),
     observed_reconciliation_epoch INTEGER NOT NULL DEFAULT 0,
+    resolution_snapshot_id TEXT NOT NULL
+        REFERENCES step_resolution_snapshots(id) ON DELETE RESTRICT,
     tool_snapshot_json TEXT,
     tool_set_hash TEXT,
     progress_signature_json TEXT,

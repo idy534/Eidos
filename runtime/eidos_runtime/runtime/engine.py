@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import threading
@@ -8,6 +7,7 @@ import time
 from typing import Callable
 
 from eidos_runtime.context.builder import ContextBuilder
+from eidos_runtime.context.project_rules import ProjectRuleResolver
 from eidos_runtime.context.compactor import ContextCompactionError, ContextCompactor
 from eidos_runtime.db.storage import (
     ContextLimitExceeded,
@@ -50,6 +50,7 @@ from eidos_runtime.sandbox.sensitive import (
     SensitiveScanner,
     default_scanner,
 )
+from eidos_runtime.sandbox.permissions import BasePermissionProfile
 
 
 EMPTY_EXTENSION_SNAPSHOT = {
@@ -163,6 +164,7 @@ class RuntimeEngine:
         context_builder = ContextBuilder(self.store)
         compactor = ContextCompactor(self.store)
         step_factory = StepContextFactory(self.store)
+        rule_resolver = ProjectRuleResolver()
         sampling = SamplingRuntime(
             self.store, self.model, self.events, self.sensitive
         )
@@ -198,12 +200,18 @@ class RuntimeEngine:
             tool_definitions = tuple(
                 dispatcher.model_definitions(snapshot.activated_names)
             )
+            workspace = self.store.workspace_for_run(run.run_id)
+            rule_snapshot = rule_resolver.resolve(
+                workspace.path,
+                workspace.path,
+            )
             built = context_builder.build(
                 run.run_id,
                 tool_definitions=tool_definitions,
                 retained_context=resources.retained_context,
                 selected_skill_context=resources.selected_skill_context,
                 extra_context=run.model_context,
+                rule_resolution_snapshot=rule_snapshot,
             )
             budget_fact = self.store.run_budget(run.run_id)
             compaction_guard = guard.observe_compaction_overflow(
@@ -269,6 +277,7 @@ class RuntimeEngine:
                     resources,
                     model_context=built.model_context,
                     tool_snapshot=snapshot,
+                    rule_resolution_snapshot=rule_snapshot,
                     context_budget=built.budget,
                     workspace_version=built.facts.workspace_version,
                     new_user_input_ids=tuple(item_id for item_id, _content in injected),
@@ -315,6 +324,9 @@ class RuntimeEngine:
                 self.sensitive,
                 self.state_machine,
                 shell_available=self.shell_available,
+                base_permissions=BasePermissionProfile.model_validate_json(
+                    step.resolution_snapshot.permission_profile_json
+                ),
                 resource_registry=self.resources,
             )
             validation = tools.validate(step, sampled)
@@ -464,12 +476,7 @@ class RuntimeEngine:
         run: dict[str, object],
         extension_snapshot: dict[str, object],
     ) -> RunContext:
-        encoded = json.dumps(
-            extension_snapshot,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
+        resolution = self.store.read_run_resolution_snapshot(str(run["id"]))
         return RunContext(
             run_id=str(run["id"]),
             session_id=str(run["sessionId"]),
@@ -477,7 +484,8 @@ class RuntimeEngine:
             model_profile=self.store.read_model_profile(str(run["id"])),
             model_context=(),
             extension_snapshot=extension_snapshot,
-            extension_snapshot_hash=hashlib.sha256(encoded).hexdigest(),
+            extension_snapshot_hash=resolution.extension_snapshot_hash,
+            resolution_snapshot=resolution,
         )
 
     def _emit_started(self, run_id: str, run: dict[str, object]) -> None:

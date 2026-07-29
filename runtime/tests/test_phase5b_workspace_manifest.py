@@ -33,6 +33,7 @@ from eidos_runtime.runtime.tool_runtime import (  # noqa: E402
     ShellToolHandler,
     _HandlerDependencies,
 )
+from eidos_runtime.sandbox.permissions import BasePermissionProfile  # noqa: E402
 from eidos_runtime.sandbox.sensitive import default_scanner  # noqa: E402
 from eidos_runtime.tools.workspace import ToolExecutor  # noqa: E402
 
@@ -197,6 +198,11 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             True,
             self.controller.execute_side_effect,
             self.controller.authorize_side_effect,
+            base_permissions=BasePermissionProfile.model_validate_json(
+                self.store.read_step_resolution_snapshots(
+                    self.run["id"]
+                )[0].permission_profile_json
+            ),
         )
         runtime_context.handler = ShellToolHandler(dependencies)
 

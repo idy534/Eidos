@@ -53,6 +53,11 @@ from eidos_runtime.model_gateway.models import (
     RunModelSnapshot,
 )
 from eidos_runtime.runtime.contracts import ProgressSignature
+from eidos_runtime.runtime.resolution import (
+    RuleResolutionSnapshot,
+    RunResolutionSnapshot,
+    StepResolutionSnapshot,
+)
 
 
 SCHEMA_REVISION = SCHEMA_VERSION
@@ -392,6 +397,11 @@ class SessionStore:
     def read_model_profile(self, run_id: str) -> ModelProfileSnapshot:
         return self._repository(self._runs).read_model_profile(run_id)
 
+    def read_run_resolution_snapshot(
+        self, run_id: str
+    ) -> RunResolutionSnapshot:
+        return self._repository(self._runs).read_resolution_snapshot(run_id)
+
     def run_budget(self, run_id: str) -> dict[str, int]:
         return self._repository(self._runs).run_budget(run_id)
 
@@ -501,16 +511,34 @@ class SessionStore:
         run_id: str,
         *,
         tool_snapshot: dict[str, object] | None = None,
+        rule_resolution_snapshot: RuleResolutionSnapshot | None = None,
+        resolution_snapshot: StepResolutionSnapshot | None = None,
     ) -> int:
         return self._repository(self._execution).increment_model_step(
             run_id,
             tool_snapshot=tool_snapshot,
+            rule_resolution_snapshot=rule_resolution_snapshot,
+            resolution_snapshot=resolution_snapshot,
         )
 
     def read_step_tool_snapshot(
         self, run_id: str, model_step_index: int
     ) -> dict[str, object]:
         return self._repository(self._execution).read_step_tool_snapshot(run_id, model_step_index)
+
+    def read_rule_resolution_snapshot(
+        self, snapshot_id: str
+    ) -> RuleResolutionSnapshot:
+        return self._repository(
+            self._execution
+        ).read_rule_resolution_snapshot(snapshot_id)
+
+    def read_step_resolution_snapshots(
+        self, run_id: str
+    ) -> tuple[StepResolutionSnapshot, ...]:
+        return self._repository(
+            self._execution
+        ).read_step_resolution_snapshots(run_id)
 
     def read_current_step_fact(self, run_id: str) -> dict[str, object]:
         return self._repository(self._execution).read_current_step_fact(run_id)

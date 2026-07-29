@@ -37,6 +37,10 @@ test("shares closed extension vectors with the Python runtime", async () => {
     (fixture.stepToolSnapshot as { deferredNames: string[] }).deferredNames,
     ["mcp__fixture__echo"],
   );
+  assert.equal(
+    (fixture.stepResolutionReview as { requestHash: string }).requestHash,
+    "5".repeat(64),
+  );
 });
 
 
@@ -107,7 +111,7 @@ test("creates and reads a persisted session across runtime restarts", async () =
 
     assert.deepEqual(listed, { items: [created] });
     assert.deepEqual(snapshot, {
-      session: created, runs: [], items: [], throughEventId: 1,
+      session: created, runs: [], items: [], stepResolutions: [], throughEventId: 1,
     });
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });

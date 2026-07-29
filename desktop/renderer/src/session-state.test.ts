@@ -54,6 +54,7 @@ function snapshot(status: Run["status"], content: string): SessionSnapshot {
     session,
     runs: [run(status)],
     items: [assistant(content, status === "running" ? "in_progress" : "completed")],
+    stepResolutions: [],
   };
 }
 
@@ -149,7 +150,12 @@ test("a new run's user item stays after the preceding run's items", () => {
     content: "Second question",
   };
   const result = applyNotification(
-    { session, runs: [], items: [previousUser, previousAssistant] },
+    {
+      session,
+      runs: [],
+      items: [previousUser, previousAssistant],
+      stepResolutions: [],
+    },
     {
       method: "item/started",
       params: { sessionId: session.id, runId: newUser.runId, item: newUser },

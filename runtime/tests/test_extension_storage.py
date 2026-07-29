@@ -15,6 +15,7 @@ from eidos_runtime.protocol.schemas import (  # noqa: E402
     PluginRecordDto,
     RunExtensionSnapshotDto,
     SkillMetadataDto,
+    StepResolutionReviewDto,
     StepToolSnapshotDto,
 )
 from eidos_runtime.tools.registry import ToolProvenance  # noqa: E402
@@ -75,6 +76,12 @@ class ExtensionStorageTests(unittest.TestCase):
             fixture["stepToolSnapshot"],
         )
         self.assertEqual(
+            StepResolutionReviewDto.model_validate(
+                fixture["stepResolutionReview"]
+            ).to_json_value(),
+            fixture["stepResolutionReview"],
+        )
+        self.assertEqual(
             ToolProvenance.model_validate(fixture["toolProvenance"]).model_dump(
                 mode="json", by_alias=True, exclude_none=True
             ),
@@ -100,7 +107,7 @@ class ExtensionStorageTests(unittest.TestCase):
         connection = self.store.connection
         assert connection is not None
 
-        self.assertEqual(SCHEMA_REVISION, 8)
+        self.assertEqual(SCHEMA_REVISION, 9)
         self.assertIn(
             "extension_snapshot_json",
             {row[1] for row in connection.execute("PRAGMA table_info(runs)")},

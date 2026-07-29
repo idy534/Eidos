@@ -356,6 +356,7 @@ export function AppShell({ runtime }: AppShellProps) {
             <ExecutionFeed
               items={snapshot.items}
               runs={snapshot.runs}
+              stepResolutions={snapshot.stepResolutions}
               approvals={approvals.filter((a) => a.sessionId === snapshot.session.id)}
               respondingApprovalIds={respondingApprovalIds}
               respondingKindByApprovalId={respondingKindByApprovalId}

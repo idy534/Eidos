@@ -212,15 +212,19 @@ class RuntimeArchitectureTests(unittest.TestCase):
     def test_snapshot_contracts_are_frozen_and_forbid_extra_fields(self) -> None:
         from eidos_runtime.runtime.contracts import RunContext
 
-        context = RunContext(
-            run_id="run",
-            session_id="session",
-            model_id="deepseek-v4-flash",
-            model_profile=default_profile_snapshot("deepseek-v4-flash"),
-            model_context=(),
-            extension_snapshot={},
-            extension_snapshot_hash="0" * 64,
-        )
+        with self.runtime() as (store, session, _workspace):
+            run, _ = store.create_run(session["id"], "snapshot")
+            resolution = store.read_run_resolution_snapshot(run["id"])
+            context = RunContext(
+                run_id=run["id"],
+                session_id=session["id"],
+                model_id="deepseek-v4-flash",
+                model_profile=default_profile_snapshot("deepseek-v4-flash"),
+                model_context=(),
+                extension_snapshot=run["extensionSnapshot"],
+                extension_snapshot_hash=resolution.extension_snapshot_hash,
+                resolution_snapshot=resolution,
+            )
         with self.assertRaises(ValidationError):
             context.run_id = "changed"  # type: ignore[misc]
         with self.assertRaises(ValidationError):

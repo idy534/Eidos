@@ -107,17 +107,26 @@ class RuntimeStateConsistencyTests(unittest.TestCase):
         self.store.increment_model_step(run["id"])
         connection = self.store.connection
         assert connection is not None
-        segment_id = connection.execute(
-            "SELECT id FROM execution_segments WHERE run_id = ?", (run["id"],)
-        ).fetchone()["id"]
+        step = connection.execute(
+            """
+            SELECT segment_id, resolution_snapshot_id
+            FROM steps WHERE run_id = ?
+            """,
+            (run["id"],),
+        ).fetchone()
         with self.assertRaises(sqlite3.IntegrityError):
             connection.execute(
                 """
                 INSERT INTO steps
-                    (id, run_id, segment_id, ordinal, status, created_at)
-                VALUES ('duplicate-step', ?, ?, 2, 'running', 1)
+                    (id, run_id, segment_id, ordinal, status,
+                     resolution_snapshot_id, created_at)
+                VALUES ('duplicate-step', ?, ?, 2, 'running', ?, 1)
                 """,
-                (run["id"], segment_id),
+                (
+                    run["id"],
+                    step["segment_id"],
+                    step["resolution_snapshot_id"],
+                ),
             )
 
     def test_only_one_running_attempt_per_step(self) -> None:

@@ -5,7 +5,16 @@ import sqlite3
 
 from eidos_runtime.context.facts import CompactSummary
 from eidos_runtime.model.client import ModelUsage
-from eidos_runtime.protocol.schemas import ItemDto, RunDto, SessionDto
+from eidos_runtime.protocol.schemas import (
+    ItemDto,
+    RunDto,
+    SessionDto,
+    StepResolutionReviewDto,
+)
+from eidos_runtime.runtime.resolution import (
+    RuleResolutionSnapshot,
+    StepResolutionSnapshot,
+)
 
 
 MAX_SNAPSHOT_TEXT_BYTES = 192 * 1024
@@ -92,6 +101,37 @@ def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
         separators=(",", ":"),
         sort_keys=True,
     )
+
+
+def _step_resolution_review(
+    row: sqlite3.Row,
+) -> dict[str, object]:
+    step = StepResolutionSnapshot.model_validate_json(row["step_snapshot_json"])
+    rules = RuleResolutionSnapshot.model_validate_json(row["rule_snapshot_json"])
+    return StepResolutionReviewDto.model_validate({
+        "id": step.id,
+        "stepId": row["step_id"],
+        "runId": row["run_id"],
+        "stepOrdinal": row["ordinal"],
+        "snapshotHash": step.snapshot_hash,
+        "requestHash": step.final_request_hash,
+        "ruleSnapshotId": rules.id,
+        "ruleSnapshotHash": rules.snapshot_hash,
+        "rules": [
+            {
+                **rule.model_dump(mode="json", exclude={"content"}),
+            }
+            for rule in rules.rules
+        ],
+        "shadowed": [
+            candidate.model_dump(mode="json")
+            for candidate in rules.shadowed
+        ],
+        "warnings": [
+            warning.model_dump(mode="json")
+            for warning in rules.warnings
+        ],
+    }).to_json_value()
 
 def _truncate_snapshot_text(value: str) -> str:
     encoded = value.encode("utf-8")

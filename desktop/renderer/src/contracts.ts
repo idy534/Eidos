@@ -14,6 +14,7 @@ export type {
   Session,
   SessionListResult,
   SessionSnapshot,
+  StepResolutionReview,
   DeleteSessionResult,
   Run,
   Item,

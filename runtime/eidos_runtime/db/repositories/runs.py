@@ -37,6 +37,12 @@ from eidos_runtime.runtime.state_machine import (
     SegmentStatus,
     ensure_transition,
 )
+from eidos_runtime.runtime.resolution import (
+    RunResolutionSnapshot,
+    WorkspaceIdentitySnapshot,
+    canonical_json,
+    create_run_resolution_snapshot,
+)
 
 EMPTY_EXTENSION_SNAPSHOT = {
     "schemaVersion": 1,
@@ -112,7 +118,12 @@ class RunRepository(Repository):
             connection: sqlite3.Connection,
         ) -> dict[str, object]:
             session = connection.execute(
-                "SELECT id, workspace_root, title FROM sessions WHERE id = ?", (session_id,)
+                """
+                SELECT id, workspace_root, workspace_dev, workspace_inode,
+                       workspace_uid, title
+                FROM sessions WHERE id = ?
+                """,
+                (session_id,),
             ).fetchone()
             if session is None:
                 raise ResourceNotFoundError("session not found")
@@ -158,6 +169,34 @@ class RunRepository(Repository):
                 if "one_active_run" in str(error) or "UNIQUE constraint failed" in str(error):
                     raise ActiveRunError("another run is active") from None
                 raise
+            run_resolution = create_run_resolution_snapshot(
+                run_id=run_id,
+                model_profile=profile,
+                run_model_snapshot=run_model_snapshot,
+                extension_snapshot=json.loads(extension_snapshot_json),
+                workspace_identity=WorkspaceIdentitySnapshot(
+                    path=session["workspace_root"],
+                    device=session["workspace_dev"],
+                    inode=session["workspace_inode"],
+                    owner=session["workspace_uid"],
+                ),
+                data_directory=self.database.data_directory,
+                created_at=now,
+            )
+            connection.execute(
+                """
+                INSERT INTO run_resolution_snapshots (
+                    id, run_id, snapshot_hash, snapshot_json, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    run_resolution.id,
+                    run_id,
+                    run_resolution.snapshot_hash,
+                    canonical_json(run_resolution.model_dump(mode="json")),
+                    now,
+                ),
+            )
             connection.execute(
                 """
                 INSERT INTO items (
@@ -314,6 +353,22 @@ class RunRepository(Repository):
         if row is None:
             raise ResourceNotFoundError("run not found")
         return _run_from_row(row)
+
+    def read_resolution_snapshot(self, run_id: str) -> RunResolutionSnapshot:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT snapshot_json FROM run_resolution_snapshots
+                WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            raise ResourceNotFoundError("run resolution snapshot not found")
+        try:
+            return RunResolutionSnapshot.model_validate_json(row["snapshot_json"])
+        except (TypeError, ValueError):
+            raise StorageError("run_resolution_snapshot_invalid") from None
 
     def read_model_profile(self, run_id: str) -> ModelProfileSnapshot:
         with self.lock:

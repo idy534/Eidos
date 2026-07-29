@@ -127,8 +127,49 @@ export interface SessionSnapshot {
   session: Session;
   runs: Run[];
   items: Item[];
+  stepResolutions: StepResolutionReview[];
   previousItemId?: string;
   throughEventId?: number;
+}
+
+export interface RuleSourceReview {
+  absolutePath: string;
+  relativePath: string;
+  filename: string;
+  contentHash: string;
+  byteCount: number;
+  includedByteCount: number;
+  directoryLevel: number;
+  selectionReason: "eidos_override" | "eidos_native" | "compatibility_fallback";
+  truncated: boolean;
+}
+
+export interface ShadowedRuleReview {
+  absolutePath: string;
+  relativePath: string;
+  filename: string;
+  directoryLevel: number;
+  reason: "higher_precedence_candidate_selected";
+}
+
+export interface RuleResolutionWarning {
+  code: "RULE_BUDGET_TRUNCATED" | "RULE_READ_ERROR" | "RULE_PATH_OUTSIDE_WORKSPACE";
+  path: string;
+  message: string;
+}
+
+export interface StepResolutionReview {
+  id: string;
+  stepId: string;
+  runId: string;
+  stepOrdinal: number;
+  snapshotHash: string;
+  requestHash: string;
+  ruleSnapshotId: string;
+  ruleSnapshotHash: string;
+  rules: RuleSourceReview[];
+  shadowed: ShadowedRuleReview[];
+  warnings: RuleResolutionWarning[];
 }
 
 export interface RuntimeEvent {

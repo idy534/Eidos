@@ -53,6 +53,52 @@ test("provides an accessible jump to the latest content control", () => {
   assert.match(html, /hidden=""/);
 });
 
+test("exposes the immutable request snapshot for review", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({ id: "user", ordinal: 1, kind: "user_message", content: "检查规则" })]}
+      runs={[run]}
+      stepResolutions={[{
+        id: `step_${"4".repeat(64)}`,
+        stepId: "step-1",
+        runId: run.id,
+        stepOrdinal: 1,
+        snapshotHash: "4".repeat(64),
+        requestHash: "5".repeat(64),
+        ruleSnapshotId: `rule_${"6".repeat(64)}`,
+        ruleSnapshotHash: "6".repeat(64),
+        rules: [{
+          absolutePath: "/workspace/EIDOS.md",
+          relativePath: "EIDOS.md",
+          filename: "EIDOS.md",
+          contentHash: "7".repeat(64),
+          byteCount: 12,
+          includedByteCount: 12,
+          directoryLevel: 0,
+          selectionReason: "eidos_native",
+          truncated: false,
+        }],
+        shadowed: [{
+          absolutePath: "/workspace/AGENTS.md",
+          relativePath: "AGENTS.md",
+          filename: "AGENTS.md",
+          directoryLevel: 0,
+          reason: "higher_precedence_candidate_selected",
+        }],
+        warnings: [],
+      }]}
+      approvals={[]}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(html, /请求快照 · Step 1/);
+  assert.match(html, /EIDOS\.md/);
+  assert.match(html, /AGENTS\.md/);
+  assert.match(html, new RegExp("5".repeat(64)));
+});
+
 test("folds tool execution before the final answer and omits the success pill", () => {
   const items = [
     item({ id: "user", ordinal: 1, kind: "user_message", content: "检查改动" }),

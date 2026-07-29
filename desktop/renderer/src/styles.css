@@ -2050,6 +2050,24 @@ input:focus, textarea:focus {
 .run-notice--error { color: var(--danger); }
 .run-notice--warning { color: #6f5b38; }
 
+.resolution-audit {
+  max-width: 48rem;
+  margin: -0.5rem 0 1.25rem;
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+}
+.resolution-audit > summary { cursor: pointer; }
+.resolution-audit dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.25rem 0.75rem;
+}
+.resolution-audit dt { font-weight: 650; }
+.resolution-audit dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.resolution-audit h3 { margin: 0.75rem 0 0.25rem; font-size: inherit; }
+.resolution-audit ul { margin: 0; padding-left: 1.25rem; }
+.resolution-audit code { overflow-wrap: anywhere; }
+
 .tool-item { max-width: 48rem; margin: 0 0 0.45rem; color: #7a7f7a; }
 .tool-item > summary {
   display: grid;

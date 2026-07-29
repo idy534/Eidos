@@ -35,6 +35,14 @@ from eidos_runtime.db.transitions import (
 )
 from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.runtime.contracts import ProgressSignature
+from eidos_runtime.runtime.resolution import (
+    RuleResolutionSnapshot,
+    RunResolutionSnapshot,
+    StepResolutionSnapshot,
+    canonical_json,
+    canonical_sha256,
+    create_step_resolution_snapshot,
+)
 from eidos_runtime.runtime.state_machine import (
     EventType,
     RunStatus,
@@ -126,7 +134,30 @@ class ExecutionRepository(Repository):
         run_id: str,
         *,
         tool_snapshot: dict[str, object] | None = None,
+        rule_resolution_snapshot: RuleResolutionSnapshot | None = None,
+        resolution_snapshot: StepResolutionSnapshot | None = None,
     ) -> int:
+        if (rule_resolution_snapshot is None) != (resolution_snapshot is None):
+            raise ValueError("resolution snapshots must be provided together")
+        if tool_snapshot is None:
+            empty_hash = canonical_sha256({"definitions": [], "contracts": {}})
+            tool_snapshot = {
+                "schemaVersion": 1,
+                "availableNames": [],
+                "directNames": [],
+                "deferredNames": [],
+                "activatedNames": [],
+                "specHashes": {},
+                "definitionsHash": empty_hash,
+                "toolSetHash": canonical_sha256({
+                    "availableNames": [],
+                    "directNames": [],
+                    "deferredNames": [],
+                    "activatedNames": [],
+                    "specHashes": [],
+                    "definitionsHash": empty_hash,
+                }),
+            }
         tool_snapshot_json = (
             _bounded_canonical_json(tool_snapshot, code="tool_snapshot_invalid")
             if tool_snapshot is not None else None
@@ -142,6 +173,45 @@ class ExecutionRepository(Repository):
             ).fetchone()
             if run is None:
                 raise InvalidRunStateError("run is not active")
+            run_snapshot_row = connection.execute(
+                """
+                SELECT snapshot_json FROM run_resolution_snapshots
+                WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+            if run_snapshot_row is None:
+                raise StorageError("run_resolution_snapshot_invalid")
+            run_snapshot = RunResolutionSnapshot.model_validate_json(
+                run_snapshot_row["snapshot_json"]
+            )
+            if rule_resolution_snapshot is None:
+                rule_resolution_snapshot = RuleResolutionSnapshot.create(
+                    workspace_root=run_snapshot.workspace_identity.path,
+                    cwd=run_snapshot.workspace_identity.path,
+                    budget_bytes=32 * 1024,
+                    used_bytes=0,
+                    rules=(),
+                    shadowed=(),
+                    warnings=(),
+                )
+                resolution_snapshot = create_step_resolution_snapshot(
+                    run_snapshot=run_snapshot,
+                    rule_snapshot=rule_resolution_snapshot,
+                    tool_snapshot=tool_snapshot,
+                    model_context=(),
+                    tool_definitions=(),
+                    workspace_version=int(run["workspace_version"]),
+                    created_at=_now_ms(),
+                )
+            assert resolution_snapshot is not None
+            if (
+                resolution_snapshot.run_snapshot_id != run_snapshot.id
+                or resolution_snapshot.rule_resolution_snapshot_id
+                != rule_resolution_snapshot.id
+                or resolution_snapshot.tool_set_hash != tool_set_hash
+            ):
+                raise ValueError("step_resolution_snapshot_invalid")
             if run["model_step_count"] >= 80:
                 raise RunLimitReached("run step limit reached")
             if run["total_effective_ms"] >= 7_200_000:
@@ -182,15 +252,48 @@ class ExecutionRepository(Repository):
             step_ordinal = segment["step_count"] + 1
             connection.execute(
                 """
+                INSERT OR IGNORE INTO rule_resolution_snapshots (
+                    id, snapshot_hash, snapshot_json, created_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    rule_resolution_snapshot.id,
+                    rule_resolution_snapshot.snapshot_hash,
+                    canonical_json(
+                        rule_resolution_snapshot.model_dump(mode="json")
+                    ),
+                    now,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO step_resolution_snapshots (
+                    id, run_snapshot_id, rule_snapshot_id, snapshot_hash,
+                    snapshot_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    resolution_snapshot.id,
+                    resolution_snapshot.run_snapshot_id,
+                    resolution_snapshot.rule_resolution_snapshot_id,
+                    resolution_snapshot.snapshot_hash,
+                    canonical_json(resolution_snapshot.model_dump(mode="json")),
+                    resolution_snapshot.created_at,
+                ),
+            )
+            connection.execute(
+                """
                 INSERT INTO steps (
                     id, run_id, segment_id, ordinal, status,
-                    observed_reconciliation_epoch, tool_snapshot_json,
+                    observed_reconciliation_epoch, resolution_snapshot_id,
+                    tool_snapshot_json,
                     tool_set_hash, created_at
-                ) VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
                 """,
                 (
                     step_id, run_id, segment["id"], step_ordinal,
-                    run["reconciliation_epoch"], tool_snapshot_json,
+                    run["reconciliation_epoch"], resolution_snapshot.id,
+                    tool_snapshot_json,
                     tool_set_hash, now,
                 ),
             )
@@ -244,6 +347,47 @@ class ExecutionRepository(Repository):
         if not isinstance(value, dict):
             raise StorageError("tool_snapshot_invalid")
         return value
+
+    def read_rule_resolution_snapshot(
+        self, snapshot_id: str
+    ) -> RuleResolutionSnapshot:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT snapshot_json FROM rule_resolution_snapshots
+                WHERE id = ?
+                """,
+                (snapshot_id,),
+            ).fetchone()
+        if row is None:
+            raise ResourceNotFoundError("rule resolution snapshot not found")
+        try:
+            return RuleResolutionSnapshot.model_validate_json(row["snapshot_json"])
+        except (TypeError, ValueError):
+            raise StorageError("rule_resolution_snapshot_invalid") from None
+
+    def read_step_resolution_snapshots(
+        self, run_id: str
+    ) -> tuple[StepResolutionSnapshot, ...]:
+        with self.lock:
+            rows = self._connection().execute(
+                """
+                SELECT step_resolution_snapshots.snapshot_json
+                FROM steps
+                JOIN step_resolution_snapshots
+                  ON step_resolution_snapshots.id = steps.resolution_snapshot_id
+                WHERE steps.run_id = ?
+                ORDER BY steps.creation_seq
+                """,
+                (run_id,),
+            ).fetchall()
+        try:
+            return tuple(
+                StepResolutionSnapshot.model_validate_json(row["snapshot_json"])
+                for row in rows
+            )
+        except (TypeError, ValueError):
+            raise StorageError("step_resolution_snapshot_invalid") from None
 
     def read_current_step_fact(self, run_id: str) -> dict[str, object]:
         with self.lock:

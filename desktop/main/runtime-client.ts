@@ -836,14 +836,79 @@ function isSessionListResult(value: unknown): value is SessionListResult {
 function isSessionSnapshot(value: unknown): value is SessionSnapshot {
   return (
     isRecord(value)
-    && hasOnlyKeys(value, ["session", "runs", "items", "previousItemId", "throughEventId"])
+    && hasOnlyKeys(value, [
+      "session", "runs", "items", "stepResolutions",
+      "previousItemId", "throughEventId",
+    ])
     && isSession(value.session)
     && Array.isArray(value.runs)
     && value.runs.every(isRun)
     && Array.isArray(value.items)
     && value.items.every(isItem)
+    && Array.isArray(value.stepResolutions)
+    && value.stepResolutions.every(isStepResolutionReview)
     && (value.previousItemId === undefined || typeof value.previousItemId === "string")
     && (value.throughEventId === undefined || isNonNegativeInteger(value.throughEventId))
+  );
+}
+
+function isStepResolutionReview(value: unknown): boolean {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "id", "stepId", "runId", "stepOrdinal", "snapshotHash", "requestHash",
+      "ruleSnapshotId", "ruleSnapshotHash", "rules", "shadowed", "warnings",
+    ])
+    && typeof value.id === "string"
+    && typeof value.stepId === "string"
+    && typeof value.runId === "string"
+    && isPositiveInteger(value.stepOrdinal)
+    && isSha256(value.snapshotHash)
+    && isSha256(value.requestHash)
+    && typeof value.ruleSnapshotId === "string"
+    && isSha256(value.ruleSnapshotHash)
+    && Array.isArray(value.rules)
+    && value.rules.every((rule) => (
+      isRecord(rule)
+      && hasOnlyKeys(rule, [
+        "absolutePath", "relativePath", "filename", "contentHash", "byteCount",
+        "includedByteCount", "directoryLevel", "selectionReason", "truncated",
+      ])
+      && typeof rule.absolutePath === "string"
+      && typeof rule.relativePath === "string"
+      && typeof rule.filename === "string"
+      && isSha256(rule.contentHash)
+      && isNonNegativeInteger(rule.byteCount)
+      && isNonNegativeInteger(rule.includedByteCount)
+      && isNonNegativeInteger(rule.directoryLevel)
+      && [
+        "eidos_override", "eidos_native", "compatibility_fallback",
+      ].includes(String(rule.selectionReason))
+      && typeof rule.truncated === "boolean"
+    ))
+    && Array.isArray(value.shadowed)
+    && value.shadowed.every((candidate) => (
+      isRecord(candidate)
+      && hasOnlyKeys(candidate, [
+        "absolutePath", "relativePath", "filename", "directoryLevel", "reason",
+      ])
+      && typeof candidate.absolutePath === "string"
+      && typeof candidate.relativePath === "string"
+      && typeof candidate.filename === "string"
+      && isNonNegativeInteger(candidate.directoryLevel)
+      && candidate.reason === "higher_precedence_candidate_selected"
+    ))
+    && Array.isArray(value.warnings)
+    && value.warnings.every((warning) => (
+      isRecord(warning)
+      && hasOnlyKeys(warning, ["code", "path", "message"])
+      && [
+        "RULE_BUDGET_TRUNCATED", "RULE_READ_ERROR",
+        "RULE_PATH_OUTSIDE_WORKSPACE",
+      ].includes(String(warning.code))
+      && typeof warning.path === "string"
+      && typeof warning.message === "string"
+    ))
   );
 }
 
@@ -1205,6 +1270,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function hasOnlyKeys(value: Record<string, unknown>, allowed: string[]): boolean {
   const allowedKeys = new Set(allowed);
   return Object.keys(value).every((key) => allowedKeys.has(key));
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 }
 
 function isNonNegativeInteger(value: unknown): value is number {

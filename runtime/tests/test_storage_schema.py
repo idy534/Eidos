@@ -43,6 +43,9 @@ EXPECTED_TABLES = {
     "model_profiles",
     "model_capability_snapshots",
     "run_model_snapshots",
+    "rule_resolution_snapshots",
+    "run_resolution_snapshots",
+    "step_resolution_snapshots",
 }
 
 EXPECTED_COLUMNS = {
@@ -60,7 +63,12 @@ EXPECTED_COLUMNS = {
         "cancel_completed_at",
         "cancel_failure_code",
     },
-    "steps": {"tool_snapshot_json", "tool_set_hash", "progress_signature_json"},
+    "steps": {
+        "resolution_snapshot_id",
+        "tool_snapshot_json",
+        "tool_set_hash",
+        "progress_signature_json",
+    },
     "tool_calls": {
         "approval_status",
         "approval_decision",

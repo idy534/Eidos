@@ -117,6 +117,56 @@ class StepToolSnapshotDto(ClosedModel):
     tool_set_hash: StrictStr = Field(alias="toolSetHash")
 
 
+class RuleSourceReviewDto(ClosedModel):
+    absolute_path: StrictStr = Field(alias="absolutePath")
+    relative_path: StrictStr = Field(alias="relativePath")
+    filename: StrictStr
+    content_hash: StrictStr = Field(alias="contentHash", pattern=r"^[0-9a-f]{64}$")
+    byte_count: StrictInt = Field(alias="byteCount", ge=0)
+    included_byte_count: StrictInt = Field(alias="includedByteCount", ge=0)
+    directory_level: StrictInt = Field(alias="directoryLevel", ge=0)
+    selection_reason: Literal[
+        "eidos_override",
+        "eidos_native",
+        "compatibility_fallback",
+    ] = Field(alias="selectionReason")
+    truncated: bool
+
+
+class ShadowedRuleReviewDto(ClosedModel):
+    absolute_path: StrictStr = Field(alias="absolutePath")
+    relative_path: StrictStr = Field(alias="relativePath")
+    filename: StrictStr
+    directory_level: StrictInt = Field(alias="directoryLevel", ge=0)
+    reason: Literal["higher_precedence_candidate_selected"]
+
+
+class RuleResolutionWarningDto(ClosedModel):
+    code: Literal[
+        "RULE_BUDGET_TRUNCATED",
+        "RULE_READ_ERROR",
+        "RULE_PATH_OUTSIDE_WORKSPACE",
+    ]
+    path: StrictStr
+    message: StrictStr
+
+
+class StepResolutionReviewDto(ClosedModel):
+    id: StrictStr
+    step_id: StrictStr = Field(alias="stepId")
+    run_id: StrictStr = Field(alias="runId")
+    step_ordinal: StrictInt = Field(alias="stepOrdinal", ge=1)
+    snapshot_hash: StrictStr = Field(alias="snapshotHash", pattern=r"^[0-9a-f]{64}$")
+    request_hash: StrictStr = Field(alias="requestHash", pattern=r"^[0-9a-f]{64}$")
+    rule_snapshot_id: StrictStr = Field(alias="ruleSnapshotId")
+    rule_snapshot_hash: StrictStr = Field(
+        alias="ruleSnapshotHash", pattern=r"^[0-9a-f]{64}$"
+    )
+    rules: list[RuleSourceReviewDto]
+    shadowed: list[ShadowedRuleReviewDto]
+    warnings: list[RuleResolutionWarningDto]
+
+
 class McpServerRecordDto(ClosedModel):
     schema_version: Literal[1] = Field(alias="schemaVersion")
     plugin_id: StrictStr = Field(alias="pluginId")

@@ -11,6 +11,7 @@ from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelContextItem, ModelToolDefinition
 from eidos_runtime.model.prompts import SYSTEM_PROMPT
 from eidos_runtime.extensions.skills import RetainedContextSection
+from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
 
 
 class ContextBuild(BaseModel):
@@ -40,6 +41,7 @@ class ContextBuilder:
         retained_context: tuple[RetainedContextSection, ...] = (),
         selected_skill_context: tuple[RetainedContextSection, ...] = (),
         extra_context: tuple[ModelContextItem, ...] = (),
+        rule_resolution_snapshot: RuleResolutionSnapshot | None = None,
     ) -> ContextBuild:
         facts = self.store.context_projection_facts(run_id)
         profile = self.store.read_model_profile(run_id)
@@ -62,6 +64,16 @@ class ContextBuilder:
                 sort_keys=True,
             ),
         }]
+        if (
+            rule_resolution_snapshot is not None
+            and (instruction := rule_resolution_snapshot.model_instruction())
+            is not None
+        ):
+            context.append({
+                "type": "user",
+                "sectionId": "project-rules",
+                "content": instruction,
+            })
         retained_by_id = {
             section.section_id: section for section in retained_context
         }

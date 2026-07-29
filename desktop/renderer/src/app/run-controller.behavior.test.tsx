@@ -7,12 +7,14 @@ const mockSnapshotA: SessionSnapshot = {
   session: { id: "session-A", title: "Session A", workspaceRoot: "/ws/a", createdAt: 1000, updatedAt: 1000 },
   runs: [],
   items: [],
+  stepResolutions: [],
 };
 
 const mockSnapshotB: SessionSnapshot = {
   session: { id: "session-B", title: "Session B", workspaceRoot: "/ws/b", createdAt: 1000, updatedAt: 1000 },
   runs: [],
   items: [],
+  stepResolutions: [],
 };
 
 const mockRunA: Run = {
