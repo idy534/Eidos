@@ -187,27 +187,21 @@ class RuntimeRecoveryInvariantTests(unittest.TestCase):
         self.store = SessionStore(self.data)
         self.store.initialize()
 
-    def test_recovery_repairs_inconsistent_segment_state(self) -> None:
-        run, _ = self.store.create_run(self.session["id"], "paused")
+    def test_recovery_interrupts_running_segment(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "running")
         self.store.increment_model_step(run["id"])
         self.store.complete_current_step(run["id"], "completed")
-        connection = self.store.connection
-        assert connection is not None
-        connection.execute(
-            "UPDATE runs SET status = 'waiting_user_input' WHERE id = ?",
-            (run["id"],),
-        )
-        connection.commit()
 
         self._restart()
 
         assert self.store.connection is not None
+        self.assertEqual(self.store.read_run(run["id"])["status"], "interrupted")
         self.assertEqual(
             self.store.connection.execute(
                 "SELECT status FROM execution_segments WHERE run_id = ?",
                 (run["id"],),
             ).fetchone()["status"],
-            "waiting_user_input",
+            "failed",
         )
 
     def test_recovery_handles_cancel_requested_run(self) -> None:
@@ -246,7 +240,7 @@ class RuntimeRecoveryInvariantTests(unittest.TestCase):
         self._restart()
 
         recovered = self.store.read_run(run["id"])
-        self.assertEqual(recovered["status"], "waiting_user_input")
+        self.assertEqual(recovered["status"], "interrupted")
         self.assertTrue(recovered["sideEffectsMayExist"])
         assert self.store.connection is not None
         self.assertEqual(
@@ -694,7 +688,7 @@ class ReliableCancelTests(unittest.TestCase):
             supervisor.cancel_run(run["id"])
 
         current = self.store.read_run(run["id"])
-        self.assertEqual(current["status"], "waiting_user_input")
+        self.assertEqual(current["status"], "interrupted")
         self.assertEqual(current["cancelFailureCode"], "RECONCILIATION_REQUIRED")
 
 

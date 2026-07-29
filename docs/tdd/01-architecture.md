@@ -106,7 +106,7 @@ Main acquire Electron single-instance lock
 
 状态变化不得通过 stdout 的特殊文本行表达；所有控制消息都是 JSON-RPC response/request/notification。日志只写 stderr，且不得包含异常原文、SQL、用户正文、凭证或未扫描输出。
 
-当前 Tool Contract 或 serializer 自检失败时 Runtime 不进入 ready。升级后若非终态 Run 引用的旧 contract 已不可用或低于当前安全底线，该 Run 零模型/工具执行并进入 `waiting_user_input/runtime_contract_unsupported`。
+当前 Tool Contract 或 serializer 自检失败时 Runtime 不进入 ready。升级后若非终态 Run 引用的旧 contract 已不可用或低于当前安全底线，该 Run 零模型/工具执行并进入 `interrupted/runtime_contract_unsupported`。
 
 ToolResult quarantine 跨重启保留。只有对应 deterministic regression vectors 全部通过后才能清除；未清除的 tool scope 从 Step 工具集排除，global scope 禁止全部工具循环。
 

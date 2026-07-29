@@ -125,7 +125,7 @@ class RuntimeEngine:
             elif error.reason == "current_user_goal":
                 self._fail(run_id, "CONTEXT_INPUT_TOO_LARGE")
             else:
-                self._pause_run(run_id, "context_still_over_budget")
+                self._fail(run_id, "CONTEXT_LIMIT_EXCEEDED")
         except (RuntimeCancelled, SamplingCancelled):
             if self.terminalize_cancel:
                 self._cancel(run_id)
@@ -233,7 +233,12 @@ class RuntimeEngine:
                 except ContextLimitExceeded:
                     raise
                 except ContextCompactionError:
-                    self._pause_run(run.run_id, "context_still_over_budget")
+                    finalizer.finalize(
+                        run.run_id,
+                        built.model_context,
+                        "context_still_over_budget",
+                        cancel,
+                    )
                     return
                 continue
             if context_decision.action == LoopAction.FINALIZE:
@@ -254,7 +259,9 @@ class RuntimeEngine:
                         if budget_fact["segmentEffectiveMsRemaining"] <= 0
                         else "segment_step_limit"
                     )
-                self._pause_run(run.run_id, reason)
+                finalizer.finalize(
+                    run.run_id, built.model_context, reason, cancel
+                )
                 return
             try:
                 step = step_factory.create(
@@ -267,7 +274,14 @@ class RuntimeEngine:
                     new_user_input_ids=tuple(item_id for item_id, _content in injected),
                 )
             except SegmentLimitReached as error:
-                self._pause_for_segment_limit(run.run_id, error)
+                reason = (
+                    "segment_time_limit"
+                    if "time" in str(error)
+                    else "segment_step_limit"
+                )
+                finalizer.finalize(
+                    run.run_id, built.model_context, reason, cancel
+                )
                 return
             except RunLimitReached as error:
                 finalizer.finalize(
@@ -287,7 +301,7 @@ class RuntimeEngine:
                 self.store.complete_current_step(
                     run.run_id, "failed", reason="sensitive_scan_failed"
                 )
-                self._pause_run(run.run_id, "sensitive_scan_failed")
+                self._fail(run.run_id, "SENSITIVE_SCAN_FAILED")
                 return
             except SamplingError as error:
                 self._handle_sampling_failure(run.run_id, error)
@@ -355,7 +369,12 @@ class RuntimeEngine:
                 self.store.complete_current_step(
                     run.run_id, "failed", reason=decision.reason
                 )
-                self._pause_run(run.run_id, decision.reason or "loop_guard")
+                finalizer.finalize(
+                    run.run_id,
+                    built.model_context,
+                    decision.reason or "loop_guard",
+                    cancel,
+                )
                 return
             if decision.action == LoopAction.FAIL:
                 self._fail(
@@ -386,7 +405,9 @@ class RuntimeEngine:
             )
             if repeated is not None:
                 self.store.complete_current_step(run.run_id, "failed", reason=repeated)
-                self._pause_run(run.run_id, repeated)
+                finalizer.finalize(
+                    run.run_id, built.model_context, repeated, cancel
+                )
                 return
             outcome = tools.execute(step, validation.tool_calls, cancel)
             signature = guard.make_signature(
@@ -416,10 +437,14 @@ class RuntimeEngine:
                 cancelled=cancel.is_set(),
             )
             if tool_decision.action == LoopAction.PAUSE:
-                if self.store.read_run(run.run_id)["status"] == "running":
-                    self._pause_run(
-                        run.run_id, tool_decision.reason or "loop_guard"
-                    )
+                if self.store.read_run(run.run_id)["status"] == "interrupted":
+                    return
+                finalizer.finalize(
+                    run.run_id,
+                    built.model_context,
+                    tool_decision.reason or "loop_guard",
+                    cancel,
+                )
                 return
             if tool_decision.action == LoopAction.FAIL:
                 self._fail(run.run_id, "INTERNAL_ERROR")
@@ -430,11 +455,8 @@ class RuntimeEngine:
                 })
                 continue
             mutation = self._pause_effective_time(run.run_id)
-            updated = self.store.read_run(run.run_id)
             if mutation is not None:
                 self.events.publish(mutation, run=mutation.value)
-            if updated["status"] == "waiting_user_input":
-                return
             run = run.model_copy(update={"model_context": ()})
 
     def _run_context(
@@ -471,7 +493,7 @@ class RuntimeEngine:
             self.store.complete_current_step(
                 run_id, "failed", reason="model_stream_interrupted"
             )
-            self._pause_run(run_id, "model_stream_interrupted")
+            self._fail(run_id, "MODEL_STREAM_INTERRUPTED")
             return
         code = "MODEL_REQUEST_FAILED"
         if isinstance(error, SamplingAuthenticationFailed):
@@ -485,17 +507,6 @@ class RuntimeEngine:
         elif isinstance(error, SamplingRateLimited):
             code = "MODEL_RATE_LIMITED"
         self._fail(run_id, code)
-
-    def _pause_for_segment_limit(
-        self, run_id: str, error: SegmentLimitReached
-    ) -> None:
-        reason = "segment_time_limit" if "time" in str(error) else "segment_step_limit"
-        self._pause_run(run_id, reason)
-
-    def _pause_run(self, run_id: str, reason: str) -> None:
-        mutation = self.store.pause_run_committed(run_id, reason)
-        self.state_machine.track(RuntimeState.WAITING_USER_INPUT, reason)
-        self.events.publish(mutation, run=mutation.value)
 
     def _check_cancel(self, run_id: str, cancel: threading.Event) -> None:
         if cancel.is_set() or self.store.read_run(run_id)["status"] in {

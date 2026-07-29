@@ -36,9 +36,9 @@ MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 
 | F020 | publish_artifact | 显式发布单个现有文件，生成不可变快照 |
 | F021 | ✅ Approval | 记录请求参数、权限、diff/命令与用户决定 |
 | F022 | 文件版本复检 | 审批后执行前验证 hash、目标不存在或删除前版本 |
-| F023 | Reject 恢复 | Reject 返回 Agent；连续 2 次后等待用户输入 |
+| F023 | Reject 恢复 | Reject 返回 Agent；后续审批自动拒绝，Agent 改走无审批路径或给出手动策略 |
 | F024 | 事实确认屏障 | 写或 Shell 失败后先只读核验，再允许下一次副作用 |
-| F025 | waiting_user_input | 用户补充信息后继续同一 Run 并重新排队 |
+| F025 | 明确终止 | 无法继续时 stopped、failed 或 interrupted，不等待补充输入 |
 | F026 | ✅ 崩溃恢复 | 不自动重放；运行中 ToolCall 标记 interrupted |
 | F027 | Cancel | 排队/等待立即取消；运行中协作式取消 |
 | F028 | ✅ Model Stream | 实时输出、分块持久化、保存最终响应 |
@@ -105,7 +105,7 @@ MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 
 | F089 | ToolCall 归一化 | 内部 UUID 与 Provider call ID 分离；严格归并分片，缺失/冲突 ID 零 ToolCall |
 | F090 | ToolCall 流上限 | 单响应最多 16 calls，单 call 1 MiB、合计 2 MiB，并限制 delta 数、名称和 JSON 结构 |
 | F091 | 模型输出上限 | 可见文本、reasoning、单 Event 和总流量均有硬上限；超限保留安全进度并暂停，不重试 |
-| F092 | 完成语义 | 仅完整协议终态可完成；token 截断和内容过滤不执行 ToolCall并进入 waiting_user_input |
+| F092 | 完成语义 | 仅完整协议终态可完成；token 截断和内容过滤不执行 ToolCall并进入 failed |
 | F093 | ✅ 无状态模型请求 | 每个 Step 从本地状态重建上下文；不依赖 Provider conversation、previous response 或服务端 history |
 | F094 | 输出字段协商 | Responses 固定字段；Chat 只在 Test Connection 有界协商并把结果固化到 snapshot |
 | F095 | 工具控制字段 | 工具集非空的普通/纠正请求固定 auto + parallel，空集固定 none；probe 两阶段受控；Finalization 固定无工具 |
@@ -228,7 +228,7 @@ MVP Lite 当前实现状态：✅ F001 桌面骨架；✅ Workspace Session 与 
 | 只读工具重试 | 1 次 | 仅瞬时错误 |
 | 写/Shell 重试 | 0 | 必须先确认事实 |
 
-排队、waiting_approval 和 waiting_user_input 时间不计入有效执行时间。
+排队和 waiting_approval 时间不计入有效执行时间。
 
 ## 4. P1/P2
 

@@ -559,7 +559,6 @@ if (contractsText) {
     "renameSession",
     "deleteSession",
     "startRun",
-    "continueRun",
     "cancelRun",
     "getModelStatus",
     "listModels",

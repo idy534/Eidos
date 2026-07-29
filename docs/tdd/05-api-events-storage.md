@@ -40,7 +40,7 @@ Wire 字段统一使用 `lowerCamelCase`，状态和错误枚举继续使用稳�
 | Main → Runtime | `workspace/listFiles` / `workspace/readFile` | 面向用户的有界文件树与预览；不等同于 Agent Tool |
 | Main → Runtime | `session/create` / `session/list` / `session/read` / `session/setModel` / `session/rename` / `session/delete` | Session 生命周期、标题和删除 |
 | Main → Runtime | `run/start` / `run/read` / `run/readSnapshot` / `run/readEvents` | 创建 Run、读取当前事实与 Event 页面 |
-| Main → Runtime | `run/cancel` / `run/continue` | 取消或提交用户补充信息 |
+| Main → Runtime | `run/cancel` | 取消非终态 Run |
 | Main → Runtime | `approval/read` | 读取当前 pending Approval 的权威有界详情 |
 | Main → Runtime | `toolCall/read` / `toolCall/readLogs` / `toolCall/readChanges` | ToolCall 事实、日志和 Workspace 变化 |
 | Main → Runtime | `artifact/list` / `artifact/read` / `artifact/readContent` | 读取已发布 Artifact；不创建 Artifact |
@@ -52,7 +52,7 @@ Wire 字段统一使用 `lowerCamelCase`，状态和错误枚举继续使用稳�
 
 `publish_artifact` 是 Agent Tool，不是 Renderer 创建 Artifact 的 method。MVP Lite v1 的 `run/*`、`item/*` 生命周期 notifications 仍由 [MVP Lite](../mvp-lite.md) 定义；目标态 `event/committed` 必须通过显式 protocol version 迁移，不能在同一版本同时发送两套等价事件，也不能用另一套 HTTP 命名重建相同能力。
 
-Session list/read DTO 增加可选 `title` 与必填 `taskStatus=new|in_progress|completed|failed|canceled`。Renderer 只按 canonical `workspaceRoot` 分组，不从标题或目录 basename 推断 Workspace 身份；每组以最早保留 Session 的 `createdAt` 作为项目创建时间倒序排列，组内 Session 按 `createdAt` 倒序。Runtime 按 Session 全部 Run 投影 `taskStatus`：存在任一 `queued|running|waiting_approval|waiting_user_input|finalizing` Run 时为 `in_progress`；否则按最新 Run 将 `succeeded` 映射为 `completed`，`failed|stopped|interrupted` 映射为 `failed`，`canceled` 映射为 `canceled`；无 Run 为 `new`。完成是否已读是 Renderer 展示状态，不改变 Runtime `taskStatus`；Renderer 记录已查看的完成 Session，新的活动 Run 会清除该展示记录。
+Session list/read DTO 增加可选 `title` 与必填 `taskStatus=new|in_progress|completed|failed|canceled`。Renderer 只按 canonical `workspaceRoot` 分组，不从标题或目录 basename 推断 Workspace 身份；每组以最早保留 Session 的 `createdAt` 作为项目创建时间倒序排列，组内 Session 按 `createdAt` 倒序。Runtime 按 Session 全部 Run 投影 `taskStatus`：存在任一 `queued|running|waiting_approval|finalizing` Run 时为 `in_progress`；否则按最新 Run 将 `succeeded` 映射为 `completed`，`failed|stopped|interrupted` 映射为 `failed`，`canceled` 映射为 `canceled`；无 Run 为 `new`。完成是否已读是 Renderer 展示状态，不改变 Runtime `taskStatus`；Renderer 记录已查看的完成 Session，新的活动 Run 会清除该展示记录。
 
 首次 `run/start` 在敏感扫描和 operation replay 检查后，使用同一请求选定并固化的 `modelId`，以 `allow_tools=false` 生成标题；模型输出按普通不可信输入处理，折叠为单行、移除包裹引号并限制为 60 字符/120 UTF-8 字节。生成、扫描或传输失败时回退到同样有界的首次 `userInput`，不得阻断 Run。
 
@@ -126,10 +126,6 @@ Approve/Reject 请求不接受工具参数编辑：
 
 Runtime 必须先提交 Approval 事实与 Event，再发出 `item/requestApproval`。Main 的用户操作最终表现为该 JSON-RPC request 的 response；response 只能包含 approve/reject 和可选 feedback。Main 或 Runtime 重启后，Runtime 为仍 pending 的 Approval 使用新的传输 request id 重新发出请求，但保持相同 `approvalId+decisionNonce`；旧 request 的迟到 response 无效，且不能复活已决定或失效的 Approval。
 
-### 3.3 User Input
-
-仅允许 Run waiting_user_input。请求先在受控内存中扫描原文；命中或扫描失败时不追加 Message、不重置计数、不创建 Segment 且不改变 Run 状态。扫描通过后，一个事务内追加消息、重置 Reject 和 sensitive ToolCall 计数、创建新 Segment、清除允许清除的 pause reason，并进入队尾。
-
 ### 3.3.1 RunSnapshot、Approval detail 与 allowed actions
 
 `run/readSnapshot` 在同一 SQLite read transaction 中读取规范化当前状态，并返回闭合 `RunSnapshot v1` 与该事务可见的本 Run `throughEventId=MAX(events.id)`；无 Event 时为 `0`。准确 schema 为：
@@ -140,9 +136,9 @@ Runtime 必须先提交 Approval 事实与 Event，再发出 `item/requestApprov
   throughEventId: nonnegative integer,
   run: {
     runId, sessionId, workspaceId?, modelProfileId, modelId,
-    status = created|queued|running|waiting_approval|waiting_user_input|
-             finalizing|succeeded|failed|stopped|canceled,
-    pauseReason?, stopReason?, errorCode?,
+    status = created|queued|running|waiting_approval|finalizing|
+             succeeded|failed|stopped|canceled|interrupted,
+    stopReason?, errorCode?,
     reconciliationRequired: boolean,
     reconciliationEpoch: nonnegative integer
   },
@@ -167,7 +163,7 @@ Runtime 必须先提交 Approval 事实与 Event，再发出 `item/requestApprov
 }
 ```
 
-所有 object 递归 `additionalProperties=false`，所有 id 为 canonical UUID，所有 string 有对应 enum/长度上限；不使用 null，不适用的 optional 字段省略。`workspaceId` 仅 Public Mode 省略。active fields 只在对应规范化当前行存在且一致时出现；任何悬空/多 active 行都是 snapshot invariant error。`pauseReason|stopReason|errorCode` 必须来自各自闭合 registry，不携带动态 message。Snapshot 不内嵌 Timeline body、完整 Diff、日志或 manifest；详情使用有界专用 method。
+所有 object 递归 `additionalProperties=false`，所有 id 为 canonical UUID，所有 string 有对应 enum/长度上限；不使用 null，不适用的 optional 字段省略。`workspaceId` 仅 Public Mode 省略。active fields 只在对应规范化当前行存在且一致时出现；任何悬空/多 active 行都是 snapshot invariant error。`stopReason|errorCode` 必须来自各自闭合 registry，不携带动态 message。Snapshot 不内嵌 Timeline body、完整 Diff、日志或 manifest；详情使用有界专用 method。
 
 `ApprovalSummaryV1` 固定为：
 
@@ -183,15 +179,14 @@ diffSha256?, diffSizeBytes?, diffLineCount?, detailRef
 
 Renderer 原子替换 snapshot 后，Main 只应用 `eventId > throughEventId` 的 Runtime notifications；若启动或重连期间有缺口，Main 调用 `run/readEvents` 从该水位补齐。状态变更与 Event 同事务提交保证无缺口。未知 Event schema version 停止增量并重新取 snapshot；未知 Snapshot schema version 显示兼容错误，不得循环重试。Run 不存在返回 `run_not_found`，snapshot invariant 失败返回安全错误而非部分 snapshot。终态 Run 的 active/pending 字段省略且 `allowedActions=[]`，无需保留实时订阅。
 
-`allowedActions` v1 只允许按字典序排列的 `approve_pending_approval|cancel_run|reject_pending_approval|submit_user_input`：
+`allowedActions` v1 只允许按字典序排列的 `approve_pending_approval|cancel_run|reject_pending_approval`：
 
 - queued/running：`cancel_run`。
 - waiting_approval 且当前唯一 Approval 仍 pending、nonce/Run 匹配：approve、cancel、reject。
-- waiting_user_input 的可恢复 reason：submit、cancel。精确白名单为 `segment_step_limit|segment_time_limit|model_protocol_error|repeated_sensitive_tool_input|repeated_approval_rejection|model_temporarily_unavailable|model_stream_interrupted|model_output_truncated|model_output_blocked|model_output_limit_exceeded|sensitive_scan_failed|runtime_interrupted|reconciliation_required`；Run flag 为 reconciliation 时副作用 gate 仍保持。
-- `workspace_unavailable` 在用户显式恢复并重新验证 Workspace 身份前只有 cancel；恢复后才允许 submit。`runtime_contract_unsupported` 只有 cancel；未知 pause reason fail closed。
+- `workspace_unavailable` 和 `runtime_contract_unsupported` 进入 interrupted，后续通过新 Run 重试。
 - created/finalizing/终态：空。对已 canceled Run 重复 cancel 仍按既有规则幂等成功；其他终态拒绝。
 
-Snapshot action 只是 affordance。Cancel/User Input/Approve/Reject 都必须在写事务内重算相同谓词；通用状态不满足返回 `action_not_allowed` 与当前水位。Approval 已决定/失效的并发竞态继续返回更精确的 `approval_already_decided|approval_invalidated`。
+Snapshot action 只是 affordance。Cancel/Approve/Reject 都必须在写事务内重算相同谓词；通用状态不满足返回 `action_not_allowed` 与当前水位。Approval 已决定/失效的并发竞态继续返回更精确的 `approval_already_decided|approval_invalidated`。
 
 ### 3.4 Model Profile 生命周期
 
@@ -597,7 +592,7 @@ current_segment_id, total_steps, effective_elapsed_ms
 max_total_steps=80, max_total_effective_seconds=7200
 consecutive_rejects, consecutive_protocol_errors, consecutive_sensitive_tool_inputs
 reconciliation_required, reconciliation_epoch, ruleset_version_snapshot
-pause_reason, stop_reason, error_code, error_message
+stop_reason, error_code, error_message
 model_profile_id, model_capability_snapshot_id, model_id, model_config_snapshot
 tool_contract_version
 started_at, finished_at, created_at, updated_at
@@ -605,7 +600,7 @@ started_at, finished_at, created_at, updated_at
 
 `model_config_snapshot` 必须内嵌创建 Run 时的非密钥 Profile 配置、wire API、auth mode、创建时 credential revision、`configuration_hash`、capability snapshot ID/version、Gateway/model request contract version、`tool_schema_dialect_version`、HTTP/SSE、tool control/schema、stateless continuation 和 output token parameter。`model_capability_snapshot_id` 只用于审计关联；运行时不得通过该外键读取更新后的能力替代内嵌快照。每次发送仍从 Profile 当前凭证槽读取密钥，并把实际 credential revision 写入 ModelAttempt，不修改该快照。`tool_contract_version` 是独立 Run 快照字段，不因同一 Profile 后续重测或工具升级而改变。
 
-Profile 不允许硬删除；Session/Run/snapshot 外键均使用 `ON DELETE RESTRICT`。Gateway 或 model request contract version 升级时，启动事务把旧 version 的当前 passed snapshot 设置为 `valid=false, invalidation_reason=gateway_contract_changed|model_request_contract_changed`。Tool Schema Dialect 扩展属于 Gateway contract 变更并要求重测；只改变具体工具定义/默认值/结果 schema 时只递增 `tool_contract_version`，不失效 Profile snapshot。运行时 `model_capability_drift|model_context_limit_mismatch` 使 Run failed 的同一数据库事务也使对应 Profile 当前 snapshot `valid=false`，但不修改 Run 内嵌快照。启动时非终态 Run 引用 unsupported request/tool contract，或旧 tool contract 不再满足当前安全底线时，不创建 Step/Attempt、不执行工具，使 pending/approved Approval invalidated，并原子进入 `waiting_user_input/runtime_contract_unsupported`。
+Profile 不允许硬删除；Session/Run/snapshot 外键均使用 `ON DELETE RESTRICT`。Gateway 或 model request contract version 升级时，启动事务把旧 version 的当前 passed snapshot 设置为 `valid=false, invalidation_reason=gateway_contract_changed|model_request_contract_changed`。Tool Schema Dialect 扩展属于 Gateway contract 变更并要求重测；只改变具体工具定义/默认值/结果 schema 时只递增 `tool_contract_version`，不失效 Profile snapshot。运行时 `model_capability_drift|model_context_limit_mismatch` 使 Run failed 的同一数据库事务也使对应 Profile 当前 snapshot `valid=false`，但不修改 Run 内嵌快照。启动时非终态 Run 引用 unsupported request/tool contract，或旧 tool contract 不再满足当前安全底线时，不创建 Step/Attempt、不执行工具，使 pending/approved Approval invalidated，并原子进入 `interrupted/runtime_contract_unsupported`。
 
 `execution_segments`：
 
@@ -613,7 +608,7 @@ Profile 不允许硬删除；Session/Run/snapshot 外键均使用 `ON DELETE RES
 id, run_id, segment_index, status
 step_budget=20, time_budget_seconds=1800
 steps_used, effective_elapsed_ms
-pause_reason, started_at, finished_at
+started_at, finished_at
 UNIQUE(run_id, segment_index)
 ```
 

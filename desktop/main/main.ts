@@ -432,12 +432,6 @@ ipcMain.handle(IPC.RUN_CANCEL, (_event, runId: unknown) => {
   log("info", "run", "Cancel requested", { runId });
   return clientOrThrow().cancelRun(runId);
 });
-ipcMain.handle(IPC.RUN_CONTINUE, (_event, runId: unknown, userInput: unknown) => {
-  if (typeof runId !== "string" || typeof userInput !== "string") {
-    throw new Error("Run 参数无效。");
-  }
-  return clientOrThrow().continueRun(runId, userInput);
-});
 
 ipcMain.handle(IPC.MODEL_STATUS, () => clientOrThrow().modelStatus());
 ipcMain.handle(IPC.MODEL_LIST, () => clientOrThrow().listModels());

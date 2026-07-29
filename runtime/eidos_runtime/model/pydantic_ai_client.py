@@ -511,6 +511,14 @@ def encode_context(context: tuple[ModelContextItem, ...]) -> list[ModelMessage]:
                     f"Your previous response was invalid ({code}). "
                     "Try again using the provided tool schemas."
                 )]))
+        elif item_type == "finalization":
+            reason = item.get("stopReason")
+            if isinstance(reason, str):
+                messages.append(PAIModelRequest([UserPromptPart(
+                    f"Tool execution has stopped ({reason}). Give a concise "
+                    "final answer with a safe manual strategy the user can "
+                    "execute. Do not request approval or ask for more input."
+                )]))
 
     for index, message in enumerate(messages):
         if isinstance(message, PAIModelRequest):

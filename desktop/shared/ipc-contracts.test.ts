@@ -22,7 +22,6 @@ void test("IPC channel object provides central authoritative channels", () => {
   assert.equal(IPC.RUNTIME_GET_STATUS, "runtime:get-status");
   assert.equal(IPC.RUNTIME_HEALTH, "runtime:health");
   assert.equal(IPC.RUN_START, "run:start");
-  assert.equal(IPC.RUN_CONTINUE, "run:continue");
   assert.equal(IPC.RUN_CANCEL, "run:cancel");
   assert.equal(IPC.APPROVAL_RESPOND, "approval:respond");
   assert.equal(IPC.APP_NEW_TASK, "app:new-task");

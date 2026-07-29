@@ -168,8 +168,8 @@ Shell 审批卡必须说明命令作用于执行时的当前 Workspace，并展�
 ### 6.3 Reject
 
 - Reject 原因通过扫描且不超过容量边界后，作为封闭 ToolCall data 返回 Agent；未提供原因时不伪造文案。
-- 连续 Reject 达到 2 次后，Run 进入 `waiting_user_input`。
-- 获批状态变更成功或用户补充新指令后，Reject 计数清零。
+- 首次 Reject 后，同一 Run 的后续审批请求自动拒绝；Agent 必须改走无需审批路径，或给出用户可自行执行的策略后结束。
+- 获批状态变更成功后，Reject 计数清零。
 - 只读调用、模型重规划和失败写入不清零。
 
 ### 6.4 敏感内容
@@ -186,30 +186,13 @@ Shell 审批卡必须说明命令作用于执行时的当前 Workspace，并展�
 
 工具尚未执行。下次启动后继续展示原审批，审批不能改变工具参数，也不能提升权限。
 
-### 7.2 waiting_user_input
+### 7.2 明确终止与收尾
 
-由以下条件触发：
-
-- 连续 Reject 2 次。
-- 单个 Execution Segment 达到 20 Steps 或 30 分钟。
-- Runtime 意外中断。
-- 模型在首个 delta 后流式中断。
-- 首个 delta 前的瞬时模型故障在自动重试耗尽后仍不可用。
-- 模型连续两次返回无效协议响应。
-- 模型连续两次提出包含敏感内容的 ToolCall。
-- 模型输出被 token 上限、Provider 内容过滤或 Eidos 流式资源上限终止。
-- 流式敏感扫描器故障，且存在未确认安全的模型输出。
-- Run 固化的 model request contract 实现已不可用；此时原 Run 只能取消或复制原任务创建新 Run。
-- Workspace 消失、被替换或身份无法验证；恢复前只能取消，用户显式重新选择并验证原身份后才可继续，旧审批不会恢复。
-- 执行结果无法确认，需要用户判断。
-
-用户补充信息后，同一 Run 创建新 Execution Segment 并重新进入 FIFO 队列。
-
-“继续、取消、Approve、Reject”只按 Runtime 返回的当前 `allowed_actions` 渲染。它是界面提示而不是授权；提交时 Runtime 仍以最新状态重新判断。不可恢复的 waiting 原因不显示继续入口，未知原因默认不允许继续。
-
-模型在首个 delta 前重试时，Execution Feed 显示有界重试进度；首个 delta 后不再重放请求，而是保留未完成进度并暂停。瞬时错误耗尽终止当前模型请求周期，不直接终止 Run。
-
-模型因输出 token 上限、内容过滤或 Eidos 输出资源上限而停止时，已确认安全的文本保留为未完成进度，任何 ToolCall 都不执行。UI 区分 `model_output_truncated|model_output_blocked|model_output_limit_exceeded`，并允许用户在新 Segment 中要求缩短或拆分输出。
+- Segment 到限、循环保护或重复敏感 ToolCall 时，Runtime 最多执行一次无工具收尾，给出安全的手动策略后进入 `stopped`。
+- 模型流、敏感扫描或确定性协议故障进入 `failed`。
+- Runtime 重启、Workspace 身份失效、契约不兼容或副作用结果不确定进入 `interrupted`，并保留核验标记。
+- 原 Run 不再等待补充输入，也不存在 Continue 入口；需要补充或核验时创建新 Run。
+- “取消、Approve、Reject”只按 Runtime 返回的当前 `allowed_actions` 渲染；提交时 Runtime 仍以最新状态重新判断。
 
 ### 7.3 failed
 
@@ -223,7 +206,7 @@ Run 达到 80 Steps 或 120 分钟有效执行时间后进入 `stopped`，不能
 
 - 用户可以创建和保留多个 Run。
 - 任意时刻只有一个 Run 调用模型或执行工具。
-- waiting 状态不占执行槽；恢复后追加到队尾。
+- waiting_approval 不占执行槽；审批后追加到队尾。
 - 当前 Run 不被新 Run 抢占。
 - MVP 支持取消排队 Run，但不支持手动调序和优先级。
 
@@ -238,8 +221,8 @@ Run 达到 80 Steps 或 120 分钟有效执行时间后进入 `stopped`，不能
 
 - 没有运行中 Run 时正常退出 sidecar。
 - 有运行中 Run 时，用户选择等待完成或取消后退出。
-- 排队、waiting_approval 和 waiting_user_input Run 持久化，下一次启动恢复。
-- 意外中断的运行中 Run 不自动重放工具，改为等待用户确认。
+- 排队和 waiting_approval Run 持久化；意外中断的非终态 Run 在下一次启动时进入 interrupted。
+- 意外中断的运行中 Run 不自动重放工具。
 
 ## 11. 启动与页面恢复
 

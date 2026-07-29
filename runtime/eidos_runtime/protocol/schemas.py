@@ -146,14 +146,14 @@ class RunDto(ClosedModel):
         alias="modelId"
     )
     status: Literal[
-        "queued", "running", "waiting_approval", "waiting_user_input",
-        "finalizing", "stopped", "succeeded", "failed", "canceled", "interrupted",
+        "queued", "running", "waiting_approval", "finalizing", "stopped",
+        "succeeded", "failed", "canceled", "interrupted",
     ]
     runtime_state: Literal[
         "queued", "thinking", "tool_executing", "waiting_approval",
-        "waiting_user_input", "finalizing", "terminal",
+        "finalizing", "terminal",
     ] | None = Field(default=None, alias="runtimeState")
-    allowed_actions: list[Literal["cancel", "approve", "reject", "continue"]] = Field(
+    allowed_actions: list[Literal["cancel", "approve", "reject"]] = Field(
         default_factory=list, alias="allowedActions"
     )
     model_step_count: StrictInt = Field(alias="modelStepCount")
@@ -171,7 +171,6 @@ class RunDto(ClosedModel):
     cancel_failure_code: StrictStr | None = Field(
         default=None, alias="cancelFailureCode"
     )
-    pause_reason: StrictStr | None = Field(default=None, alias="pauseReason")
     stop_reason: StrictStr | None = Field(default=None, alias="stopReason")
     side_effects_may_exist: bool = Field(default=False, alias="sideEffectsMayExist")
     extension_snapshot: RunExtensionSnapshotDto | None = Field(

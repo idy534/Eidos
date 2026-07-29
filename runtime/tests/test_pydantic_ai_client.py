@@ -145,6 +145,7 @@ class PydanticAIModelClientTests(unittest.TestCase):
                 "result": '{"outcome":"success"}',
             },
             {"type": "protocol_error", "code": "invalid_tool_call"},
+            {"type": "finalization", "stopReason": "repeated_tool_call"},
         ))
 
         self.assertIsInstance(messages[0], PAIModelRequest)
@@ -154,6 +155,7 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertIsInstance(messages[2].parts[0], ToolCallPart)
         self.assertIsInstance(messages[3].parts[0], ToolReturnPart)
         self.assertIsInstance(messages[4].parts[0], UserPromptPart)
+        self.assertIn("manual strategy", messages[5].parts[0].content)
 
         captured = {}
         async def stream(_messages, info):

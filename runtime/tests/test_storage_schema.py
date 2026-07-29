@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import sqlite3
@@ -10,8 +11,13 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eidos_runtime.db.schema import SCHEMA_VERSION  # noqa: E402
+from eidos_runtime.db.schema import SCHEMA_SQL, SCHEMA_VERSION  # noqa: E402
 from eidos_runtime.db.storage import DATABASE_NAME, SessionStore  # noqa: E402
+from eidos_runtime.runtime.state_machine import (  # noqa: E402
+    RunStatus,
+    RuntimeState,
+    SegmentStatus,
+)
 
 
 EXPECTED_TABLES = {
@@ -84,6 +90,80 @@ class StorageSchemaTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_waiting_user_input_is_not_a_runtime_state(self) -> None:
+        self.assertNotIn("waiting_user_input", SCHEMA_SQL)
+        for status_type in (RunStatus, RuntimeState, SegmentStatus):
+            self.assertNotIn(
+                "waiting_user_input",
+                {status.value for status in status_type},
+            )
+
+    def test_legacy_waiting_run_is_interrupted_on_startup(self) -> None:
+        legacy_schema = SCHEMA_SQL.replace(
+            "'queued', 'running', 'waiting_approval', 'finalizing',",
+            "'queued', 'running', 'waiting_approval', 'waiting_user_input', 'finalizing',",
+            1,
+        ).replace(
+            "'queued', 'running', 'completed', 'failed', 'canceled'",
+            "'queued', 'running', 'waiting_user_input', 'completed', 'failed', 'canceled'",
+            1,
+        )
+        database = self.data / DATABASE_NAME
+        connection = sqlite3.connect(database)
+        connection.executescript(legacy_schema)
+        connection.execute(
+            """
+            INSERT INTO sessions (
+                id, workspace_root, created_at, updated_at
+            ) VALUES ('session', '/workspace', 1, 1)
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO runs (
+                id, session_id, user_input, model_id, model_profile_json,
+                status, extension_snapshot_json, created_at, updated_at
+            ) VALUES (
+                'run', 'session', 'legacy', 'deepseek-v4-flash', '{}',
+                'waiting_user_input', '{}', 1, 1
+            )
+            """
+        )
+        connection.execute(
+            "UPDATE runs SET extension_snapshot_json = ? WHERE id = 'run'",
+            (json.dumps({
+                "schemaVersion": 1,
+                "extensionContractVersion": 1,
+                "plugins": [],
+                "skillCatalogHash": "",
+                "mcpConfigHash": "",
+            }),),
+        )
+        connection.execute(
+            """
+            INSERT INTO execution_segments (
+                id, run_id, ordinal, status, created_at
+            ) VALUES ('segment', 'run', 1, 'waiting_user_input', 1)
+            """
+        )
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        connection.commit()
+        connection.close()
+        os.chmod(database, 0o600)
+
+        store = SessionStore(self.data)
+        store.initialize()
+
+        self.assertEqual(store.read_run("run")["status"], "interrupted")
+        assert store.connection is not None
+        self.assertEqual(
+            store.connection.execute(
+                "SELECT status FROM execution_segments WHERE id = 'segment'"
+            ).fetchone()[0],
+            "failed",
+        )
+        store.close()
 
     def test_empty_database_creates_the_complete_baseline(self) -> None:
         store = SessionStore(self.data)

@@ -40,7 +40,7 @@ export function taskStatusPresentation(
 }
 
 export function taskStatusFromRun(run: Run): Session["taskStatus"] {
-  if (["queued", "running", "waiting_approval", "waiting_user_input", "finalizing"].includes(run.status)) {
+  if (["queued", "running", "waiting_approval", "finalizing"].includes(run.status)) {
     return "in_progress";
   }
   if (run.status === "succeeded") {
@@ -233,7 +233,6 @@ export function terminalRunPresentation(
     case "stopped":
       return { label: "Run 已达到执行上限", tone: "warning" };
     case "queued":
-    case "waiting_user_input":
     case "finalizing":
     case "running":
     case "waiting_approval":
@@ -253,19 +252,17 @@ export function terminalRunPresentation(
  * - `starting` is a transient state while the IPC call is in-flight.
  * - `read_only` takes precedence over all run-based states.
  * - `idle` is the only state where a new Run can be started.
- * - `waiting_user_input` is the only state where `continueRun` is called.
  */
 export type ComposerMode =
   | "idle"               // No active run; can input and start
   | "starting"           // startRun IPC call in-flight; block double submit
   | "running"            // Run is executing; show cancel if allowed
   | "waiting_approval"   // Approval card is the primary entry point
-  | "waiting_user_input" // Run paused; submit calls continueRun
   | "finalizing"         // Run wrapping up; block all input
   | "read_only";         // storageHealth = health_only; block all writes
 
 const ACTIVE_RUN_STATUSES = new Set<Run["status"]>([
-  "queued", "running", "waiting_approval", "waiting_user_input", "finalizing",
+  "queued", "running", "waiting_approval", "finalizing",
 ]);
 
 /**
@@ -291,8 +288,6 @@ export function deriveComposerMode(
 
   // Map Run status → ComposerMode
   switch (activeRun.status) {
-    case "waiting_user_input":
-      return "waiting_user_input";
     case "waiting_approval":
       return "waiting_approval";
     case "finalizing":

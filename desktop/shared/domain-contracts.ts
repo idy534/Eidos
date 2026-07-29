@@ -45,7 +45,6 @@ export interface Run {
     | "queued"
     | "running"
     | "waiting_approval"
-    | "waiting_user_input"
     | "finalizing"
     | "stopped"
     | "succeeded"
@@ -53,7 +52,7 @@ export interface Run {
     | "canceled"
     | "interrupted";
   modelId: ModelId;
-  allowedActions?: Array<"cancel" | "approve" | "reject" | "continue">;
+  allowedActions?: Array<"cancel" | "approve" | "reject">;
   modelStepCount: number;
   createdAt: number;
   startedAt?: number;
@@ -63,7 +62,6 @@ export interface Run {
   cancelRequestedAt?: number;
   cancelCompletedAt?: number;
   cancelFailureCode?: string;
-  pauseReason?: string;
   stopReason?: string;
   sideEffectsMayExist?: boolean;
   extensionSnapshot?: Record<string, unknown>;

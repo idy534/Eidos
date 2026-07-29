@@ -126,7 +126,11 @@ class RunFinalizer:
         try:
             hit_fault("finalization_model_failure")
             ModelRunner(self.model, self.sensitive).run(
-                (*context, {"type": "finalization", "toolsAllowed": False}),
+                (*context, {
+                    "type": "finalization",
+                    "toolsAllowed": False,
+                    "stopReason": stop_reason,
+                }),
                 request_cancel,
                 writer.write,
                 allow_tools=False,

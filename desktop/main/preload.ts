@@ -53,8 +53,6 @@ const api: EidosRuntimeAPI = {
   startRun: (sessionId: string, userInput: string, modelId: ModelId): Promise<Run> =>
     ipcRenderer.invoke(IPC.RUN_START, sessionId, userInput, modelId),
   cancelRun: (runId: string): Promise<Run> => ipcRenderer.invoke(IPC.RUN_CANCEL, runId),
-  continueRun: (runId: string, userInput: string): Promise<Run> =>
-    ipcRenderer.invoke(IPC.RUN_CONTINUE, runId, userInput),
 
   // Models
   getModelStatus: (): Promise<ModelStatus> => ipcRenderer.invoke(IPC.MODEL_STATUS),

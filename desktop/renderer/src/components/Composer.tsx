@@ -12,7 +12,7 @@ export interface ComposerProps {
   modelConfigured: boolean;
   modelLoading: boolean;
   isSubmitting: boolean;
-  submitKind: "start" | "continue" | undefined;
+  submitKind: "start" | undefined;
   hasRuns: boolean;
   cancelingRunId: string | undefined;
   onInputChange: (value: string) => void;
@@ -53,7 +53,6 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
 
   const isReadOnly = composerMode === "read_only";
   const isIdle = composerMode === "idle";
-  const isContinuing = composerMode === "waiting_user_input";
   const canCancel = (composerMode === "running" || composerMode === "starting") && activeRun?.allowedActions?.includes("cancel");
   const inputDisabled = modelLoading || isSubmitting || !modelConfigured || !selectedModelId || isReadOnly || composerMode === "finalizing" || composerMode === "waiting_approval";
 
@@ -80,22 +79,16 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
     ? "正在加载模型配置…"
     : isReadOnly
       ? "存储只读，暂无法启动 Run"
-      : isContinuing
-        ? "补充信息后继续这个 Run"
-        : modelConfigured
-          ? "例如：阅读这个项目并说明如何启动"
-          : "请先配置 DeepSeek API Key";
+      : modelConfigured
+        ? "例如：阅读这个项目并说明如何启动"
+        : "请先配置 DeepSeek API Key";
 
   const showModelSelect = isIdle && !hasRuns;
   const statusLabel = modelLoading
     ? "正在加载模型…"
-    : submitKind === "continue"
-      ? "继续中…"
-      : composerMode === "running" || composerMode === "starting"
+    : composerMode === "running" || composerMode === "starting"
         ? statusText(activeRun?.status ?? "queued")
-        : isContinuing
-          ? "等待你的补充"
-          : composerMode === "waiting_approval"
+        : composerMode === "waiting_approval"
             ? "等待批准"
             : composerMode === "finalizing"
               ? "正在收尾"
@@ -103,13 +96,9 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
 
   const buttonLabel = modelLoading
     ? "加载中…"
-    : submitKind === "continue"
-      ? "继续中…"
-      : submitKind === "start" || composerMode === "starting"
+    : submitKind === "start" || composerMode === "starting"
         ? "启动中…"
-        : isContinuing
-          ? "继续"
-          : "开始";
+        : "开始";
 
   const isSubmitDisabled =
     modelLoading
@@ -231,7 +220,7 @@ export function StopSquareIcon() {
 export function statusText(status: Run["status"]): string {
   return ({
     queued: "已排队", running: "正在执行", waiting_approval: "等待批准",
-    waiting_user_input: "等待输入", finalizing: "正在收尾", stopped: "已停止",
+    finalizing: "正在收尾", stopped: "已停止",
     succeeded: "已完成", failed: "失败", canceled: "已取消", interrupted: "已中断",
   } as const)[status];
 }

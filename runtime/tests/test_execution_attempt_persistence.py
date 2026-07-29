@@ -112,7 +112,7 @@ class ExecutionAttemptPersistenceTests(unittest.TestCase):
             (run["id"],),
         ).fetchone()[0]
         self.assertEqual(tuple(attempt), ("uncertain", "runtime_interrupted"))
-        self.assertEqual(recovered["status"], "waiting_user_input")
+        self.assertEqual(recovered["status"], "interrupted")
         self.assertEqual(reconciliation_required, 1)
         self.assertTrue(recovered["sideEffectsMayExist"])
 

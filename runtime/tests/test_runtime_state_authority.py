@@ -51,7 +51,7 @@ class RuntimeStateAuthorityTests(unittest.TestCase):
             side_effect=RuntimeError("fixture event failure"),
         ):
             with self.assertRaisesRegex(RuntimeError, "fixture event failure"):
-                self.store.pause_run_committed(run["id"], "fixture")
+                self.store.fail_run_committed(run["id"], "fixture")
 
         self.assertEqual(self.store.read_run(run["id"])["status"], "running")
         after = self.store.list_events(self.session["id"], after_event_id=0)
@@ -134,11 +134,11 @@ class RuntimeStateAuthorityTests(unittest.TestCase):
         run, _ = self.store.create_run(self.session["id"], "pause")
         tracker = RuntimePhaseTracker(state=RuntimeState.CANCELED)
 
-        mutation = self.store.pause_run_committed(run["id"], "fixture")
-        tracker.track(RuntimeState.WAITING_USER_INPUT, "diagnostic only")
+        mutation = self.store.begin_finalization_committed(run["id"])
+        tracker.track(RuntimeState.FINALIZING, "diagnostic only")
 
-        self.assertEqual(mutation.value["status"], "waiting_user_input")
-        self.assertEqual(tracker.state, RuntimeState.WAITING_USER_INPUT)
+        self.assertEqual(mutation.value["status"], "finalizing")
+        self.assertEqual(tracker.state, RuntimeState.FINALIZING)
 
     def test_approval_decisions_are_compare_and_swap(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "approve")

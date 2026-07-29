@@ -344,9 +344,9 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
                 mcp_sandbox=False,
             ).run(run["id"], threading.Event())
 
-            paused = store.read_run(run["id"])
-            self.assertEqual(paused["status"], "waiting_user_input")
-            self.assertTrue(paused["sideEffectsMayExist"])
+            interrupted = store.read_run(run["id"])
+            self.assertEqual(interrupted["status"], "interrupted")
+            self.assertTrue(interrupted["sideEffectsMayExist"])
             self.assertEqual(len(model.contexts), 2)
             result = json.loads(store.connection.execute(
                 "SELECT result_json FROM tool_calls WHERE tool_name = ?",

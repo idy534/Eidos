@@ -162,11 +162,8 @@ class ApprovalCoordinator:
         self.events.publish(mutation, run=approval_run, item=mutation.value)
         self.resume_execution_slot(run_id, cancel)
         self.resume_effective_time()
-        approval_run = self.store.read_run(run_id)
         self.state_machine.track(
-            RuntimeState.WAITING_USER_INPUT
-            if approval_run["status"] == "waiting_user_input"
-            else RuntimeState.TOOL_EXECUTING,
+            RuntimeState.TOOL_EXECUTING,
             f"{transition_reason}_resolved",
         )
         return ApprovalOutcome(

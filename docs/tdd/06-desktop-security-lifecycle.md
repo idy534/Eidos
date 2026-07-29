@@ -123,7 +123,7 @@ Runtime committed Events
 - 只接受用户通过系统文件夹选择器返回的目录。
 - Main 以 `O_DIRECTORY|O_NOFOLLOW` 打开 root，sidecar 通过 fd `fstat` 与 volume resource metadata 保存 `canonical_root_path,volume_uuid,inode,birthtime_ns,last_seen_dev`。`fileResourceIdentifier`/`fileIdentifier` 只能作进程内补充，不能作为跨重启持久身份。
 - volume UUID 或可靠 birthtime 不可用时拒绝选择 `workspace_volume_identity_unsupported`。`last_seen_dev` 只用于当前挂载期辅助判断。
-- 创建/恢复 Run 和每次工具调用前都重新以 fd 验证路径、目录类型、volume UUID、inode 与 birthtime。消失、权限丢失、symlink、类型或身份变化时 Workspace -> unavailable，所有 pending/approved Approval 永久 invalidated，非终态 Run -> `waiting_user_input/workspace_unavailable`，零模型/工具续接。
+- 创建/恢复 Run 和每次工具调用前都重新以 fd 验证路径、目录类型、volume UUID、inode 与 birthtime。消失、权限丢失、symlink、类型或身份变化时 Workspace -> unavailable，所有 pending/approved Approval 永久 invalidated，非终态 Run -> `interrupted/workspace_unavailable`，零模型/工具续接。
 - 同路径新身份创建新 Workspace ID；同身份换路径也创建新 Workspace ID，不自动 rebind 或迁移历史。旧身份在原路径精确重现时，只能由用户显式重新选择恢复旧 Workspace；旧 Approval 不复活，Run 仍需显式继续。
 - 数据库同时保证 available canonical path 唯一和 available persistent identity 唯一；不可用历史仍可只读查看。
 - active root 传给 sidecar 后仍由 Workspace Guard 和 Seatbelt 二次校验。
@@ -156,7 +156,7 @@ Main：
 - 显示 Runtime disconnected，并禁用新 Run/审批操作。
 - 可由用户重新启动 sidecar。
 
-Sidecar 重启后执行崩溃恢复：running -> waiting_user_input/runtime_interrupted；finalizing 使用结构化降级摘要进入 stopped；两者都不自动重放工具。
+Sidecar 重启后执行崩溃恢复：running/waiting_approval/finalizing -> interrupted/runtime_interrupted，不自动重放工具。
 
 每个已启动 Shell 另由 Q144 guardian 持有绝对 deadline、双控制通道和进程身份 lease。Main/sidecar EOF、取消或 deadline 触发 TERM -> 2 秒 -> KILL 的受控 PGID/已识别后代清理；UI 不显示“后台仍在运行”。若 guardian 自检失败，Shell capability unavailable，但模型/只读文件工具可按 ready capability 状态继续。
 
@@ -168,7 +168,6 @@ Renderer 必须明确区分：
 queued
 running
 waiting_approval
-waiting_user_input
 finalizing
 succeeded
 failed
@@ -177,7 +176,7 @@ canceled
 runtime_disconnected
 ```
 
-Renderer 只能从 snapshot 的稳定排序 `allowed_actions` 渲染 Continue/Cancel/Approve/Reject；不能仅凭 `waiting_user_input` 或本地 Event 猜测。提交后若 Runtime 返回状态竞态，立即重新获取 snapshot。终态 snapshot 不应用实时 notifications；未知 snapshot schema 显示兼容错误，未知 Event schema 先停止 reducer 再 resnapshot。
+Renderer 只能从 snapshot 的稳定排序 `allowed_actions` 渲染 Cancel/Approve/Reject；不能仅凭本地 Event 猜测。提交后若 Runtime 返回状态竞态，立即重新获取 snapshot。终态 snapshot 不应用实时 notifications；未知 snapshot schema 显示兼容错误，未知 Event schema 先停止 reducer 再 resnapshot。
 
 所有 `*_at` 作为 UTC Unix 毫秒 ApiTimestampV1 接收，Renderer 只负责本地化展示。Approval 倒计时以服务端 `approval_expires_at` 展示，但授权判断只在 Runtime；客户端墙钟、休眠或回拨不能延长授权。
 

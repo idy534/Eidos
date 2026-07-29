@@ -30,7 +30,7 @@ interface Segment {
 }
 
 const ACTIVE_RUN_STATUSES = new Set<Run["status"]>([
-  "queued", "running", "waiting_approval", "waiting_user_input", "finalizing",
+  "queued", "running", "waiting_approval", "finalizing",
 ]);
 
 const TERMINAL_RUN_STATUSES = new Set<Run["status"]>([
@@ -421,7 +421,7 @@ function ProcessLabel({ run }: { run: Run }) {
   const duration = Math.max(0, (run.completedAt ?? now) - (run.startedAt ?? run.createdAt));
   const prefix = TERMINAL_RUN_STATUSES.has(run.status)
     ? "已处理"
-    : run.status === "waiting_user_input" ? "处理已暂停" : "正在处理";
+    : "正在处理";
   return <span>{prefix} {formatDuration(duration)}</span>;
 }
 
@@ -481,20 +481,8 @@ function splitRunIntoSegments(items: Item[]): Segment[] {
 function activeRunPresentation(run: Run) {
   switch (run.status) {
     case "waiting_approval": return { label: "等待批准", tone: "warning" as const };
-    case "waiting_user_input": return { label: `已暂停：${pauseLabel(run.pauseReason)}`, tone: "warning" as const };
     default: return undefined;
   }
-}
-
-function pauseLabel(reason: string | undefined): string {
-  return ({
-    model_stream_interrupted: "模型输出中断，请确认后继续",
-    sensitive_scan_failed: "安全扫描未完成，原文未展示",
-    repeated_sensitive_tool_input: "模型重复生成受保护参数，请改写任务",
-    reconciliation_required: "需要先核验可能发生的副作用",
-    segment_step_limit: "本段已达到步骤上限",
-    segment_time_limit: "本段已达到时间上限",
-  } as Record<string, string>)[reason ?? ""] ?? "需要你的输入才能继续";
 }
 
 function shellSummary(status: Item["status"], command: string): string {

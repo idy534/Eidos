@@ -82,20 +82,6 @@ describe("Composer DOM interaction & state behavior", () => {
     expect(screen.getByRole("button", { name: "开始" })).toBeDisabled();
   });
 
-  it("waiting_user_input presents Continue button and label", () => {
-    render(
-      <Composer
-        {...defaultProps}
-        composerMode="waiting_user_input"
-        input="Supplemental details"
-        submitKind="continue"
-      />,
-    );
-
-    const submitBtn = screen.getByRole("button", { name: "继续中…" });
-    expect(submitBtn).toBeInTheDocument();
-  });
-
   it("starting mode presents starting loading state", () => {
     render(
       <Composer

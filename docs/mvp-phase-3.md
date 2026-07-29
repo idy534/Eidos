@@ -216,7 +216,7 @@ P3-00 契约与基线
 - [x] P3-06-05 两个 profile 互斥；本期没有 Workspace 写 MCP profile，也没有同时获得 Workspace 读取与网络的 profile。
 - [x] P3-06-06 MCP ToolCall 参数在 Approval 和发送前完成 effective arguments、敏感扫描和 hash 绑定；Approval 不能修改参数、Server、profile、timeout 或 env。
 - [x] P3-06-07 MCP 结果在进入 ToolResult、模型、UI、Event、SQLite 和日志前统一扫描、递归限深、限项和限字节；Server stderr 只生成有界安全诊断，不作为 ToolResult。
-- [x] P3-06-08 `tools/call` timeout、取消、连接断开或结果提交失败均不自动重试；结果标记 `side_effects_may_exist=true` 并让 Run 进入 `waiting_user_input`，不得由 Workspace 只读工具自动清除外部不确定性。
+- [x] P3-06-08 `tools/call` timeout、取消、连接断开或结果提交失败均不自动重试；结果标记 `side_effects_may_exist=true` 并让 Run 进入 `interrupted`，不得由 Workspace 只读工具自动清除外部不确定性。
 - [x] P3-06-09 sidecar 退出时有界终止 MCP 进程组；失联进程、迟到 response 和旧 Approval 不得进入新 Run 或新 Step。
 
 验收：macOS 原生测试证明两个 profile 的文件/网络矩阵、子进程继承、真实 Home/状态目录 deny、timeout/cancel 清理和零自动重放；安全核心失败时 MCP unavailable，但内置只读闭环仍可工作。

@@ -20,6 +20,38 @@ from eidos_runtime.runtime.state_machine import (
 def recover_runtime_facts(connection: sqlite3.Connection) -> None:
     """Recover abandoned persisted facts without consulting in-memory phases."""
     now = _now_ms()
+    legacy_paused = connection.execute(
+        """
+        SELECT id, session_id FROM runs
+        WHERE status = 'waiting_user_input'
+        """
+    ).fetchall()
+    for row in legacy_paused:
+        connection.execute(
+            """
+            UPDATE execution_segments
+            SET status = 'failed', completed_at = ?
+            WHERE run_id = ? AND status IN ('queued', 'running', 'waiting_user_input')
+            """,
+            (now, row["id"]),
+        )
+        connection.execute(
+            """
+            UPDATE runs
+            SET status = 'interrupted', error_code = 'RUNTIME_INTERRUPTED',
+                completed_at = ?, updated_at = ?
+            WHERE id = ? AND status = 'waiting_user_input'
+            """,
+            (now, now, row["id"]),
+        )
+        append_event(
+            connection,
+            EventType.RUN_UPDATED,
+            now,
+            {"reason": "legacy_wait_state_removed"},
+            session_id=str(row["session_id"]),
+            run_id=str(row["id"]),
+        )
     connection.execute(
         """
         UPDATE async_operations
@@ -65,14 +97,14 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
         settle_run_children(
             connection,
             str(row["id"]),
-            RunStatus.WAITING_USER_INPUT,
+            RunStatus.INTERRUPTED,
             now,
         )
         run, _event = transition_run(
             connection,
             str(row["id"]),
             frozenset({current}),
-            RunStatus.WAITING_USER_INPUT,
+            RunStatus.INTERRUPTED,
             "side_effect_reconciliation_required",
         )
         connection.execute(
@@ -104,8 +136,7 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
           AND cancel_completed_at IS NULL
           AND reconciliation_required = 0
           AND status IN (
-              'queued', 'running', 'waiting_approval',
-              'waiting_user_input', 'finalizing'
+              'queued', 'running', 'waiting_approval', 'finalizing'
           )
         """
     ).fetchall()
@@ -133,17 +164,6 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
             frozenset({RunStatus(row["status"])}),
             RunStatus.INTERRUPTED,
             "runtime_interrupted",
-        )
-
-    paused_runs = connection.execute(
-        "SELECT id FROM runs WHERE status = 'waiting_user_input'"
-    ).fetchall()
-    for row in paused_runs:
-        settle_run_children(
-            connection,
-            str(row["id"]),
-            RunStatus.WAITING_USER_INPUT,
-            now,
         )
 
     approvals = connection.execute(

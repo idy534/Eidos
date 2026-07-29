@@ -41,8 +41,7 @@ SESSION_SELECT = """
                SELECT 1 FROM runs active
                WHERE active.session_id = s.id
                  AND active.status IN (
-                   'queued', 'running', 'waiting_approval',
-                   'waiting_user_input', 'finalizing'
+                   'queued', 'running', 'waiting_approval', 'finalizing'
                  )
              ) THEN 'in_progress'
              ELSE COALESCE((
@@ -280,8 +279,7 @@ class SessionRepository(Repository):
                 """
                 SELECT 1 FROM runs
                 WHERE session_id = ? AND status IN (
-                    'queued', 'running', 'waiting_approval',
-                    'waiting_user_input', 'finalizing'
+                    'queued', 'running', 'waiting_approval', 'finalizing'
                 ) LIMIT 1
                 """,
                 (session_id,),

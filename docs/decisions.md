@@ -26,7 +26,7 @@
 | Q17 | 明确删除必须优先使用 `delete_file`，但这不是 `workspace_write` Shell 的硬禁止项。 | PRD Agent 规则；TDD 风险说明 |
 | Q18 | 新增显式 `publish_artifact`；普通写入不会自动成为 Artifact。 | PRD Artifact；TDD 工具契约 |
 | Q19 | Artifact 是发布时的不可变快照；再次发布生成新版本。 | PRD Artifact；TDD 存储 |
-| Q20 | 意外中断不自动重放；Run 转为 `waiting_user_input/runtime_interrupted`，运行中的 ToolCall 标记 `interrupted`。 | PRD 恢复；TDD 状态机 |
+| Q20 | 意外中断不自动重放；Run 转为 `interrupted/runtime_interrupted`，运行中的 ToolCall 标记 `interrupted`。 | PRD 恢复；TDD 状态机 |
 | Q21 | 模型流实时转发，合并后持久化，完成后保存最终响应。 | TDD 模型与 Events |
 | Q22 | MVP API Key 明文保存在 `~/.eidos/config.toml`；Keychain 延后。 | PRD 风险接受；TDD 配置安全 |
 | Q23 | 所有持久化内容统一脱敏；Shell 输出在返回模型前也脱敏。 | PRD 隐私；TDD 脱敏层 |
@@ -48,10 +48,10 @@
 | Q39 | localhost 默认禁止；`local_network=true` 需单次审批；Unix Socket 在 MVP 中始终禁止。 | PRD 安全；TDD 网络策略 |
 | Q40 | 只读工具可批量；写、删除、Shell 独占且审批；`publish_artifact` 独占但自动执行。 | TDD 工具分类 |
 | Q41 | 不保存、不展示 raw reasoning；只展示 `assistant_progress` 和 `final_answer`，可保存 reasoning token 用量。 | PRD Feed；TDD 模型流与 Desktop |
-| Q42 | 首个 delta 后模型流中断不自动重试；Run 进入 waiting_user_input，部分文本标记未完成，未解析 ToolCall 丢弃。 | PRD 恢复；TDD 模型流与状态机 |
+| Q42 | 首个 delta 后模型流中断不自动重试；Run 进入 failed，部分文本标记未完成，未解析 ToolCall 丢弃。 | PRD 恢复；TDD 模型流与状态机 |
 | Q43 | 模型认证、模型不存在和确定性请求配置错误直接使 Run failed；不暂停、不 Finalize、不修改原 Run 快照。 | PRD 错误；TDD 模型与状态机 |
 | Q44 | 首个 delta 前瞬时模型错误重试耗尽后暂停 Run；多个 Attempt 只计一个失败 Step。 | PRD 恢复；TDD 模型重试 |
-| Q45 | 无效模型协议响应允许纠正一次；连续两次后 waiting_user_input，合法响应清零计数。 | PRD Agent Loop；TDD 协议状态 |
+| Q45 | 无效模型协议响应允许纠正一次；连续两次后执行一次无工具收尾并 stopped，合法响应清零计数。 | PRD Agent Loop；TDD 协议状态 |
 | Q46 | 副作用工具先持久化 durable intent，再执行并保存结果；崩溃后只对账、不重放。 | PRD 可靠性；TDD 状态与存储 |
 | Q47 | 网络代理只记录 host/port/decision/bytes 等审计元数据，不记录 URL、Header、Body，不做 TLS MITM。 | PRD 隐私；TDD 网络代理 |
 | Q48 | 网络白名单只接受精确 host 与显式端口，并校验解析 IP；拒绝通配符、私网映射和跨 host redirect。 | PRD 网络；TDD 代理策略 |

@@ -331,19 +331,6 @@ class SessionStore:
             extension_snapshot=extension_snapshot,
         )
 
-    def continue_run(
-        self,
-        run_id: str,
-        user_input: str,
-        *,
-        operation_id: str | None = None,
-    ) -> dict[str, object]:
-        return self._repository(self._runs).continue_run(
-            run_id,
-            user_input,
-            operation_id=operation_id,
-        )
-
     def claim_next_run(self) -> dict[str, object] | None:
         return self._repository(self._runs).claim_next_run()
 
@@ -865,14 +852,6 @@ class SessionStore:
 
     def clear_protocol_errors(self, run_id: str) -> None:
         return self._repository(self._runs).clear_protocol_errors(run_id)
-
-    def pause_run(self, run_id: str, reason: str) -> dict[str, object]:
-        return self._repository(self._runs).pause_run(run_id, reason)
-
-    def pause_run_committed(
-        self, run_id: str, reason: str
-    ) -> CommittedMutation[dict[str, object]]:
-        return self._repository(self._runs).pause_run_committed(run_id, reason)
 
     def begin_finalization(self, run_id: str) -> dict[str, object]:
         return self._repository(self._runs).begin_finalization(run_id)

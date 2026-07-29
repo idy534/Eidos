@@ -52,7 +52,7 @@ ToolCall row 创建前，工具参数必须完成归一化、schema 校验、组
 - 创建 Run 时把当前版本复制进不可变 Run 快照；每个 Step 和 ToolCall 都使用该版本，新版本只适用于新 Run。
 - Runtime 仅在旧实现仍满足当前安全底线时，为引用它的非终态 Run 保留实现。
 - 当前 Redaction ruleset、Workspace Guard、Seatbelt、网络边界和全局资源上限始终作用于旧 Run，旧工具契约不得将其降级。
-- 旧版本缺失或不兼容当前安全底线时，Runtime 零模型/工具执行，使其 pending/approved Approval 失效，并将 Run 置为 `waiting_user_input/runtime_contract_unsupported`。原 Run 只允许取消或按当前契约创建新 Run。
+- 旧版本缺失或不兼容当前安全底线时，Runtime 零模型/工具执行，使其 pending/approved Approval 失效，并将 Run 置为 `interrupted/runtime_contract_unsupported`。后续必须按当前契约创建新 Run。
 - 普通工具契约变化不使 Model Profile capability snapshot 失效。若变化涉及 Provider probe、wire 或请求语义，还必须递增对应 Gateway/model request contract version。
 
 ### 1.2 Eidos Tool Schema Dialect v1
@@ -549,7 +549,7 @@ summary
 - 普通非敏感条目包含 `path,type,dev,inode,logical_size,allocated_size,mtime_ns,ctime_ns,mode,uid,gid,nlink`。敏感路径不持久化名称或哈希，只保存聚合计数。
 - 前置 manifest 以受控文件保存在 Eidos state root，内容先扫描并由 durable intent 引用。intent commit 后才 spawn Shell。
 - 进程组结束后生成同规则后置 manifest，计算 `created|deleted|content_modified|metadata_modified|type_changed`。执行后仍存在且变化的 <=32 MiB 普通非敏感文件补充 SHA-256；其他只保存元数据变化。
-- `.git` 任何变化单独标记 `git_boundary_change_detected`；敏感区变化只记录 `protected_path_change_count`。两者均作为安全异常进入 waiting_user_input，不泄露隐藏名称。
+- `.git` 任何变化单独标记 `git_boundary_change_detected`；敏感区变化只记录 `protected_path_change_count`。两者均作为安全异常进入 interrupted，不泄露隐藏名称。
 - 变化归因字段固定为 `observed_during_shell_window`，不声称命令独立造成。UI 默认展示前 200 个安全路径，详情 API 可读完整非敏感列表；模型只得到分类计数、前 50 个安全路径和精确 `omitted_path_count`。
 - 后置扫描超限/失败或进程崩溃保留真实 Shell 结果，设置 `change_manifest_incomplete=true, side_effects_may_exist=true`并进入事实确认屏障。对账不重跑命令，不自动回滚。
 - 成功提交完整结果后清理 manifest 文件；崩溃恢复完成前保留。

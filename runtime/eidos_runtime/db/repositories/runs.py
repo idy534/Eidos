@@ -202,90 +202,6 @@ class RunRepository(Repository):
             extension_snapshot=extension_snapshot,
         )
 
-    def continue_run(
-        self,
-        run_id: str,
-        user_input: str,
-        *,
-        operation_id: str | None = None,
-    ) -> dict[str, object]:
-        now = _now_ms()
-        item_id = str(uuid.uuid4())
-        segment_id = str(uuid.uuid4())
-
-        def write(connection: sqlite3.Connection) -> dict[str, object]:
-            run_row = connection.execute(
-                "SELECT * FROM runs WHERE id = ? AND status = 'waiting_user_input'",
-                (run_id,),
-            ).fetchone()
-            if run_row is None:
-                raise InvalidRunStateError("run cannot continue")
-            item_ordinal = self._next_ordinal(connection, run_id)
-            segment_ordinal = connection.execute(
-                "SELECT COUNT(*) + 1 FROM execution_segments WHERE run_id = ?",
-                (run_id,),
-            ).fetchone()[0]
-            old_segment_events = transition_segments(
-                connection,
-                run_id,
-                frozenset({SegmentStatus.WAITING_USER_INPUT}),
-                SegmentStatus.COMPLETED,
-                now,
-                "run_continued",
-            )
-            if len(old_segment_events) != 1:
-                raise InvalidRunStateError("run has no paused segment")
-            connection.execute(
-                """
-                INSERT INTO items (
-                    id, session_id, run_id, ordinal, kind, status,
-                    content, created_at, completed_at
-                ) VALUES (?, ?, ?, ?, 'user_message', 'completed', ?, ?, ?)
-                """,
-                (
-                    item_id, run_row["session_id"], run_id, item_ordinal,
-                    user_input, now, now,
-                ),
-            )
-            connection.execute(
-                """
-                INSERT INTO execution_segments (
-                    id, run_id, ordinal, status, created_at
-                ) VALUES (?, ?, ?, 'queued', ?)
-                """,
-                (segment_id, run_id, segment_ordinal, now),
-            )
-            connection.execute(
-                """
-                UPDATE runs SET pause_reason = NULL, consecutive_rejects = 0
-                WHERE id = ? AND status = 'waiting_user_input'
-                """,
-                (run_id,),
-            )
-            append_event(
-                connection, EventType.SEGMENT_CREATED, now,
-                {
-                    "entity_id": segment_id, "previous": "created",
-                    "current": "queued",
-                },
-                session_id=run_row["session_id"], run_id=run_id,
-            )
-            run, _run_event = transition_run(
-                connection,
-                run_id,
-                frozenset({RunStatus.WAITING_USER_INPUT}),
-                RunStatus.QUEUED,
-                "user_input",
-            )
-            return run
-
-        return self._write(
-            write,
-            operation_id=operation_id,
-            operation_scope="run/continue",
-            operation_request={"runId": run_id, "userInput": user_input},
-        )
-
     def claim_next_run(self) -> dict[str, object] | None:
         mutation = self.claim_next_run_committed()
         return mutation.value if mutation is not None else None
@@ -490,31 +406,6 @@ class RunRepository(Repository):
                 """,
                 (_now_ms(), run_id),
             )
-
-    def pause_run(self, run_id: str, reason: str) -> dict[str, object]:
-        return self.pause_run_committed(run_id, reason).value
-
-    def pause_run_committed(
-        self, run_id: str, reason: str
-    ) -> CommittedMutation[dict[str, object]]:
-        with self.lock, self._connection() as connection:
-            now = _now_ms()
-            segment_events = transition_segments(
-                connection,
-                run_id,
-                frozenset({SegmentStatus.RUNNING}),
-                SegmentStatus.WAITING_USER_INPUT,
-                now,
-                reason,
-            )
-            run, event = transition_run(
-                connection,
-                run_id,
-                frozenset({RunStatus.RUNNING}),
-                RunStatus.WAITING_USER_INPUT,
-                reason,
-            )
-        return CommittedMutation(run, (*segment_events, event))
 
     def begin_finalization(self, run_id: str) -> dict[str, object]:
         return self.begin_finalization_committed(run_id).value
@@ -792,7 +683,6 @@ class RunRepository(Repository):
                 "queued",
                 "running",
                 "waiting_approval",
-                "waiting_user_input",
                 "finalizing",
                 "canceled",
             }:
@@ -875,7 +765,6 @@ class RunRepository(Repository):
                 RunStatus.QUEUED,
                 RunStatus.RUNNING,
                 RunStatus.WAITING_APPROVAL,
-                RunStatus.WAITING_USER_INPUT,
                 RunStatus.FINALIZING,
             })
             if current not in expected:
@@ -883,52 +772,27 @@ class RunRepository(Repository):
             now = _now_ms()
             if row["reconciliation_required"] or row["side_effects_may_exist"]:
                 events = list(settle_run_children(
-                    connection, run_id, RunStatus.WAITING_USER_INPUT, now
+                    connection, run_id, RunStatus.INTERRUPTED, now
                 ))
-                if current is RunStatus.WAITING_USER_INPUT:
-                    connection.execute(
-                        """
-                        UPDATE runs
-                        SET pause_reason = 'side_effect_reconciliation_required',
-                            cancel_failure_code = 'RECONCILIATION_REQUIRED',
-                            updated_at = ?
-                        WHERE id = ?
-                        """,
-                        (now, run_id),
-                    )
-                    run = _run_from_row(connection.execute(
-                        "SELECT * FROM runs WHERE id = ?", (run_id,)
-                    ).fetchone())
-                    events.append(append_event(
-                        connection,
-                        EventType.RUN_UPDATED,
-                        now,
-                        {
-                            "reason": "cancel_reconciliation_required",
-                        },
-                        session_id=str(run["sessionId"]),
-                        run_id=run_id,
-                    ))
-                else:
-                    run, event = transition_run(
-                        connection,
-                        run_id,
-                        frozenset({current}),
-                        RunStatus.WAITING_USER_INPUT,
-                        "side_effect_reconciliation_required",
-                    )
-                    events.append(event)
-                    connection.execute(
-                        """
-                        UPDATE runs
-                        SET cancel_failure_code = 'RECONCILIATION_REQUIRED'
-                        WHERE id = ?
-                        """,
-                        (run_id,),
-                    )
-                    run = _run_from_row(connection.execute(
-                        "SELECT * FROM runs WHERE id = ?", (run_id,)
-                    ).fetchone())
+                run, event = transition_run(
+                    connection,
+                    run_id,
+                    frozenset({current}),
+                    RunStatus.INTERRUPTED,
+                    "side_effect_reconciliation_required",
+                )
+                events.append(event)
+                connection.execute(
+                    """
+                    UPDATE runs
+                    SET cancel_failure_code = 'RECONCILIATION_REQUIRED'
+                    WHERE id = ?
+                    """,
+                    (run_id,),
+                )
+                run = _run_from_row(connection.execute(
+                    "SELECT * FROM runs WHERE id = ?", (run_id,)
+                ).fetchone())
                 return CommittedMutation(run, tuple(events))
             events = list(settle_run_children(
                 connection, run_id, RunStatus.CANCELED, now
@@ -949,8 +813,7 @@ class RunRepository(Repository):
                 """
                 SELECT id FROM runs
                 WHERE status IN (
-                    'queued', 'running', 'waiting_approval',
-                    'waiting_user_input', 'finalizing'
+                    'queued', 'running', 'waiting_approval', 'finalizing'
                 )
                 ORDER BY creation_seq
                 """
@@ -994,7 +857,6 @@ class RunRepository(Repository):
             RunStatus.QUEUED,
             RunStatus.RUNNING,
             RunStatus.WAITING_APPROVAL,
-            RunStatus.WAITING_USER_INPUT,
             RunStatus.FINALIZING,
         })
         current = RunStatus(row["status"])

@@ -741,7 +741,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertEqual(failed["status"], "failed")
         self.assertEqual(failed["errorCode"], "CONTEXT_INPUT_TOO_LARGE")
 
-    def test_two_compactions_still_over_budget_pauses_with_stable_reason(self) -> None:
+    def test_two_compactions_still_over_budget_finalize_with_stable_reason(self) -> None:
         run, _ = self.store.create_run(
             self.session["id"],
             "x" * 20_000,
@@ -759,9 +759,9 @@ class RuntimeHardeningTests(unittest.TestCase):
             run["id"], threading.Event()
         )
 
-        paused = self.store.read_run(run["id"])
-        self.assertEqual(paused["status"], "waiting_user_input")
-        self.assertEqual(paused["pauseReason"], "context_still_over_budget")
+        stopped = self.store.read_run(run["id"])
+        self.assertEqual(stopped["status"], "stopped")
+        self.assertEqual(stopped["stopReason"], "context_still_over_budget")
 
     def test_steer_refreshes_skill_context_and_deferred_tools_next_step(self) -> None:
         plugin_root = Path(self.temporary.name) / "plugin"

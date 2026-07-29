@@ -272,12 +272,6 @@ export class RuntimeClient {
     return this.validatedRequest("run/cancel", { runId, operationId }, isRun);
   }
 
-  continueRun(runId: string, userInput: string, operationId = randomUUID()): Promise<Run> {
-    return this.validatedRequest(
-      "run/continue", { runId, userInput, operationId }, isRun,
-    );
-  }
-
   modelStatus(): Promise<ModelStatus> {
     return this.validatedRequest("model/status", {}, isModelStatus);
   }
@@ -600,10 +594,10 @@ function isNotification(value: unknown): value is RuntimeNotification {
       return run.status === "running";
     }
     if (value.method === "run/updated") {
-      return ["queued", "running", "waiting_approval", "waiting_user_input", "finalizing"].includes(run.status);
+      return ["queued", "running", "waiting_approval", "finalizing"].includes(run.status);
     }
     return ![
-      "queued", "running", "waiting_approval", "waiting_user_input", "finalizing",
+      "queued", "running", "waiting_approval", "finalizing",
     ].includes(run.status);
   }
   if (value.method === "item/started" || value.method === "item/completed") {
@@ -795,7 +789,6 @@ function isRun(value: unknown): value is Run {
       "cancelRequestedAt",
       "cancelCompletedAt",
       "cancelFailureCode",
-      "pauseReason",
       "stopReason",
       "sideEffectsMayExist",
       "extensionSnapshot",
@@ -809,7 +802,7 @@ function isRun(value: unknown): value is Run {
     && typeof value.sessionId === "string"
     && (value.userInput === undefined || typeof value.userInput === "string")
     && [
-      "queued", "running", "waiting_approval", "waiting_user_input",
+      "queued", "running", "waiting_approval",
       "finalizing", "stopped", "succeeded", "failed", "canceled", "interrupted",
     ].includes(String(value.status))
     && isModelId(value.modelId)
@@ -817,7 +810,7 @@ function isRun(value: unknown): value is Run {
     && (value.allowedActions === undefined || (
       Array.isArray(value.allowedActions)
       && value.allowedActions.every((action) => [
-        "cancel", "approve", "reject", "continue",
+        "cancel", "approve", "reject",
       ].includes(String(action)))
     ))
     && isNonNegativeInteger(value.createdAt)
@@ -837,7 +830,6 @@ function isRun(value: unknown): value is Run {
       value.cancelFailureCode === undefined
       || typeof value.cancelFailureCode === "string"
     )
-    && (value.pauseReason === undefined || typeof value.pauseReason === "string")
     && (value.stopReason === undefined || typeof value.stopReason === "string")
     && (value.sideEffectsMayExist === undefined || typeof value.sideEffectsMayExist === "boolean")
     && (value.extensionSnapshot === undefined || isExtensionSnapshot(value.extensionSnapshot))

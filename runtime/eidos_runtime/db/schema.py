@@ -24,9 +24,8 @@ CREATE TABLE runs (
     model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash',
     model_profile_json TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN (
-        'queued', 'running', 'waiting_approval', 'waiting_user_input',
-        'finalizing', 'succeeded', 'failed', 'stopped', 'canceled',
-        'interrupted'
+        'queued', 'running', 'waiting_approval', 'finalizing',
+        'succeeded', 'failed', 'stopped', 'canceled', 'interrupted'
     )),
     model_step_count INTEGER NOT NULL DEFAULT 0,
     consecutive_protocol_errors INTEGER NOT NULL DEFAULT 0,
@@ -34,7 +33,6 @@ CREATE TABLE runs (
     consecutive_sensitive_tool_inputs INTEGER NOT NULL DEFAULT 0,
     enqueued_at INTEGER,
     total_effective_ms INTEGER NOT NULL DEFAULT 0,
-    pause_reason TEXT,
     stop_reason TEXT,
     reconciliation_required INTEGER NOT NULL DEFAULT 0,
     reconciliation_epoch INTEGER NOT NULL DEFAULT 0,
@@ -171,8 +169,7 @@ CREATE TABLE execution_segments (
     run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
     ordinal INTEGER NOT NULL,
     status TEXT NOT NULL CHECK (status IN (
-        'queued', 'running', 'waiting_user_input',
-        'completed', 'failed', 'canceled'
+        'queued', 'running', 'completed', 'failed', 'canceled'
     )),
     step_count INTEGER NOT NULL DEFAULT 0,
     effective_ms INTEGER NOT NULL DEFAULT 0,
@@ -206,7 +203,7 @@ WHERE status = 'running';
 
 CREATE UNIQUE INDEX one_active_segment_per_run
 ON execution_segments(run_id)
-WHERE status IN ('queued', 'running', 'waiting_user_input');
+WHERE status IN ('queued', 'running');
 
 CREATE UNIQUE INDEX one_running_step_per_run
 ON steps(run_id)

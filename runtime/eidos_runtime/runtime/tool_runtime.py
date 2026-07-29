@@ -872,14 +872,6 @@ class ToolCallRuntime:
                     step.run_id, "failed", reason="sensitive_tool_input"
                 )
                 if failures >= 2:
-                    mutation = self.store.pause_run_committed(
-                        step.run_id, "repeated_sensitive_tool_input"
-                    )
-                    self.events.publish(mutation, run=mutation.value)
-                    self.state_machine.track(
-                        RuntimeState.WAITING_USER_INPUT,
-                        "repeated_sensitive_tool_input",
-                    )
                     return ToolBatchOutcome(
                         status="paused",
                         pause_reason="repeated_sensitive_tool_input",
@@ -966,29 +958,16 @@ class ToolCallRuntime:
                     if plan.is_shell
                     else "eidos_state_reconciliation_required"
                 )
-                mutation = self.store.pause_run_committed(step.run_id, pause_reason)
-                self.state_machine.track(
-                    RuntimeState.WAITING_USER_INPUT, pause_reason
-                )
+                mutation = self.store.interrupt_run_committed(step.run_id)
                 self.events.publish(mutation, run=mutation.value)
                 return ToolBatchOutcome(
                     status="paused", pause_reason=pause_reason
                 )
 
         self.state_machine.track(RuntimeState.THINKING, "tool_batch_completed")
-        updated = self.store.read_run(step.run_id)
         facts = self.store.context_projection_facts(step.run_id)
         return ToolBatchOutcome(
-            status=(
-                "paused"
-                if updated["status"] == "waiting_user_input"
-                else "completed"
-            ),
-            pause_reason=(
-                str(updated.get("pauseReason"))
-                if updated["status"] == "waiting_user_input"
-                else None
-            ),
+            status="completed",
             error_fingerprints=tuple(errors),
             workspace_version=facts.workspace_version,
             diff_hash=facts.last_diff_hash,
