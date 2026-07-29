@@ -45,7 +45,6 @@ export interface Run {
     | "queued"
     | "running"
     | "waiting_approval"
-    | "waiting_user_input"
     | "finalizing"
     | "stopped"
     | "succeeded"
@@ -53,7 +52,7 @@ export interface Run {
     | "canceled"
     | "interrupted";
   modelId: ModelId;
-  allowedActions?: Array<"cancel" | "approve" | "reject" | "continue">;
+  allowedActions?: Array<"cancel" | "approve" | "reject">;
   modelStepCount: number;
   createdAt: number;
   startedAt?: number;
@@ -63,7 +62,6 @@ export interface Run {
   cancelRequestedAt?: number;
   cancelCompletedAt?: number;
   cancelFailureCode?: string;
-  pauseReason?: string;
   stopReason?: string;
   sideEffectsMayExist?: boolean;
   extensionSnapshot?: Record<string, unknown>;
@@ -181,8 +179,16 @@ export interface CommandApprovalRequest extends ApprovalRequestBase {
   kind: "command_execution";
   command: string;
   cwd: string;
-  networkEnabled: false;
+  networkEnabled: boolean;
   timeoutSeconds: number;
+  executionMode?: "default_sandbox" | "expanded_sandbox" | "unsandboxed";
+  sandboxPermissions?: "use_default" | "with_additional_permissions" | "require_escalated";
+  additionalReadAccess?: string[];
+  additionalWriteAccess?: string[];
+  additionalExecutableAccess?: string[];
+  reason?: string;
+  escalationReason?: string;
+  attemptOrdinal?: 0 | 1;
 }
 
 export interface ExternalToolApprovalRequest extends ApprovalRequestBase {

@@ -301,7 +301,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
       const next = new Set(prev);
       if (run.status === "succeeded" && selectedSessionIdRef.current === run.sessionId) {
         next.add(run.sessionId);
-      } else if (["queued", "running", "waiting_approval", "waiting_user_input", "finalizing", "succeeded"].includes(run.status)) {
+      } else if (["queued", "running", "waiting_approval", "finalizing", "succeeded"].includes(run.status)) {
         next.delete(run.sessionId);
       }
       return next;

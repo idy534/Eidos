@@ -30,7 +30,7 @@ interface Segment {
 }
 
 const ACTIVE_RUN_STATUSES = new Set<Run["status"]>([
-  "queued", "running", "waiting_approval", "waiting_user_input", "finalizing",
+  "queued", "running", "waiting_approval", "finalizing",
 ]);
 
 const TERMINAL_RUN_STATUSES = new Set<Run["status"]>([
@@ -268,9 +268,18 @@ function ProcessItem({
     const isRejecting = isResponding && respondingKindByApprovalId?.[approval.id] === "reject";
     const canApprove = !isExpired && run.allowedActions?.includes("approve") && !isResponding;
     const canReject = !isExpired && run.allowedActions?.includes("reject") && !isResponding;
+    const isUnsandboxed = approval.kind === "command_execution"
+      && approval.executionMode === "unsandboxed";
 
     return (
-      <article className={`approval-card ${isExpired ? "approval-card--expired" : ""}`} aria-labelledby={`approval-${approval.id}`}>
+      <article
+        className={[
+          "approval-card",
+          isExpired ? "approval-card--expired" : "",
+          isUnsandboxed ? "approval-card--unsandboxed" : "",
+        ].filter(Boolean).join(" ")}
+        aria-labelledby={`approval-${approval.id}`}
+      >
         <div className="approval-heading">
           <div>
             <p className="feed-label">{isExpired ? "已过期" : "需要你的批准"}</p>
@@ -285,7 +294,7 @@ function ProcessItem({
               ? `${approval.toolName}\n\nPlugin: ${approval.provenance.pluginId ?? "unknown"}\nServer: ${approval.provenance.serverId ?? "unknown"}\nprofile: ${approval.permissionProfile}\ntimeout: ${approval.timeoutSeconds}s\nenv names: ${approval.envNames.join(", ") || "none"}\narguments: ${JSON.stringify(approval.arguments, null, 2)}`
               : approval.kind === "network_access"
                 ? `tool: ${approval.toolName}\ntarget: ${approval.target}\napproved hosts: ${approval.hosts.join(", ")}`
-                : `$ ${approval.command}\n\ncwd: ${approval.cwd}\nnetwork: disabled\ntimeout: ${approval.timeoutSeconds}s`}
+                : commandApprovalDetails(approval)}
         </pre>
         {localError && <p className="approval-error" role="alert">{localError}</p>}
         <div className="approval-actions">
@@ -315,6 +324,35 @@ function ProcessItem({
   return item.toolCall.toolName === "run_shell"
     ? <ShellItem item={item} toolCall={item.toolCall} />
     : <ToolItem item={item} toolCall={item.toolCall} />;
+}
+
+function commandApprovalDetails(
+  approval: Extract<ApprovalRequest, { kind: "command_execution" }>,
+): string {
+  const executionMode = approval.executionMode ?? "default_sandbox";
+  const mode = executionMode === "unsandboxed"
+    ? "Unsandboxed"
+    : executionMode === "expanded_sandbox"
+      ? "Expanded sandbox"
+      : "Default sandbox";
+  const warning = executionMode === "unsandboxed"
+    ? "\nWARNING: This command runs with the current macOS user's permissions and may access or modify files outside the workspace, connect to services, and alter host state.\n"
+    : "";
+  return [
+    `Execution mode: ${mode}`,
+    warning,
+    `$ ${approval.command}`,
+    `cwd: ${approval.cwd}`,
+    `network: ${approval.networkEnabled ? "enabled" : "disabled"}`,
+    `timeout: ${approval.timeoutSeconds}s`,
+    `additional read: ${(approval.additionalReadAccess ?? []).join(", ") || "none"}`,
+    `additional write: ${(approval.additionalWriteAccess ?? []).join(", ") || "none"}`,
+    `additional execute: ${(approval.additionalExecutableAccess ?? []).join(", ") || "none"}`,
+    `reason: ${approval.reason || "none"}`,
+    ...(approval.escalationReason
+      ? [`escalation reason: ${approval.escalationReason}`]
+      : []),
+  ].filter(Boolean).join("\n");
 }
 
 function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
@@ -383,7 +421,7 @@ function ProcessLabel({ run }: { run: Run }) {
   const duration = Math.max(0, (run.completedAt ?? now) - (run.startedAt ?? run.createdAt));
   const prefix = TERMINAL_RUN_STATUSES.has(run.status)
     ? "已处理"
-    : run.status === "waiting_user_input" ? "处理已暂停" : "正在处理";
+    : "正在处理";
   return <span>{prefix} {formatDuration(duration)}</span>;
 }
 
@@ -443,21 +481,8 @@ function splitRunIntoSegments(items: Item[]): Segment[] {
 function activeRunPresentation(run: Run) {
   switch (run.status) {
     case "waiting_approval": return { label: "等待批准", tone: "warning" as const };
-    case "waiting_user_input": return { label: `已暂停：${pauseLabel(run.pauseReason)}`, tone: "warning" as const };
     default: return undefined;
   }
-}
-
-function pauseLabel(reason: string | undefined): string {
-  return ({
-    repeated_approval_rejection: "连续拒绝，请补充新的处理方式",
-    model_stream_interrupted: "模型输出中断，请确认后继续",
-    sensitive_scan_failed: "安全扫描未完成，原文未展示",
-    repeated_sensitive_tool_input: "模型重复生成受保护参数，请改写任务",
-    reconciliation_required: "需要先核验可能发生的副作用",
-    segment_step_limit: "本段已达到步骤上限",
-    segment_time_limit: "本段已达到时间上限",
-  } as Record<string, string>)[reason ?? ""] ?? "需要你的输入才能继续";
 }
 
 function shellSummary(status: Item["status"], command: string): string {

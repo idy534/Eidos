@@ -47,8 +47,6 @@ def transition_run(
         updates.update({"started_at": row["started_at"] or now, "enqueued_at": None})
     elif target_status is RunStatus.QUEUED:
         updates["enqueued_at"] = now
-    elif target_status is RunStatus.WAITING_USER_INPUT:
-        updates["pause_reason"] = reason
     elif target_status is RunStatus.FAILED:
         updates.update({"error_code": reason, "completed_at": now})
     elif target_status is RunStatus.STOPPED:
@@ -225,29 +223,10 @@ def resolve_approval_and_transition(
     ):
         raise InvalidRunStateError("approval is no longer pending")
 
-    target_run = (
-        RunStatus.WAITING_USER_INPUT
-        if rejects >= 2
-        else RunStatus.QUEUED
-        if requeue
-        else RunStatus.RUNNING
-    )
-    reason = (
-        "repeated_approval_rejection"
-        if target_run is RunStatus.WAITING_USER_INPUT
-        else "approval_resolved"
-    )
+    target_run = RunStatus.QUEUED if requeue else RunStatus.RUNNING
+    reason = "approval_resolved"
     events: list[dict[str, object]] = []
-    if target_run is RunStatus.WAITING_USER_INPUT:
-        events.extend(transition_segments(
-            connection,
-            str(fact["run_id"]),
-            frozenset({SegmentStatus.RUNNING}),
-            SegmentStatus.WAITING_USER_INPUT,
-            now,
-            reason,
-        ))
-    elif target_run is RunStatus.QUEUED:
+    if target_run is RunStatus.QUEUED:
         events.extend(transition_segments(
             connection,
             str(fact["run_id"]),
@@ -460,33 +439,19 @@ def settle_run_children(
             run_id=run_id,
         ))
 
-    if target_status is RunStatus.WAITING_USER_INPUT:
-        events.extend(transition_segments(
-            connection,
-            run_id,
-            frozenset({SegmentStatus.RUNNING}),
-            SegmentStatus.WAITING_USER_INPUT,
-            now,
-            "run_paused",
-        ))
-    else:
-        segment_target = (
-            SegmentStatus.CANCELED
-            if target_status is RunStatus.CANCELED
-            else SegmentStatus.FAILED
-        )
-        events.extend(transition_segments(
-            connection,
-            run_id,
-            frozenset({
-                SegmentStatus.QUEUED,
-                SegmentStatus.RUNNING,
-                SegmentStatus.WAITING_USER_INPUT,
-            }),
-            segment_target,
-            now,
-            "run_terminated",
-        ))
+    segment_target = (
+        SegmentStatus.CANCELED
+        if target_status is RunStatus.CANCELED
+        else SegmentStatus.FAILED
+    )
+    events.extend(transition_segments(
+        connection,
+        run_id,
+        frozenset({SegmentStatus.QUEUED, SegmentStatus.RUNNING}),
+        segment_target,
+        now,
+        "run_terminated",
+    ))
     connection.execute(
         "UPDATE input_mailbox SET status = 'canceled' WHERE run_id = ? AND status = 'pending'",
         (run_id,),

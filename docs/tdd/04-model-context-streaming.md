@@ -43,7 +43,7 @@ updated_at
 - Snapshot 不设置时间 TTL，不由后台定时探测。Gateway contract version 或 model request contract version 变化、`model_capability_drift` 或 `model_context_limit_mismatch` 也会使当前 snapshot 失效。
 - Archive 仅设置 `archived_at`，不删除或改写历史 snapshot。Archived Profile 的 `selectable=false`；恢复后只有仍满足当前配置、Gateway contract 和 model request contract 的有效 passed snapshot 才可重新选择。
 - 既有 Run 始终使用内嵌快照；Profile 编辑、Archive、恢复、失效或重新测试都不能修改 Run。
-- canonical serializer、输入估算/开销/margin、输出预留、传输重试或 timeout 语义变化时递增 `model_request_contract_version`，并使旧 Profile snapshot 对新 Run 失效。既有非终态 Run 继续路由到创建时版本；Runtime 必须保留仍被非终态 Run 引用的实现。若版本不可用，零模型请求并进入 `waiting_user_input/runtime_contract_unsupported`，只允许取消或基于原任务创建新 Run。
+- canonical serializer、输入估算/开销/margin、输出预留、传输重试或 timeout 语义变化时递增 `model_request_contract_version`，并使旧 Profile snapshot 对新 Run 失效。既有非终态 Run 继续路由到创建时版本；Runtime 必须保留仍被非终态 Run 引用的实现。若版本不可用，零模型请求并进入 `interrupted/runtime_contract_unsupported`，后续基于原任务创建新 Run。
 
 ### 1.2 显式能力探测
 
@@ -149,7 +149,7 @@ class ModelGateway(Protocol):
 - Responses 固定 `store=false`，不发送 `previous_response_id` 或 conversation；只有 `response.completed` 产生内部 completed。`response.incomplete/max_output_tokens` -> `model_output_truncated`，`response.incomplete/content_filter` -> `model_output_blocked`，failed 按安全错误映射，无终态 EOF -> `model_stream_interrupted`。
 - Chat 固定 `n=1, stream=true, stream_options.include_usage=true`，只接受 `choice.index=0`。必须同时收到合法 finish reason、完整 content/ToolCall、合法 usage 和 `[DONE]` 才 completed；仅 EOF 不完成。
 - Chat `stop` 正常完成文本；`tool_calls` 仅在完整批次时完成；`length` -> truncated；`content_filter` -> blocked；null 只允许非终态；deprecated `function_call` 和未知值 -> `model_capability_drift`。
-- truncated/blocked 不做协议纠正、重试或传输切换；已提交文本保持 incomplete，整个 ToolCall 批次丢弃，Run 分别进入 `waiting_user_input/model_output_truncated|model_output_blocked`，snapshot 不因正常 truncated/blocked 失效。
+- truncated/blocked 不做协议纠正、重试或传输切换；已提交文本保持 incomplete，整个 ToolCall 批次丢弃，Run 分别进入 `failed/model_output_truncated|model_output_blocked`，snapshot 不因正常 truncated/blocked 失效。
 
 usage 必须包含非负整数 `input_tokens,output_tokens,total_tokens` 且 `total_tokens >= input_tokens + output_tokens`。cached/reasoning/audio 等细分字段可选但存在时必须非负。探测时 Provider 拒绝 `include_usage`、完成时缺失或非法 usage -> `model_usage_unsupported`；正常 Run 完成态出现则 `model_capability_drift`。失败/中断未完成且未收到 usage 仍按 Q96 为 unknown，不属于 drift。
 
@@ -176,7 +176,7 @@ usage 必须包含非负整数 `input_tokens,output_tokens,total_tokens` 且 `to
 - 崩溃恢复以最后一个已提交 chunk 为准。
 - UI delta 是临时视图；数据库 committed Event 是断线回放边界。
 - `deny`/`redact` 命中的普通 content delta 统一替换后继续；不因普通文本单次命中终止 Run。
-- 扫描器失败后不 flush 保留窗口，丢弃未完整解析的 ToolCall，Run 进入 `waiting_user_input/sensitive_scan_failed`。
+- 扫描器失败后不 flush 保留窗口，丢弃未完整解析的 ToolCall，Run 进入 `failed/sensitive_scan_failed`。
 
 流式资源计数在解压和协议解码后、内容进入下游前执行：
 
@@ -188,7 +188,7 @@ max_single_stream_event_bytes = 1 MiB
 max_total_stream_payload_bytes = 8 MiB
 ```
 
-visible 统计全部普通 content UTF-8 字节；tool arguments 同时计入 Q106 自身上限和 8 MiB 总量；reasoning 即使立即丢弃也计数。任一上限超出即关闭流，Attempt/Step=`model_output_limit_exceeded`，Run waiting_user_input，零重试/纠正/传输切换。已提交安全文本保持 `assistant_progress/incomplete=true`，未完成 ToolCall 丢弃，usage 已完整收到则 reported，否则 unknown；snapshot 不失效。
+visible 统计全部普通 content UTF-8 字节；tool arguments 同时计入 Q106 自身上限和 8 MiB 总量；reasoning 即使立即丢弃也计数。任一上限超出即关闭流，Attempt/Step=`model_output_limit_exceeded`，Run failed，零重试/纠正/传输切换。已提交安全文本保持 `assistant_progress/incomplete=true`，未完成 ToolCall 丢弃，usage 已完整收到则 reported，否则 unknown；snapshot 不失效。
 
 ## 4. ToolCall 解析和组合校验
 
@@ -233,7 +233,7 @@ Model Gateway 输出完整 ToolCall list 后，Runtime：
 
 模型必须在读取结果进入下一轮上下文后，才能提出基于结果的变更。一次响应中的只读 ToolCall 彼此不能依赖运行结果。
 
-空响应、无法解析的 ToolCall、未知工具、参数 schema 错误和非法批次统一视为模型协议错误。Runtime 允许下一 Step 自动纠正一次；连续第二次错误后进入 waiting_user_input。每次无效响应计一个 Step，合法响应清零连续计数。
+空响应、无法解析的 ToolCall、未知工具、参数 schema 错误和非法批次统一视为模型协议错误。Runtime 允许下一 Step 自动纠正一次；连续第二次错误后执行一次无工具收尾并 stopped。每次无效响应计一个 Step，合法响应清零连续计数。
 
 ## 5. Context Builder
 
@@ -369,13 +369,13 @@ estimated_input_tokens <= usable_input_budget
 任何局部等待都取局部上限与 cycle 剩余时间的较小值。HTTP/SSE 两次重试退避固定 `1s,2s`。合法 Retry-After 优先，但上限 60 秒且不能越过 cycle deadline。
 
 - 首个 delta 前 HTTP/SSE 对网络失败、429、5xx 最多重试 2 次。
-- 周期或重试耗尽后 Step 标记 `model_temporarily_unavailable`，Run 进入 waiting_user_input。
+- 周期或重试耗尽后 Step 标记 `model_temporarily_unavailable`，Run 进入 failed。
 - 同一 Step 的多个 ModelAttempt 只占一个 Step 预算；用户继续时创建新 Segment。
 - 收到 delta 后失败：本 Attempt 标记 `failed`，同一 Step 最多自动重试 5 次；重试耗尽后 Step 标记 `model_stream_interrupted`。
-- Provider 正常报告 output token 截断、内容过滤或 Runtime 触发输出流容量上限时，分别进入 `waiting_user_input/model_output_truncated|model_output_blocked|model_output_limit_exceeded`；三者均不重试、不切换传输、不执行该响应任何 ToolCall。
+- Provider 正常报告 output token 截断、内容过滤或 Runtime 触发输出流容量上限时，分别进入 `failed/model_output_truncated|model_output_blocked|model_output_limit_exceeded`；三者均不重试、不切换传输、不执行该响应任何 ToolCall。
 - 已提交 content chunk 保留为 `assistant_progress/incomplete`，不得升级为 final_answer。
 - 部分 tool_call_delta 丢弃，不创建 ToolCall row。
-- Run 进入 waiting_user_input；用户继续时创建新 Segment。
+- Run 进入 failed；用户后续可创建新 Run。
 - 失败 Step 计入 Run 的 80 Steps 硬上限。
 - Provider validation/auth 错误不重试。
 - `401/403` 认证错误、确定性的 model not found、invalid request 或不支持参数直接终止 Run。

@@ -7,7 +7,6 @@ import { SessionSidebar } from "../components/SessionSidebar.js";
 import { Button } from "../components/Button.js";
 import { DropdownMenu } from "../components/DropdownMenu.js";
 import { PrimaryActionButton } from "../components/PrimaryActionButton.js";
-import { ApprovalFeedbackDialog } from "../components/ApprovalFeedbackDialog.js";
 import { ConfirmDialog } from "../components/settings/ConfirmDialog.js";
 import { Composer } from "../components/Composer.js";
 import type { RuntimeLifecycleState } from "./useRuntimeLifecycle.js";
@@ -121,7 +120,6 @@ export function AppShell({ runtime }: AppShellProps) {
   // -----------------------------------------------------------------------
   const hasBlockingModal =
     Boolean(sessionToDelete) ||
-    Boolean(approvalState.feedbackDialogApproval) ||
     deleteBusy ||
     sessionState.pending.creatingSession === true;
 
@@ -236,7 +234,7 @@ export function AppShell({ runtime }: AppShellProps) {
   // -----------------------------------------------------------------------
   const { composerMode, activeRun, input } = runState;
   const { snapshot } = sessionState;
-  const { approvals, respondingApprovalIds, respondingKindByApprovalId, feedbackDialogApproval, feedbackDialogError, errorsByApprovalId } = approvalState;
+  const { approvals, respondingApprovalIds, respondingKindByApprovalId, errorsByApprovalId } = approvalState;
 
   const isRenamingThisSession = Boolean(snapshot && renamingSessionId === snapshot.session.id);
 
@@ -367,7 +365,7 @@ export function AppShell({ runtime }: AppShellProps) {
               loadingPendingApprovals={approvalState.loadingPendingApprovals}
               onRetryLoadPending={() => void approvalActions.loadPending()}
               onApprove={(request) => void approvalActions.approve(request)}
-              onReject={(request) => approvalActions.openRejectDialog(request)}
+              onReject={(request) => void approvalActions.reject(request)}
             />
 
             <Composer
@@ -423,16 +421,6 @@ export function AppShell({ runtime }: AppShellProps) {
         getFallbackFocus={getDialogFallbackFocus}
         onConfirm={() => void confirmDelete()}
         onCancel={() => { setSessionToDelete(undefined); setDeleteError(undefined); }}
-      />
-
-      {/* Approval reject feedback dialog */}
-      <ApprovalFeedbackDialog
-        approval={feedbackDialogApproval}
-        busy={Boolean(feedbackDialogApproval && respondingApprovalIds.has(feedbackDialogApproval.id))}
-        error={feedbackDialogError}
-        getFallbackFocus={getDialogFallbackFocus}
-        onConfirm={(request, feedback) => void approvalActions.submitReject(request, feedback)}
-        onCancel={() => approvalActions.closeFeedbackDialog()}
       />
     </main>
   );

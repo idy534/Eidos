@@ -152,6 +152,9 @@ class PreparedToolExecution(BaseModel):
     transition_reason: str
     approval_diff: str = ""
     base_sha256: str | None = None
+    approval_request: dict[str, object] | None = None
+    attempt_ordinal: int = 0
+    approval_kind: str = "tool"
 
 
 class VerifiedToolExecutionResult(BaseModel):
@@ -262,6 +265,32 @@ class ToolExecutionController:
     ) -> tuple[ApprovalOutcome, VerifiedToolExecutionResult | None]:
         if self.approval is None:
             raise RuntimeError("tool execution approval coordinator is unavailable")
+        approval = self.authorize_side_effect(
+            run_id=run_id,
+            item=item,
+            prepared=prepared,
+            cancel=cancel,
+        )
+        if approval.decision != "approve":
+            return approval, None
+        self._execution_state.phase = ToolExecutionPhase.EXECUTING
+        raw = execute()
+        self._execution_state.phase = ToolExecutionPhase.VERIFYING
+        return approval, (
+            verify(raw) if verify is not None
+            else VerifiedToolExecutionResult(result=raw)
+        )
+
+    def authorize_side_effect(
+        self,
+        *,
+        run_id: str,
+        item: dict[str, object],
+        prepared: PreparedToolExecution,
+        cancel: threading.Event,
+    ) -> ApprovalOutcome:
+        if self.approval is None:
+            raise RuntimeError("tool execution approval coordinator is unavailable")
         self._execution_state.phase = ToolExecutionPhase.WAITING_APPROVAL
         approval = self.approval.request(
             run_id,
@@ -271,23 +300,21 @@ class ToolExecutionController:
             diff=prepared.approval_diff,
             base_sha256=prepared.base_sha256,
             transition_reason=prepared.transition_reason,
+            request=prepared.approval_request,
+            attempt_ordinal=prepared.attempt_ordinal,
+            approval_kind=prepared.approval_kind,
         )
         if approval.decision != "approve":
-            return approval, None
-        self.begin_durable_intent(
-            str(item["id"]), prepared.intent_preconditions
-        )
+            return approval
+        if not self._execution_state.intent_started:
+            self.begin_durable_intent(
+                str(item["id"]), prepared.intent_preconditions
+            )
+            self._execution_state.authorized_effects += 1
         self._execution_state.phase = ToolExecutionPhase.INTENT_COMMITTED
         if not self.store.side_effect_authorized(str(item["id"])):
             raise RuntimeError("tool execution contract violation")
-        self._execution_state.authorized_effects += 1
-        self._execution_state.phase = ToolExecutionPhase.EXECUTING
-        raw = execute()
-        self._execution_state.phase = ToolExecutionPhase.VERIFYING
-        return approval, (
-            verify(raw) if verify is not None
-            else VerifiedToolExecutionResult(result=raw)
-        )
+        return approval
 
     def execute(
         self,

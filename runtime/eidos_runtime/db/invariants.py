@@ -15,7 +15,7 @@ def verify_runtime_invariants(connection: sqlite3.Connection) -> None:
             """
             SELECT 1 FROM runs JOIN execution_segments ON execution_segments.run_id = runs.id
             WHERE runs.status IN ('succeeded', 'failed', 'stopped', 'canceled', 'interrupted')
-              AND execution_segments.status IN ('queued', 'running', 'waiting_user_input')
+              AND execution_segments.status IN ('queued', 'running')
             LIMIT 1
             """,
         ),
@@ -114,7 +114,7 @@ def verify_runtime_invariants(connection: sqlite3.Connection) -> None:
             SELECT 1 FROM steps
             JOIN execution_segments ON execution_segments.id = steps.segment_id
             WHERE steps.status = 'running'
-              AND execution_segments.status NOT IN ('queued', 'running', 'waiting_user_input')
+              AND execution_segments.status NOT IN ('queued', 'running')
             LIMIT 1
             """,
         ),

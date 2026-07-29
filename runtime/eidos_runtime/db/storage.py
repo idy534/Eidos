@@ -331,19 +331,6 @@ class SessionStore:
             extension_snapshot=extension_snapshot,
         )
 
-    def continue_run(
-        self,
-        run_id: str,
-        user_input: str,
-        *,
-        operation_id: str | None = None,
-    ) -> dict[str, object]:
-        return self._repository(self._runs).continue_run(
-            run_id,
-            user_input,
-            operation_id=operation_id,
-        )
-
     def claim_next_run(self) -> dict[str, object] | None:
         return self._repository(self._runs).claim_next_run()
 
@@ -754,19 +741,46 @@ class SessionStore:
         item_id: str,
         diff: str,
         base_sha256: str | None,
+        *,
+        request: dict[str, object] | None = None,
+        attempt_ordinal: int = 0,
+        approval_kind: str = "tool",
     ) -> dict[str, object]:
-        return self._repository(self._execution).begin_approval(item_id, diff, base_sha256)
+        return self._repository(self._execution).begin_approval(
+            item_id,
+            diff,
+            base_sha256,
+            request=request,
+            attempt_ordinal=attempt_ordinal,
+            approval_kind=approval_kind,
+        )
 
     def begin_approval_committed(
         self,
         item_id: str,
         diff: str,
         base_sha256: str | None,
+        *,
+        request: dict[str, object] | None = None,
+        attempt_ordinal: int = 0,
+        approval_kind: str = "tool",
     ) -> CommittedMutation[dict[str, object]]:
         return self._repository(self._execution).begin_approval_committed(
             item_id,
             diff,
             base_sha256,
+            request=request,
+            attempt_ordinal=attempt_ordinal,
+            approval_kind=approval_kind,
+        )
+
+    def record_tool_attempt(
+        self,
+        item_id: str,
+        **values: object,
+    ) -> None:
+        self._repository(self._execution).record_tool_attempt(
+            item_id, **values
         )
 
     def resolve_approval(
@@ -802,6 +816,9 @@ class SessionStore:
     def clear_rejects(self, run_id: str) -> None:
         return self._repository(self._runs).clear_rejects(run_id)
 
+    def approval_prompt_blocked(self, run_id: str) -> bool:
+        return self._repository(self._runs).approval_prompt_blocked(run_id)
+
     def record_sensitive_tool_input(self, run_id: str) -> int:
         return self._repository(self._runs).record_sensitive_tool_input(run_id)
 
@@ -835,14 +852,6 @@ class SessionStore:
 
     def clear_protocol_errors(self, run_id: str) -> None:
         return self._repository(self._runs).clear_protocol_errors(run_id)
-
-    def pause_run(self, run_id: str, reason: str) -> dict[str, object]:
-        return self._repository(self._runs).pause_run(run_id, reason)
-
-    def pause_run_committed(
-        self, run_id: str, reason: str
-    ) -> CommittedMutation[dict[str, object]]:
-        return self._repository(self._runs).pause_run_committed(run_id, reason)
 
     def begin_finalization(self, run_id: str) -> dict[str, object]:
         return self._repository(self._runs).begin_finalization(run_id)

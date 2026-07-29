@@ -133,7 +133,8 @@ class WorkspaceManifestTests(unittest.TestCase):
         self.assertEqual(attached["data"]["workspaceDiffHash"], diff.diff_hash)
         self.assertFalse(attached["data"]["workspaceManifestComplete"])
         self.assertTrue(attached["data"]["workspaceDiffIncomplete"])
-        self.assertFalse(attached["reconciliationRequired"])
+        self.assertEqual(attached["data"]["workspaceChangeState"], "unknown")
+        self.assertTrue(attached["reconciliationRequired"])
 
 
 class ShellManifestIntegrationTests(unittest.TestCase):
@@ -195,6 +196,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             default_scanner(),
             True,
             self.controller.execute_side_effect,
+            self.controller.authorize_side_effect,
         )
         runtime_context.handler = ShellToolHandler(dependencies)
 
@@ -204,18 +206,35 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def _execute(
-        self, result, *, mutate=None, output=(), cancel=None, observe=None
+        self,
+        result,
+        *,
+        mutate=None,
+        output=(),
+        cancel=None,
+        observe=None,
+        arguments=None,
+        attempts=None,
     ):
+        effective_arguments = arguments or {
+            "command": "fixture",
+            "cwd": ".",
+            "timeoutSeconds": 120,
+            "sandboxPermissions": "use_default",
+            "additionalPermissions": None,
+            "justification": None,
+        }
         item = self.store.create_tool_item(
             self.run["id"], 1, 0, "shell-call", "run_shell",
-            json.dumps({"command": "fixture"}),
+            json.dumps(effective_arguments),
         )
         call = ModelToolCall(
-            "shell-call", "run_shell",
-            {"command": "fixture", "cwd": ".", "timeoutSeconds": 120},
+            "shell-call", "run_shell", effective_arguments,
         )
 
         def fake_shell(*args, **_kwargs):
+            if attempts is not None:
+                attempts.append(args[8])
             if mutate is not None:
                 mutate()
             on_delta = args[5]
@@ -330,6 +349,36 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         ).fetchone()
         self.assertIsNone(item["content"])
         self.assertEqual(outcome.result["code"], "sensitive_content_rejected")
+
+    def test_unsandboxed_shell_still_scans_sensitive_output(self) -> None:
+        attempts = []
+        outcome = self._execute(
+            {
+                "outcome": "success",
+                "code": "ok",
+                "summary": "done",
+                "data": {
+                    "exitCode": 0,
+                    "stdout": "sk-1234567890123456\n",
+                    "stderr": "",
+                },
+                "sideEffectsMayExist": True,
+            },
+            output=("sk-1234567890123456\n",),
+            arguments={
+                "command": "fixture",
+                "cwd": ".",
+                "timeoutSeconds": 120,
+                "sandboxPermissions": "require_escalated",
+                "additionalPermissions": None,
+                "justification": "Native access is required",
+            },
+            attempts=attempts,
+        )
+
+        self.assertEqual(outcome.result["code"], "sensitive_content_rejected")
+        self.assertEqual(attempts[0].sandbox.value, "none")
+        self.assertTrue(outcome.result["sideEffectsMayExist"])
 
     def test_shell_delta_order_is_monotonic(self) -> None:
         self._execute(

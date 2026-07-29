@@ -22,8 +22,8 @@ Session
         └── Event
 ```
 
-- Run 是一次可暂停、恢复和排队的任务执行。
-- Execution Segment 是一次连续执行预算，用户补充信息后创建新 Segment。
+- Run 是一次可排队、执行并进入明确终态的任务执行。
+- Execution Segment 是一次连续执行预算。
 - Step 对应一次完整模型响应及其 ToolCall 批次。
 - ModelAttempt 记录一次真实模型网络发送；同一 Step 的 Attempt 共享逻辑请求 ID，并由 Step 级 10 分钟 request cycle deadline 统一约束。
 
@@ -33,9 +33,9 @@ Session
 
 - 可同时创建和保留多个 Run。
 - `queued` Run 按 `enqueued_at, creation_seq` FIFO 获取执行槽。
-- 当前 Run 不可抢占；它进入等待态或终态后释放执行槽。
-- waiting_approval/waiting_user_input 不占执行槽。
-- Approve、Reject 后继续或 user-input 恢复时，将 Run 以新的 `enqueued_at` 追加到队尾。
+- 当前 Run 不可抢占；它进入审批等待或终态后释放执行槽。
+- waiting_approval 不占执行槽。
+- Approve、Reject 后继续时，将 Run 以新的 `enqueued_at` 追加到队尾。
 - 队列顺序持久化，重启后恢复。
 - MVP 不支持优先级和手动调序。
 
@@ -60,12 +60,12 @@ created
 queued
 running
 waiting_approval
-waiting_user_input
 finalizing
 succeeded
 failed
 stopped
 canceled
+interrupted
 ```
 
 主要流转：
@@ -73,11 +73,10 @@ canceled
 ```text
 created -> queued -> running
 running -> waiting_approval -> queued
-running -> waiting_user_input -> queued
 running -> finalizing -> stopped
 running -> succeeded|failed|canceled
-queued|waiting_approval|waiting_user_input -> canceled
-waiting_approval -> waiting_user_input
+queued|waiting_approval -> canceled
+running|waiting_approval|finalizing -> interrupted
 ```
 
 `stopped` 是硬预算耗尽的终态：
@@ -95,7 +94,6 @@ class RuntimeState(str, Enum):
     THINKING = "thinking"
     TOOL_EXECUTING = "tool_executing"
     WAITING_APPROVAL = "waiting_approval"
-    WAITING_USER_INPUT = "waiting_user_input"
     FINALIZING = "finalizing"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -127,11 +125,10 @@ max_total_effective_seconds = 7200
 
 - queued
 - waiting_approval
-- waiting_user_input
 
 有效执行区间只用 TimeProvider monotonic clock 累计；区间结束时一次性向上取整为毫秒并持久化。wall `started_at/finished_at` 只用于审计和展示，不可相减驱动预算。
 
-Segment 到限时进入 `waiting_user_input`，`pause_reason=segment_step_limit|segment_time_limit`。Run 到硬上限时进入 Finalization，随后 `stopped`。
+Segment 或 Run 到限时进入 Finalization，随后 `stopped`，并通过 `stop_reason` 记录具体上限。
 
 ## 5. Step 与 ToolCall 批次
 
@@ -160,7 +157,7 @@ create step
 模型协议错误包括空响应、ToolCall ID/index/JSON 归并失败、ToolCall 流资源超限、调用未在本 Step 冻结集合中暴露的工具、未知字段、缺失 required、非法 null、其他参数 schema 错误和非法批次。处理规则：
 
 - 第一次错误：`consecutive_protocol_errors += 1`，记录失败 Step，把具体错误反馈给下一 Step 的模型。
-- 连续第二次错误：Run 进入 waiting_user_input，`pause_reason=model_protocol_error`。
+- 连续第二次错误：Run 执行一次无工具收尾并进入 stopped，`stop_reason=model_protocol_error`。
 - 每个无效响应各计一个 Step，但一个 ToolCall 都不创建或执行。
 - 任一合法模型响应将 `consecutive_protocol_errors` 清零。
 
@@ -170,7 +167,7 @@ create step
 
 - `deny` 或 `redact` 命中：整个模型 ToolCall 拒绝，不创建 ToolCall/Approval，只持久化无原文的 `sensitive_tool_input_rejected` Event。
 - 第一次连续命中：`consecutive_sensitive_tool_inputs += 1`，当前 Step 失败并将结构化安全错误反馈给下一 Step。
-- 连续第二次命中：Run 进入 waiting_user_input，`pause_reason=repeated_sensitive_tool_input`。
+- 连续第二次命中：Run 执行一次无工具收尾并进入 stopped，`stop_reason=repeated_sensitive_tool_input`。
 - 任一不含敏感 ToolCall 的合法完整响应清零该计数。
 - 每次被拒绝的模型响应计一个 Step，但不增加 `consecutive_protocol_errors`。
 
@@ -208,11 +205,9 @@ Reject 计数：
 
 - Reject：`consecutive_rejects += 1`。
 - 获批的状态变更 ToolCall 成功：清零。
-- user-input 创建新 Segment：清零。
 - 只读调用、重规划和失败副作用不清零。
 - `skipped/no_changes` 不是“获批的状态变更成功”，不清零。
-- 达到 2：进入 waiting_user_input，不再自动提出第三次变更。
-- 达到 2 时固定 `pause_reason=repeated_approval_rejection`；它属于可恢复 pause，用户后续输入按新 Segment 重新入队。
+- 首次拒绝后，同一 Run 的后续审批请求自动拒绝；模型必须改走无需审批的路径，或给出用户可自行执行的策略后结束。
 
 ## 7. 写入版本冲突
 
@@ -284,7 +279,7 @@ Shell code 按 `interrupted > workspace_change_manifest_incomplete > output_capt
 - CAS 失败表示出现更新 episode；旧 Step 不得清除它。屏障只对下一 Step 重新计算工具集。
 - 未出现 qualifying success 时模型可直接输出 final；Run 可终止，但保留 `reconciliation_required=true`、epoch 与未清除 episode 供审计，不伪造已对账。
 
-仍无法判断且模型不选择 final 时进入 waiting_user_input；用户输入可创建新的只读验证 Segment，但不能直接清除屏障。
+仍无法判断时进入 interrupted；后续核验必须通过新 Run 执行，不能直接清除屏障。
 
 文件工具失败后 Runtime 先执行内部 postcondition 检查，返回：
 
@@ -295,16 +290,15 @@ applied | not_applied | outcome_unknown
 ## 9. Retry
 
 - 模型固定使用 HTTP 请求与 SSE 响应流；首个 delta 前遇到网络错误、429、5xx 最多重试 2 次。
-- 重试仍失败或 request cycle 达到 10 分钟时，当前 Step 标记 `failed/model_temporarily_unavailable`，Run 进入 waiting_user_input。
+- 重试仍失败或 request cycle 达到 10 分钟时，当前 Step 标记 `failed/model_temporarily_unavailable`，Run 进入 failed。
 - 每个 Attempt 的 connect/first-delta/stream-idle 上限分别为 15/180/120 秒，所有 Attempt 和退避共享 request cycle deadline。
-- 设置 `pause_reason=model_temporarily_unavailable`；多个 ModelAttempt 仍属于同一个 Step，只计一次 Step 预算。
-- 用户继续时创建新 Segment，使用原 Model Profile snapshot 重新入队。
+- 多个 ModelAttempt 仍属于同一个 Step，只计一次 Step 预算。
 - 可重试的流错误在同一 Step 内按指数退避重放相同模型输入，默认最多重试 5 次；每次重试创建新的 ModelAttempt，不要求用户输入。已显示文本保留为 incomplete assistant 供 UI 审计，但不进入模型上下文。
-- Provider token 截断、内容过滤和 Runtime 输出流超限分别标记 `model_output_truncated|model_output_blocked|model_output_limit_exceeded`；Run waiting_user_input，已提交文本 incomplete，整个 ToolCall 批次丢弃，零自动重试。
+- Provider token 截断、内容过滤和 Runtime 输出流超限分别标记 `model_output_truncated|model_output_blocked|model_output_limit_exceeded`；Run failed，已提交文本 incomplete，整个 ToolCall 批次丢弃，零自动重试。
 - 已显示文本保留为 `assistant_progress` 并标记 `incomplete=true`，不能成为 final_answer。
 - 未完整解析的 ToolCall 全部丢弃，一个也不创建或执行。
-- 6 个 ModelAttempt 都在输出过可见文本后中断，Run 才进入 waiting_user_input，`pause_reason=model_stream_interrupted`；始终没有可见文本则重试耗尽后 Run failed。
-- 本次失败 Step 计入 Segment 和 Run Step 预算；用户继续时创建新 Segment 并重新入队。
+- 6 个 ModelAttempt 都在输出过可见文本后中断，Run 进入 failed，`error_code=MODEL_STREAM_INTERRUPTED`；始终没有可见文本则重试耗尽后同样 failed。
+- 本次失败 Step 计入 Segment 和 Run Step 预算。
 - 只读工具仅对 timeout、EINTR、EAGAIN 等瞬时错误重试 1 次。
 - not_found、validation、permission、sensitive_file 不重试。
 - 写工具、publish_artifact 和 run_shell 不自动重试或重放。
@@ -314,13 +308,13 @@ applied | not_applied | outcome_unknown
 - TLS 校验失败、明确的 context-length exceeded 或 Provider 违反固化的 streaming、工具控制、Tool Schema Dialect、ToolCall/ToolResult 关联或 usage 契约同样直接 failed；后两类还在终态事务中使 Profile 当前 capability snapshot 失效。
 - 该终态失败不执行 Finalization Call，不允许替换 Run 的模型快照后恢复。
 - 已有 Timeline 和 Artifact 保留；用户修复或更换 Profile 后创建新 Run。
-- 模型流敏感扫描器失败时，未确认安全的文本和 ToolCall 丢弃，Step 标记 `sensitive_scan_failed`，Run 进入 waiting_user_input。
-- Run 固化的 model request contract 或 tool contract 实现不可用/不再满足当前安全底线时不创建 Step/Attempt，不执行工具，并使 pending/approved Approval invalidated；Run 进入 `waiting_user_input/runtime_contract_unsupported`，不能用新版本继续原 Run。
+- 模型流敏感扫描器失败时，未确认安全的文本和 ToolCall 丢弃，Step 标记 `sensitive_scan_failed`，Run 进入 failed。
+- Run 固化的 model request contract 或 tool contract 实现不可用/不再满足当前安全底线时不创建 Step/Attempt，不执行工具，并使 pending/approved Approval invalidated；Run 进入 `interrupted/runtime_contract_unsupported`，不能用新版本继续原 Run。
 - ToolCall 已形成真实终态但 base ToolResult/projector/schema/canonical serializer invariant 失败时，原子保存实际副作用和 quarantine；Run 直接 `failed/tool_result_contract_violation`，零工具重试、零模型续接、零 Finalization，且不失效 Model Profile snapshot。用户输入不能恢复该 Run。
 
 ## 10. Cancel
 
-- queued/waiting：事务内直接 canceled。
+- queued/waiting_approval：事务内直接 canceled。
 - Model stream/只读工具：取消异步任务。
 - run_shell：SIGTERM 进程组，宽限期后 SIGKILL。
 - 文件工具未进入 commit 前可取消；进入原子 commit 后完成提交，再把 Run 标记 canceled。
@@ -331,16 +325,14 @@ applied | not_applied | outcome_unknown
 启动时执行恢复事务：
 
 - queued 保持 queued。
-- waiting_approval/waiting_user_input 保持原状态。
-- running Run -> waiting_user_input，`pause_reason=runtime_interrupted`。
-- finalizing Run 不重新调用模型；Runtime 根据已提交事件生成降级摘要并进入 stopped。
+- waiting_approval、running 和 finalizing Run -> interrupted，`error_code=RUNTIME_INTERRUPTED`。
 - running ToolCall -> interrupted；只读或明确尚未启动副作用执行时 `side_effects_may_exist=false`，已进入 commit 的文件/Artifact 和任一已启动 Shell 为 true。
 - 不自动重放 ModelAttempt、文件工具、Artifact 或 Shell。
 - 仅清理名称、tool_call_id/execution_nonce、inode 和父目录身份与 durable intent 全部匹配的 Runtime 临时文件。
 - running Shell 存在 baseline manifest 时先保留文件并尝试后置对账；完整结果事务成功后才清理 manifest。
 - 清除过期 executor lease，恢复 FIFO 调度。
 
-用户恢复后，Run 创建新 Segment；Agent 必须先读取现状。
+用户后续可创建新 Run；Agent 必须先读取现状。
 
 ## 12. Finalization
 

@@ -49,7 +49,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.assertEqual(connection.execute("SELECT status FROM steps").fetchone()[0], "completed")
         self.assertEqual(connection.execute("SELECT status FROM model_attempts").fetchone()[0], "completed")
 
-    def test_segment_limit_pauses_without_an_extra_model_request(self) -> None:
+    def test_segment_limit_uses_toolless_finalization(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "pause")
         self.store.increment_model_step(run["id"])
         self.store.complete_current_step(run["id"], "completed")
@@ -64,10 +64,10 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
-        paused = self.store.read_run(run["id"])
-        self.assertEqual(paused["status"], "waiting_user_input")
-        self.assertEqual(paused["pauseReason"], "segment_step_limit")
-        self.assertEqual(model.contexts, [])
+        stopped = self.store.read_run(run["id"])
+        self.assertEqual(stopped["status"], "stopped")
+        self.assertEqual(stopped["stopReason"], "segment_step_limit")
+        self.assertEqual(model.allow_tools_history, [False])
 
     def test_run_limit_uses_one_toolless_finalization_then_stops(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "stop")
@@ -89,7 +89,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(item)
         self.assertIsNone(item["model_step_index"])
 
-    def test_two_rejections_pause_and_user_input_creates_a_new_segment(self) -> None:
+    def test_rejections_do_not_pause_for_more_user_input(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "change")
         self.store.increment_model_step(run["id"])
         self.store.complete_current_step(run["id"], "completed")
@@ -105,26 +105,9 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
                 json.dumps({"outcome": "declined", "code": "user_rejected"}),
                 item_status="declined",
             )
-        paused = self.store.read_run(run["id"])
-        self.assertEqual(paused["status"], "waiting_user_input")
-        self.assertEqual(paused["pauseReason"], "repeated_approval_rejection")
-        continued = self.store.continue_run(run["id"], "try a different plan")
-        self.assertEqual(continued["status"], "queued")
-        connection = self.store.connection
-        assert connection is not None
-        self.assertEqual(
-            [
-                row["status"]
-                for row in connection.execute(
-                    """
-                    SELECT status FROM execution_segments
-                    WHERE run_id = ? ORDER BY ordinal
-                    """,
-                    (run["id"],),
-                )
-            ],
-            ["completed", "queued"],
-        )
+        current = self.store.read_run(run["id"])
+        self.assertEqual(current["status"], "running")
+        self.assertNotIn("pauseReason", current)
 
     def test_crashed_durable_intent_is_reconciled_without_replay(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "write")
@@ -139,7 +122,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.store = SessionStore(self.data)
         self.store.initialize()
         recovered = self.store.read_run(run["id"])
-        self.assertEqual(recovered["status"], "waiting_user_input")
+        self.assertEqual(recovered["status"], "interrupted")
         self.assertTrue(recovered["sideEffectsMayExist"])
         self.assertTrue(self.store.side_effects_blocked(run["id"])
         )
@@ -248,7 +231,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.assertEqual(model.calls, 2)
         self.assertEqual(model.contexts[1], model.contexts[0])
 
-    def test_repeated_stream_failures_pause_after_bounded_retries(self) -> None:
+    def test_repeated_stream_failures_fail_after_bounded_retries(self) -> None:
         class AlwaysInterruptedModel:
             calls = 0
 
@@ -266,9 +249,9 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
             run["id"], threading.Event()
         )
 
-        paused = self.store.read_run(run["id"])
-        self.assertEqual(paused["status"], "waiting_user_input")
-        self.assertEqual(paused["pauseReason"], "model_stream_interrupted")
+        failed = self.store.read_run(run["id"])
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(failed["errorCode"], "MODEL_STREAM_INTERRUPTED")
         self.assertEqual(model.calls, 6)
         connection = self.store.connection
         assert connection is not None
@@ -278,7 +261,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
             6,
         )
 
-    def test_two_sensitive_model_tool_inputs_pause_without_tool_or_approval(self) -> None:
+    def test_two_sensitive_model_tool_inputs_finalize_without_tool_or_approval(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "write safely")
         model = ScriptedModel([
             ModelResponse(tool_calls=(ModelToolCall(
@@ -293,9 +276,9 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
-        paused = self.store.read_run(run["id"])
-        self.assertEqual(paused["status"], "waiting_user_input")
-        self.assertEqual(paused["pauseReason"], "repeated_sensitive_tool_input")
+        stopped = self.store.read_run(run["id"])
+        self.assertEqual(stopped["status"], "stopped")
+        self.assertEqual(stopped["stopReason"], "repeated_sensitive_tool_input")
         connection = self.store.connection
         assert connection is not None
         self.assertEqual(connection.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0], 0)

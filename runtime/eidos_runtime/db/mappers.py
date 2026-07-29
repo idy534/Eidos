@@ -136,7 +136,6 @@ def _run_from_row(
         "queued": ["cancel"],
         "running": ["cancel"],
         "waiting_approval": ["approve", "reject", "cancel"],
-        "waiting_user_input": ["continue", "cancel"],
         "finalizing": ["cancel"],
     }.get(row["status"], [])
     if allowed_actions:
@@ -155,8 +154,6 @@ def _run_from_row(
         run["cancelCompletedAt"] = row["cancel_completed_at"]
     if "cancel_failure_code" in row.keys() and row["cancel_failure_code"] is not None:
         run["cancelFailureCode"] = row["cancel_failure_code"]
-    if "pause_reason" in row.keys() and row["pause_reason"] is not None:
-        run["pauseReason"] = row["pause_reason"]
     if "stop_reason" in row.keys() and row["stop_reason"] is not None:
         run["stopReason"] = row["stop_reason"]
     if "side_effects_may_exist" in row.keys():

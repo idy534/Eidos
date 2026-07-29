@@ -995,15 +995,39 @@ class ExecutionRepository(Repository):
         item_id: str,
         diff: str,
         base_sha256: str | None,
+        *,
+        request: dict[str, object] | None = None,
+        attempt_ordinal: int = 0,
+        approval_kind: str = "tool",
     ) -> dict[str, object]:
-        return self.begin_approval_committed(item_id, diff, base_sha256).value
+        return self.begin_approval_committed(
+            item_id,
+            diff,
+            base_sha256,
+            request=request,
+            attempt_ordinal=attempt_ordinal,
+            approval_kind=approval_kind,
+        ).value
 
     def begin_approval_committed(
         self,
         item_id: str,
         diff: str,
         base_sha256: str | None,
+        *,
+        request: dict[str, object] | None = None,
+        attempt_ordinal: int = 0,
+        approval_kind: str = "tool",
     ) -> CommittedMutation[dict[str, object]]:
+        if attempt_ordinal not in {0, 1}:
+            raise ValueError("invalid approval attempt ordinal")
+        if approval_kind not in {
+            "tool", "default", "additional_permissions", "escalated"
+        }:
+            raise ValueError("invalid approval kind")
+        request_json = _bounded_canonical_json(
+            request or {}, code="approval_request_invalid"
+        )
         now = _now_ms()
         approval_id = str(uuid.uuid4())
         with self.lock, self._connection() as connection:
@@ -1033,8 +1057,9 @@ class ExecutionRepository(Repository):
                 """
                 INSERT INTO approvals (
                     id, tool_call_id, run_id, item_id, status,
-                    request_hash, created_at
-                ) VALUES (?, ?, ?, ?, 'pending', ?, ?)
+                    request_hash, request_json, attempt_ordinal,
+                    approval_kind, created_at
+                ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
                 """,
                 (
                     approval_id, row["tool_call_id"], row["run_id"], item_id,
@@ -1042,7 +1067,13 @@ class ExecutionRepository(Repository):
                         "argumentsJson": row["arguments_json"],
                         "diff": diff,
                         "baseSha256": base_sha256,
+                        "requestJson": request_json,
+                        "attemptOrdinal": attempt_ordinal,
+                        "approvalKind": approval_kind,
                     }),
+                    request_json,
+                    attempt_ordinal,
+                    approval_kind,
                     now,
                 ),
             )
@@ -1065,6 +1096,75 @@ class ExecutionRepository(Repository):
         return CommittedMutation(
             self.read_item(item_id), (run_event, approval_event)
         )
+
+    def record_tool_attempt(
+        self,
+        item_id: str,
+        *,
+        ordinal: int,
+        sandbox_type: str,
+        sandbox_requested: bool,
+        effective_permissions: dict[str, object],
+        profile_hash: str | None,
+        escalation_reason: str | None,
+        status: str,
+        result_code: str | None = None,
+    ) -> None:
+        if ordinal not in {0, 1}:
+            raise ValueError("invalid tool attempt ordinal")
+        if sandbox_type not in {"macos_seatbelt", "none"}:
+            raise ValueError("invalid sandbox type")
+        if status not in {
+            "running", "completed", "failed", "canceled", "uncertain"
+        }:
+            raise ValueError("invalid tool attempt status")
+        permissions_json = _bounded_canonical_json(
+            effective_permissions, code="effective_permissions_invalid"
+        )
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            tool = connection.execute(
+                """
+                SELECT tool_calls.id FROM tool_calls
+                JOIN items ON items.id = tool_calls.item_id
+                WHERE items.id = ? AND tool_calls.status = 'running'
+                """,
+                (item_id,),
+            ).fetchone()
+            if tool is None:
+                raise InvalidRunStateError("tool attempt is not active")
+            if status == "running":
+                connection.execute(
+                    """
+                    INSERT INTO tool_attempts (
+                        id, tool_call_id, ordinal, sandbox_type,
+                        sandbox_requested, effective_permissions_json,
+                        profile_hash, escalation_reason, status, started_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        tool["id"],
+                        ordinal,
+                        sandbox_type,
+                        int(sandbox_requested),
+                        permissions_json,
+                        profile_hash,
+                        escalation_reason,
+                        now,
+                    ),
+                )
+                return
+            updated = connection.execute(
+                """
+                UPDATE tool_attempts
+                SET status = ?, completed_at = ?, result_code = ?
+                WHERE tool_call_id = ? AND ordinal = ? AND status = 'running'
+                """,
+                (status, now, result_code, tool["id"], ordinal),
+            )
+            if updated.rowcount != 1:
+                raise InvalidRunStateError("tool attempt is not running")
 
     def resolve_approval(
         self,

@@ -10,8 +10,7 @@ import {
 export interface SubmissionOperation {
   token: symbol;
   sessionId: string;
-  kind: "start" | "continue";
-  runId?: string;
+  kind: "start";
 }
 
 export interface RunControllerState {
@@ -20,7 +19,7 @@ export interface RunControllerState {
   input: string;
   inputs: Record<string, string>;
   isSubmitting: boolean;
-  submitKind: "start" | "continue" | undefined;
+  submitKind: "start" | undefined;
   cancelingRunId: string | undefined;
   errorsBySessionId: Readonly<Record<string, string>>;
   error: string | undefined;
@@ -47,9 +46,8 @@ export interface RunControllerActions {
  * 2. Inputs are Session-scoped (Record<sessionId, string>); switching sessions preserves drafts.
  * 3. Returned Run objects are projected immediately upon IPC resolution.
  * 4. Stale responses (wrong sessionId) do not mutate other session inputs or states.
- * 5. waiting_user_input strictly calls continueRun; idle strictly calls startRun.
- * 6. Errors are Session-scoped (Record<sessionId, string>).
- * 7. All locks are released in `finally` blocks.
+ * 5. Errors are Session-scoped (Record<sessionId, string>).
+ * 6. All locks are released in `finally` blocks.
  */
 export function useRunController(
   snapshot: SessionSnapshot | undefined,
@@ -132,98 +130,50 @@ export function useRunController(
     // Evaluate eligibility using target session's state
     const mode = deriveComposerMode(storageReady, currentActiveRun, false);
 
-    // Only "idle" and "waiting_user_input" allow submission
-    if (mode !== "idle" && mode !== "waiting_user_input") return;
+    if (mode !== "idle") return;
 
-    if (mode === "waiting_user_input") {
-      // continueRun path
-      if (!currentActiveRun?.allowedActions?.includes("continue")) return;
+    // Double check no active run exists before starting.
+    const freshActiveRun = findActiveRun(currentSnapshot.runs);
+    if (freshActiveRun) return;
 
-      const token = Symbol("run-submission");
-      const operation: SubmissionOperation = {
-        token,
-        sessionId,
-        kind: "continue",
-        runId: currentActiveRun.id,
-      };
+    const token = Symbol("run-submission");
+    const operation: SubmissionOperation = {
+      token,
+      sessionId,
+      kind: "start",
+    };
 
-      // Synchronously acquire lock before async operations
-      submissionLockRef.current = operation;
-      setSubmissionOperation(operation);
-      clearSessionError(sessionId);
+    // Synchronously acquire lock before async operations
+    submissionLockRef.current = operation;
+    setSubmissionOperation(operation);
+    clearSessionError(sessionId);
 
-      try {
-        const returnedRun = await window.eidosRuntime.continueRun(currentActiveRun.id, sessionInput.trim());
+    try {
+      const returnedRun = await window.eidosRuntime.startRun(sessionId, sessionInput.trim(), selectedModelId);
 
-        // Verify response is still for the submitted session
-        if (returnedRun.sessionId === sessionId) {
-          // Immediately project returned run
-          onRunProjected?.(sessionId, returnedRun);
-          // Clear input ONLY for the target session
-          setInputs((prev) => {
-            const next = { ...prev };
-            delete next[sessionId];
-            return next;
-          });
-        }
-      } catch (cause) {
-        if (submissionLockRef.current?.token === operation.token) {
-          const errMsg = userFacingError(cause);
-          setErrorsBySessionId((prev) => ({
-            ...prev,
-            [sessionId]: errMsg,
-          }));
-        }
-      } finally {
-        if (submissionLockRef.current?.token === operation.token) {
-          submissionLockRef.current = undefined;
-          setSubmissionOperation(undefined);
-        }
+      // Verify response is still for the submitted session
+      if (returnedRun.sessionId === sessionId) {
+        // Immediately project returned run
+        onRunProjected?.(sessionId, returnedRun);
+        // Clear input ONLY for the target session
+        setInputs((prev) => {
+          const next = { ...prev };
+          delete next[sessionId];
+          return next;
+        });
       }
-    } else if (mode === "idle") {
-      // startRun path — double check no active run exists
-      const freshActiveRun = findActiveRun(currentSnapshot.runs);
-      if (freshActiveRun) return;
-
-      const token = Symbol("run-submission");
-      const operation: SubmissionOperation = {
-        token,
-        sessionId,
-        kind: "start",
-      };
-
-      // Synchronously acquire lock before async operations
-      submissionLockRef.current = operation;
-      setSubmissionOperation(operation);
-      clearSessionError(sessionId);
-
-      try {
-        const returnedRun = await window.eidosRuntime.startRun(sessionId, sessionInput.trim(), selectedModelId);
-
-        // Verify response is still for the submitted session
-        if (returnedRun.sessionId === sessionId) {
-          // Immediately project returned run
-          onRunProjected?.(sessionId, returnedRun);
-          // Clear input ONLY for the target session
-          setInputs((prev) => {
-            const next = { ...prev };
-            delete next[sessionId];
-            return next;
-          });
-        }
-      } catch (cause) {
-        if (submissionLockRef.current?.token === operation.token) {
-          const errMsg = userFacingError(cause);
-          setErrorsBySessionId((prev) => ({
-            ...prev,
-            [sessionId]: errMsg,
-          }));
-        }
-      } finally {
-        if (submissionLockRef.current?.token === operation.token) {
-          submissionLockRef.current = undefined;
-          setSubmissionOperation(undefined);
-        }
+    } catch (cause) {
+      if (submissionLockRef.current?.token === operation.token) {
+        const errMsg = userFacingError(cause);
+        setErrorsBySessionId((prev) => ({
+          ...prev,
+          [sessionId]: errMsg,
+        }));
+      }
+    } finally {
+      if (submissionLockRef.current?.token === operation.token) {
+        submissionLockRef.current = undefined;
+        setSubmissionOperation(undefined);
       }
     }
   }, [inputs, clearSessionError]);

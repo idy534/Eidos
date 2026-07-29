@@ -176,19 +176,19 @@ test("run completion replaces the active run with its terminal state", () => {
 
 test("every terminal run state has a user-facing presentation", () => {
   assert.deepEqual(terminalRunPresentation(run("succeeded")), {
-    label: "Run 已完成",
+    label: "已完成",
     tone: "success",
   });
   assert.deepEqual(terminalRunPresentation(run("failed")), {
-    label: "Run 失败：UNKNOWN_ERROR",
+    label: "失败：UNKNOWN_ERROR",
     tone: "error",
   });
   assert.deepEqual(terminalRunPresentation(run("canceled")), {
-    label: "Run 已取消",
+    label: "已取消",
     tone: "neutral",
   });
   assert.deepEqual(terminalRunPresentation(run("interrupted")), {
-    label: "Run 已中断，未自动恢复",
+    label: "已中断，未自动恢复",
     tone: "warning",
   });
   assert.equal(terminalRunPresentation(run("running")), undefined);

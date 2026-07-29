@@ -99,7 +99,7 @@ test("folds tool execution before the final answer and omits the success pill", 
   assert.match(html, /已处理 1m 5s/);
   assert.match(html, /已运行 git diff --check/);
   assert.match(html, /无输出/);
-  assert.doesNotMatch(html, /Run 已完成/);
+  assert.doesNotMatch(html, /已完成/);
   assert.ok(html.indexOf("</details>") < html.indexOf("<h1>检查完成</h1>"));
 });
 
@@ -240,6 +240,92 @@ test("shows the exact host and target for network approval", () => {
   assert.match(html, /target: example\/skills@main:grilling/);
   assert.match(html, /approved hosts: codeload.github.com:443/);
   assert.match(html, /批准联网/);
+});
+
+test("distinguishes expanded and unsandboxed command approvals", () => {
+  const { completedAt: _completedAt, ...runWithoutCompletion } = run;
+  const waitingRun: Run = {
+    ...runWithoutCompletion,
+    status: "waiting_approval",
+    allowedActions: ["approve", "reject", "cancel"],
+  };
+  const commandItem = item({
+    id: "shell-approval",
+    ordinal: 1,
+    kind: "command_execution",
+    status: "in_progress",
+    toolCall: {
+      id: "tool-shell",
+      itemId: "shell-approval",
+      modelStepIndex: 1,
+      batchOrder: 0,
+      providerCallId: "provider-shell",
+      toolName: "run_shell",
+      status: "running",
+      startedAt: 1_000,
+      argumentsJson: JSON.stringify({ command: "make test" }),
+    },
+  });
+  const renderApproval = (
+    approval: Parameters<typeof ExecutionFeed>[0]["approvals"][number],
+  ) => renderToStaticMarkup(
+    <ExecutionFeed
+      items={[commandItem]}
+      runs={[waitingRun]}
+      approvals={[approval]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  const expanded = renderApproval({
+    id: "expanded",
+    sessionId: "session-1",
+    runId: run.id,
+    itemId: commandItem.id,
+    toolCallId: "tool-shell",
+    kind: "command_execution",
+    summary: "Run with approved paths",
+    command: "make test",
+    cwd: "/workspace",
+    networkEnabled: true,
+    timeoutSeconds: 120,
+    executionMode: "expanded_sandbox",
+    sandboxPermissions: "with_additional_permissions",
+    additionalReadAccess: ["/sdk"],
+    additionalWriteAccess: ["/output"],
+    additionalExecutableAccess: ["/toolchain"],
+    reason: "Build the project",
+  });
+  const unsandboxed = renderApproval({
+    id: "unsandboxed",
+    sessionId: "session-1",
+    runId: run.id,
+    itemId: commandItem.id,
+    toolCallId: "tool-shell",
+    kind: "command_execution",
+    summary: "Run outside Seatbelt",
+    command: "make test",
+    cwd: "/workspace",
+    networkEnabled: false,
+    timeoutSeconds: 120,
+    executionMode: "unsandboxed",
+    sandboxPermissions: "require_escalated",
+    escalationReason: "Seatbelt denied executable mapping",
+    attemptOrdinal: 1,
+  });
+
+  assert.match(expanded, /Execution mode: Expanded sandbox/);
+  assert.match(expanded, /additional read: \/sdk/);
+  assert.match(expanded, /additional write: \/output/);
+  assert.match(expanded, /additional execute: \/toolchain/);
+  assert.match(expanded, /network: enabled/);
+  assert.match(unsandboxed, /approval-card--unsandboxed/);
+  assert.match(unsandboxed, /Execution mode: Unsandboxed/);
+  assert.match(unsandboxed, /WARNING: This command runs with the current macOS user/);
+  assert.match(unsandboxed, /escalation reason: Seatbelt denied executable mapping/);
 });
 
 test("renders minimalist SVG icons for file operations, skills, and shell calls", () => {

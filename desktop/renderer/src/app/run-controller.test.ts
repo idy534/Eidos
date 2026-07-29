@@ -40,17 +40,6 @@ const mockRunActive: Run = {
   updatedAt: 2000,
 };
 
-const mockRunWaitingUserInput: Run = {
-  id: "run-3",
-  sessionId: "session-1",
-  status: "waiting_user_input",
-  allowedActions: ["continue", "cancel"],
-  modelId: "deepseek-v4-flash",
-  modelStepCount: 1,
-  createdAt: 3000,
-  updatedAt: 3000,
-};
-
 const mockRunWaitingApproval: Run = {
   id: "run-4",
   sessionId: "session-1",
@@ -77,12 +66,6 @@ void test("Active Run blocks startRun submission in Composer Mode", () => {
   const mode = deriveComposerMode(true, mockRunActive, false);
   assert.equal(mode, "running");
   assert.notEqual(mode, "idle");
-});
-
-void test("waiting_user_input allows continueRun path", () => {
-  const snapshot = makeSnapshot("session-1", [mockRunWaitingUserInput]);
-  const mode = deriveComposerMode(true, mockRunWaitingUserInput, false);
-  assert.equal(mode, "waiting_user_input");
 });
 
 void test("waiting_approval blocks submission", () => {

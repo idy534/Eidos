@@ -2,15 +2,21 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+import errno
 import hashlib
 import json
+from pathlib import Path
 import threading
 from typing import Callable
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.skills import SkillCreation
 from eidos_runtime.model.client import ModelResponse, ModelToolCall
-from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalOutcome
+from eidos_runtime.runtime.approval import (
+    APPROVAL_REJECTION_GUIDANCE,
+    ApprovalCoordinator,
+    ApprovalOutcome,
+)
 from eidos_runtime.runtime.contracts import (
     RuntimeCancelled,
     SamplingOutcome,
@@ -35,6 +41,26 @@ from eidos_runtime.runtime.tool_execution import (
     ToolInfrastructureError,
     VerifiedToolExecutionResult,
 )
+from eidos_runtime.runtime.shell_orchestration import (
+    ShellOrchestrationRequest,
+    ShellOrchestrationRuntime,
+)
+from eidos_runtime.runtime.tool_orchestrator import (
+    OrchestratorApprovalRequest,
+    OrchestratorContext,
+    ToolOrchestrator,
+)
+from eidos_runtime.sandbox.denial import (
+    SandboxDenied,
+    SandboxDenialCategory,
+    detect_sandbox_denial,
+)
+from eidos_runtime.sandbox.permissions import (
+    BasePermissionProfile,
+    SandboxAttempt,
+    SandboxPermissions,
+    SandboxType,
+)
 from eidos_runtime.sandbox.sensitive import (
     SensitiveScanError,
     SensitiveScanner,
@@ -47,6 +73,7 @@ from eidos_runtime.sandbox.workspace_manifest import (
     diff_workspace_manifests,
 )
 from eidos_runtime.tools.workspace import ToolCancelled, WorkspacePathError
+from eidos_runtime.tools.contracts import RunShellInput
 from eidos_runtime.tools.registry import (
     AdapterToolRuntime,
     EidosStateToolRuntime,
@@ -67,6 +94,7 @@ class _HandlerDependencies:
         ...,
         tuple[ApprovalOutcome, VerifiedToolExecutionResult | None],
     ]
+    authorize_side_effect: Callable[..., ApprovalOutcome]
     resources: ResourceRegistry = field(default_factory=ResourceRegistry)
 
 class ReadOnlyToolHandler:
@@ -162,7 +190,7 @@ class FileChangeToolHandler:
                     call.name,
                     "declined",
                     "user_rejected",
-                    "User rejected the file change",
+                    approval.feedback or APPROVAL_REJECTION_GUIDANCE,
                     {"path": prepared.path},
                 ),
                 "declined",
@@ -197,7 +225,14 @@ class ShellToolHandler:
         cancel: threading.Event,
         runtime: ShellToolRuntime,
     ) -> HandlerOutcome:
-        if not self.dependencies.shell_available:
+        shell_input = RunShellInput.model_validate_json(
+            json.dumps(call.arguments, ensure_ascii=False)
+        )
+        if (
+            shell_input.sandboxPermissions
+            is not SandboxPermissions.REQUIRE_ESCALATED
+            and not self.dependencies.shell_available
+        ):
             return HandlerOutcome(
                 tool_error(
                     call.name, "sandbox_unavailable", "Shell sandbox is unavailable"
@@ -205,12 +240,9 @@ class ShellToolHandler:
                 "failed",
                 "failed",
             )
-        command = call.arguments["command"]
-        cwd_value = call.arguments.get("cwd", ".")
-        timeout = call.arguments.get("timeoutSeconds", 120)
-        assert isinstance(command, str)
-        assert isinstance(cwd_value, str)
-        assert isinstance(timeout, int)
+        command = shell_input.command
+        cwd_value = shell_input.cwd
+        timeout = shell_input.timeoutSeconds
         try:
             cwd = runtime.implementation.prepare_shell(  # type: ignore[attr-defined]
                 cwd_value, cancel
@@ -223,27 +255,16 @@ class ShellToolHandler:
                 "failed",
                 "failed",
             )
-        if not is_seatbelt_ready():
+        if (
+            shell_input.sandboxPermissions
+            is not SandboxPermissions.REQUIRE_ESCALATED
+            and not is_seatbelt_ready()
+        ):
             return HandlerOutcome(
                 sandbox_unavailable_result(),
                 "failed",
                 "failed",
             )
-        prepared_execution = PreparedToolExecution(
-            approval_description={
-                "kind": "command_execution",
-                "summary": "Run shell command",
-                "command": command,
-                "cwd": cwd_value,
-                "networkEnabled": False,
-                "timeoutSeconds": timeout,
-            },
-            transition_reason="shell_approval",
-            intent_preconditions={
-                "cwd": cwd_value,
-                "timeoutSeconds": timeout,
-            },
-        )
         workspace_diff = None
         delta_sequence = 0
 
@@ -257,7 +278,13 @@ class ShellToolHandler:
             )
             self.dependencies.events.publish(mutation, item=mutation.value)
 
-        def execute_shell() -> dict[str, object]:
+        manifest_before = (
+            runtime.implementation.executor.workspace_index.manifest()  # type: ignore[attr-defined]
+        )
+
+        def execute_shell_attempt(
+            attempt: SandboxAttempt,
+        ) -> tuple[dict[str, object], SandboxDenied | None]:
             nonlocal workspace_diff
             try:
                 approved_cwd = runtime.implementation.prepare_shell(  # type: ignore[attr-defined]
@@ -268,10 +295,13 @@ class ShellToolHandler:
             except ToolCancelled:
                 raise RuntimeCancelled from None
             except WorkspacePathError as error:
-                return tool_error(
-                    call.name,
-                    error.code,
-                    "Shell workspace changed after approval",
+                return (
+                    tool_error(
+                        call.name,
+                        error.code,
+                        "Shell workspace changed after approval",
+                    ),
+                    None,
                 )
             output_stream = StreamingSensitiveScanner(
                 self.dependencies.sensitive,
@@ -288,19 +318,35 @@ class ShellToolHandler:
                 except SensitiveScanError:
                     output_scan_failed = True
 
-            manifest_before = (
-                runtime.implementation.executor.workspace_index.manifest()  # type: ignore[attr-defined]
-            )
-            raw_result = run_shell(
-                runtime.implementation.executor.workspace,  # type: ignore[attr-defined]
-                command,
-                approved_cwd,
-                timeout,
-                cancel,
-                scan_shell_output,
-                self.dependencies.resources,
-                str(item["id"]),
-            )
+            try:
+                raw_result = run_shell(
+                    runtime.implementation.executor.workspace,  # type: ignore[attr-defined]
+                    command,
+                    approved_cwd,
+                    timeout,
+                    cancel,
+                    scan_shell_output,
+                    self.dependencies.resources,
+                    str(item["id"]),
+                    attempt,
+                )
+            except PermissionError as error:
+                result = tool_error(
+                    call.name,
+                    "process_start_failed",
+                    "Shell process could not be started",
+                )
+                denial = (
+                    SandboxDenied(
+                        category=SandboxDenialCategory.PROCESS,
+                        summary="Seatbelt denied process start",
+                        evidence=str(error),
+                    )
+                    if attempt.sandbox is SandboxType.MACOS_SEATBELT
+                    and error.errno in {errno.EACCES, errno.EPERM}
+                    else None
+                )
+                return result, denial
             try:
                 manifest_after = (
                     runtime.implementation.executor.refresh_workspace_index(  # type: ignore[attr-defined]
@@ -314,6 +360,11 @@ class ShellToolHandler:
             workspace_diff = diff_workspace_manifests(
                 manifest_before, manifest_after
             )
+            if (
+                raw_result.get("outcome") == "success"
+                and attempt.sandbox is SandboxType.MACOS_SEATBELT
+            ):
+                raw_result["sideEffectsMayExist"] = False
             result = bounded_tool_result(
                 call.name, attach_workspace_diff(raw_result, workspace_diff)
             )
@@ -330,28 +381,179 @@ class ShellToolHandler:
                     "sensitive_content_rejected",
                     "Shell output was withheld",
                 )
-            return result
+            data = (
+                result.get("data")
+                if isinstance(result.get("data"), dict)
+                else {}
+            )
+            denial = detect_sandbox_denial(
+                sandboxed=attempt.sandbox is SandboxType.MACOS_SEATBELT,
+                exit_code=(
+                    data.get("exitCode")
+                    if isinstance(data.get("exitCode"), int)
+                    else None
+                ),
+                stdout=str(data.get("stdout", "")),
+                stderr=str(data.get("stderr", "")),
+            )
+            return result, denial
 
-        approval, verified = self.dependencies.execute_side_effect(
-            run_id=run_id,
-            item=item,
-            prepared=prepared_execution,
-            cancel=cancel,
-            execute=execute_shell,
+        def approve(request: OrchestratorApprovalRequest) -> bool:
+            summary = request.effective_permissions
+            mode = (
+                "unsandboxed"
+                if request.approval_kind == "escalated"
+                else "expanded_sandbox"
+                if request.approval_kind == "additional_permissions"
+                else "default_sandbox"
+            )
+            description = {
+                "kind": "command_execution",
+                "summary": (
+                    "Run shell command without the macOS sandbox"
+                    if mode == "unsandboxed"
+                    else "Run shell command with expanded sandbox permissions"
+                    if mode == "expanded_sandbox"
+                    else "Run shell command"
+                ),
+                "command": command,
+                "cwd": cwd_value,
+                "networkEnabled": bool(summary.get("networkEnabled")),
+                "timeoutSeconds": timeout,
+                "executionMode": mode,
+                "sandboxPermissions": request.sandbox_permissions.value,
+                "additionalReadAccess": summary.get("read", []),
+                "additionalWriteAccess": summary.get("write", []),
+                "additionalExecutableAccess": summary.get("execute", []),
+                "attemptOrdinal": request.attempt_ordinal,
+                **(
+                    {"reason": shell_input.justification}
+                    if shell_input.justification is not None
+                    else {}
+                ),
+                **(
+                    {"escalationReason": request.escalation_reason}
+                    if request.escalation_reason is not None
+                    else {}
+                ),
+            }
+            prepared = PreparedToolExecution(
+                approval_description=description,
+                transition_reason=(
+                    "shell_escalation_approval"
+                    if request.attempt_ordinal == 1
+                    else "shell_approval"
+                ),
+                intent_preconditions={
+                    "command": command,
+                    "cwd": cwd_value,
+                    "timeoutSeconds": timeout,
+                    "sandboxPermissions": shell_input.sandboxPermissions.value,
+                    "additionalPermissions": (
+                        shell_input.additionalPermissions.model_dump(
+                            mode="json", by_alias=True, exclude_none=True
+                        )
+                        if shell_input.additionalPermissions is not None
+                        else None
+                    ),
+                    "workspaceIdentity": [
+                        runtime.implementation.executor.workspace.device,  # type: ignore[attr-defined]
+                        runtime.implementation.executor.workspace.inode,  # type: ignore[attr-defined]
+                        runtime.implementation.executor.workspace.owner,  # type: ignore[attr-defined]
+                    ],
+                },
+                approval_request={
+                    **description,
+                    "approvalKey": request.approval_key,
+                    "effectivePermissions": request.effective_permissions,
+                },
+                attempt_ordinal=request.attempt_ordinal,
+                approval_kind=request.approval_kind,
+            )
+            approval = self.dependencies.authorize_side_effect(
+                run_id=run_id,
+                item=item,
+                prepared=prepared,
+                cancel=cancel,
+            )
+            return approval.decision == "approve"
+
+        def record_attempt(
+            attempt: SandboxAttempt,
+            status: str,
+            result: dict[str, object] | None,
+        ) -> None:
+            self.dependencies.store.record_tool_attempt(
+                str(item["id"]),
+                ordinal=attempt.ordinal,
+                sandbox_type=attempt.sandbox.value,
+                sandbox_requested=attempt.sandbox_requested,
+                effective_permissions=attempt.permissions.model_dump(
+                    mode="json", by_alias=True
+                ),
+                profile_hash=attempt.profile_hash,
+                escalation_reason=attempt.escalation_reason,
+                status=status,
+                result_code=(
+                    str(result.get("code")) if result is not None else None
+                ),
+            )
+
+        workspace = runtime.implementation.executor.workspace  # type: ignore[attr-defined]
+        data_directory = self.dependencies.store.data_directory
+        runtime_installation = Path(__file__).resolve().parents[1]
+        protected = (
+            (data_directory,)
+            if isinstance(data_directory, Path)
+            else ()
         )
-        if approval.decision != "approve":
+        request = ShellOrchestrationRequest(shell_input, workspace, cwd)
+        orchestration = ToolOrchestrator().run(
+            ShellOrchestrationRuntime(execute_shell_attempt),
+            request,
+            OrchestratorContext(
+                tool_call_id=str(item["toolCall"]["id"]),  # type: ignore[index]
+                workspace_root=workspace.path,
+                workspace_identity=(
+                    workspace.device,
+                    workspace.inode,
+                    workspace.owner,
+                ),
+                cwd=cwd.path,
+                timeout_seconds=timeout,
+                cancel=cancel,
+                base_permissions=BasePermissionProfile.for_workspace(
+                    workspace_root=workspace.path,
+                    protected_paths=protected,
+                    protected_write_paths=(runtime_installation,),
+                ),
+            ),
+            approve=approve,
+            record_attempt=record_attempt,
+        )
+        result = orchestration.result
+        if workspace_diff is not None:
+            result = attach_workspace_diff(result, workspace_diff)
+        if result.get("code") in {"user_rejected", "user_rejected_escalation"}:
             return HandlerOutcome(
                 tool_result(
                     call.name,
                     "declined",
                     "user_rejected",
-                    "User rejected the command",
+                    APPROVAL_REJECTION_GUIDANCE,
+                    result.get("data")
+                    if isinstance(result.get("data"), dict)
+                    else None,
+                    side_effects_may_exist=(
+                        result.get("sideEffectsMayExist") is True
+                    ),
+                    reconciliation_required=(
+                        result.get("reconciliationRequired") is True
+                    ),
                 ),
                 "declined",
                 "failed",
             )
-        assert verified is not None
-        result = verified.result
         if result["outcome"] == "success":
             self.dependencies.store.clear_rejects(run_id)
         status = "completed" if result["outcome"] == "success" else "failed"
@@ -421,7 +623,7 @@ class ExternalToolHandler:
                     call.name,
                     "declined",
                     "user_rejected",
-                    "User rejected the external tool",
+                    approval.feedback or APPROVAL_REJECTION_GUIDANCE,
                 ),
                 "declined",
                 "failed",
@@ -483,7 +685,7 @@ class EidosStateToolHandler:
                         call.name,
                         "declined",
                         "user_rejected_network",
-                        "User rejected network access",
+                        approval.feedback or APPROVAL_REJECTION_GUIDANCE,
                     ),
                     "declined",
                 )
@@ -527,7 +729,7 @@ class EidosStateToolHandler:
                     call.name,
                     "declined",
                     "user_rejected",
-                    "User rejected the Eidos state change",
+                    approval.feedback or APPROVAL_REJECTION_GUIDANCE,
                     {"path": prepared.path},
                 ),
                 "declined",
@@ -577,6 +779,7 @@ class ToolCallRuntime:
             sensitive,
             shell_available,
             self.controller.execute_side_effect,
+            self.controller.authorize_side_effect,
             self.controller.resources,
         )
         self.read_runtime = ReadOnlyToolHandler(dependencies)
@@ -669,14 +872,6 @@ class ToolCallRuntime:
                     step.run_id, "failed", reason="sensitive_tool_input"
                 )
                 if failures >= 2:
-                    mutation = self.store.pause_run_committed(
-                        step.run_id, "repeated_sensitive_tool_input"
-                    )
-                    self.events.publish(mutation, run=mutation.value)
-                    self.state_machine.track(
-                        RuntimeState.WAITING_USER_INPUT,
-                        "repeated_sensitive_tool_input",
-                    )
                     return ToolBatchOutcome(
                         status="paused",
                         pause_reason="repeated_sensitive_tool_input",
@@ -763,29 +958,16 @@ class ToolCallRuntime:
                     if plan.is_shell
                     else "eidos_state_reconciliation_required"
                 )
-                mutation = self.store.pause_run_committed(step.run_id, pause_reason)
-                self.state_machine.track(
-                    RuntimeState.WAITING_USER_INPUT, pause_reason
-                )
+                mutation = self.store.interrupt_run_committed(step.run_id)
                 self.events.publish(mutation, run=mutation.value)
                 return ToolBatchOutcome(
                     status="paused", pause_reason=pause_reason
                 )
 
         self.state_machine.track(RuntimeState.THINKING, "tool_batch_completed")
-        updated = self.store.read_run(step.run_id)
         facts = self.store.context_projection_facts(step.run_id)
         return ToolBatchOutcome(
-            status=(
-                "paused"
-                if updated["status"] == "waiting_user_input"
-                else "completed"
-            ),
-            pause_reason=(
-                str(updated.get("pauseReason"))
-                if updated["status"] == "waiting_user_input"
-                else None
-            ),
+            status="completed",
             error_fingerprints=tuple(errors),
             workspace_version=facts.workspace_version,
             diff_hash=facts.last_diff_hash,

@@ -13,7 +13,16 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.sandbox.shell import _terminate_group, run_shell  # noqa: E402
-from eidos_runtime.sandbox.seatbelt import is_seatbelt_ready  # noqa: E402
+from eidos_runtime.sandbox.seatbelt import (  # noqa: E402
+    SeatbeltProfile,
+    is_seatbelt_ready,
+)
+from eidos_runtime.sandbox.permissions import (  # noqa: E402
+    BasePermissionProfile,
+    SandboxAttempt,
+    SandboxType,
+    materialize_effective_profile,
+)
 from eidos_runtime.db.storage import WorkspaceIdentity  # noqa: E402
 
 
@@ -57,6 +66,19 @@ class ShellLifecycleUnitTests(unittest.TestCase):
                 lambda _delta: None,
             )
 
+    def unsandboxed_attempt(self) -> SandboxAttempt:
+        permissions = materialize_effective_profile(
+            BasePermissionProfile.for_workspace(workspace_root=self.workspace)
+        )
+        return SandboxAttempt(
+            ordinal=0,
+            sandbox=SandboxType.NONE,
+            sandboxRequested=False,
+            permissions=permissions,
+            sandboxCwd=str(self.workspace),
+            workspaceRoots=(str(self.workspace),),
+        )
+
     def test_background_process_is_detected_without_native_sandbox(self) -> None:
         result = self._run_shell("sleep 3 &", 1)
 
@@ -71,6 +93,52 @@ class ShellLifecycleUnitTests(unittest.TestCase):
     def test_process_group_permission_race_does_not_escape_cleanup(self) -> None:
         with patch("eidos_runtime.sandbox.shell.os.killpg", side_effect=PermissionError):
             _terminate_group(12345)
+
+    def test_unsandboxed_attempt_bypasses_seatbelt_but_keeps_supervision(self) -> None:
+        deltas = []
+        with patch.object(
+            SeatbeltProfile,
+            "command",
+            side_effect=AssertionError("sandbox-exec must not be used"),
+        ):
+            success = run_shell(
+                self.identity,
+                'printf "host-ok|${SSH_AUTH_SOCK-unset}"',
+                self.identity,
+                2,
+                threading.Event(),
+                deltas.append,
+                attempt=self.unsandboxed_attempt(),
+            )
+            timeout = run_shell(
+                self.identity,
+                "trap '' TERM; while :; do sleep 1; done",
+                self.identity,
+                1,
+                threading.Event(),
+                lambda _delta: None,
+                attempt=self.unsandboxed_attempt(),
+            )
+            cancel = threading.Event()
+            timer = threading.Timer(0.1, cancel.set)
+            timer.start()
+            canceled = run_shell(
+                self.identity,
+                "sleep 5",
+                self.identity,
+                2,
+                cancel,
+                lambda _delta: None,
+                attempt=self.unsandboxed_attempt(),
+            )
+            timer.join()
+
+        self.assertEqual(success["outcome"], "success")
+        self.assertEqual("".join(deltas), "host-ok|unset")
+        self.assertTrue(success["sideEffectsMayExist"])
+        self.assertEqual(timeout["code"], "timeout")
+        self.assertEqual(canceled["code"], "canceled")
+        self.assertLess(timeout["data"]["durationMs"], 3_000)
 
 
 @unittest.skipUnless(sys.platform == "darwin", "Seatbelt is macOS-only")

@@ -383,7 +383,7 @@ class ContextPersistenceTests(unittest.TestCase):
         self.assertEqual(self.store.compaction_count(current["id"]), 1)
         self.assertIn("Compact summary:", str(model.contexts[0]))
 
-    def test_runtime_preserves_recent_tool_result_and_pauses_if_it_alone_is_too_large(self) -> None:
+    def test_runtime_preserves_recent_tool_result_and_finalizes_if_it_alone_is_too_large(self) -> None:
         workspace = Path(self.session["workspaceRoot"])
         (workspace / "large.txt").write_text("x" * 20_000)
         run, _ = self.store.create_run(
@@ -404,9 +404,9 @@ class ContextPersistenceTests(unittest.TestCase):
             run["id"], threading.Event()
         )
 
-        paused = self.store.read_run(run["id"])
-        self.assertEqual(paused["status"], "waiting_user_input")
-        self.assertEqual(paused["pauseReason"], "context_still_over_budget")
+        stopped = self.store.read_run(run["id"])
+        self.assertEqual(stopped["status"], "stopped")
+        self.assertEqual(stopped["stopReason"], "context_still_over_budget")
         self.assertEqual(self.store.compaction_count(run["id"]), 0)
         facts = self.store.context_projection_facts(run["id"])
         self.assertTrue(any("x" * 1_000 in (item.result_json or "") for item in facts.items))

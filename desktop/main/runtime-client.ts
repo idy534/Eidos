@@ -272,12 +272,6 @@ export class RuntimeClient {
     return this.validatedRequest("run/cancel", { runId, operationId }, isRun);
   }
 
-  continueRun(runId: string, userInput: string, operationId = randomUUID()): Promise<Run> {
-    return this.validatedRequest(
-      "run/continue", { runId, userInput, operationId }, isRun,
-    );
-  }
-
   modelStatus(): Promise<ModelStatus> {
     return this.validatedRequest("model/status", {}, isModelStatus);
   }
@@ -600,10 +594,10 @@ function isNotification(value: unknown): value is RuntimeNotification {
       return run.status === "running";
     }
     if (value.method === "run/updated") {
-      return ["queued", "running", "waiting_approval", "waiting_user_input", "finalizing"].includes(run.status);
+      return ["queued", "running", "waiting_approval", "finalizing"].includes(run.status);
     }
     return ![
-      "queued", "running", "waiting_approval", "waiting_user_input", "finalizing",
+      "queued", "running", "waiting_approval", "finalizing",
     ].includes(run.status);
   }
   if (value.method === "item/started" || value.method === "item/completed") {
@@ -795,7 +789,6 @@ function isRun(value: unknown): value is Run {
       "cancelRequestedAt",
       "cancelCompletedAt",
       "cancelFailureCode",
-      "pauseReason",
       "stopReason",
       "sideEffectsMayExist",
       "extensionSnapshot",
@@ -809,7 +802,7 @@ function isRun(value: unknown): value is Run {
     && typeof value.sessionId === "string"
     && (value.userInput === undefined || typeof value.userInput === "string")
     && [
-      "queued", "running", "waiting_approval", "waiting_user_input",
+      "queued", "running", "waiting_approval",
       "finalizing", "stopped", "succeeded", "failed", "canceled", "interrupted",
     ].includes(String(value.status))
     && isModelId(value.modelId)
@@ -817,7 +810,7 @@ function isRun(value: unknown): value is Run {
     && (value.allowedActions === undefined || (
       Array.isArray(value.allowedActions)
       && value.allowedActions.every((action) => [
-        "cancel", "approve", "reject", "continue",
+        "cancel", "approve", "reject",
       ].includes(String(action)))
     ))
     && isNonNegativeInteger(value.createdAt)
@@ -837,7 +830,6 @@ function isRun(value: unknown): value is Run {
       value.cancelFailureCode === undefined
       || typeof value.cancelFailureCode === "string"
     )
-    && (value.pauseReason === undefined || typeof value.pauseReason === "string")
     && (value.stopReason === undefined || typeof value.stopReason === "string")
     && (value.sideEffectsMayExist === undefined || typeof value.sideEffectsMayExist === "boolean")
     && (value.extensionSnapshot === undefined || isExtensionSnapshot(value.extensionSnapshot))
@@ -1200,8 +1192,21 @@ function approvalRequestFrom(
     params.kind === "command_execution"
     && typeof params.command === "string"
     && typeof params.cwd === "string"
-    && params.networkEnabled === false
+    && typeof params.networkEnabled === "boolean"
     && isPositiveInteger(params.timeoutSeconds)
+    && (
+      params.executionMode === undefined
+      || ["default_sandbox", "expanded_sandbox", "unsandboxed"].includes(String(params.executionMode))
+    )
+    && (
+      params.sandboxPermissions === undefined
+      || ["use_default", "with_additional_permissions", "require_escalated"].includes(String(params.sandboxPermissions))
+    )
+    && [params.additionalReadAccess, params.additionalWriteAccess, params.additionalExecutableAccess]
+      .every((paths) => paths === undefined || (Array.isArray(paths) && paths.every((path) => typeof path === "string")))
+    && (params.reason === undefined || typeof params.reason === "string")
+    && (params.escalationReason === undefined || typeof params.escalationReason === "string")
+    && (params.attemptOrdinal === undefined || params.attemptOrdinal === 0 || params.attemptOrdinal === 1)
   ) {
     return {
       id: message.id,
@@ -1213,8 +1218,16 @@ function approvalRequestFrom(
       summary: params.summary as string,
       command: params.command as string,
       cwd: params.cwd as string,
-      networkEnabled: false,
+      networkEnabled: params.networkEnabled as boolean,
       timeoutSeconds: params.timeoutSeconds as number,
+      executionMode: (params.executionMode ?? "default_sandbox") as NonNullable<CommandApprovalRequest["executionMode"]>,
+      sandboxPermissions: (params.sandboxPermissions ?? "use_default") as NonNullable<CommandApprovalRequest["sandboxPermissions"]>,
+      additionalReadAccess: [...(params.additionalReadAccess as string[] | undefined ?? [])],
+      additionalWriteAccess: [...(params.additionalWriteAccess as string[] | undefined ?? [])],
+      additionalExecutableAccess: [...(params.additionalExecutableAccess as string[] | undefined ?? [])],
+      reason: (params.reason as string | undefined) ?? "",
+      escalationReason: (params.escalationReason as string | undefined) ?? "",
+      attemptOrdinal: (params.attemptOrdinal ?? 0) as 0 | 1,
     };
   }
   return undefined;

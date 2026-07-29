@@ -798,7 +798,10 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     assert.equal(req2.networkEnabled, false);
     assert.equal(req2.token, undefined);
     assert.deepEqual(Object.keys(req2).sort(), [
-      "command", "cwd", "id", "itemId", "kind", "networkEnabled", "runId", "sessionId", "summary", "timeoutSeconds", "toolCallId",
+      "additionalExecutableAccess", "additionalReadAccess", "additionalWriteAccess",
+      "attemptOrdinal", "command", "cwd", "escalationReason", "executionMode",
+      "id", "itemId", "kind", "networkEnabled", "reason", "runId",
+      "sandboxPermissions", "sessionId", "summary", "timeoutSeconds", "toolCallId",
     ]);
 
     // 3. external_tool

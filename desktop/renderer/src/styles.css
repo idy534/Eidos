@@ -2109,6 +2109,9 @@ input:focus, textarea:focus {
 .shell-status--error { color: var(--danger); }
 
 .approval-card { max-width: 48rem; margin: 0 0 1.25rem; overflow: hidden; border: 1px solid #adbeaf; border-radius: var(--radius); background: white; }
+.approval-card--unsandboxed { border-color: #b94a48; box-shadow: 0 0 0 2px rgb(185 74 72 / 12%); }
+.approval-card--unsandboxed .approval-heading { background: #fff0ef; }
+.approval-card--unsandboxed .diff-view { color: #6f2725; background: #fff8f7; }
 .approval-heading { display: flex; justify-content: space-between; gap: 1rem; align-items: start; padding: 0.875rem 1rem; background: var(--accent-soft); }
 .approval-heading h3 { margin: 0; font-size: var(--font-size-body); line-height: var(--line-height-body); }
 .approval-heading > span { border: 1px solid #a9bbaa; border-radius: 999px; padding: 0.25rem 0.5rem; color: #4d5e52; font-size: var(--font-size-xs); }
@@ -2372,4 +2375,3 @@ input:focus, textarea:focus {
     transform: none;
   }
 }
-

@@ -137,7 +137,7 @@ _BUILTIN_CONTRACTS = (
     ("write_file", "Create or replace one UTF-8 file after approval and verify the final hash. Modifies the workspace.", "workspace", True, 5, "single", WriteFileInput, WorkspaceResultData, "file_change"),
     ("apply_patch", "Apply one strict unified diff to one previously read file after approval. Modifies the workspace.", "workspace", True, 5, "single", ApplyPatchInput, WorkspaceResultData, "file_change"),
     ("delete_file", "Delete one previously read regular UTF-8 file after approval. Modifies the workspace.", "workspace", True, 5, "single", DeleteFileInput, WorkspaceResultData, "file_change"),
-    ("run_shell", "Run one network-disabled shell command after approval. Output and workspace changes are bounded and verified.", "shell", True, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
+    ("run_shell", "Run one shell command after approval. The default sandbox has no network access; for user-requested network access, set sandboxPermissions=with_additional_permissions, additionalPermissions.network.enabled=true, and provide justification instead of refusing without a tool call. Output and workspace changes are bounded and verified.", "shell", True, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
 )
 TOOL_SPECS = tuple(ToolSpec.model_validate({
     "name": name,
@@ -242,7 +242,12 @@ def canonical_tool_result(
         "summary": result.get("summary", "Tool request failed"),
         "data": result.get("data", {}),
         "sideEffectsMayExist": bool(result.get("sideEffectsMayExist", False)),
-        "reconciliationRequired": bool(result.get("reconciliationRequired", result.get("sideEffectsMayExist", False))),
+        "reconciliationRequired": bool(result.get(
+            "reconciliationRequired",
+            result.get("sideEffectsMayExist", False)
+            if result.get("outcome", "error") != "success"
+            else False,
+        )),
     }
     data_model = next(
         (contract[7] for contract in _BUILTIN_CONTRACTS if contract[0] == tool_name),

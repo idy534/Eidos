@@ -170,7 +170,12 @@ if (runtimeClientText) {
       file_change: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "diff"],
       external_tool: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "toolName", "arguments", "provenance", "permissionProfile", "timeoutSeconds", "envNames"],
       network_access: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "toolName", "hosts", "target"],
-      command_execution: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "command", "cwd", "networkEnabled", "timeoutSeconds"],
+      command_execution: [
+        "id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary",
+        "command", "cwd", "networkEnabled", "timeoutSeconds", "executionMode",
+        "sandboxPermissions", "additionalReadAccess", "additionalWriteAccess",
+        "additionalExecutableAccess", "reason", "escalationReason", "attemptOrdinal",
+      ],
     };
     const returns = descendants(
       approvalRequest,
@@ -460,14 +465,13 @@ if (appShellText) {
     attribute.name.getText(sf) === "getFallbackFocus"
     && ts.isJsxExpression(attribute.initializer)
     && attribute.initializer.expression?.getText(sf) === "getDialogFallbackFocus"
-  )).length < 2) {
-    errors.push("AppShell.tsx AST error: both Dialogs must receive explicit fallback ownership");
+  )).length < 1) {
+    errors.push("AppShell.tsx AST error: Dialog must receive explicit fallback ownership");
   }
 }
 
 // 6. Dialog focus ownership and transition checks
 for (const dialogPath of [
-  "desktop/renderer/src/components/ApprovalFeedbackDialog.tsx",
   "desktop/renderer/src/components/settings/ConfirmDialog.tsx",
 ]) {
   const text = readFile(dialogPath);
@@ -555,7 +559,6 @@ if (contractsText) {
     "renameSession",
     "deleteSession",
     "startRun",
-    "continueRun",
     "cancelRun",
     "getModelStatus",
     "listModels",

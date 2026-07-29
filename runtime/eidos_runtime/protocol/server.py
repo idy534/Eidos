@@ -241,7 +241,6 @@ class RuntimeServer:
             self.supervisor.lifecycle is not RuntimeLifecycle.RUNNING
             and method in {
                 "run/start",
-                "run/continue",
                 "model/configure",
                 "plugin/import",
                 "plugin/setEnabled",
@@ -253,7 +252,7 @@ class RuntimeServer:
             return
         if (
             self.supervisor.control_state is RuntimeControlState.RECONFIGURING
-            and method in {"run/start", "run/continue", "model/configure"}
+            and method in {"run/start", "model/configure"}
         ):
             self.send(business_error(request_id, "RUNTIME_RECONFIGURING"))
             return
@@ -281,9 +280,6 @@ class RuntimeServer:
             return
         if method == "run/cancel":
             self.cancel_run(request_id, params)
-            return
-        if method == "run/continue":
-            self.continue_run(request_id, params)
             return
         if method == "model/status":
             self.model_status(request_id, params)
@@ -684,7 +680,6 @@ class RuntimeServer:
             "queued",
             "running",
             "waiting_approval",
-            "waiting_user_input",
             "finalizing",
             "canceled",
         }:
@@ -714,45 +709,6 @@ class RuntimeServer:
             self.send(business_error(request_id, "OPERATION_IN_PROGRESS"))
             return
         self.send(response(request_id, current))
-
-    def continue_run(self, request_id: str, params: object) -> None:
-        if (
-            not isinstance(params, dict)
-            or set(params) - {"runId", "userInput", "operationId"}
-            or not {"runId", "userInput"} <= set(params)
-            or not _is_canonical_uuid(params.get("runId"))
-            or not isinstance(params.get("userInput"), str)
-            or not params["userInput"].strip()
-            or len(params["userInput"].encode("utf-8")) > 64 * 1024
-            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        try:
-            user_input = self._scan_text(params["userInput"])
-        except SensitiveContentDenied:
-            self.send(business_error(request_id, "SENSITIVE_CONTENT_REJECTED"))
-            return
-        except SensitiveScanError:
-            self.send(business_error(request_id, "SENSITIVE_SCAN_FAILED"))
-            return
-        try:
-            run = self.store.continue_run(
-                params["runId"], user_input,
-                operation_id=params.get("operationId"),
-            )
-        except InvalidRunStateError:
-            self.send(business_error(request_id, "INVALID_STATE"))
-            return
-        except OperationConflictError:
-            self.send(business_error(request_id, "OPERATION_ID_REUSED"))
-            return
-        except OperationInProgressError:
-            self.send(business_error(request_id, "OPERATION_IN_PROGRESS"))
-            return
-        self.supervisor.schedule_next()
-        run = self.store.read_run(params["runId"])
-        self.send(response(request_id, run))
 
     def model_status(self, request_id: str, params: object) -> None:
         if not isinstance(params, dict) or params:

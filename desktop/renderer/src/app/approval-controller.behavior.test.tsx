@@ -4,7 +4,6 @@ import { useEffect } from "react";
 import { useApprovalController } from "./useApprovalController.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import type { ApprovalRequest, EidosRuntimeAPI, Item, Run } from "../contracts.js";
-import { MAX_APPROVAL_FEEDBACK_BYTES } from "../../../shared/constants.js";
 
 const mockApprovalA: ApprovalRequest = {
   id: "app-A",
@@ -128,58 +127,20 @@ describe("useApprovalController real behavior", () => {
     expect(result.current[0].errorsByApprovalId["app-A"]).toBe("该审批已过期或已被处理。");
   });
 
-  it("Reject opens feedback dialog and UTF-8 feedback limit handles Chinese and emoji", async () => {
-    setupMockRuntime();
-    const { result } = renderHook(() => useApprovalController());
-
-    act(() => {
-      result.current[1].mergeApprovals([mockApprovalA]);
-    });
-
-    act(() => {
-      result.current[1].openRejectDialog(mockApprovalA);
-    });
-
-    expect(result.current[0].feedbackDialogApproval?.id).toBe("app-A");
-
-    // Over UTF-8 byte limit with Chinese and emoji
-    const oversizedFeedback = "测试中文 feedback 🎉 ".repeat(300); // Exceeds 1024 bytes
-    expect(new TextEncoder().encode(oversizedFeedback).byteLength).toBeGreaterThan(MAX_APPROVAL_FEEDBACK_BYTES);
-
-    await act(async () => {
-      await result.current[1].submitReject(mockApprovalA, oversizedFeedback);
-    });
-
-    expect(result.current[0].feedbackDialogError).toContain(`反馈长度超过限制 (${MAX_APPROVAL_FEEDBACK_BYTES} 字节)`);
-  });
-
-  it("Reject dialog preserves feedback after failure and closes after success", async () => {
-    const api = setupMockRuntime({
-      respondApproval: vi.fn().mockRejectedValueOnce(new Error("Reject Failed")).mockResolvedValue(true),
-    });
+  it("Reject responds immediately without requesting feedback", async () => {
+    const api = setupMockRuntime();
 
     const { result } = renderHook(() => useApprovalController());
 
     act(() => {
       result.current[1].mergeApprovals([mockApprovalA]);
-      result.current[1].openRejectDialog(mockApprovalA);
     });
 
-    // Reject attempt 1 fails
     await act(async () => {
-      await result.current[1].submitReject(mockApprovalA, "Reason text");
+      await result.current[1].reject(mockApprovalA);
     });
 
-    expect(result.current[0].feedbackDialogError).toBe("操作失败，请查看 Runtime 日志。");
-    expect(result.current[0].feedbackDialogApproval?.id).toBe("app-A"); // Dialog preserved
-
-    // Reject attempt 2 succeeds
-    await act(async () => {
-      await result.current[1].submitReject(mockApprovalA, "Reason text");
-    });
-
-    expect(api.respondApproval).toHaveBeenCalledWith("app-A", "reject", "Reason text");
-    expect(result.current[0].feedbackDialogApproval).toBeNull(); // Dialog closed
+    expect(api.respondApproval).toHaveBeenCalledWith("app-A", "reject");
     expect(result.current[0].approvals).toEqual([]);
   });
 
@@ -328,7 +289,7 @@ describe("useApprovalController real behavior", () => {
           loadingPendingApprovals={state.loadingPendingApprovals}
           onRetryLoadPending={() => { void actions.loadPending(); }}
           onApprove={(request) => { void actions.approve(request); }}
-          onReject={actions.openRejectDialog}
+          onReject={(request) => { void actions.reject(request); }}
         />
       );
     }

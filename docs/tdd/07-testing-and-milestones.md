@@ -125,10 +125,10 @@
 
 ### 2.6 重试与上下文
 
-- HTTP/SSE initial + 2 次首 delta 前瞬时重试后进入 waiting_user_input；多个 Attempt 只计一个 Step。
+- HTTP/SSE initial + 2 次首 delta 前瞬时重试后进入 failed；多个 Attempt 只计一个 Step。
 - 每次重试保持相同 canonical request、wire API、endpoint、认证模式和输出上限；HTTP 不升级、HTTPS 始终校验证书。
 - 首 delta 后透明重试和传输切换均被禁止。
-- 首 delta 后中断会保留 incomplete progress、丢弃部分 ToolCall，并进入 waiting_user_input。
+- 首 delta 后中断会保留 incomplete progress、丢弃部分 ToolCall，并进入 failed。
 - 模型流中断的失败 Step 计入 Segment 和 Run Step 预算。
 - 同一 Step request cycle 固定 10 分钟，包含 DNS/TLS、全部 Attempt、`1/2/4/8/16` 与 `1/2` 秒退避和 Retry-After；局部 15/180/120 秒 timer 均被 cycle deadline 截断。
 - Retry-After 上限 60 秒；超过剩余周期不会越过 deadline。Finalization 独立 60 秒且输出上限 `min(profile.max_output_tokens,4096)`。

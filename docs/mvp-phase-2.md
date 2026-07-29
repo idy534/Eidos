@@ -120,15 +120,15 @@ P2-00 基线与契约
 - [x] ✅ P2-03-05 到 Run 硬上限时执行一次最长 60 秒、无工具权限的 Finalization；成功或失败后均进入带结构化原因的 `stopped`。
 - [x] ✅ P2-03-06 所有 Run/Segment/Step/Approval 合法与非法流转由 Runtime 单点校验；取消、批准与拒绝竞态仅一个提交成功。
 - [x] ✅ P2-03-07 Runtime 为每个状态返回闭合 `allowed_actions`；Desktop 不根据本地猜测开放继续、批准、拒绝或取消按钮。
-- [x] ✅ P2-03-08 引入持久 Run 状态之外的执行态 `RuntimeState`；调度等待不进入 Loop，Loop 仅在 `thinking`、`tool_executing`、`waiting_approval`、`waiting_user_input`、`finalizing` 与终态间迁移，并由单一 StateMachine 校验和记录迁移原因。
+- [x] ✅ P2-03-08 引入持久 Run 状态之外的执行态 `RuntimeState`；调度等待不进入 Loop，Loop 仅在 `thinking`、`tool_executing`、`waiting_approval`、`finalizing` 与终态间迁移，并由单一 StateMachine 校验和记录迁移原因。
 
 验收：两个以上 Run、重启、取消、超时、Step 上限、Finalization 和 Approval 并发的状态与 Event 均可确定复现。
 
 ### P2-04：暂停、继续、Durable Intent 与事实确认
 
-- [x] ✅ P2-04-01 Approval Reject 计数持久化；连续两次 Reject 后 Run 进入 `waiting_user_input`，获批状态变更或新 Segment 才能清零。
+- [x] ✅ P2-04-01 Approval Reject 计数持久化；首次 Reject 后同一 Run 的后续审批请求自动拒绝，模型改走无需审批路径或给出手动策略。
 - [x] ✅ P2-04-02 用户补充输入创建同一 Run 的新 Segment 并重新入队；不回放旧模型请求、ToolCall 或已执行副作用。
-- [x] ✅ P2-04-03 模型首 delta 后流中断保留已扫描的 incomplete progress，丢弃未完成 ToolCall，并进入 `waiting_user_input`。
+- [x] ✅ P2-04-03 模型首 delta 后流中断保留已扫描的 incomplete progress，丢弃未完成 ToolCall，并进入 `failed`。
 - [x] ✅ P2-04-04 每个文件写入和 Shell 在实际执行前于同一事务持久化 Durable Intent、参数 hash、前置条件和审批事实。
 - [x] ✅ P2-04-05 进程退出或结果提交失败后只执行对账：不得重发模型请求、不得重跑文件提交或 Shell。
 - [x] ✅ P2-04-06 写入或 Shell 失败、被中断或结果不确定时创建 reconciliation episode；后续副作用一律拒绝。
@@ -145,7 +145,7 @@ P2-00 基线与契约
 - [x] ✅ P2-05-04 在模型文本流、ToolCall 参数、ToolResult、文件读取/搜索、Shell 输出、Event、SQLite 与日志入口先扫描、后截断或展示。
 - [x] ✅ P2-05-05 敏感文件名或文件正文命中时文件工具不返回正文；写/Patch/Shell 参数命中时零 Approval、零 intent、零执行。
 - [x] ✅ P2-05-06 支持跨 chunk 输出匹配；扫描超时、容量超限、编码无法安全处理或规则异常时不释放未确认正文。
-- [x] ✅ P2-05-07 模型连续两次生成敏感 ToolCall 时进入 `waiting_user_input`，不计入协议错误；所有安全错误只返回闭合安全 code/data。
+- [x] ✅ P2-05-07 模型连续两次生成敏感 ToolCall 时执行无工具收尾并进入 `stopped`，不计入协议错误；所有安全错误只返回闭合安全 code/data。
 
 验收：固定规则向量、跨 chunk、所有入口、重启后历史读取及 SQLite/Event/日志原文断言均通过。
 
@@ -167,7 +167,7 @@ P2-00 基线与契约
 ### P2-07：Desktop 收口与第二期发布验收
 
 - [x] ✅ P2-07-01 Renderer 合同、Preload 和 Main 对新增 DTO/状态执行闭合校验；未知字段或过期响应不进入 UI 状态。
-- [x] ✅ P2-07-02 Session Sidebar 与 Execution Feed 展示 queued、running、waiting_approval、waiting_user_input、stopped、interrupted 和 storage health 状态。
+- [x] ✅ P2-07-02 Session Sidebar 与 Execution Feed 展示 queued、running、waiting_approval、finalizing、stopped、interrupted 和 storage health 状态。
 - [x] ✅ P2-07-03 Feed 展示 Timeline、拒绝/继续入口、对账屏障和安全摘要；不显示 raw reasoning、敏感原文、API Key、内部路径或原始 OS/Provider 错误。
 - [x] ✅ P2-07-04 通过 snapshot + Event 水位恢复页面；重载与延迟通知不能覆盖更新的权威状态。
 - [x] ✅ P2-07-05 在隔离临时根执行 Runtime、Desktop、协议 fixture、迁移、重启、敏感扫描和 macOS Seatbelt 回归。

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+import socketserver
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -19,6 +21,14 @@ from eidos_runtime.sandbox.seatbelt import (  # noqa: E402
     run_sandboxed,
     run_seatbelt_self_test,
     secure_workspace_move,
+)
+from eidos_runtime.sandbox.permissions import (  # noqa: E402
+    AdditionalPermissionProfile,
+    BasePermissionProfile,
+    FileSystemAccessMode,
+    FileSystemPermissionEntry,
+    NetworkPermissions,
+    materialize_effective_profile,
 )
 
 
@@ -152,6 +162,33 @@ class SeatbeltProfileTests(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform == "darwin" and is_seatbelt_usable(), "Seatbelt is macOS-only and requires usable sandbox-exec")
 class SeatbeltSmokeTests(unittest.TestCase):
+    @staticmethod
+    def dynamic_profile(
+        root: Path,
+        overlay: AdditionalPermissionProfile | None = None,
+        *,
+        protected_write_paths: tuple[Path, ...] = (),
+    ) -> SeatbeltProfile:
+        workspace = root / "workspace"
+        home = root / "home"
+        sandbox_tmp = root / "tmp"
+        for directory in (workspace, home, sandbox_tmp):
+            directory.mkdir(exist_ok=True)
+        effective = materialize_effective_profile(
+            BasePermissionProfile.for_workspace(
+                workspace_root=workspace,
+                protected_write_paths=protected_write_paths,
+            ),
+            overlay,
+        )
+        return SeatbeltProfile.create(
+            workspace_root=workspace,
+            sandbox_home=home,
+            sandbox_tmp=sandbox_tmp,
+            sensitive_path=workspace / ".env",
+            effective_permissions=effective,
+        )
+
     def test_workspace_write_profile_passes_fail_closed_self_test(self) -> None:
         result = run_seatbelt_self_test()
 
@@ -194,6 +231,130 @@ class SeatbeltSmokeTests(unittest.TestCase):
             self.assertEqual(allowed.returncode, 0, allowed.stderr)
             self.assertNotEqual(denied.returncode, 0)
             self.assertEqual(pointer.read_text(encoding="utf-8"), original)
+
+    def test_dynamic_profile_grants_only_approved_external_paths(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="eidos-dynamic-paths-", dir="/private/tmp"
+        ) as temporary:
+            root = Path(temporary)
+            allowed = root / "allowed"
+            sibling = root / "sibling"
+            executable = root / "executable"
+            for directory in (allowed, sibling, executable):
+                directory.mkdir()
+            (allowed / "read.txt").write_text("approved", encoding="utf-8")
+            (sibling / "read.txt").write_text("private", encoding="utf-8")
+            script = executable / "hello"
+            script.write_text("#!/bin/sh\nprintf executable-ok\n", encoding="utf-8")
+            script.chmod(0o755)
+
+            denied = run_sandboxed(
+                self.dynamic_profile(root),
+                ["/bin/cat", str(allowed / "read.txt")],
+            )
+            expanded = self.dynamic_profile(
+                root,
+                AdditionalPermissionProfile(file_system=(
+                    FileSystemPermissionEntry(
+                        path=str(allowed),
+                        access=FileSystemAccessMode.WRITE,
+                    ),
+                    FileSystemPermissionEntry(
+                        path=str(executable),
+                        access=FileSystemAccessMode.EXECUTE,
+                    ),
+                )),
+            )
+            read = run_sandboxed(
+                expanded, ["/bin/cat", str(allowed / "read.txt")]
+            )
+            write = run_sandboxed(
+                expanded,
+                [
+                    "/bin/sh",
+                    "-c",
+                    'printf ok > "$1"; printf denied > "$2"',
+                    "sh",
+                    str(allowed / "written.txt"),
+                    str(sibling / "written.txt"),
+                ],
+            )
+            execute = run_sandboxed(expanded, [str(script)])
+
+            self.assertNotEqual(denied.returncode, 0)
+            self.assertEqual(
+                read.stdout,
+                "approved",
+                f"returncode={read.returncode} stderr={read.stderr}",
+            )
+            self.assertEqual((allowed / "written.txt").read_text(), "ok")
+            self.assertFalse((sibling / "written.txt").exists())
+            self.assertNotEqual(write.returncode, 0)
+            self.assertEqual(execute.stdout, "executable-ok")
+
+    def test_dynamic_profile_keeps_runtime_write_and_git_denies(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-dynamic-denies-") as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            runtime = workspace / "runtime"
+            git = workspace / ".git"
+            runtime.mkdir(parents=True)
+            git.mkdir()
+            protected = runtime / "policy.sbpl"
+            protected.write_text("original", encoding="utf-8")
+            profile = self.dynamic_profile(
+                root, protected_write_paths=(runtime,)
+            )
+
+            result = run_sandboxed(
+                profile,
+                [
+                    "/bin/sh",
+                    "-c",
+                    'printf changed > "$1"; printf changed > "$2"',
+                    "sh",
+                    str(protected),
+                    str(git / "config"),
+                ],
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(protected.read_text(), "original")
+            self.assertFalse((git / "config").exists())
+
+    def test_dynamic_network_grant_reaches_only_when_enabled(self) -> None:
+        class Handler(socketserver.BaseRequestHandler):
+            def handle(self) -> None:
+                self.request.recv(1)
+
+        with (
+            tempfile.TemporaryDirectory(prefix="eidos-dynamic-network-") as temporary,
+            socketserver.TCPServer(("127.0.0.1", 0), Handler) as server,
+        ):
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.server_address[1]
+            command = [
+                "/usr/bin/nc", "-z", "-w", "1", "127.0.0.1", str(port)
+            ]
+
+            denied = run_sandboxed(
+                self.dynamic_profile(Path(temporary)), command
+            )
+            allowed = run_sandboxed(
+                self.dynamic_profile(
+                    Path(temporary),
+                    AdditionalPermissionProfile(
+                        network=NetworkPermissions(enabled=True)
+                    ),
+                ),
+                command,
+            )
+            server.shutdown()
+            thread.join(timeout=2)
+
+            self.assertNotEqual(denied.returncode, 0)
+            self.assertEqual(allowed.returncode, 0, allowed.stderr)
 
     @unittest.skipUnless(
         Path("/opt/homebrew/bin/node").is_file()

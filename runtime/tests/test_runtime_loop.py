@@ -124,7 +124,7 @@ class RuntimeLoopTests(unittest.TestCase):
             ["list_files", "read_file"],
         )
 
-    def test_second_consecutive_empty_response_pauses_the_run(self) -> None:
+    def test_second_consecutive_empty_response_finalizes_the_run(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Invalid responses")
         model = ScriptedModel([ModelResponse(), ModelResponse()])
 
@@ -132,12 +132,12 @@ class RuntimeLoopTests(unittest.TestCase):
             run["id"], threading.Event()
         )
 
-        failed = self.store.read_run(run["id"])
-        self.assertEqual(failed["status"], "waiting_user_input")
-        self.assertEqual(failed["pauseReason"], "repeated_empty_response")
-        self.assertEqual(len(model.contexts), 2)
+        stopped = self.store.read_run(run["id"])
+        self.assertEqual(stopped["status"], "stopped")
+        self.assertEqual(stopped["stopReason"], "repeated_empty_response")
+        self.assertEqual(len(model.contexts), 3)
 
-    def test_twenty_model_steps_pause_the_segment_without_finalization(self) -> None:
+    def test_repeated_tool_calls_finalize_the_run(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Keep reading")
         model = ScriptedModel(
             [
@@ -158,11 +158,11 @@ class RuntimeLoopTests(unittest.TestCase):
             run["id"], threading.Event()
         )
 
-        paused = self.store.read_run(run["id"])
-        self.assertEqual(paused["status"], "waiting_user_input")
-        self.assertEqual(paused["pauseReason"], "repeated_tool_call")
-        self.assertEqual(paused["modelStepCount"], 3)
-        self.assertEqual(len(model.contexts), 3)
+        stopped = self.store.read_run(run["id"])
+        self.assertEqual(stopped["status"], "stopped")
+        self.assertEqual(stopped["stopReason"], "repeated_tool_call")
+        self.assertEqual(stopped["modelStepCount"], 3)
+        self.assertEqual(len(model.contexts), 4)
 
     def test_second_active_run_is_rejected(self) -> None:
         self.store.create_run(self.session["id"], "First")
@@ -306,6 +306,15 @@ class RuntimeLoopTests(unittest.TestCase):
         snapshot = self.store.read_session_snapshot(self.session["id"])
         file_item = next(item for item in snapshot["items"] if item["kind"] == "file_change")
         self.assertEqual(file_item["status"], "declined")
+        rejection = next(
+            item for item in model.contexts[-1]
+            if item.get("type") == "tool_result"
+            and item.get("name") == "write_file"
+        )
+        self.assertIn(
+            "Do not request another approval",
+            json.loads(str(rejection["result"]))["summary"],
+        )
 
     def test_approval_version_conflict_preserves_external_change(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Change hello.txt")

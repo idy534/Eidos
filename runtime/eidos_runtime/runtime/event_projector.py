@@ -63,8 +63,7 @@ class EventProjector:
             event_type == "run.updated"
             and run is not None
             and run.get("status") in {
-                "queued", "running", "waiting_approval",
-                "waiting_user_input", "finalizing",
+                "queued", "running", "waiting_approval", "finalizing",
             }
         ):
             return (self._notification("run/updated", {

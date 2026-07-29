@@ -41,8 +41,7 @@ SESSION_SELECT = """
                SELECT 1 FROM runs active
                WHERE active.session_id = s.id
                  AND active.status IN (
-                   'queued', 'running', 'waiting_approval',
-                   'waiting_user_input', 'finalizing'
+                   'queued', 'running', 'waiting_approval', 'finalizing'
                  )
              ) THEN 'in_progress'
              ELSE COALESCE((
@@ -280,8 +279,7 @@ class SessionRepository(Repository):
                 """
                 SELECT 1 FROM runs
                 WHERE session_id = ? AND status IN (
-                    'queued', 'running', 'waiting_approval',
-                    'waiting_user_input', 'finalizing'
+                    'queued', 'running', 'waiting_approval', 'finalizing'
                 ) LIMIT 1
                 """,
                 (session_id,),
@@ -295,6 +293,16 @@ class SessionRepository(Repository):
             )
             connection.execute(
                 f"DELETE FROM approvals WHERE run_id IN ({run_ids})", (session_id,)
+            )
+            connection.execute(
+                """
+                DELETE FROM tool_attempts WHERE tool_call_id IN (
+                    SELECT tool_calls.id FROM tool_calls
+                    JOIN items ON items.id = tool_calls.item_id
+                    WHERE items.session_id = ?
+                )
+                """,
+                (session_id,),
             )
             connection.execute(
                 f"DELETE FROM finalization_attempts WHERE run_id IN ({run_ids})",

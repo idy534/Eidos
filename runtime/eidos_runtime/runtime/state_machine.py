@@ -8,7 +8,6 @@ class RunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
     WAITING_APPROVAL = "waiting_approval"
-    WAITING_USER_INPUT = "waiting_user_input"
     FINALIZING = "finalizing"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -21,7 +20,6 @@ class RuntimeState(StrEnum):
     THINKING = "thinking"
     TOOL_EXECUTING = "tool_executing"
     WAITING_APPROVAL = "waiting_approval"
-    WAITING_USER_INPUT = "waiting_user_input"
     FINALIZING = "finalizing"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -38,7 +36,6 @@ class RuntimeLifecycle(StrEnum):
 class SegmentStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
-    WAITING_USER_INPUT = "waiting_user_input"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELED = "canceled"
@@ -105,38 +102,34 @@ TRANSITIONS: dict[type[StrEnum], dict[StrEnum, frozenset[StrEnum]]] = {
     RunStatus: {
         RunStatus.QUEUED: frozenset({RunStatus.RUNNING, RunStatus.CANCELED}),
         RunStatus.RUNNING: frozenset({
-            RunStatus.WAITING_APPROVAL, RunStatus.WAITING_USER_INPUT,
-            RunStatus.FINALIZING, RunStatus.SUCCEEDED, RunStatus.FAILED,
+            RunStatus.WAITING_APPROVAL, RunStatus.FINALIZING, RunStatus.SUCCEEDED, RunStatus.FAILED,
             RunStatus.CANCELED, RunStatus.INTERRUPTED,
         }),
         RunStatus.WAITING_APPROVAL: frozenset({
-            RunStatus.RUNNING, RunStatus.QUEUED, RunStatus.WAITING_USER_INPUT, RunStatus.FAILED,
+            RunStatus.RUNNING, RunStatus.QUEUED, RunStatus.FAILED,
             RunStatus.CANCELED, RunStatus.INTERRUPTED,
         }),
-        RunStatus.WAITING_USER_INPUT: frozenset({RunStatus.QUEUED, RunStatus.CANCELED}),
         RunStatus.FINALIZING: frozenset({
             RunStatus.STOPPED,
             RunStatus.FAILED,
             RunStatus.CANCELED,
-            RunStatus.WAITING_USER_INPUT,
             RunStatus.INTERRUPTED,
         }),
     },
     RuntimeState: {
         RuntimeState.THINKING: frozenset({
             RuntimeState.TOOL_EXECUTING, RuntimeState.WAITING_APPROVAL,
-            RuntimeState.WAITING_USER_INPUT, RuntimeState.FINALIZING,
-            RuntimeState.COMPLETED, RuntimeState.FAILED, RuntimeState.CANCELED,
+            RuntimeState.FINALIZING, RuntimeState.COMPLETED,
+            RuntimeState.FAILED, RuntimeState.CANCELED,
         }),
         RuntimeState.TOOL_EXECUTING: frozenset({
-            RuntimeState.THINKING, RuntimeState.WAITING_APPROVAL, RuntimeState.WAITING_USER_INPUT,
+            RuntimeState.THINKING, RuntimeState.WAITING_APPROVAL,
             RuntimeState.FAILED, RuntimeState.CANCELED,
         }),
         RuntimeState.WAITING_APPROVAL: frozenset({
-            RuntimeState.THINKING, RuntimeState.TOOL_EXECUTING, RuntimeState.WAITING_USER_INPUT,
+            RuntimeState.THINKING, RuntimeState.TOOL_EXECUTING,
             RuntimeState.FAILED, RuntimeState.CANCELED,
         }),
-        RuntimeState.WAITING_USER_INPUT: frozenset({RuntimeState.THINKING, RuntimeState.CANCELED}),
         RuntimeState.FINALIZING: frozenset({
             RuntimeState.COMPLETED, RuntimeState.FAILED, RuntimeState.CANCELED,
         }),
@@ -144,10 +137,9 @@ TRANSITIONS: dict[type[StrEnum], dict[StrEnum, frozenset[StrEnum]]] = {
     SegmentStatus: {
         SegmentStatus.QUEUED: frozenset({SegmentStatus.RUNNING, SegmentStatus.CANCELED}),
         SegmentStatus.RUNNING: frozenset({
-            SegmentStatus.QUEUED, SegmentStatus.WAITING_USER_INPUT, SegmentStatus.COMPLETED,
+            SegmentStatus.QUEUED, SegmentStatus.COMPLETED,
             SegmentStatus.FAILED, SegmentStatus.CANCELED,
         }),
-        SegmentStatus.WAITING_USER_INPUT: frozenset({SegmentStatus.COMPLETED, SegmentStatus.CANCELED}),
     },
     StepStatus: {
         StepStatus.RUNNING: frozenset({StepStatus.COMPLETED, StepStatus.FAILED, StepStatus.CANCELED}),

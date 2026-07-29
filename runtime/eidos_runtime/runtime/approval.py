@@ -13,6 +13,12 @@ from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeStat
 from eidos_runtime.runtime.fault_injection import hit_fault
 
 
+APPROVAL_REJECTION_GUIDANCE = (
+    "User rejected an approval. Do not request another approval in this run; "
+    "try a non-approval alternative or provide a safe manual strategy and finish."
+)
+
+
 @dataclass(frozen=True)
 class ApprovalDecision:
     decision: str
@@ -100,9 +106,23 @@ class ApprovalCoordinator:
         diff: str = "",
         base_sha256: str | None = None,
         transition_reason: str,
+        request: dict[str, object] | None = None,
+        attempt_ordinal: int = 0,
+        approval_kind: str = "tool",
     ) -> ApprovalOutcome:
+        if self.store.approval_prompt_blocked(run_id):
+            return ApprovalOutcome(
+                decision="reject",
+                feedback=APPROVAL_REJECTION_GUIDANCE,
+                item=item,
+            )
         mutation = self.store.begin_approval_committed(
-            str(item["id"]), diff, base_sha256
+            str(item["id"]),
+            diff,
+            base_sha256,
+            request=request,
+            attempt_ordinal=attempt_ordinal,
+            approval_kind=approval_kind,
         )
         pending_item = mutation.value
         approval_run = self.store.read_run(run_id)
@@ -142,16 +162,17 @@ class ApprovalCoordinator:
         self.events.publish(mutation, run=approval_run, item=mutation.value)
         self.resume_execution_slot(run_id, cancel)
         self.resume_effective_time()
-        approval_run = self.store.read_run(run_id)
         self.state_machine.track(
-            RuntimeState.WAITING_USER_INPUT
-            if approval_run["status"] == "waiting_user_input"
-            else RuntimeState.TOOL_EXECUTING,
+            RuntimeState.TOOL_EXECUTING,
             f"{transition_reason}_resolved",
         )
         return ApprovalOutcome(
             decision=decision.decision,
-            feedback=decision.feedback,
+            feedback=(
+                decision.feedback
+                if decision.decision == "approve" or decision.feedback
+                else APPROVAL_REJECTION_GUIDANCE
+            ),
             item=pending_item,
         )
 

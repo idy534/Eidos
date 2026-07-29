@@ -52,7 +52,6 @@ describe("useRunController real behavior", () => {
   function setupMockRuntime(overrides: Partial<EidosRuntimeAPI> = {}) {
     const api: Partial<EidosRuntimeAPI> = {
       startRun: vi.fn().mockResolvedValue(mockRunA),
-      continueRun: vi.fn().mockResolvedValue({ ...mockRunA, status: "running" }),
       cancelRun: vi.fn().mockResolvedValue({ ...mockRunA, status: "canceled" }),
       ...overrides,
     };
@@ -198,42 +197,8 @@ describe("useRunController real behavior", () => {
     });
   });
 
-  describe("Continue behavior", () => {
-    it("waiting_user_input calls continueRun instead of startRun", async () => {
-      const startRunSpy = vi.fn();
-      const continueRunSpy = vi.fn().mockResolvedValue({ ...mockRunA, status: "running" });
-      setupMockRuntime({ startRun: startRunSpy, continueRun: continueRunSpy });
-
-      const snapshotWaiting: SessionSnapshot = {
-        ...mockSnapshotA,
-        runs: [{
-          ...mockRunA,
-          status: "waiting_user_input",
-          allowedActions: ["continue", "cancel"],
-        }],
-      };
-
-      const { result } = renderHook(() => useRunController(snapshotWaiting, true));
-
-      act(() => {
-        result.current[1].setInput("Supplemental info");
-      });
-
-      await act(async () => {
-        await result.current[1].submitInput({
-          snapshot: snapshotWaiting,
-          selectedModelId: "deepseek-v4-flash",
-          isStorageReady: true,
-        });
-      });
-
-      expect(continueRunSpy).toHaveBeenCalledWith("run-A", "Supplemental info");
-      expect(startRunSpy).not.toHaveBeenCalled();
-    });
-  });
-
   describe("Run State Isolation & Lock Contention Sequence", () => {
-    it("completes full isolation and lock contention assertion sequence for start & continue", async () => {
+    it("completes full isolation and lock contention assertion sequence", async () => {
       let resolveRunA: ((run: Run) => void) | undefined;
       let rejectRunA: ((err: Error) => void) | undefined;
 

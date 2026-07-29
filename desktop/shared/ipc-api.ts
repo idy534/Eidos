@@ -41,7 +41,6 @@ export interface EidosRuntimeAPI {
 
   // Runs
   startRun(sessionId: string, userInput: string, modelId: ModelId): Promise<Run>;
-  continueRun(runId: string, userInput: string): Promise<Run>;
   cancelRun(runId: string): Promise<Run>;
 
   // Models

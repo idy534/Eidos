@@ -28,7 +28,6 @@ export const IPC = {
   // Run
   RUN_START: "run:start",
   RUN_CANCEL: "run:cancel",
-  RUN_CONTINUE: "run:continue",
 
   // Model
   MODEL_STATUS: "model:status",

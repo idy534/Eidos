@@ -304,7 +304,7 @@ class FinalizingRecoveryTests(unittest.TestCase):
         self._restart()
 
         recovered = self.store.read_run(run["id"])
-        self.assertEqual(recovered["status"], "waiting_user_input")
+        self.assertEqual(recovered["status"], "interrupted")
         self.assertTrue(self.store.side_effects_blocked(run["id"]))
         self.assertTrue(recovered["sideEffectsMayExist"])
 

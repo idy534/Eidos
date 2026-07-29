@@ -68,10 +68,6 @@ test("waiting_approval when run is waiting_approval", () => {
   assert.equal(deriveComposerMode(true, run("waiting_approval"), false), "waiting_approval");
 });
 
-test("waiting_user_input when run is waiting_user_input", () => {
-  assert.equal(deriveComposerMode(true, run("waiting_user_input"), false), "waiting_user_input");
-});
-
 test("finalizing when run is finalizing", () => {
   assert.equal(deriveComposerMode(true, run("finalizing"), false), "finalizing");
 });
@@ -104,11 +100,6 @@ test("active run is preferrred over a terminal run", () => {
   assert.equal(result?.id, "run-2");
 });
 
-test("finds waiting_user_input run", () => {
-  const paused = run("waiting_user_input", { id: "paused" });
-  assert.equal(findActiveRun([paused])?.id, "paused");
-});
-
 test("finds waiting_approval run", () => {
   const approving = run("waiting_approval", { id: "approving" });
   assert.equal(findActiveRun([approving])?.id, "approving");
@@ -124,12 +115,12 @@ test("finds finalizing run", () => {
 // ---------------------------------------------------------------------------
 
 const ALL_RUN_STATUSES: Run["status"][] = [
-  "queued", "running", "waiting_approval", "waiting_user_input", "finalizing",
+  "queued", "running", "waiting_approval", "finalizing",
   "stopped", "succeeded", "failed", "canceled", "interrupted",
 ];
 
 const ACTIVE_STATUSES: Run["status"][] = [
-  "queued", "running", "waiting_approval", "waiting_user_input", "finalizing",
+  "queued", "running", "waiting_approval", "finalizing",
 ];
 
 const TERMINAL_STATUSES: Run["status"][] = [
