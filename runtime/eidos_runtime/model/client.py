@@ -79,7 +79,6 @@ class ModelProfileSnapshot(_FrozenModel):
     wire_api: Literal[
         "chat_completions",
         "openai_responses",
-        "anthropic_messages",
     ] = "chat_completions"
     context_window_tokens: int = Field(gt=0)
     max_output_tokens: int = Field(gt=0)

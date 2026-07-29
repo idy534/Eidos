@@ -754,7 +754,7 @@ function isModelProfile(value: unknown): value is ModelProfile {
     && (value.baseUrl === null || value.baseUrl === undefined || typeof value.baseUrl === "string")
     && typeof value.authReference === "string"
     && [
-      "openai_responses", "anthropic_messages", "openai_chat_completions",
+      "openai_responses", "openai_chat_completions",
     ].includes(String(value.wireApi))
     && typeof value.modelId === "string"
     && typeof value.requestTimeout === "number"

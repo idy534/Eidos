@@ -168,7 +168,6 @@ export interface ModelListResult {
 
 export type WireAPI =
   | "openai_responses"
-  | "anthropic_messages"
   | "openai_chat_completions";
 
 export interface RetryPolicy {

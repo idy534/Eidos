@@ -244,24 +244,6 @@ def _probe_request(
                 }
             }
         return f"{base}/responses", body
-    if profile.wire_api is WireAPI.ANTHROPIC_MESSAGES:
-        path = "" if base.endswith("/v1") else "/v1"
-        body = {
-            **common,
-            "messages": [{"role": "user", "content": "Reply with OK."}],
-        }
-        if kind == "tools":
-            body["tools"] = [{
-                "name": "capability_probe",
-                "description": "A no-op schema acceptance probe.",
-                "input_schema": _probe_schema(),
-            }]
-            body["tool_choice"] = {"type": "none"}
-        elif kind == "structured":
-            body["output_config"] = {
-                "format": {"type": "json_schema", "schema": _probe_schema()}
-            }
-        return f"{base}{path}/messages", body
     body = {
         **common,
         "messages": [{"role": "user", "content": "Reply with OK."}],

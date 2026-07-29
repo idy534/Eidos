@@ -244,7 +244,6 @@ export function ModelSettings({
               <input aria-label="Profile 名称" placeholder="Profile 名称" value={profileDraft.name} onChange={(event) => setProfileDraft({ ...profileDraft, name: event.target.value })} />
               <select aria-label="Provider preset" value={profileDraft.provider} onChange={(event) => setProfileDraft({ ...profileDraft, provider: event.target.value })}>
                 <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
                 <option value="deepseek">DeepSeek</option>
                 <option value="volcengine_ark">火山方舟</option>
                 <option value="minimax">MiniMax</option>
@@ -256,7 +255,6 @@ export function ModelSettings({
               <select aria-label="Wire API" value={profileDraft.wireApi ?? ""} onChange={(event) => setProfileDraft({ ...profileDraft, wireApi: (event.target.value || undefined) as WireAPI | undefined })}>
                 <option value="">Preset 默认协议</option>
                 <option value="openai_responses">OpenAI Responses</option>
-                <option value="anthropic_messages">Anthropic Messages</option>
                 <option value="openai_chat_completions">OpenAI Chat Completions</option>
               </select>
             </div>

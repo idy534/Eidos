@@ -108,7 +108,6 @@ class ModelGatewayDomainTests(unittest.TestCase):
             set(PRESETS),
             {
                 "openai",
-                "anthropic",
                 "deepseek",
                 "volcengine_ark",
                 "minimax",
@@ -116,6 +115,13 @@ class ModelGatewayDomainTests(unittest.TestCase):
                 "qwen",
                 "custom_openai_compatible",
             },
+        )
+        self.assertEqual(
+            tuple(WireAPI),
+            (
+                WireAPI.OPENAI_RESPONSES,
+                WireAPI.OPENAI_CHAT_COMPLETIONS,
+            ),
         )
         self.assertTrue(all(preset.model_id is None for preset in PRESETS.values()))
 
@@ -177,9 +183,9 @@ class ModelGatewayErrorAndRetryTests(unittest.TestCase):
     def test_retry_only_allows_transport_changes_before_unsafe_progress(self) -> None:
         transient = normalize_http_error(
             503,
-            provider="anthropic",
-            wire_api=WireAPI.ANTHROPIC_MESSAGES,
-            model_id="claude",
+            provider="deepseek",
+            wire_api=WireAPI.OPENAI_CHAT_COMPLETIONS,
+            model_id="deepseek-chat",
             attempt_id="attempt-1",
         )
         self.assertTrue(retry_decision(transient, RetryState(attempt_number=1)).retry)
@@ -193,9 +199,9 @@ class ModelGatewayErrorAndRetryTests(unittest.TestCase):
             retry_decision(
                 normalize_http_error(
                     401,
-                    provider="anthropic",
-                    wire_api=WireAPI.ANTHROPIC_MESSAGES,
-                    model_id="claude",
+                    provider="deepseek",
+                    wire_api=WireAPI.OPENAI_CHAT_COMPLETIONS,
+                    model_id="deepseek-chat",
                     attempt_id="attempt-1",
                 ),
                 RetryState(attempt_number=1),

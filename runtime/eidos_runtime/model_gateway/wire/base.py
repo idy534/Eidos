@@ -16,10 +16,5 @@ class OpenAIResponsesWireAdapter:
 
 
 @dataclass(frozen=True)
-class AnthropicMessagesWireAdapter:
-    wire_api: WireAPI = WireAPI.ANTHROPIC_MESSAGES
-
-
-@dataclass(frozen=True)
 class OpenAIChatCompletionsWireAdapter:
     wire_api: WireAPI = WireAPI.OPENAI_CHAT_COMPLETIONS

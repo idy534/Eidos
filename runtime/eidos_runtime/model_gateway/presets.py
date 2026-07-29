@@ -27,13 +27,6 @@ PRESETS = {
         default_wire_api=WireAPI.OPENAI_RESPONSES,
         default_base_url="https://api.openai.com/v1",
     ),
-    "anthropic": ProviderPreset(
-        id="anthropic",
-        display_name="Anthropic",
-        provider_adapter_id="anthropic",
-        default_wire_api=WireAPI.ANTHROPIC_MESSAGES,
-        default_base_url="https://api.anthropic.com",
-    ),
     "deepseek": ProviderPreset(
         id="deepseek",
         display_name="DeepSeek",

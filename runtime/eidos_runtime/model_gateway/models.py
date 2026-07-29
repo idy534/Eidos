@@ -16,7 +16,6 @@ class _FrozenModel(BaseModel):
 
 class WireAPI(StrEnum):
     OPENAI_RESPONSES = "openai_responses"
-    ANTHROPIC_MESSAGES = "anthropic_messages"
     OPENAI_CHAT_COMPLETIONS = "openai_chat_completions"
 
 

@@ -21,9 +21,9 @@ Successful snapshots are immutable rows separate from profiles.
 
 Provider and wire protocol are independent registry dimensions:
 
-- providers: OpenAI, Anthropic and OpenAI-compatible;
-- wires: OpenAI Responses, Anthropic Messages and OpenAI Chat Completions;
-- presets: OpenAI, Anthropic, DeepSeek, Volcengine Ark, MiniMax, Moonshot,
+- providers: OpenAI and OpenAI-compatible;
+- wires: OpenAI Responses and OpenAI Chat Completions;
+- presets: OpenAI, DeepSeek, Volcengine Ark, MiniMax, Moonshot,
   Qwen and custom OpenAI-compatible.
 
 Pydantic AI's public Direct Model API performs protocol encoding and stream

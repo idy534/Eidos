@@ -11,7 +11,6 @@ import sys
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
-from pydantic_ai.models.anthropic import AnthropicModel  # noqa: E402
 from pydantic_ai.models.openai import (  # noqa: E402
     OpenAIChatModel,
     OpenAIResponsesModel,
@@ -71,23 +70,19 @@ class ModelGatewayLeaseTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="eidos-gateway-lease-")
         self.secrets = ModelSecretStore(Path(self.temporary.name))
         self.secrets.initialize()
-        for provider in ("openai", "anthropic", "deepseek"):
+        for provider in ("openai", "deepseek"):
             os.environ[f"{provider.upper()}_API_KEY"] = "provider-key-value-123456"
 
     def tearDown(self) -> None:
-        for provider in ("openai", "anthropic", "deepseek"):
+        for provider in ("openai", "deepseek"):
             os.environ.pop(f"{provider.upper()}_API_KEY", None)
         self.temporary.cleanup()
 
-    def test_three_wire_families_build_direct_models_with_stable_lease_metadata(self) -> None:
+    def test_supported_wire_families_build_direct_models_with_stable_lease_metadata(self) -> None:
         cases = (
             (
                 snapshot("openai", WireAPI.OPENAI_RESPONSES, "https://api.openai.com/v1"),
                 OpenAIResponsesModel,
-            ),
-            (
-                snapshot("anthropic", WireAPI.ANTHROPIC_MESSAGES, "https://api.anthropic.com"),
-                AnthropicModel,
             ),
             (
                 snapshot("deepseek", WireAPI.OPENAI_CHAT_COMPLETIONS, "https://api.deepseek.com"),

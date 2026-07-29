@@ -52,19 +52,13 @@ def profile(
 
 
 class CapabilityProbeAdapterContractTests(unittest.TestCase):
-    def test_all_wire_families_use_native_endpoint_shape_and_auth(self) -> None:
+    def test_supported_wire_families_use_native_endpoint_shape_and_auth(self) -> None:
         cases = (
             (
                 profile("openai", WireAPI.OPENAI_RESPONSES, "https://api.openai.com/v1"),
                 "/v1/responses",
                 "authorization",
                 "input",
-            ),
-            (
-                profile("anthropic", WireAPI.ANTHROPIC_MESSAGES, "https://api.anthropic.com"),
-                "/v1/messages",
-                "x-api-key",
-                "messages",
             ),
             (
                 profile("deepseek", WireAPI.OPENAI_CHAT_COMPLETIONS, "https://api.deepseek.com"),
