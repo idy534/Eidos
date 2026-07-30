@@ -96,6 +96,7 @@ class _HandlerDependencies:
     ]
     authorize_side_effect: Callable[..., ApprovalOutcome]
     resources: ResourceRegistry = field(default_factory=ResourceRegistry)
+    base_permissions: BasePermissionProfile | None = None
 
 class ReadOnlyToolHandler:
     def __init__(self, dependencies: _HandlerDependencies) -> None:
@@ -500,13 +501,8 @@ class ShellToolHandler:
             )
 
         workspace = runtime.implementation.executor.workspace  # type: ignore[attr-defined]
-        data_directory = self.dependencies.store.data_directory
-        runtime_installation = Path(__file__).resolve().parents[1]
-        protected = (
-            (data_directory,)
-            if isinstance(data_directory, Path)
-            else ()
-        )
+        if self.dependencies.base_permissions is None:
+            raise RuntimeError("step permission profile is unavailable")
         request = ShellOrchestrationRequest(shell_input, workspace, cwd)
         orchestration = ToolOrchestrator().run(
             ShellOrchestrationRuntime(execute_shell_attempt),
@@ -522,11 +518,7 @@ class ShellToolHandler:
                 cwd=cwd.path,
                 timeout_seconds=timeout,
                 cancel=cancel,
-                base_permissions=BasePermissionProfile.for_workspace(
-                    workspace_root=workspace.path,
-                    protected_paths=protected,
-                    protected_write_paths=(runtime_installation,),
-                ),
+                base_permissions=self.dependencies.base_permissions,
             ),
             approve=approve,
             record_attempt=record_attempt,
@@ -755,6 +747,7 @@ class ToolCallRuntime:
         state_machine: RuntimePhaseTracker,
         *,
         shell_available: bool,
+        base_permissions: BasePermissionProfile,
         resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self.store = store
@@ -781,6 +774,7 @@ class ToolCallRuntime:
             self.controller.execute_side_effect,
             self.controller.authorize_side_effect,
             self.controller.resources,
+            base_permissions,
         )
         self.read_runtime = ReadOnlyToolHandler(dependencies)
         self.workspace_runtime = FileChangeToolHandler(dependencies)

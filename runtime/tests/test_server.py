@@ -463,7 +463,13 @@ class RuntimeProtocolTests(unittest.TestCase):
             self.assertEqual(responses[1]["result"], {"items": [created]})
             self.assertEqual(
                 responses[2]["result"],
-                {"session": created, "runs": [], "items": [], "throughEventId": 1},
+                {
+                    "session": created,
+                    "runs": [],
+                    "items": [],
+                    "stepResolutions": [],
+                    "throughEventId": 1,
+                },
             )
             self.assertEqual((Path(data_directory) / "eidos.db").stat().st_mode & 0o777, 0o600)
 

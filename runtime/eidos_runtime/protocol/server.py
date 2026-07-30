@@ -11,6 +11,7 @@ import time
 import unicodedata
 import uuid
 from typing import Any, BinaryIO, TextIO
+from datetime import UTC, datetime
 
 from pydantic import ValidationError
 
@@ -29,6 +30,23 @@ from eidos_runtime.model.pydantic_ai_client import (
     ModelClientLease,
     ModelFactoryCloseError,
 )
+from eidos_runtime.model_gateway.auth import ModelSecretError, ModelSecretStore
+from eidos_runtime.model_gateway.capability import CapabilityProbe
+from eidos_runtime.model_gateway.gateway import (
+    ModelGateway,
+    legacy_profile_snapshot,
+)
+from eidos_runtime.model_gateway.models import (
+    CapabilityProbeSource,
+    CapabilitySnapshot,
+    ModelProfile,
+    ReasoningEffort,
+    ReasoningMode,
+    RetryPolicy,
+    RunModelSnapshot,
+    WireAPI,
+)
+from eidos_runtime.model_gateway.presets import PRESETS
 from eidos_runtime.protocol.schemas import JsonRpcRequestDto, JsonRpcResponse
 from eidos_runtime.runtime.supervisor import (
     RunCancelTimeout,
@@ -92,6 +110,127 @@ def clean_session_title(value: str) -> str:
     return title.encode("utf-8")[:MAX_SESSION_TITLE_BYTES].decode(
         "utf-8", errors="ignore"
     ).strip()
+
+
+_PROFILE_DRAFT_KEYS = {
+    "name",
+    "provider",
+    "baseUrl",
+    "authReference",
+    "wireApi",
+    "modelId",
+    "contextWindow",
+    "maxOutputTokens",
+    "reasoningMode",
+    "reasoningEffort",
+    "supportsTools",
+    "supportsParallelTools",
+    "supportsImages",
+    "supportsStructuredOutput",
+    "supportsPromptCache",
+    "requestTimeout",
+    "retryPolicy",
+}
+
+
+def _profile_id_param(params: object) -> str | None:
+    if (
+        isinstance(params, dict)
+        and set(params) == {"profileId"}
+        and isinstance(params.get("profileId"), str)
+        and params["profileId"]
+    ):
+        return params["profileId"]
+    return None
+
+
+def _draft_auth_reference(draft: dict[str, object]) -> str:
+    reference = draft.get("authReference")
+    if not isinstance(reference, str):
+        raise ValueError("auth reference is required")
+    return reference
+
+
+def _profile_from_draft(
+    draft: dict[str, object],
+    auth_reference: str,
+    *,
+    existing: ModelProfile | None = None,
+) -> ModelProfile:
+    if set(draft) - _PROFILE_DRAFT_KEYS:
+        raise ValueError("unknown model profile field")
+    provider = draft.get("provider")
+    if not isinstance(provider, str) or provider not in PRESETS:
+        raise ValueError("provider preset is invalid")
+    preset = PRESETS[provider]
+    now = datetime.now(UTC)
+    retry = draft.get("retryPolicy", {})
+    if not isinstance(retry, dict) or set(retry) - {
+        "maxAttempts",
+        "initialBackoffSeconds",
+        "maxBackoffSeconds",
+    }:
+        raise ValueError("retry policy is invalid")
+    values = {
+        "id": existing.id if existing is not None else str(uuid.uuid4()),
+        "name": draft.get("name"),
+        "provider": provider,
+        "base_url": draft.get("baseUrl", preset.default_base_url),
+        "auth_reference": auth_reference,
+        "wire_api": WireAPI(
+            draft.get("wireApi", preset.default_wire_api.value)
+        ),
+        "model_id": draft.get("modelId"),
+        "context_window": draft.get("contextWindow"),
+        "max_output_tokens": draft.get("maxOutputTokens"),
+        "reasoning_mode": ReasoningMode(
+            draft.get("reasoningMode", "none")
+        ),
+        "reasoning_effort": (
+            ReasoningEffort(draft["reasoningEffort"])
+            if draft.get("reasoningEffort") is not None
+            else None
+        ),
+        "supports_tools": draft.get("supportsTools"),
+        "supports_parallel_tools": draft.get("supportsParallelTools"),
+        "supports_images": draft.get("supportsImages"),
+        "supports_structured_output": draft.get("supportsStructuredOutput"),
+        "supports_prompt_cache": draft.get("supportsPromptCache"),
+        "request_timeout": draft.get("requestTimeout", 120.0),
+        "retry_policy": RetryPolicy(
+            max_attempts=retry.get("maxAttempts", 3),
+            initial_backoff_seconds=retry.get("initialBackoffSeconds", 0.2),
+            max_backoff_seconds=retry.get("maxBackoffSeconds", 2.0),
+        ),
+        "created_at": existing.created_at if existing is not None else now,
+        "updated_at": now,
+    }
+    return ModelProfile.model_validate(values)
+
+
+def _public_model(value: object) -> dict[str, Any]:
+    if hasattr(value, "model_dump"):
+        value = value.model_dump(mode="json")  # type: ignore[attr-defined]
+    converted = _camelize(value)
+    if not isinstance(converted, dict):
+        raise TypeError("public model must be an object")
+    return converted
+
+
+def _camelize(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            _camel_key(str(key)): _camelize(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_camelize(item) for item in value]
+    return value
+
+
+def _camel_key(value: str) -> str:
+    head, *tail = value.split("_")
+    return head + "".join(part[:1].upper() + part[1:] for part in tail)
 
 
 def response(request_id: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -180,13 +319,16 @@ class RuntimeServer:
         self.model_config = ModelConfigStore(data_directory)
         self.model = model
         self.model_factory: ModelClientFactory | None = None
+        self.model_secrets = ModelSecretStore(data_directory)
+        self.model_gateway: ModelGateway | None = None
+        self.capability_probe = CapabilityProbe()
         self.output_lock = threading.RLock()
         self.shell_available = False
         self.sensitive: SensitiveScanner | None = None
         self.plugins: PluginCatalog | None = None
         self.supervisor = RunSupervisor(
             self.store,
-            self._model_lease_for,
+            self._model_lease_for_run,
             self.send,
             self._scan_text,
             lambda: self.model is not None or self.model_factory is not None,
@@ -242,6 +384,9 @@ class RuntimeServer:
             and method in {
                 "run/start",
                 "model/configure",
+                "model_profile/create",
+                "model_profile/update",
+                "model_profile/delete",
                 "plugin/import",
                 "plugin/setEnabled",
                 "plugin/remove",
@@ -289,6 +434,30 @@ class RuntimeServer:
             return
         if method == "model/configure":
             self.configure_model(request_id, params)
+            return
+        if method == "model_profile/list":
+            self.list_model_profiles(request_id, params)
+            return
+        if method == "model_profile/get":
+            self.get_model_profile(request_id, params)
+            return
+        if method == "model_profile/create":
+            self.create_model_profile(request_id, params)
+            return
+        if method == "model_profile/update":
+            self.update_model_profile(request_id, params)
+            return
+        if method == "model_profile/delete":
+            self.delete_model_profile(request_id, params)
+            return
+        if method == "model_profile/test_connection":
+            self.test_model_profile(request_id, params)
+            return
+        if method == "model_profile/get_capability_snapshot":
+            self.get_model_capability_snapshot(request_id, params)
+            return
+        if method == "model_profile/list_presets":
+            self.list_model_presets(request_id, params)
             return
         if method == "plugin/list":
             self.list_plugins(request_id, params)
@@ -342,6 +511,11 @@ class RuntimeServer:
                 deploy_system_skills(self.store.data_directory)
                 self.plugins = PluginCatalog(self.store)
                 self.model_config.initialize()
+                self.model_secrets.initialize()
+                self.model_gateway = ModelGateway(
+                    self.model_secrets,
+                    resource_registry=self.supervisor.resources,
+                )
                 configured_key = self.model_config.api_key()
                 if self.model is None and configured_key is not None:
                     self.model_factory = ModelClientFactory(
@@ -374,7 +548,12 @@ class RuntimeServer:
                     "capabilities": {
                         "runShell": self.shell_available,
                         "modelConfigured": (
-                            self.model is not None or self.model_factory is not None
+                            self.model is not None
+                            or self.model_factory is not None
+                            or (
+                                self.store.health_state == "ready"
+                                and bool(self.store.list_model_profiles())
+                            )
                         ),
                     },
                 },
@@ -553,7 +732,9 @@ class RuntimeServer:
     def start_run(self, request_id: str, params: object) -> None:
         if (
             not isinstance(params, dict)
-            or set(params) - {"sessionId", "userInput", "modelId", "operationId"}
+            or set(params) - {
+                "sessionId", "userInput", "modelId", "profileId", "operationId"
+            }
             or not {"sessionId", "userInput"} <= set(params)
             or not _is_canonical_uuid(params.get("sessionId"))
             or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
@@ -561,10 +742,16 @@ class RuntimeServer:
             or not params["userInput"].strip()
             or len(params["userInput"].encode("utf-8")) > 64 * 1024
             or ("modelId" in params and not isinstance(params["modelId"], str))
+            or ("profileId" in params and not isinstance(params["profileId"], str))
+            or ("modelId" in params and "profileId" in params)
         ):
             self.send(protocol_error(request_id, -32602, "Invalid params"))
             return
-        if self.model is None and self.model_factory is None:
+        if (
+            self.model is None
+            and self.model_factory is None
+            and not self.store.list_model_profiles()
+        ):
             self.send(business_error(request_id, "INVALID_STATE"))
             return
         try:
@@ -579,8 +766,40 @@ class RuntimeServer:
         if session is None:
             self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
             return
+        requested_profile_id = params.get("profileId")
         requested_model_id = params.get("modelId")
-        if requested_model_id is not None and requested_model_id not in SUPPORTED_MODELS:
+        frozen_model: RunModelSnapshot | None = None
+        if (
+            requested_profile_id is None
+            and isinstance(requested_model_id, str)
+            and self.store.get_model_profile(requested_model_id) is not None
+        ):
+            requested_profile_id = requested_model_id
+        if isinstance(requested_profile_id, str):
+            profile = self.store.get_model_profile(requested_profile_id)
+            capability = (
+                self.store.get_model_capability_snapshot(requested_profile_id)
+                if profile is not None else None
+            )
+            if (
+                profile is None
+                or capability is None
+                or not capability.reachable
+                or not capability.authenticated
+            ):
+                self.send(business_error(request_id, "MODEL_NOT_AVAILABLE"))
+                return
+            frozen_model = RunModelSnapshot(
+                profile=profile,
+                capability=capability,
+                frozen_at=datetime.now(UTC),
+            )
+            requested_model_id = profile.model_id
+        if (
+            frozen_model is None
+            and requested_model_id is not None
+            and requested_model_id not in SUPPORTED_MODELS
+        ):
             self.send(business_error(request_id, "MODEL_NOT_AVAILABLE"))
             return
         existing_model_id = self.store.session_model_id(params["sessionId"])
@@ -592,7 +811,9 @@ class RuntimeServer:
             self.send(business_error(request_id, "MODEL_CHANGE_NOT_ALLOWED"))
             return
         model_id = existing_model_id or requested_model_id or DEFAULT_MODEL_ID
-        run_model = self._model_for(model_id)
+        run_model = (
+            None if frozen_model is not None else self._model_for(model_id)
+        )
         extension_snapshot = (
             SkillCatalog(self.plugins).extension_snapshot()
             if self.plugins is not None else None
@@ -607,6 +828,7 @@ class RuntimeServer:
                         "sessionId": params["sessionId"],
                         "userInput": user_input,
                         "modelId": model_id,
+                        "profileId": requested_profile_id,
                         "extensionSnapshot": extension_snapshot,
                     },
                 )
@@ -626,7 +848,12 @@ class RuntimeServer:
                 operation_id=params.get("operationId"),
                 session_title=None,
                 model_id=model_id,
-                model_profile=getattr(run_model, "profile_snapshot", None),
+                model_profile=(
+                    legacy_profile_snapshot(frozen_model)
+                    if frozen_model is not None
+                    else getattr(run_model, "profile_snapshot", None)
+                ),
+                run_model_snapshot=frozen_model,
                 extension_snapshot=extension_snapshot,
             )
         except ResourceNotFoundError:
@@ -658,7 +885,13 @@ class RuntimeServer:
             self.supervisor.release(start)
         if needs_title:
             self._schedule_title_generation(
-                params["sessionId"], user_input, model_id
+                params["sessionId"],
+                user_input,
+                (
+                    requested_profile_id
+                    if isinstance(requested_profile_id, str)
+                    else model_id
+                ),
             )
 
     def cancel_run(self, request_id: str, params: object) -> None:
@@ -727,11 +960,37 @@ class RuntimeServer:
         if not isinstance(params, dict) or params:
             self.send(protocol_error(request_id, -32602, "Invalid params"))
             return
-        self.send(response(
-            request_id, model_catalog(configured=(
-                self.model is not None or self.model_factory is not None
-            ))
+        legacy = model_catalog(configured=(
+            self.model is not None or self.model_factory is not None
         ))
+        profiles = self.store.list_model_profiles()
+        options = [
+            {
+                "id": profile.id,
+                "provider": profile.provider,
+                "displayName": profile.name,
+                "configured": (
+                    snapshot is not None
+                    and snapshot.reachable
+                    and snapshot.authenticated
+                ),
+                "selectable": (
+                    snapshot is not None
+                    and snapshot.reachable
+                    and snapshot.authenticated
+                ),
+            }
+            for profile in profiles
+            for snapshot in [self.store.get_model_capability_snapshot(profile.id)]
+        ]
+        selectable = next(
+            (option["id"] for option in options if option["selectable"]),
+            legacy["defaultModelId"],
+        )
+        self.send(response(request_id, {
+            "models": options + legacy["models"],
+            "defaultModelId": selectable,
+        }))
 
     def configure_model(self, request_id: str, params: object) -> None:
         if (
@@ -823,6 +1082,152 @@ class RuntimeServer:
             self.supervisor.end_reconfiguration()
         self.supervisor.schedule_next()
         self.send(response(request_id, self.model_config.public_status()))
+
+    def list_model_profiles(self, request_id: str, params: object) -> None:
+        if params != {}:
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        self.send(response(request_id, {
+            "schemaVersion": 1,
+            "profiles": [
+                _public_model(profile)
+                for profile in self.store.list_model_profiles()
+            ],
+        }))
+
+    def get_model_profile(self, request_id: str, params: object) -> None:
+        profile_id = _profile_id_param(params)
+        if profile_id is None:
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        profile = self.store.get_model_profile(profile_id)
+        if profile is None:
+            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
+            return
+        self.send(response(request_id, _public_model(profile)))
+
+    def create_model_profile(self, request_id: str, params: object) -> None:
+        if (
+            not isinstance(params, dict)
+            or set(params) - {"profile", "apiKey"}
+            or not isinstance(params.get("profile"), dict)
+            or (
+                "apiKey" in params
+                and not isinstance(params.get("apiKey"), str)
+            )
+        ):
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        reference: str | None = None
+        try:
+            reference = (
+                self.model_secrets.save(params["apiKey"])
+                if isinstance(params.get("apiKey"), str)
+                else _draft_auth_reference(params["profile"])
+            )
+            profile = _profile_from_draft(params["profile"], reference)
+            self.store.create_model_profile(profile)
+        except (ValueError, ValidationError, ModelSecretError):
+            if reference is not None and isinstance(params.get("apiKey"), str):
+                self.model_secrets.delete(reference)
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        self.send(response(request_id, _public_model(profile)))
+
+    def update_model_profile(self, request_id: str, params: object) -> None:
+        if (
+            not isinstance(params, dict)
+            or set(params) - {"profileId", "profile", "apiKey"}
+            or not isinstance(params.get("profileId"), str)
+            or not isinstance(params.get("profile"), dict)
+            or (
+                "apiKey" in params
+                and not isinstance(params.get("apiKey"), str)
+            )
+        ):
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        existing = self.store.get_model_profile(params["profileId"])
+        if existing is None:
+            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
+            return
+        reference: str | None = None
+        try:
+            reference = (
+                self.model_secrets.save(params["apiKey"])
+                if isinstance(params.get("apiKey"), str)
+                else existing.auth_reference
+            )
+            profile = _profile_from_draft(
+                params["profile"],
+                reference,
+                existing=existing,
+            )
+            self.store.update_model_profile(profile)
+        except (ValueError, ValidationError, ModelSecretError):
+            if reference is not None and isinstance(params.get("apiKey"), str):
+                self.model_secrets.delete(reference)
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        self.send(response(request_id, _public_model(profile)))
+
+    def delete_model_profile(self, request_id: str, params: object) -> None:
+        profile_id = _profile_id_param(params)
+        if profile_id is None:
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        try:
+            self.store.delete_model_profile(profile_id)
+        except ResourceNotFoundError:
+            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
+            return
+        self.send(response(request_id, {"deletedProfileId": profile_id}))
+
+    def test_model_profile(self, request_id: str, params: object) -> None:
+        profile_id = _profile_id_param(params)
+        if profile_id is None:
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        profile = self.store.get_model_profile(profile_id)
+        if profile is None:
+            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
+            return
+        try:
+            secret = self.model_secrets.resolve(profile.auth_reference)
+            result = self.capability_probe.test_connection(
+                profile, secret, threading.Event()
+            )
+            if result.capability_snapshot is not None:
+                self.store.save_model_capability_snapshot(
+                    result.capability_snapshot
+                )
+        except (ValueError, ModelSecretError):
+            self.send(business_error(request_id, "MODEL_AUTH_REFERENCE_INVALID"))
+            return
+        self.send(response(request_id, _public_model(result)))
+
+    def get_model_capability_snapshot(
+        self, request_id: str, params: object
+    ) -> None:
+        profile_id = _profile_id_param(params)
+        if profile_id is None:
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        snapshot = self.store.get_model_capability_snapshot(profile_id)
+        self.send(response(request_id, {
+            "capabilitySnapshot": (
+                _public_model(snapshot) if snapshot is not None else None
+            )
+        }))
+
+    def list_model_presets(self, request_id: str, params: object) -> None:
+        if params != {}:
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        self.send(response(request_id, {
+            "schemaVersion": 1,
+            "presets": [_public_model(preset) for preset in PRESETS.values()],
+        }))
 
     def list_plugins(self, request_id: str, params: object) -> None:
         if not isinstance(params, dict) or params:
@@ -1261,6 +1666,16 @@ class RuntimeServer:
         return self.model_factory.client_for(model_id)
 
     def _model_lease_for(self, model_id: str) -> ModelClientLease:
+        profile = self.store.get_model_profile(model_id)
+        if profile is not None:
+            capability = self.store.get_model_capability_snapshot(profile.id)
+            if capability is None or self.model_gateway is None:
+                raise ModelConfigError("model profile is not verified")
+            return self.model_gateway.acquire_lease(RunModelSnapshot(
+                profile=profile,
+                capability=capability,
+                frozen_at=datetime.now(UTC),
+            ))
         if self.model is not None:
             return ModelClientLease(
                 self.model,
@@ -1270,6 +1685,16 @@ class RuntimeServer:
         if self.model_factory is None:
             raise ModelConfigError("model is not configured")
         return self.model_factory.acquire(model_id)
+
+    def _model_lease_for_run(self, run_id: str) -> ModelClientLease:
+        try:
+            snapshot = self.store.read_run_model_snapshot(run_id)
+        except ResourceNotFoundError:
+            run = self.store.read_run(run_id)
+            return self._model_lease_for(str(run["modelId"]))
+        if self.model_gateway is None:
+            raise ModelConfigError("model gateway is not initialized")
+        return self.model_gateway.acquire_lease(snapshot)
 
     def _schedule_title_generation(
         self, session_id: str, user_input: str, model_id: str

@@ -25,6 +25,7 @@ from eidos_runtime.db.transitions import (
     transition_segments,
 )
 from eidos_runtime.model.client import ModelProfileSnapshot
+from eidos_runtime.model_gateway.models import RunModelSnapshot
 from eidos_runtime.model.config import (
     DEFAULT_MODEL_ID,
     SUPPORTED_MODELS,
@@ -35,6 +36,12 @@ from eidos_runtime.runtime.state_machine import (
     RunStatus,
     SegmentStatus,
     ensure_transition,
+)
+from eidos_runtime.runtime.resolution import (
+    RunResolutionSnapshot,
+    WorkspaceIdentitySnapshot,
+    canonical_json,
+    create_run_resolution_snapshot,
 )
 
 EMPTY_EXTENSION_SNAPSHOT = {
@@ -74,6 +81,7 @@ class RunRepository(Repository):
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
+        run_model_snapshot: RunModelSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         if session_title is not None and (
@@ -82,11 +90,22 @@ class RunRepository(Repository):
             or len(session_title.encode("utf-8")) > 120
         ):
             raise ValueError("session title is invalid")
-        if model_id not in SUPPORTED_MODELS:
+        if run_model_snapshot is None and model_id not in SUPPORTED_MODELS:
             raise ValueError("model is unsupported")
         profile = model_profile or default_profile_snapshot(model_id)
-        if profile.provider_id != "deepseek" or profile.model_id != model_id:
+        if (
+            profile.model_id != model_id
+            or (
+                run_model_snapshot is None
+                and profile.provider_id != "deepseek"
+            )
+        ):
             raise ValueError("model profile does not match run")
+        if (
+            run_model_snapshot is not None
+            and run_model_snapshot.profile.model_id != model_id
+        ):
+            raise ValueError("run model snapshot does not match run")
         model_profile_json = profile.model_dump_json()
         extension_snapshot_json = _bounded_canonical_json(
             extension_snapshot or EMPTY_EXTENSION_SNAPSHOT,
@@ -99,7 +118,12 @@ class RunRepository(Repository):
             connection: sqlite3.Connection,
         ) -> dict[str, object]:
             session = connection.execute(
-                "SELECT id, workspace_root, title FROM sessions WHERE id = ?", (session_id,)
+                """
+                SELECT id, workspace_root, workspace_dev, workspace_inode,
+                       workspace_uid, title
+                FROM sessions WHERE id = ?
+                """,
+                (session_id,),
             ).fetchone()
             if session is None:
                 raise ResourceNotFoundError("session not found")
@@ -123,13 +147,19 @@ class RunRepository(Repository):
                 connection.execute(
                     """
                     INSERT INTO runs (
-                        id, session_id, user_input, model_id, model_profile_json,
+                        id, session_id, user_input, model_id, model_profile_id,
+                        model_profile_json,
                         status, enqueued_at,
                         extension_snapshot_json, created_at, started_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        run_id, session_id, user_input, model_id, model_profile_json,
+                        run_id, session_id, user_input, model_id,
+                        (
+                            run_model_snapshot.profile.id
+                            if run_model_snapshot is not None else None
+                        ),
+                        model_profile_json,
                         status,
                         now if queued else None, extension_snapshot_json,
                         now, started_at, now,
@@ -139,6 +169,34 @@ class RunRepository(Repository):
                 if "one_active_run" in str(error) or "UNIQUE constraint failed" in str(error):
                     raise ActiveRunError("another run is active") from None
                 raise
+            run_resolution = create_run_resolution_snapshot(
+                run_id=run_id,
+                model_profile=profile,
+                run_model_snapshot=run_model_snapshot,
+                extension_snapshot=json.loads(extension_snapshot_json),
+                workspace_identity=WorkspaceIdentitySnapshot(
+                    path=session["workspace_root"],
+                    device=session["workspace_dev"],
+                    inode=session["workspace_inode"],
+                    owner=session["workspace_uid"],
+                ),
+                data_directory=self.database.data_directory,
+                created_at=now,
+            )
+            connection.execute(
+                """
+                INSERT INTO run_resolution_snapshots (
+                    id, run_id, snapshot_hash, snapshot_json, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    run_resolution.id,
+                    run_id,
+                    run_resolution.snapshot_hash,
+                    canonical_json(run_resolution.model_dump(mode="json")),
+                    now,
+                ),
+            )
             connection.execute(
                 """
                 INSERT INTO items (
@@ -148,6 +206,22 @@ class RunRepository(Repository):
                 """,
                 (item_id, session_id, run_id, user_input, now, now),
             )
+            if run_model_snapshot is not None:
+                connection.execute(
+                    """
+                    INSERT INTO run_model_snapshots (
+                        run_id, profile_id, capability_snapshot_id,
+                        snapshot_json, frozen_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        run_id,
+                        run_model_snapshot.profile.id,
+                        run_model_snapshot.capability.id,
+                        run_model_snapshot.model_dump_json(),
+                        int(run_model_snapshot.frozen_at.timestamp() * 1000),
+                    ),
+                )
             connection.execute(
                 "UPDATE sessions SET updated_at = ? WHERE id = ?",
                 (now, session_id),
@@ -175,6 +249,10 @@ class RunRepository(Repository):
                 "sessionId": session_id,
                 "userInput": user_input,
                 "modelId": model_id,
+                "profileId": (
+                    run_model_snapshot.profile.id
+                    if run_model_snapshot is not None else None
+                ),
                 "extensionSnapshot": json.loads(extension_snapshot_json),
             },
         )
@@ -189,6 +267,7 @@ class RunRepository(Repository):
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
+        run_model_snapshot: RunModelSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         return self.create_run(
@@ -199,6 +278,7 @@ class RunRepository(Repository):
             session_title=session_title,
             model_id=model_id,
             model_profile=model_profile,
+            run_model_snapshot=run_model_snapshot,
             extension_snapshot=extension_snapshot,
         )
 
@@ -273,6 +353,22 @@ class RunRepository(Repository):
         if row is None:
             raise ResourceNotFoundError("run not found")
         return _run_from_row(row)
+
+    def read_resolution_snapshot(self, run_id: str) -> RunResolutionSnapshot:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT snapshot_json FROM run_resolution_snapshots
+                WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            raise ResourceNotFoundError("run resolution snapshot not found")
+        try:
+            return RunResolutionSnapshot.model_validate_json(row["snapshot_json"])
+        except (TypeError, ValueError):
+            raise StorageError("run_resolution_snapshot_invalid") from None
 
     def read_model_profile(self, run_id: str) -> ModelProfileSnapshot:
         with self.lock:

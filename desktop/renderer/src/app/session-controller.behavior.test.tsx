@@ -25,12 +25,14 @@ const mockSnapshot1: SessionSnapshot = {
   session: mockSession1,
   runs: [],
   items: [],
+  stepResolutions: [],
 };
 
 const mockSnapshot2: SessionSnapshot = {
   session: mockSession2,
   runs: [],
   items: [],
+  stepResolutions: [],
 };
 const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
 

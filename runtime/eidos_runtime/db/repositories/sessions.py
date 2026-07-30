@@ -24,6 +24,7 @@ from eidos_runtime.db.mappers import (
     _run_from_row,
     _session_from_row,
     _snapshot_item,
+    _step_resolution_review,
 )
 from eidos_runtime.protocol.schemas import SessionDto
 from eidos_runtime.runtime.state_machine import EventType
@@ -322,6 +323,18 @@ class SessionRepository(Repository):
                 f"DELETE FROM steps WHERE run_id IN ({run_ids})", (session_id,)
             )
             connection.execute(
+                """
+                DELETE FROM step_resolution_snapshots
+                WHERE run_snapshot_id IN (
+                    SELECT id FROM run_resolution_snapshots
+                    WHERE run_id IN (
+                        SELECT id FROM runs WHERE session_id = ?
+                    )
+                )
+                """,
+                (session_id,),
+            )
+            connection.execute(
                 f"DELETE FROM execution_segments WHERE run_id IN ({run_ids})",
                 (session_id,),
             )
@@ -353,7 +366,35 @@ class SessionRepository(Repository):
             connection.execute(
                 "DELETE FROM events WHERE session_id = ?", (session_id,)
             )
+            connection.execute(
+                """
+                DELETE FROM run_resolution_snapshots
+                WHERE run_id IN (
+                    SELECT id FROM runs WHERE session_id = ?
+                )
+                """,
+                (session_id,),
+            )
+            connection.execute(
+                """
+                DELETE FROM run_model_snapshots
+                WHERE run_id IN (
+                    SELECT id FROM runs WHERE session_id = ?
+                )
+                """,
+                (session_id,),
+            )
             connection.execute("DELETE FROM runs WHERE session_id = ?", (session_id,))
+            connection.execute(
+                """
+                DELETE FROM rule_resolution_snapshots
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM step_resolution_snapshots
+                    WHERE step_resolution_snapshots.rule_snapshot_id =
+                          rule_resolution_snapshots.id
+                )
+                """
+            )
             connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             return {"deletedSessionId": session_id}
 
@@ -416,6 +457,27 @@ class SessionRepository(Repository):
                 "SELECT COALESCE(MAX(id), 0) FROM events WHERE session_id = ?",
                 (session_id,),
             ).fetchone()[0]
+            resolution_rows = connection.execute(
+                """
+                SELECT steps.id AS step_id, steps.run_id, steps.ordinal,
+                       step_resolution_snapshots.snapshot_json
+                           AS step_snapshot_json,
+                       rule_resolution_snapshots.snapshot_json
+                           AS rule_snapshot_json
+                FROM steps
+                JOIN runs ON runs.id = steps.run_id
+                JOIN step_resolution_snapshots
+                  ON step_resolution_snapshots.id =
+                     steps.resolution_snapshot_id
+                JOIN rule_resolution_snapshots
+                  ON rule_resolution_snapshots.id =
+                     step_resolution_snapshots.rule_snapshot_id
+                WHERE runs.session_id = ?
+                ORDER BY steps.creation_seq DESC
+                LIMIT 100
+                """,
+                (session_id,),
+            ).fetchall()
         session = _session_from_row(session_row)
         selected_runs = [
             _run_from_row(row, include_user_input=False)
@@ -434,10 +496,15 @@ class SessionRepository(Repository):
             selected_items.append(item)
             selected_bytes += item_bytes
         selected_items.reverse()
+        step_resolutions = [
+            _step_resolution_review(row)
+            for row in reversed(resolution_rows)
+        ]
         snapshot: dict[str, object] = {
             "session": session,
             "runs": selected_runs,
             "items": selected_items,
+            "stepResolutions": step_resolutions,
             "throughEventId": through_event_id,
         }
         if has_more and selected_items:

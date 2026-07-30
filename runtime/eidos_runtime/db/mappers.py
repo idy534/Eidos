@@ -5,7 +5,16 @@ import sqlite3
 
 from eidos_runtime.context.facts import CompactSummary
 from eidos_runtime.model.client import ModelUsage
-from eidos_runtime.protocol.schemas import ItemDto, RunDto, SessionDto
+from eidos_runtime.protocol.schemas import (
+    ItemDto,
+    RunDto,
+    SessionDto,
+    StepResolutionReviewDto,
+)
+from eidos_runtime.runtime.resolution import (
+    RuleResolutionSnapshot,
+    StepResolutionSnapshot,
+)
 
 
 MAX_SNAPSHOT_TEXT_BYTES = 192 * 1024
@@ -93,6 +102,37 @@ def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
         sort_keys=True,
     )
 
+
+def _step_resolution_review(
+    row: sqlite3.Row,
+) -> dict[str, object]:
+    step = StepResolutionSnapshot.model_validate_json(row["step_snapshot_json"])
+    rules = RuleResolutionSnapshot.model_validate_json(row["rule_snapshot_json"])
+    return StepResolutionReviewDto.model_validate({
+        "id": step.id,
+        "stepId": row["step_id"],
+        "runId": row["run_id"],
+        "stepOrdinal": row["ordinal"],
+        "snapshotHash": step.snapshot_hash,
+        "requestHash": step.final_request_hash,
+        "ruleSnapshotId": rules.id,
+        "ruleSnapshotHash": rules.snapshot_hash,
+        "rules": [
+            {
+                **rule.model_dump(mode="json", exclude={"content"}),
+            }
+            for rule in rules.rules
+        ],
+        "shadowed": [
+            candidate.model_dump(mode="json")
+            for candidate in rules.shadowed
+        ],
+        "warnings": [
+            warning.model_dump(mode="json")
+            for warning in rules.warnings
+        ],
+    }).to_json_value()
+
 def _truncate_snapshot_text(value: str) -> str:
     encoded = value.encode("utf-8")
     if len(encoded) <= MAX_SNAPSHOT_TEXT_BYTES:
@@ -132,6 +172,8 @@ def _run_from_row(
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }
+    if "model_profile_id" in row.keys() and row["model_profile_id"] is not None:
+        run["profileId"] = row["model_profile_id"]
     allowed_actions = {
         "queued": ["cancel"],
         "running": ["cancel"],
@@ -185,6 +227,14 @@ def _model_attempt_from_row(row: sqlite3.Row) -> dict[str, object]:
         "resolvedModelName": row["resolved_model_name"],
         "finishReason": row["finish_reason"],
         "providerResponseId": row["provider_response_id"],
+        "leaseId": row["lease_id"],
+        "wireApi": row["wire_api"],
+        "modelId": row["model_id"],
+        "requestTimeout": row["request_timeout"],
+        "retryDecision": (
+            json.loads(row["retry_decision_json"])
+            if row["retry_decision_json"] is not None else None
+        ),
         "usage": usage,
         "errorCode": row["error_code"],
         "httpStatus": row["http_status"],

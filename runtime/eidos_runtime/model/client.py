@@ -76,13 +76,19 @@ class ModelProfileSnapshot(_FrozenModel):
     schema_version: int = 1
     provider_id: str
     model_id: str
-    wire_api: Literal["chat_completions"] = "chat_completions"
+    wire_api: Literal[
+        "chat_completions",
+        "openai_responses",
+    ] = "chat_completions"
     context_window_tokens: int = Field(gt=0)
     max_output_tokens: int = Field(gt=0)
     request_timeout_seconds: float = Field(gt=0)
     supports_tools: bool
     supports_json_schema_output: bool
     supports_reasoning: bool
+    retry_max_attempts: int = Field(default=6, ge=1, le=10)
+    retry_initial_backoff_seconds: float = Field(default=0.2, ge=0, le=60)
+    retry_max_backoff_seconds: float = Field(default=2.0, ge=0, le=300)
     pydantic_ai_version: str = "2.13.0"
 
 

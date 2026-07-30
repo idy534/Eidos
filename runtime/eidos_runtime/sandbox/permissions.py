@@ -144,6 +144,17 @@ class BasePermissionProfile(ClosedModel):
         )
 
 
+def base_permission_profile_for_workspace(
+    workspace_root: Path,
+    data_directory: Path | None,
+) -> BasePermissionProfile:
+    return BasePermissionProfile.for_workspace(
+        workspace_root=workspace_root,
+        protected_paths=(data_directory,) if data_directory is not None else (),
+        protected_write_paths=(Path(__file__).resolve().parents[1],),
+    )
+
+
 class EffectivePermissionProfile(ClosedModel):
     workspace_roots: tuple[StrictStr, ...] = Field(alias="workspaceRoots")
     entries: tuple[MaterializedFileSystemPermissionEntry, ...]

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 9
 
 SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -22,6 +22,7 @@ CREATE TABLE runs (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
     user_input TEXT NOT NULL,
     model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash',
+    model_profile_id TEXT,
     model_profile_json TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN (
         'queued', 'running', 'waiting_approval', 'finalizing',
@@ -55,6 +56,48 @@ CREATE TABLE runs (
 CREATE UNIQUE INDEX one_active_run
 ON runs ((1))
 WHERE status IN ('running', 'finalizing');
+
+CREATE TABLE model_profiles (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL UNIQUE,
+    profile_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE model_capability_snapshots (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    profile_id TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    probed_at INTEGER NOT NULL
+);
+
+CREATE TABLE run_model_snapshots (
+    run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE RESTRICT,
+    profile_id TEXT NOT NULL,
+    capability_snapshot_id TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    frozen_at INTEGER NOT NULL
+);
+
+CREATE TABLE run_resolution_snapshots (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    run_id TEXT NOT NULL UNIQUE REFERENCES runs(id) ON DELETE RESTRICT,
+    snapshot_hash TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE rule_resolution_snapshots (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    snapshot_hash TEXT NOT NULL UNIQUE,
+    snapshot_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
 
 CREATE TABLE items (
     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -179,6 +222,18 @@ CREATE TABLE execution_segments (
     UNIQUE(run_id, ordinal)
 );
 
+CREATE TABLE step_resolution_snapshots (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    run_snapshot_id TEXT NOT NULL
+        REFERENCES run_resolution_snapshots(id) ON DELETE RESTRICT,
+    rule_snapshot_id TEXT NOT NULL
+        REFERENCES rule_resolution_snapshots(id) ON DELETE RESTRICT,
+    snapshot_hash TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
 CREATE TABLE steps (
     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
@@ -189,6 +244,8 @@ CREATE TABLE steps (
         'running', 'completed', 'failed', 'canceled'
     )),
     observed_reconciliation_epoch INTEGER NOT NULL DEFAULT 0,
+    resolution_snapshot_id TEXT NOT NULL
+        REFERENCES step_resolution_snapshots(id) ON DELETE RESTRICT,
     tool_snapshot_json TEXT,
     tool_set_hash TEXT,
     progress_signature_json TEXT,
@@ -221,6 +278,11 @@ CREATE TABLE model_attempts (
     resolved_model_name TEXT,
     finish_reason TEXT,
     provider_response_id TEXT,
+    lease_id TEXT,
+    wire_api TEXT,
+    model_id TEXT,
+    request_timeout REAL,
+    retry_decision_json TEXT,
     usage_json TEXT,
     error_code TEXT,
     http_status INTEGER,

@@ -70,5 +70,38 @@
     },
     "definitionsHash": "2222222222222222222222222222222222222222222222222222222222222222",
     "toolSetHash": "3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "stepResolutionReview": {
+    "id": "step_4444444444444444444444444444444444444444444444444444444444444444",
+    "stepId": "step-fixture",
+    "runId": "run-fixture",
+    "stepOrdinal": 1,
+    "snapshotHash": "4444444444444444444444444444444444444444444444444444444444444444",
+    "requestHash": "5555555555555555555555555555555555555555555555555555555555555555",
+    "ruleSnapshotId": "rule_6666666666666666666666666666666666666666666666666666666666666666",
+    "ruleSnapshotHash": "6666666666666666666666666666666666666666666666666666666666666666",
+    "rules": [{
+      "absolutePath": "/workspace/EIDOS.md",
+      "relativePath": "EIDOS.md",
+      "filename": "EIDOS.md",
+      "contentHash": "7777777777777777777777777777777777777777777777777777777777777777",
+      "byteCount": 12,
+      "includedByteCount": 12,
+      "directoryLevel": 0,
+      "selectionReason": "eidos_native",
+      "truncated": false
+    }],
+    "shadowed": [{
+      "absolutePath": "/workspace/AGENTS.md",
+      "relativePath": "AGENTS.md",
+      "filename": "AGENTS.md",
+      "directoryLevel": 0,
+      "reason": "higher_precedence_candidate_selected"
+    }],
+    "warnings": [{
+      "code": "RULE_BUDGET_TRUNCATED",
+      "path": "/workspace/EIDOS.md",
+      "message": "Project rule content exceeded the remaining 32 KiB budget"
+    }]
   }
 }

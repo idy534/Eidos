@@ -28,6 +28,7 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "MODEL_NOT_AVAILABLE",
   "MODEL_CHANGE_NOT_ALLOWED",
   "MODEL_CLIENT_IN_USE",
+  "MODEL_AUTH_REFERENCE_INVALID",
   "RUN_CANCEL_TIMEOUT",
   "RUN_RECONCILIATION_REQUIRED",
   "EXTENSIONS_UNAVAILABLE",
@@ -55,6 +56,9 @@ import type {
   ModelListResult,
   ModelOption,
   ModelStatus,
+  ModelProfile,
+  ModelProfileDraft,
+  ModelTestConnectionResult,
   PluginListResult,
   PluginRecord,
   Run,
@@ -282,6 +286,60 @@ export class RuntimeClient {
 
   configureModel(apiKey: string): Promise<ModelStatus> {
     return this.validatedRequest("model/configure", { apiKey }, isModelStatus);
+  }
+
+  listModelProfiles(): Promise<ModelProfile[]> {
+    return this.validatedRequest(
+      "model_profile/list",
+      {},
+      (value): value is { schemaVersion: 1; profiles: ModelProfile[] } => (
+        isRecord(value)
+        && hasOnlyKeys(value, ["schemaVersion", "profiles"])
+        && value.schemaVersion === 1
+        && Array.isArray(value.profiles)
+        && value.profiles.every(isModelProfile)
+      ),
+    ).then((result) => result.profiles);
+  }
+
+  createModelProfile(profile: ModelProfileDraft, apiKey?: string): Promise<ModelProfile> {
+    return this.validatedRequest(
+      "model_profile/create",
+      { profile, ...(apiKey ? { apiKey } : {}) },
+      isModelProfile,
+    );
+  }
+
+  updateModelProfile(
+    profileId: string,
+    profile: ModelProfileDraft,
+    apiKey?: string,
+  ): Promise<ModelProfile> {
+    return this.validatedRequest(
+      "model_profile/update",
+      { profileId, profile, ...(apiKey ? { apiKey } : {}) },
+      isModelProfile,
+    );
+  }
+
+  deleteModelProfile(profileId: string): Promise<void> {
+    return this.validatedRequest(
+      "model_profile/delete",
+      { profileId },
+      (value): value is { deletedProfileId: string } => (
+        isRecord(value)
+        && hasOnlyKeys(value, ["deletedProfileId"])
+        && value.deletedProfileId === profileId
+      ),
+    ).then(() => undefined);
+  }
+
+  testModelProfile(profileId: string): Promise<ModelTestConnectionResult> {
+    return this.validatedRequest(
+      "model_profile/test_connection",
+      { profileId },
+      isModelTestConnectionResult,
+    );
   }
 
   listPlugins(): Promise<{ plugins: PluginRecord[] }> {
@@ -678,8 +736,51 @@ function isModelStatus(value: unknown): value is ModelStatus {
   );
 }
 
+function isModelProfile(value: unknown): value is ModelProfile {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "schemaVersion", "id", "name", "provider", "baseUrl", "authReference",
+      "wireApi", "modelId", "contextWindow", "maxOutputTokens",
+      "reasoningMode", "reasoningEffort", "supportsTools",
+      "supportsParallelTools", "supportsImages", "supportsStructuredOutput",
+      "supportsPromptCache", "requestTimeout", "retryPolicy", "createdAt",
+      "updatedAt",
+    ])
+    && value.schemaVersion === 1
+    && typeof value.id === "string"
+    && typeof value.name === "string"
+    && typeof value.provider === "string"
+    && (value.baseUrl === null || value.baseUrl === undefined || typeof value.baseUrl === "string")
+    && typeof value.authReference === "string"
+    && [
+      "openai_responses", "openai_chat_completions",
+    ].includes(String(value.wireApi))
+    && typeof value.modelId === "string"
+    && typeof value.requestTimeout === "number"
+    && isRecord(value.retryPolicy)
+    && typeof value.createdAt === "string"
+    && typeof value.updatedAt === "string"
+  );
+}
+
+function isModelTestConnectionResult(value: unknown): value is ModelTestConnectionResult {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "success", "profileValid", "endpointIdentity", "capabilitySnapshot",
+      "warnings", "error", "probeDurationMs",
+    ])
+    && typeof value.success === "boolean"
+    && typeof value.profileValid === "boolean"
+    && typeof value.endpointIdentity === "string"
+    && Array.isArray(value.warnings)
+    && typeof value.probeDurationMs === "number"
+  );
+}
+
 function isModelId(value: unknown): value is ModelId {
-  return value === "deepseek-v4-flash" || value === "deepseek-v4-pro";
+  return typeof value === "string" && value.length > 0 && value.length <= 256;
 }
 
 function isModelListResult(value: unknown): value is ModelListResult {
@@ -692,7 +793,7 @@ function isModelListResult(value: unknown): value is ModelListResult {
       isRecord(model)
       && hasOnlyKeys(model, ["id", "provider", "displayName", "configured", "selectable"])
       && isModelId(model.id)
-      && model.provider === "deepseek"
+      && typeof model.provider === "string"
       && typeof model.displayName === "string"
       && typeof model.configured === "boolean"
       && typeof model.selectable === "boolean"
@@ -735,14 +836,79 @@ function isSessionListResult(value: unknown): value is SessionListResult {
 function isSessionSnapshot(value: unknown): value is SessionSnapshot {
   return (
     isRecord(value)
-    && hasOnlyKeys(value, ["session", "runs", "items", "previousItemId", "throughEventId"])
+    && hasOnlyKeys(value, [
+      "session", "runs", "items", "stepResolutions",
+      "previousItemId", "throughEventId",
+    ])
     && isSession(value.session)
     && Array.isArray(value.runs)
     && value.runs.every(isRun)
     && Array.isArray(value.items)
     && value.items.every(isItem)
+    && Array.isArray(value.stepResolutions)
+    && value.stepResolutions.every(isStepResolutionReview)
     && (value.previousItemId === undefined || typeof value.previousItemId === "string")
     && (value.throughEventId === undefined || isNonNegativeInteger(value.throughEventId))
+  );
+}
+
+function isStepResolutionReview(value: unknown): boolean {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "id", "stepId", "runId", "stepOrdinal", "snapshotHash", "requestHash",
+      "ruleSnapshotId", "ruleSnapshotHash", "rules", "shadowed", "warnings",
+    ])
+    && typeof value.id === "string"
+    && typeof value.stepId === "string"
+    && typeof value.runId === "string"
+    && isPositiveInteger(value.stepOrdinal)
+    && isSha256(value.snapshotHash)
+    && isSha256(value.requestHash)
+    && typeof value.ruleSnapshotId === "string"
+    && isSha256(value.ruleSnapshotHash)
+    && Array.isArray(value.rules)
+    && value.rules.every((rule) => (
+      isRecord(rule)
+      && hasOnlyKeys(rule, [
+        "absolutePath", "relativePath", "filename", "contentHash", "byteCount",
+        "includedByteCount", "directoryLevel", "selectionReason", "truncated",
+      ])
+      && typeof rule.absolutePath === "string"
+      && typeof rule.relativePath === "string"
+      && typeof rule.filename === "string"
+      && isSha256(rule.contentHash)
+      && isNonNegativeInteger(rule.byteCount)
+      && isNonNegativeInteger(rule.includedByteCount)
+      && isNonNegativeInteger(rule.directoryLevel)
+      && [
+        "eidos_override", "eidos_native", "compatibility_fallback",
+      ].includes(String(rule.selectionReason))
+      && typeof rule.truncated === "boolean"
+    ))
+    && Array.isArray(value.shadowed)
+    && value.shadowed.every((candidate) => (
+      isRecord(candidate)
+      && hasOnlyKeys(candidate, [
+        "absolutePath", "relativePath", "filename", "directoryLevel", "reason",
+      ])
+      && typeof candidate.absolutePath === "string"
+      && typeof candidate.relativePath === "string"
+      && typeof candidate.filename === "string"
+      && isNonNegativeInteger(candidate.directoryLevel)
+      && candidate.reason === "higher_precedence_candidate_selected"
+    ))
+    && Array.isArray(value.warnings)
+    && value.warnings.every((warning) => (
+      isRecord(warning)
+      && hasOnlyKeys(warning, ["code", "path", "message"])
+      && [
+        "RULE_BUDGET_TRUNCATED", "RULE_READ_ERROR",
+        "RULE_PATH_OUTSIDE_WORKSPACE",
+      ].includes(String(warning.code))
+      && typeof warning.path === "string"
+      && typeof warning.message === "string"
+    ))
   );
 }
 
@@ -780,6 +946,7 @@ function isRun(value: unknown): value is Run {
       "status",
       "runtimeState",
       "modelId",
+      "profileId",
       "modelStepCount",
       "allowedActions",
       "createdAt",
@@ -814,6 +981,7 @@ function isRun(value: unknown): value is Run {
       ].includes(String(value.runtimeState))
     )
     && isModelId(value.modelId)
+    && (value.profileId === undefined || typeof value.profileId === "string")
     && isNonNegativeInteger(value.modelStepCount)
     && (value.allowedActions === undefined || (
       Array.isArray(value.allowedActions)
@@ -1102,6 +1270,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function hasOnlyKeys(value: Record<string, unknown>, allowed: string[]): boolean {
   const allowedKeys = new Set(allowed);
   return Object.keys(value).every((key) => allowedKeys.has(key));
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 }
 
 function isNonNegativeInteger(value: unknown): value is number {

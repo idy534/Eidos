@@ -572,7 +572,7 @@ class RunSupervisor:
         start_gate.wait()
         try:
             run = self.store.read_run(run_id)
-            leased = self.model_for(str(run["modelId"]))
+            leased = self.model_for(run_id)
             lease = (
                 leased
                 if isinstance(leased, ModelClientLease)

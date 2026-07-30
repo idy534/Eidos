@@ -13,6 +13,11 @@ from eidos_runtime.model.client import (
     ModelProfileSnapshot,
 )
 from eidos_runtime.context.budget import ContextBudget
+from eidos_runtime.runtime.resolution import (
+    RunResolutionSnapshot,
+    StepResolutionSnapshot,
+    WorkspaceIdentitySnapshot,
+)
 from eidos_runtime.tools.registry import StepToolSnapshot
 
 
@@ -25,13 +30,6 @@ class _FrozenModel(BaseModel):
     )
 
 
-class WorkspaceIdentitySnapshot(_FrozenModel):
-    path: str
-    device: int
-    inode: int
-    owner: int
-
-
 class RunContext(_FrozenModel):
     run_id: str
     session_id: str
@@ -40,6 +38,7 @@ class RunContext(_FrozenModel):
     model_context: tuple[ModelContextItem, ...]
     extension_snapshot: dict[str, object]
     extension_snapshot_hash: str
+    resolution_snapshot: RunResolutionSnapshot
 
 
 class StepContext(_FrozenModel):
@@ -57,6 +56,7 @@ class StepContext(_FrozenModel):
     workspace_version: int = 0
     context_budget: ContextBudget | None = None
     extension_snapshot_hash: str
+    resolution_snapshot: StepResolutionSnapshot
     new_user_input_ids: tuple[str, ...] = ()
 
 

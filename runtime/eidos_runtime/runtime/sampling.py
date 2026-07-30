@@ -15,9 +15,6 @@ from eidos_runtime.runtime.model_runner import ModelRunner, ModelStreamInterrupt
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
 
 
-MAX_STREAM_RETRIES = 5
-
-
 class SamplingError(RuntimeError):
     def __init__(
         self,
@@ -112,7 +109,10 @@ class SamplingRuntime:
                         had_progress=writer.item is not None,
                     )
                     raise error
-                if isinstance(error, SamplingRetryableError) and retries < MAX_STREAM_RETRIES:
+                if (
+                    isinstance(error, SamplingRetryableError)
+                    and retries < step.model_profile.retry_max_attempts - 1
+                ):
                     retries += 1
                     self.store.complete_current_model_attempt(
                         step.run_id,
@@ -127,8 +127,22 @@ class SamplingRuntime:
                         ttft_ms=interrupted.ttft_ms,
                         duration_ms=interrupted.duration_ms,
                         had_progress=error.had_progress,
+                        retry_decision={
+                            "retry": True,
+                            "reason": "transient_error",
+                        },
                     )
-                    if cancel.wait(min(0.2 * 2 ** (retries - 1), 2.0)):
+                    backoff = min(
+                        step.model_profile.retry_initial_backoff_seconds
+                        * 2 ** (retries - 1),
+                        step.model_profile.retry_max_backoff_seconds,
+                    )
+                    if error.failure and error.failure.retry_after_seconds is not None:
+                        backoff = max(
+                            backoff,
+                            error.failure.retry_after_seconds,
+                        )
+                    if cancel.wait(backoff):
                         raise SamplingCancelled("sampling canceled")
                     self.store.start_retry_model_attempt(step.run_id)
                     continue
@@ -141,6 +155,14 @@ class SamplingRuntime:
                     ttft_ms=interrupted.ttft_ms,
                     duration_ms=interrupted.duration_ms,
                     had_progress=error.had_progress,
+                    retry_decision={
+                        "retry": False,
+                        "reason": (
+                            "canceled"
+                            if isinstance(error, SamplingCancelled)
+                            else "non_retryable_or_exhausted"
+                        ),
+                    },
                 )
                 raise error
 
@@ -169,6 +191,13 @@ class SamplingRuntime:
                 ttft_ms=result.ttft_ms,
                 duration_ms=result.duration_ms,
                 had_progress=writer.item is not None,
+                retry_decision={
+                    "retry": False,
+                    "reason": (
+                        "invalid_completion"
+                        if invalid_completion else "completed"
+                    ),
+                },
             )
             self._check_cancel(cancel)
             if invalid_completion:

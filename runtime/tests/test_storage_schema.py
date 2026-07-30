@@ -40,6 +40,12 @@ EXPECTED_TABLES = {
     "input_mailbox",
     "async_operations",
     "event_outbox",
+    "model_profiles",
+    "model_capability_snapshots",
+    "run_model_snapshots",
+    "rule_resolution_snapshots",
+    "run_resolution_snapshots",
+    "step_resolution_snapshots",
 }
 
 EXPECTED_COLUMNS = {
@@ -52,11 +58,17 @@ EXPECTED_COLUMNS = {
         "workspace_version",
         "last_diff_hash",
         "model_profile_json",
+        "model_profile_id",
         "cancel_requested_at",
         "cancel_completed_at",
         "cancel_failure_code",
     },
-    "steps": {"tool_snapshot_json", "tool_set_hash", "progress_signature_json"},
+    "steps": {
+        "resolution_snapshot_id",
+        "tool_snapshot_json",
+        "tool_set_hash",
+        "progress_signature_json",
+    },
     "tool_calls": {
         "approval_status",
         "approval_decision",
@@ -73,6 +85,10 @@ EXPECTED_COLUMNS = {
     },
     "approvals": {
         "request_json", "attempt_ordinal", "approval_kind",
+    },
+    "model_attempts": {
+        "lease_id", "wire_api", "model_id", "request_timeout",
+        "retry_decision_json",
     },
     "tool_attempts": {
         "tool_call_id", "ordinal", "sandbox_type", "sandbox_requested",

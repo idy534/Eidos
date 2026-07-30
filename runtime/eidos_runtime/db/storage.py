@@ -37,6 +37,7 @@ from eidos_runtime.db.repositories import (
     ContextRepository,
     ExecutionRepository,
     ExtensionRepository,
+    ModelProfileRepository,
     RunRepository,
     SessionRepository,
 )
@@ -46,7 +47,17 @@ from eidos_runtime.db.repositories.sessions import DEFAULT_LIST_LIMIT
 from eidos_runtime.db.schema import SCHEMA_VERSION
 from eidos_runtime.model.client import ModelProfileSnapshot, ModelUsage
 from eidos_runtime.model.config import DEFAULT_MODEL_ID
+from eidos_runtime.model_gateway.models import (
+    CapabilitySnapshot,
+    ModelProfile,
+    RunModelSnapshot,
+)
 from eidos_runtime.runtime.contracts import ProgressSignature
+from eidos_runtime.runtime.resolution import (
+    RuleResolutionSnapshot,
+    RunResolutionSnapshot,
+    StepResolutionSnapshot,
+)
 
 
 SCHEMA_REVISION = SCHEMA_VERSION
@@ -62,6 +73,7 @@ class SessionStore:
         self._extensions: ExtensionRepository | None = None
         self._context: ContextRepository | None = None
         self._async_operations: AsyncOperationRepository | None = None
+        self._model_profiles: ModelProfileRepository | None = None
 
     def initialize(self) -> None:
         self._database.initialize()
@@ -82,6 +94,42 @@ class SessionStore:
         self._extensions = ExtensionRepository(self._database)
         self._context = ContextRepository(self._database)
         self._async_operations = AsyncOperationRepository(self._database)
+        self._model_profiles = ModelProfileRepository(self._database)
+
+    def create_model_profile(self, profile: ModelProfile) -> ModelProfile:
+        return self._repository(self._model_profiles).create(profile)
+
+    def update_model_profile(self, profile: ModelProfile) -> ModelProfile:
+        return self._repository(self._model_profiles).update(profile)
+
+    def get_model_profile(self, profile_id: str) -> ModelProfile | None:
+        return self._repository(self._model_profiles).get(profile_id)
+
+    def list_model_profiles(self) -> list[ModelProfile]:
+        return self._repository(self._model_profiles).list()
+
+    def delete_model_profile(self, profile_id: str) -> None:
+        self._repository(self._model_profiles).delete(profile_id)
+
+    def save_model_capability_snapshot(
+        self, snapshot: CapabilitySnapshot
+    ) -> CapabilitySnapshot:
+        return self._repository(self._model_profiles).save_capability(snapshot)
+
+    def get_model_capability_snapshot(
+        self, profile_id: str
+    ) -> CapabilitySnapshot | None:
+        return self._repository(self._model_profiles).latest_capability(profile_id)
+
+    def save_run_model_snapshot(
+        self, run_id: str, snapshot: RunModelSnapshot
+    ) -> RunModelSnapshot:
+        return self._repository(self._model_profiles).save_run_snapshot(
+            run_id, snapshot
+        )
+
+    def read_run_model_snapshot(self, run_id: str) -> RunModelSnapshot:
+        return self._repository(self._model_profiles).read_run_snapshot(run_id)
 
     @property
     def data_directory(self) -> Path | None:
@@ -297,6 +345,7 @@ class SessionStore:
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
+        run_model_snapshot: RunModelSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         return self._repository(self._runs).create_run(
@@ -307,6 +356,7 @@ class SessionStore:
             session_title=session_title,
             model_id=model_id,
             model_profile=model_profile,
+            run_model_snapshot=run_model_snapshot,
             extension_snapshot=extension_snapshot,
         )
 
@@ -319,6 +369,7 @@ class SessionStore:
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
+        run_model_snapshot: RunModelSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         return self._repository(self._runs).enqueue_run(
@@ -328,6 +379,7 @@ class SessionStore:
             session_title=session_title,
             model_id=model_id,
             model_profile=model_profile,
+            run_model_snapshot=run_model_snapshot,
             extension_snapshot=extension_snapshot,
         )
 
@@ -344,6 +396,11 @@ class SessionStore:
 
     def read_model_profile(self, run_id: str) -> ModelProfileSnapshot:
         return self._repository(self._runs).read_model_profile(run_id)
+
+    def read_run_resolution_snapshot(
+        self, run_id: str
+    ) -> RunResolutionSnapshot:
+        return self._repository(self._runs).read_resolution_snapshot(run_id)
 
     def run_budget(self, run_id: str) -> dict[str, int]:
         return self._repository(self._runs).run_budget(run_id)
@@ -454,16 +511,34 @@ class SessionStore:
         run_id: str,
         *,
         tool_snapshot: dict[str, object] | None = None,
+        rule_resolution_snapshot: RuleResolutionSnapshot | None = None,
+        resolution_snapshot: StepResolutionSnapshot | None = None,
     ) -> int:
         return self._repository(self._execution).increment_model_step(
             run_id,
             tool_snapshot=tool_snapshot,
+            rule_resolution_snapshot=rule_resolution_snapshot,
+            resolution_snapshot=resolution_snapshot,
         )
 
     def read_step_tool_snapshot(
         self, run_id: str, model_step_index: int
     ) -> dict[str, object]:
         return self._repository(self._execution).read_step_tool_snapshot(run_id, model_step_index)
+
+    def read_rule_resolution_snapshot(
+        self, snapshot_id: str
+    ) -> RuleResolutionSnapshot:
+        return self._repository(
+            self._execution
+        ).read_rule_resolution_snapshot(snapshot_id)
+
+    def read_step_resolution_snapshots(
+        self, run_id: str
+    ) -> tuple[StepResolutionSnapshot, ...]:
+        return self._repository(
+            self._execution
+        ).read_step_resolution_snapshots(run_id)
 
     def read_current_step_fact(self, run_id: str) -> dict[str, object]:
         return self._repository(self._execution).read_current_step_fact(run_id)
@@ -511,6 +586,7 @@ class SessionStore:
         ttft_ms: int | None = None,
         duration_ms: int | None = None,
         had_progress: bool = False,
+        retry_decision: dict[str, object] | None = None,
     ) -> bool:
         return self._repository(self._execution).complete_current_model_attempt(
             run_id,
@@ -525,6 +601,7 @@ class SessionStore:
             ttft_ms=ttft_ms,
             duration_ms=duration_ms,
             had_progress=had_progress,
+            retry_decision=retry_decision,
         )
 
     def start_retry_model_attempt(self, run_id: str) -> None:
