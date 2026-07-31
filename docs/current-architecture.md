@@ -114,6 +114,8 @@ MCP Connection 通过 initialize 阶段一次性绑定的同一 Kernel 启动为
 Title Generation 与 Plugin Import 等 Managed Task 同样由 `RuntimeAsyncTask` Handle 拥有；保留的同步 `Callable[[threading.Event], None]` 通过 `anyio.to_thread.run_sync()` 执行，未启用 abandon-on-cancel。Shutdown 先设置 Eidos cooperative cancellation Event，再有界等待同步函数真实退出；未退出时保留 `MANAGED_TASK`、`ASYNC_REQUEST` 与 `ASYNC_TASK` 事实并报告 timeout，不把 worker Future 取消误判为底层工作停止。
 
 只读并行 Batch 的同步入口通过同一 Kernel 进入 AnyIO TaskGroup，每个现有同步 read execution 使用默认等待真实退出的 AnyIO worker thread bridge；不再为每个 Batch 创建 `ThreadPoolExecutor` 或依赖 Future 完成顺序。`ToolConcurrencyGate` 继续权威表达 max concurrency、exclusive mode、resource/exclusive key 和 cancellation policy；只有 Dispatcher 确认为只读且所有参数通过 Sensitive Scanner 的完整 Batch 才进入该路径。基础设施失败或取消会设置共享 cooperative signal，并等待所有已启动执行终止；Infrastructure Error 优先，普通 Tool Error 不取消合法 sibling，最终 Outcome、Item、Event、Context Fact 和 progress fingerprint 仍按原 Batch Order 汇总。关闭顺序仍先结束 Run-scoped MCP、Managed Task、Tool Execution、Run/Model Client，再关闭 kernel 并释放唯一 `async_kernel` 资源。
+
+Shutdown quiescence 只由显式 Run Handle、Model Lease、Kernel Task Handle、`ResourceRegistry`、持久 Run 状态和 MCP child process ownership 判定，不扫描全局线程名，也不维护第二份 Tool 活跃计数。Timeout 日志最多列出 100 个结构化诊断，只包含 `kind`、`owner_id`、`state`、`deadline` 与 `diagnostic_code`。当前有意保留一个 AnyIO Portal Thread 和每个活跃 Run 的一个同步 Worker Thread；MCP 没有专用线程，Managed Task 没有 Eidos 专用线程，并行只读 Batch 没有 Batch Executor。这是原生 async Runtime Engine/Run Supervisor 迁移前的明确边界。
 | DB schema/mappers/events | `runtime/eidos_runtime/db/` |
 | Run loop | `runtime/eidos_runtime/runtime/engine.py` |
 | Tool batch/single/orchestration | `runtime/eidos_runtime/runtime/tool_runtime.py`, `tool_execution.py`, `tool_orchestrator.py` |

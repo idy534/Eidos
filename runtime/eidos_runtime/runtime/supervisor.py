@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+import json
 import logging
 import threading
 import time
@@ -31,11 +32,11 @@ from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
     RuntimeResource,
+    RuntimeResourceDiagnostic,
     RuntimeResourceKind,
 )
 from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle
-from eidos_runtime.runtime.tool_execution import active_tool_execution_count
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
 
 
@@ -349,7 +350,6 @@ class RunSupervisor:
         self._release_approval_waits()
         self.wait(self.shutdown_timeout)
         self.wait_managed_tasks(self.shutdown_timeout)
-        live_threads = self._live_managed_threads()
         registered = tuple(
             resource
             for resource in self.resources.active_resources()
@@ -359,8 +359,6 @@ class RunSupervisor:
             self.has_active_workers()
             or self.has_active_model_leases()
             or self.has_active_managed_tasks()
-            or active_tool_execution_count()
-            or live_threads
             or registered
         ):
             for run_id in active_ids:
@@ -371,24 +369,14 @@ class RunSupervisor:
                     self.events.publish(failed, run=failed.value)
                 except (InvalidRunStateError, ResourceNotFoundError):
                     pass
-            resources = []
-            if self.has_active_workers():
-                resources.append("run_handle")
-            if self.has_active_model_leases():
-                resources.append("model_lease")
-            if self.has_active_managed_tasks():
-                resources.append("managed_task")
-            if active_tool_execution_count():
-                resources.append("tool_execution")
-            if live_threads:
-                resources.append("managed_thread")
-            resources.extend(
-                f"{resource.kind.value}:{resource.owner_id}"
-                for resource in registered
-            )
             logger.warning(
                 "Runtime shutdown timed out; active resources: %s",
-                ",".join(resources),
+                json.dumps(
+                    self._shutdown_diagnostics(registered),
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
             )
             raise RuntimeShutdownTimeout("RUNTIME_SHUTDOWN_TIMEOUT")
         with self.store.lock:
@@ -545,22 +533,74 @@ class RunSupervisor:
             if self.control_state is RuntimeControlState.RECONFIGURING:
                 self.control_state = RuntimeControlState.RUNNING
 
-    @staticmethod
-    def _live_managed_threads() -> tuple[threading.Thread, ...]:
-        current = threading.current_thread()
-        prefixes = (
-            "eidos-mcp-",
-            "eidos-tool-",
-            "eidos-title-",
-            "eidos-finalization-",
-        )
-        return tuple(
-            thread
-            for thread in threading.enumerate()
-            if thread is not current
-            and thread.is_alive()
-            and thread.name.startswith(prefixes)
-        )
+    def _shutdown_diagnostics(
+        self,
+        registered: tuple[RuntimeResourceDiagnostic, ...],
+    ) -> list[dict[str, object]]:
+        diagnostics = [
+            {
+                "kind": resource.kind.value,
+                "owner_id": resource.owner_id,
+                "state": resource.state.value,
+                "deadline": resource.deadline,
+                "diagnostic_code": resource.diagnostic_code,
+            }
+            for resource in registered[:100]
+        ]
+        represented = {
+            (str(value["kind"]), str(value["owner_id"]))
+            for value in diagnostics
+        }
+        with self.lock:
+            handles = tuple(self._handles.values())
+            managed = tuple(self._managed_tasks.values())
+        for handle in handles:
+            if len(diagnostics) >= 100:
+                break
+            if (
+                handle.state is not RunWorkerState.FINISHED
+                and (RuntimeResourceKind.RUN_WORKER.value, handle.run_id)
+                not in represented
+            ):
+                diagnostics.append({
+                    "kind": RuntimeResourceKind.RUN_WORKER.value,
+                    "owner_id": handle.run_id,
+                    "state": handle.state.value,
+                    "deadline": None,
+                    "diagnostic_code": "RUNTIME_SHUTDOWN_TIMEOUT",
+                })
+            if (
+                len(diagnostics) < 100
+                and handle.model_lease is not None
+                and not handle.model_lease.closed
+                and (RuntimeResourceKind.MODEL_LEASE.value, handle.run_id)
+                not in represented
+            ):
+                diagnostics.append({
+                    "kind": RuntimeResourceKind.MODEL_LEASE.value,
+                    "owner_id": handle.run_id,
+                    "state": "running",
+                    "deadline": None,
+                    "diagnostic_code": "RUNTIME_SHUTDOWN_TIMEOUT",
+                })
+        for task in managed:
+            if len(diagnostics) >= 100:
+                break
+            if (
+                not task.async_task_handle.done()
+                and (RuntimeResourceKind.MANAGED_TASK.value, task.task_id)
+                not in represented
+            ):
+                diagnostics.append({
+                    "kind": RuntimeResourceKind.MANAGED_TASK.value,
+                    "owner_id": task.task_id,
+                    "state": task.async_task_handle.state.value,
+                    "deadline": task.async_task_handle.deadline,
+                    "diagnostic_code": (
+                        task.async_task_handle.diagnostics().diagnostic_code
+                    ),
+                })
+        return diagnostics
 
     def _release_approval_waits(self, run_id: str | None = None) -> None:
         with self.approval_lock:

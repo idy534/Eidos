@@ -4,7 +4,6 @@ import sqlite3
 import threading
 
 from eidos_runtime.db.invariants import verify_runtime_invariants
-from eidos_runtime.runtime.tool_execution import active_tool_execution_count
 
 
 FAULT_POINTS = frozenset({
@@ -103,8 +102,6 @@ def assert_runtime_converged(store, supervisor=None) -> None:
         raise AssertionError("committed event is missing from outbox")
     if active_operations:
         raise AssertionError("live async operation")
-    if active_tool_execution_count():
-        raise AssertionError("live tool execution")
     if supervisor is not None and (
         supervisor.has_active_workers()
         or supervisor.has_active_model_leases()
@@ -113,9 +110,3 @@ def assert_runtime_converged(store, supervisor=None) -> None:
         raise AssertionError("live supervisor resource")
     if supervisor is not None and supervisor.resources.active_resources():
         raise AssertionError("live registered runtime resource")
-    if any(
-        thread.is_alive()
-        and thread.name.startswith(("eidos-mcp-", "eidos-title-"))
-        for thread in threading.enumerate()
-    ):
-        raise AssertionError("live runtime thread")

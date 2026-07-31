@@ -30,6 +30,7 @@ from eidos_runtime.runtime.supervisor import (  # noqa: E402
     RuntimeShutdownTimeout,
 )
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
+from eidos_runtime.runtime.state_machine import RuntimeLifecycle  # noqa: E402
 
 
 class _ExitOnCancelEngine:
@@ -373,7 +374,7 @@ class McpCloseContractTests(unittest.TestCase):
 
         service.cancel.assert_called_once_with()
 
-    def test_runtime_quiescence_detects_live_mcp_thread(self) -> None:
+    def test_runtime_quiescence_does_not_depend_on_thread_name_prefixes(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-phase5b0-close-") as temporary:
             root = Path(temporary)
             data = root / "data"
@@ -398,8 +399,11 @@ class McpCloseContractTests(unittest.TestCase):
             )
             thread.start()
             try:
-                with self.assertRaises(RuntimeShutdownTimeout):
-                    supervisor.shutdown()
+                supervisor.shutdown()
+                self.assertEqual(
+                    supervisor.lifecycle,
+                    RuntimeLifecycle.QUIESCENT,
+                )
             finally:
                 release.set()
                 thread.join(1)

@@ -820,8 +820,18 @@ class ReliableShutdownTests(unittest.TestCase):
     def test_shutdown_timeout_returns_error(self) -> None:
         _run, supervisor = self._started(_StuckEngine, timeout=0.01)
 
-        with self.assertRaises(RuntimeShutdownTimeout):
-            supervisor.shutdown()
+        with self.assertLogs("eidos.runtime", level="WARNING") as captured:
+            with self.assertRaises(RuntimeShutdownTimeout):
+                supervisor.shutdown()
+        payload = json.loads(
+            captured.output[-1].split("active resources: ", maxsplit=1)[1]
+        )
+        self.assertTrue(payload)
+        self.assertEqual(
+            set(payload[0]),
+            {"kind", "owner_id", "state", "deadline", "diagnostic_code"},
+        )
+        self.assertIn("run_worker", {value["kind"] for value in payload})
         _StuckEngine.release.set()
         supervisor.wait(1)
 
