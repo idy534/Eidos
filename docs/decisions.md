@@ -104,7 +104,7 @@
 | Q95 | Model Profile 不探测或记录 WebSocket；重试保持相同 wire API、endpoint、请求语义、认证和 TLS 策略，瞬时故障不使 capability snapshot 失效。 | PRD Model Profile；TDD Model Gateway |
 | Q96 | 每次实际模型网络发送都创建独立 ModelAttempt；同一 Step 共享逻辑请求 ID，不假设 Provider 幂等，分别保存已报告 usage，未知 usage 不按零计算。 | PRD 用量透明；TDD Attempt/可观测性 |
 | Q97 | 输入估算固定为 canonical payload UTF-8 字节数加协议开销；safety margin 为 context window 的 2%，下限 1,024、上限 8,192。 | PRD 上下文预算；TDD 估算公式 |
-| Q98 | 普通/纠正请求使用 Profile 的 `max_output_tokens`；Finalization 上限 4,096，Test Connection 探测上限 512；实际请求值参与预算并写入 Attempt。 | PRD 输出预算；TDD 请求构造 |
+| Q98 | 普通/纠正请求使用 Profile 的 `max_output_tokens`；Finalization 上限 4,096；实际请求值参与预算并写入 Attempt。 | PRD 输出预算；TDD 请求构造 |
 | Q99 | 不可裁剪输入在本地预算阶段已超限时零 Provider 请求，Run 直接 `failed/context_input_too_large` 且不使 capability snapshot 失效。 | PRD 错误体验；TDD Context Builder/状态机 |
 | Q100 | 同一 Step 的完整模型请求周期共享 10 分钟 deadline，覆盖全部 HTTP/SSE Attempt、退避和 Retry-After；Finalization 仍为独立 60 秒。 | PRD 时间预算；TDD 重试时钟 |
 | Q101 | 版本化 `model_request_contract_version` 固化序列化、预算、输出预留、传输重试与 timeout；新版本使 Profile snapshot 失效，既有 Run 继续使用创建时版本。 | PRD 升级兼容；TDD 版本路由/恢复 |
@@ -116,9 +116,9 @@
 | Q107 | 模型可见文本按 output tokens 动态限制且最大 4 MiB；discarded reasoning 2 MiB、单 Event 1 MiB、总流 8 MiB，超限暂停且不重试。 | PRD 输出安全；TDD Stream limiter |
 | Q108 | Responses 只以 `response.completed` 完成；Chat 必须有合法 finish reason、完整分片、usage 和 `[DONE]`；截断/过滤暂停 Run，不执行任何 ToolCall。 | PRD 输出状态；TDD 完成判定 |
 | Q109 | MVP 固定语义无状态模型请求：Responses `store=false`，不依赖 previous response/conversation；每个 Step 从本地状态重建完整上下文。 | PRD 隐私/可恢复性；TDD Context Adapter |
-| Q110 | Responses 固定 `max_output_tokens`；Chat 仅在 Test Connection 中按确定性错误协商 `max_completion_tokens`/`max_tokens` 并把结果固化到 snapshot。 | PRD 兼容性；TDD 参数协商 |
+| Q110 | Responses 固定 `max_output_tokens`；Chat 的兼容字段由 Profile/Preset 静态配置决定，真实请求错误不回写能力声明。 | PRD 兼容性；TDD 参数协商 |
 | Q111 | 工具集非空的普通/协议纠正请求固定 `parallel_tool_calls=true`；它只允许模型同响应提出多调用。Runtime 仅并发 `parallel_safe` 的安全只读批次，Shell、副作用和外部工具保持独占，结果按模型声明顺序返回。 | 当前 Tool Dispatcher/ToolCallRuntime；TDD 请求控制 |
-| Q112 | Test Connection 使用严格两阶段 ToolCall/ToolResult probe：首阶段单一工具 `required` 且禁止 parallel，次阶段回传固定结果并使用 `tool_choice=none`。 | PRD 能力测试；TDD probe 协议 |
+| Q112 | ToolCall/ToolResult 只在真实 Model Attempt 中执行；能力由用户声明、Preset 和保守默认值本地解析。 | PRD 能力测试；TDD 模型协议 |
 | Q113 | 工具集非空的普通/纠正请求固定 `tool_choice=auto`；空工具集与 Finalization 不发 tools、固定 `tool_choice=none` 且不发 `parallel_tool_calls`；Profile 不得覆盖。 | PRD Agent Loop；TDD 请求构造 |
 | Q114 | 两种 wire API 的 function tool 定义都显式发送 `strict=false`；Provider strict 不是安全边界，Runtime 本地 schema 校验始终是执行授权依据。 | PRD 兼容性；TDD Tool schema |
 | Q115 | 所有 function tool 输入 schema 递归封闭 object/array object，显式 `additionalProperties=false`；MVP 无自由 map，未知字段按 Q45 整批零执行。 | PRD 工具可预期性；TDD 参数校验 |

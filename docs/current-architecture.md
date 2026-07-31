@@ -63,6 +63,8 @@ Renderer 只通过 context-isolated preload 暴露的 typed IPC 访问 Main。Ma
 | Main JSON-RPC validator/client | `desktop/main/runtime-client.ts` |
 | Python DTO | `runtime/eidos_runtime/protocol/schemas.py` |
 | JSON-RPC server | `runtime/eidos_runtime/protocol/server.py` |
+
+Model Profile 能力只由本地声明解析：显式用户声明优先于内置 Provider Preset，Preset 缺失时保守为不支持。Eidos 不发送 Test Connection 或能力探测请求；网络、认证和 Provider 兼容性仅由真实 Model Attempt 的稳定错误映射确认。新 Run 冻结当时解析出的能力，历史持久化 Snapshot 仅用于读取兼容，不决定 Profile 是否可选。
 | DB schema/mappers/events | `runtime/eidos_runtime/db/` |
 | Run loop | `runtime/eidos_runtime/runtime/engine.py` |
 | Tool batch/single/orchestration | `runtime/eidos_runtime/runtime/tool_runtime.py`, `tool_execution.py`, `tool_orchestrator.py` |

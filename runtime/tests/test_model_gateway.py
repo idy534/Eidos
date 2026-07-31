@@ -22,14 +22,13 @@ from eidos_runtime.model_gateway.events import (  # noqa: E402
     ModelToolCallCompleted,
 )
 from eidos_runtime.model_gateway.models import (  # noqa: E402
-    CapabilityProbeSource,
-    CapabilitySnapshot,
     ModelProfile,
     ReasoningMode,
     RetryPolicy,
     WireAPI,
 )
 from eidos_runtime.model_gateway.presets import PRESETS  # noqa: E402
+from eidos_runtime.model_gateway.capabilities import resolve_model_capabilities  # noqa: E402
 from eidos_runtime.model_gateway.registry import AdapterRegistry  # noqa: E402
 from eidos_runtime.model_gateway.retry import RetryState, retry_decision  # noqa: E402
 from eidos_runtime.model_gateway.usage import NormalizedUsage  # noqa: E402
@@ -68,25 +67,20 @@ class ModelGatewayDomainTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(ValidationError):
                 profile(base_url=url)
 
-    def test_unknown_capabilities_default_false_and_remain_distinct_from_declarations(self) -> None:
+    def test_declared_capabilities_are_resolved_locally_and_remain_frozen(self) -> None:
         declared = profile(
             supports_tools=True,
             supports_parallel_tools=None,
             supports_structured_output=True,
         )
-        snapshot = CapabilitySnapshot.conservative(
-            declared,
-            probe_source=CapabilityProbeSource.ACTIVE_PROBE,
-            probe_version="r2-v1",
-            probed_at=NOW,
-            verified={"supports_tools": True},
-        )
+        snapshot = resolve_model_capabilities(declared, PRESETS[declared.provider])
 
         self.assertTrue(declared.supports_structured_output)
         self.assertTrue(snapshot.supports_tools)
         self.assertFalse(snapshot.supports_parallel_tools)
-        self.assertFalse(snapshot.supports_structured_output)
-        self.assertTrue(any(w.code == "CAPABILITY_UNVERIFIED" for w in snapshot.warnings))
+        self.assertTrue(snapshot.supports_structured_output)
+        self.assertFalse(snapshot.reachable)
+        self.assertFalse(snapshot.authenticated)
         with self.assertRaises(ValidationError):
             snapshot.supports_tools = False  # type: ignore[misc]
 

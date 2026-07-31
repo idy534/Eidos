@@ -6,9 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from eidos_runtime.model_gateway.capability import (
-    TestConnectionResult as ConnectionResult,
-)
+from eidos_runtime.model_gateway.capabilities import resolve_model_capabilities
 from eidos_runtime.model_gateway.errors import EidosModelError
 from eidos_runtime.model_gateway.events import ModelTextDelta
 from eidos_runtime.model_gateway.models import (
@@ -55,14 +53,16 @@ def profile() -> ModelProfile:
 
 
 def capability(value: ModelProfile) -> CapabilitySnapshot:
-    return CapabilitySnapshot.conservative(
+    return resolve_model_capabilities(
         value,
-        probe_source=CapabilityProbeSource.USER_DECLARATION,
-        probe_version="test-v1",
-        probed_at=NOW,
-        verified={"supports_tools": True},
-        snapshot_id="capability-1",
-    )
+        ProviderPreset(
+            id=value.provider,
+            display_name="Test",
+            provider_adapter_id="openai_compatible",
+            default_wire_api=value.wire_api,
+            default_base_url=value.base_url,
+        ),
+    ).model_copy(update={"id": "capability-1"})
 
 
 @pytest.mark.parametrize(
@@ -82,12 +82,6 @@ def capability(value: ModelProfile) -> CapabilitySnapshot:
         NormalizedUsage(provider_reported=True, estimated=False),
         PricingReference(id="pricing-1", source="test", effective_at="2026-07-31"),
         NormalizedCost(),
-        ConnectionResult(
-            success=True,
-            profile_valid=True,
-            endpoint_identity="https://api.example.test",
-            probe_duration_ms=0,
-        ),
         EidosModelError(
             code="MODEL_INVALID_REQUEST",
             message="invalid request",

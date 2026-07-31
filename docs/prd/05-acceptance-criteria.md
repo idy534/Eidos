@@ -10,7 +10,7 @@
 |---|---|---|
 | A001 | macOS 启动 | Electron 启动并拉起 sidecar；非 macOS 明确拒绝 |
 | A002 | 两种模式 | Workspace/Public Session 均可创建 Run |
-| A003 | Model Profile | 创建只保存配置；Test Connection 不携带用户任务数据并验证认证、模型、streaming、ToolCall、usage；失败 Profile 不可选，Run 固化不含密钥的版本化能力快照 |
+| A003 | Model Profile | 创建只保存本地配置；声明能力按用户声明、Preset 和保守默认值解析；本地凭证和必要 limits 完整的 Profile 可选，Run 固化不含密钥的版本化能力快照 |
 | A004 | 多 Run | 多个 Run 可创建、查看、排队、暂停和取消 |
 | A005 | 单执行器 | 任意时刻最多一个 Run 调模型或执行工具 |
 | A006 | FIFO | 新建和恢复按 `enqueued_at` 排队，重启后顺序保持 |
@@ -164,7 +164,7 @@
 | 编号 | 验收项 | 标准 |
 |---|---|---|
 | A114 | 轮换凭证 | 既有 Run 的下一次请求使用 Profile 当前密钥；Run 非密钥快照保持不变，Attempt 记录实际凭证 revision |
-| A115 | 传输探测 | Test Connection 必须证明 HTTP 请求、SSE 完整终态、ToolCall/ToolResult 续接和 usage；不探测 WebSocket |
+| A115 | 真实模型请求 | 真实 Model Attempt 验证 HTTP 请求、SSE 完整终态、ToolCall/ToolResult 续接和 usage；不探测 WebSocket |
 | A116 | 传输重试 | 首 delta 前 HTTP/SSE 瞬时错误最多重试 2 次且请求语义不变；首 delta 后禁止重放 |
 | A117 | 重试作用域 | 重试只属于当前逻辑模型请求；不会切换协议或传输，瞬时故障不使 Profile capability snapshot 失效 |
 | A118 | Attempt 与 usage | 每次网络发送独立 Attempt、共享逻辑请求 ID；usage 逐次保存，缺失标记 unknown 且汇总不按零计算 |

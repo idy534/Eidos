@@ -107,7 +107,7 @@
 | F091 | 模型输出上限 | 可见文本、reasoning、单 Event 和总流量均有硬上限；超限保留安全进度并暂停，不重试 |
 | F092 | 完成语义 | 仅完整协议终态可完成；token 截断和内容过滤不执行 ToolCall并进入 failed |
 | F093 | ✅ 无状态模型请求 | 每个 Step 从本地状态重建上下文；不依赖 Provider conversation、previous response 或服务端 history |
-| F094 | 输出字段协商 | Responses 固定字段；Chat 只在 Test Connection 有界协商并把结果固化到 snapshot |
+| F094 | 输出字段协商 | Responses 固定字段；Chat 使用 Wire API 与静态 Profile/Preset 配置，真实请求错误不回写 snapshot |
 | F095 | 工具控制字段 | 工具集非空的普通/纠正请求固定 auto + parallel，空集固定 none；probe 两阶段受控；Finalization 固定无工具 |
 | F096 | 非 strict 生成 | 两种 wire 显式 `strict=false`；Provider strict 不替代 Runtime 本地校验 |
 | F097 | 封闭工具输入 | 根/嵌套/数组 object 递归禁止未知字段；MVP 无自由 map |

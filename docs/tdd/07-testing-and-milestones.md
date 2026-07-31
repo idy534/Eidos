@@ -162,7 +162,6 @@
 ### 2.7 Model Profile 能力探测
 
 - 创建 Profile 只落配置且不发网络请求，初始 `selectable=false`。
-- Test Connection 请求只含 Profile 配置、固定 probe 文本和固定无副作用 tool schema；断言不含任务、Session、Workspace、Artifact、Timeline 或 ToolResult 数据。
 - 认证、模型存在、streaming、工具控制、`strict=false` Schema 模式、ToolCall/ToolResult 关联、stateless continuation 和 usage 分别成功；任一失败都产生新的 `failed` snapshot 和安全错误码，Profile 仍不可选择。
 - 全部通过时产生 `passed` snapshot；snapshot version 单调递增并绑定 configuration/Gateway/model request contract version，不覆盖历史结果。
 - Session 创建/切换和 Run 创建均拒绝未验证或最新探测失败的 Profile；拒绝创建 Run 时不占用 idempotency key。
@@ -177,13 +176,11 @@
 - HTTPS 的有效系统信任链通过；过期、主机名错误、自签名未信任证书失败且没有 verify=false 分支；HTTP 仍可连接。
 - 扩展参数稳定透传；保留字段、NaN/Infinity、敏感值、32 KiB/深度/成员上限分别拒绝，并参与 configuration hash。
 - context/output 在 4,096..4,194,304 和 1..262,144 固定边界内且 output<context；Provider 元数据不覆盖用户值，明确 context-length exceeded 映射为 `model_context_limit_mismatch` 并失效。
-- Test Connection 必须验证 HTTP 请求、SSE 完整终态、ToolCall/ToolResult 关联和 usage；不发送 WebSocket probe。
-- Test Connection 的短 probe 使用最多 512 输出 token，独立参数校验验证 Profile 声明上限。
 - Responses/Chat 显式 wire_api 分别通过；修改 wire 递增 config version 并失效，不存在按 URL/模型/错误自动推断或跨协议 fallback。
 - Responses 固化 max_output_tokens；Chat 明确 unknown max_completion_tokens 后才探测 max_tokens。认证/网络/429/5xx/含糊 invalid request 不触发字段切换。
 - 两阶段关联 probe 第一阶段固定单工具 `required/parallel=false/strict=false` 且恰好一 call，第二阶段移除 tools、`none` 并回传固定结果；probe ToolCall 永不执行或落业务表。
 - 非空工具集的普通/纠正请求显式 `auto/parallel=true/strict=false`；空集与 Finalization 无 tools、`none` 且省略 parallel；Profile parameters 无法覆盖保留字段。
-- Test Connection 对 parallel true、required/none/parallel false、strict false 的确定性拒绝分别映射 `model_parallel_tool_calls_unsupported|model_tool_control_unsupported|model_tool_schema_mode_unsupported`。
+- 真实 Model Attempt 对 parallel true、required/none/parallel false、strict false 的确定性拒绝分别映射 `model_parallel_tool_calls_unsupported|model_tool_control_unsupported|model_tool_schema_mode_unsupported`。
 - 固定 Dialect probe 覆盖全部允许结构/关键字，并验证 Provider 接受及参数 roundtrip；不把 Provider 是否执行 schema 校验当成授权条件。
 
 ### 2.8 Wire Adapter 与流归一化
@@ -237,7 +234,7 @@
 ## 4. Runtime 集成测试
 
 - Public 无工具回复。
-- Model Profile 创建 -> Test Connection -> Session 选择 -> Run 固化 snapshot；未测试/失败 Profile 在 Session 和 Run 两个入口均被拒绝。
+- Model Profile 创建 -> 本地声明解析 -> Session 选择 -> Run 固化 snapshot；缺少本地凭证或必要 limits 的 Profile 在 Session 和 Run 两个入口均被拒绝。
 - Profile 编辑 -> snapshot 失效 -> 重新测试，以及 Archive/restore、Gateway contract 升级失效和 capability/context drift 终态事务。
 - 任意地址类别的 HTTP(S) Provider、同/跨 Origin Redirect、三种认证模式、TLS 系统信任链和扩展参数/保留字段端到端请求断言。
 - HTTP/SSE 首 delta 前两次瞬时重试、首 delta 后零重放、request-cycle deadline 和 Attempt/Event/时钟断言。
@@ -254,7 +251,6 @@
 - 崩溃恢复不重放副作用。
 - Event 与状态同事务；模拟 Event insert 失败回滚状态。
 - 所有持久化 POST/PATCH 的 operation ID：同 envelope 并发/断线/重启只提交一次并重放原 response；跨 method/route/resource/body 复用冲突；重放重新鉴权；敏感/鉴权/validation 失败不占 key；nonce/version/gesture guard 仍生效。
-- Test Connection 在 intent 前、网络发送中、结果提交前崩溃的同 ID 分别返回可确定结果或 operation_interrupted，绝不自动重发；新用户点击使用新 ID。
 - closed JSON-RPC DTO 的 Python/TypeScript/runtime validator 与 fixture contract tests；unknown/missing/null/enum/message cap 和 SQLite 新列零泄漏。分页 cursor 覆盖 method/scope/filter/order/version 篡改、每页重新校验、limit、creation_seq high-water、last key、并发新增/更新/删除和零 offset。
 - Event envelope/type payload 固定向量、全局 id 跳号/重复无条件忽略、同一持久 Event 在 ruleset 变化后 wire payload 可不同、服务端 immutable hash 校验、content_unavailable、兼容未知 type 安全占位、已知未知 version resnapshot、snapshot 未覆盖有界失败和不兼容 event contract ready 阻断。
 - health-only 启动顺序注入状态目录、lock、DB revision/迁移/完整性、契约 serializer、Redaction 和恢复故障；ready 前零业务 body parse/Event/idempotency/调度，ready 只发布一次且 scheduler 后释放。

@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 import os
 import tempfile
-import threading
 import unittest
 
 
@@ -49,13 +48,26 @@ def profile(*, name: str = "DeepSeek", model_id: str = "deepseek-chat") -> Model
 
 
 def capability(value: ModelProfile, *, snapshot_id: str = "capability-1") -> CapabilitySnapshot:
-    return CapabilitySnapshot.conservative(
-        value,
-        snapshot_id=snapshot_id,
+    return CapabilitySnapshot(
+        id=snapshot_id,
+        profile_id=value.id,
+        provider=value.provider,
+        wire_api=value.wire_api,
+        model_id=value.model_id,
+        reachable=True,
+        authenticated=True,
+        context_window=value.context_window,
+        max_output_tokens=value.max_output_tokens,
+        supports_tools=True,
+        supports_parallel_tools=False,
+        supports_images=False,
+        supports_structured_output=False,
+        supports_prompt_cache=False,
+        reasoning_mode=value.reasoning_mode,
         probe_source=CapabilityProbeSource.ACTIVE_PROBE,
         probe_version="r2-v1",
         probed_at=NOW,
-        verified={"supports_tools": True},
+        sources={"supports_tools": CapabilityProbeSource.ACTIVE_PROBE},
     )
 
 
@@ -170,16 +182,14 @@ class ModelGatewayPersistenceTests(unittest.TestCase):
         assert secrets.path is not None
         self.assertFalse(secrets.path.exists())
 
-    def test_cancelled_probe_does_not_create_capability_snapshot(self) -> None:
-        from eidos_runtime.model_gateway.capability import CapabilityProbe
-
+    def test_legacy_active_probe_snapshot_remains_readable(self) -> None:
         value = profile()
-        cancel = threading.Event()
-        cancel.set()
+        self.store.create_model_profile(value)
+        self.store.save_model_capability_snapshot(capability(value))
 
-        with self.assertRaisesRegex(RuntimeError, "MODEL_PROBE_CANCELLED"):
-            CapabilityProbe().probe(value, "provider-key-value-123456", cancel)
-        self.assertIsNone(self.store.get_model_capability_snapshot(value.id))
+        restored = self.store.get_model_capability_snapshot(value.id)
+        assert restored is not None
+        self.assertIs(restored.probe_source, CapabilityProbeSource.ACTIVE_PROBE)
 
 
 if __name__ == "__main__":

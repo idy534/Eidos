@@ -17,16 +17,16 @@ from pydantic_ai.models.openai import (  # noqa: E402
 )
 
 from eidos_runtime.model_gateway.auth import ModelSecretStore  # noqa: E402
+from eidos_runtime.model_gateway.capabilities import resolve_model_capabilities  # noqa: E402
 from eidos_runtime.model_gateway.gateway import ModelGateway  # noqa: E402
 from eidos_runtime.model_gateway.models import (  # noqa: E402
-    CapabilityProbeSource,
-    CapabilitySnapshot,
     ModelProfile,
     ReasoningMode,
     RetryPolicy,
     RunModelSnapshot,
     WireAPI,
 )
+from eidos_runtime.model_gateway.presets import PRESETS  # noqa: E402
 
 
 NOW = datetime(2026, 7, 30, tzinfo=UTC)
@@ -50,17 +50,8 @@ def snapshot(provider: str, wire: WireAPI, base_url: str) -> RunModelSnapshot:
         created_at=NOW,
         updated_at=NOW,
     )
-    capability = CapabilitySnapshot.conservative(
-        profile,
-        snapshot_id=f"capability-{provider}",
-        probe_source=CapabilityProbeSource.ACTIVE_PROBE,
-        probe_version="r2-v1",
-        probed_at=NOW,
-        verified={
-            "supports_tools": True,
-            "context_window": 128_000,
-            "max_output_tokens": 4_096,
-        },
+    capability = resolve_model_capabilities(profile, PRESETS[provider]).model_copy(
+        update={"id": f"capability-{provider}"}
     )
     return RunModelSnapshot(profile=profile, capability=capability, frozen_at=NOW)
 

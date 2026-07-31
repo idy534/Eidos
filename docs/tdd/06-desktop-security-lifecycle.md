@@ -229,9 +229,9 @@ Artifact UI 在 MVP 只接受 text/markdown/json/csv/html/code；不支持格式
 
 Renderer 不实现 raw reasoning 专用 UI；只渲染 `assistant_progress`、`final_answer` 和 reasoning token 用量元数据。
 
-Model Profile UI 必须区分未测试、测试中、已通过、已失效、失败和 Archived 状态。用户必须显式选择 Responses 或 Chat Completions。Test Connection 只能由用户手势触发，不接受任务或自定义 probe 文本；结果展示 snapshot/Gateway/model request/Tool Schema Dialect version、认证、模型、HTTP/SSE、`tool_choice`/`parallel_tool_calls` 控制、`strict=false` schema 模式、ToolCall/ToolResult 分片与无状态续接、usage、output token parameter 和安全错误分类。任一必需能力未通过、失效或 Archived Profile 禁用 Session 选择和新 Run 创建，既有 Run 仍展示其固化 snapshot。
+Model Profile UI 展示声明能力及其来源，不显示连接测试或 Verified 状态。用户必须显式选择 Responses 或 Chat Completions。Profile 只有在本地凭证引用可解析、Provider/Preset 与 Wire API 有效、且 Context Window 与 Max Output Tokens 已知时可选择；既有 Run 仍展示其固化 snapshot。网络、认证、HTTP/SSE、工具控制和 Provider 协议错误由真实 Model Attempt 的安全错误分类报告。
 
-Profile 编辑表单不回显 API Key，只提供保持、替换或在 `none` 认证下清除。连接/协议字段修改前提示“保存后需要重新 Test Connection”；纯名称修改不显示失效提示。Archive 使用确认卡且无 Delete 操作，恢复后根据 snapshot 有效性决定是否可选。
+Profile 编辑表单不回显 API Key，只提供保持、替换或在 `none` 认证下清除。保存不会发送网络请求，后续 Run 按更新后的本地声明重新解析能力；已启动 Run 保持其冻结 snapshot。Archive 使用确认卡且无 Delete 操作，恢复后根据本地可选条件决定是否可选。
 
 Endpoint 表单接受任意 HTTP(S) 地址类别，拒绝 URL 内嵌凭证和已包含固定 endpoint 的 base_url，并展示规范化 API root、Origin 和根据 wire API 生成的最终 URL。HTTP 显示 API Key 与任务内容非加密传输警告；HTTPS 证书错误只显示 `model_tls_validation_failed`，没有忽略错误按钮。认证只显示 bearer/api_key_header/none，参数编辑器明确标记 Runtime 保留字段；context/output 上限由用户输入，不根据模型名自动回填覆盖。
 

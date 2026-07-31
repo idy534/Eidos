@@ -92,7 +92,7 @@ hash 排除 operation ID 本身，但包含静态 default 后的全部语义输�
 
 纯 SQLite 写把 operation completed record、领域状态、Event 与安全 response snapshot 放在同一事务。验证/鉴权/敏感拒绝不占 key、不保存 payload/hash，保持 Q57。operation record 不保存请求正文，只保存 contract/kind/scope/request hash、闭合响应和资源引用；MVP 不自动清理，计入存储统计。
 
-Test Connection 等包含外部网络的 operation 先持久化 in-progress intent。崩溃后无法确认是否已发出/完成时，同 ID 固定返回 `operation_interrupted`，不得自动重发；用户再次明确点击生成新 ID。该本地机制不承诺 Provider、Shell 或文件系统 exactly-once。Cancel 的领域语义仍幂等；Approval 已决定/失效仍优先返回 `approval_already_decided|approval_invalidated`。
+真实 Model Attempt 等包含外部网络的 operation 先持久化 in-progress intent。崩溃后无法确认是否已发出/完成时，同 ID 固定返回 `operation_interrupted`，不得自动重发。该本地机制不承诺 Provider、Shell 或文件系统 exactly-once。Cancel 的领域语义仍幂等；Approval 已决定/失效仍优先返回 `approval_already_decided|approval_invalidated`。
 
 ### 3.1 Create Run
 
@@ -203,7 +203,7 @@ Archive/restore 同样要求 `expectedProfileVersion`。Archive 设置内部 `ar
 
 ### 3.5 Model Profile 能力探测
 
-- 创建 Profile 只校验并保存配置，不隐式发起 Test Connection；响应标记 `selectable=false`。
+- 创建 Profile 只校验并保存配置，不隐式发起网络请求；本地凭证引用和执行所需 limits 完整时可直接选择。
 - `modelProfile/test` 由用户显式触发，使用固定 probe 输入，不接受 task、message、workspace、artifact 或自定义 prompt 字段。
 - 探测不创建 Session/Run/Step/ToolCall/Event；probe ToolCall 永不进入工具注册表或执行器。
 - 每次完成都原子创建一个新的 capability snapshot；响应只返回版本、HTTP/SSE、工具控制、Tool Schema Dialect、ToolCall/ToolResult 关联、stateless continuation、固化 output token parameter、时间和安全错误码，不返回 API Key、Provider 原始响应或 probe 正文。
@@ -798,7 +798,7 @@ event_id
 
 - FIFO queue wait、Run/Segment 有效执行时间。
 - 模型首 delta 延迟、request cycle 总耗时、分 transport 的 Attempt/重试/降级和失败分类，以及 reported usage 与 unknown usage Attempt 数。
-- Model Profile Test Connection 各能力结果、snapshot 失效原因、Archive/恢复、TLS/Redirect/保留参数拒绝和 context mismatch；指标不含 base_url query、API Key 或 Provider 原始错误正文。
+- Model Profile 声明能力来源、Archive/恢复、TLS/Redirect/保留参数拒绝和 context mismatch；指标不含 base_url query、API Key 或 Provider 原始错误正文。
 - ToolCall/Approval 耗时、timeout、cancel、interrupted 和冲突。
 - Seatbelt 自检失败、策略拒绝、代理 host 拒绝和 localhost 申请。
 - Event backlog、notification gap/replay 和 redaction 命中数。
