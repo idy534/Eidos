@@ -22,15 +22,13 @@ from eidos_runtime.model_gateway.events import (  # noqa: E402
     ModelToolCallCompleted,
 )
 from eidos_runtime.model_gateway.models import (  # noqa: E402
-    CapabilityProbeSource,
-    CapabilitySnapshot,
     ModelProfile,
     ReasoningMode,
     RetryPolicy,
     WireAPI,
 )
-from eidos_runtime.model_gateway.presets import PRESETS  # noqa: E402
-from eidos_runtime.model_gateway.registry import AdapterRegistry  # noqa: E402
+from eidos_runtime.model_gateway.presets import PRESETS, ProviderPreset  # noqa: E402
+from eidos_runtime.model_gateway.capabilities import resolve_model_capabilities  # noqa: E402
 from eidos_runtime.model_gateway.retry import RetryState, retry_decision  # noqa: E402
 from eidos_runtime.model_gateway.usage import NormalizedUsage  # noqa: E402
 
@@ -68,40 +66,29 @@ class ModelGatewayDomainTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(ValidationError):
                 profile(base_url=url)
 
-    def test_unknown_capabilities_default_false_and_remain_distinct_from_declarations(self) -> None:
+    def test_declared_capabilities_are_resolved_locally_and_remain_frozen(self) -> None:
         declared = profile(
             supports_tools=True,
             supports_parallel_tools=None,
             supports_structured_output=True,
         )
-        snapshot = CapabilitySnapshot.conservative(
-            declared,
-            probe_source=CapabilityProbeSource.ACTIVE_PROBE,
-            probe_version="r2-v1",
-            probed_at=NOW,
-            verified={"supports_tools": True},
-        )
+        snapshot = resolve_model_capabilities(declared, PRESETS[declared.provider])
 
         self.assertTrue(declared.supports_structured_output)
         self.assertTrue(snapshot.supports_tools)
         self.assertFalse(snapshot.supports_parallel_tools)
-        self.assertFalse(snapshot.supports_structured_output)
-        self.assertTrue(any(w.code == "CAPABILITY_UNVERIFIED" for w in snapshot.warnings))
+        self.assertTrue(snapshot.supports_structured_output)
+        self.assertFalse(snapshot.reachable)
+        self.assertFalse(snapshot.authenticated)
         with self.assertRaises(ValidationError):
             snapshot.supports_tools = False  # type: ignore[misc]
 
-    def test_provider_and_wire_are_independent_registry_dimensions(self) -> None:
-        registry = AdapterRegistry.default()
-        provider = registry.provider("deepseek")
-        wire = registry.wire(WireAPI.OPENAI_CHAT_COMPLETIONS)
+    def test_presets_describe_product_defaults_not_adapter_implementations(self) -> None:
+        fields = ProviderPreset.model_fields
 
-        self.assertEqual(provider.provider_id, "openai_compatible")
-        self.assertEqual(wire.wire_api, WireAPI.OPENAI_CHAT_COMPLETIONS)
-        self.assertIsNot(provider, wire)
-        self.assertEqual(
-            registry.provider("custom").provider_id,
-            "openai_compatible",
-        )
+        self.assertNotIn("provider" + "_adapter_id", fields)
+        self.assertNotIn("auth_style", fields)
+        self.assertEqual(PRESETS["deepseek"].default_wire_api, WireAPI.OPENAI_CHAT_COMPLETIONS)
 
     def test_required_presets_exist_without_forcing_model_ids(self) -> None:
         self.assertEqual(
@@ -189,12 +176,12 @@ class ModelGatewayErrorAndRetryTests(unittest.TestCase):
             attempt_id="attempt-1",
         )
         self.assertTrue(retry_decision(transient, RetryState(attempt_number=1)).retry)
-        self.assertFalse(
-            retry_decision(
-                transient,
-                RetryState(attempt_number=1, complete_tool_call_emitted=True),
-            ).retry
+        unsafe = retry_decision(
+            transient,
+            RetryState(attempt_number=1, complete_tool_call_emitted=True),
         )
+        self.assertFalse(unsafe.retry)
+        self.assertEqual(unsafe.reason, "unsafe_stream_progress")
         self.assertFalse(
             retry_decision(
                 normalize_http_error(

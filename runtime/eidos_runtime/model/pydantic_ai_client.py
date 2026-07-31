@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import Future
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass, replace
 from enum import StrEnum
 import hashlib
@@ -56,6 +56,11 @@ from eidos_runtime.model.config import (
     _validate_key,
 )
 from eidos_runtime.model.prompts import SYSTEM_PROMPT, TITLE_PROMPT
+from eidos_runtime.model_gateway.retry_transport import (
+    RetryBackoffCanceled,
+    RetryTracker,
+    RetryTransportClient,
+)
 from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
     RuntimeResource,
@@ -137,6 +142,7 @@ class PydanticAIModelClient:
         *,
         openai_client: AsyncOpenAI | None = None,
         provider_client: Any | None = None,
+        retry_transport: RetryTransportClient | None = None,
         profile_snapshot: ModelProfileSnapshot | None = None,
         settings_extra_body: dict[str, object] | None = None,
         parallel_tool_calls: bool | None = True,
@@ -147,6 +153,7 @@ class PydanticAIModelClient:
         self._profile_spec = profile_spec
         self._openai_client = openai_client
         self._provider_client = provider_client or openai_client
+        self._retry_transport = retry_transport
         self._settings_extra_body = (
             settings_extra_body
             if settings_extra_body is not None
@@ -226,6 +233,7 @@ class PydanticAIModelClient:
     ) -> ModelResponse:
         if cancel.is_set():
             raise ModelRequestError(_cancelled_failure())
+        retry_tracker = RetryTracker()
         try:
             return self._loop.run(self._complete(
                 context,
@@ -233,7 +241,12 @@ class PydanticAIModelClient:
                 on_text_delta,
                 allow_tools,
                 tool_definitions,
+                retry_tracker,
             ))
+        except RetryBackoffCanceled:
+            raise ModelRequestError(
+                _with_retry_diagnostics(_cancelled_failure(), retry_tracker)
+            ) from None
         except ModelRequestError:
             raise
         except (
@@ -243,6 +256,7 @@ class PydanticAIModelClient:
             IncompleteToolCall,
             httpx.TimeoutException,
             httpx.NetworkError,
+            httpx.HTTPStatusError,
             APITimeoutError,
             APIConnectionError,
             APIStatusError,
@@ -252,7 +266,9 @@ class PydanticAIModelClient:
                 failure = failure.model_copy(update={
                     "provider_name": self._profile_spec.provider_id
                 })
-            raise ModelRequestError(failure) from None
+            raise ModelRequestError(
+                _with_retry_diagnostics(failure, retry_tracker)
+            ) from None
         except (ValueError, AssertionError):
             raise ModelRequestError(ModelRequestFailure(
                 code="protocol_error",
@@ -267,6 +283,7 @@ class PydanticAIModelClient:
         on_text_delta,
         allow_tools: bool,
         tool_definitions: tuple[ModelToolDefinition, ...],
+        retry_tracker: RetryTracker,
     ) -> ModelResponse:
         hit_fault("model_stream_block")
         settings_values: dict[str, object] = {
@@ -287,32 +304,38 @@ class PydanticAIModelClient:
             ),
             allow_text_output=True,
         )
-        async with model_request_stream(
-            self._model,
-            encode_context(context),
-            model_settings=settings,
-            model_request_parameters=parameters,
-            instrument=False,
-        ) as stream:
-            cancel_task = asyncio.create_task(_cancel_when_requested(cancel, stream))
-            try:
-                async for event in stream:
-                    if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-                        if event.part.content:
-                            on_text_delta(event.part.content)
-                    elif isinstance(event, PartDeltaEvent) and isinstance(
-                        event.delta, TextPartDelta
-                    ):
-                        if event.delta.content_delta:
-                            on_text_delta(event.delta.content_delta)
-                response = stream.get()
-            finally:
-                cancel_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await cancel_task
+        retry_scope = (
+            self._retry_transport.request_scope(cancel, retry_tracker)
+            if self._retry_transport is not None
+            else nullcontext()
+        )
+        with retry_scope:
+            async with model_request_stream(
+                self._model,
+                encode_context(context),
+                model_settings=settings,
+                model_request_parameters=parameters,
+                instrument=False,
+            ) as stream:
+                cancel_task = asyncio.create_task(_cancel_when_requested(cancel, stream))
+                try:
+                    async for event in stream:
+                        if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                            if event.part.content:
+                                on_text_delta(event.part.content)
+                        elif isinstance(event, PartDeltaEvent) and isinstance(
+                            event.delta, TextPartDelta
+                        ):
+                            if event.delta.content_delta:
+                                on_text_delta(event.delta.content_delta)
+                    response = stream.get()
+                finally:
+                    cancel_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await cancel_task
         if cancel.is_set():
             raise ModelRequestError(_cancelled_failure())
-        return map_model_response(response)
+        return map_model_response(response, retry_tracker=retry_tracker)
 
     def close(self) -> None:
         if self._closed:
@@ -562,7 +585,11 @@ def encode_tool_definition(definition: ModelToolDefinition) -> ToolDefinition:
     )
 
 
-def map_model_response(response: PAIModelResponse) -> ModelResponse:
+def map_model_response(
+    response: PAIModelResponse,
+    *,
+    retry_tracker: RetryTracker | None = None,
+) -> ModelResponse:
     calls: list[ModelToolCall] = []
     for index, call in enumerate(response.tool_calls):
         try:
@@ -602,6 +629,21 @@ def map_model_response(response: PAIModelResponse) -> ModelResponse:
         finish_reason=response.finish_reason or ("tool_call" if calls else "unknown"),
         provider_response_id=response.provider_response_id,
         response_state=response.state,
+        transport_attempt_count=(
+            retry_tracker.transport_attempt_count if retry_tracker is not None else 0
+        ),
+        transport_retry_count=(
+            retry_tracker.transport_retry_count if retry_tracker is not None else 0
+        ),
+        last_retry_reason=(
+            retry_tracker.last_retry_reason if retry_tracker is not None else None
+        ),
+        last_backoff_seconds=(
+            retry_tracker.last_backoff_seconds if retry_tracker is not None else None
+        ),
+        retry_after_applied=(
+            retry_tracker.retry_after_applied if retry_tracker is not None else False
+        ),
     )
 
 
@@ -626,6 +668,8 @@ def map_model_error(error: BaseException) -> ModelRequestFailure:
         return ModelRequestFailure(code="provider_timeout", retryable=True)
     if isinstance(error, APIConnectionError | httpx.NetworkError):
         return ModelRequestFailure(code="provider_unavailable", retryable=True)
+    if isinstance(error, httpx.HTTPStatusError):
+        return _http_failure(error.response.status_code)
     if isinstance(error, APIStatusError):
         return _http_failure(error.status_code)
     if isinstance(error, ModelHTTPError):
@@ -638,6 +682,19 @@ def map_model_error(error: BaseException) -> ModelRequestFailure:
     if isinstance(error, ModelAPIError):
         return ModelRequestFailure(code="invalid_request", retryable=False)
     return ModelRequestFailure(code="protocol_error", retryable=False)
+
+
+def _with_retry_diagnostics(
+    failure: ModelRequestFailure,
+    tracker: RetryTracker,
+) -> ModelRequestFailure:
+    return failure.model_copy(update={
+        "transport_attempt_count": tracker.transport_attempt_count,
+        "transport_retry_count": tracker.transport_retry_count,
+        "last_retry_reason": tracker.last_retry_reason,
+        "last_backoff_seconds": tracker.last_backoff_seconds,
+        "retry_after_applied": tracker.retry_after_applied,
+    })
 
 
 def _http_failure(

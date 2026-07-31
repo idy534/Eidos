@@ -100,13 +100,13 @@
 | Q91 | 既有 Run 不固化 API Key；每次模型请求从 Profile 专属凭证槽读取当前有效密钥，轮换后使用新密钥但不改写 Run 的非密钥配置快照。 | PRD 凭证轮换；TDD Gateway/凭证版本 |
 | Q92 | MVP 不依赖 Provider token 统计做发送前预算；使用版本化 canonical payload 的 UTF-8 字节保守估算、固定协议开销和固定公式 safety margin。 | PRD 上下文预算；TDD Context Builder |
 | Q93 | 模型网络阶段使用固定超时：建连 15 秒、首 delta 180 秒、流空闲 120 秒；完整请求周期受共享总时限约束。 | PRD 响应体验；TDD Model Gateway |
-| Q94 | Runtime 调用远端模型固定使用 HTTP 请求和 SSE 响应流；首 delta 前瞬时错误最多重试 2 次，首 delta 后禁止重放。 | PRD 模型韧性；TDD Model Gateway |
+| Q94 | Runtime 调用远端模型固定使用 HTTP 请求和 SSE 响应流；Pydantic AI `AsyncTenacityTransport` 在响应流交给 Eidos 前按冻结 Profile 的总请求预算重试，流消费后禁止重放。 | B3 Model Retry Transport；TDD Model Gateway |
 | Q95 | Model Profile 不探测或记录 WebSocket；重试保持相同 wire API、endpoint、请求语义、认证和 TLS 策略，瞬时故障不使 capability snapshot 失效。 | PRD Model Profile；TDD Model Gateway |
-| Q96 | 每次实际模型网络发送都创建独立 ModelAttempt；同一 Step 共享逻辑请求 ID，不假设 Provider 幂等，分别保存已报告 usage，未知 usage 不按零计算。 | PRD 用量透明；TDD Attempt/可观测性 |
+| Q96 | 一次 `SamplingRuntime.sample` 是一个逻辑 ModelAttempt 和一条持久化记录；其内部 HTTP Transport Retry 是网络子尝试，不另建 `model_attempt`，并将次数和最终决策写入该记录。 | B3 Model Retry Transport；TDD Attempt/可观测性 |
 | Q97 | 输入估算固定为 canonical payload UTF-8 字节数加协议开销；safety margin 为 context window 的 2%，下限 1,024、上限 8,192。 | PRD 上下文预算；TDD 估算公式 |
-| Q98 | 普通/纠正请求使用 Profile 的 `max_output_tokens`；Finalization 上限 4,096，Test Connection 探测上限 512；实际请求值参与预算并写入 Attempt。 | PRD 输出预算；TDD 请求构造 |
+| Q98 | 普通/纠正请求使用 Profile 的 `max_output_tokens`；Finalization 上限 4,096；实际请求值参与预算并写入 Attempt。 | PRD 输出预算；TDD 请求构造 |
 | Q99 | 不可裁剪输入在本地预算阶段已超限时零 Provider 请求，Run 直接 `failed/context_input_too_large` 且不使 capability snapshot 失效。 | PRD 错误体验；TDD Context Builder/状态机 |
-| Q100 | 同一 Step 的完整模型请求周期共享 10 分钟 deadline，覆盖全部 HTTP/SSE Attempt、退避和 Retry-After；Finalization 仍为独立 60 秒。 | PRD 时间预算；TDD 重试时钟 |
+| Q100 | 同一 Step 的完整模型请求周期共享 10 分钟 deadline，覆盖全部 HTTP/SSE 子尝试、Tenacity 退避和 Retry-After；Finalization 仍为独立 60 秒。 | B3 Model Retry Transport；TDD 重试时钟 |
 | Q101 | 版本化 `model_request_contract_version` 固化序列化、预算、输出预留、传输重试与 timeout；新版本使 Profile snapshot 失效，既有 Run 继续使用创建时版本。 | PRD 升级兼容；TDD 版本路由/恢复 |
 | Q102 | MVP 同时支持显式 `wire_api=responses|chat_completions`；只测试和运行所选协议，不自动猜测、跨协议回退或建立厂商分支。 | PRD Model Profile；TDD Protocol Adapter |
 | Q103 | `base_url` 只表示 API 根；Adapter 固定追加 `/responses` 或 `/chat/completions`，完整 endpoint 输入拒绝，结构化拼接并保留安全 query。 | PRD Endpoint；TDD URL 构造 |
@@ -116,9 +116,9 @@
 | Q107 | 模型可见文本按 output tokens 动态限制且最大 4 MiB；discarded reasoning 2 MiB、单 Event 1 MiB、总流 8 MiB，超限暂停且不重试。 | PRD 输出安全；TDD Stream limiter |
 | Q108 | Responses 只以 `response.completed` 完成；Chat 必须有合法 finish reason、完整分片、usage 和 `[DONE]`；截断/过滤暂停 Run，不执行任何 ToolCall。 | PRD 输出状态；TDD 完成判定 |
 | Q109 | MVP 固定语义无状态模型请求：Responses `store=false`，不依赖 previous response/conversation；每个 Step 从本地状态重建完整上下文。 | PRD 隐私/可恢复性；TDD Context Adapter |
-| Q110 | Responses 固定 `max_output_tokens`；Chat 仅在 Test Connection 中按确定性错误协商 `max_completion_tokens`/`max_tokens` 并把结果固化到 snapshot。 | PRD 兼容性；TDD 参数协商 |
+| Q110 | Responses 固定 `max_output_tokens`；Chat 的兼容字段由 Profile/Preset 静态配置决定，真实请求错误不回写能力声明。 | PRD 兼容性；TDD 参数协商 |
 | Q111 | 工具集非空的普通/协议纠正请求固定 `parallel_tool_calls=true`；它只允许模型同响应提出多调用。Runtime 仅并发 `parallel_safe` 的安全只读批次，Shell、副作用和外部工具保持独占，结果按模型声明顺序返回。 | 当前 Tool Dispatcher/ToolCallRuntime；TDD 请求控制 |
-| Q112 | Test Connection 使用严格两阶段 ToolCall/ToolResult probe：首阶段单一工具 `required` 且禁止 parallel，次阶段回传固定结果并使用 `tool_choice=none`。 | PRD 能力测试；TDD probe 协议 |
+| Q112 | ToolCall/ToolResult 只在真实 Model Attempt 中执行；能力由用户声明、Preset 和保守默认值本地解析。 | PRD 能力测试；TDD 模型协议 |
 | Q113 | 工具集非空的普通/纠正请求固定 `tool_choice=auto`；空工具集与 Finalization 不发 tools、固定 `tool_choice=none` 且不发 `parallel_tool_calls`；Profile 不得覆盖。 | PRD Agent Loop；TDD 请求构造 |
 | Q114 | 两种 wire API 的 function tool 定义都显式发送 `strict=false`；Provider strict 不是安全边界，Runtime 本地 schema 校验始终是执行授权依据。 | PRD 兼容性；TDD Tool schema |
 | Q115 | 所有 function tool 输入 schema 递归封闭 object/array object，显式 `additionalProperties=false`；MVP 无自由 map，未知字段按 Q45 整批零执行。 | PRD 工具可预期性；TDD 参数校验 |

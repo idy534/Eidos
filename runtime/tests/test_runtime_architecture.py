@@ -58,7 +58,7 @@ class RuntimeArchitectureTests(unittest.TestCase):
         }
         self.assertTrue(forbidden.isdisjoint(RuntimeEngine.__dict__))
 
-    def test_sampling_retry_adds_attempt_without_adding_step(self) -> None:
+    def test_stream_progress_never_replays_the_model_request(self) -> None:
         from eidos_runtime.runtime.engine import RuntimeEngine
 
         class InterruptedThenCompletedModel:
@@ -89,8 +89,10 @@ class RuntimeArchitectureTests(unittest.TestCase):
                 store.connection.execute(
                     "SELECT COUNT(*) FROM model_attempts"
                 ).fetchone()[0],
-                2,
+                1,
             )
+            attempt = store.read_model_attempts(run["id"])[0]
+            self.assertEqual(attempt["retryDecision"]["reason"], "unsafe_stream_progress")
 
     def test_step_snapshot_drives_model_validation_and_execution(self) -> None:
         from eidos_runtime.runtime.engine import RuntimeEngine

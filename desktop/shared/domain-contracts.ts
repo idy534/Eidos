@@ -1,7 +1,5 @@
 import type { ModelId } from "./constants.js";
 import type {
-  CapabilitySnapshot,
-  CapabilityWarning,
   ModelProfile,
   RetryPolicy,
   WireAPI,
@@ -10,8 +8,6 @@ import { IPC } from "./ipc-channels.js";
 
 export type { ModelId };
 export type {
-  CapabilitySnapshot,
-  CapabilityWarning,
   ModelProfile,
   RetryPolicy,
   WireAPI,
@@ -238,16 +234,6 @@ export interface ModelProfileDraft {
   supportsPromptCache?: boolean | undefined;
   requestTimeout?: number | undefined;
   retryPolicy?: Partial<RetryPolicy> | undefined;
-}
-
-export interface ModelTestConnectionResult {
-  success: boolean;
-  profileValid: boolean;
-  endpointIdentity: string;
-  capabilitySnapshot?: CapabilitySnapshot | null;
-  warnings: CapabilityWarning[];
-  error?: { code: string; message: string; retryable: boolean } | null;
-  probeDurationMs: number;
 }
 
 export interface ApprovalDecision {

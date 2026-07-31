@@ -75,7 +75,7 @@ Runtime 模型必须从 `eidos_runtime.models` 选择明确的基础类，而非
 
 Model Profile 的跨语言契约由 `runtime/eidos_runtime/model_gateway/models.py` 中的 Pydantic 模型单向生成：先导出 `contracts/generated/model-profile.schema.json`，再生成 `desktop/shared/generated/runtime/model-profile.ts`。生成物必须提交，禁止手工编辑。
 
-修改 `ModelProfile`、`CapabilitySnapshot`、`RetryPolicy` 或其直接嵌套类型后运行：
+修改 `ModelProfile`、`RetryPolicy` 或其直接嵌套类型后运行：
 
 ```bash
 pnpm generate:contracts:model-profile

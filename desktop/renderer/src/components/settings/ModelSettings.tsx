@@ -5,7 +5,6 @@ import type {
   ModelProfile,
   ModelProfileDraft,
   ModelStatus,
-  ModelTestConnectionResult,
   WireAPI,
 } from "../../contracts";
 import type { SettingsPendingAction } from "./settings-types";
@@ -50,7 +49,6 @@ export function ModelSettings({
   });
   const [profileKey, setProfileKey] = useState("");
   const [profileBusy, setProfileBusy] = useState(false);
-  const [probeResults, setProbeResults] = useState<Record<string, ModelTestConnectionResult>>({});
 
   async function loadProfiles() {
     if (!window.eidosRuntime.listModelProfiles) return;
@@ -130,19 +128,6 @@ export function ModelSettings({
     });
   }
 
-  async function testProfile(profileId: string) {
-    setProfileBusy(true);
-    try {
-      const result = await window.eidosRuntime.testModelProfile(profileId);
-      setProbeResults((current) => ({ ...current, [profileId]: result }));
-      await loadProfiles();
-    } catch {
-      setLocalError("Test Connection 失败，请查看 Runtime 日志。");
-    } finally {
-      setProfileBusy(false);
-    }
-  }
-
   const isSaving = modelConfiguring;
   const effectiveError = localError ?? modelError;
 
@@ -188,10 +173,9 @@ export function ModelSettings({
 
       <SettingSection
         title="Model Profiles"
-        description="Provider 配置、协议和验证结果彼此独立；任务启动后冻结本次 Profile 与 Capability Snapshot。"
+        description="Profile 保存后即可使用其声明能力；任务启动后冻结本次 Profile 与 Capability Snapshot。"
       >
         {profiles.map((profile) => {
-          const result = probeResults[profile.id];
           return (
             <SettingRow
               key={profile.id}
@@ -204,14 +188,8 @@ export function ModelSettings({
               description={`${profile.provider} · ${profile.wireApi}`}
               action={
                 <div className="model-row-badges">
-                  <StatusBadge tone={result?.success ? "success" : "neutral"}>
-                    {result?.success ? "Verified" : "Unknown"}
-                  </StatusBadge>
                   <Button size="small" variant="secondary" disabled={profileBusy} onClick={() => editProfile(profile)}>
                     编辑
-                  </Button>
-                  <Button size="small" variant="secondary" disabled={profileBusy} onClick={() => void testProfile(profile.id)}>
-                    Test Connection
                   </Button>
                   <Button
                     size="small"
@@ -225,16 +203,11 @@ export function ModelSettings({
               }
             >
               <p className="setting-row-description">
-                Declared: Tools {profile.supportsTools === true ? "Yes" : profile.supportsTools === false ? "No" : "Unknown"}
-                {" · "}Structured Output {profile.supportsStructuredOutput === true ? "Yes" : profile.supportsStructuredOutput === false ? "No" : "Unknown"}
+                Tools: {profile.supportsTools === true ? "Enabled" : profile.supportsTools === false ? "Disabled" : "Not declared"}
+                {" · "}Structured Output: {profile.supportsStructuredOutput === true ? "Enabled" : profile.supportsStructuredOutput === false ? "Disabled" : "Not declared"}
+                {" · "}Context Window: {profile.contextWindow ?? "Not declared"}
+                {" · "}Max Output Tokens: {profile.maxOutputTokens ?? "Not declared"}
               </p>
-              {result?.capabilitySnapshot && (
-                <p className="setting-row-description">
-                  Verified: Tools {result.capabilitySnapshot.supportsTools ? "Supported" : "Unsupported"}
-                  {" · "}Structured Output {result.capabilitySnapshot.supportsStructuredOutput ? "Supported" : "Unsupported"}
-                </p>
-              )}
-              {result?.error && <p role="alert">{result.error.code}: {result.error.message}</p>}
             </SettingRow>
           );
         })}

@@ -47,7 +47,7 @@ updated_at
 
 ### 1.2 显式能力探测
 
-`Test Connection` 是用户显式触发的 Model Profile 操作，不创建 Session、Message、Run、Step 或 ToolCall：
+Model Profile 保存和能力解析是纯本地操作，不创建 Session、Message、Run、Step 或 ToolCall：
 
 1. Gateway 只使用 Profile 配置、固定的 Eidos probe system/user 文本和固定无副作用 probe tool schema 构造请求。Probe schema 覆盖 `Eidos Tool Schema Dialect v1` 的所有允许结构/关键字，但不包含真实工具数据。
 2. 请求不得读取或携带用户任务、Session 消息、Workspace、Artifact、Timeline 或 ToolResult 内容。
@@ -107,12 +107,12 @@ Profile 只有在未 Archive、当前 `configuration_hash`、Gateway contract ve
 - `parameters_json` 使用标准 JSON，UTF-8 编码后最大 32 KiB、最大嵌套深度 8、容器成员合计最大 256；禁止 NaN、Infinity、二进制值和敏感内容。
 - Runtime 保留并拒绝用户提供 `model`、`messages|input|instructions`、`tools`、`tool_choice`、`parallel_tool_calls`、`stream`、`stream_options`、`store`、`previous_response_id`、`conversation|conversation_id|thread|thread_id`、`max_output_tokens`、`max_tokens`、`max_completion_tokens`、认证/Header、URL、代理、TLS 和其他传输层字段。
 - 其他字段原样透传并纳入 `configuration_hash`；Runtime 构造核心请求后再合并扩展字段，遇到保留键整次返回 `model_profile_reserved_parameter`。
-- Test Connection 必须使用 Profile 的实际扩展参数。Provider 确定性拒绝参数时 snapshot 为 failed，错误分类为 `model_invalid_request`。
+- 真实 Model Attempt 使用冻结 Profile 的实际扩展参数。Provider 确定性拒绝参数时映射为 `model_invalid_request`，不回写 Profile 声明。
 
 ### 1.5 输出字段协商
 
 - Responses 固定发送 `max_output_tokens=request_max_output_tokens`。
-- Chat 在 Test Connection 中先使用 `max_completion_tokens`。只有 Provider 明确返回该字段未知/不支持的确定性错误时，才以相同固定 probe 尝试 `max_tokens`；认证、网络、429、5xx、timeout 或含糊 invalid request 不触发切换。
+- Chat 的输出 token 参数由 Wire API 与静态 Profile/Preset 配置决定；认证、网络、429、5xx、timeout 或 invalid request 由真实请求的既有错误映射处理。
 - 两者都拒绝时探测失败 `model_output_limit_parameter_unsupported`；两者都接受时固定选择 `max_completion_tokens`。
 - `output_token_parameter` 固化到 capability/Run snapshot；正常 Run 只使用该字段。后来被拒绝时是 `model_capability_drift`，不得运行时尝试另一字段。
 
@@ -157,7 +157,7 @@ usage 必须包含非负整数 `input_tokens,output_tokens,total_tokens` 且 `to
 
 - 每个 Step 从 Eidos 本地 Timeline/Context Builder 重建完整语义输入，不依赖 Provider history。Provider response ID 只写 Attempt 审计字段。
 - Responses ToolResult 编码为 `function_call_output.call_id=provider_call_id`；Chat 编码为 `role=tool,tool_call_id=provider_call_id`。相应完整 assistant ToolCall item/message 必须在本地上下文中先于结果。
-- HTTP 连接或 SSE 流只承载传输，不持有不可替代语义状态。Provider 必须依赖服务端会话才能完成 ToolResult continuation 时，Test Connection 失败 `model_stateless_mode_unsupported`。
+- HTTP 连接或 SSE 流只承载传输，不持有不可替代语义状态。Provider 必须依赖服务端会话才能完成 ToolResult continuation 时，真实 Model Attempt 返回 `model_stateless_mode_unsupported`。
 
 ### 2.3 HTTP/SSE 传输
 
@@ -333,7 +333,6 @@ estimated_input_tokens <= usable_input_budget
 
 - 普通 Agent Step 和协议纠正 Step：Run 快照中的 `profile.max_output_tokens`。
 - Finalization：`min(profile.max_output_tokens, 4_096)`。
-- Test Connection 短探测：`min(profile.max_output_tokens, 512)`。
 
 同一逻辑请求的所有重放保持相同值，每个 ModelAttempt 保存实际值。Provider 元数据或响应不得静默覆盖。
 

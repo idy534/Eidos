@@ -37,7 +37,6 @@ export const IPC = {
   MODEL_PROFILE_CREATE: "model-profile:create",
   MODEL_PROFILE_UPDATE: "model-profile:update",
   MODEL_PROFILE_DELETE: "model-profile:delete",
-  MODEL_PROFILE_TEST: "model-profile:test",
 
   // Plugin
   PLUGIN_LIST: "plugin:list",

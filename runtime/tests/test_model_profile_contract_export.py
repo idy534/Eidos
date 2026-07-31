@@ -32,7 +32,8 @@ def test_model_profile_contract_schema_uses_wire_aliases_and_closed_models(
     assert schema["$comment"] == (
         "Generated from Eidos Runtime Pydantic models. Do not edit manually."
     )
-    assert {"ModelProfile", "CapabilitySnapshot", "RetryPolicy"} <= set(definitions)
+    assert {"ModelProfile", "RetryPolicy"} <= set(definitions)
+    assert "CapabilitySnapshot" not in definitions
     assert "supportsToolCall" not in profile["properties"]
     assert "supportsTools" in profile["properties"]
     assert "authReference" in profile["properties"]

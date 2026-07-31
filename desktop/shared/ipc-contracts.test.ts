@@ -17,6 +17,10 @@ type WindowEidosRuntimeMatches = TestWindow["eidosRuntime"] extends EidosRuntime
   : false;
 
 const _assertWindowApiMatches: WindowEidosRuntimeMatches = true;
+type TestConnectionIsNotExposed = "testModelProfile" extends keyof EidosRuntimeAPI
+  ? true
+  : false;
+const _assertTestConnectionIsNotExposed: TestConnectionIsNotExposed = false;
 
 void test("IPC channel object provides central authoritative channels", () => {
   assert.equal(IPC.RUNTIME_GET_STATUS, "runtime:get-status");
@@ -26,6 +30,7 @@ void test("IPC channel object provides central authoritative channels", () => {
   assert.equal(IPC.APPROVAL_RESPOND, "approval:respond");
   assert.equal(IPC.APP_NEW_TASK, "app:new-task");
   assert.equal(IPC.APP_OPEN_WORKSPACE, "app:open-workspace");
+  assert.equal("MODEL_PROFILE_TEST" in IPC, false);
 });
 
 void test("Shared constants provide authoritative limits and model validation", () => {

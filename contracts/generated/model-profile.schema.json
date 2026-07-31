@@ -3,171 +3,6 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
   "definitions": {
-    "CapabilityProbeSource": {
-      "enum": [
-        "provider_metadata",
-        "active_probe",
-        "built_in_preset",
-        "user_declaration",
-        "conservative_default"
-      ],
-      "title": "CapabilityProbeSource",
-      "type": "string"
-    },
-    "CapabilitySnapshot": {
-      "additionalProperties": false,
-      "properties": {
-        "authenticated": {
-          "type": "boolean"
-        },
-        "contextWindow": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "id": {
-          "type": "string"
-        },
-        "maxOutputTokens": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "modelId": {
-          "type": "string"
-        },
-        "probeSource": {
-          "$ref": "#/definitions/CapabilityProbeSource"
-        },
-        "probeVersion": {
-          "type": "string"
-        },
-        "probedAt": {
-          "format": "date-time",
-          "type": "string"
-        },
-        "profileId": {
-          "type": "string"
-        },
-        "provider": {
-          "type": "string"
-        },
-        "reachable": {
-          "type": "boolean"
-        },
-        "reasoningMode": {
-          "$ref": "#/definitions/ReasoningMode"
-        },
-        "schemaVersion": {
-          "default": 1,
-          "type": "integer"
-        },
-        "sources": {
-          "additionalProperties": {
-            "$ref": "#/definitions/CapabilityProbeSource"
-          },
-          "type": "object"
-        },
-        "supportedReasoningEfforts": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/ReasoningEffort"
-          },
-          "type": "array"
-        },
-        "supportsImages": {
-          "type": "boolean"
-        },
-        "supportsParallelTools": {
-          "type": "boolean"
-        },
-        "supportsPromptCache": {
-          "type": "boolean"
-        },
-        "supportsStructuredOutput": {
-          "type": "boolean"
-        },
-        "supportsTools": {
-          "type": "boolean"
-        },
-        "warnings": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/CapabilityWarning"
-          },
-          "type": "array"
-        },
-        "wireApi": {
-          "$ref": "#/definitions/WireAPI"
-        }
-      },
-      "required": [
-        "id",
-        "profileId",
-        "provider",
-        "wireApi",
-        "modelId",
-        "reachable",
-        "authenticated",
-        "supportsTools",
-        "supportsParallelTools",
-        "supportsImages",
-        "supportsStructuredOutput",
-        "supportsPromptCache",
-        "reasoningMode",
-        "probeSource",
-        "probeVersion",
-        "probedAt"
-      ],
-      "title": "CapabilitySnapshot",
-      "type": "object"
-    },
-    "CapabilityWarning": {
-      "additionalProperties": false,
-      "properties": {
-        "capability": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "code": {
-          "type": "string"
-        },
-        "message": {
-          "type": "string"
-        },
-        "source": {
-          "$ref": "#/definitions/CapabilityProbeSource"
-        }
-      },
-      "required": [
-        "code",
-        "message",
-        "source"
-      ],
-      "title": "CapabilityWarning",
-      "type": "object"
-    },
     "ModelProfile": {
       "additionalProperties": false,
       "properties": {
@@ -391,18 +226,14 @@
       "type": "string"
     }
   },
-  "description": "Schema-only root that retains the Model Profile contract's definitions.",
+  "description": "Schema-only root that retains the Desktop Model Profile contract.",
   "properties": {
-    "capabilitySnapshot": {
-      "$ref": "#/definitions/CapabilitySnapshot"
-    },
     "profile": {
       "$ref": "#/definitions/ModelProfile"
     }
   },
   "required": [
-    "profile",
-    "capabilitySnapshot"
+    "profile"
   ],
   "title": "ModelProfileContractBundle",
   "type": "object"

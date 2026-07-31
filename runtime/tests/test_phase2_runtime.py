@@ -157,7 +157,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.store.complete_current_step(run["id"], "completed")
         self.assertFalse(self.store.side_effects_blocked(run["id"]))
 
-    def test_stream_failure_after_first_delta_retries_without_user_input(self) -> None:
+    def test_stream_failure_after_first_delta_never_replays_request(self) -> None:
         class InterruptedThenCompletedModel:
             calls = 0
             contexts = []
@@ -180,18 +180,15 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
             run["id"], threading.Event()
         )
         completed = self.store.read_run(run["id"])
-        self.assertEqual(completed["status"], "succeeded")
+        self.assertEqual(completed["status"], "failed")
         snapshot = self.store.read_session_snapshot(self.session["id"])
         messages = [
             item for item in snapshot["items"] if item["kind"] == "assistant_message"
         ]
-        progress, final = messages
+        (progress,) = messages
         self.assertEqual(progress["content"], "safe progress")
         self.assertTrue(progress["incomplete"])
-        self.assertEqual(final["content"], "done")
-        self.assertFalse(final.get("incomplete", False))
-        self.assertEqual(model.calls, 2)
-        self.assertEqual(model.contexts[1], model.contexts[0])
+        self.assertEqual(model.calls, 1)
         future_context = ContextBuilder(self.store).build(run["id"]).model_context
         self.assertNotIn(
             "safe progress",
@@ -202,10 +199,12 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.assertEqual(connection.execute("SELECT COUNT(*) FROM steps").fetchone()[0], 1)
         self.assertEqual(
             connection.execute("SELECT COUNT(*) FROM model_attempts").fetchone()[0],
-            2,
+            1,
         )
+        attempt = self.store.read_model_attempts(run["id"])[0]
+        self.assertEqual(attempt["retryDecision"]["reason"], "unsafe_stream_progress")
 
-    def test_stream_failure_before_first_delta_retries_same_model_input(self) -> None:
+    def test_stream_failure_before_first_delta_does_not_replay_unknown_stream_state(self) -> None:
         class InitiallyUnavailableModel:
             calls = 0
             contexts = []
@@ -227,11 +226,12 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
             run["id"], threading.Event()
         )
 
-        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
-        self.assertEqual(model.calls, 2)
-        self.assertEqual(model.contexts[1], model.contexts[0])
+        self.assertEqual(self.store.read_run(run["id"])["status"], "failed")
+        self.assertEqual(model.calls, 1)
+        attempt = self.store.read_model_attempts(run["id"])[0]
+        self.assertEqual(attempt["retryDecision"]["reason"], "unsafe_stream_progress")
 
-    def test_repeated_stream_failures_fail_after_bounded_retries(self) -> None:
+    def test_stream_failure_stops_after_one_unsafe_attempt(self) -> None:
         class AlwaysInterruptedModel:
             calls = 0
 
@@ -252,13 +252,13 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         failed = self.store.read_run(run["id"])
         self.assertEqual(failed["status"], "failed")
         self.assertEqual(failed["errorCode"], "MODEL_STREAM_INTERRUPTED")
-        self.assertEqual(model.calls, 6)
+        self.assertEqual(model.calls, 1)
         connection = self.store.connection
         assert connection is not None
         self.assertEqual(connection.execute("SELECT COUNT(*) FROM steps").fetchone()[0], 1)
         self.assertEqual(
             connection.execute("SELECT COUNT(*) FROM model_attempts").fetchone()[0],
-            6,
+            1,
         )
 
     def test_two_sensitive_model_tool_inputs_finalize_without_tool_or_approval(self) -> None:

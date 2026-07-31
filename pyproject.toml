@@ -3,11 +3,12 @@ name = "eidos-python-runtime"
 version = "0.3.0"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-    "anyio>=4,<5",
-    "httpx>=0.28,<1",
-    "openai>=2,<3",
+    "anyio>=4.14,<5",
+    "httpx>=0.28,<0.29",
+    "openai>=2.51,<3",
     "pydantic==2.12.5",
-    "pydantic-ai-slim[openai]==2.13.0",
+    "pydantic-ai-slim[openai,retries]==2.13.0",
+    "tenacity>=9,<10",
     "mcp>=1.27,<2",
 ]
 
@@ -41,5 +42,3 @@ select = ["E4", "E7", "E9", "F"]
 
 [tool.deptry]
 known_first_party = ["eidos_runtime", "github_utils"]
-# Existing SDK integrations deliberately import their declared extras' transitive APIs.
-per_rule_ignores = { DEP003 = ["anyio", "httpx", "openai"] }

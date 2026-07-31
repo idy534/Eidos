@@ -129,7 +129,7 @@ class ModelPersistenceTests(unittest.TestCase):
         self.assertEqual(attempt["usage"].input_tokens, 5)
         self.assertEqual(attempt["finishReason"], "stop")
 
-    def test_retry_attempts_keep_separate_metadata_and_one_step(self) -> None:
+    def test_stream_progress_does_not_create_a_second_model_attempt(self) -> None:
         class RetryThenSuccess:
             calls = 0
 
@@ -160,14 +160,16 @@ class ModelPersistenceTests(unittest.TestCase):
         )
 
         attempts = self.store.read_model_attempts(run["id"])
-        self.assertEqual(model.calls, 2)
+        self.assertEqual(model.calls, 1)
         self.assertEqual(self.store.read_run(run["id"])["modelStepCount"], 1)
-        self.assertEqual([item["status"] for item in attempts], ["failed", "completed"])
+        self.assertEqual([item["status"] for item in attempts], ["failed"])
         self.assertEqual(attempts[0]["errorCode"], "provider_unavailable")
         self.assertEqual(attempts[0]["httpStatus"], 503)
         self.assertTrue(attempts[0]["hadProgress"])
         self.assertIsNone(attempts[0]["usage"])
-        self.assertEqual(attempts[1]["usage"].input_tokens, 8)
+        self.assertEqual(
+            attempts[0]["retryDecision"]["reason"], "unsafe_stream_progress"
+        )
 
     def test_each_attempt_persists_its_own_usage(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "attempt usage")
@@ -205,6 +207,7 @@ class ModelPersistenceTests(unittest.TestCase):
         self.assertEqual(attempt["status"], "failed")
         self.assertEqual(attempt["finishReason"], "length")
         self.assertEqual(attempt["errorCode"], "length")
+        self.assertEqual(attempt["retryDecision"]["reason"], "invalid_completion")
         self.assertEqual(self.store.read_run(run["id"])["errorCode"], "MODEL_PROTOCOL_ERROR")
 
     def test_sensitive_text_split_across_deltas_never_enters_sqlite(self) -> None:
@@ -225,6 +228,7 @@ class ModelPersistenceTests(unittest.TestCase):
         attempt = self.store.read_model_attempts(run["id"])[0]
         self.assertEqual(attempt["status"], "failed")
         self.assertEqual(attempt["errorCode"], "sensitive_scan_failed")
+        self.assertEqual(attempt["retryDecision"]["reason"], "sensitive_scan_failed")
 
 
 

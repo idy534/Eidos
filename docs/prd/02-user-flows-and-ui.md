@@ -79,11 +79,11 @@ Session 中的模型正文按 CommonMark Markdown 与 GFM 表格展示，至少�
 - 用户可在开始前切换并确认本次任务使用的模型；首个 Run 创建后模型锁定，后续 Segment、恢复和重试继续使用该 Run 的模型快照，不在执行中切换。
 - 模型列表为空或没有可用模型时禁用“开始”，并引导用户从左下角齿轮进入模型配置。
 - 创建 Profile 只保存 OpenAI-compatible 连接配置和显式 `responses|chat_completions` wire API，不会自动使其可用于 Session。
-- 用户必须显式执行 Test Connection；探测不携带用户任务、Session 消息、Workspace 内容或 Artifact 正文。
+- 保存 Profile 不发送连接测试或模型请求；网络与认证仅在真实 Model Attempt 中验证。
 - 探测必须验证认证、模型存在、streaming、ToolCall 和 usage 契约，并生成版本化 capability snapshot。ToolCall 探测使用一个固定无副作用工具完成受控调用与 ToolResult 续接，不执行真实工具。
 - 只有最近一次能力探测成功且存在有效 snapshot 的 Profile 才能被 Session 选择或用于创建新 Run；失败项显示安全的分类结果，不回显 API Key。
 - Run 始终使用创建时固化的 Profile 与 capability snapshot。运行期间发现能力漂移时显示结构化模型错误，不静默修改原 Run 或切换 Profile。
-- Snapshot 不按时间自动过期，也不在后台自动探测；连接/协议配置变化、Gateway 契约升级或运行中确认能力漂移时失效，重新使用前必须由用户再次 Test Connection。
+- Snapshot 不按时间自动过期，也不在后台探测；新 Run 总是根据当前 Profile 重新解析声明能力，已启动 Run 保持冻结 snapshot。
 - 用户可以编辑 Profile。名称等展示字段变化不影响 snapshot；连接、认证、参数和上下文上限变化会立即使 Profile 不可选择，既有 Run 不受影响。
 - 用户可以 Archive 和恢复 Profile，但不能物理删除。Archived Profile 不可用于新 Session/Run，历史 Session、Run、Timeline 和 snapshot 保留；恢复后仍需满足有效 snapshot 条件。
 - 每个 Profile 独占 API Key 凭证槽位；保存后不回显明文。替换密钥只影响该 Profile，不存在跨 Profile 共享或选择凭证。
@@ -94,8 +94,8 @@ Session 中的模型正文按 CommonMark Markdown 与 GFM 表格展示，至少�
 - HTTPS 始终校验证书、主机名和系统信任链，不提供忽略证书错误的继续入口。
 - Provider 扩展参数可以透传，但不能覆盖 Runtime 管理的模型、消息、工具、streaming、认证、传输或输出上限字段。
 - `context_window_tokens` 与 `max_output_tokens` 由用户显式填写，Eidos 不按模型名称自动推断；明确的上下文上限不匹配会使 Run 失败并要求修改 Profile 后重新测试。
-- HTTP 请求与 SSE streaming 是唯一模型传输。Test Connection 必须验证 SSE 终态、ToolCall/ToolResult 关联和 usage；不探测或协商 WebSocket。
-- Test Connection 分别展示 usage、ToolCall 分片关联、工具控制/Schema Dialect、无状态 ToolResult 续接和输出 token 字段结果；Chat 只在显式测试中协商兼容字段，Run 不临时试错。
+- HTTP 请求与 SSE streaming 是唯一模型传输。真实 Model Attempt 验证 SSE 终态、ToolCall/ToolResult 关联和 usage；不探测或协商 WebSocket。
+- Profile UI 只展示声明的工具、结构化输出、Context Window、Max Output Tokens 和 Wire API；真实请求错误不自动修改声明能力。
 
 ## 4. Workspace 主流程
 

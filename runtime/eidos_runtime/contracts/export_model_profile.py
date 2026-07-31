@@ -7,7 +7,7 @@ from typing import Sequence
 
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaMode
 
-from eidos_runtime.model_gateway.models import CapabilitySnapshot, ModelProfile
+from eidos_runtime.model_gateway.models import ModelProfile
 from eidos_runtime.models import EidosFrozenStrictModel
 
 
@@ -23,10 +23,9 @@ DEFAULT_OUTPUT = (
 
 
 class ModelProfileContractBundle(EidosFrozenStrictModel):
-    """Schema-only root that retains the Model Profile contract's definitions."""
+    """Schema-only root that retains the Desktop Model Profile contract."""
 
     profile: ModelProfile
-    capability_snapshot: CapabilitySnapshot
 
 
 class Draft7ModelProfileSchema(GenerateJsonSchema):

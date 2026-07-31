@@ -4,7 +4,7 @@ R2 separates mutable model setup from immutable Run execution:
 
 ```text
 ModelProfile (declared candidate)
-  + CapabilitySnapshot (probed, conservative)
+  -> CapabilitySnapshot (locally resolved declaration)
   -> RunModelSnapshot (immutable)
   -> ModelGatewayLease
   -> ModelAttempt
@@ -14,39 +14,49 @@ ModelProfile (declared candidate)
 authentication reference, declared limits/capabilities, timeout and retry
 policy. Declarations are never presented as verified capability.
 
-`CapabilityProbe` resolves the authentication reference, sends a bounded
-provider-native request, and actively probes declared tool and structured
-output support. Unknown capabilities remain false and carry warnings.
-Successful snapshots are immutable rows separate from profiles.
+Eidos does not actively probe model capabilities. A pure local resolver applies
+explicit user declarations first, then static provider preset values, then
+conservative defaults. It records the source for every resolved capability and
+never guesses context-window or maximum-output limits. A local snapshot's
+legacy `reachable` and `authenticated` fields are always `false`: they do not
+claim network reachability or credential validation.
 
-Provider and wire protocol are independent registry dimensions:
+Network reachability, authentication, permission, rate limiting and provider
+compatibility are evaluated only by the first real `ModelAttempt`. Its existing
+safe Model Error mapping reports the result without changing the Profile's
+declared capabilities.
 
-- providers: OpenAI and OpenAI-compatible;
-- wires: OpenAI Responses and OpenAI Chat Completions;
-- presets: OpenAI, DeepSeek, Volcengine Ark, MiniMax, Moonshot,
-  Qwen and custom OpenAI-compatible.
+Eidos persists `ModelProfile` and `RunModelSnapshot`, then directly constructs
+a Pydantic AI Provider and Model from that frozen configuration. `WireAPI`
+selects `OpenAIResponsesModel` or `OpenAIChatModel`; Pydantic AI supplies the
+corresponding request profile, protocol encoding and stream assembly. OpenAI,
+DeepSeek, Moonshot and Qwen use their available Pydantic AI providers with the
+Eidos-created OpenAI client. Volcengine Ark, MiniMax and custom compatible
+endpoints use `OpenAIProvider` with that same client.
 
-Pydantic AI's public Direct Model API performs protocol encoding and stream
-assembly. It never executes Eidos tools. Eidos retains conversation progress,
-tool execution, approval, cancellation, sensitive scanning, SQLite events and
-Run lifecycle authority. Provider SDK retries are disabled.
+The Eidos-created `AsyncOpenAI` client remains authoritative for the resolved
+secret, base URL, timeouts and `max_retries=0`. Its injected `httpx.AsyncClient`
+uses Pydantic AI's public `AsyncTenacityTransport`; this is the only HTTP retry
+executor. Pydantic AI never executes Eidos tools; Eidos retains conversation
+progress, tool execution, approval, cancellation, sensitive scanning, SQLite
+events and Run lifecycle authority.
 
 ```mermaid
 sequenceDiagram
     participant Loop as Runtime Loop
     participant Gateway as ModelGateway
-    participant Provider as ProviderAdapter
-    participant Wire as WireAdapter / Pydantic AI
+    participant Pydantic as Pydantic AI Provider + Model
+    participant Retry as AsyncTenacityTransport
     participant API as Provider HTTP API
     participant Tools as Tool Runtime
     participant DB as SQLite
 
     Loop->>Gateway: acquire_lease(RunModelSnapshot)
-    Gateway->>Provider: resolve provider and auth
-    Gateway->>Wire: resolve frozen wire client
-    Wire->>API: streamed request
-    API-->>Wire: provider-native stream
-    Wire-->>Loop: Eidos model response/deltas
+    Gateway->>Pydantic: construct from frozen profile and Eidos client
+    Pydantic->>Retry: streamed request
+    Retry->>API: HTTP request (bounded retry before stream)
+    API-->>Pydantic: provider-native stream
+    Pydantic-->>Loop: Eidos model response/deltas
     Loop->>Tools: normalized tool calls
     Loop->>DB: terminal ModelAttempt metadata
     Loop->>Gateway: close lease
@@ -54,18 +64,27 @@ sequenceDiagram
 
 ## Retry and cancellation
 
-Retries occur at the Eidos ModelAttempt boundary. Provider, base URL, model,
-wire protocol, prompts, context, tool set, capability snapshot, reasoning and
-output policy remain frozen. Transient transport, timeout, overload and rate
-limit failures may retry within the profile budget. Authentication,
-permission, model-not-found, invalid request, context exceeded, capability
-rejection and cancellation do not retry. A completed tool call or committed
-tool result makes automatic retry unsafe.
+`RetryPolicy.max_attempts` is the total number of HTTP requests permitted in
+one logical Model Attempt, including the first request. `AsyncTenacityTransport`
+uses Tenacity's bounded exponential fallback and `Retry-After` handling for
+408, 425, 429, 500, 502, 503 and 504 plus explicit HTTPX connection, timeout,
+read/write and protocol failures. Other 4xx responses reach the existing model
+error mapper without retry. OpenAI SDK retry stays disabled.
 
-Renderer cancellation reaches the active Run worker and public provider stream
-cancel operation. Cancellation is persisted as cancellation and never becomes
-a generic retryable provider error. Closing a Run lease closes its SDK client,
-HTTP streams and dedicated model loop deterministically.
+Eidos owns the retry classification, the frozen profile budget, cancellation
+and the safety boundary. Transport sub-attempts stay inside one
+`SamplingRuntime.sample` and never create another SQLite `model_attempt` row.
+The request-scoped tracker projects the final transport retry count and safe
+diagnostics into that one row. Once streaming consumption has begun, any text
+is visible, a Tool Call is complete or a Tool Result is committed, Eidos does
+not replay the request. Mid-stream resume/replay is not part of B3, and neither
+is a Model Event Loop migration.
+
+Renderer cancellation reaches both the active provider stream and the
+request-scoped Tenacity sleep. Cancellation is persisted as cancellation and
+never becomes a generic retryable provider error. Closing a Run lease closes
+the SDK client and its injected HTTP client exactly once before closing the
+dedicated model loop.
 
 ## Persistence and secrets
 
@@ -94,8 +113,6 @@ The Runtime exposes:
 - `model_profile/create`
 - `model_profile/update`
 - `model_profile/delete`
-- `model_profile/test_connection`
-- `model_profile/get_capability_snapshot`
 - `model_profile/list_presets`
 
 All results are versioned Eidos DTOs. Provider-native bodies and exceptions do
@@ -103,8 +120,9 @@ not cross the Runtime boundary.
 
 ## Adding a provider
 
-Reuse an existing wire adapter whenever the provider implements that protocol.
-Add a preset for base URL and compatibility hints, then register the provider
-adapter only if authentication, errors, usage or provider metadata differ.
-Add a new wire adapter only for a genuinely different request/stream protocol,
-and run the shared adapter/probe contract suite.
+Add a preset for product defaults and map it directly to a locked Pydantic AI
+provider only when that provider accepts the Eidos-resolved key, preserves the
+configured base URL and has deterministic client ownership. Otherwise use
+`OpenAIProvider` with the Eidos-created `AsyncOpenAI` client for compatible
+endpoints. A new request wire requires a separate focused change that maps a
+new `WireAPI` value to a Pydantic AI model class.

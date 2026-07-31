@@ -31,14 +31,12 @@ from eidos_runtime.model.pydantic_ai_client import (
     ModelFactoryCloseError,
 )
 from eidos_runtime.model_gateway.auth import ModelSecretError, ModelSecretStore
-from eidos_runtime.model_gateway.capability import CapabilityProbe
+from eidos_runtime.model_gateway.capabilities import resolve_model_capabilities
 from eidos_runtime.model_gateway.gateway import (
     ModelGateway,
     legacy_profile_snapshot,
 )
 from eidos_runtime.model_gateway.models import (
-    CapabilityProbeSource,
-    CapabilitySnapshot,
     ModelProfile,
     ReasoningEffort,
     ReasoningMode,
@@ -321,7 +319,6 @@ class RuntimeServer:
         self.model_factory: ModelClientFactory | None = None
         self.model_secrets = ModelSecretStore(data_directory)
         self.model_gateway: ModelGateway | None = None
-        self.capability_probe = CapabilityProbe()
         self.output_lock = threading.RLock()
         self.shell_available = False
         self.sensitive: SensitiveScanner | None = None
@@ -449,12 +446,6 @@ class RuntimeServer:
             return
         if method == "model_profile/delete":
             self.delete_model_profile(request_id, params)
-            return
-        if method == "model_profile/test_connection":
-            self.test_model_profile(request_id, params)
-            return
-        if method == "model_profile/get_capability_snapshot":
-            self.get_model_capability_snapshot(request_id, params)
             return
         if method == "model_profile/list_presets":
             self.list_model_presets(request_id, params)
@@ -777,21 +768,12 @@ class RuntimeServer:
             requested_profile_id = requested_model_id
         if isinstance(requested_profile_id, str):
             profile = self.store.get_model_profile(requested_profile_id)
-            capability = (
-                self.store.get_model_capability_snapshot(requested_profile_id)
-                if profile is not None else None
-            )
-            if (
-                profile is None
-                or capability is None
-                or not capability.reachable
-                or not capability.authenticated
-            ):
+            if profile is None or not self._profile_is_selectable(profile):
                 self.send(business_error(request_id, "MODEL_NOT_AVAILABLE"))
                 return
             frozen_model = RunModelSnapshot(
                 profile=profile,
-                capability=capability,
+                capability=resolve_model_capabilities(profile, PRESETS[profile.provider]),
                 frozen_at=datetime.now(UTC),
             )
             requested_model_id = profile.model_id
@@ -964,25 +946,7 @@ class RuntimeServer:
             self.model is not None or self.model_factory is not None
         ))
         profiles = self.store.list_model_profiles()
-        options = [
-            {
-                "id": profile.id,
-                "provider": profile.provider,
-                "displayName": profile.name,
-                "configured": (
-                    snapshot is not None
-                    and snapshot.reachable
-                    and snapshot.authenticated
-                ),
-                "selectable": (
-                    snapshot is not None
-                    and snapshot.reachable
-                    and snapshot.authenticated
-                ),
-            }
-            for profile in profiles
-            for snapshot in [self.store.get_model_capability_snapshot(profile.id)]
-        ]
+        options = [self._model_option(profile) for profile in profiles]
         selectable = next(
             (option["id"] for option in options if option["selectable"]),
             legacy["defaultModelId"],
@@ -991,6 +955,35 @@ class RuntimeServer:
             "models": options + legacy["models"],
             "defaultModelId": selectable,
         }))
+
+    def _model_option(self, profile: ModelProfile) -> dict[str, object]:
+        configured = self._profile_is_configured(profile)
+        return {
+            "id": profile.id,
+            "provider": profile.provider,
+            "displayName": profile.name,
+            "configured": configured,
+            "selectable": configured and self._profile_is_selectable(profile),
+        }
+
+    def _profile_is_configured(self, profile: ModelProfile) -> bool:
+        try:
+            self.model_secrets.resolve(profile.auth_reference)
+        except (ValueError, ModelSecretError):
+            return False
+        return True
+
+    def _profile_is_selectable(self, profile: ModelProfile) -> bool:
+        if not self._profile_is_configured(profile):
+            return False
+        preset = PRESETS.get(profile.provider)
+        if preset is None or not isinstance(profile.wire_api, WireAPI):
+            return False
+        capability = resolve_model_capabilities(profile, preset)
+        return (
+            capability.context_window is not None
+            and capability.max_output_tokens is not None
+        )
 
     def configure_model(self, request_id: str, params: object) -> None:
         if (
@@ -1126,6 +1119,8 @@ class RuntimeServer:
                 else _draft_auth_reference(params["profile"])
             )
             profile = _profile_from_draft(params["profile"], reference)
+            self.model_secrets.resolve(profile.auth_reference)
+            resolve_model_capabilities(profile, PRESETS[profile.provider])
             self.store.create_model_profile(profile)
         except (ValueError, ValidationError, ModelSecretError):
             if reference is not None and isinstance(params.get("apiKey"), str):
@@ -1163,6 +1158,8 @@ class RuntimeServer:
                 reference,
                 existing=existing,
             )
+            self.model_secrets.resolve(profile.auth_reference)
+            resolve_model_capabilities(profile, PRESETS[profile.provider])
             self.store.update_model_profile(profile)
         except (ValueError, ValidationError, ModelSecretError):
             if reference is not None and isinstance(params.get("apiKey"), str):
@@ -1182,43 +1179,6 @@ class RuntimeServer:
             self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
             return
         self.send(response(request_id, {"deletedProfileId": profile_id}))
-
-    def test_model_profile(self, request_id: str, params: object) -> None:
-        profile_id = _profile_id_param(params)
-        if profile_id is None:
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        profile = self.store.get_model_profile(profile_id)
-        if profile is None:
-            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
-            return
-        try:
-            secret = self.model_secrets.resolve(profile.auth_reference)
-            result = self.capability_probe.test_connection(
-                profile, secret, threading.Event()
-            )
-            if result.capability_snapshot is not None:
-                self.store.save_model_capability_snapshot(
-                    result.capability_snapshot
-                )
-        except (ValueError, ModelSecretError):
-            self.send(business_error(request_id, "MODEL_AUTH_REFERENCE_INVALID"))
-            return
-        self.send(response(request_id, _public_model(result)))
-
-    def get_model_capability_snapshot(
-        self, request_id: str, params: object
-    ) -> None:
-        profile_id = _profile_id_param(params)
-        if profile_id is None:
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        snapshot = self.store.get_model_capability_snapshot(profile_id)
-        self.send(response(request_id, {
-            "capabilitySnapshot": (
-                _public_model(snapshot) if snapshot is not None else None
-            )
-        }))
 
     def list_model_presets(self, request_id: str, params: object) -> None:
         if params != {}:
@@ -1668,12 +1628,11 @@ class RuntimeServer:
     def _model_lease_for(self, model_id: str) -> ModelClientLease:
         profile = self.store.get_model_profile(model_id)
         if profile is not None:
-            capability = self.store.get_model_capability_snapshot(profile.id)
-            if capability is None or self.model_gateway is None:
-                raise ModelConfigError("model profile is not verified")
+            if not self._profile_is_selectable(profile) or self.model_gateway is None:
+                raise ModelConfigError("model profile is not available")
             return self.model_gateway.acquire_lease(RunModelSnapshot(
                 profile=profile,
-                capability=capability,
+                capability=resolve_model_capabilities(profile, PRESETS[profile.provider]),
                 frozen_at=datetime.now(UTC),
             ))
         if self.model is not None:
