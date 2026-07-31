@@ -60,6 +60,13 @@ and shared Eidos discovery policy filter every returned path. Hard and
 sensitive directories are also excluded in argv as defense in depth, but argv
 globs and ignore rules are not treated as security authorization.
 
+`apply_patch` delegates Unified Diff structure and metadata parsing to
+`unidiff`. Eidos accepts only one existing-file modification whose headers
+match the authoritative Tool path, rejects Git extensions and unsupported EOF
+markers, verifies every context/removal line exactly, and constructs the full
+candidate before the existing approval, version recheck, atomic commit and
+recovery lifecycle.
+
 Ripgrep stdout, stderr, JSON line size, event count, preview, file size and
 result count are bounded. Deadline, cancellation and the 100-result limit
 terminate and reap the dedicated process group. `scannedBytes` is the sum of

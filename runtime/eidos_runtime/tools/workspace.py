@@ -44,6 +44,10 @@ from eidos_runtime.workspace.search_driver import (
     WorkspaceSearchDriver,
     WorkspaceSearchRequest,
 )
+from eidos_runtime.workspace.unified_diff import (
+    PatchApplyError,
+    apply_strict_single_file_patch,
+)
 from eidos_runtime.tools.registry import (
     ToolProvenance,
     ToolRegistry,
@@ -465,11 +469,14 @@ class ToolExecutor:
                     raise WorkspacePathError("file_unavailable")
                 patch_value = arguments["patch"]
                 assert isinstance(patch_value, str)
-                candidate = _apply_unified_diff(
-                    normalized_path,
-                    existing[0].decode("utf-8", errors="strict"),
-                    patch_value,
-                ).encode("utf-8")
+                try:
+                    candidate = apply_strict_single_file_patch(
+                        path=normalized_path,
+                        original=existing[0].decode("utf-8", errors="strict"),
+                        patch_text=patch_value,
+                    ).encode("utf-8")
+                except PatchApplyError as error:
+                    raise WorkspacePathError(error.code) from None
             if len(candidate) > MAX_FILE_CHANGE_BYTES:
                 raise WorkspacePathError("file_too_large")
             base_content = existing[0] if existing is not None else b""
@@ -1199,63 +1206,6 @@ def _darwin_has_unsupported_file_metadata(descriptor: int) -> bool:
     return ctypes.get_errno() != errno.ENOENT
 
 
-HUNK_HEADER = re.compile(
-    r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?\n?$"
-)
-
-
-def _apply_unified_diff(path: str, original: str, patch: str) -> str:
-    lines = patch.splitlines(keepends=True)
-    if len(lines) < 3:
-        raise WorkspacePathError("invalid_patch")
-    old_header = lines[0].rstrip("\r\n")
-    new_header = lines[1].rstrip("\r\n")
-    if old_header not in {f"--- {path}", f"--- a/{path}"} or new_header not in {
-        f"+++ {path}",
-        f"+++ b/{path}",
-    }:
-        raise WorkspacePathError("invalid_patch")
-    original_lines = original.splitlines(keepends=True)
-    output: list[str] = []
-    source_cursor = 0
-    index = 2
-    saw_hunk = False
-    while index < len(lines):
-        match = HUNK_HEADER.match(lines[index])
-        if match is None:
-            raise WorkspacePathError("invalid_patch")
-        saw_hunk = True
-        old_start = int(match.group(1))
-        old_count = int(match.group(2) or "1")
-        new_count = int(match.group(4) or "1")
-        target_cursor = 0 if old_start == 0 else old_start - 1
-        if target_cursor < source_cursor or target_cursor > len(original_lines):
-            raise WorkspacePathError("patch_context_mismatch")
-        output.extend(original_lines[source_cursor:target_cursor])
-        source_cursor = target_cursor
-        index += 1
-        consumed_old = 0
-        produced_new = 0
-        while index < len(lines) and not lines[index].startswith("@@ "):
-            line = lines[index]
-            if not line or line[0] not in {" ", "+", "-"}:
-                raise WorkspacePathError("invalid_patch")
-            content = line[1:]
-            if line[0] in {" ", "-"}:
-                if source_cursor >= len(original_lines) or original_lines[source_cursor] != content:
-                    raise WorkspacePathError("patch_context_mismatch")
-                source_cursor += 1
-                consumed_old += 1
-            if line[0] in {" ", "+"}:
-                output.append(content)
-                produced_new += 1
-            index += 1
-        if consumed_old != old_count or produced_new != new_count:
-            raise WorkspacePathError("invalid_patch")
-    if not saw_hunk:
-        raise WorkspacePathError("invalid_patch")
-    output.extend(original_lines[source_cursor:])
-    return "".join(output)
 
 
 def _build_approval_diff(

@@ -30,7 +30,7 @@
 - `search_text` 当前仍只支持最大 512 UTF-8 bytes 的单行 Literal、ASCII
   case-insensitive 查询；单文件最大 256 KiB、preview 最大 300 字符、最多返回
   100 个 Match。超时、取消和结果上限都会终止并回收 Ripgrep 进程组。
-- Workspace 变更：`write_file`、`apply_patch`、`delete_file`，均要求审批、版本复检和安全提交。
+- Workspace 变更：`write_file`、`apply_patch`、`delete_file`，均要求审批、版本复检和安全提交。`apply_patch` 使用 `unidiff` 解析结构与 metadata，但仍只接受单个已存在文件的严格 Unified Diff；Eidos 负责拒绝 Git 扩展、精确上下文校验和候选构建。
 - Shell：`run_shell`，要求审批，默认经 macOS Seatbelt 执行并记录有界输出、进程终态和 Workspace 变化。
 - 工具发现：`tool_search`。
 - Skill 管理：`skill_create`、`skill_install`，使用专用 Eidos-state 路径和审批。
