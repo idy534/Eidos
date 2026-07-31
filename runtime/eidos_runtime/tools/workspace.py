@@ -26,6 +26,10 @@ from eidos_runtime.sandbox.workspace_index import (
     WorkspaceIndex,
     WorkspaceIndexIncomplete,
 )
+from eidos_runtime.workspace.discovery_scope import (
+    DiscoveryScopeError,
+    WorkspaceDiscoveryScope,
+)
 from eidos_runtime.tools.registry import (
     ToolProvenance,
     ToolRegistry,
@@ -64,14 +68,15 @@ MAX_DIFF_BYTES = 512 * 1024
 TOOL_DEADLINE_SECONDS = 5.0
 SHELL_PREFLIGHT_DEADLINE_SECONDS = 10.0
 MAX_SHELL_PREFLIGHT_ENTRIES = 250_000
-EXCLUDED_DIRECTORIES = {
+HARD_DISCOVERY_DIRECTORIES = frozenset({
     ".git",
+    ".eidos",
     ".venv",
     "__pycache__",
     "build",
     "dist",
     "node_modules",
-}
+})
 SENSITIVE_DIRECTORIES = {".aws", ".config", ".eidos", ".gnupg", ".kube", ".ssh"}
 SENSITIVE_NAMES = {
     ".git-credentials",
@@ -424,6 +429,8 @@ class ToolExecutor:
             return _error(tool_name, "sensitive_content_rejected", "Sensitive content was withheld")
         except ToolCancelled:
             return _error(tool_name, "canceled", "Tool was canceled")
+        except DiscoveryScopeError as error:
+            return _error(tool_name, error.code, "Workspace discovery ignore file is unavailable")
         except WorkspacePathError as error:
             return _error(tool_name, error.code, "Workspace path is unavailable")
 
@@ -708,6 +715,7 @@ class ToolExecutor:
     def _list_files(
         self, _arguments: dict[str, object], cancel: threading.Event
     ) -> dict[str, object]:
+        scope = WorkspaceDiscoveryScope.load(self.root_fd)
         paths: list[str] = []
         truncated = False
         deadline = time.monotonic() + TOOL_DEADLINE_SECONDS
@@ -738,9 +746,10 @@ class ToolExecutor:
                 if stat.S_ISLNK(metadata.st_mode):
                     continue
                 if stat.S_ISDIR(metadata.st_mode):
-                    if name in EXCLUDED_DIRECTORIES or _is_sensitive_directory(name):
+                    if name in HARD_DISCOVERY_DIRECTORIES or _is_sensitive_directory(name):
                         continue
-                    paths.append(f"{relative}/")
+                    if not scope.is_ignored(relative, is_directory=True):
+                        paths.append(f"{relative}/")
                     if depth < MAX_LIST_DEPTH:
                         child_fd = self._open_directory(directory_fd, name)
                         try:
@@ -748,7 +757,8 @@ class ToolExecutor:
                         finally:
                             os.close(child_fd)
                 elif stat.S_ISREG(metadata.st_mode):
-                    paths.append(relative)
+                    if not scope.is_ignored(relative, is_directory=False):
+                        paths.append(relative)
 
         root_fd = os.dup(self.root_fd)
         try:
@@ -854,6 +864,7 @@ class ToolExecutor:
     def _search_text(
         self, arguments: dict[str, object], cancel: threading.Event
     ) -> dict[str, object]:
+        scope = WorkspaceDiscoveryScope.load(self.root_fd)
         query = arguments["query"]
         assert isinstance(query, str)
         deadline = time.monotonic() + TOOL_DEADLINE_SECONDS
@@ -889,7 +900,7 @@ class ToolExecutor:
                     continue
                 relative = f"{prefix}{name}"
                 if stat.S_ISDIR(metadata.st_mode):
-                    if name in EXCLUDED_DIRECTORIES or _is_sensitive_directory(name):
+                    if name in HARD_DISCOVERY_DIRECTORIES or _is_sensitive_directory(name):
                         continue
                     child_fd = self._open_directory(directory_fd, name)
                     try:
@@ -900,6 +911,8 @@ class ToolExecutor:
                         return
                     continue
                 if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_FILE_BYTES:
+                    continue
+                if scope.is_ignored(relative, is_directory=False):
                     continue
                 if scanned_bytes + metadata.st_size > MAX_SEARCH_BYTES:
                     truncated = True
