@@ -26,34 +26,34 @@ compatibility are evaluated only by the first real `ModelAttempt`. Its existing
 safe Model Error mapping reports the result without changing the Profile's
 declared capabilities.
 
-Provider and wire protocol are independent registry dimensions:
+Eidos persists `ModelProfile` and `RunModelSnapshot`, then directly constructs
+a Pydantic AI Provider and Model from that frozen configuration. `WireAPI`
+selects `OpenAIResponsesModel` or `OpenAIChatModel`; Pydantic AI supplies the
+corresponding request profile, protocol encoding and stream assembly. OpenAI,
+DeepSeek, Moonshot and Qwen use their available Pydantic AI providers with the
+Eidos-created OpenAI client. Volcengine Ark, MiniMax and custom compatible
+endpoints use `OpenAIProvider` with that same client.
 
-- providers: OpenAI and OpenAI-compatible;
-- wires: OpenAI Responses and OpenAI Chat Completions;
-- presets: OpenAI, DeepSeek, Volcengine Ark, MiniMax, Moonshot,
-  Qwen and custom OpenAI-compatible.
-
-Pydantic AI's public Direct Model API performs protocol encoding and stream
-assembly. It never executes Eidos tools. Eidos retains conversation progress,
-tool execution, approval, cancellation, sensitive scanning, SQLite events and
-Run lifecycle authority. Provider SDK retries are disabled.
+The Eidos-created client remains authoritative for the resolved secret, base
+URL, timeouts and `max_retries=0`. No Eidos transport registry is present in
+the request path. Pydantic AI never executes Eidos tools; Eidos retains
+conversation progress, tool execution, approval, cancellation, sensitive
+scanning, SQLite events and Run lifecycle authority.
 
 ```mermaid
 sequenceDiagram
     participant Loop as Runtime Loop
     participant Gateway as ModelGateway
-    participant Provider as ProviderAdapter
-    participant Wire as WireAdapter / Pydantic AI
+    participant Pydantic as Pydantic AI Provider + Model
     participant API as Provider HTTP API
     participant Tools as Tool Runtime
     participant DB as SQLite
 
     Loop->>Gateway: acquire_lease(RunModelSnapshot)
-    Gateway->>Provider: resolve provider and auth
-    Gateway->>Wire: resolve frozen wire client
-    Wire->>API: streamed request
-    API-->>Wire: provider-native stream
-    Wire-->>Loop: Eidos model response/deltas
+    Gateway->>Pydantic: construct from frozen profile and Eidos client
+    Pydantic->>API: streamed request
+    API-->>Pydantic: provider-native stream
+    Pydantic-->>Loop: Eidos model response/deltas
     Loop->>Tools: normalized tool calls
     Loop->>DB: terminal ModelAttempt metadata
     Loop->>Gateway: close lease
@@ -108,8 +108,9 @@ not cross the Runtime boundary.
 
 ## Adding a provider
 
-Reuse an existing wire adapter whenever the provider implements that protocol.
-Add a preset for base URL and compatibility hints, then register the provider
-adapter only if authentication, errors, usage or provider metadata differ.
-Add a new wire adapter only for a genuinely different request/stream protocol,
-and run the shared adapter contract suite.
+Add a preset for product defaults and map it directly to a locked Pydantic AI
+provider only when that provider accepts the Eidos-resolved key, preserves the
+configured base URL and has deterministic client ownership. Otherwise use
+`OpenAIProvider` with the Eidos-created `AsyncOpenAI` client for compatible
+endpoints. A new request wire requires a separate focused change that maps a
+new `WireAPI` value to a Pydantic AI model class.

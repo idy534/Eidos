@@ -58,7 +58,6 @@ def capability(value: ModelProfile) -> CapabilitySnapshot:
         ProviderPreset(
             id=value.provider,
             display_name="Test",
-            provider_adapter_id="openai_compatible",
             default_wire_api=value.wire_api,
             default_base_url=value.base_url,
         ),
@@ -101,7 +100,6 @@ def capability(value: ModelProfile) -> CapabilitySnapshot:
         ProviderPreset(
             id="test",
             display_name="Test",
-            provider_adapter_id="test",
             default_wire_api=WireAPI.OPENAI_CHAT_COMPLETIONS,
             default_base_url="https://api.example.test",
         ),

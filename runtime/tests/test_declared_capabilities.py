@@ -47,7 +47,6 @@ def preset(**updates: object) -> ProviderPreset:
     values: dict[str, object] = {
         "id": "example",
         "display_name": "Example",
-        "provider_adapter_id": "openai_compatible",
         "default_wire_api": WireAPI.OPENAI_CHAT_COMPLETIONS,
         "default_base_url": "https://api.example.test",
         "capability_hints": {
