@@ -325,7 +325,7 @@ class RunSupervisor:
         registered = tuple(
             resource
             for resource in self.resources.active_resources()
-            if resource.kind is not RuntimeResourceKind.MODEL_LOOP
+            if resource.kind is not RuntimeResourceKind.ASYNC_KERNEL
         )
         if (
             self.has_active_workers()

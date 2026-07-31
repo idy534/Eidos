@@ -61,15 +61,15 @@ class ResourceRegistryTests(unittest.TestCase):
     def test_resource_failure_remains_visible_until_closed(self) -> None:
         registry = ResourceRegistry()
         resource = registry.register(
-            RuntimeResourceKind.MODEL_LOOP, owner_id="model-1"
+            RuntimeResourceKind.ASYNC_KERNEL, owner_id="runtime"
         )
 
-        resource.fail("MODEL_SHUTDOWN_TIMEOUT")
+        resource.fail("ASYNC_KERNEL_SHUTDOWN_FAILED")
 
         diagnostic = registry.active_resources()[0]
         self.assertEqual(diagnostic.state, RuntimeResourceState.FAILED)
         self.assertEqual(
-            diagnostic.diagnostic_code, "MODEL_SHUTDOWN_TIMEOUT"
+            diagnostic.diagnostic_code, "ASYNC_KERNEL_SHUTDOWN_FAILED"
         )
         resource.close()
         self.assertEqual(registry.active_resources(), ())

@@ -56,6 +56,10 @@ from eidos_runtime.runtime.supervisor import (
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle
 from eidos_runtime.runtime.events import RuntimeOutputClosedError
 from eidos_runtime.runtime.resource_registry import ResourceRegistryError
+from eidos_runtime.runtime.async_kernel import (
+    AsyncKernelCloseError,
+    RuntimeAsyncKernel,
+)
 from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.sandbox.sensitive import (
     SensitiveContentDenied,
@@ -319,6 +323,7 @@ class RuntimeServer:
         self.model_factory: ModelClientFactory | None = None
         self.model_secrets = ModelSecretStore(data_directory)
         self.model_gateway: ModelGateway | None = None
+        self.async_kernel: RuntimeAsyncKernel | None = None
         self.output_lock = threading.RLock()
         self.shell_available = False
         self.sensitive: SensitiveScanner | None = None
@@ -503,17 +508,31 @@ class RuntimeServer:
                 self.plugins = PluginCatalog(self.store)
                 self.model_config.initialize()
                 self.model_secrets.initialize()
+                self.async_kernel = RuntimeAsyncKernel(
+                    resource_registry=self.supervisor.resources,
+                )
+                self.async_kernel.start()
                 self.model_gateway = ModelGateway(
                     self.model_secrets,
+                    async_kernel=self.async_kernel,
                     resource_registry=self.supervisor.resources,
                 )
                 configured_key = self.model_config.api_key()
                 if self.model is None and configured_key is not None:
                     self.model_factory = ModelClientFactory(
                         configured_key,
+                        async_kernel=self.async_kernel,
                         resource_registry=self.supervisor.resources,
                     )
-        except (StorageError, ModelConfigError, SensitiveScanError, SkillReadError):
+        except (
+            StorageError,
+            ModelConfigError,
+            SensitiveScanError,
+            SkillReadError,
+            OSError,
+            RuntimeError,
+        ):
+            self._close_async_kernel()
             logger.exception("Runtime storage initialization failed")
             self.send(business_error(request_id, "INTERNAL_ERROR"))
             return
@@ -1012,6 +1031,7 @@ class RuntimeServer:
             previous_key = self.model_config.api_key()
             candidate = ModelClientFactory(
                 params["apiKey"],
+                async_kernel=self._required_async_kernel(),
                 resource_registry=self.supervisor.resources,
             )
             if previous_factory is not None:
@@ -1536,6 +1556,7 @@ class RuntimeServer:
             self.supervisor.shutdown()
             self._cleanup_extensions()
             self._close_model_factory()
+            self._close_async_kernel()
             self.store.cancel_active_async_operations()
             self.supervisor.events.deliver_pending()
             if self.store.pending_outbox_count():
@@ -1549,6 +1570,7 @@ class RuntimeServer:
         except (
             RuntimeShutdownTimeout,
             ModelClientInUseError,
+            AsyncKernelCloseError,
             ResourceRegistryError,
         ):
             self.send(business_error(request_id, "RUNTIME_SHUTDOWN_TIMEOUT"))
@@ -1594,6 +1616,7 @@ class RuntimeServer:
             return
         if not self.initialized or self.store.health_state != "ready":
             self._close_model_factory()
+            self._close_async_kernel()
             self.store.close()
             self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
             return
@@ -1601,6 +1624,7 @@ class RuntimeServer:
             self.supervisor.shutdown()
             self._cleanup_extensions()
             self._close_model_factory()
+            self._close_async_kernel()
             self.store.cancel_active_async_operations()
             self.supervisor.events.deliver_pending()
             if self.store.pending_outbox_count():
@@ -1612,6 +1636,7 @@ class RuntimeServer:
             RuntimeShutdownTimeout,
             ModelClientInUseError,
             ModelFactoryCloseError,
+            AsyncKernelCloseError,
             ResourceRegistryError,
         ):
             raise
@@ -1752,6 +1777,19 @@ class RuntimeServer:
             factory.close()
             if self.model_factory is factory:
                 self.model_factory = None
+
+    def _required_async_kernel(self) -> RuntimeAsyncKernel:
+        if self.async_kernel is None:
+            raise ModelConfigError("runtime async kernel is not initialized")
+        return self.async_kernel
+
+    def _close_async_kernel(self) -> None:
+        kernel = self.async_kernel
+        if kernel is None:
+            return
+        kernel.close()
+        if self.async_kernel is kernel:
+            self.async_kernel = None
 
     def _cleanup_extensions(self) -> None:
         if self.plugins is not None:

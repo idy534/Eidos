@@ -15,10 +15,10 @@ from eidos_runtime.model.pydantic_ai_client import (  # noqa: E402
     ModelClientFactory,
     ModelFactoryCloseError,
     ModelFactoryState,
-    _AsyncLoop,
     _ClientEntry,
 )
 from eidos_runtime.protocol.server import RuntimeServer  # noqa: E402
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 
 
 class _ClosingClient:
@@ -33,15 +33,17 @@ class _ClosingClient:
 
 
 class ModelFactoryLifecycleTests(unittest.TestCase):
-    def test_model_loop_is_not_daemon(self) -> None:
-        loop = _AsyncLoop("eidos-model-test")
-        try:
-            self.assertFalse(loop.thread.daemon)
-        finally:
-            loop.close()
+    def setUp(self) -> None:
+        self.kernel = RuntimeAsyncKernel()
+        self.kernel.start()
+
+    def tearDown(self) -> None:
+        self.kernel.close()
 
     def test_factory_close_failure_keeps_failed_resources_visible(self) -> None:
-        factory = ModelClientFactory("sk-valid-key-for-tests")
+        factory = ModelClientFactory(
+            "sk-valid-key-for-tests", async_kernel=self.kernel
+        )
         client = _ClosingClient(failures=1)
         factory._clients[("deepseek", "deepseek-v4-flash")] = _ClientEntry(client)
 
@@ -54,7 +56,9 @@ class ModelFactoryLifecycleTests(unittest.TestCase):
         )
 
     def test_factory_close_failure_is_retryable(self) -> None:
-        factory = ModelClientFactory("sk-valid-key-for-tests")
+        factory = ModelClientFactory(
+            "sk-valid-key-for-tests", async_kernel=self.kernel
+        )
         client = _ClosingClient(failures=1)
         factory._clients[("deepseek", "deepseek-v4-flash")] = _ClientEntry(client)
 
@@ -74,8 +78,11 @@ class ModelFactoryLifecycleTests(unittest.TestCase):
             server.store.initialize()
             server.model_config.initialize()
             server.initialized = True
+            server.async_kernel = self.kernel
             server.model_config.save_api_key("sk-existing-key-for-tests")
-            previous = ModelClientFactory("sk-existing-key-for-tests")
+            previous = ModelClientFactory(
+                "sk-existing-key-for-tests", async_kernel=self.kernel
+            )
             server.model_factory = previous
 
             with (
@@ -113,7 +120,10 @@ class ModelFactoryLifecycleTests(unittest.TestCase):
             server.store.initialize()
             server.model_config.initialize()
             server.initialized = True
-            previous = ModelClientFactory("sk-existing-key-for-tests")
+            server.async_kernel = self.kernel
+            previous = ModelClientFactory(
+                "sk-existing-key-for-tests", async_kernel=self.kernel
+            )
             server.model_factory = previous
 
             with patch.object(

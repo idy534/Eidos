@@ -16,7 +16,7 @@ class ResourceRegistryError(RuntimeError):
 class RuntimeResourceKind(StrEnum):
     RUN_WORKER = "run_worker"
     MANAGED_TASK = "managed_task"
-    MODEL_LOOP = "model_loop"
+    ASYNC_KERNEL = "async_kernel"
     MODEL_LEASE = "model_lease"
     TOOL_EXECUTION = "tool_execution"
     SHELL_PROCESS = "shell_process"

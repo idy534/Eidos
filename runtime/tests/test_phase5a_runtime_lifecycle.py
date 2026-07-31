@@ -33,6 +33,7 @@ from eidos_runtime.runtime.supervisor import (  # noqa: E402
     RuntimeShutdownTimeout,
 )
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle  # noqa: E402
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 
 
 class RuntimeStateConsistencyTests(unittest.TestCase):
@@ -505,7 +506,11 @@ class ModelClientLeaseTests(unittest.TestCase):
             "eidos_runtime.model.pydantic_ai_client.PydanticAIModelClient.deepseek",
             return_value=client,
         ):
-            factory = ModelClientFactory("sk-example-key-for-tests")
+            kernel = RuntimeAsyncKernel()
+            kernel.start()
+            factory = ModelClientFactory(
+                "sk-example-key-for-tests", async_kernel=kernel
+            )
             lease = factory.acquire("deepseek-v4-flash")
             with self.assertRaises(ModelClientInUseError):
                 factory.close()
@@ -513,6 +518,7 @@ class ModelClientLeaseTests(unittest.TestCase):
             lease.close()
             factory.close()
             self.assertTrue(client.closed)
+            kernel.close()
 
     def test_model_lease_kept_during_approval_wait(self) -> None:
         client = _CloseTrackingClient()
@@ -520,12 +526,17 @@ class ModelClientLeaseTests(unittest.TestCase):
             "eidos_runtime.model.pydantic_ai_client.PydanticAIModelClient.deepseek",
             return_value=client,
         ):
-            factory = ModelClientFactory("sk-example-key-for-tests")
+            kernel = RuntimeAsyncKernel()
+            kernel.start()
+            factory = ModelClientFactory(
+                "sk-example-key-for-tests", async_kernel=kernel
+            )
             lease = factory.acquire("deepseek-v4-flash")
             self.assertEqual(factory.active_lease_count, 1)
             self.assertFalse(lease.closed)
             lease.close()
             factory.close()
+            kernel.close()
 
     def test_model_lease_released_after_worker_exit(self) -> None:
         closed = threading.Event()
