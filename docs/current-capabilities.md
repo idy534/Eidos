@@ -63,3 +63,4 @@
 - 业务事件与 Outbox 原子提交，按数据库 event ID 投影通知；发送失败保留待投递事实。
 - 启动时收敛未完成 Run、ToolCall、审批和资源状态，不自动重放可能产生副作用的操作。
 - `ResourceRegistry` 跟踪 Run worker、唯一异步内核、Kernel-owned async task、模型 lease、工具、Shell、MCP、finalization 和异步请求；成功 shutdown 要求资源清空。Kernel-owned task 通过有界 handle 诊断记录 owner、task、状态、deadline 和稳定错误码。
+- Title Generation 与 Plugin Import 等 Managed Task 由 Kernel Task Handle 拥有；现有同步 target 通过 AnyIO worker thread bridge 执行并保留 cooperative cancellation Event，不再创建 Eidos 专用命名线程。

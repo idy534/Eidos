@@ -23,6 +23,12 @@ from eidos_runtime.runtime.contracts import RuntimeCancelled  # noqa: E402
 from eidos_runtime.sandbox.sensitive import SensitiveScanner  # noqa: E402
 from eidos_runtime.runtime.events import RuntimeEvents  # noqa: E402
 from eidos_runtime.runtime.finalizer import RunFinalizer  # noqa: E402
+from eidos_runtime.runtime.async_kernel import (  # noqa: E402
+    AsyncTaskState,
+    RuntimeAsyncKernel,
+)
+from eidos_runtime.runtime.resource_registry import RuntimeResourceKind  # noqa: E402
+from eidos_runtime.runtime.supervisor import RuntimeShutdownTimeout  # noqa: E402
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker  # noqa: E402
 
 
@@ -79,6 +85,11 @@ class AsyncTitleTests(unittest.TestCase):
         self.server.model_config.initialize()
         self.server.sensitive = SensitiveScanner()
         self.server.initialized = True
+        self.server.async_kernel = RuntimeAsyncKernel(
+            resource_registry=self.server.supervisor.resources
+        )
+        self.server.async_kernel.start()
+        self.server.supervisor.bind_async_kernel(self.server.async_kernel)
         self.server.supervisor.engine_factory = _CancelEngine
         self.session = self.server.store.create_session(str(self.workspace))
 
@@ -104,6 +115,22 @@ class AsyncTitleTests(unittest.TestCase):
         self.assertIn("result", message)
         self.assertLess(elapsed, 0.1)
         self.assertTrue(self.model.entered.wait(1))
+
+    def test_title_task_is_kernel_owned_without_a_dedicated_thread(self) -> None:
+        self._start()
+        self.assertTrue(self.model.entered.wait(1))
+
+        kinds = {
+            resource.kind
+            for resource in self.server.supervisor.resources.active_resources()
+        }
+        self.assertIn(RuntimeResourceKind.MANAGED_TASK, kinds)
+        self.assertIn(RuntimeResourceKind.ASYNC_REQUEST, kinds)
+        self.assertIn(RuntimeResourceKind.ASYNC_TASK, kinds)
+        self.assertFalse(any(
+            thread.name.startswith(("eidos-title-", "eidos-plugin-import-"))
+            for thread in threading.enumerate()
+        ))
 
     def test_health_responds_while_title_generation_is_running(self) -> None:
         self._start()
@@ -184,6 +211,58 @@ class AsyncTitleTests(unittest.TestCase):
         self.assertEqual(health["result"]["state"], "ready")
         plugins.release.set()
         self.assertTrue(self.server.supervisor.wait_managed_tasks(1))
+
+    def test_managed_task_exception_is_owned_by_kernel_handle(self) -> None:
+        def fail(_cancel: threading.Event) -> None:
+            raise ValueError("managed failure")
+
+        self.assertTrue(self.server.supervisor.start_managed_task("title", fail))
+        self.assertTrue(self.server.supervisor.wait_managed_tasks(1))
+
+        diagnostic = self.server.async_kernel.recent_task_diagnostics()[-1]
+        self.assertTrue(diagnostic.owner_id.startswith("managed:"))
+        self.assertEqual(diagnostic.state, AsyncTaskState.FAILED)
+        self.assertEqual(diagnostic.diagnostic_code, "ASYNC_TASK_FAILED")
+
+    def test_reconfiguration_rejects_active_managed_task(self) -> None:
+        entered = threading.Event()
+        release = threading.Event()
+
+        def block(_cancel: threading.Event) -> None:
+            entered.set()
+            release.wait(1)
+
+        self.assertTrue(self.server.supervisor.start_managed_task("title", block))
+        self.assertTrue(entered.wait(1))
+        self.assertFalse(self.server.supervisor.begin_reconfiguration())
+        release.set()
+        self.assertTrue(self.server.supervisor.wait_managed_tasks(1))
+
+    def test_noncooperative_managed_task_keeps_truthful_shutdown_timeout(self) -> None:
+        entered = threading.Event()
+        release = threading.Event()
+
+        def block(_cancel: threading.Event) -> None:
+            entered.set()
+            release.wait(1)
+
+        self.server.supervisor.shutdown_timeout = 0.01
+        self.assertTrue(self.server.supervisor.start_managed_task("title", block))
+        self.assertTrue(entered.wait(1))
+        try:
+            with self.assertRaisesRegex(
+                RuntimeShutdownTimeout, "RUNTIME_SHUTDOWN_TIMEOUT"
+            ):
+                self.server.supervisor.shutdown()
+            kinds = {
+                resource.kind
+                for resource in self.server.supervisor.resources.active_resources()
+            }
+            self.assertIn(RuntimeResourceKind.MANAGED_TASK, kinds)
+            self.assertIn(RuntimeResourceKind.ASYNC_TASK, kinds)
+        finally:
+            release.set()
+            self.assertTrue(self.server.supervisor.wait_managed_tasks(1))
 
 
 class _FailingFinalizationModel(ScriptedModel):

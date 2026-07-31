@@ -8,6 +8,7 @@ import time
 import uuid
 from typing import Callable
 
+import anyio
 from pydantic import ValidationError
 
 from eidos_runtime.db.storage import (
@@ -19,7 +20,11 @@ from eidos_runtime.model.client import ModelClient
 from eidos_runtime.model.pydantic_ai_client import ModelClientLease
 from eidos_runtime.protocol.schemas import ApprovalDecisionDto
 from eidos_runtime.runtime.approval import ApprovalDecision
-from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
+from eidos_runtime.runtime.async_kernel import (
+    AsyncKernelClosedError,
+    RuntimeAsyncKernel,
+    RuntimeAsyncTask,
+)
 from eidos_runtime.runtime.contracts import RuntimeCancelled
 from eidos_runtime.runtime.engine import RuntimeEngine
 from eidos_runtime.runtime.events import RuntimeEvents
@@ -87,9 +92,10 @@ class PendingApproval:
 class ManagedTask:
     task_id: str
     kind: str
-    thread: threading.Thread
     cancellation: threading.Event
+    async_task_handle: RuntimeAsyncTask[None]
     resource: RuntimeResource
+    async_request_resource: RuntimeResource | None
 
 
 @dataclass(frozen=True)
@@ -426,12 +432,19 @@ class RunSupervisor:
     ) -> bool:
         task_id = str(uuid.uuid4())
         cancellation = threading.Event()
+        registered = threading.Event()
 
-        def run() -> None:
+        async def run() -> None:
+            while not registered.is_set():
+                await anyio.sleep(0)
             try:
-                target(cancellation)
+                await anyio.to_thread.run_sync(target, cancellation)
             except Exception:
+                resource.fail("MANAGED_TASK_FAILED")
+                if async_resource is not None:
+                    async_resource.fail("MANAGED_TASK_FAILED")
                 logger.exception("Runtime managed task failed: %s", kind)
+                raise
             finally:
                 if async_resource is not None:
                     async_resource.close()
@@ -439,11 +452,6 @@ class RunSupervisor:
                 with self.lock:
                     self._managed_tasks.pop(task_id, None)
 
-        thread = threading.Thread(
-            target=run,
-            name=f"eidos-{kind}-{task_id}",
-            daemon=False,
-        )
         resource = self.resources.register(
             RuntimeResourceKind.MANAGED_TASK,
             owner_id=task_id,
@@ -462,24 +470,41 @@ class RunSupervisor:
             if (
                 self.lifecycle is not RuntimeLifecycle.RUNNING
                 or self.control_state is not RuntimeControlState.RUNNING
+                or self._async_kernel is None
             ):
                 if async_resource is not None:
                     async_resource.close()
                 resource.close()
                 return False
+            try:
+                handle = self._async_kernel.start_task(
+                    run,
+                    owner_id=f"managed:{task_id}",
+                )
+            except (AsyncKernelClosedError, RuntimeError):
+                if async_resource is not None:
+                    async_resource.close()
+                resource.close()
+                return False
             self._managed_tasks[task_id] = ManagedTask(
-                task_id, kind, thread, cancellation, resource
+                task_id,
+                kind,
+                cancellation,
+                handle,
+                resource,
+                async_resource,
             )
-            thread.start()
             resource.start()
             if async_resource is not None:
                 async_resource.start()
+            registered.set()
         return True
 
     def has_active_managed_tasks(self) -> bool:
         with self.lock:
             return any(
-                task.thread.is_alive() for task in self._managed_tasks.values()
+                not task.async_task_handle.done()
+                for task in self._managed_tasks.values()
             )
 
     def wait_managed_tasks(self, timeout: float) -> bool:
@@ -487,7 +512,9 @@ class RunSupervisor:
         with self.lock:
             tasks = tuple(self._managed_tasks.values())
         for task in tasks:
-            task.thread.join(timeout=max(0.0, deadline - time.monotonic()))
+            task.async_task_handle.wait(
+                max(0.0, deadline - time.monotonic())
+            )
         return not self.has_active_managed_tasks()
 
     def begin_reconfiguration(self) -> bool:
@@ -505,7 +532,7 @@ class RunSupervisor:
                     for handle in self._handles.values()
                 )
                 or any(
-                    task.thread.is_alive()
+                    not task.async_task_handle.done()
                     for task in self._managed_tasks.values()
                 )
             ):
