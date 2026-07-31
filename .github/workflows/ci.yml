@@ -29,7 +29,8 @@ jobs:
           node-version: "22"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: uv sync --locked
+      - run: uv sync --frozen
+      - run: pnpm check:contracts:model-profile
       - run: pnpm lint:python
       - run: pnpm deps:python
       - run: pnpm audit:python
@@ -37,3 +38,4 @@ jobs:
       - run: pnpm build
       - run: pnpm test:seatbelt-native
       - run: pnpm test:electron-smoke
+      - run: git diff --check

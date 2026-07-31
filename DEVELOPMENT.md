@@ -71,6 +71,19 @@ Runtime 模型必须从 `eidos_runtime.models` 选择明确的基础类，而非
 
 跨 JSON-RPC 或 Renderer 的整数只有在 JavaScript 安全范围已是既有契约时才使用 `JsonSafeInt`；不要批量替换普通 `int`。基础类集中保持 alias、未知字段和默认值验证规则，避免各领域模型重复或悄然偏离这些协议边界。
 
+### Model Profile Contract Generation
+
+Model Profile 的跨语言契约由 `runtime/eidos_runtime/model_gateway/models.py` 中的 Pydantic 模型单向生成：先导出 `contracts/generated/model-profile.schema.json`，再生成 `desktop/shared/generated/runtime/model-profile.ts`。生成物必须提交，禁止手工编辑。
+
+修改 `ModelProfile`、`CapabilitySnapshot`、`RetryPolicy` 或其直接嵌套类型后运行：
+
+```bash
+pnpm generate:contracts:model-profile
+pnpm check:contracts:model-profile
+```
+
+第二个命令在临时目录生成并逐字节比较已提交的 JSON Schema 和 TypeScript 文件，不会修改工作区；CI 会执行它以拒绝过期生成物。
+
 验证桌面端可以完整构建：
 
 ```bash
