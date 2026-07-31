@@ -24,6 +24,12 @@
 - 安全只读：`list_files`、`read_file`、`read_file_range`、`search_text`。
 - `list_files` 与 `search_text` 使用 Workspace 根目录的 `.gitignore`，再使用
   `.eidosignore` 过滤普通发现结果；后者可覆盖前者的普通忽略规则。
+- `search_text` 使用 Eidos 随 Runtime 管理并校验 SHA256 的 Ripgrep 15.2.0
+  macOS arm64 二进制；通过固定 argv、`shell=False`、最小环境和 JSON 事件协议执行，
+  不读取用户 `PATH`、Ripgrep Config、嵌套或全局 Ignore，也不在运行时下载。
+- `search_text` 当前仍只支持最大 512 UTF-8 bytes 的单行 Literal、ASCII
+  case-insensitive 查询；单文件最大 256 KiB、preview 最大 300 字符、最多返回
+  100 个 Match。超时、取消和结果上限都会终止并回收 Ripgrep 进程组。
 - Workspace 变更：`write_file`、`apply_patch`、`delete_file`，均要求审批、版本复检和安全提交。
 - Shell：`run_shell`，要求审批，默认经 macOS Seatbelt 执行并记录有界输出、进程终态和 Workspace 变化。
 - 工具发现：`tool_search`。
@@ -37,6 +43,9 @@
 - Workspace 路径/身份检查、敏感路径拒绝、原子文件提交和变更 manifest。
 - 发现忽略规则不是权限：显式读写 ignored path 仍遵循既有 Workspace、安全内容与审批规则；
   Shell security scan 和副作用 evidence 不使用这些忽略规则。
+- Ripgrep 的 argv 排除仅是搜索缩减；每个候选 Match 仍由 Eidos 对 Workspace-relative
+  路径、C2 DiscoveryScope、硬目录、敏感名称、symlink、普通文件、大小、稳定性、
+  binary 与严格 UTF-8 进行独立后置校验。
 - Shell Seatbelt fail-closed、动态权限物化、显式审批和最多一次权限升级。
 
 ## 扩展

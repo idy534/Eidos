@@ -196,6 +196,7 @@
 | Q183 | v0.3 以专用 `skill_create` Eidos-state Tool 创建 `SKILL.md` 与可选 UTF-8 资源文件；`skill_install` 对公开 GitHub Skill 依次执行精确 host 网络审批、完整包验证、Eidos State 写审批和原子私有安装。普通 Agent Shell 仍不能访问 `~/.eidos`，也不因该能力获得通用网络权限。 | P3 Skill 补充；PRD F156-F158；TDD Sandbox |
 | Q184 | `.system` Skill 继续要求 Runtime 管理的 owner 与精确 `0700/0600`；用户 Skill 允许 Finder、Git 或 `cp` 常见的目录/文件 mode，只要求完整树归当前用户所有并继续拒绝 symlink、特殊文件、越界和非法内容。 | P3 Skill 补充；PRD F156/A188；TDD Extension Catalog |
 | Q185 | 模型正文在安全 CommonMark 基础上启用 GFM 表格；最终文本在跨分片敏感扫描后以完整安全行为最小放出单位，模型请求完成前即可经既有 `item/delta` 链路呈现。 | PRD F144-F145/A183-A184；TDD Renderer/Runtime |
+| Q186 | `search_text` 的通用文本匹配固定委托给 Eidos 管理的 Ripgrep 15.2.0 macOS arm64 artifact：Resolver 校验 manifest、owner、mode 与 SHA256，Driver 只用固定 argv/`shell=False`/最小环境/有界 JSON 协议，不读取 PATH 或用户 Config、不联网下载、缺失或无效时显式失败且不保留 Python fallback。C2 根级 Ignore 仍由 `WorkspaceDiscoveryScope` 权威后置过滤，硬目录和敏感路径由 Eidos 独立复检；当前只支持 Literal、ASCII case-insensitive、256 KiB 单文件、300 字符 preview 和 100 Match。 | C3 Ripgrep Search Driver；当前 Workspace Tool 契约 |
 
 ## 文件契约统一收敛
 

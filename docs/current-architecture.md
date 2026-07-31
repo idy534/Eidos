@@ -47,6 +47,28 @@ existing Workspace and sensitive-content checks, while WorkspaceIndex shell
 preflight and side-effect manifests continue their independent security and
 evidence traversals.
 
+`search_text` delegates text matching to the synchronous
+`RipgrepSearchDriver`. The production resolver accepts only the pinned
+Ripgrep 15.2.0 macOS arm64 resource at
+`runtime/eidos_runtime/resources/bin/ripgrep/darwin-arm64/rg`, verifies its
+manifest identity, owner, mode and SHA256, and never searches `PATH` or
+downloads a binary. The driver launches a fixed argv with `shell=False`, a
+minimal environment, `--no-config`, fixed-string matching and ASCII-only
+case folding. Ripgrep ignore sources are disabled so nested/global/user ignore
+files cannot change C2 semantics; the already-loaded `WorkspaceDiscoveryScope`
+and shared Eidos discovery policy filter every returned path. Hard and
+sensitive directories are also excluded in argv as defense in depth, but argv
+globs and ignore rules are not treated as security authorization.
+
+Ripgrep stdout, stderr, JSON line size, event count, preview, file size and
+result count are bounded. Deadline, cancellation and the 100-result limit
+terminate and reap the dedicated process group. `scannedBytes` is the sum of
+Ripgrep `end.stats.bytes_searched` for accepted files that produced a match,
+falling back to the stable validated file size only when the result limit ends
+the process before its `end` event; ignored and sensitive paths do not enter
+the metric. Missing, invalid or malformed backends fail explicitly and never
+fall back to the former Python traversal.
+
 代码中有两个模块级 `ToolRuntime` Protocol：
 
 - `eidos_runtime.tools.registry.ToolRuntime` 是 Registry 工具的 prepare/execute/verify/invoke 契约。
