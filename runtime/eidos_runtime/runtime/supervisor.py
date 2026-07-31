@@ -423,8 +423,7 @@ class RunSupervisor:
         registered = threading.Event()
 
         async def run() -> None:
-            while not registered.is_set():
-                await anyio.sleep(0)
+            await anyio.to_thread.run_sync(registered.wait)
             try:
                 await anyio.to_thread.run_sync(target, cancellation)
             except Exception:

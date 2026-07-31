@@ -5,7 +5,8 @@
 - 仅支持 macOS Desktop。Shell 隔离依赖可用的原生 `/usr/bin/sandbox-exec` 与随包策略资源；Self-Test 失败时 Shell 能力 fail-closed。
 - 模型 Provider 固定为 DeepSeek，wire API 固定为 Chat Completions；没有通用 Model Profile 编辑器或 Responses API。
 - 全局同一时间只执行一个 Run。单个模型响应内只有安全只读工具可并发；Workspace 写入、Shell、Eidos-state 和 MCP/外部工具不得并发。
-- Runtime 仍为每个活跃 Run 保留一个同步 Worker Thread；除此之外异步 I/O、MCP、Managed Task 和并行只读 Batch 统一由一个进程级 AnyIO Kernel 管理。
+- Eidos 1.0 不追求零线程架构：Durable Runtime core 与 SQLite 仍保持同步，每个活跃 Run 一个 Worker Thread 是刻意的隔离边界。异步网络 I/O、MCP、Managed Task 和并行只读 Batch 统一由唯一进程级 AnyIO Kernel 管理；blocking callback 不得在 Kernel Event Loop 上运行。
+- 原生 async `RuntimeEngine`/`RunSupervisor` 不是 Eidos 1.0 路线图。只有 Run-thread scalability 成为实测瓶颈、并行 Agent 数超过有界线程模型、SQLite 被替换为 async persistence boundary，或 profiling 证明显著 Event Loop/线程竞争时，才重新评估该转换。
 - 内置文件工具只处理当前 Workspace 内受支持的普通 UTF-8 文件；没有通用二进制编辑、内嵌 Terminal、浏览器自动化或 Artifact 发布工具。
 - Repository discovery 目前只读取 Workspace 根目录的 `.gitignore` 和 `.eidosignore`；
   不支持嵌套 `.gitignore`。这些规则只控制 `list_files` / `search_text` 的普通展示，

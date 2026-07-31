@@ -115,7 +115,15 @@ Title Generation 与 Plugin Import 等 Managed Task 同样由 `RuntimeAsyncTask`
 
 只读并行 Batch 的同步入口通过同一 Kernel 进入 AnyIO TaskGroup，每个现有同步 read execution 使用默认等待真实退出的 AnyIO worker thread bridge；不再为每个 Batch 创建 `ThreadPoolExecutor` 或依赖 Future 完成顺序。`ToolConcurrencyGate` 继续权威表达 max concurrency、exclusive mode、resource/exclusive key 和 cancellation policy；只有 Dispatcher 确认为只读且所有参数通过 Sensitive Scanner 的完整 Batch 才进入该路径。基础设施失败或取消会设置共享 cooperative signal，并等待所有已启动执行终止；Infrastructure Error 优先，普通 Tool Error 不取消合法 sibling，最终 Outcome、Item、Event、Context Fact 和 progress fingerprint 仍按原 Batch Order 汇总。关闭顺序仍先结束 Run-scoped MCP、Managed Task、Tool Execution、Run/Model Client，再关闭 kernel 并释放唯一 `async_kernel` 资源。
 
-Shutdown quiescence 只由显式 Run Handle、Model Lease、Kernel Task Handle、`ResourceRegistry`、持久 Run 状态和 MCP child process ownership 判定，不扫描全局线程名，也不维护第二份 Tool 活跃计数。Timeout 日志最多列出 100 个结构化诊断，只包含 `kind`、`owner_id`、`state`、`deadline` 与 `diagnostic_code`。当前有意保留一个 AnyIO Portal Thread 和每个活跃 Run 的一个同步 Worker Thread；MCP 没有专用线程，Managed Task 没有 Eidos 专用线程，并行只读 Batch 没有 Batch Executor。这是原生 async Runtime Engine/Run Supervisor 迁移前的明确边界。
+Shutdown quiescence 只由显式 Run Handle、Model Lease、Kernel Task Handle、`ResourceRegistry`、持久 Run 状态和 MCP child process ownership 判定，不扫描全局线程名，也不维护第二份 Tool 活跃计数。Timeout 日志最多列出 100 个结构化诊断，只包含 `kind`、`owner_id`、`state`、`deadline` 与 `diagnostic_code`。
+
+### Eidos 1.0 sync/async boundary
+
+Eidos 1.0 不追求零线程架构。Durable Runtime core 保持同步：`RuntimeEngine`、`RunSupervisor` FIFO/执行 slot、SQLite 事务和状态迁移、Approval 持久状态机、Context 构建与压缩、Tool 副作用编排、Sandbox/进程核验，以及 Recovery/Reconciliation 都继续由同步核心拥有。每个活跃 Run 一个 Worker Thread 是刻意的隔离边界，不是待消除的过渡实现。
+
+进程唯一的 `RuntimeAsyncKernel` 集中拥有 Pydantic AI 网络 I/O、MCP connection service、Managed Task 调度、并行只读协调和 provider client 的异步 close。同步 Worker、AnyIO worker 或其他非 Portal 调用者可以同步进入 Kernel；Kernel Event Loop Thread 不得同步重入 `RuntimeAsyncKernel.call()`，会以 `ASYNC_KERNEL_REENTRY` 立即失败。模型流的 blocking callback 通过串行 AnyIO worker bridge 执行，因此不会在 Kernel Event Loop 上执行 SQLite 或 Event publication；SQLite 仍是同步且唯一的业务事实来源。
+
+原生 async `RuntimeEngine`/`RunSupervisor` 转换延后，直到以下任一条件成立：测得 Run-thread scalability 已成为瓶颈、并行 Agent 数量超过有界线程模型、SQLite 被替换为 async persistence boundary，或 profiling 证明 Event Loop/线程竞争有显著影响。在此之前不维护 `AsyncModelClient`、async `ApprovalCoordinator`、双 sync/async Sampling/ToolCall Runtime、`RuntimeEngine.arun()` 或 async `RunSupervisor` 的占位接口。
 | DB schema/mappers/events | `runtime/eidos_runtime/db/` |
 | Run loop | `runtime/eidos_runtime/runtime/engine.py` |
 | Tool batch/single/orchestration | `runtime/eidos_runtime/runtime/tool_runtime.py`, `tool_execution.py`, `tool_orchestrator.py` |
