@@ -12,6 +12,7 @@ dependencies = [
     "tenacity>=9,<10",
     "mcp>=1.27,<2",
     "referencing==0.37.0",
+    "pathspec>=1.1,<2",
 ]
 
 [dependency-groups]

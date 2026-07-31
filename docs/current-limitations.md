@@ -6,6 +6,9 @@
 - 模型 Provider 固定为 DeepSeek，wire API 固定为 Chat Completions；没有通用 Model Profile 编辑器或 Responses API。
 - 全局同一时间只执行一个 Run。单个模型响应内只有安全只读工具可并发；Workspace 写入、Shell、Eidos-state 和 MCP/外部工具不得并发。
 - 内置文件工具只处理当前 Workspace 内受支持的普通 UTF-8 文件；没有通用二进制编辑、内嵌 Terminal、浏览器自动化或 Artifact 发布工具。
+- Repository discovery 目前只读取 Workspace 根目录的 `.gitignore` 和 `.eidosignore`；
+  不支持嵌套 `.gitignore`。这些规则只控制 `list_files` / `search_text` 的普通展示，
+  不是文件权限，也不会缩小安全扫描或副作用证据范围。
 - Plugin 只支持本地受管包；MCP 只支持 stdio Tools。没有远程市场、OAuth、Streamable HTTP、Resources、Prompts、Sampling 或 Tasks。
 - Runtime 不恢复内存中的模型请求、进程或 ToolCall。重启从 SQLite 事实收敛，可能有副作用的未确认执行要求 reconciliation，不自动重放。
 - 数据库只接受当前 schema v7 或全新数据库；当前没有通用历史 Migration 框架。

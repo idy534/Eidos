@@ -1,0 +1,239 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import sys
+import tempfile
+import threading
+import unittest
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from eidos_runtime.tools.workspace import ToolExecutor, WorkspacePathError  # noqa: E402
+from eidos_runtime.workspace.discovery_scope import (  # noqa: E402
+    DiscoveryScopeError,
+    MAX_IGNORE_FILE_BYTES,
+    WorkspaceDiscoveryScope,
+)
+
+
+class WorkspaceDiscoveryScopeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="eidos-discovery-")
+        self.workspace = Path(self.temporary.name)
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def _load(self) -> WorkspaceDiscoveryScope:
+        descriptor = os.open(self.workspace, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            return WorkspaceDiscoveryScope.load(descriptor)
+        finally:
+            os.close(descriptor)
+
+    def test_root_gitignore_supports_comments_blanks_wildcards_directories_and_anchors(self) -> None:
+        (self.workspace / ".gitignore").write_text(
+            "# comment\n\n*.log\ncache/\n/root-only.txt\n",
+            encoding="utf-8",
+        )
+        scope = self._load()
+
+        self.assertTrue(scope.is_ignored("trace.log", is_directory=False))
+        self.assertTrue(scope.is_ignored("nested/trace.log", is_directory=False))
+        self.assertTrue(scope.is_ignored("cache/item.txt", is_directory=False))
+        self.assertTrue(scope.is_ignored("root-only.txt", is_directory=False))
+        self.assertFalse(scope.is_ignored("nested/root-only.txt", is_directory=False))
+        self.assertFalse(scope.is_ignored("keep.txt", is_directory=False))
+
+    def test_eidosignore_is_later_and_can_reinclude_ordinary_path(self) -> None:
+        (self.workspace / ".gitignore").write_text("fixtures/\n", encoding="utf-8")
+        (self.workspace / ".eidosignore").write_text(
+            "!fixtures/agent-test.json\n", encoding="utf-8"
+        )
+        scope = self._load()
+
+        self.assertTrue(scope.is_ignored("fixtures/other.json", is_directory=False))
+        self.assertFalse(scope.is_ignored("fixtures/agent-test.json", is_directory=False))
+
+    def test_eidosignore_adds_an_exclusion_after_gitignore(self) -> None:
+        (self.workspace / ".gitignore").write_text("*.log\n", encoding="utf-8")
+        (self.workspace / ".eidosignore").write_text("*.snapshot\n", encoding="utf-8")
+        scope = self._load()
+
+        self.assertTrue(scope.is_ignored("trace.log", is_directory=False))
+        self.assertTrue(scope.is_ignored("result.snapshot", is_directory=False))
+
+    def test_symlinked_ignore_file_is_not_followed(self) -> None:
+        outside = self.workspace.parent / f"{self.workspace.name}-outside-ignore"
+        outside.write_text("*.txt\n", encoding="utf-8")
+        (self.workspace / ".gitignore").symlink_to(outside)
+
+        with self.assertRaisesRegex(DiscoveryScopeError, "ignore_file_invalid"):
+            self._load()
+
+    def test_oversized_and_invalid_utf8_ignore_files_fail_closed(self) -> None:
+        (self.workspace / ".eidosignore").write_bytes(
+            b"a" * (MAX_IGNORE_FILE_BYTES + 1)
+        )
+        with self.assertRaisesRegex(DiscoveryScopeError, "ignore_file_too_large"):
+            self._load()
+
+        (self.workspace / ".eidosignore").write_bytes(b"\xff")
+        with self.assertRaisesRegex(DiscoveryScopeError, "ignore_file_invalid_utf8"):
+            self._load()
+
+
+class ToolExecutorDiscoveryScopeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="eidos-discovery-tools-")
+        self.workspace = Path(self.temporary.name)
+        self.executor = ToolExecutor(self.workspace)
+
+    def tearDown(self) -> None:
+        self.executor.close()
+        self.temporary.cleanup()
+
+    def _list(self) -> dict[str, object]:
+        return self.executor.execute("list_files", {}, threading.Event())
+
+    def _search(self, query: str) -> dict[str, object]:
+        return self.executor.execute("search_text", {"query": query}, threading.Event())
+
+    def test_list_and_search_apply_root_ignore_and_refresh_each_call(self) -> None:
+        (self.workspace / "ignored.log").write_text("needle\n", encoding="utf-8")
+        (self.workspace / "visible.txt").write_text("needle\n", encoding="utf-8")
+        (self.workspace / ".gitignore").write_text("*.log\n", encoding="utf-8")
+
+        listed = self._list()
+        searched = self._search("needle")
+
+        self.assertNotIn("ignored.log", listed["data"]["paths"])
+        self.assertNotIn("ignored.log", [item["path"] for item in searched["data"]["matches"]])
+        self.assertIn("visible.txt", listed["data"]["paths"])
+
+        (self.workspace / ".gitignore").write_text("", encoding="utf-8")
+        self.assertIn("ignored.log", self._list()["data"]["paths"])
+
+    def test_ignored_directory_is_traversed_for_later_negation(self) -> None:
+        fixtures = self.workspace / "fixtures"
+        fixtures.mkdir()
+        (fixtures / "hidden.txt").write_text("needle\n", encoding="utf-8")
+        (fixtures / "agent-test.json").write_text("needle\n", encoding="utf-8")
+        (self.workspace / ".gitignore").write_text("fixtures/\n", encoding="utf-8")
+        (self.workspace / ".eidosignore").write_text(
+            "!fixtures/agent-test.json\n", encoding="utf-8"
+        )
+
+        listed = self._list()
+        searched = self._search("needle")
+
+        self.assertNotIn("fixtures/", listed["data"]["paths"])
+        self.assertNotIn("fixtures/hidden.txt", listed["data"]["paths"])
+        self.assertIn("fixtures/agent-test.json", listed["data"]["paths"])
+        self.assertEqual(
+            [item["path"] for item in searched["data"]["matches"]],
+            ["fixtures/agent-test.json"],
+        )
+
+    def test_eidosignore_negation_cannot_reinclude_hard_or_sensitive_paths(self) -> None:
+        git_file = self.workspace / ".git" / "visible.txt"
+        eidos_file = self.workspace / ".eidos" / "visible.txt"
+        sensitive_file = self.workspace / ".ssh" / "visible.txt"
+        for path in (git_file, eidos_file, sensitive_file):
+            path.parent.mkdir()
+            path.write_text("needle\n", encoding="utf-8")
+        (self.workspace / ".eidosignore").write_text(
+            "!.git/visible.txt\n!.eidos/visible.txt\n!.ssh/visible.txt\n",
+            encoding="utf-8",
+        )
+
+        listed = self._list()
+        searched = self._search("needle")
+
+        self.assertNotIn(".git/visible.txt", listed["data"]["paths"])
+        self.assertNotIn(".eidos/visible.txt", listed["data"]["paths"])
+        self.assertNotIn(".ssh/visible.txt", listed["data"]["paths"])
+        self.assertEqual(searched["data"]["matches"], [])
+
+    def test_ignored_file_remains_available_to_explicit_operations(self) -> None:
+        ignored = self.workspace / "ignored.txt"
+        ignored.write_text("before\n", encoding="utf-8")
+        (self.workspace / ".gitignore").write_text("ignored.txt\n", encoding="utf-8")
+
+        read = self.executor.execute(
+            "read_file", {"path": "ignored.txt"}, threading.Event()
+        )
+        prepared = self.executor.prepare_file_change(
+            "write_file", {"path": "ignored.txt", "content": "after\n"}, threading.Event()
+        )
+        patch = """--- a/ignored.txt
++++ b/ignored.txt
+@@ -1 +1 @@
+-before
++after
+"""
+        patched = self.executor.prepare_file_change(
+            "apply_patch", {"path": "ignored.txt", "patch": patch}, threading.Event()
+        )
+        deleted = self.executor.prepare_file_change(
+            "delete_file", {"path": "ignored.txt"}, threading.Event()
+        )
+
+        self.assertEqual(read["outcome"], "success")
+        self.assertNotIsInstance(prepared, dict)
+        self.assertNotIsInstance(patched, dict)
+        self.assertNotIsInstance(deleted, dict)
+
+    def test_shell_preflight_still_scans_gitignored_sensitive_and_unsafe_entries(self) -> None:
+        ignored = self.workspace / "ignored"
+        ignored.mkdir()
+        (self.workspace / ".gitignore").write_text("ignored/\n", encoding="utf-8")
+        (ignored / "credentials.json").write_text("secret\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(WorkspacePathError, "sensitive_workspace_content"):
+            self.executor.prepare_shell(".", threading.Event())
+
+        (ignored / "credentials.json").unlink()
+        target = ignored / "target.txt"
+        target.write_text("x\n", encoding="utf-8")
+        os.link(target, ignored / "alias.txt")
+        with self.assertRaisesRegex(WorkspacePathError, "unsupported_workspace_hardlink"):
+            self.executor.prepare_shell(".", threading.Event())
+
+    def test_shell_preflight_still_scans_gitignored_special_files(self) -> None:
+        ignored = self.workspace / "ignored"
+        ignored.mkdir()
+        (self.workspace / ".gitignore").write_text("ignored/\n", encoding="utf-8")
+        fifo = ignored / "stream"
+        os.mkfifo(fifo)
+        try:
+            with self.assertRaisesRegex(WorkspacePathError, "unsupported_workspace_entry"):
+                self.executor.prepare_shell(".", threading.Event())
+        finally:
+            fifo.unlink(missing_ok=True)
+
+    def test_invalid_ignore_file_returns_stable_discovery_error(self) -> None:
+        (self.workspace / ".eidosignore").write_bytes(b"\xff")
+
+        result = self._list()
+
+        self.assertEqual(result["outcome"], "error")
+        self.assertEqual(result["code"], "ignore_file_invalid_utf8")
+
+    def test_ignored_directory_does_not_bypass_cancellation(self) -> None:
+        ignored = self.workspace / "ignored"
+        ignored.mkdir()
+        (ignored / "file.txt").write_text("needle\n", encoding="utf-8")
+        (self.workspace / ".gitignore").write_text("ignored/\n", encoding="utf-8")
+        cancel = threading.Event()
+        cancel.set()
+
+        result = self.executor.execute("search_text", {"query": "needle"}, cancel)
+
+        self.assertEqual(result["code"], "canceled")
+
+
+if __name__ == "__main__":
+    unittest.main()

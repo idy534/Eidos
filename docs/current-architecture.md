@@ -37,6 +37,16 @@ Renderer 只通过 context-isolated preload 暴露的 typed IPC 访问 Main。Ma
 | `ToolExecutionController` | 单个 ToolCall 的 prepare/execute/verify、deadline、取消、Durable Intent、结果校验/投影、终态与 reconciliation | 模型循环、批次调度、Seatbelt 策略 |
 | `ToolOrchestrator` | Shell attempt 的有效权限物化、审批要求、Seatbelt/unsandboxed attempt 选择和一次权限升级 | ToolCall DB 生命周期、批次、进程监督实现 |
 
+Workspace discovery is a separate presentation boundary. `list_files` and
+`search_text` load root `.gitignore` followed by root `.eidosignore` through
+the Workspace descriptor and use PathSpec only to filter ordinary discovery
+results. The later `.eidosignore` rules may refine ordinary Git-ignore
+matches; Eidos-owned hard discovery directories remain non-overridable.
+Ignore rules are not permissions: explicit file operations retain their
+existing Workspace and sensitive-content checks, while WorkspaceIndex shell
+preflight and side-effect manifests continue their independent security and
+evidence traversals.
+
 代码中有两个模块级 `ToolRuntime` Protocol：
 
 - `eidos_runtime.tools.registry.ToolRuntime` 是 Registry 工具的 prepare/execute/verify/invoke 契约。
