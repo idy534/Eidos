@@ -35,7 +35,6 @@ from eidos_runtime.runtime.tool_execution import (  # noqa: E402
     PreparedToolExecution,
     ToolExecutionController,
 )
-from eidos_runtime.model.client import ModelToolCall  # noqa: E402
 from eidos_runtime.sandbox.sensitive import default_scanner  # noqa: E402
 from eidos_runtime.tools.contracts import (  # noqa: E402
     ReadFileInput,

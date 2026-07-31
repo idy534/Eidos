@@ -15,18 +15,20 @@ Eidos 是一个 macOS 桌面 Agent Runtime。Electron Desktop 通过 stdio JSON-
 
 ## 开发运行
 
-要求 macOS、Node.js 22+、pnpm 11 和 Python 3。
+要求 macOS、Node.js 22+、pnpm 11、Python 3.11 或 3.12，以及 [uv](https://docs.astral.sh/uv/)。
 
 ```bash
-pnpm install --frozen-lockfile
-python3 -m venv .venv
-.venv/bin/python -m pip install -r runtime/requirements.txt
+pnpm install
+uv sync --locked
 pnpm start
 ```
+
+`uv` 在仓库根目录创建 `.venv`；Electron 在源码开发时刻意从该路径使用 `.venv/bin/python`。`uv.lock` 已提交，只有在有意修改 `pyproject.toml` 中的生产依赖后才应更新它；`pip install -r runtime/requirements.txt` 已废弃。
 
 ## 验证
 
 ```bash
+pnpm check:python
 pnpm test
 pnpm build
 pnpm test:seatbelt-native

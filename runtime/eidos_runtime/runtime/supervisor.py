@@ -571,7 +571,7 @@ class RunSupervisor:
                 self._active_slot_run_id = run_id
         start_gate.wait()
         try:
-            run = self.store.read_run(run_id)
+            self.store.read_run(run_id)
             leased = self.model_for(run_id)
             lease = (
                 leased

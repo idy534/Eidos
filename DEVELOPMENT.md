@@ -7,7 +7,8 @@
 - macOS
 - Node.js 22.12 或更高版本
 - pnpm 11
-- Python 3.11 或更高版本
+- Python 3.11 或 3.12
+- [uv](https://docs.astral.sh/uv/)
 
 先确认本机环境：
 
@@ -20,7 +21,7 @@ python3 --version
 如果缺少 Node.js、pnpm 或 Python，可使用 Homebrew 安装：
 
 ```bash
-brew install node pnpm python
+brew install node pnpm python uv
 ```
 
 ## 2. 第一次安装
@@ -29,9 +30,10 @@ brew install node pnpm python
 
 ```bash
 pnpm install
-python3 -m venv .venv
-.venv/bin/pip install -r runtime/requirements.txt
+uv sync --locked
 ```
+
+`uv` 会在仓库根目录创建 `.venv`，Electron 的源码开发路径会刻意使用其中的 `.venv/bin/python`。`uv.lock` 必须提交；修改 Runtime 生产依赖时，先修改 `pyproject.toml`，再有意更新锁文件。`pip install -r runtime/requirements.txt` 已废弃。
 
 Electron 第一次安装或启动时需要从官方源下载对应 macOS 架构的 Chromium 二进制，耗时会明显长于普通前端依赖。后续启动会复用本地缓存。
 
@@ -40,8 +42,14 @@ Electron 第一次安装或启动时需要从官方源下载对应 macOS 架构�
 运行全部当前阶段测试：
 
 ```bash
+pnpm check:python
 pnpm test
+pnpm build
+pnpm test:seatbelt-native
+pnpm test:electron-smoke
 ```
+
+当前 Ruff 只启用语法、未定义名称和未使用导入等正确性规则；格式化、导入排序扩展和类型检查留给后续专门的工程 PR。
 
 预期结果：
 
@@ -140,8 +148,8 @@ pgrep -af eidos_runtime
 先确认：
 
 ```bash
-python3 --version
-python3 -m unittest discover -s runtime/tests -v
+uv --version
+pnpm test:runtime
 ```
 
 如果系统 Python 不在默认路径，可显式指定：

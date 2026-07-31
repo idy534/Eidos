@@ -18,7 +18,6 @@ from eidos_runtime.tools.contracts import (  # noqa: E402
     ReadFileRangeResultData,
     RunShellInput,
     SearchTextInput,
-    SearchTextResultData,
     WorkspaceResultData,
     WriteFileInput,
     project_tool_result,

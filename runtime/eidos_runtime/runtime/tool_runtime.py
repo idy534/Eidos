@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 import errno
 import hashlib
 import json
-from pathlib import Path
 import threading
 from typing import Callable
 
@@ -919,7 +918,6 @@ class ToolCallRuntime:
                     cancel=cancel,
                     deadline=None,
                 )
-            completed = outcome.item or item
             self._check_cancel(step.run_id, cancel)
             if outcome.activations:
                 self.store.activate_tools(step.run_id, outcome.activations)

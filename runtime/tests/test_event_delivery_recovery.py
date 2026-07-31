@@ -15,7 +15,6 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.db.storage import (  # noqa: E402
-    CommittedMutation,
     DATABASE_NAME,
     SessionStore,
 )

@@ -21,7 +21,6 @@ from eidos_runtime.extensions.mcp import (  # noqa: E402
 )
 from eidos_runtime.model.pydantic_ai_client import (  # noqa: E402
     ModelClientFactory,
-    ModelClientInUseError,
     ModelClientLease,
 )
 from eidos_runtime.protocol.server import RuntimeServer  # noqa: E402

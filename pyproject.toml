@@ -1,0 +1,42 @@
+[project]
+name = "eidos-python-runtime"
+version = "0.3.0"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "pydantic==2.12.5",
+    "pydantic-ai-slim[openai]==2.13.0",
+    "mcp>=1.27,<2",
+]
+
+[dependency-groups]
+dev = [
+    "deptry>=0.23,<0.24",
+    "pip-audit>=2.8,<3",
+    "pytest>=8.3,<9",
+    "ruff>=0.11,<0.12",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["runtime/tests"]
+pythonpath = ["runtime"]
+addopts = ["-ra"]
+
+[tool.ruff]
+target-version = "py311"
+extend-exclude = ["build", "dist"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# These modules intentionally re-export legacy Runtime storage/protocol symbols.
+"runtime/eidos_runtime/db/storage.py" = ["F401"]
+"runtime/eidos_runtime/protocol/server.py" = ["F401"]
+
+[tool.deptry]
+known_first_party = ["eidos_runtime", "github_utils"]
+# Existing SDK integrations deliberately import their declared extras' transitive APIs.
+per_rule_ignores = { DEP003 = ["anyio", "httpx", "openai"] }
