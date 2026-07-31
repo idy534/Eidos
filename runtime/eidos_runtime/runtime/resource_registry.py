@@ -17,6 +17,7 @@ class RuntimeResourceKind(StrEnum):
     RUN_WORKER = "run_worker"
     MANAGED_TASK = "managed_task"
     ASYNC_KERNEL = "async_kernel"
+    ASYNC_TASK = "async_task"
     MODEL_LEASE = "model_lease"
     TOOL_EXECUTION = "tool_execution"
     SHELL_PROCESS = "shell_process"
@@ -47,6 +48,7 @@ class RuntimeResourceDiagnostic(BaseModel):
     closed_at: int | None = None
     deadline: float | None = None
     diagnostic_code: str | None = None
+    task_id: str | None = None
 
 
 class RuntimeResource:
@@ -143,6 +145,7 @@ class ResourceRegistry:
         owner_id: str,
         *,
         resource_id: str | None = None,
+        task_id: str | None = None,
         deadline: float | None = None,
         cancel: Callable[[], None] | None = None,
         close: Callable[[], None] | None = None,
@@ -162,6 +165,7 @@ class ResourceRegistry:
                     state=RuntimeResourceState.CREATED,
                     created_at=_now_ms(),
                     deadline=deadline,
+                    task_id=task_id,
                 ),
                 cancel=cancel,
                 close=close,
