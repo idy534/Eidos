@@ -30,6 +30,20 @@ from eidos_runtime.workspace.discovery_scope import (
     DiscoveryScopeError,
     WorkspaceDiscoveryScope,
 )
+from eidos_runtime.workspace.discovery_policy import (
+    HARD_DISCOVERY_DIRECTORIES,
+    SENSITIVE_NAMES,
+    SENSITIVE_SUFFIXES,
+    is_sensitive_directory as _is_sensitive_directory,
+    is_sensitive_name as _is_sensitive_name,
+)
+from eidos_runtime.workspace.search_driver import (
+    MAX_RG_PREVIEW_CHARACTERS,
+    RipgrepSearchDriver,
+    SearchDriverError,
+    WorkspaceSearchDriver,
+    WorkspaceSearchRequest,
+)
 from eidos_runtime.tools.registry import (
     ToolProvenance,
     ToolRegistry,
@@ -60,37 +74,12 @@ MAX_READ_FILE_BYTES = 2 * 1024 * 1024
 MAX_RANGE_LINES = 2_000
 MAX_LIST_DEPTH = 5
 MAX_LIST_ENTRIES = 2_000
-MAX_SEARCH_BYTES = 8 * 1024 * 1024
-MAX_SEARCH_ENTRIES = 20_000
 MAX_SEARCH_RESULTS = 100
 MAX_FILE_CHANGE_BYTES = 256 * 1024
 MAX_DIFF_BYTES = 512 * 1024
 TOOL_DEADLINE_SECONDS = 5.0
 SHELL_PREFLIGHT_DEADLINE_SECONDS = 10.0
 MAX_SHELL_PREFLIGHT_ENTRIES = 250_000
-HARD_DISCOVERY_DIRECTORIES = frozenset({
-    ".git",
-    ".eidos",
-    ".venv",
-    "__pycache__",
-    "build",
-    "dist",
-    "node_modules",
-})
-SENSITIVE_DIRECTORIES = {".aws", ".config", ".eidos", ".gnupg", ".kube", ".ssh"}
-SENSITIVE_NAMES = {
-    ".git-credentials",
-    ".netrc",
-    ".npmrc",
-    ".pypirc",
-    "credentials",
-    "credentials.json",
-    "id_dsa",
-    "id_ed25519",
-    "id_rsa",
-}
-SENSITIVE_SUFFIXES = {".key", ".p12", ".pem", ".pfx"}
-SENSITIVE_KEYWORDS = {"credential", "secret", "token"}
 SHELL_SOURCE_SUFFIXES = {
     ".c",
     ".cc",
@@ -278,7 +267,11 @@ def canonical_tool_result(
 
 
 class ToolExecutor:
-    def __init__(self, workspace: Path | WorkspaceIdentity) -> None:
+    def __init__(
+        self,
+        workspace: Path | WorkspaceIdentity,
+        search_driver: WorkspaceSearchDriver | None = None,
+    ) -> None:
         if isinstance(workspace, WorkspaceIdentity):
             identity = workspace
         else:
@@ -309,6 +302,7 @@ class ToolExecutor:
         self.workspace = identity
         self.root_fd = root_fd
         self.workspace_index = WorkspaceIndex(identity)
+        self.search_driver = search_driver or RipgrepSearchDriver()
         self.registry = builtin_tool_registry(self)
 
     def __enter__(self) -> ToolExecutor:
@@ -431,6 +425,9 @@ class ToolExecutor:
             return _error(tool_name, "canceled", "Tool was canceled")
         except DiscoveryScopeError as error:
             return _error(tool_name, error.code, "Workspace discovery ignore file is unavailable")
+        except SearchDriverError as error:
+            code = "canceled" if error.code == "search_backend_canceled" else error.code
+            return _error(tool_name, code, "Workspace search backend is unavailable")
         except WorkspacePathError as error:
             return _error(tool_name, error.code, "Workspace path is unavailable")
 
@@ -867,103 +864,34 @@ class ToolExecutor:
         scope = WorkspaceDiscoveryScope.load(self.root_fd)
         query = arguments["query"]
         assert isinstance(query, str)
-        deadline = time.monotonic() + TOOL_DEADLINE_SECONDS
-        scanned_bytes = 0
-        scanned_entries = 0
-        matches: list[dict[str, object]] = []
-        truncated = False
-
-        def visit(directory_fd: int, prefix: str) -> None:
-            nonlocal scanned_bytes, scanned_entries, truncated
-            if truncated:
-                return
-            names, names_truncated = self._bounded_names(
-                directory_fd,
-                MAX_SEARCH_ENTRIES + 1,
-                cancel,
-                deadline,
-            )
-            truncated = truncated or names_truncated
-            for name in names:
-                _check_budget(cancel, deadline)
-                scanned_entries += 1
-                if scanned_entries > MAX_SEARCH_ENTRIES:
-                    truncated = True
-                    return
-                if _is_sensitive_name(name):
-                    continue
-                try:
-                    metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-                except OSError:
-                    continue
-                if stat.S_ISLNK(metadata.st_mode):
-                    continue
-                relative = f"{prefix}{name}"
-                if stat.S_ISDIR(metadata.st_mode):
-                    if name in HARD_DISCOVERY_DIRECTORIES or _is_sensitive_directory(name):
-                        continue
-                    child_fd = self._open_directory(directory_fd, name)
-                    try:
-                        visit(child_fd, f"{relative}/")
-                    finally:
-                        os.close(child_fd)
-                    if truncated:
-                        return
-                    continue
-                if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_FILE_BYTES:
-                    continue
-                if scope.is_ignored(relative, is_directory=False):
-                    continue
-                if scanned_bytes + metadata.st_size > MAX_SEARCH_BYTES:
-                    truncated = True
-                    return
-                try:
-                    for attempt in range(2):
-                        file_fd = self._open_file_at(directory_fd, name)
-                        try:
-                            content_bytes, stable_metadata = _read_regular_file(file_fd, cancel)
-                            break
-                        except WorkspacePathError as error:
-                            if error.code != "workspace_changed" or attempt == 1:
-                                raise
-                        finally:
-                            os.close(file_fd)
-                except WorkspacePathError:
-                    continue
-                scanned_bytes += stable_metadata.st_size
-                try:
-                    content = content_bytes.decode("utf-8", errors="strict")
-                except UnicodeDecodeError:
-                    continue
-                for line_number, line in enumerate(content.splitlines(), start=1):
-                    column = _ascii_lower(line).find(_ascii_lower(query))
-                    if column < 0:
-                        continue
-                    matches.append(
-                        {
-                            "path": relative,
-                            "line": line_number,
-                            "column": column + 1,
-                            "preview": line[:300],
-                        }
-                    )
-                    if len(matches) >= MAX_SEARCH_RESULTS:
-                        truncated = True
-                        return
-
-        root_fd = os.dup(self.root_fd)
-        try:
-            visit(root_fd, "")
-        finally:
-            os.close(root_fd)
+        result = self.search_driver.search(
+            WorkspaceSearchRequest(
+                query=query,
+                workspace_path=self.workspace.path,
+                deadline=time.monotonic() + TOOL_DEADLINE_SECONDS,
+                max_results=MAX_SEARCH_RESULTS,
+                max_preview_characters=MAX_RG_PREVIEW_CHARACTERS,
+                discovery_scope=scope,
+            ),
+            cancel,
+        )
+        self._verify_root()
         return _success(
             "search_text",
             "Searched text",
             {
-                "matches": matches,
-                "scannedBytes": scanned_bytes,
-                "truncated": truncated,
-                "truncationReason": "limit" if truncated else None,
+                "matches": [
+                    {
+                        "path": match.path,
+                        "line": match.line,
+                        "column": match.column,
+                        "preview": match.preview,
+                    }
+                    for match in result.matches
+                ],
+                "scannedBytes": result.scanned_bytes,
+                "truncated": result.truncated,
+                "truncationReason": result.truncation_reason,
             },
         )
 
@@ -1384,25 +1312,6 @@ def _has_unsupported_text_control(value: str) -> bool:
         character not in {"\n", "\r", "\t"}
         and (ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F)
         for character in value
-    )
-
-
-def _is_sensitive_directory(name: str) -> bool:
-    return name.lower() in SENSITIVE_DIRECTORIES
-
-
-def _is_sensitive_name(name: str) -> bool:
-    lowered = name.lower()
-    if lowered == ".env.example":
-        return False
-    return (
-        lowered.startswith(".eidos-")
-        or
-        lowered == ".env"
-        or lowered.startswith(".env.")
-        or lowered in SENSITIVE_NAMES
-        or Path(lowered).suffix in SENSITIVE_SUFFIXES
-        or any(keyword in lowered for keyword in SENSITIVE_KEYWORDS)
     )
 
 
