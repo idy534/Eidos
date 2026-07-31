@@ -31,7 +31,7 @@ class ModelProfileSpec(BaseModel):
 
     provider_id: str
     model_id: str
-    wire_api: Literal["chat_completions"] = "chat_completions"
+    wire_api: Literal["chat_completions", "openai_responses"] = "chat_completions"
     context_window_tokens: int = Field(gt=0)
     max_output_tokens: int = Field(gt=0)
     request_timeout_seconds: float = Field(gt=0)
@@ -40,6 +40,7 @@ class ModelProfileSpec(BaseModel):
         return ModelProfileSnapshot(
             provider_id=self.provider_id,
             model_id=self.model_id,
+            wire_api=self.wire_api,
             context_window_tokens=self.context_window_tokens,
             max_output_tokens=self.max_output_tokens,
             request_timeout_seconds=self.request_timeout_seconds,

@@ -27,9 +27,8 @@ from eidos_runtime.model_gateway.models import (  # noqa: E402
     RetryPolicy,
     WireAPI,
 )
-from eidos_runtime.model_gateway.presets import PRESETS  # noqa: E402
+from eidos_runtime.model_gateway.presets import PRESETS, ProviderPreset  # noqa: E402
 from eidos_runtime.model_gateway.capabilities import resolve_model_capabilities  # noqa: E402
-from eidos_runtime.model_gateway.registry import AdapterRegistry  # noqa: E402
 from eidos_runtime.model_gateway.retry import RetryState, retry_decision  # noqa: E402
 from eidos_runtime.model_gateway.usage import NormalizedUsage  # noqa: E402
 
@@ -84,18 +83,12 @@ class ModelGatewayDomainTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             snapshot.supports_tools = False  # type: ignore[misc]
 
-    def test_provider_and_wire_are_independent_registry_dimensions(self) -> None:
-        registry = AdapterRegistry.default()
-        provider = registry.provider("deepseek")
-        wire = registry.wire(WireAPI.OPENAI_CHAT_COMPLETIONS)
+    def test_presets_describe_product_defaults_not_adapter_implementations(self) -> None:
+        fields = ProviderPreset.model_fields
 
-        self.assertEqual(provider.provider_id, "openai_compatible")
-        self.assertEqual(wire.wire_api, WireAPI.OPENAI_CHAT_COMPLETIONS)
-        self.assertIsNot(provider, wire)
-        self.assertEqual(
-            registry.provider("custom").provider_id,
-            "openai_compatible",
-        )
+        self.assertNotIn("provider" + "_adapter_id", fields)
+        self.assertNotIn("auth_style", fields)
+        self.assertEqual(PRESETS["deepseek"].default_wire_api, WireAPI.OPENAI_CHAT_COMPLETIONS)
 
     def test_required_presets_exist_without_forcing_model_ids(self) -> None:
         self.assertEqual(
