@@ -5,7 +5,7 @@ from contextlib import AbstractContextManager
 from enum import StrEnum
 from functools import partial
 from threading import RLock
-from typing import Any, ParamSpec, TypeVar
+from typing import ParamSpec, TypeVar
 
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 

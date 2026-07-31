@@ -45,10 +45,14 @@ test("generates closed Model Profile TypeScript contracts from the exported sche
 
     assert.match(generated, /Generated from Eidos Runtime Pydantic models/);
     assert.match(generated, /export interface ModelProfile/);
-    assert.match(generated, /export interface CapabilitySnapshot/);
     assert.match(generated, /export interface RetryPolicy/);
+    assert.match(generated, /export type WireAPI/);
     assert.match(generated, /supportsTools/);
     assert.doesNotMatch(generated, /supports_tools/);
+    assert.doesNotMatch(
+      generated,
+      /CapabilitySnapshot|CapabilityProbeSource|CapabilityWarning/,
+    );
     assert.doesNotMatch(generated, /\bany\b/);
     assert.doesNotMatch(generated, /\[k:\s*string\]:\s*unknown/);
 
