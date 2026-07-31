@@ -19,7 +19,12 @@ from eidos_runtime.model.client import (  # noqa: E402
     ScriptedModel,
 )
 from eidos_runtime.runtime.contracts import RuntimeCancelled  # noqa: E402
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
+from eidos_runtime.runtime.resource_registry import (  # noqa: E402
+    ResourceRegistry,
+    RuntimeResourceKind,
+)
 from eidos_runtime.runtime.tool_runtime import (  # noqa: E402
     ReadOnlyToolHandler,
 )
@@ -62,9 +67,24 @@ class ParallelToolConvergenceTests(unittest.TestCase):
             raise RuntimeCancelled
 
         with patch.object(ReadOnlyToolHandler, "execute", injected):
-            RuntimeEngine(self.store, model, lambda _message: None).run(
-                run["id"], threading.Event()
-            )
+            resources = ResourceRegistry()
+            kernel = RuntimeAsyncKernel(resource_registry=resources)
+            kernel.start()
+            try:
+                RuntimeEngine(
+                    self.store,
+                    model,
+                    lambda _message: None,
+                    async_kernel=kernel,
+                    resource_registry=resources,
+                ).run(run["id"], threading.Event())
+                self.assertEqual(
+                    [resource.kind for resource in resources.active_resources()],
+                    [RuntimeResourceKind.ASYNC_KERNEL],
+                )
+            finally:
+                kernel.close()
+            resources.ensure_empty()
 
         self.assertEqual(
             self.store.read_run(run["id"])["errorCode"],

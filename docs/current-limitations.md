@@ -5,6 +5,7 @@
 - 仅支持 macOS Desktop。Shell 隔离依赖可用的原生 `/usr/bin/sandbox-exec` 与随包策略资源；Self-Test 失败时 Shell 能力 fail-closed。
 - 模型 Provider 固定为 DeepSeek，wire API 固定为 Chat Completions；没有通用 Model Profile 编辑器或 Responses API。
 - 全局同一时间只执行一个 Run。单个模型响应内只有安全只读工具可并发；Workspace 写入、Shell、Eidos-state 和 MCP/外部工具不得并发。
+- Runtime 仍为每个活跃 Run 保留一个同步 Worker Thread；除此之外异步 I/O、MCP、Managed Task 和并行只读 Batch 统一由一个进程级 AnyIO Kernel 管理。
 - 内置文件工具只处理当前 Workspace 内受支持的普通 UTF-8 文件；没有通用二进制编辑、内嵌 Terminal、浏览器自动化或 Artifact 发布工具。
 - Repository discovery 目前只读取 Workspace 根目录的 `.gitignore` 和 `.eidosignore`；
   不支持嵌套 `.gitignore`。这些规则只控制 `list_files` / `search_text` 的普通展示，

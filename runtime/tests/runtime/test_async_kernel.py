@@ -451,6 +451,7 @@ class RuntimeAsyncKernelTests(unittest.TestCase):
             self.assertIsNotNone(kernel)
             assert kernel is not None
             self.assertEqual(kernel.state, AsyncKernelState.RUNNING)
+            self.assertIs(server.supervisor.async_kernel, kernel)
             self.assertEqual(
                 [resource.kind for resource in server.supervisor.resources.active_resources()],
                 [RuntimeResourceKind.ASYNC_KERNEL],

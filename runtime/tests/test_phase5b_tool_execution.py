@@ -24,7 +24,6 @@ from eidos_runtime.runtime.tool_execution import (  # noqa: E402
     HandlerOutcome,
     PreparedToolExecution,
     ToolExecutionController,
-    active_tool_execution_count,
 )
 from eidos_runtime.sandbox.sensitive import default_scanner  # noqa: E402
 from eidos_runtime.tools.contracts import (  # noqa: E402
@@ -301,7 +300,7 @@ class ToolExecutionControllerTests(unittest.TestCase):
 
         self.assertEqual(outcome.result["code"], "TOOL_TIMEOUT")
         self.assertLess(time.monotonic() - started, 0.2)
-        self.assertEqual(active_tool_execution_count(), 0)
+        self.assertEqual(controller.resources.active_resources(), ())
 
     def test_cancel_wins_over_timeout(self) -> None:
         cancel = threading.Event()

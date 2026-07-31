@@ -17,6 +17,8 @@ from eidos_runtime.extensions.skills import SkillCatalog  # noqa: E402
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
 from eidos_runtime.runtime.loop import RuntimeEngine  # noqa: E402
 from eidos_runtime.runtime.loop import ApprovalDecision  # noqa: E402
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
+from eidos_runtime.runtime.resource_registry import ResourceRegistry  # noqa: E402
 
 
 class PhaseThreeRuntimeTests(unittest.TestCase):
@@ -338,11 +340,21 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
                 ),)),
                 ModelResponse(text="must not retry"),
             ])
-            RuntimeEngine(
-                store, model, lambda _message: None,
-                request_approval=lambda _params, _cancel: ApprovalDecision("approve"),
-                mcp_sandbox=False,
-            ).run(run["id"], threading.Event())
+            resources = ResourceRegistry()
+            kernel = RuntimeAsyncKernel(resource_registry=resources)
+            kernel.start()
+            try:
+                RuntimeEngine(
+                    store, model, lambda _message: None,
+                    request_approval=(
+                        lambda _params, _cancel: ApprovalDecision("approve")
+                    ),
+                    async_kernel=kernel,
+                    mcp_sandbox=False,
+                    resource_registry=resources,
+                ).run(run["id"], threading.Event())
+            finally:
+                kernel.close()
 
             interrupted = store.read_run(run["id"])
             self.assertEqual(interrupted["status"], "interrupted")
@@ -410,10 +422,19 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
                 approvals.append(params)
                 return ApprovalDecision("approve")
 
-            RuntimeEngine(
-                store, model, lambda _message: None,
-                request_approval=approve, mcp_sandbox=False,
-            ).run(run["id"], threading.Event())
+            resources = ResourceRegistry()
+            kernel = RuntimeAsyncKernel(resource_registry=resources)
+            kernel.start()
+            try:
+                RuntimeEngine(
+                    store, model, lambda _message: None,
+                    request_approval=approve,
+                    async_kernel=kernel,
+                    mcp_sandbox=False,
+                    resource_registry=resources,
+                ).run(run["id"], threading.Event())
+            finally:
+                kernel.close()
 
             first_names = {
                 value.name for value in model.tool_definitions_history[0]

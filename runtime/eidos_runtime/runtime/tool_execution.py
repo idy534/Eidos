@@ -40,8 +40,6 @@ from eidos_runtime.tools.contracts import GENERIC_PROJECTOR
 from eidos_runtime.tools.registry import ToolConcurrencyPolicy
 
 
-_active_lock = threading.Lock()
-_active_executions = 0
 logger = logging.getLogger("eidos.runtime")
 
 
@@ -349,7 +347,6 @@ class ToolExecutionController:
             cancel=cancel.set,
         )
         resource.start()
-        _execution_started()
         try:
             raise_after_commit = False
             reason = controlled_cancel.reason
@@ -730,7 +727,6 @@ class ToolExecutionController:
             self._execution_state.intent_started = False
             self._execution_state.authorized_effects = 0
             self._execution_state.cleanup_attempted = False
-            _execution_finished()
             resource.close()
 
     def _validate_result(
@@ -783,20 +779,3 @@ def _already_interrupted(result: dict[str, object], reason: str) -> bool:
         reason == "timeout"
         and ("timeout" in code or "timed_out" in code)
     )
-
-
-def active_tool_execution_count() -> int:
-    with _active_lock:
-        return _active_executions
-
-
-def _execution_started() -> None:
-    global _active_executions
-    with _active_lock:
-        _active_executions += 1
-
-
-def _execution_finished() -> None:
-    global _active_executions
-    with _active_lock:
-        _active_executions -= 1

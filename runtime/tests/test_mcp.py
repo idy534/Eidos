@@ -13,8 +13,17 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
-from eidos_runtime.extensions.mcp import McpManager  # noqa: E402
+from eidos_runtime.extensions.mcp import (  # noqa: E402
+    McpConnection,
+    McpManager,
+    McpUnavailable,
+)
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
+from eidos_runtime.runtime.resource_registry import (  # noqa: E402
+    ResourceRegistry,
+    RuntimeResourceKind,
+)
 from eidos_runtime.tools.registry import ToolRegistry  # noqa: E402
 
 
@@ -54,17 +63,117 @@ class McpManagerTests(unittest.TestCase):
         self.plugins.import_directory(source)
         self.plugins.set_enabled("demo", True)
         self.plugins.set_mcp_enabled("demo", "fixture", True)
+        self.resources = ResourceRegistry()
+        self.kernel = RuntimeAsyncKernel(resource_registry=self.resources)
+        self.kernel.start()
         self.manager = McpManager(
+            self.plugins,
+            self.plugins.extension_snapshot(),
+            self.workspace,
+            sandbox=False,
+            async_kernel=self.kernel,
+            resource_registry=self.resources,
+        )
+
+    def tearDown(self) -> None:
+        self.manager.close()
+        self.kernel.close()
+        self.assertEqual(self.resources.active_resources(), ())
+        self.store.close()
+        self.temporary.cleanup()
+
+    def test_connection_is_a_service_on_the_shared_kernel(self) -> None:
+        self.manager.start()
+
+        connection = self.manager.connections[0]
+        active = self.resources.active_resources()
+
+        self.assertIs(connection.async_kernel, self.kernel)
+        self.assertFalse(hasattr(connection, "thread"))
+        self.assertFalse(hasattr(connection, "commands"))
+        self.assertFalse(any(
+            thread.name.startswith("eidos-mcp-")
+            for thread in threading.enumerate()
+        ))
+        self.assertEqual(
+            [resource.kind for resource in active].count(
+                RuntimeResourceKind.MCP_CONNECTION
+            ),
+            1,
+        )
+        async_tasks = [
+            resource
+            for resource in active
+            if resource.kind is RuntimeResourceKind.ASYNC_TASK
+        ]
+        self.assertEqual(len(async_tasks), 1)
+        self.assertEqual(async_tasks[0].owner_id, "mcp:fixture")
+
+    def test_two_connections_share_the_runtime_kernel(self) -> None:
+        second = McpManager(
+            self.plugins,
+            self.plugins.extension_snapshot(),
+            self.workspace,
+            sandbox=False,
+            async_kernel=self.kernel,
+            resource_registry=self.resources,
+        )
+        try:
+            self.manager.start()
+            second.start()
+
+            self.assertIs(
+                self.manager.connections[0].async_kernel,
+                second.connections[0].async_kernel,
+            )
+            self.assertEqual(
+                sum(
+                    resource.kind is RuntimeResourceKind.ASYNC_TASK
+                    for resource in self.resources.active_resources()
+                ),
+                2,
+            )
+        finally:
+            second.close()
+
+    def test_startup_timeout_is_closed_and_releases_async_task(self) -> None:
+        config = self.plugins.manifest("demo").mcp_servers[0].model_copy(
+            update={
+                "argv": ["server.py", "--startup-delay"],
+                "startup_timeout_seconds": 1,
+            }
+        )
+        connection = McpConnection(
+            plugin_root=self.plugins.installed_root("demo"),
+            runtime_root=self.data / "extensions" / "mcp-runtime",
+            workspace_root=self.workspace,
+            config=config,
+            on_list_changed=lambda: None,
+            async_kernel=self.kernel,
+            sandbox=False,
+            resource_registry=self.resources,
+        )
+
+        with self.assertRaisesRegex(McpUnavailable, "mcp_startup_timeout"):
+            connection.start()
+
+        self.assertFalse(any(
+            resource.kind is RuntimeResourceKind.ASYNC_TASK
+            for resource in self.resources.active_resources()
+        ))
+
+    def test_enabled_server_without_bound_kernel_fails_closed(self) -> None:
+        manager = McpManager(
             self.plugins,
             self.plugins.extension_snapshot(),
             self.workspace,
             sandbox=False,
         )
 
-    def tearDown(self) -> None:
-        self.manager.close()
-        self.store.close()
-        self.temporary.cleanup()
+        self.assertEqual(manager.start(), ())
+        server = self.plugins.list_mcp_servers()[0]
+        self.assertFalse(server["available"])
+        self.assertEqual(server["errorCode"], "mcp_connection_lost")
 
     def test_discovers_namespaced_external_tools_and_calls_success(self) -> None:
         entries = self.manager.start()
@@ -100,6 +209,17 @@ class McpManagerTests(unittest.TestCase):
         self.assertEqual(timeout_result["code"], "mcp_tool_timeout")
         self.assertTrue(timeout_result["sideEffectsMayExist"])
         self.assertTrue(timeout_result["reconciliationRequired"])
+
+    def test_preserves_structured_content(self) -> None:
+        entries = self.manager.start()
+        structured = next(
+            value for value in entries if value.spec.name.endswith("__structured")
+        )
+
+        result = structured.adapter.execute({}, threading.Event())
+
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(result["data"]["structuredContent"], {"answer": 42})
 
     def test_rejects_unsupported_content_and_cancel_never_sends(self) -> None:
         entries = self.manager.start()

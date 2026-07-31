@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+import json
 import logging
 import threading
 import time
 import uuid
 from typing import Callable
 
+import anyio
 from pydantic import ValidationError
 
 from eidos_runtime.db.storage import (
@@ -19,17 +21,22 @@ from eidos_runtime.model.client import ModelClient
 from eidos_runtime.model.pydantic_ai_client import ModelClientLease
 from eidos_runtime.protocol.schemas import ApprovalDecisionDto
 from eidos_runtime.runtime.approval import ApprovalDecision
+from eidos_runtime.runtime.async_kernel import (
+    AsyncKernelClosedError,
+    RuntimeAsyncKernel,
+    RuntimeAsyncTask,
+)
 from eidos_runtime.runtime.contracts import RuntimeCancelled
 from eidos_runtime.runtime.engine import RuntimeEngine
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
     RuntimeResource,
+    RuntimeResourceDiagnostic,
     RuntimeResourceKind,
 )
 from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle
-from eidos_runtime.runtime.tool_execution import active_tool_execution_count
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
 
 
@@ -86,9 +93,10 @@ class PendingApproval:
 class ManagedTask:
     task_id: str
     kind: str
-    thread: threading.Thread
     cancellation: threading.Event
+    async_task_handle: RuntimeAsyncTask[None]
     resource: RuntimeResource
+    async_request_resource: RuntimeResource | None
 
 
 @dataclass(frozen=True)
@@ -137,6 +145,26 @@ class RunSupervisor:
         self.lifecycle = RuntimeLifecycle.RUNNING
         self.control_state = RuntimeControlState.RUNNING
         self.events = RuntimeEvents(notify, store=store)
+        self._async_kernel: RuntimeAsyncKernel | None = None
+        self._async_kernel_frozen = False
+
+    def bind_async_kernel(self, kernel: RuntimeAsyncKernel) -> None:
+        """Bind the process-owned kernel before the first Run is dispatched."""
+        with self.lock:
+            if (
+                self.lifecycle is not RuntimeLifecycle.RUNNING
+                or self.control_state is not RuntimeControlState.RUNNING
+                or self._async_kernel_frozen
+            ):
+                raise RuntimeError("runtime async kernel binding is frozen")
+            if self._async_kernel is not None and self._async_kernel is not kernel:
+                raise RuntimeError("runtime async kernel is already bound")
+            self._async_kernel = kernel
+
+    @property
+    def async_kernel(self) -> RuntimeAsyncKernel | None:
+        with self.lock:
+            return self._async_kernel
 
     def prepare_next(self) -> WorkerStart | None:
         if (
@@ -156,6 +184,7 @@ class RunSupervisor:
             if claimed is None:
                 return None
             run_id = str(claimed.value["id"])
+            self._async_kernel_frozen = True
             handle = self._handles.get(run_id)
             if handle is not None:
                 if handle.state not in {
@@ -321,7 +350,6 @@ class RunSupervisor:
         self._release_approval_waits()
         self.wait(self.shutdown_timeout)
         self.wait_managed_tasks(self.shutdown_timeout)
-        live_threads = self._live_managed_threads()
         registered = tuple(
             resource
             for resource in self.resources.active_resources()
@@ -331,8 +359,6 @@ class RunSupervisor:
             self.has_active_workers()
             or self.has_active_model_leases()
             or self.has_active_managed_tasks()
-            or active_tool_execution_count()
-            or live_threads
             or registered
         ):
             for run_id in active_ids:
@@ -343,24 +369,14 @@ class RunSupervisor:
                     self.events.publish(failed, run=failed.value)
                 except (InvalidRunStateError, ResourceNotFoundError):
                     pass
-            resources = []
-            if self.has_active_workers():
-                resources.append("run_handle")
-            if self.has_active_model_leases():
-                resources.append("model_lease")
-            if self.has_active_managed_tasks():
-                resources.append("managed_task")
-            if active_tool_execution_count():
-                resources.append("tool_execution")
-            if live_threads:
-                resources.append("managed_thread")
-            resources.extend(
-                f"{resource.kind.value}:{resource.owner_id}"
-                for resource in registered
-            )
             logger.warning(
                 "Runtime shutdown timed out; active resources: %s",
-                ",".join(resources),
+                json.dumps(
+                    self._shutdown_diagnostics(registered),
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
             )
             raise RuntimeShutdownTimeout("RUNTIME_SHUTDOWN_TIMEOUT")
         with self.store.lock:
@@ -404,12 +420,19 @@ class RunSupervisor:
     ) -> bool:
         task_id = str(uuid.uuid4())
         cancellation = threading.Event()
+        registered = threading.Event()
 
-        def run() -> None:
+        async def run() -> None:
+            while not registered.is_set():
+                await anyio.sleep(0)
             try:
-                target(cancellation)
+                await anyio.to_thread.run_sync(target, cancellation)
             except Exception:
+                resource.fail("MANAGED_TASK_FAILED")
+                if async_resource is not None:
+                    async_resource.fail("MANAGED_TASK_FAILED")
                 logger.exception("Runtime managed task failed: %s", kind)
+                raise
             finally:
                 if async_resource is not None:
                     async_resource.close()
@@ -417,11 +440,6 @@ class RunSupervisor:
                 with self.lock:
                     self._managed_tasks.pop(task_id, None)
 
-        thread = threading.Thread(
-            target=run,
-            name=f"eidos-{kind}-{task_id}",
-            daemon=False,
-        )
         resource = self.resources.register(
             RuntimeResourceKind.MANAGED_TASK,
             owner_id=task_id,
@@ -440,24 +458,41 @@ class RunSupervisor:
             if (
                 self.lifecycle is not RuntimeLifecycle.RUNNING
                 or self.control_state is not RuntimeControlState.RUNNING
+                or self._async_kernel is None
             ):
                 if async_resource is not None:
                     async_resource.close()
                 resource.close()
                 return False
+            try:
+                handle = self._async_kernel.start_task(
+                    run,
+                    owner_id=f"managed:{task_id}",
+                )
+            except (AsyncKernelClosedError, RuntimeError):
+                if async_resource is not None:
+                    async_resource.close()
+                resource.close()
+                return False
             self._managed_tasks[task_id] = ManagedTask(
-                task_id, kind, thread, cancellation, resource
+                task_id,
+                kind,
+                cancellation,
+                handle,
+                resource,
+                async_resource,
             )
-            thread.start()
             resource.start()
             if async_resource is not None:
                 async_resource.start()
+            registered.set()
         return True
 
     def has_active_managed_tasks(self) -> bool:
         with self.lock:
             return any(
-                task.thread.is_alive() for task in self._managed_tasks.values()
+                not task.async_task_handle.done()
+                for task in self._managed_tasks.values()
             )
 
     def wait_managed_tasks(self, timeout: float) -> bool:
@@ -465,7 +500,9 @@ class RunSupervisor:
         with self.lock:
             tasks = tuple(self._managed_tasks.values())
         for task in tasks:
-            task.thread.join(timeout=max(0.0, deadline - time.monotonic()))
+            task.async_task_handle.wait(
+                max(0.0, deadline - time.monotonic())
+            )
         return not self.has_active_managed_tasks()
 
     def begin_reconfiguration(self) -> bool:
@@ -483,7 +520,7 @@ class RunSupervisor:
                     for handle in self._handles.values()
                 )
                 or any(
-                    task.thread.is_alive()
+                    not task.async_task_handle.done()
                     for task in self._managed_tasks.values()
                 )
             ):
@@ -496,22 +533,74 @@ class RunSupervisor:
             if self.control_state is RuntimeControlState.RECONFIGURING:
                 self.control_state = RuntimeControlState.RUNNING
 
-    @staticmethod
-    def _live_managed_threads() -> tuple[threading.Thread, ...]:
-        current = threading.current_thread()
-        prefixes = (
-            "eidos-mcp-",
-            "eidos-tool-",
-            "eidos-title-",
-            "eidos-finalization-",
-        )
-        return tuple(
-            thread
-            for thread in threading.enumerate()
-            if thread is not current
-            and thread.is_alive()
-            and thread.name.startswith(prefixes)
-        )
+    def _shutdown_diagnostics(
+        self,
+        registered: tuple[RuntimeResourceDiagnostic, ...],
+    ) -> list[dict[str, object]]:
+        diagnostics = [
+            {
+                "kind": resource.kind.value,
+                "owner_id": resource.owner_id,
+                "state": resource.state.value,
+                "deadline": resource.deadline,
+                "diagnostic_code": resource.diagnostic_code,
+            }
+            for resource in registered[:100]
+        ]
+        represented = {
+            (str(value["kind"]), str(value["owner_id"]))
+            for value in diagnostics
+        }
+        with self.lock:
+            handles = tuple(self._handles.values())
+            managed = tuple(self._managed_tasks.values())
+        for handle in handles:
+            if len(diagnostics) >= 100:
+                break
+            if (
+                handle.state is not RunWorkerState.FINISHED
+                and (RuntimeResourceKind.RUN_WORKER.value, handle.run_id)
+                not in represented
+            ):
+                diagnostics.append({
+                    "kind": RuntimeResourceKind.RUN_WORKER.value,
+                    "owner_id": handle.run_id,
+                    "state": handle.state.value,
+                    "deadline": None,
+                    "diagnostic_code": "RUNTIME_SHUTDOWN_TIMEOUT",
+                })
+            if (
+                len(diagnostics) < 100
+                and handle.model_lease is not None
+                and not handle.model_lease.closed
+                and (RuntimeResourceKind.MODEL_LEASE.value, handle.run_id)
+                not in represented
+            ):
+                diagnostics.append({
+                    "kind": RuntimeResourceKind.MODEL_LEASE.value,
+                    "owner_id": handle.run_id,
+                    "state": "running",
+                    "deadline": None,
+                    "diagnostic_code": "RUNTIME_SHUTDOWN_TIMEOUT",
+                })
+        for task in managed:
+            if len(diagnostics) >= 100:
+                break
+            if (
+                not task.async_task_handle.done()
+                and (RuntimeResourceKind.MANAGED_TASK.value, task.task_id)
+                not in represented
+            ):
+                diagnostics.append({
+                    "kind": RuntimeResourceKind.MANAGED_TASK.value,
+                    "owner_id": task.task_id,
+                    "state": task.async_task_handle.state.value,
+                    "deadline": task.async_task_handle.deadline,
+                    "diagnostic_code": (
+                        task.async_task_handle.diagnostics().diagnostic_code
+                    ),
+                })
+        return diagnostics
 
     def _release_approval_waits(self, run_id: str | None = None) -> None:
         with self.approval_lock:
@@ -581,16 +670,21 @@ class RunSupervisor:
             with self.lock:
                 handle.model_lease = lease
                 handle.state = RunWorkerState.RUNNING
+            engine_kwargs: dict[str, object] = {
+                "sensitive": self.sensitive(),
+                "wait_for_execution_slot": self._wait_for_execution_slot,
+                "resource_registry": self.resources,
+                "events": self.events,
+            }
+            if self.engine_factory is RuntimeEngine:
+                engine_kwargs["async_kernel"] = self._async_kernel
             engine = self.engine_factory(
                 self.store,
                 lease.client,
                 self.notify,
                 self.request_approval,
                 self.shell_available(),
-                sensitive=self.sensitive(),
-                wait_for_execution_slot=self._wait_for_execution_slot,
-                resource_registry=self.resources,
-                events=self.events,
+                **engine_kwargs,
             )
             if isinstance(engine, RuntimeEngine):
                 engine.terminalize_cancel = False
