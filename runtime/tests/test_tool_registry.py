@@ -188,6 +188,33 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertEqual(registry.names, frozenset({"memory_echo"}))
         self.assertEqual(registry.quarantined[0].code, "invalid_tool_schema")
 
+    def test_schema_backed_tool_normalizes_declared_defaults(self) -> None:
+        base = memory_entry("mcp__demo__defaults")
+        entry = ToolRegistryEntry(
+            base.spec.model_copy(update={
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "value": {"type": "string"},
+                        "mode": {"type": "string", "default": "safe"},
+                    },
+                    "required": ["value"],
+                    "additionalProperties": False,
+                },
+            }),
+            base.provenance.model_copy(update={
+                "kind": "mcp", "plugin_id": "demo", "server_id": "demo",
+            }),
+            base.adapter,
+        )
+
+        validated = entry.validate_arguments({"value": "hello"})
+
+        self.assertTrue(validated.valid)
+        self.assertEqual(
+            validated.normalized_arguments, {"value": "hello", "mode": "safe"},
+        )
+
     def test_step_snapshot_order_and_hash_are_deterministic(self) -> None:
         first = memory_entry("alpha")
         second = memory_entry("zeta")
