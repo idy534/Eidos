@@ -3,8 +3,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
+from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.model_gateway.models import WireAPI
 
 
@@ -20,9 +21,7 @@ def redact_diagnostic(value: str | None) -> str | None:
     return _SECRET.sub("[REDACTED]", value)[:2_000]
 
 
-class EidosModelError(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
+class EidosModelError(EidosFrozenStrictModel):
     code: str
     message: str
     retryable: bool

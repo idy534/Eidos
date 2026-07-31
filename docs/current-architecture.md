@@ -59,6 +59,7 @@ Renderer 只通过 context-isolated preload 暴露的 typed IPC 访问 Main。Ma
 | 边界 | 路径 |
 |---|---|
 | Desktop shared contract | `desktop/shared/domain-contracts.ts` |
+| Model Profile generated contract | `runtime/eidos_runtime/contracts/export_model_profile.py` → `contracts/generated/model-profile.schema.json` → `desktop/shared/generated/runtime/model-profile.ts` |
 | Main JSON-RPC validator/client | `desktop/main/runtime-client.ts` |
 | Python DTO | `runtime/eidos_runtime/protocol/schemas.py` |
 | JSON-RPC server | `runtime/eidos_runtime/protocol/server.py` |

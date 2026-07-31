@@ -7,11 +7,9 @@ from typing import Self
 from urllib.parse import urlparse
 import uuid
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 
-
-class _FrozenModel(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+from eidos_runtime.models import EidosFrozenStrictModel
 
 
 class WireAPI(StrEnum):
@@ -57,7 +55,7 @@ class CapabilityProbeSource(StrEnum):
     CONSERVATIVE_DEFAULT = "conservative_default"
 
 
-class RetryPolicy(_FrozenModel):
+class RetryPolicy(EidosFrozenStrictModel):
     max_attempts: int = Field(default=3, ge=1, le=10)
     initial_backoff_seconds: float = Field(default=0.2, ge=0, le=60)
     max_backoff_seconds: float = Field(default=2.0, ge=0, le=300)
@@ -69,7 +67,7 @@ class RetryPolicy(_FrozenModel):
         return self
 
 
-class ModelProfile(_FrozenModel):
+class ModelProfile(EidosFrozenStrictModel):
     schema_version: int = 1
     id: str = Field(min_length=1, max_length=128)
     name: str = Field(min_length=1, max_length=120)
@@ -124,14 +122,14 @@ class ModelProfile(_FrozenModel):
         return value
 
 
-class CapabilityWarning(_FrozenModel):
+class CapabilityWarning(EidosFrozenStrictModel):
     code: str
     capability: str | None = None
     message: str
     source: CapabilityProbeSource
 
 
-class CapabilitySnapshot(_FrozenModel):
+class CapabilitySnapshot(EidosFrozenStrictModel):
     schema_version: int = 1
     id: str
     profile_id: str
@@ -225,7 +223,7 @@ class CapabilitySnapshot(_FrozenModel):
         )
 
 
-class RunModelSnapshot(_FrozenModel):
+class RunModelSnapshot(EidosFrozenStrictModel):
     schema_version: int = 1
     lease_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     profile: ModelProfile

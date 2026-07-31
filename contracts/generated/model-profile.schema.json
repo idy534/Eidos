@@ -1,0 +1,409 @@
+{
+  "$comment": "Generated from Eidos Runtime Pydantic models. Do not edit manually.",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "CapabilityProbeSource": {
+      "enum": [
+        "provider_metadata",
+        "active_probe",
+        "built_in_preset",
+        "user_declaration",
+        "conservative_default"
+      ],
+      "title": "CapabilityProbeSource",
+      "type": "string"
+    },
+    "CapabilitySnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "authenticated": {
+          "type": "boolean"
+        },
+        "contextWindow": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "type": "string"
+        },
+        "maxOutputTokens": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "modelId": {
+          "type": "string"
+        },
+        "probeSource": {
+          "$ref": "#/definitions/CapabilityProbeSource"
+        },
+        "probeVersion": {
+          "type": "string"
+        },
+        "probedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "profileId": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "reachable": {
+          "type": "boolean"
+        },
+        "reasoningMode": {
+          "$ref": "#/definitions/ReasoningMode"
+        },
+        "schemaVersion": {
+          "default": 1,
+          "type": "integer"
+        },
+        "sources": {
+          "additionalProperties": {
+            "$ref": "#/definitions/CapabilityProbeSource"
+          },
+          "type": "object"
+        },
+        "supportedReasoningEfforts": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ReasoningEffort"
+          },
+          "type": "array"
+        },
+        "supportsImages": {
+          "type": "boolean"
+        },
+        "supportsParallelTools": {
+          "type": "boolean"
+        },
+        "supportsPromptCache": {
+          "type": "boolean"
+        },
+        "supportsStructuredOutput": {
+          "type": "boolean"
+        },
+        "supportsTools": {
+          "type": "boolean"
+        },
+        "warnings": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/CapabilityWarning"
+          },
+          "type": "array"
+        },
+        "wireApi": {
+          "$ref": "#/definitions/WireAPI"
+        }
+      },
+      "required": [
+        "id",
+        "profileId",
+        "provider",
+        "wireApi",
+        "modelId",
+        "reachable",
+        "authenticated",
+        "supportsTools",
+        "supportsParallelTools",
+        "supportsImages",
+        "supportsStructuredOutput",
+        "supportsPromptCache",
+        "reasoningMode",
+        "probeSource",
+        "probeVersion",
+        "probedAt"
+      ],
+      "title": "CapabilitySnapshot",
+      "type": "object"
+    },
+    "CapabilityWarning": {
+      "additionalProperties": false,
+      "properties": {
+        "capability": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/definitions/CapabilityProbeSource"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "source"
+      ],
+      "title": "CapabilityWarning",
+      "type": "object"
+    },
+    "ModelProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "authReference": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        "baseUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "contextWindow": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "maxOutputTokens": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "modelId": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "reasoningEffort": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reasoningMode": {
+          "$ref": "#/definitions/ReasoningMode",
+          "default": "none"
+        },
+        "requestTimeout": {
+          "default": 120.0,
+          "exclusiveMinimum": 0,
+          "maximum": 600,
+          "type": "number"
+        },
+        "retryPolicy": {
+          "$ref": "#/definitions/RetryPolicy"
+        },
+        "schemaVersion": {
+          "default": 1,
+          "type": "integer"
+        },
+        "supportsImages": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "supportsParallelTools": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "supportsPromptCache": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "supportsStructuredOutput": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "supportsTools": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "updatedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "wireApi": {
+          "$ref": "#/definitions/WireAPI"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "provider",
+        "authReference",
+        "wireApi",
+        "modelId",
+        "createdAt",
+        "updatedAt"
+      ],
+      "title": "ModelProfile",
+      "type": "object"
+    },
+    "ReasoningEffort": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "ReasoningEffort",
+      "type": "string"
+    },
+    "ReasoningMode": {
+      "enum": [
+        "none",
+        "native",
+        "compatible"
+      ],
+      "title": "ReasoningMode",
+      "type": "string"
+    },
+    "RetryPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "initialBackoffSeconds": {
+          "default": 0.2,
+          "maximum": 60,
+          "minimum": 0,
+          "type": "number"
+        },
+        "maxAttempts": {
+          "default": 3,
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxBackoffSeconds": {
+          "default": 2.0,
+          "maximum": 300,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "title": "RetryPolicy",
+      "type": "object"
+    },
+    "WireAPI": {
+      "enum": [
+        "openai_responses",
+        "openai_chat_completions"
+      ],
+      "title": "WireAPI",
+      "type": "string"
+    }
+  },
+  "description": "Schema-only root that retains the Model Profile contract's definitions.",
+  "properties": {
+    "capabilitySnapshot": {
+      "$ref": "#/definitions/CapabilitySnapshot"
+    },
+    "profile": {
+      "$ref": "#/definitions/ModelProfile"
+    }
+  },
+  "required": [
+    "profile",
+    "capabilitySnapshot"
+  ],
+  "title": "ModelProfileContractBundle",
+  "type": "object"
+}

@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
-
+from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.model_gateway.models import WireAPI
 
 
-class ProviderPreset(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
+class ProviderPreset(EidosFrozenStrictModel):
     id: str
     display_name: str
     provider_adapter_id: str

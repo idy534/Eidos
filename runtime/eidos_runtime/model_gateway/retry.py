@@ -1,22 +1,19 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
+from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.model_gateway.errors import EidosModelError
 from eidos_runtime.model_gateway.models import RetryPolicy
 
 
-class RetryState(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
+class RetryState(EidosFrozenStrictModel):
     attempt_number: int = Field(ge=1)
     complete_tool_call_emitted: bool = False
     tool_result_committed: bool = False
 
 
-class RetryDecision(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
+class RetryDecision(EidosFrozenStrictModel):
     retry: bool
     reason: str
     backoff_seconds: float = Field(ge=0)
