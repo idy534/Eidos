@@ -2,14 +2,12 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
+
+from eidos_runtime.models import EidosFrozenStrictModel
 
 
-class _FrozenModel(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
-
-class NormalizedUsage(_FrozenModel):
+class NormalizedUsage(EidosFrozenStrictModel):
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
     reasoning_tokens: int | None = Field(default=None, ge=0)
@@ -20,13 +18,13 @@ class NormalizedUsage(_FrozenModel):
     estimated: bool
 
 
-class PricingReference(_FrozenModel):
+class PricingReference(EidosFrozenStrictModel):
     id: str
     source: str
     effective_at: str
 
 
-class NormalizedCost(_FrozenModel):
+class NormalizedCost(EidosFrozenStrictModel):
     pricing_reference: PricingReference | None = None
     currency: str | None = None
     input_cost: Decimal | None = None

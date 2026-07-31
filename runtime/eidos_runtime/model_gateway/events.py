@@ -3,15 +3,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
+from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.model_gateway.errors import EidosModelError
 from eidos_runtime.model_gateway.usage import NormalizedUsage
 
 
-class GatewayEvent(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
+class GatewayEvent(EidosFrozenStrictModel):
     run_id: str
     attempt_id: str
     response_id: str | None = None

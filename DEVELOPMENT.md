@@ -63,6 +63,14 @@ pnpm test:electron-smoke
 - Runtime Loop 测试会用确定性 Fake Model 完成 `read_file -> ToolResult -> final answer` 两轮循环。
 - DeepSeek Adapter 测试覆盖 SSE 文本、reasoning 隐藏、ToolCall 跨 chunk 归并与 `0600` 私有配置；不会产生真实 API 费用。
 
+### Pydantic Model Conventions
+
+Runtime 模型必须从 `eidos_runtime.models` 选择明确的基础类，而非直接继承 `pydantic.BaseModel`：普通 DTO 使用 `EidosModel`，需要拒绝隐式类型转换时使用 `EidosStrictModel`，不可变配置、快照和值对象使用 `EidosFrozenModel`，同时需要两者时使用 `EidosFrozenStrictModel`。不要把运行中的可变状态改为 Frozen。
+
+`to_internal_dict()` 用 snake_case 为 Runtime 与持久化边界生成 JSON-compatible 数据；`to_wire_dict()` 用 camelCase 为 JSON-RPC、Renderer 和外部 JSON 边界生成 JSON-compatible 数据。两者默认保留 `None`，只有调用者显式传入 `exclude_none=True` 才删除。
+
+跨 JSON-RPC 或 Renderer 的整数只有在 JavaScript 安全范围已是既有契约时才使用 `JsonSafeInt`；不要批量替换普通 `int`。基础类集中保持 alias、未知字段和默认值验证规则，避免各领域模型重复或悄然偏离这些协议边界。
+
 验证桌面端可以完整构建：
 
 ```bash

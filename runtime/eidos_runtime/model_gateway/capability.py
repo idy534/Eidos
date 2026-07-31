@@ -8,8 +8,8 @@ import time
 import uuid
 
 import httpx
-from pydantic import BaseModel, ConfigDict
 
+from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.model_gateway.errors import EidosModelError, normalize_http_error
 from eidos_runtime.model_gateway.models import (
     CapabilityProbeSource,
@@ -29,9 +29,7 @@ class CapabilityProbeError(RuntimeError):
         super().__init__(error.code)
 
 
-class TestConnectionResult(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
+class TestConnectionResult(EidosFrozenStrictModel):
     success: bool
     profile_valid: bool
     endpoint_identity: str
