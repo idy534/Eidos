@@ -9,7 +9,6 @@ export type {
   ModelListResult,
   ModelProfile,
   ModelProfileDraft,
-  ModelTestConnectionResult,
   WireAPI,
   Session,
   SessionListResult,

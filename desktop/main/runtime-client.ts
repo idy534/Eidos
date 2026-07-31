@@ -58,7 +58,6 @@ import type {
   ModelStatus,
   ModelProfile,
   ModelProfileDraft,
-  ModelTestConnectionResult,
   PluginListResult,
   PluginRecord,
   Run,
@@ -332,14 +331,6 @@ export class RuntimeClient {
         && value.deletedProfileId === profileId
       ),
     ).then(() => undefined);
-  }
-
-  testModelProfile(profileId: string): Promise<ModelTestConnectionResult> {
-    return this.validatedRequest(
-      "model_profile/test_connection",
-      { profileId },
-      isModelTestConnectionResult,
-    );
   }
 
   listPlugins(): Promise<{ plugins: PluginRecord[] }> {
@@ -761,21 +752,6 @@ function isModelProfile(value: unknown): value is ModelProfile {
     && isRecord(value.retryPolicy)
     && typeof value.createdAt === "string"
     && typeof value.updatedAt === "string"
-  );
-}
-
-function isModelTestConnectionResult(value: unknown): value is ModelTestConnectionResult {
-  return (
-    isRecord(value)
-    && hasOnlyKeys(value, [
-      "success", "profileValid", "endpointIdentity", "capabilitySnapshot",
-      "warnings", "error", "probeDurationMs",
-    ])
-    && typeof value.success === "boolean"
-    && typeof value.profileValid === "boolean"
-    && typeof value.endpointIdentity === "string"
-    && Array.isArray(value.warnings)
-    && typeof value.probeDurationMs === "number"
   );
 }
 

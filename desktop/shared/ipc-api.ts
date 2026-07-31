@@ -12,7 +12,6 @@ import type {
   ModelListResult,
   ModelProfile,
   ModelProfileDraft,
-  ModelTestConnectionResult,
   ApprovalRequest,
   PluginListResult,
   PluginRecord,
@@ -54,7 +53,6 @@ export interface EidosRuntimeAPI {
   createModelProfile(profile: ModelProfileDraft, apiKey?: string): Promise<ModelProfile>;
   updateModelProfile(profileId: string, profile: ModelProfileDraft, apiKey?: string): Promise<ModelProfile>;
   deleteModelProfile(profileId: string): Promise<void>;
-  testModelProfile(profileId: string): Promise<ModelTestConnectionResult>;
 
   // Approvals
   listPendingApprovals(): Promise<ApprovalRequest[]>;

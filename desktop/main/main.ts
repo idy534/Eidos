@@ -480,11 +480,6 @@ ipcMain.handle(IPC.MODEL_PROFILE_DELETE, (_event, profileId: unknown) => {
   if (typeof profileId !== "string") throw new Error("Model Profile 参数无效。");
   return clientOrThrow().deleteModelProfile(profileId);
 });
-ipcMain.handle(IPC.MODEL_PROFILE_TEST, (_event, profileId: unknown) => {
-  if (typeof profileId !== "string") throw new Error("Model Profile 参数无效。");
-  return clientOrThrow().testModelProfile(profileId);
-});
-
 ipcMain.handle(IPC.PLUGIN_LIST, () => clientOrThrow().listPlugins());
 ipcMain.handle(IPC.PLUGIN_IMPORT, async () => {
   const result = await dialog.showOpenDialog({
