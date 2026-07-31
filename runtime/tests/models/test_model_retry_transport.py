@@ -38,6 +38,7 @@ from eidos_runtime.model_gateway.models import RunModelSnapshot  # noqa: E402
 from eidos_runtime.model.pydantic_ai_client import PydanticAIModelClient  # noqa: E402
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 
 
 NOW = datetime(2026, 7, 31, tzinfo=UTC)
@@ -150,6 +151,8 @@ def test_frozen_profile_factory_retries_once_and_persists_one_model_attempt() ->
         side_effect=build_with_scripted_transport,
     ):
         built = build_pydantic_model(frozen, "provider-key-value-123456")
+    kernel = RuntimeAsyncKernel()
+    kernel.start()
     client = PydanticAIModelClient(
         built.model,
         model_profile_spec(frozen),
@@ -159,6 +162,7 @@ def test_frozen_profile_factory_retries_once_and_persists_one_model_attempt() ->
         profile_snapshot=legacy_profile_snapshot(frozen),
         settings_extra_body={"thinking": {"type": "disabled"}},
         parallel_tool_calls=False,
+        async_kernel=kernel,
     )
     try:
         with tempfile.TemporaryDirectory(prefix="eidos-retry-integration-") as temporary:
@@ -189,6 +193,7 @@ def test_frozen_profile_factory_retries_once_and_persists_one_model_attempt() ->
                 store.close()
     finally:
         client.close()
+        kernel.close()
     assert built.retry_client.http_client.is_closed
 
 

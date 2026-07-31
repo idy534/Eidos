@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import Future
 from contextlib import nullcontext, suppress
 from dataclasses import dataclass, replace
 from enum import StrEnum
 import hashlib
+import inspect
 import json
 import threading
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable
 
 import httpx
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
@@ -66,6 +66,7 @@ from eidos_runtime.runtime.resource_registry import (
     RuntimeResource,
     RuntimeResourceKind,
 )
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.fault_injection import hit_fault
 
 
@@ -78,58 +79,6 @@ USAGE_DETAIL_KEYS = frozenset({
     "reasoning_tokens",
     "rejected_prediction_tokens",
 })
-
-
-class _AsyncLoop:
-    def __init__(
-        self,
-        name: str,
-        resource_registry: ResourceRegistry | None = None,
-    ) -> None:
-        self.loop = asyncio.new_event_loop()
-        self.ready = threading.Event()
-        self.thread = threading.Thread(
-            target=self._run,
-            name=name,
-            daemon=False,
-        )
-        self.resource = (
-            resource_registry.register(
-                RuntimeResourceKind.MODEL_LOOP,
-                owner_id=name,
-            )
-            if resource_registry is not None
-            else None
-        )
-        self.thread.start()
-        if self.resource is not None:
-            self.resource.start()
-        self.ready.wait()
-
-    def _run(self) -> None:
-        asyncio.set_event_loop(self.loop)
-        self.ready.set()
-        self.loop.run_forever()
-        self.loop.close()
-
-    def run(self, coroutine: Coroutine[Any, Any, Any]) -> Any:
-        if not self.thread.is_alive():
-            coroutine.close()
-            raise RuntimeError("model client is closed")
-        future: Future[Any] = asyncio.run_coroutine_threadsafe(coroutine, self.loop)
-        return future.result()
-
-    def close(self) -> None:
-        if not self.thread.is_alive():
-            return
-        self.loop.call_soon_threadsafe(self.loop.stop)
-        self.thread.join(timeout=5.0)
-        if self.thread.is_alive():
-            if self.resource is not None:
-                self.resource.fail("MODEL_SHUTDOWN_TIMEOUT")
-            raise RuntimeError("model event loop did not stop")
-        if self.resource is not None:
-            self.resource.close()
 
 
 class PydanticAIModelClient:
@@ -147,7 +96,7 @@ class PydanticAIModelClient:
         settings_extra_body: dict[str, object] | None = None,
         parallel_tool_calls: bool | None = True,
         reasoning_effort: str | None = None,
-        resource_registry: ResourceRegistry | None = None,
+        async_kernel: RuntimeAsyncKernel,
     ) -> None:
         self._model = model
         self._profile_spec = profile_spec
@@ -165,11 +114,9 @@ class PydanticAIModelClient:
         )
         self._parallel_tool_calls = parallel_tool_calls
         self._reasoning_effort = reasoning_effort
-        self._loop = _AsyncLoop(
-            f"eidos-model-{profile_spec.provider_id}-{profile_spec.model_id}",
-            resource_registry,
-        )
+        self._async_kernel = async_kernel
         self._closed = False
+        self._lock = threading.RLock()
         self._profile_snapshot = (
             profile_snapshot or profile_spec.snapshot(dict(model.profile))
         )
@@ -180,7 +127,7 @@ class PydanticAIModelClient:
         api_key: str,
         model_id: str,
         *,
-        resource_registry: ResourceRegistry | None = None,
+        async_kernel: RuntimeAsyncKernel,
     ) -> PydanticAIModelClient:
         profile = MODEL_CATALOG.profile(model_id)
         timeout = httpx.Timeout(
@@ -204,7 +151,7 @@ class PydanticAIModelClient:
             profile,
             openai_client=client,
             settings_extra_body={"thinking": {"type": "disabled"}},
-            resource_registry=resource_registry,
+            async_kernel=async_kernel,
         )
 
     @property
@@ -231,18 +178,22 @@ class PydanticAIModelClient:
         allow_tools: bool = True,
         tool_definitions: tuple[ModelToolDefinition, ...] = (),
     ) -> ModelResponse:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("model client is closed")
         if cancel.is_set():
             raise ModelRequestError(_cancelled_failure())
         retry_tracker = RetryTracker()
         try:
-            return self._loop.run(self._complete(
+            return self._async_kernel.call(
+                self._complete,
                 context,
                 cancel,
                 on_text_delta,
                 allow_tools,
                 tool_definitions,
                 retry_tracker,
-            ))
+            )
         except RetryBackoffCanceled:
             raise ModelRequestError(
                 _with_retry_diagnostics(_cancelled_failure(), retry_tracker)
@@ -338,12 +289,14 @@ class PydanticAIModelClient:
         return map_model_response(response, retry_tracker=retry_tracker)
 
     def close(self) -> None:
-        if self._closed:
-            return
-        if self._provider_client is not None:
-            self._loop.run(self._provider_client.close())
-        self._loop.close()
-        self._closed = True
+        with self._lock:
+            if self._closed:
+                return
+            provider_client = self._provider_client
+        if provider_client is not None:
+            self._async_kernel.call(_close_provider_client, provider_client)
+        with self._lock:
+            self._closed = True
 
 
 class ModelClientInUseError(RuntimeError):
@@ -417,6 +370,7 @@ class ModelClientFactory:
         self,
         api_key: str,
         *,
+        async_kernel: RuntimeAsyncKernel,
         resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self._api_key = _validate_key(api_key)
@@ -424,6 +378,7 @@ class ModelClientFactory:
         self._lock = threading.RLock()
         self._state = ModelFactoryState.OPEN
         self._resources = resource_registry
+        self._async_kernel = async_kernel
 
     def client_for(self, model_id: str) -> PydanticAIModelClient:
         key = (PROVIDER, model_id)
@@ -481,16 +436,8 @@ class ModelClientFactory:
                 else ModelFactoryState.CLOSED
             )
         if failures:
-            code = (
-                "MODEL_SHUTDOWN_TIMEOUT"
-                if any(
-                    "event loop did not stop" in str(error)
-                    for error in failures
-                )
-                else "MODEL_RECONFIGURATION_FAILED"
-            )
             raise ModelFactoryCloseError(
-                code
+                "MODEL_RECONFIGURATION_FAILED"
             ) from failures[0]
 
     def _entry(
@@ -506,7 +453,7 @@ class ModelClientFactory:
                 PydanticAIModelClient.deepseek(
                     self._api_key,
                     model_id,
-                    resource_registry=self._resources,
+                    async_kernel=self._async_kernel,
                 )
             )
             self._clients[key] = entry
@@ -522,6 +469,15 @@ class ModelClientFactory:
             if entry is not expected or entry.lease_count <= 0:
                 return
             entry.lease_count -= 1
+
+
+async def _close_provider_client(provider_client: Any) -> None:
+    close = getattr(provider_client, "close", None)
+    if not callable(close):
+        return
+    result = close()
+    if inspect.isawaitable(result):
+        await result
 
 
 def encode_context(context: tuple[ModelContextItem, ...]) -> list[ModelMessage]:

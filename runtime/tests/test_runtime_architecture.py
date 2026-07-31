@@ -46,6 +46,26 @@ class RuntimeArchitectureTests(unittest.TestCase):
             "eidos_runtime.tools.workspace",
         }.isdisjoint(imports))
 
+    def test_async_portal_is_owned_only_by_runtime_async_kernel(self) -> None:
+        production = RUNTIME_ROOT / "eidos_runtime"
+        forbidden = (
+            "class _AsyncLoop",
+            "asyncio.new_event_loop",
+            "asyncio.run_coroutine_threadsafe",
+            "MODEL_LOOP",
+            "eidos-model-",
+            "model event loop did not stop",
+        )
+        portal_terms = ("start_blocking_portal", "BlockingPortal")
+        private_terms = ("pydantic_ai._", "anyio._")
+        for path in production.rglob("*.py"):
+            source = path.read_text(encoding="utf-8")
+            with self.subTest(path=path):
+                self.assertTrue(all(term not in source for term in forbidden))
+                self.assertTrue(all(term not in source for term in private_terms))
+                if path.name != "async_kernel.py":
+                    self.assertTrue(all(term not in source for term in portal_terms))
+
     def test_engine_has_no_concrete_tool_execution_methods(self) -> None:
         from eidos_runtime.runtime.engine import RuntimeEngine
 

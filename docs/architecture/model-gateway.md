@@ -77,14 +77,16 @@ and the safety boundary. Transport sub-attempts stay inside one
 The request-scoped tracker projects the final transport retry count and safe
 diagnostics into that one row. Once streaming consumption has begun, any text
 is visible, a Tool Call is complete or a Tool Result is committed, Eidos does
-not replay the request. Mid-stream resume/replay is not part of B3, and neither
-is a Model Event Loop migration.
+not replay the request. Mid-stream resume/replay is not part of B3. B4
+supersedes the Model Event Loop limitation: Model I/O now runs on the single
+AnyIO `BlockingPortal` owned by `RuntimeServer`, not on a Client-private loop.
 
 Renderer cancellation reaches both the active provider stream and the
 request-scoped Tenacity sleep. Cancellation is persisted as cancellation and
 never becomes a generic retryable provider error. Closing a Run lease closes
-the SDK client and its injected HTTP client exactly once before closing the
-dedicated model loop.
+the SDK client and its injected HTTP client exactly once on the shared Runtime
+Async Kernel; it never closes that kernel. Runtime shutdown closes all Model
+Clients before closing the shared kernel.
 
 ## Persistence and secrets
 

@@ -5,6 +5,10 @@
 
 本文件记录产品与技术决策的演进背景，包含历史阶段结论和目标态约束。它不是当前实现清单；判断当前行为请以 [当前架构](current-architecture.md)、[当前能力](current-capabilities.md)、[当前限制](current-limitations.md)、代码和测试为准。PRD、TDD 与归档 Phase 文档同样不能替代当前实现依据。
 
+## B4 implementation note
+
+历史 B3 中“Model Event Loop migration 不在范围内”的说明已被 B4 supersede：RuntimeServer 现在拥有唯一的 AnyIO `BlockingPortal`，模型 Client 不再创建私有 Event Loop 或线程。此变更不把 RuntimeEngine、RunSupervisor、MCP、Tool Execution 或 Managed Task 迁移为 AnyIO Runtime。
+
 | 编号 | 已确认决策 | 主要落点 |
 |---|---|---|
 | Q1 | `run_shell` 即使获批也必须受硬隔离；审批不能替代 `active_root` 边界。 | PRD 安全；TDD 沙箱 |

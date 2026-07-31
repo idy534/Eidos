@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 import httpx
 from openai import AsyncOpenAI
@@ -53,11 +54,15 @@ from eidos_runtime.model.pydantic_ai_client import (  # noqa: E402
     map_model_error,
     map_model_response,
 )
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 
 
 class PydanticAIModelClientTests(unittest.TestCase):
     def client(self, stream_function) -> PydanticAIModelClient:
         model = FunctionModel(stream_function=stream_function, model_name="fixture")
+        kernel = RuntimeAsyncKernel()
+        kernel.start()
+        self.addCleanup(kernel.close)
         client = PydanticAIModelClient(
             model,
             ModelProfileSpec(
@@ -67,6 +72,7 @@ class PydanticAIModelClientTests(unittest.TestCase):
                 max_output_tokens=512,
                 request_timeout_seconds=5.0,
             ),
+            async_kernel=kernel,
         )
         self.addCleanup(client.close)
         return client
@@ -261,6 +267,61 @@ class PydanticAIModelClientTests(unittest.TestCase):
         asyncio.run(_cancel_when_requested(cancel, stream))  # type: ignore[arg-type]
         self.assertTrue(stream.canceled)
 
+    def test_cancel_stops_an_idle_stream_without_waiting_for_an_event(self) -> None:
+        class IdleStream:
+            def __init__(self) -> None:
+                self.entered = threading.Event()
+                self.canceled = threading.Event()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args) -> None:
+                return None
+
+            def __aiter__(self):
+                return self.events()
+
+            async def events(self):
+                self.entered.set()
+                while not self.canceled.is_set():
+                    await asyncio.sleep(0.001)
+                if False:
+                    yield None
+
+            async def cancel(self) -> None:
+                self.canceled.set()
+
+            def get(self):
+                return PAIModelResponse(parts=[])
+
+        stream = IdleStream()
+        cancel = threading.Event()
+        result: list[BaseException] = []
+        client = self.client(_one_chunk)
+
+        def complete() -> None:
+            try:
+                client.complete((), cancel, lambda _delta: None)
+            except BaseException as error:
+                result.append(error)
+
+        with patch(
+            "eidos_runtime.model.pydantic_ai_client.model_request_stream",
+            return_value=stream,
+        ):
+            worker = threading.Thread(target=complete)
+            worker.start()
+            self.assertTrue(stream.entered.wait(timeout=1.0))
+            cancel.set()
+            self.assertTrue(stream.canceled.wait(timeout=1.0))
+            worker.join(timeout=1.0)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(result), 1)
+        self.assertIsInstance(result[0], ModelRequestError)
+        self.assertEqual(result[0].failure.code, "sampling_canceled")
+
     def test_client_remains_reusable_after_cancelled_call(self) -> None:
         client = self.client(_one_chunk)
         cancel = threading.Event()
@@ -271,17 +332,58 @@ class PydanticAIModelClientTests(unittest.TestCase):
         response = client.complete((), threading.Event(), lambda _delta: None)
         self.assertEqual(response.text, "done")
 
-    def test_factory_disables_sdk_retries_reuses_clients_and_closes_threads(self) -> None:
-        factory = ModelClientFactory("sk-example-key-for-tests")
+    def test_clients_share_kernel_and_client_close_does_not_stop_title_generation(self) -> None:
+        kernel = RuntimeAsyncKernel()
+        kernel.start()
+        profile = ModelProfileSpec(
+            provider_id="function",
+            model_id="fixture",
+            context_window_tokens=4_096,
+            max_output_tokens=512,
+            request_timeout_seconds=5.0,
+        )
+        first = PydanticAIModelClient(
+            FunctionModel(stream_function=_one_chunk, model_name="first"),
+            profile,
+            async_kernel=kernel,
+        )
+        second = PydanticAIModelClient(
+            FunctionModel(stream_function=_one_chunk, model_name="second"),
+            profile,
+            async_kernel=kernel,
+        )
+        try:
+            first.close()
+            self.assertEqual(
+                second.generate_title("name this session", threading.Event()),
+                "done",
+            )
+            self.assertEqual(
+                second.complete((), threading.Event(), lambda _delta: None).text,
+                "done",
+            )
+            self.assertFalse(any(
+                thread.name.startswith("eidos-model-")
+                for thread in threading.enumerate()
+            ))
+        finally:
+            second.close()
+            kernel.close()
+
+    def test_factory_disables_sdk_retries_reuses_clients_without_model_threads(self) -> None:
+        kernel = RuntimeAsyncKernel()
+        kernel.start()
+        factory = ModelClientFactory(
+            "sk-example-key-for-tests", async_kernel=kernel
+        )
         first = factory.client_for("deepseek-v4-flash")
         self.assertIs(first, factory.client_for("deepseek-v4-flash"))
         self.assertIsNot(first, factory.client_for("deepseek-v4-pro"))
         self.assertEqual(first.sdk_max_retries, 0)
         names = {thread.name for thread in threading.enumerate()}
-        self.assertTrue(any(name.startswith("eidos-model-") for name in names))
-        factory.close()
-        names = {thread.name for thread in threading.enumerate()}
         self.assertFalse(any(name.startswith("eidos-model-") for name in names))
+        factory.close()
+        kernel.close()
 
     def test_deepseek_request_omits_unsupported_none_reasoning_effort(self) -> None:
         payloads: list[dict[str, object]] = []
@@ -309,6 +411,8 @@ class PydanticAIModelClientTests(unittest.TestCase):
             base_url="https://api.deepseek.com",
             http_client=http_client,
         )
+        kernel = RuntimeAsyncKernel()
+        kernel.start()
         client = PydanticAIModelClient(
             OpenAIChatModel(
                 "deepseek-v4-flash",
@@ -322,7 +426,9 @@ class PydanticAIModelClientTests(unittest.TestCase):
                 request_timeout_seconds=120.0,
             ),
             openai_client=openai_client,
+            async_kernel=kernel,
         )
+        self.addCleanup(kernel.close)
         self.addCleanup(client.close)
         self.addCleanup(lambda: asyncio.run(http_client.aclose()))
 

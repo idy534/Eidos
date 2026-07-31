@@ -29,6 +29,7 @@ from eidos_runtime.runtime.supervisor import (  # noqa: E402
     RuntimeControlState,
     RuntimeShutdownTimeout,
 )
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 
 
 class _ExitOnCancelEngine:
@@ -181,6 +182,8 @@ class ConfigureFailureTests(unittest.TestCase):
         server = RuntimeServer(io.StringIO(), data)
         server.store.initialize()
         server.model_config.initialize()
+        server.async_kernel = RuntimeAsyncKernel()
+        server.async_kernel.start()
         server.initialized = True
         return server
 
@@ -188,7 +191,9 @@ class ConfigureFailureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="eidos-phase5b0-config-") as temporary:
             server = self._server(Path(temporary))
             server.model_config.save_api_key("sk-existing-key-for-tests")
-            previous = ModelClientFactory("sk-existing-key-for-tests")
+            previous = ModelClientFactory(
+                "sk-existing-key-for-tests", async_kernel=server.async_kernel
+            )
             server.model_factory = previous
 
             with patch(
@@ -226,7 +231,9 @@ class ConfigureFailureTests(unittest.TestCase):
     def test_model_factory_in_use_is_mapped_to_business_error(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-phase5b0-config-") as temporary:
             server = self._server(Path(temporary))
-            server.model_factory = ModelClientFactory("sk-existing-key-for-tests")
+            server.model_factory = ModelClientFactory(
+                "sk-existing-key-for-tests", async_kernel=server.async_kernel
+            )
             lease = server.model_factory.acquire("deepseek-v4-flash")
 
             server.configure_model(

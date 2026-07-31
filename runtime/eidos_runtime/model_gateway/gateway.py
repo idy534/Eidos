@@ -17,6 +17,7 @@ from eidos_runtime.model_gateway.pydantic_factory import (
     validate_provider_configuration,
 )
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 
 
 logger = logging.getLogger("eidos.runtime.model_gateway")
@@ -62,10 +63,12 @@ class ModelGateway:
         self,
         secrets: ModelSecretStore,
         *,
+        async_kernel: RuntimeAsyncKernel,
         resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self.secrets = secrets
         self.resources = resource_registry
+        self.async_kernel = async_kernel
 
     def acquire_lease(self, snapshot: RunModelSnapshot) -> ModelGatewayLease:
         profile = snapshot.profile
@@ -93,7 +96,7 @@ class ModelGateway:
                 and profile.provider != "deepseek"
                 else None
             ),
-            resource_registry=self.resources,
+            async_kernel=self.async_kernel,
         )
         lease = ModelGatewayLease(
             client,

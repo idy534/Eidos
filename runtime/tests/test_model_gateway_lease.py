@@ -20,6 +20,7 @@ from pydantic_ai.models.openai import (  # noqa: E402
 from eidos_runtime.model_gateway.auth import ModelSecretStore  # noqa: E402
 from eidos_runtime.model_gateway.capabilities import resolve_model_capabilities  # noqa: E402
 from eidos_runtime.model_gateway.gateway import ModelGateway  # noqa: E402
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 from eidos_runtime.model_gateway.pydantic_factory import (  # noqa: E402
     build_pydantic_model,
 )
@@ -67,12 +68,15 @@ class ModelGatewayLeaseTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="eidos-gateway-lease-")
         self.secrets = ModelSecretStore(Path(self.temporary.name))
         self.secrets.initialize()
+        self.kernel = RuntimeAsyncKernel()
+        self.kernel.start()
         for provider in PRESETS:
             os.environ[f"{provider.upper()}_API_KEY"] = "provider-key-value-123456"
 
     def tearDown(self) -> None:
         for provider in PRESETS:
             os.environ.pop(f"{provider.upper()}_API_KEY", None)
+        self.kernel.close()
         self.temporary.cleanup()
 
     def test_supported_profiles_build_their_pydantic_ai_model_class(self) -> None:
@@ -125,7 +129,7 @@ class ModelGatewayLeaseTests(unittest.TestCase):
             WireAPI.OPENAI_CHAT_COMPLETIONS,
             "https://api.deepseek.com",
         )
-        lease = ModelGateway(self.secrets).acquire_lease(frozen)
+        lease = ModelGateway(self.secrets, async_kernel=self.kernel).acquire_lease(frozen)
         original_release = lease._release
         close_count = 0
 
@@ -172,7 +176,7 @@ class ModelGatewayLeaseTests(unittest.TestCase):
             WireAPI.OPENAI_RESPONSES,
             "https://api.openai.com/v1",
         )
-        lease = ModelGateway(self.secrets).acquire_lease(frozen)
+        lease = ModelGateway(self.secrets, async_kernel=self.kernel).acquire_lease(frozen)
         try:
             self.assertEqual(lease.client.profile_snapshot.wire_api, "openai_responses")
         finally:
@@ -185,7 +189,7 @@ class ModelGatewayLeaseTests(unittest.TestCase):
             "https://api.example.test/v1",
         )
         with self.assertRaisesRegex(ValueError, "unknown model provider") as raised:
-            ModelGateway(self.secrets).acquire_lease(frozen)
+            ModelGateway(self.secrets, async_kernel=self.kernel).acquire_lease(frozen)
         self.assertNotIn("provider-key-value", str(raised.exception))
 
     def test_gateway_requires_effective_context_limits_before_acquiring(self) -> None:
@@ -199,7 +203,7 @@ class ModelGatewayLeaseTests(unittest.TestCase):
             "capability": frozen.capability.model_copy(update={"context_window": None}),
         })
         with self.assertRaisesRegex(ValueError, "context window"):
-            ModelGateway(self.secrets).acquire_lease(invalid)
+            ModelGateway(self.secrets, async_kernel=self.kernel).acquire_lease(invalid)
 
 
 if __name__ == "__main__":
