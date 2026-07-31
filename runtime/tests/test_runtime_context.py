@@ -30,6 +30,7 @@ from eidos_runtime.runtime.contracts import (  # noqa: E402
 )
 from eidos_runtime.runtime.decision import LoopDecisionEngine  # noqa: E402
 from eidos_runtime.runtime.tool_runtime import ReadOnlyToolHandler  # noqa: E402
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 from eidos_runtime.runtime.loop_guard import LoopGuard  # noqa: E402
 
 
@@ -472,12 +473,14 @@ class ContextPersistenceTests(unittest.TestCase):
         lock = threading.Lock()
         active = 0
         maximum = 0
+        worker_names: set[str] = set()
 
         def observed(handler, *args):
             nonlocal active, maximum
             with lock:
                 active += 1
                 maximum = max(maximum, active)
+                worker_names.add(threading.current_thread().name)
             time.sleep(0.05)
             try:
                 return original(handler, *args)
@@ -485,12 +488,23 @@ class ContextPersistenceTests(unittest.TestCase):
                 with lock:
                     active -= 1
 
-        with patch.object(ReadOnlyToolHandler, "execute", observed):
-            RuntimeEngine(self.store, model, lambda _message: None).run(
-                run["id"], threading.Event()
-            )
+        kernel = RuntimeAsyncKernel()
+        kernel.start()
+        try:
+            with patch.object(ReadOnlyToolHandler, "execute", observed):
+                RuntimeEngine(
+                    self.store,
+                    model,
+                    lambda _message: None,
+                    async_kernel=kernel,
+                ).run(run["id"], threading.Event())
+        finally:
+            kernel.close()
 
         self.assertEqual(maximum, 2)
+        self.assertFalse(any(
+            name.startswith("ThreadPoolExecutor-") for name in worker_names
+        ))
         assert self.store.connection is not None
         rows = self.store.connection.execute(
             "SELECT provider_call_id, batch_order, status FROM tool_calls ORDER BY creation_seq"
@@ -569,9 +583,17 @@ class ContextPersistenceTests(unittest.TestCase):
             raise RuntimeCancelled
 
         with patch.object(ReadOnlyToolHandler, "execute", canceled):
-            RuntimeEngine(self.store, model, lambda _message: None).run(
-                run["id"], cancel
-            )
+            kernel = RuntimeAsyncKernel()
+            kernel.start()
+            try:
+                RuntimeEngine(
+                    self.store,
+                    model,
+                    lambda _message: None,
+                    async_kernel=kernel,
+                ).run(run["id"], cancel)
+            finally:
+                kernel.close()
 
         self.assertEqual(self.store.read_run(run["id"])["status"], "canceled")
 
@@ -619,9 +641,17 @@ class ContextPersistenceTests(unittest.TestCase):
             return original(handler, run_id, item, call, cancel, runtime)
 
         with patch.object(ReadOnlyToolHandler, "execute", fail_one):
-            RuntimeEngine(self.store, model, lambda _message: None).run(
-                run["id"], threading.Event()
-            )
+            kernel = RuntimeAsyncKernel()
+            kernel.start()
+            try:
+                RuntimeEngine(
+                    self.store,
+                    model,
+                    lambda _message: None,
+                    async_kernel=kernel,
+                ).run(run["id"], threading.Event())
+            finally:
+                kernel.close()
 
         assert self.store.connection is not None
         rows = self.store.connection.execute(

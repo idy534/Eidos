@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 import errno
 import hashlib
 import json
 import threading
 from typing import Callable
+
+import anyio
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.skills import SkillCreation
@@ -15,6 +16,10 @@ from eidos_runtime.runtime.approval import (
     APPROVAL_REJECTION_GUIDANCE,
     ApprovalCoordinator,
     ApprovalOutcome,
+)
+from eidos_runtime.runtime.async_kernel import (
+    AsyncKernelClosedError,
+    RuntimeAsyncKernel,
 )
 from eidos_runtime.runtime.contracts import (
     RuntimeCancelled,
@@ -747,6 +752,7 @@ class ToolCallRuntime:
         *,
         shell_available: bool,
         base_permissions: BasePermissionProfile,
+        async_kernel: RuntimeAsyncKernel | None = None,
         resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self.store = store
@@ -754,6 +760,7 @@ class ToolCallRuntime:
         self.events = events
         self.sensitive = sensitive
         self.state_machine = state_machine
+        self.async_kernel = async_kernel
         self.concurrency = ToolConcurrencyGate()
         self.controller = ToolExecutionController(
             store,
@@ -847,6 +854,7 @@ class ToolCallRuntime:
         if (
             self.dispatcher.is_parallel_read_batch(tool_calls)
             and self._parallel_arguments_are_safe(tool_calls)
+            and self.async_kernel is not None
         ):
             self.store.clear_sensitive_tool_inputs(step.run_id)
             return self._execute_parallel_reads(step, tool_calls, cancel)
@@ -1055,38 +1063,53 @@ class ToolCallRuntime:
                     "failed",
                 )
 
-        with ThreadPoolExecutor(max_workers=len(pending)) as executor:
-            futures: dict[
-                Future[HandlerOutcome],
-                tuple[dict[str, object], ModelToolCall],
-            ] = {
-                executor.submit(run, entry): entry for entry in pending
-            }
-            results: dict[str, HandlerOutcome] = {}
-            infrastructure_error: ToolInfrastructureError | None = None
-            runtime_cancelled = False
-            for future in as_completed(futures):
-                item, _call = futures[future]
+        async def coordinate() -> tuple[HandlerOutcome, ...]:
+            results: list[HandlerOutcome | None] = [None] * len(pending)
+            infrastructure_errors: dict[int, ToolInfrastructureError] = {}
+            runtime_cancellations: set[int] = set()
+
+            async def worker(
+                index: int,
+                entry: tuple[dict[str, object], ModelToolCall],
+            ) -> None:
                 try:
-                    results[str(item["id"])] = future.result()
+                    results[index] = await anyio.to_thread.run_sync(run, entry)
                 except ToolInfrastructureError as error:
-                    infrastructure_error = error
+                    infrastructure_errors[index] = error
                     batch_cancel.set()
                 except RuntimeCancelled:
                     batch_cancel.set()
-                    runtime_cancelled = True
-            if infrastructure_error is not None:
+                    runtime_cancellations.add(index)
+
+            async with anyio.create_task_group() as group:
+                for index, entry in enumerate(pending):
+                    group.start_soon(worker, index, entry)
+
+            if infrastructure_errors:
                 self.store.complete_current_step(
                     step.run_id,
                     "failed",
                     reason="TOOL_INFRASTRUCTURE_FAILURE",
                 )
-                raise infrastructure_error
-            if runtime_cancelled:
+                raise infrastructure_errors[min(infrastructure_errors)]
+            if runtime_cancellations:
                 raise RuntimeCancelled
-            outcomes = [
-                results[str(item["id"])] for item, _call in pending
-            ]
+            if any(result is None for result in results):
+                raise ToolInfrastructureError("parallel tool result missing")
+            return tuple(result for result in results if result is not None)
+
+        assert self.async_kernel is not None
+        try:
+            outcomes = self.async_kernel.call(coordinate)
+        except AsyncKernelClosedError as error:
+            self.store.complete_current_step(
+                step.run_id,
+                "failed",
+                reason="TOOL_INFRASTRUCTURE_FAILURE",
+            )
+            raise ToolInfrastructureError(
+                "runtime async kernel is unavailable"
+            ) from error
 
         errors: list[str] = []
         successes: list[str] = []

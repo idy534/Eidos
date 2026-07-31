@@ -330,6 +330,7 @@ class RuntimeEngine:
                 base_permissions=BasePermissionProfile.model_validate_json(
                     step.resolution_snapshot.permission_profile_json
                 ),
+                async_kernel=self.async_kernel,
                 resource_registry=self.resources,
             )
             validation = tools.validate(step, sampled)
