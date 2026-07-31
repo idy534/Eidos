@@ -14,6 +14,7 @@ from eidos_runtime.model.client import (
     ModelUsage,
 )
 from eidos_runtime.sandbox.sensitive import (
+    SensitiveScanError,
     SensitiveScanner,
     StreamingSensitiveScanner,
     default_scanner,
@@ -32,6 +33,11 @@ class ModelStepResult:
     response_state: str | None = None
     ttft_ms: int | None = None
     duration_ms: int | None = None
+    transport_attempt_count: int = 0
+    transport_retry_count: int = 0
+    last_retry_reason: str | None = None
+    last_backoff_seconds: float | None = None
+    retry_after_applied: bool = False
 
 
 class ModelStreamInterrupted(RuntimeError):
@@ -90,10 +96,15 @@ class ModelRunner:
                 allow_tools=allow_tools,
                 tool_definitions=tool_definitions,
             )
+            text = stream.finish().text
         except Exception as error:
             # Finish the scanner before surfacing the interruption: safe visible
             # progress is retained, while sensitive content still raises normally.
-            stream.finish()
+            if not isinstance(error, SensitiveScanError):
+                try:
+                    stream.finish()
+                except Exception as finish_error:
+                    error = finish_error
             ended = self._monotonic()
             raise ModelStreamInterrupted(
                 "",
@@ -104,7 +115,6 @@ class ModelRunner:
                 ),
                 duration_ms=int((ended - started) * 1000),
             ) from error
-        text = stream.finish().text
         ended = self._monotonic()
         if not isinstance(response, ModelResponse):
             return ModelStepResult("", (), duration_ms=int((ended - started) * 1000))
@@ -121,4 +131,9 @@ class ModelRunner:
             response.response_state,
             int((first_safe - started) * 1000) if first_safe is not None else None,
             int((ended - started) * 1000),
+            response.transport_attempt_count,
+            response.transport_retry_count,
+            response.last_retry_reason,
+            response.last_backoff_seconds,
+            response.retry_after_applied,
         )

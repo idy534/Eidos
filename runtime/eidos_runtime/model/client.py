@@ -55,6 +55,11 @@ class ModelResponse(_FrozenModel):
     finish_reason: str | None = None
     provider_response_id: str | None = None
     response_state: str | None = None
+    transport_attempt_count: int = Field(default=0, ge=0)
+    transport_retry_count: int = Field(default=0, ge=0)
+    last_retry_reason: str | None = None
+    last_backoff_seconds: float | None = Field(default=None, ge=0)
+    retry_after_applied: bool = False
 
 
 class ModelRequestFailure(_FrozenModel):
@@ -64,6 +69,11 @@ class ModelRequestFailure(_FrozenModel):
     retry_after_seconds: float | None = Field(default=None, ge=0)
     provider_name: str | None = None
     had_progress: bool = False
+    transport_attempt_count: int = Field(default=0, ge=0)
+    transport_retry_count: int = Field(default=0, ge=0)
+    last_retry_reason: str | None = None
+    last_backoff_seconds: float | None = Field(default=None, ge=0)
+    retry_after_applied: bool = False
 
 
 class ModelRequestError(RuntimeError):

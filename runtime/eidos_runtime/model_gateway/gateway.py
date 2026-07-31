@@ -79,6 +79,7 @@ class ModelGateway:
             spec,
             openai_client=built.provider_client,
             provider_client=built.provider_client,
+            retry_transport=built.retry_client,
             profile_snapshot=legacy,
             settings_extra_body=(
                 {"thinking": {"type": "disabled"}}

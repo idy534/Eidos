@@ -7,7 +7,8 @@ dependencies = [
     "httpx>=0.28,<0.29",
     "openai>=2.51,<3",
     "pydantic==2.12.5",
-    "pydantic-ai-slim[openai]==2.13.0",
+    "pydantic-ai-slim[openai,retries]==2.13.0",
+    "tenacity>=9,<10",
     "mcp>=1.27,<2",
 ]
 

@@ -34,24 +34,27 @@ DeepSeek, Moonshot and Qwen use their available Pydantic AI providers with the
 Eidos-created OpenAI client. Volcengine Ark, MiniMax and custom compatible
 endpoints use `OpenAIProvider` with that same client.
 
-The Eidos-created client remains authoritative for the resolved secret, base
-URL, timeouts and `max_retries=0`. No Eidos transport registry is present in
-the request path. Pydantic AI never executes Eidos tools; Eidos retains
-conversation progress, tool execution, approval, cancellation, sensitive
-scanning, SQLite events and Run lifecycle authority.
+The Eidos-created `AsyncOpenAI` client remains authoritative for the resolved
+secret, base URL, timeouts and `max_retries=0`. Its injected `httpx.AsyncClient`
+uses Pydantic AI's public `AsyncTenacityTransport`; this is the only HTTP retry
+executor. Pydantic AI never executes Eidos tools; Eidos retains conversation
+progress, tool execution, approval, cancellation, sensitive scanning, SQLite
+events and Run lifecycle authority.
 
 ```mermaid
 sequenceDiagram
     participant Loop as Runtime Loop
     participant Gateway as ModelGateway
     participant Pydantic as Pydantic AI Provider + Model
+    participant Retry as AsyncTenacityTransport
     participant API as Provider HTTP API
     participant Tools as Tool Runtime
     participant DB as SQLite
 
     Loop->>Gateway: acquire_lease(RunModelSnapshot)
     Gateway->>Pydantic: construct from frozen profile and Eidos client
-    Pydantic->>API: streamed request
+    Pydantic->>Retry: streamed request
+    Retry->>API: HTTP request (bounded retry before stream)
     API-->>Pydantic: provider-native stream
     Pydantic-->>Loop: Eidos model response/deltas
     Loop->>Tools: normalized tool calls
@@ -61,18 +64,27 @@ sequenceDiagram
 
 ## Retry and cancellation
 
-Retries occur at the Eidos ModelAttempt boundary. Provider, base URL, model,
-wire protocol, prompts, context, tool set, capability snapshot, reasoning and
-output policy remain frozen. Transient transport, timeout, overload and rate
-limit failures may retry within the profile budget. Authentication,
-permission, model-not-found, invalid request, context exceeded, capability
-rejection and cancellation do not retry. A completed tool call or committed
-tool result makes automatic retry unsafe.
+`RetryPolicy.max_attempts` is the total number of HTTP requests permitted in
+one logical Model Attempt, including the first request. `AsyncTenacityTransport`
+uses Tenacity's bounded exponential fallback and `Retry-After` handling for
+408, 425, 429, 500, 502, 503 and 504 plus explicit HTTPX connection, timeout,
+read/write and protocol failures. Other 4xx responses reach the existing model
+error mapper without retry. OpenAI SDK retry stays disabled.
 
-Renderer cancellation reaches the active Run worker and public provider stream
-cancel operation. Cancellation is persisted as cancellation and never becomes
-a generic retryable provider error. Closing a Run lease closes its SDK client,
-HTTP streams and dedicated model loop deterministically.
+Eidos owns the retry classification, the frozen profile budget, cancellation
+and the safety boundary. Transport sub-attempts stay inside one
+`SamplingRuntime.sample` and never create another SQLite `model_attempt` row.
+The request-scoped tracker projects the final transport retry count and safe
+diagnostics into that one row. Once streaming consumption has begun, any text
+is visible, a Tool Call is complete or a Tool Result is committed, Eidos does
+not replay the request. Mid-stream resume/replay is not part of B3, and neither
+is a Model Event Loop migration.
+
+Renderer cancellation reaches both the active provider stream and the
+request-scoped Tenacity sleep. Cancellation is persisted as cancellation and
+never becomes a generic retryable provider error. Closing a Run lease closes
+the SDK client and its injected HTTP client exactly once before closing the
+dedicated model loop.
 
 ## Persistence and secrets
 

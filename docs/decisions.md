@@ -100,13 +100,13 @@
 | Q91 | 既有 Run 不固化 API Key；每次模型请求从 Profile 专属凭证槽读取当前有效密钥，轮换后使用新密钥但不改写 Run 的非密钥配置快照。 | PRD 凭证轮换；TDD Gateway/凭证版本 |
 | Q92 | MVP 不依赖 Provider token 统计做发送前预算；使用版本化 canonical payload 的 UTF-8 字节保守估算、固定协议开销和固定公式 safety margin。 | PRD 上下文预算；TDD Context Builder |
 | Q93 | 模型网络阶段使用固定超时：建连 15 秒、首 delta 180 秒、流空闲 120 秒；完整请求周期受共享总时限约束。 | PRD 响应体验；TDD Model Gateway |
-| Q94 | Runtime 调用远端模型固定使用 HTTP 请求和 SSE 响应流；首 delta 前瞬时错误最多重试 2 次，首 delta 后禁止重放。 | PRD 模型韧性；TDD Model Gateway |
+| Q94 | Runtime 调用远端模型固定使用 HTTP 请求和 SSE 响应流；Pydantic AI `AsyncTenacityTransport` 在响应流交给 Eidos 前按冻结 Profile 的总请求预算重试，流消费后禁止重放。 | B3 Model Retry Transport；TDD Model Gateway |
 | Q95 | Model Profile 不探测或记录 WebSocket；重试保持相同 wire API、endpoint、请求语义、认证和 TLS 策略，瞬时故障不使 capability snapshot 失效。 | PRD Model Profile；TDD Model Gateway |
-| Q96 | 每次实际模型网络发送都创建独立 ModelAttempt；同一 Step 共享逻辑请求 ID，不假设 Provider 幂等，分别保存已报告 usage，未知 usage 不按零计算。 | PRD 用量透明；TDD Attempt/可观测性 |
+| Q96 | 一次 `SamplingRuntime.sample` 是一个逻辑 ModelAttempt 和一条持久化记录；其内部 HTTP Transport Retry 是网络子尝试，不另建 `model_attempt`，并将次数和最终决策写入该记录。 | B3 Model Retry Transport；TDD Attempt/可观测性 |
 | Q97 | 输入估算固定为 canonical payload UTF-8 字节数加协议开销；safety margin 为 context window 的 2%，下限 1,024、上限 8,192。 | PRD 上下文预算；TDD 估算公式 |
 | Q98 | 普通/纠正请求使用 Profile 的 `max_output_tokens`；Finalization 上限 4,096；实际请求值参与预算并写入 Attempt。 | PRD 输出预算；TDD 请求构造 |
 | Q99 | 不可裁剪输入在本地预算阶段已超限时零 Provider 请求，Run 直接 `failed/context_input_too_large` 且不使 capability snapshot 失效。 | PRD 错误体验；TDD Context Builder/状态机 |
-| Q100 | 同一 Step 的完整模型请求周期共享 10 分钟 deadline，覆盖全部 HTTP/SSE Attempt、退避和 Retry-After；Finalization 仍为独立 60 秒。 | PRD 时间预算；TDD 重试时钟 |
+| Q100 | 同一 Step 的完整模型请求周期共享 10 分钟 deadline，覆盖全部 HTTP/SSE 子尝试、Tenacity 退避和 Retry-After；Finalization 仍为独立 60 秒。 | B3 Model Retry Transport；TDD 重试时钟 |
 | Q101 | 版本化 `model_request_contract_version` 固化序列化、预算、输出预留、传输重试与 timeout；新版本使 Profile snapshot 失效，既有 Run 继续使用创建时版本。 | PRD 升级兼容；TDD 版本路由/恢复 |
 | Q102 | MVP 同时支持显式 `wire_api=responses|chat_completions`；只测试和运行所选协议，不自动猜测、跨协议回退或建立厂商分支。 | PRD Model Profile；TDD Protocol Adapter |
 | Q103 | `base_url` 只表示 API 根；Adapter 固定追加 `/responses` 或 `/chat/completions`，完整 endpoint 输入拒绝，结构化拼接并保留安全 query。 | PRD Endpoint；TDD URL 构造 |

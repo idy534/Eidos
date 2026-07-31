@@ -13,6 +13,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from eidos_runtime.model_gateway.models import ModelProfile, RunModelSnapshot, WireAPI
 from eidos_runtime.model_gateway.presets import PRESETS
+from eidos_runtime.model_gateway.retry_transport import RetryTransportClient, build_retrying_http_client
 
 
 OpenAICompatibleProvider = (
@@ -24,6 +25,7 @@ OpenAICompatibleProvider = (
 class BuiltPydanticModel:
     model: Model
     provider_client: AsyncOpenAI
+    retry_client: RetryTransportClient
 
 
 def build_provider(
@@ -31,14 +33,16 @@ def build_provider(
     api_key: str,
     *,
     timeout: httpx.Timeout,
-) -> tuple[OpenAICompatibleProvider, AsyncOpenAI]:
+) -> tuple[OpenAICompatibleProvider, AsyncOpenAI, RetryTransportClient]:
     """Build a Pydantic AI provider from Eidos's already-frozen configuration."""
     validate_provider_configuration(profile)
+    retry_client = build_retrying_http_client(profile, timeout=timeout)
     client = AsyncOpenAI(
         api_key=api_key,
         base_url=profile.base_url,
         max_retries=0,
         timeout=timeout,
+        http_client=retry_client.http_client,
     )
     match profile.provider:
         case "openai":
@@ -55,7 +59,7 @@ def build_provider(
             # PRESETS membership above makes this branch unreachable until a
             # product preset is added without a deliberate Pydantic AI mapping.
             raise ValueError("unknown model provider")
-    return provider, client
+    return provider, client, retry_client
 
 
 def validate_provider_configuration(profile: ModelProfile) -> None:
@@ -84,8 +88,9 @@ def build_pydantic_model(snapshot: RunModelSnapshot, api_key: str) -> BuiltPydan
         write=min(30.0, profile.request_timeout),
         pool=min(10.0, profile.request_timeout),
     )
-    provider, provider_client = build_provider(profile, api_key, timeout=timeout)
+    provider, provider_client, retry_client = build_provider(profile, api_key, timeout=timeout)
     return BuiltPydanticModel(
         model=build_model(snapshot, provider),
         provider_client=provider_client,
+        retry_client=retry_client,
     )

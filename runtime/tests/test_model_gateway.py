@@ -176,12 +176,12 @@ class ModelGatewayErrorAndRetryTests(unittest.TestCase):
             attempt_id="attempt-1",
         )
         self.assertTrue(retry_decision(transient, RetryState(attempt_number=1)).retry)
-        self.assertFalse(
-            retry_decision(
-                transient,
-                RetryState(attempt_number=1, complete_tool_call_emitted=True),
-            ).retry
+        unsafe = retry_decision(
+            transient,
+            RetryState(attempt_number=1, complete_tool_call_emitted=True),
         )
+        self.assertFalse(unsafe.retry)
+        self.assertEqual(unsafe.reason, "unsafe_stream_progress")
         self.assertFalse(
             retry_decision(
                 normalize_http_error(
