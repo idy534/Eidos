@@ -54,6 +54,7 @@
 - 内置、用户和 Plugin Skill Catalog；Run/Step 固化来源与内容 hash。
 - stdio MCP Tools、显式 Server consent、`connector`/`workspace_read` 权限档案、逐次外部工具审批。
 - MCP 和延迟工具进入统一 Registry、ToolSpec、ToolResult 与 provenance。
+- 每个 MCP Connection 是进程级 `RuntimeAsyncKernel` 拥有的长生命周期 AnyIO Service；连接不再创建专用线程或 Event Loop，同一 `ClientSession` 的 Tool Call 与 Tool List Refresh 串行进入受控同步/异步边界。
 
 ## 持久化、事件与恢复
 

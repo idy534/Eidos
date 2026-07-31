@@ -62,9 +62,23 @@ TOOLS = [
         "description": "Spawn a process in the server process group",
         "inputSchema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
     },
+    {
+        "name": "structured",
+        "description": "Return structured content",
+        "inputSchema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+        "outputSchema": {
+            "type": "object",
+            "properties": {"answer": {"type": "integer"}},
+            "required": ["answer"],
+            "additionalProperties": False,
+        },
+    },
 ]
 
 listed_once = False
+
+if "--startup-delay" in sys.argv:
+    time.sleep(2)
 
 
 def send(value: dict[str, object]) -> None:
@@ -125,12 +139,19 @@ for line in sys.stdin:
         elif name == "fail":
             content = [{"type": "text", "text": "safe failure"}]
             is_error = True
+        elif name == "structured":
+            content = [{"type": "text", "text": "structured"}]
+            is_error = False
         else:
             text = message["params"]["arguments"]["message"]
             content = [{"type": "text", "text": text}]
             is_error = False
-        send({
+        result_payload = {"content": content, "isError": is_error}
+        if name == "structured":
+            result_payload["structuredContent"] = {"answer": 42}
+        response = {
             "jsonrpc": "2.0",
             "id": message["id"],
-            "result": {"content": content, "isError": is_error},
-        })
+            "result": result_payload,
+        }
+        send(response)

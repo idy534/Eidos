@@ -19,6 +19,7 @@ from eidos_runtime.model.client import ModelClient
 from eidos_runtime.model.pydantic_ai_client import ModelClientLease
 from eidos_runtime.protocol.schemas import ApprovalDecisionDto
 from eidos_runtime.runtime.approval import ApprovalDecision
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.contracts import RuntimeCancelled
 from eidos_runtime.runtime.engine import RuntimeEngine
 from eidos_runtime.runtime.events import RuntimeEvents
@@ -137,6 +138,26 @@ class RunSupervisor:
         self.lifecycle = RuntimeLifecycle.RUNNING
         self.control_state = RuntimeControlState.RUNNING
         self.events = RuntimeEvents(notify, store=store)
+        self._async_kernel: RuntimeAsyncKernel | None = None
+        self._async_kernel_frozen = False
+
+    def bind_async_kernel(self, kernel: RuntimeAsyncKernel) -> None:
+        """Bind the process-owned kernel before the first Run is dispatched."""
+        with self.lock:
+            if (
+                self.lifecycle is not RuntimeLifecycle.RUNNING
+                or self.control_state is not RuntimeControlState.RUNNING
+                or self._async_kernel_frozen
+            ):
+                raise RuntimeError("runtime async kernel binding is frozen")
+            if self._async_kernel is not None and self._async_kernel is not kernel:
+                raise RuntimeError("runtime async kernel is already bound")
+            self._async_kernel = kernel
+
+    @property
+    def async_kernel(self) -> RuntimeAsyncKernel | None:
+        with self.lock:
+            return self._async_kernel
 
     def prepare_next(self) -> WorkerStart | None:
         if (
@@ -156,6 +177,7 @@ class RunSupervisor:
             if claimed is None:
                 return None
             run_id = str(claimed.value["id"])
+            self._async_kernel_frozen = True
             handle = self._handles.get(run_id)
             if handle is not None:
                 if handle.state not in {
@@ -581,16 +603,21 @@ class RunSupervisor:
             with self.lock:
                 handle.model_lease = lease
                 handle.state = RunWorkerState.RUNNING
+            engine_kwargs: dict[str, object] = {
+                "sensitive": self.sensitive(),
+                "wait_for_execution_slot": self._wait_for_execution_slot,
+                "resource_registry": self.resources,
+                "events": self.events,
+            }
+            if self.engine_factory is RuntimeEngine:
+                engine_kwargs["async_kernel"] = self._async_kernel
             engine = self.engine_factory(
                 self.store,
                 lease.client,
                 self.notify,
                 self.request_approval,
                 self.shell_available(),
-                sensitive=self.sensitive(),
-                wait_for_execution_slot=self._wait_for_execution_slot,
-                resource_registry=self.resources,
-                events=self.events,
+                **engine_kwargs,
             )
             if isinstance(engine, RuntimeEngine):
                 engine.terminalize_cancel = False

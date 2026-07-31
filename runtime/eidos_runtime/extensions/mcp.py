@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import timedelta
 import hashlib
 import json
 import logging
 import os
 from pathlib import Path
-import queue
 import signal
 import shutil
 import sys
 import threading
+import time
 import uuid
 from typing import Callable
 
@@ -33,6 +33,11 @@ from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
     RuntimeResource,
     RuntimeResourceKind,
+)
+from eidos_runtime.runtime.async_kernel import (
+    AsyncKernelClosedError,
+    RuntimeAsyncKernel,
+    RuntimeAsyncTask,
 )
 from eidos_runtime.runtime.fault_injection import hit_fault
 
@@ -64,8 +69,6 @@ class _Command:
     arguments: dict[str, object]
     timeout_seconds: int
     cancel: threading.Event
-    completed: threading.Event = field(default_factory=threading.Event)
-    result: dict[str, object] | None = None
 
 
 class McpConnection:
@@ -77,6 +80,7 @@ class McpConnection:
         workspace_root: Path,
         config: McpServerConfigV1,
         on_list_changed: Callable[[], None],
+        async_kernel: RuntimeAsyncKernel,
         sandbox: bool = True,
         resource_registry: ResourceRegistry | None = None,
     ) -> None:
@@ -84,20 +88,18 @@ class McpConnection:
         self.workspace_root = workspace_root
         self.config = config
         self.on_list_changed = on_list_changed
+        self.async_kernel = async_kernel
         self.sandbox = sandbox
-        self.ready = threading.Event()
         self.closed = threading.Event()
-        self.commands: queue.Queue[_Command | None] = queue.Queue()
         self.tools: tuple[mcp_types.Tool, ...] = ()
         self.error_code: str | None = None
         self.runtime_root = runtime_root / uuid.uuid4().hex
-        self.thread = threading.Thread(
-            target=self._thread_main,
-            name=f"eidos-mcp-{config.id}",
-            daemon=False,
-        )
         self.resources = resource_registry
         self.resource: RuntimeResource | None = None
+        self._service: RuntimeAsyncTask[None] | None = None
+        self._session: ClientSession | None = None
+        self._session_lock: anyio.Lock | None = None
+        self._close_event: anyio.Event | None = None
 
     def start(self) -> tuple[mcp_types.Tool, ...]:
         if self.resources is not None:
@@ -109,13 +111,23 @@ class McpConnection:
             self.resource.start()
         self.runtime_root.mkdir(mode=0o700, parents=True)
         os.chmod(self.runtime_root, 0o700)
-        self.thread.start()
-        if not self.ready.wait(self.config.startup_timeout_seconds + 1):
-            self.error_code = "mcp_startup_timeout"
+        try:
+            service, started = self.async_kernel.start_service(
+                self._serve,
+                owner_id=f"mcp:{self.config.id}",
+                deadline=time.monotonic() + self.config.startup_timeout_seconds,
+            )
+            self._service = service
+            self.tools = tuple(started)
+            return self.tools
+        except BaseException as error:
+            self.error_code = (
+                str(error)
+                if isinstance(error, McpUnavailable)
+                else "mcp_connection_lost"
+            )
             self.close()
-        if self.error_code is not None:
-            raise McpUnavailable(self.error_code)
-        return self.tools
+            raise McpUnavailable(self.error_code) from None
 
     def call(
         self,
@@ -123,7 +135,13 @@ class McpConnection:
         arguments: dict[str, object],
         cancel: threading.Event,
     ) -> dict[str, object]:
-        if self.error_code is not None or not self.thread.is_alive():
+        service = self._service
+        if (
+            self.error_code is not None
+            or service is None
+            or service.done()
+            or self.closed.is_set()
+        ):
             return _unavailable()
         command = _Command(name, arguments, self.config.tool_timeout_seconds, cancel)
         resource = (
@@ -138,15 +156,12 @@ class McpConnection:
         if resource is not None:
             resource.start()
         try:
-            self.commands.put(command)
-            while not command.completed.wait(0.05):
-                if cancel.is_set():
-                    continue
-                if not self.thread.is_alive():
-                    return _uncertain("mcp_connection_lost")
+            try:
+                result = self.async_kernel.call(self._call, command)
+            except (AsyncKernelClosedError, RuntimeError):
+                return _uncertain(self.error_code or "mcp_connection_lost")
             if self.error_code == "mcp_stdout_pollution":
                 return _uncertain("mcp_stdout_pollution")
-            result = command.result or _uncertain("mcp_connection_lost")
             if result.get("code") in {"mcp_tool_canceled", "mcp_tool_timeout"}:
                 try:
                     self.close()
@@ -158,27 +173,31 @@ class McpConnection:
                 resource.close()
 
     def refresh_tools(self) -> tuple[mcp_types.Tool, ...]:
-        command = _Command("\x00list", {}, self.config.startup_timeout_seconds, threading.Event())
-        self.commands.put(command)
-        if not command.completed.wait(self.config.startup_timeout_seconds + 1):
-            raise McpUnavailable("mcp_tool_list_timeout")
-        if command.result is None or command.result.get("outcome") != "success":
-            raise McpUnavailable("mcp_tool_list_failed")
-        return self.tools
+        try:
+            return self.async_kernel.call(self._refresh_tools)
+        except TimeoutError:
+            raise McpUnavailable("mcp_tool_list_timeout") from None
+        except (AsyncKernelClosedError, RuntimeError):
+            raise McpUnavailable("mcp_tool_list_failed") from None
 
     def close(self) -> bool:
         hit_fault("mcp_thread_stuck")
-        if not self.closed.is_set():
-            self.closed.set()
-            self.commands.put(None)
+        self.closed.set()
+        service = getattr(self, "_service", None)
+        if service is not None and not service.done():
+            try:
+                self.async_kernel.call(self._request_close)
+            except (AsyncKernelClosedError, RuntimeError):
+                pass
         process_group_exited = self._terminate_process_group()
-        if self.thread.is_alive() and self.thread is not threading.current_thread():
-            self.thread.join(timeout=5)
+        if service is not None and not service.done():
+            service.wait(5)
+        if service is not None and not service.done():
+            service.cancel()
+            service.wait(2)
         if not process_group_exited:
             process_group_exited = self._terminate_process_group()
-        if self.thread.is_alive() and self.thread is not threading.current_thread():
-            self.thread.join(timeout=2)
-        if self.thread.is_alive() or not process_group_exited:
+        if (service is not None and not service.done()) or not process_group_exited:
             resource = getattr(self, "resource", None)
             if resource is not None:
                 resource.fail("MCP_CANCEL_TIMEOUT")
@@ -232,88 +251,89 @@ class McpConnection:
             return True
         except PermissionError:
             # The MCP stdio owner already reaped its child before this fallback
-            # on restricted macOS runners; the thread exit is the remaining proof.
-            return not self.thread.is_alive()
+            # on restricted macOS runners; service exit is the remaining proof.
+            service = getattr(self, "_service", None)
+            return service is None or service.done()
         except (OSError, ValueError, UnicodeError):
             return False
 
-    def _thread_main(self) -> None:
-        try:
-            anyio.run(self._serve)
-        except BaseException as error:
-            self.error_code = self.error_code or (
-                str(error) if isinstance(error, McpUnavailable)
-                else "mcp_connection_failed"
-            )
-            self.ready.set()
-            while True:
-                try:
-                    command = self.commands.get_nowait()
-                except queue.Empty:
-                    break
-                if command is not None:
-                    command.result = _uncertain(self.error_code)
-                    command.completed.set()
-
-    async def _serve(self) -> None:
+    async def _serve(self, *, task_status: anyio.abc.TaskStatus[object]) -> None:
         parameters = self._parameters()
 
         async def message_handler(message: object) -> None:
             if isinstance(message, Exception):
                 self.error_code = "mcp_stdout_pollution"
+                if self._close_event is not None:
+                    self._close_event.set()
                 return
             root = getattr(message, "root", None)
             if isinstance(root, mcp_types.ToolListChangedNotification):
                 self.on_list_changed()
 
-        with open(os.devnull, "w", encoding="utf-8") as error_log:
-            try:
-                with anyio.fail_after(self.config.startup_timeout_seconds):
-                    async with stdio_client(parameters, errlog=error_log) as streams:
-                        async with ClientSession(
-                            streams[0], streams[1], message_handler=message_handler
-                        ) as session:
+        startup_scope: anyio.CancelScope | None = None
+        try:
+            with open(os.devnull, "w", encoding="utf-8") as error_log:
+                async with stdio_client(parameters, errlog=error_log) as streams:
+                    async with ClientSession(
+                        streams[0], streams[1], message_handler=message_handler
+                    ) as session:
+                        with anyio.fail_after(
+                            self.config.startup_timeout_seconds
+                        ) as startup_scope:
                             await session.initialize()
-                            self.tools = await _discover_tools(session)
-                            self.ready.set()
-                            await self._command_loop(session)
-            except TimeoutError:
-                self.error_code = "mcp_startup_timeout"
-            except McpUnavailable as error:
-                self.error_code = str(error)
-            except BaseException:
-                self.error_code = "mcp_protocol_error"
-            finally:
-                self.ready.set()
-
-    async def _command_loop(self, session: ClientSession) -> None:
-        while not self.closed.is_set():
-            command = await anyio.to_thread.run_sync(
-                self._next_command, abandon_on_cancel=True
+                            tools = await _discover_tools(session)
+                        self._session = session
+                        self._session_lock = anyio.Lock()
+                        self._close_event = anyio.Event()
+                        self.tools = tools
+                        task_status.started(tools)
+                        await self._close_event.wait()
+        except McpUnavailable as error:
+            self.error_code = str(error)
+            raise
+        except BaseException as error:
+            self.error_code = self.error_code or (
+                "mcp_startup_timeout"
+                if (
+                    (startup_scope is not None and startup_scope.cancel_called)
+                    or _exception_contains(error, TimeoutError)
+                )
+                else "mcp_protocol_error"
             )
-            if command is None:
-                return
-            try:
-                if command.name == "\x00list":
-                    with anyio.fail_after(command.timeout_seconds):
-                        self.tools = await _discover_tools(session)
-                    command.result = _result("success", "ok", {})
-                else:
-                    command.result = await _call_tool(session, command)
-            except TimeoutError:
-                command.result = _uncertain("mcp_tool_timeout")
-            except BaseException:
-                command.result = _uncertain("mcp_connection_lost")
-            finally:
-                command.completed.set()
+            raise McpUnavailable(self.error_code) from None
+        finally:
+            self._session = None
+            self._session_lock = None
+            self._close_event = None
 
-    def _next_command(self) -> _Command | None:
-        while not self.closed.is_set():
+    async def _call(self, command: _Command) -> dict[str, object]:
+        session = self._session
+        lock = self._session_lock
+        if session is None or lock is None or self.closed.is_set():
+            return _uncertain(self.error_code or "mcp_connection_lost")
+        async with lock:
+            if self.error_code is not None:
+                return _uncertain(self.error_code)
             try:
-                return self.commands.get(timeout=0.1)
-            except queue.Empty:
-                continue
-        return None
+                return await _call_tool(session, command)
+            except TimeoutError:
+                return _uncertain("mcp_tool_timeout")
+            except BaseException:
+                return _uncertain(self.error_code or "mcp_connection_lost")
+
+    async def _refresh_tools(self) -> tuple[mcp_types.Tool, ...]:
+        session = self._session
+        lock = self._session_lock
+        if session is None or lock is None or self.closed.is_set():
+            raise McpUnavailable("mcp_tool_list_failed")
+        async with lock:
+            with anyio.fail_after(self.config.startup_timeout_seconds):
+                self.tools = await _discover_tools(session)
+            return self.tools
+
+    async def _request_close(self) -> None:
+        if self._close_event is not None:
+            self._close_event.set()
 
     def _parameters(self) -> StdioServerParameters:
         executable = self.config.executable
@@ -422,12 +442,14 @@ class McpManager:
         snapshot: dict[str, object],
         workspace_root: Path,
         *,
+        async_kernel: RuntimeAsyncKernel | None = None,
         sandbox: bool = True,
         resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self.plugins = plugins
         self.snapshot = snapshot
         self.workspace_root = workspace_root
+        self.async_kernel = async_kernel
         self.sandbox = sandbox
         self.resources = resource_registry
         self.connections: list[McpConnection] = []
@@ -450,11 +472,17 @@ class McpManager:
                 value for value in manifest.mcp_servers
                 if value.id == server["serverId"]
             )
+            if self.async_kernel is None:
+                self.plugins.store.set_mcp_server_state(
+                    server, consented=True, error_code="mcp_connection_lost"
+                )
+                continue
             connection = McpConnection(
                 plugin_root=self.plugins.installed_root(plugin_id),
                 runtime_root=self.plugins.store.data_directory / "extensions" / "mcp-runtime",
                 workspace_root=self.workspace_root,
                 config=config,
+                async_kernel=self.async_kernel,
                 on_list_changed=lambda plugin_id=plugin_id, server_id=config.id: self._list_changed(
                     plugin_id, server_id
                 ),
@@ -712,6 +740,14 @@ def _snapshot_has_plugin(snapshot: dict[str, object], plugin_id: str, content_ha
         and value.get("contentHash") == content_hash
         for value in plugins
     )
+
+
+def _exception_contains(error: BaseException, kind: type[BaseException]) -> bool:
+    if isinstance(error, kind):
+        return True
+    if isinstance(error, BaseExceptionGroup):
+        return any(_exception_contains(child, kind) for child in error.exceptions)
+    return False
 
 
 def _result(outcome: str, code: str, data: dict[str, object]) -> dict[str, object]:

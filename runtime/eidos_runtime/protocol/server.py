@@ -524,6 +524,7 @@ class RuntimeServer:
                         async_kernel=self.async_kernel,
                         resource_registry=self.supervisor.resources,
                     )
+                self.supervisor.bind_async_kernel(self.async_kernel)
         except (
             StorageError,
             ModelConfigError,

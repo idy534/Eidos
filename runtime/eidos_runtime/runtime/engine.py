@@ -17,6 +17,7 @@ from eidos_runtime.db.storage import (
 )
 from eidos_runtime.model.client import ModelClient
 from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalDecision
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.contracts import (
     LoopAction,
     RunContext,
@@ -79,6 +80,7 @@ class RuntimeEngine:
         wait_for_execution_slot: Callable[[str, threading.Event], bool] | None = None,
         mcp_sandbox: bool = True,
         terminalize_cancel: bool = True,
+        async_kernel: RuntimeAsyncKernel | None = None,
         resource_registry: ResourceRegistry | None = None,
         events: RuntimeEvents | None = None,
     ) -> None:
@@ -92,6 +94,7 @@ class RuntimeEngine:
         self.wait_for_execution_slot = wait_for_execution_slot
         self.mcp_sandbox = mcp_sandbox
         self.terminalize_cancel = terminalize_cancel
+        self.async_kernel = async_kernel
         self.resources = resource_registry or ResourceRegistry()
         self.state_machine = RuntimePhaseTracker()
         self.active_started: float | None = None
@@ -110,6 +113,7 @@ class RuntimeEngine:
                 run_id,
                 extension_snapshot,
                 str(run.get("userInput") or ""),
+                async_kernel=self.async_kernel,
                 mcp_sandbox=self.mcp_sandbox,
                 resource_registry=self.resources,
             ) as resources:

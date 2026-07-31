@@ -13,6 +13,7 @@ from eidos_runtime.extensions.skills import (
     SkillReadError,
 )
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
 from eidos_runtime.tools.search import tool_search_entry
@@ -33,6 +34,7 @@ class RunResources:
         extension_snapshot: dict[str, object],
         user_input: str = "",
         *,
+        async_kernel: RuntimeAsyncKernel | None = None,
         mcp_sandbox: bool = True,
         resource_registry: ResourceRegistry | None = None,
     ) -> None:
@@ -41,6 +43,7 @@ class RunResources:
         self.extension_snapshot = extension_snapshot
         self.user_input = user_input
         self.mcp_sandbox = mcp_sandbox
+        self.async_kernel = async_kernel
         self.resources = resource_registry or ResourceRegistry()
         self.tool_executor: ToolExecutor | None = None
         self.skills: SkillCatalog | None = None
@@ -61,6 +64,7 @@ class RunResources:
                 self.skills.plugins,
                 self.extension_snapshot,
                 workspace.path,
+                async_kernel=self.async_kernel,
                 sandbox=self.mcp_sandbox,
                 resource_registry=self.resources,
             )

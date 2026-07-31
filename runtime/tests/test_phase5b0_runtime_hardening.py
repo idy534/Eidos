@@ -8,7 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -334,25 +334,25 @@ class McpCloseContractTests(unittest.TestCase):
     def _connection(self) -> McpConnection:
         connection = object.__new__(McpConnection)
         connection.closed = threading.Event()
-        connection.commands = __import__("queue").Queue()
         connection.runtime_root = Path("/tmp/eidos-mcp-test-do-not-create")
+        connection.resource = None
         return connection
 
-    def test_mcp_close_success_means_thread_exited(self) -> None:
+    def test_mcp_close_success_means_service_exited(self) -> None:
         connection = self._connection()
-        release = threading.Event()
-        connection.thread = threading.Thread(target=lambda: release.wait(0.05))
-        connection.thread.start()
+        service = Mock()
+        service.done.return_value = True
+        connection._service = service
         connection._terminate_process_group = lambda: True
 
         self.assertTrue(connection.close())
-        self.assertFalse(connection.thread.is_alive())
+        self.assertTrue(service.done())
 
     def test_mcp_close_success_means_process_group_exited(self) -> None:
         connection = self._connection()
-        connection.thread = threading.Thread(target=lambda: None)
-        connection.thread.start()
-        connection.thread.join()
+        service = Mock()
+        service.done.return_value = True
+        connection._service = service
         connection._terminate_process_group = lambda: False
 
         with self.assertRaises(McpShutdownTimeout):
@@ -360,17 +360,18 @@ class McpCloseContractTests(unittest.TestCase):
 
     def test_mcp_shutdown_timeout_is_visible(self) -> None:
         connection = self._connection()
-        release = threading.Event()
-        connection.thread = threading.Thread(target=release.wait)
-        connection.thread.start()
+        service = Mock()
+        service.done.return_value = False
+        service.wait.return_value = False
+        connection._service = service
+        connection.async_kernel = Mock()
+        connection.async_kernel.call.side_effect = RuntimeError
         connection._terminate_process_group = lambda: True
-        try:
-            with patch.object(connection.thread, "join", return_value=None):
-                with self.assertRaises(McpShutdownTimeout):
-                    connection.close()
-        finally:
-            release.set()
-            connection.thread.join(1)
+
+        with self.assertRaises(McpShutdownTimeout):
+            connection.close()
+
+        service.cancel.assert_called_once_with()
 
     def test_runtime_quiescence_detects_live_mcp_thread(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-phase5b0-close-") as temporary:

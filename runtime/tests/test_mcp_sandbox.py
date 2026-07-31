@@ -15,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.extensions.mcp import McpManager  # noqa: E402
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
+from eidos_runtime.runtime.resource_registry import ResourceRegistry  # noqa: E402
 from eidos_runtime.sandbox.seatbelt import is_seatbelt_usable  # noqa: E402
 
 
@@ -97,8 +99,16 @@ class McpSeatbeltTests(unittest.TestCase):
         plugins.import_directory(source)
         plugins.set_enabled("native", True)
         plugins.set_mcp_enabled("native", "fixture", True)
+        resources = ResourceRegistry()
+        kernel = RuntimeAsyncKernel(resource_registry=resources)
+        kernel.start()
         manager = McpManager(
-            plugins, plugins.extension_snapshot(), self.workspace, sandbox=True
+            plugins,
+            plugins.extension_snapshot(),
+            self.workspace,
+            async_kernel=kernel,
+            sandbox=True,
+            resource_registry=resources,
         )
         try:
             entries = manager.start()
@@ -107,6 +117,8 @@ class McpSeatbeltTests(unittest.TestCase):
             self.assertEqual(result["data"]["text"], "native")
         finally:
             manager.close()
+            kernel.close()
+            self.assertEqual(resources.active_resources(), ())
             store.close()
 
     def _run(self, profile: str, code: str) -> bool:
