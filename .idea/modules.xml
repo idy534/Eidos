@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/Eidos.iml" filepath="$PROJECT_DIR$/.idea/Eidos.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/eidos-python-runtime.iml" filepath="$PROJECT_DIR$/.idea/eidos-python-runtime.iml" />
     </modules>
   </component>
 </project>
