@@ -385,6 +385,92 @@ class RuntimeLoopTests(unittest.TestCase):
             (self.workspace / "hello.txt").read_text(), "hello from workspace\n"
         )
 
+    def test_apply_patch_without_read_evidence_never_requests_approval(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Blind Patch")
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "call-patch",
+                            "apply_patch",
+                            {
+                                "path": "hello.txt",
+                                "patch": "--- a/hello.txt\n+++ b/hello.txt\n"
+                                "@@ -1 +1 @@\n-hello from workspace\n+blind\n",
+                            },
+                        ),
+                    )
+                ),
+                ModelResponse(text="I need to read it first."),
+            ]
+        )
+        approvals: list[object] = []
+
+        RuntimeLoop(
+            self.store,
+            model,
+            lambda _message: None,
+            lambda request, _cancel: approvals.append(request) or ApprovalDecision("approve"),
+        ).run(run["id"], threading.Event())
+
+        self.assertEqual(approvals, [])
+        self.assertEqual(
+            (self.workspace / "hello.txt").read_text(), "hello from workspace\n"
+        )
+
+    def test_invalid_or_mismatched_patch_never_requests_approval(self) -> None:
+        patches = (
+            "--- a/hello.txt\n+++ b/hello.txt\n",
+            "--- a/hello.txt\n+++ b/hello.txt\n@@ -1 +1 @@\n-other\n+new\n",
+        )
+        for index, patch_text in enumerate(patches):
+            with self.subTest(patch_text=patch_text):
+                run, _ = self.store.create_run(self.session["id"], "Invalid Patch")
+                model = ScriptedModel(
+                    [
+                        ModelResponse(
+                            tool_calls=(
+                                ModelToolCall(
+                                    f"call-read-{index}", "read_file", {"path": "hello.txt"}
+                                ),
+                            )
+                        ),
+                        ModelResponse(
+                            tool_calls=(
+                                ModelToolCall(
+                                    f"call-patch-{index}",
+                                    "apply_patch",
+                                    {"path": "hello.txt", "patch": patch_text},
+                                ),
+                            )
+                        ),
+                        ModelResponse(text="The Patch could not be applied."),
+                    ]
+                )
+                approvals: list[object] = []
+
+                RuntimeLoop(
+                    self.store,
+                    model,
+                    lambda _message: None,
+                    lambda request, _cancel: approvals.append(request)
+                    or ApprovalDecision("approve"),
+                ).run(run["id"], threading.Event())
+
+                self.assertEqual(approvals, [])
+                snapshot = self.store.read_session_snapshot(self.session["id"])
+                file_item = [
+                    item for item in snapshot["items"] if item["kind"] == "file_change"
+                ][-1]
+                result = json.loads(file_item["toolCall"]["resultJson"])
+                expected = "invalid_patch" if index == 0 else "patch_context_mismatch"
+                self.assertEqual(result["code"], expected)
+                self.assertEqual(
+                    (self.workspace / "hello.txt").read_text(),
+                    "hello from workspace\n",
+                )
+
     def test_approved_shell_runs_in_sandbox_and_returns_output(self) -> None:
         if not is_seatbelt_ready():
             self.skipTest(
