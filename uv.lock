@@ -265,7 +265,10 @@ name = "eidos-python-runtime"
 version = "0.3.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "anyio" },
+    { name = "httpx" },
     { name = "mcp" },
+    { name = "openai" },
     { name = "pydantic" },
     { name = "pydantic-ai-slim", extra = ["openai"] },
 ]
@@ -280,7 +283,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.14,<5" },
+    { name = "httpx", specifier = ">=0.28,<0.29" },
     { name = "mcp", specifier = ">=1.27,<2" },
+    { name = "openai", specifier = ">=2.51,<3" },
     { name = "pydantic", specifier = "==2.12.5" },
     { name = "pydantic-ai-slim", extras = ["openai"], specifier = "==2.13.0" },
 ]
