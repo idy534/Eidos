@@ -4,7 +4,7 @@ R2 separates mutable model setup from immutable Run execution:
 
 ```text
 ModelProfile (declared candidate)
-  + CapabilitySnapshot (probed, conservative)
+  -> CapabilitySnapshot (locally resolved declaration)
   -> RunModelSnapshot (immutable)
   -> ModelGatewayLease
   -> ModelAttempt
@@ -14,10 +14,17 @@ ModelProfile (declared candidate)
 authentication reference, declared limits/capabilities, timeout and retry
 policy. Declarations are never presented as verified capability.
 
-`CapabilityProbe` resolves the authentication reference, sends a bounded
-provider-native request, and actively probes declared tool and structured
-output support. Unknown capabilities remain false and carry warnings.
-Successful snapshots are immutable rows separate from profiles.
+Eidos does not actively probe model capabilities. A pure local resolver applies
+explicit user declarations first, then static provider preset values, then
+conservative defaults. It records the source for every resolved capability and
+never guesses context-window or maximum-output limits. A local snapshot's
+legacy `reachable` and `authenticated` fields are always `false`: they do not
+claim network reachability or credential validation.
+
+Network reachability, authentication, permission, rate limiting and provider
+compatibility are evaluated only by the first real `ModelAttempt`. Its existing
+safe Model Error mapping reports the result without changing the Profile's
+declared capabilities.
 
 Provider and wire protocol are independent registry dimensions:
 
@@ -94,8 +101,6 @@ The Runtime exposes:
 - `model_profile/create`
 - `model_profile/update`
 - `model_profile/delete`
-- `model_profile/test_connection`
-- `model_profile/get_capability_snapshot`
 - `model_profile/list_presets`
 
 All results are versioned Eidos DTOs. Provider-native bodies and exceptions do
@@ -107,4 +112,4 @@ Reuse an existing wire adapter whenever the provider implements that protocol.
 Add a preset for base URL and compatibility hints, then register the provider
 adapter only if authentication, errors, usage or provider metadata differ.
 Add a new wire adapter only for a genuinely different request/stream protocol,
-and run the shared adapter/probe contract suite.
+and run the shared adapter contract suite.

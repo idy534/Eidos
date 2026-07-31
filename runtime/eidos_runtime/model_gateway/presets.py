@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pydantic import Field
+
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.model_gateway.models import WireAPI
 
@@ -12,7 +14,9 @@ class ProviderPreset(EidosFrozenStrictModel):
     default_base_url: str | None
     auth_style: str = "bearer"
     model_id: None = None
-    capability_hints: dict[str, bool] = {}
+    capability_hints: dict[str, bool] = Field(default_factory=dict)
+    context_window: int | None = Field(default=None, gt=0)
+    max_output_tokens: int | None = Field(default=None, gt=0)
     compatibility_flags: tuple[str, ...] = ()
 
 

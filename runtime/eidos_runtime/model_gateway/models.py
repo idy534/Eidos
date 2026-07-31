@@ -48,6 +48,8 @@ class RetryClassification(StrEnum):
 
 
 class CapabilityProbeSource(StrEnum):
+    """Capability source values; ACTIVE_PROBE remains parse-only legacy data."""
+
     PROVIDER_METADATA = "provider_metadata"
     ACTIVE_PROBE = "active_probe"
     BUILT_IN_PRESET = "built_in_preset"
@@ -130,6 +132,8 @@ class CapabilityWarning(EidosFrozenStrictModel):
 
 
 class CapabilitySnapshot(EidosFrozenStrictModel):
+    """Declared capability resolution with legacy persistence compatibility fields."""
+
     schema_version: int = 1
     id: str
     profile_id: str
@@ -152,76 +156,6 @@ class CapabilitySnapshot(EidosFrozenStrictModel):
     probed_at: datetime
     warnings: tuple[CapabilityWarning, ...] = ()
     sources: dict[str, CapabilityProbeSource] = Field(default_factory=dict)
-
-    @classmethod
-    def conservative(
-        cls,
-        profile: ModelProfile,
-        *,
-        probe_source: CapabilityProbeSource,
-        probe_version: str,
-        probed_at: datetime,
-        verified: dict[str, bool | int | None] | None = None,
-        reachable: bool = True,
-        authenticated: bool = True,
-        snapshot_id: str = "unpersisted",
-    ) -> CapabilitySnapshot:
-        verified = verified or {}
-        capabilities = (
-            "supports_tools",
-            "supports_parallel_tools",
-            "supports_images",
-            "supports_structured_output",
-            "supports_prompt_cache",
-        )
-        warnings = tuple(
-            CapabilityWarning(
-                code="CAPABILITY_UNVERIFIED",
-                capability=name,
-                message=f"{name} was not verified and defaults to unsupported",
-                source=CapabilityProbeSource.CONSERVATIVE_DEFAULT,
-            )
-            for name in capabilities
-            if name not in verified and getattr(profile, name) is True
-        )
-        return cls(
-            id=snapshot_id,
-            profile_id=profile.id,
-            provider=profile.provider,
-            wire_api=profile.wire_api,
-            model_id=profile.model_id,
-            reachable=reachable,
-            authenticated=authenticated,
-            context_window=(
-                verified.get("context_window")
-                if isinstance(verified.get("context_window"), int)
-                else None
-            ),
-            max_output_tokens=(
-                verified.get("max_output_tokens")
-                if isinstance(verified.get("max_output_tokens"), int)
-                else None
-            ),
-            **{
-                name: verified.get(name) is True
-                for name in capabilities
-            },
-            reasoning_mode=profile.reasoning_mode,
-            supported_reasoning_efforts=(),
-            probe_source=probe_source,
-            probe_version=probe_version,
-            probed_at=probed_at,
-            warnings=warnings,
-            sources={
-                name: (
-                    probe_source
-                    if name in verified
-                    else CapabilityProbeSource.CONSERVATIVE_DEFAULT
-                )
-                for name in capabilities
-            },
-        )
-
 
 class RunModelSnapshot(EidosFrozenStrictModel):
     schema_version: int = 1
