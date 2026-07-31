@@ -1,7 +1,21 @@
 import type { ModelId } from "./constants.js";
+import type {
+  CapabilitySnapshot,
+  CapabilityWarning,
+  ModelProfile,
+  RetryPolicy,
+  WireAPI,
+} from "./generated/runtime/model-profile.js";
 import { IPC } from "./ipc-channels.js";
 
 export type { ModelId };
+export type {
+  CapabilitySnapshot,
+  CapabilityWarning,
+  ModelProfile,
+  RetryPolicy,
+  WireAPI,
+} from "./generated/runtime/model-profile.js";
 
 export interface RuntimeHealth {
   state: "ready" | "health_only";
@@ -207,40 +221,6 @@ export interface ModelListResult {
   defaultModelId: ModelId;
 }
 
-export type WireAPI =
-  | "openai_responses"
-  | "openai_chat_completions";
-
-export interface RetryPolicy {
-  maxAttempts: number;
-  initialBackoffSeconds: number;
-  maxBackoffSeconds: number;
-}
-
-export interface ModelProfile {
-  schemaVersion: 1;
-  id: string;
-  name: string;
-  provider: string;
-  baseUrl?: string | null;
-  authReference: string;
-  wireApi: WireAPI;
-  modelId: string;
-  contextWindow?: number | null;
-  maxOutputTokens?: number | null;
-  reasoningMode: "none" | "native" | "compatible";
-  reasoningEffort?: "low" | "medium" | "high" | null;
-  supportsTools?: boolean | null;
-  supportsParallelTools?: boolean | null;
-  supportsImages?: boolean | null;
-  supportsStructuredOutput?: boolean | null;
-  supportsPromptCache?: boolean | null;
-  requestTimeout: number;
-  retryPolicy: RetryPolicy;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface ModelProfileDraft {
   name: string;
   provider: string;
@@ -258,29 +238,6 @@ export interface ModelProfileDraft {
   supportsPromptCache?: boolean | undefined;
   requestTimeout?: number | undefined;
   retryPolicy?: Partial<RetryPolicy> | undefined;
-}
-
-export interface CapabilityWarning {
-  code: string;
-  capability?: string;
-  message: string;
-  source: string;
-}
-
-export interface CapabilitySnapshot {
-  id: string;
-  profileId: string;
-  provider: string;
-  wireApi: WireAPI;
-  modelId: string;
-  reachable: boolean;
-  authenticated: boolean;
-  supportsTools: boolean;
-  supportsParallelTools: boolean;
-  supportsImages: boolean;
-  supportsStructuredOutput: boolean;
-  supportsPromptCache: boolean;
-  warnings: CapabilityWarning[];
 }
 
 export interface ModelTestConnectionResult {
