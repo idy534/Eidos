@@ -267,10 +267,12 @@ source = { virtual = "." }
 dependencies = [
     { name = "anyio" },
     { name = "httpx" },
+    { name = "jsonschema" },
     { name = "mcp" },
     { name = "openai" },
     { name = "pydantic" },
     { name = "pydantic-ai-slim", extra = ["openai", "retries"] },
+    { name = "referencing" },
     { name = "tenacity" },
 ]
 
@@ -286,10 +288,12 @@ dev = [
 requires-dist = [
     { name = "anyio", specifier = ">=4.14,<5" },
     { name = "httpx", specifier = ">=0.28,<0.29" },
+    { name = "jsonschema", specifier = "==4.26.0" },
     { name = "mcp", specifier = ">=1.27,<2" },
     { name = "openai", specifier = ">=2.51,<3" },
     { name = "pydantic", specifier = "==2.12.5" },
     { name = "pydantic-ai-slim", extras = ["openai", "retries"], specifier = "==2.13.0" },
+    { name = "referencing", specifier = "==0.37.0" },
     { name = "tenacity", specifier = ">=9,<10" },
 ]
 
