@@ -10,10 +10,11 @@ import threading
 import time
 import unicodedata
 import uuid
+from contextvars import ContextVar
 from typing import Any, BinaryIO, TextIO
 from datetime import UTC, datetime
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from eidos_runtime import __version__
 from eidos_runtime.model.client import ModelClient, ModelResponse, ModelToolCall, ScriptedModel
@@ -45,11 +46,11 @@ from eidos_runtime.model_gateway.models import (
     WireAPI,
 )
 from eidos_runtime.model_gateway.presets import PRESETS
+from eidos_runtime.protocol import methods as method_dtos
 from eidos_runtime.protocol.registry import (
-    JsonObjectParams,
-    JsonObjectResult,
     MethodRegistration,
     MethodRegistry,
+    MethodResultValidationError,
     MethodValidationError,
 )
 from eidos_runtime.protocol.schemas import JsonRpcRequestDto, JsonRpcResponse
@@ -314,6 +315,54 @@ def valid_initialize_params(params: object) -> bool:
     )
 
 
+class _CapturedMethodResponse(RuntimeError):
+    """An existing handler produced its own stable JSON-RPC error envelope."""
+
+    def __init__(self, message: dict[str, object]) -> None:
+        self.message = message
+        super().__init__("captured method error response")
+
+
+class _LegacyMethodAdapter:
+    """Temporary typed boundary around an unmigrated synchronous use case.
+
+    The adapter is deliberately short-lived: it makes request/result DTO
+    validation effective before the following application migration removes
+    the legacy handlers. It never emits output itself; the registry returns a
+    validated result to ``RuntimeServer.handle`` for envelope serialization.
+    """
+
+    def __init__(
+        self,
+        server: "RuntimeServer",
+        handler: Any,
+        response_type: type[BaseModel],
+    ) -> None:
+        self._server = server
+        self._handler = handler
+        self._response_type = response_type
+
+    def __call__(self, request_id: str, request: BaseModel) -> BaseModel:
+        params = request.model_dump(
+            mode="json",
+            by_alias=True,
+            exclude_none=True,
+            exclude_defaults=True,
+        )
+        captured: list[dict[str, object]] = []
+        token = self._server._captured_method_messages.set(captured)
+        try:
+            self._handler(request_id, params)
+        finally:
+            self._server._captured_method_messages.reset(token)
+        if len(captured) != 1:
+            raise RuntimeError("legacy method did not produce exactly one response")
+        message = captured[0]
+        if "error" in message:
+            raise _CapturedMethodResponse(message)
+        return self._response_type.model_validate(message.get("result"))
+
+
 class RuntimeServer:
     def __init__(
         self,
@@ -332,6 +381,9 @@ class RuntimeServer:
         self.model_gateway: ModelGateway | None = None
         self.async_kernel: RuntimeAsyncKernel | None = None
         self.output_lock = threading.RLock()
+        self._captured_method_messages: ContextVar[
+            list[dict[str, object]] | None
+        ] = ContextVar("captured_method_messages", default=None)
         self.shell_available = False
         self.sensitive: SensitiveScanner | None = None
         self.plugins: PluginCatalog | None = None
@@ -404,45 +456,155 @@ class RuntimeServer:
         ):
             self.send(business_error(request_id, "RUNTIME_RECONFIGURING"))
             return
-        try:
-            if self.method_registry.dispatch(method, request_id, params):
+        if method == "plugin/import":
+            # The managed task still owns the existing asynchronous response
+            # timing. Its request is nevertheless a strict method DTO.
+            try:
+                plugin_request = method_dtos.PluginImportRequestDto.model_validate(params)
+            except ValidationError:
+                self.send(protocol_error(request_id, -32602, "Invalid params"))
                 return
+            self.import_plugin(
+                request_id,
+                plugin_request.model_dump(
+                    mode="json",
+                    by_alias=True,
+                    exclude_none=True,
+                    exclude_defaults=True,
+                ),
+            )
+            return
+        try:
+            result = self.method_registry.dispatch(method, request_id, params)
         except MethodValidationError:
             self.send(protocol_error(request_id, -32602, "Invalid params"))
+            return
+        except _CapturedMethodResponse as error:
+            self.send(error.message)
+            return
+        except MethodResultValidationError:
+            logger.error("Registered method returned an invalid response: %s", method)
+            self.send(business_error(request_id, "INTERNAL_ERROR"))
+            return
+        if result is not False:
+            self.send(response(request_id, result))
             return
         self.send(protocol_error(request_id, -32601, "Method not found"))
 
     def _build_method_registry(self) -> MethodRegistry:
         registry = MethodRegistry()
-        handlers = {
-            "session/create": self.create_session,
-            "session/list": self.list_sessions,
-            "session/read": self.read_session,
-            "session/rename": self.rename_session,
-            "session/delete": self.delete_session,
-            "event/list": self.list_events,
-            "run/start": self.start_run,
-            "run/cancel": self.cancel_run,
-            "model/status": self.model_status,
-            "model/list": self.list_models,
-            "model/configure": self.configure_model,
-            "model_profile/list": self.list_model_profiles,
-            "model_profile/get": self.get_model_profile,
-            "model_profile/create": self.create_model_profile,
-            "model_profile/update": self.update_model_profile,
-            "model_profile/delete": self.delete_model_profile,
-            "model_profile/list_presets": self.list_model_presets,
-            "plugin/list": self.list_plugins,
-            "plugin/import": self.import_plugin,
-            "plugin/setEnabled": self.set_plugin_enabled,
-            "plugin/remove": self.remove_plugin,
-            "skill/list": self.list_skills,
-            "skill/read": self.read_skill,
-            "mcp/list": self.list_mcp_servers,
-            "mcp/setEnabled": self.set_mcp_enabled,
-            "extension/read": self.read_extensions,
-            "extension/readEvents": self.read_extension_events,
-        }
+        handlers: tuple[tuple[str, type[BaseModel], type[BaseModel], Any], ...] = (
+            (
+                "session/create", method_dtos.SessionCreateRequestDto,
+                method_dtos.SessionCreateResponseDto, self.create_session,
+            ),
+            (
+                "session/list", method_dtos.SessionListRequestDto,
+                method_dtos.SessionListResponseDto, self.list_sessions,
+            ),
+            (
+                "session/read", method_dtos.SessionReadRequestDto,
+                method_dtos.SessionReadResponseDto, self.read_session,
+            ),
+            (
+                "session/rename", method_dtos.SessionRenameRequestDto,
+                method_dtos.SessionRenameResponseDto, self.rename_session,
+            ),
+            (
+                "session/delete", method_dtos.SessionDeleteRequestDto,
+                method_dtos.SessionDeleteResponseDto, self.delete_session,
+            ),
+            (
+                "event/list", method_dtos.EventListRequestDto,
+                method_dtos.EventListResponseDto, self.list_events,
+            ),
+            (
+                "run/start", method_dtos.RunStartRequestDto,
+                method_dtos.RunStartResponseDto, self.start_run,
+            ),
+            (
+                "run/cancel", method_dtos.RunCancelRequestDto,
+                method_dtos.RunCancelResponseDto, self.cancel_run,
+            ),
+            (
+                "model/status", method_dtos.ModelStatusRequestDto,
+                method_dtos.ModelStatusResponseDto, self.model_status,
+            ),
+            (
+                "model/list", method_dtos.ModelListRequestDto,
+                method_dtos.ModelListResponseDto, self.list_models,
+            ),
+            (
+                "model/configure", method_dtos.ModelConfigureRequestDto,
+                method_dtos.ModelConfigureResponseDto, self.configure_model,
+            ),
+            (
+                "model_profile/list", method_dtos.ModelProfileListRequestDto,
+                method_dtos.ModelProfileListResponseDto, self.list_model_profiles,
+            ),
+            (
+                "model_profile/get", method_dtos.ModelProfileGetRequestDto,
+                method_dtos.ModelProfileGetResponseDto, self.get_model_profile,
+            ),
+            (
+                "model_profile/create", method_dtos.ModelProfileCreateRequestDto,
+                method_dtos.ModelProfileCreateResponseDto, self.create_model_profile,
+            ),
+            (
+                "model_profile/update", method_dtos.ModelProfileUpdateRequestDto,
+                method_dtos.ModelProfileUpdateResponseDto, self.update_model_profile,
+            ),
+            (
+                "model_profile/delete", method_dtos.ModelProfileDeleteRequestDto,
+                method_dtos.ModelProfileDeleteResponseDto, self.delete_model_profile,
+            ),
+            (
+                "model_profile/list_presets",
+                method_dtos.ModelProfileListPresetsRequestDto,
+                method_dtos.ModelProfileListPresetsResponseDto,
+                self.list_model_presets,
+            ),
+            (
+                "plugin/list", method_dtos.PluginListRequestDto,
+                method_dtos.PluginListResponseDto, self.list_plugins,
+            ),
+            (
+                "plugin/import", method_dtos.PluginImportRequestDto,
+                method_dtos.PluginImportResponseDto, self.import_plugin,
+            ),
+            (
+                "plugin/setEnabled", method_dtos.PluginSetEnabledRequestDto,
+                method_dtos.PluginSetEnabledResponseDto, self.set_plugin_enabled,
+            ),
+            (
+                "plugin/remove", method_dtos.PluginRemoveRequestDto,
+                method_dtos.PluginRemoveResponseDto, self.remove_plugin,
+            ),
+            (
+                "skill/list", method_dtos.SkillListRequestDto,
+                method_dtos.SkillListResponseDto, self.list_skills,
+            ),
+            (
+                "skill/read", method_dtos.SkillReadRequestDto,
+                method_dtos.SkillReadResponseDto, self.read_skill,
+            ),
+            (
+                "mcp/list", method_dtos.McpListRequestDto,
+                method_dtos.McpListResponseDto, self.list_mcp_servers,
+            ),
+            (
+                "mcp/setEnabled", method_dtos.McpSetEnabledRequestDto,
+                method_dtos.McpSetEnabledResponseDto, self.set_mcp_enabled,
+            ),
+            (
+                "extension/read", method_dtos.ExtensionReadRequestDto,
+                method_dtos.ExtensionReadResponseDto, self.read_extensions,
+            ),
+            (
+                "extension/readEvents", method_dtos.ExtensionReadEventsRequestDto,
+                method_dtos.ExtensionReadEventsResponseDto, self.read_extension_events,
+            ),
+        )
         draining_blocked = {
             "run/start",
             "model/configure",
@@ -455,14 +617,12 @@ class RuntimeServer:
             "mcp/setEnabled",
         }
         reconfiguration_blocked = {"run/start", "model/configure"}
-        for name, handler in handlers.items():
+        for name, request_type, response_type, handler in handlers:
             registry.register(MethodRegistration(
                 name=name,
-                request_type=JsonObjectParams,
-                response_type=JsonObjectResult,
-                handler=lambda request_id, params, handler=handler: handler(
-                    request_id, params.root
-                ),
+                request_type=request_type,
+                response_type=response_type,
+                handler=_LegacyMethodAdapter(self, handler, response_type),
                 allowed_when_draining=name not in draining_blocked,
                 allowed_during_reconfiguration=name not in reconfiguration_blocked,
             ))
@@ -1563,6 +1723,10 @@ class RuntimeServer:
         logger.info("Runtime shutdown requested")
 
     def send(self, message: dict[str, object]) -> None:
+        captured = self._captured_method_messages.get()
+        if captured is not None:
+            captured.append(message)
+            return
         with self.output_lock:
             hit_fault("jsonrpc_output_disconnect")
             if self.output.closed:
