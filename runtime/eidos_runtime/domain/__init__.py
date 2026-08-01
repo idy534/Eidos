@@ -9,6 +9,13 @@ from eidos_runtime.domain.execution import (
     Step,
     StepStatus,
 )
+from eidos_runtime.domain.long_task import (
+    LongTaskProgress,
+    LongTaskStatus,
+    ResumeVerification,
+    SafePoint,
+    VerificationStatus,
+)
 from eidos_runtime.domain.run import (
     Run,
     RunControlState,
@@ -49,6 +56,8 @@ __all__ = [
     "Item",
     "ItemKind",
     "ItemStatus",
+    "LongTaskProgress",
+    "LongTaskStatus",
     "ModelAttempt",
     "ModelAttemptStatus",
     "PermissionSnapshot",
@@ -57,6 +66,8 @@ __all__ = [
     "RunQueuePosition",
     "RunSnapshot",
     "RunStatus",
+    "ResumeVerification",
+    "SafePoint",
     "SandboxAttempt",
     "SegmentStatus",
     "Session",
@@ -68,4 +79,5 @@ __all__ = [
     "ToolAttemptStatus",
     "ToolCall",
     "ToolCallStatus",
+    "VerificationStatus",
 ]
