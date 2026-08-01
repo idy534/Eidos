@@ -96,6 +96,89 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertNotIn("private", response.text)
         self.assertEqual(response.resolved_model_name, "fixture")
 
+    def test_stream_callbacks_are_serialized_off_the_kernel_event_loop(self) -> None:
+        event_loop_thread_ids: list[int] = []
+        callback_thread_ids: list[int] = []
+        callback_deltas: list[str] = []
+        active_callbacks = 0
+        maximum_active_callbacks = 0
+        callback_lock = threading.Lock()
+
+        async def stream(_messages, _info):
+            event_loop_thread_ids.append(threading.get_ident())
+            yield "one"
+            yield "two"
+
+        def on_delta(delta: str) -> None:
+            nonlocal active_callbacks, maximum_active_callbacks
+            with callback_lock:
+                active_callbacks += 1
+                maximum_active_callbacks = max(maximum_active_callbacks, active_callbacks)
+                callback_thread_ids.append(threading.get_ident())
+                callback_deltas.append(delta)
+            try:
+                self.assertIn(delta, {"one", "two"})
+            finally:
+                with callback_lock:
+                    active_callbacks -= 1
+
+        response = self.client(stream).complete((), threading.Event(), on_delta)
+
+        self.assertEqual(response.text, "onetwo")
+        self.assertEqual(callback_deltas, ["one", "two"])
+        self.assertEqual(maximum_active_callbacks, 1)
+        self.assertEqual(len(callback_thread_ids), 2)
+        self.assertTrue(all(
+            callback_thread_id != event_loop_thread_ids[0]
+            for callback_thread_id in callback_thread_ids
+        ))
+
+    def test_cancel_waits_for_the_in_flight_stream_callback(self) -> None:
+        callback_entered = threading.Event()
+        release_callback = threading.Event()
+        cancel = threading.Event()
+        errors: list[BaseException] = []
+
+        async def stream(_messages, _info):
+            yield "first"
+
+        def on_delta(_delta: str) -> None:
+            callback_entered.set()
+            release_callback.wait(timeout=1.0)
+
+        client = self.client(stream)
+
+        def complete() -> None:
+            try:
+                client.complete((), cancel, on_delta)
+            except BaseException as error:
+                errors.append(error)
+
+        worker = threading.Thread(target=complete)
+        worker.start()
+        self.assertTrue(callback_entered.wait(timeout=1.0))
+        cancel.set()
+        self.assertTrue(worker.is_alive())
+        release_callback.set()
+        worker.join(timeout=1.0)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], ModelRequestError)
+        self.assertEqual(errors[0].failure.code, "sampling_canceled")
+
+    def test_stream_callback_error_maps_to_the_existing_model_error_path(self) -> None:
+        async def stream(_messages, _info):
+            yield "first"
+
+        def fail_callback(_delta: str) -> None:
+            raise ValueError("writer failed")
+
+        with self.assertRaises(ModelRequestError) as raised:
+            self.client(stream).complete((), threading.Event(), fail_callback)
+
+        self.assertEqual(raised.exception.failure.code, "protocol_error")
+
     def test_profile_capabilities_come_from_resolved_model_profile(self) -> None:
         profile = self.client(_one_chunk).profile_snapshot
 

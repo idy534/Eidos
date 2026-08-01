@@ -83,7 +83,7 @@ fall back to the former Python traversal.
 
 二者没有交叉导入或运行时类型冲突；当前无需重命名。文档和代码引用时应保留模块限定或结合所在模块理解。
 
-动态 MCP/外部 Tool Schema 由 `jsonschema` 的 Draft 2020-12 校验器执行标准 `type`、枚举、边界和闭合对象规则；Eidos 的 `BoundedJsonSchema` 仍在构造前 fail-closed 地限制 Schema/Value 字节、深度和节点数、允许关键字与类型、JSON 安全数值和稳定错误码。它不支持 `$ref` 或其他引用关键字，并使用没有检索器的 `referencing.Registry`，因此 Schema 不能触发网络、文件或包资源访问。默认值是 Eidos 独立的确定性投影：只写入显式属性默认值，且不创建缺失父对象。
+动态 MCP/外部 Tool Schema 由 `jsonschema` 的 Draft 2020-12 校验器执行标准 `type`、枚举、边界和闭合对象规则；Eidos 的 `BoundedJsonSchema` 仍在构造前 fail-closed 地限制 Schema/Value 字节、深度和节点数、允许关键字与类型、JSON 安全数值和稳定错误码。它不支持 `$ref` 或其他引用关键字，并使用没有检索器的 `referencing.Registry`，因此 Schema 不能触发网络、文件或包资源访问。默认值是 Eidos 独立的确定性投影：只写入显式属性默认值，且不创建缺失父对象；它先校验原始输入边界、复制并应用 defaults，再以 JSON-safe integer enforcement 重检扩展候选值，最后进行标准 Schema 校验。因此 default expansion 不能绕过 Eidos 的 bytes、depth、node、finite-number 或 object-key 边界。
 
 ## 多 ToolCall 语义
 
@@ -109,13 +109,21 @@ Model Profile 能力只由本地声明解析：显式用户声明优先于内置
 
 Runtime Core 目前仍是同步 Durable Runtime，`RunSupervisor` 与 Run Worker 仍使用线程。模型异步 I/O 由 `RuntimeServer` 唯一持有的 `RuntimeAsyncKernel` 承载：一个进程级 AnyIO `BlockingPortal` 可并发执行多个 Model Client、Run Sampling 与标题生成请求；Client 只通过该 kernel 调用 Pydantic AI 的公开异步 Direct API。Kernel 还通过 `RuntimeAsyncTask` 拥有通用异步 Task/Service 的启动、取消、等待、结果和有界诊断；Service readiness 使用 AnyIO `task_status.started(value)`，Portal 不暴露给业务模块。每个 owned task 对应一个 `async_task` 资源，完成后从活跃集合移除；Kernel shutdown 先拒绝新任务、协作取消并有界等待，未真实退出时保留资源并报告 `ASYNC_KERNEL_TASK_SHUTDOWN_TIMEOUT`。
 
-MCP Connection 通过 initialize 阶段一次性绑定的同一 Kernel 启动为长生命周期 Service；`stdio_client`、官方 `ClientSession`、初始化、Tool Discovery 和 List Changed notification 都留在该 Service 内。同步 Tool Adapter 通过 Kernel 受控边界调用私有 Session，同一 Session 使用 AnyIO Lock 串行化 Tool Call/Refresh；Connection 不再拥有 `Thread`、`queue.Queue`、轮询完成 Event 或独立 `anyio.run()`。`MCP_CONNECTION` 与 `MCP_COMMAND` 仍表达领域资源，Kernel 的 `ASYNC_TASK` 只表达基础设施 ownership；超时/取消后的副作用不确定性、Launcher/PID/进程组、Seatbelt、私有 HOME/TMP 和 stdout 污染 fail-closed 语义保持不变。
+MCP Connection 通过 initialize 阶段一次性绑定的同一 Kernel 启动为长生命周期 Service；一个私有的 AnyIO startup timeout 覆盖 private HOME/TMP、环境与 sandbox argv 准备、`stdio_client`/子进程、官方 `ClientSession`、初始化和分页 Tool Discovery，直到 `task_status.started()`。成功 ready 后该 timeout 被禁用，Service/`ASYNC_TASK` 的 `deadline` 为 `None`，不会把已过期的启动时间显示为活跃诊断。同步 Tool Adapter 通过 Kernel 受控边界调用私有 Session，同一 Session 使用 AnyIO Lock 串行化 Tool Call/Refresh；Connection 不再拥有 `Thread`、`queue.Queue`、轮询完成 Event 或独立 `anyio.run()`。Tool List Changed 的同步 SQLite bookkeeping 通过不 abandon 的 AnyIO worker bridge 执行；关闭会等待已经开始的 callback，callback 本身失败只记录安全日志，不把健康的 MCP session 映射为协议失败。基础设施取消保持为 AnyIO cancellation 而非 `McpUnavailable`。`MCP_CONNECTION` 与 `MCP_COMMAND` 仍表达领域资源，Kernel 的 `ASYNC_TASK` 只表达基础设施 ownership；startup timeout、transport/protocol failure、sandbox unavailable 分别稳定映射为 `mcp_startup_timeout`、`mcp_protocol_error`、`mcp_sandbox_unavailable`；超时/取消后的副作用不确定性、Launcher/PID/进程组、Seatbelt、私有 HOME/TMP 和 stdout 污染 fail-closed 语义保持不变。
 
 Title Generation 与 Plugin Import 等 Managed Task 同样由 `RuntimeAsyncTask` Handle 拥有；保留的同步 `Callable[[threading.Event], None]` 通过 `anyio.to_thread.run_sync()` 执行，未启用 abandon-on-cancel。Shutdown 先设置 Eidos cooperative cancellation Event，再有界等待同步函数真实退出；未退出时保留 `MANAGED_TASK`、`ASYNC_REQUEST` 与 `ASYNC_TASK` 事实并报告 timeout，不把 worker Future 取消误判为底层工作停止。
 
 只读并行 Batch 的同步入口通过同一 Kernel 进入 AnyIO TaskGroup，每个现有同步 read execution 使用默认等待真实退出的 AnyIO worker thread bridge；不再为每个 Batch 创建 `ThreadPoolExecutor` 或依赖 Future 完成顺序。`ToolConcurrencyGate` 继续权威表达 max concurrency、exclusive mode、resource/exclusive key 和 cancellation policy；只有 Dispatcher 确认为只读且所有参数通过 Sensitive Scanner 的完整 Batch 才进入该路径。基础设施失败或取消会设置共享 cooperative signal，并等待所有已启动执行终止；Infrastructure Error 优先，普通 Tool Error 不取消合法 sibling，最终 Outcome、Item、Event、Context Fact 和 progress fingerprint 仍按原 Batch Order 汇总。关闭顺序仍先结束 Run-scoped MCP、Managed Task、Tool Execution、Run/Model Client，再关闭 kernel 并释放唯一 `async_kernel` 资源。
 
-Shutdown quiescence 只由显式 Run Handle、Model Lease、Kernel Task Handle、`ResourceRegistry`、持久 Run 状态和 MCP child process ownership 判定，不扫描全局线程名，也不维护第二份 Tool 活跃计数。Timeout 日志最多列出 100 个结构化诊断，只包含 `kind`、`owner_id`、`state`、`deadline` 与 `diagnostic_code`。当前有意保留一个 AnyIO Portal Thread 和每个活跃 Run 的一个同步 Worker Thread；MCP 没有专用线程，Managed Task 没有 Eidos 专用线程，并行只读 Batch 没有 Batch Executor。这是原生 async Runtime Engine/Run Supervisor 迁移前的明确边界。
+Shutdown quiescence 只由显式 Run Handle、Model Lease、Kernel Task Handle、`ResourceRegistry`、持久 Run 状态和 MCP child process ownership 判定，不扫描全局线程名，也不维护第二份 Tool 活跃计数。Timeout 日志最多列出 100 个结构化诊断，只包含 `kind`、`owner_id`、`state`、`deadline` 与 `diagnostic_code`。
+
+### Eidos 1.0 sync/async boundary
+
+Eidos 1.0 不追求零线程架构。Durable Runtime core 保持同步：`RuntimeEngine`、`RunSupervisor` FIFO/执行 slot、SQLite 事务和状态迁移、Approval 持久状态机、Context 构建与压缩、Tool 副作用编排、Sandbox/进程核验，以及 Recovery/Reconciliation 都继续由同步核心拥有。每个活跃 Run 一个 Worker Thread 是刻意的隔离边界，不是待消除的过渡实现。
+
+进程唯一的 `RuntimeAsyncKernel` 集中拥有 Pydantic AI 网络 I/O、MCP connection service、Managed Task 调度、并行只读协调和 provider client 的异步 close。同步 Worker、AnyIO worker 或其他非 Portal 调用者可以同步进入 Kernel；Kernel Event Loop Thread 不得同步重入 `RuntimeAsyncKernel.call()`，会以 `ASYNC_KERNEL_REENTRY` 立即失败。模型流的 blocking callback 通过串行 AnyIO worker bridge 执行，因此不会在 Kernel Event Loop 上执行 SQLite 或 Event publication；SQLite 仍是同步且唯一的业务事实来源。
+
+原生 async `RuntimeEngine`/`RunSupervisor` 转换延后，直到以下任一条件成立：测得 Run-thread scalability 已成为瓶颈、并行 Agent 数量超过有界线程模型、SQLite 被替换为 async persistence boundary，或 profiling 证明 Event Loop/线程竞争有显著影响。在此之前不维护 `AsyncModelClient`、async `ApprovalCoordinator`、双 sync/async Sampling/ToolCall Runtime、`RuntimeEngine.arun()` 或 async `RunSupervisor` 的占位接口。
 | DB schema/mappers/events | `runtime/eidos_runtime/db/` |
 | Run loop | `runtime/eidos_runtime/runtime/engine.py` |
 | Tool batch/single/orchestration | `runtime/eidos_runtime/runtime/tool_runtime.py`, `tool_execution.py`, `tool_orchestrator.py` |

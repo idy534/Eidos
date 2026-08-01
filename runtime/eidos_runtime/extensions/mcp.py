@@ -5,6 +5,7 @@ from datetime import timedelta
 import hashlib
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import signal
@@ -53,6 +54,7 @@ LAUNCHER = Path(__file__).with_name("mcp_launcher.py")
 # The SDK includes the polluted stdout line in parser exception logs. Eidos maps
 # that condition to a closed code and never logs the untrusted protocol bytes.
 logging.getLogger("mcp.client.stdio").setLevel(logging.CRITICAL)
+LOGGER = logging.getLogger(__name__)
 
 
 class McpUnavailable(RuntimeError):
@@ -100,6 +102,10 @@ class McpConnection:
         self._session: ClientSession | None = None
         self._session_lock: anyio.Lock | None = None
         self._close_event: anyio.Event | None = None
+        self._callback_lock = threading.Lock()
+        self._callbacks_in_flight = 0
+        self._callbacks_quiescent = threading.Event()
+        self._callbacks_quiescent.set()
 
     def start(self) -> tuple[mcp_types.Tool, ...]:
         if self.resources is not None:
@@ -109,13 +115,13 @@ class McpConnection:
                 cancel=self.closed.set,
             )
             self.resource.start()
-        self.runtime_root.mkdir(mode=0o700, parents=True)
-        os.chmod(self.runtime_root, 0o700)
         try:
             service, started = self.async_kernel.start_service(
                 self._serve,
                 owner_id=f"mcp:{self.config.id}",
-                deadline=time.monotonic() + self.config.startup_timeout_seconds,
+                # Readiness has its own private timeout in _serve. A ready MCP
+                # connection is a long-lived service, not a deadline-bound task.
+                deadline=None,
             )
             self._service = service
             self.tools = tuple(started)
@@ -195,12 +201,21 @@ class McpConnection:
         if service is not None and not service.done():
             service.cancel()
             service.wait(2)
+        callbacks_quiescent = self._callbacks_quiescent.wait(5)
         if not process_group_exited:
             process_group_exited = self._terminate_process_group()
-        if (service is not None and not service.done()) or not process_group_exited:
+        if (
+            (service is not None and not service.done())
+            or not process_group_exited
+            or not callbacks_quiescent
+        ):
             resource = getattr(self, "resource", None)
             if resource is not None:
-                resource.fail("MCP_CANCEL_TIMEOUT")
+                resource.fail(
+                    "MCP_CALLBACK_SHUTDOWN_TIMEOUT"
+                    if not callbacks_quiescent
+                    else "MCP_CANCEL_TIMEOUT"
+                )
             raise McpShutdownTimeout("MCP_SHUTDOWN_TIMEOUT")
         try:
             resolved = self.runtime_root.resolve(strict=False)
@@ -258,8 +273,6 @@ class McpConnection:
             return False
 
     async def _serve(self, *, task_status: anyio.abc.TaskStatus[object]) -> None:
-        parameters = self._parameters()
-
         async def message_handler(message: object) -> None:
             if isinstance(message, Exception):
                 self.error_code = "mcp_stdout_pollution"
@@ -268,34 +281,73 @@ class McpConnection:
                 return
             root = getattr(message, "root", None)
             if isinstance(root, mcp_types.ToolListChangedNotification):
-                self.on_list_changed()
+                try:
+                    # The callback records an event in SQLite. It must not run
+                    # synchronously on the RuntimeAsyncKernel Event Loop.
+                    await anyio.to_thread.run_sync(self._run_list_changed_callback)
+                except BaseException as error:
+                    if isinstance(error, anyio.get_cancelled_exc_class()):
+                        raise
+                    # A notification callback is local bookkeeping, not MCP
+                    # protocol state. Retain the service while making its local
+                    # failure visible without untrusted exception data.
+                    LOGGER.error(
+                        "MCP tool-list change callback failed",
+                        extra={"mcp_server_id": self.config.id},
+                    )
 
         startup_scope: anyio.CancelScope | None = None
+        startup_deadline: float | None = None
+        startup_ready = False
         try:
-            with open(os.devnull, "w", encoding="utf-8") as error_log:
-                async with stdio_client(parameters, errlog=error_log) as streams:
-                    async with ClientSession(
-                        streams[0], streams[1], message_handler=message_handler
-                    ) as session:
-                        with anyio.fail_after(
-                            self.config.startup_timeout_seconds
-                        ) as startup_scope:
+            # The scope begins before any transport preparation. It remains
+            # lexically around the contexts so their cleanup stays structured,
+            # then explicitly loses its deadline once the service is ready.
+            with anyio.fail_after(
+                self.config.startup_timeout_seconds
+            ) as startup_scope:
+                startup_deadline = startup_scope.deadline
+                parameters = await anyio.to_thread.run_sync(self._prepare_parameters)
+                with open(os.devnull, "w", encoding="utf-8") as error_log:
+                    async with stdio_client(parameters, errlog=error_log) as streams:
+                        async with ClientSession(
+                            streams[0], streams[1], message_handler=message_handler
+                        ) as session:
                             await session.initialize()
                             tools = await _discover_tools(session)
-                        self._session = session
-                        self._session_lock = anyio.Lock()
-                        self._close_event = anyio.Event()
-                        self.tools = tools
-                        task_status.started(tools)
-                        await self._close_event.wait()
+                            self._session = session
+                            self._session_lock = anyio.Lock()
+                            self._close_event = anyio.Event()
+                            self.tools = tools
+                            task_status.started(tools)
+                            startup_ready = True
+                            startup_scope.deadline = math.inf
+                            await self._close_event.wait()
         except McpUnavailable as error:
             self.error_code = str(error)
             raise
         except BaseException as error:
+            cancellation_type = anyio.get_cancelled_exc_class()
+            if _exception_contains(error, cancellation_type):
+                if startup_scope is not None and startup_scope.cancel_called:
+                    self.error_code = "mcp_startup_timeout"
+                    raise McpUnavailable(self.error_code) from None
+                raise
+            if (
+                not startup_ready
+                and startup_deadline is not None
+                and time.monotonic() >= startup_deadline
+            ):
+                self.error_code = "mcp_startup_timeout"
+                raise McpUnavailable(self.error_code) from None
             self.error_code = self.error_code or (
                 "mcp_startup_timeout"
                 if (
                     (startup_scope is not None and startup_scope.cancel_called)
+                    or (
+                        startup_scope is not None
+                        and startup_scope.cancelled_caught
+                    )
                     or _exception_contains(error, TimeoutError)
                 )
                 else "mcp_protocol_error"
@@ -335,7 +387,21 @@ class McpConnection:
         if self._close_event is not None:
             self._close_event.set()
 
-    def _parameters(self) -> StdioServerParameters:
+    def _run_list_changed_callback(self) -> None:
+        with self._callback_lock:
+            self._callbacks_in_flight += 1
+            self._callbacks_quiescent.clear()
+        try:
+            self.on_list_changed()
+        finally:
+            with self._callback_lock:
+                self._callbacks_in_flight -= 1
+                if self._callbacks_in_flight == 0:
+                    self._callbacks_quiescent.set()
+
+    def _prepare_parameters(self) -> StdioServerParameters:
+        self.runtime_root.mkdir(mode=0o700, parents=True)
+        os.chmod(self.runtime_root, 0o700)
         executable = self.config.executable
         if "/" in executable and not Path(executable).is_absolute():
             executable = str(self.plugin_root / executable)

@@ -224,6 +224,23 @@ class AsyncTitleTests(unittest.TestCase):
         self.assertEqual(diagnostic.state, AsyncTaskState.FAILED)
         self.assertEqual(diagnostic.diagnostic_code, "ASYNC_TASK_FAILED")
 
+    def test_immediately_finishing_managed_task_leaves_no_registration_race(self) -> None:
+        completed = threading.Event()
+
+        def finish_immediately(_cancel: threading.Event) -> None:
+            completed.set()
+
+        self.assertTrue(
+            self.server.supervisor.start_managed_task("immediate", finish_immediately)
+        )
+        self.assertTrue(completed.wait(1))
+        self.assertTrue(self.server.supervisor.wait_managed_tasks(1))
+        self.assertFalse(self.server.supervisor.has_active_managed_tasks())
+        self.assertFalse(any(
+            resource.kind is RuntimeResourceKind.MANAGED_TASK
+            for resource in self.server.supervisor.resources.active_resources()
+        ))
+
     def test_reconfiguration_rejects_active_managed_task(self) -> None:
         entered = threading.Event()
         release = threading.Event()

@@ -13,6 +13,7 @@ import anyio
 from eidos_runtime.runtime.async_kernel import (
     AsyncKernelCloseError,
     AsyncKernelClosedError,
+    AsyncKernelReentryError,
     AsyncKernelState,
     AsyncTaskState,
     RuntimeAsyncKernel,
@@ -134,6 +135,28 @@ class RuntimeAsyncKernelTests(unittest.TestCase):
             [resource.kind for resource in resources.active_resources()],
             [RuntimeResourceKind.ASYNC_KERNEL],
         )
+        kernel.close()
+        resources.ensure_empty()
+
+    def test_forced_service_cancellation_has_a_canceled_terminal_state(self) -> None:
+        resources = ResourceRegistry()
+        kernel = RuntimeAsyncKernel(resource_registry=resources)
+        kernel.start()
+        entered = threading.Event()
+
+        async def service(*, task_status) -> None:
+            task_status.started("ready")
+            entered.set()
+            await anyio.sleep_forever()
+
+        task, started = kernel.start_service(service, owner_id="service-1")
+
+        self.assertEqual(started, "ready")
+        self.assertTrue(entered.wait(1))
+        self.assertTrue(task.cancel())
+        self.assertTrue(task.wait(1))
+        self.assertEqual(task.state, AsyncTaskState.CANCELED)
+        self.assertEqual(task.diagnostics().diagnostic_code, None)
         kernel.close()
         resources.ensure_empty()
 
@@ -350,6 +373,58 @@ class RuntimeAsyncKernelTests(unittest.TestCase):
         with self.assertRaises(AsyncKernelClosedError):
             kernel.call(raises)
 
+    def test_call_rejects_portal_event_loop_reentry_with_stable_code(self) -> None:
+        kernel = RuntimeAsyncKernel()
+        kernel.start()
+
+        async def inner() -> None:
+            return None
+
+        async def reenter() -> str:
+            with self.assertRaises(AsyncKernelReentryError) as raised:
+                kernel.call(inner)
+            return raised.exception.code
+
+        try:
+            self.assertEqual(kernel.call(reenter), "ASYNC_KERNEL_REENTRY")
+        finally:
+            kernel.close()
+
+    def test_call_from_anyio_worker_thread_remains_supported(self) -> None:
+        kernel = RuntimeAsyncKernel()
+        kernel.start()
+
+        async def value() -> str:
+            return "called"
+
+        async def from_worker() -> str:
+            return await anyio.to_thread.run_sync(kernel.call, value)
+
+        try:
+            self.assertEqual(kernel.call(from_worker), "called")
+        finally:
+            kernel.close()
+
+    def test_call_from_run_worker_thread_remains_supported(self) -> None:
+        kernel = RuntimeAsyncKernel()
+        kernel.start()
+        result: list[str] = []
+
+        async def value() -> str:
+            return "called"
+
+        worker = threading.Thread(
+            target=lambda: result.append(kernel.call(value)),
+            name="eidos-run-worker-test",
+        )
+        try:
+            worker.start()
+            worker.join(timeout=1.0)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(result, ["called"])
+        finally:
+            kernel.close()
+
     def test_start_failure_is_recorded_on_the_kernel_resource(self) -> None:
         resources = ResourceRegistry()
         kernel = RuntimeAsyncKernel(resource_registry=resources)
@@ -369,7 +444,9 @@ class RuntimeAsyncKernelTests(unittest.TestCase):
 
     def test_close_failure_is_recorded_on_the_kernel_resource(self) -> None:
         class FailingPortal:
-            def call(self, _function) -> None:
+            def call(self, function) -> int | None:
+                if function is threading.get_ident:
+                    return 1
                 raise RuntimeError("portal stop failed")
 
         class PortalContext:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,9 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
+
+import anyio
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -20,6 +24,7 @@ from eidos_runtime.extensions.mcp import (  # noqa: E402
 )
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
+from eidos_runtime.runtime.async_kernel import AsyncTaskState  # noqa: E402
 from eidos_runtime.runtime.resource_registry import (  # noqa: E402
     ResourceRegistry,
     RuntimeResourceKind,
@@ -108,6 +113,8 @@ class McpManagerTests(unittest.TestCase):
         ]
         self.assertEqual(len(async_tasks), 1)
         self.assertEqual(async_tasks[0].owner_id, "mcp:fixture")
+        self.assertIsNone(connection._service.deadline)
+        self.assertIsNone(async_tasks[0].deadline)
 
     def test_two_connections_share_the_runtime_kernel(self) -> None:
         second = McpManager(
@@ -159,6 +166,203 @@ class McpManagerTests(unittest.TestCase):
 
         self.assertFalse(any(
             resource.kind is RuntimeResourceKind.ASYNC_TASK
+            for resource in self.resources.active_resources()
+        ))
+        self.assertFalse(any(
+            resource.kind is RuntimeResourceKind.MCP_CONNECTION
+            for resource in self.resources.active_resources()
+        ))
+
+    def test_startup_timeout_bounds_transport_context_entry(self) -> None:
+        config = self.plugins.manifest("demo").mcp_servers[0].model_copy(
+            update={"startup_timeout_seconds": 0.05}
+        )
+        connection = self._connection(config)
+
+        @asynccontextmanager
+        async def stalled_transport(_parameters, *, errlog):
+            del errlog
+            await anyio.sleep(1)
+            yield (object(), object())
+
+        started = time.monotonic()
+        with patch("eidos_runtime.extensions.mcp.stdio_client", stalled_transport):
+            with self.assertRaisesRegex(McpUnavailable, "mcp_startup_timeout"):
+                connection.start()
+
+        self.assertLess(time.monotonic() - started, 0.5)
+        self._assert_startup_resources_released()
+
+    def test_startup_timeout_bounds_client_session_context_entry(self) -> None:
+        config = self.plugins.manifest("demo").mcp_servers[0].model_copy(
+            update={"startup_timeout_seconds": 0.05}
+        )
+        connection = self._connection(config)
+
+        @asynccontextmanager
+        async def transport(_parameters, *, errlog):
+            del errlog
+            yield (object(), object())
+
+        class StalledSession:
+            def __init__(self, *_args, **_kwargs) -> None:
+                pass
+
+            async def __aenter__(self):
+                await anyio.sleep(1)
+
+            async def __aexit__(self, *_args) -> None:
+                return None
+
+        started = time.monotonic()
+        with (
+            patch("eidos_runtime.extensions.mcp.stdio_client", transport),
+            patch("eidos_runtime.extensions.mcp.ClientSession", StalledSession),
+        ):
+            with self.assertRaisesRegex(McpUnavailable, "mcp_startup_timeout"):
+                connection.start()
+
+        self.assertLess(time.monotonic() - started, 0.5)
+        self._assert_startup_resources_released()
+
+    def test_forced_service_cancellation_stays_canceled(self) -> None:
+        self.manager.start()
+        connection = self.manager.connections[0]
+        service = connection._service
+        assert service is not None
+
+        self.assertTrue(service.cancel())
+        self.assertTrue(service.wait(1))
+
+        self.assertEqual(service.state, AsyncTaskState.CANCELED)
+        self.assertNotEqual(connection.error_code, "mcp_protocol_error")
+
+    def test_list_changed_callback_failure_keeps_session_available(self) -> None:
+        connection = self._connection(
+            self.plugins.manifest("demo").mcp_servers[0],
+            on_list_changed=lambda: (_ for _ in ()).throw(RuntimeError("storage")),
+        )
+        try:
+            connection.start()
+            result = connection.call("echo", {"message": "still-live"}, threading.Event())
+        finally:
+            connection.close()
+
+        self.assertEqual(result["outcome"], "success")
+        self.assertNotEqual(connection.error_code, "mcp_protocol_error")
+
+    def test_blocking_list_changed_callback_does_not_block_kernel(self) -> None:
+        callback_entered = threading.Event()
+        release_callback = threading.Event()
+        config = self.plugins.manifest("demo").mcp_servers[0]
+        connection = self._connection(
+            config,
+            on_list_changed=lambda: (
+                callback_entered.set(), release_callback.wait(2)
+            ),
+        )
+        try:
+            connection.start()
+            self.assertTrue(callback_entered.wait(1))
+
+            completed = threading.Event()
+
+            async def unrelated() -> None:
+                completed.set()
+
+            task = self.kernel.start_task(unrelated, owner_id="unrelated")
+            self.assertTrue(completed.wait(0.2))
+            self.assertTrue(task.wait(1))
+        finally:
+            release_callback.set()
+            connection.close()
+
+    def test_close_waits_for_started_list_changed_callback(self) -> None:
+        callback_entered = threading.Event()
+        release_callback = threading.Event()
+        config = self.plugins.manifest("demo").mcp_servers[0]
+        connection = self._connection(
+            config,
+            on_list_changed=lambda: (
+                callback_entered.set(), release_callback.wait(2)
+            ),
+        )
+        connection.start()
+        callback_worker = threading.Thread(
+            target=connection._run_list_changed_callback
+        )
+        callback_worker.start()
+        self.assertTrue(callback_entered.wait(1))
+        closed = threading.Event()
+
+        def close_connection() -> None:
+            connection.close()
+            closed.set()
+
+        closer = threading.Thread(target=close_connection)
+        closer.start()
+        self.assertFalse(closed.wait(0.1))
+        release_callback.set()
+        self.assertTrue(closed.wait(1))
+        closer.join(timeout=1)
+        callback_worker.join(timeout=1)
+
+    def test_startup_timeout_reaps_started_child_process_group(self) -> None:
+        config = self.plugins.manifest("demo").mcp_servers[0].model_copy(
+            update={
+                "argv": ["server.py", "--startup-delay"],
+                "startup_timeout_seconds": 1,
+            }
+        )
+        connection = self._connection(config)
+        failure: list[BaseException] = []
+
+        def start_connection() -> None:
+            try:
+                connection.start()
+            except BaseException as error:
+                failure.append(error)
+
+        starter = threading.Thread(target=start_connection)
+        starter.start()
+        pid_path = connection.runtime_root / "server.pid"
+        for _ in range(20):
+            if pid_path.exists():
+                break
+            time.sleep(0.02)
+        self.assertTrue(pid_path.exists())
+        process_group = int(pid_path.read_text(encoding="ascii"))
+        starter.join(timeout=2)
+        self.assertFalse(starter.is_alive())
+        self.assertEqual(len(failure), 1)
+        self.assertIsInstance(failure[0], McpUnavailable)
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(process_group, 0)
+        self._assert_startup_resources_released()
+
+    def _connection(
+        self,
+        config,
+        *,
+        on_list_changed=lambda: None,
+    ) -> McpConnection:
+        return McpConnection(
+            plugin_root=self.plugins.installed_root("demo"),
+            runtime_root=self.data / "extensions" / "mcp-runtime",
+            workspace_root=self.workspace,
+            config=config,
+            on_list_changed=on_list_changed,
+            async_kernel=self.kernel,
+            sandbox=False,
+            resource_registry=self.resources,
+        )
+
+    def _assert_startup_resources_released(self) -> None:
+        self.assertFalse(any(
+            resource.kind in {
+                RuntimeResourceKind.MCP_CONNECTION,
+                RuntimeResourceKind.ASYNC_TASK,
+            }
             for resource in self.resources.active_resources()
         ))
 

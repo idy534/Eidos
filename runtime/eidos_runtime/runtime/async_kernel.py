@@ -6,7 +6,7 @@ from concurrent.futures import CancelledError, Future, InvalidStateError
 from contextlib import AbstractContextManager
 from enum import StrEnum
 from functools import partial
-from threading import Event, Lock, RLock
+from threading import Event, Lock, RLock, get_ident
 import time
 from typing import Generic, ParamSpec, TypeVar, cast
 import uuid
@@ -42,6 +42,15 @@ class AsyncKernelError(RuntimeError):
 
 class AsyncKernelClosedError(AsyncKernelError):
     pass
+
+
+class AsyncKernelReentryError(AsyncKernelError):
+    """Raised when synchronous portal entry is attempted on the portal thread."""
+
+    code = "ASYNC_KERNEL_REENTRY"
+
+    def __init__(self) -> None:
+        super().__init__(self.code)
 
 
 class AsyncKernelCloseError(AsyncKernelError):
@@ -244,6 +253,7 @@ class RuntimeAsyncKernel:
         self._resource: RuntimeResource | None = None
         self._portal_context: AbstractContextManager[BlockingPortal] | None = None
         self._portal: BlockingPortal | None = None
+        self._portal_thread_identity: int | None = None
         self._task_shutdown_timeout = task_shutdown_timeout
         self._tasks: dict[str, RuntimeAsyncTask[object]] = {}
         self._recent_task_diagnostics: deque[RuntimeAsyncTaskDiagnostic] = deque(
@@ -281,6 +291,7 @@ class RuntimeAsyncKernel:
                 )
                 self._portal = context.__enter__()
                 self._portal_context = context
+                self._portal_thread_identity = self._portal.call(get_ident)
             except BaseException:
                 self._state = AsyncKernelState.FAILED
                 if self._resource is not None:
@@ -300,6 +311,9 @@ class RuntimeAsyncKernel:
             if self._state is not AsyncKernelState.RUNNING or self._portal is None:
                 raise AsyncKernelClosedError("runtime async kernel is not available")
             portal = self._portal
+            portal_thread_identity = self._portal_thread_identity
+        if portal_thread_identity == get_ident():
+            raise AsyncKernelReentryError()
         try:
             return portal.call(partial(function, *args, **kwargs))
         except RuntimeError:
@@ -406,6 +420,7 @@ class RuntimeAsyncKernel:
             with self._lock:
                 self._portal = None
                 self._portal_context = None
+                self._portal_thread_identity = None
                 self._state = AsyncKernelState.CLOSED
                 resource = self._resource
                 self._resource = None

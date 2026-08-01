@@ -10,6 +10,7 @@ import json
 import threading
 from typing import Any, Callable
 
+import anyio
 import httpx
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 from pydantic_ai.direct import model_request_stream
@@ -273,12 +274,16 @@ class PydanticAIModelClient:
                     async for event in stream:
                         if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
                             if event.part.content:
-                                on_text_delta(event.part.content)
+                                await anyio.to_thread.run_sync(
+                                    on_text_delta, event.part.content
+                                )
                         elif isinstance(event, PartDeltaEvent) and isinstance(
                             event.delta, TextPartDelta
                         ):
                             if event.delta.content_delta:
-                                on_text_delta(event.delta.content_delta)
+                                await anyio.to_thread.run_sync(
+                                    on_text_delta, event.delta.content_delta
+                                )
                     response = stream.get()
                 finally:
                     cancel_task.cancel()
