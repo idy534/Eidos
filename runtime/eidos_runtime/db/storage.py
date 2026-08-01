@@ -58,6 +58,7 @@ from eidos_runtime.persistence.mappers.session import (
     session_page_to_legacy_dict,
     session_to_legacy_dict,
 )
+from eidos_runtime.persistence.repositories import TypedRuntimeRepository
 from eidos_runtime.runtime.contracts import ProgressSignature
 from eidos_runtime.runtime.resolution import (
     RuleResolutionSnapshot,
@@ -88,6 +89,7 @@ class SessionStore:
         self._context: ContextRepository | None = None
         self._async_operations: AsyncOperationRepository | None = None
         self._model_profiles: ModelProfileRepository | None = None
+        self._typed_runtime_repository: TypedRuntimeRepository | None = None
 
     def initialize(self) -> None:
         self._database.initialize()
@@ -166,7 +168,23 @@ class SessionStore:
         return self._database.health_code
 
     def close(self) -> None:
+        self._typed_runtime_repository = None
         self._database.close()
+
+    def typed_runtime_repository(self) -> TypedRuntimeRepository:
+        """Return the public typed persistence seam after initialization.
+
+        It shares this store's Database and therefore the exact same SQLite
+        transaction, outbox, recovery and state-machine authorities.  Legacy
+        Store methods deliberately remain available while callers migrate.
+        """
+
+        self._repository(self._sessions)
+        self._repository(self._runs)
+        self._repository(self._execution)
+        if self._typed_runtime_repository is None:
+            self._typed_runtime_repository = TypedRuntimeRepository(self._database)
+        return self._typed_runtime_repository
 
     def health(self) -> dict[str, object]:
         return self._database.health()

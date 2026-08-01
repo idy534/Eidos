@@ -106,6 +106,41 @@ def test_session_application_preserves_semantic_invalid_params_and_sensitive_err
         store.close()
 
 
+def test_session_application_uses_the_typed_repository_for_session_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = _store(tmp_path)
+
+    def legacy_write_used(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("SessionApplication must use the typed repository")
+
+    try:
+        monkeypatch.setattr(store, "create_session", legacy_write_used)
+        monkeypatch.setattr(store, "list_sessions", legacy_write_used)
+        monkeypatch.setattr(store, "rename_session", legacy_write_used)
+        monkeypatch.setattr(store, "delete_session", legacy_write_used)
+
+        application = SessionApplication(store, scan_text=lambda value: value)
+        created = application.create(
+            SessionCreateRequestDto(workspaceRoot=str(workspace))
+        )
+        session_id = str(created.root["id"])
+
+        assert application.list(SessionListRequestDto()).root["items"] == [created.root]
+        renamed = application.rename(
+            SessionRenameRequestDto(sessionId=session_id, title="typed")
+        )
+        assert renamed.root["title"] == "typed"
+        assert application.delete(
+            SessionDeleteRequestDto(sessionId=session_id)
+        ).root == {"deletedSessionId": session_id}
+    finally:
+        store.close()
+
+
 @dataclass(frozen=True)
 class _WorkerStart:
     run_id: str

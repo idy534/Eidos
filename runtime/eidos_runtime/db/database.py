@@ -173,6 +173,34 @@ class Database:
                 operation_request=operation_request,
             )
 
+    def execute_idempotent_committed(
+        self,
+        action: Callable[[sqlite3.Connection], CommittedMutation[T]],
+        *,
+        operation_id: str | None = None,
+        operation_scope: str | None = None,
+        operation_request: dict[str, object] | None = None,
+        serialize_value: Callable[[T], object],
+        deserialize_value: Callable[[object], T],
+    ) -> CommittedMutation[T]:
+        """Commit a typed mutation and retain only its durable value for replay.
+
+        Event/outbox records are transactional facts.  An idempotent replay
+        returns the same durable value without presenting already-committed
+        events as newly emitted.
+        """
+
+        with self.transaction() as connection:
+            return execute_idempotent_committed(
+                connection,
+                action,
+                operation_id=operation_id,
+                operation_scope=operation_scope,
+                operation_request=operation_request,
+                serialize_value=serialize_value,
+                deserialize_value=deserialize_value,
+            )
+
     def operation_result(
         self, operation_id: str, scope: str, request: dict[str, object]
     ) -> object | None:
@@ -225,6 +253,25 @@ class Repository:
             operation_id=operation_id,
             operation_scope=operation_scope,
             operation_request=operation_request,
+        )
+
+    def _write_committed(
+        self,
+        action: Callable[[sqlite3.Connection], CommittedMutation[T]],
+        *,
+        operation_id: str | None = None,
+        operation_scope: str | None = None,
+        operation_request: dict[str, object] | None = None,
+        serialize_value: Callable[[T], object],
+        deserialize_value: Callable[[object], T],
+    ) -> CommittedMutation[T]:
+        return self.database.execute_idempotent_committed(
+            action,
+            operation_id=operation_id,
+            operation_scope=operation_scope,
+            operation_request=operation_request,
+            serialize_value=serialize_value,
+            deserialize_value=deserialize_value,
         )
 
     @staticmethod
@@ -284,6 +331,69 @@ def execute_idempotent(
         ),
     )
     return result
+
+
+def execute_idempotent_committed(
+    connection: sqlite3.Connection,
+    action: Callable[[sqlite3.Connection], CommittedMutation[T]],
+    *,
+    operation_id: str | None,
+    operation_scope: str | None,
+    operation_request: dict[str, object] | None,
+    serialize_value: Callable[[T], object],
+    deserialize_value: Callable[[object], T],
+) -> CommittedMutation[T]:
+    """Typed counterpart to :func:`execute_idempotent`.
+
+    The operations table stores JSON for a durable value replay.  It does not
+    store event identities: those are durable outbox facts created during the
+    original transaction and must not be delivered twice.
+    """
+
+    if operation_id is None:
+        return action(connection)
+    assert operation_scope is not None and operation_request is not None
+    request_hash = canonical_hash(operation_request)
+    existing = connection.execute(
+        "SELECT * FROM operations WHERE id = ? AND scope = ?",
+        (operation_id, operation_scope),
+    ).fetchone()
+    if existing is not None:
+        if existing["request_hash"] != request_hash:
+            raise OperationConflictError("operation id was reused")
+        if existing["status"] != "completed" or existing["result_json"] is None:
+            raise OperationInProgressError("operation is still in progress")
+        value = deserialize_value(json.loads(existing["result_json"]))
+        return CommittedMutation(value, ())
+
+    now = now_ms()
+    connection.execute(
+        """
+        INSERT INTO operations (id, scope, request_hash, status, created_at)
+        VALUES (?, ?, ?, 'in_progress', ?)
+        """,
+        (operation_id, operation_scope, request_hash, now),
+    )
+    mutation = action(connection)
+    connection.execute(
+        """
+        UPDATE operations
+        SET status = 'completed', result_json = ?, completed_at = ?
+        WHERE id = ? AND scope = ? AND status = 'in_progress'
+        """,
+        (
+            json.dumps(
+                serialize_value(mutation.value),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            now_ms(),
+            operation_id,
+            operation_scope,
+        ),
+    )
+    return mutation
 
 
 def canonical_hash(value: object) -> str:

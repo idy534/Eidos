@@ -27,6 +27,7 @@ from eidos_runtime.db.mappers import (
 from eidos_runtime.domain.session import DeletedSession, Session, SessionPage
 from eidos_runtime.persistence.mappers.session import (
     deleted_session_from_legacy_dict,
+    deleted_session_to_legacy_dict,
     session_from_legacy_dict,
     session_from_row,
     session_to_legacy_dict,
@@ -71,6 +72,13 @@ class SessionRepository(Repository):
     def create_session(
         self, workspace_root: str, *, operation_id: str | None = None
     ) -> Session:
+        return self.create_session_committed(
+            workspace_root, operation_id=operation_id
+        ).value
+
+    def create_session_committed(
+        self, workspace_root: str, *, operation_id: str | None = None
+    ) -> CommittedMutation[Session]:
         workspace = _canonical_workspace(workspace_root)
         if self._workspace_overlaps_data(workspace):
             raise WorkspaceBoundaryError("workspace overlaps runtime data")
@@ -86,7 +94,7 @@ class SessionRepository(Repository):
             "updated_at": now,
         })
 
-        def write(connection: sqlite3.Connection) -> dict[str, object]:
+        def write(connection: sqlite3.Connection) -> CommittedMutation[Session]:
             connection.execute(
                 """
                 INSERT INTO sessions (
@@ -104,22 +112,23 @@ class SessionRepository(Repository):
                     now,
                 ),
             )
-            append_event(
+            event = append_event(
                 connection,
                 EventType.SESSION_CREATED,
                 now,
                 {"session": session_to_legacy_dict(session)},
                 session_id=session_id,
             )
-            return session_to_legacy_dict(session)
+            return CommittedMutation(session, (event,))
 
-        result = self._write(
+        return self._write_committed(
             write,
             operation_id=operation_id,
             operation_scope="session/create",
             operation_request={"workspaceRoot": str(workspace)},
+            serialize_value=session_to_legacy_dict,
+            deserialize_value=session_from_legacy_dict,
         )
-        return session_from_legacy_dict(result)
 
     def list_sessions(
         self, *, limit: int = DEFAULT_LIST_LIMIT, cursor: str | None = None
@@ -181,18 +190,29 @@ class SessionRepository(Repository):
         *,
         operation_id: str | None = None,
     ) -> Session:
+        return self.rename_session_committed(
+            session_id, title, operation_id=operation_id
+        ).value
+
+    def rename_session_committed(
+        self,
+        session_id: str,
+        title: str,
+        *,
+        operation_id: str | None = None,
+    ) -> CommittedMutation[Session]:
         if not title or len(title) > 60 or len(title.encode("utf-8")) > 120:
             raise ValueError("session title is invalid")
         now = _now_ms()
 
-        def write(connection: sqlite3.Connection) -> dict[str, object]:
+        def write(connection: sqlite3.Connection) -> CommittedMutation[Session]:
             updated = connection.execute(
                 "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
                 (title, now, session_id),
             )
             if updated.rowcount != 1:
                 raise ResourceNotFoundError("session not found")
-            append_event(
+            event = append_event(
                 connection,
                 EventType.SESSION_TITLE_UPDATED,
                 now,
@@ -202,15 +222,16 @@ class SessionRepository(Repository):
             row = connection.execute(
                 SESSION_SELECT + " WHERE s.id = ?", (session_id,)
             ).fetchone()
-            return session_to_legacy_dict(session_from_row(row))
+            return CommittedMutation(session_from_row(row), (event,))
 
-        result = self._write(
+        return self._write_committed(
             write,
             operation_id=operation_id,
             operation_scope="session/rename",
             operation_request={"sessionId": session_id, "title": title},
+            serialize_value=session_to_legacy_dict,
+            deserialize_value=session_from_legacy_dict,
         )
-        return session_from_legacy_dict(result)
 
     def begin_title_generation_committed(
         self, session_id: str
@@ -282,7 +303,19 @@ class SessionRepository(Repository):
         *,
         operation_id: str | None = None,
     ) -> DeletedSession:
-        def write(connection: sqlite3.Connection) -> dict[str, object]:
+        return self.delete_session_committed(
+            session_id, operation_id=operation_id
+        ).value
+
+    def delete_session_committed(
+        self,
+        session_id: str,
+        *,
+        operation_id: str | None = None,
+    ) -> CommittedMutation[DeletedSession]:
+        def write(
+            connection: sqlite3.Connection,
+        ) -> CommittedMutation[DeletedSession]:
             session = connection.execute(
                 "SELECT id FROM sessions WHERE id = ?", (session_id,)
             ).fetchone()
@@ -408,15 +441,18 @@ class SessionRepository(Repository):
                 """
             )
             connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-            return {"deletedSessionId": session_id}
+            return CommittedMutation(
+                DeletedSession(deleted_session_id=session_id), ()
+            )
 
-        result = self._write(
+        return self._write_committed(
             write,
             operation_id=operation_id,
             operation_scope="session/delete",
             operation_request={"sessionId": session_id},
+            serialize_value=deleted_session_to_legacy_dict,
+            deserialize_value=deleted_session_from_legacy_dict,
         )
-        return deleted_session_from_legacy_dict(result)
 
     def read_session_snapshot(
         self,

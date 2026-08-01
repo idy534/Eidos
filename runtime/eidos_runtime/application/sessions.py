@@ -10,6 +10,7 @@ from eidos_runtime.application.errors import (
     ApplicationError,
     ApplicationInvalidParamsError,
 )
+from eidos_runtime.db.database import CommittedMutation
 from eidos_runtime.db.errors import (
     InvalidCursorError,
     OperationConflictError,
@@ -33,6 +34,12 @@ from eidos_runtime.protocol.methods import (
     SessionRenameRequestDto,
     SessionRenameResponseDto,
 )
+from eidos_runtime.domain.session import DeletedSession, Session, SessionPage
+from eidos_runtime.persistence.mappers.session import (
+    deleted_session_to_legacy_dict,
+    session_page_to_legacy_dict,
+    session_to_legacy_dict,
+)
 from eidos_runtime.sandbox.sensitive import (
     SensitiveContentDenied,
     SensitiveScanError,
@@ -43,30 +50,18 @@ MAX_SESSION_TITLE_BYTES = 120
 ResultT = TypeVar("ResultT", bound=MethodResultDto)
 
 
-class SessionStorePort(Protocol):
-    """The public compatibility surface needed by Session use cases.
-
-    Stage 3 can replace this port with typed write repositories without
-    changing the application method contracts.
-    """
+class TypedSessionRepositoryPort(Protocol):
+    """Typed Session reads/writes consumed by the application layer."""
 
     def create_session(
         self, workspace_root: str, *, operation_id: str | None = None
-    ) -> dict[str, object]: ...
+    ) -> CommittedMutation[Session]: ...
 
     def list_sessions(
         self, *, limit: int, cursor: str | None
-    ) -> dict[str, object]: ...
+    ) -> SessionPage: ...
 
-    def read_session(self, session_id: str) -> dict[str, object] | None: ...
-
-    def read_session_snapshot(
-        self,
-        session_id: str,
-        *,
-        item_limit: int,
-        before_item_id: str | None,
-    ) -> dict[str, object]: ...
+    def read_session(self, session_id: str) -> Session | None: ...
 
     def rename_session(
         self,
@@ -74,10 +69,29 @@ class SessionStorePort(Protocol):
         title: str,
         *,
         operation_id: str | None = None,
-    ) -> dict[str, object]: ...
+    ) -> CommittedMutation[Session]: ...
 
     def delete_session(
         self, session_id: str, *, operation_id: str | None = None
+    ) -> CommittedMutation[DeletedSession]: ...
+
+
+class SessionStorePort(Protocol):
+    """Compatibility store for aggregate reads not yet represented as domains.
+
+    Session create/list/read/rename/delete use ``TypedSessionRepositoryPort``.
+    The aggregate snapshot and historical event feeds retain their established
+    wire records until those records have their own domain models.
+    """
+
+    def typed_runtime_repository(self) -> TypedSessionRepositoryPort: ...
+
+    def read_session_snapshot(
+        self,
+        session_id: str,
+        *,
+        item_limit: int,
+        before_item_id: str | None,
     ) -> dict[str, object]: ...
 
     def list_events(
@@ -101,9 +115,10 @@ def clean_session_title(value: str) -> str:
 class SessionApplication:
     """Owns top-level Session and Session-event use cases.
 
-    It deliberately speaks only to the public SessionStore compatibility port;
-    the store remains the single transactional authority while typed write
-    repositories are introduced incrementally.
+    Typed Session writes/reads flow through the public repository seam.  The
+    Store remains the single transactional authority; aggregate snapshots and
+    historical event feeds keep their established compatibility records until
+    they receive dedicated domain models.
     """
 
     def __init__(
@@ -113,11 +128,14 @@ class SessionApplication:
         scan_text: Callable[[str], str],
     ) -> None:
         self._store = store
+        self._repository: TypedSessionRepositoryPort = (
+            store.typed_runtime_repository()
+        )
         self._scan_text = scan_text
 
     def create(self, request: SessionCreateRequestDto) -> SessionCreateResponseDto:
         try:
-            session = self._store.create_session(
+            mutation = self._repository.create_session(
                 request.workspace_root,
                 operation_id=request.operation_id,
             )
@@ -129,22 +147,22 @@ class SessionApplication:
             raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
         except OperationInProgressError as error:
             raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
-        return _result(SessionCreateResponseDto, session)
+        return _result(SessionCreateResponseDto, session_to_legacy_dict(mutation.value))
 
     def list(self, request: SessionListRequestDto) -> SessionListResponseDto:
         try:
-            page = self._store.list_sessions(
+            page = self._repository.list_sessions(
                 limit=request.limit,
                 cursor=request.cursor,
             )
         except InvalidCursorError as error:
             raise ApplicationInvalidParamsError("INVALID_CURSOR", str(error)) from error
-        return _result(SessionListResponseDto, page)
+        return _result(SessionListResponseDto, session_page_to_legacy_dict(page))
 
     def read_snapshot(
         self, request: SessionReadRequestDto
     ) -> SessionReadResponseDto:
-        if self._store.read_session(request.session_id) is None:
+        if self._repository.read_session(request.session_id) is None:
             raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
         try:
             snapshot = self._store.read_session_snapshot(
@@ -162,7 +180,7 @@ class SessionApplication:
             raise ApplicationError("INVALID_SESSION_TITLE", "session title is empty")
         try:
             title = clean_session_title(self._scan_text(title))
-            session = self._store.rename_session(
+            mutation = self._repository.rename_session(
                 request.session_id,
                 title,
                 operation_id=request.operation_id,
@@ -179,11 +197,11 @@ class SessionApplication:
             raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
         except ValueError as error:
             raise ApplicationError("INVALID_SESSION_TITLE", str(error)) from error
-        return _result(SessionRenameResponseDto, session)
+        return _result(SessionRenameResponseDto, session_to_legacy_dict(mutation.value))
 
     def delete(self, request: SessionDeleteRequestDto) -> SessionDeleteResponseDto:
         try:
-            deleted = self._store.delete_session(
+            mutation = self._repository.delete_session(
                 request.session_id,
                 operation_id=request.operation_id,
             )
@@ -195,7 +213,10 @@ class SessionApplication:
             raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
         except OperationInProgressError as error:
             raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
-        return _result(SessionDeleteResponseDto, deleted)
+        return _result(
+            SessionDeleteResponseDto,
+            deleted_session_to_legacy_dict(mutation.value),
+        )
 
     def list_events(self, request: EventListRequestDto) -> EventListResponseDto:
         try:
@@ -222,5 +243,6 @@ __all__ = [
     "MAX_SESSION_TITLE_BYTES",
     "SessionApplication",
     "SessionStorePort",
+    "TypedSessionRepositoryPort",
     "clean_session_title",
 ]
