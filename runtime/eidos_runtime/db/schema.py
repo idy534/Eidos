@@ -680,6 +680,18 @@ CREATE TABLE context_snapshots (
     snapshot_json TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
+
+CREATE TABLE verified_compact_summaries (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    summary_hash TEXT NOT NULL,
+    verified_json TEXT NOT NULL,
+    input_start INTEGER NOT NULL,
+    input_end INTEGER NOT NULL,
+    compaction_version INTEGER NOT NULL,
+    verification_result TEXT NOT NULL CHECK (verification_result = 'verified'),
+    verified_at INTEGER NOT NULL
+);
 """
 
 V10_MODEL_ATTEMPT_COLUMN_SQL = """

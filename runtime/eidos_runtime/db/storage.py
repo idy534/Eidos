@@ -63,6 +63,7 @@ from eidos_runtime.persistence.repository_intelligence import (
     RepositoryIntelligenceRepository,
 )
 from eidos_runtime.persistence.context_snapshots import ContextSnapshotRepository
+from eidos_runtime.persistence.verified_compaction import VerifiedCompactionRepository
 from eidos_runtime.context.plan import ContextSnapshot
 from eidos_runtime.runtime.contracts import ProgressSignature
 from eidos_runtime.runtime.resolution import (
@@ -99,6 +100,7 @@ class SessionStore:
             RepositoryIntelligenceRepository | None
         ) = None
         self._context_snapshot_repository: ContextSnapshotRepository | None = None
+        self._verified_compaction_repository: VerifiedCompactionRepository | None = None
 
     def initialize(self) -> None:
         self._database.initialize()
@@ -180,6 +182,7 @@ class SessionStore:
         self._typed_runtime_repository = None
         self._repository_intelligence_repository = None
         self._context_snapshot_repository = None
+        self._verified_compaction_repository = None
         self._database.close()
 
     def typed_runtime_repository(self) -> TypedRuntimeRepository:
@@ -221,6 +224,14 @@ class SessionStore:
         self, run_id: str
     ) -> ContextSnapshot | None:
         return self.context_snapshot_repository().read_running_for_run(run_id)
+
+    def verified_compaction_repository(self) -> VerifiedCompactionRepository:
+        self._repository(self._sessions)
+        if self._verified_compaction_repository is None:
+            self._verified_compaction_repository = VerifiedCompactionRepository(
+                self._database
+            )
+        return self._verified_compaction_repository
 
     def health(self) -> dict[str, object]:
         return self._database.health()

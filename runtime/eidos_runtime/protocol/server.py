@@ -631,7 +631,8 @@ class RuntimeServer:
                 self.store.repository_intelligence_repository
             ),
             context=ContextApplication(
-                snapshots=self.store.context_snapshot_repository()
+                snapshots=self.store.context_snapshot_repository(),
+                verified_compactions=self.store.verified_compaction_repository(),
             ),
             task_lifecycle=task_lifecycle,
         )

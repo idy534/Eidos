@@ -60,6 +60,7 @@ EXPECTED_TABLES = {
     "repository_retrieval_snapshots",
     "context_plans",
     "context_snapshots",
+    "verified_compact_summaries",
 }
 
 EXPECTED_COLUMNS = {
