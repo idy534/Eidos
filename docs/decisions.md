@@ -5,6 +5,17 @@
 
 本文件记录产品与技术决策的演进背景，包含历史阶段结论和目标态约束。它不是当前实现清单；判断当前行为请以 [当前架构](current-architecture.md)、[当前能力](current-capabilities.md)、[当前限制](current-limitations.md)、代码和测试为准。PRD、TDD 与归档 Phase 文档同样不能替代当前实现依据。
 
+## Phase E-F implementation notes
+
+| 决策 | 当前实现边界 |
+|---|---|
+| SQLite remains the sole business-fact authority | Typed repositories and long-task control use SQLite; memory only coordinates active work. |
+| Preserve schema v9 compatibility | Long-task progress reuses `operations` with scope `long_task/control` and typed JSON plus compare-and-set; no unrelated migration was introduced. |
+| Mature repository infrastructure first | `charset-normalizer`, Tree-sitter grammars, `watchfiles`, RapidFuzz and SQLite FTS5 provide bounded mechanisms; Eidos owns policy, snapshot identity, security filtering and ranking. |
+| Sync Durable Runtime remains the loop owner | Inventory/index work is cancellable and must run outside the AnyIO event loop; no async RuntimeEngine or second scheduler was introduced. |
+| Context is immutable per attempt | Rule, repository and model-profile identities are frozen into `ContextPlan` and `ContextSnapshot`; stale evidence is rejected before model use. |
+| Partial Phase E-F delivery is documented explicitly | Repository/context/long-task seams have focused tests, but Desktop pause/resume wiring, persisted repository generations and full compaction provenance remain limitations until their owning paths are migrated. |
+
 ## B4 implementation note
 
 历史 B3 中“Model Event Loop migration 不在范围内”的说明已被 B4 supersede：RuntimeServer 现在拥有唯一的 AnyIO `BlockingPortal`，模型 Client 不再创建私有 Event Loop 或线程。此变更不把 RuntimeEngine、RunSupervisor、MCP、Tool Execution 或 Managed Task 迁移为 AnyIO Runtime。

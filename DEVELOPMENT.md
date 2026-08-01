@@ -92,6 +92,28 @@ pnpm build
 
 预期结果：TypeScript 类型检查通过，Vite 在 `dist/renderer/` 生成 Renderer 资源。
 
+### Repository、Context 与长任务 focused tests
+
+Phase E-F 的新基础设施使用当前锁定依赖：Tree-sitter Python/TypeScript/JavaScript/Go
+grammars、`charset-normalizer`、`watchfiles` 和 RapidFuzz；SQLite FTS5 只建立派生的
+进程内检索表。扫描、索引、Watcher、检索、ContextPlan、压缩验证和长任务状态都必须
+在完整快照上工作，Watcher 只发失效信号，取消时保留上一个完整 generation。
+
+可先运行定向门槛：
+
+```bash
+uv run --locked pytest runtime/tests -k "repository or inventory or watcher or index or retrieval or context or compaction or pause or resume or restart or cancel"
+```
+
+`LongTaskRepository` 将进度写入现有 `operations` 表的
+`scope=long_task/control`，因此不会改变 schema v9；它是持久控制 seam，不等同于
+已经对 Desktop 暴露暂停/恢复 RPC。恢复前必须重新核验 Workspace、Git、规则、索引、
+Context Plan、permission snapshot 和 side-effect reconciliation；不确定副作用不自动重放。
+
+当前仍未完成的接线路径见 [当前限制](docs/current-limitations.md)：Repository/Context
+默认在线组装、完整 Restart Verification、Checkpoint/Rewind/Fork 联动、compaction
+provenance 持久化以及 Desktop `run/pause`/`run/resume` 不应在手工验收中被误认为已完成。
+
 ## 4. 手动界面验证
 
 启动应用：

@@ -22,11 +22,57 @@ Renderer 只通过 context-isolated preload 暴露的 typed IPC 访问 Main。Ma
 
 ## 状态与恢复权威
 
-- SQLite schema v7 保存 Session、Run、Item、ToolCall、审批、执行段、Step、模型尝试、Durable Intent、事件、Outbox、异步操作和扩展快照。
+- SQLite schema v9 保存 Session、Run、Item、ToolCall、审批、执行段、Step、模型尝试、Durable Intent、事件、Outbox、异步操作和扩展快照。
 - SQLite 是唯一业务事实来源。`RunSupervisor` 的 worker/slot、`ResourceRegistry` 和 `RuntimePhaseTracker` 只保存运行中协调或诊断状态。
 - `Run.status` 是持久状态权威。`Run.runtimeState` 是可选传输提示；当前 DB mapper 不依赖它恢复执行。
 - 业务变更和 Event/Outbox 在同一提交中落库；通知从已提交事件投影。启动恢复不会重放不确定副作用。
 - Runtime 只允许一个 Run 占用全局执行 slot；等待审批时可以释放 slot，恢复后重新进入 FIFO。
+
+## Typed foundation and repository intelligence
+
+`domain/` contains strict, frozen records for persisted Run, Item, Step,
+ToolCall, Approval and ModelAttempt facts. `persistence/mappers/` is the only
+new seam that knows SQLite column names; `TypedRuntimeRepository` returns
+validated domain records and never exposes `sqlite3.Row`. Existing write
+repositories and `SessionStore` remain compatibility authorities until each
+path can migrate without changing transaction semantics.
+
+`protocol/registry.py` owns method lookup and object-shaped request validation.
+`RuntimeServer` keeps initialization, shutdown and health as explicit lifecycle
+special cases, while the existing public handlers remain compatible. The
+small `application/` services are use-case boundaries; they do not own the
+Runtime loop, Tool lifecycle or JSON-RPC envelopes.
+
+Repository intelligence is a bounded, immutable snapshot pipeline:
+
+```text
+Workspace → Inventory → Tree-sitter Index → Repository Map/Retrieval
+                                      ↘ ContextPlan → ContextSnapshot
+```
+
+Inventory and index builders reopen and hash regular files, exclude symlinks,
+special, ignored and discovery-blocked paths, and retain the last complete
+generation when cancellation occurs. `watchfiles` only produces invalidation
+signals. Retrieval uses a derived SQLite FTS5 index plus RapidFuzz and explicit
+versioned signals; each evidence item carries path/hash/generation and ranking
+reasons. The current FTS5 index is process-local and rebuilt from an immutable
+inventory/index snapshot rather than persisted as a second business fact.
+
+`ProjectRuleResolver` creates immutable, hashed rule snapshots. `ContextPlan`
+freezes the selected model profile, rule, inventory, index, map and evidence,
+reserves output budget, and produces an immutable per-attempt
+`ContextSnapshot`. `ContextCompactionVerifier` validates source Item IDs,
+provenance and reconciliation facts before accepting a typed summary; the
+existing storage compactor remains the compatibility write path until its
+persisted summary schema is extended.
+
+Long-task progress is stored as typed JSON in the existing `operations` table
+under `long_task/control`, with compare-and-set updates. This avoids a schema
+bump while preserving SQLite as the only authority. Pause is reported only at
+explicit safe points; resume checks Workspace identity, Git HEAD, rules, index,
+Context Plan, permission snapshot and uncertain side effects. The repository
+and verifier are currently a durable control seam; Desktop `run/pause` and
+`run/resume` RPC wiring is intentionally not claimed yet.
 
 ## Runtime 与 Tool 职责
 

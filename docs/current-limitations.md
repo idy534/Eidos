@@ -22,6 +22,21 @@
 - Plugin 只支持本地受管包；MCP 只支持 stdio Tools。没有远程市场、OAuth、Streamable HTTP、Resources、Prompts、Sampling 或 Tasks。
 - MCP startup 受单一、有界的 readiness deadline 约束；ready 后 Connection 是无 deadline 的长生命周期 Service。MCP Tool List Changed 只做本地、串行的 SQLite bookkeeping，可能在关闭时等待一个已经开始的 callback 完成；callback 失败不会终止已建立的 MCP session。
 - Runtime 不恢复内存中的模型请求、进程或 ToolCall。重启从 SQLite 事实收敛，可能有副作用的未确认执行要求 reconciliation，不自动重放。
-- 数据库只接受当前 schema v7 或全新数据库；当前没有通用历史 Migration 框架。
+- 数据库只接受当前 schema v9 或全新数据库；当前没有通用历史 Migration 框架。
+- Phase E-F 的 Repository Inventory、Tree-sitter Index、Repository Map、
+  Retrieval、ContextPlan 和 LongTaskRepository 已有严格 typed seam 与 focused
+  tests，但尚未全部成为 RuntimeEngine 的默认在线路径。当前 retrieval 的
+  FTS5 表是进程内派生索引，重启后从完整 Inventory/Index 重建；Inventory/Index
+  快照尚未单独持久化为新的 SQLite 表。
+- `LongTaskRepository` 与 `ResumeVerifier` 已持久化控制意图、进度和校验结果，
+  但 Desktop 尚未暴露 `run/pause`、`run/resume` RPC，RunSupervisor 也尚未消费
+  这些控制事实。现有 `run/cancel` 生命周期保持原实现；暂停期间的资源释放、
+  Checkpoint/Rewind/Fork 联动和启动时完整 Restart Verification 仍待接入。
+- `ContextCompactionVerifier` 是可复用的验证边界；兼容性的
+  `ContextCompactor` 仍写入现有 `compact_summaries` 结构，因此 Event、ToolCall
+  和 Repository Evidence provenance 尚未作为完整持久字段保存。
+- `application/` 已建立 Session、Run 和 TaskLifecycle 的最小边界，但部分
+  RuntimeServer handler 仍通过 `SessionStore` 兼容入口执行，尚未完成所有顶层
+  use case 的迁移。
 - `Run.runtimeState` 是可选跨语言契约字段，不是持久恢复权威；当前稳定权威是 `Run.status` 加 SQLite 中的审批、Step、ToolCall 和 reconciliation 事实。
 - 原生 Seatbelt、进程组和 Electron 启动验证需要真实 macOS 执行环境；受限嵌套沙箱不能替代该证据。
