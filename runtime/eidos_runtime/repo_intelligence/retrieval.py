@@ -73,6 +73,7 @@ class RepositoryEvidence(EidosFrozenStrictModel):
     inventory_generation: int = Field(ge=0)
     index_generation: int = Field(ge=0)
     text: str
+    retrieval_reasons: tuple[RetrievalReason, ...] = ()
 
 
 class RepositoryRetrievalCandidate(EidosFrozenStrictModel):
@@ -182,6 +183,7 @@ class RepositoryRetriever:
                 inventory_generation=self.inventory.generation,
                 index_generation=self.index.index_generation,
                 text=document.text,
+                retrieval_reasons=candidate.reasons,
             )
             evidence_bytes = len(evidence.text.encode("utf-8"))
             if used_bytes + evidence_bytes > query.max_evidence_bytes:
