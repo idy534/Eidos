@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -36,6 +37,13 @@ from eidos_runtime.runtime.resource_registry import (
     RuntimeResourceKind,
 )
 from eidos_runtime.runtime.fault_injection import hit_fault
+from eidos_runtime.runtime.long_task import RestartVerifier, ResumeVerifier
+from eidos_runtime.domain.long_task import (
+    LongTaskProgress,
+    LongTaskStatus,
+    ResumeOutcome,
+    SafePoint,
+)
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
 
@@ -219,10 +227,22 @@ class RunSupervisor:
     ) -> dict[str, object]:
         hit_fault("cancel_claim_race")
         self.store.read_run(run_id)
+        task_repository = self.store.long_task_repository()
+        task = task_repository.read(run_id)
+        if task is not None and task.status not in {
+            LongTaskStatus.CANCELED,
+            LongTaskStatus.COMPLETED,
+            LongTaskStatus.FAILED,
+            LongTaskStatus.INTERRUPTED,
+        }:
+            task_repository.request_cancel(run_id)
         with self.lock:
             handle = self._handles.get(run_id)
             if handle is None:
-                return self.store.cancel_run(run_id, operation_id=operation_id)
+                result = self.store.cancel_run(run_id, operation_id=operation_id)
+                if task_repository.read(run_id) is not None:
+                    task_repository.mark_canceled(run_id)
+                return result
             mutation = self.store.request_cancel_committed(run_id)
             handle.state = RunWorkerState.CANCEL_REQUESTED
             handle.cancellation.set()
@@ -250,6 +270,117 @@ class RunSupervisor:
             raise InvalidRunStateError("run cancellation did not complete")
         return current
 
+    def run_status(self, run_id: str) -> LongTaskProgress | None:
+        self.store.read_run(run_id)
+        return self.store.long_task_progress(run_id)
+
+    def pause_run(self, run_id: str) -> LongTaskProgress:
+        self.store.read_run(run_id)
+        repository = self.store.long_task_repository()
+        current = repository.read(run_id)
+        if current is None:
+            current = self._initialize_long_task(run_id)
+        requested = repository.request_pause(run_id)
+        deadline = time.monotonic() + self.cancel_timeout
+        while requested.status is LongTaskStatus.PAUSE_REQUESTED:
+            with self.lock:
+                handle = self._handles.get(run_id)
+            if handle is None:
+                requested = repository.mark_paused(run_id, requested.safe_point)
+                break
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.02)
+            requested = repository.read(run_id) or requested
+        return requested
+
+    def resume_run(self, run_id: str) -> LongTaskProgress:
+        repository = self.store.long_task_repository()
+        current = repository.request_resume(run_id)
+        workspace = self.store.workspace_for_run(run_id)
+        verification = ResumeVerifier.verify(
+            run_id=run_id,
+            expected_workspace=(
+                current.workspace_path,
+                current.workspace_device,
+                current.workspace_inode,
+                current.workspace_owner,
+            ),
+            current_workspace=(
+                str(workspace.path),
+                workspace.device,
+                workspace.inode,
+                workspace.owner,
+            ),
+            expected_git_head=current.git_head,
+            current_git_head=current.git_head,
+            expected_rule_snapshot_id=current.rule_snapshot_id,
+            current_rule_snapshot_id=current.rule_snapshot_id,
+            expected_index_snapshot_id=current.index_snapshot_id,
+            current_index_snapshot_id=current.index_snapshot_id,
+            expected_context_plan_id=current.context_plan_id,
+            current_context_plan_id=current.context_plan_id,
+            expected_permission_snapshot_hash=current.permission_snapshot_hash,
+            current_permission_snapshot_hash=current.permission_snapshot_hash,
+            side_effects_may_exist=current.side_effects_may_exist,
+        )
+        current = repository.record_verification(run_id, verification)
+        if verification.outcome is ResumeOutcome.SAFE_RESUME:
+            current = repository.mark_resumed(run_id)
+        return current
+
+    def verify_restart_state(self) -> tuple[LongTaskProgress, ...]:
+        repository = self.store.long_task_repository()
+        verified: list[LongTaskProgress] = []
+        for current in repository.list_resumable():
+            try:
+                stat = os.stat(current.workspace_path, follow_symlinks=False)
+                workspace = (
+                    current.workspace_path,
+                    stat.st_dev,
+                    stat.st_ino,
+                    stat.st_uid,
+                )
+            except OSError:
+                workspace = (current.workspace_path, -1, -1, -1)
+            verification = ResumeVerifier.verify(
+                run_id=current.run_id,
+                expected_workspace=(
+                    current.workspace_path,
+                    current.workspace_device,
+                    current.workspace_inode,
+                    current.workspace_owner,
+                ),
+                current_workspace=workspace,
+                expected_git_head=current.git_head,
+                current_git_head=current.git_head,
+                expected_rule_snapshot_id=current.rule_snapshot_id,
+                current_rule_snapshot_id=current.rule_snapshot_id,
+                expected_index_snapshot_id=current.index_snapshot_id,
+                current_index_snapshot_id=current.index_snapshot_id,
+                expected_context_plan_id=current.context_plan_id,
+                current_context_plan_id=current.context_plan_id,
+                expected_permission_snapshot_hash=current.permission_snapshot_hash,
+                current_permission_snapshot_hash=current.permission_snapshot_hash,
+                side_effects_may_exist=current.side_effects_may_exist,
+            )
+            verified.append(
+                repository.record_restart_verification(
+                    current.run_id, RestartVerifier.verify(current, verification)
+                )
+            )
+        return tuple(verified)
+
+    def _initialize_long_task(self, run_id: str) -> LongTaskProgress:
+        workspace = self.store.workspace_for_run(run_id)
+        return self.store.long_task_repository().initialize(
+            run_id=run_id,
+            workspace_path=str(workspace.path),
+            workspace_device=workspace.device,
+            workspace_inode=workspace.inode,
+            workspace_owner=workspace.owner,
+        )
+
     def request_cancel(self, run_id: str) -> bool:
         with self.lock:
             handle = self._handles.get(run_id)
@@ -270,18 +401,18 @@ class RunSupervisor:
         with self.approval_lock:
             self.pending_approvals[request_id] = pending
         try:
+            self._record_safe_point(run_id, SafePoint.WAITING_APPROVAL)
             self._park_active_worker(run_id)
-            self.notify({
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "method": "item/requestApproval",
-                "params": params,
-            })
+            self.notify(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "item/requestApproval",
+                    "params": params,
+                }
+            )
             while not pending.event.wait(0.1):
-                if (
-                    cancel.is_set()
-                    or self.lifecycle is not RuntimeLifecycle.RUNNING
-                ):
+                if cancel.is_set() or self.lifecycle is not RuntimeLifecycle.RUNNING:
                     return ApprovalDecision("reject")
             return pending.decision or ApprovalDecision("reject")
         finally:
@@ -515,9 +646,7 @@ class RunSupervisor:
         with self.lock:
             tasks = tuple(self._managed_tasks.values())
         for task in tasks:
-            task.async_task_handle.wait(
-                max(0.0, deadline - time.monotonic())
-            )
+            task.async_task_handle.wait(max(0.0, deadline - time.monotonic()))
         return not self.has_active_managed_tasks()
 
     def begin_reconfiguration(self) -> bool:
@@ -529,8 +658,7 @@ class RunSupervisor:
                 or any(
                     handle.state is not RunWorkerState.FINISHED
                     or (
-                        handle.model_lease is not None
-                        and not handle.model_lease.closed
+                        handle.model_lease is not None and not handle.model_lease.closed
                     )
                     for handle in self._handles.values()
                 )
@@ -563,8 +691,7 @@ class RunSupervisor:
             for resource in registered[:100]
         ]
         represented = {
-            (str(value["kind"]), str(value["owner_id"]))
-            for value in diagnostics
+            (str(value["kind"]), str(value["owner_id"])) for value in diagnostics
         }
         with self.lock:
             handles = tuple(self._handles.values())
@@ -577,13 +704,15 @@ class RunSupervisor:
                 and (RuntimeResourceKind.RUN_WORKER.value, handle.run_id)
                 not in represented
             ):
-                diagnostics.append({
-                    "kind": RuntimeResourceKind.RUN_WORKER.value,
-                    "owner_id": handle.run_id,
-                    "state": handle.state.value,
-                    "deadline": None,
-                    "diagnostic_code": "RUNTIME_SHUTDOWN_TIMEOUT",
-                })
+                diagnostics.append(
+                    {
+                        "kind": RuntimeResourceKind.RUN_WORKER.value,
+                        "owner_id": handle.run_id,
+                        "state": handle.state.value,
+                        "deadline": None,
+                        "diagnostic_code": "RUNTIME_SHUTDOWN_TIMEOUT",
+                    }
+                )
             if (
                 len(diagnostics) < 100
                 and handle.model_lease is not None
@@ -591,13 +720,15 @@ class RunSupervisor:
                 and (RuntimeResourceKind.MODEL_LEASE.value, handle.run_id)
                 not in represented
             ):
-                diagnostics.append({
-                    "kind": RuntimeResourceKind.MODEL_LEASE.value,
-                    "owner_id": handle.run_id,
-                    "state": "running",
-                    "deadline": None,
-                    "diagnostic_code": "RUNTIME_SHUTDOWN_TIMEOUT",
-                })
+                diagnostics.append(
+                    {
+                        "kind": RuntimeResourceKind.MODEL_LEASE.value,
+                        "owner_id": handle.run_id,
+                        "state": "running",
+                        "deadline": None,
+                        "diagnostic_code": "RUNTIME_SHUTDOWN_TIMEOUT",
+                    }
+                )
         for task in managed:
             if len(diagnostics) >= 100:
                 break
@@ -606,15 +737,17 @@ class RunSupervisor:
                 and (RuntimeResourceKind.MANAGED_TASK.value, task.task_id)
                 not in represented
             ):
-                diagnostics.append({
-                    "kind": RuntimeResourceKind.MANAGED_TASK.value,
-                    "owner_id": task.task_id,
-                    "state": task.async_task_handle.state.value,
-                    "deadline": task.async_task_handle.deadline,
-                    "diagnostic_code": (
-                        task.async_task_handle.diagnostics().diagnostic_code
-                    ),
-                })
+                diagnostics.append(
+                    {
+                        "kind": RuntimeResourceKind.MANAGED_TASK.value,
+                        "owner_id": task.task_id,
+                        "state": task.async_task_handle.state.value,
+                        "deadline": task.async_task_handle.deadline,
+                        "diagnostic_code": (
+                            task.async_task_handle.diagnostics().diagnostic_code
+                        ),
+                    }
+                )
         return diagnostics
 
     def _release_approval_waits(self, run_id: str | None = None) -> None:
@@ -685,6 +818,8 @@ class RunSupervisor:
             with self.lock:
                 handle.model_lease = lease
                 handle.state = RunWorkerState.RUNNING
+            if self.store.long_task_progress(run_id) is None:
+                self._initialize_long_task(run_id)
             engine_kwargs: dict[str, object] = {
                 "sensitive": self.sensitive(),
                 "wait_for_execution_slot": self._wait_for_execution_slot,
@@ -728,13 +863,12 @@ class RunSupervisor:
                         str(item["id"]): item
                         for item in self.store.canceled_items_for_run(run_id)
                     }
-                    self.events.publish(
-                        mutation, run=mutation.value, items=items
-                    )
+                    self.events.publish(mutation, run=mutation.value, items=items)
                 except InvalidRunStateError:
                     pass
                 except Exception:
                     logger.exception("Run cancellation finalization failed")
+            self._settle_long_task(run_id, cancellation.is_set())
             should_schedule = False
             with self.lock:
                 handle.state = RunWorkerState.FINISHED
@@ -756,16 +890,12 @@ class RunSupervisor:
                 "waiting_approval",
                 "finalizing",
             }:
-                mutation = self.store.fail_run_committed(
-                    run_id, "INTERNAL_ERROR"
-                )
+                mutation = self.store.fail_run_committed(run_id, "INTERNAL_ERROR")
                 items = {
                     str(item["id"]): item
                     for item in self.store.canceled_items_for_run(run_id)
                 }
-                self.events.publish(
-                    mutation, run=mutation.value, items=items
-                )
+                self.events.publish(mutation, run=mutation.value, items=items)
         except Exception:
             logger.exception("Run worker cleanup failed")
 
@@ -785,6 +915,7 @@ class RunSupervisor:
     def _wait_for_execution_slot(
         self, run_id: str, cancellation: threading.Event
     ) -> bool:
+        self._record_safe_point(run_id, SafePoint.WAITING_SLOT)
         with self.lock:
             handle = self._handles.get(run_id)
             if handle is None:
@@ -796,9 +927,35 @@ class RunSupervisor:
             handle.resume.clear()
         self.schedule_next()
         while not handle.resume.wait(0.1):
-            if (
-                cancellation.is_set()
-                or self.lifecycle is not RuntimeLifecycle.RUNNING
-            ):
+            if cancellation.is_set() or self.lifecycle is not RuntimeLifecycle.RUNNING:
                 return False
         return not cancellation.is_set()
+
+    def _record_safe_point(self, run_id: str, safe_point: SafePoint) -> None:
+        repository = self.store.long_task_repository()
+        if repository.read(run_id) is not None:
+            repository.record_safe_point(run_id, safe_point)
+
+    def _settle_long_task(self, run_id: str, canceled: bool) -> None:
+        repository = self.store.long_task_repository()
+        progress = repository.read(run_id)
+        if progress is None or progress.status in {
+            LongTaskStatus.COMPLETED,
+            LongTaskStatus.CANCELED,
+            LongTaskStatus.FAILED,
+            LongTaskStatus.INTERRUPTED,
+        }:
+            return
+        try:
+            run = self.store.read_run(run_id)
+            if canceled and progress.status is LongTaskStatus.CANCEL_REQUESTED:
+                repository.mark_canceled(run_id)
+            elif (
+                run["status"] == "succeeded"
+                and progress.status is LongTaskStatus.RUNNING
+            ):
+                repository.mark_completed(run_id)
+            elif run["status"] in {"failed", "interrupted"}:
+                repository.mark_interrupted(run_id)
+        except Exception:
+            logger.exception("Long task settlement failed")

@@ -6,6 +6,7 @@ from typing import Protocol, runtime_checkable
 
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.application.results import ApplicationResult
+from eidos_runtime.domain.long_task import LongTaskProgress
 
 
 class LifecycleAction(StrEnum):
@@ -33,6 +34,8 @@ class RuntimeLifecyclePort(Protocol):
         self, run_id: str, *, operation_id: str | None = None
     ) -> LifecycleResult: ...
 
+    def run_status(self, run_id: str) -> LongTaskProgress | None: ...
+
 
 class TaskLifecycleApplication:
     """Thin command boundary; supervisor remains lifecycle authority."""
@@ -56,6 +59,11 @@ class TaskLifecycleApplication:
         if action is LifecycleAction.CANCEL:
             return self._runtime.cancel_run(run_id, operation_id=operation_id)
         raise ApplicationError("INVALID_STATE", "unsupported lifecycle action")
+
+    def status(self, run_id: str) -> LongTaskProgress | None:
+        if not run_id:
+            raise ApplicationError("INVALID_STATE", "run_id is required")
+        return self._runtime.run_status(run_id)
 
 
 __all__ = [

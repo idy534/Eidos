@@ -16,6 +16,7 @@ from eidos_runtime.db.storage import (
     SessionStore,
 )
 from eidos_runtime.model.client import ModelClient
+from eidos_runtime.domain.long_task import LongTaskStatus, SafePoint
 from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalDecision
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.contracts import (
@@ -168,9 +169,7 @@ class RuntimeEngine:
         compactor = ContextCompactor(self.store)
         step_factory = StepContextFactory(self.store)
         rule_resolver = ProjectRuleResolver()
-        sampling = SamplingRuntime(
-            self.store, self.model, self.events, self.sensitive
-        )
+        sampling = SamplingRuntime(self.store, self.model, self.events, self.sensitive)
         finalizer = RunFinalizer(
             self.store,
             self.model,
@@ -222,12 +221,18 @@ class RuntimeEngine:
             )
             context_decision = decisions.decide(
                 context_budget=built.budget,
-                run_budget=RunBudget.model_validate({
-                    "segment_steps_remaining": budget_fact["segmentStepsRemaining"],
-                    "run_steps_remaining": budget_fact["runStepsRemaining"],
-                    "segment_effective_ms_remaining": budget_fact["segmentEffectiveMsRemaining"],
-                    "run_effective_ms_remaining": budget_fact["runEffectiveMsRemaining"],
-                }),
+                run_budget=RunBudget.model_validate(
+                    {
+                        "segment_steps_remaining": budget_fact["segmentStepsRemaining"],
+                        "run_steps_remaining": budget_fact["runStepsRemaining"],
+                        "segment_effective_ms_remaining": budget_fact[
+                            "segmentEffectiveMsRemaining"
+                        ],
+                        "run_effective_ms_remaining": budget_fact[
+                            "runEffectiveMsRemaining"
+                        ],
+                    }
+                ),
                 compaction_count=built.facts.compaction_count,
                 loop_guard_result=compaction_guard,
                 pending_user_input=self.store.has_pending_input(run.run_id),
@@ -236,9 +241,11 @@ class RuntimeEngine:
             if context_decision.action == LoopAction.CANCEL:
                 raise RuntimeCancelled
             if context_decision.action == LoopAction.COMPACT:
-                phase = "mid_turn" if int(
-                    self.store.read_run(run.run_id)["modelStepCount"]
-                ) else "pre_turn"
+                phase = (
+                    "mid_turn"
+                    if int(self.store.read_run(run.run_id)["modelStepCount"])
+                    else "pre_turn"
+                )
                 try:
                     compactor.compact(run.run_id, phase)
                 except ContextLimitExceeded:
@@ -270,9 +277,7 @@ class RuntimeEngine:
                         if budget_fact["segmentEffectiveMsRemaining"] <= 0
                         else "segment_step_limit"
                     )
-                finalizer.finalize(
-                    run.run_id, built.model_context, reason, cancel
-                )
+                finalizer.finalize(run.run_id, built.model_context, reason, cancel)
                 return
             try:
                 step = step_factory.create(
@@ -291,22 +296,23 @@ class RuntimeEngine:
                     if "time" in str(error)
                     else "segment_step_limit"
                 )
-                finalizer.finalize(
-                    run.run_id, built.model_context, reason, cancel
-                )
+                finalizer.finalize(run.run_id, built.model_context, reason, cancel)
                 return
             except RunLimitReached as error:
                 finalizer.finalize(
                     run.run_id,
                     built.model_context,
-                    "max_effective_runtime" if "time" in str(error)
+                    "max_effective_runtime"
+                    if "time" in str(error)
                     else "max_total_steps",
                     cancel,
                 )
                 return
             self._resume_effective_time()
             try:
+                self._pause_at(run.run_id, SafePoint.BEFORE_MODEL, cancel)
                 sampled = sampling.sample(step, cancel)
+                self._pause_at(run.run_id, SafePoint.AFTER_MODEL, cancel)
             except SamplingCancelled:
                 raise
             except SensitiveScanError:
@@ -370,16 +376,15 @@ class RuntimeEngine:
                 self.store.complete_current_step(run.run_id, "completed")
                 run = run.model_copy(update={"model_context": ()})
                 continue
-            if (
-                decision.action == LoopAction.CONTINUE
-                and validation.status != "ready"
-            ):
-                run = run.model_copy(update={
-                    "model_context": (
-                        *run.model_context,
-                        {"type": "protocol_error", "code": decision.reason},
-                    )
-                })
+            if decision.action == LoopAction.CONTINUE and validation.status != "ready":
+                run = run.model_copy(
+                    update={
+                        "model_context": (
+                            *run.model_context,
+                            {"type": "protocol_error", "code": decision.reason},
+                        )
+                    }
+                )
                 continue
             if decision.action == LoopAction.PAUSE:
                 self.store.complete_current_step(
@@ -421,11 +426,11 @@ class RuntimeEngine:
             )
             if repeated is not None:
                 self.store.complete_current_step(run.run_id, "failed", reason=repeated)
-                finalizer.finalize(
-                    run.run_id, built.model_context, repeated, cancel
-                )
+                finalizer.finalize(run.run_id, built.model_context, repeated, cancel)
                 return
+            self._pause_at(run.run_id, SafePoint.BEFORE_TOOL, cancel)
             outcome = tools.execute(step, validation.tool_calls, cancel)
+            self._pause_at(run.run_id, SafePoint.AFTER_TOOL, cancel)
             signature = guard.make_signature(
                 workspace_version=outcome.workspace_version,
                 diff_hash=outcome.diff_hash,
@@ -466,9 +471,9 @@ class RuntimeEngine:
                 self._fail(run.run_id, "INTERNAL_ERROR")
                 return
             if outcome.status == "sensitive_rejected":
-                run = run.model_copy(update={
-                    "model_context": (*run.model_context, *outcome.feedback)
-                })
+                run = run.model_copy(
+                    update={"model_context": (*run.model_context, *outcome.feedback)}
+                )
                 continue
             mutation = self._pause_effective_time(run.run_id)
             if mutation is not None:
@@ -522,13 +527,30 @@ class RuntimeEngine:
 
     def _check_cancel(self, run_id: str, cancel: threading.Event) -> None:
         if cancel.is_set() or self.store.read_run(run_id)["status"] in {
-            "canceled", "interrupted",
+            "canceled",
+            "interrupted",
         }:
             raise RuntimeCancelled
 
-    def _resume_after_approval(
-        self, run_id: str, cancel: threading.Event
+    def _pause_at(
+        self, run_id: str, safe_point: SafePoint, cancel: threading.Event
     ) -> None:
+        repository = self.store.long_task_repository()
+        progress = repository.read(run_id)
+        if progress is None:
+            return
+        progress = repository.record_safe_point(run_id, safe_point)
+        if progress.status is LongTaskStatus.PAUSE_REQUESTED:
+            progress = repository.mark_paused(run_id, safe_point)
+        while progress.status in {
+            LongTaskStatus.PAUSED,
+            LongTaskStatus.RESUME_REQUESTED,
+        }:
+            if cancel.wait(0.05):
+                raise RuntimeCancelled
+            progress = repository.read(run_id) or progress
+
+    def _resume_after_approval(self, run_id: str, cancel: threading.Event) -> None:
         current = self.store.read_run(run_id)
         if current["status"] != "queued":
             return
@@ -558,8 +580,7 @@ class RuntimeEngine:
         self.store.complete_current_step(run_id, "failed", reason=error_code)
         mutation = self.store.fail_run_committed(run_id, error_code)
         items = {
-            str(item["id"]): item
-            for item in self.store.canceled_items_for_run(run_id)
+            str(item["id"]): item for item in self.store.canceled_items_for_run(run_id)
         }
         self.events.publish(mutation, run=mutation.value, items=items)
 

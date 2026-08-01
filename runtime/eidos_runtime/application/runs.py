@@ -22,19 +22,31 @@ from eidos_runtime.db.errors import (
     WorkspaceBoundaryError,
 )
 from eidos_runtime.model.client import ModelClient, ModelProfileSnapshot
-from eidos_runtime.model.config import DEFAULT_MODEL_ID, SUPPORTED_MODELS, ModelConfigError
+from eidos_runtime.model.config import (
+    DEFAULT_MODEL_ID,
+    SUPPORTED_MODELS,
+    ModelConfigError,
+)
 from eidos_runtime.model_gateway.capabilities import resolve_model_capabilities
 from eidos_runtime.model_gateway.gateway import legacy_profile_snapshot
 from eidos_runtime.model_gateway.models import ModelProfile, RunModelSnapshot
 from eidos_runtime.model_gateway.presets import PRESETS
 from eidos_runtime.persistence.repositories import TypedRuntimeRepository
+from eidos_runtime.persistence.errors import ConditionalUpdateFailed
 from eidos_runtime.domain.run import Run
+from eidos_runtime.domain.long_task import LongTaskProgress
 from eidos_runtime.protocol.methods import (
     MethodResultDto,
     RunCancelRequestDto,
     RunCancelResponseDto,
+    RunPauseRequestDto,
+    RunPauseResponseDto,
+    RunResumeRequestDto,
+    RunResumeResponseDto,
     RunStartRequestDto,
     RunStartResponseDto,
+    RunStatusRequestDto,
+    RunStatusResponseDto,
 )
 from eidos_runtime.runtime.supervisor import (
     RunCancelTimeout,
@@ -78,6 +90,8 @@ class RunStorePort(Protocol):
     def read_run(self, run_id: str) -> dict[str, object]: ...
 
     def interrupt_run(self, run_id: str) -> dict[str, object]: ...
+
+    def long_task_progress(self, run_id: str) -> LongTaskProgress | None: ...
 
 
 class RunRuntimePort(Protocol):
@@ -198,7 +212,9 @@ class RunApplication:
         self._lifecycle = (
             lifecycle
             if lifecycle is not None
-            else TaskLifecycleApplication(runtime) if runtime is not None else None
+            else TaskLifecycleApplication(runtime)
+            if runtime is not None
+            else None
         )
         self._scan_text = scan_text
 
@@ -353,6 +369,62 @@ class RunApplication:
         except OperationInProgressError as error:
             raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
         return _result(RunCancelResponseDto, current)
+
+    def status(self, request: RunStatusRequestDto) -> RunStatusResponseDto:
+        return self._lifecycle_response(
+            RunStatusResponseDto, request.run_id, action=None
+        )
+
+    def pause(self, request: RunPauseRequestDto) -> RunPauseResponseDto:
+        return self._lifecycle_response(
+            RunPauseResponseDto,
+            request.run_id,
+            action=LifecycleAction.PAUSE,
+            operation_id=request.operation_id,
+        )
+
+    def resume(self, request: RunResumeRequestDto) -> RunResumeResponseDto:
+        return self._lifecycle_response(
+            RunResumeResponseDto,
+            request.run_id,
+            action=LifecycleAction.RESUME,
+            operation_id=request.operation_id,
+        )
+
+    def _lifecycle_response(
+        self,
+        result_type: type[
+            RunStatusResponseDto | RunPauseResponseDto | RunResumeResponseDto
+        ],
+        run_id: str,
+        *,
+        action: LifecycleAction | None,
+        operation_id: str | None = None,
+    ) -> RunStatusResponseDto | RunPauseResponseDto | RunResumeResponseDto:
+        store, _runtime = self._cancel_dependencies()
+        try:
+            if self._lifecycle is None:
+                raise RuntimeError("Run lifecycle application is not configured")
+            if action is not None:
+                self._lifecycle.execute(action, run_id, operation_id=operation_id)
+            progress = self._lifecycle.status(run_id)
+            run = store.read_run(run_id)
+        except ResourceNotFoundError as error:
+            raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
+        except (InvalidRunStateError, ConditionalUpdateFailed) as error:
+            raise ApplicationError("INVALID_STATE", str(error)) from error
+        payload = {
+            "run": run,
+            "task": progress.model_dump(by_alias=True)
+            if progress is not None
+            else None,
+            "resumeVerification": (
+                progress.last_verification.model_dump(by_alias=True)
+                if progress is not None and progress.last_verification is not None
+                else None
+            ),
+        }
+        return _result(result_type, payload)
 
     def _select_model(
         self,

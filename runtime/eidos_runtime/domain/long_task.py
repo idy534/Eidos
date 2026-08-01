@@ -27,16 +27,25 @@ class SafePoint(StrEnum):
     BEFORE_TOOL = "before_tool"
     AFTER_TOOL = "after_tool"
     TOOL_EXECUTING = "tool_executing"
+    AFTER_CHECKPOINT = "after_checkpoint"
+    AFTER_REPOSITORY_GENERATION = "after_repository_generation"
 
 
-class VerificationStatus(StrEnum):
-    VERIFIED = "verified"
-    BLOCKED = "blocked"
+class ResumeOutcome(StrEnum):
+    SAFE_RESUME = "safe_resume"
+    REBUILD_CONTEXT = "rebuild_context"
+    REINDEX_REQUIRED = "reindex_required"
+    APPROVAL_REQUIRED = "approval_required"
+    RECONCILIATION_REQUIRED = "reconciliation_required"
+    WORKSPACE_CHANGED = "workspace_changed"
+    MODEL_UNAVAILABLE = "model_unavailable"
+    PERMISSION_CHANGED = "permission_changed"
+    CANNOT_RESUME = "cannot_resume"
 
 
 class ResumeVerification(EidosFrozenStrictModel):
     run_id: str = Field(min_length=1)
-    status: VerificationStatus
+    outcome: ResumeOutcome
     reasons: tuple[str, ...]
     checked_at: JsonSafeInt
 
@@ -71,6 +80,6 @@ __all__ = [
     "LongTaskProgress",
     "LongTaskStatus",
     "ResumeVerification",
+    "ResumeOutcome",
     "SafePoint",
-    "VerificationStatus",
 ]

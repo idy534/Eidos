@@ -42,7 +42,12 @@ from eidos_runtime.application.task_lifecycle import (
     LifecycleResult,
     TaskLifecycleApplication,
 )
-from eidos_runtime.model.client import ModelClient, ModelResponse, ModelToolCall, ScriptedModel
+from eidos_runtime.model.client import (
+    ModelClient,
+    ModelResponse,
+    ModelToolCall,
+    ScriptedModel,
+)
 from eidos_runtime.model.config import (
     ModelConfigError,
     ModelConfigStore,
@@ -62,6 +67,7 @@ from eidos_runtime.model_gateway.models import (
     WireAPI,
 )
 from eidos_runtime.model_gateway.presets import PRESETS
+from eidos_runtime.domain.long_task import LongTaskProgress
 from eidos_runtime.protocol import methods as method_dtos
 from eidos_runtime.protocol.registry import (
     DeferredMethodResult,
@@ -124,9 +130,7 @@ def response(request_id: str, result: dict[str, Any]) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
-def protocol_error(
-    request_id: str | None, code: int, message: str
-) -> dict[str, Any]:
+def protocol_error(request_id: str | None, code: int, message: str) -> dict[str, Any]:
     return {
         "jsonrpc": "2.0",
         "id": request_id,
@@ -373,19 +377,30 @@ class _ServerTaskLifecycleRuntime:
     def __init__(self, supervisor: RunSupervisor) -> None:
         self._supervisor = supervisor
 
-    def pause_run(self, _run_id: str) -> LifecycleResult:
+    def pause_run(self, run_id: str) -> LifecycleResult:
+        progress = self._supervisor.pause_run(run_id)
         return LifecycleResult(
             action=LifecycleAction.PAUSE,
-            accepted=False,
-            reason="pause_not_integrated",
+            accepted=progress.status.value == "paused",
+            reason=None if progress.status.value == "paused" else progress.status.value,
         )
 
-    def resume_run(self, _run_id: str) -> LifecycleResult:
+    def resume_run(self, run_id: str) -> LifecycleResult:
+        progress = self._supervisor.resume_run(run_id)
         return LifecycleResult(
             action=LifecycleAction.RESUME,
-            accepted=False,
-            reason="resume_not_integrated",
+            accepted=progress.status.value == "running",
+            reason=(
+                None
+                if progress.status.value == "running"
+                else progress.last_verification.outcome.value
+                if progress.last_verification is not None
+                else progress.status.value
+            ),
         )
+
+    def run_status(self, run_id: str) -> LongTaskProgress | None:
+        return self._supervisor.run_status(run_id)
 
     def cancel_run(
         self, run_id: str, *, operation_id: str | None = None
@@ -438,24 +453,20 @@ class RuntimeServer:
             if not isinstance(request_id, str):
                 return
             try:
-                decision = ApprovalDecisionDto.model_validate(
-                    message.get("result")
-                )
+                decision = ApprovalDecisionDto.model_validate(message.get("result"))
             except ValidationError:
                 decision = ApprovalDecisionDto(decision="reject")
             applications = self._applications_or_error()
             if decision.decision == "approve":
                 applications.approvals.approve(request_id)
             else:
-                applications.approvals.reject(
-                    request_id, feedback=decision.feedback
-                )
+                applications.approvals.reject(request_id, feedback=decision.feedback)
             return
 
         try:
-            request = JsonRpcRequestDto.model_validate({
-                **message, "params": message.get("params", {})
-            })
+            request = JsonRpcRequestDto.model_validate(
+                {**message, "params": message.get("params", {})}
+            )
         except ValidationError:
             self.send(protocol_error(None, -32600, "Invalid Request"))
             return
@@ -530,33 +541,238 @@ class RuntimeServer:
 
     def _build_method_registry(self) -> MethodRegistry:
         registry = MethodRegistry()
-        handlers: tuple[tuple[str, type[BaseModel], type[method_dtos.MethodResultDto], Any], ...] = (
-            ("session/create", method_dtos.SessionCreateRequestDto, method_dtos.SessionCreateResponseDto, lambda _id, request: self._applications_or_error().sessions.create(request)),
-            ("session/list", method_dtos.SessionListRequestDto, method_dtos.SessionListResponseDto, lambda _id, request: self._applications_or_error().sessions.list(request)),
-            ("session/read", method_dtos.SessionReadRequestDto, method_dtos.SessionReadResponseDto, lambda _id, request: self._applications_or_error().sessions.read_snapshot(request)),
-            ("session/rename", method_dtos.SessionRenameRequestDto, method_dtos.SessionRenameResponseDto, lambda _id, request: self._applications_or_error().sessions.rename(request)),
-            ("session/delete", method_dtos.SessionDeleteRequestDto, method_dtos.SessionDeleteResponseDto, lambda _id, request: self._applications_or_error().sessions.delete(request)),
-            ("event/list", method_dtos.EventListRequestDto, method_dtos.EventListResponseDto, lambda _id, request: self._applications_or_error().sessions.list_events(request)),
-            ("run/start", method_dtos.RunStartRequestDto, method_dtos.RunStartResponseDto, lambda _id, request: self._applications_or_error().runs.start(request)),
-            ("run/cancel", method_dtos.RunCancelRequestDto, method_dtos.RunCancelResponseDto, lambda _id, request: self._applications_or_error().runs.cancel(request)),
-            ("model/status", method_dtos.ModelStatusRequestDto, method_dtos.ModelStatusResponseDto, lambda _id, _request: self._applications_or_error().models.status()),
-            ("model/list", method_dtos.ModelListRequestDto, method_dtos.ModelListResponseDto, lambda _id, _request: self._applications_or_error().models.list_models()),
-            ("model/configure", method_dtos.ModelConfigureRequestDto, method_dtos.ModelConfigureResponseDto, lambda _id, request: self._applications_or_error().models.configure(request.api_key)),
-            ("model_profile/list", method_dtos.ModelProfileListRequestDto, method_dtos.ModelProfileListResponseDto, lambda _id, _request: self._applications_or_error().models.list_profiles()),
-            ("model_profile/get", method_dtos.ModelProfileGetRequestDto, method_dtos.ModelProfileGetResponseDto, lambda _id, request: self._applications_or_error().models.get_profile(request.profile_id)),
-            ("model_profile/create", method_dtos.ModelProfileCreateRequestDto, method_dtos.ModelProfileCreateResponseDto, lambda _id, request: self._applications_or_error().models.create_profile(ModelProfileDraft.from_wire(request.profile), api_key=request.api_key)),
-            ("model_profile/update", method_dtos.ModelProfileUpdateRequestDto, method_dtos.ModelProfileUpdateResponseDto, lambda _id, request: self._applications_or_error().models.update_profile(request.profile_id, ModelProfileDraft.from_wire(request.profile), api_key=request.api_key)),
-            ("model_profile/delete", method_dtos.ModelProfileDeleteRequestDto, method_dtos.ModelProfileDeleteResponseDto, lambda _id, request: self._applications_or_error().models.delete_profile(request.profile_id)),
-            ("model_profile/list_presets", method_dtos.ModelProfileListPresetsRequestDto, method_dtos.ModelProfileListPresetsResponseDto, lambda _id, _request: self._applications_or_error().models.list_presets()),
-            ("plugin/list", method_dtos.PluginListRequestDto, method_dtos.PluginListResponseDto, lambda _id, _request: self._applications_or_error().extensions.list_plugins()),
-            ("plugin/setEnabled", method_dtos.PluginSetEnabledRequestDto, method_dtos.PluginSetEnabledResponseDto, lambda _id, request: self._applications_or_error().extensions.set_plugin_enabled(plugin_id=request.plugin_id, enabled=request.enabled, operation_id=request.operation_id)),
-            ("plugin/remove", method_dtos.PluginRemoveRequestDto, method_dtos.PluginRemoveResponseDto, lambda _id, request: self._applications_or_error().extensions.remove_plugin(plugin_id=request.plugin_id, operation_id=request.operation_id)),
-            ("skill/list", method_dtos.SkillListRequestDto, method_dtos.SkillListResponseDto, lambda _id, _request: self._applications_or_error().extensions.list_skills()),
-            ("skill/read", method_dtos.SkillReadRequestDto, method_dtos.SkillReadResponseDto, lambda _id, request: self._applications_or_error().extensions.read_skill(qualified_id=request.qualified_id)),
-            ("mcp/list", method_dtos.McpListRequestDto, method_dtos.McpListResponseDto, lambda _id, _request: self._applications_or_error().extensions.list_mcp_servers()),
-            ("mcp/setEnabled", method_dtos.McpSetEnabledRequestDto, method_dtos.McpSetEnabledResponseDto, lambda _id, request: self._applications_or_error().extensions.set_mcp_enabled(plugin_id=request.plugin_id, server_id=request.server_id, enabled=request.enabled, consent=request.consent, operation_id=request.operation_id)),
-            ("extension/read", method_dtos.ExtensionReadRequestDto, method_dtos.ExtensionReadResponseDto, lambda _id, _request: self._applications_or_error().extensions.read_extensions()),
-            ("extension/readEvents", method_dtos.ExtensionReadEventsRequestDto, method_dtos.ExtensionReadEventsResponseDto, lambda _id, request: self._applications_or_error().extensions.read_extension_events(after_event_id=request.after_event_id, limit=request.limit)),
+        handlers: tuple[
+            tuple[str, type[BaseModel], type[method_dtos.MethodResultDto], Any], ...
+        ] = (
+            (
+                "session/create",
+                method_dtos.SessionCreateRequestDto,
+                method_dtos.SessionCreateResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.create(
+                    request
+                ),
+            ),
+            (
+                "session/list",
+                method_dtos.SessionListRequestDto,
+                method_dtos.SessionListResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.list(
+                    request
+                ),
+            ),
+            (
+                "session/read",
+                method_dtos.SessionReadRequestDto,
+                method_dtos.SessionReadResponseDto,
+                lambda _id,
+                request: self._applications_or_error().sessions.read_snapshot(request),
+            ),
+            (
+                "session/rename",
+                method_dtos.SessionRenameRequestDto,
+                method_dtos.SessionRenameResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.rename(
+                    request
+                ),
+            ),
+            (
+                "session/delete",
+                method_dtos.SessionDeleteRequestDto,
+                method_dtos.SessionDeleteResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.delete(
+                    request
+                ),
+            ),
+            (
+                "event/list",
+                method_dtos.EventListRequestDto,
+                method_dtos.EventListResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.list_events(
+                    request
+                ),
+            ),
+            (
+                "run/start",
+                method_dtos.RunStartRequestDto,
+                method_dtos.RunStartResponseDto,
+                lambda _id, request: self._applications_or_error().runs.start(request),
+            ),
+            (
+                "run/cancel",
+                method_dtos.RunCancelRequestDto,
+                method_dtos.RunCancelResponseDto,
+                lambda _id, request: self._applications_or_error().runs.cancel(request),
+            ),
+            (
+                "run/status",
+                method_dtos.RunStatusRequestDto,
+                method_dtos.RunStatusResponseDto,
+                lambda _id, request: self._applications_or_error().runs.status(request),
+            ),
+            (
+                "run/pause",
+                method_dtos.RunPauseRequestDto,
+                method_dtos.RunPauseResponseDto,
+                lambda _id, request: self._applications_or_error().runs.pause(request),
+            ),
+            (
+                "run/resume",
+                method_dtos.RunResumeRequestDto,
+                method_dtos.RunResumeResponseDto,
+                lambda _id, request: self._applications_or_error().runs.resume(request),
+            ),
+            (
+                "model/status",
+                method_dtos.ModelStatusRequestDto,
+                method_dtos.ModelStatusResponseDto,
+                lambda _id, _request: self._applications_or_error().models.status(),
+            ),
+            (
+                "model/list",
+                method_dtos.ModelListRequestDto,
+                method_dtos.ModelListResponseDto,
+                lambda _id,
+                _request: self._applications_or_error().models.list_models(),
+            ),
+            (
+                "model/configure",
+                method_dtos.ModelConfigureRequestDto,
+                method_dtos.ModelConfigureResponseDto,
+                lambda _id, request: self._applications_or_error().models.configure(
+                    request.api_key
+                ),
+            ),
+            (
+                "model_profile/list",
+                method_dtos.ModelProfileListRequestDto,
+                method_dtos.ModelProfileListResponseDto,
+                lambda _id,
+                _request: self._applications_or_error().models.list_profiles(),
+            ),
+            (
+                "model_profile/get",
+                method_dtos.ModelProfileGetRequestDto,
+                method_dtos.ModelProfileGetResponseDto,
+                lambda _id, request: self._applications_or_error().models.get_profile(
+                    request.profile_id
+                ),
+            ),
+            (
+                "model_profile/create",
+                method_dtos.ModelProfileCreateRequestDto,
+                method_dtos.ModelProfileCreateResponseDto,
+                lambda _id,
+                request: self._applications_or_error().models.create_profile(
+                    ModelProfileDraft.from_wire(request.profile),
+                    api_key=request.api_key,
+                ),
+            ),
+            (
+                "model_profile/update",
+                method_dtos.ModelProfileUpdateRequestDto,
+                method_dtos.ModelProfileUpdateResponseDto,
+                lambda _id,
+                request: self._applications_or_error().models.update_profile(
+                    request.profile_id,
+                    ModelProfileDraft.from_wire(request.profile),
+                    api_key=request.api_key,
+                ),
+            ),
+            (
+                "model_profile/delete",
+                method_dtos.ModelProfileDeleteRequestDto,
+                method_dtos.ModelProfileDeleteResponseDto,
+                lambda _id,
+                request: self._applications_or_error().models.delete_profile(
+                    request.profile_id
+                ),
+            ),
+            (
+                "model_profile/list_presets",
+                method_dtos.ModelProfileListPresetsRequestDto,
+                method_dtos.ModelProfileListPresetsResponseDto,
+                lambda _id,
+                _request: self._applications_or_error().models.list_presets(),
+            ),
+            (
+                "plugin/list",
+                method_dtos.PluginListRequestDto,
+                method_dtos.PluginListResponseDto,
+                lambda _id,
+                _request: self._applications_or_error().extensions.list_plugins(),
+            ),
+            (
+                "plugin/setEnabled",
+                method_dtos.PluginSetEnabledRequestDto,
+                method_dtos.PluginSetEnabledResponseDto,
+                lambda _id,
+                request: self._applications_or_error().extensions.set_plugin_enabled(
+                    plugin_id=request.plugin_id,
+                    enabled=request.enabled,
+                    operation_id=request.operation_id,
+                ),
+            ),
+            (
+                "plugin/remove",
+                method_dtos.PluginRemoveRequestDto,
+                method_dtos.PluginRemoveResponseDto,
+                lambda _id,
+                request: self._applications_or_error().extensions.remove_plugin(
+                    plugin_id=request.plugin_id, operation_id=request.operation_id
+                ),
+            ),
+            (
+                "skill/list",
+                method_dtos.SkillListRequestDto,
+                method_dtos.SkillListResponseDto,
+                lambda _id,
+                _request: self._applications_or_error().extensions.list_skills(),
+            ),
+            (
+                "skill/read",
+                method_dtos.SkillReadRequestDto,
+                method_dtos.SkillReadResponseDto,
+                lambda _id,
+                request: self._applications_or_error().extensions.read_skill(
+                    qualified_id=request.qualified_id
+                ),
+            ),
+            (
+                "mcp/list",
+                method_dtos.McpListRequestDto,
+                method_dtos.McpListResponseDto,
+                lambda _id,
+                _request: self._applications_or_error().extensions.list_mcp_servers(),
+            ),
+            (
+                "mcp/setEnabled",
+                method_dtos.McpSetEnabledRequestDto,
+                method_dtos.McpSetEnabledResponseDto,
+                lambda _id,
+                request: self._applications_or_error().extensions.set_mcp_enabled(
+                    plugin_id=request.plugin_id,
+                    server_id=request.server_id,
+                    enabled=request.enabled,
+                    consent=request.consent,
+                    operation_id=request.operation_id,
+                ),
+            ),
+            (
+                "extension/read",
+                method_dtos.ExtensionReadRequestDto,
+                method_dtos.ExtensionReadResponseDto,
+                lambda _id,
+                _request: self._applications_or_error().extensions.read_extensions(),
+            ),
+            (
+                "extension/readEvents",
+                method_dtos.ExtensionReadEventsRequestDto,
+                method_dtos.ExtensionReadEventsResponseDto,
+                lambda _id,
+                request: self._applications_or_error().extensions.read_extension_events(
+                    after_event_id=request.after_event_id, limit=request.limit
+                ),
+            ),
         )
         draining_blocked = {
             "run/start",
@@ -571,24 +787,28 @@ class RuntimeServer:
         }
         reconfiguration_blocked = {"run/start", "model/configure"}
         for name, request_type, response_type, handler in handlers:
-            registry.register(MethodRegistration(
-                name=name,
-                request_type=request_type,
-                response_type=response_type,
-                handler=_ApplicationMethodAdapter(handler, response_type),
-                allowed_when_draining=name not in draining_blocked,
-                allowed_during_reconfiguration=name not in reconfiguration_blocked,
+            registry.register(
+                MethodRegistration(
+                    name=name,
+                    request_type=request_type,
+                    response_type=response_type,
+                    handler=_ApplicationMethodAdapter(handler, response_type),
+                    allowed_when_draining=name not in draining_blocked,
+                    allowed_during_reconfiguration=name not in reconfiguration_blocked,
+                    error_mapper=_application_error_mapping,
+                )
+            )
+        registry.register(
+            MethodRegistration(
+                name="plugin/import",
+                request_type=method_dtos.PluginImportRequestDto,
+                response_type=method_dtos.PluginImportResponseDto,
+                handler=_DeferredPluginImportAdapter(self),
+                allowed_when_draining=False,
+                allowed_during_reconfiguration=True,
                 error_mapper=_application_error_mapping,
-            ))
-        registry.register(MethodRegistration(
-            name="plugin/import",
-            request_type=method_dtos.PluginImportRequestDto,
-            response_type=method_dtos.PluginImportResponseDto,
-            handler=_DeferredPluginImportAdapter(self),
-            allowed_when_draining=False,
-            allowed_during_reconfiguration=True,
-            error_mapper=_application_error_mapping,
-        ))
+            )
+        )
         return registry
 
     def _applications_or_error(self) -> _RuntimeApplications:
@@ -674,6 +894,7 @@ class RuntimeServer:
                         resource_registry=self.supervisor.resources,
                     )
                 self.supervisor.bind_async_kernel(self.async_kernel)
+                self.supervisor.verify_restart_state()
                 self._applications = self._build_applications()
         except (
             StorageError,
@@ -774,6 +995,7 @@ class RuntimeServer:
             return
         assert invocation.json_result is not None
         self.send(response(request_id, invocation.json_result))
+
     def _configure_legacy_model(self, api_key: str) -> None:
         """Atomically replace the active legacy model client.
 
@@ -785,8 +1007,7 @@ class RuntimeServer:
         if not self.supervisor.begin_reconfiguration():
             code = (
                 "RUNTIME_RECONFIGURING"
-                if self.supervisor.control_state
-                is RuntimeControlState.RECONFIGURING
+                if self.supervisor.control_state is RuntimeControlState.RECONFIGURING
                 else "RUN_ALREADY_ACTIVE"
             )
             raise ApplicationError(code)
@@ -814,7 +1035,9 @@ class RuntimeServer:
             self.model_factory = candidate
             candidate = None
         except ValueError as error:
-            raise ApplicationInvalidParamsError("INVALID_PARAMS", "invalid API key") from error
+            raise ApplicationInvalidParamsError(
+                "INVALID_PARAMS", "invalid API key"
+            ) from error
         except ModelClientInUseError as error:
             if saved:
                 self.model_config.restore_api_key(previous_key)
@@ -870,9 +1093,7 @@ class RuntimeServer:
             self.store.cancel_active_async_operations()
             self.supervisor.events.deliver_pending()
             if self.store.pending_outbox_count():
-                raise ResourceRegistryError(
-                    "event delivery is not quiescent"
-                )
+                raise ResourceRegistryError("event delivery is not quiescent")
             self.supervisor.resources.ensure_empty()
         except ModelFactoryCloseError as error:
             self.send(business_error(request_id, error.code))
@@ -938,9 +1159,7 @@ class RuntimeServer:
             self.store.cancel_active_async_operations()
             self.supervisor.events.deliver_pending()
             if self.store.pending_outbox_count():
-                raise ResourceRegistryError(
-                    "event delivery is not quiescent"
-                )
+                raise ResourceRegistryError("event delivery is not quiescent")
             self.supervisor.resources.ensure_empty()
         except (
             RuntimeShutdownTimeout,
@@ -965,11 +1184,15 @@ class RuntimeServer:
         if profile is not None:
             if not self._profile_is_selectable(profile) or self.model_gateway is None:
                 raise ModelConfigError("model profile is not available")
-            return self.model_gateway.acquire_lease(RunModelSnapshot(
-                profile=profile,
-                capability=resolve_model_capabilities(profile, PRESETS[profile.provider]),
-                frozen_at=datetime.now(UTC),
-            ))
+            return self.model_gateway.acquire_lease(
+                RunModelSnapshot(
+                    profile=profile,
+                    capability=resolve_model_capabilities(
+                        profile, PRESETS[profile.provider]
+                    ),
+                    frozen_at=datetime.now(UTC),
+                )
+            )
         if self.model is not None:
             return ModelClientLease(
                 self.model,
@@ -1058,9 +1281,7 @@ class RuntimeServer:
                 if deadline_cancel.timed_out
                 else "title_generation_failed"
             )
-            logger.warning(
-                "Session title generation failed: %s", type(error).__name__
-            )
+            logger.warning("Session title generation failed: %s", type(error).__name__)
         finally:
             if lease is not None:
                 lease.close()
@@ -1119,14 +1340,14 @@ class _TitleCancellation(threading.Event):
         if self.is_set():
             return True
         remaining = max(0.0, self.deadline - time.monotonic())
-        return self.cancel.wait(
-            remaining if timeout is None else min(timeout, remaining)
-        ) or self.is_set()
+        return (
+            self.cancel.wait(remaining if timeout is None else min(timeout, remaining))
+            or self.is_set()
+        )
 
     @property
     def timed_out(self) -> bool:
         return time.monotonic() >= self.deadline
-
 
 
 def _model_from_environment() -> ModelClient | None:

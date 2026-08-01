@@ -65,6 +65,8 @@ from eidos_runtime.persistence.repository_intelligence import (
 from eidos_runtime.persistence.context_snapshots import ContextSnapshotRepository
 from eidos_runtime.persistence.verified_compaction import VerifiedCompactionRepository
 from eidos_runtime.context.plan import ContextSnapshot
+from eidos_runtime.runtime.long_task import LongTaskRepository
+from eidos_runtime.domain.long_task import LongTaskProgress
 from eidos_runtime.runtime.contracts import ProgressSignature
 from eidos_runtime.runtime.resolution import (
     RuleResolutionSnapshot,
@@ -80,9 +82,7 @@ TRepository = TypeVar("TRepository", bound=Repository)
 def _legacy_session_mutation(
     mutation: CommittedMutation[Session],
 ) -> CommittedMutation[dict[str, object]]:
-    return CommittedMutation(
-        session_to_legacy_dict(mutation.value), mutation.events
-    )
+    return CommittedMutation(session_to_legacy_dict(mutation.value), mutation.events)
 
 
 class SessionStore:
@@ -101,6 +101,7 @@ class SessionStore:
         ) = None
         self._context_snapshot_repository: ContextSnapshotRepository | None = None
         self._verified_compaction_repository: VerifiedCompactionRepository | None = None
+        self._long_task_repository: LongTaskRepository | None = None
 
     def initialize(self) -> None:
         self._database.initialize()
@@ -183,6 +184,7 @@ class SessionStore:
         self._repository_intelligence_repository = None
         self._context_snapshot_repository = None
         self._verified_compaction_repository = None
+        self._long_task_repository = None
         self._database.close()
 
     def typed_runtime_repository(self) -> TypedRuntimeRepository:
@@ -207,8 +209,8 @@ class SessionStore:
 
         self._repository(self._sessions)
         if self._repository_intelligence_repository is None:
-            self._repository_intelligence_repository = (
-                RepositoryIntelligenceRepository(self._database)
+            self._repository_intelligence_repository = RepositoryIntelligenceRepository(
+                self._database
             )
         return self._repository_intelligence_repository
 
@@ -220,9 +222,7 @@ class SessionStore:
             )
         return self._context_snapshot_repository
 
-    def read_running_context_snapshot(
-        self, run_id: str
-    ) -> ContextSnapshot | None:
+    def read_running_context_snapshot(self, run_id: str) -> ContextSnapshot | None:
         return self.context_snapshot_repository().read_running_for_run(run_id)
 
     def verified_compaction_repository(self) -> VerifiedCompactionRepository:
@@ -232,6 +232,15 @@ class SessionStore:
                 self._database
             )
         return self._verified_compaction_repository
+
+    def long_task_repository(self) -> LongTaskRepository:
+        self._repository(self._sessions)
+        if self._long_task_repository is None:
+            self._long_task_repository = LongTaskRepository(self._database)
+        return self._long_task_repository
+
+    def long_task_progress(self, run_id: str) -> LongTaskProgress | None:
+        return self.long_task_repository().read(run_id)
 
     def health(self) -> dict[str, object]:
         return self._database.health()
@@ -250,13 +259,9 @@ class SessionStore:
             parameters = (through_event_id,)
         sql += " ORDER BY event_outbox.event_id ASC"
         with self.lock:
-            rows = self._database.connection().execute(
-                sql, parameters
-            ).fetchall()
+            rows = self._database.connection().execute(sql, parameters).fetchall()
         return tuple(
-            event
-            for row in rows
-            if (event := event_from_row(row)) is not None
+            event for row in rows if (event := event_from_row(row)) is not None
         )
 
     def mark_outbox_delivered(self, event_id: int) -> None:
@@ -275,9 +280,7 @@ class SessionStore:
             if update.rowcount not in {0, 1}:
                 raise StorageError("event outbox update failed")
 
-    def record_outbox_failure(
-        self, event_id: int, error_code: str
-    ) -> None:
+    def record_outbox_failure(self, event_id: int, error_code: str) -> None:
         with self.lock, self._database.connection() as connection:
             connection.execute(
                 """
@@ -291,12 +294,16 @@ class SessionStore:
 
     def pending_outbox_count(self) -> int:
         with self.lock:
-            row = self._database.connection().execute(
-                """
+            row = (
+                self._database.connection()
+                .execute(
+                    """
                 SELECT COUNT(*) FROM event_outbox
                 WHERE status = 'pending'
                 """
-            ).fetchone()
+                )
+                .fetchone()
+            )
         return int(row[0])
 
     def accept_async_operation(
@@ -314,36 +321,26 @@ class SessionStore:
             request=request,
         )
 
-    def start_async_operation(
-        self, operation_id: str
-    ) -> AsyncOperation:
+    def start_async_operation(self, operation_id: str) -> AsyncOperation:
         return self._repository(self._async_operations).start(operation_id)
 
     def complete_async_operation(
         self, operation_id: str, result: dict[str, object]
     ) -> AsyncOperation:
-        return self._repository(self._async_operations).complete(
-            operation_id, result
-        )
+        return self._repository(self._async_operations).complete(operation_id, result)
 
     def fail_async_operation(
         self, operation_id: str, error_code: str
     ) -> AsyncOperation:
-        return self._repository(self._async_operations).fail(
-            operation_id, error_code
-        )
+        return self._repository(self._async_operations).fail(operation_id, error_code)
 
-    def cancel_async_operation(
-        self, operation_id: str
-    ) -> AsyncOperation:
+    def cancel_async_operation(self, operation_id: str) -> AsyncOperation:
         return self._repository(self._async_operations).cancel(operation_id)
 
     def cancel_active_async_operations(
         self,
     ) -> tuple[AsyncOperation, ...]:
-        return self._repository(
-            self._async_operations
-        ).cancel_active()
+        return self._repository(self._async_operations).cancel_active()
 
     @staticmethod
     def _repository(repository: TRepository | None) -> TRepository:
@@ -365,9 +362,7 @@ class SessionStore:
         self, *, limit: int = DEFAULT_LIST_LIMIT, cursor: str | None = None
     ) -> dict[str, object]:
         return session_page_to_legacy_dict(
-            self._repository(self._sessions).list_sessions(
-                limit=limit, cursor=cursor
-            )
+            self._repository(self._sessions).list_sessions(limit=limit, cursor=cursor)
         )
 
     def read_session(self, session_id: str) -> dict[str, object] | None:
@@ -396,9 +391,9 @@ class SessionStore:
         self, session_id: str
     ) -> CommittedMutation[dict[str, object]]:
         return _legacy_session_mutation(
-            self._repository(
-                self._sessions
-            ).begin_title_generation_committed(session_id)
+            self._repository(self._sessions).begin_title_generation_committed(
+                session_id
+            )
         )
 
     def finish_title_generation_committed(
@@ -409,9 +404,7 @@ class SessionStore:
         failure_reason: str | None = None,
     ) -> CommittedMutation[dict[str, object]]:
         return _legacy_session_mutation(
-            self._repository(
-                self._sessions
-            ).finish_title_generation_committed(
+            self._repository(self._sessions).finish_title_generation_committed(
                 session_id, title, failure_reason=failure_reason
             )
         )
@@ -491,9 +484,7 @@ class SessionStore:
     def read_model_profile(self, run_id: str) -> ModelProfileSnapshot:
         return self._repository(self._runs).read_model_profile(run_id)
 
-    def read_run_resolution_snapshot(
-        self, run_id: str
-    ) -> RunResolutionSnapshot:
+    def read_run_resolution_snapshot(self, run_id: str) -> RunResolutionSnapshot:
         return self._repository(self._runs).read_resolution_snapshot(run_id)
 
     def run_budget(self, run_id: str) -> dict[str, int]:
@@ -515,9 +506,7 @@ class SessionStore:
     def insert_plugin_record(self, record: dict[str, object]) -> dict[str, object]:
         return self._repository(self._extensions).insert_plugin_record(record)
 
-    def set_plugin_enabled(
-        self, plugin_id: str, enabled: bool
-    ) -> dict[str, object]:
+    def set_plugin_enabled(self, plugin_id: str, enabled: bool) -> dict[str, object]:
         return self._repository(self._extensions).set_plugin_enabled(plugin_id, enabled)
 
     def remove_plugin_record(self, plugin_id: str) -> dict[str, object]:
@@ -531,9 +520,7 @@ class SessionStore:
             content_hash,
         )
 
-    def mcp_server_state(
-        self, plugin_id: str, server_id: str
-    ) -> dict[str, object]:
+    def mcp_server_state(self, plugin_id: str, server_id: str) -> dict[str, object]:
         return self._repository(self._extensions).mcp_server_state(plugin_id, server_id)
 
     def set_mcp_server_state(
@@ -556,7 +543,9 @@ class SessionStore:
         return self._repository(self._extensions).activate_tools(run_id, names)
 
     def record_mcp_tool_list_changed(self, plugin_id: str, server_id: str) -> None:
-        return self._repository(self._extensions).record_mcp_tool_list_changed(plugin_id, server_id)
+        return self._repository(self._extensions).record_mcp_tool_list_changed(
+            plugin_id, server_id
+        )
 
     def extension_event_waterline(self) -> int:
         return self._repository(self._extensions).extension_event_waterline()
@@ -618,21 +607,19 @@ class SessionStore:
     def read_step_tool_snapshot(
         self, run_id: str, model_step_index: int
     ) -> dict[str, object]:
-        return self._repository(self._execution).read_step_tool_snapshot(run_id, model_step_index)
+        return self._repository(self._execution).read_step_tool_snapshot(
+            run_id, model_step_index
+        )
 
-    def read_rule_resolution_snapshot(
-        self, snapshot_id: str
-    ) -> RuleResolutionSnapshot:
-        return self._repository(
-            self._execution
-        ).read_rule_resolution_snapshot(snapshot_id)
+    def read_rule_resolution_snapshot(self, snapshot_id: str) -> RuleResolutionSnapshot:
+        return self._repository(self._execution).read_rule_resolution_snapshot(
+            snapshot_id
+        )
 
     def read_step_resolution_snapshots(
         self, run_id: str
     ) -> tuple[StepResolutionSnapshot, ...]:
-        return self._repository(
-            self._execution
-        ).read_step_resolution_snapshots(run_id)
+        return self._repository(self._execution).read_step_resolution_snapshots(run_id)
 
     def read_current_step_fact(self, run_id: str) -> dict[str, object]:
         return self._repository(self._execution).read_current_step_fact(run_id)
@@ -643,7 +630,9 @@ class SessionStore:
     def add_effective_time_committed(
         self, run_id: str, elapsed_ms: int
     ) -> CommittedMutation[dict[str, object]] | None:
-        return self._repository(self._execution).add_effective_time_committed(run_id, elapsed_ms)
+        return self._repository(self._execution).add_effective_time_committed(
+            run_id, elapsed_ms
+        )
 
     def complete_current_step(
         self,
@@ -663,7 +652,9 @@ class SessionStore:
     def recent_progress_signatures(
         self, run_id: str, limit: int = 8
     ) -> tuple[ProgressSignature, ...]:
-        return self._repository(self._execution).recent_progress_signatures(run_id, limit)
+        return self._repository(self._execution).recent_progress_signatures(
+            run_id, limit
+        )
 
     def complete_current_model_attempt(
         self,
@@ -707,7 +698,9 @@ class SessionStore:
     def create_assistant_item(
         self, run_id: str, model_step_index: int
     ) -> dict[str, object]:
-        return self._repository(self._execution).create_assistant_item(run_id, model_step_index)
+        return self._repository(self._execution).create_assistant_item(
+            run_id, model_step_index
+        )
 
     def create_assistant_item_committed(
         self, run_id: str, model_step_index: int
@@ -717,15 +710,17 @@ class SessionStore:
             model_step_index,
         )
 
-    def create_finalization_assistant_item(
-        self, run_id: str
-    ) -> dict[str, object]:
-        return self._repository(self._execution).create_finalization_assistant_item(run_id)
+    def create_finalization_assistant_item(self, run_id: str) -> dict[str, object]:
+        return self._repository(self._execution).create_finalization_assistant_item(
+            run_id
+        )
 
     def create_finalization_assistant_item_committed(
         self, run_id: str
     ) -> CommittedMutation[dict[str, object]]:
-        return self._repository(self._execution).create_finalization_assistant_item_committed(
+        return self._repository(
+            self._execution
+        ).create_finalization_assistant_item_committed(
             run_id,
         )
 
@@ -750,7 +745,9 @@ class SessionStore:
     def complete_assistant_item_committed(
         self, item_id: str
     ) -> CommittedMutation[dict[str, object]]:
-        return self._repository(self._execution).complete_assistant_item_committed(item_id)
+        return self._repository(self._execution).complete_assistant_item_committed(
+            item_id
+        )
 
     def mark_assistant_incomplete(self, item_id: str) -> dict[str, object]:
         return self._repository(self._execution).mark_assistant_incomplete(item_id)
@@ -758,19 +755,25 @@ class SessionStore:
     def mark_assistant_incomplete_committed(
         self, item_id: str
     ) -> CommittedMutation[dict[str, object]]:
-        return self._repository(self._execution).mark_assistant_incomplete_committed(item_id)
+        return self._repository(self._execution).mark_assistant_incomplete_committed(
+            item_id
+        )
 
     def mark_assistant_incomplete_if_active_committed(
         self, item_id: str
     ) -> CommittedMutation[dict[str, object]] | None:
-        return self._repository(self._execution).mark_assistant_incomplete_if_active_committed(
+        return self._repository(
+            self._execution
+        ).mark_assistant_incomplete_if_active_committed(
             item_id,
         )
 
     def complete_assistant_and_run(
         self, item_id: str, run_id: str
     ) -> tuple[dict[str, object], dict[str, object]]:
-        return self._repository(self._execution).complete_assistant_and_run(item_id, run_id)
+        return self._repository(self._execution).complete_assistant_and_run(
+            item_id, run_id
+        )
 
     def complete_assistant_and_run_committed(
         self, item_id: str, run_id: str
@@ -892,9 +895,7 @@ class SessionStore:
         diff_hash: str | None = None,
         duration_ms: int | None = None,
     ) -> CommittedMutation[dict[str, object]]:
-        return self._repository(
-            self._execution
-        ).complete_tool_item_once_committed(
+        return self._repository(self._execution).complete_tool_item_once_committed(
             item_id,
             result_json,
             model_result_json=model_result_json,
@@ -950,9 +951,7 @@ class SessionStore:
         item_id: str,
         **values: object,
     ) -> None:
-        self._repository(self._execution).record_tool_attempt(
-            item_id, **values
-        )
+        self._repository(self._execution).record_tool_attempt(item_id, **values)
 
     def resolve_approval(
         self,
@@ -1013,9 +1012,7 @@ class SessionStore:
     def side_effect_authorized(self, item_id: str) -> bool:
         return self._repository(self._execution).side_effect_authorized(item_id)
 
-    def has_read_evidence(
-        self, run_id: str, path: str, sha256: str
-    ) -> bool:
+    def has_read_evidence(self, run_id: str, path: str, sha256: str) -> bool:
         return self._repository(self._execution).has_read_evidence(run_id, path, sha256)
 
     def record_protocol_error(self, run_id: str) -> int:
@@ -1035,13 +1032,11 @@ class SessionStore:
     def begin_finalization_attempt_committed(
         self, run_id: str, *, model_id: str
     ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
-        return self._repository(
-            self._runs
-        ).begin_finalization_attempt_committed(run_id, model_id=model_id)
+        return self._repository(self._runs).begin_finalization_attempt_committed(
+            run_id, model_id=model_id
+        )
 
-    def read_finalization_attempts(
-        self, run_id: str
-    ) -> tuple[dict[str, object], ...]:
+    def read_finalization_attempts(self, run_id: str) -> tuple[dict[str, object], ...]:
         return self._repository(self._runs).read_finalization_attempts(run_id)
 
     def stop_run(self, run_id: str, reason: str) -> dict[str, object]:
@@ -1062,9 +1057,7 @@ class SessionStore:
         attempt_status: str | None = None,
         error_code: str | None = None,
         error_message: str | None = None,
-    ) -> CommittedMutation[
-        tuple[dict[str, object] | None, dict[str, object]]
-    ]:
+    ) -> CommittedMutation[tuple[dict[str, object] | None, dict[str, object]]]:
         return self._repository(self._runs).complete_finalization_and_stop_committed(
             item_id,
             run_id,
@@ -1086,7 +1079,9 @@ class SessionStore:
     def cancel_run(
         self, run_id: str, *, operation_id: str | None = None
     ) -> dict[str, object]:
-        return self._repository(self._runs).cancel_run(run_id, operation_id=operation_id)
+        return self._repository(self._runs).cancel_run(
+            run_id, operation_id=operation_id
+        )
 
     def request_cancel_committed(
         self, run_id: str
@@ -1108,9 +1103,7 @@ class SessionStore:
     def nonterminal_run_ids(self) -> tuple[str, ...]:
         return self._repository(self._runs).nonterminal_run_ids()
 
-    def cancel_run_committed(
-        self, run_id: str
-    ) -> CommittedMutation[dict[str, object]]:
+    def cancel_run_committed(self, run_id: str) -> CommittedMutation[dict[str, object]]:
         return self._repository(self._runs).cancel_run_committed(run_id)
 
     def cancel_waiting_approval_committed(
@@ -1155,9 +1148,7 @@ class SessionStore:
     def consume_pending_inputs(self, run_id: str) -> int:
         return self._repository(self._execution).consume_pending_inputs(run_id)
 
-    def consume_pending_input_facts(
-        self, run_id: str
-    ) -> tuple[tuple[str, str], ...]:
+    def consume_pending_input_facts(self, run_id: str) -> tuple[tuple[str, str], ...]:
         return self._repository(self._execution).consume_pending_input_facts(run_id)
 
     def operation_result(

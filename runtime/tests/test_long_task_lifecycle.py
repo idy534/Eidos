@@ -11,11 +11,14 @@ from eidos_runtime.runtime.long_task import (
     LongTaskStatus,
     ResumeVerification,
     SafePoint,
-    VerificationStatus,
+    ResumeOutcome,
+    ResumeVerifier,
 )
 
 
-def test_long_task_pause_resume_cancel_uses_conditional_sqlite_facts(tmp_path: Path) -> None:
+def test_long_task_pause_resume_cancel_uses_conditional_sqlite_facts(
+    tmp_path: Path,
+) -> None:
     data = tmp_path / "data"
     data.mkdir(mode=0o700)
     database = Database(data)
@@ -45,7 +48,7 @@ def test_long_task_pause_resume_cancel_uses_conditional_sqlite_facts(tmp_path: P
             "run-1",
             ResumeVerification(
                 run_id="run-1",
-                status=VerificationStatus.VERIFIED,
+                outcome=ResumeOutcome.SAFE_RESUME,
                 reasons=(),
                 checked_at=10,
             ),
@@ -64,9 +67,9 @@ def test_long_task_pause_resume_cancel_uses_conditional_sqlite_facts(tmp_path: P
         database.close()
 
 
-def test_resume_verification_blocks_changed_workspace_or_uncertain_side_effects() -> None:
-    from eidos_runtime.runtime.long_task import ResumeVerifier
-
+def test_resume_verification_blocks_changed_workspace_or_uncertain_side_effects() -> (
+    None
+):
     verification = ResumeVerifier.verify(
         run_id="run-1",
         expected_workspace=("/workspace", 1, 2, 3),
@@ -84,9 +87,75 @@ def test_resume_verification_blocks_changed_workspace_or_uncertain_side_effects(
         side_effects_may_exist=True,
     )
 
-    assert verification.status is VerificationStatus.BLOCKED
+    assert verification.outcome is ResumeOutcome.RECONCILIATION_REQUIRED
     assert "workspace_identity_changed" in verification.reasons
     assert "git_head_changed" in verification.reasons
     assert "context_plan_changed" in verification.reasons
     assert "permission_snapshot_changed" in verification.reasons
     assert "reconciliation_required" in verification.reasons
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected"),
+    [
+        ({"expected_index_snapshot_id": "old"}, ResumeOutcome.REINDEX_REQUIRED),
+        ({"expected_rule_snapshot_id": "old"}, ResumeOutcome.REBUILD_CONTEXT),
+        ({"pending_approval": True}, ResumeOutcome.APPROVAL_REQUIRED),
+        ({"model_available": False}, ResumeOutcome.MODEL_UNAVAILABLE),
+        ({"seatbelt_ready": False}, ResumeOutcome.PERMISSION_CHANGED),
+        ({"checkpoint_integrity_valid": False}, ResumeOutcome.CANNOT_RESUME),
+        ({"durable_intent_unfinished": True}, ResumeOutcome.RECONCILIATION_REQUIRED),
+    ],
+)
+def test_resume_verification_has_typed_recovery_outcomes(
+    changes: dict[str, object], expected: ResumeOutcome
+) -> None:
+    arguments: dict[str, object] = {
+        "run_id": "run-1",
+        "expected_workspace": ("/workspace", 1, 2, 3),
+        "current_workspace": ("/workspace", 1, 2, 3),
+        "expected_git_head": "head",
+        "current_git_head": "head",
+        "expected_rule_snapshot_id": "current",
+        "current_rule_snapshot_id": "current",
+        "expected_index_snapshot_id": "current",
+        "current_index_snapshot_id": "current",
+        "side_effects_may_exist": False,
+    }
+    arguments.update(changes)
+
+    verification = ResumeVerifier.verify(**arguments)  # type: ignore[arg-type]
+
+    assert verification.outcome is expected
+
+
+def test_restart_verification_persistence_is_idempotent(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    data.mkdir(mode=0o700)
+    database = Database(data)
+    database.initialize()
+    try:
+        repository = LongTaskRepository(database)
+        repository.initialize(
+            run_id="run-1",
+            workspace_path="/workspace",
+            workspace_device=1,
+            workspace_inode=2,
+            workspace_owner=3,
+        )
+        verification = ResumeVerification(
+            run_id="run-1",
+            outcome=ResumeOutcome.SAFE_RESUME,
+            reasons=(),
+            checked_at=10,
+        )
+
+        first = repository.record_restart_verification("run-1", verification)
+        second = repository.record_restart_verification(
+            "run-1", verification.model_copy(update={"checked_at": 20})
+        )
+
+        assert second.progress_sequence == first.progress_sequence
+        assert second.last_verification == first.last_verification
+    finally:
+        database.close()

@@ -14,7 +14,7 @@ from eidos_runtime.domain.long_task import (
     LongTaskStatus,
     ResumeVerification,
     SafePoint,
-    VerificationStatus,
+    ResumeOutcome,
 )
 from eidos_runtime.domain.run import (
     Run,
@@ -79,5 +79,5 @@ __all__ = [
     "ToolAttemptStatus",
     "ToolCall",
     "ToolCallStatus",
-    "VerificationStatus",
+    "ResumeOutcome",
 ]
