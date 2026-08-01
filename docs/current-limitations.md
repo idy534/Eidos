@@ -35,7 +35,7 @@
 - `ContextCompactionVerifier` 是可复用的验证边界；兼容性的
   `ContextCompactor` 仍写入现有 `compact_summaries` 结构，因此 Event、ToolCall
   和 Repository Evidence provenance 尚未作为完整持久字段保存。
-- `application/` 已建立 Session、Run 和 TaskLifecycle 的最小边界，但部分
+- `application/` 已建立 Session、Run、Repository、Context 和 TaskLifecycle 的最小边界，但部分
   RuntimeServer handler 仍通过 `SessionStore` 兼容入口执行，尚未完成所有顶层
   use case 的迁移。
 - `Run.runtimeState` 是可选跨语言契约字段，不是持久恢复权威；当前稳定权威是 `Run.status` 加 SQLite 中的审批、Step、ToolCall 和 reconciliation 事实。

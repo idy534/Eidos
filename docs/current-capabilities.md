@@ -87,3 +87,6 @@
 - Typed long-task progress/control facts with compare-and-set pause, resume,
   cancel and interruption transitions, plus Workspace/Git/rule/index/context/
   permission/side-effect resume verification.
+- Thin `RepositoryApplication` and `ContextApplication` boundaries compose the
+  typed snapshot builders and context verification without creating a second
+  scheduler or business-fact authority.

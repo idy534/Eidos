@@ -40,8 +40,10 @@ path can migrate without changing transaction semantics.
 `protocol/registry.py` owns method lookup and object-shaped request validation.
 `RuntimeServer` keeps initialization, shutdown and health as explicit lifecycle
 special cases, while the existing public handlers remain compatible. The
-small `application/` services are use-case boundaries; they do not own the
-Runtime loop, Tool lifecycle or JSON-RPC envelopes.
+small `application/` services (`SessionApplication`, `RunApplication`,
+`RepositoryApplication`, `ContextApplication` and `TaskLifecycleApplication`)
+are use-case boundaries; they do not own the Runtime loop, Tool lifecycle or
+JSON-RPC envelopes.
 
 Repository intelligence is a bounded, immutable snapshot pipeline:
 
