@@ -4,7 +4,6 @@ import base64
 import json
 from pathlib import Path
 import sqlite3
-import time
 import uuid
 
 from eidos_runtime.db.database import (
@@ -22,11 +21,16 @@ from eidos_runtime.db.events import append_event, event_from_row
 from eidos_runtime.db.mappers import (
     _json_bytes,
     _run_from_row,
-    _session_from_row,
     _snapshot_item,
     _step_resolution_review,
 )
-from eidos_runtime.protocol.schemas import SessionDto
+from eidos_runtime.domain.session import DeletedSession, Session, SessionPage
+from eidos_runtime.persistence.mappers.session import (
+    deleted_session_from_legacy_dict,
+    session_from_legacy_dict,
+    session_from_row,
+    session_to_legacy_dict,
+)
 from eidos_runtime.runtime.state_machine import EventType
 
 DEFAULT_LIST_LIMIT = 50
@@ -66,21 +70,22 @@ SESSION_SELECT = """
 class SessionRepository(Repository):
     def create_session(
         self, workspace_root: str, *, operation_id: str | None = None
-    ) -> dict[str, object]:
+    ) -> Session:
         workspace = _canonical_workspace(workspace_root)
         if self._workspace_overlaps_data(workspace):
             raise WorkspaceBoundaryError("workspace overlaps runtime data")
         metadata = workspace.stat()
         session_id = str(uuid.uuid4())
-        now = time.time_ns() // 1_000_000
-        session = SessionDto.model_validate({
+        now = _now_ms()
+        session = session_from_row({
             "id": session_id,
-            "workspaceRoot": str(workspace),
+            "workspace_root": str(workspace),
             "title": None,
-            "taskStatus": "new",
-            "createdAt": now,
-            "updatedAt": now,
-        }).to_json_value()
+            "task_status": "new",
+            "created_at": now,
+            "updated_at": now,
+        })
+
         def write(connection: sqlite3.Connection) -> dict[str, object]:
             connection.execute(
                 """
@@ -103,20 +108,22 @@ class SessionRepository(Repository):
                 connection,
                 EventType.SESSION_CREATED,
                 now,
-                {"session": session},
+                {"session": session_to_legacy_dict(session)},
                 session_id=session_id,
             )
-            return session
-        return self._write(
+            return session_to_legacy_dict(session)
+
+        result = self._write(
             write,
             operation_id=operation_id,
             operation_scope="session/create",
             operation_request={"workspaceRoot": str(workspace)},
         )
+        return session_from_legacy_dict(result)
 
     def list_sessions(
         self, *, limit: int = DEFAULT_LIST_LIMIT, cursor: str | None = None
-    ) -> dict[str, object]:
+    ) -> SessionPage:
         cursor_state = _decode_cursor(cursor) if cursor is not None else None
         sql = SESSION_SELECT
         with self.lock:
@@ -136,20 +143,24 @@ class SessionRepository(Repository):
             ).fetchall()
         has_more = len(rows) > limit
         page = rows[:limit]
-        result: dict[str, object] = {"items": [_session_from_row(row) for row in page]}
-        if has_more:
-            result["nextCursor"] = _encode_cursor(
+        return SessionPage(
+            items=tuple(session_from_row(row) for row in page),
+            next_cursor=(
+                _encode_cursor(
                 high_water, page[-1]["creation_seq"]
+                )
+                if has_more
+                else None
             )
-        return result
+        )
 
-    def read_session(self, session_id: str) -> dict[str, object] | None:
+    def read_session(self, session_id: str) -> Session | None:
         with self.lock:
             row = self._connection().execute(
                 SESSION_SELECT + " WHERE s.id = ?",
                 (session_id,),
             ).fetchone()
-        return _session_from_row(row) if row is not None else None
+        return session_from_row(row) if row is not None else None
 
     def session_model_id(self, session_id: str) -> str | None:
         with self.lock:
@@ -169,7 +180,7 @@ class SessionRepository(Repository):
         title: str,
         *,
         operation_id: str | None = None,
-    ) -> dict[str, object]:
+    ) -> Session:
         if not title or len(title) > 60 or len(title.encode("utf-8")) > 120:
             raise ValueError("session title is invalid")
         now = _now_ms()
@@ -191,18 +202,19 @@ class SessionRepository(Repository):
             row = connection.execute(
                 SESSION_SELECT + " WHERE s.id = ?", (session_id,)
             ).fetchone()
-            return _session_from_row(row)
+            return session_to_legacy_dict(session_from_row(row))
 
-        return self._write(
+        result = self._write(
             write,
             operation_id=operation_id,
             operation_scope="session/rename",
             operation_request={"sessionId": session_id, "title": title},
         )
+        return session_from_legacy_dict(result)
 
     def begin_title_generation_committed(
         self, session_id: str
-    ) -> CommittedMutation[dict[str, object]]:
+    ) -> CommittedMutation[Session]:
         with self.lock, self._connection() as connection:
             row = connection.execute(
                 "SELECT id FROM sessions WHERE id = ?", (session_id,)
@@ -226,7 +238,7 @@ class SessionRepository(Repository):
         title: str,
         *,
         failure_reason: str | None = None,
-    ) -> CommittedMutation[dict[str, object]]:
+    ) -> CommittedMutation[Session]:
         if not title or len(title) > 60 or len(title.encode("utf-8")) > 120:
             raise ValueError("session title is invalid")
         events: list[dict[str, object]] = []
@@ -269,7 +281,7 @@ class SessionRepository(Repository):
         session_id: str,
         *,
         operation_id: str | None = None,
-    ) -> dict[str, object]:
+    ) -> DeletedSession:
         def write(connection: sqlite3.Connection) -> dict[str, object]:
             session = connection.execute(
                 "SELECT id FROM sessions WHERE id = ?", (session_id,)
@@ -398,12 +410,13 @@ class SessionRepository(Repository):
             connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             return {"deletedSessionId": session_id}
 
-        return self._write(
+        result = self._write(
             write,
             operation_id=operation_id,
             operation_scope="session/delete",
             operation_request={"sessionId": session_id},
         )
+        return deleted_session_from_legacy_dict(result)
 
     def read_session_snapshot(
         self,
@@ -478,7 +491,7 @@ class SessionRepository(Repository):
                 """,
                 (session_id,),
             ).fetchall()
-        session = _session_from_row(session_row)
+        session = session_to_legacy_dict(session_from_row(session_row))
         selected_runs = [
             _run_from_row(row, include_user_input=False)
             for row in reversed(run_rows)

@@ -45,12 +45,18 @@ from eidos_runtime.db.repositories.context import RECENT_CONTEXT_STEPS
 from eidos_runtime.db.repositories.async_operations import AsyncOperation
 from eidos_runtime.db.repositories.sessions import DEFAULT_LIST_LIMIT
 from eidos_runtime.db.schema import SCHEMA_VERSION
+from eidos_runtime.domain.session import Session
 from eidos_runtime.model.client import ModelProfileSnapshot, ModelUsage
 from eidos_runtime.model.config import DEFAULT_MODEL_ID
 from eidos_runtime.model_gateway.models import (
     CapabilitySnapshot,
     ModelProfile,
     RunModelSnapshot,
+)
+from eidos_runtime.persistence.mappers.session import (
+    deleted_session_to_legacy_dict,
+    session_page_to_legacy_dict,
+    session_to_legacy_dict,
 )
 from eidos_runtime.runtime.contracts import ProgressSignature
 from eidos_runtime.runtime.resolution import (
@@ -62,6 +68,14 @@ from eidos_runtime.runtime.resolution import (
 
 SCHEMA_REVISION = SCHEMA_VERSION
 TRepository = TypeVar("TRepository", bound=Repository)
+
+
+def _legacy_session_mutation(
+    mutation: CommittedMutation[Session],
+) -> CommittedMutation[dict[str, object]]:
+    return CommittedMutation(
+        session_to_legacy_dict(mutation.value), mutation.events
+    )
 
 
 class SessionStore:
@@ -275,18 +289,25 @@ class SessionStore:
     def create_session(
         self, workspace_root: str, *, operation_id: str | None = None
     ) -> dict[str, object]:
-        return self._repository(self._sessions).create_session(
-            workspace_root,
-            operation_id=operation_id,
+        return session_to_legacy_dict(
+            self._repository(self._sessions).create_session(
+                workspace_root,
+                operation_id=operation_id,
+            )
         )
 
     def list_sessions(
         self, *, limit: int = DEFAULT_LIST_LIMIT, cursor: str | None = None
     ) -> dict[str, object]:
-        return self._repository(self._sessions).list_sessions(limit=limit, cursor=cursor)
+        return session_page_to_legacy_dict(
+            self._repository(self._sessions).list_sessions(
+                limit=limit, cursor=cursor
+            )
+        )
 
     def read_session(self, session_id: str) -> dict[str, object] | None:
-        return self._repository(self._sessions).read_session(session_id)
+        session = self._repository(self._sessions).read_session(session_id)
+        return session_to_legacy_dict(session) if session is not None else None
 
     def session_model_id(self, session_id: str) -> str | None:
         return self._repository(self._sessions).session_model_id(session_id)
@@ -298,18 +319,22 @@ class SessionStore:
         *,
         operation_id: str | None = None,
     ) -> dict[str, object]:
-        return self._repository(self._sessions).rename_session(
-            session_id,
-            title,
-            operation_id=operation_id,
+        return session_to_legacy_dict(
+            self._repository(self._sessions).rename_session(
+                session_id,
+                title,
+                operation_id=operation_id,
+            )
         )
 
     def begin_title_generation_committed(
         self, session_id: str
     ) -> CommittedMutation[dict[str, object]]:
-        return self._repository(
-            self._sessions
-        ).begin_title_generation_committed(session_id)
+        return _legacy_session_mutation(
+            self._repository(
+                self._sessions
+            ).begin_title_generation_committed(session_id)
+        )
 
     def finish_title_generation_committed(
         self,
@@ -318,10 +343,12 @@ class SessionStore:
         *,
         failure_reason: str | None = None,
     ) -> CommittedMutation[dict[str, object]]:
-        return self._repository(
-            self._sessions
-        ).finish_title_generation_committed(
-            session_id, title, failure_reason=failure_reason
+        return _legacy_session_mutation(
+            self._repository(
+                self._sessions
+            ).finish_title_generation_committed(
+                session_id, title, failure_reason=failure_reason
+            )
         )
 
     def delete_session(
@@ -330,9 +357,11 @@ class SessionStore:
         *,
         operation_id: str | None = None,
     ) -> dict[str, object]:
-        return self._repository(self._sessions).delete_session(
-            session_id,
-            operation_id=operation_id,
+        return deleted_session_to_legacy_dict(
+            self._repository(self._sessions).delete_session(
+                session_id,
+                operation_id=operation_id,
+            )
         )
 
     def create_run(

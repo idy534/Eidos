@@ -8,7 +8,6 @@ from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.protocol.schemas import (
     ItemDto,
     RunDto,
-    SessionDto,
     StepResolutionReviewDto,
 )
 from eidos_runtime.runtime.resolution import (
@@ -18,17 +17,6 @@ from eidos_runtime.runtime.resolution import (
 
 
 MAX_SNAPSHOT_TEXT_BYTES = 192 * 1024
-
-
-def _session_from_row(row: sqlite3.Row) -> dict[str, object]:
-    return SessionDto.model_validate({
-        "id": row["id"],
-        "workspaceRoot": row["workspace_root"],
-        "title": row["title"],
-        "taskStatus": row["task_status"],
-        "createdAt": row["created_at"],
-        "updatedAt": row["updated_at"],
-    }).to_json_value()
 
 def _plugin_from_row(row: sqlite3.Row) -> dict[str, object]:
     return {
