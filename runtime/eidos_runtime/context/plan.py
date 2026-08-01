@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 import hashlib
 import json
+import time
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -94,6 +95,7 @@ class ContextPlan(EidosFrozenStrictModel):
             plan=self,
             snapshot_id=f"context_{digest}",
             snapshot_hash=digest,
+            created_at_ms=int(time.time() * 1000),
         )
 
 
@@ -105,6 +107,7 @@ class ContextSnapshot(EidosFrozenStrictModel):
     plan: ContextPlan
     snapshot_id: str
     snapshot_hash: str = Field(min_length=64, max_length=64)
+    created_at_ms: JsonSafeInt
 
     @model_validator(mode="after")
     def verify_hash(self) -> ContextSnapshot:
@@ -144,9 +147,14 @@ class ContextPlanner:
     ) -> ContextPlan:
         self._validate_snapshots(inventory, index, repository_map, retrieval)
         model_profile_hash = _hash(model_profile.model_dump(mode="json"))
-        messages: list[ContextMessage] = [ContextMessage(
+        messages: list[ContextMessage] = []
+        if instruction := rule_snapshot.model_instruction():
+            messages.append(ContextMessage(
+                role="system", section="rules", content=instruction
+            ))
+        messages.append(ContextMessage(
             role="user", section="goal", content=user_goal
-        )]
+        ))
         messages.extend(ContextMessage(role="user", section="pending_approval", content=value) for value in pending_approval_facts)
         messages.extend(ContextMessage(role="user", section="reconciliation", content=value) for value in reconciliation_facts)
         if compact_summary is not None:
@@ -238,7 +246,7 @@ class ContextPlanner:
             section_budgets=sections,
             omissions=omissions,
             diagnostics=diagnostics,
-            created_at_ms=0,
+            created_at_ms=int(time.time() * 1000),
             snapshot_hash=digest,
         )
 
@@ -282,7 +290,7 @@ def _section_budgets(messages: Iterable[ContextMessage], max_bytes: int) -> tupl
         totals[message.section] = totals.get(message.section, 0) + len(message.content.encode("utf-8"))
     priority = {
         "pending_approval": 0, "reconciliation": 1, "goal": 2,
-        "verified_summary": 3, "diff": 4, "conversation": 5,
+        "rules": 0, "verified_summary": 3, "diff": 4, "conversation": 5,
         "tool_fact": 6, "repository_evidence": 7,
     }
     return tuple(

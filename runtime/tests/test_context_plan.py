@@ -15,6 +15,12 @@ from eidos_runtime.repo_intelligence.retrieval import (
     RepositoryRetriever,
 )
 from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
+from eidos_runtime.db.database import Database
+from eidos_runtime.persistence.repository_intelligence import (
+    RepositoryIntelligenceRepository,
+    RepositoryWorkspaceIdentity,
+)
+from eidos_runtime.persistence.context_snapshots import ContextSnapshotRepository
 
 
 def _profile() -> ModelProfileSnapshot:
@@ -37,7 +43,13 @@ def test_context_plan_freezes_all_snapshots_and_reserves_output_budget(tmp_path:
     inventory = RepositoryInventoryBuilder(root).build()
     index = RepositoryIndexer(root).build(inventory)
     repository_map = RepositoryMapBuilder(root).build(inventory)
-    retrieval = RepositoryRetriever(inventory, index).retrieve(
+    database = Database(tmp_path / "data")
+    database.initialize()
+    repository = RepositoryIntelligenceRepository(database)
+    repository.commit_complete(
+        inventory, index, RepositoryWorkspaceIdentity.from_root(root)
+    )
+    retrieval = RepositoryRetriever(inventory, index, repository).retrieve(
         RepositoryRetrievalQuery(text="main", mentioned_symbols=("main",))
     )
     rules = RuleResolutionSnapshot.create(
@@ -86,6 +98,29 @@ def test_context_plan_freezes_all_snapshots_and_reserves_output_budget(tmp_path:
     assert snapshot.plan == plan
     with pytest.raises(ValidationError):
         plan.user_goal = "mutated"  # type: ignore[misc]
+    assert plan.created_at_ms > 0
+    assert snapshot.created_at_ms > 0
+    with database.transaction() as connection:
+        connection.execute(
+            "INSERT INTO sessions (id, workspace_root, created_at, updated_at) "
+            "VALUES ('session', ?, 1, 1)",
+            (str(root),),
+        )
+        connection.execute(
+            """
+            INSERT INTO runs (
+                id, session_id, user_input, model_profile_json, status,
+                created_at, updated_at
+            ) VALUES ('run', 'session', 'goal', '{}', 'running', 1, 1)
+            """
+        )
+    snapshots = ContextSnapshotRepository(database)
+    persisted = snapshots.persist(
+        run_id="run", retrieval=retrieval, snapshot=snapshot
+    )
+    assert persisted == snapshot
+    assert snapshots.read_for_model_attempt("attempt-1") == snapshot
+    database.close()
 
 
 def test_context_plan_rejects_stale_evidence_before_model_attempt(tmp_path: Path) -> None:
@@ -96,7 +131,13 @@ def test_context_plan_rejects_stale_evidence_before_model_attempt(tmp_path: Path
     inventory = RepositoryInventoryBuilder(root).build()
     index = RepositoryIndexer(root).build(inventory)
     repository_map = RepositoryMapBuilder(root).build(inventory)
-    retrieval = RepositoryRetriever(inventory, index).retrieve(
+    database = Database(tmp_path / "data")
+    database.initialize()
+    repository = RepositoryIntelligenceRepository(database)
+    repository.commit_complete(
+        inventory, index, RepositoryWorkspaceIdentity.from_root(root)
+    )
+    retrieval = RepositoryRetriever(inventory, index, repository).retrieve(
         RepositoryRetrievalQuery(text="main", mentioned_symbols=("main",))
     )
     source.write_text("def changed(): pass\n", encoding="utf-8")
@@ -112,3 +153,4 @@ def test_context_plan_rejects_stale_evidence_before_model_attempt(tmp_path: Path
             inventory=changed_inventory, index=index, repository_map=repository_map,
             retrieval=retrieval, user_goal="goal",
         )
+    database.close()

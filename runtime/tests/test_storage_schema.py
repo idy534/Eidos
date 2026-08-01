@@ -57,6 +57,9 @@ EXPECTED_TABLES = {
     "repository_chunks",
     "repository_diagnostics",
     "repository_fts",
+    "repository_retrieval_snapshots",
+    "context_plans",
+    "context_snapshots",
 }
 
 EXPECTED_COLUMNS = {
@@ -100,6 +103,7 @@ EXPECTED_COLUMNS = {
     "model_attempts": {
         "lease_id", "wire_api", "model_id", "request_timeout",
         "retry_decision_json",
+        "context_snapshot_id",
     },
     "tool_attempts": {
         "tool_call_id", "ordinal", "sandbox_type", "sandbox_requested",

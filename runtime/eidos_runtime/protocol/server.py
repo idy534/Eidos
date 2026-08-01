@@ -630,7 +630,9 @@ class RuntimeServer:
             repository_factory=RepositoryApplicationFactory(
                 self.store.repository_intelligence_repository
             ),
-            context=ContextApplication(),
+            context=ContextApplication(
+                snapshots=self.store.context_snapshot_repository()
+            ),
             task_lifecycle=task_lifecycle,
         )
 

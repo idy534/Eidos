@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import sqlite3
 
-from eidos_runtime.db.schema import V10_REPOSITORY_SCHEMA_SQL
+from eidos_runtime.db.schema import (
+    V10_CONTEXT_SCHEMA_SQL,
+    V10_MODEL_ATTEMPT_COLUMN_SQL,
+    V10_REPOSITORY_SCHEMA_SQL,
+)
 from eidos_runtime.runtime.fault_injection import hit_fault
 
 
@@ -95,7 +99,12 @@ def migrate(connection: sqlite3.Connection) -> None:
     verify_v9_structure(connection)
     executed = 0
     pending = ""
-    for line in V10_REPOSITORY_SCHEMA_SQL.splitlines(keepends=True):
+    migration_sql = (
+        V10_REPOSITORY_SCHEMA_SQL
+        + V10_CONTEXT_SCHEMA_SQL
+        + V10_MODEL_ATTEMPT_COLUMN_SQL
+    )
+    for line in migration_sql.splitlines(keepends=True):
         pending += line
         if not sqlite3.complete_statement(pending):
             continue

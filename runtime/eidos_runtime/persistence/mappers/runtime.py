@@ -233,6 +233,7 @@ def model_attempt_from_row(
         "wire_api": values.optional_text("wire_api"),
         "model_id": values.optional_text("model_id"),
         "request_timeout": values.optional_real("request_timeout"),
+        "context_snapshot_id": values.optional_text("context_snapshot_id"),
         "retry_decision_json": values.optional_json_text("retry_decision_json"),
         "usage_json": values.optional_json_text("usage_json"),
         "error_code": values.optional_text("error_code"),

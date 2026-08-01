@@ -219,6 +219,7 @@ def _model_attempt_from_row(row: sqlite3.Row) -> dict[str, object]:
         "wireApi": row["wire_api"],
         "modelId": row["model_id"],
         "requestTimeout": row["request_timeout"],
+        "contextSnapshotId": row["context_snapshot_id"],
         "retryDecision": (
             json.loads(row["retry_decision_json"])
             if row["retry_decision_json"] is not None else None

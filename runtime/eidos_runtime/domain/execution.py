@@ -106,6 +106,7 @@ class ModelAttempt(EidosFrozenStrictModel):
     wire_api: str | None = None
     model_id: str | None = None
     request_timeout: float | None = Field(default=None, ge=0)
+    context_snapshot_id: str | None = None
     retry_decision_json: str | None = None
     usage_json: str | None = None
     error_code: str | None = None

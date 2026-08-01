@@ -646,4 +646,54 @@ CREATE VIRTUAL TABLE repository_fts USING fts5(
 );
 """
 
-SCHEMA_SQL = V9_SCHEMA_SQL + V10_REPOSITORY_SCHEMA_SQL
+V10_CONTEXT_SCHEMA_SQL = """
+CREATE TABLE repository_retrieval_snapshots (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    inventory_snapshot_id TEXT NOT NULL,
+    index_snapshot_id TEXT NOT NULL,
+    snapshot_hash TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE context_plans (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    retrieval_snapshot_id TEXT NOT NULL
+        REFERENCES repository_retrieval_snapshots(id) ON DELETE RESTRICT,
+    model_profile_snapshot_hash TEXT NOT NULL,
+    rule_snapshot_id TEXT NOT NULL,
+    inventory_snapshot_id TEXT NOT NULL,
+    index_snapshot_id TEXT NOT NULL,
+    snapshot_hash TEXT NOT NULL,
+    plan_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE context_snapshots (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    model_attempt_id TEXT NOT NULL UNIQUE,
+    plan_id TEXT NOT NULL REFERENCES context_plans(id) ON DELETE RESTRICT,
+    snapshot_hash TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+"""
+
+V10_MODEL_ATTEMPT_COLUMN_SQL = """
+ALTER TABLE model_attempts ADD COLUMN context_snapshot_id TEXT
+    REFERENCES context_snapshots(id) ON DELETE RESTRICT;
+"""
+
+V10_BASE_SCHEMA_SQL = V9_SCHEMA_SQL.replace(
+    "    retry_decision_json TEXT,",
+    "    context_snapshot_id TEXT REFERENCES context_snapshots(id) ON DELETE RESTRICT,\n"
+    "    retry_decision_json TEXT,",
+)
+SCHEMA_SQL = (
+    V10_BASE_SCHEMA_SQL
+    + V10_REPOSITORY_SCHEMA_SQL
+    + V10_CONTEXT_SCHEMA_SQL
+)
