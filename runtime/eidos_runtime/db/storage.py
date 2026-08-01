@@ -455,6 +455,20 @@ class SessionStore:
     def read_runtime_start_event(self, run_id: str) -> dict[str, object]:
         return self._repository(self._runs).read_runtime_start_event(run_id)
 
+    def effective_cwd_for_run(self, run_id: str, *, workspace_root: Path) -> Path:
+        """Return the effective working directory for a run.
+
+        Falls back to workspace_root when no effective_cwd has been set
+        or when the stored value is outside the workspace boundary.
+        """
+        return self._repository(self._runs).effective_cwd_for_run(
+            run_id, workspace_root=workspace_root
+        )
+
+    def set_run_effective_cwd(self, run_id: str, cwd: Path) -> None:
+        """Persist the effective working directory for a run."""
+        self._repository(self._runs).set_run_effective_cwd(run_id, cwd)
+
     def plugin_record(self, plugin_id: str) -> dict[str, object] | None:
         return self._repository(self._extensions).plugin_record(plugin_id)
 

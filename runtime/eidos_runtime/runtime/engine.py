@@ -51,7 +51,12 @@ from eidos_runtime.sandbox.sensitive import (
     SensitiveScanner,
     default_scanner,
 )
-from eidos_runtime.sandbox.permissions import BasePermissionProfile
+from eidos_runtime.sandbox.permissions import (
+    BasePermissionProfile,
+    EffectivePermissionProfile,
+    SandboxAttempt,
+)
+from eidos_runtime.model.instructions import StepPermissionPolicy
 
 
 EMPTY_EXTENSION_SNAPSHOT = {
@@ -203,9 +208,17 @@ class RuntimeEngine:
                 dispatcher.model_definitions(snapshot.activated_names)
             )
             workspace = self.store.workspace_for_run(run.run_id)
+            effective_cwd = self.store.effective_cwd_for_run(
+                run.run_id, workspace_root=workspace.path
+            )
             rule_snapshot = rule_resolver.resolve(
                 workspace.path,
-                workspace.path,
+                effective_cwd,
+            )
+            step_policy = _build_step_policy(
+                run.resolution_snapshot.permission_profile_json,
+                run.resolution_snapshot.sandbox_policy_json,
+                run.resolution_snapshot.workspace_identity.path,
             )
             built = context_builder.build(
                 run.run_id,
@@ -214,6 +227,7 @@ class RuntimeEngine:
                 selected_skill_context=resources.selected_skill_context,
                 extra_context=run.model_context,
                 rule_resolution_snapshot=rule_snapshot,
+                step_policy=step_policy,
             )
             budget_fact = self.store.run_budget(run.run_id)
             compaction_guard = guard.observe_compaction_overflow(
@@ -627,4 +641,55 @@ class RuntimeEngine:
             self.events.publish(mutation, run=mutation.value, items=items)
 
 
+
 RuntimeLoop = RuntimeEngine
+
+
+def _build_step_policy(
+    permission_profile_json: str,
+    sandbox_policy_json: str,
+    workspace_root: str,
+) -> StepPermissionPolicy:
+    """Build a StepPermissionPolicy from the persisted run permission snapshots.
+
+    All values are read from the immutable snapshots captured at run start;
+    this never queries the DB or filesystem.
+    """
+    import json
+    try:
+        effective = EffectivePermissionProfile.model_validate_json(
+            permission_profile_json
+        )
+        network_enabled = effective.network_enabled
+        writable_roots = tuple(
+            entry.resolved_path
+            for entry in effective.entries
+            if entry.access.value in {"write", "execute"}
+        )
+    except Exception:
+        network_enabled = False
+        writable_roots = (workspace_root,)
+
+    try:
+        sandbox_data = json.loads(sandbox_policy_json)
+        sandbox_mode_raw: str = sandbox_data.get("sandboxMode", "none")
+        allow_escalated = bool(sandbox_data.get("allowEscalated", False))
+        allow_additional = bool(sandbox_data.get("allowAdditional", True))
+        rejected_ids: tuple[str, ...] = tuple(
+            str(rid) for rid in sandbox_data.get("rejectedApprovalIds", [])
+        )
+    except Exception:
+        sandbox_mode_raw = "none"
+        allow_escalated = False
+        allow_additional = True
+        rejected_ids = ()
+
+    return StepPermissionPolicy(
+        sandbox_mode=sandbox_mode_raw,
+        workspace_root=workspace_root,
+        writable_roots=writable_roots,
+        network_enabled=network_enabled,
+        allow_additional_permissions=allow_additional,
+        allow_escalated_execution=allow_escalated,
+        rejected_approval_ids=rejected_ids,
+    )

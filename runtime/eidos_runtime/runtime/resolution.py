@@ -201,8 +201,10 @@ class StepResolutionSnapshot(_FrozenModel):
     context_payload_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     context_payload_json: str
     system_prompt_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    resolved_instructions_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     final_request_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     final_request_json: str
+    effective_cwd: str
     created_at: int = Field(ge=0)
 
     @classmethod
@@ -333,15 +335,18 @@ def create_step_resolution_snapshot(
     tool_definitions: tuple[ModelToolDefinition, ...],
     instructions: ResolvedInstructions,
     workspace_version: int,
+    effective_cwd: str,
     created_at: int,
 ) -> StepResolutionSnapshot:
     context_value = list(model_context)
     context_json = canonical_json(context_value)
+    # system_text contains only system/developer-role layers (what is sent to the provider)
+    system_prompt = instructions.system_text
     request = {
         "schemaVersion": 1,
         "modelSnapshotId": run_snapshot.model_profile_snapshot_id,
         "modelSnapshotHash": run_snapshot.model_profile_snapshot_hash,
-        "systemPrompt": instructions.text,
+        "systemPrompt": system_prompt,
         "messages": context_value,
         "tools": [
             definition.model_dump(mode="json")
@@ -366,8 +371,10 @@ def create_step_resolution_snapshot(
         sandbox_policy_json=run_snapshot.sandbox_policy_json,
         context_payload_hash=canonical_sha256(context_value),
         context_payload_json=context_json,
-        system_prompt_hash=instructions.instructions_hash,
+        system_prompt_hash=canonical_sha256(system_prompt, raw_text=True),
+        resolved_instructions_hash=instructions.instructions_hash,
         final_request_hash=canonical_sha256(request),
         final_request_json=request_json,
+        effective_cwd=effective_cwd,
         created_at=created_at,
     )

@@ -1,3 +1,9 @@
+"""Schema migration tests for V11 and V12.
+
+V11: drops legacy model storage tables.
+V12: adds effective_cwd to runs; adds resolved_instructions_hash and
+     effective_cwd to step_resolution_snapshots.
+"""
 from __future__ import annotations
 
 import json
@@ -17,11 +23,14 @@ from eidos_runtime.db.schema import (  # noqa: E402
     V10_BASE_SCHEMA_SQL,
     V10_CONTEXT_SCHEMA_SQL,
     V10_REPOSITORY_SCHEMA_SQL,
+    V11_BASE_SCHEMA_SQL,
 )
 from eidos_runtime.db.storage import DATABASE_NAME, SessionStore  # noqa: E402
 
 
 class SchemaV11MigrationTests(unittest.TestCase):
+    """Upgrade from V10 → V11 → V12 (full chain)."""
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="eidos-v11-migration-")
         self.data = Path(self.temporary.name) / "data"
@@ -84,6 +93,44 @@ class SchemaV11MigrationTests(unittest.TestCase):
         connection.close()
         os.chmod(self.database, 0o600)
 
+    def _create_v11(self, *, with_facts: bool = False) -> None:
+        connection = sqlite3.connect(self.database)
+        connection.executescript(
+            V11_BASE_SCHEMA_SQL
+            + V10_REPOSITORY_SCHEMA_SQL
+            + V10_CONTEXT_SCHEMA_SQL
+        )
+        if with_facts:
+            model_config = {
+                "provider": "deepseek",
+                "model_id": "deepseek-v4-flash",
+                "wire_api": "openai_chat_completions",
+                "request_timeout": 30.0,
+            }
+            connection.execute(
+                "INSERT INTO sessions (id, workspace_root, created_at, updated_at) "
+                "VALUES ('session', '/workspace', 1, 1)"
+            )
+            connection.execute(
+                """
+                INSERT INTO runs (
+                    id, session_id, user_input, model_id, model_profile_json,
+                    status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'succeeded', 2, 2)
+                """,
+                (
+                    "run",
+                    "session",
+                    "goal",
+                    "deepseek-v4-flash",
+                    json.dumps(model_config),
+                ),
+            )
+        connection.execute("PRAGMA user_version = 11")
+        connection.commit()
+        connection.close()
+        os.chmod(self.database, 0o600)
+
     def _revision_and_tables(self) -> tuple[int, set[str]]:
         connection = sqlite3.connect(self.database)
         try:
@@ -98,7 +145,11 @@ class SchemaV11MigrationTests(unittest.TestCase):
         finally:
             connection.close()
 
-    def test_v10_upgrades_preserves_runs_and_drops_legacy_model_storage(self) -> None:
+    # ------------------------------------------------------------------
+    # V10 → V12 (two-step migration chain)
+    # ------------------------------------------------------------------
+
+    def test_v10_upgrades_to_v12_preserves_runs_and_drops_legacy_model_storage(self) -> None:
         self._create_v10(with_facts=True)
 
         store = SessionStore(self.data)
@@ -114,14 +165,25 @@ class SchemaV11MigrationTests(unittest.TestCase):
         columns = {
             row[1] for row in store.connection.execute("PRAGMA table_info(runs)")
         }
+        # V11: model_profile_id dropped
         self.assertNotIn("model_profile_id", columns)
+        # V12: effective_cwd added
+        self.assertIn("effective_cwd", columns)
         _, tables = self._revision_and_tables()
         self.assertTrue({
             "model_profiles", "model_capability_snapshots", "run_model_snapshots"
         }.isdisjoint(tables))
+        # step_resolution_snapshots gets new columns
+        srs_columns = {
+            row[1] for row in store.connection.execute(
+                "PRAGMA table_info(step_resolution_snapshots)"
+            )
+        }
+        self.assertIn("resolved_instructions_hash", srs_columns)
+        self.assertIn("effective_cwd", srs_columns)
         store.close()
 
-    def test_failure_rolls_back_to_intact_v10(self) -> None:
+    def test_v10_migration_failure_rolls_back_to_intact_v10(self) -> None:
         self._create_v10(with_facts=True)
 
         def fail_after_first_drop(connection: sqlite3.Connection) -> None:
@@ -143,8 +205,54 @@ class SchemaV11MigrationTests(unittest.TestCase):
         self.assertEqual(revision, 10)
         self.assertIn("run_model_snapshots", tables)
 
+    # ------------------------------------------------------------------
+    # V11 → V12 (single step)
+    # ------------------------------------------------------------------
+
+    def test_v11_upgrades_to_v12_adds_new_columns(self) -> None:
+        self._create_v11(with_facts=True)
+
+        store = SessionStore(self.data)
+        store.initialize()
+
+        self.assertEqual(store.health(), {"state": "ready"})
+        assert store.connection is not None
+        self.assertEqual(
+            store.connection.execute("PRAGMA user_version").fetchone()[0],
+            SCHEMA_VERSION,
+        )
+        columns = {
+            row[1] for row in store.connection.execute("PRAGMA table_info(runs)")
+        }
+        self.assertIn("effective_cwd", columns)
+        store.close()
+
+    def test_v12_migration_failure_rolls_back_to_intact_v11(self) -> None:
+        self._create_v11(with_facts=True)
+
+        def fail_on_v12(connection: sqlite3.Connection) -> None:
+            raise sqlite3.OperationalError("injected v12 migration failure")
+
+        with patch(
+            "eidos_runtime.db.migrations.v011_to_v012.migrate",
+            side_effect=fail_on_v12,
+        ):
+            store = SessionStore(self.data)
+            store.initialize()
+
+        self.assertEqual(
+            store.health(),
+            {"state": "health_only", "code": "schema_migration_failed"},
+        )
+        revision, _ = self._revision_and_tables()
+        self.assertEqual(revision, 11)
+
+    # ------------------------------------------------------------------
+    # Unsupported revisions
+    # ------------------------------------------------------------------
+
     def test_other_revisions_are_rejected_without_mutation(self) -> None:
-        for revision in (9, 12):
+        for revision in (9, 13):
             with self.subTest(revision=revision):
                 if self.database.exists():
                     self.database.unlink()
