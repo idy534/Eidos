@@ -9,7 +9,8 @@ from eidos_runtime.context.budget import ContextBudget, estimate_context_budget
 from eidos_runtime.context.facts import ContextFacts
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelContextItem, ModelToolDefinition
-from eidos_runtime.model.prompts import SYSTEM_PROMPT
+from eidos_runtime.model.instructions import InstructionResolver
+from eidos_runtime.model.prompts import ResolvedInstructions
 from eidos_runtime.extensions.skills import RetainedContextSection
 from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
 
@@ -20,6 +21,7 @@ class ContextBuild(BaseModel):
     )
 
     model_context: tuple[ModelContextItem, ...]
+    instructions: ResolvedInstructions
     budget: ContextBudget
     facts: ContextFacts
 
@@ -45,6 +47,10 @@ class ContextBuilder:
     ) -> ContextBuild:
         facts = self.store.context_projection_facts(run_id)
         profile = self.store.read_model_profile(run_id)
+        instructions = InstructionResolver().resolve(
+            rule_snapshot=rule_resolution_snapshot,
+            selected_skill_context=selected_skill_context,
+        )
         source_ids = set(
             facts.compact_summary.source_item_ids if facts.compact_summary else ()
         )
@@ -64,25 +70,16 @@ class ContextBuilder:
                 sort_keys=True,
             ),
         }]
-        if (
-            rule_resolution_snapshot is not None
-            and (instruction := rule_resolution_snapshot.model_instruction())
-            is not None
-        ):
-            context.append({
-                "type": "user",
-                "sectionId": "project-rules",
-                "content": instruction,
-            })
+        if any(section.role != "user" for section in retained_context):
+            raise ValueError(
+                "developer retained context must use an instruction layer"
+            )
         retained_by_id = {
             section.section_id: section for section in retained_context
         }
         context.extend(
             retained_by_id[key].as_model_item()
             for key in sorted(retained_by_id)
-        )
-        context.extend(
-            section.as_model_item() for section in selected_skill_context
         )
         if facts.compact_summary is not None:
             context.append({
@@ -137,7 +134,7 @@ class ContextBuilder:
         tool_calls = sum(item.get("type") == "tool_call" for item in context)
         tool_results = sum(item.get("type") == "tool_result" for item in context)
         payload = {
-            "system": SYSTEM_PROMPT,
+            "instructions": instructions.text,
             "messages": context,
             "tools": [tool.model_dump(mode="json") for tool in tool_definitions],
         }
@@ -151,4 +148,9 @@ class ContextBuilder:
         )
         if facts.candidate_overflow and budget.fits:
             budget = budget.model_copy(update={"fits": False})
-        return ContextBuild(model_context=tuple(context), budget=budget, facts=facts)
+        return ContextBuild(
+            model_context=tuple(context),
+            instructions=instructions,
+            budget=budget,
+            facts=facts,
+        )

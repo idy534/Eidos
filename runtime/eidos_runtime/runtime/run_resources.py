@@ -175,6 +175,7 @@ class RunResources:
             self.skill_catalog_snapshot, turn_id, user_input
         )
         self.selected_skill_context = (
-            (self.skills.render_selected(self.skill_catalog_snapshot, selected),)
-            if selected.selected_qualified_ids else ()
+            self.skills.render_selected(self.skill_catalog_snapshot, selected)
+            if selected.selected_qualified_ids
+            else ()
         )

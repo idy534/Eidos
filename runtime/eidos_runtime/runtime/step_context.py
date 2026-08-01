@@ -9,6 +9,7 @@ from eidos_runtime.runtime.contracts import (
 from eidos_runtime.runtime.run_resources import RunResources
 from eidos_runtime.context.budget import ContextBudget
 from eidos_runtime.model.client import ModelContextItem
+from eidos_runtime.model.prompts import ResolvedInstructions
 from eidos_runtime.tools.registry import StepToolSnapshot
 from eidos_runtime.runtime.resolution import (
     RuleResolutionSnapshot,
@@ -29,6 +30,7 @@ class StepContextFactory:
         resources: RunResources,
         *,
         model_context: tuple[ModelContextItem, ...] | None = None,
+        instructions: ResolvedInstructions,
         tool_snapshot: StepToolSnapshot | None = None,
         rule_resolution_snapshot: RuleResolutionSnapshot,
         context_budget: ContextBudget | None = None,
@@ -55,6 +57,7 @@ class StepContextFactory:
             tool_snapshot=snapshot.as_dict(),
             model_context=effective_context,
             tool_definitions=tool_definitions,
+            instructions=instructions,
             workspace_version=workspace_version,
             created_at=time.time_ns() // 1_000_000,
         )
@@ -74,6 +77,7 @@ class StepContextFactory:
             model_id=run.model_id,
             model_profile=run.model_profile,
             model_context=effective_context,
+            instructions=instructions,
             tool_snapshot=snapshot,
             tool_definitions=tool_definitions,
             workspace_identity=WorkspaceIdentitySnapshot(

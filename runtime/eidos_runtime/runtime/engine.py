@@ -256,17 +256,22 @@ class RuntimeEngine:
                         built.model_context,
                         "context_still_over_budget",
                         cancel,
+                        instructions=built.instructions,
                     )
                     return
                 continue
             if context_decision.action == LoopAction.FINALIZE:
+                reason = (
+                    "max_effective_runtime"
+                    if budget_fact["runEffectiveMsRemaining"] <= 0
+                    else "max_total_steps"
+                )
                 finalizer.finalize(
                     run.run_id,
                     built.model_context,
-                    "max_effective_runtime"
-                    if budget_fact["runEffectiveMsRemaining"] <= 0
-                    else "max_total_steps",
+                    reason,
                     cancel,
+                    instructions=built.instructions,
                 )
                 return
             if context_decision.action == LoopAction.PAUSE:
@@ -277,13 +282,20 @@ class RuntimeEngine:
                         if budget_fact["segmentEffectiveMsRemaining"] <= 0
                         else "segment_step_limit"
                     )
-                finalizer.finalize(run.run_id, built.model_context, reason, cancel)
+                finalizer.finalize(
+                    run.run_id,
+                    built.model_context,
+                    reason,
+                    cancel,
+                    instructions=built.instructions,
+                )
                 return
             try:
                 step = step_factory.create(
                     run,
                     resources,
                     model_context=built.model_context,
+                    instructions=built.instructions,
                     tool_snapshot=snapshot,
                     rule_resolution_snapshot=rule_snapshot,
                     context_budget=built.budget,
@@ -296,16 +308,26 @@ class RuntimeEngine:
                     if "time" in str(error)
                     else "segment_step_limit"
                 )
-                finalizer.finalize(run.run_id, built.model_context, reason, cancel)
-                return
-            except RunLimitReached as error:
                 finalizer.finalize(
                     run.run_id,
                     built.model_context,
+                    reason,
+                    cancel,
+                    instructions=built.instructions,
+                )
+                return
+            except RunLimitReached as error:
+                reason = (
                     "max_effective_runtime"
                     if "time" in str(error)
-                    else "max_total_steps",
+                    else "max_total_steps"
+                )
+                finalizer.finalize(
+                    run.run_id,
+                    built.model_context,
+                    reason,
                     cancel,
+                    instructions=built.instructions,
                 )
                 return
             self._resume_effective_time()
@@ -395,6 +417,7 @@ class RuntimeEngine:
                     built.model_context,
                     decision.reason or "loop_guard",
                     cancel,
+                    instructions=built.instructions,
                 )
                 return
             if decision.action == LoopAction.FAIL:
@@ -426,7 +449,13 @@ class RuntimeEngine:
             )
             if repeated is not None:
                 self.store.complete_current_step(run.run_id, "failed", reason=repeated)
-                finalizer.finalize(run.run_id, built.model_context, repeated, cancel)
+                finalizer.finalize(
+                    run.run_id,
+                    built.model_context,
+                    repeated,
+                    cancel,
+                    instructions=built.instructions,
+                )
                 return
             self._pause_at(run.run_id, SafePoint.BEFORE_TOOL, cancel)
             outcome = tools.execute(step, validation.tool_calls, cancel)
@@ -465,6 +494,7 @@ class RuntimeEngine:
                     built.model_context,
                     tool_decision.reason or "loop_guard",
                     cancel,
+                    instructions=built.instructions,
                 )
                 return
             if tool_decision.action == LoopAction.FAIL:

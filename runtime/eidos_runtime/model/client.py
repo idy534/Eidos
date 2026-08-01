@@ -113,6 +113,8 @@ class ModelClient(Protocol):
         context: tuple[ModelContextItem, ...],
         cancel: threading.Event,
         on_text_delta: Callable[[str], None],
+        *,
+        instructions: str,
         allow_tools: bool = True,
         tool_definitions: tuple[ModelToolDefinition, ...] = (),
     ) -> ModelResponse: ...
@@ -123,6 +125,7 @@ class ScriptedModel:
     responses: Sequence[ModelResponse]
     generated_title: str = "Fixture task"
     contexts: list[tuple[ModelContextItem, ...]] = field(default_factory=list)
+    instructions_history: list[str] = field(default_factory=list)
     allow_tools_history: list[bool] = field(default_factory=list)
     tool_definitions_history: list[tuple[ModelToolDefinition, ...]] = field(
         default_factory=list
@@ -141,12 +144,15 @@ class ScriptedModel:
         context: tuple[ModelContextItem, ...],
         cancel: threading.Event,
         on_text_delta: Callable[[str], None],
+        *,
+        instructions: str,
         allow_tools: bool = True,
         tool_definitions: tuple[ModelToolDefinition, ...] = (),
     ) -> ModelResponse:
         if cancel.is_set():
             return ModelResponse()
         self.contexts.append(context)
+        self.instructions_history.append(instructions)
         self.allow_tools_history.append(allow_tools)
         self.tool_definitions_history.append(tool_definitions)
         if self._index >= len(self.responses):

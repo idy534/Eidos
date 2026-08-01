@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict
 
 from eidos_runtime.db.storage import InvalidRunStateError, SessionStore
 from eidos_runtime.model.client import ModelClient, ModelContextItem
+from eidos_runtime.model.instructions import InstructionResolver
+from eidos_runtime.model.prompts import ResolvedInstructions
 from eidos_runtime.runtime.assistant_stream import AssistantStreamWriter
 from eidos_runtime.runtime.contracts import RuntimeCancelled
 from eidos_runtime.runtime.events import RuntimeEvents
@@ -82,6 +84,8 @@ class RunFinalizer:
         context: tuple[ModelContextItem, ...],
         stop_reason: str,
         cancel: threading.Event,
+        *,
+        instructions: ResolvedInstructions | None = None,
     ) -> FinalizationOutcome:
         resource = self.resources.register(
             RuntimeResourceKind.FINALIZATION,
@@ -90,7 +94,13 @@ class RunFinalizer:
         )
         resource.start()
         try:
-            return self._finalize(run_id, context, stop_reason, cancel)
+            return self._finalize(
+                run_id,
+                context,
+                stop_reason,
+                cancel,
+                instructions=instructions,
+            )
         finally:
             resource.close()
 
@@ -100,6 +110,8 @@ class RunFinalizer:
         context: tuple[ModelContextItem, ...],
         stop_reason: str,
         cancel: threading.Event,
+        *,
+        instructions: ResolvedInstructions | None,
     ) -> FinalizationOutcome:
         self.state_machine.track(RuntimeState.FINALIZING, stop_reason)
         current_run = self.store.read_run(run_id)
@@ -122,6 +134,9 @@ class RunFinalizer:
             None,
             check_cancel=lambda: _raise_finalization_cancel(request_cancel),
         )
+        resolved = InstructionResolver().for_finalization(
+            instructions or InstructionResolver().resolve()
+        )
 
         try:
             hit_fault("finalization_model_failure")
@@ -133,6 +148,7 @@ class RunFinalizer:
                 }),
                 request_cancel,
                 writer.write,
+                instructions=resolved.text,
                 allow_tools=False,
             )
             if cancel.is_set():

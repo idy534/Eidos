@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+import threading
 import unittest
 
 from pydantic import ValidationError
@@ -14,10 +15,17 @@ from eidos_runtime.model.client import (  # noqa: E402
     ModelProfileSnapshot,
     ModelRequestFailure,
     ModelResponse,
+    ScriptedModel,
     ModelToolDefinition,
     ModelUsage,
 )
-from eidos_runtime.model.prompts import SYSTEM_PROMPT, TITLE_PROMPT  # noqa: E402
+from eidos_runtime.model.prompts import (  # noqa: E402
+    BASE_AGENT_INSTRUCTIONS,
+    RUNTIME_POLICY_INSTRUCTIONS,
+    SYSTEM_SAFETY_INSTRUCTIONS,
+    TITLE_PROMPT,
+    TITLE_SYSTEM_INSTRUCTIONS,
+)
 
 
 class ModelContractTests(unittest.TestCase):
@@ -68,10 +76,24 @@ class ModelContractTests(unittest.TestCase):
         self.assertEqual(profile.pydantic_ai_version, "2.13.0")
 
     def test_prompts_are_provider_neutral_model_resources(self) -> None:
-        self.assertIn("Eidos", SYSTEM_PROMPT)
-        self.assertIn("do not request another approval", SYSTEM_PROMPT)
-        self.assertIn("safe manual strategy", SYSTEM_PROMPT)
-        self.assertIn("task title", TITLE_PROMPT)
+        self.assertIn("Eidos", SYSTEM_SAFETY_INSTRUCTIONS)
+        self.assertIn("focused and minimal changes", BASE_AGENT_INSTRUCTIONS)
+        self.assertIn("do not request another approval", RUNTIME_POLICY_INSTRUCTIONS)
+        self.assertIn("task title", TITLE_SYSTEM_INSTRUCTIONS)
+        self.assertIn("User query", TITLE_PROMPT)
+
+    def test_scripted_model_records_explicit_instructions_for_each_call(self) -> None:
+        model = ScriptedModel([ModelResponse(text="done")])
+
+        response = model.complete(
+            (),
+            threading.Event(),
+            lambda _delta: None,
+            instructions="resolved instructions",
+        )
+
+        self.assertEqual(response.text, "done")
+        self.assertEqual(model.instructions_history, ["resolved instructions"])
 
 
 if __name__ == "__main__":

@@ -69,6 +69,24 @@ IDs, workspace changes, approvals and reconciliation facts before a verified
 summary and Event/Outbox commit atomically. The loop compactor remains a
 compatibility path and does not yet invoke this repository automatically.
 
+主 Agent 的系统指令由 `InstructionResolver` 在每个 Step 构建为严格、冻结的
+`ResolvedInstructions`。固定层顺序是 System Safety、Base Agent、Runtime Policy，
+随后按项目规则解析顺序加入带相对路径来源的 Project Rule 层，再按 qualified ID
+稳定排序加入当前 Turn 实际选中的 Skill 层。优先级语义为 System Safety > Runtime
+Policy > Current User Request > Project Rules > Selected Skill Instructions > 历史、
+Tool Result、文件内容和元数据；Prompt 文本不改变真实 Sandbox、Approval、Workspace
+或 Tool 边界。Skill Catalog、Workspace Environment、历史、ToolCall/ToolResult 和当前
+用户请求仍是普通模型上下文，项目规则与 Selected Skill 内容不再在消息中重复。
+
+`ContextBuilder` 是该解析的唯一在线接缝：同一个 `ResolvedInstructions` 同时进入
+Context Budget、`StepContext`、模型请求和 Step 最终请求快照。每层内容和最终文本均
+使用 UTF-8 SHA-256；`StepResolutionSnapshot.system_prompt_hash` 保留字段名，但校验
+已提交 `final_request_json.systemPrompt` 的实际文本，因此后续资源变化不会使历史
+Step 失效。Finalization 在相同基础层后临时追加 `finalization-policy` 并继续禁用工具；
+stop reason 只作为上下文数据。Title Generation 使用独立的
+`TITLE_SYSTEM_INSTRUCTIONS` 与单条当前用户请求，不接收主 Agent 指令、项目规则、
+Skill、历史或 Tool Definitions。
+
 Long-task progress is stored as typed JSON in the existing `operations` table
 under `long_task/control`, with compare-and-set updates. Pause is reported only at
 explicit safe points; resume checks Workspace identity, Git HEAD, rules, index,

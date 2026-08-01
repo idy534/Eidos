@@ -164,6 +164,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
 
             def complete(
                 self, context, _cancel, on_text_delta,
+                *, instructions,
                 allow_tools=True, tool_definitions=(),
             ):
                 self.calls += 1
@@ -211,6 +212,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
 
             def complete(
                 self, context, _cancel, on_text_delta,
+                *, instructions,
                 allow_tools=True, tool_definitions=(),
             ):
                 self.calls += 1
@@ -237,6 +239,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
 
             def complete(
                 self, _context, _cancel, on_text_delta,
+                *, instructions,
                 allow_tools=True, tool_definitions=(),
             ):
                 self.calls += 1

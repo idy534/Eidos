@@ -86,6 +86,7 @@ class RuntimeArchitectureTests(unittest.TestCase):
 
             def complete(
                 self, _context, _cancel, on_text_delta,
+                *, instructions,
                 allow_tools=True, tool_definitions=(),
             ):
                 self.calls += 1

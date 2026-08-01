@@ -95,10 +95,12 @@ class Phase4ASkillContextTests(unittest.TestCase):
         self.assertEqual(catalog.catalog_hash, reordered.canonical_hash())
         self.assertEqual(selected.selected_qualified_ids, ("demo:review",))
         self.assertNotIn("Use the checklist.", self.skills.render_catalog(catalog).content)
-        self.assertIn(
-            "Use the checklist.",
-            self.skills.render_selected(self.snapshot, selected).content,
-        )
+        selected_context = self.skills.render_selected(self.snapshot, selected)
+        self.assertEqual(len(selected_context), 1)
+        self.assertEqual(selected_context[0].section_id, "selected-skill:demo:review")
+        self.assertEqual(selected_context[0].role, "developer")
+        self.assertEqual(selected_context[0].source, "demo")
+        self.assertIn("Use the checklist.", selected_context[0].content)
 
     def test_materialized_catalog_ignores_new_skills_until_next_run(self) -> None:
         catalog_a = self.skills.catalog_snapshot(self.snapshot)
@@ -127,9 +129,11 @@ class Phase4ASkillContextTests(unittest.TestCase):
             catalog_a, "turn-3", "@demo:review"
         )
         self.assertEqual(same_run.selected_qualified_ids, ())
+        selected_context = self.skills.render_selected(catalog_a, existing)
+        self.assertEqual(len(selected_context), 1)
         self.assertIn(
             "Use the checklist.",
-            self.skills.render_selected(catalog_a, existing).content,
+            selected_context[0].content,
         )
 
         snapshot_b = self.skills.extension_snapshot()
@@ -172,7 +176,7 @@ class Phase4ASkillContextTests(unittest.TestCase):
         catalog_section = self.skills.render_catalog(
             self.skills.catalog_snapshot(self.snapshot)
         )
-        selected_section = self.skills.render_selected(
+        selected_context = self.skills.render_selected(
             self.snapshot,
             self.skills.select_explicit(
                 self.snapshot, str(run["id"]), "Use @demo:review"
@@ -182,7 +186,7 @@ class Phase4ASkillContextTests(unittest.TestCase):
         built = ContextBuilder(self.store).build(
             run["id"],
             retained_context=(catalog_section,),
-            selected_skill_context=(selected_section,),
+            selected_skill_context=selected_context,
         )
         rendered = json.dumps(built.model_context)
         catalog_indexes = [
@@ -198,7 +202,8 @@ class Phase4ASkillContextTests(unittest.TestCase):
         self.assertLess(catalog_indexes[0], tool_index)
         self.assertEqual(rendered.count("Skill Catalog"), 1)
         self.assertNotIn("x" * 100_000, rendered)
-        self.assertIn("Use the checklist.", rendered)
+        self.assertNotIn("Use the checklist.", rendered)
+        self.assertIn("Use the checklist.", built.instructions.text)
 
     def test_tool_round_trip_keeps_one_catalog_in_retained_position(self) -> None:
         session = self.store.create_session(str(self.workspace))
@@ -219,7 +224,11 @@ class Phase4ASkillContextTests(unittest.TestCase):
         )
 
         self.assertEqual(len(model.contexts), 2)
-        for context in model.contexts:
+        for context, instructions in zip(
+            model.contexts,
+            model.instructions_history,
+            strict=True,
+        ):
             catalogs = [
                 index for index, item in enumerate(context)
                 if item.get("sectionId") == "skill-catalog"
@@ -229,6 +238,8 @@ class Phase4ASkillContextTests(unittest.TestCase):
                 sum("Skill Catalog" in str(item.get("content", "")) for item in context),
                 1,
             )
+            self.assertNotIn("Use the checklist.", json.dumps(context))
+            self.assertIn("Use the checklist.", instructions)
         second_tool_result = next(
             index for index, item in enumerate(model.contexts[1])
             if item.get("type") == "tool_result"
@@ -278,8 +289,10 @@ class Phase4ASkillContextTests(unittest.TestCase):
             second["id"], threading.Event()
         )
 
-        self.assertIn("Use the checklist.", json.dumps(first_model.contexts[0]))
+        self.assertNotIn("Use the checklist.", json.dumps(first_model.contexts[0]))
         self.assertNotIn("Use the checklist.", json.dumps(second_model.contexts[0]))
+        self.assertIn("Use the checklist.", first_model.instructions_history[0])
+        self.assertNotIn("Use the checklist.", second_model.instructions_history[0])
 
     def test_every_registered_builtin_has_one_authoritative_contract(self) -> None:
         with ToolExecutor(self.workspace) as executor:

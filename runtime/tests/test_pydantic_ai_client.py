@@ -38,7 +38,13 @@ from eidos_runtime.model.client import (  # noqa: E402
     ModelToolDefinition,
 )
 from eidos_runtime.model.config import ModelProfileSpec  # noqa: E402
-from eidos_runtime.model.prompts import SYSTEM_PROMPT  # noqa: E402
+from eidos_runtime.model.prompts import (  # noqa: E402
+    BASE_AGENT_INSTRUCTIONS,
+    RUNTIME_POLICY_INSTRUCTIONS,
+    SYSTEM_SAFETY_INSTRUCTIONS,
+    TITLE_PROMPT,
+    TITLE_SYSTEM_INSTRUCTIONS,
+)
 from eidos_runtime.model.pydantic_ai_client import (  # noqa: E402
     PydanticAIModelClient,
     _cancel_when_requested,
@@ -47,6 +53,9 @@ from eidos_runtime.model.pydantic_ai_client import (  # noqa: E402
     map_model_response,
 )
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
+
+
+TEST_INSTRUCTIONS = "Resolved instructions for this model request."
 
 
 class PydanticAIModelClientTests(unittest.TestCase):
@@ -81,6 +90,7 @@ class PydanticAIModelClientTests(unittest.TestCase):
             ({"type": "user", "content": "hi"},),
             threading.Event(),
             deltas.append,
+            instructions=TEST_INSTRUCTIONS,
         )
 
         self.assertEqual(deltas, ["Hel", "lo"])
@@ -114,7 +124,12 @@ class PydanticAIModelClientTests(unittest.TestCase):
                 with callback_lock:
                     active_callbacks -= 1
 
-        response = self.client(stream).complete((), threading.Event(), on_delta)
+        response = self.client(stream).complete(
+            (),
+            threading.Event(),
+            on_delta,
+            instructions=TEST_INSTRUCTIONS,
+        )
 
         self.assertEqual(response.text, "onetwo")
         self.assertEqual(callback_deltas, ["one", "two"])
@@ -142,7 +157,9 @@ class PydanticAIModelClientTests(unittest.TestCase):
 
         def complete() -> None:
             try:
-                client.complete((), cancel, on_delta)
+                client.complete(
+                    (), cancel, on_delta, instructions=TEST_INSTRUCTIONS
+                )
             except BaseException as error:
                 errors.append(error)
 
@@ -167,7 +184,12 @@ class PydanticAIModelClientTests(unittest.TestCase):
             raise ValueError("writer failed")
 
         with self.assertRaises(ModelRequestError) as raised:
-            self.client(stream).complete((), threading.Event(), fail_callback)
+            self.client(stream).complete(
+                (),
+                threading.Event(),
+                fail_callback,
+                instructions=TEST_INSTRUCTIONS,
+            )
 
         self.assertEqual(raised.exception.failure.code, "protocol_error")
 
@@ -186,7 +208,12 @@ class PydanticAIModelClientTests(unittest.TestCase):
                 name="list_files", json_args='{"path":"."}', tool_call_id="call-2"
             )}
 
-        response = self.client(stream).complete((), threading.Event(), lambda _delta: None)
+        response = self.client(stream).complete(
+            (),
+            threading.Event(),
+            lambda _delta: None,
+            instructions=TEST_INSTRUCTIONS,
+        )
 
         self.assertEqual(
             [(call.provider_call_id, call.name, call.arguments) for call in response.tool_calls],
@@ -200,7 +227,12 @@ class PydanticAIModelClientTests(unittest.TestCase):
         async def stream(_messages, _info):
             yield {0: DeltaToolCall(name="read_file", json_args='{"path":"a.txt"}')}
 
-        response = self.client(stream).complete((), threading.Event(), lambda _delta: None)
+        response = self.client(stream).complete(
+            (),
+            threading.Event(),
+            lambda _delta: None,
+            instructions=TEST_INSTRUCTIONS,
+        )
 
         self.assertTrue(response.tool_calls[0].provider_call_id.startswith("pyd_ai_"))
 
@@ -209,11 +241,16 @@ class PydanticAIModelClientTests(unittest.TestCase):
             yield {0: DeltaToolCall(name="read_file", json_args='["not-object"]')}
 
         with self.assertRaises(ModelRequestError) as raised:
-            self.client(stream).complete((), threading.Event(), lambda _delta: None)
+            self.client(stream).complete(
+                (),
+                threading.Event(),
+                lambda _delta: None,
+                instructions=TEST_INSTRUCTIONS,
+            )
         self.assertEqual(raised.exception.failure.code, "protocol_error")
         self.assertFalse(raised.exception.failure.retryable)
 
-    def test_context_and_tool_definitions_use_public_pydantic_types(self) -> None:
+    def test_encode_context_only_encodes_messages_without_instructions(self) -> None:
         messages = encode_context((
             {"type": "user", "content": "你好"},
             {"type": "assistant", "content": ""},
@@ -230,16 +267,30 @@ class PydanticAIModelClientTests(unittest.TestCase):
         ))
 
         self.assertIsInstance(messages[0], PAIModelRequest)
-        self.assertEqual(messages[0].instructions, SYSTEM_PROMPT)
+        self.assertTrue(all(
+            message.instructions is None
+            for message in messages
+            if isinstance(message, PAIModelRequest)
+        ))
         self.assertIsInstance(messages[0].parts[0], UserPromptPart)
         self.assertIsInstance(messages[2], PAIModelResponse)
         self.assertIsInstance(messages[2].parts[0], ToolCallPart)
         self.assertIsInstance(messages[3].parts[0], ToolReturnPart)
         self.assertIsInstance(messages[4].parts[0], UserPromptPart)
-        self.assertIn("manual strategy", messages[5].parts[0].content)
+        self.assertIn('"stopReason":"repeated_tool_call"', messages[5].parts[0].content)
+        self.assertNotIn("manual strategy", messages[5].parts[0].content)
 
-        captured = {}
-        async def stream(_messages, info):
+        with self.assertRaisesRegex(ValueError, "unsupported model context item type"):
+            encode_context(({
+                "type": "developer",
+                "content": "must use a declared instruction layer",
+            },))
+
+    def test_complete_attaches_instructions_only_to_first_model_request(self) -> None:
+        captured: dict[str, object] = {}
+
+        async def stream(messages, info):
+            captured["messages"] = messages
             captured["tools"] = info.function_tools
             captured["instructions"] = info.instructions
             yield "done"
@@ -252,13 +303,80 @@ class PydanticAIModelClientTests(unittest.TestCase):
             },
         )
         self.client(stream).complete(
-            ({"type": "user", "content": "read"},),
+            (
+                {"type": "user", "content": "first user message"},
+                {"type": "assistant", "content": "assistant response"},
+                {"type": "user", "content": "current user message"},
+            ),
             threading.Event(),
             lambda _delta: None,
+            instructions=TEST_INSTRUCTIONS,
             tool_definitions=(definition,),
         )
+        requests = [
+            message
+            for message in captured["messages"]
+            if isinstance(message, PAIModelRequest)
+        ]
+
         self.assertEqual(captured["tools"][0].name, "read_file")
-        self.assertEqual(captured["instructions"], SYSTEM_PROMPT)
+        self.assertEqual(captured["instructions"], TEST_INSTRUCTIONS)
+        self.assertEqual(
+            [request.instructions for request in requests],
+            [TEST_INSTRUCTIONS, None],
+        )
+        self.assertEqual(
+            [request.parts[0].content for request in requests],
+            ["first user message", "current user message"],
+        )
+
+    def test_empty_context_sends_one_instruction_only_request(self) -> None:
+        captured: dict[str, object] = {}
+
+        async def stream(messages, info):
+            captured["messages"] = messages
+            captured["instructions"] = info.instructions
+            yield "done"
+
+        response = self.client(stream).complete(
+            (),
+            threading.Event(),
+            lambda _delta: None,
+            instructions=TEST_INSTRUCTIONS,
+            allow_tools=False,
+        )
+        messages = captured["messages"]
+
+        self.assertEqual(response.text, "done")
+        self.assertEqual(captured["instructions"], TEST_INSTRUCTIONS)
+        self.assertEqual(len(messages), 1)
+        self.assertIsInstance(messages[0], PAIModelRequest)
+        self.assertEqual(messages[0].parts, [])
+        self.assertEqual(messages[0].instructions, TEST_INSTRUCTIONS)
+
+    def test_title_generation_uses_isolated_title_instructions(self) -> None:
+        captured: dict[str, object] = {}
+        user_input = "分析当前仓库"
+
+        async def stream(messages, info):
+            captured["messages"] = messages
+            captured["instructions"] = info.instructions
+            captured["tools"] = info.function_tools
+            yield "仓库分析"
+
+        title = self.client(stream).generate_title(user_input, threading.Event())
+        messages = captured["messages"]
+
+        self.assertEqual(title, "仓库分析")
+        self.assertEqual(captured["instructions"], TITLE_SYSTEM_INSTRUCTIONS)
+        self.assertEqual(captured["tools"], [])
+        self.assertEqual(len(messages), 1)
+        self.assertIsInstance(messages[0], PAIModelRequest)
+        self.assertEqual(messages[0].instructions, TITLE_SYSTEM_INSTRUCTIONS)
+        self.assertEqual(messages[0].parts[0].content, TITLE_PROMPT + user_input)
+        self.assertNotEqual(messages[0].instructions, SYSTEM_SAFETY_INSTRUCTIONS)
+        self.assertNotEqual(messages[0].instructions, BASE_AGENT_INSTRUCTIONS)
+        self.assertNotEqual(messages[0].instructions, RUNTIME_POLICY_INSTRUCTIONS)
 
     def test_maps_usage_finish_provider_response_id_and_state(self) -> None:
         response = map_model_response(PAIModelResponse(
@@ -326,7 +444,12 @@ class PydanticAIModelClientTests(unittest.TestCase):
         cancel = threading.Event()
         cancel.set()
         with self.assertRaises(ModelRequestError) as raised:
-            self.client(_one_chunk).complete((), cancel, lambda _delta: None)
+            self.client(_one_chunk).complete(
+                (),
+                cancel,
+                lambda _delta: None,
+                instructions=TEST_INSTRUCTIONS,
+            )
         self.assertEqual(raised.exception.failure.code, "sampling_canceled")
 
     def test_cancel_bridge_calls_public_stream_cancel(self) -> None:
@@ -377,7 +500,12 @@ class PydanticAIModelClientTests(unittest.TestCase):
 
         def complete() -> None:
             try:
-                client.complete((), cancel, lambda _delta: None)
+                client.complete(
+                    (),
+                    cancel,
+                    lambda _delta: None,
+                    instructions=TEST_INSTRUCTIONS,
+                )
             except BaseException as error:
                 result.append(error)
 
@@ -402,9 +530,19 @@ class PydanticAIModelClientTests(unittest.TestCase):
         cancel = threading.Event()
         cancel.set()
         with self.assertRaises(ModelRequestError):
-            client.complete((), cancel, lambda _delta: None)
+            client.complete(
+                (),
+                cancel,
+                lambda _delta: None,
+                instructions=TEST_INSTRUCTIONS,
+            )
 
-        response = client.complete((), threading.Event(), lambda _delta: None)
+        response = client.complete(
+            (),
+            threading.Event(),
+            lambda _delta: None,
+            instructions=TEST_INSTRUCTIONS,
+        )
         self.assertEqual(response.text, "done")
 
     def test_clients_share_kernel_and_client_close_does_not_stop_title_generation(self) -> None:
@@ -434,7 +572,12 @@ class PydanticAIModelClientTests(unittest.TestCase):
                 "done",
             )
             self.assertEqual(
-                second.complete((), threading.Event(), lambda _delta: None).text,
+                second.complete(
+                    (),
+                    threading.Event(),
+                    lambda _delta: None,
+                    instructions=TEST_INSTRUCTIONS,
+                ).text,
                 "done",
             )
             self.assertFalse(any(
@@ -496,6 +639,7 @@ class PydanticAIModelClientTests(unittest.TestCase):
             ({"type": "user", "content": "Reply with OK."},),
             threading.Event(),
             lambda _delta: None,
+            instructions=TEST_INSTRUCTIONS,
             allow_tools=False,
         )
 
