@@ -16,6 +16,7 @@ from eidos_runtime.protocol.registry import (
     MethodValidationError,
 )
 from eidos_runtime.protocol.schemas import ClosedModel
+from eidos_runtime.protocol import methods as method_dtos
 from eidos_runtime.protocol.server import RuntimeServer
 
 
@@ -193,3 +194,56 @@ def test_production_method_registrations_do_not_use_generic_object_models(
     assert len({registration.response_type for registration in server.method_registry}) == len(
         server.method_registry
     )
+    assert all(
+        not registration.response_type.__pydantic_root_model__
+        for registration in server.method_registry
+    )
+
+
+def test_method_responses_validate_nested_business_contracts() -> None:
+    session = {
+        "id": "session-1",
+        "workspaceRoot": "/workspace",
+        "taskStatus": "new",
+        "createdAt": 1,
+        "updatedAt": 1,
+    }
+    response = method_dtos.SessionListResponseDto.model_validate({
+        "items": [session],
+    })
+    assert response.to_json_value() == {"items": [session]}
+
+    with pytest.raises(ValueError):
+        method_dtos.SessionListResponseDto.model_validate({
+            "items": [{**session, "taskStatus": "invented"}],
+        })
+    with pytest.raises(ValueError):
+        method_dtos.EventListResponseDto.model_validate({
+            "items": [{
+                "eventContractVersion": 1,
+                "eventId": 9_007_199_254_740_992,
+                "eventType": "RUN_UPDATED",
+                "occurredAt": 1,
+                "payload": {},
+            }],
+            "hasMore": False,
+            "throughEventId": 1,
+        })
+    with pytest.raises(ValueError):
+        method_dtos.PluginListResponseDto.model_validate({
+            "plugins": [{
+                "schemaVersion": 1,
+                "id": "plugin",
+                "name": "Plugin",
+            }],
+        })
+
+
+def test_lifecycle_checkpoint_and_repository_responses_are_specific_models() -> None:
+    assert {
+        "run",
+        "task",
+        "resume_verification",
+    } <= set(method_dtos.RunStatusResponseDto.model_fields)
+    assert "checkpoint" in method_dtos.CheckpointCreateResponseDto.model_fields
+    assert "snapshots" in method_dtos.RepositoryStatusResponseDto.model_fields
