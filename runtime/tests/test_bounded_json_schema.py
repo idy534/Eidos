@@ -228,3 +228,77 @@ def test_first_standard_validation_error_is_deterministic() -> None:
             validator.validate({"extra": True})
         first.append(error.value.code)
     assert first == ["JSON_VALUE_ADDITIONAL_PROPERTY"] * 3
+
+
+def test_defaults_are_rebounded_after_expansion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    validator = BoundedJsonSchema({
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "payload": {"type": "string", "default": "0123456789"},
+            },
+            "additionalProperties": False,
+        },
+    })
+    value = [{}, {}, {}]
+    monkeypatch.setattr(json_schema, "MAX_VALUE_BYTES", 32)
+
+    assert_code(
+        "JSON_VALUE_TOO_LARGE",
+        lambda: validator.validate(value, apply_defaults=True),
+    )
+    assert value == [{}, {}, {}]
+
+
+@pytest.mark.parametrize(
+    ("limit_name", "limit", "property_schema", "default", "code"),
+    [
+        (
+            "MAX_NODES", 3,
+            {"type": "array", "items": {"type": "string"}},
+            ["first", "second"],
+            "JSON_VALUE_LIMIT_EXCEEDED",
+        ),
+        (
+            "MAX_DEPTH", 2,
+            {
+                "type": "array",
+                "items": {"type": "array", "items": {"type": "string"}},
+            },
+            [["default"]],
+            "JSON_VALUE_LIMIT_EXCEEDED",
+        ),
+    ],
+)
+def test_nested_defaults_are_rebounded_after_expansion(
+    monkeypatch: pytest.MonkeyPatch,
+    limit_name: str,
+    limit: int,
+    property_schema: dict[str, object],
+    default: object,
+    code: str,
+) -> None:
+    property_schema = {**property_schema, "default": default}
+    validator = BoundedJsonSchema({
+        "type": "object",
+        "properties": {"value": property_schema},
+        "additionalProperties": False,
+    })
+    monkeypatch.setattr(json_schema, limit_name, limit)
+
+    assert_code(code, lambda: validator.validate({}, apply_defaults=True))
+
+
+def test_unsafe_integer_default_is_rejected_as_an_expanded_value() -> None:
+    validator = BoundedJsonSchema({
+        "type": "object",
+        "properties": {
+            "count": {"type": "integer", "default": 9_007_199_254_740_992},
+        },
+        "additionalProperties": False,
+    })
+
+    assert_code("JSON_VALUE_INVALID", lambda: validator.validate({}, apply_defaults=True))
