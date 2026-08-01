@@ -3,10 +3,12 @@ from __future__ import annotations
 from enum import StrEnum
 import hashlib
 import json
+import os
 from pathlib import Path
 import threading
 import time
-from typing import Final
+from importlib.metadata import version
+from typing import Final, TypeVar
 
 from pydantic import Field, model_validator
 from tree_sitter import Language, Parser
@@ -19,12 +21,14 @@ from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 from eidos_runtime.repo_intelligence.inventory import (
     FileRecord,
     RepositoryInventory,
+    read_verified_file,
 )
 
 
 MAX_DIAGNOSTICS: Final = 128
 MAX_CHUNKS_PER_FILE: Final = 128
 MAX_REFERENCES_PER_FILE: Final = 512
+FactT = TypeVar("FactT", bound=EidosFrozenStrictModel)
 
 
 class IndexCanceled(RuntimeError):
@@ -163,11 +167,19 @@ class RepositoryIndexer:
     def last_complete(self) -> RepositoryIndexSnapshot | None:
         return self._last_complete
 
+    def restore_generation(self, snapshot: RepositoryIndexSnapshot) -> None:
+        if not snapshot.complete or snapshot.repository_id != _repository_id(self.root):
+            raise IndexError("index restore snapshot is incompatible")
+        if snapshot.index_generation > self._generation:
+            self._generation = snapshot.index_generation
+            self._last_complete = snapshot
+
     def build(
         self,
         inventory: RepositoryInventory,
         *,
         cancel: threading.Event | None = None,
+        previous: RepositoryIndexSnapshot | None = None,
     ) -> RepositoryIndexSnapshot:
         if not inventory.complete:
             raise IndexError("complete inventory is required")
@@ -182,10 +194,50 @@ class RepositoryIndexer:
         chunks: list[CodeChunk] = []
         diagnostics: list[ParseDiagnostic] = []
         complete = True
+        reusable_paths: set[str] = set()
+        current_files = {record.path: record for record in inventory.files}
+        if previous is not None:
+            if not previous.complete or previous.repository_id != inventory.repository_id:
+                raise IndexError("previous index generation is incompatible")
+            reusable_paths = {
+                parsed.path
+                for parsed in previous.parsed_files
+                if (
+                    (record := current_files.get(parsed.path)) is not None
+                    and record.content_hash == parsed.file_content_hash
+                    and record.language == parsed.language
+                )
+            }
+            parsed_files.extend(
+                _advance_fact(item, inventory.generation, next_generation)
+                for item in previous.parsed_files if item.path in reusable_paths
+            )
+            symbols.extend(
+                _advance_fact(item, inventory.generation, next_generation)
+                for item in previous.symbols if item.path in reusable_paths
+            )
+            imports.extend(
+                _advance_fact(item, inventory.generation, next_generation)
+                for item in previous.imports if item.path in reusable_paths
+            )
+            references.extend(
+                _advance_fact(item, inventory.generation, next_generation)
+                for item in previous.references if item.path in reusable_paths
+            )
+            chunks.extend(
+                _advance_fact(item, inventory.generation, next_generation)
+                for item in previous.chunks if item.path in reusable_paths
+            )
+            diagnostics.extend(
+                _advance_fact(item, inventory.generation, next_generation)
+                for item in previous.diagnostics if item.path in reusable_paths
+            )
         for file_record in inventory.files:
             if cancel.is_set():
                 raise IndexCanceled("index_canceled")
             if file_record.language not in _LANGUAGE_FACTORIES:
+                continue
+            if file_record.path in reusable_paths:
                 continue
             try:
                 content = self._read_verified(file_record)
@@ -219,7 +271,8 @@ class RepositoryIndexer:
             references.extend(parsed[3])
             chunks.extend(parsed[4])
             diagnostics.extend(parsed[5][:MAX_DIAGNOSTICS - len(diagnostics)])
-            complete = complete and not parsed[0].has_errors
+            # A syntax-error file is a bounded diagnostic.  The generation is
+            # complete when every eligible file reached a consistent outcome.
         if cancel.is_set():
             raise IndexCanceled("index_canceled")
         parsed_files.sort(key=lambda record: record.path.encode())
@@ -266,24 +319,28 @@ class RepositoryIndexer:
         return snapshot
 
     def _read_verified(self, record: FileRecord) -> bytes:
-        path = self.root / record.path
-        before = path.stat()
-        if not path.is_file() or path.is_symlink():
-            raise IndexError("file is not a regular non-symlink file")
-        content = path.read_bytes()
-        after = path.stat()
-        if (
-            before.st_dev,
-            before.st_ino,
-            before.st_size,
-            before.st_mtime_ns,
-        ) != (
-            after.st_dev,
-            after.st_ino,
-            after.st_size,
-            after.st_mtime_ns,
-        ):
-            raise IndexError("file changed during parse")
+        if record.device is None or record.inode is None:
+            raise IndexError("inventory file identity is incomplete")
+        root_fd = os.open(
+            self.root,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            # Recreate the exact nanosecond identity fields used by the
+            # inventory instead of trusting path-based metadata.
+            current = os.stat(record.path, dir_fd=root_fd, follow_symlinks=False)
+            if (
+                current.st_dev != record.device
+                or current.st_ino != record.inode
+                or current.st_size != record.size_bytes
+                or current.st_mtime_ns != record.mtime_ns
+            ):
+                raise IndexError("file changed after inventory")
+            content = read_verified_file(
+                root_fd, record.path, current, record.size_bytes
+            )
+        finally:
+            os.close(root_fd)
         digest = hashlib.sha256(content).hexdigest()
         if record.content_hash is None or digest != record.content_hash:
             raise IndexError("file content hash does not match inventory")
@@ -300,7 +357,7 @@ class RepositoryIndexer:
             inventory_generation=inventory_generation,
             index_generation=index_generation,
             language=language,
-            parser_version="tree-sitter-0.25",
+            parser_version=_parser_version(language),
             byte_length=len(content),
             has_errors=tree.root_node.has_error,
         )
@@ -374,6 +431,15 @@ class RepositoryIndexer:
                     inventory_generation=inventory_generation,
                     index_generation=index_generation,
                 ))
+        if parsed_file.has_errors and not diagnostics:
+            diagnostics.append(ParseDiagnostic(
+                path=record.path,
+                code="TREE_SITTER_ERROR",
+                message="syntax error",
+                start_line=tree.root_node.start_point[0],
+                inventory_generation=inventory_generation,
+                index_generation=index_generation,
+            ))
         for node in nodes:
             if node.parent is not None and node.parent.type != "module":
                 continue
@@ -471,6 +537,30 @@ def _hash(value: object) -> str:
     return hashlib.sha256(json.dumps(
         value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     ).encode("utf-8")).hexdigest()
+
+
+def _repository_id(root: Path) -> str:
+    return hashlib.sha256(str(root).encode("utf-8")).hexdigest()
+
+
+def _parser_version(language: str) -> str:
+    grammar_package = {
+        "python": "tree-sitter-python",
+        "typescript": "tree-sitter-typescript",
+        "tsx": "tree-sitter-typescript",
+        "javascript": "tree-sitter-javascript",
+        "go": "tree-sitter-go",
+    }[language]
+    return f"tree-sitter={version('tree-sitter')};{grammar_package}={version(grammar_package)}"
+
+
+def _advance_fact(
+    item: FactT, inventory_generation: int, index_generation: int
+) -> FactT:
+    return item.model_copy(update={
+        "inventory_generation": inventory_generation,
+        "index_generation": index_generation,
+    })
 
 
 _LANGUAGE_FACTORIES = {

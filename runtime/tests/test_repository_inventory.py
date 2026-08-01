@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
+import os
 
 import pytest
 
@@ -53,3 +54,31 @@ def test_inventory_cancellation_never_returns_a_complete_generation(tmp_path: Pa
 
     with pytest.raises(InventoryCanceled):
         RepositoryInventoryBuilder(root).build(cancel=cancel)
+
+
+def test_inventory_replaced_file_race_does_not_publish_stale_verified_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    target = root / "main.py"
+    target.write_bytes(b"a" * 200_000)
+    replacement = root / "replacement.py"
+    replacement.write_bytes(b"b" * 200_000)
+    original_read = os.read
+    replaced = False
+
+    def replacing_read(descriptor: int, size: int) -> bytes:
+        nonlocal replaced
+        data = original_read(descriptor, size)
+        if not replaced:
+            replaced = True
+            replacement.replace(target)
+        return data
+
+    monkeypatch.setattr(os, "read", replacing_read)
+    inventory = RepositoryInventoryBuilder(root).build()
+    record = next(item for item in inventory.files if item.path == "main.py")
+
+    assert record.verification_state.value == "metadata_only"
+    assert record.content_hash is None

@@ -66,3 +66,51 @@ def test_index_removes_stale_symbols_and_keeps_previous_complete_snapshot_on_can
     with pytest.raises(IndexCanceled):
         indexer.build(second_inventory, cancel=cancel)
     assert indexer.last_complete == second
+
+
+def test_syntax_error_is_diagnostic_but_generation_remains_usable(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "good.py").write_text("def good():\n    return 1\n", encoding="utf-8")
+    (root / "broken.py").write_text("def broken(:\n", encoding="utf-8")
+
+    inventory = RepositoryInventoryBuilder(root).build()
+    index = RepositoryIndexer(root).build(inventory)
+
+    assert index.complete is True
+    assert any(symbol.name == "good" for symbol in index.symbols)
+    assert any(item.path == "broken.py" for item in index.diagnostics)
+    assert all("tree-sitter=" in item.parser_version for item in index.parsed_files)
+
+
+def test_incremental_generation_reparses_changed_file_and_removes_deleted_facts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    first_file = root / "first.py"
+    deleted_file = root / "deleted.py"
+    first_file.write_text("def first():\n    return 1\n", encoding="utf-8")
+    deleted_file.write_text("def removed():\n    return 1\n", encoding="utf-8")
+    inventories = RepositoryInventoryBuilder(root)
+    indexer = RepositoryIndexer(root)
+    first_inventory = inventories.build()
+    first = indexer.build(first_inventory)
+    parsed: list[str] = []
+    original_parse = indexer._parse_file
+
+    def recording_parse(record, *args):
+        parsed.append(record.path)
+        return original_parse(record, *args)
+
+    monkeypatch.setattr(indexer, "_parse_file", recording_parse)
+    first_file.write_text("def changed():\n    return 2\n", encoding="utf-8")
+    deleted_file.unlink()
+    second_inventory = inventories.build()
+    second = indexer.build(second_inventory, previous=first)
+
+    assert parsed == ["first.py"]
+    assert {symbol.name for symbol in second.symbols} == {"changed"}
+    assert all(item.path != "deleted.py" for item in second.parsed_files)

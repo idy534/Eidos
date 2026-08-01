@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import os
 import threading
 from collections.abc import Callable, Iterable
 
@@ -16,12 +17,34 @@ class RepositoryChange:
 
 def coalesce_changes(
     changes: Iterable[tuple[str, str] | tuple[Change, str]],
+    *,
+    root: Path | None = None,
 ) -> tuple[RepositoryChange, ...]:
     """Normalize events; callers must reopen and verify paths afterwards."""
+    frozen_root = root.resolve(strict=True) if root is not None else None
     merged: dict[str, str] = {}
     for change, path in changes:
-        value = change.value if isinstance(change, Change) else change
-        if not path or Path(path).is_absolute() or "\x00" in path:
+        value = change.name if isinstance(change, Change) else change
+        if not path or "\x00" in path:
+            continue
+        candidate = Path(path)
+        if candidate.is_absolute():
+            if frozen_root is None:
+                continue
+            absolute = Path(os.path.abspath(candidate))
+            try:
+                path = absolute.relative_to(frozen_root).as_posix()
+            except ValueError:
+                continue
+        elif frozen_root is not None:
+            absolute = Path(os.path.abspath(frozen_root / candidate))
+            try:
+                path = absolute.relative_to(frozen_root).as_posix()
+            except ValueError:
+                continue
+        else:
+            path = candidate.as_posix()
+        if not path or path == "." or path.startswith("../"):
             continue
         previous = merged.get(path)
         if previous == "added" and value == "deleted":
@@ -51,7 +74,10 @@ class RepositoryWatchController:
             debounce=200,
             step=50,
         ):
-            normalized = coalesce_changes((change, str(path)) for change, path in changes)
+            normalized = coalesce_changes(
+                ((change, str(path)) for change, path in changes),
+                root=self.root,
+            )
             if normalized:
                 on_invalidate(normalized)
 

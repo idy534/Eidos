@@ -139,6 +139,17 @@ class RepositoryInventoryBuilder:
     def last_complete(self) -> RepositoryInventory | None:
         return self._last_snapshot
 
+    def restore_generation(self, snapshot: RepositoryInventory) -> None:
+        if (
+            not snapshot.complete
+            or snapshot.root != str(self.root)
+            or snapshot.repository_id != _repository_id(self.root)
+        ):
+            raise InventoryError("inventory restore snapshot is incompatible")
+        if snapshot.generation > self._generation:
+            self._generation = snapshot.generation
+            self._last_snapshot = snapshot
+
     def build(
         self,
         *,
@@ -256,7 +267,7 @@ class RepositoryInventoryBuilder:
                     if ignored:
                         continue
                     record = self._file_record(
-                        child, relative, metadata, generation=self._generation + 1
+                        root_fd, relative, metadata, generation=self._generation + 1
                     )
                     files.append(record)
                 if entries_seen > self.max_entries or not complete:
@@ -304,7 +315,7 @@ class RepositoryInventoryBuilder:
 
     def _file_record(
         self,
-        entry: os.DirEntry[str],
+        root_fd: int,
         relative: str,
         metadata: os.stat_result,
         *,
@@ -316,21 +327,9 @@ class RepositoryInventoryBuilder:
         verification_state = VerificationState.METADATA_ONLY
         if metadata.st_size <= self.max_hash_bytes:
             try:
-                content = Path(entry.path).read_bytes()
-                before = entry.stat(follow_symlinks=False)
-                after = entry.stat(follow_symlinks=False)
-                if (
-                    before.st_dev,
-                    before.st_ino,
-                    before.st_size,
-                    before.st_mtime_ns,
-                ) != (
-                    after.st_dev,
-                    after.st_ino,
-                    after.st_size,
-                    after.st_mtime_ns,
-                ) or len(content) != metadata.st_size:
-                    raise OSError("file changed during inventory")
+                content = read_verified_file(
+                    root_fd, relative, metadata, self.max_hash_bytes
+                )
                 content_hash = hashlib.sha256(content).hexdigest()
                 if b"\x00" not in content:
                     match = from_bytes(content[:MAX_ENCODING_SAMPLE_BYTES]).best()
@@ -357,6 +356,73 @@ class RepositoryInventoryBuilder:
             generation=generation,
             verification_state=verification_state,
         )
+
+
+def read_verified_file(
+    root_fd: int,
+    relative: str,
+    expected: os.stat_result,
+    max_bytes: int,
+) -> bytes:
+    parts = Path(relative).parts
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        raise OSError("invalid repository path")
+    opened: list[int] = []
+    parent_fd = root_fd
+    try:
+        directory_flags = (
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        for component in parts[:-1]:
+            descriptor = os.open(component, directory_flags, dir_fd=parent_fd)
+            opened.append(descriptor)
+            parent_fd = descriptor
+        descriptor = os.open(
+            parts[-1],
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent_fd,
+        )
+        opened.append(descriptor)
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or _file_identity(before) != _file_identity(expected)
+            or before.st_size > max_bytes
+        ):
+            raise OSError("file identity changed before inventory read")
+        chunks: list[bytes] = []
+        remaining = before.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, 64 * 1024))
+            if not chunk:
+                raise OSError("file was truncated during inventory read")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            raise OSError("file grew during inventory read")
+        after = os.fstat(descriptor)
+        current = os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            _file_identity(before) != _file_identity(after)
+            or _file_identity(expected) != _file_identity(current)
+        ):
+            raise OSError("file changed during inventory read")
+        return b"".join(chunks)
+    finally:
+        for descriptor in reversed(opened):
+            os.close(descriptor)
+
+
+def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        getattr(metadata, "st_ctime_ns", 0),
+    )
 
 
 def _repository_id(root: Path) -> str:
@@ -412,4 +478,5 @@ __all__ = [
     "InventoryError",
     "RepositoryInventory",
     "RepositoryInventoryBuilder",
+    "read_verified_file",
 ]

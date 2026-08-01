@@ -58,6 +58,13 @@ class RepositoryApplication:
         workspace_identity = RepositoryWorkspaceIdentity.from_root(
             self.inventory_builder.root
         )
+        restored = self.repository.read_latest_complete(
+            workspace_identity.repository_id, workspace_identity
+        )
+        if restored is not None:
+            self.inventory_builder.restore_generation(restored.inventory)
+            if restored.index is not None:
+                self.indexer.restore_generation(restored.index)
         inventory = self.inventory_builder.build(cancel=cancel)
         if not inventory.complete:
             persisted = self.repository.record_incomplete(
@@ -70,7 +77,11 @@ class RepositoryApplication:
                 complete=False,
                 persisted_snapshot=persisted,
             )
-        index = self.indexer.build(inventory, cancel=cancel)
+        index = self.indexer.build(
+            inventory,
+            cancel=cancel,
+            previous=restored.index if restored is not None else None,
+        )
         persisted = (
             self.repository.commit_complete(inventory, index, workspace_identity)
             if index.complete

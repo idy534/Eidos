@@ -38,6 +38,12 @@ def test_repository_application_persists_complete_build_and_restores_it_on_start
         source.write_text("def main() -> str:\n    return 'changed'\n", encoding="utf-8")
 
         assert application.initialize_recovery().reconciliation_required is True
+
+        restarted = RepositoryApplication(root, repository=repository)
+        rebuilt = restarted.build()
+        assert rebuilt.inventory.generation > built.inventory.generation
+        assert rebuilt.index is not None and built.index is not None
+        assert rebuilt.index.index_generation > built.index.index_generation
     finally:
         database.close()
 
