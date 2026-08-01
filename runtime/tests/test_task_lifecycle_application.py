@@ -11,11 +11,13 @@ from eidos_runtime.application.task_lifecycle import (
     RuntimeLifecyclePort,
     TaskLifecycleApplication,
 )
+from eidos_runtime.domain.long_task import LongTaskProgress
 
 
 @dataclass
 class RecordingRuntimeLifecycle:
     calls: list[tuple[LifecycleAction, str]] = field(default_factory=list)
+    status_calls: list[str] = field(default_factory=list)
 
     def pause_run(self, run_id: str) -> LifecycleResult:
         self.calls.append((LifecycleAction.PAUSE, run_id))
@@ -31,6 +33,10 @@ class RecordingRuntimeLifecycle:
         del operation_id
         self.calls.append((LifecycleAction.CANCEL, run_id))
         return LifecycleResult(action=LifecycleAction.CANCEL, accepted=True)
+
+    def run_status(self, run_id: str) -> LongTaskProgress | None:
+        self.status_calls.append(run_id)
+        return None
 
 
 @pytest.mark.parametrize(
@@ -59,3 +65,12 @@ def test_task_lifecycle_application_rejects_blank_run_ids_before_runtime_call() 
 
     assert error.value.code == "INVALID_STATE"
     assert runtime.calls == []
+
+
+def test_task_lifecycle_status_uses_the_runtime_owned_read_boundary() -> None:
+    runtime = RecordingRuntimeLifecycle()
+
+    result = TaskLifecycleApplication(runtime).status("run-1")
+
+    assert result is None
+    assert runtime.status_calls == ["run-1"]

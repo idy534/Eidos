@@ -46,5 +46,13 @@ def test_runtime_application_container_composes_all_phase_ef_boundaries(tmp_path
     assert applications.extensions is not None
     assert applications.repository_factory is not None
     assert applications.context is not None
+    assert applications.checkpoints is not None
     assert applications.task_lifecycle is not None
+
+    registered = {registration.name for registration in server.method_registry}
+    assert {
+        "run/status", "run/pause", "run/resume", "run/cancel",
+        "checkpoint/create", "checkpoint/list", "checkpoint/rewind",
+        "checkpoint/fork",
+    } <= registered
     server.close()

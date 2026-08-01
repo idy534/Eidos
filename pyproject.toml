@@ -38,7 +38,10 @@ package = false
 [tool.pytest.ini_options]
 testpaths = ["runtime/tests"]
 pythonpath = ["runtime"]
-addopts = ["-ra"]
+addopts = ["-ra", "-m", "not large_repository"]
+markers = [
+    "large_repository: separately scheduled repository scale validation",
+]
 
 [tool.ruff]
 target-version = "py311"

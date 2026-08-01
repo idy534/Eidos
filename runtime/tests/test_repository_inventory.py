@@ -82,3 +82,19 @@ def test_inventory_replaced_file_race_does_not_publish_stale_verified_content(
 
     assert record.verification_state.value == "metadata_only"
     assert record.content_hash is None
+
+
+def test_regular_ci_inventory_fixture_is_bounded_and_complete(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    for index in range(1_000):
+        (root / f"module-{index:04d}.py").write_text(
+            f"VALUE = {index}\n", encoding="utf-8"
+        )
+
+    inventory = RepositoryInventoryBuilder(
+        root, max_entries=1_100, max_scan_seconds=15.0
+    ).build()
+
+    assert inventory.complete is True
+    assert len(inventory.files) == 1_000
