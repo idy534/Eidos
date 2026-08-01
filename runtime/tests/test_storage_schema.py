@@ -46,6 +46,17 @@ EXPECTED_TABLES = {
     "rule_resolution_snapshots",
     "run_resolution_snapshots",
     "step_resolution_snapshots",
+    "repository_snapshots",
+    "repository_files",
+    "repository_directories",
+    "repository_index_generations",
+    "repository_parsed_files",
+    "repository_symbols",
+    "repository_imports",
+    "repository_references",
+    "repository_chunks",
+    "repository_diagnostics",
+    "repository_fts",
 }
 
 EXPECTED_COLUMNS = {
@@ -193,6 +204,7 @@ class StorageSchemaTests(unittest.TestCase):
             for row in connection.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
             )
+            if not row[0].startswith("repository_fts_")
         }
         indexes = {
             row[0]
@@ -215,6 +227,10 @@ class StorageSchemaTests(unittest.TestCase):
                 "one_running_finalization_attempt_per_run",
                 "one_running_async_operation_per_operation_id",
                 "one_pending_outbox_delivery_per_event",
+                "repository_snapshots_last_complete",
+                "repository_index_generations_snapshot",
+                "repository_symbols_name",
+                "repository_diagnostics_generation",
             },
         )
         for table, expected in EXPECTED_COLUMNS.items():

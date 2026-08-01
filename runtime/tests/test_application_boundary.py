@@ -9,6 +9,9 @@ from eidos_runtime.application.sessions import SessionApplication
 from eidos_runtime.db.database import Database
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.run import Run
+from eidos_runtime.persistence.repository_intelligence import (
+    RepositoryIntelligenceRepository,
+)
 from eidos_runtime.context.facts import CompactSummary, ContextFacts
 from eidos_runtime.context.plan import ContextPlanner
 from eidos_runtime.protocol.methods import (
@@ -72,18 +75,28 @@ def test_repository_application_returns_an_immutable_complete_analysis(tmp_path:
     root = tmp_path / "repo"
     root.mkdir()
     (root / "main.py").write_text("def main():\n    return 'ok'\n", encoding="utf-8")
+    data = tmp_path / "data"
+    data.mkdir(mode=0o700)
+    database = Database(data)
+    database.initialize()
+    try:
+        application = RepositoryApplication(
+            root,
+            repository=RepositoryIntelligenceRepository(database),
+        )
+        snapshot = application.build()
+        retrieval = application.retrieve(
+            snapshot,
+            RepositoryRetrievalQuery(text="main", mentioned_symbols=("main",)),
+        )
 
-    application = RepositoryApplication(root)
-    snapshot = application.build()
-    retrieval = application.retrieve(
-        snapshot,
-        RepositoryRetrievalQuery(text="main", mentioned_symbols=("main",)),
-    )
-
-    assert snapshot.complete is True
-    assert snapshot.index is not None
-    assert snapshot.repository_map is not None
-    assert retrieval.results
+        assert snapshot.complete is True
+        assert snapshot.persisted_snapshot is not None
+        assert snapshot.index is not None
+        assert snapshot.repository_map is not None
+        assert retrieval.results
+    finally:
+        database.close()
 
 
 def test_context_application_delegates_typed_plan_and_compaction_verification() -> None:

@@ -18,6 +18,12 @@ from eidos_runtime.repo_intelligence.retrieval import (
     RepositoryRetriever,
     RetrievalSnapshot,
 )
+from eidos_runtime.persistence.repository_intelligence import (
+    RepositoryIndexStatus,
+    RepositoryIntelligenceRepository,
+    RepositoryIntelligenceSnapshot,
+    RepositoryWorkspaceIdentity,
+)
 
 
 class RepositoryAnalysisSnapshot(EidosFrozenStrictModel):
@@ -27,25 +33,50 @@ class RepositoryAnalysisSnapshot(EidosFrozenStrictModel):
     index: RepositoryIndexSnapshot | None
     repository_map: RepositoryMap | None
     complete: bool
+    persisted_snapshot: RepositoryIntelligenceSnapshot | None = None
 
 
 class RepositoryApplication:
-    """Coordinates inventory, index and map builders without owning their policy."""
+    """Coordinates persisted repository generations without owning scan policy."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        repository: RepositoryIntelligenceRepository,
+    ) -> None:
         self.inventory_builder = RepositoryInventoryBuilder(root)
         self.indexer = RepositoryIndexer(root)
         self.map_builder = RepositoryMapBuilder(root)
+        self.repository = repository
+        self.workspace_identity = RepositoryWorkspaceIdentity.from_root(root)
 
     def build(
         self, *, cancel: threading.Event | None = None
     ) -> RepositoryAnalysisSnapshot:
+        workspace_identity = RepositoryWorkspaceIdentity.from_root(
+            self.inventory_builder.root
+        )
         inventory = self.inventory_builder.build(cancel=cancel)
         if not inventory.complete:
+            persisted = self.repository.record_incomplete(
+                inventory, None, workspace_identity
+            )
             return RepositoryAnalysisSnapshot(
-                inventory=inventory, index=None, repository_map=None, complete=False
+                inventory=inventory,
+                index=None,
+                repository_map=None,
+                complete=False,
+                persisted_snapshot=persisted,
             )
         index = self.indexer.build(inventory, cancel=cancel)
+        persisted = (
+            self.repository.commit_complete(inventory, index, workspace_identity)
+            if index.complete
+            else self.repository.record_incomplete(
+                inventory, index, workspace_identity
+            )
+        )
         repository_map = (
             self.map_builder.build(inventory) if index.complete else None
         )
@@ -54,7 +85,34 @@ class RepositoryApplication:
             index=index,
             repository_map=repository_map,
             complete=index.complete and repository_map is not None,
+            persisted_snapshot=persisted,
         )
+
+    def initialize_recovery(self) -> RepositoryIndexStatus:
+        """Read one complete persisted generation without blocking startup.
+
+        The later watcher/reconciliation stage owns discovery of new paths. This
+        basis only compares every previously verified record to its current
+        metadata and reports whether a bounded reconciliation is needed.
+        """
+
+        identity = RepositoryWorkspaceIdentity.from_root(self.inventory_builder.root)
+        status = self.repository.read_status(identity)
+        restored = self.repository.read_latest_complete(
+            identity.repository_id, identity
+        )
+        if restored is None:
+            return status
+        return status.model_copy(update={
+            "reconciliation_required": (
+                status.reconciliation_required
+                or _inventory_metadata_changed(self.inventory_builder.root, restored.inventory)
+            ),
+        })
+
+    def restore_latest_complete(self) -> RepositoryIntelligenceSnapshot | None:
+        identity = RepositoryWorkspaceIdentity.from_root(self.inventory_builder.root)
+        return self.repository.read_latest_complete(identity.repository_id, identity)
 
     def retrieve(
         self,
@@ -64,6 +122,27 @@ class RepositoryApplication:
         if not snapshot.complete or snapshot.index is None:
             raise ValueError("complete repository analysis is required")
         return RepositoryRetriever(snapshot.inventory, snapshot.index).retrieve(query)
+
+
+def _inventory_metadata_changed(root: Path, inventory: RepositoryInventory) -> bool:
+    for record in inventory.files:
+        try:
+            metadata = (root / record.path).lstat()
+        except OSError:
+            return True
+        if (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_size,
+            metadata.st_mtime_ns,
+        ) != (
+            record.device,
+            record.inode,
+            record.size_bytes,
+            record.mtime_ns,
+        ):
+            return True
+    return False
 
 
 __all__ = ["RepositoryAnalysisSnapshot", "RepositoryApplication"]
