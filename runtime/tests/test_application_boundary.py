@@ -7,33 +7,39 @@ from eidos_runtime.application.repository import RepositoryApplication
 from eidos_runtime.application.runs import RunApplication
 from eidos_runtime.application.sessions import SessionApplication
 from eidos_runtime.db.database import Database
-from eidos_runtime.db.repositories.sessions import SessionRepository
+from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.run import Run
-from eidos_runtime.domain.session import Session
 from eidos_runtime.context.facts import CompactSummary, ContextFacts
 from eidos_runtime.context.plan import ContextPlanner
+from eidos_runtime.protocol.methods import (
+    SessionCreateRequestDto,
+    SessionListRequestDto,
+    SessionReadRequestDto,
+)
 from eidos_runtime.repo_intelligence.retrieval import RepositoryRetrievalQuery
 
 
-def test_session_application_returns_domain_records_without_wire_dictionaries(
+def test_session_application_returns_method_specific_results_over_the_store_port(
     tmp_path: Path,
 ) -> None:
     data = tmp_path / "data"
     workspace = tmp_path / "workspace"
     data.mkdir(mode=0o700)
     workspace.mkdir()
-    database = Database(data)
-    database.initialize()
+    store = SessionStore(data)
+    store.initialize()
     try:
-        application = SessionApplication(SessionRepository(database))
-        created = application.create(str(workspace))
-        page = application.list()
+        application = SessionApplication(store, scan_text=lambda value: value)
+        created = application.create(SessionCreateRequestDto(workspaceRoot=str(workspace)))
+        page = application.list(SessionListRequestDto())
 
-        assert isinstance(created, Session)
-        assert page.items == (created,)
-        assert application.read(created.id) == created
+        assert page.root["items"] == [created.root]
+        snapshot = application.read_snapshot(
+            SessionReadRequestDto(sessionId=str(created.root["id"]))
+        )
+        assert snapshot.root["session"] == created.root
     finally:
-        database.close()
+        store.close()
 
 
 def test_run_application_reads_the_typed_repository_seam(tmp_path: Path) -> None:

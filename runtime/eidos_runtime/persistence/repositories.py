@@ -77,6 +77,19 @@ class TypedRuntimeRepository(Repository):
             ).fetchone()
         return approval_from_row(row) if row is not None else None
 
+    def read_pending_approval(self, run_id: str) -> Approval | None:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT * FROM approvals
+                WHERE run_id = ? AND status = 'pending'
+                ORDER BY creation_seq ASC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        return approval_from_row(row) if row is not None else None
+
     def list_model_attempts(self, run_id: str) -> tuple[ModelAttempt, ...]:
         with self.lock:
             rows = self._connection().execute(

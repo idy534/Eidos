@@ -64,7 +64,18 @@ class _BlockingPluginCatalog:
     def import_directory(self, _path: Path) -> dict[str, object]:
         self.entered.set()
         self.release.wait(1)
-        return {"id": "fixture-plugin"}
+        return {
+            "schemaVersion": 1,
+            "id": "fixture-plugin",
+            "name": "Fixture",
+            "version": "1.0.0",
+            "description": "Blocking fixture",
+            "contentHash": "a" * 64,
+            "enabled": True,
+            "status": "installed",
+            "installedAt": 1,
+            "updatedAt": 1,
+        }
 
     def cleanup_removed(self) -> None:
         pass
@@ -103,9 +114,14 @@ class AsyncTitleTests(unittest.TestCase):
 
     def _start(self) -> float:
         started = time.monotonic()
-        self.server.start_run("client-run", {
-            "sessionId": self.session["id"],
-            "userInput": "请分析这个仓库",
+        self.server.handle({
+            "jsonrpc": "2.0",
+            "id": "client-run",
+            "method": "run/start",
+            "params": {
+                "sessionId": self.session["id"],
+                "userInput": "请分析这个仓库",
+            },
         })
         return time.monotonic() - started
 
@@ -189,8 +205,11 @@ class AsyncTitleTests(unittest.TestCase):
         plugins = _BlockingPluginCatalog()
         self.server.plugins = plugins  # type: ignore[assignment]
         started = time.monotonic()
-        self.server.import_plugin("client-plugin", {
-            "sourcePath": str(self.workspace),
+        self.server.handle({
+            "jsonrpc": "2.0",
+            "id": "client-plugin",
+            "method": "plugin/import",
+            "params": {"sourcePath": str(self.workspace)},
         })
         self.assertLess(time.monotonic() - started, 0.1)
         self.assertTrue(plugins.entered.wait(1))
