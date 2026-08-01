@@ -45,6 +45,13 @@ from eidos_runtime.model_gateway.models import (
     WireAPI,
 )
 from eidos_runtime.model_gateway.presets import PRESETS
+from eidos_runtime.protocol.registry import (
+    JsonObjectParams,
+    JsonObjectResult,
+    MethodRegistration,
+    MethodRegistry,
+    MethodValidationError,
+)
 from eidos_runtime.protocol.schemas import JsonRpcRequestDto, JsonRpcResponse
 from eidos_runtime.runtime.supervisor import (
     RunCancelTimeout,
@@ -338,6 +345,7 @@ class RuntimeServer:
             lambda: self.sensitive,
             self._cleanup_extensions,
         )
+        self.method_registry = self._build_method_registry()
 
     def handle(self, message: object) -> None:
         if not isinstance(message, dict):
@@ -381,112 +389,84 @@ class RuntimeServer:
         if self.store.health_state != "ready":
             self.send(business_error(request_id, "STORAGE_HEALTH_ONLY"))
             return
+        registration = self.method_registry.get(method)
         if (
-            self.supervisor.lifecycle is not RuntimeLifecycle.RUNNING
-            and method in {
-                "run/start",
-                "model/configure",
-                "model_profile/create",
-                "model_profile/update",
-                "model_profile/delete",
-                "plugin/import",
-                "plugin/setEnabled",
-                "plugin/remove",
-                "mcp/setEnabled",
-            }
+            registration is not None
+            and self.supervisor.lifecycle is not RuntimeLifecycle.RUNNING
+            and not registration.allowed_when_draining
         ):
             self.send(business_error(request_id, "RUNTIME_DRAINING"))
             return
         if (
-            self.supervisor.control_state is RuntimeControlState.RECONFIGURING
-            and method in {"run/start", "model/configure"}
+            registration is not None
+            and self.supervisor.control_state is RuntimeControlState.RECONFIGURING
+            and not registration.allowed_during_reconfiguration
         ):
             self.send(business_error(request_id, "RUNTIME_RECONFIGURING"))
             return
-
-        if method == "session/create":
-            self.create_session(request_id, params)
+        try:
+            if self.method_registry.dispatch(method, request_id, params):
+                return
+        except MethodValidationError:
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
             return
-        if method == "session/list":
-            self.list_sessions(request_id, params)
-            return
-        if method == "session/read":
-            self.read_session(request_id, params)
-            return
-        if method == "session/rename":
-            self.rename_session(request_id, params)
-            return
-        if method == "session/delete":
-            self.delete_session(request_id, params)
-            return
-        if method == "event/list":
-            self.list_events(request_id, params)
-            return
-        if method == "run/start":
-            self.start_run(request_id, params)
-            return
-        if method == "run/cancel":
-            self.cancel_run(request_id, params)
-            return
-        if method == "model/status":
-            self.model_status(request_id, params)
-            return
-        if method == "model/list":
-            self.list_models(request_id, params)
-            return
-        if method == "model/configure":
-            self.configure_model(request_id, params)
-            return
-        if method == "model_profile/list":
-            self.list_model_profiles(request_id, params)
-            return
-        if method == "model_profile/get":
-            self.get_model_profile(request_id, params)
-            return
-        if method == "model_profile/create":
-            self.create_model_profile(request_id, params)
-            return
-        if method == "model_profile/update":
-            self.update_model_profile(request_id, params)
-            return
-        if method == "model_profile/delete":
-            self.delete_model_profile(request_id, params)
-            return
-        if method == "model_profile/list_presets":
-            self.list_model_presets(request_id, params)
-            return
-        if method == "plugin/list":
-            self.list_plugins(request_id, params)
-            return
-        if method == "plugin/import":
-            self.import_plugin(request_id, params)
-            return
-        if method == "plugin/setEnabled":
-            self.set_plugin_enabled(request_id, params)
-            return
-        if method == "plugin/remove":
-            self.remove_plugin(request_id, params)
-            return
-        if method == "skill/list":
-            self.list_skills(request_id, params)
-            return
-        if method == "skill/read":
-            self.read_skill(request_id, params)
-            return
-        if method == "mcp/list":
-            self.list_mcp_servers(request_id, params)
-            return
-        if method == "mcp/setEnabled":
-            self.set_mcp_enabled(request_id, params)
-            return
-        if method == "extension/read":
-            self.read_extensions(request_id, params)
-            return
-        if method == "extension/readEvents":
-            self.read_extension_events(request_id, params)
-            return
-
         self.send(protocol_error(request_id, -32601, "Method not found"))
+
+    def _build_method_registry(self) -> MethodRegistry:
+        registry = MethodRegistry()
+        handlers = {
+            "session/create": self.create_session,
+            "session/list": self.list_sessions,
+            "session/read": self.read_session,
+            "session/rename": self.rename_session,
+            "session/delete": self.delete_session,
+            "event/list": self.list_events,
+            "run/start": self.start_run,
+            "run/cancel": self.cancel_run,
+            "model/status": self.model_status,
+            "model/list": self.list_models,
+            "model/configure": self.configure_model,
+            "model_profile/list": self.list_model_profiles,
+            "model_profile/get": self.get_model_profile,
+            "model_profile/create": self.create_model_profile,
+            "model_profile/update": self.update_model_profile,
+            "model_profile/delete": self.delete_model_profile,
+            "model_profile/list_presets": self.list_model_presets,
+            "plugin/list": self.list_plugins,
+            "plugin/import": self.import_plugin,
+            "plugin/setEnabled": self.set_plugin_enabled,
+            "plugin/remove": self.remove_plugin,
+            "skill/list": self.list_skills,
+            "skill/read": self.read_skill,
+            "mcp/list": self.list_mcp_servers,
+            "mcp/setEnabled": self.set_mcp_enabled,
+            "extension/read": self.read_extensions,
+            "extension/readEvents": self.read_extension_events,
+        }
+        draining_blocked = {
+            "run/start",
+            "model/configure",
+            "model_profile/create",
+            "model_profile/update",
+            "model_profile/delete",
+            "plugin/import",
+            "plugin/setEnabled",
+            "plugin/remove",
+            "mcp/setEnabled",
+        }
+        reconfiguration_blocked = {"run/start", "model/configure"}
+        for name, handler in handlers.items():
+            registry.register(MethodRegistration(
+                name=name,
+                request_type=JsonObjectParams,
+                response_type=JsonObjectResult,
+                handler=lambda request_id, params, handler=handler: handler(
+                    request_id, params.root
+                ),
+                allowed_when_draining=name not in draining_blocked,
+                allowed_during_reconfiguration=name not in reconfiguration_blocked,
+            ))
+        return registry
 
     def initialize(self, request_id: str, params: object) -> None:
         if not valid_initialize_params(params):
