@@ -116,6 +116,46 @@ class RowReader:
             return None
         return sqlite_safe_integer(value, record=self.record, field=field)
 
+    def boolean(self, field: str) -> bool:
+        value = sqlite_safe_integer(
+            self.value(field), record=self.record, field=field
+        )
+        if value not in (0, 1):
+            self._invalid(field)
+        return bool(value)
+
+    def optional_boolean(self, field: str) -> bool | None:
+        value = self.value(field)
+        if value is None:
+            return None
+        return self.boolean(field)
+
+    def real(self, field: str) -> float:
+        value = self.value(field)
+        if type(value) not in (int, float) or not math.isfinite(value):
+            self._invalid(field)
+        return float(value)
+
+    def optional_real(self, field: str) -> float | None:
+        value = self.value(field)
+        if value is None:
+            return None
+        return self.real(field)
+
+    def json_text(self, field: str) -> str:
+        value = self.text(field)
+        try:
+            json.loads(value, parse_constant=lambda _value: _invalid_json())
+        except (TypeError, ValueError, json.JSONDecodeError):
+            _raise_json_invalid(self.record, field)
+        return value
+
+    def optional_json_text(self, field: str) -> str | None:
+        value = self.value(field)
+        if value is None:
+            return None
+        return self.json_text(field)
+
     def _invalid(self, field: str) -> None:
         raise PersistenceCorruptionError(
             "persistence_value_invalid",

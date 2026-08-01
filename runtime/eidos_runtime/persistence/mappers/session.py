@@ -21,6 +21,22 @@ from eidos_runtime.persistence.errors import PersistenceCorruptionError
 
 def session_from_row(row: RowValues | Mapping[str, object]) -> Session:
     values = RowReader(row, record="session")
+    # Read scalar columns in the persisted record's stable order.  Apart from
+    # making corruption diagnostics deterministic, this ensures a partial row
+    # reports its first missing column instead of a later enum conversion.
+    session_id = values.text("id")
+    workspace_root = values.text("workspace_root")
+    title = values.optional_text("title")
+    created_at = utc_datetime_from_millis(
+        values.value("created_at"),
+        record="session",
+        field="created_at",
+    )
+    updated_at = utc_datetime_from_millis(
+        values.value("updated_at"),
+        record="session",
+        field="updated_at",
+    )
     task_status_value = values.text("task_status")
     try:
         task_status = SessionTaskStatus(task_status_value)
@@ -32,20 +48,12 @@ def session_from_row(row: RowValues | Mapping[str, object]) -> Session:
         ) from None
     try:
         return Session(
-            id=values.text("id"),
-            workspace_root=values.text("workspace_root"),
-            title=values.optional_text("title"),
+            id=session_id,
+            workspace_root=workspace_root,
+            title=title,
             task_status=task_status,
-            created_at=utc_datetime_from_millis(
-                values.value("created_at"),
-                record="session",
-                field="created_at",
-            ),
-            updated_at=utc_datetime_from_millis(
-                values.value("updated_at"),
-                record="session",
-                field="updated_at",
-            ),
+            created_at=created_at,
+            updated_at=updated_at,
         )
     except ValidationError as error:
         field = _validation_field(error)
