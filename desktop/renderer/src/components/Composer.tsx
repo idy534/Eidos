@@ -13,12 +13,12 @@ export interface ComposerProps {
   modelLoading: boolean;
   isSubmitting: boolean;
   submitKind: "start" | undefined;
-  hasRuns: boolean;
   cancelingRunId: string | undefined;
   onInputChange: (value: string) => void;
   onSubmit: () => void;
   onCancel: () => void;
   onModelChange: (id: ModelId) => void;
+  onOpenModelSettings: () => void;
 }
 
 export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function Composer({
@@ -31,12 +31,12 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   modelLoading,
   isSubmitting,
   submitKind,
-  hasRuns,
   cancelingRunId,
   onInputChange,
   onSubmit,
   onCancel,
   onModelChange,
+  onOpenModelSettings,
 }, forwardedRef) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   useImperativeHandle(forwardedRef, () => textareaRef.current as HTMLTextAreaElement);
@@ -81,9 +81,8 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       ? "存储只读，暂无法启动 Run"
       : modelConfigured
         ? "例如：阅读这个项目并说明如何启动"
-        : "请先配置 DeepSeek API Key";
+        : "请先在设置中添加模型";
 
-  const showModelSelect = isIdle && !hasRuns;
   const statusLabel = modelLoading
     ? "正在加载模型…"
     : composerMode === "running" || composerMode === "starting"
@@ -135,24 +134,24 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       />
       <div className="composer-actions">
         <div className="composer-meta">
-          {showModelSelect ? (
-            <>
-              <label htmlFor="run-model">本次模型</label>
-              <select
-                id="run-model"
-                value={selectedModelId ?? ""}
-                disabled={composerMode !== "idle" || modelLoading || isSubmitting}
-                onChange={(e) => onModelChange(e.target.value as ModelId)}
-              >
-                {modelList?.models.map((option) => (
-                  <option key={option.id} value={option.id} disabled={!option.selectable}>
-                    {option.displayName}
-                  </option>
-                ))}
-              </select>
-            </>
-          ) : (
-            <span>{statusLabel}</span>
+          <label htmlFor="run-model">本次模型</label>
+          <select
+            id="run-model"
+            value={selectedModelId ?? ""}
+            disabled={composerMode !== "idle" || modelLoading || isSubmitting || !modelConfigured}
+            onChange={(e) => onModelChange(e.target.value as ModelId)}
+          >
+            {modelList?.models.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.name}
+              </option>
+            ))}
+          </select>
+          {!isIdle && <span>{statusLabel}</span>}
+          {!modelConfigured && (
+            <Button type="button" variant="ghost" size="small" onClick={onOpenModelSettings}>
+              前往模型设置
+            </Button>
           )}
         </div>
 

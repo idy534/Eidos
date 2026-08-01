@@ -30,13 +30,11 @@ export const IPC = {
   RUN_CANCEL: "run:cancel",
 
   // Model
-  MODEL_STATUS: "model:status",
+  MODEL_PRESETS: "model:presets",
   MODEL_LIST: "model:list",
-  MODEL_CONFIGURE: "model:configure",
-  MODEL_PROFILE_LIST: "model-profile:list",
-  MODEL_PROFILE_CREATE: "model-profile:create",
-  MODEL_PROFILE_UPDATE: "model-profile:update",
-  MODEL_PROFILE_DELETE: "model-profile:delete",
+  MODEL_CREATE: "model:create",
+  MODEL_UPDATE: "model:update",
+  MODEL_DELETE: "model:delete",
 
   // Plugin
   PLUGIN_LIST: "plugin:list",

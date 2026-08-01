@@ -1,6 +1,6 @@
 # Eidos 本地开发与阶段验证
 
-本文面向第一次参与桌面端开发的维护者。MVP Lite L0-L3 的代码与离线闭环已经完成：桌面端可以选择 Workspace、持久化 Session/Run/Item/ToolCall、配置 DeepSeek、执行只读工具、审批文件修改与 Shell，并展示流式 Feed。最终退出还需要在本机原生环境运行一次完整测试，并由用户在界面输入真实 API Key 完成联网验收。
+本文面向第一次参与桌面端开发的维护者。MVP Lite L0-L3 的代码与离线闭环已经完成：桌面端可以选择 Workspace、持久化 Session/Run/Item/ToolCall、配置多个本地模型、执行只读工具、审批文件修改与 Shell，并展示流式 Feed。最终退出还需要在本机原生环境运行一次完整测试，并由用户在界面输入真实 API Key 完成联网验收。
 
 ## 1. 环境要求
 
@@ -61,7 +61,7 @@ pnpm test:electron-smoke
 - `protocol/fixtures/v1.json` 固定代表性协议向量：Python 验证初始化/错误 envelope，TypeScript 验证完整向量解析，真实审批/通知由双进程集成测试覆盖；分块超限与慢通知消费者也有回归。
 - Session 测试会创建隔离 SQLite，验证 Runtime 重启后的 `session/list|read` 结果。
 - Runtime Loop 测试会用确定性 Fake Model 完成 `read_file -> ToolResult -> final answer` 两轮循环。
-- DeepSeek Adapter 测试覆盖 SSE 文本、reasoning 隐藏、ToolCall 跨 chunk 归并与 `0600` 私有配置；不会产生真实 API 费用。
+- OpenAI-compatible Chat Completions Adapter 测试覆盖 SSE 文本、reasoning 隐藏、ToolCall 跨 chunk 归并，以及 DeepSeek、MiniMax、Kimi 的 Provider 构造与 `0600` 私有配置；不会产生真实 API 费用。
 
 ### Pydantic Model Conventions
 
@@ -71,19 +71,6 @@ Runtime 模型必须从 `eidos_runtime.models` 选择明确的基础类，而非
 
 跨 JSON-RPC 或 Renderer 的整数只有在 JavaScript 安全范围已是既有契约时才使用 `JsonSafeInt`；不要批量替换普通 `int`。基础类集中保持 alias、未知字段和默认值验证规则，避免各领域模型重复或悄然偏离这些协议边界。
 
-### Model Profile Contract Generation
-
-Model Profile 的跨语言契约由 `runtime/eidos_runtime/model_gateway/models.py` 中的 Pydantic 模型单向生成：先导出 `contracts/generated/model-profile.schema.json`，再生成 `desktop/shared/generated/runtime/model-profile.ts`。生成物必须提交，禁止手工编辑。
-
-修改 `ModelProfile`、`RetryPolicy` 或其直接嵌套类型后运行：
-
-```bash
-pnpm generate:contracts:model-profile
-pnpm check:contracts:model-profile
-```
-
-第二个命令在临时目录生成并逐字节比较已提交的 JSON Schema 和 TypeScript 文件，不会修改工作区；CI 会执行它以拒绝过期生成物。
-
 验证桌面端可以完整构建：
 
 ```bash
@@ -91,6 +78,34 @@ pnpm build
 ```
 
 预期结果：TypeScript 类型检查通过，Vite 在 `dist/renderer/` 生成 Renderer 资源。
+
+### Repository、Context 与长任务 focused tests
+
+Phase E-F 的新基础设施使用当前锁定依赖：Tree-sitter Python/TypeScript/JavaScript/Go
+grammars、`charset-normalizer`、`watchfiles` 和 RapidFuzz；SQLite FTS5 按持久化
+Index Snapshot generation 查询。扫描、索引、Watcher、检索、ContextPlan、压缩验证和长任务状态都必须
+在完整快照上工作，Watcher 只发失效信号，取消时保留上一个完整 generation。
+
+可先运行定向门槛：
+
+```bash
+uv run --locked pytest runtime/tests -k "repository or inventory or watcher or index or retrieval or context or compaction or pause or resume or restart or cancel"
+```
+
+`LongTaskRepository` 将进度写入现有 `operations` 表的
+`scope=long_task/control`；authoritative baseline 是 schema v10，v9 启动时执行原子
+migration。暂停/恢复通过 typed JSON-RPC 和 RunSupervisor 接入。恢复前必须重新核验 Workspace、Git、规则、索引、
+Context Plan、permission snapshot 和 side-effect reconciliation；不确定副作用不自动重放。
+
+当前仍未完成的接线路径见 [当前限制](docs/current-limitations.md)：Repository/Context
+默认在线组装、穷尽式 Restart Verification、Checkpoint rewind/fork 的完整 Context/
+Git Worktree 重建，以及兼容 compactor 自动切换，不应在手工验收中被误认为已完成。
+
+100,000-entry fixture 独立运行，不进入默认快测：
+
+```bash
+uv run --locked pytest -m large_repository runtime/tests/test_repository_large_scale.py
+```
 
 ## 4. 手动界面验证
 
@@ -110,11 +125,11 @@ EIDOS_DATA_DIR=/private/tmp/eidos-smoke-data EIDOS_FAKE_MODEL=1 pnpm start
 
 1. `正在完成 Python Runtime 协议握手…`
 2. 左侧 Session 列表与右侧 Eidos Workspace。
-3. 尚未配置模型时出现“连接 DeepSeek”区域。
+3. 尚未配置模型时 Composer 禁用发送，并显示进入“模型”设置的引导。
 
-已经保存过 Key 时，顶部会显示“更换 API Key”。错误、过期或撤销的 Key 可直接替换；应用不会展示旧值。窗口在等待审批时关闭并重新打开，待审批卡会从 Electron Main 的内存状态重新载入。
+在“模型”设置中选择 DeepSeek、MiniMax 或 Kimi 的内置模型并输入 API Key。模型 ID、URL 和能力标记由内置目录填写，用户不能编辑；配置以 JSON 数组写入 `~/.eidos/models.json`，文件权限应为 `0600`。编辑模型时 API Key 留空会保持原值；界面、Runtime stdout、SQLite 和日志都不应回显 Key。曾经发到聊天或其他第三方系统的 Key 建议先轮换，再作为长期配置使用。
 
-在“连接 DeepSeek”中输入 API Key 并保存。Key 只写入 `~/.eidos/model.json`，文件权限应为 `0600`；界面、Runtime stdout、SQLite 和日志都不应回显 Key。曾经发到聊天或其他第三方系统的 Key 建议先轮换，再作为长期配置使用。
+添加至少两个模型后，在同一 Session 完成一个 Turn，切换 Composer 模型再启动下一个 Turn；两个 Run 应分别记录所选 `modelId`。活动 Run 期间选择器必须禁用，删除当前选中模型后应回退到配置列表第一个模型。重启 Eidos 后设置页和 Composer 应从同一 `models.json` 恢复。
 
 然后按以下步骤验收 L1：
 

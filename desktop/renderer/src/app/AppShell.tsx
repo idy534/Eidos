@@ -54,6 +54,7 @@ export function AppShell({ runtime }: AppShellProps) {
   const [deleteError, setDeleteError] = useState<string | undefined>(undefined);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const workspaceRef = useRef<HTMLElement>(null);
+  const modelSessionInitializedRef = useRef<string | undefined>(undefined);
   const getDialogFallbackFocus = useCallback((): HTMLElement | null => {
     const composer = composerRef.current;
     return composer?.isConnected && !composer.disabled
@@ -76,6 +77,17 @@ export function AppShell({ runtime }: AppShellProps) {
     ]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runtimeStatus.state, runtimeStatus.state === "ready" ? runtimeStatus.storageHealth.state : null]);
+
+  useEffect(() => {
+    const snapshot = sessionState.snapshot;
+    if (!snapshot || !modelState.list) return;
+    if (modelSessionInitializedRef.current === snapshot.session.id) return;
+    modelSessionInitializedRef.current = snapshot.session.id;
+    modelActions.initialize(
+      modelState.list,
+      resolveSessionModelId(snapshot.runs),
+    );
+  }, [modelState.list, sessionState.snapshot?.session.id]);
 
   // -----------------------------------------------------------------------
   // Runtime notifications
@@ -152,19 +164,11 @@ export function AppShell({ runtime }: AppShellProps) {
   // Session Selection & Creation with Model re-eval
   // -----------------------------------------------------------------------
   async function handleSelectSession(session: Session) {
-    const loaded = await sessionActions.selectSession(session);
-    if (loaded && modelState.status && modelState.list) {
-      modelActions.initialize(modelState.status, modelState.list, resolveSessionModelId(loaded.runs));
-    }
-    return loaded;
+    return sessionActions.selectSession(session);
   }
 
   async function handleCreateSession(workspaceRoot?: string) {
-    const loaded = await sessionActions.createSession(workspaceRoot);
-    if (loaded && modelState.status && modelState.list) {
-      modelActions.initialize(modelState.status, modelState.list, resolveSessionModelId(loaded.runs));
-    }
-    return loaded;
+    return sessionActions.createSession(workspaceRoot);
   }
 
   // -----------------------------------------------------------------------
@@ -274,11 +278,9 @@ export function AppShell({ runtime }: AppShellProps) {
         {settingsOpen ? (
           <SettingsPage
             runtime={runtimeStatus}
-            model={modelState.status}
             modelList={modelState.list}
             modelLoading={modelState.loading}
             modelError={modelState.error}
-            modelConfiguring={modelState.configuring}
             plugins={extensionState.plugins}
             skills={extensionState.skills}
             mcpServers={extensionState.mcpServers}
@@ -286,7 +288,7 @@ export function AppShell({ runtime }: AppShellProps) {
             pendingAction={extensionState.pendingAction}
             hasBlockingModal={hasBlockingModal}
             onClose={() => setSettingsOpen(false)}
-            onConfigureModel={(key) => modelActions.configure(key)}
+            onModelsChanged={() => modelActions.load()}
             onImportPlugin={() => extensionActions.importPlugin()}
             onTogglePlugin={(id, enabled) => extensionActions.setPluginEnabled(id, enabled)}
             onRemovePlugin={(id) => extensionActions.removePlugin(id)}
@@ -376,16 +378,16 @@ export function AppShell({ runtime }: AppShellProps) {
               input={input}
               modelList={modelState.list}
               selectedModelId={modelState.selectedModelId}
-              modelConfigured={modelState.status?.configured ?? false}
+              modelConfigured={Boolean(modelState.list?.models.length)}
               modelLoading={modelState.loading}
               isSubmitting={runState.isSubmitting}
               submitKind={runState.submitKind}
-              hasRuns={snapshot.runs.length > 0}
               cancelingRunId={runState.cancelingRunId}
               onInputChange={runActions.setInput}
               onSubmit={handleSubmit}
               onCancel={() => activeRun && snapshot && void runActions.cancelRun({ runId: activeRun.id, sessionId: snapshot.session.id })}
               onModelChange={(id) => modelActions.selectModel(id)}
+              onOpenModelSettings={() => setSettingsOpen(true)}
             />
           </>
         ) : (

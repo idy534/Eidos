@@ -40,12 +40,26 @@ EXPECTED_TABLES = {
     "input_mailbox",
     "async_operations",
     "event_outbox",
-    "model_profiles",
-    "model_capability_snapshots",
-    "run_model_snapshots",
     "rule_resolution_snapshots",
     "run_resolution_snapshots",
     "step_resolution_snapshots",
+    "repository_snapshots",
+    "repository_files",
+    "repository_directories",
+    "repository_index_generations",
+    "repository_parsed_files",
+    "repository_symbols",
+    "repository_imports",
+    "repository_references",
+    "repository_chunks",
+    "repository_diagnostics",
+    "repository_fts",
+    "repository_retrieval_snapshots",
+    "context_plans",
+    "context_snapshots",
+    "verified_compact_summaries",
+    "checkpoints",
+    "checkpoint_actions",
 }
 
 EXPECTED_COLUMNS = {
@@ -58,7 +72,6 @@ EXPECTED_COLUMNS = {
         "workspace_version",
         "last_diff_hash",
         "model_profile_json",
-        "model_profile_id",
         "cancel_requested_at",
         "cancel_completed_at",
         "cancel_failure_code",
@@ -89,6 +102,7 @@ EXPECTED_COLUMNS = {
     "model_attempts": {
         "lease_id", "wire_api", "model_id", "request_timeout",
         "retry_decision_json",
+        "context_snapshot_id",
     },
     "tool_attempts": {
         "tool_call_id", "ordinal", "sandbox_type", "sandbox_requested",
@@ -193,6 +207,7 @@ class StorageSchemaTests(unittest.TestCase):
             for row in connection.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
             )
+            if not row[0].startswith("repository_fts_")
         }
         indexes = {
             row[0]
@@ -215,6 +230,11 @@ class StorageSchemaTests(unittest.TestCase):
                 "one_running_finalization_attempt_per_run",
                 "one_running_async_operation_per_operation_id",
                 "one_pending_outbox_delivery_per_event",
+                "repository_snapshots_last_complete",
+                "repository_index_generations_snapshot",
+                "repository_symbols_name",
+                "repository_diagnostics_generation",
+                "checkpoints_run_boundary",
             },
         )
         for table, expected in EXPECTED_COLUMNS.items():

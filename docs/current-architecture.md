@@ -11,7 +11,7 @@ flowchart LR
     Server --> Store["SQLite SessionStore"]
     Server --> Supervisor["RunSupervisor"]
     Supervisor --> Engine["RuntimeEngine"]
-    Engine --> Model["SamplingRuntime / DeepSeek"]
+    Engine --> Model["SamplingRuntime / OpenAI-compatible Chat Completions"]
     Engine --> Batch["ToolCallRuntime"]
     Batch --> Single["ToolExecutionController"]
     Single --> Handlers["Tool handlers / Registry runtimes"]
@@ -22,11 +22,62 @@ Renderer 只通过 context-isolated preload 暴露的 typed IPC 访问 Main。Ma
 
 ## 状态与恢复权威
 
-- SQLite schema v7 保存 Session、Run、Item、ToolCall、审批、执行段、Step、模型尝试、Durable Intent、事件、Outbox、异步操作和扩展快照。
+- SQLite schema v11 保存 Runtime 事实、Repository generations、retrieval/context snapshots、verified compact summaries 和 checkpoints。全新数据库直接建立完整 v11；v10 数据库在 `BEGIN IMMEDIATE` 内校验并删除旧 `model_profiles`、Capability 与 Run Model Snapshot 表后才更新 `user_version`，失败进入 health-only 且保留原数据。模型配置不写 SQLite。
 - SQLite 是唯一业务事实来源。`RunSupervisor` 的 worker/slot、`ResourceRegistry` 和 `RuntimePhaseTracker` 只保存运行中协调或诊断状态。
 - `Run.status` 是持久状态权威。`Run.runtimeState` 是可选传输提示；当前 DB mapper 不依赖它恢复执行。
 - 业务变更和 Event/Outbox 在同一提交中落库；通知从已提交事件投影。启动恢复不会重放不确定副作用。
 - Runtime 只允许一个 Run 占用全局执行 slot；等待审批时可以释放 slot，恢复后重新进入 FIFO。
+
+## Typed foundation and repository intelligence
+
+`domain/` contains strict, frozen records for persisted Run, Item, Step,
+ToolCall, Approval and ModelAttempt facts. `persistence/mappers/` is the only
+new seam that knows SQLite column names; `TypedRuntimeRepository` returns
+validated domain records and never exposes `sqlite3.Row`. Existing write
+repositories and `SessionStore` remain compatibility authorities until each
+path can migrate without changing transaction semantics.
+
+`protocol/registry.py` owns method lookup and object-shaped request validation.
+`RuntimeServer` keeps initialization, shutdown and health as explicit lifecycle
+special cases, while the existing public handlers remain compatible. The
+small `application/` services (`SessionApplication`, `RunApplication`,
+`RepositoryApplication`, `ContextApplication`, `CheckpointApplication` and
+`TaskLifecycleApplication`)
+are use-case boundaries; they do not own the Runtime loop, Tool lifecycle or
+JSON-RPC envelopes.
+
+Repository intelligence is a bounded, immutable snapshot pipeline:
+
+```text
+Workspace → Inventory → Tree-sitter Index → Repository Map/Retrieval
+                                      ↘ ContextPlan → ContextSnapshot
+```
+
+Inventory and index builders reopen and hash regular files, exclude symlinks,
+special, ignored and discovery-blocked paths, and retain the last complete
+generation when cancellation occurs. `watchfiles` only produces invalidation
+signals. Retrieval queries the selected persisted SQLite FTS5 generation plus
+typed symbol/import/reference/path relations, RapidFuzz and explicit versioned
+signals; each evidence item carries path/hash/generation and ranking reasons.
+SQLite progress handlers bound long queries and prevent cross-generation results.
+
+`ProjectRuleResolver` creates immutable, hashed rule snapshots. `ContextPlan`
+freezes the selected model profile, rule, inventory, index, map and evidence,
+reserves output budget, and produces an immutable per-attempt
+`ContextSnapshot`. `ContextCompactionVerifier` validates authoritative source
+IDs, workspace changes, approvals and reconciliation facts before a verified
+summary and Event/Outbox commit atomically. The loop compactor remains a
+compatibility path and does not yet invoke this repository automatically.
+
+Long-task progress is stored as typed JSON in the existing `operations` table
+under `long_task/control`, with compare-and-set updates. Pause is reported only at
+explicit safe points; resume checks Workspace identity, Git HEAD, rules, index,
+Context Plan, permission snapshot and uncertain side effects. The repository
+and verifier are consumed by `RunSupervisor` and `RuntimeEngine` through typed
+`run/status`, `run/pause`, `run/resume` and `run/cancel` boundaries. Startup
+persists an idempotent verification result before scheduling. Checkpoint RPCs
+freeze rule/repository/context/compaction/model/permission lineage; full rewind
+context reconstruction remains a documented limitation.
 
 ## Runtime 与 Tool 职责
 
@@ -100,12 +151,14 @@ fall back to the former Python traversal.
 | 边界 | 路径 |
 |---|---|
 | Desktop shared contract | `desktop/shared/domain-contracts.ts` |
-| Model Profile generated contract | `runtime/eidos_runtime/contracts/export_model_profile.py` → `contracts/generated/model-profile.schema.json` → `desktop/shared/generated/runtime/model-profile.ts` |
+| Local model catalog/store | `runtime/eidos_runtime/model/config.py` → `~/.eidos/models.json` |
 | Main JSON-RPC validator/client | `desktop/main/runtime-client.ts` |
 | Python DTO | `runtime/eidos_runtime/protocol/schemas.py` |
 | JSON-RPC server | `runtime/eidos_runtime/protocol/server.py` |
 
-Model Profile 能力只由本地声明解析：显式用户声明优先于内置 Provider Preset，Preset 缺失时保守为不支持。Eidos 不发送 Test Connection 或能力探测请求；网络、认证和 Provider 兼容性仅由真实 Model Attempt 的稳定错误映射确认。新 Run 冻结当时解析出的能力，历史持久化 Snapshot 仅用于读取兼容，不决定 Profile 是否可选。Model Gateway 直接用冻结 Profile 构造 Pydantic AI Provider 和 Model，`WireAPI` 选择对应模型类；Eidos 不维护独立的 Provider/Wire transport registry。注入的 HTTP Client 由 Pydantic AI `AsyncTenacityTransport` 执行建立响应流前的唯一网络重试，OpenAI SDK `max_retries=0`；`RetryPolicy.max_attempts` 是单个逻辑 Model Attempt 内的总 HTTP 请求数，Transport Retry 不增加 SQLite `model_attempt`，流已消费后不重放。
+本地模型目录只包含 DeepSeek、MiniMax 和 Kimi 的五个固定模型；模型 ID、Chat Completions URL 与能力标记由 Runtime 填充，API Key 直接保存在用户私有的 `~/.eidos/models.json`。`model/list` 是 Desktop 选择器的唯一数据源，`run/start` 只传 `modelId`；每个 Run 在创建时冻结实际配置，因此同一 Session 可以在 Turn 之间切换，活动 Run 不受后续编辑或删除影响。不存在 Test Connection、Capability Probe、Capability Snapshot、密钥引用或 SQLite Model Profile 权威。三个 Provider 都由 Pydantic AI 的 `OpenAIChatModel` 进入同一 Chat Completions 流式与 ToolCall 路径。
+
+注入的 HTTP Client 由 Pydantic AI `AsyncTenacityTransport` 执行建立响应流前的唯一网络重试，OpenAI SDK `max_retries=0`；Transport Retry 不增加 SQLite `model_attempt`，流已消费后不重放。
 
 Runtime Core 目前仍是同步 Durable Runtime，`RunSupervisor` 与 Run Worker 仍使用线程。模型异步 I/O 由 `RuntimeServer` 唯一持有的 `RuntimeAsyncKernel` 承载：一个进程级 AnyIO `BlockingPortal` 可并发执行多个 Model Client、Run Sampling 与标题生成请求；Client 只通过该 kernel 调用 Pydantic AI 的公开异步 Direct API。Kernel 还通过 `RuntimeAsyncTask` 拥有通用异步 Task/Service 的启动、取消、等待、结果和有界诊断；Service readiness 使用 AnyIO `task_status.started(value)`，Portal 不暴露给业务模块。每个 owned task 对应一个 `async_task` 资源，完成后从活跃集合移除；Kernel shutdown 先拒绝新任务、协作取消并有界等待，未真实退出时保留资源并报告 `ASYNC_KERNEL_TASK_SHUTDOWN_TIMEOUT`。
 

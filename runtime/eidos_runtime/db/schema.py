@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 11
 
-SCHEMA_SQL = """
+V9_SCHEMA_SQL = """
 CREATE TABLE sessions (
     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
@@ -439,4 +439,336 @@ CREATE TABLE IF NOT EXISTS async_operations (
 CREATE UNIQUE INDEX IF NOT EXISTS one_running_async_operation_per_operation_id
 ON async_operations(scope, operation_id)
 WHERE status IN ('accepted', 'running');
+
 """
+
+V10_REPOSITORY_SCHEMA_SQL = """
+CREATE TABLE repository_snapshots (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    repository_id TEXT NOT NULL,
+    workspace_root TEXT NOT NULL,
+    workspace_dev INTEGER NOT NULL,
+    workspace_inode INTEGER NOT NULL,
+    workspace_uid INTEGER NOT NULL,
+    inventory_generation INTEGER NOT NULL CHECK (inventory_generation >= 0),
+    index_generation INTEGER,
+    inventory_snapshot_id TEXT NOT NULL,
+    inventory_snapshot_hash TEXT NOT NULL,
+    index_snapshot_id TEXT,
+    index_snapshot_hash TEXT,
+    grammar_versions_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('complete', 'incomplete')),
+    complete INTEGER NOT NULL CHECK (complete IN (0, 1)),
+    created_at INTEGER NOT NULL,
+    CHECK (
+        (complete = 1 AND status = 'complete'
+         AND index_generation IS NOT NULL
+         AND index_snapshot_id IS NOT NULL
+         AND index_snapshot_hash IS NOT NULL)
+        OR (complete = 0 AND status = 'incomplete')
+    )
+);
+
+CREATE INDEX repository_snapshots_last_complete
+ON repository_snapshots (
+    repository_id,
+    workspace_root,
+    workspace_dev,
+    workspace_inode,
+    workspace_uid,
+    complete,
+    creation_seq DESC
+);
+
+CREATE TABLE repository_files (
+    repository_snapshot_id TEXT NOT NULL
+        REFERENCES repository_snapshots(id) ON DELETE RESTRICT,
+    path TEXT NOT NULL,
+    file_type TEXT NOT NULL,
+    language TEXT,
+    size_bytes INTEGER NOT NULL,
+    mtime_ns INTEGER NOT NULL,
+    ctime_ns INTEGER,
+    device INTEGER,
+    inode INTEGER,
+    content_hash TEXT,
+    encoding TEXT NOT NULL,
+    generated INTEGER NOT NULL CHECK (generated IN (0, 1)),
+    vendor INTEGER NOT NULL CHECK (vendor IN (0, 1)),
+    ignored INTEGER NOT NULL CHECK (ignored IN (0, 1)),
+    git_status TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK (generation >= 0),
+    verification_state TEXT NOT NULL,
+    PRIMARY KEY(repository_snapshot_id, path)
+);
+
+CREATE TABLE repository_directories (
+    repository_snapshot_id TEXT NOT NULL
+        REFERENCES repository_snapshots(id) ON DELETE RESTRICT,
+    path TEXT NOT NULL,
+    device INTEGER,
+    inode INTEGER,
+    ignored INTEGER NOT NULL CHECK (ignored IN (0, 1)),
+    generation INTEGER NOT NULL CHECK (generation >= 0),
+    PRIMARY KEY(repository_snapshot_id, path)
+);
+
+CREATE TABLE repository_index_generations (
+    id TEXT PRIMARY KEY,
+    repository_snapshot_id TEXT NOT NULL
+        REFERENCES repository_snapshots(id) ON DELETE RESTRICT,
+    repository_id TEXT NOT NULL,
+    inventory_snapshot_id TEXT NOT NULL,
+    inventory_generation INTEGER NOT NULL CHECK (inventory_generation >= 0),
+    index_generation INTEGER NOT NULL CHECK (index_generation >= 0),
+    snapshot_hash TEXT NOT NULL,
+    parser_versions_json TEXT NOT NULL,
+    complete INTEGER NOT NULL CHECK (complete IN (0, 1)),
+    created_at INTEGER NOT NULL,
+    UNIQUE(repository_snapshot_id, index_generation)
+);
+
+CREATE INDEX repository_index_generations_snapshot
+ON repository_index_generations(repository_snapshot_id, complete, index_generation DESC);
+
+CREATE TABLE repository_parsed_files (
+    repository_index_generation_id TEXT NOT NULL
+        REFERENCES repository_index_generations(id) ON DELETE RESTRICT,
+    path TEXT NOT NULL,
+    file_content_hash TEXT NOT NULL,
+    inventory_generation INTEGER NOT NULL CHECK (inventory_generation >= 0),
+    index_generation INTEGER NOT NULL CHECK (index_generation >= 0),
+    language TEXT NOT NULL,
+    parser_version TEXT NOT NULL,
+    byte_length INTEGER NOT NULL CHECK (byte_length >= 0),
+    has_errors INTEGER NOT NULL CHECK (has_errors IN (0, 1)),
+    PRIMARY KEY(repository_index_generation_id, path)
+);
+
+CREATE TABLE repository_symbols (
+    repository_index_generation_id TEXT NOT NULL
+        REFERENCES repository_index_generations(id) ON DELETE RESTRICT,
+    id TEXT NOT NULL,
+    path TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    start_line INTEGER NOT NULL,
+    start_column INTEGER NOT NULL,
+    end_line INTEGER NOT NULL,
+    end_column INTEGER NOT NULL,
+    file_content_hash TEXT NOT NULL,
+    inventory_generation INTEGER NOT NULL CHECK (inventory_generation >= 0),
+    index_generation INTEGER NOT NULL CHECK (index_generation >= 0),
+    PRIMARY KEY(repository_index_generation_id, id)
+);
+
+CREATE INDEX repository_symbols_name
+ON repository_symbols(repository_index_generation_id, name, path, start_line);
+
+CREATE TABLE repository_imports (
+    repository_index_generation_id TEXT NOT NULL
+        REFERENCES repository_index_generations(id) ON DELETE RESTRICT,
+    id TEXT NOT NULL,
+    path TEXT NOT NULL,
+    imported_name TEXT NOT NULL,
+    source TEXT,
+    start_line INTEGER NOT NULL,
+    file_content_hash TEXT NOT NULL,
+    inventory_generation INTEGER NOT NULL CHECK (inventory_generation >= 0),
+    index_generation INTEGER NOT NULL CHECK (index_generation >= 0),
+    PRIMARY KEY(repository_index_generation_id, id)
+);
+
+CREATE TABLE repository_references (
+    repository_index_generation_id TEXT NOT NULL
+        REFERENCES repository_index_generations(id) ON DELETE RESTRICT,
+    id TEXT NOT NULL,
+    path TEXT NOT NULL,
+    name TEXT NOT NULL,
+    start_line INTEGER NOT NULL,
+    start_column INTEGER NOT NULL,
+    file_content_hash TEXT NOT NULL,
+    inventory_generation INTEGER NOT NULL CHECK (inventory_generation >= 0),
+    index_generation INTEGER NOT NULL CHECK (index_generation >= 0),
+    PRIMARY KEY(repository_index_generation_id, id)
+);
+
+CREATE TABLE repository_chunks (
+    repository_index_generation_id TEXT NOT NULL
+        REFERENCES repository_index_generations(id) ON DELETE RESTRICT,
+    id TEXT NOT NULL,
+    path TEXT NOT NULL,
+    start_line INTEGER NOT NULL,
+    end_line INTEGER NOT NULL,
+    byte_start INTEGER NOT NULL,
+    byte_end INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    file_content_hash TEXT NOT NULL,
+    inventory_generation INTEGER NOT NULL CHECK (inventory_generation >= 0),
+    index_generation INTEGER NOT NULL CHECK (index_generation >= 0),
+    PRIMARY KEY(repository_index_generation_id, id)
+);
+
+CREATE TABLE repository_diagnostics (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    repository_snapshot_id TEXT NOT NULL
+        REFERENCES repository_snapshots(id) ON DELETE RESTRICT,
+    repository_index_generation_id TEXT
+        REFERENCES repository_index_generations(id) ON DELETE RESTRICT,
+    source TEXT NOT NULL CHECK (source IN ('inventory', 'index')),
+    path TEXT NOT NULL,
+    code TEXT NOT NULL,
+    message TEXT NOT NULL,
+    start_line INTEGER NOT NULL,
+    inventory_generation INTEGER NOT NULL CHECK (inventory_generation >= 0),
+    index_generation INTEGER NOT NULL CHECK (index_generation >= 0),
+    CHECK (
+        (source = 'inventory' AND repository_index_generation_id IS NULL)
+        OR (source = 'index' AND repository_index_generation_id IS NOT NULL)
+    )
+);
+
+CREATE INDEX repository_diagnostics_generation
+ON repository_diagnostics(repository_snapshot_id, repository_index_generation_id, creation_seq);
+
+CREATE VIRTUAL TABLE repository_fts USING fts5(
+    index_snapshot_id UNINDEXED,
+    record_id UNINDEXED,
+    path,
+    symbol,
+    body,
+    kind UNINDEXED,
+    start_line UNINDEXED,
+    end_line UNINDEXED,
+    file_hash UNINDEXED
+);
+"""
+
+V10_CONTEXT_SCHEMA_SQL = """
+CREATE TABLE repository_retrieval_snapshots (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    inventory_snapshot_id TEXT NOT NULL,
+    index_snapshot_id TEXT NOT NULL,
+    snapshot_hash TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE context_plans (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    retrieval_snapshot_id TEXT NOT NULL
+        REFERENCES repository_retrieval_snapshots(id) ON DELETE RESTRICT,
+    model_profile_snapshot_hash TEXT NOT NULL,
+    rule_snapshot_id TEXT NOT NULL,
+    inventory_snapshot_id TEXT NOT NULL,
+    index_snapshot_id TEXT NOT NULL,
+    snapshot_hash TEXT NOT NULL,
+    plan_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE context_snapshots (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    model_attempt_id TEXT NOT NULL UNIQUE,
+    plan_id TEXT NOT NULL REFERENCES context_plans(id) ON DELETE RESTRICT,
+    snapshot_hash TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE verified_compact_summaries (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    summary_hash TEXT NOT NULL,
+    verified_json TEXT NOT NULL,
+    input_start INTEGER NOT NULL,
+    input_end INTEGER NOT NULL,
+    compaction_version INTEGER NOT NULL,
+    verification_result TEXT NOT NULL CHECK (verification_result = 'verified'),
+    verified_at INTEGER NOT NULL
+);
+
+CREATE TABLE checkpoints (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    item_ordinal INTEGER NOT NULL CHECK (item_ordinal >= 0),
+    rule_snapshot_id TEXT,
+    repository_snapshot_id TEXT,
+    context_snapshot_id TEXT REFERENCES context_snapshots(id) ON DELETE RESTRICT,
+    compact_summary_id TEXT REFERENCES verified_compact_summaries(id) ON DELETE RESTRICT,
+    workspace_identity_hash TEXT NOT NULL,
+    git_head TEXT,
+    permission_snapshot_hash TEXT,
+    model_profile_snapshot_hash TEXT NOT NULL,
+    reconciliation_required INTEGER NOT NULL CHECK (reconciliation_required IN (0, 1)),
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX checkpoints_run_boundary
+ON checkpoints(run_id, item_ordinal, creation_seq);
+
+CREATE TABLE checkpoint_actions (
+    id TEXT PRIMARY KEY,
+    checkpoint_id TEXT NOT NULL REFERENCES checkpoints(id) ON DELETE RESTRICT,
+    action TEXT NOT NULL CHECK (action IN ('rewind', 'fork')),
+    source_run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    target_run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    created_at INTEGER NOT NULL
+);
+"""
+
+V10_MODEL_ATTEMPT_COLUMN_SQL = """
+ALTER TABLE model_attempts ADD COLUMN context_snapshot_id TEXT
+    REFERENCES context_snapshots(id) ON DELETE RESTRICT;
+"""
+
+V10_BASE_SCHEMA_SQL = V9_SCHEMA_SQL.replace(
+    "    retry_decision_json TEXT,",
+    "    context_snapshot_id TEXT REFERENCES context_snapshots(id) ON DELETE RESTRICT,\n"
+    "    retry_decision_json TEXT,",
+)
+_LEGACY_MODEL_TABLES_SQL = """
+CREATE TABLE model_profiles (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL UNIQUE,
+    profile_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE model_capability_snapshots (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    profile_id TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    probed_at INTEGER NOT NULL
+);
+
+CREATE TABLE run_model_snapshots (
+    run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE RESTRICT,
+    profile_id TEXT NOT NULL,
+    capability_snapshot_id TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    frozen_at INTEGER NOT NULL
+);
+
+"""
+V11_BASE_SCHEMA_SQL = V10_BASE_SCHEMA_SQL.replace(
+    _LEGACY_MODEL_TABLES_SQL, ""
+).replace(
+    "    model_profile_id TEXT,\n", ""
+)
+if V11_BASE_SCHEMA_SQL == V10_BASE_SCHEMA_SQL:
+    raise RuntimeError("legacy model tables were not removed from the current schema")
+SCHEMA_SQL = (
+    V11_BASE_SCHEMA_SQL
+    + V10_REPOSITORY_SCHEMA_SQL
+    + V10_CONTEXT_SCHEMA_SQL
+)

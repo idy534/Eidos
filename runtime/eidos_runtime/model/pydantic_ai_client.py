@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import nullcontext, suppress
-from dataclasses import dataclass, replace
-from enum import StrEnum
+from dataclasses import replace
 import hashlib
 import inspect
 import json
@@ -52,9 +51,7 @@ from eidos_runtime.model.client import (
 )
 from eidos_runtime.model.config import (
     MODEL_CATALOG,
-    PROVIDER,
     ModelProfileSpec,
-    _validate_key,
 )
 from eidos_runtime.model.prompts import SYSTEM_PROMPT, TITLE_PROMPT
 from eidos_runtime.model_gateway.retry_transport import (
@@ -304,23 +301,6 @@ class PydanticAIModelClient:
             self._closed = True
 
 
-class ModelClientInUseError(RuntimeError):
-    pass
-
-
-class ModelFactoryCloseError(RuntimeError):
-    def __init__(self, code: str) -> None:
-        self.code = code
-        super().__init__(code)
-
-
-class ModelFactoryState(StrEnum):
-    OPEN = "open"
-    CLOSING = "closing"
-    CLOSED = "closed"
-    FAILED = "failed"
-
-
 class ModelClientLease:
     def __init__(
         self,
@@ -361,119 +341,6 @@ class ModelClientLease:
             release()
         if self._resource is not None:
             self._resource.close()
-
-
-@dataclass
-class _ClientEntry:
-    client: PydanticAIModelClient
-    lease_count: int = 0
-    closing: bool = False
-
-
-class ModelClientFactory:
-    def __init__(
-        self,
-        api_key: str,
-        *,
-        async_kernel: RuntimeAsyncKernel,
-        resource_registry: ResourceRegistry | None = None,
-    ) -> None:
-        self._api_key = _validate_key(api_key)
-        self._clients: dict[tuple[str, str], _ClientEntry] = {}
-        self._lock = threading.RLock()
-        self._state = ModelFactoryState.OPEN
-        self._resources = resource_registry
-        self._async_kernel = async_kernel
-
-    def client_for(self, model_id: str) -> PydanticAIModelClient:
-        key = (PROVIDER, model_id)
-        with self._lock:
-            return self._entry(key, model_id).client
-
-    def acquire(self, model_id: str) -> ModelClientLease:
-        key = (PROVIDER, model_id)
-        with self._lock:
-            entry = self._entry(key, model_id)
-            if entry.closing:
-                raise RuntimeError("model client is closing")
-            entry.lease_count += 1
-        return ModelClientLease(
-            entry.client,
-            lambda: self._release(key, entry),
-            resource_registry=self._resources,
-            owner_id=model_id,
-        )
-
-    @property
-    def active_lease_count(self) -> int:
-        with self._lock:
-            return sum(entry.lease_count for entry in self._clients.values())
-
-    @property
-    def state(self) -> ModelFactoryState:
-        with self._lock:
-            return self._state
-
-    def close(self) -> None:
-        with self._lock:
-            if self._state is ModelFactoryState.CLOSED:
-                return
-            if any(entry.lease_count for entry in self._clients.values()):
-                raise ModelClientInUseError("model client has active leases")
-            self._state = ModelFactoryState.CLOSING
-            entries = tuple(self._clients.items())
-            for _key, entry in entries:
-                entry.closing = True
-        failures: list[BaseException] = []
-        for key, entry in entries:
-            try:
-                entry.client.close()
-            except Exception as error:
-                failures.append(error)
-                continue
-            with self._lock:
-                if self._clients.get(key) is entry:
-                    self._clients.pop(key)
-        with self._lock:
-            self._state = (
-                ModelFactoryState.FAILED
-                if failures
-                else ModelFactoryState.CLOSED
-            )
-        if failures:
-            raise ModelFactoryCloseError(
-                "MODEL_RECONFIGURATION_FAILED"
-            ) from failures[0]
-
-    def _entry(
-        self,
-        key: tuple[str, str],
-        model_id: str,
-    ) -> _ClientEntry:
-        if self._state is not ModelFactoryState.OPEN:
-            raise RuntimeError("model client factory is closed")
-        entry = self._clients.get(key)
-        if entry is None:
-            entry = _ClientEntry(
-                PydanticAIModelClient.deepseek(
-                    self._api_key,
-                    model_id,
-                    async_kernel=self._async_kernel,
-                )
-            )
-            self._clients[key] = entry
-        return entry
-
-    def _release(
-        self,
-        key: tuple[str, str],
-        expected: _ClientEntry,
-    ) -> None:
-        with self._lock:
-            entry = self._clients.get(key)
-            if entry is not expected or entry.lease_count <= 0:
-                return
-            entry.lease_count -= 1
 
 
 async def _close_provider_client(provider_client: Any) -> None:

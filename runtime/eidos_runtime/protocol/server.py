@@ -8,47 +8,69 @@ import re
 import sys
 import threading
 import time
-import unicodedata
-import uuid
+from dataclasses import dataclass
 from typing import Any, BinaryIO, TextIO
-from datetime import UTC, datetime
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from eidos_runtime import __version__
-from eidos_runtime.model.client import ModelClient, ModelResponse, ModelToolCall, ScriptedModel
+from eidos_runtime.application.errors import (
+    ApplicationError,
+    ApplicationInvalidParamsError,
+)
+from eidos_runtime.application.approvals import (
+    ApprovalApplication,
+    ApprovalDecision as ApplicationApprovalDecision,
+)
+from eidos_runtime.application.context import ContextApplication
+from eidos_runtime.application.checkpoints import CheckpointApplication
+from eidos_runtime.application.extensions import (
+    DeferredPluginImport,
+    ExtensionApplication,
+    PluginImportCompleted,
+    PluginImportFailure,
+)
+from eidos_runtime.application.models import ModelApplication
+from eidos_runtime.application.runs import RunApplication, RunStartOutcome
+from eidos_runtime.application.repository import RepositoryApplicationFactory
+from eidos_runtime.application.sessions import SessionApplication, clean_session_title
+from eidos_runtime.application.task_lifecycle import (
+    LifecycleAction,
+    LifecycleResult,
+    TaskLifecycleApplication,
+)
+from eidos_runtime.model.client import (
+    ModelClient,
+    ModelResponse,
+    ModelToolCall,
+    ScriptedModel,
+)
 from eidos_runtime.model.config import (
-    DEFAULT_MODEL_ID,
-    SUPPORTED_MODELS,
+    ModelConfig,
     ModelConfigError,
     ModelConfigStore,
-    model_catalog,
 )
 from eidos_runtime.model.pydantic_ai_client import (
-    ModelClientFactory,
-    ModelClientInUseError,
     ModelClientLease,
-    ModelFactoryCloseError,
 )
-from eidos_runtime.model_gateway.auth import ModelSecretError, ModelSecretStore
-from eidos_runtime.model_gateway.capabilities import resolve_model_capabilities
-from eidos_runtime.model_gateway.gateway import (
-    ModelGateway,
-    legacy_profile_snapshot,
+from eidos_runtime.model_gateway.gateway import ModelGateway
+from eidos_runtime.domain.long_task import LongTaskProgress
+from eidos_runtime.protocol import methods as method_dtos
+from eidos_runtime.protocol.registry import (
+    DeferredMethodResult,
+    MethodApplicationError,
+    MethodErrorMapping,
+    MethodRegistration,
+    MethodRegistry,
+    MethodResultValidationError,
+    MethodValidationError,
 )
-from eidos_runtime.model_gateway.models import (
-    ModelProfile,
-    ReasoningEffort,
-    ReasoningMode,
-    RetryPolicy,
-    RunModelSnapshot,
-    WireAPI,
+from eidos_runtime.protocol.schemas import (
+    ApprovalDecisionDto,
+    JsonRpcRequestDto,
+    JsonRpcResponse,
 )
-from eidos_runtime.model_gateway.presets import PRESETS
-from eidos_runtime.protocol.schemas import JsonRpcRequestDto, JsonRpcResponse
 from eidos_runtime.runtime.supervisor import (
-    RunCancelTimeout,
-    RunReconciliationRequired,
     RunSupervisor,
     RuntimeControlState,
     RuntimeShutdownTimeout,
@@ -67,25 +89,14 @@ from eidos_runtime.sandbox.sensitive import (
     SensitiveScanner,
 )
 from eidos_runtime.sandbox.seatbelt import (
-    is_seatbelt_usable,
     run_seatbelt_self_test,
 )
 from eidos_runtime.db.storage import (
-    ActiveRunError,
-    InvalidCursorError,
-    InvalidRunStateError,
-    OperationConflictError,
-    OperationInProgressError,
     ResourceNotFoundError,
-    SessionActiveError,
     SessionStore,
     StorageError,
-    WorkspaceBoundaryError,
 )
-from eidos_runtime.extensions.plugins import (
-    PluginCatalog,
-    PluginImportError,
-)
+from eidos_runtime.extensions.plugins import PluginCatalog
 from eidos_runtime.extensions.skills import (
     SkillCatalog,
     SkillReadError,
@@ -97,151 +108,16 @@ MAX_MESSAGE_BYTES = 1024 * 1024
 MAX_REQUEST_ID_BYTES = 128
 PROTOCOL_VERSION = 1
 CLIENT_REQUEST_ID = re.compile(r"client-[A-Za-z0-9._-]+")
-MAX_SESSION_TITLE_BYTES = 120
 TITLE_TIMEOUT_SECONDS = 10.0
 
 logger = logging.getLogger("eidos.runtime")
-
-
-def clean_session_title(value: str) -> str:
-    title = "".join(
-        " " if unicodedata.category(character).startswith("C") else character
-        for character in value
-    )
-    title = " ".join(title.split()).strip("\"'`“”‘’ ")[:60]
-    return title.encode("utf-8")[:MAX_SESSION_TITLE_BYTES].decode(
-        "utf-8", errors="ignore"
-    ).strip()
-
-
-_PROFILE_DRAFT_KEYS = {
-    "name",
-    "provider",
-    "baseUrl",
-    "authReference",
-    "wireApi",
-    "modelId",
-    "contextWindow",
-    "maxOutputTokens",
-    "reasoningMode",
-    "reasoningEffort",
-    "supportsTools",
-    "supportsParallelTools",
-    "supportsImages",
-    "supportsStructuredOutput",
-    "supportsPromptCache",
-    "requestTimeout",
-    "retryPolicy",
-}
-
-
-def _profile_id_param(params: object) -> str | None:
-    if (
-        isinstance(params, dict)
-        and set(params) == {"profileId"}
-        and isinstance(params.get("profileId"), str)
-        and params["profileId"]
-    ):
-        return params["profileId"]
-    return None
-
-
-def _draft_auth_reference(draft: dict[str, object]) -> str:
-    reference = draft.get("authReference")
-    if not isinstance(reference, str):
-        raise ValueError("auth reference is required")
-    return reference
-
-
-def _profile_from_draft(
-    draft: dict[str, object],
-    auth_reference: str,
-    *,
-    existing: ModelProfile | None = None,
-) -> ModelProfile:
-    if set(draft) - _PROFILE_DRAFT_KEYS:
-        raise ValueError("unknown model profile field")
-    provider = draft.get("provider")
-    if not isinstance(provider, str) or provider not in PRESETS:
-        raise ValueError("provider preset is invalid")
-    preset = PRESETS[provider]
-    now = datetime.now(UTC)
-    retry = draft.get("retryPolicy", {})
-    if not isinstance(retry, dict) or set(retry) - {
-        "maxAttempts",
-        "initialBackoffSeconds",
-        "maxBackoffSeconds",
-    }:
-        raise ValueError("retry policy is invalid")
-    values = {
-        "id": existing.id if existing is not None else str(uuid.uuid4()),
-        "name": draft.get("name"),
-        "provider": provider,
-        "base_url": draft.get("baseUrl", preset.default_base_url),
-        "auth_reference": auth_reference,
-        "wire_api": WireAPI(
-            draft.get("wireApi", preset.default_wire_api.value)
-        ),
-        "model_id": draft.get("modelId"),
-        "context_window": draft.get("contextWindow"),
-        "max_output_tokens": draft.get("maxOutputTokens"),
-        "reasoning_mode": ReasoningMode(
-            draft.get("reasoningMode", "none")
-        ),
-        "reasoning_effort": (
-            ReasoningEffort(draft["reasoningEffort"])
-            if draft.get("reasoningEffort") is not None
-            else None
-        ),
-        "supports_tools": draft.get("supportsTools"),
-        "supports_parallel_tools": draft.get("supportsParallelTools"),
-        "supports_images": draft.get("supportsImages"),
-        "supports_structured_output": draft.get("supportsStructuredOutput"),
-        "supports_prompt_cache": draft.get("supportsPromptCache"),
-        "request_timeout": draft.get("requestTimeout", 120.0),
-        "retry_policy": RetryPolicy(
-            max_attempts=retry.get("maxAttempts", 3),
-            initial_backoff_seconds=retry.get("initialBackoffSeconds", 0.2),
-            max_backoff_seconds=retry.get("maxBackoffSeconds", 2.0),
-        ),
-        "created_at": existing.created_at if existing is not None else now,
-        "updated_at": now,
-    }
-    return ModelProfile.model_validate(values)
-
-
-def _public_model(value: object) -> dict[str, Any]:
-    if hasattr(value, "model_dump"):
-        value = value.model_dump(mode="json")  # type: ignore[attr-defined]
-    converted = _camelize(value)
-    if not isinstance(converted, dict):
-        raise TypeError("public model must be an object")
-    return converted
-
-
-def _camelize(value: object) -> object:
-    if isinstance(value, dict):
-        return {
-            _camel_key(str(key)): _camelize(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_camelize(item) for item in value]
-    return value
-
-
-def _camel_key(value: str) -> str:
-    head, *tail = value.split("_")
-    return head + "".join(part[:1].upper() + part[1:] for part in tail)
 
 
 def response(request_id: str, result: dict[str, Any]) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
-def protocol_error(
-    request_id: str | None, code: int, message: str
-) -> dict[str, Any]:
+def protocol_error(request_id: str | None, code: int, message: str) -> dict[str, Any]:
     return {
         "jsonrpc": "2.0",
         "id": request_id,
@@ -307,6 +183,217 @@ def valid_initialize_params(params: object) -> bool:
     )
 
 
+def _application_error_mapping(error: Exception) -> MethodErrorMapping | None:
+    """Map only stable application failures at the protocol boundary."""
+
+    if isinstance(error, ApplicationInvalidParamsError):
+        return MethodErrorMapping(error.code, invalid_params=True)
+    if isinstance(error, ApplicationError):
+        return MethodErrorMapping(error.code)
+    return None
+
+
+def _application_wire_value(value: object) -> object:
+    """Project a typed application result without constructing an envelope."""
+
+    to_wire_dict = getattr(value, "to_wire_dict", None)
+    if callable(to_wire_dict):
+        return to_wire_dict()
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json", by_alias=True)
+    return value
+
+
+class _ApplicationMethodAdapter:
+    """Turns one typed Application use case into its declared response DTO."""
+
+    def __init__(
+        self,
+        handler: Any,
+        response_type: type[method_dtos.MethodResultDto],
+    ) -> None:
+        self._handler = handler
+        self._response_type = response_type
+        self._run_start_outcomes: dict[int, RunStartOutcome] = {}
+
+    def __call__(self, request_id: str, request: BaseModel) -> BaseModel:
+        result = self._handler(request_id, request)
+        if isinstance(result, RunStartOutcome):
+            response = result.response
+            self._run_start_outcomes[id(response)] = result
+            return response
+        if isinstance(result, self._response_type):
+            return result
+        return self._response_type.model_validate(_application_wire_value(result))
+
+    def settle_response(self, response: BaseModel, delivered: bool) -> None:
+        outcome = self._run_start_outcomes.pop(id(response), None)
+        if outcome is None:
+            return
+        if delivered:
+            outcome.mark_response_delivered()
+        else:
+            outcome.mark_response_failed()
+
+
+class _DeferredPluginImportAdapter:
+    """Schedules a typed Plugin import without a compatibility server handler."""
+
+    def __init__(self, server: "RuntimeServer") -> None:
+        self._server = server
+
+    def __call__(
+        self,
+        request_id: str,
+        request: method_dtos.PluginImportRequestDto,
+    ) -> BaseModel | DeferredMethodResult:
+        result = self._server._applications_or_error().extensions.prepare_plugin_import(
+            source_path=Path(request.source_path),
+            operation_id=request.operation_id,
+            request_id=request_id,
+        )
+        if isinstance(result, PluginImportCompleted):
+            return method_dtos.PluginImportResponseDto.model_validate(
+                result.plugin.to_wire_dict()
+            )
+        if not isinstance(result, DeferredPluginImport):
+            raise ApplicationError("INTERNAL_ERROR", "unexpected plugin import result")
+        scheduled = self._server.supervisor.start_managed_task(
+            "plugin-import",
+            lambda cancel: self._complete(request_id, result, cancel),
+            operation_id=result.async_operation_id,
+        )
+        if not scheduled:
+            failure = result.cancel_before_start()
+            raise ApplicationError(failure.code)
+        return DeferredMethodResult()
+
+    def _complete(
+        self,
+        request_id: str,
+        deferred: DeferredPluginImport,
+        cancel: threading.Event,
+    ) -> None:
+        result = deferred.run(cancel)
+        if isinstance(result, PluginImportCompleted):
+            response_dto = method_dtos.PluginImportResponseDto.model_validate(
+                result.plugin.to_wire_dict()
+            )
+            self._server.send(response(request_id, response_dto.to_json_value()))
+            return
+        if isinstance(result, PluginImportFailure):
+            self._server.send(business_error(request_id, result.code))
+            return
+        self._server.send(business_error(request_id, "INTERNAL_ERROR"))
+
+
+@dataclass(frozen=True)
+class _RuntimeApplications:
+    sessions: SessionApplication
+    runs: RunApplication
+    approvals: ApprovalApplication
+    models: ModelApplication
+    extensions: ExtensionApplication
+    repository_factory: RepositoryApplicationFactory
+    context: ContextApplication
+    checkpoints: CheckpointApplication
+    task_lifecycle: TaskLifecycleApplication
+
+
+class _ServerRunEnvironment:
+    """Narrow non-durable Run collaborators owned by RuntimeServer."""
+
+    def __init__(self, server: "RuntimeServer") -> None:
+        self._server = server
+
+    def model_is_configured(self) -> bool:
+        return (
+            self._server.model is not None
+            or bool(self._server.model_config.list())
+        )
+
+    def model_config(self, model_id: str) -> ModelConfig:
+        config = self._server.model_config.get(model_id)
+        if config is None:
+            raise ModelConfigError("model is not configured")
+        return config
+
+    def model_for(self, model_id: str) -> ModelClient:
+        if self._server.model is None:
+            raise ModelConfigError("configured models use the model gateway")
+        return self._server.model
+
+    def freeze_model_config(self, run_id: str, config: ModelConfig) -> None:
+        self._server._freeze_model_config(run_id, config)
+
+    def discard_model_config(self, run_id: str) -> None:
+        self._server._discard_model_config(run_id)
+
+    def extension_snapshot(self) -> dict[str, object] | None:
+        if self._server.plugins is None:
+            return None
+        return SkillCatalog(self._server.plugins).extension_snapshot()
+
+    def schedule_title_generation(
+        self, session_id: str, user_input: str, model_id: str
+    ) -> None:
+        self._server._schedule_title_generation(session_id, user_input, model_id)
+
+
+class _ServerApprovalRuntime:
+    def __init__(self, supervisor: RunSupervisor) -> None:
+        self._supervisor = supervisor
+
+    def submit_approval_response(
+        self,
+        *,
+        request_id: str,
+        decision: ApplicationApprovalDecision,
+        feedback: str | None,
+    ) -> bool:
+        return self._supervisor.submit_approval_response(
+            request_id=request_id,
+            decision=decision.value,
+            feedback=feedback,
+        )
+
+
+class _ServerTaskLifecycleRuntime:
+    def __init__(self, supervisor: RunSupervisor) -> None:
+        self._supervisor = supervisor
+
+    def pause_run(self, run_id: str) -> LifecycleResult:
+        progress = self._supervisor.pause_run(run_id)
+        return LifecycleResult(
+            action=LifecycleAction.PAUSE,
+            accepted=progress.status.value == "paused",
+            reason=None if progress.status.value == "paused" else progress.status.value,
+        )
+
+    def resume_run(self, run_id: str) -> LifecycleResult:
+        progress = self._supervisor.resume_run(run_id)
+        return LifecycleResult(
+            action=LifecycleAction.RESUME,
+            accepted=progress.status.value == "running",
+            reason=(
+                None
+                if progress.status.value == "running"
+                else progress.last_verification.outcome.value
+                if progress.last_verification is not None
+                else progress.status.value
+            ),
+        )
+
+    def run_status(self, run_id: str) -> LongTaskProgress | None:
+        return self._supervisor.run_status(run_id)
+
+    def cancel_run(
+        self, run_id: str, *, operation_id: str | None = None
+    ) -> LifecycleResult:
+        self._supervisor.cancel_run(run_id, operation_id=operation_id)
+        return LifecycleResult(action=LifecycleAction.CANCEL, accepted=True)
+
+
 class RuntimeServer:
     def __init__(
         self,
@@ -320,24 +407,26 @@ class RuntimeServer:
         self.store = SessionStore(data_directory)
         self.model_config = ModelConfigStore(data_directory)
         self.model = model
-        self.model_factory: ModelClientFactory | None = None
-        self.model_secrets = ModelSecretStore(data_directory)
         self.model_gateway: ModelGateway | None = None
+        self._frozen_model_configs: dict[str, ModelConfig] = {}
+        self._frozen_model_configs_lock = threading.RLock()
         self.async_kernel: RuntimeAsyncKernel | None = None
         self.output_lock = threading.RLock()
         self.shell_available = False
         self.sensitive: SensitiveScanner | None = None
         self.plugins: PluginCatalog | None = None
+        self._applications: _RuntimeApplications | None = None
         self.supervisor = RunSupervisor(
             self.store,
             self._model_lease_for_run,
             self.send,
             self._scan_text,
-            lambda: self.model is not None or self.model_factory is not None,
+            lambda: self.model is not None or bool(self.model_config.list()),
             lambda: self.shell_available,
             lambda: self.sensitive,
             self._cleanup_extensions,
         )
+        self.method_registry = self._build_method_registry()
 
     def handle(self, message: object) -> None:
         if not isinstance(message, dict):
@@ -345,13 +434,24 @@ class RuntimeServer:
             return
 
         if self._is_server_response(message):
-            self.supervisor.handle_approval_response(message)
+            request_id = message.get("id")
+            if not isinstance(request_id, str):
+                return
+            try:
+                decision = ApprovalDecisionDto.model_validate(message.get("result"))
+            except ValidationError:
+                decision = ApprovalDecisionDto(decision="reject")
+            applications = self._applications_or_error()
+            if decision.decision == "approve":
+                applications.approvals.approve(request_id)
+            else:
+                applications.approvals.reject(request_id, feedback=decision.feedback)
             return
 
         try:
-            request = JsonRpcRequestDto.model_validate({
-                **message, "params": message.get("params", {})
-            })
+            request = JsonRpcRequestDto.model_validate(
+                {**message, "params": message.get("params", {})}
+            )
         except ValidationError:
             self.send(protocol_error(None, -32600, "Invalid Request"))
             return
@@ -381,112 +481,356 @@ class RuntimeServer:
         if self.store.health_state != "ready":
             self.send(business_error(request_id, "STORAGE_HEALTH_ONLY"))
             return
+        registration = self.method_registry.get(method)
         if (
-            self.supervisor.lifecycle is not RuntimeLifecycle.RUNNING
-            and method in {
-                "run/start",
-                "model/configure",
-                "model_profile/create",
-                "model_profile/update",
-                "model_profile/delete",
-                "plugin/import",
-                "plugin/setEnabled",
-                "plugin/remove",
-                "mcp/setEnabled",
-            }
+            registration is not None
+            and self.supervisor.lifecycle is not RuntimeLifecycle.RUNNING
+            and not registration.allowed_when_draining
         ):
             self.send(business_error(request_id, "RUNTIME_DRAINING"))
             return
         if (
-            self.supervisor.control_state is RuntimeControlState.RECONFIGURING
-            and method in {"run/start", "model/configure"}
+            registration is not None
+            and self.supervisor.control_state is RuntimeControlState.RECONFIGURING
+            and not registration.allowed_during_reconfiguration
         ):
             self.send(business_error(request_id, "RUNTIME_RECONFIGURING"))
             return
-
-        if method == "session/create":
-            self.create_session(request_id, params)
+        try:
+            invocation = self.method_registry.invoke(method, request_id, params)
+        except MethodValidationError:
+            self.send(protocol_error(request_id, -32602, "Invalid params"))
             return
-        if method == "session/list":
-            self.list_sessions(request_id, params)
+        except MethodApplicationError as error:
+            if error.mapping.invalid_params:
+                self.send(protocol_error(request_id, -32602, "Invalid params"))
+            else:
+                self.send(business_error(request_id, error.mapping.code))
             return
-        if method == "session/read":
-            self.read_session(request_id, params)
+        except MethodResultValidationError:
+            logger.error("Registered method returned an invalid response: %s", method)
+            self.send(business_error(request_id, "INTERNAL_ERROR"))
             return
-        if method == "session/rename":
-            self.rename_session(request_id, params)
+        if invocation is not False:
+            if invocation.deferred:
+                return
+            assert invocation.json_result is not None
+            try:
+                self.send(response(request_id, invocation.json_result))
+            except BaseException:
+                invocation.settle_response(delivered=False)
+                raise
+            invocation.settle_response(delivered=True)
             return
-        if method == "session/delete":
-            self.delete_session(request_id, params)
-            return
-        if method == "event/list":
-            self.list_events(request_id, params)
-            return
-        if method == "run/start":
-            self.start_run(request_id, params)
-            return
-        if method == "run/cancel":
-            self.cancel_run(request_id, params)
-            return
-        if method == "model/status":
-            self.model_status(request_id, params)
-            return
-        if method == "model/list":
-            self.list_models(request_id, params)
-            return
-        if method == "model/configure":
-            self.configure_model(request_id, params)
-            return
-        if method == "model_profile/list":
-            self.list_model_profiles(request_id, params)
-            return
-        if method == "model_profile/get":
-            self.get_model_profile(request_id, params)
-            return
-        if method == "model_profile/create":
-            self.create_model_profile(request_id, params)
-            return
-        if method == "model_profile/update":
-            self.update_model_profile(request_id, params)
-            return
-        if method == "model_profile/delete":
-            self.delete_model_profile(request_id, params)
-            return
-        if method == "model_profile/list_presets":
-            self.list_model_presets(request_id, params)
-            return
-        if method == "plugin/list":
-            self.list_plugins(request_id, params)
-            return
-        if method == "plugin/import":
-            self.import_plugin(request_id, params)
-            return
-        if method == "plugin/setEnabled":
-            self.set_plugin_enabled(request_id, params)
-            return
-        if method == "plugin/remove":
-            self.remove_plugin(request_id, params)
-            return
-        if method == "skill/list":
-            self.list_skills(request_id, params)
-            return
-        if method == "skill/read":
-            self.read_skill(request_id, params)
-            return
-        if method == "mcp/list":
-            self.list_mcp_servers(request_id, params)
-            return
-        if method == "mcp/setEnabled":
-            self.set_mcp_enabled(request_id, params)
-            return
-        if method == "extension/read":
-            self.read_extensions(request_id, params)
-            return
-        if method == "extension/readEvents":
-            self.read_extension_events(request_id, params)
-            return
-
         self.send(protocol_error(request_id, -32601, "Method not found"))
+
+    def _build_method_registry(self) -> MethodRegistry:
+        registry = MethodRegistry()
+        handlers: tuple[
+            tuple[str, type[BaseModel], type[method_dtos.MethodResultDto], Any], ...
+        ] = (
+            (
+                "session/create",
+                method_dtos.SessionCreateRequestDto,
+                method_dtos.SessionCreateResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.create(
+                    request
+                ),
+            ),
+            (
+                "session/list",
+                method_dtos.SessionListRequestDto,
+                method_dtos.SessionListResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.list(
+                    request
+                ),
+            ),
+            (
+                "session/read",
+                method_dtos.SessionReadRequestDto,
+                method_dtos.SessionReadResponseDto,
+                lambda _id,
+                request: self._applications_or_error().sessions.read_snapshot(request),
+            ),
+            (
+                "session/rename",
+                method_dtos.SessionRenameRequestDto,
+                method_dtos.SessionRenameResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.rename(
+                    request
+                ),
+            ),
+            (
+                "session/delete",
+                method_dtos.SessionDeleteRequestDto,
+                method_dtos.SessionDeleteResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.delete(
+                    request
+                ),
+            ),
+            (
+                "event/list",
+                method_dtos.EventListRequestDto,
+                method_dtos.EventListResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.list_events(
+                    request
+                ),
+            ),
+            (
+                "run/start",
+                method_dtos.RunStartRequestDto,
+                method_dtos.RunStartResponseDto,
+                lambda _id, request: self._applications_or_error().runs.start(request),
+            ),
+            (
+                "run/cancel",
+                method_dtos.RunCancelRequestDto,
+                method_dtos.RunCancelResponseDto,
+                lambda _id, request: self._applications_or_error().runs.cancel(request),
+            ),
+            (
+                "run/status",
+                method_dtos.RunStatusRequestDto,
+                method_dtos.RunStatusResponseDto,
+                lambda _id, request: self._applications_or_error().runs.status(request),
+            ),
+            (
+                "run/pause",
+                method_dtos.RunPauseRequestDto,
+                method_dtos.RunPauseResponseDto,
+                lambda _id, request: self._applications_or_error().runs.pause(request),
+            ),
+            (
+                "run/resume",
+                method_dtos.RunResumeRequestDto,
+                method_dtos.RunResumeResponseDto,
+                lambda _id, request: self._applications_or_error().runs.resume(request),
+            ),
+            (
+                "checkpoint/create",
+                method_dtos.CheckpointCreateRequestDto,
+                method_dtos.CheckpointCreateResponseDto,
+                lambda _id, request: self._applications_or_error().checkpoints.create(request),
+            ),
+            (
+                "checkpoint/list",
+                method_dtos.CheckpointListRequestDto,
+                method_dtos.CheckpointListResponseDto,
+                lambda _id, request: self._applications_or_error().checkpoints.list(request),
+            ),
+            (
+                "checkpoint/rewind",
+                method_dtos.CheckpointRewindRequestDto,
+                method_dtos.CheckpointRewindResponseDto,
+                lambda _id, request: self._applications_or_error().checkpoints.rewind(request),
+            ),
+            (
+                "checkpoint/fork",
+                method_dtos.CheckpointForkRequestDto,
+                method_dtos.CheckpointForkResponseDto,
+                lambda _id, request: self._applications_or_error().checkpoints.fork(request),
+            ),
+            (
+                "model/presets",
+                method_dtos.ModelPresetsRequestDto,
+                method_dtos.ModelPresetsResponseDto,
+                lambda _id, _request: self._applications_or_error().models.presets(),
+            ),
+            (
+                "model/list",
+                method_dtos.ModelListRequestDto,
+                method_dtos.ModelListResponseDto,
+                lambda _id,
+                _request: self._applications_or_error().models.list_models(),
+            ),
+            (
+                "model/create",
+                method_dtos.ModelCreateRequestDto,
+                method_dtos.ModelCreateResponseDto,
+                lambda _id, request: self._applications_or_error().models.create(
+                    provider=request.provider,
+                    model_id=request.model_id,
+                    api_key=request.api_key,
+                ),
+            ),
+            (
+                "model/update",
+                method_dtos.ModelUpdateRequestDto,
+                method_dtos.ModelUpdateResponseDto,
+                lambda _id, request: self._applications_or_error().models.update(
+                    request.id,
+                    provider=request.provider,
+                    model_id=request.model_id,
+                    api_key=request.api_key,
+                ),
+            ),
+            (
+                "model/delete",
+                method_dtos.ModelDeleteRequestDto,
+                method_dtos.ModelDeleteResponseDto,
+                lambda _id, request: self._applications_or_error().models.delete(
+                    request.id
+                ),
+            ),
+            (
+                "plugin/list",
+                method_dtos.PluginListRequestDto,
+                method_dtos.PluginListResponseDto,
+                lambda _id,
+                _request: self._applications_or_error().extensions.list_plugins(),
+            ),
+            (
+                "plugin/setEnabled",
+                method_dtos.PluginSetEnabledRequestDto,
+                method_dtos.PluginSetEnabledResponseDto,
+                lambda _id,
+                request: self._applications_or_error().extensions.set_plugin_enabled(
+                    plugin_id=request.plugin_id,
+                    enabled=request.enabled,
+                    operation_id=request.operation_id,
+                ),
+            ),
+            (
+                "plugin/remove",
+                method_dtos.PluginRemoveRequestDto,
+                method_dtos.PluginRemoveResponseDto,
+                lambda _id,
+                request: self._applications_or_error().extensions.remove_plugin(
+                    plugin_id=request.plugin_id, operation_id=request.operation_id
+                ),
+            ),
+            (
+                "skill/list",
+                method_dtos.SkillListRequestDto,
+                method_dtos.SkillListResponseDto,
+                lambda _id,
+                _request: self._applications_or_error().extensions.list_skills(),
+            ),
+            (
+                "skill/read",
+                method_dtos.SkillReadRequestDto,
+                method_dtos.SkillReadResponseDto,
+                lambda _id,
+                request: self._applications_or_error().extensions.read_skill(
+                    qualified_id=request.qualified_id
+                ),
+            ),
+            (
+                "mcp/list",
+                method_dtos.McpListRequestDto,
+                method_dtos.McpListResponseDto,
+                lambda _id,
+                _request: self._applications_or_error().extensions.list_mcp_servers(),
+            ),
+            (
+                "mcp/setEnabled",
+                method_dtos.McpSetEnabledRequestDto,
+                method_dtos.McpSetEnabledResponseDto,
+                lambda _id,
+                request: self._applications_or_error().extensions.set_mcp_enabled(
+                    plugin_id=request.plugin_id,
+                    server_id=request.server_id,
+                    enabled=request.enabled,
+                    consent=request.consent,
+                    operation_id=request.operation_id,
+                ),
+            ),
+            (
+                "extension/read",
+                method_dtos.ExtensionReadRequestDto,
+                method_dtos.ExtensionReadResponseDto,
+                lambda _id,
+                _request: self._applications_or_error().extensions.read_extensions(),
+            ),
+            (
+                "extension/readEvents",
+                method_dtos.ExtensionReadEventsRequestDto,
+                method_dtos.ExtensionReadEventsResponseDto,
+                lambda _id,
+                request: self._applications_or_error().extensions.read_extension_events(
+                    after_event_id=request.after_event_id, limit=request.limit
+                ),
+            ),
+        )
+        draining_blocked = {
+            "run/start",
+            "model/create",
+            "model/update",
+            "model/delete",
+            "plugin/import",
+            "plugin/setEnabled",
+            "plugin/remove",
+            "mcp/setEnabled",
+        }
+        reconfiguration_blocked = {"run/start"}
+        for name, request_type, response_type, handler in handlers:
+            registry.register(
+                MethodRegistration(
+                    name=name,
+                    request_type=request_type,
+                    response_type=response_type,
+                    handler=_ApplicationMethodAdapter(handler, response_type),
+                    allowed_when_draining=name not in draining_blocked,
+                    allowed_during_reconfiguration=name not in reconfiguration_blocked,
+                    error_mapper=_application_error_mapping,
+                )
+            )
+        registry.register(
+            MethodRegistration(
+                name="plugin/import",
+                request_type=method_dtos.PluginImportRequestDto,
+                response_type=method_dtos.PluginImportResponseDto,
+                handler=_DeferredPluginImportAdapter(self),
+                allowed_when_draining=False,
+                allowed_during_reconfiguration=True,
+                error_mapper=_application_error_mapping,
+            )
+        )
+        return registry
+
+    def _applications_or_error(self) -> _RuntimeApplications:
+        """Return initialized use cases, retaining no second state authority."""
+
+        if self._applications is None:
+            if self.store.health_state != "ready":
+                raise ApplicationError("STORAGE_HEALTH_ONLY")
+            self._applications = self._build_applications()
+        return self._applications
+
+    def _build_applications(self) -> _RuntimeApplications:
+        task_lifecycle = TaskLifecycleApplication(
+            _ServerTaskLifecycleRuntime(self.supervisor)
+        )
+        return _RuntimeApplications(
+            sessions=SessionApplication(self.store, scan_text=self._scan_text),
+            runs=RunApplication(
+                store=self.store,
+                runtime=self.supervisor,
+                environment=_ServerRunEnvironment(self),
+                lifecycle=task_lifecycle,
+                scan_text=self._scan_text,
+            ),
+            approvals=ApprovalApplication(
+                self.store.typed_runtime_repository(),
+                _ServerApprovalRuntime(self.supervisor),
+            ),
+            models=ModelApplication(self.model_config),
+            extensions=ExtensionApplication(
+                store=self.store,
+                plugins=lambda: self.plugins,
+            ),
+            repository_factory=RepositoryApplicationFactory(
+                self.store.repository_intelligence_repository
+            ),
+            context=ContextApplication(
+                snapshots=self.store.context_snapshot_repository(),
+                verified_compactions=self.store.verified_compaction_repository(),
+            ),
+            checkpoints=CheckpointApplication(
+                self.store, self.store.checkpoint_repository()
+            ),
+            task_lifecycle=task_lifecycle,
+        )
 
     def initialize(self, request_id: str, params: object) -> None:
         if not valid_initialize_params(params):
@@ -507,24 +851,18 @@ class RuntimeServer:
                 deploy_system_skills(self.store.data_directory)
                 self.plugins = PluginCatalog(self.store)
                 self.model_config.initialize()
-                self.model_secrets.initialize()
                 self.async_kernel = RuntimeAsyncKernel(
                     resource_registry=self.supervisor.resources,
                 )
                 self.async_kernel.start()
                 self.model_gateway = ModelGateway(
-                    self.model_secrets,
+                    self.model_config,
                     async_kernel=self.async_kernel,
                     resource_registry=self.supervisor.resources,
                 )
-                configured_key = self.model_config.api_key()
-                if self.model is None and configured_key is not None:
-                    self.model_factory = ModelClientFactory(
-                        configured_key,
-                        async_kernel=self.async_kernel,
-                        resource_registry=self.supervisor.resources,
-                    )
                 self.supervisor.bind_async_kernel(self.async_kernel)
+                self.supervisor.verify_restart_state()
+                self._applications = self._build_applications()
         except (
             StorageError,
             ModelConfigError,
@@ -560,11 +898,7 @@ class RuntimeServer:
                         "runShell": self.shell_available,
                         "modelConfigured": (
                             self.model is not None
-                            or self.model_factory is not None
-                            or (
-                                self.store.health_state == "ready"
-                                and bool(self.store.list_model_profiles())
-                            )
+                            or bool(self.model_config.list())
                         ),
                     },
                 },
@@ -574,975 +908,6 @@ class RuntimeServer:
             self.supervisor.events.deliver_pending()
         logger.info("Runtime initialized")
         self.supervisor.schedule_next()
-
-    def create_session(self, request_id: str, params: object) -> None:
-        if (
-            not isinstance(params, dict)
-            or set(params) - {"workspaceRoot", "operationId"}
-            or "workspaceRoot" not in params
-            or not isinstance(params.get("workspaceRoot"), str)
-            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        try:
-            session = self.store.create_session(
-                params["workspaceRoot"], operation_id=params.get("operationId")
-            )
-        except WorkspaceBoundaryError:
-            self.send(business_error(request_id, "WORKSPACE_BOUNDARY_VIOLATION"))
-            return
-        except OperationConflictError:
-            self.send(business_error(request_id, "OPERATION_ID_REUSED"))
-            return
-        except OperationInProgressError:
-            self.send(business_error(request_id, "OPERATION_IN_PROGRESS"))
-            return
-        self.send(response(request_id, session))
-
-    def list_sessions(self, request_id: str, params: object) -> None:
-        if not isinstance(params, dict) or set(params) - {"limit", "cursor"}:
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        limit = params.get("limit", 50)
-        cursor = params.get("cursor")
-        if (
-            not isinstance(limit, int)
-            or isinstance(limit, bool)
-            or not 1 <= limit <= 200
-            or (cursor is not None and not isinstance(cursor, str))
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        try:
-            result = self.store.list_sessions(limit=limit, cursor=cursor)
-        except InvalidCursorError:
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        self.send(response(request_id, result))
-
-    def read_session(self, request_id: str, params: object) -> None:
-        if (
-            not isinstance(params, dict)
-            or set(params) - {"sessionId", "itemLimit", "beforeItemId"}
-            or not _is_canonical_uuid(params.get("sessionId"))
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        item_limit = params.get("itemLimit", 200)
-        before_item_id = params.get("beforeItemId")
-        if (
-            not isinstance(item_limit, int)
-            or isinstance(item_limit, bool)
-            or not 1 <= item_limit <= 500
-            or (before_item_id is not None and not _is_canonical_uuid(before_item_id))
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        session = self.store.read_session(params["sessionId"])
-        if session is None:
-            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
-            return
-        try:
-            snapshot = self.store.read_session_snapshot(
-                params["sessionId"],
-                item_limit=item_limit,
-                before_item_id=before_item_id,
-            )
-        except ResourceNotFoundError:
-            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
-            return
-        self.send(response(request_id, snapshot))
-
-    def rename_session(self, request_id: str, params: object) -> None:
-        if (
-            not isinstance(params, dict)
-            or set(params) - {"sessionId", "title", "operationId"}
-            or not {"sessionId", "title"} <= set(params)
-            or not _is_canonical_uuid(params.get("sessionId"))
-            or not isinstance(params.get("title"), str)
-            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        title = clean_session_title(params["title"])
-        if not title:
-            self.send(business_error(request_id, "INVALID_SESSION_TITLE"))
-            return
-        try:
-            title = clean_session_title(self._scan_text(title))
-            session = self.store.rename_session(
-                params["sessionId"], title, operation_id=params.get("operationId")
-            )
-        except SensitiveContentDenied:
-            self.send(business_error(request_id, "SENSITIVE_CONTENT_REJECTED"))
-            return
-        except SensitiveScanError:
-            self.send(business_error(request_id, "SENSITIVE_SCAN_FAILED"))
-            return
-        except ResourceNotFoundError:
-            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
-            return
-        except OperationConflictError:
-            self.send(business_error(request_id, "OPERATION_ID_REUSED"))
-            return
-        except OperationInProgressError:
-            self.send(business_error(request_id, "OPERATION_IN_PROGRESS"))
-            return
-        self.send(response(request_id, session))
-
-    def delete_session(self, request_id: str, params: object) -> None:
-        if (
-            not isinstance(params, dict)
-            or set(params) - {"sessionId", "operationId"}
-            or not _is_canonical_uuid(params.get("sessionId"))
-            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        try:
-            result = self.store.delete_session(
-                params["sessionId"], operation_id=params.get("operationId")
-            )
-        except ResourceNotFoundError:
-            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
-            return
-        except SessionActiveError:
-            self.send(business_error(request_id, "SESSION_HAS_ACTIVE_RUN"))
-            return
-        except OperationConflictError:
-            self.send(business_error(request_id, "OPERATION_ID_REUSED"))
-            return
-        except OperationInProgressError:
-            self.send(business_error(request_id, "OPERATION_IN_PROGRESS"))
-            return
-        self.send(response(request_id, result))
-
-    def list_events(self, request_id: str, params: object) -> None:
-        if (
-            not isinstance(params, dict)
-            or set(params) - {"sessionId", "afterEventId", "limit"}
-            or not _is_canonical_uuid(params.get("sessionId"))
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        after_event_id = params.get("afterEventId", 0)
-        limit = params.get("limit", 200)
-        if (
-            not isinstance(after_event_id, int) or isinstance(after_event_id, bool)
-            or after_event_id < 0
-            or not isinstance(limit, int) or isinstance(limit, bool)
-            or not 1 <= limit <= 500
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        self.send(response(request_id, self.store.list_events(
-            params["sessionId"], after_event_id=after_event_id, limit=limit
-        )))
-
-    def start_run(self, request_id: str, params: object) -> None:
-        if (
-            not isinstance(params, dict)
-            or set(params) - {
-                "sessionId", "userInput", "modelId", "profileId", "operationId"
-            }
-            or not {"sessionId", "userInput"} <= set(params)
-            or not _is_canonical_uuid(params.get("sessionId"))
-            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
-            or not isinstance(params.get("userInput"), str)
-            or not params["userInput"].strip()
-            or len(params["userInput"].encode("utf-8")) > 64 * 1024
-            or ("modelId" in params and not isinstance(params["modelId"], str))
-            or ("profileId" in params and not isinstance(params["profileId"], str))
-            or ("modelId" in params and "profileId" in params)
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        if (
-            self.model is None
-            and self.model_factory is None
-            and not self.store.list_model_profiles()
-        ):
-            self.send(business_error(request_id, "INVALID_STATE"))
-            return
-        try:
-            user_input = self._scan_text(params["userInput"])
-        except SensitiveContentDenied:
-            self.send(business_error(request_id, "SENSITIVE_CONTENT_REJECTED"))
-            return
-        except SensitiveScanError:
-            self.send(business_error(request_id, "SENSITIVE_SCAN_FAILED"))
-            return
-        session = self.store.read_session(params["sessionId"])
-        if session is None:
-            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
-            return
-        requested_profile_id = params.get("profileId")
-        requested_model_id = params.get("modelId")
-        frozen_model: RunModelSnapshot | None = None
-        if (
-            requested_profile_id is None
-            and isinstance(requested_model_id, str)
-            and self.store.get_model_profile(requested_model_id) is not None
-        ):
-            requested_profile_id = requested_model_id
-        if isinstance(requested_profile_id, str):
-            profile = self.store.get_model_profile(requested_profile_id)
-            if profile is None or not self._profile_is_selectable(profile):
-                self.send(business_error(request_id, "MODEL_NOT_AVAILABLE"))
-                return
-            frozen_model = RunModelSnapshot(
-                profile=profile,
-                capability=resolve_model_capabilities(profile, PRESETS[profile.provider]),
-                frozen_at=datetime.now(UTC),
-            )
-            requested_model_id = profile.model_id
-        if (
-            frozen_model is None
-            and requested_model_id is not None
-            and requested_model_id not in SUPPORTED_MODELS
-        ):
-            self.send(business_error(request_id, "MODEL_NOT_AVAILABLE"))
-            return
-        existing_model_id = self.store.session_model_id(params["sessionId"])
-        if (
-            existing_model_id is not None
-            and requested_model_id is not None
-            and requested_model_id != existing_model_id
-        ):
-            self.send(business_error(request_id, "MODEL_CHANGE_NOT_ALLOWED"))
-            return
-        model_id = existing_model_id or requested_model_id or DEFAULT_MODEL_ID
-        run_model = (
-            None if frozen_model is not None else self._model_for(model_id)
-        )
-        extension_snapshot = (
-            SkillCatalog(self.plugins).extension_snapshot()
-            if self.plugins is not None else None
-        )
-        operation_id = params.get("operationId")
-        if isinstance(operation_id, str):
-            try:
-                replay = self.store.operation_result(
-                    operation_id,
-                    "run/start",
-                    {
-                        "sessionId": params["sessionId"],
-                        "userInput": user_input,
-                        "modelId": model_id,
-                        "profileId": requested_profile_id,
-                        "extensionSnapshot": extension_snapshot,
-                    },
-                )
-            except OperationConflictError:
-                self.send(business_error(request_id, "OPERATION_ID_REUSED"))
-                return
-            except OperationInProgressError:
-                self.send(business_error(request_id, "OPERATION_IN_PROGRESS"))
-                return
-            if isinstance(replay, dict) and isinstance(replay.get("run"), dict):
-                self.send(response(request_id, replay["run"]))
-                return
-        needs_title = "title" not in session
-        try:
-            run, _user_item = self.store.enqueue_run(
-                params["sessionId"], user_input,
-                operation_id=params.get("operationId"),
-                session_title=None,
-                model_id=model_id,
-                model_profile=(
-                    legacy_profile_snapshot(frozen_model)
-                    if frozen_model is not None
-                    else getattr(run_model, "profile_snapshot", None)
-                ),
-                run_model_snapshot=frozen_model,
-                extension_snapshot=extension_snapshot,
-            )
-        except ResourceNotFoundError:
-            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
-            return
-        except WorkspaceBoundaryError:
-            self.send(business_error(request_id, "WORKSPACE_BOUNDARY_VIOLATION"))
-            return
-        except OperationConflictError:
-            self.send(business_error(request_id, "OPERATION_ID_REUSED"))
-            return
-        except OperationInProgressError:
-            self.send(business_error(request_id, "OPERATION_IN_PROGRESS"))
-            return
-
-        start = self.supervisor.prepare_next()
-        run = self.store.read_run(str(run["id"]))
-        try:
-            self.send(response(request_id, run))
-        except Exception:
-            self.supervisor.abort(start)
-            if start is not None:
-                try:
-                    self.store.interrupt_run(start.run_id)
-                except (ResourceNotFoundError, InvalidRunStateError):
-                    pass
-            raise
-        finally:
-            self.supervisor.release(start)
-        if needs_title:
-            self._schedule_title_generation(
-                params["sessionId"],
-                user_input,
-                (
-                    requested_profile_id
-                    if isinstance(requested_profile_id, str)
-                    else model_id
-                ),
-            )
-
-    def cancel_run(self, request_id: str, params: object) -> None:
-        if (
-            not isinstance(params, dict)
-            or set(params) - {"runId", "operationId"}
-            or "runId" not in params
-            or not _is_canonical_uuid(params.get("runId"))
-            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        try:
-            current = self.store.read_run(params["runId"])
-        except ResourceNotFoundError:
-            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
-            return
-        if current["status"] not in {
-            "queued",
-            "running",
-            "waiting_approval",
-            "finalizing",
-            "canceled",
-        }:
-            self.send(business_error(request_id, "INVALID_STATE"))
-            return
-        try:
-            current = self.supervisor.cancel_run(
-                params["runId"], operation_id=params.get("operationId")
-            )
-        except InvalidRunStateError:
-            current = self.store.read_run(params["runId"])
-            if current["status"] != "canceled":
-                self.send(business_error(request_id, "INVALID_STATE"))
-                return
-        except RunCancelTimeout:
-            self.send(business_error(request_id, "RUN_CANCEL_TIMEOUT"))
-            return
-        except RunReconciliationRequired:
-            self.send(
-                business_error(request_id, "RUN_RECONCILIATION_REQUIRED")
-            )
-            return
-        except OperationConflictError:
-            self.send(business_error(request_id, "OPERATION_ID_REUSED"))
-            return
-        except OperationInProgressError:
-            self.send(business_error(request_id, "OPERATION_IN_PROGRESS"))
-            return
-        self.send(response(request_id, current))
-
-    def model_status(self, request_id: str, params: object) -> None:
-        if not isinstance(params, dict) or params:
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        try:
-            status = self.model_config.public_status()
-        except ModelConfigError:
-            self.send(business_error(request_id, "INTERNAL_ERROR"))
-            return
-        if self.model is not None or self.model_factory is not None:
-            status["configured"] = True
-        self.send(response(request_id, status))
-
-    def list_models(self, request_id: str, params: object) -> None:
-        if not isinstance(params, dict) or params:
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        legacy = model_catalog(configured=(
-            self.model is not None or self.model_factory is not None
-        ))
-        profiles = self.store.list_model_profiles()
-        options = [self._model_option(profile) for profile in profiles]
-        selectable = next(
-            (option["id"] for option in options if option["selectable"]),
-            legacy["defaultModelId"],
-        )
-        self.send(response(request_id, {
-            "models": options + legacy["models"],
-            "defaultModelId": selectable,
-        }))
-
-    def _model_option(self, profile: ModelProfile) -> dict[str, object]:
-        configured = self._profile_is_configured(profile)
-        return {
-            "id": profile.id,
-            "provider": profile.provider,
-            "displayName": profile.name,
-            "configured": configured,
-            "selectable": configured and self._profile_is_selectable(profile),
-        }
-
-    def _profile_is_configured(self, profile: ModelProfile) -> bool:
-        try:
-            self.model_secrets.resolve(profile.auth_reference)
-        except (ValueError, ModelSecretError):
-            return False
-        return True
-
-    def _profile_is_selectable(self, profile: ModelProfile) -> bool:
-        if not self._profile_is_configured(profile):
-            return False
-        preset = PRESETS.get(profile.provider)
-        if preset is None or not isinstance(profile.wire_api, WireAPI):
-            return False
-        capability = resolve_model_capabilities(profile, preset)
-        return (
-            capability.context_window is not None
-            and capability.max_output_tokens is not None
-        )
-
-    def configure_model(self, request_id: str, params: object) -> None:
-        if (
-            not isinstance(params, dict)
-            or set(params) != {"apiKey"}
-            or not isinstance(params.get("apiKey"), str)
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        if not self.supervisor.begin_reconfiguration():
-            code = (
-                "RUNTIME_RECONFIGURING"
-                if self.supervisor.control_state
-                is RuntimeControlState.RECONFIGURING
-                else "RUN_ALREADY_ACTIVE"
-            )
-            self.send(business_error(request_id, code))
-            return
-        previous_factory = self.model_factory
-        previous_model = self.model
-        previous_key: str | None = None
-        saved = False
-        previous_closed = False
-        candidate: ModelClientFactory | None = None
-        try:
-            previous_key = self.model_config.api_key()
-            candidate = ModelClientFactory(
-                params["apiKey"],
-                async_kernel=self._required_async_kernel(),
-                resource_registry=self.supervisor.resources,
-            )
-            if previous_factory is not None:
-                previous_factory.close()
-                previous_closed = True
-            self.model_config.save_api_key(params["apiKey"])
-            saved = True
-            key = self.model_config.api_key()
-            if key is None:
-                raise ModelConfigError("model configuration was not saved")
-            self.model = None
-            self.model_factory = candidate
-            candidate = None
-        except ValueError:
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        except ModelClientInUseError:
-            if saved:
-                self.model_config.restore_api_key(previous_key)
-            self.model = previous_model
-            self.model_factory = previous_factory
-            if candidate is not None:
-                candidate.close()
-            self.send(business_error(request_id, "MODEL_CLIENT_IN_USE"))
-            return
-        except ModelFactoryCloseError as error:
-            if candidate is not None:
-                candidate.close()
-            self.send(
-                business_error(
-                    request_id, error.code
-                )
-            )
-            return
-        except (OSError, ModelConfigError):
-            if saved:
-                try:
-                    self.model_config.restore_api_key(previous_key)
-                except (OSError, ModelConfigError):
-                    logger.exception("Model configuration rollback failed")
-            if previous_closed and candidate is not None:
-                self.model = None
-                self.model_factory = candidate
-                candidate = None
-            else:
-                self.model = previous_model
-                self.model_factory = previous_factory
-            if candidate is not None:
-                candidate.close()
-            logger.exception("Model configuration failed")
-            self.send(
-                business_error(
-                    request_id,
-                    "MODEL_CONFIG_COMMIT_FAILED"
-                    if previous_closed
-                    else "MODEL_RECONFIGURATION_FAILED",
-                )
-            )
-            return
-        finally:
-            self.supervisor.end_reconfiguration()
-        self.supervisor.schedule_next()
-        self.send(response(request_id, self.model_config.public_status()))
-
-    def list_model_profiles(self, request_id: str, params: object) -> None:
-        if params != {}:
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        self.send(response(request_id, {
-            "schemaVersion": 1,
-            "profiles": [
-                _public_model(profile)
-                for profile in self.store.list_model_profiles()
-            ],
-        }))
-
-    def get_model_profile(self, request_id: str, params: object) -> None:
-        profile_id = _profile_id_param(params)
-        if profile_id is None:
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        profile = self.store.get_model_profile(profile_id)
-        if profile is None:
-            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
-            return
-        self.send(response(request_id, _public_model(profile)))
-
-    def create_model_profile(self, request_id: str, params: object) -> None:
-        if (
-            not isinstance(params, dict)
-            or set(params) - {"profile", "apiKey"}
-            or not isinstance(params.get("profile"), dict)
-            or (
-                "apiKey" in params
-                and not isinstance(params.get("apiKey"), str)
-            )
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        reference: str | None = None
-        try:
-            reference = (
-                self.model_secrets.save(params["apiKey"])
-                if isinstance(params.get("apiKey"), str)
-                else _draft_auth_reference(params["profile"])
-            )
-            profile = _profile_from_draft(params["profile"], reference)
-            self.model_secrets.resolve(profile.auth_reference)
-            resolve_model_capabilities(profile, PRESETS[profile.provider])
-            self.store.create_model_profile(profile)
-        except (ValueError, ValidationError, ModelSecretError):
-            if reference is not None and isinstance(params.get("apiKey"), str):
-                self.model_secrets.delete(reference)
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        self.send(response(request_id, _public_model(profile)))
-
-    def update_model_profile(self, request_id: str, params: object) -> None:
-        if (
-            not isinstance(params, dict)
-            or set(params) - {"profileId", "profile", "apiKey"}
-            or not isinstance(params.get("profileId"), str)
-            or not isinstance(params.get("profile"), dict)
-            or (
-                "apiKey" in params
-                and not isinstance(params.get("apiKey"), str)
-            )
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        existing = self.store.get_model_profile(params["profileId"])
-        if existing is None:
-            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
-            return
-        reference: str | None = None
-        try:
-            reference = (
-                self.model_secrets.save(params["apiKey"])
-                if isinstance(params.get("apiKey"), str)
-                else existing.auth_reference
-            )
-            profile = _profile_from_draft(
-                params["profile"],
-                reference,
-                existing=existing,
-            )
-            self.model_secrets.resolve(profile.auth_reference)
-            resolve_model_capabilities(profile, PRESETS[profile.provider])
-            self.store.update_model_profile(profile)
-        except (ValueError, ValidationError, ModelSecretError):
-            if reference is not None and isinstance(params.get("apiKey"), str):
-                self.model_secrets.delete(reference)
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        self.send(response(request_id, _public_model(profile)))
-
-    def delete_model_profile(self, request_id: str, params: object) -> None:
-        profile_id = _profile_id_param(params)
-        if profile_id is None:
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        try:
-            self.store.delete_model_profile(profile_id)
-        except ResourceNotFoundError:
-            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
-            return
-        self.send(response(request_id, {"deletedProfileId": profile_id}))
-
-    def list_model_presets(self, request_id: str, params: object) -> None:
-        if params != {}:
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        self.send(response(request_id, {
-            "schemaVersion": 1,
-            "presets": [_public_model(preset) for preset in PRESETS.values()],
-        }))
-
-    def list_plugins(self, request_id: str, params: object) -> None:
-        if not isinstance(params, dict) or params:
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        if self.plugins is None:
-            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
-            return
-        self.send(response(request_id, {"plugins": self.plugins.list_plugins()}))
-
-    def import_plugin(self, request_id: str, params: object) -> None:
-        if (
-            not isinstance(params, dict)
-            or set(params) - {"sourcePath", "operationId"}
-            or "sourcePath" not in params
-            or not isinstance(params.get("sourcePath"), str)
-            or not 1 <= len(params["sourcePath"].encode("utf-8")) <= 4096
-            or not Path(params["sourcePath"]).is_absolute()
-            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        if self.plugins is None:
-            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
-            return
-        operation_request = {"sourcePath": params["sourcePath"]}
-        operation_key = (
-            str(params["operationId"])
-            if isinstance(params.get("operationId"), str)
-            else str(uuid.uuid4())
-        )
-        try:
-            operation, created = self.store.accept_async_operation(
-                request_id=request_id,
-                operation_id=operation_key,
-                scope="plugin/import",
-                request=operation_request,
-            )
-        except OperationConflictError:
-            self.send(business_error(request_id, "OPERATION_ID_REUSED"))
-            return
-        if not created:
-            if operation.status == "completed" and operation.result is not None:
-                self.send(response(request_id, operation.result))
-            elif operation.status in {"accepted", "running"}:
-                self.send(
-                    business_error(request_id, "OPERATION_IN_PROGRESS")
-                )
-            else:
-                self.send(
-                    business_error(
-                        request_id,
-                        operation.error_code
-                        or (
-                            "ASYNC_OPERATION_INTERRUPTED"
-                            if operation.status == "interrupted"
-                            else "ASYNC_OPERATION_CANCELED"
-                        ),
-                    )
-                )
-            return
-        scheduled = self.supervisor.start_managed_task(
-            "plugin-import",
-            lambda cancel: self._import_plugin_task(
-                request_id, dict(params), operation.id, cancel
-            ),
-            operation_id=operation.id,
-        )
-        if not scheduled:
-            self.store.cancel_async_operation(operation.id)
-            self.send(business_error(request_id, "RUNTIME_DRAINING"))
-
-    def _import_plugin_task(
-        self,
-        request_id: str,
-        params: dict[str, object],
-        async_operation_id: str,
-        cancel: threading.Event,
-    ) -> None:
-        if cancel.is_set() or self.plugins is None:
-            self.store.cancel_async_operation(async_operation_id)
-            self.send(
-                business_error(request_id, "ASYNC_OPERATION_CANCELED")
-            )
-            return
-        self.store.start_async_operation(async_operation_id)
-        try:
-            plugin = self.plugins.import_directory(Path(params["sourcePath"]))
-        except PluginImportError as error:
-            if cancel.is_set():
-                self.store.cancel_async_operation(async_operation_id)
-                self.send(
-                    business_error(request_id, "ASYNC_OPERATION_CANCELED")
-                )
-                return
-            code = {
-                "plugin_version_conflict": "PLUGIN_VERSION_CONFLICT",
-                "plugin_id_conflict": "PLUGIN_ID_CONFLICT",
-            }.get(str(error), "PLUGIN_IMPORT_REJECTED")
-            self.store.fail_async_operation(async_operation_id, code)
-            self.send(business_error(request_id, code))
-            return
-        except (OSError, StorageError):
-            code = (
-                "ASYNC_OPERATION_CANCELED"
-                if cancel.is_set()
-                else "PLUGIN_IMPORT_FAILED"
-            )
-            if cancel.is_set():
-                self.store.cancel_async_operation(async_operation_id)
-            else:
-                self.store.fail_async_operation(
-                    async_operation_id, code
-                )
-            self.send(business_error(request_id, code))
-            return
-        self.store.complete_async_operation(async_operation_id, plugin)
-        self.send(response(request_id, plugin))
-
-    def set_plugin_enabled(self, request_id: str, params: object) -> None:
-        if (
-            not isinstance(params, dict)
-            or set(params) - {"pluginId", "enabled", "operationId"}
-            or not {"pluginId", "enabled"} <= set(params)
-            or not isinstance(params.get("pluginId"), str)
-            or not isinstance(params.get("enabled"), bool)
-            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        if self.plugins is None:
-            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
-            return
-        operation_request = {"pluginId": params["pluginId"], "enabled": params["enabled"]}
-        if self._extension_replay(
-            request_id, params.get("operationId"), "plugin/setEnabled", operation_request
-        ):
-            return
-        try:
-            plugin = self.plugins.set_enabled(params["pluginId"], params["enabled"])
-        except ResourceNotFoundError:
-            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
-            return
-        plugin = self._record_extension_operation(
-            params.get("operationId"), "plugin/setEnabled", operation_request, plugin
-        )
-        self.send(response(request_id, plugin))
-
-    def remove_plugin(self, request_id: str, params: object) -> None:
-        if (
-            not isinstance(params, dict)
-            or set(params) - {"pluginId", "operationId"}
-            or "pluginId" not in params
-            or not isinstance(params.get("pluginId"), str)
-            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        if self.plugins is None:
-            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
-            return
-        operation_request = {"pluginId": params["pluginId"]}
-        if self._extension_replay(
-            request_id, params.get("operationId"), "plugin/remove", operation_request
-        ):
-            return
-        try:
-            plugin = self.plugins.remove(params["pluginId"])
-        except ResourceNotFoundError:
-            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
-            return
-        plugin = self._record_extension_operation(
-            params.get("operationId"), "plugin/remove", operation_request, plugin
-        )
-        self.send(response(request_id, plugin))
-
-    def list_skills(self, request_id: str, params: object) -> None:
-        if not isinstance(params, dict) or params:
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        if self.plugins is None:
-            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
-            return
-        try:
-            catalog = SkillCatalog(self.plugins)
-            skills = catalog.catalog(catalog.extension_snapshot())
-        except SkillReadError:
-            self.send(business_error(request_id, "SKILL_CATALOG_UNAVAILABLE"))
-            return
-        self.send(response(request_id, {"skills": skills}))
-
-    def read_skill(self, request_id: str, params: object) -> None:
-        if (
-            not isinstance(params, dict)
-            or set(params) != {"qualifiedId"}
-            or not isinstance(params.get("qualifiedId"), str)
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        if self.plugins is None:
-            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
-            return
-        try:
-            catalog = SkillCatalog(self.plugins)
-            skill = catalog.read_skill(
-                catalog.extension_snapshot(), params["qualifiedId"]
-            )
-        except SkillReadError:
-            self.send(business_error(request_id, "SKILL_UNAVAILABLE"))
-            return
-        self.send(response(request_id, skill))
-
-    def list_mcp_servers(self, request_id: str, params: object) -> None:
-        if not isinstance(params, dict) or params:
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        if self.plugins is None:
-            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
-            return
-        self.send(response(request_id, {"servers": self.plugins.list_mcp_servers()}))
-
-    def read_extensions(self, request_id: str, params: object) -> None:
-        if not isinstance(params, dict) or params:
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        if self.plugins is None:
-            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
-            return
-        waterline = self.store.extension_event_waterline()
-        try:
-            catalog = SkillCatalog(self.plugins)
-            skills = catalog.catalog(catalog.extension_snapshot())
-        except SkillReadError:
-            skills = []
-        self.send(response(request_id, {
-            "plugins": self.plugins.list_plugins(),
-            "skills": skills,
-            "servers": self.plugins.list_mcp_servers(),
-            "throughEventId": waterline,
-        }))
-
-    def read_extension_events(self, request_id: str, params: object) -> None:
-        if (
-            not isinstance(params, dict)
-            or set(params) - {"afterEventId", "limit"}
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        after = params.get("afterEventId", 0)
-        limit = params.get("limit", 200)
-        if (
-            not isinstance(after, int) or isinstance(after, bool) or after < 0
-            or not isinstance(limit, int) or isinstance(limit, bool)
-            or not 1 <= limit <= 500
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        self.send(response(request_id, self.store.list_extension_events(
-            after_event_id=after, limit=limit
-        )))
-
-    def set_mcp_enabled(self, request_id: str, params: object) -> None:
-        if (
-            not isinstance(params, dict)
-            or set(params) - {"pluginId", "serverId", "enabled", "consent", "operationId"}
-            or not {"pluginId", "serverId", "enabled", "consent"} <= set(params)
-            or not isinstance(params.get("pluginId"), str)
-            or not isinstance(params.get("serverId"), str)
-            or not isinstance(params.get("enabled"), bool)
-            or params.get("consent") is not True
-            or ("operationId" in params and not _is_canonical_uuid(params["operationId"]))
-        ):
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        if self.plugins is None:
-            self.send(business_error(request_id, "EXTENSIONS_UNAVAILABLE"))
-            return
-        operation_request = {
-            "pluginId": params["pluginId"], "serverId": params["serverId"],
-            "enabled": params["enabled"], "consent": True,
-        }
-        if self._extension_replay(
-            request_id, params.get("operationId"), "mcp/setEnabled", operation_request
-        ):
-            return
-        try:
-            server = self.plugins.set_mcp_enabled(
-                params["pluginId"], params["serverId"], params["enabled"]
-            )
-        except ResourceNotFoundError:
-            self.send(business_error(request_id, "RESOURCE_NOT_FOUND"))
-            return
-        except PluginImportError:
-            self.send(business_error(request_id, "MCP_SERVER_DISABLED"))
-            return
-        server = self._record_extension_operation(
-            params.get("operationId"), "mcp/setEnabled", operation_request, server
-        )
-        self.send(response(request_id, server))
-
-    def _extension_replay(
-        self,
-        request_id: str,
-        operation_id: object,
-        scope: str,
-        request: dict[str, object],
-    ) -> bool:
-        if not isinstance(operation_id, str):
-            return False
-        try:
-            replay = self.store.operation_result(operation_id, scope, request)
-        except OperationConflictError:
-            self.send(business_error(request_id, "OPERATION_ID_REUSED"))
-            return True
-        except OperationInProgressError:
-            self.send(business_error(request_id, "OPERATION_IN_PROGRESS"))
-            return True
-        if isinstance(replay, dict):
-            self.send(response(request_id, replay))
-            return True
-        return False
-
-    def _record_extension_operation(
-        self,
-        operation_id: object,
-        scope: str,
-        request: dict[str, object],
-        result: dict[str, object],
-    ) -> dict[str, object]:
-        if not isinstance(operation_id, str):
-            return result
-        return self.store.record_operation_result(
-            operation_id, scope, request, result
-        )
 
     def shutdown(self, request_id: str, params: object) -> None:
         if not isinstance(params, dict) or params:
@@ -1556,26 +921,20 @@ class RuntimeServer:
         try:
             self.supervisor.shutdown()
             self._cleanup_extensions()
-            self._close_model_factory()
             self._close_async_kernel()
             self.store.cancel_active_async_operations()
             self.supervisor.events.deliver_pending()
             if self.store.pending_outbox_count():
-                raise ResourceRegistryError(
-                    "event delivery is not quiescent"
-                )
+                raise ResourceRegistryError("event delivery is not quiescent")
             self.supervisor.resources.ensure_empty()
-        except ModelFactoryCloseError as error:
-            self.send(business_error(request_id, error.code))
-            return
         except (
             RuntimeShutdownTimeout,
-            ModelClientInUseError,
             AsyncKernelCloseError,
             ResourceRegistryError,
         ):
             self.send(business_error(request_id, "RUNTIME_SHUTDOWN_TIMEOUT"))
             return
+        self._clear_frozen_model_configs()
         self.store.close()
         self.send(response(request_id, {}))
         self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
@@ -1616,70 +975,65 @@ class RuntimeServer:
         if self.supervisor.lifecycle is RuntimeLifecycle.CLOSED:
             return
         if not self.initialized or self.store.health_state != "ready":
-            self._close_model_factory()
             self._close_async_kernel()
+            self._clear_frozen_model_configs()
             self.store.close()
             self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
             return
         try:
             self.supervisor.shutdown()
             self._cleanup_extensions()
-            self._close_model_factory()
             self._close_async_kernel()
             self.store.cancel_active_async_operations()
             self.supervisor.events.deliver_pending()
             if self.store.pending_outbox_count():
-                raise ResourceRegistryError(
-                    "event delivery is not quiescent"
-                )
+                raise ResourceRegistryError("event delivery is not quiescent")
             self.supervisor.resources.ensure_empty()
         except (
             RuntimeShutdownTimeout,
-            ModelClientInUseError,
-            ModelFactoryCloseError,
             AsyncKernelCloseError,
             ResourceRegistryError,
         ):
             raise
+        self._clear_frozen_model_configs()
         self.store.close()
         self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
 
-    def _model_for(self, model_id: str) -> ModelClient:
-        if self.model is not None:
-            return self.model
-        if self.model_factory is None:
-            raise ModelConfigError("model is not configured")
-        return self.model_factory.client_for(model_id)
-
     def _model_lease_for(self, model_id: str) -> ModelClientLease:
-        profile = self.store.get_model_profile(model_id)
-        if profile is not None:
-            if not self._profile_is_selectable(profile) or self.model_gateway is None:
-                raise ModelConfigError("model profile is not available")
-            return self.model_gateway.acquire_lease(RunModelSnapshot(
-                profile=profile,
-                capability=resolve_model_capabilities(profile, PRESETS[profile.provider]),
-                frozen_at=datetime.now(UTC),
-            ))
         if self.model is not None:
             return ModelClientLease(
                 self.model,
                 resource_registry=self.supervisor.resources,
                 owner_id=model_id,
             )
-        if self.model_factory is None:
+        config = self.model_config.get(model_id)
+        if config is None or self.model_gateway is None:
             raise ModelConfigError("model is not configured")
-        return self.model_factory.acquire(model_id)
+        return self.model_gateway.acquire_lease(config)
 
     def _model_lease_for_run(self, run_id: str) -> ModelClientLease:
-        try:
-            snapshot = self.store.read_run_model_snapshot(run_id)
-        except ResourceNotFoundError:
-            run = self.store.read_run(run_id)
+        run = self.store.read_run(run_id)
+        if self.model is not None:
+            return self._model_lease_for(str(run["modelId"]))
+        with self._frozen_model_configs_lock:
+            config = self._frozen_model_configs.pop(run_id, None)
+        if config is None:
             return self._model_lease_for(str(run["modelId"]))
         if self.model_gateway is None:
-            raise ModelConfigError("model gateway is not initialized")
-        return self.model_gateway.acquire_lease(snapshot)
+            raise ModelConfigError("model gateway is unavailable")
+        return self.model_gateway.acquire_lease(config)
+
+    def _freeze_model_config(self, run_id: str, config: ModelConfig) -> None:
+        with self._frozen_model_configs_lock:
+            self._frozen_model_configs[run_id] = config
+
+    def _discard_model_config(self, run_id: str) -> None:
+        with self._frozen_model_configs_lock:
+            self._frozen_model_configs.pop(run_id, None)
+
+    def _clear_frozen_model_configs(self) -> None:
+        with self._frozen_model_configs_lock:
+            self._frozen_model_configs.clear()
 
     def _schedule_title_generation(
         self, session_id: str, user_input: str, model_id: str
@@ -1749,9 +1103,7 @@ class RuntimeServer:
                 if deadline_cancel.timed_out
                 else "title_generation_failed"
             )
-            logger.warning(
-                "Session title generation failed: %s", type(error).__name__
-            )
+            logger.warning("Session title generation failed: %s", type(error).__name__)
         finally:
             if lease is not None:
                 lease.close()
@@ -1771,13 +1123,6 @@ class RuntimeServer:
                 "failureReason": failure_reason,
             },
         )
-
-    def _close_model_factory(self) -> None:
-        factory = self.model_factory
-        if factory is not None:
-            factory.close()
-            if self.model_factory is factory:
-                self.model_factory = None
 
     def _required_async_kernel(self) -> RuntimeAsyncKernel:
         if self.async_kernel is None:
@@ -1810,22 +1155,14 @@ class _TitleCancellation(threading.Event):
         if self.is_set():
             return True
         remaining = max(0.0, self.deadline - time.monotonic())
-        return self.cancel.wait(
-            remaining if timeout is None else min(timeout, remaining)
-        ) or self.is_set()
+        return (
+            self.cancel.wait(remaining if timeout is None else min(timeout, remaining))
+            or self.is_set()
+        )
 
     @property
     def timed_out(self) -> bool:
         return time.monotonic() >= self.deadline
-
-
-def _is_canonical_uuid(value: object) -> bool:
-    if not isinstance(value, str):
-        return False
-    try:
-        return str(uuid.UUID(value)) == value
-    except ValueError:
-        return False
 
 
 def _model_from_environment() -> ModelClient | None:

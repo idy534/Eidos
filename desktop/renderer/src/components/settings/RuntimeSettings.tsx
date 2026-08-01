@@ -1,5 +1,5 @@
 import React from "react";
-import type { ModelStatus, RuntimeStatus } from "../../contracts";
+import type { RuntimeStatus } from "../../contracts";
 import { deriveRuntimePresentation } from "../../session-state";
 import { SettingSection } from "./SettingSection";
 import { SettingRow } from "./SettingRow";
@@ -7,10 +7,9 @@ import { StatusBadge } from "./StatusBadge";
 
 interface RuntimeSettingsProps {
   runtime: RuntimeStatus;
-  model?: ModelStatus | undefined;
 }
 
-export function RuntimeSettings({ runtime, model }: RuntimeSettingsProps) {
+export function RuntimeSettings({ runtime }: RuntimeSettingsProps) {
   const presentation = deriveRuntimePresentation(runtime);
 
   if (runtime.state !== "ready") {
@@ -29,7 +28,6 @@ export function RuntimeSettings({ runtime, model }: RuntimeSettingsProps) {
   }
 
   const isStorageReady = runtime.storageHealth.state === "ready";
-  const isModelReady = Boolean(model?.configured);
 
   return (
     <div className="settings-panel">
@@ -83,17 +81,6 @@ export function RuntimeSettings({ runtime, model }: RuntimeSettingsProps) {
               <StatusBadge tone="warning">
                 Health Only ({runtime.storageHealth.code ?? "UNKNOWN"})
               </StatusBadge>
-            )
-          }
-        />
-        <SettingRow
-          title="模型服务配置"
-          description="DeepSeek LLM API Key 设置"
-          action={
-            isModelReady ? (
-              <StatusBadge tone="success">已配置</StatusBadge>
-            ) : (
-              <StatusBadge tone="warning">待配置</StatusBadge>
             )
           }
         />

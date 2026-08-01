@@ -11,10 +11,11 @@ import type {
   DeleteSessionResult,
   Run,
   ModelId,
-  ModelStatus,
   ModelListResult,
-  ModelProfile,
-  ModelProfileDraft,
+  ModelOption,
+  ModelPresetsResult,
+  ModelCreateInput,
+  ModelUpdateInput,
   ApprovalRequest,
   PluginListResult,
   PluginRecord,
@@ -57,20 +58,13 @@ const api: EidosRuntimeAPI = {
   cancelRun: (runId: string): Promise<Run> => ipcRenderer.invoke(IPC.RUN_CANCEL, runId),
 
   // Models
-  getModelStatus: (): Promise<ModelStatus> => ipcRenderer.invoke(IPC.MODEL_STATUS),
+  listModelPresets: (): Promise<ModelPresetsResult> => ipcRenderer.invoke(IPC.MODEL_PRESETS),
   listModels: (): Promise<ModelListResult> => ipcRenderer.invoke(IPC.MODEL_LIST),
-  configureModel: (apiKey: string): Promise<ModelStatus> => ipcRenderer.invoke(IPC.MODEL_CONFIGURE, apiKey),
-  listModelProfiles: (): Promise<ModelProfile[]> => ipcRenderer.invoke(IPC.MODEL_PROFILE_LIST),
-  createModelProfile: (profile: ModelProfileDraft, apiKey?: string): Promise<ModelProfile> =>
-    ipcRenderer.invoke(IPC.MODEL_PROFILE_CREATE, profile, apiKey),
-  updateModelProfile: (
-    profileId: string,
-    profile: ModelProfileDraft,
-    apiKey?: string,
-  ): Promise<ModelProfile> =>
-    ipcRenderer.invoke(IPC.MODEL_PROFILE_UPDATE, profileId, profile, apiKey),
-  deleteModelProfile: (profileId: string): Promise<void> =>
-    ipcRenderer.invoke(IPC.MODEL_PROFILE_DELETE, profileId),
+  createModel: (input: ModelCreateInput): Promise<ModelOption> =>
+    ipcRenderer.invoke(IPC.MODEL_CREATE, input),
+  updateModel: (input: ModelUpdateInput): Promise<ModelOption> =>
+    ipcRenderer.invoke(IPC.MODEL_UPDATE, input),
+  deleteModel: (id: ModelId): Promise<void> => ipcRenderer.invoke(IPC.MODEL_DELETE, id),
 
   // Plugins
   listPlugins: (): Promise<PluginListResult> => ipcRenderer.invoke(IPC.PLUGIN_LIST),

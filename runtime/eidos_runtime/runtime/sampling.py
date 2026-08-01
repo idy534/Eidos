@@ -83,8 +83,15 @@ class SamplingRuntime:
             check_cancel=lambda: self._check_cancel(cancel),
         )
         try:
+            frozen = self.store.read_running_context_snapshot(step.run_id)
+            model_context = (
+                tuple({"role": message.role, "content": message.content}
+                      for message in frozen.plan.messages)
+                if frozen is not None
+                else step.model_context
+            )
             result = self.runner.run(
-                step.model_context,
+                model_context,
                 cancel,
                 writer.write,
                 tool_definitions=step.tool_definitions,

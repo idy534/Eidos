@@ -89,6 +89,7 @@ class SensitiveScannerTests(unittest.TestCase):
             server.handle({
                 "jsonrpc": "2.0", "id": "client-run", "method": "run/start",
                 "params": {"sessionId": session["id"], "userInput": secret,
+                           "modelId": "deepseek-v4-flash",
                            "operationId": operation_id},
             })
             messages = [json.loads(line) for line in output.getvalue().splitlines()]

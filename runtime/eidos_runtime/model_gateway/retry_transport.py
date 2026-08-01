@@ -13,7 +13,8 @@ import httpx
 from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
 from tenacity import RetryCallState, retry_if_exception, stop_after_attempt, wait_exponential
 
-from eidos_runtime.model_gateway.models import ModelProfile
+from eidos_runtime.model.config import MODEL_CATALOG, ModelConfig
+from eidos_runtime.model_gateway.models import RetryPolicy, WireAPI
 from eidos_runtime.model_gateway.retry import (
     RetryState,
     is_retryable_transport_exception,
@@ -56,23 +57,24 @@ class RetryTransportClient:
 
     def __init__(
         self,
-        profile: ModelProfile,
+        profile: ModelConfig,
         *,
         wrapped: httpx.AsyncBaseTransport | None = None,
         timeout: httpx.Timeout | None = None,
     ) -> None:
         self._profile = profile
+        self._policy = RetryPolicy()
         self._sleep_for_testing: Callable[[float], object] | None = None
         fallback = wait_exponential(
-            multiplier=profile.retry_policy.initial_backoff_seconds,
-            max=profile.retry_policy.max_backoff_seconds,
+            multiplier=self._policy.initial_backoff_seconds,
+            max=self._policy.max_backoff_seconds,
         )
         retry_config: RetryConfig = {
             "retry": retry_if_exception(is_retryable_transport_exception),
-            "stop": stop_after_attempt(profile.retry_policy.max_attempts),
+            "stop": stop_after_attempt(self._policy.max_attempts),
             "wait": wait_retry_after(
                 fallback_strategy=fallback,
-                max_wait=profile.retry_policy.max_backoff_seconds,
+                max_wait=self._policy.max_backoff_seconds,
             ),
             "sleep": self._cancellation_aware_sleep,
             "before": self._before_attempt,
@@ -126,7 +128,7 @@ class RetryTransportClient:
         decision = retry_decision(
             error,
             RetryState(attempt_number=state.attempt_number, canceled=scope.cancel.is_set()),
-            self._profile.retry_policy,
+            self._policy,
         )
         tracker = scope.tracker
         tracker.transport_retry_count = state.attempt_number
@@ -141,11 +143,11 @@ class RetryTransportClient:
             "model transport retry provider=%s model_id=%s wire_api=%s "
             "transport_attempt_number=%s max_attempts=%s failure_classification=%s "
             "http_status=%s selected_backoff_seconds=%s retry_after_applied=%s",
-            self._profile.provider,
-            self._profile.model_id,
-            self._profile.wire_api.value,
+            MODEL_CATALOG.provider_id_for(self._profile.id),
+            self._profile.id,
+            WireAPI.OPENAI_CHAT_COMPLETIONS.value,
             state.attempt_number,
-            self._profile.retry_policy.max_attempts,
+            self._policy.max_attempts,
             decision.reason,
             tracker.last_http_status,
             tracker.last_backoff_seconds,
@@ -178,7 +180,7 @@ class RetryTransportClient:
 
 
 def build_retrying_http_client(
-    profile: ModelProfile,
+    profile: ModelConfig,
     *,
     wrapped: httpx.AsyncBaseTransport | None = None,
     timeout: httpx.Timeout | None = None,

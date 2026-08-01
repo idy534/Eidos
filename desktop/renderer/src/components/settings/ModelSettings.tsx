@@ -1,360 +1,283 @@
-import React, { useEffect, useState } from "react";
-import { Button } from "../Button.js";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type {
   ModelListResult,
-  ModelProfile,
-  ModelProfileDraft,
-  ModelStatus,
-  WireAPI,
-} from "../../contracts";
-import type { SettingsPendingAction } from "./settings-types";
-import { SettingSection } from "./SettingSection";
-import { SettingRow } from "./SettingRow";
-import { StatusBadge } from "./StatusBadge";
+  ModelOption,
+  ModelProviderPreset,
+  ModelPresetsResult,
+} from "../../contracts.js";
+import { Button } from "../Button.js";
+import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
+import { SettingSection } from "./SettingSection.js";
+import { SettingRow } from "./SettingRow.js";
 
 interface ModelSettingsProps {
-  model?: ModelStatus | undefined;
   modelList?: ModelListResult | undefined;
   modelLoading?: boolean | undefined;
   modelError?: string | undefined;
-  modelConfiguring: boolean;
   storageHealthReady: boolean;
-  onConfigureModel: (apiKey: string) => Promise<boolean>;
+  onModelsChanged: () => Promise<void>;
   onShowToast: (message: string, type: "success" | "info" | "error") => void;
 }
 
+interface ModelDraft {
+  originalId?: string;
+  provider: ModelProviderPreset["id"];
+  modelId: string;
+  apiKey: string;
+}
+
+const vendorNames: Record<string, string> = {
+  DeepSeek: "深度求索",
+  MiniMax: "MiniMax",
+  Kimi: "月之暗面",
+};
+
 export function ModelSettings({
-  model,
   modelList,
   modelLoading,
   modelError,
-  modelConfiguring,
   storageHealthReady,
-  onConfigureModel,
+  onModelsChanged,
   onShowToast,
 }: ModelSettingsProps) {
-  const [editingKey, setEditingKey] = useState(false);
-  const [inputKey, setInputKey] = useState("");
-  const [localError, setLocalError] = useState<string>();
-  const [profiles, setProfiles] = useState<ModelProfile[]>([]);
-  const [editingProfileId, setEditingProfileId] = useState<string>();
-  const [profileDraft, setProfileDraft] = useState<ModelProfileDraft>({
-    name: "",
-    provider: "deepseek",
-    modelId: "",
-    contextWindow: 128000,
-    maxOutputTokens: 4096,
-    requestTimeout: 120,
-    retryPolicy: { maxAttempts: 3 },
-  });
-  const [profileKey, setProfileKey] = useState("");
-  const [profileBusy, setProfileBusy] = useState(false);
-
-  async function loadProfiles() {
-    if (!window.eidosRuntime.listModelProfiles) return;
-    setProfiles(await window.eidosRuntime.listModelProfiles());
-  }
+  const [presets, setPresets] = useState<ModelPresetsResult | undefined>(undefined);
+  const [draft, setDraft] = useState<ModelDraft | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [localError, setLocalError] = useState<string | undefined>(undefined);
 
   useEffect(() => {
-    void loadProfiles().catch(() => setLocalError("Model Profile 加载失败"));
+    let active = true;
+    void window.eidosRuntime.listModelPresets().then((result) => {
+      if (active) setPresets(result);
+    }).catch(() => {
+      if (active) setLocalError("内置模型目录加载失败");
+    });
+    return () => { active = false; };
   }, []);
 
-  async function saveProfile() {
-    if (!profileDraft.name.trim() || !profileDraft.modelId.trim()) {
-      setLocalError("Profile 名称和 Model ID 必填");
-      return;
-    }
-    if (!editingProfileId && !profileKey && !profileDraft.authReference) {
-      setLocalError("首次保存需填写 API Key 或环境变量引用");
-      return;
-    }
-    setProfileBusy(true);
+  const openCreate = () => {
+    const provider = presets?.providers[0];
+    const model = provider?.models[0];
+    if (!provider || !model) return;
     setLocalError(undefined);
-    try {
-      if (editingProfileId) {
-        await window.eidosRuntime.updateModelProfile(
-          editingProfileId,
-          profileDraft,
-          profileKey || undefined,
-        );
-      } else {
-        await window.eidosRuntime.createModelProfile(
-          profileDraft,
-          profileKey || undefined,
-        );
-      }
-      setProfileKey("");
-      setEditingProfileId(undefined);
-      setProfileDraft({
-        name: "",
-        provider: "deepseek",
-        modelId: "",
-        contextWindow: 128000,
-        maxOutputTokens: 4096,
-        requestTimeout: 120,
-        retryPolicy: { maxAttempts: 3 },
-      });
-      await loadProfiles();
-      onShowToast("Model Profile 已保存", "success");
-    } catch {
-      setLocalError("Model Profile 保存失败，请查看 Runtime 日志。");
-    } finally {
-      setProfileBusy(false);
-    }
-  }
+    setDraft({ provider: provider.id, modelId: model.id, apiKey: "" });
+  };
 
-  function editProfile(profile: ModelProfile) {
-    setEditingProfileId(profile.id);
-    setProfileKey("");
-    setProfileDraft({
-      name: profile.name,
-      provider: profile.provider,
-      baseUrl: profile.baseUrl ?? undefined,
-      authReference: profile.authReference.startsWith("env:")
-        ? profile.authReference
-        : undefined,
-      wireApi: profile.wireApi,
-      modelId: profile.modelId,
-      contextWindow: profile.contextWindow ?? undefined,
-      maxOutputTokens: profile.maxOutputTokens ?? undefined,
-      reasoningMode: profile.reasoningMode,
-      supportsTools: profile.supportsTools ?? undefined,
-      supportsParallelTools: profile.supportsParallelTools ?? undefined,
-      supportsImages: profile.supportsImages ?? undefined,
-      supportsStructuredOutput: profile.supportsStructuredOutput ?? undefined,
-      supportsPromptCache: profile.supportsPromptCache ?? undefined,
-      requestTimeout: profile.requestTimeout,
-      retryPolicy: profile.retryPolicy,
+  const openEdit = (model: ModelOption) => {
+    setLocalError(undefined);
+    setDraft({
+      originalId: model.id,
+      provider: model.provider as ModelProviderPreset["id"],
+      modelId: model.id,
+      apiKey: "",
     });
-  }
+  };
 
-  const isSaving = modelConfiguring;
-  const effectiveError = localError ?? modelError;
-
-  async function handleSave() {
-    if (inputKey.length < 16) {
-      setLocalError("API Key 长度不能小于 16 位字符");
+  async function save() {
+    if (!draft || (!draft.originalId && !draft.apiKey.trim())) {
+      setLocalError("API Key 必填");
       return;
     }
+    setBusy(true);
     setLocalError(undefined);
     try {
-      const success = await onConfigureModel(inputKey);
-      if (success) {
-        setInputKey("");
-        setEditingKey(false);
-        onShowToast("API Key 保存成功", "success");
+      if (draft.originalId) {
+        await window.eidosRuntime.updateModel({
+          id: draft.originalId,
+          provider: draft.provider,
+          modelId: draft.modelId,
+          ...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}),
+        });
+      } else {
+        await window.eidosRuntime.createModel({
+          provider: draft.provider,
+          modelId: draft.modelId,
+          apiKey: draft.apiKey.trim(),
+        });
       }
-    } catch (cause) {
-      const msg = cause instanceof Error ? cause.message : "保存 API Key 失败";
-      setLocalError(msg);
+      await onModelsChanged();
+      setDraft(undefined);
+      onShowToast("模型已保存", "success");
+    } catch {
+      setLocalError("模型保存失败，请检查配置或 Runtime 日志。");
+    } finally {
+      setBusy(false);
     }
   }
 
-  function handleCancel() {
-    setInputKey("");
-    setEditingKey(false);
+  async function remove(model: ModelOption) {
+    setBusy(true);
     setLocalError(undefined);
+    try {
+      await window.eidosRuntime.deleteModel(model.id);
+      await onModelsChanged();
+      onShowToast("模型已删除", "success");
+    } catch {
+      setLocalError("模型删除失败，请查看 Runtime 日志。");
+    } finally {
+      setBusy(false);
+    }
   }
-
-  const apiKeyDescription = modelLoading
-    ? "正在加载模型配置…"
-    : model?.configured
-      ? "凭证已保存在仅当前用户可读的本地配置中（~/.eidos/model.json）"
-      : "尚未配置有效的 API Key，请填入凭证后启动 Agent";
 
   return (
-    <div className="settings-panel">
+    <div className="settings-panel model-settings-panel">
       <div className="settings-panel-header">
-        <h1>模型与 API</h1>
-        <p className="settings-panel-subtitle">
-          配置 Eidos 用于执行任务的模型服务。支持的模型由 Runtime 返回，任务启动后锁定本次使用的模型。
-        </p>
+        <h1>模型</h1>
+        <p className="settings-panel-subtitle">自定义模型</p>
       </div>
 
-      <SettingSection
-        title="Model Profiles"
-        description="Profile 保存后即可使用其声明能力；任务启动后冻结本次 Profile 与 Capability Snapshot。"
-      >
-        {profiles.map((profile) => {
-          return (
+      <SettingSection title="">
+        <SettingRow
+          title="本地配置文件"
+          description="管理写入 ~/.eidos/models.json"
+          action={
+            <Button variant="primary" disabled={!storageHealthReady || !presets || busy} onClick={openCreate}>
+              添加模型
+            </Button>
+          }
+        />
+      </SettingSection>
+
+      <SettingSection title="已保存模型">
+        {modelLoading ? (
+          <SettingRow title="正在加载模型…" />
+        ) : modelList?.models.length ? (
+          modelList.models.map((model) => (
             <SettingRow
-              key={profile.id}
+              key={model.id}
               title={
-                <div className="model-row-title">
-                  <span className="model-name">{profile.name}</span>
-                  <code className="model-id">{profile.modelId}</code>
+                <div className="saved-model">
+                  <span className={`model-vendor-icon model-vendor-icon--${model.provider}`} aria-hidden="true">
+                    {model.vendor.slice(0, 1)}
+                  </span>
+                  <span className="saved-model-copy">
+                    <strong>{model.name}</strong>
+                    <span>{vendorNames[model.vendor] ?? model.vendor}</span>
+                  </span>
                 </div>
               }
-              description={`${profile.provider} · ${profile.wireApi}`}
               action={
-                <div className="model-row-badges">
-                  <Button size="small" variant="secondary" disabled={profileBusy} onClick={() => editProfile(profile)}>
-                    编辑
-                  </Button>
+                <div className="saved-model-actions">
+                  <Button
+                    size="small"
+                    variant="secondary"
+                    aria-label={`编辑 ${model.name}`}
+                    disabled={busy}
+                    onClick={() => openEdit(model)}
+                  >编辑</Button>
                   <Button
                     size="small"
                     variant="ghost"
-                    disabled={profileBusy}
-                    onClick={() => void window.eidosRuntime.deleteModelProfile(profile.id).then(loadProfiles)}
-                  >
-                    删除
-                  </Button>
+                    aria-label={`删除 ${model.name}`}
+                    disabled={busy}
+                    onClick={() => void remove(model)}
+                  >删除</Button>
                 </div>
               }
-            >
-              <p className="setting-row-description">
-                Tools: {profile.supportsTools === true ? "Enabled" : profile.supportsTools === false ? "Disabled" : "Not declared"}
-                {" · "}Structured Output: {profile.supportsStructuredOutput === true ? "Enabled" : profile.supportsStructuredOutput === false ? "Disabled" : "Not declared"}
-                {" · "}Context Window: {profile.contextWindow ?? "Not declared"}
-                {" · "}Max Output Tokens: {profile.maxOutputTokens ?? "Not declared"}
-              </p>
-            </SettingRow>
-          );
-        })}
-        <SettingRow title={editingProfileId ? "编辑 Model Profile" : "新建 Model Profile"}>
-          <div className="api-key-edit-form">
-            <div className="api-key-input-row">
-              <input aria-label="Profile 名称" placeholder="Profile 名称" value={profileDraft.name} onChange={(event) => setProfileDraft({ ...profileDraft, name: event.target.value })} />
-              <select aria-label="Provider preset" value={profileDraft.provider} onChange={(event) => setProfileDraft({ ...profileDraft, provider: event.target.value })}>
-                <option value="openai">OpenAI</option>
-                <option value="deepseek">DeepSeek</option>
-                <option value="volcengine_ark">火山方舟</option>
-                <option value="minimax">MiniMax</option>
-                <option value="moonshot">Kimi / Moonshot</option>
-                <option value="qwen">Qwen / DashScope</option>
-                <option value="custom_openai_compatible">Custom OpenAI-compatible</option>
-              </select>
-              <input aria-label="Model ID" placeholder="Model ID" value={profileDraft.modelId} onChange={(event) => setProfileDraft({ ...profileDraft, modelId: event.target.value })} />
-              <select aria-label="Wire API" value={profileDraft.wireApi ?? ""} onChange={(event) => setProfileDraft({ ...profileDraft, wireApi: (event.target.value || undefined) as WireAPI | undefined })}>
-                <option value="">Preset 默认协议</option>
-                <option value="openai_responses">OpenAI Responses</option>
-                <option value="openai_chat_completions">OpenAI Chat Completions</option>
-              </select>
-            </div>
-            <div className="api-key-input-row">
-              <input aria-label="Base URL" placeholder="自定义 Base URL（可选）" value={profileDraft.baseUrl ?? ""} onChange={(event) => setProfileDraft({ ...profileDraft, baseUrl: event.target.value || undefined })} />
-              <input type="password" autoComplete="off" aria-label="Profile API Key" placeholder={editingProfileId ? "新 API Key（留空不变）" : "API Key"} value={profileKey} onChange={(event) => setProfileKey(event.target.value)} />
-              <input aria-label="Auth environment reference" placeholder="env:OPENAI_API_KEY（可选）" value={profileDraft.authReference ?? ""} onChange={(event) => setProfileDraft({ ...profileDraft, authReference: event.target.value || undefined })} />
-            </div>
-            <div className="api-key-input-row">
-              <label><input type="checkbox" checked={profileDraft.supportsTools ?? false} onChange={(event) => setProfileDraft({ ...profileDraft, supportsTools: event.target.checked })} /> Declared Tools</label>
-              <label><input type="checkbox" checked={profileDraft.supportsStructuredOutput ?? false} onChange={(event) => setProfileDraft({ ...profileDraft, supportsStructuredOutput: event.target.checked })} /> Declared Structured Output</label>
-              <input type="number" aria-label="Timeout seconds" min="1" max="600" value={profileDraft.requestTimeout ?? 120} onChange={(event) => setProfileDraft({ ...profileDraft, requestTimeout: Number(event.target.value) })} />
-              <input type="number" aria-label="Retry attempts" min="1" max="10" value={profileDraft.retryPolicy?.maxAttempts ?? 3} onChange={(event) => setProfileDraft({ ...profileDraft, retryPolicy: { ...profileDraft.retryPolicy, maxAttempts: Number(event.target.value) } })} />
-              <Button variant="primary" disabled={profileBusy || !storageHealthReady} loading={profileBusy} onClick={() => void saveProfile()}>
-                {editingProfileId ? "保存 Profile" : "创建 Profile"}
-              </Button>
-            </div>
-          </div>
-        </SettingRow>
-      </SettingSection>
-
-      <SettingSection
-        title="DeepSeek 模型服务"
-        description="系统默认的 LLM 执行引擎与功能推理模型。"
-      >
-        {modelLoading ? (
-          <SettingRow
-            title="模型列表"
-            description="正在从 Local Runtime 获取可用模型列表…"
-            action={<StatusBadge tone="neutral">加载中</StatusBadge>}
-          />
+            />
+          ))
         ) : (
-          modelList?.models.map((option) => {
-            const isDefault = option.id === modelList.defaultModelId;
-            return (
-              <SettingRow
-                key={option.id}
-                title={
-                  <div className="model-row-title">
-                    <span className="model-name">{option.displayName}</span>
-                    <code className="model-id">{option.id}</code>
-                  </div>
-                }
-                action={
-                  <div className="model-row-badges">
-                    {isDefault && <StatusBadge tone="info" dot={false}>默认</StatusBadge>}
-                    {option.configured ? (
-                      <StatusBadge tone="success">可用</StatusBadge>
-                    ) : (
-                      <StatusBadge tone="warning">待配置</StatusBadge>
-                    )}
-                  </div>
-                }
-              />
-            );
-          })
+          <SettingRow title="尚未添加模型" description="添加后即可在 Session 的模型选择器中使用。" />
         )}
       </SettingSection>
 
-      <SettingSection
-        title="API 凭证"
-        description="用于认证 DeepSeek API 的私钥凭证。凭证仅保存在本机 ~/.eidos/model.json（权限 0600），不会写入项目。"
-      >
-        <SettingRow
-          title="DeepSeek API Key"
-          description={apiKeyDescription}
-          action={
-            !editingKey && (
-              <Button
-                variant="secondary"
-                size="medium"
-                disabled={!storageHealthReady || isSaving || modelLoading}
-                onClick={() => {
-                  setEditingKey(true);
-                  setLocalError(undefined);
-                }}
-              >
-                {model?.configured ? "更新凭证" : "配置 API Key"}
-              </Button>
-            )
-          }
-        >
-          {editingKey ? (
-            <div className="api-key-edit-form">
-              <div className="api-key-input-row">
-                <input
-                  type="password"
-                  autoComplete="off"
-                  placeholder="sk-…"
-                  value={inputKey}
-                  disabled={isSaving}
-                  onChange={(e) => setInputKey(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && inputKey.length >= 16 && !isSaving) {
-                      e.preventDefault();
-                      void handleSave();
-                    }
-                  }}
-                />
-                <Button
-                  variant="primary"
-                  size="medium"
-                  disabled={isSaving || !storageHealthReady || inputKey.length < 16}
-                  loading={isSaving}
-                  onClick={() => void handleSave()}
-                >
-                  {isSaving ? "保存中…" : "保存配置"}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="medium"
-                  disabled={isSaving}
-                  onClick={handleCancel}
-                >
-                  取消
-                </Button>
-              </div>
-              {effectiveError && <p className="setting-field-error" role="alert">{effectiveError}</p>}
-            </div>
-          ) : (
-            <div className="api-key-masked-display">
-              <code>{model?.configured ? "••••••••••••••••••••••••••••••••" : "未配置"}</code>
-              {effectiveError && <p className="setting-field-error" role="alert">{effectiveError}</p>}
-            </div>
-          )}
-        </SettingRow>
-      </SettingSection>
+      {(localError ?? modelError) && <p className="setting-field-error" role="alert">{localError ?? modelError}</p>}
+      <ModelDialog
+        draft={draft}
+        presets={presets}
+        busy={busy}
+        error={localError}
+        onChange={setDraft}
+        onCancel={() => { if (!busy) { setDraft(undefined); setLocalError(undefined); } }}
+        onSave={() => void save()}
+      />
+    </div>
+  );
+}
+
+interface ModelDialogProps {
+  draft?: ModelDraft | undefined;
+  presets?: ModelPresetsResult | undefined;
+  busy: boolean;
+  error?: string | undefined;
+  onChange: (draft: ModelDraft) => void;
+  onCancel: () => void;
+  onSave: () => void;
+}
+
+function ModelDialog({ draft, presets, busy, error, onChange, onCancel, onSave }: ModelDialogProps) {
+  const providerSelectRef = useRef<HTMLSelectElement>(null);
+  useDialogFocusLifecycle({ open: Boolean(draft), initialFocusRef: providerSelectRef });
+  const provider = useMemo(
+    () => presets?.providers.find((item) => item.id === draft?.provider),
+    [draft?.provider, presets],
+  );
+
+  useEffect(() => {
+    if (!draft) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) onCancel();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [busy, draft, onCancel]);
+
+  if (!draft || !presets) return null;
+  return (
+    <div className="modal-backdrop" onClick={busy ? undefined : onCancel}>
+      <div className="modal-dialog model-dialog" role="dialog" aria-modal="true" aria-labelledby="model-dialog-title" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header model-dialog-header">
+          <div>
+            <h3 id="model-dialog-title">{draft.originalId ? "编辑模型" : "添加模型"}</h3>
+            <p>仅支持 OpenAI 兼容协议 API</p>
+          </div>
+        </div>
+        <div className="modal-body model-dialog-fields">
+          <label>
+            <span>提供商</span>
+            <select
+              ref={providerSelectRef}
+              aria-label="提供商"
+              value={draft.provider}
+              disabled={busy}
+              onChange={(event) => {
+                const next = presets.providers.find((item) => item.id === event.target.value)!;
+                onChange({ ...draft, provider: next.id, modelId: next.models[0]?.id ?? "" });
+              }}
+            >
+              {presets.providers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>API Key</span>
+            <input
+              type="password"
+              autoComplete="off"
+              aria-label="API Key"
+              placeholder={draft.originalId ? "留空表示保持原值" : "请输入 API Key"}
+              value={draft.apiKey}
+              disabled={busy}
+              onChange={(event) => onChange({ ...draft, apiKey: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>模型名称</span>
+            <select
+              aria-label="模型名称"
+              value={draft.modelId}
+              disabled={busy}
+              onChange={(event) => onChange({ ...draft, modelId: event.target.value })}
+            >
+              {provider?.models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
+            </select>
+          </label>
+          {error && <p className="setting-field-error" role="alert">{error}</p>}
+        </div>
+        <div className="modal-footer">
+          <Button variant="ghost" disabled={busy} onClick={onCancel}>取消</Button>
+          <Button variant="primary" loading={busy} disabled={busy} onClick={onSave}>保存</Button>
+        </div>
+      </div>
     </div>
   );
 }

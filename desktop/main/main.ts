@@ -13,7 +13,8 @@ import type {
   AppShortcut,
   RuntimeNotification,
   RuntimeStatus,
-  ModelProfileDraft,
+  ModelCreateInput,
+  ModelUpdateInput,
 } from "../shared/index.js";
 import { IPC, MAX_APPROVAL_FEEDBACK_BYTES } from "../shared/index.js";
 
@@ -439,46 +440,19 @@ ipcMain.handle(IPC.RUN_CANCEL, (_event, runId: unknown) => {
   return clientOrThrow().cancelRun(runId);
 });
 
-ipcMain.handle(IPC.MODEL_STATUS, () => clientOrThrow().modelStatus());
+ipcMain.handle(IPC.MODEL_PRESETS, () => clientOrThrow().listModelPresets());
 ipcMain.handle(IPC.MODEL_LIST, () => clientOrThrow().listModels());
-ipcMain.handle(IPC.MODEL_CONFIGURE, (_event, apiKey: unknown) => {
-  if (typeof apiKey !== "string") throw new Error("API Key 参数无效。");
-  return clientOrThrow().configureModel(apiKey);
+ipcMain.handle(IPC.MODEL_CREATE, (_event, input: unknown) => {
+  if (!input || typeof input !== "object") throw new Error("模型参数无效。");
+  return clientOrThrow().createModel(input as ModelCreateInput);
 });
-ipcMain.handle(IPC.MODEL_PROFILE_LIST, () => clientOrThrow().listModelProfiles());
-ipcMain.handle(IPC.MODEL_PROFILE_CREATE, (
-  _event,
-  profile: unknown,
-  apiKey: unknown,
-) => {
-  if (!profile || typeof profile !== "object" || (apiKey !== undefined && typeof apiKey !== "string")) {
-    throw new Error("Model Profile 参数无效。");
-  }
-  return clientOrThrow().createModelProfile(profile as ModelProfileDraft, apiKey as string | undefined);
+ipcMain.handle(IPC.MODEL_UPDATE, (_event, input: unknown) => {
+  if (!input || typeof input !== "object") throw new Error("模型参数无效。");
+  return clientOrThrow().updateModel(input as ModelUpdateInput);
 });
-ipcMain.handle(IPC.MODEL_PROFILE_UPDATE, (
-  _event,
-  profileId: unknown,
-  profile: unknown,
-  apiKey: unknown,
-) => {
-  if (
-    typeof profileId !== "string"
-    || !profile
-    || typeof profile !== "object"
-    || (apiKey !== undefined && typeof apiKey !== "string")
-  ) {
-    throw new Error("Model Profile 参数无效。");
-  }
-  return clientOrThrow().updateModelProfile(
-    profileId,
-    profile as ModelProfileDraft,
-    apiKey as string | undefined,
-  );
-});
-ipcMain.handle(IPC.MODEL_PROFILE_DELETE, (_event, profileId: unknown) => {
-  if (typeof profileId !== "string") throw new Error("Model Profile 参数无效。");
-  return clientOrThrow().deleteModelProfile(profileId);
+ipcMain.handle(IPC.MODEL_DELETE, (_event, id: unknown) => {
+  if (typeof id !== "string") throw new Error("模型参数无效。");
+  return clientOrThrow().deleteModel(id);
 });
 ipcMain.handle(IPC.PLUGIN_LIST, () => clientOrThrow().listPlugins());
 ipcMain.handle(IPC.PLUGIN_IMPORT, async () => {

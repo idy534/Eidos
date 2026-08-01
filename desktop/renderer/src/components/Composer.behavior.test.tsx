@@ -6,7 +6,12 @@ import type { ModelListResult, Run } from "../contracts.js";
 const mockModelList: ModelListResult = {
   defaultModelId: "deepseek-v4-flash",
   models: [
-    { id: "deepseek-v4-flash", provider: "deepseek", displayName: "Flash", configured: true, selectable: true },
+    {
+      id: "deepseek-v4-flash", name: "DeepSeek-V4 Flash", vendor: "DeepSeek",
+      provider: "deepseek", url: "https://api.deepseek.com/chat/completions",
+      supportsToolCall: true, supportsImages: false, supportsReasoning: true,
+      reasoning: { defaultEffort: "high", supportedEfforts: ["high", "max"] },
+    },
   ],
 };
 
@@ -20,12 +25,12 @@ const defaultProps: ComposerProps = {
   modelLoading: false,
   isSubmitting: false,
   submitKind: undefined,
-  hasRuns: false,
   cancelingRunId: undefined,
   onInputChange: vi.fn(),
   onSubmit: vi.fn(),
   onCancel: vi.fn(),
   onModelChange: vi.fn(),
+  onOpenModelSettings: vi.fn(),
 };
 
 describe("Composer DOM interaction & state behavior", () => {
@@ -53,12 +58,30 @@ describe("Composer DOM interaction & state behavior", () => {
     expect(submitBtn).toBeDisabled();
   });
 
-  it("Unconfigured model (modelConfigured=false) disables submit button", () => {
-    render(<Composer {...defaultProps} modelConfigured={false} input="Valid task text" />);
+  it("keeps the configured model selector available between completed Turns", () => {
+    const onModelChange = vi.fn();
+    render(<Composer {...defaultProps} onModelChange={onModelChange} />);
+
+    fireEvent.change(screen.getByLabelText("本次模型"), { target: { value: "deepseek-v4-flash" } });
+    expect(onModelChange).toHaveBeenCalledWith("deepseek-v4-flash");
+  });
+
+  it("empty local model configuration disables submit and guides to settings", () => {
+    const onOpenModelSettings = vi.fn();
+    render(
+      <Composer
+        {...defaultProps}
+        modelConfigured={false}
+        input="Valid task text"
+        onOpenModelSettings={onOpenModelSettings}
+      />,
+    );
 
     const submitBtn = screen.getByRole("button", { name: "开始" });
     expect(submitBtn).toBeDisabled();
-    expect(screen.getByPlaceholderText("请先配置 DeepSeek API Key")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("请先在设置中添加模型")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "前往模型设置" }));
+    expect(onOpenModelSettings).toHaveBeenCalledTimes(1);
   });
 
   it("Read-only storage (composerMode='read_only') disables input and submit button", () => {
@@ -119,6 +142,7 @@ describe("Composer DOM interaction & state behavior", () => {
     );
 
     expect(screen.getByRole("button", { name: "取消 Run" })).toBeInTheDocument();
+    expect(screen.getByLabelText("本次模型")).toBeDisabled();
 
     const activeRunDisallowed: Run = {
       ...activeRunAllowed,

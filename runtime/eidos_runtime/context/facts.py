@@ -18,6 +18,7 @@ class ContextItemFact(_Fact):
     arguments_json: str | None = None
     result_json: str | None = None
     model_result_json: str | None = None
+    ordinal: int = 0
 
 
 class CompactSummary(_Fact):
@@ -29,6 +30,10 @@ class CompactSummary(_Fact):
     unresolved_problems: tuple[str, ...]
     next_actions: tuple[str, ...]
     source_item_ids: tuple[str, ...]
+    important_decisions: tuple[str, ...] = ()
+    failed_attempts: tuple[str, ...] = ()
+    pending_approvals: tuple[str, ...] = ()
+    uncertain_side_effects: tuple[str, ...] = ()
 
 
 class ContextFacts(_Fact):
@@ -44,3 +49,9 @@ class ContextFacts(_Fact):
     current_user_goal_id: str | None = None
     reconciliation_required: bool = False
     active_error_fingerprints: tuple[str, ...] = ()
+    pending_approval_ids: tuple[str, ...] = ()
+    side_effects_may_exist: bool = False
+    committed_workspace_changes: tuple[str, ...] = ()
+    available_event_ids: tuple[int, ...] = ()
+    available_tool_call_ids: tuple[str, ...] = ()
+    available_evidence_ids: tuple[str, ...] = ()

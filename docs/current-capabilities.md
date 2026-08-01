@@ -12,10 +12,11 @@
 
 ## 模型与循环
 
-- DeepSeek `deepseek-v4-flash` 与 `deepseek-v4-pro`。
+- 本地多模型配置：DeepSeek V4 Pro/Flash、MiniMax M3、Kimi K3、Kimi K2.7 Code；配置持久化到 `~/.eidos/models.json`。
 - OpenAI-compatible Chat Completions/SSE，通过 Pydantic AI Direct Model API 接入。
 - 同步 Runtime 共享一个由 `RuntimeServer` 管理的 AnyIO `BlockingPortal` 执行模型异步 I/O；Model Client 不拥有 Event Loop 或线程。
-- 模型配置私有文件、Run 固化模型与扩展快照、模型尝试记录、usage 和有限重试。
+- Session 选择器只展示已配置模型；新 Session 选择第一项，历史 Session 恢复最近 Run 模型，并支持 Turn 之间切换。
+- 每个 Run 固化实际模型配置与扩展快照；活动 Run 不受模型配置后续编辑或删除影响。保留模型尝试记录、usage 和有限重试。
 - 上下文构建、压缩、Run/Segment 预算、协议错误反馈、Loop Guard 和最终化。
 - `parallel_tool_calls=true` 允许模型声明多调用；Runtime 只并发安全只读批次并保持声明顺序。
 
@@ -58,10 +59,40 @@
 
 ## 持久化、事件与恢复
 
-- SQLite schema v7，私有数据目录、单实例状态锁、WAL、完整性检查和 health-only 失败模式。
+- SQLite schema v10，支持原子 v9 → v10 migration、私有数据目录、单实例状态锁、WAL、完整性检查和 health-only 失败模式。
 - Session/Run/Item/ToolCall、审批、Segment/Step/Attempt、Durable Intent、事件/Outbox、异步操作和扩展状态持久化。
 - 业务事件与 Outbox 原子提交，按数据库 event ID 投影通知；发送失败保留待投递事实。
 - 启动时收敛未完成 Run、ToolCall、审批和资源状态，不自动重放可能产生副作用的操作。
 - `ResourceRegistry` 跟踪 Run worker、唯一异步内核、Kernel-owned async task、模型 lease、工具、Shell、MCP、finalization 和异步请求；成功 shutdown 要求资源清空。Kernel-owned task 通过有界 handle 诊断记录 owner、task、状态、deadline 和稳定错误码；shutdown 不依赖线程名前缀或重复的全局 Tool 计数。
 - Title Generation 与 Plugin Import 等 Managed Task 由 Kernel Task Handle 拥有；现有同步 target 通过 AnyIO worker thread bridge 执行并保留 cooperative cancellation Event，不再创建 Eidos 专用命名线程。
 - 符合 `parallel_safe` policy 的只读 Tool Batch 由共享 Kernel 内的 AnyIO TaskGroup 协调；现有同步 Driver 通过有界 worker thread bridge 执行，结果、Item、Event 和 Context Fact 仍按模型声明顺序提交。
+
+## Typed Runtime and Repository Intelligence
+
+- Strict/frozen domain records and typed SQLite mappers for Session-adjacent
+  Run, Item, Step, ToolCall, Approval and ModelAttempt reads; corrupted rows
+  fail through explicit persistence diagnostics.
+- JSON-RPC method lookup and request validation through a duplicate-safe typed
+  Method Registry, while initialization/draining/reconfiguration gates remain
+  explicit.
+- Bounded Repository Inventory with UTF-8/binary classification, content
+  hashes, generation IDs, generated/vendor flags and cancellable scans.
+- Tree-sitter index snapshots for Python, TypeScript/TSX, JavaScript and Go,
+  including bounded symbols, imports, references, chunks and parse diagnostics.
+- Deterministic Repository Map discovery and hybrid FTS5/RapidFuzz retrieval;
+  every selected evidence record exposes its score breakdown and reasons.
+- Persisted generation-scoped FTS5 and typed symbol/definition/import/
+  reference/path/test-source queries with bounded cancellation.
+- Immutable rule, context-plan and per-model-attempt context snapshots with
+  frozen model budget, repository generations and stale-evidence rejection.
+- Typed compaction verification against persisted source Items and required
+  reconciliation facts, without replacing SQLite business facts.
+- Typed long-task progress/control facts with compare-and-set pause, resume,
+  cancel and interruption transitions, plus Workspace/Git/rule/index/context/
+  permission/side-effect resume verification.
+- Typed `run/status`, `run/pause`, `run/resume` and checkpoint create/list/
+  rewind/fork JSON-RPC boundaries; RuntimeEngine consumes pause intent at
+  explicit model/tool/approval/slot safe points.
+- Thin `RepositoryApplication` and `ContextApplication` boundaries compose the
+  typed snapshot builders and context verification without creating a second
+  scheduler or business-fact authority.

@@ -1,17 +1,7 @@
 import type { ModelId } from "./constants.js";
-import type {
-  ModelProfile,
-  RetryPolicy,
-  WireAPI,
-} from "./generated/runtime/model-profile.js";
 import { IPC } from "./ipc-channels.js";
 
 export type { ModelId };
-export type {
-  ModelProfile,
-  RetryPolicy,
-  WireAPI,
-} from "./generated/runtime/model-profile.js";
 
 export interface RuntimeHealth {
   state: "ready" | "health_only";
@@ -70,7 +60,6 @@ export interface Run {
     | "finalizing"
     | "terminal";
   modelId: ModelId;
-  profileId?: string;
   allowedActions?: Array<"cancel" | "approve" | "reject">;
   modelStepCount: number;
   createdAt: number;
@@ -198,42 +187,49 @@ export interface EventListResult {
   throughEventId: number;
 }
 
-export interface ModelStatus {
-  provider: "deepseek";
-  model: "deepseek-v4-flash";
-  configured: boolean;
+export interface ModelReasoning {
+  defaultEffort: "high" | "max";
+  supportedEfforts: Array<"high" | "max">;
 }
 
 export interface ModelOption {
   id: ModelId;
+  name: string;
+  vendor: string;
   provider: string;
-  displayName: string;
-  configured: boolean;
-  selectable: boolean;
+  url: string;
+  supportsToolCall: boolean;
+  supportsImages: boolean;
+  supportsReasoning: boolean;
+  reasoning?: ModelReasoning | null;
 }
 
 export interface ModelListResult {
   models: ModelOption[];
-  defaultModelId: ModelId;
+  defaultModelId?: ModelId | null;
 }
 
-export interface ModelProfileDraft {
+export interface ModelPresetModel extends Omit<ModelOption, "vendor" | "provider"> {}
+
+export interface ModelProviderPreset {
+  id: "deepseek" | "minimax" | "kimi";
   name: string;
-  provider: string;
-  baseUrl?: string | undefined;
-  authReference?: string | undefined;
-  wireApi?: WireAPI | undefined;
-  modelId: string;
-  contextWindow?: number | undefined;
-  maxOutputTokens?: number | undefined;
-  reasoningMode?: "none" | "native" | "compatible" | undefined;
-  supportsTools?: boolean | undefined;
-  supportsParallelTools?: boolean | undefined;
-  supportsImages?: boolean | undefined;
-  supportsStructuredOutput?: boolean | undefined;
-  supportsPromptCache?: boolean | undefined;
-  requestTimeout?: number | undefined;
-  retryPolicy?: Partial<RetryPolicy> | undefined;
+  models: ModelPresetModel[];
+}
+
+export interface ModelPresetsResult {
+  providers: ModelProviderPreset[];
+}
+
+export interface ModelCreateInput {
+  provider: ModelProviderPreset["id"];
+  modelId: ModelId;
+  apiKey: string;
+}
+
+export interface ModelUpdateInput extends Omit<ModelCreateInput, "apiKey"> {
+  id: ModelId;
+  apiKey?: string;
 }
 
 export interface ApprovalDecision {

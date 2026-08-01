@@ -87,6 +87,7 @@ class RuntimeProcessRecoveryTests(unittest.TestCase):
                 send("client-run", "run/start", {
                     "sessionId": session["id"],
                     "userInput": "write approved.txt",
+                    "modelId": "deepseek-v4-flash",
                 })
                 read_until(
                     lambda message: message.get("method") == "item/requestApproval"

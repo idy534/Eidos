@@ -540,7 +540,7 @@ class RuntimeAsyncKernelTests(unittest.TestCase):
             self.assertEqual(kernel.state, AsyncKernelState.CLOSED)
             server.supervisor.resources.ensure_empty()
 
-    def test_model_reconfiguration_reuses_runtime_kernel(self) -> None:
+    def test_model_configuration_write_does_not_replace_runtime_kernel(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-async-kernel-config-") as root:
             server = RuntimeServer(io.StringIO(), Path(root), ScriptedModel([]))
             with patch(
@@ -552,9 +552,11 @@ class RuntimeAsyncKernelTests(unittest.TestCase):
                     "protocolVersion": 1,
                 })
             kernel = server.async_kernel
-            server.configure_model("client-config", {
-                "apiKey": "sk-example-key-for-tests",
-            })
+            server.model_config.create(
+                provider_id="deepseek",
+                model_id="deepseek-v4-flash",
+                api_key="sk-example-key-for-tests",
+            )
 
             self.assertIs(server.async_kernel, kernel)
             self.assertEqual(
