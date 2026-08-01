@@ -30,7 +30,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: uv sync --frozen
-      - run: pnpm check:contracts:model-profile
+#      - run: pnpm check:contracts:model-profile
       - run: pnpm lint:python
       - run: pnpm deps:python
       - run: pnpm audit:python

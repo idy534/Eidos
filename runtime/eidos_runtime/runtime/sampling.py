@@ -94,6 +94,7 @@ class SamplingRuntime:
                 model_context,
                 cancel,
                 writer.write,
+                instructions=step.instructions.text,
                 tool_definitions=step.tool_definitions,
             )
         except ModelStreamInterrupted as interrupted:

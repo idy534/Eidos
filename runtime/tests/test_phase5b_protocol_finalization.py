@@ -17,7 +17,9 @@ from eidos_runtime.model.client import (  # noqa: E402
     ModelResponse,
     ScriptedModel,
 )
+from eidos_runtime.context.project_rules import ProjectRuleResolver  # noqa: E402
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
+from eidos_runtime.model.instructions import InstructionResolver  # noqa: E402
 from eidos_runtime.protocol.server import RuntimeServer  # noqa: E402
 from eidos_runtime.runtime.contracts import RuntimeCancelled  # noqa: E402
 from eidos_runtime.sandbox.sensitive import SensitiveScanner  # noqa: E402
@@ -312,12 +314,12 @@ class FinalizationPersistenceTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="eidos-finalization-")
         root = Path(self.temporary.name)
         self.data = root / "data"
-        workspace = root / "workspace"
+        self.workspace = root / "workspace"
         self.data.mkdir(mode=0o700)
-        workspace.mkdir()
+        self.workspace.mkdir()
         self.store = SessionStore(self.data)
         self.store.initialize()
-        self.session = self.store.create_session(str(workspace))
+        self.session = self.store.create_session(str(self.workspace))
 
     def tearDown(self) -> None:
         self.store.close()
@@ -325,17 +327,28 @@ class FinalizationPersistenceTests(unittest.TestCase):
 
     def _finalize(self, model):
         run, _ = self.store.create_run(self.session["id"], "finalize")
+        rules = ProjectRuleResolver().resolve(self.workspace, self.workspace)
+        instructions = InstructionResolver().resolve(
+            rule_snapshot=rules,
+            selected_skill_context=(),
+        )
         outcome = RunFinalizer(
             self.store,
             model,
             RuntimeEvents(lambda _message: None),
             SensitiveScanner(),
             RuntimePhaseTracker(),
-        ).finalize(run["id"], (), "max_total_steps", threading.Event())
-        return run, outcome
+        ).finalize(
+            run["id"],
+            (),
+            "max_total_steps",
+            threading.Event(),
+            instructions=instructions,
+        )
+        return run, outcome, instructions
 
     def test_successful_finalization_persists_completed_attempt(self) -> None:
-        run, outcome = self._finalize(
+        run, outcome, _instructions = self._finalize(
             ScriptedModel([ModelResponse(text="final answer")])
         )
 
@@ -345,7 +358,7 @@ class FinalizationPersistenceTests(unittest.TestCase):
         self.assertEqual(attempts[0]["outputItemId"], outcome.item["id"])
 
     def test_model_failure_is_explained_without_assistant_item(self) -> None:
-        run, outcome = self._finalize(_FailingFinalizationModel([]))
+        run, outcome, _instructions = self._finalize(_FailingFinalizationModel([]))
 
         attempts = self.store.read_finalization_attempts(run["id"])
         self.assertIsNone(outcome.item)
@@ -368,6 +381,38 @@ class FinalizationPersistenceTests(unittest.TestCase):
         self.assertEqual(attempts[0]["status"], "interrupted")
         self.assertEqual(attempts[0]["errorCode"], "finalization_interrupted")
         self.assertEqual(self.store.read_run(run["id"])["status"], "interrupted")
+
+    def test_finalization_policy_is_instruction_while_stop_reason_remains_data(self) -> None:
+        (self.workspace / "EIDOS.md").write_text(
+            "Preserve this project rule during finalization.", encoding="utf-8"
+        )
+        model = ScriptedModel([ModelResponse(text="bounded final answer")])
+
+        _run, _outcome, base = self._finalize(model)
+
+        self.assertEqual(model.allow_tools_history, [False])
+        self.assertEqual(model.tool_definitions_history, [()])
+        self.assertEqual(len(model.instructions_history), 1)
+        final_instructions = model.instructions_history[0]
+        self.assertIn("system-safety", final_instructions)
+        self.assertIn("runtime-policy", final_instructions)
+        self.assertIn("project-rule:EIDOS.md", final_instructions)
+        self.assertIn("Preserve this project rule", final_instructions)
+        self.assertIn("finalization-policy", final_instructions)
+        self.assertIn("Do not call tools", final_instructions)
+        for layer in base.layers:
+            self.assertIn(layer.id, final_instructions)
+            self.assertIn(layer.content, final_instructions)
+
+        self.assertEqual(
+            model.contexts[0][-1],
+            {
+                "type": "finalization",
+                "toolsAllowed": False,
+                "stopReason": "max_total_steps",
+            },
+        )
+        self.assertNotIn("Do not call tools", json.dumps(model.contexts[0]))
 
 
 if __name__ == "__main__":

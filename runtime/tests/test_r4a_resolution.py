@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -22,8 +23,13 @@ from eidos_runtime.model.client import (  # noqa: E402
     ModelToolCall,
     ScriptedModel,
 )
+from eidos_runtime.model.instructions import InstructionResolver  # noqa: E402
 from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
-from eidos_runtime.runtime.resolution import canonical_sha256  # noqa: E402
+from eidos_runtime.runtime.resolution import (  # noqa: E402
+    StepResolutionSnapshot,
+    canonical_json,
+    canonical_sha256,
+)
 
 
 class ProjectRuleResolverTests(unittest.TestCase):
@@ -124,6 +130,38 @@ class ProjectRuleResolverTests(unittest.TestCase):
         self.assertEqual(snapshot.shadowed[0].filename, "AGENTS.md")
         self.assertEqual(snapshot.warnings[0].code, "RULE_READ_ERROR")
 
+    def test_resolved_instructions_rebuild_identically_in_another_process(self) -> None:
+        (self.root / "EIDOS.md").write_text(
+            "Use deterministic request snapshots.", encoding="utf-8"
+        )
+        rules = ProjectRuleResolver().resolve(self.root, self.root)
+        expected = InstructionResolver().resolve(
+            rule_snapshot=rules,
+            selected_skill_context=(),
+        )
+        code = (
+            "import hashlib,sys;"
+            "from eidos_runtime.model.instructions import InstructionResolver;"
+            "from eidos_runtime.runtime.resolution import RuleResolutionSnapshot;"
+            "rules=RuleResolutionSnapshot.model_validate_json(sys.stdin.read());"
+            "resolved=InstructionResolver().resolve("
+            "rule_snapshot=rules,selected_skill_context=());"
+            "print(resolved.instructions_hash);"
+            "print(hashlib.sha256(resolved.text.encode('utf-8')).hexdigest())"
+        )
+
+        actual = subprocess.check_output(
+            [sys.executable, "-c", code],
+            cwd=Path(__file__).resolve().parents[1],
+            input=rules.model_dump_json(),
+            text=True,
+        ).splitlines()
+
+        self.assertEqual(
+            actual,
+            [expected.instructions_hash, expected.instructions_hash],
+        )
+
 
 class ResolutionPersistenceTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -159,7 +197,8 @@ class ResolutionPersistenceTests(unittest.TestCase):
         self.assertEqual(step.model_snapshot_hash, run_snapshot.model_profile_snapshot_hash)
         self.assertEqual(step.permission_profile_hash, run_snapshot.permission_profile_hash)
         self.assertEqual(step.sandbox_policy_hash, run_snapshot.sandbox_policy_hash)
-        self.assertIn("Use another model", json.loads(step.context_payload_json)[1]["content"])
+        self.assertIn("Use another model", model.instructions_history[0])
+        self.assertNotIn("Use another model", step.context_payload_json)
         self.assertEqual(
             tuple(definition.name for definition in model.tool_definitions_history[0]),
             tuple(json.loads(step.tool_snapshot_json)["availableNames"]),
@@ -173,6 +212,7 @@ class ResolutionPersistenceTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.calls = 0
                 self.contexts: list[tuple[dict[str, object], ...]] = []
+                self.instructions_history: list[str] = []
                 self.tool_definitions_history = []
 
             def complete(
@@ -180,10 +220,13 @@ class ResolutionPersistenceTests(unittest.TestCase):
                 context,
                 _cancel,
                 _on_text,
+                *,
+                instructions,
                 allow_tools=True,
                 tool_definitions=(),
             ):
                 inner.contexts.append(context)
+                inner.instructions_history.append(instructions)
                 inner.tool_definitions_history.append(tool_definitions)
                 inner.calls += 1
                 if inner.calls == 1:
@@ -204,9 +247,21 @@ class ResolutionPersistenceTests(unittest.TestCase):
         self.assertEqual(len(snapshots), 2)
         first_context = json.loads(snapshots[0].context_payload_json)
         second_context = json.loads(snapshots[1].context_payload_json)
-        self.assertIn("old rule", first_context[1]["content"])
-        self.assertNotIn("new rule", first_context[1]["content"])
-        self.assertIn("new rule", second_context[1]["content"])
+        first_request = json.loads(snapshots[0].final_request_json)
+        second_request = json.loads(snapshots[1].final_request_json)
+        self.assertNotIn("old rule", json.dumps(first_context))
+        self.assertNotIn("new rule", json.dumps(second_context))
+        self.assertIn("old rule", first_request["systemPrompt"])
+        self.assertNotIn("new rule", first_request["systemPrompt"])
+        self.assertIn("new rule", second_request["systemPrompt"])
+        self.assertEqual(
+            [first_request["systemPrompt"], second_request["systemPrompt"]],
+            model.instructions_history,
+        )
+        self.assertNotEqual(
+            snapshots[0].system_prompt_hash,
+            snapshots[1].system_prompt_hash,
+        )
         self.assertNotEqual(
             snapshots[0].rule_resolution_snapshot_hash,
             snapshots[1].rule_resolution_snapshot_hash,
@@ -259,6 +314,9 @@ class ResolutionPersistenceTests(unittest.TestCase):
         ).run(run["id"], threading.Event())
         run_id = run["id"]
         before = self.store.read_step_resolution_snapshots(run_id)[0]
+        (self.workspace / "EIDOS.md").write_text(
+            "changed after the historical step committed", encoding="utf-8"
+        )
 
         self.store.close()
         self.store = SessionStore(self.data)
@@ -270,6 +328,14 @@ class ResolutionPersistenceTests(unittest.TestCase):
         )
         self.assertEqual(after, before)
         self.assertEqual(rule.rules[0].content, "persistent rule")
+        self.assertIn(
+            "persistent rule",
+            json.loads(after.final_request_json)["systemPrompt"],
+        )
+        self.assertNotIn(
+            "changed after the historical step committed",
+            after.final_request_json,
+        )
         self.assertEqual(
             json.loads(after.final_request_json)["messages"],
             json.loads(after.context_payload_json),
@@ -315,21 +381,71 @@ class ResolutionPersistenceTests(unittest.TestCase):
         snapshot = self.store.read_step_resolution_snapshots(run["id"])[0]
         self.assertEqual(snapshot.tool_set_hash, row["tool_set_hash"])
 
-    def test_canonical_json_hash_is_stable_in_another_process(self) -> None:
-        value = {"z": ["界", 1, True], "a": {"b": None}}
-        expected = canonical_sha256(value)
+    def test_step_snapshot_validates_the_embedded_historical_system_prompt(self) -> None:
+        (self.workspace / "EIDOS.md").write_text("historical rule", encoding="utf-8")
+        run, _ = self.store.create_run(self.session["id"], "inspect")
+        RuntimeEngine(
+            self.store,
+            ScriptedModel([ModelResponse(text="done")]),
+            lambda _message: None,
+        ).run(run["id"], threading.Event())
+        stored = self.store.read_step_resolution_snapshots(run["id"])[0]
+        values = stored.model_dump(mode="json")
+        request = json.loads(values["final_request_json"])
+        request["systemPrompt"] = "historical resolved instructions"
+        values["final_request_json"] = canonical_json(request)
+        values["system_prompt_hash"] = canonical_sha256(
+            request["systemPrompt"], raw_text=True
+        )
+        values["final_request_hash"] = canonical_sha256(request)
+        payload = {
+            key: value
+            for key, value in values.items()
+            if key not in {"id", "snapshot_hash"}
+        }
+        digest = canonical_sha256(payload)
+        values["id"] = f"step_{digest}"
+        values["snapshot_hash"] = digest
+
+        rebuilt = StepResolutionSnapshot.model_validate(values)
+
+        self.assertEqual(
+            rebuilt.system_prompt_hash,
+            hashlib.sha256(request["systemPrompt"].encode("utf-8")).hexdigest(),
+        )
+        self.assertEqual(
+            json.loads(rebuilt.final_request_json)["systemPrompt"],
+            "historical resolved instructions",
+        )
+
+    def test_final_request_hash_is_stable_in_another_process(self) -> None:
+        (self.workspace / "EIDOS.md").write_text("stable rule", encoding="utf-8")
+        run, _ = self.store.create_run(self.session["id"], "inspect")
+        model = ScriptedModel([ModelResponse(text="done")])
+        RuntimeEngine(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+        snapshot = self.store.read_step_resolution_snapshots(run["id"])[0]
+        request = json.loads(snapshot.final_request_json)
+        self.assertEqual(request["systemPrompt"], model.instructions_history[0])
+        self.assertEqual(
+            snapshot.system_prompt_hash,
+            hashlib.sha256(request["systemPrompt"].encode("utf-8")).hexdigest(),
+        )
         code = (
+            "import json,sys;"
             "from eidos_runtime.runtime.resolution import canonical_sha256;"
-            f"print(canonical_sha256({value!r}))"
+            "print(canonical_sha256(json.loads(sys.stdin.read())))"
         )
 
         actual = subprocess.check_output(
             [sys.executable, "-c", code],
             cwd=Path(__file__).resolve().parents[1],
+            input=snapshot.final_request_json,
             text=True,
         ).strip()
 
-        self.assertEqual(actual, expected)
+        self.assertEqual(actual, snapshot.final_request_hash)
 
 
 if __name__ == "__main__":

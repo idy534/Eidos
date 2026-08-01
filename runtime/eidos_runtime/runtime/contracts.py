@@ -13,6 +13,7 @@ from eidos_runtime.model.client import (
     ModelProfileSnapshot,
 )
 from eidos_runtime.context.budget import ContextBudget
+from eidos_runtime.model.prompts import ResolvedInstructions
 from eidos_runtime.runtime.resolution import (
     RunResolutionSnapshot,
     StepResolutionSnapshot,
@@ -49,6 +50,7 @@ class StepContext(_FrozenModel):
     model_id: str
     model_profile: ModelProfileSnapshot
     model_context: tuple[ModelContextItem, ...]
+    instructions: ResolvedInstructions
     tool_snapshot: StepToolSnapshot
     tool_definitions: tuple[ModelToolDefinition, ...]
     workspace_identity: WorkspaceIdentitySnapshot

@@ -75,6 +75,7 @@ class ModelRunner:
         cancel: threading.Event,
         on_text: Callable[[str], None],
         *,
+        instructions: str,
         allow_tools: bool = True,
         tool_definitions: tuple[ModelToolDefinition, ...] = (),
     ) -> ModelStepResult:
@@ -93,6 +94,7 @@ class ModelRunner:
                 context,
                 cancel,
                 stream.feed,
+                instructions=instructions,
                 allow_tools=allow_tools,
                 tool_definitions=tool_definitions,
             )

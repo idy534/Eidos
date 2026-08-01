@@ -1452,6 +1452,7 @@ class BlockingModel:
 
     def complete(
         self, context, cancel, on_text_delta,
+        *, instructions,
         allow_tools=True, tool_definitions=(),
     ):
         self.started.set()
