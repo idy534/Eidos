@@ -18,6 +18,7 @@ from eidos_runtime.db.errors import (
     OperationInProgressError,
     StorageError,
 )
+from eidos_runtime.db.migration import migrate_schema
 from eidos_runtime.db.schema import (
     SCHEMA_SQL,
     SCHEMA_VERSION,
@@ -94,7 +95,7 @@ class Database:
             tables = _table_names(connection)
             revision = connection.execute("PRAGMA user_version").fetchone()[0]
             if (
-                (tables and revision != SCHEMA_VERSION)
+                (tables and revision not in {SCHEMA_VERSION, SCHEMA_VERSION - 1})
                 or (not tables and revision != 0)
             ):
                 raise StorageError("schema_revision_unsupported")
@@ -108,6 +109,12 @@ class Database:
                     "BEGIN IMMEDIATE;\n"
                     + SCHEMA_SQL
                     + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
+                )
+            elif revision == SCHEMA_VERSION - 1:
+                migrate_schema(
+                    connection,
+                    current_version=revision,
+                    target_version=SCHEMA_VERSION,
                 )
             _verify_integrity(connection)
             self._connection = connection
@@ -424,6 +431,7 @@ def _safe_health_code(error: BaseException) -> str:
         if code in {
             "state_locked",
             "schema_revision_unsupported",
+            "schema_migration_failed",
             "database_corrupt",
             "foreign_key_violation",
             "storage_pragmas_invalid",

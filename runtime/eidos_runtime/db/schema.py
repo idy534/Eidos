@@ -3,7 +3,7 @@ from __future__ import annotations
 
 SCHEMA_VERSION = 10
 
-SCHEMA_SQL = """
+V9_SCHEMA_SQL = """
 CREATE TABLE sessions (
     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
@@ -440,6 +440,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS one_running_async_operation_per_operation_id
 ON async_operations(scope, operation_id)
 WHERE status IN ('accepted', 'running');
 
+"""
+
+V10_REPOSITORY_SCHEMA_SQL = """
 CREATE TABLE repository_snapshots (
     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
@@ -642,3 +645,5 @@ CREATE VIRTUAL TABLE repository_fts USING fts5(
     file_hash UNINDEXED
 );
 """
+
+SCHEMA_SQL = V9_SCHEMA_SQL + V10_REPOSITORY_SCHEMA_SQL
