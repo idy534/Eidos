@@ -24,6 +24,7 @@ from eidos_runtime.application.approvals import (
     ApprovalDecision as ApplicationApprovalDecision,
 )
 from eidos_runtime.application.context import ContextApplication
+from eidos_runtime.application.checkpoints import CheckpointApplication
 from eidos_runtime.application.extensions import (
     DeferredPluginImport,
     ExtensionApplication,
@@ -309,6 +310,7 @@ class _RuntimeApplications:
     extensions: ExtensionApplication
     repository_factory: RepositoryApplicationFactory
     context: ContextApplication
+    checkpoints: CheckpointApplication
     task_lifecycle: TaskLifecycleApplication
 
 
@@ -622,6 +624,30 @@ class RuntimeServer:
                 lambda _id, request: self._applications_or_error().runs.resume(request),
             ),
             (
+                "checkpoint/create",
+                method_dtos.CheckpointCreateRequestDto,
+                method_dtos.CheckpointCreateResponseDto,
+                lambda _id, request: self._applications_or_error().checkpoints.create(request),
+            ),
+            (
+                "checkpoint/list",
+                method_dtos.CheckpointListRequestDto,
+                method_dtos.CheckpointListResponseDto,
+                lambda _id, request: self._applications_or_error().checkpoints.list(request),
+            ),
+            (
+                "checkpoint/rewind",
+                method_dtos.CheckpointRewindRequestDto,
+                method_dtos.CheckpointRewindResponseDto,
+                lambda _id, request: self._applications_or_error().checkpoints.rewind(request),
+            ),
+            (
+                "checkpoint/fork",
+                method_dtos.CheckpointForkRequestDto,
+                method_dtos.CheckpointForkResponseDto,
+                lambda _id, request: self._applications_or_error().checkpoints.fork(request),
+            ),
+            (
                 "model/status",
                 method_dtos.ModelStatusRequestDto,
                 method_dtos.ModelStatusResponseDto,
@@ -853,6 +879,9 @@ class RuntimeServer:
             context=ContextApplication(
                 snapshots=self.store.context_snapshot_repository(),
                 verified_compactions=self.store.verified_compaction_repository(),
+            ),
+            checkpoints=CheckpointApplication(
+                self.store, self.store.checkpoint_repository()
             ),
             task_lifecycle=task_lifecycle,
         )

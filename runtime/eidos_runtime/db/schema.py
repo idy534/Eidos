@@ -692,6 +692,35 @@ CREATE TABLE verified_compact_summaries (
     verification_result TEXT NOT NULL CHECK (verification_result = 'verified'),
     verified_at INTEGER NOT NULL
 );
+
+CREATE TABLE checkpoints (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    item_ordinal INTEGER NOT NULL CHECK (item_ordinal >= 0),
+    rule_snapshot_id TEXT,
+    repository_snapshot_id TEXT,
+    context_snapshot_id TEXT REFERENCES context_snapshots(id) ON DELETE RESTRICT,
+    compact_summary_id TEXT REFERENCES verified_compact_summaries(id) ON DELETE RESTRICT,
+    workspace_identity_hash TEXT NOT NULL,
+    git_head TEXT,
+    permission_snapshot_hash TEXT,
+    model_profile_snapshot_hash TEXT NOT NULL,
+    reconciliation_required INTEGER NOT NULL CHECK (reconciliation_required IN (0, 1)),
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX checkpoints_run_boundary
+ON checkpoints(run_id, item_ordinal, creation_seq);
+
+CREATE TABLE checkpoint_actions (
+    id TEXT PRIMARY KEY,
+    checkpoint_id TEXT NOT NULL REFERENCES checkpoints(id) ON DELETE RESTRICT,
+    action TEXT NOT NULL CHECK (action IN ('rewind', 'fork')),
+    source_run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    target_run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    created_at INTEGER NOT NULL
+);
 """
 
 V10_MODEL_ATTEMPT_COLUMN_SQL = """
