@@ -10,11 +10,11 @@
 | 决策 | 当前实现边界 |
 |---|---|
 | SQLite remains the sole business-fact authority | Typed repositories and long-task control use SQLite; memory only coordinates active work. |
-| Preserve schema v9 compatibility | Long-task progress reuses `operations` with scope `long_task/control` and typed JSON plus compare-and-set; no unrelated migration was introduced. |
+| Upgrade schema v9 to v10 atomically | Fresh databases use complete v10. Existing v9 databases migrate inside `BEGIN IMMEDIATE`, verify FTS5 and integrity, and retain intact facts on rollback. |
 | Mature repository infrastructure first | `charset-normalizer`, Tree-sitter grammars, `watchfiles`, RapidFuzz and SQLite FTS5 provide bounded mechanisms; Eidos owns policy, snapshot identity, security filtering and ranking. |
 | Sync Durable Runtime remains the loop owner | Inventory/index work is cancellable and must run outside the AnyIO event loop; no async RuntimeEngine or second scheduler was introduced. |
 | Context is immutable per attempt | Rule, repository and model-profile identities are frozen into `ContextPlan` and `ContextSnapshot`; stale evidence is rejected before model use. |
-| Partial Phase E-F delivery is documented explicitly | Repository/context/long-task seams have focused tests, but Desktop pause/resume wiring, persisted repository generations and full compaction provenance remain limitations until their owning paths are migrated. |
+| Online claims follow production wiring | Persisted repository generations/retrieval and pause/resume RPCs are implemented; default pre-attempt repository/context assembly, exhaustive restart verification and complete rewind/fork reconstruction remain explicit limitations. |
 
 ## B4 implementation note
 

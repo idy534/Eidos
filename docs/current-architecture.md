@@ -22,7 +22,7 @@ Renderer 只通过 context-isolated preload 暴露的 typed IPC 访问 Main。Ma
 
 ## 状态与恢复权威
 
-- SQLite schema v9 保存 Session、Run、Item、ToolCall、审批、执行段、Step、模型尝试、Durable Intent、事件、Outbox、异步操作和扩展快照。
+- SQLite schema v10 保存 Runtime 事实、Repository generations、retrieval/context snapshots、verified compact summaries 和 checkpoints。全新数据库直接建立完整 v10；v9 数据库在 `BEGIN IMMEDIATE` 内校验、迁移、验证 FTS5 与完整性后才更新 `user_version`，失败进入 health-only 且保留原数据。
 - SQLite 是唯一业务事实来源。`RunSupervisor` 的 worker/slot、`ResourceRegistry` 和 `RuntimePhaseTracker` 只保存运行中协调或诊断状态。
 - `Run.status` 是持久状态权威。`Run.runtimeState` 是可选传输提示；当前 DB mapper 不依赖它恢复执行。
 - 业务变更和 Event/Outbox 在同一提交中落库；通知从已提交事件投影。启动恢复不会重放不确定副作用。
@@ -41,7 +41,8 @@ path can migrate without changing transaction semantics.
 `RuntimeServer` keeps initialization, shutdown and health as explicit lifecycle
 special cases, while the existing public handlers remain compatible. The
 small `application/` services (`SessionApplication`, `RunApplication`,
-`RepositoryApplication`, `ContextApplication` and `TaskLifecycleApplication`)
+`RepositoryApplication`, `ContextApplication`, `CheckpointApplication` and
+`TaskLifecycleApplication`)
 are use-case boundaries; they do not own the Runtime loop, Tool lifecycle or
 JSON-RPC envelopes.
 
@@ -55,26 +56,28 @@ Workspace → Inventory → Tree-sitter Index → Repository Map/Retrieval
 Inventory and index builders reopen and hash regular files, exclude symlinks,
 special, ignored and discovery-blocked paths, and retain the last complete
 generation when cancellation occurs. `watchfiles` only produces invalidation
-signals. Retrieval uses a derived SQLite FTS5 index plus RapidFuzz and explicit
-versioned signals; each evidence item carries path/hash/generation and ranking
-reasons. The current FTS5 index is process-local and rebuilt from an immutable
-inventory/index snapshot rather than persisted as a second business fact.
+signals. Retrieval queries the selected persisted SQLite FTS5 generation plus
+typed symbol/import/reference/path relations, RapidFuzz and explicit versioned
+signals; each evidence item carries path/hash/generation and ranking reasons.
+SQLite progress handlers bound long queries and prevent cross-generation results.
 
 `ProjectRuleResolver` creates immutable, hashed rule snapshots. `ContextPlan`
 freezes the selected model profile, rule, inventory, index, map and evidence,
 reserves output budget, and produces an immutable per-attempt
-`ContextSnapshot`. `ContextCompactionVerifier` validates source Item IDs,
-provenance and reconciliation facts before accepting a typed summary; the
-existing storage compactor remains the compatibility write path until its
-persisted summary schema is extended.
+`ContextSnapshot`. `ContextCompactionVerifier` validates authoritative source
+IDs, workspace changes, approvals and reconciliation facts before a verified
+summary and Event/Outbox commit atomically. The loop compactor remains a
+compatibility path and does not yet invoke this repository automatically.
 
 Long-task progress is stored as typed JSON in the existing `operations` table
-under `long_task/control`, with compare-and-set updates. This avoids a schema
-bump while preserving SQLite as the only authority. Pause is reported only at
+under `long_task/control`, with compare-and-set updates. Pause is reported only at
 explicit safe points; resume checks Workspace identity, Git HEAD, rules, index,
 Context Plan, permission snapshot and uncertain side effects. The repository
-and verifier are currently a durable control seam; Desktop `run/pause` and
-`run/resume` RPC wiring is intentionally not claimed yet.
+and verifier are consumed by `RunSupervisor` and `RuntimeEngine` through typed
+`run/status`, `run/pause`, `run/resume` and `run/cancel` boundaries. Startup
+persists an idempotent verification result before scheduling. Checkpoint RPCs
+freeze rule/repository/context/compaction/model/permission lineage; full rewind
+context reconstruction remains a documented limitation.
 
 ## Runtime 与 Tool 职责
 

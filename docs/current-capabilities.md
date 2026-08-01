@@ -58,7 +58,7 @@
 
 ## 持久化、事件与恢复
 
-- SQLite schema v9，私有数据目录、单实例状态锁、WAL、完整性检查和 health-only 失败模式。
+- SQLite schema v10，支持原子 v9 → v10 migration、私有数据目录、单实例状态锁、WAL、完整性检查和 health-only 失败模式。
 - Session/Run/Item/ToolCall、审批、Segment/Step/Attempt、Durable Intent、事件/Outbox、异步操作和扩展状态持久化。
 - 业务事件与 Outbox 原子提交，按数据库 event ID 投影通知；发送失败保留待投递事实。
 - 启动时收敛未完成 Run、ToolCall、审批和资源状态，不自动重放可能产生副作用的操作。
@@ -80,6 +80,8 @@
   including bounded symbols, imports, references, chunks and parse diagnostics.
 - Deterministic Repository Map discovery and hybrid FTS5/RapidFuzz retrieval;
   every selected evidence record exposes its score breakdown and reasons.
+- Persisted generation-scoped FTS5 and typed symbol/definition/import/
+  reference/path/test-source queries with bounded cancellation.
 - Immutable rule, context-plan and per-model-attempt context snapshots with
   frozen model budget, repository generations and stale-evidence rejection.
 - Typed compaction verification against persisted source Items and required
@@ -87,6 +89,9 @@
 - Typed long-task progress/control facts with compare-and-set pause, resume,
   cancel and interruption transitions, plus Workspace/Git/rule/index/context/
   permission/side-effect resume verification.
+- Typed `run/status`, `run/pause`, `run/resume` and checkpoint create/list/
+  rewind/fork JSON-RPC boundaries; RuntimeEngine consumes pause intent at
+  explicit model/tool/approval/slot safe points.
 - Thin `RepositoryApplication` and `ContextApplication` boundaries compose the
   typed snapshot builders and context verification without creating a second
   scheduler or business-fact authority.

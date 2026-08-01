@@ -95,8 +95,8 @@ pnpm build
 ### Repository、Context 与长任务 focused tests
 
 Phase E-F 的新基础设施使用当前锁定依赖：Tree-sitter Python/TypeScript/JavaScript/Go
-grammars、`charset-normalizer`、`watchfiles` 和 RapidFuzz；SQLite FTS5 只建立派生的
-进程内检索表。扫描、索引、Watcher、检索、ContextPlan、压缩验证和长任务状态都必须
+grammars、`charset-normalizer`、`watchfiles` 和 RapidFuzz；SQLite FTS5 按持久化
+Index Snapshot generation 查询。扫描、索引、Watcher、检索、ContextPlan、压缩验证和长任务状态都必须
 在完整快照上工作，Watcher 只发失效信号，取消时保留上一个完整 generation。
 
 可先运行定向门槛：
@@ -106,13 +106,19 @@ uv run --locked pytest runtime/tests -k "repository or inventory or watcher or i
 ```
 
 `LongTaskRepository` 将进度写入现有 `operations` 表的
-`scope=long_task/control`，因此不会改变 schema v9；它是持久控制 seam，不等同于
-已经对 Desktop 暴露暂停/恢复 RPC。恢复前必须重新核验 Workspace、Git、规则、索引、
+`scope=long_task/control`；authoritative baseline 是 schema v10，v9 启动时执行原子
+migration。暂停/恢复通过 typed JSON-RPC 和 RunSupervisor 接入。恢复前必须重新核验 Workspace、Git、规则、索引、
 Context Plan、permission snapshot 和 side-effect reconciliation；不确定副作用不自动重放。
 
 当前仍未完成的接线路径见 [当前限制](docs/current-limitations.md)：Repository/Context
-默认在线组装、完整 Restart Verification、Checkpoint/Rewind/Fork 联动、compaction
-provenance 持久化以及 Desktop `run/pause`/`run/resume` 不应在手工验收中被误认为已完成。
+默认在线组装、穷尽式 Restart Verification、Checkpoint rewind/fork 的完整 Context/
+Git Worktree 重建，以及兼容 compactor 自动切换，不应在手工验收中被误认为已完成。
+
+100,000-entry fixture 独立运行，不进入默认快测：
+
+```bash
+uv run --locked pytest -m large_repository runtime/tests/test_repository_large_scale.py
+```
 
 ## 4. 手动界面验证
 

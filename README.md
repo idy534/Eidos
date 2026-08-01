@@ -11,7 +11,7 @@ Eidos 是一个 macOS 桌面 Agent Runtime。Electron Desktop 通过 stdio JSON-
 - [当前限制](docs/current-limitations.md)
 - [文档索引与权威性](docs/README.md)
 
-当前代码支持 DeepSeek Chat Completions、Session/Run 管理、持久 FIFO、文件与 Shell 工具、审批、macOS Seatbelt、Plugin/Skill/stdio MCP、事件投影和恢复。模型可在一次响应中声明多个 ToolCall；Runtime 只并发执行标记为 `parallel_safe` 的安全只读工具，Shell、副作用工具和外部工具保持独占，结果按模型声明顺序返回。Phase E-F 还建立了 typed persistence/Method Registry、bounded Repository Inventory/Tree-sitter Index、确定性检索、ContextPlan/ContextSnapshot、compaction verification 和 long-task control seams；这些新增边界的未接入路径见[当前限制](docs/current-limitations.md)。
+当前代码支持 DeepSeek Chat Completions、Session/Run 管理、持久 FIFO、文件与 Shell 工具、审批、macOS Seatbelt、Plugin/Skill/stdio MCP、事件投影和恢复。模型可在一次响应中声明多个 ToolCall；Runtime 只并发执行标记为 `parallel_safe` 的安全只读工具，Shell、副作用工具和外部工具保持独占，结果按模型声明顺序返回。Phase E-F 还建立了 schema v10 与原子 v9 migration、typed persistence/Method Registry、持久化 Repository Inventory/Tree-sitter Index/FTS5 retrieval、ContextPlan/ContextSnapshot、verified compaction、pause/resume 和 checkpoint lineage。尚未接入默认 Run path 或未形成完整产品闭环的部分见[当前限制](docs/current-limitations.md)。
 
 ## 开发运行
 

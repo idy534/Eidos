@@ -22,19 +22,24 @@
 - Plugin 只支持本地受管包；MCP 只支持 stdio Tools。没有远程市场、OAuth、Streamable HTTP、Resources、Prompts、Sampling 或 Tasks。
 - MCP startup 受单一、有界的 readiness deadline 约束；ready 后 Connection 是无 deadline 的长生命周期 Service。MCP Tool List Changed 只做本地、串行的 SQLite bookkeeping，可能在关闭时等待一个已经开始的 callback 完成；callback 失败不会终止已建立的 MCP session。
 - Runtime 不恢复内存中的模型请求、进程或 ToolCall。重启从 SQLite 事实收敛，可能有副作用的未确认执行要求 reconciliation，不自动重放。
-- 数据库只接受当前 schema v9 或全新数据库；当前没有通用历史 Migration 框架。
+- 数据库接受完整 schema v10、全新数据库和受支持的原子 v9 → v10 migration；v8、v11 与未知版本 fail closed。迁移框架目前只实现这一条升级路径。
 - Phase E-F 的 Repository Inventory、Tree-sitter Index、Repository Map、
   Retrieval、ContextPlan 和 LongTaskRepository 已有严格 typed seam 与 focused
-  tests，但尚未全部成为 RuntimeEngine 的默认在线路径。当前 retrieval 的
-  FTS5 表是进程内派生索引，重启后从完整 Inventory/Index 重建；Inventory/Index
-  快照尚未单独持久化为新的 SQLite 表。
+  tests，但尚未全部成为 RuntimeEngine 的默认在线路径。Inventory、Index 与 FTS5
+  generations 已持久化，Retriever 绑定指定 Index Snapshot；当前缺口是 Run 首次
+  ModelAttempt 前仍未强制执行 restore/reconcile/retrieve/context 组装。
 - `LongTaskRepository` 与 `ResumeVerifier` 已持久化控制意图、进度和校验结果，
-  但 Desktop 尚未暴露 `run/pause`、`run/resume` RPC，RunSupervisor 也尚未消费
-  这些控制事实。现有 `run/cancel` 生命周期保持原实现；暂停期间的资源释放、
-  Checkpoint/Rewind/Fork 联动和启动时完整 Restart Verification 仍待接入。
+  `run/status`、`run/pause`、`run/resume` 和 `run/cancel` 已通过 Application 与
+  RunSupervisor 接入，RuntimeEngine 在模型/工具/审批/slot 安全点消费暂停事实。
+  Restart Verification 尚未核验完整 Git diff、credential、MCP、Seatbelt、pending
+  Approval、unfinished ToolCall/Durable Intent 和 Checkpoint 完整性集合。
 - `ContextCompactionVerifier` 是可复用的验证边界；兼容性的
   `ContextCompactor` 仍写入现有 `compact_summaries` 结构，因此 Event、ToolCall
-  和 Repository Evidence provenance 尚未作为完整持久字段保存。
+  和 Repository Evidence provenance 已有 verified v10 持久表，但兼容
+  `ContextCompactor` 尚未自动切换到该验证写路径。
+- Checkpoint create/list 与 append-only rewind/fork lineage 已持久化并暴露 typed RPC；
+  rewind 尚未重建完整逻辑 Context，fork 尚未验证或复制所有兼容 immutable snapshots，
+  也尚未创建和校验独立 Git Worktree，因此不能视为完整产品闭环。
 - `application/` 已建立 Session、Run、Repository、Context 和 TaskLifecycle 的最小边界，但部分
   RuntimeServer handler 仍通过 `SessionStore` 兼容入口执行，尚未完成所有顶层
   use case 的迁移。
