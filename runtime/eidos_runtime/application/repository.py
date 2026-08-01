@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
+from collections.abc import Callable
 
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.repo_intelligence.index import (
@@ -124,6 +125,33 @@ class RepositoryApplication:
         return RepositoryRetriever(snapshot.inventory, snapshot.index).retrieve(query)
 
 
+class RepositoryApplicationFactory:
+    """Own one repository service per verified Workspace identity."""
+
+    def __init__(
+        self,
+        repository_provider: Callable[[], RepositoryIntelligenceRepository],
+    ) -> None:
+        self._repository_provider = repository_provider
+        self._applications: dict[
+            tuple[str, int, int, int], RepositoryApplication
+        ] = {}
+        self._lock = threading.RLock()
+
+    def for_workspace(self, root: Path) -> RepositoryApplication:
+        identity = RepositoryWorkspaceIdentity.from_root(root)
+        key = (identity.root, identity.device, identity.inode, identity.owner)
+        with self._lock:
+            application = self._applications.get(key)
+            if application is None:
+                application = RepositoryApplication(
+                    Path(identity.root),
+                    repository=self._repository_provider(),
+                )
+                self._applications[key] = application
+            return application
+
+
 def _inventory_metadata_changed(root: Path, inventory: RepositoryInventory) -> bool:
     for record in inventory.files:
         try:
@@ -145,4 +173,8 @@ def _inventory_metadata_changed(root: Path, inventory: RepositoryInventory) -> b
     return False
 
 
-__all__ = ["RepositoryAnalysisSnapshot", "RepositoryApplication"]
+__all__ = [
+    "RepositoryAnalysisSnapshot",
+    "RepositoryApplication",
+    "RepositoryApplicationFactory",
+]

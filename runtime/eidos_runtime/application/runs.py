@@ -9,6 +9,10 @@ from typing import Protocol, TypeVar
 from pydantic import ValidationError
 
 from eidos_runtime.application.errors import ApplicationError
+from eidos_runtime.application.task_lifecycle import (
+    LifecycleAction,
+    TaskLifecycleApplication,
+)
 from eidos_runtime.db.database import Database
 from eidos_runtime.db.errors import (
     InvalidRunStateError,
@@ -182,6 +186,7 @@ class RunApplication:
         store: RunStorePort | None = None,
         runtime: RunRuntimePort | None = None,
         environment: RunStartEnvironmentPort | None = None,
+        lifecycle: TaskLifecycleApplication | None = None,
         scan_text: Callable[[str], str] | None = None,
     ) -> None:
         self._typed_repository = (
@@ -190,6 +195,11 @@ class RunApplication:
         self._store = store
         self._runtime = runtime
         self._environment = environment
+        self._lifecycle = (
+            lifecycle
+            if lifecycle is not None
+            else TaskLifecycleApplication(runtime) if runtime is not None else None
+        )
         self._scan_text = scan_text
 
     def read(self, run_id: str) -> Run | None:
@@ -305,7 +315,7 @@ class RunApplication:
         )
 
     def cancel(self, request: RunCancelRequestDto) -> RunCancelResponseDto:
-        store, runtime = self._cancel_dependencies()
+        store, _runtime = self._cancel_dependencies()
         try:
             current = store.read_run(request.run_id)
         except ResourceNotFoundError as error:
@@ -319,10 +329,14 @@ class RunApplication:
         }:
             raise ApplicationError("INVALID_STATE", "run cannot be canceled")
         try:
-            current = runtime.cancel_run(
+            if self._lifecycle is None:
+                raise RuntimeError("Run lifecycle application is not configured")
+            self._lifecycle.execute(
+                LifecycleAction.CANCEL,
                 request.run_id,
                 operation_id=request.operation_id,
             )
+            current = store.read_run(request.run_id)
         except InvalidRunStateError:
             try:
                 current = store.read_run(request.run_id)

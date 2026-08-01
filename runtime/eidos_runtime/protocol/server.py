@@ -19,6 +19,11 @@ from eidos_runtime.application.errors import (
     ApplicationError,
     ApplicationInvalidParamsError,
 )
+from eidos_runtime.application.approvals import (
+    ApprovalApplication,
+    ApprovalDecision as ApplicationApprovalDecision,
+)
+from eidos_runtime.application.context import ContextApplication
 from eidos_runtime.application.extensions import (
     DeferredPluginImport,
     ExtensionApplication,
@@ -30,7 +35,13 @@ from eidos_runtime.application.models import (
     ModelProfileDraft,
 )
 from eidos_runtime.application.runs import RunApplication, RunStartOutcome
+from eidos_runtime.application.repository import RepositoryApplicationFactory
 from eidos_runtime.application.sessions import SessionApplication, clean_session_title
+from eidos_runtime.application.task_lifecycle import (
+    LifecycleAction,
+    LifecycleResult,
+    TaskLifecycleApplication,
+)
 from eidos_runtime.model.client import ModelClient, ModelResponse, ModelToolCall, ScriptedModel
 from eidos_runtime.model.config import (
     ModelConfigError,
@@ -61,7 +72,11 @@ from eidos_runtime.protocol.registry import (
     MethodResultValidationError,
     MethodValidationError,
 )
-from eidos_runtime.protocol.schemas import JsonRpcRequestDto, JsonRpcResponse
+from eidos_runtime.protocol.schemas import (
+    ApprovalDecisionDto,
+    JsonRpcRequestDto,
+    JsonRpcResponse,
+)
 from eidos_runtime.runtime.supervisor import (
     RunSupervisor,
     RuntimeControlState,
@@ -285,8 +300,12 @@ class _DeferredPluginImportAdapter:
 class _RuntimeApplications:
     sessions: SessionApplication
     runs: RunApplication
+    approvals: ApprovalApplication
     models: ModelProfileApplication
     extensions: ExtensionApplication
+    repository_factory: RepositoryApplicationFactory
+    context: ContextApplication
+    task_lifecycle: TaskLifecycleApplication
 
 
 class _ServerModelRuntime:
@@ -332,6 +351,49 @@ class _ServerRunEnvironment:
         self._server._schedule_title_generation(session_id, user_input, model_id)
 
 
+class _ServerApprovalRuntime:
+    def __init__(self, supervisor: RunSupervisor) -> None:
+        self._supervisor = supervisor
+
+    def submit_approval_response(
+        self,
+        *,
+        request_id: str,
+        decision: ApplicationApprovalDecision,
+        feedback: str | None,
+    ) -> bool:
+        return self._supervisor.submit_approval_response(
+            request_id=request_id,
+            decision=decision.value,
+            feedback=feedback,
+        )
+
+
+class _ServerTaskLifecycleRuntime:
+    def __init__(self, supervisor: RunSupervisor) -> None:
+        self._supervisor = supervisor
+
+    def pause_run(self, _run_id: str) -> LifecycleResult:
+        return LifecycleResult(
+            action=LifecycleAction.PAUSE,
+            accepted=False,
+            reason="pause_not_integrated",
+        )
+
+    def resume_run(self, _run_id: str) -> LifecycleResult:
+        return LifecycleResult(
+            action=LifecycleAction.RESUME,
+            accepted=False,
+            reason="resume_not_integrated",
+        )
+
+    def cancel_run(
+        self, run_id: str, *, operation_id: str | None = None
+    ) -> LifecycleResult:
+        self._supervisor.cancel_run(run_id, operation_id=operation_id)
+        return LifecycleResult(action=LifecycleAction.CANCEL, accepted=True)
+
+
 class RuntimeServer:
     def __init__(
         self,
@@ -372,7 +434,22 @@ class RuntimeServer:
             return
 
         if self._is_server_response(message):
-            self.supervisor.handle_approval_response(message)
+            request_id = message.get("id")
+            if not isinstance(request_id, str):
+                return
+            try:
+                decision = ApprovalDecisionDto.model_validate(
+                    message.get("result")
+                )
+            except ValidationError:
+                decision = ApprovalDecisionDto(decision="reject")
+            applications = self._applications_or_error()
+            if decision.decision == "approve":
+                applications.approvals.approve(request_id)
+            else:
+                applications.approvals.reject(
+                    request_id, feedback=decision.feedback
+                )
             return
 
         try:
@@ -524,13 +601,21 @@ class RuntimeServer:
         return self._applications
 
     def _build_applications(self) -> _RuntimeApplications:
+        task_lifecycle = TaskLifecycleApplication(
+            _ServerTaskLifecycleRuntime(self.supervisor)
+        )
         return _RuntimeApplications(
             sessions=SessionApplication(self.store, scan_text=self._scan_text),
             runs=RunApplication(
                 store=self.store,
                 runtime=self.supervisor,
                 environment=_ServerRunEnvironment(self),
+                lifecycle=task_lifecycle,
                 scan_text=self._scan_text,
+            ),
+            approvals=ApprovalApplication(
+                self.store.typed_runtime_repository(),
+                _ServerApprovalRuntime(self.supervisor),
             ),
             models=ModelProfileApplication(
                 store=self.store,
@@ -542,6 +627,11 @@ class RuntimeServer:
                 store=self.store,
                 plugins=lambda: self.plugins,
             ),
+            repository_factory=RepositoryApplicationFactory(
+                self.store.repository_intelligence_repository
+            ),
+            context=ContextApplication(),
+            task_lifecycle=task_lifecycle,
         )
 
     def initialize(self, request_id: str, params: object) -> None:

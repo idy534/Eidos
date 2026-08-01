@@ -292,21 +292,37 @@ class RunSupervisor:
         request_id = message.get("id")
         if not isinstance(request_id, str):
             return
+        try:
+            parsed = ApprovalDecisionDto.model_validate(message.get("result"))
+            decision = parsed.decision
+            feedback = parsed.feedback
+        except ValidationError:
+            decision = "reject"
+            feedback = None
+        self.submit_approval_response(
+            request_id=request_id,
+            decision=decision,
+            feedback=feedback,
+        )
+
+    def submit_approval_response(
+        self,
+        *,
+        request_id: str,
+        decision: str,
+        feedback: str | None,
+    ) -> bool:
         with self.approval_lock:
             pending = self.pending_approvals.get(request_id)
             if pending is None or pending.event.is_set():
-                return
+                return False
             try:
-                parsed = ApprovalDecisionDto.model_validate(message.get("result"))
-                feedback = (
-                    self.scan_feedback(parsed.feedback)
-                    if parsed.feedback is not None
-                    else None
-                )
-                pending.decision = ApprovalDecision(parsed.decision, feedback)
-            except (ValidationError, SensitiveScanError):
+                scanned = self.scan_feedback(feedback) if feedback is not None else None
+                pending.decision = ApprovalDecision(decision, scanned)
+            except (ValueError, SensitiveScanError):
                 pending.decision = ApprovalDecision("reject")
             pending.event.set()
+            return True
 
     def wait(self, timeout: float = 5.0) -> None:
         deadline = time.monotonic() + timeout

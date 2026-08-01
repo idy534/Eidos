@@ -29,7 +29,9 @@ class RuntimeLifecyclePort(Protocol):
 
     def resume_run(self, run_id: str) -> LifecycleResult: ...
 
-    def cancel_run(self, run_id: str) -> LifecycleResult: ...
+    def cancel_run(
+        self, run_id: str, *, operation_id: str | None = None
+    ) -> LifecycleResult: ...
 
 
 class TaskLifecycleApplication:
@@ -38,7 +40,13 @@ class TaskLifecycleApplication:
     def __init__(self, runtime: RuntimeLifecyclePort) -> None:
         self._runtime = runtime
 
-    def execute(self, action: LifecycleAction, run_id: str) -> LifecycleResult:
+    def execute(
+        self,
+        action: LifecycleAction,
+        run_id: str,
+        *,
+        operation_id: str | None = None,
+    ) -> LifecycleResult:
         if not run_id:
             raise ApplicationError("INVALID_STATE", "run_id is required")
         if action is LifecycleAction.PAUSE:
@@ -46,7 +54,7 @@ class TaskLifecycleApplication:
         if action is LifecycleAction.RESUME:
             return self._runtime.resume_run(run_id)
         if action is LifecycleAction.CANCEL:
-            return self._runtime.cancel_run(run_id)
+            return self._runtime.cancel_run(run_id, operation_id=operation_id)
         raise ApplicationError("INVALID_STATE", "unsupported lifecycle action")
 
 

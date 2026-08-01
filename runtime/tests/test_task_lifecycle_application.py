@@ -25,7 +25,10 @@ class RecordingRuntimeLifecycle:
         self.calls.append((LifecycleAction.RESUME, run_id))
         return LifecycleResult(action=LifecycleAction.RESUME, accepted=True)
 
-    def cancel_run(self, run_id: str) -> LifecycleResult:
+    def cancel_run(
+        self, run_id: str, *, operation_id: str | None = None
+    ) -> LifecycleResult:
+        del operation_id
         self.calls.append((LifecycleAction.CANCEL, run_id))
         return LifecycleResult(action=LifecycleAction.CANCEL, accepted=True)
 

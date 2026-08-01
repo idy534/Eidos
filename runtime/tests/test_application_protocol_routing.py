@@ -31,3 +31,20 @@ def test_business_method_registry_has_no_legacy_server_handler_adapter(tmp_path)
         "list_plugins",
         "import_plugin",
     } & set(RuntimeServer.__dict__)
+
+
+def test_runtime_application_container_composes_all_phase_ef_boundaries(tmp_path) -> None:
+    server = RuntimeServer(StringIO(), data_directory=tmp_path / "data")
+    server.store.initialize()
+
+    applications = server._build_applications()
+
+    assert applications.sessions is not None
+    assert applications.runs is not None
+    assert applications.approvals is not None
+    assert applications.models is not None
+    assert applications.extensions is not None
+    assert applications.repository_factory is not None
+    assert applications.context is not None
+    assert applications.task_lifecycle is not None
+    server.close()

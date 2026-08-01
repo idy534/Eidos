@@ -59,6 +59,9 @@ from eidos_runtime.persistence.mappers.session import (
     session_to_legacy_dict,
 )
 from eidos_runtime.persistence.repositories import TypedRuntimeRepository
+from eidos_runtime.persistence.repository_intelligence import (
+    RepositoryIntelligenceRepository,
+)
 from eidos_runtime.runtime.contracts import ProgressSignature
 from eidos_runtime.runtime.resolution import (
     RuleResolutionSnapshot,
@@ -90,6 +93,9 @@ class SessionStore:
         self._async_operations: AsyncOperationRepository | None = None
         self._model_profiles: ModelProfileRepository | None = None
         self._typed_runtime_repository: TypedRuntimeRepository | None = None
+        self._repository_intelligence_repository: (
+            RepositoryIntelligenceRepository | None
+        ) = None
 
     def initialize(self) -> None:
         self._database.initialize()
@@ -169,6 +175,7 @@ class SessionStore:
 
     def close(self) -> None:
         self._typed_runtime_repository = None
+        self._repository_intelligence_repository = None
         self._database.close()
 
     def typed_runtime_repository(self) -> TypedRuntimeRepository:
@@ -185,6 +192,18 @@ class SessionStore:
         if self._typed_runtime_repository is None:
             self._typed_runtime_repository = TypedRuntimeRepository(self._database)
         return self._typed_runtime_repository
+
+    def repository_intelligence_repository(
+        self,
+    ) -> RepositoryIntelligenceRepository:
+        """Return the typed repository-intelligence persistence boundary."""
+
+        self._repository(self._sessions)
+        if self._repository_intelligence_repository is None:
+            self._repository_intelligence_repository = (
+                RepositoryIntelligenceRepository(self._database)
+            )
+        return self._repository_intelligence_repository
 
     def health(self) -> dict[str, object]:
         return self._database.health()
