@@ -214,6 +214,10 @@ class ResumeVerifier:
         expected_index_snapshot_id: str | None,
         current_index_snapshot_id: str | None,
         side_effects_may_exist: bool,
+        expected_context_plan_id: str | None = None,
+        current_context_plan_id: str | None = None,
+        expected_permission_snapshot_hash: str | None = None,
+        current_permission_snapshot_hash: str | None = None,
     ) -> ResumeVerification:
         reasons: list[str] = []
         if expected_workspace != current_workspace:
@@ -224,6 +228,10 @@ class ResumeVerifier:
             reasons.append("rule_snapshot_changed")
         if expected_index_snapshot_id != current_index_snapshot_id:
             reasons.append("index_snapshot_changed")
+        if expected_context_plan_id != current_context_plan_id:
+            reasons.append("context_plan_changed")
+        if expected_permission_snapshot_hash != current_permission_snapshot_hash:
+            reasons.append("permission_snapshot_changed")
         if side_effects_may_exist:
             reasons.append("reconciliation_required")
         return ResumeVerification(

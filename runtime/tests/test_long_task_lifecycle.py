@@ -77,10 +77,16 @@ def test_resume_verification_blocks_changed_workspace_or_uncertain_side_effects(
         current_rule_snapshot_id="rule-1",
         expected_index_snapshot_id="index-1",
         current_index_snapshot_id="index-1",
+        expected_context_plan_id="plan-1",
+        current_context_plan_id="plan-2",
+        expected_permission_snapshot_hash="permission-1",
+        current_permission_snapshot_hash="permission-2",
         side_effects_may_exist=True,
     )
 
     assert verification.status is VerificationStatus.BLOCKED
     assert "workspace_identity_changed" in verification.reasons
     assert "git_head_changed" in verification.reasons
+    assert "context_plan_changed" in verification.reasons
+    assert "permission_snapshot_changed" in verification.reasons
     assert "reconciliation_required" in verification.reasons
