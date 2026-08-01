@@ -86,6 +86,10 @@ class BoundedJsonSchema:
         candidate = deepcopy(value)
         if apply_defaults:
             candidate = _apply_defaults(self.schema, candidate)
+            # Defaults are schema metadata, not trusted values. Reapply Eidos's
+            # value boundary to their fully expanded result before standard
+            # validation, including the JSON-safe integer rule.
+            _validate_value_boundary(candidate, enforce_safe_integers=True)
         errors = sorted(
             self._validator.iter_errors(candidate), key=_validation_error_sort_key,
         )
@@ -185,11 +189,17 @@ def _validate_literal_keywords(schema: dict[object, object]) -> None:
         if not isinstance(enum, list) or not enum:
             raise JsonSchemaValidationError("JSON_SCHEMA_MALFORMED")
         _validate_json_tree(enum, 0, [0], "JSON_SCHEMA_MALFORMED", True)
-    for key in ("const", "default"):
-        if key in schema:
-            _validate_json_tree(
-                schema[key], 0, [0], "JSON_SCHEMA_MALFORMED", True,
-            )
+    if "const" in schema:
+        _validate_json_tree(
+            schema["const"], 0, [0], "JSON_SCHEMA_MALFORMED", True,
+        )
+    if "default" in schema:
+        # Defaults are bounded JSON metadata. Their JSON-safe integer policy is
+        # enforced after expansion by validate(..., apply_defaults=True), so
+        # the resulting error stays on the value boundary.
+        _validate_json_tree(
+            schema["default"], 0, [0], "JSON_SCHEMA_MALFORMED", False,
+        )
 
 
 def _validate_value_boundary(
