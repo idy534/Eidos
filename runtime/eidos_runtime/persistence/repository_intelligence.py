@@ -14,6 +14,8 @@ import json
 from pathlib import Path
 import sqlite3
 import stat
+import threading
+import time
 from typing import TypeVar
 
 from pydantic import Field, ValidationError, model_validator
@@ -101,6 +103,11 @@ class RepositoryFtsDocument(EidosFrozenStrictModel):
     start_line: int = Field(ge=0)
     end_line: int = Field(ge=0)
     file_hash: str | None = None
+
+
+class RepositoryFtsMatch(EidosFrozenStrictModel):
+    document: RepositoryFtsDocument
+    bm25: float
 
 
 class RepositoryIntelligenceSnapshot(EidosFrozenStrictModel):
@@ -310,6 +317,136 @@ class RepositoryIntelligenceRepository(Repository):
                          start_line, record_id COLLATE BINARY
                 """,
                 (index_snapshot_id,),
+            ).fetchall()
+        return tuple(_fts_document_from_row(row) for row in rows)
+
+    def query_fts_bm25(
+        self,
+        index_snapshot_id: str,
+        text: str,
+        *,
+        deadline_ms: int,
+        cancel: threading.Event | None = None,
+        limit: int = 500,
+    ) -> tuple[RepositoryFtsMatch, ...]:
+        tokens = [token for token in text.replace("/", " ").split() if token]
+        if not tokens:
+            return ()
+        match = " OR ".join(f'"{token.replace(chr(34), "")}"' for token in tokens)
+        deadline = time.monotonic() + deadline_ms / 1000
+        cancel = cancel or threading.Event()
+        with self.lock:
+            connection = self._connection()
+
+            def interrupted() -> int:
+                return int(cancel.is_set() or time.monotonic() >= deadline)
+
+            connection.set_progress_handler(interrupted, 1_000)
+            try:
+                rows = connection.execute(
+                    """
+                    SELECT index_snapshot_id, record_id, path, kind, symbol,
+                           body, start_line, end_line, file_hash,
+                           bm25(repository_fts) AS rank
+                    FROM repository_fts
+                    WHERE repository_fts MATCH ? AND index_snapshot_id = ?
+                    ORDER BY rank, path COLLATE BINARY, record_id COLLATE BINARY
+                    LIMIT ?
+                    """,
+                    (match, index_snapshot_id, limit),
+                ).fetchall()
+            finally:
+                connection.set_progress_handler(None, 0)
+        return tuple(RepositoryFtsMatch(
+            document=_fts_document_from_row(row),
+            bm25=float(row["rank"]),
+        ) for row in rows)
+
+    def exact_symbol_lookup(
+        self, index_snapshot_id: str, symbol: str
+    ) -> tuple[RepositoryFtsDocument, ...]:
+        return self._query_documents(
+            "index_snapshot_id = ? AND kind = 'symbol' AND symbol = ?",
+            (index_snapshot_id, symbol),
+        )
+
+    def definition_lookup(
+        self, index_snapshot_id: str, symbol: str
+    ) -> tuple[RepositoryFtsDocument, ...]:
+        return self.exact_symbol_lookup(index_snapshot_id, symbol)
+
+    def path_lookup(
+        self, index_snapshot_id: str, path: str
+    ) -> tuple[RepositoryFtsDocument, ...]:
+        return self._query_documents(
+            "index_snapshot_id = ? AND path = ?", (index_snapshot_id, path)
+        )
+
+    def import_relationship_lookup(
+        self, index_snapshot_id: str, name: str
+    ) -> tuple[RepositoryFtsDocument, ...]:
+        return self._relationship_documents(
+            index_snapshot_id, "repository_imports", "imported_name", name
+        )
+
+    def reference_relationship_lookup(
+        self, index_snapshot_id: str, name: str
+    ) -> tuple[RepositoryFtsDocument, ...]:
+        return self._relationship_documents(
+            index_snapshot_id, "repository_references", "name", name
+        )
+
+    def test_source_relationship_lookup(
+        self, index_snapshot_id: str, path: str
+    ) -> tuple[RepositoryFtsDocument, ...]:
+        stem = Path(path).stem.removeprefix("test_").removesuffix("_test")
+        with self.lock:
+            rows = self._connection().execute(
+                """
+                SELECT index_snapshot_id, record_id, path, kind, symbol, body,
+                       start_line, end_line, file_hash
+                FROM repository_fts
+                WHERE index_snapshot_id = ? AND path != ?
+                  AND (path LIKE ? OR path LIKE ?)
+                ORDER BY path COLLATE BINARY, record_id COLLATE BINARY
+                """,
+                (index_snapshot_id, path, f"%/{stem}_test.%", f"%/test_{stem}.%"),
+            ).fetchall()
+        return tuple(_fts_document_from_row(row) for row in rows)
+
+    def _query_documents(
+        self, where: str, parameters: tuple[object, ...]
+    ) -> tuple[RepositoryFtsDocument, ...]:
+        with self.lock:
+            rows = self._connection().execute(
+                "SELECT index_snapshot_id, record_id, path, kind, symbol, body, "
+                "start_line, end_line, file_hash FROM repository_fts WHERE "
+                + where
+                + " ORDER BY path COLLATE BINARY, record_id COLLATE BINARY",
+                parameters,
+            ).fetchall()
+        return tuple(_fts_document_from_row(row) for row in rows)
+
+    def _relationship_documents(
+        self, index_snapshot_id: str, table: str, column: str, value: str
+    ) -> tuple[RepositoryFtsDocument, ...]:
+        if table not in {"repository_imports", "repository_references"}:
+            raise ValueError("unsupported relationship table")
+        if column not in {"imported_name", "name"}:
+            raise ValueError("unsupported relationship column")
+        with self.lock:
+            rows = self._connection().execute(
+                f"""
+                SELECT f.index_snapshot_id, f.record_id, f.path, f.kind,
+                       f.symbol, f.body, f.start_line, f.end_line, f.file_hash
+                FROM repository_fts AS f
+                JOIN {table} AS relationship ON relationship.path = f.path
+                WHERE f.index_snapshot_id = ?
+                  AND relationship.repository_index_generation_id = ?
+                  AND relationship.{column} LIKE ?
+                ORDER BY f.path COLLATE BINARY, f.record_id COLLATE BINARY
+                """,
+                (index_snapshot_id, index_snapshot_id, f"%{value}%"),
             ).fetchall()
         return tuple(_fts_document_from_row(row) for row in rows)
 

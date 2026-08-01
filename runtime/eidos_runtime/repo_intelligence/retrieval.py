@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
-import sqlite3
+import threading
 import time
 from typing import Final
 
@@ -15,6 +15,9 @@ from eidos_runtime.repo_intelligence.index import (
     RepositoryIndexSnapshot,
 )
 from eidos_runtime.repo_intelligence.inventory import RepositoryInventory
+from eidos_runtime.persistence.repository_intelligence import (
+    RepositoryIntelligenceRepository,
+)
 
 
 RANKING_VERSION: Final = 1
@@ -57,6 +60,8 @@ class RetrievalScoreBreakdown(EidosFrozenStrictModel):
     path_rule: float = 0.0
     language_affinity: float = 0.0
     test_source: float = 0.0
+    generated_penalty: float = 0.0
+    vendor_penalty: float = 0.0
 
     @property
     def total(self) -> float:
@@ -123,6 +128,7 @@ class RepositoryRetriever:
         self,
         inventory: RepositoryInventory,
         index: RepositoryIndexSnapshot,
+        repository: RepositoryIntelligenceRepository,
     ) -> None:
         if not inventory.complete or not index.complete:
             raise ValueError("complete inventory and index generations are required")
@@ -134,24 +140,30 @@ class RepositoryRetriever:
             raise ValueError("inventory and index generation mismatch")
         self.inventory = inventory
         self.index = index
-        self._documents = self._build_documents()
-        self._fts = sqlite3.connect(":memory:")
-        self._fts.execute(
-            "CREATE VIRTUAL TABLE documents USING fts5(record_id UNINDEXED, path, body, kind UNINDEXED)"
-        )
-        self._fts.executemany(
-            "INSERT INTO documents(record_id, path, body, kind) VALUES (?, ?, ?, ?)",
-            [
-                (document.record_id, document.path, document.text, document.kind)
-                for document in self._documents.values()
-            ],
-        )
+        self.repository = repository
+        self._documents = {
+            item.record_id: _Document(
+                record_id=item.record_id,
+                path=item.path,
+                kind=item.kind,
+                text=item.symbol or item.body,
+                file_hash=item.file_hash,
+                start_line=item.start_line,
+                end_line=item.end_line,
+            )
+            for item in repository.list_fts_documents(index.snapshot_id)
+        }
 
-    def retrieve(self, query: RepositoryRetrievalQuery) -> RetrievalSnapshot:
+    def retrieve(
+        self,
+        query: RepositoryRetrievalQuery,
+        *,
+        cancel: threading.Event | None = None,
+    ) -> RetrievalSnapshot:
         if len(query.text.encode("utf-8")) > MAX_QUERY_BYTES:
             raise ValueError("retrieval query is too large")
         deadline = time.monotonic() + query.deadline_ms / 1000
-        fts_scores = self._fts_scores(query.text)
+        fts_scores = self._fts_scores(query, cancel=cancel)
         candidates: list[RepositoryRetrievalCandidate] = []
         for document in self._documents.values():
             if time.monotonic() >= deadline:
@@ -215,54 +227,20 @@ class RepositoryRetriever:
             snapshot_hash=digest,
         )
 
-    def _build_documents(self) -> dict[str, _Document]:
-        documents: dict[str, _Document] = {}
-        for file_record in self.inventory.files:
-            documents[f"file_{file_record.path}"] = _Document(
-                record_id=f"file_{file_record.path}",
-                path=file_record.path,
-                kind="file",
-                text=file_record.path,
-                file_hash=file_record.content_hash,
-                start_line=0,
-                end_line=0,
-            )
-        for chunk in self.index.chunks:
-            documents[chunk.id] = _Document(
-                record_id=chunk.id,
-                path=chunk.path,
-                kind="chunk",
-                text=chunk.text,
-                file_hash=chunk.file_content_hash,
-                start_line=chunk.start_line,
-                end_line=chunk.end_line,
-            )
-        for symbol in self.index.symbols:
-            documents[symbol.id] = _Document(
-                record_id=symbol.id,
-                path=symbol.path,
-                kind="symbol",
-                text=symbol.name,
-                file_hash=symbol.file_content_hash,
-                start_line=symbol.start_line,
-                end_line=symbol.end_line,
-            )
-        return documents
-
-    def _fts_scores(self, text: str) -> dict[str, float]:
-        tokens = [token for token in text.replace("/", " ").split() if token]
-        if not tokens:
-            return {}
-        match = " OR ".join('"' + token.replace('"', "") + '"' for token in tokens)
-        try:
-            rows = self._fts.execute(
-                "SELECT record_id, bm25(documents) FROM documents WHERE documents MATCH ? ORDER BY bm25(documents)",
-                (match,),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            return {}
+    def _fts_scores(
+        self,
+        query: RepositoryRetrievalQuery,
+        *,
+        cancel: threading.Event | None,
+    ) -> dict[str, float]:
+        rows = self.repository.query_fts_bm25(
+            self.index.snapshot_id,
+            query.text,
+            deadline_ms=query.deadline_ms,
+            cancel=cancel,
+        )
         return {
-            str(row[0]): 1.0 / (1.0 + max(0.0, float(row[1])))
+            row.document.record_id: 1.0 / (1.0 + abs(row.bm25))
             for row in rows
         }
 
@@ -276,21 +254,44 @@ class RepositoryRetriever:
             document.kind == "symbol" and document.text in query.mentioned_symbols
         ) else 0.0
         exact_path = 7.0 if document.path in query.mentioned_paths else 0.0
-        fuzzy_path = max((ratio(document.path, value) / 100 * 2 for value in query.mentioned_paths), default=0.0)
-        fuzzy_symbol = max((ratio(document.text, value) / 100 * 3 for value in query.mentioned_symbols), default=0.0)
+        fuzzy_path = max((_fuzzy(document.path, value, 2) for value in query.mentioned_paths), default=0.0)
+        fuzzy_symbol = max((_fuzzy(document.text, value, 3) for value in query.mentioned_symbols), default=0.0)
         current_diff = 6.0 if document.path in query.current_diff_paths else 0.0
         recently_modified = 4.0 if document.path in query.recently_modified_paths else 0.0
         previous_read = 3.0 if document.path in query.previous_read_paths else 0.0
         recent_tool_result = 3.0 if document.path in query.recent_tool_result_paths else 0.0
         path_rule = 2.0 if document.path in query.rule_paths else 0.0
         fts = fts_scores.get(document.record_id, 0.0)
-        definition = 3.0 if document.kind == "symbol" else 0.0
-        # Test promotion is applied by a later source-to-test expansion pass;
-        # a test must not outrank an exact implementation definition alone.
-        test_source = 0.0
+        definition = 3.0 if exact_symbol else 0.0
+        import_relationship = 2.0 if any(
+            item.path == document.path
+            and any(name in item.imported_name for name in query.mentioned_symbols)
+            for item in self.index.imports
+        ) else 0.0
+        reference_relationship = 1.5 if any(
+            item.path == document.path and item.name in query.mentioned_symbols
+            for item in self.index.references
+        ) else 0.0
+        file_record = next(
+            (item for item in self.inventory.files if item.path == document.path), None
+        )
+        mentioned_languages = {
+            item.language for item in self.inventory.files
+            if item.path in query.mentioned_paths and item.language is not None
+        }
+        language_affinity = 1.0 if (
+            file_record is not None and file_record.language in mentioned_languages
+        ) else 0.0
+        test_source = 1.5 if _related_test_path(
+            document.path, query.mentioned_paths
+        ) else 0.0
+        generated_penalty = -2.0 if file_record is not None and file_record.generated else 0.0
+        vendor_penalty = -3.0 if file_record is not None and file_record.vendor else 0.0
         return RetrievalScoreBreakdown(
             exact_symbol=exact_symbol,
             definition_match=definition,
+            import_relationship=import_relationship,
+            reference_relationship=reference_relationship,
             fts_bm25=fts,
             exact_path=exact_path,
             fuzzy_path=fuzzy_path,
@@ -300,7 +301,10 @@ class RepositoryRetriever:
             previous_read=previous_read,
             recent_tool_result=recent_tool_result,
             path_rule=path_rule,
+            language_affinity=language_affinity,
             test_source=test_source,
+            generated_penalty=generated_penalty,
+            vendor_penalty=vendor_penalty,
         )
 
 
@@ -308,6 +312,8 @@ def _reasons(breakdown: RetrievalScoreBreakdown) -> tuple[RetrievalReason, ...]:
     labels = {
         "exact_symbol": "exact symbol match",
         "definition_match": "definition record",
+        "import_relationship": "import relationship",
+        "reference_relationship": "reference relationship",
         "fts_bm25": "SQLite FTS5 lexical match",
         "exact_path": "explicit path match",
         "fuzzy_path": "bounded fuzzy path match",
@@ -317,13 +323,16 @@ def _reasons(breakdown: RetrievalScoreBreakdown) -> tuple[RetrievalReason, ...]:
         "previous_read": "previous read evidence",
         "recent_tool_result": "recent tool result",
         "path_rule": "path-scoped rule relevance",
+        "language_affinity": "language affinity",
         "test_source": "test/source promotion",
+        "generated_penalty": "generated-file penalty",
+        "vendor_penalty": "vendor-file penalty",
     }
     values = breakdown.model_dump(mode="python")
     return tuple(
         RetrievalReason(signal=name, value=float(value), explanation=labels[name])
         for name, value in values.items()
-        if value > 0
+        if value != 0
     )
 
 
@@ -340,6 +349,20 @@ def _utf8_prefix(value: str, byte_limit: int) -> str:
             return prefix.decode("utf-8")
         except UnicodeDecodeError as error:
             prefix = prefix[:error.start]
+
+
+def _fuzzy(left: str, right: str, weight: float) -> float:
+    similarity = ratio(left, right)
+    return similarity / 100 * weight if similarity >= 70 else 0.0
+
+
+def _related_test_path(path: str, selected_sources: tuple[str, ...]) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    is_test = name.startswith("test_") or "_test." in name
+    if not is_test:
+        return False
+    normalized = name.removeprefix("test_").replace("_test.", ".")
+    return any(source.rsplit("/", 1)[-1] == normalized for source in selected_sources)
 
 
 __all__ = [

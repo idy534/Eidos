@@ -90,6 +90,19 @@ def test_repository_intelligence_complete_generation_roundtrips_across_database_
         assert {
             document.index_snapshot_id for document in first_fts_documents
         } == {index.snapshot_id}
+        matches = repository.query_fts_bm25(
+            index.snapshot_id, "service", deadline_ms=500
+        )
+        assert matches
+        assert all(
+            match.document.index_snapshot_id == index.snapshot_id
+            for match in matches
+        )
+        assert repository.exact_symbol_lookup(index.snapshot_id, "useful_service")
+        assert repository.path_lookup(index.snapshot_id, "src/service.py")
+        assert repository.query_fts_bm25(
+            "another-index", "service", deadline_ms=500
+        ) == ()
     finally:
         database.close()
 

@@ -133,7 +133,9 @@ class RepositoryApplication:
     ) -> RetrievalSnapshot:
         if not snapshot.complete or snapshot.index is None:
             raise ValueError("complete repository analysis is required")
-        return RepositoryRetriever(snapshot.inventory, snapshot.index).retrieve(query)
+        return RepositoryRetriever(
+            snapshot.inventory, snapshot.index, self.repository
+        ).retrieve(query)
 
 
 class RepositoryApplicationFactory:
