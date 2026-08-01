@@ -10,7 +10,6 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Any, BinaryIO, TextIO
-from datetime import UTC, datetime
 
 from pydantic import BaseModel, ValidationError
 
@@ -31,10 +30,7 @@ from eidos_runtime.application.extensions import (
     PluginImportCompleted,
     PluginImportFailure,
 )
-from eidos_runtime.application.models import (
-    ModelProfileApplication,
-    ModelProfileDraft,
-)
+from eidos_runtime.application.models import ModelApplication
 from eidos_runtime.application.runs import RunApplication, RunStartOutcome
 from eidos_runtime.application.repository import RepositoryApplicationFactory
 from eidos_runtime.application.sessions import SessionApplication, clean_session_title
@@ -50,24 +46,14 @@ from eidos_runtime.model.client import (
     ScriptedModel,
 )
 from eidos_runtime.model.config import (
+    ModelConfig,
     ModelConfigError,
     ModelConfigStore,
 )
 from eidos_runtime.model.pydantic_ai_client import (
-    ModelClientFactory,
-    ModelClientInUseError,
     ModelClientLease,
-    ModelFactoryCloseError,
 )
-from eidos_runtime.model_gateway.auth import ModelSecretError, ModelSecretStore
-from eidos_runtime.model_gateway.capabilities import resolve_model_capabilities
 from eidos_runtime.model_gateway.gateway import ModelGateway
-from eidos_runtime.model_gateway.models import (
-    ModelProfile,
-    RunModelSnapshot,
-    WireAPI,
-)
-from eidos_runtime.model_gateway.presets import PRESETS
 from eidos_runtime.domain.long_task import LongTaskProgress
 from eidos_runtime.protocol import methods as method_dtos
 from eidos_runtime.protocol.registry import (
@@ -306,25 +292,12 @@ class _RuntimeApplications:
     sessions: SessionApplication
     runs: RunApplication
     approvals: ApprovalApplication
-    models: ModelProfileApplication
+    models: ModelApplication
     extensions: ExtensionApplication
     repository_factory: RepositoryApplicationFactory
     context: ContextApplication
     checkpoints: CheckpointApplication
     task_lifecycle: TaskLifecycleApplication
-
-
-class _ServerModelRuntime:
-    """Narrow owner of active model factory and reconfiguration lifecycle."""
-
-    def __init__(self, server: "RuntimeServer") -> None:
-        self._server = server
-
-    def has_configured_legacy_model(self) -> bool:
-        return self._server.model is not None or self._server.model_factory is not None
-
-    def configure_legacy_model(self, api_key: str) -> None:
-        self._server._configure_legacy_model(api_key)
 
 
 class _ServerRunEnvironment:
@@ -336,15 +309,25 @@ class _ServerRunEnvironment:
     def model_is_configured(self) -> bool:
         return (
             self._server.model is not None
-            or self._server.model_factory is not None
-            or bool(self._server.store.list_model_profiles())
+            or bool(self._server.model_config.list())
         )
 
-    def profile_is_selectable(self, profile: ModelProfile) -> bool:
-        return self._server._profile_is_selectable(profile)
+    def model_config(self, model_id: str) -> ModelConfig:
+        config = self._server.model_config.get(model_id)
+        if config is None:
+            raise ModelConfigError("model is not configured")
+        return config
 
     def model_for(self, model_id: str) -> ModelClient:
-        return self._server._model_for(model_id)
+        if self._server.model is None:
+            raise ModelConfigError("configured models use the model gateway")
+        return self._server.model
+
+    def freeze_model_config(self, run_id: str, config: ModelConfig) -> None:
+        self._server._freeze_model_config(run_id, config)
+
+    def discard_model_config(self, run_id: str) -> None:
+        self._server._discard_model_config(run_id)
 
     def extension_snapshot(self) -> dict[str, object] | None:
         if self._server.plugins is None:
@@ -424,9 +407,9 @@ class RuntimeServer:
         self.store = SessionStore(data_directory)
         self.model_config = ModelConfigStore(data_directory)
         self.model = model
-        self.model_factory: ModelClientFactory | None = None
-        self.model_secrets = ModelSecretStore(data_directory)
         self.model_gateway: ModelGateway | None = None
+        self._frozen_model_configs: dict[str, ModelConfig] = {}
+        self._frozen_model_configs_lock = threading.RLock()
         self.async_kernel: RuntimeAsyncKernel | None = None
         self.output_lock = threading.RLock()
         self.shell_available = False
@@ -438,7 +421,7 @@ class RuntimeServer:
             self._model_lease_for_run,
             self.send,
             self._scan_text,
-            lambda: self.model is not None or self.model_factory is not None,
+            lambda: self.model is not None or bool(self.model_config.list()),
             lambda: self.shell_available,
             lambda: self.sensitive,
             self._cleanup_extensions,
@@ -648,10 +631,10 @@ class RuntimeServer:
                 lambda _id, request: self._applications_or_error().checkpoints.fork(request),
             ),
             (
-                "model/status",
-                method_dtos.ModelStatusRequestDto,
-                method_dtos.ModelStatusResponseDto,
-                lambda _id, _request: self._applications_or_error().models.status(),
+                "model/presets",
+                method_dtos.ModelPresetsRequestDto,
+                method_dtos.ModelPresetsResponseDto,
+                lambda _id, _request: self._applications_or_error().models.presets(),
             ),
             (
                 "model/list",
@@ -661,64 +644,33 @@ class RuntimeServer:
                 _request: self._applications_or_error().models.list_models(),
             ),
             (
-                "model/configure",
-                method_dtos.ModelConfigureRequestDto,
-                method_dtos.ModelConfigureResponseDto,
-                lambda _id, request: self._applications_or_error().models.configure(
-                    request.api_key
-                ),
-            ),
-            (
-                "model_profile/list",
-                method_dtos.ModelProfileListRequestDto,
-                method_dtos.ModelProfileListResponseDto,
-                lambda _id,
-                _request: self._applications_or_error().models.list_profiles(),
-            ),
-            (
-                "model_profile/get",
-                method_dtos.ModelProfileGetRequestDto,
-                method_dtos.ModelProfileGetResponseDto,
-                lambda _id, request: self._applications_or_error().models.get_profile(
-                    request.profile_id
-                ),
-            ),
-            (
-                "model_profile/create",
-                method_dtos.ModelProfileCreateRequestDto,
-                method_dtos.ModelProfileCreateResponseDto,
-                lambda _id,
-                request: self._applications_or_error().models.create_profile(
-                    ModelProfileDraft.from_wire(request.profile),
+                "model/create",
+                method_dtos.ModelCreateRequestDto,
+                method_dtos.ModelCreateResponseDto,
+                lambda _id, request: self._applications_or_error().models.create(
+                    provider=request.provider,
+                    model_id=request.model_id,
                     api_key=request.api_key,
                 ),
             ),
             (
-                "model_profile/update",
-                method_dtos.ModelProfileUpdateRequestDto,
-                method_dtos.ModelProfileUpdateResponseDto,
-                lambda _id,
-                request: self._applications_or_error().models.update_profile(
-                    request.profile_id,
-                    ModelProfileDraft.from_wire(request.profile),
+                "model/update",
+                method_dtos.ModelUpdateRequestDto,
+                method_dtos.ModelUpdateResponseDto,
+                lambda _id, request: self._applications_or_error().models.update(
+                    request.id,
+                    provider=request.provider,
+                    model_id=request.model_id,
                     api_key=request.api_key,
                 ),
             ),
             (
-                "model_profile/delete",
-                method_dtos.ModelProfileDeleteRequestDto,
-                method_dtos.ModelProfileDeleteResponseDto,
-                lambda _id,
-                request: self._applications_or_error().models.delete_profile(
-                    request.profile_id
+                "model/delete",
+                method_dtos.ModelDeleteRequestDto,
+                method_dtos.ModelDeleteResponseDto,
+                lambda _id, request: self._applications_or_error().models.delete(
+                    request.id
                 ),
-            ),
-            (
-                "model_profile/list_presets",
-                method_dtos.ModelProfileListPresetsRequestDto,
-                method_dtos.ModelProfileListPresetsResponseDto,
-                lambda _id,
-                _request: self._applications_or_error().models.list_presets(),
             ),
             (
                 "plugin/list",
@@ -802,16 +754,15 @@ class RuntimeServer:
         )
         draining_blocked = {
             "run/start",
-            "model/configure",
-            "model_profile/create",
-            "model_profile/update",
-            "model_profile/delete",
+            "model/create",
+            "model/update",
+            "model/delete",
             "plugin/import",
             "plugin/setEnabled",
             "plugin/remove",
             "mcp/setEnabled",
         }
-        reconfiguration_blocked = {"run/start", "model/configure"}
+        reconfiguration_blocked = {"run/start"}
         for name, request_type, response_type, handler in handlers:
             registry.register(
                 MethodRegistration(
@@ -863,12 +814,7 @@ class RuntimeServer:
                 self.store.typed_runtime_repository(),
                 _ServerApprovalRuntime(self.supervisor),
             ),
-            models=ModelProfileApplication(
-                store=self.store,
-                secret_store=self.model_secrets,
-                model_config=self.model_config,
-                runtime=_ServerModelRuntime(self),
-            ),
+            models=ModelApplication(self.model_config),
             extensions=ExtensionApplication(
                 store=self.store,
                 plugins=lambda: self.plugins,
@@ -905,23 +851,15 @@ class RuntimeServer:
                 deploy_system_skills(self.store.data_directory)
                 self.plugins = PluginCatalog(self.store)
                 self.model_config.initialize()
-                self.model_secrets.initialize()
                 self.async_kernel = RuntimeAsyncKernel(
                     resource_registry=self.supervisor.resources,
                 )
                 self.async_kernel.start()
                 self.model_gateway = ModelGateway(
-                    self.model_secrets,
+                    self.model_config,
                     async_kernel=self.async_kernel,
                     resource_registry=self.supervisor.resources,
                 )
-                configured_key = self.model_config.api_key()
-                if self.model is None and configured_key is not None:
-                    self.model_factory = ModelClientFactory(
-                        configured_key,
-                        async_kernel=self.async_kernel,
-                        resource_registry=self.supervisor.resources,
-                    )
                 self.supervisor.bind_async_kernel(self.async_kernel)
                 self.supervisor.verify_restart_state()
                 self._applications = self._build_applications()
@@ -960,11 +898,7 @@ class RuntimeServer:
                         "runShell": self.shell_available,
                         "modelConfigured": (
                             self.model is not None
-                            or self.model_factory is not None
-                            or (
-                                self.store.health_state == "ready"
-                                and bool(self.store.list_model_profiles())
-                            )
+                            or bool(self.model_config.list())
                         ),
                     },
                 },
@@ -973,136 +907,6 @@ class RuntimeServer:
         if self.store.health_state == "ready":
             self.supervisor.events.deliver_pending()
         logger.info("Runtime initialized")
-        self.supervisor.schedule_next()
-
-    def _profile_is_configured(self, profile: ModelProfile) -> bool:
-        try:
-            self.model_secrets.resolve(profile.auth_reference)
-        except (ValueError, ModelSecretError):
-            return False
-        return True
-
-    def _profile_is_selectable(self, profile: ModelProfile) -> bool:
-        if not self._profile_is_configured(profile):
-            return False
-        preset = PRESETS.get(profile.provider)
-        if preset is None or not isinstance(profile.wire_api, WireAPI):
-            return False
-        capability = resolve_model_capabilities(profile, preset)
-        return (
-            capability.context_window is not None
-            and capability.max_output_tokens is not None
-        )
-
-    def configure_model(self, request_id: str, params: object) -> None:
-        """Compatibility-only direct entry point for native lifecycle tests.
-
-        Production JSON-RPC dispatch reaches the same typed application method
-        through MethodRegistry. This bridge keeps existing native tests from
-        invoking the Server model lifecycle implementation directly while the
-        direct test helper is retired.
-        """
-
-        try:
-            invocation = self.method_registry.invoke(
-                "model/configure", request_id, params
-            )
-        except MethodValidationError:
-            self.send(protocol_error(request_id, -32602, "Invalid params"))
-            return
-        except MethodApplicationError as error:
-            if error.mapping.invalid_params:
-                self.send(protocol_error(request_id, -32602, "Invalid params"))
-            else:
-                self.send(business_error(request_id, error.mapping.code))
-            return
-        except MethodResultValidationError:
-            self.send(business_error(request_id, "INTERNAL_ERROR"))
-            return
-        if invocation is False or invocation.deferred:
-            self.send(business_error(request_id, "INTERNAL_ERROR"))
-            return
-        assert invocation.json_result is not None
-        self.send(response(request_id, invocation.json_result))
-
-    def _configure_legacy_model(self, api_key: str) -> None:
-        """Atomically replace the active legacy model client.
-
-        The ModelProfile application invokes this narrow Runtime-owned port;
-        it deliberately retains factory ownership, rollback and the
-        supervisor reconfiguration gate here.
-        """
-
-        if not self.supervisor.begin_reconfiguration():
-            code = (
-                "RUNTIME_RECONFIGURING"
-                if self.supervisor.control_state is RuntimeControlState.RECONFIGURING
-                else "RUN_ALREADY_ACTIVE"
-            )
-            raise ApplicationError(code)
-        previous_factory = self.model_factory
-        previous_model = self.model
-        previous_key: str | None = None
-        saved = False
-        previous_closed = False
-        candidate: ModelClientFactory | None = None
-        try:
-            previous_key = self.model_config.api_key()
-            candidate = ModelClientFactory(
-                api_key,
-                async_kernel=self._required_async_kernel(),
-                resource_registry=self.supervisor.resources,
-            )
-            if previous_factory is not None:
-                previous_factory.close()
-                previous_closed = True
-            self.model_config.save_api_key(api_key)
-            saved = True
-            if self.model_config.api_key() is None:
-                raise ModelConfigError("model configuration was not saved")
-            self.model = None
-            self.model_factory = candidate
-            candidate = None
-        except ValueError as error:
-            raise ApplicationInvalidParamsError(
-                "INVALID_PARAMS", "invalid API key"
-            ) from error
-        except ModelClientInUseError as error:
-            if saved:
-                self.model_config.restore_api_key(previous_key)
-            self.model = previous_model
-            self.model_factory = previous_factory
-            if candidate is not None:
-                candidate.close()
-            raise ApplicationError("MODEL_CLIENT_IN_USE") from error
-        except ModelFactoryCloseError as error:
-            if candidate is not None:
-                candidate.close()
-            raise ApplicationError(error.code) from error
-        except (OSError, ModelConfigError) as error:
-            if saved:
-                try:
-                    self.model_config.restore_api_key(previous_key)
-                except (OSError, ModelConfigError):
-                    logger.exception("Model configuration rollback failed")
-            if previous_closed and candidate is not None:
-                self.model = None
-                self.model_factory = candidate
-                candidate = None
-            else:
-                self.model = previous_model
-                self.model_factory = previous_factory
-            if candidate is not None:
-                candidate.close()
-            logger.exception("Model configuration failed")
-            code = (
-                "MODEL_CONFIG_COMMIT_FAILED"
-                if previous_closed
-                else "MODEL_RECONFIGURATION_FAILED"
-            )
-            raise ApplicationError(code) from error
-        finally:
-            self.supervisor.end_reconfiguration()
         self.supervisor.schedule_next()
 
     def shutdown(self, request_id: str, params: object) -> None:
@@ -1117,24 +921,20 @@ class RuntimeServer:
         try:
             self.supervisor.shutdown()
             self._cleanup_extensions()
-            self._close_model_factory()
             self._close_async_kernel()
             self.store.cancel_active_async_operations()
             self.supervisor.events.deliver_pending()
             if self.store.pending_outbox_count():
                 raise ResourceRegistryError("event delivery is not quiescent")
             self.supervisor.resources.ensure_empty()
-        except ModelFactoryCloseError as error:
-            self.send(business_error(request_id, error.code))
-            return
         except (
             RuntimeShutdownTimeout,
-            ModelClientInUseError,
             AsyncKernelCloseError,
             ResourceRegistryError,
         ):
             self.send(business_error(request_id, "RUNTIME_SHUTDOWN_TIMEOUT"))
             return
+        self._clear_frozen_model_configs()
         self.store.close()
         self.send(response(request_id, {}))
         self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
@@ -1175,15 +975,14 @@ class RuntimeServer:
         if self.supervisor.lifecycle is RuntimeLifecycle.CLOSED:
             return
         if not self.initialized or self.store.health_state != "ready":
-            self._close_model_factory()
             self._close_async_kernel()
+            self._clear_frozen_model_configs()
             self.store.close()
             self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
             return
         try:
             self.supervisor.shutdown()
             self._cleanup_extensions()
-            self._close_model_factory()
             self._close_async_kernel()
             self.store.cancel_active_async_operations()
             self.supervisor.events.deliver_pending()
@@ -1192,55 +991,49 @@ class RuntimeServer:
             self.supervisor.resources.ensure_empty()
         except (
             RuntimeShutdownTimeout,
-            ModelClientInUseError,
-            ModelFactoryCloseError,
             AsyncKernelCloseError,
             ResourceRegistryError,
         ):
             raise
+        self._clear_frozen_model_configs()
         self.store.close()
         self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
 
-    def _model_for(self, model_id: str) -> ModelClient:
-        if self.model is not None:
-            return self.model
-        if self.model_factory is None:
-            raise ModelConfigError("model is not configured")
-        return self.model_factory.client_for(model_id)
-
     def _model_lease_for(self, model_id: str) -> ModelClientLease:
-        profile = self.store.get_model_profile(model_id)
-        if profile is not None:
-            if not self._profile_is_selectable(profile) or self.model_gateway is None:
-                raise ModelConfigError("model profile is not available")
-            return self.model_gateway.acquire_lease(
-                RunModelSnapshot(
-                    profile=profile,
-                    capability=resolve_model_capabilities(
-                        profile, PRESETS[profile.provider]
-                    ),
-                    frozen_at=datetime.now(UTC),
-                )
-            )
         if self.model is not None:
             return ModelClientLease(
                 self.model,
                 resource_registry=self.supervisor.resources,
                 owner_id=model_id,
             )
-        if self.model_factory is None:
+        config = self.model_config.get(model_id)
+        if config is None or self.model_gateway is None:
             raise ModelConfigError("model is not configured")
-        return self.model_factory.acquire(model_id)
+        return self.model_gateway.acquire_lease(config)
 
     def _model_lease_for_run(self, run_id: str) -> ModelClientLease:
-        try:
-            snapshot = self.store.read_run_model_snapshot(run_id)
-        except ResourceNotFoundError:
-            run = self.store.read_run(run_id)
+        run = self.store.read_run(run_id)
+        if self.model is not None:
+            return self._model_lease_for(str(run["modelId"]))
+        with self._frozen_model_configs_lock:
+            config = self._frozen_model_configs.pop(run_id, None)
+        if config is None:
             return self._model_lease_for(str(run["modelId"]))
         if self.model_gateway is None:
-            raise ModelConfigError("model gateway is not initialized")
-        return self.model_gateway.acquire_lease(snapshot)
+            raise ModelConfigError("model gateway is unavailable")
+        return self.model_gateway.acquire_lease(config)
+
+    def _freeze_model_config(self, run_id: str, config: ModelConfig) -> None:
+        with self._frozen_model_configs_lock:
+            self._frozen_model_configs[run_id] = config
+
+    def _discard_model_config(self, run_id: str) -> None:
+        with self._frozen_model_configs_lock:
+            self._frozen_model_configs.pop(run_id, None)
+
+    def _clear_frozen_model_configs(self) -> None:
+        with self._frozen_model_configs_lock:
+            self._frozen_model_configs.clear()
 
     def _schedule_title_generation(
         self, session_id: str, user_input: str, model_id: str
@@ -1330,13 +1123,6 @@ class RuntimeServer:
                 "failureReason": failure_reason,
             },
         )
-
-    def _close_model_factory(self) -> None:
-        factory = self.model_factory
-        if factory is not None:
-            factory.close()
-            if self.model_factory is factory:
-                self.model_factory = None
 
     def _required_async_kernel(self) -> RuntimeAsyncKernel:
         if self.async_kernel is None:

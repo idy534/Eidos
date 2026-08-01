@@ -13,7 +13,6 @@ from eidos_runtime.model.client import (
     ModelToolDefinition,
 )
 from eidos_runtime.model.prompts import SYSTEM_PROMPT
-from eidos_runtime.model_gateway.models import RunModelSnapshot
 from eidos_runtime.sandbox.permissions import (
     BasePermissionProfile,
     base_permission_profile_for_workspace,
@@ -149,8 +148,6 @@ class RunResolutionSnapshot(_FrozenModel):
     run_id: str
     model_profile_snapshot_id: str
     model_profile_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    provider_capability_snapshot_id: str
-    provider_capability_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     extension_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     workspace_identity: WorkspaceIdentitySnapshot
     permission_profile_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -284,33 +281,14 @@ def create_run_resolution_snapshot(
     *,
     run_id: str,
     model_profile: ModelProfileSnapshot,
-    run_model_snapshot: RunModelSnapshot | None,
     extension_snapshot: dict[str, object],
     workspace_identity: WorkspaceIdentitySnapshot,
     data_directory: Path | None,
     created_at: int,
 ) -> RunResolutionSnapshot:
-    if run_model_snapshot is None:
-        model_value = model_profile.model_dump(mode="json")
-        model_hash = canonical_sha256(model_value)
-        model_id = f"legacy_model_{model_hash}"
-        capability_value = {
-            "providerId": model_profile.provider_id,
-            "modelId": model_profile.model_id,
-            "supportsTools": model_profile.supports_tools,
-            "supportsJsonSchemaOutput": model_profile.supports_json_schema_output,
-            "supportsReasoning": model_profile.supports_reasoning,
-        }
-        capability_hash = canonical_sha256(capability_value)
-        capability_id = f"legacy_capability_{capability_hash}"
-    else:
-        model_value = run_model_snapshot.profile.model_dump(mode="json")
-        model_hash = canonical_sha256(model_value)
-        model_id = run_model_snapshot.profile.id
-        capability_value = run_model_snapshot.capability.model_dump(mode="json")
-        capability_hash = canonical_sha256(capability_value)
-        capability_id = run_model_snapshot.capability.id
-
+    model_value = model_profile.model_dump(mode="json")
+    model_hash = canonical_sha256(model_value)
+    model_id = f"model_{model_hash}"
     base_permissions = base_permission_profile_for_workspace(
         Path(workspace_identity.path),
         data_directory,
@@ -333,8 +311,6 @@ def create_run_resolution_snapshot(
         run_id=run_id,
         model_profile_snapshot_id=model_id,
         model_profile_snapshot_hash=model_hash,
-        provider_capability_snapshot_id=capability_id,
-        provider_capability_snapshot_hash=capability_hash,
         extension_snapshot_hash=canonical_sha256(extension_snapshot),
         workspace_identity=workspace_identity,
         permission_profile_hash=permission_hash,
@@ -361,12 +337,6 @@ def create_step_resolution_snapshot(
         "schemaVersion": 1,
         "modelSnapshotId": run_snapshot.model_profile_snapshot_id,
         "modelSnapshotHash": run_snapshot.model_profile_snapshot_hash,
-        "providerCapabilitySnapshotId": (
-            run_snapshot.provider_capability_snapshot_id
-        ),
-        "providerCapabilitySnapshotHash": (
-            run_snapshot.provider_capability_snapshot_hash
-        ),
         "systemPrompt": SYSTEM_PROMPT,
         "messages": context_value,
         "tools": [

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import io
 from pathlib import Path
 import sqlite3
 import sys
@@ -9,7 +8,6 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -19,12 +17,7 @@ from eidos_runtime.db.invariants import (  # noqa: E402
     verify_runtime_invariants,
 )
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
-from eidos_runtime.model.pydantic_ai_client import (  # noqa: E402
-    ModelClientFactory,
-    ModelClientInUseError,
-    ModelClientLease,
-)
-from eidos_runtime.protocol.server import RuntimeServer  # noqa: E402
+from eidos_runtime.model.pydantic_ai_client import ModelClientLease  # noqa: E402
 from eidos_runtime.runtime.supervisor import (  # noqa: E402
     RunCancelTimeout,
     RunReconciliationRequired,
@@ -33,7 +26,6 @@ from eidos_runtime.runtime.supervisor import (  # noqa: E402
     RuntimeShutdownTimeout,
 )
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle  # noqa: E402
-from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 
 
 class RuntimeStateConsistencyTests(unittest.TestCase):
@@ -442,102 +434,6 @@ class RunHandleTests(unittest.TestCase):
 
 
 class ModelClientLeaseTests(unittest.TestCase):
-    def test_model_configuration_rejected_while_run_active(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="eidos-phase5a-config-") as temporary:
-            root = Path(temporary)
-            data = root / "data"
-            workspace = root / "workspace"
-            data.mkdir(mode=0o700)
-            workspace.mkdir()
-            server = RuntimeServer(io.StringIO(), data, object())  # type: ignore[arg-type]
-            server.store.initialize()
-            server.model_config.initialize()
-            server.initialized = True
-            session = server.store.create_session(str(workspace))
-            run, _ = server.store.enqueue_run(session["id"], "block")
-            server.supervisor.engine_factory = _BlockingEngine
-            _BlockingEngine.entered = threading.Event()
-            _BlockingEngine.release = threading.Event()
-            server.supervisor.schedule_next()
-            self.assertTrue(_BlockingEngine.entered.wait(1))
-
-            server.configure_model("client-config", {"apiKey": "sk-example-key-for-tests"})
-
-            message = json.loads(server.output.getvalue().splitlines()[-1])
-            self.assertEqual(message["error"]["data"]["code"], "RUN_ALREADY_ACTIVE")
-            _BlockingEngine.release.set()
-            server.supervisor.wait(1)
-            server.store.cancel_run(run["id"])
-            server.close()
-
-    def test_model_configuration_rejected_while_waiting_approval(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="eidos-phase5a-config-") as temporary:
-            root = Path(temporary)
-            data = root / "data"
-            workspace = root / "workspace"
-            data.mkdir(mode=0o700)
-            workspace.mkdir()
-            server = RuntimeServer(io.StringIO(), data, object())  # type: ignore[arg-type]
-            server.store.initialize()
-            server.model_config.initialize()
-            server.initialized = True
-            session = server.store.create_session(str(workspace))
-            run, _ = server.store.enqueue_run(session["id"], "approve")
-            server.supervisor.engine_factory = _ApprovalWaitingEngine
-            _ApprovalWaitingEngine.entered = threading.Event()
-            server.supervisor.schedule_next()
-            self.assertTrue(_ApprovalWaitingEngine.entered.wait(1))
-            self.assertTrue(_wait_until(
-                lambda: server.supervisor.handle_state(run["id"])
-                is RunWorkerState.WAITING_APPROVAL
-            ))
-
-            server.configure_model("client-config", {"apiKey": "sk-example-key-for-tests"})
-
-            message = json.loads(server.output.getvalue().splitlines()[-1])
-            self.assertEqual(message["error"]["data"]["code"], "RUN_ALREADY_ACTIVE")
-            server.supervisor.request_cancel(run["id"])
-            server.supervisor.wait(1)
-            server.close()
-
-    def test_model_client_not_closed_before_worker_finishes(self) -> None:
-        client = _CloseTrackingClient()
-        with patch(
-            "eidos_runtime.model.pydantic_ai_client.PydanticAIModelClient.deepseek",
-            return_value=client,
-        ):
-            kernel = RuntimeAsyncKernel()
-            kernel.start()
-            factory = ModelClientFactory(
-                "sk-example-key-for-tests", async_kernel=kernel
-            )
-            lease = factory.acquire("deepseek-v4-flash")
-            with self.assertRaises(ModelClientInUseError):
-                factory.close()
-            self.assertFalse(client.closed)
-            lease.close()
-            factory.close()
-            self.assertTrue(client.closed)
-            kernel.close()
-
-    def test_model_lease_kept_during_approval_wait(self) -> None:
-        client = _CloseTrackingClient()
-        with patch(
-            "eidos_runtime.model.pydantic_ai_client.PydanticAIModelClient.deepseek",
-            return_value=client,
-        ):
-            kernel = RuntimeAsyncKernel()
-            kernel.start()
-            factory = ModelClientFactory(
-                "sk-example-key-for-tests", async_kernel=kernel
-            )
-            lease = factory.acquire("deepseek-v4-flash")
-            self.assertEqual(factory.active_lease_count, 1)
-            self.assertFalse(lease.closed)
-            lease.close()
-            factory.close()
-            kernel.close()
-
     def test_model_lease_released_after_worker_exit(self) -> None:
         closed = threading.Event()
         lease = ModelClientLease(object(), closed.set)

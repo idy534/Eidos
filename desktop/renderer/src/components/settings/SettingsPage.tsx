@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import type {
   ModelListResult,
-  ModelStatus,
   McpServerRecord,
   PluginRecord,
   RuntimeStatus,
@@ -18,11 +17,9 @@ import { Button } from "../Button.js";
 
 interface SettingsPageProps {
   runtime: RuntimeStatus;
-  model?: ModelStatus | undefined;
   modelList?: ModelListResult | undefined;
   modelLoading?: boolean | undefined;
   modelError?: string | undefined;
-  modelConfiguring?: boolean | undefined;
   plugins: PluginRecord[];
   skills: SkillMetadata[];
   mcpServers: McpServerRecord[];
@@ -30,7 +27,7 @@ interface SettingsPageProps {
   pendingAction: SettingsPendingAction;
   hasBlockingModal?: boolean | undefined;
   onClose: () => void;
-  onConfigureModel: (apiKey: string) => Promise<boolean>;
+  onModelsChanged: () => Promise<void>;
   onImportPlugin: () => Promise<void>;
   onTogglePlugin: (pluginId: string, enabled: boolean) => Promise<void>;
   onRemovePlugin: (pluginId: string) => Promise<void>;
@@ -39,11 +36,9 @@ interface SettingsPageProps {
 
 export function SettingsPage({
   runtime,
-  model,
   modelList,
   modelLoading,
   modelError,
-  modelConfiguring = false,
   plugins,
   skills,
   mcpServers,
@@ -51,7 +46,7 @@ export function SettingsPage({
   pendingAction,
   hasBlockingModal = false,
   onClose,
-  onConfigureModel,
+  onModelsChanged,
   onImportPlugin,
   onTogglePlugin,
   onRemovePlugin,
@@ -62,7 +57,11 @@ export function SettingsPage({
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !hasBlockingModal) {
+      if (
+        event.key === "Escape"
+        && !hasBlockingModal
+        && !document.querySelector("[role='dialog'], [role='alertdialog']")
+      ) {
         onClose();
       }
     }
@@ -83,7 +82,7 @@ export function SettingsPage({
   // Navigation badge counts & warnings
   const mcpHasError = mcpServers.some((s) => Boolean(s.errorCode));
   const categories: SettingsCategoryItem[] = [
-    { id: "model", label: "模型与 API" },
+    { id: "model", label: "模型" },
     { id: "plugins", label: "Plugins", count: plugins.length },
     { id: "skills", label: "Skills", count: skills.length },
     {
@@ -133,13 +132,11 @@ export function SettingsPage({
 
             {activeCategory === "model" && (
               <ModelSettings
-                model={model}
                 modelList={modelList}
                 modelLoading={modelLoading}
                 modelError={modelError}
-                modelConfiguring={modelConfiguring}
                 storageHealthReady={storageReady}
-                onConfigureModel={onConfigureModel}
+                onModelsChanged={onModelsChanged}
                 onShowToast={showToast}
               />
             )}
@@ -169,7 +166,7 @@ export function SettingsPage({
             )}
 
             {activeCategory === "runtime" && (
-              <RuntimeSettings runtime={runtime} model={model} />
+              <RuntimeSettings runtime={runtime} />
             )}
           </section>
         </div>

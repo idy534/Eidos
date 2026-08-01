@@ -177,7 +177,7 @@ test("imports and manages closed Plugin Skill and MCP records", async () => {
   }
 });
 
-test("lists models, locks a task model, then renames and deletes only task state", async () => {
+test("lists only configured models and keeps task model history during session mutations", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-workspace-"));
   await writeFile(path.join(workspaceRoot, "README.md"), "# Keep me\n", "utf8");
@@ -212,10 +212,8 @@ test("lists models, locks a task model, then renames and deletes only task state
     await client.shutdown();
     assert.equal(await client.waitForExit(), 0);
 
-    assert.deepEqual(models.models.map((entry) => entry.id), [
-      "deepseek-v4-flash", "deepseek-v4-pro",
-    ]);
-    assert.equal(models.defaultModelId, "deepseek-v4-flash");
+    assert.deepEqual(models.models, []);
+    assert.equal(models.defaultModelId, undefined);
     assert.equal(started.modelId, "deepseek-v4-pro");
     assert.equal(listed.items[0]?.taskStatus, "completed");
     assert.equal(renamed.title, "检查项目");
@@ -253,7 +251,7 @@ test("routes runtime notifications during a fake model read loop", async () => {
 
     await client.initialize();
     const session = await client.createSession(workspaceRoot);
-    const started = await client.startRun(session.id, "Read README.md");
+    const started = await client.startRun(session.id, "Read README.md", "deepseek-v4-flash");
     const completed = await withTimeout(runCompleted, 5_000);
     const snapshot = await client.readSession(session.id);
     await client.shutdown();
@@ -333,7 +331,7 @@ test("routes a runtime approval request and commits only after approval", async 
 
     await client.initialize();
     const session = await client.createSession(workspaceRoot);
-    await client.startRun(session.id, "Create approved.txt");
+    await client.startRun(session.id, "Create approved.txt", "deepseek-v4-flash");
     const completed = await withTimeout(runCompleted, 5_000);
     await client.shutdown();
     assert.equal(await client.waitForExit(), 0);
@@ -387,7 +385,7 @@ test("cancel while awaiting approval ignores a late approve response", async () 
 
     await client.initialize();
     const session = await client.createSession(workspaceRoot);
-    const run = await client.startRun(session.id, "Create approved.txt");
+    const run = await client.startRun(session.id, "Create approved.txt", "deepseek-v4-flash");
     await withTimeout(approvalRequested, 5_000);
     await client.cancelRun(run.id);
     const completed = await withTimeout(runCompleted, 5_000);
@@ -442,7 +440,7 @@ test("degraded Shell capability rejects execution without approval or workspace 
     const initialized = await client.initialize();
     assert.equal(initialized.capabilities.runShell, false);
     await assert.rejects(
-      client.startRun("session-1", "Run printf"),
+      client.startRun("session-1", "Run printf", "deepseek-v4-flash"),
       (error: unknown) => (
         error instanceof RuntimeRequestError
         && error.businessCode === "SANDBOX_UNAVAILABLE"
@@ -497,7 +495,7 @@ test("routes shell approval and streams sandboxed command completion", async (co
       return;
     }
     const session = await client.createSession(workspaceRoot);
-    await client.startRun(session.id, "Run printf");
+    await client.startRun(session.id, "Run printf", "deepseek-v4-flash");
     await withTimeout(runCompleted, 5_000);
     const snapshot = await client.readSession(session.id);
     await client.shutdown();

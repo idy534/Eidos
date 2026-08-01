@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 V9_SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -733,8 +733,42 @@ V10_BASE_SCHEMA_SQL = V9_SCHEMA_SQL.replace(
     "    context_snapshot_id TEXT REFERENCES context_snapshots(id) ON DELETE RESTRICT,\n"
     "    retry_decision_json TEXT,",
 )
+_LEGACY_MODEL_TABLES_SQL = """
+CREATE TABLE model_profiles (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL UNIQUE,
+    profile_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE model_capability_snapshots (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    profile_id TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    probed_at INTEGER NOT NULL
+);
+
+CREATE TABLE run_model_snapshots (
+    run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE RESTRICT,
+    profile_id TEXT NOT NULL,
+    capability_snapshot_id TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    frozen_at INTEGER NOT NULL
+);
+
+"""
+V11_BASE_SCHEMA_SQL = V10_BASE_SCHEMA_SQL.replace(
+    _LEGACY_MODEL_TABLES_SQL, ""
+).replace(
+    "    model_profile_id TEXT,\n", ""
+)
+if V11_BASE_SCHEMA_SQL == V10_BASE_SCHEMA_SQL:
+    raise RuntimeError("legacy model tables were not removed from the current schema")
 SCHEMA_SQL = (
-    V10_BASE_SCHEMA_SQL
+    V11_BASE_SCHEMA_SQL
     + V10_REPOSITORY_SCHEMA_SQL
     + V10_CONTEXT_SCHEMA_SQL
 )

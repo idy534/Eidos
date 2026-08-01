@@ -100,10 +100,6 @@ class AsyncOwnershipArchitectureTests(unittest.TestCase):
             close_source.index("self.supervisor.shutdown()"),
             close_source.rindex("self._close_async_kernel()"),
         )
-        self.assertLess(
-            close_source.index("self._close_model_factory()"),
-            close_source.rindex("self._close_async_kernel()"),
-        )
 
     def test_successful_runtime_shutdown_leaves_the_resource_registry_empty(self) -> None:
         from eidos_runtime.model.client import ScriptedModel

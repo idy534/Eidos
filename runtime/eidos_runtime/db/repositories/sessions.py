@@ -420,15 +420,6 @@ class SessionRepository(Repository):
                 """,
                 (session_id,),
             )
-            connection.execute(
-                """
-                DELETE FROM run_model_snapshots
-                WHERE run_id IN (
-                    SELECT id FROM runs WHERE session_id = ?
-                )
-                """,
-                (session_id,),
-            )
             connection.execute("DELETE FROM runs WHERE session_id = ?", (session_id,))
             connection.execute(
                 """

@@ -37,7 +37,6 @@ from eidos_runtime.db.repositories import (
     ContextRepository,
     ExecutionRepository,
     ExtensionRepository,
-    ModelProfileRepository,
     RunRepository,
     SessionRepository,
 )
@@ -48,11 +47,6 @@ from eidos_runtime.db.schema import SCHEMA_VERSION
 from eidos_runtime.domain.session import Session
 from eidos_runtime.model.client import ModelProfileSnapshot, ModelUsage
 from eidos_runtime.model.config import DEFAULT_MODEL_ID
-from eidos_runtime.model_gateway.models import (
-    CapabilitySnapshot,
-    ModelProfile,
-    RunModelSnapshot,
-)
 from eidos_runtime.persistence.mappers.session import (
     deleted_session_to_legacy_dict,
     session_page_to_legacy_dict,
@@ -95,7 +89,6 @@ class SessionStore:
         self._extensions: ExtensionRepository | None = None
         self._context: ContextRepository | None = None
         self._async_operations: AsyncOperationRepository | None = None
-        self._model_profiles: ModelProfileRepository | None = None
         self._typed_runtime_repository: TypedRuntimeRepository | None = None
         self._repository_intelligence_repository: (
             RepositoryIntelligenceRepository | None
@@ -124,42 +117,6 @@ class SessionStore:
         self._extensions = ExtensionRepository(self._database)
         self._context = ContextRepository(self._database)
         self._async_operations = AsyncOperationRepository(self._database)
-        self._model_profiles = ModelProfileRepository(self._database)
-
-    def create_model_profile(self, profile: ModelProfile) -> ModelProfile:
-        return self._repository(self._model_profiles).create(profile)
-
-    def update_model_profile(self, profile: ModelProfile) -> ModelProfile:
-        return self._repository(self._model_profiles).update(profile)
-
-    def get_model_profile(self, profile_id: str) -> ModelProfile | None:
-        return self._repository(self._model_profiles).get(profile_id)
-
-    def list_model_profiles(self) -> list[ModelProfile]:
-        return self._repository(self._model_profiles).list()
-
-    def delete_model_profile(self, profile_id: str) -> None:
-        self._repository(self._model_profiles).delete(profile_id)
-
-    def save_model_capability_snapshot(
-        self, snapshot: CapabilitySnapshot
-    ) -> CapabilitySnapshot:
-        return self._repository(self._model_profiles).save_capability(snapshot)
-
-    def get_model_capability_snapshot(
-        self, profile_id: str
-    ) -> CapabilitySnapshot | None:
-        return self._repository(self._model_profiles).latest_capability(profile_id)
-
-    def save_run_model_snapshot(
-        self, run_id: str, snapshot: RunModelSnapshot
-    ) -> RunModelSnapshot:
-        return self._repository(self._model_profiles).save_run_snapshot(
-            run_id, snapshot
-        )
-
-    def read_run_model_snapshot(self, run_id: str) -> RunModelSnapshot:
-        return self._repository(self._model_profiles).read_run_snapshot(run_id)
 
     @property
     def data_directory(self) -> Path | None:
@@ -441,7 +398,6 @@ class SessionStore:
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
-        run_model_snapshot: RunModelSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         return self._repository(self._runs).create_run(
@@ -452,7 +408,6 @@ class SessionStore:
             session_title=session_title,
             model_id=model_id,
             model_profile=model_profile,
-            run_model_snapshot=run_model_snapshot,
             extension_snapshot=extension_snapshot,
         )
 
@@ -465,7 +420,6 @@ class SessionStore:
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
-        run_model_snapshot: RunModelSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         return self._repository(self._runs).enqueue_run(
@@ -475,7 +429,6 @@ class SessionStore:
             session_title=session_title,
             model_id=model_id,
             model_profile=model_profile,
-            run_model_snapshot=run_model_snapshot,
             extension_snapshot=extension_snapshot,
         )
 

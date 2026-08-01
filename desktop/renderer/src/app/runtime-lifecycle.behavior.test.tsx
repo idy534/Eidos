@@ -7,6 +7,8 @@ const mockReadyStatus: RuntimeStatus = {
   state: "ready",
   protocolVersion: 1,
   runtimeVersion: "0.3.0",
+  runShell: true,
+  modelConfigured: true,
   storageHealth: { state: "ready" },
 };
 
@@ -14,6 +16,8 @@ const mockHealthOnlyStatus: RuntimeStatus = {
   state: "ready",
   protocolVersion: 1,
   runtimeVersion: "0.3.0",
+  runShell: true,
+  modelConfigured: true,
   storageHealth: { state: "health_only", code: "READ_ONLY_STORAGE" },
 };
 const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
@@ -44,8 +48,15 @@ describe("App & Runtime Lifecycle behavior", () => {
       onNotification: vi.fn().mockReturnValue(() => {}),
       onApprovalRequest: vi.fn().mockReturnValue(() => {}),
       listSessions: vi.fn().mockResolvedValue({ items: [] }),
-      getModelStatus: vi.fn().mockResolvedValue({ provider: "deepseek", model: "deepseek-v4-flash", configured: true }),
-      listModels: vi.fn().mockResolvedValue({ defaultModelId: "deepseek-v4-flash", models: [{ id: "deepseek-v4-flash", provider: "deepseek", displayName: "Flash", configured: true, selectable: true }] }),
+      listModels: vi.fn().mockResolvedValue({
+        defaultModelId: "deepseek-v4-flash",
+        models: [{
+          id: "deepseek-v4-flash", name: "DeepSeek-V4 Flash", vendor: "DeepSeek",
+          provider: "deepseek", url: "https://api.deepseek.com/chat/completions",
+          supportsToolCall: true, supportsImages: false, supportsReasoning: true,
+          reasoning: { defaultEffort: "high", supportedEfforts: ["high", "max"] },
+        }],
+      }),
       listPendingApprovals: vi.fn().mockResolvedValue([]),
       readExtensions: vi.fn().mockResolvedValue({ plugins: [], skills: [], servers: [], throughEventId: 0 }),
       readExtensionEvents: vi.fn().mockResolvedValue({ items: [], throughEventId: 0 }),

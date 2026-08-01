@@ -108,7 +108,7 @@ class RuntimeProtocolTests(unittest.TestCase):
 
             self.assertEqual(
                 [model["id"] for model in messages["client-models"]["result"]["models"]],
-                ["deepseek-v4-flash", "deepseek-v4-pro"],
+                [],
             )
             self.assertEqual(run["modelId"], "deepseek-v4-pro")
             self.assertEqual(messages["client-rename"]["result"]["title"], "新标题")
@@ -758,7 +758,7 @@ class RuntimeProtocolTests(unittest.TestCase):
                 {"code": "RESOURCE_NOT_FOUND", "retryable": False},
             )
 
-    def test_model_configuration_is_private_and_loaded_after_restart(self) -> None:
+    def test_local_model_configuration_is_private_and_loaded_after_restart(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-data-") as data_directory:
             configured = run_runtime(
                 [
@@ -767,8 +767,12 @@ class RuntimeProtocolTests(unittest.TestCase):
                         {
                             "jsonrpc": "2.0",
                             "id": "client-2",
-                            "method": "model/configure",
-                            "params": {"apiKey": "sk-example-key-for-tests"},
+                            "method": "model/create",
+                            "params": {
+                                "provider": "deepseek",
+                                "modelId": "deepseek-v4-flash",
+                                "apiKey": "sk-example-key-for-tests",
+                            },
                         }
                     ),
                     shutdown_message("client-3"),
@@ -776,15 +780,11 @@ class RuntimeProtocolTests(unittest.TestCase):
                 Path(data_directory),
             )
             configured_response = json.loads(configured.stdout.splitlines()[1])
-            self.assertEqual(
-                configured_response["result"],
-                {
-                    "provider": "deepseek",
-                    "model": "deepseek-v4-flash",
-                    "configured": True,
-                },
-            )
+            self.assertEqual(configured_response["result"]["id"], "deepseek-v4-flash")
+            self.assertNotIn("apiKey", configured_response["result"])
             self.assertNotIn("sk-example", configured.stdout)
+            self.assertTrue((Path(data_directory) / "models.json").is_file())
+            self.assertFalse((Path(data_directory) / "model-secrets.json").exists())
 
             restarted = run_runtime(
                 [initialize_message("client-1"), shutdown_message("client-2")],

@@ -186,6 +186,12 @@ class _RunStartEnvironment:
     def model_for(self, _model_id: str) -> object:
         return _LegacyModel()
 
+    def freeze_model_config(self, _run_id: str, _config: object) -> None:
+        pass
+
+    def discard_model_config(self, _run_id: str) -> None:
+        pass
+
     def extension_snapshot(self) -> dict[str, object]:
         return {
             "schemaVersion": 1,
@@ -233,6 +239,7 @@ def test_run_application_start_defers_worker_release_until_response_delivery(
         request = RunStartRequestDto(
             sessionId=session["id"],
             userInput="inspect the workspace",
+            modelId="deepseek-v4-flash",
             operationId=str(uuid4()),
         )
 
@@ -272,6 +279,7 @@ def test_run_start_outcome_aborts_and_interrupts_a_claimed_run_after_response_fa
             RunStartRequestDto(
                 sessionId=session["id"],
                 userInput="inspect the workspace",
+                modelId="deepseek-v4-flash",
             )
         )
         run_id = str(outcome.response.root["id"])

@@ -121,6 +121,7 @@ class AsyncTitleTests(unittest.TestCase):
             "params": {
                 "sessionId": self.session["id"],
                 "userInput": "请分析这个仓库",
+                "modelId": "deepseek-v4-flash",
             },
         })
         return time.monotonic() - started

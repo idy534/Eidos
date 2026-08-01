@@ -193,7 +193,6 @@ class RunDto(ClosedModel):
     session_id: StrictStr = Field(alias="sessionId")
     user_input: StrictStr | None = Field(default=None, alias="userInput")
     model_id: StrictStr = Field(alias="modelId", min_length=1, max_length=256)
-    profile_id: StrictStr | None = Field(default=None, alias="profileId")
     status: Literal[
         "queued", "running", "waiting_approval", "finalizing", "stopped",
         "succeeded", "failed", "canceled", "interrupted",

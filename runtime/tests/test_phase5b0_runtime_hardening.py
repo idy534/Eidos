@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import json
 from pathlib import Path
 import sys
 import tempfile
@@ -19,17 +18,13 @@ from eidos_runtime.extensions.mcp import (  # noqa: E402
     McpConnection,
     McpShutdownTimeout,
 )
-from eidos_runtime.model.pydantic_ai_client import (  # noqa: E402
-    ModelClientFactory,
-    ModelClientLease,
-)
+from eidos_runtime.model.pydantic_ai_client import ModelClientLease  # noqa: E402
 from eidos_runtime.protocol.server import RuntimeServer  # noqa: E402
 from eidos_runtime.runtime.supervisor import (  # noqa: E402
     RunSupervisor,
     RuntimeControlState,
     RuntimeShutdownTimeout,
 )
-from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle  # noqa: E402
 
 
@@ -172,81 +167,6 @@ class SupervisorRaceTests(unittest.TestCase):
         supervisor.schedule_next()
         self.assertTrue(acquired.wait(1))
         supervisor.shutdown()
-
-
-class ConfigureFailureTests(unittest.TestCase):
-    def _server(self, root: Path) -> RuntimeServer:
-        data = root / "data"
-        workspace = root / "workspace"
-        data.mkdir(mode=0o700)
-        workspace.mkdir()
-        server = RuntimeServer(io.StringIO(), data)
-        server.store.initialize()
-        server.model_config.initialize()
-        server.async_kernel = RuntimeAsyncKernel()
-        server.async_kernel.start()
-        server.initialized = True
-        return server
-
-    def test_configure_failure_preserves_previous_factory(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="eidos-phase5b0-config-") as temporary:
-            server = self._server(Path(temporary))
-            server.model_config.save_api_key("sk-existing-key-for-tests")
-            previous = ModelClientFactory(
-                "sk-existing-key-for-tests", async_kernel=server.async_kernel
-            )
-            server.model_factory = previous
-
-            with patch(
-                "eidos_runtime.protocol.server.ModelClientFactory",
-                side_effect=OSError("factory failed"),
-            ):
-                server.configure_model(
-                    "client-config", {"apiKey": "sk-replacement-key-for-tests"}
-                )
-
-            self.assertIs(server.model_factory, previous)
-            self.assertEqual(
-                server.model_config.api_key(), "sk-existing-key-for-tests"
-            )
-            previous.close()
-            server.model_factory = None
-            server.close()
-
-    def test_configure_releases_gate_after_failure(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="eidos-phase5b0-config-") as temporary:
-            server = self._server(Path(temporary))
-            with patch(
-                "eidos_runtime.protocol.server.ModelClientFactory",
-                side_effect=OSError("factory failed"),
-            ):
-                server.configure_model(
-                    "client-config", {"apiKey": "sk-replacement-key-for-tests"}
-                )
-
-            self.assertEqual(
-                server.supervisor.control_state, RuntimeControlState.RUNNING
-            )
-            server.close()
-
-    def test_model_factory_in_use_is_mapped_to_business_error(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="eidos-phase5b0-config-") as temporary:
-            server = self._server(Path(temporary))
-            server.model_factory = ModelClientFactory(
-                "sk-existing-key-for-tests", async_kernel=server.async_kernel
-            )
-            lease = server.model_factory.acquire("deepseek-v4-flash")
-
-            server.configure_model(
-                "client-config", {"apiKey": "sk-replacement-key-for-tests"}
-            )
-
-            message = json.loads(server.output.getvalue().splitlines()[-1])
-            self.assertEqual(
-                message["error"]["data"]["code"], "MODEL_CLIENT_IN_USE"
-            )
-            lease.close()
-            server.close()
 
 
 class CommittedMutationOrderTests(unittest.TestCase):

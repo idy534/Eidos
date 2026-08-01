@@ -26,9 +26,6 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "INVALID_SESSION_TITLE",
   "SESSION_HAS_ACTIVE_RUN",
   "MODEL_NOT_AVAILABLE",
-  "MODEL_CHANGE_NOT_ALLOWED",
-  "MODEL_CLIENT_IN_USE",
-  "MODEL_AUTH_REFERENCE_INVALID",
   "RUN_CANCEL_TIMEOUT",
   "RUN_RECONCILIATION_REQUIRED",
   "EXTENSIONS_UNAVAILABLE",
@@ -55,9 +52,9 @@ import type {
   ModelId,
   ModelListResult,
   ModelOption,
-  ModelStatus,
-  ModelProfile,
-  ModelProfileDraft,
+  ModelPresetsResult,
+  ModelCreateInput,
+  ModelUpdateInput,
   PluginListResult,
   PluginRecord,
   Run,
@@ -97,7 +94,9 @@ export type {
   ModelId,
   ModelListResult,
   ModelOption,
-  ModelStatus,
+  ModelPresetsResult,
+  ModelCreateInput,
+  ModelUpdateInput,
   PluginListResult,
   PluginRecord,
   Run,
@@ -263,7 +262,7 @@ export class RuntimeClient {
   startRun(
     sessionId: string,
     userInput: string,
-    modelId: ModelId = "deepseek-v4-flash",
+    modelId: ModelId,
     operationId = randomUUID(),
   ): Promise<Run> {
     return this.validatedRequest(
@@ -275,60 +274,30 @@ export class RuntimeClient {
     return this.validatedRequest("run/cancel", { runId, operationId }, isRun);
   }
 
-  modelStatus(): Promise<ModelStatus> {
-    return this.validatedRequest("model/status", {}, isModelStatus);
+  listModelPresets(): Promise<ModelPresetsResult> {
+    return this.validatedRequest("model/presets", {}, isModelPresetsResult);
   }
 
   listModels(): Promise<ModelListResult> {
     return this.validatedRequest("model/list", {}, isModelListResult);
   }
 
-  configureModel(apiKey: string): Promise<ModelStatus> {
-    return this.validatedRequest("model/configure", { apiKey }, isModelStatus);
+  createModel(input: ModelCreateInput): Promise<ModelOption> {
+    return this.validatedRequest("model/create", { ...input }, isModelOption);
   }
 
-  listModelProfiles(): Promise<ModelProfile[]> {
+  updateModel(input: ModelUpdateInput): Promise<ModelOption> {
+    return this.validatedRequest("model/update", { ...input }, isModelOption);
+  }
+
+  deleteModel(id: ModelId): Promise<void> {
     return this.validatedRequest(
-      "model_profile/list",
-      {},
-      (value): value is { schemaVersion: 1; profiles: ModelProfile[] } => (
+      "model/delete",
+      { id },
+      (value): value is { deletedModelId: string } => (
         isRecord(value)
-        && hasOnlyKeys(value, ["schemaVersion", "profiles"])
-        && value.schemaVersion === 1
-        && Array.isArray(value.profiles)
-        && value.profiles.every(isModelProfile)
-      ),
-    ).then((result) => result.profiles);
-  }
-
-  createModelProfile(profile: ModelProfileDraft, apiKey?: string): Promise<ModelProfile> {
-    return this.validatedRequest(
-      "model_profile/create",
-      { profile, ...(apiKey ? { apiKey } : {}) },
-      isModelProfile,
-    );
-  }
-
-  updateModelProfile(
-    profileId: string,
-    profile: ModelProfileDraft,
-    apiKey?: string,
-  ): Promise<ModelProfile> {
-    return this.validatedRequest(
-      "model_profile/update",
-      { profileId, profile, ...(apiKey ? { apiKey } : {}) },
-      isModelProfile,
-    );
-  }
-
-  deleteModelProfile(profileId: string): Promise<void> {
-    return this.validatedRequest(
-      "model_profile/delete",
-      { profileId },
-      (value): value is { deletedProfileId: string } => (
-        isRecord(value)
-        && hasOnlyKeys(value, ["deletedProfileId"])
-        && value.deletedProfileId === profileId
+        && hasOnlyKeys(value, ["deletedModelId"])
+        && value.deletedModelId === id
       ),
     ).then(() => undefined);
   }
@@ -717,42 +686,31 @@ function isInitializeResult(value: unknown): value is InitializeResult {
   );
 }
 
-function isModelStatus(value: unknown): value is ModelStatus {
-  return (
-    isRecord(value)
-    && hasOnlyKeys(value, ["provider", "model", "configured"])
-    && value.provider === "deepseek"
-    && value.model === "deepseek-v4-flash"
-    && typeof value.configured === "boolean"
-  );
-}
-
-function isModelProfile(value: unknown): value is ModelProfile {
+function isModelOption(value: unknown): value is ModelOption {
   return (
     isRecord(value)
     && hasOnlyKeys(value, [
-      "schemaVersion", "id", "name", "provider", "baseUrl", "authReference",
-      "wireApi", "modelId", "contextWindow", "maxOutputTokens",
-      "reasoningMode", "reasoningEffort", "supportsTools",
-      "supportsParallelTools", "supportsImages", "supportsStructuredOutput",
-      "supportsPromptCache", "requestTimeout", "retryPolicy", "createdAt",
-      "updatedAt",
+      "id", "name", "vendor", "provider", "url", "supportsToolCall",
+      "supportsImages", "supportsReasoning", "reasoning",
     ])
-    && value.schemaVersion === 1
-    && typeof value.id === "string"
+    && isModelId(value.id)
     && typeof value.name === "string"
+    && typeof value.vendor === "string"
     && typeof value.provider === "string"
-    && (value.baseUrl === null || value.baseUrl === undefined || typeof value.baseUrl === "string")
-    && typeof value.authReference === "string"
-    && [
-      "openai_responses", "openai_chat_completions",
-    ].includes(String(value.wireApi))
-    && typeof value.modelId === "string"
-    && typeof value.requestTimeout === "number"
-    && isRecord(value.retryPolicy)
-    && typeof value.createdAt === "string"
-    && typeof value.updatedAt === "string"
+    && typeof value.url === "string"
+    && typeof value.supportsToolCall === "boolean"
+    && typeof value.supportsImages === "boolean"
+    && typeof value.supportsReasoning === "boolean"
+    && (value.reasoning === null || isModelReasoning(value.reasoning))
   );
+}
+
+function isModelReasoning(value: unknown): boolean {
+  return isRecord(value)
+    && hasOnlyKeys(value, ["defaultEffort", "supportedEfforts"])
+    && ["high", "max"].includes(String(value.defaultEffort))
+    && Array.isArray(value.supportedEfforts)
+    && value.supportedEfforts.every((effort) => ["high", "max"].includes(String(effort)));
 }
 
 function isModelId(value: unknown): value is ModelId {
@@ -763,18 +721,31 @@ function isModelListResult(value: unknown): value is ModelListResult {
   return (
     isRecord(value)
     && hasOnlyKeys(value, ["models", "defaultModelId"])
-    && isModelId(value.defaultModelId)
+    && (
+      value.defaultModelId === undefined
+      || value.defaultModelId === null
+      || isModelId(value.defaultModelId)
+    )
     && Array.isArray(value.models)
-    && value.models.every((model) => (
-      isRecord(model)
-      && hasOnlyKeys(model, ["id", "provider", "displayName", "configured", "selectable"])
-      && isModelId(model.id)
-      && typeof model.provider === "string"
-      && typeof model.displayName === "string"
-      && typeof model.configured === "boolean"
-      && typeof model.selectable === "boolean"
-    ))
+    && value.models.every(isModelOption)
   );
+}
+
+function isModelPresetsResult(value: unknown): value is ModelPresetsResult {
+  return isRecord(value)
+    && hasOnlyKeys(value, ["providers"])
+    && Array.isArray(value.providers)
+    && value.providers.every((provider) => (
+      isRecord(provider)
+      && hasOnlyKeys(provider, ["id", "name", "models"])
+      && ["deepseek", "minimax", "kimi"].includes(String(provider.id))
+      && typeof provider.name === "string"
+      && Array.isArray(provider.models)
+      && provider.models.every((model) => (
+        isRecord(model)
+        && isModelOption({ ...model, vendor: provider.name, provider: provider.id })
+      ))
+    ));
 }
 
 function isRuntimeHealth(value: unknown): value is RuntimeHealth {
@@ -922,7 +893,6 @@ function isRun(value: unknown): value is Run {
       "status",
       "runtimeState",
       "modelId",
-      "profileId",
       "modelStepCount",
       "allowedActions",
       "createdAt",
@@ -957,7 +927,6 @@ function isRun(value: unknown): value is Run {
       ].includes(String(value.runtimeState))
     )
     && isModelId(value.modelId)
-    && (value.profileId === undefined || typeof value.profileId === "string")
     && isNonNegativeInteger(value.modelStepCount)
     && (value.allowedActions === undefined || (
       Array.isArray(value.allowedActions)

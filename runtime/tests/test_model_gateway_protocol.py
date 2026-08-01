@@ -3,156 +3,174 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
-import sys
 import tempfile
 import unittest
 
-RUNTIME_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(RUNTIME_ROOT))
-
-from eidos_runtime.protocol.server import RuntimeServer  # noqa: E402
-from eidos_runtime.model_gateway.capabilities import resolve_model_capabilities  # noqa: E402
-from eidos_runtime.model_gateway.models import CapabilityProbeSource  # noqa: E402
-from eidos_runtime.model_gateway.presets import PRESETS  # noqa: E402
-from eidos_runtime.sandbox.sensitive import SensitiveScanner  # noqa: E402
+from eidos_runtime.protocol.server import RuntimeServer
+from eidos_runtime.sandbox.sensitive import SensitiveScanner
 
 
 class ModelGatewayProtocolTests(unittest.TestCase):
-    def test_profile_crud_without_probe_is_selectable_and_freezes_declared_capability(self) -> None:
+    def test_model_crud_and_turn_level_switch_use_the_closed_rpc_contract(self) -> None:
         with (
-            tempfile.TemporaryDirectory(prefix="eidos-gateway-rpc-") as data,
-            tempfile.TemporaryDirectory(prefix="eidos-gateway-workspace-") as workspace,
+            tempfile.TemporaryDirectory(prefix="eidos-model-rpc-") as data,
+            tempfile.TemporaryDirectory(prefix="eidos-model-workspace-") as workspace,
         ):
             output = io.StringIO()
             server = RuntimeServer(output, Path(data))
             server.store.initialize()
-            server.model_secrets.initialize()
+            server.model_config.initialize()
             server.initialized = True
             server.sensitive = SensitiveScanner()
             server.supervisor.prepare_next = lambda: None  # type: ignore[method-assign]
             server._schedule_title_generation = lambda *_args: None  # type: ignore[method-assign]
 
-            server.handle(request("model_profile/list_presets", {}, "presets"))
+            server.handle(request("model/presets", {}, "presets"))
             server.handle(request(
-                "model_profile/create",
+                "model/create",
                 {
-                    "apiKey": "provider-key-value-123456",
-                    "profile": {
-                        "name": "DeepSeek",
-                        "provider": "deepseek",
-                        "modelId": "deepseek-chat",
-                        "contextWindow": 128000,
-                        "maxOutputTokens": 4096,
-                        "supportsTools": True,
-                        "requestTimeout": 30.0,
-                        "retryPolicy": {"maxAttempts": 3},
-                    },
+                    "provider": "deepseek",
+                    "modelId": "deepseek-v4-flash",
+                    "apiKey": "sk-deepseek-secret-value",
                 },
-                "create",
+                "create-flash",
             ))
-            created = messages(output)["create"]["result"]
-            profile_id = created["id"]
-            self.assertEqual(created["wireApi"], "openai_chat_completions")
-            self.assertTrue(created["authReference"].startswith("local:"))
+            server.handle(request(
+                "model/create",
+                {
+                    "provider": "minimax",
+                    "modelId": "MiniMax-M3",
+                    "apiKey": "minimax-secret-value",
+                },
+                "create-minimax",
+            ))
+            server.handle(request(
+                "model/create",
+                {
+                    "provider": "kimi",
+                    "modelId": "kimi-k2.7-code-highspeed",
+                    "apiKey": "kimi-secret-value",
+                },
+                "create-kimi",
+            ))
+            server.handle(request("model/list", {}, "list"))
 
-            server.handle(request("model_profile/list", {}, "list"))
-            server.handle(request("model/list", {}, "models"))
+            results = messages(output)
+            self.assertEqual(
+                [provider["id"] for provider in results["presets"]["result"]["providers"]],
+                ["deepseek", "minimax", "kimi"],
+            )
+            self.assertEqual(
+                [model["id"] for model in results["list"]["result"]["models"]],
+                [
+                    "deepseek-v4-flash",
+                    "MiniMax-M3",
+                    "kimi-k2.7-code-highspeed",
+                ],
+            )
+            self.assertNotIn(
+                "sk-deepseek-secret-value",
+                json.dumps(results["list"], ensure_ascii=False),
+            )
+
             session = server.store.create_session(workspace)
+            server.handle(request(
+                "run/start",
+                {"sessionId": session["id"], "userInput": "missing model"},
+                "run-missing-model",
+            ))
             server.handle(request(
                 "run/start",
                 {
                     "sessionId": session["id"],
-                    "userInput": "inspect",
-                    "profileId": profile_id,
+                    "userInput": "legacy selector",
+                    "modelId": "deepseek-v4-flash",
+                    "profileId": "legacy-profile",
                 },
-                "run",
+                "run-profile-id",
             ))
+            invalid_runs = messages(output)
+            self.assertEqual(invalid_runs["run-missing-model"]["error"]["code"], -32602)
+            self.assertEqual(invalid_runs["run-profile-id"]["error"]["code"], -32602)
+            server.handle(request(
+                "run/start",
+                {
+                    "sessionId": session["id"],
+                    "userInput": "first turn",
+                    "modelId": "deepseek-v4-flash",
+                },
+                "run-one",
+            ))
+            first = messages(output)["run-one"]["result"]
+            server.store.cancel_run(first["id"])
+
+            server.handle(request(
+                "run/start",
+                {
+                    "sessionId": session["id"],
+                    "userInput": "second turn",
+                    "modelId": "MiniMax-M3",
+                },
+                "run-two",
+            ))
+            second = messages(output)["run-two"]["result"]
+            self.assertEqual(first["modelId"], "deepseek-v4-flash")
+            self.assertEqual(second["modelId"], "MiniMax-M3")
+            self.assertNotIn("profileId", first)
+            self.assertNotIn("profileId", second)
+
+            server.handle(request(
+                "model/update",
+                {
+                    "id": "MiniMax-M3",
+                    "provider": "kimi",
+                    "modelId": "kimi-k3",
+                    "apiKey": "",
+                },
+                "update",
+            ))
+            self.assertEqual(messages(output)["update"]["result"]["id"], "kimi-k3")
+            self.assertEqual(
+                server._frozen_model_configs[second["id"]].id,
+                "MiniMax-M3",
+            )
+            self.assertEqual(
+                server._frozen_model_configs[second["id"]].api_key,
+                "minimax-secret-value",
+            )
+
+            server.handle(request(
+                "model/delete", {"id": "kimi-k3"}, "delete"
+            ))
+            self.assertEqual(
+                messages(output)["delete"]["result"], {"deletedModelId": "kimi-k3"}
+            )
+            server.store.close()
+
+    def test_removed_profile_and_configure_methods_are_not_registered(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-model-rpc-") as data:
+            output = io.StringIO()
+            server = RuntimeServer(output, Path(data))
+            server.store.initialize()
+            server.model_config.initialize()
+            server.initialized = True
+
+            for index, method in enumerate((
+                "model/status",
+                "model/configure",
+                "model_profile/list",
+                "model_profile/create",
+                "model_profile/update",
+                "model_profile/delete",
+                "model_profile/list_presets",
+            )):
+                server.handle(request(method, {}, f"removed-{index}"))
 
             results = messages(output)
-            self.assertEqual(
-                results["list"]["result"]["profiles"][0]["id"],
-                profile_id,
-            )
-            option = next(
-                value for value in results["models"]["result"]["models"]
-                if value["id"] == profile_id
-            )
-            self.assertTrue(option["configured"])
-            self.assertTrue(option["selectable"])
-            run = results["run"]["result"]
-            frozen = server.store.read_run_model_snapshot(run["id"])
-            self.assertEqual(frozen.profile.id, profile_id)
-            self.assertEqual(frozen.profile.model_id, "deepseek-chat")
-            self.assertFalse(frozen.capability.reachable)
-            self.assertFalse(frozen.capability.authenticated)
-            self.assertNotIn(
-                b"provider-key-value-123456",
-                (Path(data) / "eidos.db").read_bytes(),
-            )
-            server.store.close()
-
-    def test_removed_test_connection_rpc_returns_method_not_found(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="eidos-gateway-rpc-") as data:
-            output = io.StringIO()
-            server = RuntimeServer(output, Path(data))
-            server.store.initialize()
-            server.model_secrets.initialize()
-            server.initialized = True
-            server.handle(request(
-                "model_profile/test_connection", {"profileId": "profile-1"}, "removed"
+            self.assertTrue(all(
+                results[f"removed-{index}"]["error"]["code"] == -32601
+                for index in range(7)
             ))
-
-            self.assertEqual(messages(output)["removed"]["error"]["code"], -32601)
-            server.store.close()
-
-    def test_historical_active_probe_snapshot_does_not_control_new_run(self) -> None:
-        with (
-            tempfile.TemporaryDirectory(prefix="eidos-gateway-rpc-") as data,
-            tempfile.TemporaryDirectory(prefix="eidos-gateway-workspace-") as workspace,
-        ):
-            output = io.StringIO()
-            server = RuntimeServer(output, Path(data))
-            server.store.initialize()
-            server.model_secrets.initialize()
-            server.initialized = True
-            server.sensitive = SensitiveScanner()
-            server.supervisor.prepare_next = lambda: None  # type: ignore[method-assign]
-            server._schedule_title_generation = lambda *_args: None  # type: ignore[method-assign]
-            server.handle(request(
-                "model_profile/create",
-                {"apiKey": "provider-key-value-123456", "profile": {
-                    "name": "DeepSeek", "provider": "deepseek", "modelId": "deepseek-chat",
-                    "contextWindow": 128000, "maxOutputTokens": 4096,
-                }},
-                "create",
-            ))
-            profile_id = messages(output)["create"]["result"]["id"]
-            profile = server.store.get_model_profile(profile_id)
-            assert profile is not None
-            server.store.save_model_capability_snapshot(
-                resolve_model_capabilities(profile, PRESETS[profile.provider]).model_copy(
-                    update={
-                        "id": "legacy-active-probe",
-                        "probe_source": CapabilityProbeSource.ACTIVE_PROBE,
-                        "probe_version": "r2-v1",
-                    }
-                )
-            )
-
-            server.handle(request("model/list", {}, "models"))
-            session = server.store.create_session(workspace)
-            server.handle(request("run/start", {
-                "sessionId": session["id"], "userInput": "inspect", "profileId": profile_id,
-            }, "run"))
-
-            option = next(
-                value for value in messages(output)["models"]["result"]["models"]
-                if value["id"] == profile_id
-            )
-            self.assertTrue(option["selectable"])
-            self.assertIn("result", messages(output)["run"])
-            frozen = server.store.read_run_model_snapshot(messages(output)["run"]["result"]["id"])
-            self.assertIsNot(frozen.capability.probe_source, CapabilityProbeSource.ACTIVE_PROBE)
             server.store.close()
 
 

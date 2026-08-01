@@ -11,7 +11,7 @@ flowchart LR
     Server --> Store["SQLite SessionStore"]
     Server --> Supervisor["RunSupervisor"]
     Supervisor --> Engine["RuntimeEngine"]
-    Engine --> Model["SamplingRuntime / DeepSeek"]
+    Engine --> Model["SamplingRuntime / OpenAI-compatible Chat Completions"]
     Engine --> Batch["ToolCallRuntime"]
     Batch --> Single["ToolExecutionController"]
     Single --> Handlers["Tool handlers / Registry runtimes"]
@@ -22,7 +22,7 @@ Renderer 只通过 context-isolated preload 暴露的 typed IPC 访问 Main。Ma
 
 ## 状态与恢复权威
 
-- SQLite schema v10 保存 Runtime 事实、Repository generations、retrieval/context snapshots、verified compact summaries 和 checkpoints。全新数据库直接建立完整 v10；v9 数据库在 `BEGIN IMMEDIATE` 内校验、迁移、验证 FTS5 与完整性后才更新 `user_version`，失败进入 health-only 且保留原数据。
+- SQLite schema v11 保存 Runtime 事实、Repository generations、retrieval/context snapshots、verified compact summaries 和 checkpoints。全新数据库直接建立完整 v11；v10 数据库在 `BEGIN IMMEDIATE` 内校验并删除旧 `model_profiles`、Capability 与 Run Model Snapshot 表后才更新 `user_version`，失败进入 health-only 且保留原数据。模型配置不写 SQLite。
 - SQLite 是唯一业务事实来源。`RunSupervisor` 的 worker/slot、`ResourceRegistry` 和 `RuntimePhaseTracker` 只保存运行中协调或诊断状态。
 - `Run.status` 是持久状态权威。`Run.runtimeState` 是可选传输提示；当前 DB mapper 不依赖它恢复执行。
 - 业务变更和 Event/Outbox 在同一提交中落库；通知从已提交事件投影。启动恢复不会重放不确定副作用。
@@ -151,12 +151,14 @@ fall back to the former Python traversal.
 | 边界 | 路径 |
 |---|---|
 | Desktop shared contract | `desktop/shared/domain-contracts.ts` |
-| Model Profile generated contract | `runtime/eidos_runtime/contracts/export_model_profile.py` → `contracts/generated/model-profile.schema.json` → `desktop/shared/generated/runtime/model-profile.ts` |
+| Local model catalog/store | `runtime/eidos_runtime/model/config.py` → `~/.eidos/models.json` |
 | Main JSON-RPC validator/client | `desktop/main/runtime-client.ts` |
 | Python DTO | `runtime/eidos_runtime/protocol/schemas.py` |
 | JSON-RPC server | `runtime/eidos_runtime/protocol/server.py` |
 
-Model Profile 能力只由本地声明解析：显式用户声明优先于内置 Provider Preset，Preset 缺失时保守为不支持。Eidos 不发送 Test Connection 或能力探测请求；网络、认证和 Provider 兼容性仅由真实 Model Attempt 的稳定错误映射确认。新 Run 冻结当时解析出的能力，历史持久化 Snapshot 仅用于读取兼容，不决定 Profile 是否可选。Model Gateway 直接用冻结 Profile 构造 Pydantic AI Provider 和 Model，`WireAPI` 选择对应模型类；Eidos 不维护独立的 Provider/Wire transport registry。注入的 HTTP Client 由 Pydantic AI `AsyncTenacityTransport` 执行建立响应流前的唯一网络重试，OpenAI SDK `max_retries=0`；`RetryPolicy.max_attempts` 是单个逻辑 Model Attempt 内的总 HTTP 请求数，Transport Retry 不增加 SQLite `model_attempt`，流已消费后不重放。
+本地模型目录只包含 DeepSeek、MiniMax 和 Kimi 的五个固定模型；模型 ID、Chat Completions URL 与能力标记由 Runtime 填充，API Key 直接保存在用户私有的 `~/.eidos/models.json`。`model/list` 是 Desktop 选择器的唯一数据源，`run/start` 只传 `modelId`；每个 Run 在创建时冻结实际配置，因此同一 Session 可以在 Turn 之间切换，活动 Run 不受后续编辑或删除影响。不存在 Test Connection、Capability Probe、Capability Snapshot、密钥引用或 SQLite Model Profile 权威。三个 Provider 都由 Pydantic AI 的 `OpenAIChatModel` 进入同一 Chat Completions 流式与 ToolCall 路径。
+
+注入的 HTTP Client 由 Pydantic AI `AsyncTenacityTransport` 执行建立响应流前的唯一网络重试，OpenAI SDK `max_retries=0`；Transport Retry 不增加 SQLite `model_attempt`，流已消费后不重放。
 
 Runtime Core 目前仍是同步 Durable Runtime，`RunSupervisor` 与 Run Worker 仍使用线程。模型异步 I/O 由 `RuntimeServer` 唯一持有的 `RuntimeAsyncKernel` 承载：一个进程级 AnyIO `BlockingPortal` 可并发执行多个 Model Client、Run Sampling 与标题生成请求；Client 只通过该 kernel 调用 Pydantic AI 的公开异步 Direct API。Kernel 还通过 `RuntimeAsyncTask` 拥有通用异步 Task/Service 的启动、取消、等待、结果和有界诊断；Service readiness 使用 AnyIO `task_status.started(value)`，Portal 不暴露给业务模块。每个 owned task 对应一个 `async_task` 资源，完成后从活跃集合移除；Kernel shutdown 先拒绝新任务、协作取消并有界等待，未真实退出时保留资源并报告 `ASYNC_KERNEL_TASK_SHUTDOWN_TIMEOUT`。
 

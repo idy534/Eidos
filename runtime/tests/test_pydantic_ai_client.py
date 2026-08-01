@@ -2,11 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from pathlib import Path
-import stat
 import sys
-import tempfile
 import threading
 import unittest
 from unittest.mock import patch
@@ -40,14 +37,9 @@ from eidos_runtime.model.client import (  # noqa: E402
     ModelRequestError,
     ModelToolDefinition,
 )
-from eidos_runtime.model.config import (  # noqa: E402
-    ModelConfigStore,
-    ModelProfileSpec,
-    model_catalog,
-)
+from eidos_runtime.model.config import ModelProfileSpec  # noqa: E402
 from eidos_runtime.model.prompts import SYSTEM_PROMPT  # noqa: E402
 from eidos_runtime.model.pydantic_ai_client import (  # noqa: E402
-    ModelClientFactory,
     PydanticAIModelClient,
     _cancel_when_requested,
     encode_context,
@@ -453,21 +445,6 @@ class PydanticAIModelClientTests(unittest.TestCase):
             second.close()
             kernel.close()
 
-    def test_factory_disables_sdk_retries_reuses_clients_without_model_threads(self) -> None:
-        kernel = RuntimeAsyncKernel()
-        kernel.start()
-        factory = ModelClientFactory(
-            "sk-example-key-for-tests", async_kernel=kernel
-        )
-        first = factory.client_for("deepseek-v4-flash")
-        self.assertIs(first, factory.client_for("deepseek-v4-flash"))
-        self.assertIsNot(first, factory.client_for("deepseek-v4-pro"))
-        self.assertEqual(first.sdk_max_retries, 0)
-        names = {thread.name for thread in threading.enumerate()}
-        self.assertFalse(any(name.startswith("eidos-model-") for name in names))
-        factory.close()
-        kernel.close()
-
     def test_deepseek_request_omits_unsupported_none_reasoning_effort(self) -> None:
         payloads: list[dict[str, object]] = []
 
@@ -529,26 +506,6 @@ class PydanticAIModelClientTests(unittest.TestCase):
 
 async def _one_chunk(_messages, _info):
     yield "done"
-
-
-class ModelConfigStoreTests(unittest.TestCase):
-    def test_model_catalog_lists_flash_then_pro_and_defaults_to_flash(self) -> None:
-        self.assertEqual(
-            [model["id"] for model in model_catalog(configured=True)["models"]],
-            ["deepseek-v4-flash", "deepseek-v4-pro"],
-        )
-
-    def test_saves_private_configuration_and_never_returns_the_key_in_status(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="eidos-model-") as temporary:
-            directory = Path(temporary)
-            os.chmod(directory, 0o700)
-            store = ModelConfigStore(directory)
-            store.initialize()
-            store.save_api_key("sk-example-key-for-tests")
-            self.assertNotIn("apiKey", store.public_status())
-            self.assertEqual(
-                stat.S_IMODE((directory / "model.json").stat().st_mode), 0o600
-            )
 
 
 if __name__ == "__main__":

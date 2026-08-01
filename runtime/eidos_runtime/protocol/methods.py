@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from typing import ClassVar, Literal
 
-from pydantic import Field, JsonValue, StrictFloat, StrictInt, StrictStr
+from pydantic import Field, JsonValue, StrictInt, StrictStr
 from pydantic import field_validator, model_validator
 
 from eidos_runtime.protocol.schemas import (
@@ -102,8 +102,7 @@ class EventListRequestDto(_CanonicalIdRequest):
 class RunStartRequestDto(_OperationRequest):
     session_id: StrictStr = Field(alias="sessionId")
     user_input: StrictStr = Field(alias="userInput", min_length=1, max_length=64 * 1024)
-    model_id: StrictStr | None = Field(default=None, alias="modelId")
-    profile_id: StrictStr | None = Field(default=None, alias="profileId")
+    model_id: StrictStr = Field(alias="modelId", min_length=1, max_length=256)
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("operation_id", "session_id")
 
     @model_validator(mode="after")
@@ -111,8 +110,6 @@ class RunStartRequestDto(_OperationRequest):
         super()._validate_canonical_ids()
         if not self.user_input.strip():
             raise ValueError("userInput must not be blank")
-        if self.model_id is not None and self.profile_id is not None:
-            raise ValueError("modelId and profileId cannot both be supplied")
         return self
 
 
@@ -136,7 +133,7 @@ class RunStatusRequestDto(_CanonicalIdRequest):
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("run_id",)
 
 
-class ModelStatusRequestDto(MethodRequestDto):
+class ModelPresetsRequestDto(MethodRequestDto):
     pass
 
 
@@ -144,35 +141,21 @@ class ModelListRequestDto(MethodRequestDto):
     pass
 
 
-class ModelConfigureRequestDto(MethodRequestDto):
-    api_key: StrictStr = Field(alias="apiKey", min_length=1)
+class ModelCreateRequestDto(MethodRequestDto):
+    provider: StrictStr = Field(min_length=1, max_length=64)
+    model_id: StrictStr = Field(alias="modelId", min_length=1, max_length=256)
+    api_key: StrictStr = Field(alias="apiKey", min_length=1, max_length=512)
 
 
-class ModelProfileListRequestDto(MethodRequestDto):
-    pass
+class ModelUpdateRequestDto(MethodRequestDto):
+    id: StrictStr = Field(min_length=1, max_length=256)
+    provider: StrictStr = Field(min_length=1, max_length=64)
+    model_id: StrictStr = Field(alias="modelId", min_length=1, max_length=256)
+    api_key: StrictStr | None = Field(default=None, alias="apiKey", max_length=512)
 
 
-class ModelProfileGetRequestDto(MethodRequestDto):
-    profile_id: StrictStr = Field(alias="profileId", min_length=1)
-
-
-class ModelProfileCreateRequestDto(MethodRequestDto):
-    profile: dict[str, JsonValue]
-    api_key: StrictStr | None = Field(default=None, alias="apiKey")
-
-
-class ModelProfileUpdateRequestDto(MethodRequestDto):
-    profile_id: StrictStr = Field(alias="profileId", min_length=1)
-    profile: dict[str, JsonValue]
-    api_key: StrictStr | None = Field(default=None, alias="apiKey")
-
-
-class ModelProfileDeleteRequestDto(MethodRequestDto):
-    profile_id: StrictStr = Field(alias="profileId", min_length=1)
-
-
-class ModelProfileListPresetsRequestDto(MethodRequestDto):
-    pass
+class ModelDeleteRequestDto(MethodRequestDto):
+    id: StrictStr = Field(min_length=1, max_length=256)
 
 
 class PluginListRequestDto(MethodRequestDto):
@@ -377,103 +360,62 @@ class RunStatusResponseDto(_RunLifecycleResponseDto):
     pass
 
 
-class ModelStatusResponseDto(MethodResultDto):
-    provider: StrictStr
-    model: StrictStr
-    configured: bool
+class ModelReasoningDto(ClosedModel):
+    default_effort: Literal["high", "max"] = Field(alias="defaultEffort")
+    supported_efforts: list[Literal["high", "max"]] = Field(alias="supportedEfforts")
 
 
 class ModelOptionDto(ClosedModel):
     id: StrictStr
+    name: StrictStr
+    vendor: StrictStr
     provider: StrictStr
-    display_name: StrictStr = Field(alias="displayName")
-    configured: bool
-    selectable: bool
+    url: StrictStr
+    supports_tool_call: bool = Field(alias="supportsToolCall")
+    supports_images: bool = Field(alias="supportsImages")
+    supports_reasoning: bool = Field(alias="supportsReasoning")
+    reasoning: ModelReasoningDto | None = None
 
 
 class ModelListResponseDto(MethodResultDto):
     models: list[ModelOptionDto]
-    default_model_id: StrictStr = Field(alias="defaultModelId")
+    default_model_id: StrictStr | None = Field(alias="defaultModelId")
 
 
-class ModelConfigureResponseDto(ModelStatusResponseDto):
+class _ModelResponseDto(MethodResultDto, ModelOptionDto):
     pass
 
 
-class RetryPolicyDto(ClosedModel):
-    max_attempts: StrictInt = Field(alias="maxAttempts", ge=1, le=10)
-    initial_backoff_seconds: StrictFloat = Field(alias="initialBackoffSeconds", ge=0)
-    max_backoff_seconds: StrictFloat = Field(alias="maxBackoffSeconds", ge=0)
+class ModelCreateResponseDto(_ModelResponseDto):
+    pass
 
 
-class ModelProfileDto(ClosedModel):
-    schema_version: Literal[1] = Field(alias="schemaVersion")
+class ModelUpdateResponseDto(_ModelResponseDto):
+    pass
+
+
+class ModelDeleteResponseDto(MethodResultDto):
+    deleted_model_id: StrictStr = Field(alias="deletedModelId")
+
+
+class PresetModelDto(ClosedModel):
     id: StrictStr
     name: StrictStr
-    provider: StrictStr
-    base_url: StrictStr | None = Field(default=None, alias="baseUrl")
-    auth_reference: StrictStr = Field(alias="authReference")
-    wire_api: Literal["openai_responses", "openai_chat_completions"] = Field(alias="wireApi")
-    model_id: StrictStr = Field(alias="modelId")
-    context_window: StrictInt | None = Field(default=None, alias="contextWindow", gt=0)
-    max_output_tokens: StrictInt | None = Field(default=None, alias="maxOutputTokens", gt=0)
-    reasoning_mode: Literal["none", "native", "compatible"] = Field(alias="reasoningMode")
-    reasoning_effort: Literal["low", "medium", "high"] | None = Field(
-        default=None, alias="reasoningEffort"
-    )
-    supports_tools: bool | None = Field(default=None, alias="supportsTools")
-    supports_parallel_tools: bool | None = Field(default=None, alias="supportsParallelTools")
-    supports_images: bool | None = Field(default=None, alias="supportsImages")
-    supports_structured_output: bool | None = Field(default=None, alias="supportsStructuredOutput")
-    supports_prompt_cache: bool | None = Field(default=None, alias="supportsPromptCache")
-    request_timeout: StrictFloat = Field(alias="requestTimeout", gt=0)
-    retry_policy: RetryPolicyDto = Field(alias="retryPolicy")
-    created_at: StrictStr = Field(alias="createdAt")
-    updated_at: StrictStr = Field(alias="updatedAt")
-
-
-class ModelProfileListResponseDto(MethodResultDto):
-    schema_version: Literal[1] = Field(alias="schemaVersion")
-    profiles: list[ModelProfileDto]
-
-
-class _ModelProfileResponseDto(MethodResultDto, ModelProfileDto):
-    pass
-
-
-class ModelProfileGetResponseDto(_ModelProfileResponseDto):
-    pass
-
-
-class ModelProfileCreateResponseDto(_ModelProfileResponseDto):
-    pass
-
-
-class ModelProfileUpdateResponseDto(_ModelProfileResponseDto):
-    pass
-
-
-class ModelProfileDeleteResponseDto(MethodResultDto):
-    deleted_profile_id: StrictStr = Field(alias="deletedProfileId")
+    url: StrictStr
+    supports_tool_call: bool = Field(alias="supportsToolCall")
+    supports_images: bool = Field(alias="supportsImages")
+    supports_reasoning: bool = Field(alias="supportsReasoning")
+    reasoning: ModelReasoningDto | None = None
 
 
 class ProviderPresetDto(ClosedModel):
-    id: StrictStr
-    display_name: StrictStr = Field(alias="displayName")
-    default_wire_api: Literal[
-        "openai_responses", "openai_chat_completions"
-    ] = Field(alias="defaultWireApi")
-    default_base_url: StrictStr | None = Field(default=None, alias="defaultBaseUrl")
-    model_id: None = Field(default=None, alias="modelId")
-    capability_hints: dict[StrictStr, bool] = Field(alias="capabilityHints")
-    context_window: StrictInt | None = Field(default=None, alias="contextWindow", gt=0)
-    max_output_tokens: StrictInt | None = Field(default=None, alias="maxOutputTokens", gt=0)
-    compatibility_flags: list[StrictStr] = Field(alias="compatibilityFlags")
+    id: Literal["deepseek", "minimax", "kimi"]
+    name: StrictStr
+    models: list[PresetModelDto]
 
 
-class ModelProfileListPresetsResponseDto(MethodResultDto):
-    schema_version: Literal[1] = Field(alias="schemaVersion")
-    presets: list[ProviderPresetDto]
+class ModelPresetsResponseDto(MethodResultDto):
+    providers: list[ProviderPresetDto]
 
 
 class PluginListResponseDto(MethodResultDto):

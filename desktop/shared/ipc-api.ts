@@ -8,10 +8,11 @@ import type {
   DeleteSessionResult,
   Run,
   ModelId,
-  ModelStatus,
   ModelListResult,
-  ModelProfile,
-  ModelProfileDraft,
+  ModelOption,
+  ModelPresetsResult,
+  ModelCreateInput,
+  ModelUpdateInput,
   ApprovalRequest,
   PluginListResult,
   PluginRecord,
@@ -46,13 +47,11 @@ export interface EidosRuntimeAPI {
   cancelRun(runId: string): Promise<Run>;
 
   // Models
-  getModelStatus(): Promise<ModelStatus>;
+  listModelPresets(): Promise<ModelPresetsResult>;
   listModels(): Promise<ModelListResult>;
-  configureModel(apiKey: string): Promise<ModelStatus>;
-  listModelProfiles(): Promise<ModelProfile[]>;
-  createModelProfile(profile: ModelProfileDraft, apiKey?: string): Promise<ModelProfile>;
-  updateModelProfile(profileId: string, profile: ModelProfileDraft, apiKey?: string): Promise<ModelProfile>;
-  deleteModelProfile(profileId: string): Promise<void>;
+  createModel(input: ModelCreateInput): Promise<ModelOption>;
+  updateModel(input: ModelUpdateInput): Promise<ModelOption>;
+  deleteModel(id: ModelId): Promise<void>;
 
   // Approvals
   listPendingApprovals(): Promise<ApprovalRequest[]>;

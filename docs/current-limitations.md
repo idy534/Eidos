@@ -3,7 +3,7 @@
 本文只描述当前代码边界，不列未来路线图。
 
 - 仅支持 macOS Desktop。Shell 隔离依赖可用的原生 `/usr/bin/sandbox-exec` 与随包策略资源；Self-Test 失败时 Shell 能力 fail-closed。
-- 模型 Provider 固定为 DeepSeek，wire API 固定为 Chat Completions；没有通用 Model Profile 编辑器或 Responses API。
+- 模型 Provider 限定为内置 DeepSeek、MiniMax、Kimi 目录，wire API 固定为 OpenAI-compatible Chat Completions；不支持自定义 Provider、URL、Responses API、连接测试或能力探测。
 - 全局同一时间只执行一个 Run。单个模型响应内只有安全只读工具可并发；Workspace 写入、Shell、Eidos-state 和 MCP/外部工具不得并发。
 - Eidos 1.0 不追求零线程架构：Durable Runtime core 与 SQLite 仍保持同步，每个活跃 Run 一个 Worker Thread 是刻意的隔离边界。异步网络 I/O、MCP、Managed Task 和并行只读 Batch 统一由唯一进程级 AnyIO Kernel 管理；blocking callback 不得在 Kernel Event Loop 上运行。
 - 原生 async `RuntimeEngine`/`RunSupervisor` 不是 Eidos 1.0 路线图。只有 Run-thread scalability 成为实测瓶颈、并行 Agent 数超过有界线程模型、SQLite 被替换为 async persistence boundary，或 profiling 证明显著 Event Loop/线程竞争时，才重新评估该转换。

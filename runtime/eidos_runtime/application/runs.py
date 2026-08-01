@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from threading import Lock
 from typing import Protocol, TypeVar
 
@@ -23,14 +22,11 @@ from eidos_runtime.db.errors import (
 )
 from eidos_runtime.model.client import ModelClient, ModelProfileSnapshot
 from eidos_runtime.model.config import (
-    DEFAULT_MODEL_ID,
-    SUPPORTED_MODELS,
+    ModelConfig,
     ModelConfigError,
+    MODEL_CATALOG,
+    default_profile_snapshot,
 )
-from eidos_runtime.model_gateway.capabilities import resolve_model_capabilities
-from eidos_runtime.model_gateway.gateway import legacy_profile_snapshot
-from eidos_runtime.model_gateway.models import ModelProfile, RunModelSnapshot
-from eidos_runtime.model_gateway.presets import PRESETS
 from eidos_runtime.persistence.repositories import TypedRuntimeRepository
 from eidos_runtime.persistence.errors import ConditionalUpdateFailed
 from eidos_runtime.domain.run import Run
@@ -64,8 +60,6 @@ ResultT = TypeVar("ResultT", bound=MethodResultDto)
 class RunStorePort(Protocol):
     """The public compatibility authority required for Run start/cancel."""
 
-    def get_model_profile(self, profile_id: str) -> ModelProfile | None: ...
-
     def read_session(self, session_id: str) -> dict[str, object] | None: ...
 
     def session_model_id(self, session_id: str) -> str | None: ...
@@ -81,9 +75,8 @@ class RunStorePort(Protocol):
         *,
         operation_id: str | None = None,
         session_title: str | None = None,
-        model_id: str = DEFAULT_MODEL_ID,
+        model_id: str,
         model_profile: ModelProfileSnapshot | None = None,
-        run_model_snapshot: RunModelSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]: ...
 
@@ -117,9 +110,13 @@ class RunStartEnvironmentPort(Protocol):
 
     def model_is_configured(self) -> bool: ...
 
-    def profile_is_selectable(self, profile: ModelProfile) -> bool: ...
+    def model_config(self, model_id: str) -> ModelConfig: ...
 
     def model_for(self, model_id: str) -> ModelClient: ...
+
+    def freeze_model_config(self, run_id: str, config: ModelConfig) -> None: ...
+
+    def discard_model_config(self, run_id: str) -> None: ...
 
     def extension_snapshot(self) -> dict[str, object]: ...
 
@@ -152,6 +149,7 @@ class RunStartOutcome:
     _run_id: str
     _environment: RunStartEnvironmentPort
     _title_request: _TitleGenerationRequest | None = None
+    _has_frozen_model_config: bool = False
     _settled: bool = field(default=False, init=False, repr=False)
     _lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
@@ -168,6 +166,8 @@ class RunStartOutcome:
 
     def mark_response_failed(self) -> None:
         self._mark_settled()
+        if self._has_frozen_model_config:
+            self._environment.discard_model_config(self._run_id)
         if self._start is not None:
             try:
                 self._runtime.abort(self._start)
@@ -243,7 +243,7 @@ class RunApplication:
         if session is None:
             raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
 
-        model_id, profile_id, run_model, frozen_model = self._select_model(
+        model_id, model_profile, model_config = self._select_model(
             request,
             store=store,
             environment=environment,
@@ -253,7 +253,6 @@ class RunApplication:
             "sessionId": request.session_id,
             "userInput": user_input,
             "modelId": model_id,
-            "profileId": profile_id,
             "extensionSnapshot": extension_snapshot,
         }
         if request.operation_id is not None:
@@ -286,12 +285,7 @@ class RunApplication:
                 operation_id=request.operation_id,
                 session_title=None,
                 model_id=model_id,
-                model_profile=(
-                    legacy_profile_snapshot(frozen_model)
-                    if frozen_model is not None
-                    else getattr(run_model, "profile_snapshot", None)
-                ),
-                run_model_snapshot=frozen_model,
+                model_profile=model_profile,
                 extension_snapshot=extension_snapshot,
             )
         except ResourceNotFoundError as error:
@@ -306,11 +300,20 @@ class RunApplication:
             raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
 
         run_id = str(created["id"])
-        start = runtime.prepare_next()
+        if model_config is not None:
+            environment.freeze_model_config(run_id, model_config)
+        try:
+            start = runtime.prepare_next()
+        except Exception:
+            if model_config is not None:
+                environment.discard_model_config(run_id)
+            raise
         try:
             response = _result(RunStartResponseDto, store.read_run(run_id))
         except Exception:
             self._abort_before_response(store, runtime, start, run_id)
+            if model_config is not None:
+                environment.discard_model_config(run_id)
             raise
         return RunStartOutcome(
             response=response,
@@ -319,11 +322,12 @@ class RunApplication:
             _start=start,
             _run_id=run_id,
             _environment=environment,
+            _has_frozen_model_config=model_config is not None,
             _title_request=(
                 _TitleGenerationRequest(
                     session_id=request.session_id,
                     user_input=user_input,
-                    model_id=profile_id or model_id,
+                    model_id=model_id,
                 )
                 if needs_title
                 else None
@@ -432,58 +436,24 @@ class RunApplication:
         *,
         store: RunStorePort,
         environment: RunStartEnvironmentPort,
-    ) -> tuple[str, str | None, ModelClient | None, RunModelSnapshot | None]:
-        profile_id = request.profile_id
-        requested_model_id = request.model_id
-        if (
-            profile_id is None
-            and requested_model_id is not None
-            and store.get_model_profile(requested_model_id) is not None
-        ):
-            profile_id = requested_model_id
-
-        frozen_model: RunModelSnapshot | None = None
-        if profile_id is not None:
-            profile = store.get_model_profile(profile_id)
-            if profile is None or not environment.profile_is_selectable(profile):
-                raise ApplicationError(
-                    "MODEL_NOT_AVAILABLE", "model profile is unavailable"
-                )
-            preset = PRESETS.get(profile.provider)
-            if preset is None:
-                raise ApplicationError(
-                    "MODEL_NOT_AVAILABLE", "model provider is unavailable"
-                )
-            frozen_model = RunModelSnapshot(
-                profile=profile,
-                capability=resolve_model_capabilities(profile, preset),
-                frozen_at=datetime.now(UTC),
-            )
-            requested_model_id = profile.model_id
-        if (
-            frozen_model is None
-            and requested_model_id is not None
-            and requested_model_id not in SUPPORTED_MODELS
-        ):
-            raise ApplicationError("MODEL_NOT_AVAILABLE", "model is unavailable")
-
-        existing_model_id = store.session_model_id(request.session_id)
-        if (
-            existing_model_id is not None
-            and requested_model_id is not None
-            and requested_model_id != existing_model_id
-        ):
-            raise ApplicationError(
-                "MODEL_CHANGE_NOT_ALLOWED", "session model cannot be changed"
-            )
-        model_id = existing_model_id or requested_model_id or DEFAULT_MODEL_ID
+    ) -> tuple[str, ModelProfileSnapshot, ModelConfig | None]:
+        model_id = request.model_id
         try:
-            run_model = (
-                None if frozen_model is not None else environment.model_for(model_id)
+            run_model = environment.model_for(model_id)
+        except ModelConfigError:
+            run_model = None
+        if run_model is not None:
+            profile = getattr(run_model, "profile_snapshot", None)
+            return model_id, profile or default_profile_snapshot(model_id), None
+        try:
+            config = environment.model_config(model_id)
+            return (
+                model_id,
+                MODEL_CATALOG.profile(model_id).snapshot(config),
+                config,
             )
-        except ModelConfigError as error:
-            raise ApplicationError("INVALID_STATE", str(error)) from error
-        return model_id, profile_id, run_model, frozen_model
+        except (ModelConfigError, ValueError) as error:
+            raise ApplicationError("MODEL_NOT_AVAILABLE", "model is unavailable") from error
 
     @staticmethod
     def _abort_before_response(

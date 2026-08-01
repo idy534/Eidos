@@ -71,10 +71,6 @@ class EidosModelContextExceededError(EidosModelError):
     provider_reported_input_size: int | None = None
 
 
-class EidosModelCapabilityError(EidosModelError):
-    pass
-
-
 class EidosModelStreamInterruptedError(EidosModelError):
     pass
 
@@ -84,10 +80,6 @@ class EidosModelCancelledError(EidosModelError):
 
 
 class EidosModelProviderUnavailableError(EidosModelError):
-    pass
-
-
-class EidosModelUnknownProviderError(EidosModelError):
     pass
 
 

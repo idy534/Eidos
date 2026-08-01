@@ -18,7 +18,7 @@ export function resolveSessionModelId(runs: Run[]): ModelId | undefined {
   // 1. Active Run priority
   const activeRun = findActiveRun(runs);
   if (activeRun) {
-    return activeRun.profileId ?? activeRun.modelId;
+    return activeRun.modelId;
   }
 
   // 2 & 3. Most recently updated / created Run with deterministic tie-breaking
@@ -32,5 +32,5 @@ export function resolveSessionModelId(runs: Run[]): ModelId | undefined {
     return b.id.localeCompare(a.id);
   });
 
-  return sorted[0]?.profileId ?? sorted[0]?.modelId;
+  return sorted[0]?.modelId;
 }

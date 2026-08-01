@@ -198,7 +198,6 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   INVALID_SESSION_TITLE: "任务标题不能为空，请换一个标题。",
   SESSION_HAS_ACTIVE_RUN: "任务仍在执行，请先取消或等待完成后再删除。",
   MODEL_NOT_AVAILABLE: "所选模型当前不可用，请重新选择。",
-  MODEL_CHANGE_NOT_ALLOWED: "任务开始后不能切换模型；请新建任务使用其他模型。",
   INTERNAL_ERROR: "Runtime 遇到内部错误，请查看诊断日志。",
 };
 

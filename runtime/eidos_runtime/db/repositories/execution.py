@@ -58,22 +58,21 @@ def _attempt_metadata(
     run_id: str,
 ) -> tuple[str | None, str | None, str | None, float | None]:
     row = connection.execute(
-        "SELECT snapshot_json FROM run_model_snapshots WHERE run_id = ?",
+        "SELECT model_profile_json FROM runs WHERE id = ?",
         (run_id,),
     ).fetchone()
     if row is None:
         return None, None, None, None
     try:
-        snapshot = json.loads(row["snapshot_json"])
-        profile = snapshot["profile"]
+        profile = json.loads(row["model_profile_json"])
         return (
-            snapshot.get("lease_id"),
+            None,
             profile.get("wire_api"),
             profile.get("model_id"),
             profile.get("request_timeout"),
         )
     except (KeyError, TypeError, json.JSONDecodeError):
-        raise StorageError("run_model_snapshot_invalid") from None
+        raise StorageError("run_model_config_invalid") from None
 
 
 class ExecutionRepository(Repository):

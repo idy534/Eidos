@@ -160,8 +160,6 @@ def _run_from_row(
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }
-    if "model_profile_id" in row.keys() and row["model_profile_id"] is not None:
-        run["profileId"] = row["model_profile_id"]
     allowed_actions = {
         "queued": ["cancel"],
         "running": ["cancel"],
