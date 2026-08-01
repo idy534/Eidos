@@ -337,6 +337,8 @@ class McpCloseContractTests(unittest.TestCase):
         connection.closed = threading.Event()
         connection.runtime_root = Path("/tmp/eidos-mcp-test-do-not-create")
         connection.resource = None
+        connection._callbacks_quiescent = threading.Event()
+        connection._callbacks_quiescent.set()
         return connection
 
     def test_mcp_close_success_means_service_exited(self) -> None:

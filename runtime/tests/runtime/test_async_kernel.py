@@ -138,6 +138,28 @@ class RuntimeAsyncKernelTests(unittest.TestCase):
         kernel.close()
         resources.ensure_empty()
 
+    def test_forced_service_cancellation_has_a_canceled_terminal_state(self) -> None:
+        resources = ResourceRegistry()
+        kernel = RuntimeAsyncKernel(resource_registry=resources)
+        kernel.start()
+        entered = threading.Event()
+
+        async def service(*, task_status) -> None:
+            task_status.started("ready")
+            entered.set()
+            await anyio.sleep_forever()
+
+        task, started = kernel.start_service(service, owner_id="service-1")
+
+        self.assertEqual(started, "ready")
+        self.assertTrue(entered.wait(1))
+        self.assertTrue(task.cancel())
+        self.assertTrue(task.wait(1))
+        self.assertEqual(task.state, AsyncTaskState.CANCELED)
+        self.assertEqual(task.diagnostics().diagnostic_code, None)
+        kernel.close()
+        resources.ensure_empty()
+
     def test_task_execution_exception_is_owned_by_the_handle(self) -> None:
         resources = ResourceRegistry()
         kernel = RuntimeAsyncKernel(resource_registry=resources)

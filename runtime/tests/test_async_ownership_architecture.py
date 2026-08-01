@@ -54,6 +54,16 @@ class AsyncOwnershipArchitectureTests(unittest.TestCase):
         self.assertNotIn("ThreadPoolExecutor", parallel_source)
         self.assertNotIn("Future", parallel_source)
 
+    def test_mcp_list_changed_callback_uses_a_waited_worker_bridge(self) -> None:
+        from eidos_runtime.extensions.mcp import McpConnection
+
+        source = inspect.getsource(McpConnection._serve)
+        self.assertIn(
+            "await anyio.to_thread.run_sync(self._run_list_changed_callback)",
+            source,
+        )
+        self.assertNotIn("abandon_on_cancel=True", source)
+
     def test_runtime_server_initialization_owns_exactly_one_kernel(self) -> None:
         from eidos_runtime.protocol.server import RuntimeServer
 
