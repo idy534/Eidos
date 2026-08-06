@@ -36,7 +36,10 @@ class RuntimeSeamTests(unittest.TestCase):
                 return ModelResponse(text="first line\nsecond line")
 
         result = ModelRunner(StreamingModel()).run(
-            (), threading.Event(), deltas.append
+            (),
+            threading.Event(),
+            deltas.append,
+            instructions="resolved instructions",
         )
 
         self.assertEqual(observed_during_completion, [["first line\n"]])
@@ -52,13 +55,18 @@ class RuntimeSeamTests(unittest.TestCase):
         ])
         deltas: list[str] = []
 
-        result = ModelRunner(model).run((), threading.Event(), deltas.append)
+        result = ModelRunner(model).run(
+            (),
+            threading.Event(),
+            deltas.append,
+            instructions="resolved instructions",
+        )
 
         self.assertEqual(result.text, "hello")
         self.assertEqual(result.tool_calls[0].name, "read_file")
         self.assertEqual(deltas, ["hello"])
 
-    def test_model_runner_passes_the_step_tool_definitions_explicitly(self) -> None:
+    def test_model_runner_passes_step_instructions_and_tools_explicitly(self) -> None:
         model = ScriptedModel([ModelResponse(text="done")])
         definitions = (ModelToolDefinition(
             name="memory_echo",
@@ -72,9 +80,11 @@ class RuntimeSeamTests(unittest.TestCase):
 
         ModelRunner(model).run(
             (), threading.Event(), lambda _delta: None,
+            instructions="resolved step instructions",
             tool_definitions=definitions,
         )
 
+        self.assertEqual(model.instructions_history, ["resolved step instructions"])
         self.assertEqual(model.tool_definitions_history, [definitions])
 
     def test_tool_dispatcher_returns_one_closed_batch_error(self) -> None:

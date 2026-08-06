@@ -823,7 +823,9 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertNotIn("mcp__fixture__demo_deferred", first_tools)
         self.assertIn("mcp__fixture__demo_deferred", second_tools)
         self.assertNotIn("Use review checklist.", json.dumps(model.contexts[0]))
-        self.assertIn("Use review checklist.", json.dumps(model.contexts[1]))
+        self.assertNotIn("Use review checklist.", json.dumps(model.contexts[1]))
+        self.assertNotIn("Use review checklist.", model.instructions_history[0])
+        self.assertIn("Use review checklist.", model.instructions_history[1])
 
     def _finalizing_run(self, user_input: str) -> dict[str, object]:
         run, _ = self.store.create_run(self.session["id"], user_input)

@@ -34,6 +34,7 @@ from eidos_runtime.db.transitions import (
     transition_segments,
 )
 from eidos_runtime.model.client import ModelUsage
+from eidos_runtime.model.instructions import InstructionResolver
 from eidos_runtime.runtime.contracts import ProgressSignature
 from eidos_runtime.runtime.resolution import (
     RuleResolutionSnapshot,
@@ -200,6 +201,9 @@ class ExecutionRepository(Repository):
                     tool_snapshot=tool_snapshot,
                     model_context=(),
                     tool_definitions=(),
+                    instructions=InstructionResolver().resolve(
+                        rule_snapshot=rule_resolution_snapshot,
+                    ),
                     workspace_version=int(run["workspace_version"]),
                     created_at=_now_ms(),
                 )

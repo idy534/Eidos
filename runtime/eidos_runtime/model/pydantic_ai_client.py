@@ -53,7 +53,7 @@ from eidos_runtime.model.config import (
     MODEL_CATALOG,
     ModelProfileSpec,
 )
-from eidos_runtime.model.prompts import SYSTEM_PROMPT, TITLE_PROMPT
+from eidos_runtime.model.prompts import TITLE_PROMPT, TITLE_SYSTEM_INSTRUCTIONS
 from eidos_runtime.model_gateway.retry_transport import (
     RetryBackoffCanceled,
     RetryTracker,
@@ -165,6 +165,7 @@ class PydanticAIModelClient:
             ({"type": "user", "content": TITLE_PROMPT + user_input},),
             cancel,
             lambda _delta: None,
+            instructions=TITLE_SYSTEM_INSTRUCTIONS,
             allow_tools=False,
         ).text
 
@@ -173,6 +174,8 @@ class PydanticAIModelClient:
         context: tuple[ModelContextItem, ...],
         cancel: threading.Event,
         on_text_delta,
+        *,
+        instructions: str,
         allow_tools: bool = True,
         tool_definitions: tuple[ModelToolDefinition, ...] = (),
     ) -> ModelResponse:
@@ -188,6 +191,7 @@ class PydanticAIModelClient:
                 context,
                 cancel,
                 on_text_delta,
+                instructions,
                 allow_tools,
                 tool_definitions,
                 retry_tracker,
@@ -230,6 +234,7 @@ class PydanticAIModelClient:
         context: tuple[ModelContextItem, ...],
         cancel: threading.Event,
         on_text_delta,
+        instructions: str,
         allow_tools: bool,
         tool_definitions: tuple[ModelToolDefinition, ...],
         retry_tracker: RetryTracker,
@@ -261,7 +266,7 @@ class PydanticAIModelClient:
         with retry_scope:
             async with model_request_stream(
                 self._model,
-                encode_context(context),
+                _attach_instructions(encode_context(context), instructions),
                 model_settings=settings,
                 model_request_parameters=parameters,
                 instrument=False,
@@ -355,7 +360,7 @@ async def _close_provider_client(provider_client: Any) -> None:
 def encode_context(context: tuple[ModelContextItem, ...]) -> list[ModelMessage]:
     messages: list[ModelMessage] = []
     for item in context:
-        item_type = item.get("type")
+        item_type = item.get("type", item.get("role"))
         if item_type == "user":
             content = item.get("content")
             if isinstance(content, str):
@@ -387,21 +392,47 @@ def encode_context(context: tuple[ModelContextItem, ...]) -> list[ModelMessage]:
                     f"Your previous response was invalid ({code}). "
                     "Try again using the provided tool schemas."
                 )]))
+        elif item_type == "tool_error":
+            code = item.get("code")
+            if isinstance(code, str):
+                messages.append(PAIModelRequest([UserPromptPart(
+                    "Runtime tool error data: " + json.dumps(
+                        {"code": code},
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                )]))
         elif item_type == "finalization":
             reason = item.get("stopReason")
             if isinstance(reason, str):
                 messages.append(PAIModelRequest([UserPromptPart(
-                    f"Tool execution has stopped ({reason}). Give a concise "
-                    "final answer with a safe manual strategy the user can "
-                    "execute. Do not request approval or ask for more input."
+                    "Runtime finalization state data: " + json.dumps(
+                        {
+                            "stopReason": reason,
+                            "toolsAllowed": item.get("toolsAllowed") is True,
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
                 )]))
+        else:
+            raise ValueError(f"unsupported model context item type: {item_type!r}")
 
+    return messages
+
+
+def _attach_instructions(
+    messages: list[ModelMessage],
+    instructions: str,
+) -> list[ModelMessage]:
     for index, message in enumerate(messages):
         if isinstance(message, PAIModelRequest):
-            messages[index] = replace(message, instructions=SYSTEM_PROMPT)
+            messages[index] = replace(message, instructions=instructions)
             break
     else:
-        messages.insert(0, PAIModelRequest([], instructions=SYSTEM_PROMPT))
+        messages.insert(0, PAIModelRequest([], instructions=instructions))
     return messages
 
 

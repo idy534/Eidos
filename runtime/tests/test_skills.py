@@ -248,9 +248,16 @@ class SkillCatalogTests(unittest.TestCase):
         snapshot = self.skills.extension_snapshot()
 
         context = self.skills.context(snapshot, "Use @demo:review")
+        selected = self.skills.select_explicit(
+            snapshot, "turn-1", "Use @demo:review"
+        )
+        selected_context = self.skills.render_selected(snapshot, selected)
 
-        self.assertIn("Inspect before editing", str(context))
+        self.assertNotIn("Inspect before editing", str(context))
         self.assertNotIn("PARTIAL BODY", str(context))
+        self.assertEqual(len(selected_context), 1)
+        self.assertIn("Inspect before editing", selected_context[0].content)
+        self.assertNotIn("PARTIAL BODY", selected_context[0].content)
 
 
 if __name__ == "__main__":

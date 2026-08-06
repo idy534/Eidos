@@ -12,7 +12,7 @@ from eidos_runtime.model.client import (
     ModelProfileSnapshot,
     ModelToolDefinition,
 )
-from eidos_runtime.model.prompts import SYSTEM_PROMPT
+from eidos_runtime.model.prompts import ResolvedInstructions
 from eidos_runtime.sandbox.permissions import (
     BasePermissionProfile,
     base_permission_profile_for_workspace,
@@ -240,17 +240,20 @@ class StepResolutionSnapshot(_FrozenModel):
             != self.permission_profile_hash
         ):
             raise ValueError("sandbox policy hash mismatch")
-        if self.system_prompt_hash != canonical_sha256(
-            SYSTEM_PROMPT, raw_text=True
-        ):
-            raise ValueError("system prompt hash mismatch")
         if canonical_sha256(parsed["final_request_json"]) != self.final_request_hash:
             raise ValueError("final request hash mismatch")
         request = parsed["final_request_json"]
+        if not isinstance(request, dict):
+            raise ValueError("final request snapshot mismatch")
+        system_prompt = request.get("systemPrompt")
         if (
-            not isinstance(request, dict)
-            or request.get("systemPrompt") != SYSTEM_PROMPT
-            or request.get("messages") != parsed["context_payload_json"]
+            not isinstance(system_prompt, str)
+            or self.system_prompt_hash
+            != canonical_sha256(system_prompt, raw_text=True)
+        ):
+            raise ValueError("system prompt hash mismatch")
+        if (
+            request.get("messages") != parsed["context_payload_json"]
             or request.get("modelSnapshotId") != self.model_snapshot_id
             or request.get("modelSnapshotHash") != self.model_snapshot_hash
         ):
@@ -328,6 +331,7 @@ def create_step_resolution_snapshot(
     tool_snapshot: dict[str, object],
     model_context: tuple[ModelContextItem, ...],
     tool_definitions: tuple[ModelToolDefinition, ...],
+    instructions: ResolvedInstructions,
     workspace_version: int,
     created_at: int,
 ) -> StepResolutionSnapshot:
@@ -337,7 +341,7 @@ def create_step_resolution_snapshot(
         "schemaVersion": 1,
         "modelSnapshotId": run_snapshot.model_profile_snapshot_id,
         "modelSnapshotHash": run_snapshot.model_profile_snapshot_hash,
-        "systemPrompt": SYSTEM_PROMPT,
+        "systemPrompt": instructions.text,
         "messages": context_value,
         "tools": [
             definition.model_dump(mode="json")
@@ -362,7 +366,7 @@ def create_step_resolution_snapshot(
         sandbox_policy_json=run_snapshot.sandbox_policy_json,
         context_payload_hash=canonical_sha256(context_value),
         context_payload_json=context_json,
-        system_prompt_hash=canonical_sha256(SYSTEM_PROMPT, raw_text=True),
+        system_prompt_hash=instructions.instructions_hash,
         final_request_hash=canonical_sha256(request),
         final_request_json=request_json,
         created_at=created_at,
