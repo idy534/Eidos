@@ -124,14 +124,6 @@ export function ExecutionFeed({
                 />
               ))}
               <RunNotice run={run} />
-              {stepResolutions
-                .filter((resolution) => resolution.runId === run.id)
-                .map((resolution) => (
-                  <StepResolutionAudit
-                    key={resolution.id}
-                    resolution={resolution}
-                  />
-                ))}
             </Fragment>
           );
         })}
@@ -146,64 +138,6 @@ export function ExecutionFeed({
         <span aria-hidden="true">↓</span>
       </button>
     </div>
-  );
-}
-
-function StepResolutionAudit({
-  resolution,
-}: {
-  resolution: StepResolutionReview;
-}) {
-  return (
-    <details className="resolution-audit">
-      <summary>请求快照 · Step {resolution.stepOrdinal}</summary>
-      <dl>
-        <dt>Snapshot ID</dt>
-        <dd><code>{resolution.id}</code></dd>
-        <dt>Request hash</dt>
-        <dd><code>{resolution.requestHash}</code></dd>
-      </dl>
-      {resolution.rules.length > 0 && (
-        <>
-          <h3>项目规则</h3>
-          <ul>
-            {resolution.rules.map((rule) => (
-              <li key={`${rule.directoryLevel}:${rule.relativePath}`}>
-                <span title={rule.absolutePath}>
-                  L{rule.directoryLevel} · {rule.relativePath}
-                </span>
-                {" · "}<code>{rule.contentHash}</code>
-                {rule.truncated ? " · 已截断" : ""}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      {resolution.shadowed.length > 0 && (
-        <>
-          <h3>Shadowed</h3>
-          <ul>
-            {resolution.shadowed.map((candidate) => (
-              <li key={`${candidate.directoryLevel}:${candidate.relativePath}`}>
-                L{candidate.directoryLevel} · {candidate.relativePath}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      {resolution.warnings.length > 0 && (
-        <>
-          <h3>Warnings</h3>
-          <ul>
-            {resolution.warnings.map((warning, index) => (
-              <li key={`${warning.code}:${warning.path}:${index}`}>
-                {warning.code} · {warning.path}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-    </details>
   );
 }
 

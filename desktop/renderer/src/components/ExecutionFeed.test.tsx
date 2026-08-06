@@ -53,7 +53,7 @@ test("provides an accessible jump to the latest content control", () => {
   assert.match(html, /hidden=""/);
 });
 
-test("exposes the immutable request snapshot for review", () => {
+test("does not render request snapshot tail in execution feed", () => {
   const html = renderToStaticMarkup(
     <ExecutionFeed
       items={[item({ id: "user", ordinal: 1, kind: "user_message", content: "检查规则" })]}
@@ -93,10 +93,9 @@ test("exposes the immutable request snapshot for review", () => {
     />,
   );
 
-  assert.match(html, /请求快照 · Step 1/);
-  assert.match(html, /EIDOS\.md/);
-  assert.match(html, /AGENTS\.md/);
-  assert.match(html, new RegExp("5".repeat(64)));
+  assert.doesNotMatch(html, /请求快照/);
+  assert.doesNotMatch(html, /Snapshot ID/);
+  assert.doesNotMatch(html, /Request hash/);
 });
 
 test("folds tool execution before the final answer and omits the success pill", () => {
