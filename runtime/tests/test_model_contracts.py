@@ -78,7 +78,7 @@ class ModelContractTests(unittest.TestCase):
     def test_prompts_are_provider_neutral_model_resources(self) -> None:
         self.assertIn("Eidos", SYSTEM_SAFETY_INSTRUCTIONS)
         self.assertIn("smallest coherent set of changes", BASE_AGENT_INSTRUCTIONS)
-        self.assertIn("do not retry the same operation", RUNTIME_POLICY_INSTRUCTIONS)
+        self.assertIn("do not request another approval", RUNTIME_POLICY_INSTRUCTIONS)
         self.assertIn("natural, concise task title", TITLE_SYSTEM_INSTRUCTIONS)
         self.assertIn("User query", TITLE_PROMPT)
 
