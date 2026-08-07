@@ -198,12 +198,12 @@ class Phase4ASkillContextTests(unittest.TestCase):
             if value.get("type") == "tool_result"
         )
 
-        self.assertEqual(catalog_indexes, [1])
+        self.assertEqual(catalog_indexes, [2])
         self.assertLess(catalog_indexes[0], tool_index)
         self.assertEqual(rendered.count("Skill Catalog"), 1)
         self.assertNotIn("x" * 100_000, rendered)
-        self.assertNotIn("Use the checklist.", rendered)
-        self.assertIn("Use the checklist.", built.instructions.text)
+        self.assertIn("Use the checklist.", rendered)
+        self.assertNotIn("Use the checklist.", built.instructions.system_text)
 
     def test_tool_round_trip_keeps_one_catalog_in_retained_position(self) -> None:
         session = self.store.create_session(str(self.workspace))
@@ -233,13 +233,13 @@ class Phase4ASkillContextTests(unittest.TestCase):
                 index for index, item in enumerate(context)
                 if item.get("sectionId") == "skill-catalog"
             ]
-            self.assertEqual(catalogs, [1])
+            self.assertEqual(catalogs, [2])
             self.assertEqual(
                 sum("Skill Catalog" in str(item.get("content", "")) for item in context),
                 1,
             )
-            self.assertNotIn("Use the checklist.", json.dumps(context))
-            self.assertIn("Use the checklist.", instructions)
+            self.assertIn("Use the checklist.", json.dumps(context))
+            self.assertNotIn("Use the checklist.", instructions)
         second_tool_result = next(
             index for index, item in enumerate(model.contexts[1])
             if item.get("type") == "tool_result"
@@ -289,9 +289,9 @@ class Phase4ASkillContextTests(unittest.TestCase):
             second["id"], threading.Event()
         )
 
-        self.assertNotIn("Use the checklist.", json.dumps(first_model.contexts[0]))
+        self.assertIn("Use the checklist.", json.dumps(first_model.contexts[0]))
         self.assertNotIn("Use the checklist.", json.dumps(second_model.contexts[0]))
-        self.assertIn("Use the checklist.", first_model.instructions_history[0])
+        self.assertNotIn("Use the checklist.", first_model.instructions_history[0])
         self.assertNotIn("Use the checklist.", second_model.instructions_history[0])
 
     def test_every_registered_builtin_has_one_authoritative_contract(self) -> None:

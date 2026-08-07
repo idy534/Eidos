@@ -197,8 +197,8 @@ class ResolutionPersistenceTests(unittest.TestCase):
         self.assertEqual(step.model_snapshot_hash, run_snapshot.model_profile_snapshot_hash)
         self.assertEqual(step.permission_profile_hash, run_snapshot.permission_profile_hash)
         self.assertEqual(step.sandbox_policy_hash, run_snapshot.sandbox_policy_hash)
-        self.assertIn("Use another model", model.instructions_history[0])
-        self.assertNotIn("Use another model", step.context_payload_json)
+        self.assertNotIn("Use another model", model.instructions_history[0])
+        self.assertIn("Use another model", step.context_payload_json)
         self.assertEqual(
             tuple(definition.name for definition in model.tool_definitions_history[0]),
             tuple(json.loads(step.tool_snapshot_json)["availableNames"]),
@@ -249,16 +249,16 @@ class ResolutionPersistenceTests(unittest.TestCase):
         second_context = json.loads(snapshots[1].context_payload_json)
         first_request = json.loads(snapshots[0].final_request_json)
         second_request = json.loads(snapshots[1].final_request_json)
-        self.assertNotIn("old rule", json.dumps(first_context))
-        self.assertNotIn("new rule", json.dumps(second_context))
-        self.assertIn("old rule", first_request["systemPrompt"])
+        self.assertIn("old rule", json.dumps(first_context))
+        self.assertIn("new rule", json.dumps(second_context))
+        self.assertNotIn("old rule", first_request["systemPrompt"])
         self.assertNotIn("new rule", first_request["systemPrompt"])
-        self.assertIn("new rule", second_request["systemPrompt"])
+        self.assertNotIn("new rule", second_request["systemPrompt"])
         self.assertEqual(
             [first_request["systemPrompt"], second_request["systemPrompt"]],
             model.instructions_history,
         )
-        self.assertNotEqual(
+        self.assertEqual(
             snapshots[0].system_prompt_hash,
             snapshots[1].system_prompt_hash,
         )
@@ -328,7 +328,8 @@ class ResolutionPersistenceTests(unittest.TestCase):
         )
         self.assertEqual(after, before)
         self.assertEqual(rule.rules[0].content, "persistent rule")
-        self.assertIn(
+        self.assertIn("persistent rule", after.context_payload_json)
+        self.assertNotIn(
             "persistent rule",
             json.loads(after.final_request_json)["systemPrompt"],
         )

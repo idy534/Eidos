@@ -239,8 +239,8 @@ class ContextBuilderInstructionTests(unittest.TestCase):
         ordinary_content = tuple(
             str(item.get("content", "")) for item in built.model_context
         )
-        self.assertFalse(any("Keep changes focused." in value for value in ordinary_content))
-        self.assertFalse(any("Use the review checklist." in value for value in ordinary_content))
+        self.assertTrue(any("Keep changes focused." in value for value in ordinary_content))
+        self.assertTrue(any("Use the review checklist." in value for value in ordinary_content))
         self.assertEqual(
             sum(item.get("sectionId") == "skill-catalog" for item in built.model_context),
             1,
@@ -249,8 +249,8 @@ class ContextBuilderInstructionTests(unittest.TestCase):
             {"type": "user", "content": "Implement the request"},
             built.model_context,
         )
-        self.assertIn("Keep changes focused.", built.instructions.text)
-        self.assertIn("Use the review checklist.", built.instructions.text)
+        self.assertNotIn("Keep changes focused.", built.instructions.system_text)
+        self.assertNotIn("Use the review checklist.", built.instructions.system_text)
 
     def test_context_budget_includes_resolved_instructions(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Budget this request")
@@ -266,7 +266,7 @@ class ContextBuilderInstructionTests(unittest.TestCase):
             rule_resolution_snapshot=_rule_snapshot(),
         )
 
-        self.assertEqual(baseline.model_context, expanded.model_context)
+        self.assertNotEqual(baseline.model_context, expanded.model_context)
         self.assertGreater(
             expanded.budget.payload_estimate_tokens,
             baseline.budget.payload_estimate_tokens,
