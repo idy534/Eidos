@@ -138,6 +138,37 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             ["Recovered without persisting the invalid response."],
         )
 
+    def test_provider_control_text_without_structured_call_is_repaired(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Repair provider control output")
+        model = ScriptedModel([
+            ModelResponse(
+                text=(
+                    "<|DSML|tool_calls><|DSML|invoke name=\"write_file\">"
+                    "<|DSML|parameter name=\"path\">go.mod"
+                )
+            ),
+            ModelResponse(text="Recovered from provider protocol output."),
+        ])
+
+        RuntimeLoop(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        completed = self.store.read_run(run["id"])
+        self.assertEqual(completed["status"], "succeeded")
+        self.assertEqual(completed["modelStepCount"], 1)
+        attempts = self.store.read_model_attempts(run["id"])
+        self.assertEqual([attempt["status"] for attempt in attempts], ["failed", "completed"])
+        self.assertEqual(attempts[0]["errorCode"], "provider_control_syntax")
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        assistant_text = [
+            item.get("content")
+            for item in snapshot["items"]
+            if item["kind"] == "assistant_message"
+        ]
+        self.assertEqual(assistant_text, ["Recovered from provider protocol output."])
+        self.assertFalse(any("DSML" in str(value) for value in assistant_text))
+
     def test_repeated_protocol_failure_is_a_failed_run_not_loop_stop(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Keep returning bad tools")
         bad = ModelResponse(tool_calls=(
