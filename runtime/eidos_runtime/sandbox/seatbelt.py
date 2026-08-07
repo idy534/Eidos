@@ -231,6 +231,7 @@ def secure_workspace_move(
         f"-DFILE_COMMIT_HELPER={FILE_COMMIT_HELPER}",
         "--",
         SYSTEM_PYTHON,
+        "-B",
         str(FILE_COMMIT_HELPER),
         str(source),
         str(target),
