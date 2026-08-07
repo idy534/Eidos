@@ -186,9 +186,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         messages = [
             item for item in snapshot["items"] if item["kind"] == "assistant_message"
         ]
-        (progress,) = messages
-        self.assertEqual(progress["content"], "safe progress")
-        self.assertTrue(progress["incomplete"])
+        self.assertEqual(messages, [])
         self.assertEqual(model.calls, 1)
         future_context = ContextBuilder(self.store).build(run["id"]).model_context
         self.assertNotIn(

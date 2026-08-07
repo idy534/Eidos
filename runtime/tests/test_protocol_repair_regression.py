@@ -183,7 +183,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         failed = self.store.read_run(run["id"])
         self.assertEqual(failed["status"], "failed")
         self.assertEqual(failed["errorCode"], "MODEL_PROTOCOL_ERROR")
-        self.assertIsNone(failed["stopReason"])
+        self.assertIsNone(failed.get("stopReason"))
         self.assertEqual(failed["modelStepCount"], 1)
         attempts = self.store.read_model_attempts(run["id"])
         self.assertEqual([attempt["status"] for attempt in attempts], ["failed", "failed"])
