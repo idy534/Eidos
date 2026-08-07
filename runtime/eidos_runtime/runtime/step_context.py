@@ -59,6 +59,7 @@ class StepContextFactory:
             tool_definitions=tool_definitions,
             instructions=instructions,
             workspace_version=workspace_version,
+            effective_cwd=rule_resolution_snapshot.cwd,
             created_at=time.time_ns() // 1_000_000,
         )
         step_index = self.store.increment_model_step(

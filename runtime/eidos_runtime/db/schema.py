@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 V9_SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -767,8 +767,35 @@ V11_BASE_SCHEMA_SQL = V10_BASE_SCHEMA_SQL.replace(
 )
 if V11_BASE_SCHEMA_SQL == V10_BASE_SCHEMA_SQL:
     raise RuntimeError("legacy model tables were not removed from the current schema")
+
+# V12 additions: effective_cwd on runs, resolved_instructions_hash + effective_cwd on
+# step_resolution_snapshots
+V12_BASE_SCHEMA_SQL = V11_BASE_SCHEMA_SQL.replace(
+    "    error_code TEXT,\n"
+    "    cancel_requested_at INTEGER,",
+    "    effective_cwd TEXT,\n"
+    "    error_code TEXT,\n"
+    "    cancel_requested_at INTEGER,",
+).replace(
+    "    snapshot_hash TEXT NOT NULL,\n"
+    "    snapshot_json TEXT NOT NULL,\n"
+    "    created_at INTEGER NOT NULL\n"
+    ");\n"
+    "\n"
+    "CREATE TABLE steps",
+    "    snapshot_hash TEXT NOT NULL,\n"
+    "    snapshot_json TEXT NOT NULL,\n"
+    "    resolved_instructions_hash TEXT,\n"
+    "    effective_cwd TEXT,\n"
+    "    created_at INTEGER NOT NULL\n"
+    ");\n"
+    "\n"
+    "CREATE TABLE steps",
+)
+if V12_BASE_SCHEMA_SQL == V11_BASE_SCHEMA_SQL:
+    raise RuntimeError("V12 schema additions are missing")
 SCHEMA_SQL = (
-    V11_BASE_SCHEMA_SQL
+    V12_BASE_SCHEMA_SQL
     + V10_REPOSITORY_SCHEMA_SQL
     + V10_CONTEXT_SCHEMA_SQL
 )

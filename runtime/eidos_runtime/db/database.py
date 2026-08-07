@@ -95,7 +95,9 @@ class Database:
             tables = _table_names(connection)
             revision = connection.execute("PRAGMA user_version").fetchone()[0]
             if (
-                (tables and revision not in {SCHEMA_VERSION, SCHEMA_VERSION - 1})
+                (tables and revision not in range(
+                    SCHEMA_VERSION - 2, SCHEMA_VERSION + 1
+                ))
                 or (not tables and revision != 0)
             ):
                 raise StorageError("schema_revision_unsupported")
@@ -110,12 +112,16 @@ class Database:
                     + SCHEMA_SQL
                     + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
                 )
-            elif revision == SCHEMA_VERSION - 1:
-                migrate_schema(
-                    connection,
-                    current_version=revision,
-                    target_version=SCHEMA_VERSION,
-                )
+            elif revision < SCHEMA_VERSION:
+                # Chain migrations one step at a time until we reach the target
+                current = revision
+                while current < SCHEMA_VERSION:
+                    migrate_schema(
+                        connection,
+                        current_version=current,
+                        target_version=current + 1,
+                    )
+                    current += 1
             _verify_integrity(connection)
             self._connection = connection
             self.health_state = "ready"

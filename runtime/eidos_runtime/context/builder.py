@@ -9,7 +9,7 @@ from eidos_runtime.context.budget import ContextBudget, estimate_context_budget
 from eidos_runtime.context.facts import ContextFacts
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelContextItem, ModelToolDefinition
-from eidos_runtime.model.instructions import InstructionResolver
+from eidos_runtime.model.instructions import InstructionResolver, StepPermissionPolicy
 from eidos_runtime.model.prompts import ResolvedInstructions
 from eidos_runtime.extensions.skills import RetainedContextSection
 from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
@@ -44,18 +44,33 @@ class ContextBuilder:
         selected_skill_context: tuple[RetainedContextSection, ...] = (),
         extra_context: tuple[ModelContextItem, ...] = (),
         rule_resolution_snapshot: RuleResolutionSnapshot | None = None,
+        step_policy: StepPermissionPolicy | None = None,
     ) -> ContextBuild:
         facts = self.store.context_projection_facts(run_id)
         profile = self.store.read_model_profile(run_id)
         instructions = InstructionResolver().resolve(
             rule_snapshot=rule_resolution_snapshot,
             selected_skill_context=selected_skill_context,
+            step_policy=step_policy,
         )
         source_ids = set(
             facts.compact_summary.source_item_ids if facts.compact_summary else ()
         )
         workspace = self.store.workspace_for_run(run_id)
-        context: list[ModelContextItem] = [{
+
+        # --- User-context layers (Project Rules, Skills) ---
+        # These are injected as user messages BEFORE workspace-environment so that
+        # the current user request (which comes later in history) has higher priority.
+        user_context_messages: list[ModelContextItem] = []
+        for layer in instructions.user_context_layers:
+            user_context_messages.append({
+                "type": "user",
+                "sectionId": layer.id,
+                "content": layer.content,
+            })
+
+        # --- Workspace environment context ---
+        workspace_env: ModelContextItem = {
             "type": "user",
             "sectionId": "workspace-environment",
             "version": str(facts.workspace_version),
@@ -69,7 +84,11 @@ class ContextBuilder:
                 separators=(",", ":"),
                 sort_keys=True,
             ),
-        }]
+        }
+
+        # Order: [user-context layers] [workspace-env] [retained] [summary] [history] [extra]
+        context: list[ModelContextItem] = [*user_context_messages, workspace_env]
+
         if any(section.role != "user" for section in retained_context):
             raise ValueError(
                 "developer retained context must use an instruction layer"
@@ -133,8 +152,10 @@ class ContextBuilder:
             })
         tool_calls = sum(item.get("type") == "tool_call" for item in context)
         tool_results = sum(item.get("type") == "tool_result" for item in context)
+
+        # system_text only includes system/developer layers; user layers are in context
         payload = {
-            "instructions": instructions.text,
+            "instructions": instructions.system_text,
             "messages": context,
             "tools": [tool.model_dump(mode="json") for tool in tool_definitions],
         }

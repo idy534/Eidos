@@ -51,7 +51,12 @@ from eidos_runtime.sandbox.sensitive import (
     SensitiveScanner,
     default_scanner,
 )
-from eidos_runtime.sandbox.permissions import BasePermissionProfile
+from eidos_runtime.sandbox.permissions import (
+    BasePermissionProfile,
+    materialize_effective_profile,
+    unsandboxed_execution_allowed,
+)
+from eidos_runtime.model.instructions import StepPermissionPolicy
 
 
 EMPTY_EXTENSION_SNAPSHOT = {
@@ -203,9 +208,18 @@ class RuntimeEngine:
                 dispatcher.model_definitions(snapshot.activated_names)
             )
             workspace = self.store.workspace_for_run(run.run_id)
+            effective_cwd = self.store.effective_cwd_for_run(
+                run.run_id, workspace_root=workspace.path
+            )
             rule_snapshot = rule_resolver.resolve(
                 workspace.path,
-                workspace.path,
+                effective_cwd,
+            )
+            step_policy = _build_step_policy(
+                run.resolution_snapshot.permission_profile_json,
+                run.resolution_snapshot.sandbox_policy_json,
+                run.resolution_snapshot.workspace_identity.path,
+                snapshot.activated_names,
             )
             built = context_builder.build(
                 run.run_id,
@@ -214,6 +228,7 @@ class RuntimeEngine:
                 selected_skill_context=resources.selected_skill_context,
                 extra_context=run.model_context,
                 rule_resolution_snapshot=rule_snapshot,
+                step_policy=step_policy,
             )
             budget_fact = self.store.run_budget(run.run_id)
             compaction_guard = guard.observe_compaction_overflow(
@@ -691,3 +706,64 @@ class RuntimeEngine:
 
 
 RuntimeLoop = RuntimeEngine
+
+
+def _build_step_policy(
+    permission_profile_json: str,
+    sandbox_policy_json: str,
+    workspace_root: str,
+    available_tools: tuple[str, ...],
+) -> StepPermissionPolicy:
+    """Project persisted permissions and the current tool set into prompt context."""
+    import json
+
+    effective = None
+    try:
+        base_permissions = BasePermissionProfile.model_validate_json(
+            permission_profile_json
+        )
+        effective = materialize_effective_profile(base_permissions)
+        network_enabled = effective.network_enabled
+        writable_roots = tuple(
+            entry.resolved_path
+            for entry in effective.entries
+            if entry.access.value in {"write", "execute"}
+        )
+    except Exception:
+        network_enabled = False
+        writable_roots = (workspace_root,)
+
+    try:
+        sandbox_data = json.loads(sandbox_policy_json)
+        sandbox_type = (
+            str(sandbox_data.get("sandboxType") or "none")
+            if isinstance(sandbox_data, dict)
+            else "none"
+        )
+    except Exception:
+        sandbox_type = "none"
+
+    if sandbox_type == "none":
+        sandbox_mode = "none"
+    elif writable_roots:
+        sandbox_mode = "workspace-write"
+    else:
+        sandbox_mode = "read-only"
+
+    shell_available = "run_shell" in available_tools
+    allow_escalated = bool(
+        shell_available
+        and effective is not None
+        and unsandboxed_execution_allowed(effective)
+    )
+
+    return StepPermissionPolicy(
+        sandbox_mode=sandbox_mode,
+        workspace_root=workspace_root,
+        writable_roots=writable_roots,
+        network_enabled=network_enabled,
+        allow_additional_permissions=shell_available,
+        allow_escalated_execution=allow_escalated,
+        rejected_approval_ids=(),
+        available_tools=available_tools,
+    )

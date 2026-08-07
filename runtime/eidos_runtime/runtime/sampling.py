@@ -93,7 +93,7 @@ class SamplingRuntime:
                 model_context,
                 cancel,
                 provisional_text.append,
-                instructions=step.instructions.text,
+                instructions=step.instructions.system_text,
                 tool_definitions=step.tool_definitions,
             )
         except ModelStreamInterrupted as interrupted:

@@ -384,6 +384,47 @@ class RunRepository(Repository):
             raise ResourceNotFoundError("run start event not found")
         return event
 
+    def effective_cwd_for_run(
+        self,
+        run_id: str,
+        *,
+        workspace_root: Path,
+    ) -> Path:
+        """Return the effective working directory for a run.
+
+        Falls back to workspace_root when no effective_cwd has been set.
+        Validates the stored cwd is within workspace_root; falls back if not.
+        """
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT runs.effective_cwd, sessions.workspace_root
+                FROM runs JOIN sessions ON runs.session_id = sessions.id
+                WHERE runs.id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            raise ResourceNotFoundError("run not found")
+        raw_cwd: str | None = row["effective_cwd"]
+        if raw_cwd is None:
+            return workspace_root
+        cwd = Path(raw_cwd)
+        try:
+            cwd.resolve().relative_to(workspace_root.resolve())
+        except ValueError:
+            # cwd is outside workspace_root — fall back to workspace root
+            return workspace_root
+        return cwd
+
+    def set_run_effective_cwd(self, run_id: str, cwd: Path) -> None:
+        """Persist the effective working directory for a run."""
+        with self.lock, self._connection() as connection:
+            connection.execute(
+                "UPDATE runs SET effective_cwd = ? WHERE id = ?",
+                (str(cwd), run_id),
+            )
+
     def clear_rejects(self, run_id: str) -> None:
         with self.lock, self._connection() as connection:
             connection.execute(
