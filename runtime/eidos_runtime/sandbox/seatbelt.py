@@ -206,10 +206,12 @@ def secure_workspace_move(
     expected_sha256: str | None,
 ) -> str:
     """Perform the final rename under Seatbelt."""
-    workspace = workspace_root.absolute()
+    workspace = workspace_root.resolve()
+    source_path = source.resolve()
+    target_path = target.resolve(strict=False)
     try:
-        source.absolute().relative_to(workspace)
-        target.absolute().relative_to(workspace)
+        source_path.relative_to(workspace)
+        target_path.relative_to(workspace)
     except ValueError:
         return "failed"
 
@@ -233,8 +235,8 @@ def secure_workspace_move(
         SYSTEM_PYTHON,
         "-B",
         str(FILE_COMMIT_HELPER),
-        str(source),
-        str(target),
+        str(source_path),
+        str(target_path),
         expected_sha256 or "new",
     ]
     try:
