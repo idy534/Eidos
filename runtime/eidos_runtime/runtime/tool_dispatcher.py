@@ -92,7 +92,9 @@ class ToolDispatcher:
         if not isinstance(response, ModelResponse):
             return ToolValidationResult((), "invalid_response")
         if not response.text and not response.tool_calls:
-            return ToolValidationResult((), "empty_response")
+            # Empty output is a runtime liveness condition rather than a malformed
+            # ToolCall protocol. Keep it on the dedicated empty-response path.
+            return ToolValidationResult(())
         if (
             response.text
             and not response.tool_calls
