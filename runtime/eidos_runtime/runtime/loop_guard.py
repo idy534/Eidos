@@ -30,7 +30,6 @@ class LoopGuard:
         self._seen_facts: set[str] = set()
         self._active_errors: set[str] = set()
         self._empty_responses = 0
-        self._protocol_errors = 0
         self._post_compaction_overflows = 0
 
     @classmethod
@@ -142,10 +141,6 @@ class LoopGuard:
     def observe_empty_response(self, empty: bool) -> str | None:
         self._empty_responses = self._empty_responses + 1 if empty else 0
         return "repeated_empty_response" if self._empty_responses >= 2 else None
-
-    def observe_protocol_error(self, failed: bool) -> str | None:
-        self._protocol_errors = self._protocol_errors + 1 if failed else 0
-        return "repeated_protocol_error" if self._protocol_errors >= 2 else None
 
     def observe_compaction_overflow(self, overflow: bool) -> str | None:
         self._post_compaction_overflows = self._post_compaction_overflows + 1 if overflow else 0
