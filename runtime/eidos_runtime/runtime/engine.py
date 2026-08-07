@@ -53,7 +53,8 @@ from eidos_runtime.sandbox.sensitive import (
 )
 from eidos_runtime.sandbox.permissions import (
     BasePermissionProfile,
-    EffectivePermissionProfile,
+    materialize_effective_profile,
+    unsandboxed_execution_allowed,
 )
 from eidos_runtime.model.instructions import StepPermissionPolicy
 
@@ -713,16 +714,15 @@ def _build_step_policy(
     workspace_root: str,
     available_tools: tuple[str, ...],
 ) -> StepPermissionPolicy:
-    """Build a StepPermissionPolicy from the persisted run permission snapshots.
-
-    All values are read from the immutable snapshots captured at run start;
-    this never queries the DB or filesystem.
-    """
+    """Project persisted permissions and the current tool set into prompt context."""
     import json
+
+    effective = None
     try:
-        effective = EffectivePermissionProfile.model_validate_json(
+        base_permissions = BasePermissionProfile.model_validate_json(
             permission_profile_json
         )
+        effective = materialize_effective_profile(base_permissions)
         network_enabled = effective.network_enabled
         writable_roots = tuple(
             entry.resolved_path
@@ -735,25 +735,35 @@ def _build_step_policy(
 
     try:
         sandbox_data = json.loads(sandbox_policy_json)
-        sandbox_mode_raw: str = sandbox_data.get("sandboxMode", "none")
-        allow_escalated = bool(sandbox_data.get("allowEscalated", False))
-        allow_additional = bool(sandbox_data.get("allowAdditional", True))
-        rejected_ids: tuple[str, ...] = tuple(
-            str(rid) for rid in sandbox_data.get("rejectedApprovalIds", [])
+        sandbox_type = (
+            str(sandbox_data.get("sandboxType") or "none")
+            if isinstance(sandbox_data, dict)
+            else "none"
         )
     except Exception:
-        sandbox_mode_raw = "none"
-        allow_escalated = False
-        allow_additional = True
-        rejected_ids = ()
+        sandbox_type = "none"
+
+    if sandbox_type == "none":
+        sandbox_mode = "none"
+    elif writable_roots:
+        sandbox_mode = "workspace-write"
+    else:
+        sandbox_mode = "read-only"
+
+    shell_available = "run_shell" in available_tools
+    allow_escalated = bool(
+        shell_available
+        and effective is not None
+        and unsandboxed_execution_allowed(effective)
+    )
 
     return StepPermissionPolicy(
-        sandbox_mode=sandbox_mode_raw,
+        sandbox_mode=sandbox_mode,
         workspace_root=workspace_root,
         writable_roots=writable_roots,
         network_enabled=network_enabled,
-        allow_additional_permissions=allow_additional,
+        allow_additional_permissions=shell_available,
         allow_escalated_execution=allow_escalated,
-        rejected_approval_ids=rejected_ids,
+        rejected_approval_ids=(),
         available_tools=available_tools,
     )
