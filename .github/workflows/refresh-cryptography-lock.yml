@@ -1,0 +1,38 @@
+name: Refresh cryptography lock
+
+on:
+  push:
+    branches:
+      - agent/fix-python-audit-cryptography
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-python-audit-cryptography
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.32"
+      - name: Upgrade cryptography in lockfile
+        run: uv lock --upgrade-package cryptography
+      - name: Commit refreshed lockfile
+        run: |
+          if git diff --quiet -- uv.lock; then
+            echo "uv.lock already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add uv.lock
+          git commit -m "fix(deps): upgrade cryptography security release"
+          git push origin HEAD:agent/fix-python-audit-cryptography
