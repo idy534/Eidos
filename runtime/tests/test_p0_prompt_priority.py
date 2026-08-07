@@ -7,22 +7,17 @@ Tests for three P0 fixes:
 """
 from __future__ import annotations
 
-import hashlib
-import os
 import tempfile
 import unittest
-from dataclasses import replace
 from pathlib import Path
 
 from eidos_runtime.context.project_rules import ProjectRuleResolver
 from eidos_runtime.model.instructions import (
+    PROJECT_RULE_AUTHORITY,
     RUNTIME_AUTHORITY,
     SELECTED_SKILL_AUTHORITY,
-    PROJECT_RULE_AUTHORITY,
-    SYSTEM_SAFETY_AUTHORITY,
     InstructionResolver,
     StepPermissionPolicy,
-    _build_runtime_permissions_content,
 )
 from eidos_runtime.model.prompts import InstructionLayer, ResolvedInstructions
 
@@ -60,7 +55,12 @@ class TestPromptRoleAndPriority(unittest.TestCase):
     def test_system_safety_layer_is_system_role(self):
         instructions = self._resolve()
         safety = next(
-            (l for l in instructions.layers if l.id == "system-safety"), None
+            (
+                layer
+                for layer in instructions.layers
+                if layer.id == "system-safety"
+            ),
+            None,
         )
         self.assertIsNotNone(safety)
         self.assertEqual(safety.role, "system")
@@ -84,10 +84,8 @@ class TestPromptRoleAndPriority(unittest.TestCase):
             rule_snapshot = resolver.resolve(root, root)
 
         instructions = self._resolve(rule_snapshot=rule_snapshot)
-        # User layers exist
         user_layers = instructions.user_context_layers
         self.assertTrue(len(user_layers) > 0)
-        # Their content must not appear in system_text
         for layer in user_layers:
             self.assertNotIn(
                 layer.content,
@@ -104,13 +102,15 @@ class TestPromptRoleAndPriority(unittest.TestCase):
 
         instructions = self._resolve(rule_snapshot=rule_snapshot)
         rule_layers = [
-            l for l in instructions.layers
-            if l.id.startswith("project-rule:")
+            layer
+            for layer in instructions.layers
+            if layer.id.startswith("project-rule:")
         ]
         self.assertTrue(len(rule_layers) > 0)
         for layer in rule_layers:
             self.assertEqual(
-                layer.role, "user",
+                layer.role,
+                "user",
                 f"Project rule layer {layer.id!r} must have role=user, got {layer.role!r}",
             )
             self.assertEqual(layer.authority, PROJECT_RULE_AUTHORITY)
@@ -126,13 +126,15 @@ class TestPromptRoleAndPriority(unittest.TestCase):
 
         instructions = self._resolve(selected_skills=(_FakeSection(),))
         skill_layers = [
-            l for l in instructions.layers
-            if l.id.startswith("selected-skill:")
+            layer
+            for layer in instructions.layers
+            if layer.id.startswith("selected-skill:")
         ]
         self.assertTrue(len(skill_layers) > 0)
         for layer in skill_layers:
             self.assertEqual(
-                layer.role, "user",
+                layer.role,
+                "user",
                 f"Skill layer {layer.id!r} must have role=user",
             )
             self.assertEqual(layer.authority, SELECTED_SKILL_AUTHORITY)
@@ -145,14 +147,16 @@ class TestPromptRoleAndPriority(unittest.TestCase):
             rule_snapshot = ProjectRuleResolver().resolve(root, root)
 
         instructions = self._resolve(rule_snapshot=rule_snapshot)
-        user_layer_ids = {l.id for l in instructions.user_context_layers}
-        system_layer_ids = {l.id for l in instructions.system_layers}
-        # No overlap
+        user_layer_ids = {
+            layer.id for layer in instructions.user_context_layers
+        }
+        system_layer_ids = {
+            layer.id for layer in instructions.system_layers
+        }
         self.assertFalse(user_layer_ids & system_layer_ids)
-        # All ids accounted for
         self.assertEqual(
             user_layer_ids | system_layer_ids,
-            {l.id for l in instructions.layers},
+            {layer.id for layer in instructions.layers},
         )
 
     def test_instructions_hash_covers_all_layers(self):
@@ -164,12 +168,10 @@ class TestPromptRoleAndPriority(unittest.TestCase):
 
         with_rules = self._resolve(rule_snapshot=rule_snapshot)
         without_rules = self._resolve()
-        # instructions_hash must differ because user layers differ
         self.assertNotEqual(
             with_rules.instructions_hash,
             without_rules.instructions_hash,
         )
-        # system_text should be the same (rules only in user-context layers)
         self.assertEqual(with_rules.system_text, without_rules.system_text)
 
     def test_finalization_adds_developer_layer(self):
@@ -178,7 +180,12 @@ class TestPromptRoleAndPriority(unittest.TestCase):
         resolver = InstructionResolver()
         finalized = resolver.for_finalization(base)
         fin_layer = next(
-            (l for l in finalized.layers if l.id == "finalization-policy"), None
+            (
+                layer
+                for layer in finalized.layers
+                if layer.id == "finalization-policy"
+            ),
+            None,
         )
         self.assertIsNotNone(fin_layer)
         self.assertEqual(fin_layer.role, "developer")
@@ -212,7 +219,12 @@ class TestRuntimePermissionInjection(unittest.TestCase):
     def test_runtime_permissions_layer_present_when_policy_given(self):
         instructions = self._resolve_with_policy(self._policy())
         layer = next(
-            (l for l in instructions.layers if l.id == "runtime-permissions"), None
+            (
+                layer
+                for layer in instructions.layers
+                if layer.id == "runtime-permissions"
+            ),
+            None,
         )
         self.assertIsNotNone(layer)
         self.assertEqual(layer.role, "developer")
@@ -220,7 +232,7 @@ class TestRuntimePermissionInjection(unittest.TestCase):
 
     def test_runtime_permissions_layer_absent_without_policy(self):
         instructions = InstructionResolver().resolve()
-        ids = {l.id for l in instructions.layers}
+        ids = {layer.id for layer in instructions.layers}
         self.assertNotIn("runtime-permissions", ids)
 
     def test_sandbox_mode_reflected_in_layer(self):
@@ -228,8 +240,9 @@ class TestRuntimePermissionInjection(unittest.TestCase):
             with self.subTest(sandbox_mode=mode):
                 policy = self._policy(sandbox_mode=mode)
                 layer = next(
-                    l for l in self._resolve_with_policy(policy).layers
-                    if l.id == "runtime-permissions"
+                    layer
+                    for layer in self._resolve_with_policy(policy).layers
+                    if layer.id == "runtime-permissions"
                 )
                 self.assertIn(mode, layer.content)
 
@@ -238,12 +251,14 @@ class TestRuntimePermissionInjection(unittest.TestCase):
         disabled = self._policy(network_enabled=False)
 
         content_enabled = next(
-            l for l in self._resolve_with_policy(enabled).layers
-            if l.id == "runtime-permissions"
+            layer
+            for layer in self._resolve_with_policy(enabled).layers
+            if layer.id == "runtime-permissions"
         ).content
         content_disabled = next(
-            l for l in self._resolve_with_policy(disabled).layers
-            if l.id == "runtime-permissions"
+            layer
+            for layer in self._resolve_with_policy(disabled).layers
+            if layer.id == "runtime-permissions"
         ).content
 
         self.assertIn("enabled", content_enabled)
@@ -252,8 +267,9 @@ class TestRuntimePermissionInjection(unittest.TestCase):
     def test_available_tools_reflected_in_layer(self):
         policy = self._policy(available_tools=("my_tool", "another_tool"))
         layer = next(
-            l for l in self._resolve_with_policy(policy).layers
-            if l.id == "runtime-permissions"
+            layer
+            for layer in self._resolve_with_policy(policy).layers
+            if layer.id == "runtime-permissions"
         )
         self.assertIn("my_tool", layer.content)
         self.assertIn("another_tool", layer.content)
@@ -261,22 +277,25 @@ class TestRuntimePermissionInjection(unittest.TestCase):
     def test_rejected_approvals_reflected_in_layer(self):
         policy = self._policy(rejected_approval_ids=("approval-1", "approval-2"))
         layer = next(
-            l for l in self._resolve_with_policy(policy).layers
-            if l.id == "runtime-permissions"
+            layer
+            for layer in self._resolve_with_policy(policy).layers
+            if layer.id == "runtime-permissions"
         )
-        self.assertIn("2", layer.content)  # "2 approval request(s)"
+        self.assertIn("2", layer.content)
 
     def test_escalated_execution_availability(self):
         allowed = self._policy(allow_escalated_execution=True)
         denied = self._policy(allow_escalated_execution=False)
 
         content_allowed = next(
-            l for l in self._resolve_with_policy(allowed).layers
-            if l.id == "runtime-permissions"
+            layer
+            for layer in self._resolve_with_policy(allowed).layers
+            if layer.id == "runtime-permissions"
         ).content
         content_denied = next(
-            l for l in self._resolve_with_policy(denied).layers
-            if l.id == "runtime-permissions"
+            layer
+            for layer in self._resolve_with_policy(denied).layers
+            if layer.id == "runtime-permissions"
         ).content
 
         self.assertIn("may be requested", content_allowed)
@@ -306,9 +325,10 @@ class TestRuntimePermissionInjection(unittest.TestCase):
             step_policy=policy,
         )
         perm_layer = next(
-            l for l in instructions.layers if l.id == "runtime-permissions"
+            layer
+            for layer in instructions.layers
+            if layer.id == "runtime-permissions"
         )
-        # The actual runtime-permissions layer must reflect the policy, not the AGENTS.md
         self.assertIn("disabled", perm_layer.content)
         self.assertIn("workspace-write", perm_layer.content)
         self.assertNotIn("unsandboxed", perm_layer.content)
@@ -316,8 +336,8 @@ class TestRuntimePermissionInjection(unittest.TestCase):
     def test_runtime_permissions_layer_is_in_system_layers_not_user(self):
         policy = self._policy()
         instructions = self._resolve_with_policy(policy)
-        system_ids = {l.id for l in instructions.system_layers}
-        user_ids = {l.id for l in instructions.user_context_layers}
+        system_ids = {layer.id for layer in instructions.system_layers}
+        user_ids = {layer.id for layer in instructions.user_context_layers}
         self.assertIn("runtime-permissions", system_ids)
         self.assertNotIn("runtime-permissions", user_ids)
 
@@ -339,7 +359,7 @@ class TestProjectRulesEffectiveCwd(unittest.TestCase):
             subdir = root / "src"
             subdir.mkdir()
             snapshot = ProjectRuleResolver().resolve(root, root)
-        paths = [r.relative_path for r in snapshot.rules]
+        paths = [rule.relative_path for rule in snapshot.rules]
         self.assertEqual(paths, ["AGENTS.md"])
 
     def test_cwd_at_subdir_loads_root_and_subdir_rules(self):
@@ -350,10 +370,9 @@ class TestProjectRulesEffectiveCwd(unittest.TestCase):
             subdir.mkdir()
             (subdir / "AGENTS.md").write_text("# Subdir rules")
             snapshot = ProjectRuleResolver().resolve(root, subdir)
-        paths = [r.relative_path for r in snapshot.rules]
+        paths = [rule.relative_path for rule in snapshot.rules]
         self.assertIn("AGENTS.md", paths)
         self.assertIn("src/AGENTS.md", paths)
-        # Root rule comes before subdir rule
         self.assertLess(paths.index("AGENTS.md"), paths.index("src/AGENTS.md"))
 
     def test_cwd_at_deep_subdir_loads_all_levels(self):
@@ -367,7 +386,7 @@ class TestProjectRulesEffectiveCwd(unittest.TestCase):
             b.mkdir()
             (b / "AGENTS.md").write_text("# B")
             snapshot = ProjectRuleResolver().resolve(root, b)
-        paths = [r.relative_path for r in snapshot.rules]
+        paths = [rule.relative_path for rule in snapshot.rules]
         self.assertEqual(len(paths), 3)
         self.assertEqual(paths[0], "AGENTS.md")
         self.assertEqual(paths[1], "a/AGENTS.md")
@@ -380,7 +399,7 @@ class TestProjectRulesEffectiveCwd(unittest.TestCase):
             subdir = root / "src" / "nested"
             subdir.mkdir(parents=True)
             snapshot = ProjectRuleResolver().resolve(root, subdir)
-        paths = [r.relative_path for r in snapshot.rules]
+        paths = [rule.relative_path for rule in snapshot.rules]
         self.assertEqual(paths, ["AGENTS.md"])
 
     def test_out_of_bounds_cwd_raises_error(self):
@@ -420,12 +439,10 @@ class TestProjectRulesEffectiveCwd(unittest.TestCase):
 
     def test_step_context_effective_cwd_stored_in_snapshot(self):
         """StepResolutionSnapshot.effective_cwd records the actual cwd used."""
-        from eidos_runtime.runtime.resolution import (
-            create_step_resolution_snapshot,
-            RunResolutionSnapshot,
-        )
-        # This is a structural check only (no real DB)
         import inspect
+
+        from eidos_runtime.runtime.resolution import create_step_resolution_snapshot
+
         sig = inspect.signature(create_step_resolution_snapshot)
         self.assertIn("effective_cwd", sig.parameters)
 
@@ -478,15 +495,22 @@ class TestInstructionLayerRole(unittest.TestCase):
 
     def test_system_text_excludes_user_role_layer_text(self):
         system_layer = InstructionLayer.create(
-            id="sys", authority=500, source="s", content="SYSTEM CONTENT", role="system"
+            id="sys",
+            authority=500,
+            source="s",
+            content="SYSTEM CONTENT",
+            role="system",
         )
         user_layer = InstructionLayer.create(
-            id="usr", authority=200, source="u", content="USER CONTENT", role="user"
+            id="usr",
+            authority=200,
+            source="u",
+            content="USER CONTENT",
+            role="user",
         )
         instructions = ResolvedInstructions.create((system_layer, user_layer))
         self.assertIn("SYSTEM CONTENT", instructions.system_text)
         self.assertNotIn("USER CONTENT", instructions.system_text)
-        # instructions.text (full) has both
         self.assertIn("SYSTEM CONTENT", instructions.text)
         self.assertIn("USER CONTENT", instructions.text)
 
