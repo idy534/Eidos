@@ -54,7 +54,6 @@ from eidos_runtime.sandbox.sensitive import (
 from eidos_runtime.sandbox.permissions import (
     BasePermissionProfile,
     EffectivePermissionProfile,
-    SandboxAttempt,
 )
 from eidos_runtime.model.instructions import StepPermissionPolicy
 
@@ -219,6 +218,7 @@ class RuntimeEngine:
                 run.resolution_snapshot.permission_profile_json,
                 run.resolution_snapshot.sandbox_policy_json,
                 run.resolution_snapshot.workspace_identity.path,
+                snapshot.activated_names,
             )
             built = context_builder.build(
                 run.run_id,
@@ -704,7 +704,6 @@ class RuntimeEngine:
             self.events.publish(mutation, run=mutation.value, items=items)
 
 
-
 RuntimeLoop = RuntimeEngine
 
 
@@ -712,6 +711,7 @@ def _build_step_policy(
     permission_profile_json: str,
     sandbox_policy_json: str,
     workspace_root: str,
+    available_tools: tuple[str, ...],
 ) -> StepPermissionPolicy:
     """Build a StepPermissionPolicy from the persisted run permission snapshots.
 
@@ -755,4 +755,5 @@ def _build_step_policy(
         allow_additional_permissions=allow_additional,
         allow_escalated_execution=allow_escalated,
         rejected_approval_ids=rejected_ids,
+        available_tools=available_tools,
     )
