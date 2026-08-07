@@ -1993,16 +1993,97 @@ input:focus, textarea:focus {
 .feed-item p { margin-bottom: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .feed-item--user {
-  width: fit-content;
-  max-width: min(38rem, 82%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   margin-left: auto;
+  max-width: min(38rem, 82%);
+}
+
+.user-message-bubble {
+  width: fit-content;
   border-radius: var(--radius);
   padding: 0.75rem 1rem;
   color: var(--text);
   background: var(--surface-muted);
 }
 
+.user-message-bubble p {
+  margin-bottom: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .feed-item--assistant { margin-right: auto; }
+
+.feed-item-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: var(--font-size-caption, 0.75rem);
+  color: var(--muted);
+}
+
+.feed-item--user .feed-item-footer {
+  justify-content: flex-end;
+  margin-top: 0.25rem;
+  min-height: 1.5rem;
+}
+
+.feed-item--assistant .feed-item-footer {
+  justify-content: flex-start;
+  margin-top: 0.5rem;
+}
+
+.feed-item-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+
+.feed-item-copy-btn:hover:not(:disabled) {
+  background: #f0f0f0;
+  color: var(--muted);
+  border-color: transparent;
+}
+
+.feed-item-timestamp {
+  font-size: var(--font-size-caption, 0.75rem);
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  user-select: none;
+}
+
+.feed-item--user .feed-item-copy-btn,
+.feed-item--user .feed-item-timestamp {
+  opacity: 0;
+}
+
+.feed-item--user:hover .feed-item-copy-btn,
+.feed-item--user:hover .feed-item-timestamp,
+.feed-item--user:focus-within .feed-item-copy-btn,
+.feed-item--user:focus-within .feed-item-timestamp {
+  opacity: 1;
+}
+
+.feed-item--assistant .feed-item-timestamp {
+  opacity: 0;
+}
+
+.feed-item--assistant:hover .feed-item-timestamp,
+.feed-item--assistant:focus-within .feed-item-timestamp {
+  opacity: 1;
+}
 
 .feed-label {
   margin-bottom: 0.25rem !important;
@@ -2092,24 +2173,6 @@ input:focus, textarea:focus {
 .run-notice { max-width: 48rem; margin: -0.25rem 0 1.25rem; color: var(--muted); font-size: var(--font-size-caption); }
 .run-notice--error { color: var(--danger); }
 .run-notice--warning { color: #6f5b38; }
-
-.resolution-audit {
-  max-width: 48rem;
-  margin: -0.5rem 0 1.25rem;
-  color: var(--muted);
-  font-size: var(--font-size-caption);
-}
-.resolution-audit > summary { cursor: pointer; }
-.resolution-audit dl {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: 0.25rem 0.75rem;
-}
-.resolution-audit dt { font-weight: 650; }
-.resolution-audit dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
-.resolution-audit h3 { margin: 0.75rem 0 0.25rem; font-size: inherit; }
-.resolution-audit ul { margin: 0; padding-left: 1.25rem; }
-.resolution-audit code { overflow-wrap: anywhere; }
 
 .tool-item { max-width: 48rem; margin: 0 0 0.45rem; color: #7a7f7a; }
 .tool-item > summary {

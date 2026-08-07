@@ -344,22 +344,6 @@ class RuntimeEngine:
                     instructions=built.instructions,
                 )
                 return
-            self._resume_effective_time()
-            try:
-                self._pause_at(run.run_id, SafePoint.BEFORE_MODEL, cancel)
-                sampled = sampling.sample(step, cancel)
-                self._pause_at(run.run_id, SafePoint.AFTER_MODEL, cancel)
-            except SamplingCancelled:
-                raise
-            except SensitiveScanError:
-                self.store.complete_current_step(
-                    run.run_id, "failed", reason="sensitive_scan_failed"
-                )
-                self._fail(run.run_id, "SENSITIVE_SCAN_FAILED")
-                return
-            except SamplingError as error:
-                self._handle_sampling_failure(run.run_id, error)
-                return
 
             tools = ToolCallRuntime(
                 self.store,
@@ -375,32 +359,120 @@ class RuntimeEngine:
                 async_kernel=self.async_kernel,
                 resource_registry=self.resources,
             )
-            validation = tools.validate(step, sampled)
-            protocol_errors = 0
-            if validation.status in {"validation_failed", "no_tools"} and (
-                validation.status == "validation_failed"
-                or sampled.assistant_item is None
-            ):
-                if sampled.assistant_item is not None:
-                    mutation = self.store.complete_assistant_item_committed(
-                        str(sampled.assistant_item["id"])
-                    )
-                    self.events.publish(mutation, item=mutation.value)
-                protocol_errors = self.store.record_protocol_error(run.run_id)
-                reason = validation.error_code or "empty_response"
-                self.store.complete_current_step(run.run_id, "failed", reason=reason)
-            else:
-                self.store.clear_protocol_errors(run.run_id)
+            self._resume_effective_time()
 
-            guard_reason = guard.observe_empty_response(
-                sampled.assistant_item is None and not sampled.tool_calls
-            ) or guard.observe_protocol_error(validation.status == "validation_failed")
+            while True:
+                try:
+                    self._pause_at(run.run_id, SafePoint.BEFORE_MODEL, cancel)
+                    sampled = sampling.sample(step, cancel)
+                    self._pause_at(run.run_id, SafePoint.AFTER_MODEL, cancel)
+                except SamplingCancelled:
+                    raise
+                except SensitiveScanError:
+                    self.store.complete_current_step(
+                        run.run_id, "failed", reason="sensitive_scan_failed"
+                    )
+                    self._fail(run.run_id, "SENSITIVE_SCAN_FAILED")
+                    return
+                except SamplingError as error:
+                    self._handle_sampling_failure(run.run_id, error)
+                    return
+
+                validation = tools.validate(step, sampled)
+                if validation.status == "validation_failed":
+                    reason = validation.error_code or "invalid_response"
+                    protocol_errors = self.store.record_protocol_error(run.run_id)
+                    should_retry = protocol_errors < 2
+                    sampling.complete_attempt(
+                        step,
+                        sampled,
+                        status="failed",
+                        error_code=reason,
+                        retry=should_retry,
+                        retry_reason=(
+                            "protocol_repair"
+                            if should_retry
+                            else "protocol_repair_exhausted"
+                        ),
+                    )
+                    if should_retry:
+                        self.store.start_retry_model_attempt(run.run_id)
+                        step = step.model_copy(update={
+                            "model_context": (
+                                *step.model_context,
+                                {"type": "protocol_error", "code": reason},
+                            )
+                        })
+                        continue
+                    self.store.complete_current_step(
+                        run.run_id, "failed", reason=reason
+                    )
+                    self._fail(run.run_id, "MODEL_PROTOCOL_ERROR")
+                    return
+
+                if validation.status == "no_tools" and not sampled.text:
+                    protocol_errors = self.store.record_protocol_error(run.run_id)
+                    empty_reason = guard.observe_empty_response(True)
+                    should_retry = protocol_errors < 2 and empty_reason is None
+                    sampling.complete_attempt(
+                        step,
+                        sampled,
+                        status="failed",
+                        error_code="empty_response",
+                        retry=should_retry,
+                        retry_reason=(
+                            "empty_response_repair"
+                            if should_retry
+                            else "empty_response_exhausted"
+                        ),
+                    )
+                    if should_retry:
+                        self.store.start_retry_model_attempt(run.run_id)
+                        step = step.model_copy(update={
+                            "model_context": (
+                                *step.model_context,
+                                {"type": "protocol_error", "code": "empty_response"},
+                            )
+                        })
+                        continue
+                    reason = empty_reason or "empty_response"
+                    self.store.complete_current_step(
+                        run.run_id, "failed", reason=reason
+                    )
+                    if empty_reason is not None:
+                        finalizer.finalize(
+                            run.run_id,
+                            built.model_context,
+                            empty_reason,
+                            cancel,
+                            instructions=built.instructions,
+                        )
+                    else:
+                        self._fail(run.run_id, "MODEL_PROTOCOL_ERROR")
+                    return
+
+                guard.observe_empty_response(False)
+                self.store.clear_protocol_errors(run.run_id)
+                sampling.complete_attempt(
+                    step,
+                    sampled,
+                    status="completed",
+                    retry=False,
+                    retry_reason="completed",
+                )
+                if validation.status == "no_tools" and sampled.text:
+                    assistant_item = sampling.commit_assistant(
+                        step, sampled.text, cancel
+                    )
+                    sampled = sampled.model_copy(
+                        update={"assistant_item": assistant_item}
+                    )
+                break
+
             decision = decisions.decide(
                 sampling=sampled,
                 tool_batch=validation,
                 pending_user_input=self.store.has_pending_input(run.run_id),
-                protocol_errors=protocol_errors,
-                loop_guard_result=guard_reason,
                 cancelled=cancel.is_set(),
             )
             if decision.reason == "pending_input":
@@ -413,14 +485,7 @@ class RuntimeEngine:
                 run = run.model_copy(update={"model_context": ()})
                 continue
             if decision.action == LoopAction.CONTINUE and validation.status != "ready":
-                run = run.model_copy(
-                    update={
-                        "model_context": (
-                            *run.model_context,
-                            {"type": "protocol_error", "code": decision.reason},
-                        )
-                    }
-                )
+                run = run.model_copy(update={"model_context": ()})
                 continue
             if decision.action == LoopAction.PAUSE:
                 self.store.complete_current_step(
@@ -451,11 +516,9 @@ class RuntimeEngine:
                 self.state_machine.track(RuntimeState.COMPLETED, "run_succeeded")
                 return
 
-            if sampled.assistant_item is not None:
-                mutation = self.store.complete_assistant_item_committed(
-                    str(sampled.assistant_item["id"])
-                )
-                self.events.publish(mutation, item=mutation.value)
+            # Text accompanying tool calls is provisional narration rather than a
+            # committed conversation fact. Tool items provide durable progress;
+            # only a validated no-tool response becomes an assistant message.
             repeated = guard.observe_tool_calls(
                 validation.tool_calls,
                 step.workspace_version,

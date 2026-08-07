@@ -290,6 +290,7 @@ dependencies = [
 dev = [
     { name = "deptry" },
     { name = "pip-audit" },
+    { name = "pydevd-pycharm" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -321,6 +322,7 @@ requires-dist = [
 dev = [
     { name = "deptry", specifier = ">=0.23,<0.24" },
     { name = "pip-audit", specifier = ">=2.8,<3" },
+    { name = "pydevd-pycharm", specifier = ">=262.8665.186" },
     { name = "pytest", specifier = ">=8.3,<9" },
     { name = "ruff", specifier = ">=0.11,<0.12" },
 ]
@@ -894,6 +896,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/5c/b5/8f48e906c3e020527
 wheels = [
     { url = "https://files.pythonhosted.org/packages/77/c1/6e422f34e569cf8e18df68d1939c81c099d2b61e4f7d9621c8a77560799c/pydantic_settings-2.14.2-py3-none-any.whl", hash = "sha256:a20c97b37910b6550d5ea50fbcc2d4187defe58cd57070b73863d069419c9440", size = 61715, upload-time = "2026-06-19T13:44:55.02Z" },
 ]
+
+[[package]]
+name = "pydevd-pycharm"
+version = "262.8665.186"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/f6/8f49005d581cff8832c21c9de67ea28ed70dccc259b766e951c5f70a1290/pydevd_pycharm-262.8665.186.tar.gz", hash = "sha256:3ddd0a6250eb168e6cc93c5f4bb225eb8463cea2d28041ff35ff340b824b75e9", size = 7636010, upload-time = "2026-07-09T17:29:09.628Z" }
 
 [[package]]
 name = "pygments"

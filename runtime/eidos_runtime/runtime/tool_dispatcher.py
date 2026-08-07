@@ -92,7 +92,15 @@ class ToolDispatcher:
         if not isinstance(response, ModelResponse):
             return ToolValidationResult((), "invalid_response")
         if not response.text and not response.tool_calls:
-            return ToolValidationResult((), "empty_response")
+            # Empty output is a runtime liveness condition rather than a malformed
+            # ToolCall protocol. Keep it on the dedicated empty-response path.
+            return ToolValidationResult(())
+        if (
+            response.text
+            and not response.tool_calls
+            and _contains_provider_control_syntax(response.text)
+        ):
+            return ToolValidationResult((), "provider_control_syntax")
         if len(response.tool_calls) > 16:
             return ToolValidationResult((), "too_many_tool_calls")
         provider_ids: set[str] = set()
@@ -135,11 +143,9 @@ class ToolDispatcher:
             effective_calls.append(ModelToolCall(
                 call.provider_call_id, call.name, effective
             ))
-        if any(
-            self._registry.get(call.name).spec.batch_policy == "single"  # type: ignore[union-attr]
-            for call in effective_calls
-        ) and len(response.tool_calls) != 1:
-            return ToolValidationResult((), "invalid_tool_batch")
+        # Batch policy controls runtime scheduling, not how many calls a model may
+        # return in one response. Mixed or side-effecting batches are serialized by
+        # ToolCallRuntime; only an all-read parallel-safe batch is run concurrently.
         return ToolValidationResult(tuple(effective_calls))
 
     def model_definitions(
@@ -189,9 +195,7 @@ class ToolDispatcher:
             )
         return ToolDispatchPlan(binding)
 
-    def validate_execution(
-        self, call: ModelToolCall, plan: ToolDispatchPlan
-    ) -> bool:
+    def validate_execution(self, call: ModelToolCall, plan: ToolDispatchPlan) -> bool:
         validation = (
             plan.descriptor.validate_arguments(call.arguments)
             if plan.descriptor is not None
@@ -236,6 +240,11 @@ class ToolDispatcher:
             and entry.execution_policy.concurrency.mode == "parallel_safe"
             for call in calls
         )
+
+
+def _contains_provider_control_syntax(text: str) -> bool:
+    return "<|DSML|" in text or "<｜DSML｜" in text
+
 
 def _valid_arguments(value: object) -> bool:
     if not isinstance(value, dict):

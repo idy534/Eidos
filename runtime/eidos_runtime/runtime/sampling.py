@@ -59,7 +59,12 @@ class SamplingCancelled(SamplingError):
 
 
 class SamplingRuntime:
-    """Owns Step sampling, streamed Assistant Items, and ModelAttempts."""
+    """Owns Step sampling and ModelAttempts.
+
+    Assistant text stays provisional until RuntimeEngine validates the complete
+    model response. This prevents invalid protocol output and tool-call control
+    syntax from becoming persisted conversation facts before validation.
+    """
 
     def __init__(
         self,
@@ -75,13 +80,7 @@ class SamplingRuntime:
     def sample(
         self, step: StepContext, cancel: threading.Event
     ) -> SamplingOutcome:
-        writer = AssistantStreamWriter(
-            self.store,
-            self.events,
-            step.run_id,
-            step.step_index,
-            check_cancel=lambda: self._check_cancel(cancel),
-        )
+        provisional_text: list[str] = []
         try:
             frozen = self.store.read_running_context_snapshot(step.run_id)
             model_context = (
@@ -93,17 +92,12 @@ class SamplingRuntime:
             result = self.runner.run(
                 model_context,
                 cancel,
-                writer.write,
+                provisional_text.append,
                 instructions=step.instructions.system_text,
                 tool_definitions=step.tool_definitions,
             )
         except ModelStreamInterrupted as interrupted:
-            if interrupted.text:
-                writer.write(interrupted.text)
-            writer.flush()
-            had_progress = writer.item is not None
-            if had_progress:
-                writer.abort()
+            had_progress = bool(provisional_text or interrupted.text)
             error = _sampling_error(interrupted.cause, had_progress=had_progress)
             if isinstance(error, SensitiveScanError):
                 self.store.complete_current_model_attempt(
@@ -137,47 +131,37 @@ class SamplingRuntime:
             )
             raise error
 
-        writer.flush()
         invalid_completion = (
             result.response_state not in {None, "complete"}
             or result.finish_reason in {"length", "content_filter", "error"}
         )
-        decision = RetryDecision(
-            retry=False,
-            reason="invalid_completion" if invalid_completion else "completed",
-        )
-        self.store.complete_current_model_attempt(
-            step.run_id,
-            "failed" if invalid_completion else "completed",
-            usage=result.usage,
-            provider_name=result.provider_name,
-            resolved_model_name=result.resolved_model_name,
-            finish_reason=result.finish_reason,
-            provider_response_id=result.provider_response_id,
-            error_code=(result.finish_reason or result.response_state)
-            if invalid_completion
-            else None,
-            ttft_ms=result.ttft_ms,
-            duration_ms=result.duration_ms,
-            had_progress=writer.item is not None,
-            retry_decision=_retry_decision_payload_from_result(decision, result),
-        )
-        self._check_cancel(cancel)
         if invalid_completion:
-            had_progress = writer.item is not None
-            if had_progress:
-                writer.abort()
+            decision = RetryDecision(retry=False, reason="invalid_completion")
+            self.store.complete_current_model_attempt(
+                step.run_id,
+                "failed",
+                usage=result.usage,
+                provider_name=result.provider_name,
+                resolved_model_name=result.resolved_model_name,
+                finish_reason=result.finish_reason,
+                provider_response_id=result.provider_response_id,
+                error_code=result.finish_reason or result.response_state,
+                ttft_ms=result.ttft_ms,
+                duration_ms=result.duration_ms,
+                had_progress=bool(result.text),
+                retry_decision=_retry_decision_payload_from_result(decision, result),
+            )
+            self._check_cancel(cancel)
             raise SamplingProtocolError(
                 result.finish_reason or result.response_state or "incomplete_response",
-                had_progress=had_progress,
+                had_progress=bool(result.text),
             )
-        if result.text and writer.item is None:
-            writer.write(result.text)
-            writer.flush()
+
+        self._check_cancel(cancel)
         return SamplingOutcome(
             text=result.text,
             tool_calls=result.tool_calls,
-            assistant_item=writer.item,
+            assistant_item=None,
             retry_count=result.transport_retry_count,
             usage=result.usage,
             provider_name=result.provider_name,
@@ -188,6 +172,58 @@ class SamplingRuntime:
             ttft_ms=result.ttft_ms,
             duration_ms=result.duration_ms,
         )
+
+    def complete_attempt(
+        self,
+        step: StepContext,
+        sampled: SamplingOutcome,
+        *,
+        status: str,
+        error_code: str | None = None,
+        retry: bool = False,
+        retry_reason: str = "completed",
+    ) -> None:
+        self.store.complete_current_model_attempt(
+            step.run_id,
+            status,
+            usage=sampled.usage,
+            provider_name=sampled.provider_name,
+            resolved_model_name=sampled.resolved_model_name,
+            finish_reason=sampled.finish_reason,
+            provider_response_id=sampled.provider_response_id,
+            error_code=error_code,
+            ttft_ms=sampled.ttft_ms,
+            duration_ms=sampled.duration_ms,
+            had_progress=bool(sampled.text),
+            retry_decision={
+                "retry": retry,
+                "reason": retry_reason,
+                "transportAttemptCount": sampled.retry_count + 1,
+                "transportRetryCount": sampled.retry_count,
+                "lastRetryReason": None,
+                "lastBackoffSeconds": None,
+                "retryAfterApplied": False,
+            },
+        )
+
+    def commit_assistant(
+        self,
+        step: StepContext,
+        text: str,
+        cancel: threading.Event,
+    ) -> dict[str, object] | None:
+        if not text:
+            return None
+        writer = AssistantStreamWriter(
+            self.store,
+            self.events,
+            step.run_id,
+            step.step_index,
+            check_cancel=lambda: self._check_cancel(cancel),
+        )
+        writer.write(text)
+        writer.flush()
+        return writer.item
 
     @staticmethod
     def _check_cancel(cancel: threading.Event) -> None:
@@ -252,8 +288,8 @@ def _terminal_retry_decision(
     if decision.reason == "retry_budget_exhausted":
         return RetryDecision(retry=False, reason="transport_retries_exhausted")
     if decision.retry:
-        # Sampling never owns a second request loop. If a failure reaches it
-        # after a ModelRunner interruption, replay is unsafe by definition.
+        # Sampling never owns a second transport request loop. If a failure reaches
+        # it after a ModelRunner interruption, replay is unsafe by definition.
         return RetryDecision(retry=False, reason="unsafe_stream_progress")
     return decision
 

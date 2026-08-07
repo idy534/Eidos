@@ -87,7 +87,7 @@ class RuntimeSeamTests(unittest.TestCase):
         self.assertEqual(model.instructions_history, ["resolved step instructions"])
         self.assertEqual(model.tool_definitions_history, [definitions])
 
-    def test_tool_dispatcher_returns_one_closed_batch_error(self) -> None:
+    def test_tool_dispatcher_accepts_mixed_batch_for_runtime_scheduling(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             tools = ToolExecutor(Path(directory))
             try:
@@ -98,7 +98,11 @@ class RuntimeSeamTests(unittest.TestCase):
             finally:
                 tools.close()
 
-        self.assertEqual(result.error_code, "invalid_tool_batch")
+        self.assertIsNone(result.error_code)
+        self.assertEqual(
+            [call.name for call in result.tool_calls],
+            ["read_file", "write_file"],
+        )
 
     def test_descriptor_runtime_executes_a_read_only_call(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

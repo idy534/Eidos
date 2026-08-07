@@ -124,14 +124,6 @@ export function ExecutionFeed({
                 />
               ))}
               <RunNotice run={run} />
-              {stepResolutions
-                .filter((resolution) => resolution.runId === run.id)
-                .map((resolution) => (
-                  <StepResolutionAudit
-                    key={resolution.id}
-                    resolution={resolution}
-                  />
-                ))}
             </Fragment>
           );
         })}
@@ -146,64 +138,6 @@ export function ExecutionFeed({
         <span aria-hidden="true">↓</span>
       </button>
     </div>
-  );
-}
-
-function StepResolutionAudit({
-  resolution,
-}: {
-  resolution: StepResolutionReview;
-}) {
-  return (
-    <details className="resolution-audit">
-      <summary>请求快照 · Step {resolution.stepOrdinal}</summary>
-      <dl>
-        <dt>Snapshot ID</dt>
-        <dd><code>{resolution.id}</code></dd>
-        <dt>Request hash</dt>
-        <dd><code>{resolution.requestHash}</code></dd>
-      </dl>
-      {resolution.rules.length > 0 && (
-        <>
-          <h3>项目规则</h3>
-          <ul>
-            {resolution.rules.map((rule) => (
-              <li key={`${rule.directoryLevel}:${rule.relativePath}`}>
-                <span title={rule.absolutePath}>
-                  L{rule.directoryLevel} · {rule.relativePath}
-                </span>
-                {" · "}<code>{rule.contentHash}</code>
-                {rule.truncated ? " · 已截断" : ""}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      {resolution.shadowed.length > 0 && (
-        <>
-          <h3>Shadowed</h3>
-          <ul>
-            {resolution.shadowed.map((candidate) => (
-              <li key={`${candidate.directoryLevel}:${candidate.relativePath}`}>
-                L{candidate.directoryLevel} · {candidate.relativePath}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      {resolution.warnings.length > 0 && (
-        <>
-          <h3>Warnings</h3>
-          <ul>
-            {resolution.warnings.map((warning, index) => (
-              <li key={`${warning.code}:${warning.path}:${index}`}>
-                {warning.code} · {warning.path}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-    </details>
   );
 }
 
@@ -282,12 +216,84 @@ function ProcessGroup({ run, children }: { run: Run; children: ReactNode }) {
   );
 }
 
+export function formatItemTime(timestampMs?: number): string {
+  if (!timestampMs) return "";
+  const date = new Date(timestampMs);
+  if (Number.isNaN(date.getTime())) return "";
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${month}月${day}日 ${hours}:${minutes}`;
+}
+
+function CopyButton({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    if (!content) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(content);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy text:", err);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      className="feed-item-copy-btn"
+      onClick={handleCopy}
+      title={copied ? "已复制" : "复制内容"}
+      aria-label={copied ? "已复制" : "复制内容"}
+    >
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        {copied ? (
+          <polyline points="20 6 9 17 4 12" />
+        ) : (
+          <>
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </>
+        )}
+      </svg>
+    </button>
+  );
+}
+
 function UserMessage({ item }: { item: Item }) {
-  return <article className="feed-item feed-item--user"><p>{item.content}</p></article>;
+  const formattedTime = formatItemTime(item.completedAt ?? item.createdAt);
+
+  return (
+    <div className="feed-item feed-item--user">
+      <div className="user-message-bubble">
+        <p>{item.content}</p>
+      </div>
+      <div className="feed-item-footer">
+        {item.content && <CopyButton content={item.content} />}
+        {formattedTime && <span className="feed-item-timestamp">{formattedTime}</span>}
+      </div>
+    </div>
+  );
 }
 
 function AssistantMessage({ item }: { item: Item }) {
   const contentRef = useRef<HTMLDivElement>(null);
+  const formattedTime = formatItemTime(item.completedAt ?? item.createdAt);
 
   useLayoutEffect(() => {
     if (
@@ -303,6 +309,12 @@ function AssistantMessage({ item }: { item: Item }) {
   return (
     <article className="feed-item feed-item--assistant" ref={contentRef}>
       <MarkdownContent content={item.content || ""} />
+      {item.content && (
+        <div className="feed-item-footer">
+          <CopyButton content={item.content} />
+          {formattedTime && <span className="feed-item-timestamp">{formattedTime}</span>}
+        </div>
+      )}
     </article>
   );
 }

@@ -4,7 +4,7 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { Item, Run } from "../contracts.js";
-import { ExecutionFeed, isFeedAtBottom } from "./ExecutionFeed.js";
+import { ExecutionFeed, isFeedAtBottom, formatItemTime } from "./ExecutionFeed.js";
 
 
 const run: Run = {
@@ -53,7 +53,7 @@ test("provides an accessible jump to the latest content control", () => {
   assert.match(html, /hidden=""/);
 });
 
-test("exposes the immutable request snapshot for review", () => {
+test("does not render request snapshot tail in execution feed", () => {
   const html = renderToStaticMarkup(
     <ExecutionFeed
       items={[item({ id: "user", ordinal: 1, kind: "user_message", content: "检查规则" })]}
@@ -93,10 +93,9 @@ test("exposes the immutable request snapshot for review", () => {
     />,
   );
 
-  assert.match(html, /请求快照 · Step 1/);
-  assert.match(html, /EIDOS\.md/);
-  assert.match(html, /AGENTS\.md/);
-  assert.match(html, new RegExp("5".repeat(64)));
+  assert.doesNotMatch(html, /请求快照/);
+  assert.doesNotMatch(html, /Snapshot ID/);
+  assert.doesNotMatch(html, /Request hash/);
 });
 
 test("folds tool execution before the final answer and omits the success pill", () => {
@@ -149,12 +148,20 @@ test("folds tool execution before the final answer and omits the success pill", 
   assert.ok(html.indexOf("</details>") < html.indexOf("<h1>检查完成</h1>"));
 });
 
+test("formatItemTime formats timestamp to Month日 Hour:Minute", () => {
+  // Test July 20, 2024 at 13:46:00 UTC
+  // Construct date locally to verify formatItemTime match
+  const testDate = new Date(2024, 6, 20, 13, 46);
+  assert.equal(formatItemTime(testDate.getTime()), "7月20日 13:46");
+  assert.equal(formatItemTime(undefined), "");
+});
+
 test("streams a tool-free answer without a process group", () => {
   const html = renderToStaticMarkup(
     <ExecutionFeed
       items={[
-        item({ id: "user", ordinal: 1, kind: "user_message", content: "直接回答" }),
-        item({ id: "final", ordinal: 2, kind: "assistant_message", content: "**答案**" }),
+        item({ id: "user", ordinal: 1, kind: "user_message", content: "直接回答", createdAt: 1721454360000 }),
+        item({ id: "final", ordinal: 2, kind: "assistant_message", content: "**答案**", createdAt: 1721454360000 }),
       ]}
       runs={[run]}
       approvals={[]}
@@ -167,6 +174,10 @@ test("streams a tool-free answer without a process group", () => {
 
   assert.doesNotMatch(html, /process-group|已处理|正在处理/);
   assert.match(html, /<strong>答案<\/strong>/);
+  assert.match(html, /class="feed-item-copy-btn"/);
+  assert.match(html, /title="复制内容"/);
+  assert.match(html, /class="user-message-bubble"/);
+  assert.match(html, /class="feed-item-timestamp"/);
 });
 
 test("shows a thinking indicator before the first model item", () => {
