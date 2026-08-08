@@ -15,7 +15,6 @@
   "include": [
     "desktop/shared/**/*.ts",
     "desktop/shared/**/*.cts",
-    "desktop/renderer/src/**/*.d.ts",
     "desktop/renderer/src/contracts.ts",
     "desktop/renderer/src/session-state.ts",
     "desktop/renderer/src/app/useApprovalController.ts",
