@@ -1,0 +1,124 @@
+.response-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.response-actions-left,
+.response-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.response-action-button {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted, #6f6f6f);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, transform 120ms ease;
+}
+
+.response-action-button:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.055);
+  color: var(--text-primary, #252525);
+}
+
+.response-action-button:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.response-action-button:focus-visible {
+  outline: 2px solid rgba(51, 102, 255, 0.45);
+  outline-offset: 1px;
+}
+
+.response-action-button:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.response-action-button--active {
+  color: var(--text-primary, #252525);
+  background: rgba(0, 0, 0, 0.065);
+}
+
+.response-model {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted, #777);
+  font-size: 12px;
+}
+
+.response-meta .feed-item-timestamp::before {
+  content: "·";
+  margin-right: 4px;
+}
+
+.user-message-editor {
+  min-width: min(560px, 68vw);
+}
+
+.user-message-editor textarea {
+  width: 100%;
+  min-height: 76px;
+  max-height: 220px;
+  resize: vertical;
+  box-sizing: border-box;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  color: inherit;
+  font: inherit;
+  line-height: 1.5;
+  padding: 10px 12px;
+  outline: none;
+}
+
+.user-message-editor textarea:focus {
+  border-color: rgba(0, 0, 0, 0.24);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.04);
+}
+
+.user-message-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.user-message-editor-actions button {
+  min-height: 28px;
+  border: 0;
+  border-radius: 7px;
+  padding: 0 10px;
+  background: rgba(0, 0, 0, 0.055);
+  color: inherit;
+  cursor: pointer;
+}
+
+.user-message-editor-actions button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.user-message-editor-actions .user-message-editor-submit {
+  background: rgba(0, 0, 0, 0.84);
+  color: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .response-action-button {
+    transition: none;
+  }
+}
