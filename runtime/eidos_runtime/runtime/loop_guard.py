@@ -90,21 +90,25 @@ class LoopGuard:
         fingerprint = tool_call_fingerprint(
             calls, workspace_version, reconciliation_epoch
         )
-        if fingerprint != self._last_tool:
-            self._last_tool = fingerprint
-            self._same_tool = 1
-            if self._recovered_tool != fingerprint:
-                self._recovered_tool = None
-            return None
+        if fingerprint != self._last_tool and self._recovered_tool != fingerprint:
+            self._recovered_tool = None
+        self._same_tool = self._same_tool + 1 if fingerprint == self._last_tool else 1
+        self._last_tool = fingerprint
+        return (
+            "repeated_tool_call"
+            if self._same_tool >= self.max_same_tool_fingerprint
+            else None
+        )
 
-        self._same_tool += 1
-        if self._same_tool < self.max_same_tool_fingerprint:
-            return None
-        if self._recovered_tool == fingerprint:
-            return "repeated_tool_call"
-
-        self._recovered_tool = fingerprint
-        return "repeated_tool_call_recovery"
+    def should_recover_repeated_tool_call(self) -> bool:
+        if (
+            self._last_tool is None
+            or self._same_tool < self.max_same_tool_fingerprint
+            or self._recovered_tool == self._last_tool
+        ):
+            return False
+        self._recovered_tool = self._last_tool
+        return True
 
     def observe_errors(self, errors: tuple[str, ...]) -> str | None:
         signature = tuple(sorted(set(errors)))
