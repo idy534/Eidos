@@ -31,7 +31,7 @@
   color: var(--muted);
   box-shadow: none;
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease, transform 120ms ease;
+  transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease, transform 120ms ease;
 }
 
 .response-action-button svg {
@@ -67,6 +67,45 @@
 .response-action-button--active {
   color: var(--text);
   background: rgba(0, 0, 0, 0.065);
+}
+
+/* User edit follows the existing copy-button behavior: hidden until the
+ * message is hovered or keyboard focus enters the message actions. */
+.feed-item--user .response-action-button {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.feed-item--user:hover .response-action-button,
+.feed-item--user:focus-within .response-action-button,
+.feed-item--user .response-action-button:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Regenerate uses a balanced two-way refresh glyph rather than the previous
+ * open-circle arrow, while keeping the same quiet icon-button surface. */
+.response-action-button[aria-label="重新回答"] {
+  position: relative;
+  border-radius: 8px;
+}
+
+.response-action-button[aria-label="重新回答"] svg {
+  display: none;
+}
+
+.response-action-button[aria-label="重新回答"]::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  flex: none;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 11a8 8 0 0 0-14.9-4'/%3E%3Cpath d='M4 4v4h4'/%3E%3Cpath d='M4 13a8 8 0 0 0 14.9 4'/%3E%3Cpath d='M20 20v-4h-4'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 11a8 8 0 0 0-14.9-4'/%3E%3Cpath d='M4 4v4h4'/%3E%3Cpath d='M4 13a8 8 0 0 0 14.9 4'/%3E%3Cpath d='M20 20v-4h-4'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+}
+
+.response-action-button[aria-label="重新回答"]:hover:not(:disabled) {
+  background: var(--surface-muted);
 }
 
 .response-model {
