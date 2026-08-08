@@ -15,7 +15,6 @@ import { terminalRunPresentation } from "../session-state.js";
 import { Button } from "./Button.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
-import "./response-actions.css";
 
 
 type FeedbackHandler = (
