@@ -525,6 +525,24 @@ class RuntimeEngine:
                 step.workspace_version,
                 step.reconciliation_epoch,
             )
+            if repeated == "repeated_tool_call_recovery":
+                self.store.complete_current_step(
+                    run.run_id, "completed", reason=repeated
+                )
+                run = run.model_copy(update={
+                    "model_context": ({
+                        "type": "user",
+                        "sectionId": "runtime-loop-recovery",
+                        "content": (
+                            "Runtime loop recovery: the same tool call with the same "
+                            "arguments has already been attempted repeatedly against "
+                            "an unchanged workspace. Do not repeat it. Choose a "
+                            "different tool or arguments, or finish with the evidence "
+                            "already collected."
+                        ),
+                    },)
+                })
+                continue
             if repeated is not None:
                 self.store.complete_current_step(run.run_id, "failed", reason=repeated)
                 finalizer.finalize(
