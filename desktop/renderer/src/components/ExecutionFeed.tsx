@@ -1,9 +1,12 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import type {
   ApprovalRequest,
   Item,
+  ModelOption,
+  ResponseActionState,
+  ResponseFeedbackValue,
   Run,
   StepResolutionReview,
   ToolCall,
@@ -12,11 +15,16 @@ import { terminalRunPresentation } from "../session-state.js";
 import { Button } from "./Button.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
+import "./response-actions.css";
 
 
 interface Props {
   items: Item[];
   runs: Run[];
+  models: ModelOption[];
+  responseActionState: ResponseActionState;
+  pendingFeedbackItemIds: ReadonlySet<string>;
+  revisionSubmitting: boolean;
   stepResolutions?: StepResolutionReview[] | undefined;
   approvals: ApprovalRequest[];
   respondingApprovalIds?: ReadonlySet<string> | undefined;
@@ -28,6 +36,9 @@ interface Props {
   onRetryLoadPending?: (() => void) | undefined;
   onApprove: (request: ApprovalRequest) => void;
   onReject: (request: ApprovalRequest) => void;
+  onFeedback: (itemId: string, feedback: ResponseFeedbackValue | null) => Promise<void>;
+  onRegenerate: (run: Run) => Promise<void>;
+  onEditResend: (run: Run, editedInput: string) => Promise<void>;
 }
 
 interface Segment {
@@ -48,6 +59,10 @@ const TERMINAL_RUN_STATUSES = new Set<Run["status"]>([
 export function ExecutionFeed({
   items,
   runs,
+  models,
+  responseActionState,
+  pendingFeedbackItemIds,
+  revisionSubmitting,
   stepResolutions = [],
   approvals,
   respondingApprovalIds,
@@ -59,6 +74,9 @@ export function ExecutionFeed({
   onRetryLoadPending,
   onApprove,
   onReject,
+  onFeedback,
+  onRegenerate,
+  onEditResend,
 }: Props) {
   const feedRef = useRef<HTMLElement>(null);
   const [atBottom, setAtBottom] = useState(true);
@@ -66,7 +84,18 @@ export function ExecutionFeed({
   useLayoutEffect(() => {
     const feed = feedRef.current;
     if (feed && atBottom) feed.scrollTop = feed.scrollHeight;
-  }, [items, atBottom]);
+  }, [items, responseActionState.revisions, atBottom]);
+
+  const supersededRunIds = useMemo(
+    () => new Set(responseActionState.revisions.map((revision) => revision.sourceRunId)),
+    [responseActionState.revisions],
+  );
+  const feedbackByItemId = useMemo(
+    () => new Map(responseActionState.feedback.map((entry) => [entry.itemId, entry.value])),
+    [responseActionState.feedback],
+  );
+  const latestVisibleRun = [...runs].reverse().find((run) => !supersededRunIds.has(run.id));
+  const hasActiveRun = runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status));
 
   if (items.length === 0) {
     return (
@@ -84,7 +113,7 @@ export function ExecutionFeed({
   }
 
   const runsById = new Map(runs.map((run) => [run.id, run]));
-  const itemGroups = groupItemsByRun(items);
+  const itemGroups = groupItemsByRun(items).filter(({ runId }) => !supersededRunIds.has(runId));
 
   return (
     <div className="feed-shell">
@@ -106,6 +135,11 @@ export function ExecutionFeed({
           const run = runsById.get(runId);
           if (!run) return null;
           const segments = splitRunIntoSegments(runItems);
+          const canReviseRun = latestVisibleRun?.id === run.id
+            && TERMINAL_RUN_STATUSES.has(run.status)
+            && !hasActiveRun
+            && !revisionSubmitting;
+          const modelName = models.find((model) => model.id === run.modelId)?.name ?? run.modelId;
           return (
             <Fragment key={runId}>
               {segments.map((segment, index) => (
@@ -113,7 +147,12 @@ export function ExecutionFeed({
                   key={`${runId}:${segment.user?.id ?? index}`}
                   segment={segment}
                   run={run}
+                  modelName={modelName}
                   isLast={index === segments.length - 1}
+                  canReviseRun={canReviseRun}
+                  feedbackByItemId={feedbackByItemId}
+                  pendingFeedbackItemIds={pendingFeedbackItemIds}
+                  revisionSubmitting={revisionSubmitting}
                   approvals={approvals}
                   respondingApprovalIds={respondingApprovalIds}
                   respondingKindByApprovalId={respondingKindByApprovalId}
@@ -121,6 +160,9 @@ export function ExecutionFeed({
                   errorsByApprovalId={errorsByApprovalId}
                   onApprove={onApprove}
                   onReject={onReject}
+                  onFeedback={onFeedback}
+                  onRegenerate={onRegenerate}
+                  onEditResend={onEditResend}
                 />
               ))}
               <RunNotice run={run} />
@@ -150,7 +192,12 @@ export function isFeedAtBottom(
 function RunSegment({
   segment,
   run,
+  modelName,
   isLast,
+  canReviseRun,
+  feedbackByItemId,
+  pendingFeedbackItemIds,
+  revisionSubmitting,
   approvals,
   respondingApprovalIds,
   respondingKindByApprovalId,
@@ -158,10 +205,18 @@ function RunSegment({
   errorsByApprovalId,
   onApprove,
   onReject,
+  onFeedback,
+  onRegenerate,
+  onEditResend,
 }: {
   segment: Segment;
   run: Run;
+  modelName: string;
   isLast: boolean;
+  canReviseRun: boolean;
+  feedbackByItemId: ReadonlyMap<string, ResponseFeedbackValue>;
+  pendingFeedbackItemIds: ReadonlySet<string>;
+  revisionSubmitting: boolean;
   approvals: ApprovalRequest[];
   respondingApprovalIds?: ReadonlySet<string> | undefined;
   respondingKindByApprovalId?: Readonly<Record<string, "approve" | "reject">> | undefined;
@@ -169,6 +224,9 @@ function RunSegment({
   errorsByApprovalId?: Readonly<Record<string, string>> | undefined;
   onApprove: Props["onApprove"];
   onReject: Props["onReject"];
+  onFeedback: Props["onFeedback"];
+  onRegenerate: Props["onRegenerate"];
+  onEditResend: Props["onEditResend"];
 }) {
   const showThinking = isLast
     && ACTIVE_RUN_STATUSES.has(run.status)
@@ -177,7 +235,15 @@ function RunSegment({
 
   return (
     <>
-      {segment.user && <UserMessage item={segment.user} />}
+      {segment.user && (
+        <UserMessage
+          item={segment.user}
+          run={run}
+          canEdit={isLast && canReviseRun}
+          revisionSubmitting={revisionSubmitting}
+          onEditResend={onEditResend}
+        />
+      )}
       {segment.process.length > 0 && (
         <ProcessGroup
           key={`${run.id}:${TERMINAL_RUN_STATUSES.has(run.status) ? "done" : "active"}`}
@@ -200,7 +266,19 @@ function RunSegment({
         </ProcessGroup>
       )}
       {showThinking && <p className="thinking-indicator" role="status">正在思考</p>}
-      {segment.response.map((item) => <AssistantMessage key={item.id} item={item} />)}
+      {segment.response.map((item, index) => (
+        <AssistantMessage
+          key={item.id}
+          item={item}
+          run={run}
+          modelName={modelName}
+          feedback={feedbackByItemId.get(item.id)}
+          feedbackPending={pendingFeedbackItemIds.has(item.id)}
+          canRegenerate={isLast && index === segment.response.length - 1 && canReviseRun}
+          onFeedback={onFeedback}
+          onRegenerate={onRegenerate}
+        />
+      ))}
     </>
   );
 }
@@ -246,7 +324,7 @@ function CopyButton({ content }: { content: string }) {
   return (
     <button
       type="button"
-      className="feed-item-copy-btn"
+      className="feed-item-copy-btn response-action-button"
       onClick={handleCopy}
       title={copied ? "已复制" : "复制内容"}
       aria-label={copied ? "已复制" : "复制内容"}
@@ -275,23 +353,109 @@ function CopyButton({ content }: { content: string }) {
   );
 }
 
-function UserMessage({ item }: { item: Item }) {
+function UserMessage({
+  item,
+  run,
+  canEdit,
+  revisionSubmitting,
+  onEditResend,
+}: {
+  item: Item;
+  run: Run;
+  canEdit: boolean;
+  revisionSubmitting: boolean;
+  onEditResend: Props["onEditResend"];
+}) {
   const formattedTime = formatItemTime(item.completedAt ?? item.createdAt);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(item.content ?? "");
+
+  useEffect(() => {
+    if (!editing) setDraft(item.content ?? "");
+  }, [editing, item.content]);
+
+  async function submitEdit(): Promise<void> {
+    const value = draft.trim();
+    if (!value || revisionSubmitting) return;
+    await onEditResend(run, value);
+    setEditing(false);
+  }
 
   return (
     <div className="feed-item feed-item--user">
       <div className="user-message-bubble">
-        <p>{item.content}</p>
+        {editing ? (
+          <div className="user-message-editor">
+            <textarea
+              autoFocus
+              value={draft}
+              disabled={revisionSubmitting}
+              aria-label="编辑最近一次提问"
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setEditing(false);
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  void submitEdit();
+                }
+              }}
+            />
+            <div className="user-message-editor-actions">
+              <button type="button" disabled={revisionSubmitting} onClick={() => setEditing(false)}>取消</button>
+              <button
+                type="button"
+                className="user-message-editor-submit"
+                disabled={revisionSubmitting || !draft.trim()}
+                onClick={() => void submitEdit()}
+              >
+                {revisionSubmitting ? "发送中…" : "发送"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p>{item.content}</p>
+        )}
       </div>
-      <div className="feed-item-footer">
-        {item.content && <CopyButton content={item.content} />}
-        {formattedTime && <span className="feed-item-timestamp">{formattedTime}</span>}
-      </div>
+      {!editing && (
+        <div className="feed-item-footer response-footer">
+          <div className="response-actions-left">
+            {item.content && <CopyButton content={item.content} />}
+            {canEdit && item.content && (
+              <ActionButton
+                label="编辑并重新发送"
+                disabled={revisionSubmitting}
+                onClick={() => setEditing(true)}
+              >
+                <EditIcon />
+              </ActionButton>
+            )}
+          </div>
+          {formattedTime && <span className="feed-item-timestamp">{formattedTime}</span>}
+        </div>
+      )}
     </div>
   );
 }
 
-function AssistantMessage({ item }: { item: Item }) {
+function AssistantMessage({
+  item,
+  run,
+  modelName,
+  feedback,
+  feedbackPending,
+  canRegenerate,
+  onFeedback,
+  onRegenerate,
+}: {
+  item: Item;
+  run: Run;
+  modelName: string;
+  feedback: ResponseFeedbackValue | undefined;
+  feedbackPending: boolean;
+  canRegenerate: boolean;
+  onFeedback: Props["onFeedback"];
+  onRegenerate: Props["onRegenerate"];
+}) {
   const contentRef = useRef<HTMLDivElement>(null);
   const formattedTime = formatItemTime(item.completedAt ?? item.createdAt);
 
@@ -306,16 +470,108 @@ function AssistantMessage({ item }: { item: Item }) {
     latest?.scrollIntoView({ block: "end" });
   }, [item.content, item.status]);
 
+  const canFeedback = item.status === "completed" && Boolean(item.content);
+
   return (
     <article className="feed-item feed-item--assistant" ref={contentRef}>
       <MarkdownContent content={item.content || ""} />
       {item.content && (
-        <div className="feed-item-footer">
-          <CopyButton content={item.content} />
-          {formattedTime && <span className="feed-item-timestamp">{formattedTime}</span>}
+        <div className="feed-item-footer response-footer">
+          <div className="response-actions-left">
+            <CopyButton content={item.content} />
+            <ActionButton
+              label={feedback === "up" ? "取消点赞" : "点赞"}
+              active={feedback === "up"}
+              disabled={!canFeedback || feedbackPending}
+              onClick={() => void onFeedback(item.id, feedback === "up" ? null : "up")}
+            >
+              <ThumbUpIcon />
+            </ActionButton>
+            <ActionButton
+              label={feedback === "down" ? "取消差评" : "差评"}
+              active={feedback === "down"}
+              disabled={!canFeedback || feedbackPending}
+              onClick={() => void onFeedback(item.id, feedback === "down" ? null : "down")}
+            >
+              <ThumbDownIcon />
+            </ActionButton>
+            {canRegenerate && (
+              <ActionButton label="重新回答" onClick={() => void onRegenerate(run)}>
+                <RegenerateIcon />
+              </ActionButton>
+            )}
+          </div>
+          <div className="response-meta">
+            <span className="response-model" title={`本次回复模型：${modelName}`}>{modelName}</span>
+            {formattedTime && <span className="feed-item-timestamp">{formattedTime}</span>}
+          </div>
         </div>
       )}
     </article>
+  );
+}
+
+function ActionButton({
+  label,
+  active = false,
+  disabled = false,
+  onClick,
+  children,
+}: {
+  label: string;
+  active?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className={`response-action-button${active ? " response-action-button--active" : ""}`}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      aria-pressed={active || undefined}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ThumbUpIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M7 10v10H4a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h3Z" />
+      <path d="M7 20h9.2a2 2 0 0 0 1.9-1.4l2-6A2 2 0 0 0 18.2 10H14l.7-3.4A2.2 2.2 0 0 0 12.5 4L7 10Z" />
+    </svg>
+  );
+}
+
+function ThumbDownIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M7 14V4H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h3Z" />
+      <path d="M7 4h9.2a2 2 0 0 1 1.9 1.4l2 6a2 2 0 0 1-1.9 2.6H14l.7 3.4a2.2 2.2 0 0 1-2.2 2.6L7 14Z" />
+    </svg>
+  );
+}
+
+function RegenerateIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M20 7v5h-5" />
+      <path d="M19 12a7 7 0 1 1-2-5" />
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4 11.5-11.5Z" />
+    </svg>
   );
 }
 
