@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from eidos_runtime.db.database import now_ms as _now_ms
+from eidos_runtime.db.errors import InvalidRunStateError
 from eidos_runtime.db.repositories.execution import (
     ExecutionRepository as BaseExecutionRepository,
 )
-from eidos_runtime.db.transitions import transition_segments
 from eidos_runtime.runtime.resolution import (
     RuleResolutionSnapshot,
     StepResolutionSnapshot,
 )
-from eidos_runtime.runtime.state_machine import SegmentStatus
+from eidos_runtime.runtime.state_machine import SegmentStatus, ensure_transition
 
 
 SEGMENT_STEP_QUANTUM = 20
@@ -44,7 +44,8 @@ class ExecutionRepository(BaseExecutionRepository):
         with self.lock, self._connection() as connection:
             segment = connection.execute(
                 """
-                SELECT step_count, effective_ms FROM execution_segments
+                SELECT id, status, step_count, effective_ms
+                FROM execution_segments
                 WHERE run_id = ? AND status = 'running'
                 ORDER BY ordinal DESC LIMIT 1
                 """,
@@ -67,11 +68,16 @@ class ExecutionRepository(BaseExecutionRepository):
             ).fetchone()
             if running_step is not None:
                 return
-            transition_segments(
-                connection,
-                run_id,
-                frozenset({SegmentStatus.RUNNING}),
-                SegmentStatus.COMPLETED,
-                _now_ms(),
-                "segment_quantum_exhausted",
+
+            current = SegmentStatus(segment["status"])
+            ensure_transition(current, SegmentStatus.COMPLETED)
+            changed = connection.execute(
+                """
+                UPDATE execution_segments
+                SET status = 'completed', completed_at = ?
+                WHERE id = ? AND status = 'running'
+                """,
+                (_now_ms(), segment["id"]),
             )
+            if changed.rowcount != 1:
+                raise InvalidRunStateError("segment status changed")
