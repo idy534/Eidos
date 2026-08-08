@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { renderToStaticMarkup } from "react-dom/server";
 
-import type { Item, ModelOption, Run } from "../contracts.js";
+import type { Item, ModelOption, ResponseActionState, Run } from "../contracts.js";
 import { ExecutionFeed } from "./ExecutionFeed.js";
 
 
@@ -60,8 +60,8 @@ const models: ModelOption[] = [
 ];
 
 function render(
-  responseActionState = {
-    feedback: [{ itemId: "assistant-1", value: "up" as const }],
+  responseActionState: ResponseActionState = {
+    feedback: [{ itemId: "assistant-1", value: "up" }],
     revisions: [],
   },
 ): string {
@@ -93,7 +93,7 @@ test("superseded run is removed from canonical execution feed", () => {
     revisions: [{
       runId: "run-2",
       sourceRunId: "run-1",
-      kind: "edit" as const,
+      kind: "edit",
     }],
   });
   assert.doesNotMatch(markup, /原始问题/);
