@@ -13,14 +13,18 @@
   min-width: 0;
 }
 
+.response-actions-left .feed-item-copy-btn,
 .response-action-button {
   width: 28px;
   height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 0;
   border-radius: 7px;
+}
+
+.response-action-button {
+  border: 0;
   background: transparent;
   color: var(--text-muted, #6f6f6f);
   cursor: pointer;
