@@ -28,6 +28,11 @@ export const IPC = {
   // Run
   RUN_START: "run:start",
   RUN_CANCEL: "run:cancel",
+  RUN_REVISE: "run:revise",
+
+  // Response actions
+  RESPONSE_ACTION_STATE: "response-action:state",
+  ITEM_SET_FEEDBACK: "item:set-feedback",
 
   // Model
   MODEL_PRESETS: "model:presets",
