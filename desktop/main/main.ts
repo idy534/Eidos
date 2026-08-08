@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { RuntimeClient } from "./runtime-client.js";
+import "./response-runtime-client.js";
 import { redactLogLine, sanitizeLogValue } from "./log-redaction.js";
 import { dispatchAppCommand as dispatchCommand, ensureAppWindow as ensureWindow } from "./app-command-dispatch.js";
 import { QuitFlowController, type ActiveRunProjection, type QuitFlowDependencies } from "./quit-flow.js";
@@ -15,6 +16,7 @@ import type {
   RuntimeStatus,
   ModelCreateInput,
   ModelUpdateInput,
+  ResponseFeedbackValue,
 } from "../shared/index.js";
 import { IPC, MAX_APPROVAL_FEEDBACK_BYTES } from "../shared/index.js";
 
@@ -438,6 +440,40 @@ ipcMain.handle(IPC.RUN_CANCEL, (_event, runId: unknown) => {
   if (typeof runId !== "string") throw new Error("Run 参数无效。");
   log("info", "run", "Cancel requested", { runId });
   return clientOrThrow().cancelRun(runId);
+});
+ipcMain.handle(IPC.RUN_REVISE, (_event, sourceRunId: unknown, userInput: unknown) => {
+  if (
+    typeof sourceRunId !== "string"
+    || (userInput !== undefined && typeof userInput !== "string")
+    || (typeof userInput === "string" && (
+      !userInput.trim() || Buffer.byteLength(userInput, "utf8") > 64 * 1024
+    ))
+  ) {
+    throw new Error("重新回答参数无效。");
+  }
+  log("info", "run", "Run revision requested", {
+    sourceRunId,
+    kind: userInput === undefined ? "regenerate" : "edit",
+  });
+  return clientOrThrow().reviseRun(sourceRunId, userInput);
+});
+
+ipcMain.handle(IPC.RESPONSE_ACTION_STATE, (_event, sessionId: unknown) => {
+  if (typeof sessionId !== "string") throw new Error("回复操作参数无效。");
+  return clientOrThrow().readResponseActionState(sessionId);
+});
+ipcMain.handle(IPC.ITEM_SET_FEEDBACK, (_event, itemId: unknown, feedback: unknown) => {
+  if (
+    typeof itemId !== "string"
+    || (feedback !== null && !["up", "down"].includes(String(feedback)))
+  ) {
+    throw new Error("回复反馈参数无效。");
+  }
+  log("info", "feedback", "Response feedback requested", { itemId, feedback });
+  return clientOrThrow().setItemFeedback(
+    itemId,
+    feedback as ResponseFeedbackValue | null,
+  );
 });
 
 ipcMain.handle(IPC.MODEL_PRESETS, () => clientOrThrow().listModelPresets());

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Session } from "../contracts.js";
+import type { Run, Session } from "../contracts.js";
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import { EidosMark } from "../components/EidosMark.js";
@@ -14,6 +14,7 @@ import { useSessionController } from "./useSessionController.js";
 import { useRunController } from "./useRunController.js";
 import { useApprovalController } from "./useApprovalController.js";
 import { useModelController } from "./useModelController.js";
+import { useResponseActionController } from "./useResponseActionController.js";
 import { resolveSessionModelId } from "./session-model-resolver.js";
 import { useExtensionController } from "./useExtensionController.js";
 import { applyNotification, userFacingError } from "../session-state.js";
@@ -43,6 +44,9 @@ export function AppShell({ runtime }: AppShellProps) {
   const [approvalState, approvalActions] = useApprovalController();
   const [modelState, modelActions] = useModelController();
   const [extensionState, extensionActions] = useExtensionController();
+  const [responseActionState, responseActionActions] = useResponseActionController(
+    sessionState.snapshot?.session.id,
+  );
 
   // UI-only state (not domain state)
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -62,7 +66,6 @@ export function AppShell({ runtime }: AppShellProps) {
       : workspaceRef.current;
   }, []);
 
-  // Aggregate workbench error display (domain-scoped errors remain in their respective components/pages)
   const topError = sessionState.error ?? runState.error;
 
   // -----------------------------------------------------------------------
@@ -88,6 +91,13 @@ export function AppShell({ runtime }: AppShellProps) {
       resolveSessionModelId(snapshot.runs),
     );
   }, [modelState.list, sessionState.snapshot?.session.id]);
+
+  useEffect(() => {
+    const sessionId = sessionState.snapshot?.session.id;
+    if (!sessionId || runtimeStatus.state !== "ready" || !isStorageReady) return;
+    void responseActionActions.load(sessionId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionState.snapshot?.session.id, runtimeStatus.state, isStorageReady]);
 
   // -----------------------------------------------------------------------
   // Runtime notifications
@@ -221,7 +231,7 @@ export function AppShell({ runtime }: AppShellProps) {
   }
 
   // -----------------------------------------------------------------------
-  // Composer submit
+  // Run submission and revision
   // -----------------------------------------------------------------------
   async function handleSubmit(): Promise<void> {
     if (!sessionState.snapshot || !modelState.selectedModelId) return;
@@ -230,6 +240,22 @@ export function AppShell({ runtime }: AppShellProps) {
       selectedModelId: modelState.selectedModelId,
       isStorageReady,
       onRunProjected: sessionActions.projectRun,
+    });
+  }
+
+  async function reviseLatestRun(run: Run, userInput?: string): Promise<void> {
+    const snapshot = sessionState.snapshot;
+    if (!snapshot || run.sessionId !== snapshot.session.id) return;
+    await runActions.reviseRun({
+      snapshot,
+      sourceRunId: run.id,
+      ...(userInput !== undefined ? { userInput } : {}),
+      isStorageReady,
+      onRunProjected: sessionActions.projectRun,
+      onRevisionProjected: (revision) => {
+        responseActionActions.projectRevision(snapshot.session.id, revision);
+      },
+      onRefreshSession: sessionActions.refreshCompletedSession,
     });
   }
 
@@ -355,9 +381,19 @@ export function AppShell({ runtime }: AppShellProps) {
               )}
             </header>
 
+            {responseActionState.error && (
+              <p className="approval-error response-action-error" role="alert">
+                {responseActionState.error}
+              </p>
+            )}
+
             <ExecutionFeed
               items={snapshot.items}
               runs={snapshot.runs}
+              models={modelState.list?.models ?? []}
+              responseActionState={responseActionState.responseState}
+              pendingFeedbackItemIds={responseActionState.pendingFeedbackItemIds}
+              revisionSubmitting={runState.isSubmitting}
               stepResolutions={snapshot.stepResolutions}
               approvals={approvals.filter((a) => a.sessionId === snapshot.session.id)}
               respondingApprovalIds={respondingApprovalIds}
@@ -369,6 +405,10 @@ export function AppShell({ runtime }: AppShellProps) {
               onRetryLoadPending={() => void approvalActions.loadPending()}
               onApprove={(request) => void approvalActions.approve(request)}
               onReject={(request) => void approvalActions.reject(request)}
+              onFeedback={(itemId, feedback) =>
+                responseActionActions.setFeedback(snapshot.session.id, itemId, feedback)}
+              onRegenerate={(run) => reviseLatestRun(run)}
+              onEditResend={(run, editedInput) => reviseLatestRun(run, editedInput)}
             />
 
             <Composer

@@ -1,0 +1,181 @@
+.response-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.response-actions-left,
+.response-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.response-actions-left .feed-item-copy-btn,
+.response-action-button {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+}
+
+.response-action-button {
+  flex: 0 0 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease, transform 120ms ease;
+}
+
+.response-action-button svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+  flex: none;
+  stroke: currentColor;
+}
+
+.response-action-button:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.055);
+  color: var(--text);
+  box-shadow: none;
+}
+
+.response-action-button:active:not(:disabled) {
+  transform: scale(0.94);
+  box-shadow: none;
+}
+
+.response-action-button:focus-visible {
+  outline: 2px solid var(--accent-glow);
+  outline-offset: 1px;
+}
+
+.response-action-button:disabled {
+  cursor: default;
+  opacity: 0.38;
+  box-shadow: none;
+}
+
+.response-action-button--active {
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.065);
+}
+
+/* User edit follows the existing copy-button behavior: hidden until the
+ * message is hovered or keyboard focus enters the message actions. */
+.feed-item--user .response-action-button {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.feed-item--user:hover .response-action-button,
+.feed-item--user:focus-within .response-action-button,
+.feed-item--user .response-action-button:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Regenerate uses a balanced two-way refresh glyph rather than the previous
+ * open-circle arrow, while keeping the same quiet icon-button surface. */
+.response-action-button[aria-label="重新回答"] {
+  position: relative;
+  border-radius: 8px;
+}
+
+.response-action-button[aria-label="重新回答"] svg {
+  display: none;
+}
+
+.response-action-button[aria-label="重新回答"]::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  flex: none;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 11a8 8 0 0 0-14.9-4'/%3E%3Cpath d='M4 4v4h4'/%3E%3Cpath d='M4 13a8 8 0 0 0 14.9 4'/%3E%3Cpath d='M20 20v-4h-4'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 11a8 8 0 0 0-14.9-4'/%3E%3Cpath d='M4 4v4h4'/%3E%3Cpath d='M4 13a8 8 0 0 0 14.9 4'/%3E%3Cpath d='M20 20v-4h-4'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+}
+
+.response-action-button[aria-label="重新回答"]:hover:not(:disabled) {
+  background: var(--surface-muted);
+}
+
+.response-model {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.response-meta .feed-item-timestamp::before {
+  content: "·";
+  margin-right: 4px;
+}
+
+.user-message-editor {
+  min-width: min(560px, 68vw);
+}
+
+.user-message-editor textarea {
+  width: 100%;
+  min-height: 76px;
+  max-height: 220px;
+  resize: vertical;
+  box-sizing: border-box;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  color: inherit;
+  font: inherit;
+  line-height: 1.5;
+  padding: 10px 12px;
+  outline: none;
+}
+
+.user-message-editor textarea:focus {
+  border-color: rgba(0, 0, 0, 0.24);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.04);
+}
+
+.user-message-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.user-message-editor-actions button {
+  min-height: 28px;
+  border: 0;
+  border-radius: 7px;
+  padding: 0 10px;
+  background: rgba(0, 0, 0, 0.055);
+  color: inherit;
+  cursor: pointer;
+}
+
+.user-message-editor-actions button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.user-message-editor-actions .user-message-editor-submit {
+  background: rgba(0, 0, 0, 0.84);
+  color: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .response-action-button {
+    transition: none;
+  }
+}

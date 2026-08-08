@@ -26,6 +26,12 @@ import type {
   RuntimeNotification,
   AppShortcut,
 } from "../shared/domain-contracts.js";
+import type {
+  ItemFeedbackResult,
+  ResponseActionState,
+  ResponseFeedbackValue,
+  RunRevisionResult,
+} from "../shared/response-actions.js";
 
 const api: EidosRuntimeAPI = {
   // Runtime status
@@ -56,6 +62,16 @@ const api: EidosRuntimeAPI = {
   startRun: (sessionId: string, userInput: string, modelId: ModelId): Promise<Run> =>
     ipcRenderer.invoke(IPC.RUN_START, sessionId, userInput, modelId),
   cancelRun: (runId: string): Promise<Run> => ipcRenderer.invoke(IPC.RUN_CANCEL, runId),
+  reviseRun: (sourceRunId: string, userInput?: string): Promise<RunRevisionResult> =>
+    ipcRenderer.invoke(IPC.RUN_REVISE, sourceRunId, userInput),
+
+  // Response actions
+  readResponseActionState: (sessionId: string): Promise<ResponseActionState> =>
+    ipcRenderer.invoke(IPC.RESPONSE_ACTION_STATE, sessionId),
+  setItemFeedback: (
+    itemId: string,
+    feedback: ResponseFeedbackValue | null,
+  ): Promise<ItemFeedbackResult> => ipcRenderer.invoke(IPC.ITEM_SET_FEEDBACK, itemId, feedback),
 
   // Models
   listModelPresets: (): Promise<ModelPresetsResult> => ipcRenderer.invoke(IPC.MODEL_PRESETS),

@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import type { ModelId, Run, SessionSnapshot } from "../contracts.js";
+import type { ModelId, Run, RunRevisionResult, SessionSnapshot } from "../contracts.js";
 import {
   deriveComposerMode,
   findActiveRun,
@@ -34,6 +34,15 @@ export interface RunControllerActions {
     isStorageReady: boolean;
     onRunProjected?: (sessionId: string, run: Run) => void;
   }) => Promise<void>;
+  reviseRun: (params: {
+    snapshot: SessionSnapshot;
+    sourceRunId: string;
+    userInput?: string;
+    isStorageReady: boolean;
+    onRunProjected?: (sessionId: string, run: Run) => void;
+    onRevisionProjected?: (revision: RunRevisionResult) => void;
+    onRefreshSession?: (sessionId: string) => Promise<unknown>;
+  }) => Promise<void>;
   cancelRun: (params: { runId: string; sessionId: string } | string) => Promise<void>;
   clearError: (sessionId?: string) => void;
 }
@@ -47,19 +56,18 @@ export interface RunControllerActions {
  * 3. Returned Run objects are projected immediately upon IPC resolution.
  * 4. Stale responses (wrong sessionId) do not mutate other session inputs or states.
  * 5. Errors are Session-scoped (Record<sessionId, string>).
- * 6. All locks are released in `finally` blocks.
+ * 6. Start and revision operations share the same synchronous lock.
+ * 7. All locks are released in `finally` blocks.
  */
 export function useRunController(
   snapshot: SessionSnapshot | undefined,
   isStorageReady: boolean,
 ): [RunControllerState, RunControllerActions] {
-  // Session-scoped draft inputs
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [submissionOperation, setSubmissionOperation] = useState<SubmissionOperation | undefined>(undefined);
   const [cancelingRunId, setCancelingRunId] = useState<string | undefined>(undefined);
   const [errorsBySessionId, setErrorsBySessionId] = useState<Record<string, string>>({});
 
-  // Synchronous lock ref to prevent race conditions during rapid shortcut/click dispatch
   const submissionLockRef = useRef<SubmissionOperation | undefined>(undefined);
 
   const currentSessionId = snapshot?.session.id;
@@ -111,7 +119,6 @@ export function useRunController(
     const sessionId = currentSnapshot.session.id;
     const sessionInput = inputs[sessionId] ?? "";
 
-    // Synchronous lock check — if another session owns the lock, present explicit local busy feedback
     if (submissionLockRef.current) {
       if (submissionLockRef.current.sessionId !== sessionId) {
         setErrorsBySessionId((prev) => ({
@@ -122,17 +129,13 @@ export function useRunController(
       return;
     }
 
-    // Defensive guards
     if (!storageReady) return;
     if (!sessionInput.trim()) return;
 
     const currentActiveRun = findActiveRun(currentSnapshot.runs);
-    // Evaluate eligibility using target session's state
     const mode = deriveComposerMode(storageReady, currentActiveRun, false);
-
     if (mode !== "idle") return;
 
-    // Double check no active run exists before starting.
     const freshActiveRun = findActiveRun(currentSnapshot.runs);
     if (freshActiveRun) return;
 
@@ -143,19 +146,19 @@ export function useRunController(
       kind: "start",
     };
 
-    // Synchronously acquire lock before async operations
     submissionLockRef.current = operation;
     setSubmissionOperation(operation);
     clearSessionError(sessionId);
 
     try {
-      const returnedRun = await window.eidosRuntime.startRun(sessionId, sessionInput.trim(), selectedModelId);
+      const returnedRun = await window.eidosRuntime.startRun(
+        sessionId,
+        sessionInput.trim(),
+        selectedModelId,
+      );
 
-      // Verify response is still for the submitted session
       if (returnedRun.sessionId === sessionId) {
-        // Immediately project returned run
         onRunProjected?.(sessionId, returnedRun);
-        // Clear input ONLY for the target session
         setInputs((prev) => {
           const next = { ...prev };
           delete next[sessionId];
@@ -177,6 +180,63 @@ export function useRunController(
       }
     }
   }, [inputs, clearSessionError]);
+
+  const reviseRun = useCallback(async ({
+    snapshot: currentSnapshot,
+    sourceRunId,
+    userInput,
+    isStorageReady: storageReady,
+    onRunProjected,
+    onRevisionProjected,
+    onRefreshSession,
+  }: {
+    snapshot: SessionSnapshot;
+    sourceRunId: string;
+    userInput?: string;
+    isStorageReady: boolean;
+    onRunProjected?: (sessionId: string, run: Run) => void;
+    onRevisionProjected?: (revision: RunRevisionResult) => void;
+    onRefreshSession?: (sessionId: string) => Promise<unknown>;
+  }): Promise<void> => {
+    const sessionId = currentSnapshot.session.id;
+    if (submissionLockRef.current || !storageReady || findActiveRun(currentSnapshot.runs)) {
+      return;
+    }
+    if (userInput !== undefined && !userInput.trim()) return;
+
+    const token = Symbol("run-revision");
+    const operation: SubmissionOperation = {
+      token,
+      sessionId,
+      kind: "start",
+    };
+    submissionLockRef.current = operation;
+    setSubmissionOperation(operation);
+    clearSessionError(sessionId);
+
+    try {
+      const revision = await window.eidosRuntime.reviseRun(
+        sourceRunId,
+        userInput?.trim(),
+      );
+      if (revision.run.sessionId !== sessionId) return;
+      onRevisionProjected?.(revision);
+      onRunProjected?.(sessionId, revision.run);
+      await onRefreshSession?.(sessionId);
+    } catch (cause) {
+      if (submissionLockRef.current?.token === operation.token) {
+        setErrorsBySessionId((prev) => ({
+          ...prev,
+          [sessionId]: userFacingError(cause),
+        }));
+      }
+    } finally {
+      if (submissionLockRef.current?.token === operation.token) {
+        submissionLockRef.current = undefined;
+        setSubmissionOperation(undefined);
+      }
+    }
+  }, [clearSessionError]);
 
   const cancelingRunIdRef = useRef<string | undefined>(undefined);
 
@@ -225,6 +285,7 @@ export function useRunController(
     setInput,
     setInputForSession,
     submitInput,
+    reviseRun,
     cancelRun,
     clearError: clearErrorAction,
   };

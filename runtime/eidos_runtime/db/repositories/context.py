@@ -20,6 +20,7 @@ MAX_CONTEXT_BYTES = 768 * 1024
 MAX_CONTEXT_ITEMS = 200
 RECENT_CONTEXT_STEPS = 3
 
+
 class ContextRepository(Repository):
     def context_projection_facts(self, run_id: str) -> ContextFacts:
         return self._bounded_context_facts(run_id, newest=True)
@@ -61,6 +62,10 @@ class ContextRepository(Repository):
                 SELECT * FROM items
                 WHERE session_id = ? AND kind = 'user_message'
                   AND status = 'completed'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM run_revisions
+                    WHERE run_revisions.source_run_id = items.run_id
+                  )
                 ORDER BY creation_seq DESC LIMIT 1
                 """,
                 (run["session_id"],),
@@ -119,6 +124,10 @@ class ContextRepository(Repository):
                 WHERE items.session_id = ?
                   AND items.status IN ('completed', 'failed', 'declined')
                   AND NOT (items.kind = 'assistant_message' AND items.incomplete = 1)
+                  AND NOT EXISTS (
+                    SELECT 1 FROM run_revisions
+                    WHERE run_revisions.source_run_id = items.run_id
+                  )
                   {excluded_sql}
             """
             size_expression = """
