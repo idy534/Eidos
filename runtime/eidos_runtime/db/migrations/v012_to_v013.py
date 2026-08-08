@@ -6,26 +6,6 @@ import sqlite3
 FROM_VERSION = 12
 TO_VERSION = 13
 
-_RESPONSE_ACTIONS_SQL = """
-CREATE TABLE response_feedback (
-    item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
-    value TEXT NOT NULL CHECK (value IN ('up', 'down')),
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
-
-CREATE TABLE run_revisions (
-    run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
-    source_run_id TEXT NOT NULL UNIQUE REFERENCES runs(id) ON DELETE CASCADE,
-    revision_kind TEXT NOT NULL CHECK (revision_kind IN ('regenerate', 'edit')),
-    created_at INTEGER NOT NULL,
-    CHECK (run_id <> source_run_id)
-);
-
-CREATE INDEX run_revisions_source
-ON run_revisions(source_run_id);
-"""
-
 _REQUIRED_TABLES = frozenset({"runs", "items", "step_resolution_snapshots"})
 
 
@@ -59,5 +39,30 @@ def verify_v12_structure(connection: sqlite3.Connection) -> None:
 
 def migrate(connection: sqlite3.Connection) -> None:
     verify_v12_structure(connection)
-    connection.executescript(_RESPONSE_ACTIONS_SQL)
+    connection.execute(
+        """
+        CREATE TABLE response_feedback (
+            item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+            value TEXT NOT NULL CHECK (value IN ('up', 'down')),
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE run_revisions (
+            run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+            source_run_id TEXT NOT NULL UNIQUE REFERENCES runs(id) ON DELETE CASCADE,
+            revision_kind TEXT NOT NULL CHECK (
+                revision_kind IN ('regenerate', 'edit')
+            ),
+            created_at INTEGER NOT NULL,
+            CHECK (run_id <> source_run_id)
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX run_revisions_source ON run_revisions(source_run_id)"
+    )
     connection.execute(f"PRAGMA user_version = {TO_VERSION}")
