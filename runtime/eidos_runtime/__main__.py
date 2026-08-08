@@ -1,4 +1,4 @@
-from eidos_runtime.protocol.server import run
+from eidos_runtime.protocol.response_server import run
 
 
 raise SystemExit(run())
