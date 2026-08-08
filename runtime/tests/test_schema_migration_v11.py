@@ -1,8 +1,9 @@
-"""Schema migration tests for V11 and V12.
+"""Schema migration tests for the supported V11 → V12 → V13 window.
 
 V11: drops legacy model storage tables.
 V12: adds effective_cwd to runs; adds resolved_instructions_hash and
      effective_cwd to step_resolution_snapshots.
+V13: adds response feedback and run revision persistence.
 """
 from __future__ import annotations
 
@@ -29,7 +30,7 @@ from eidos_runtime.db.storage import DATABASE_NAME, SessionStore  # noqa: E402
 
 
 class SchemaV11MigrationTests(unittest.TestCase):
-    """Upgrade from V10 → V11 → V12 (full chain)."""
+    """Validate the current two-revision migration support window."""
 
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="eidos-v11-migration-")
@@ -146,70 +147,29 @@ class SchemaV11MigrationTests(unittest.TestCase):
             connection.close()
 
     # ------------------------------------------------------------------
-    # V10 → V12 (two-step migration chain)
+    # V10 is outside the current two-revision migration window.
     # ------------------------------------------------------------------
 
-    def test_v10_upgrades_to_v12_preserves_runs_and_drops_legacy_model_storage(self) -> None:
+    def test_v10_is_rejected_without_mutation(self) -> None:
         self._create_v10(with_facts=True)
 
         store = SessionStore(self.data)
         store.initialize()
 
-        self.assertEqual(store.health(), {"state": "ready"})
-        assert store.connection is not None
-        self.assertEqual(
-            store.connection.execute("PRAGMA user_version").fetchone()[0],
-            SCHEMA_VERSION,
-        )
-        self.assertEqual(store.connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0], 1)
-        columns = {
-            row[1] for row in store.connection.execute("PRAGMA table_info(runs)")
-        }
-        # V11: model_profile_id dropped
-        self.assertNotIn("model_profile_id", columns)
-        # V12: effective_cwd added
-        self.assertIn("effective_cwd", columns)
-        _, tables = self._revision_and_tables()
-        self.assertTrue({
-            "model_profiles", "model_capability_snapshots", "run_model_snapshots"
-        }.isdisjoint(tables))
-        # step_resolution_snapshots gets new columns
-        srs_columns = {
-            row[1] for row in store.connection.execute(
-                "PRAGMA table_info(step_resolution_snapshots)"
-            )
-        }
-        self.assertIn("resolved_instructions_hash", srs_columns)
-        self.assertIn("effective_cwd", srs_columns)
-        store.close()
-
-    def test_v10_migration_failure_rolls_back_to_intact_v10(self) -> None:
-        self._create_v10(with_facts=True)
-
-        def fail_after_first_drop(connection: sqlite3.Connection) -> None:
-            connection.execute("DROP TABLE run_model_snapshots")
-            raise sqlite3.OperationalError("injected v11 migration failure")
-
-        with patch(
-            "eidos_runtime.db.migrations.v010_to_v011.migrate",
-            side_effect=fail_after_first_drop,
-        ):
-            store = SessionStore(self.data)
-            store.initialize()
-
         self.assertEqual(
             store.health(),
-            {"state": "health_only", "code": "schema_migration_failed"},
+            {"state": "health_only", "code": "schema_revision_unsupported"},
         )
         revision, tables = self._revision_and_tables()
         self.assertEqual(revision, 10)
         self.assertIn("run_model_snapshots", tables)
+        store.close()
 
     # ------------------------------------------------------------------
-    # V11 → V12 (single step)
+    # V11 → V12 → V13 migration chain.
     # ------------------------------------------------------------------
 
-    def test_v11_upgrades_to_v12_adds_new_columns(self) -> None:
+    def test_v11_upgrades_to_v13_and_preserves_current_contract(self) -> None:
         self._create_v11(with_facts=True)
 
         store = SessionStore(self.data)
@@ -225,6 +185,16 @@ class SchemaV11MigrationTests(unittest.TestCase):
             row[1] for row in store.connection.execute("PRAGMA table_info(runs)")
         }
         self.assertIn("effective_cwd", columns)
+        srs_columns = {
+            row[1] for row in store.connection.execute(
+                "PRAGMA table_info(step_resolution_snapshots)"
+            )
+        }
+        self.assertIn("resolved_instructions_hash", srs_columns)
+        self.assertIn("effective_cwd", srs_columns)
+        _, tables = self._revision_and_tables()
+        self.assertIn("response_feedback", tables)
+        self.assertIn("run_revisions", tables)
         store.close()
 
     def test_v12_migration_failure_rolls_back_to_intact_v11(self) -> None:
@@ -252,7 +222,7 @@ class SchemaV11MigrationTests(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_other_revisions_are_rejected_without_mutation(self) -> None:
-        for revision in (9, 13):
+        for revision in (9, SCHEMA_VERSION + 1):
             with self.subTest(revision=revision):
                 if self.database.exists():
                     self.database.unlink()
