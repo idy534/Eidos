@@ -197,6 +197,20 @@ test("every terminal run state has a user-facing presentation", () => {
     label: "已中断，未自动恢复",
     tone: "warning",
   });
+  assert.deepEqual(
+    terminalRunPresentation({ ...run("stopped"), stopReason: "repeated_tool_call" }),
+    {
+      label: "检测到重复工具调用，任务已停止",
+      tone: "warning",
+    },
+  );
+  assert.deepEqual(
+    terminalRunPresentation({ ...run("stopped"), stopReason: "max_effective_runtime" }),
+    {
+      label: "已达到最长执行时间",
+      tone: "warning",
+    },
+  );
   assert.equal(terminalRunPresentation(run("running")), undefined);
 });
 
