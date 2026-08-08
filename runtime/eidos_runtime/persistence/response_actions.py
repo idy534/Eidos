@@ -59,17 +59,49 @@ class ResponseActionRepository:
             )
         return {"itemId": item_id, "feedback": value}
 
-    def feedback_for_items(self, item_ids: list[str]) -> dict[str, FeedbackValue]:
-        if not item_ids:
-            return {}
-        placeholders = ",".join("?" for _ in item_ids)
+    def state_for_session(self, session_id: str) -> dict[str, object]:
         with self._store.lock:
-            rows = self._connection().execute(
-                f"SELECT item_id, value FROM response_feedback "
-                f"WHERE item_id IN ({placeholders})",
-                item_ids,
+            connection = self._connection()
+            session = connection.execute(
+                "SELECT 1 FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            if session is None:
+                raise ResourceNotFoundError("session not found")
+            feedback_rows = connection.execute(
+                """
+                SELECT response_feedback.item_id, response_feedback.value
+                FROM response_feedback
+                JOIN items ON items.id = response_feedback.item_id
+                WHERE items.session_id = ?
+                ORDER BY items.creation_seq ASC
+                """,
+                (session_id,),
             ).fetchall()
-        return {str(row["item_id"]): row["value"] for row in rows}
+            revision_rows = connection.execute(
+                """
+                SELECT run_revisions.run_id, run_revisions.source_run_id,
+                       run_revisions.revision_kind
+                FROM run_revisions
+                JOIN runs ON runs.id = run_revisions.run_id
+                WHERE runs.session_id = ?
+                ORDER BY runs.creation_seq ASC
+                """,
+                (session_id,),
+            ).fetchall()
+        return {
+            "feedback": [
+                {"itemId": str(row["item_id"]), "value": str(row["value"])}
+                for row in feedback_rows
+            ],
+            "revisions": [
+                {
+                    "runId": str(row["run_id"]),
+                    "sourceRunId": str(row["source_run_id"]),
+                    "kind": str(row["revision_kind"]),
+                }
+                for row in revision_rows
+            ],
+        }
 
     def validate_revision_source(self, source_run_id: str) -> dict[str, object]:
         with self._store.lock:
@@ -163,23 +195,6 @@ class ResponseActionRepository:
                 """,
                 (run_id, source_run_id, revision_kind, now_ms()),
             )
-
-    def revisions_for_runs(
-        self, run_ids: list[str]
-    ) -> dict[str, tuple[str, RevisionKind]]:
-        if not run_ids:
-            return {}
-        placeholders = ",".join("?" for _ in run_ids)
-        with self._store.lock:
-            rows = self._connection().execute(
-                f"SELECT run_id, source_run_id, revision_kind FROM run_revisions "
-                f"WHERE run_id IN ({placeholders})",
-                run_ids,
-            ).fetchall()
-        return {
-            str(row["run_id"]): (str(row["source_run_id"]), row["revision_kind"])
-            for row in rows
-        }
 
     def _connection(self) -> sqlite3.Connection:
         connection = self._store.connection
