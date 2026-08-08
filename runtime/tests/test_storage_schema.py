@@ -60,6 +60,8 @@ EXPECTED_TABLES = {
     "verified_compact_summaries",
     "checkpoints",
     "checkpoint_actions",
+    "response_feedback",
+    "run_revisions",
 }
 
 EXPECTED_COLUMNS = {
@@ -235,6 +237,7 @@ class StorageSchemaTests(unittest.TestCase):
                 "repository_symbols_name",
                 "repository_diagnostics_generation",
                 "checkpoints_run_boundary",
+                "run_revisions_source",
             },
         )
         for table, expected in EXPECTED_COLUMNS.items():
