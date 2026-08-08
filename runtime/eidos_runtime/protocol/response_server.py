@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 import sys
+from typing import TextIO
 
 from eidos_runtime.application.response_actions import ResponseActionApplication
+from eidos_runtime.model.client import ModelClient
 from eidos_runtime.persistence.response_actions import ResponseActionRepository
-from eidos_runtime.protocol.registry import MethodRegistration
+from eidos_runtime.protocol.registry import MethodRegistration, MethodRegistry
 from eidos_runtime.protocol.response_actions import (
     ItemSetFeedbackRequestDto,
     ItemSetFeedbackResponseDto,
@@ -33,9 +36,14 @@ logger = logging.getLogger("eidos.runtime")
 class ResponseActionRuntimeServer(RuntimeServer):
     """Runtime server with the response-action protocol slice registered."""
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
+    def __init__(
+        self,
+        output: TextIO,
+        data_directory: Path | None = None,
+        model: ModelClient | None = None,
+    ) -> None:
         self._response_action_application: ResponseActionApplication | None = None
-        super().__init__(*args, **kwargs)
+        super().__init__(output, data_directory=data_directory, model=model)
 
     def _response_actions_or_error(self) -> ResponseActionApplication:
         application = self._response_action_application
@@ -49,7 +57,7 @@ class ResponseActionRuntimeServer(RuntimeServer):
         self._response_action_application = application
         return application
 
-    def _build_method_registry(self):  # type: ignore[no-untyped-def]
+    def _build_method_registry(self) -> MethodRegistry:
         registry = super()._build_method_registry()
         registrations = (
             (
