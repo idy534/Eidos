@@ -38,6 +38,13 @@ export type {
   RuntimeEvent,
   EventListResult,
   AppShortcut,
+  ResponseActionState,
+  ResponseFeedbackState,
+  ResponseFeedbackValue,
+  RunRevisionKind,
+  RunRevisionState,
+  RunRevisionResult,
+  ItemFeedbackResult,
 } from "../../shared/index.js";
 
 declare global {
