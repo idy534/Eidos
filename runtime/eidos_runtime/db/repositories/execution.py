@@ -205,6 +205,7 @@ class ExecutionRepository(Repository):
                         rule_snapshot=rule_resolution_snapshot,
                     ),
                     workspace_version=int(run["workspace_version"]),
+                    effective_cwd=rule_resolution_snapshot.cwd,
                     created_at=_now_ms(),
                 )
             assert resolution_snapshot is not None

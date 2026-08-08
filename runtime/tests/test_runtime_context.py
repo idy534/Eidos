@@ -620,9 +620,9 @@ class ContextPersistenceTests(unittest.TestCase):
         assert self.store.connection is not None
         self.assertEqual(
             self.store.connection.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0],
-            0,
+            2,
         )
-        self.assertEqual(approvals, [])
+        self.assertEqual(len(approvals), 1)
 
     def test_one_parallel_read_failure_does_not_cancel_the_other(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "read batch")

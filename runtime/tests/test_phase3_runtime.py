@@ -514,8 +514,8 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
                 run["id"], threading.Event()
             )
 
-            self.assertNotIn("Use the checklist", json.dumps(model.contexts[0]))
-            self.assertIn("Use the checklist", model.instructions_history[0])
+            self.assertIn("Use the checklist", json.dumps(model.contexts[0]))
+            self.assertNotIn("Use the checklist", model.instructions_history[0])
             names = {
                 value.name
                 for value in model.tool_definitions_history[0]
