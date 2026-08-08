@@ -249,7 +249,7 @@ export function AppShell({ runtime }: AppShellProps) {
     await runActions.reviseRun({
       snapshot,
       sourceRunId: run.id,
-      userInput,
+      ...(userInput !== undefined ? { userInput } : {}),
       isStorageReady,
       onRunProjected: sessionActions.projectRun,
       onRevisionProjected: (revision) => {
