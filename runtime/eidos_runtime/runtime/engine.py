@@ -525,9 +525,9 @@ class RuntimeEngine:
                 step.workspace_version,
                 step.reconciliation_epoch,
             )
-            if repeated == "repeated_tool_call_recovery":
+            if repeated is not None and guard.should_recover_repeated_tool_call():
                 self.store.complete_current_step(
-                    run.run_id, "completed", reason=repeated
+                    run.run_id, "completed", reason="repeated_tool_call_recovery"
                 )
                 run = run.model_copy(update={
                     "model_context": ({
