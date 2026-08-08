@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import stat
 
@@ -19,7 +20,7 @@ class ToolExecutor(BaseToolExecutor):
         self,
         directory_fd: int,
         name: str,
-        metadata: stat_result,
+        metadata: os.stat_result,
         relative: str,
         is_git: bool,
     ) -> None:
@@ -39,10 +40,14 @@ class ToolExecutor(BaseToolExecutor):
             stat.S_ISREG(metadata.st_mode)
             and Path(name.lower()).suffix == ".rs"
         )
-        if relative != ".env" and (
-            _is_shell_sensitive_name(name)
-            or _is_sensitive_directory(name)
-        ) and not is_rust_source:
+        if (
+            relative != ".env"
+            and (
+                _is_shell_sensitive_name(name)
+                or _is_sensitive_directory(name)
+            )
+            and not is_rust_source
+        ):
             raise WorkspacePathError("sensitive_workspace_content")
         if stat.S_ISLNK(metadata.st_mode):
             return
@@ -54,7 +59,3 @@ class ToolExecutor(BaseToolExecutor):
             raise WorkspacePathError("unsupported_workspace_hardlink")
         if _contains_sensitive_pem(directory_fd, name, metadata):
             raise WorkspacePathError("sensitive_workspace_content")
-
-
-# Keep the annotation local to avoid exporting os as part of the runtime tool API.
-from os import stat_result  # noqa: E402
