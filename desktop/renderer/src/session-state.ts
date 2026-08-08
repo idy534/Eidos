@@ -201,6 +201,17 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   INTERNAL_ERROR: "Runtime 遇到内部错误，请查看诊断日志。",
 };
 
+const STOP_REASON_MESSAGES: Record<string, string> = {
+  max_total_steps: "已达到任务执行预算",
+  max_effective_runtime: "已达到最长执行时间",
+  context_still_over_budget: "上下文容量已达到上限",
+  repeated_tool_call: "检测到重复工具调用，任务已停止",
+  repeated_tool_error: "工具持续失败，任务已停止",
+  no_progress: "连续多轮未取得进展，任务已停止",
+  repeated_empty_response: "模型连续返回空响应，任务已停止",
+  repeated_sensitive_tool_input: "连续工具输入被安全策略拒绝，任务已停止",
+};
+
 export function userFacingError(cause: unknown): string {
   const message = cause instanceof Error ? cause.message : "";
   const match = message.match(/EIDOS_RUNTIME_ERROR:([A-Z_]+)/);
@@ -230,7 +241,12 @@ export function terminalRunPresentation(
     case "interrupted":
       return { label: "已中断，未自动恢复", tone: "warning" };
     case "stopped":
-      return { label: "已达到执行上限", tone: "warning" };
+      return {
+        label: run.stopReason
+          ? STOP_REASON_MESSAGES[run.stopReason] ?? "任务已停止"
+          : "任务已停止",
+        tone: "warning",
+      };
     case "queued":
     case "finalizing":
     case "running":

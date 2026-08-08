@@ -56,8 +56,18 @@ def test_real_watcher_reports_relative_add_modify_rename_delete_and_stops(
     original.write_text("two\n", encoding="utf-8")
     time.sleep(0.3)
     original.rename(renamed)
-    time.sleep(0.3)
+
+    # A rename immediately followed by delete may be coalesced by watchfiles
+    # before CI schedules the watcher thread. Wait until the renamed path has
+    # actually crossed the invalidation boundary before testing deletion.
+    rename_deadline = time.monotonic() + 5
+    while time.monotonic() < rename_deadline:
+        paths = {change.path for batch in batches for change in batch}
+        if "renamed.py" in paths:
+            break
+        time.sleep(0.05)
     renamed.unlink()
+
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         paths = {change.path for batch in batches for change in batch}

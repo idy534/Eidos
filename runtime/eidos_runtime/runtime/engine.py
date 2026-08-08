@@ -525,6 +525,30 @@ class RuntimeEngine:
                 step.workspace_version,
                 step.reconciliation_epoch,
             )
+            zero_argument_repeat = bool(validation.tool_calls) and all(
+                not call.arguments for call in validation.tool_calls
+            )
+            if (
+                repeated is not None
+                and zero_argument_repeat
+                and guard.should_recover_repeated_tool_call()
+            ):
+                self.store.complete_current_step(
+                    run.run_id, "completed", reason="repeated_tool_call_recovery"
+                )
+                run = run.model_copy(update={
+                    "model_context": ({
+                        "type": "user",
+                        "sectionId": "runtime-loop-recovery",
+                        "content": (
+                            "Runtime loop recovery: the same zero-argument tool call "
+                            "has already been attempted repeatedly against an unchanged "
+                            "workspace. Do not repeat it. Choose a different tool, or "
+                            "finish with the evidence already collected."
+                        ),
+                    },)
+                })
+                continue
             if repeated is not None:
                 self.store.complete_current_step(run.run_id, "failed", reason=repeated)
                 finalizer.finalize(

@@ -40,11 +40,9 @@ class LoopDecisionEngine:
         if run_budget is not None:
             if run_budget.run_steps_remaining <= 0 or run_budget.run_effective_ms_remaining <= 0:
                 return LoopDecision(action=LoopAction.FINALIZE, reason="run_budget_exhausted")
-            if (
-                run_budget.segment_steps_remaining <= 0
-                or run_budget.segment_effective_ms_remaining <= 0
-            ):
-                return LoopDecision(action=LoopAction.PAUSE, reason="segment_budget_exhausted")
+            # Segment limits are execution scheduling quanta, not task-completion
+            # criteria. The execution repository rolls an exhausted segment over
+            # at a Step boundary while this Run continues under its hard budget.
         if tool_batch is not None:
             if tool_batch.status == "paused":
                 return LoopDecision(action=LoopAction.PAUSE, reason=tool_batch.pause_reason)

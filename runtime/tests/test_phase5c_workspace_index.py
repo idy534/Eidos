@@ -58,10 +58,18 @@ class WorkspaceIndexTests(unittest.TestCase):
             first = self._refresh()
             first_reads = reads
             second = self._refresh()
+            unchanged_reads = reads
+            time.sleep(0.001)
+            (self.workspace / "0.txt").write_text(
+                "changed-content", encoding="utf-8"
+            )
+            changed = self._refresh()
 
-        self.assertGreater(first_reads, 0)
-        self.assertEqual(reads, first_reads)
+        self.assertEqual(first_reads, 0)
+        self.assertEqual(unchanged_reads, 0)
+        self.assertGreater(reads, unchanged_reads)
         self.assertEqual(second.generation, first.generation)
+        self.assertEqual(changed.generation, first.generation + 1)
 
     def test_git_objects_are_not_recursively_scanned(self) -> None:
         objects = self.workspace / ".git" / "objects" / "aa"

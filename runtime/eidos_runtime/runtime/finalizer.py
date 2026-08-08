@@ -14,6 +14,7 @@ from eidos_runtime.runtime.assistant_stream import AssistantStreamWriter
 from eidos_runtime.runtime.contracts import RuntimeCancelled
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.model_runner import ModelRunner, ModelStreamInterrupted
+from eidos_runtime.runtime.provider_control import contains_provider_control_syntax
 from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
     RuntimeResourceKind,
@@ -140,14 +141,17 @@ class RunFinalizer:
 
         try:
             hit_fault("finalization_model_failure")
-            ModelRunner(self.model, self.sensitive).run(
+            # Finalization is deliberately provisional until the whole provider
+            # response is known. A tool-less request must never stream provider
+            # control markup into persisted assistant content before validation.
+            result = ModelRunner(self.model, self.sensitive).run(
                 (*context, {
                     "type": "finalization",
                     "toolsAllowed": False,
                     "stopReason": stop_reason,
                 }),
                 request_cancel,
-                writer.write,
+                lambda _delta: None,
                 instructions=resolved.text,
                 allow_tools=False,
             )
@@ -155,7 +159,10 @@ class RunFinalizer:
                 raise RuntimeCancelled
             if timed_out.is_set():
                 failure_reason = "finalization_timeout"
-            else:
+            elif result.tool_calls or contains_provider_control_syntax(result.text):
+                failure_reason = "finalization_protocol_error"
+            elif result.text:
+                writer.write(result.text)
                 writer.flush()
         except SensitiveScanError:
             failure_reason = "finalization_sensitive_content_rejected"

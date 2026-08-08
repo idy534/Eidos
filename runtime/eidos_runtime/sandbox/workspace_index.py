@@ -137,6 +137,19 @@ class WorkspaceIndex:
                     raise WorkspaceIndexIncomplete from None
                 entry_count += 1
                 is_git = not relative_parent and name == ".git"
+                ignored = manifest_ignored or name in IGNORED_NAMES
+
+                # Large generated/dependency trees are outside the workspace
+                # manifest contract. Prune them before descending instead of
+                # recursively validating content that will never be retained.
+                if (
+                    ignored
+                    and not is_git
+                    and stat.S_ISDIR(metadata.st_mode)
+                    and not stat.S_ISLNK(metadata.st_mode)
+                ):
+                    continue
+
                 validate(
                     directory_fd,
                     name,
@@ -146,7 +159,6 @@ class WorkspaceIndex:
                 )
                 if is_git:
                     continue
-                ignored = manifest_ignored or name in IGNORED_NAMES
                 if stat.S_ISDIR(metadata.st_mode) and not stat.S_ISLNK(
                     metadata.st_mode
                 ):
@@ -235,7 +247,12 @@ class WorkspaceIndex:
         ):
             return None
         with self._lock:
-            if self._fingerprints.get(relative) == fingerprint:
+            previous = self._fingerprints.get(relative)
+            if previous is None:
+                # The first manifest pass is a structural baseline. Avoid hashing
+                # every source file before a trivial shell command can start.
+                return None
+            if previous == fingerprint:
                 return self._digests.get(relative)
         flags = os.O_RDONLY | os.O_NONBLOCK
         if hasattr(os, "O_NOFOLLOW"):
