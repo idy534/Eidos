@@ -18,13 +18,20 @@ import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
 import "./response-actions.css";
 
 
+type FeedbackHandler = (
+  itemId: string,
+  feedback: ResponseFeedbackValue | null,
+) => Promise<void>;
+type RegenerateHandler = (run: Run) => Promise<void>;
+type EditResendHandler = (run: Run, editedInput: string) => Promise<void>;
+
 interface Props {
   items: Item[];
   runs: Run[];
-  models: ModelOption[];
-  responseActionState: ResponseActionState;
-  pendingFeedbackItemIds: ReadonlySet<string>;
-  revisionSubmitting: boolean;
+  models?: ModelOption[];
+  responseActionState?: ResponseActionState;
+  pendingFeedbackItemIds?: ReadonlySet<string>;
+  revisionSubmitting?: boolean;
   stepResolutions?: StepResolutionReview[] | undefined;
   approvals: ApprovalRequest[];
   respondingApprovalIds?: ReadonlySet<string> | undefined;
@@ -36,9 +43,9 @@ interface Props {
   onRetryLoadPending?: (() => void) | undefined;
   onApprove: (request: ApprovalRequest) => void;
   onReject: (request: ApprovalRequest) => void;
-  onFeedback: (itemId: string, feedback: ResponseFeedbackValue | null) => Promise<void>;
-  onRegenerate: (run: Run) => Promise<void>;
-  onEditResend: (run: Run, editedInput: string) => Promise<void>;
+  onFeedback?: FeedbackHandler;
+  onRegenerate?: RegenerateHandler;
+  onEditResend?: EditResendHandler;
 }
 
 interface Segment {
@@ -55,14 +62,23 @@ const TERMINAL_RUN_STATUSES = new Set<Run["status"]>([
   "stopped", "succeeded", "failed", "canceled", "interrupted",
 ]);
 
+const EMPTY_RESPONSE_ACTION_STATE: ResponseActionState = {
+  feedback: [],
+  revisions: [],
+};
+const EMPTY_PENDING_FEEDBACK = new Set<string>();
+const NOOP_FEEDBACK: FeedbackHandler = async () => {};
+const NOOP_REGENERATE: RegenerateHandler = async () => {};
+const NOOP_EDIT_RESEND: EditResendHandler = async () => {};
+
 
 export function ExecutionFeed({
   items,
   runs,
-  models,
-  responseActionState,
-  pendingFeedbackItemIds,
-  revisionSubmitting,
+  models = [],
+  responseActionState = EMPTY_RESPONSE_ACTION_STATE,
+  pendingFeedbackItemIds = EMPTY_PENDING_FEEDBACK,
+  revisionSubmitting = false,
   stepResolutions = [],
   approvals,
   respondingApprovalIds,
@@ -74,9 +90,9 @@ export function ExecutionFeed({
   onRetryLoadPending,
   onApprove,
   onReject,
-  onFeedback,
-  onRegenerate,
-  onEditResend,
+  onFeedback = NOOP_FEEDBACK,
+  onRegenerate = NOOP_REGENERATE,
+  onEditResend = NOOP_EDIT_RESEND,
 }: Props) {
   const feedRef = useRef<HTMLElement>(null);
   const [atBottom, setAtBottom] = useState(true);
@@ -224,9 +240,9 @@ function RunSegment({
   errorsByApprovalId?: Readonly<Record<string, string>> | undefined;
   onApprove: Props["onApprove"];
   onReject: Props["onReject"];
-  onFeedback: Props["onFeedback"];
-  onRegenerate: Props["onRegenerate"];
-  onEditResend: Props["onEditResend"];
+  onFeedback: FeedbackHandler;
+  onRegenerate: RegenerateHandler;
+  onEditResend: EditResendHandler;
 }) {
   const showThinking = isLast
     && ACTIVE_RUN_STATUSES.has(run.status)
@@ -324,7 +340,7 @@ function CopyButton({ content }: { content: string }) {
   return (
     <button
       type="button"
-      className="feed-item-copy-btn response-action-button"
+      className="feed-item-copy-btn"
       onClick={handleCopy}
       title={copied ? "已复制" : "复制内容"}
       aria-label={copied ? "已复制" : "复制内容"}
@@ -364,7 +380,7 @@ function UserMessage({
   run: Run;
   canEdit: boolean;
   revisionSubmitting: boolean;
-  onEditResend: Props["onEditResend"];
+  onEditResend: EditResendHandler;
 }) {
   const formattedTime = formatItemTime(item.completedAt ?? item.createdAt);
   const [editing, setEditing] = useState(false);
@@ -453,8 +469,8 @@ function AssistantMessage({
   feedback: ResponseFeedbackValue | undefined;
   feedbackPending: boolean;
   canRegenerate: boolean;
-  onFeedback: Props["onFeedback"];
-  onRegenerate: Props["onRegenerate"];
+  onFeedback: FeedbackHandler;
+  onRegenerate: RegenerateHandler;
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
   const formattedTime = formatItemTime(item.completedAt ?? item.createdAt);
