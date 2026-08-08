@@ -23,6 +23,12 @@ import type {
   RuntimeNotification,
   AppShortcut,
 } from "./domain-contracts.js";
+import type {
+  ItemFeedbackResult,
+  ResponseActionState,
+  ResponseFeedbackValue,
+  RunRevisionResult,
+} from "./response-actions.js";
 
 export type Unsubscribe = () => void;
 
@@ -45,6 +51,14 @@ export interface EidosRuntimeAPI {
   // Runs
   startRun(sessionId: string, userInput: string, modelId: ModelId): Promise<Run>;
   cancelRun(runId: string): Promise<Run>;
+  reviseRun(sourceRunId: string, userInput?: string): Promise<RunRevisionResult>;
+
+  // Response actions
+  readResponseActionState(sessionId: string): Promise<ResponseActionState>;
+  setItemFeedback(
+    itemId: string,
+    feedback: ResponseFeedbackValue | null,
+  ): Promise<ItemFeedbackResult>;
 
   // Models
   listModelPresets(): Promise<ModelPresetsResult>;
