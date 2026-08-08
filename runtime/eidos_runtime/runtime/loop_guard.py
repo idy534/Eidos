@@ -22,6 +22,7 @@ class LoopGuard:
         self.max_compactions_per_run = max_compactions_per_run
         self._last_tool: str | None = None
         self._same_tool = 0
+        self._recovered_tool: str | None = None
         self._last_error: tuple[str, ...] | None = None
         self._same_error = 0
         self._last_progress: ProgressSignature | None = None
@@ -89,13 +90,21 @@ class LoopGuard:
         fingerprint = tool_call_fingerprint(
             calls, workspace_version, reconciliation_epoch
         )
-        self._same_tool = self._same_tool + 1 if fingerprint == self._last_tool else 1
-        self._last_tool = fingerprint
-        return (
-            "repeated_tool_call"
-            if self._same_tool >= self.max_same_tool_fingerprint
-            else None
-        )
+        if fingerprint != self._last_tool:
+            self._last_tool = fingerprint
+            self._same_tool = 1
+            if self._recovered_tool != fingerprint:
+                self._recovered_tool = None
+            return None
+
+        self._same_tool += 1
+        if self._same_tool < self.max_same_tool_fingerprint:
+            return None
+        if self._recovered_tool == fingerprint:
+            return "repeated_tool_call"
+
+        self._recovered_tool = fingerprint
+        return "repeated_tool_call_recovery"
 
     def observe_errors(self, errors: tuple[str, ...]) -> str | None:
         signature = tuple(sorted(set(errors)))
