@@ -9,15 +9,14 @@ from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.application.runs import RunApplication, RunStartOutcome
 from eidos_runtime.db.errors import InvalidRunStateError, ResourceNotFoundError
 from eidos_runtime.persistence.response_actions import ResponseActionRepository
-from eidos_runtime.protocol.methods import (
+from eidos_runtime.protocol.methods import MethodResultDto, RunStartRequestDto
+from eidos_runtime.protocol.response_actions import (
     ItemSetFeedbackRequestDto,
     ItemSetFeedbackResponseDto,
-    MethodResultDto,
     ResponseActionStateRequestDto,
     ResponseActionStateResponseDto,
     RunReviseRequestDto,
     RunReviseResponseDto,
-    RunStartRequestDto,
 )
 
 
