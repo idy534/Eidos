@@ -30,66 +30,20 @@ EXTENSION_SNAPSHOT = {
 }
 TOOL_SNAPSHOT = {
     "schemaVersion": 1,
-    "availableNames": ["read_file"],
-    "directNames": ["read_file"],
-    "deferredNames": [],
-    "activatedNames": [],
-    "specHashes": {"read_file": "1" * 64},
-    "definitionsHash": "2" * 64,
-    "toolSetHash": "3" * 64,
+    "toolSetHash": "1" * 64,
+    "tools": [],
 }
 PROVENANCE = {
     "kind": "builtin",
     "sourceId": "eidos",
     "sourceVersion": "1",
-    "contentHash": "4" * 64,
+    "contentHash": "2" * 64,
 }
 
 
 class ExtensionStorageTests(unittest.TestCase):
-    def test_shared_extension_vectors_match_closed_runtime_dtos(self) -> None:
-        fixture = json.loads(
-            (Path(__file__).resolve().parents[2] / "protocol" / "fixtures" / "extensions-v1.json").read_text(encoding="utf-8")
-        )
-        self.assertEqual(
-            PluginRecordDto.model_validate(fixture["plugin"]).to_json_value(),
-            fixture["plugin"],
-        )
-        self.assertEqual(
-            SkillMetadataDto.model_validate(fixture["skill"]).to_json_value(),
-            fixture["skill"],
-        )
-        self.assertEqual(
-            McpServerRecordDto.model_validate(fixture["mcpServer"]).to_json_value(),
-            fixture["mcpServer"],
-        )
-        self.assertEqual(
-            RunExtensionSnapshotDto.model_validate(
-                fixture["runExtensionSnapshot"]
-            ).to_json_value(),
-            fixture["runExtensionSnapshot"],
-        )
-        self.assertEqual(
-            StepToolSnapshotDto.model_validate(
-                fixture["stepToolSnapshot"]
-            ).to_json_value(),
-            fixture["stepToolSnapshot"],
-        )
-        self.assertEqual(
-            StepResolutionReviewDto.model_validate(
-                fixture["stepResolutionReview"]
-            ).to_json_value(),
-            fixture["stepResolutionReview"],
-        )
-        self.assertEqual(
-            ToolProvenance.model_validate(fixture["toolProvenance"]).model_dump(
-                mode="json", by_alias=True, exclude_none=True
-            ),
-            fixture["toolProvenance"],
-        )
-
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="eidos-p3-storage-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="eidos-extension-storage-")
         root = Path(self.temporary.name)
         self.data = root / "data"
         self.workspace = root / "workspace"
@@ -107,7 +61,7 @@ class ExtensionStorageTests(unittest.TestCase):
         connection = self.store.connection
         assert connection is not None
 
-        self.assertEqual(SCHEMA_REVISION, 12)
+        self.assertEqual(SCHEMA_REVISION, 13)
         self.assertIn(
             "extension_snapshot_json",
             {row[1] for row in connection.execute("PRAGMA table_info(runs)")},
@@ -134,21 +88,69 @@ class ExtensionStorageTests(unittest.TestCase):
             provenance=PROVENANCE,
             tool_set_hash=TOOL_SNAPSHOT["toolSetHash"],
         )
-        item_id = item["id"]
-        run_id = run["id"]
         self.store.close()
         self.store = SessionStore(self.data)
         self.store.initialize()
 
+        stored_run = self.store.read_run(run["id"])
+        self.assertEqual(stored_run["extensionSnapshot"], EXTENSION_SNAPSHOT)
+        stored_step = self.store.read_step_tool_snapshot(run["id"], step_index)
+        self.assertEqual(stored_step, TOOL_SNAPSHOT)
+        stored_item = self.store.read_item(item["id"])
+        self.assertEqual(stored_item["toolCall"]["provenance"], PROVENANCE)
         self.assertEqual(
-            self.store.read_run(run_id)["extensionSnapshot"], EXTENSION_SNAPSHOT
+            stored_item["toolCall"]["toolSetHash"], TOOL_SNAPSHOT["toolSetHash"]
         )
-        self.assertEqual(
-            self.store.read_step_tool_snapshot(run_id, step_index), TOOL_SNAPSHOT
+
+    def test_extension_and_resolution_wire_models_are_strict(self) -> None:
+        models = (
+            (PluginRecordDto, {
+                "schemaVersion": 1,
+                "id": "plugin-a",
+                "name": "Plugin A",
+                "enabled": True,
+                "contentHash": "0" * 64,
+                "manifest": {},
+            }),
+            (McpServerRecordDto, {
+                "schemaVersion": 1,
+                "pluginId": "plugin-a",
+                "serverId": "server-a",
+                "enabled": True,
+                "config": {},
+            }),
+            (SkillMetadataDto, {
+                "schemaVersion": 1,
+                "qualifiedId": "builtin:test",
+                "name": "test",
+                "description": "test skill",
+                "scope": "builtin",
+                "kind": "builtin",
+                "contentHash": "0" * 64,
+                "rootPath": "/tmp/test",
+            }),
+            (RunExtensionSnapshotDto, EXTENSION_SNAPSHOT),
+            (StepToolSnapshotDto, TOOL_SNAPSHOT),
+            (StepResolutionReviewDto, {
+                "schemaVersion": 1,
+                "stepIndex": 1,
+                "systemPromptHash": "0" * 64,
+                "resolvedInstructionsHash": "1" * 64,
+                "workspaceRules": [],
+                "skillInstructions": [],
+                "activatedToolNames": [],
+                "effectiveCwd": ".",
+                "toolSetHash": "2" * 64,
+                "ruleResolutionSnapshotId": "snapshot",
+            }),
         )
-        restored = self.store.read_item(item_id)["toolCall"]
-        self.assertEqual(restored["provenance"], PROVENANCE)
-        self.assertEqual(restored["toolSetHash"], TOOL_SNAPSHOT["toolSetHash"])
+        for model, payload in models:
+            with self.subTest(model=model.__name__):
+                model.model_validate(payload)
+                with self.assertRaises(ValueError):
+                    model.model_validate({**payload, "unknown": True})
+
+        ToolProvenance.model_validate(PROVENANCE)
 
 
 if __name__ == "__main__":
