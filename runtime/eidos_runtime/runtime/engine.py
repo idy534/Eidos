@@ -525,7 +525,14 @@ class RuntimeEngine:
                 step.workspace_version,
                 step.reconciliation_epoch,
             )
-            if repeated is not None and guard.should_recover_repeated_tool_call():
+            zero_argument_repeat = bool(validation.tool_calls) and all(
+                not call.arguments for call in validation.tool_calls
+            )
+            if (
+                repeated is not None
+                and zero_argument_repeat
+                and guard.should_recover_repeated_tool_call()
+            ):
                 self.store.complete_current_step(
                     run.run_id, "completed", reason="repeated_tool_call_recovery"
                 )
@@ -534,11 +541,10 @@ class RuntimeEngine:
                         "type": "user",
                         "sectionId": "runtime-loop-recovery",
                         "content": (
-                            "Runtime loop recovery: the same tool call with the same "
-                            "arguments has already been attempted repeatedly against "
-                            "an unchanged workspace. Do not repeat it. Choose a "
-                            "different tool or arguments, or finish with the evidence "
-                            "already collected."
+                            "Runtime loop recovery: the same zero-argument tool call "
+                            "has already been attempted repeatedly against an unchanged "
+                            "workspace. Do not repeat it. Choose a different tool, or "
+                            "finish with the evidence already collected."
                         ),
                     },)
                 })
