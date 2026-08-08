@@ -66,7 +66,7 @@ export function AppShell({ runtime }: AppShellProps) {
       : workspaceRef.current;
   }, []);
 
-  const topError = sessionState.error ?? runState.error ?? responseActionState.error;
+  const topError = sessionState.error ?? runState.error;
 
   // -----------------------------------------------------------------------
   // Bootstrap: load sessions, model, approvals independently
@@ -380,6 +380,12 @@ export function AppShell({ runtime }: AppShellProps) {
                 </div>
               )}
             </header>
+
+            {responseActionState.error && (
+              <p className="approval-error response-action-error" role="alert">
+                {responseActionState.error}
+              </p>
+            )}
 
             <ExecutionFeed
               items={snapshot.items}
