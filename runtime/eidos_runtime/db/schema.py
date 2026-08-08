@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 V9_SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -794,8 +794,30 @@ V12_BASE_SCHEMA_SQL = V11_BASE_SCHEMA_SQL.replace(
 )
 if V12_BASE_SCHEMA_SQL == V11_BASE_SCHEMA_SQL:
     raise RuntimeError("V12 schema additions are missing")
+
+V13_RESPONSE_ACTIONS_SCHEMA_SQL = """
+CREATE TABLE response_feedback (
+    item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+    value TEXT NOT NULL CHECK (value IN ('up', 'down')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE run_revisions (
+    run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+    source_run_id TEXT NOT NULL UNIQUE REFERENCES runs(id) ON DELETE CASCADE,
+    revision_kind TEXT NOT NULL CHECK (revision_kind IN ('regenerate', 'edit')),
+    created_at INTEGER NOT NULL,
+    CHECK (run_id <> source_run_id)
+);
+
+CREATE INDEX run_revisions_source
+ON run_revisions(source_run_id);
+"""
+
 SCHEMA_SQL = (
     V12_BASE_SCHEMA_SQL
     + V10_REPOSITORY_SCHEMA_SQL
     + V10_CONTEXT_SCHEMA_SQL
+    + V13_RESPONSE_ACTIONS_SCHEMA_SQL
 )
