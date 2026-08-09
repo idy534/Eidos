@@ -20,6 +20,10 @@ from eidos_runtime.runtime.state_machine import EventType
 # serialization work. They are not the provider model context window.
 CONTEXT_PROJECTION_MAX_BYTES = 768 * 1024
 CONTEXT_PROJECTION_MAX_ITEMS = 200
+# Compaction candidates are never sent to the model. Keep their payloads
+# bounded independently of the model projection so an oversized historical
+# item can still be represented by its durable source id and summarized.
+COMPACTION_FACT_VALUE_MAX_CHARS = 8 * 1024
 RECENT_CONTEXT_STEPS = 3
 
 
@@ -182,10 +186,9 @@ class ContextRepository(Repository):
             base_selected = 0
             for row in metadata:
                 fact_bytes = int(row["fact_bytes"])
-                if (
-                    len(selected_ids) >= CONTEXT_PROJECTION_MAX_ITEMS
-                    or selected_bytes + fact_bytes > CONTEXT_PROJECTION_MAX_BYTES
-                ):
+                if len(selected_ids) >= CONTEXT_PROJECTION_MAX_ITEMS:
+                    break
+                if newest and selected_bytes + fact_bytes > CONTEXT_PROJECTION_MAX_BYTES:
                     break
                 selected_ids.append(str(row["id"]))
                 selected_bytes += fact_bytes
@@ -193,18 +196,48 @@ class ContextRepository(Repository):
             item_rows: list[sqlite3.Row] = []
             if selected_ids:
                 placeholders = ",".join("?" for _ in selected_ids)
-                item_rows = connection.execute(
-                    f"SELECT * FROM items WHERE id IN ({placeholders})",
-                    selected_ids,
-                ).fetchall()
+                if newest:
+                    item_rows = connection.execute(
+                        f"SELECT * FROM items WHERE id IN ({placeholders})",
+                        selected_ids,
+                    ).fetchall()
+                else:
+                    item_rows = connection.execute(
+                        f"""
+                        SELECT creation_seq, id, session_id, run_id, ordinal,
+                               model_step_index, kind, status,
+                               substr(content, 1, ?) AS content,
+                               incomplete, created_at, completed_at
+                        FROM items WHERE id IN ({placeholders})
+                        """,
+                        (COMPACTION_FACT_VALUE_MAX_CHARS, *selected_ids),
+                    ).fetchall()
             item_rows.sort(key=lambda row: int(row["creation_seq"]))
             tool_rows: list[sqlite3.Row] = []
             if selected_ids:
                 placeholders = ",".join("?" for _ in selected_ids)
-                tool_rows = connection.execute(
-                    f"SELECT * FROM tool_calls WHERE item_id IN ({placeholders})",
-                    selected_ids,
-                ).fetchall()
+                if newest:
+                    tool_rows = connection.execute(
+                        f"SELECT * FROM tool_calls WHERE item_id IN ({placeholders})",
+                        selected_ids,
+                    ).fetchall()
+                else:
+                    tool_rows = connection.execute(
+                        f"""
+                        SELECT item_id, provider_call_id, tool_name,
+                               substr(arguments_json, 1, ?) AS arguments_json,
+                               status,
+                               substr(result_json, 1, ?) AS result_json,
+                               substr(model_result_json, 1, ?) AS model_result_json
+                        FROM tool_calls WHERE item_id IN ({placeholders})
+                        """,
+                        (
+                            COMPACTION_FACT_VALUE_MAX_CHARS,
+                            COMPACTION_FACT_VALUE_MAX_CHARS,
+                            COMPACTION_FACT_VALUE_MAX_CHARS,
+                            *selected_ids,
+                        ),
+                    ).fetchall()
             candidate_overflow = (
                 int(aggregate[0]) > base_selected
                 or int(aggregate[1])

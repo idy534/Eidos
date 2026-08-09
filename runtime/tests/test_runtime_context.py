@@ -436,6 +436,34 @@ class ContextPersistenceTests(unittest.TestCase):
             built.model_context[call_index + 1]["callId"],
         )
 
+    def test_context_builder_projects_next_request_after_provider_usage(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "inspect")
+        builder = ContextBuilder(self.store)
+        tool = self.store.create_tool_item(
+            run["id"], 1, 0, "call-large", "read_file", '{"path":"large.txt"}'
+        )
+
+        with patch.object(
+            self.store,
+            "latest_model_usage",
+            side_effect=(
+                None,
+                ModelUsage(input_tokens=185_000, output_tokens=1_000),
+            ),
+        ):
+            before = builder.build(run["id"])
+            self.store.complete_tool_item(
+                tool["id"],
+                json.dumps({"outcome": "success", "data": {"content": "x"}}),
+                model_result_json=json.dumps({"content": "x" * 30_000}),
+            )
+            after = builder.build(run["id"])
+
+        self.assertEqual(after.budget.context_usage.active_tokens, 185_000)
+        self.assertEqual(after.budget.context_usage.source, "provider")
+        self.assertGreater(after.budget.projected_input_tokens, before.budget.projected_input_tokens)
+        self.assertGreater(after.budget.projected_input_tokens, 185_000)
+
     def test_context_projection_keeps_unresolved_errors_and_reconciliation_state(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "inspect failure")
         self.store.increment_model_step(run["id"])
@@ -482,7 +510,7 @@ class ContextPersistenceTests(unittest.TestCase):
                     f"projection-{index}", self.session["id"], old["id"], index + 2,
                     "x" * 5_000, now + index, now + index,
                 )
-                for index in range(250)
+                for index in range(320)
             ),
         )
         self.store.connection.commit()
@@ -514,10 +542,33 @@ class ContextPersistenceTests(unittest.TestCase):
         summary = self.store.latest_compact_summary(current["id"])
         self.assertIsNotNone(summary)
         assert summary is not None
-        self.assertEqual(len(summary.source_item_ids), 251)
+        historical_ids = {f"projection-{index}" for index in range(320)}
+        projected_after = self.store.context_projection_facts(current["id"])
+        projected_ids = {item.item_id for item in projected_after.items}
+        self.assertTrue(
+            historical_ids - projected_ids <= set(summary.source_item_ids)
+        )
         current_item = self.store.get_user_item(current["id"])
         self.assertNotIn(current_item["id"], summary.source_item_ids)
+        self.assertTrue(
+            historical_ids.issubset(set(summary.source_item_ids) | projected_ids)
+        )
+        self.assertFalse(projected_after.candidate_overflow)
         self.assertGreaterEqual(self.store.compaction_count(current["id"]), 2)
+
+    def test_oversized_eligible_history_is_summary_covered(self) -> None:
+        old, _ = self.store.create_run(self.session["id"], "old history")
+        item = self.store.create_assistant_item(old["id"], 1)
+        self.store.append_item_content(
+            item["id"], "x" * (768 * 1024 + 4_096)
+        )
+        self.store.complete_assistant_item(item["id"])
+        self.store.fail_run(old["id"], "fixture")
+        current, _ = self.store.create_run(self.session["id"], "continue")
+
+        summary = ContextCompactor(self.store).compact(current["id"], "pre_turn")
+
+        self.assertIn(item["id"], summary.source_item_ids)
 
     def test_projection_overflow_without_durable_progress_fails_explicitly(self) -> None:
         old, _ = self.store.create_run(self.session["id"], "old history")
