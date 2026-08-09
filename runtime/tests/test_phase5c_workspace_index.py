@@ -76,12 +76,23 @@ class WorkspaceIndexTests(unittest.TestCase):
         objects.mkdir(parents=True)
         (objects / "secret.key").write_text("ignored", encoding="utf-8")
 
-        snapshot = self.executor.prepare_shell(".", threading.Event())
+        identity = self.executor.prepare_shell(".", threading.Event())
+        self.executor.refresh_workspace_index(threading.Event())
 
-        self.assertEqual(snapshot.path, self.workspace.resolve())
+        self.assertEqual(identity.path, self.workspace.resolve())
         self.assertEqual(
             self.executor.workspace_index.snapshot.entry_count, 1
         )
+
+    def test_shell_prepare_only_validates_launch_identity(self) -> None:
+        with patch.object(
+            self.executor.workspace_index,
+            "refresh",
+            side_effect=AssertionError("shell launch must not scan the workspace"),
+        ):
+            identity = self.executor.prepare_shell(".", threading.Event())
+
+        self.assertEqual(identity.path, self.workspace.resolve())
 
     def test_sensitive_file_added_after_initial_scan_is_detected(self) -> None:
         self._refresh()

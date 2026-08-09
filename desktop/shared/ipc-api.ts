@@ -7,6 +7,7 @@ import type {
   Session,
   DeleteSessionResult,
   Run,
+  ContextUsage,
   ModelId,
   ModelListResult,
   ModelOption,
@@ -51,6 +52,7 @@ export interface EidosRuntimeAPI {
   // Runs
   startRun(sessionId: string, userInput: string, modelId: ModelId): Promise<Run>;
   cancelRun(runId: string): Promise<Run>;
+  readContextUsage(runId: string): Promise<ContextUsage | null>;
   reviseRun(sourceRunId: string, userInput?: string): Promise<RunRevisionResult>;
 
   // Response actions

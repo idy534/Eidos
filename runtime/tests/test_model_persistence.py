@@ -190,6 +190,9 @@ class ModelPersistenceTests(unittest.TestCase):
         attempts = self.store.read_model_attempts(run["id"])
         self.assertEqual(attempts[0]["usage"].input_tokens, 4)
         self.assertEqual(attempts[1]["usage"].input_tokens, 8)
+        latest = self.store.latest_model_usage(run["id"])
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest.input_tokens, 8)
 
     def test_length_finish_fails_attempt_and_is_not_normal_completion(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "length")

@@ -364,7 +364,11 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
                 "SELECT result_json FROM tool_calls WHERE tool_name = ?",
                 ("mcp__fixture__slow",),
             ).fetchone()[0])
-            self.assertEqual(result["code"], "mcp_tool_timeout")
+            # The MCP adapter and the outer ToolExecutionController share the
+            # configured deadline. Whichever boundary observes the deadline
+            # first owns the canonical timeout result, and both outcomes are
+            # uncertain and must pause the run without retrying the tool.
+            self.assertIn(result["code"], {"mcp_tool_timeout", "TOOL_TIMEOUT"})
             store.close()
 
     def test_tool_search_activates_mcp_for_next_step_and_external_call_is_approved(self) -> None:

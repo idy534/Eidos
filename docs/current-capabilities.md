@@ -20,7 +20,16 @@
 - 每个 Step 确定性解析并固化分层系统指令：System Safety、Base Agent、Runtime Policy、带来源的 Project Rules 和当前 Turn 的 Selected Skills；消息、工具与输出预算和最终 instructions 一起计入 Context Budget。
 - Project Rules 与 Selected Skill 内容只进入声明的指令层，不在普通 user 消息中重复；Skill Catalog、历史、Tool Result、文件内容和元数据继续作为普通上下文数据。Step 快照保存实际发送的完整 instructions 与 UTF-8 SHA-256。
 - Finalization 复用当前解析结果并临时追加无工具的 `finalization-policy`；标题生成使用隔离的标题系统指令、当前用户请求和空 Tool Definitions。
-- 上下文构建、压缩、Run/Segment 预算、协议错误反馈、Loop Guard 和最终化。
+- 上下文构建、压缩、Run/Segment 预算、协议错误反馈、Loop Guard 和最终化；Context
+  Usage 优先使用最近 Provider usage 的 Active Context，缺失时才使用标记为
+  `estimated` 的有界 fallback，并区分模型窗口与投影安全上限。
+- Compaction Summary 使用 deterministic structured extraction 保留任务目标、用户约束、
+  workspace state、路径/hash/symbol 证据、修改状态、失败尝试、未解决问题、决定、待处理
+  审批和下一步；摘要 metadata 与摘要主体一起持久化，完整历史仍保留在 SQLite。
+- Composer 在模型选择器右侧显示当前模型最近 Run 的 Context Usage；Provider 数据显示
+  `上下文 xx% · xxK / xxxK`，估算数据明确显示 `≈`，无可用快照显示 `上下文 --`。
+  该展示通过 `context/usage` Runtime RPC 进入 Main 和 typed preload，不使用累计 Session
+  Token Consumption。
 - `parallel_tool_calls=true` 允许模型声明多调用；Runtime 只并发安全只读批次并保持声明顺序。
 
 ## 内置工具
@@ -28,14 +37,20 @@
 - 安全只读：`list_files`、`read_file`、`read_file_range`、`search_text`。
 - `list_files` 与 `search_text` 使用 Workspace 根目录的 `.gitignore`，再使用
   `.eidosignore` 过滤普通发现结果；后者可覆盖前者的普通忽略规则。
+- `list_files` 支持 workspace-relative `path`、`maxDepth` 和 `maxEntries`；默认
+  `{}` 仍从 Workspace 根目录开始，结果始终是 workspace-relative，并保留敏感目录、
+  generated/dependency pruning。
 - `search_text` 使用 Eidos 随 Runtime 管理并校验 SHA256 的 Ripgrep 15.2.0
   macOS arm64 二进制；通过固定 argv、`shell=False`、最小环境和 JSON 事件协议执行，
   不读取用户 `PATH`、Ripgrep Config、嵌套或全局 Ignore，也不在运行时下载。
-- `search_text` 当前仍只支持最大 512 UTF-8 bytes 的单行 Literal、ASCII
-  case-insensitive 查询；单文件最大 256 KiB、preview 最大 300 字符、最多返回
+- `search_text` 支持 workspace-relative `path`、最大 512 UTF-8 bytes 的单行查询、
+  bounded `maxResults`、可选 regex 和 include globs；默认仍是 Literal、ASCII
+  case-insensitive 查询。单文件最大 256 KiB、preview 最大 300 字符、最多返回
   100 个 Match。超时、取消和结果上限都会终止并回收 Ripgrep 进程组。
+- Context Builder 对 workspace state 未变化时完全相同的只读 Tool Result 做上下文去重；
+  LoopGuard 仍独立负责检测 Agent 无进展循环。
 - Workspace 变更：`write_file`、`apply_patch`、`delete_file`，均要求审批、版本复检和安全提交。`apply_patch` 使用 `unidiff` 解析结构与 metadata，但仍只接受单个已存在文件的严格 Unified Diff；Eidos 负责拒绝 Git 扩展、精确上下文校验和候选构建。
-- Shell：`run_shell`，要求审批，默认经 macOS Seatbelt 执行并记录有界输出、进程终态和 Workspace 变化。
+- Shell：`run_shell`，要求审批，默认经 macOS Seatbelt 执行并记录有界输出、进程终态和 Workspace 变化；启动只验证 Workspace identity、cwd、Approval 和 Seatbelt 边界，不依赖全仓扫描或 Shell 命令 allowlist/parser，失败时 UI 展示 canonical `code`、`summary` 和 `stderr`，索引不完整时保留 unknown/reconciliation。
 - 工具发现：`tool_search`。
 - Skill 管理：`skill_create`、`skill_install`，使用专用 Eidos-state 路径和审批。
 

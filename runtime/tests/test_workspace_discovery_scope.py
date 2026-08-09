@@ -95,11 +95,48 @@ class ToolExecutorDiscoveryScopeTests(unittest.TestCase):
         self.executor.close()
         self.temporary.cleanup()
 
-    def _list(self) -> dict[str, object]:
-        return self.executor.execute("list_files", {}, threading.Event())
+    def _list(self, arguments: dict[str, object] | None = None) -> dict[str, object]:
+        return self.executor.execute(
+            "list_files", arguments or {}, threading.Event()
+        )
 
-    def _search(self, query: str) -> dict[str, object]:
-        return self.executor.execute("search_text", {"query": query}, threading.Event())
+    def _search(
+        self,
+        query: str,
+        **arguments: object,
+    ) -> dict[str, object]:
+        return self.executor.execute(
+            "search_text", {"query": query, **arguments}, threading.Event()
+        )
+
+    def test_list_files_supports_scoped_depth_and_entry_limits(self) -> None:
+        source = self.workspace / "src"
+        nested = source / "nested"
+        nested.mkdir(parents=True)
+        (source / "main.py").write_text("main\n", encoding="utf-8")
+        (nested / "module.py").write_text("module\n", encoding="utf-8")
+        (self.workspace / "outside.py").write_text("outside\n", encoding="utf-8")
+
+        scoped = self._list({"path": "src", "maxDepth": 1})
+
+        self.assertEqual(scoped["outcome"], "success")
+        self.assertEqual(scoped["data"]["paths"], ["src/main.py", "src/nested/"])
+        self.assertNotIn("outside.py", scoped["data"]["paths"])
+
+        limited = self._list({"path": "src", "maxEntries": 1})
+        self.assertEqual(limited["data"]["paths"], ["src/main.py"])
+        self.assertTrue(limited["data"]["truncated"])
+
+    def test_discovery_paths_reject_absolute_and_parent_traversal(self) -> None:
+        for tool_name, arguments in (
+            ("list_files", {"path": "/tmp"}),
+            ("list_files", {"path": "../outside"}),
+            ("search_text", {"query": "needle", "path": "/tmp"}),
+            ("search_text", {"query": "needle", "path": "../outside"}),
+        ):
+            result = self.executor.execute(tool_name, arguments, threading.Event())
+            self.assertEqual(result["outcome"], "error")
+            self.assertEqual(result["code"], "invalid_arguments")
 
     def test_list_and_search_apply_root_ignore_and_refresh_each_call(self) -> None:
         (self.workspace / "ignored.log").write_text("needle\n", encoding="utf-8")
@@ -186,31 +223,36 @@ class ToolExecutorDiscoveryScopeTests(unittest.TestCase):
         self.assertNotIsInstance(patched, dict)
         self.assertNotIsInstance(deleted, dict)
 
-    def test_shell_preflight_still_scans_gitignored_sensitive_and_unsafe_entries(self) -> None:
+    def test_shell_launch_does_not_scan_gitignored_sensitive_and_unsafe_entries(self) -> None:
         ignored = self.workspace / "ignored"
         ignored.mkdir()
         (self.workspace / ".gitignore").write_text("ignored/\n", encoding="utf-8")
         (ignored / "credentials.json").write_text("secret\n", encoding="utf-8")
 
+        identity = self.executor.prepare_shell(".", threading.Event())
+
+        self.assertEqual(identity.path, self.workspace.resolve())
         with self.assertRaisesRegex(WorkspacePathError, "sensitive_workspace_content"):
-            self.executor.prepare_shell(".", threading.Event())
+            self.executor.refresh_workspace_index(threading.Event())
 
         (ignored / "credentials.json").unlink()
         target = ignored / "target.txt"
         target.write_text("x\n", encoding="utf-8")
         os.link(target, ignored / "alias.txt")
         with self.assertRaisesRegex(WorkspacePathError, "unsupported_workspace_hardlink"):
-            self.executor.prepare_shell(".", threading.Event())
+            self.executor.refresh_workspace_index(threading.Event())
 
-    def test_shell_preflight_still_scans_gitignored_special_files(self) -> None:
+    def test_shell_launch_does_not_scan_gitignored_special_files(self) -> None:
         ignored = self.workspace / "ignored"
         ignored.mkdir()
         (self.workspace / ".gitignore").write_text("ignored/\n", encoding="utf-8")
         fifo = ignored / "stream"
         os.mkfifo(fifo)
         try:
+            identity = self.executor.prepare_shell(".", threading.Event())
+            self.assertEqual(identity.path, self.workspace.resolve())
             with self.assertRaisesRegex(WorkspacePathError, "unsupported_workspace_entry"):
-                self.executor.prepare_shell(".", threading.Event())
+                self.executor.refresh_workspace_index(threading.Event())
         finally:
             fifo.unlink(missing_ok=True)
 

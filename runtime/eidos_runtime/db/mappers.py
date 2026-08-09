@@ -17,6 +17,9 @@ from eidos_runtime.runtime.resolution import (
 
 
 MAX_SNAPSHOT_TEXT_BYTES = 192 * 1024
+MAX_SNAPSHOT_ARGUMENT_STRING_BYTES = 16 * 1024
+MAX_SNAPSHOT_INCLUDE_GLOBS = 32
+MAX_SNAPSHOT_INCLUDE_GLOB_BYTES = 512
 
 def _plugin_from_row(row: sqlite3.Row) -> dict[str, object]:
     return {
@@ -65,10 +68,12 @@ def _snapshot_item(
 
 def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
     fields_by_tool = {
-        "list_files": (),
+        "list_files": ("path", "maxDepth", "maxEntries"),
         "read_file": ("path",),
         "read_file_range": ("path", "startLine", "endLine"),
-        "search_text": ("query",),
+        "search_text": (
+            "query", "path", "regex", "maxResults", "includeGlobs"
+        ),
         "write_file": ("path",),
         "apply_patch": ("path",),
         "delete_file": ("path",),
@@ -78,11 +83,33 @@ def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
     arguments = _load_json_object(tool_call.get("argumentsJson"))
     if fields is None or arguments is None:
         return None
-    projected = {
-        field: arguments[field]
-        for field in fields
-        if field in arguments and isinstance(arguments[field], (str, int))
-    }
+    projected: dict[str, object] = {}
+    for field in fields:
+        if field not in arguments:
+            continue
+        value = arguments[field]
+        if field == "includeGlobs":
+            if not isinstance(value, (list, tuple)):
+                continue
+            globs = list(value[:MAX_SNAPSHOT_INCLUDE_GLOBS])
+            if not all(
+                isinstance(glob, str)
+                and len(glob.encode("utf-8")) <= MAX_SNAPSHOT_INCLUDE_GLOB_BYTES
+                for glob in globs
+            ):
+                continue
+            projected[field] = globs
+        elif field == "regex":
+            if isinstance(value, bool):
+                projected[field] = value
+        elif field in {"maxDepth", "maxEntries", "startLine", "endLine", "maxResults", "timeoutSeconds"}:
+            if isinstance(value, int) and not isinstance(value, bool):
+                projected[field] = value
+        elif isinstance(value, str):
+            encoded = value.encode("utf-8")
+            projected[field] = encoded[:MAX_SNAPSHOT_ARGUMENT_STRING_BYTES].decode(
+                "utf-8", errors="ignore"
+            )
     return json.dumps(
         projected,
         ensure_ascii=False,
@@ -137,6 +164,21 @@ def _truncate_snapshot_text(value: str) -> str:
 def _compact_summary_from_row(row: sqlite3.Row | None) -> CompactSummary | None:
     if row is None:
         return None
+    metadata: dict[str, object] = {}
+    if "summary_metadata_json" in row.keys():
+        try:
+            parsed = json.loads(row["summary_metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            metadata = parsed
+
+    def metadata_tuple(name: str) -> tuple[str, ...]:
+        value = metadata.get(name, ())
+        if not isinstance(value, list):
+            return ()
+        return tuple(item for item in value if isinstance(item, str))
+
     return CompactSummary(
         task_goal=str(row["task_goal"]),
         constraints=tuple(json.loads(row["constraints_json"])),
@@ -146,6 +188,10 @@ def _compact_summary_from_row(row: sqlite3.Row | None) -> CompactSummary | None:
         unresolved_problems=tuple(json.loads(row["unresolved_problems_json"])),
         next_actions=tuple(json.loads(row["next_actions_json"])),
         source_item_ids=tuple(json.loads(row["source_item_ids_json"])),
+        important_decisions=metadata_tuple("important_decisions"),
+        failed_attempts=metadata_tuple("failed_attempts"),
+        pending_approvals=metadata_tuple("pending_approvals"),
+        uncertain_side_effects=metadata_tuple("uncertain_side_effects"),
     )
 
 def _run_from_row(

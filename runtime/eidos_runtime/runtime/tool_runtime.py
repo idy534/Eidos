@@ -102,6 +102,7 @@ class _HandlerDependencies:
     resources: ResourceRegistry = field(default_factory=ResourceRegistry)
     base_permissions: BasePermissionProfile | None = None
 
+
 class ReadOnlyToolHandler:
     def __init__(self, dependencies: _HandlerDependencies) -> None:
         self.dependencies = dependencies

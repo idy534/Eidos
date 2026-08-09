@@ -28,6 +28,7 @@ void test("IPC channel object provides central authoritative channels", () => {
   assert.equal(IPC.RUN_START, "run:start");
   assert.equal(IPC.RUN_CANCEL, "run:cancel");
   assert.equal(IPC.RUN_REVISE, "run:revise");
+  assert.equal(IPC.CONTEXT_USAGE, "context:usage");
   assert.equal(IPC.RESPONSE_ACTION_STATE, "response-action:state");
   assert.equal(IPC.ITEM_SET_FEEDBACK, "item:set-feedback");
   assert.equal(IPC.MODEL_PRESETS, "model:presets");

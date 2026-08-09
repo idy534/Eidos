@@ -76,6 +76,14 @@ export interface Run {
   activatedTools?: string[];
 }
 
+export interface ContextUsage {
+  activeTokens: number;
+  windowTokens: number;
+  percentUsed: number;
+  source: "provider" | "estimated";
+  updatedAt?: number;
+}
+
 export interface ToolProvenance {
   kind: "builtin" | "skill" | "mcp";
   sourceId: string;

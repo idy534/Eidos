@@ -5,7 +5,7 @@ import threading
 import time
 from typing import Callable
 
-from eidos_runtime.context.builder import ContextBuilder
+from eidos_runtime.context.builder import ContextBuild, ContextBuilder
 from eidos_runtime.context.project_rules import ProjectRuleResolver
 from eidos_runtime.context.compactor import ContextCompactionError, ContextCompactor
 from eidos_runtime.db.storage import (
@@ -15,7 +15,7 @@ from eidos_runtime.db.storage import (
     SegmentLimitReached,
     SessionStore,
 )
-from eidos_runtime.model.client import ModelClient
+from eidos_runtime.model.client import ModelClient, ModelToolCall
 from eidos_runtime.domain.long_task import LongTaskStatus, SafePoint
 from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalDecision
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
@@ -57,6 +57,7 @@ from eidos_runtime.sandbox.permissions import (
     unsandboxed_execution_allowed,
 )
 from eidos_runtime.model.instructions import StepPermissionPolicy
+from eidos_runtime.tools.contracts import ListFilesInput
 
 
 EMPTY_EXTENSION_SNAPSHOT = {
@@ -132,8 +133,10 @@ class RuntimeEngine:
                 self._cancel(run_id)
             elif current["status"] != "running":
                 pass
-            elif error.reason == "current_user_goal":
+            elif error.reason == "current_user_goal_too_large":
                 self._fail(run_id, "CONTEXT_INPUT_TOO_LARGE")
+            elif error.reason == "internal_projection_limit":
+                self._fail(run_id, "CONTEXT_PROJECTION_OVERFLOW")
             else:
                 self._fail(run_id, "CONTEXT_LIMIT_EXCEEDED")
         except (RuntimeCancelled, SamplingCancelled):
@@ -175,6 +178,11 @@ class RuntimeEngine:
         step_factory = StepContextFactory(self.store)
         rule_resolver = ProjectRuleResolver()
         sampling = SamplingRuntime(self.store, self.model, self.events, self.sensitive)
+        provider_recovery_states: set[tuple[object, ...]] = set()
+        estimated_pressure_states: set[tuple[object, ...]] = set()
+        pending_compaction_baseline: int | None = None
+        pending_provider_recovery = False
+        pending_projection_marker: tuple[object, ...] | None = None
         finalizer = RunFinalizer(
             self.store,
             self.model,
@@ -230,12 +238,57 @@ class RuntimeEngine:
                 rule_resolution_snapshot=rule_snapshot,
                 step_policy=step_policy,
             )
-            budget_fact = self.store.run_budget(run.run_id)
-            compaction_guard = guard.observe_compaction_overflow(
-                not built.budget.fits and built.facts.compaction_count > 0
+            if pending_compaction_baseline is not None:
+                if built.budget.projected_input_tokens >= pending_compaction_baseline:
+                    if pending_provider_recovery:
+                        finalizer.finalize(
+                            run.run_id,
+                            built.model_context,
+                            "context_still_over_budget",
+                            cancel,
+                            instructions=built.instructions,
+                        )
+                        return
+                    if built.budget.context_usage.source == "estimated":
+                        estimated_pressure_states.add(_context_state(built))
+                    else:
+                        finalizer.finalize(
+                            run.run_id,
+                            built.model_context,
+                            "context_still_over_budget",
+                            cancel,
+                            instructions=built.instructions,
+                        )
+                        return
+                pending_compaction_baseline = None
+                pending_provider_recovery = False
+            if pending_projection_marker is not None:
+                if _projection_state(built) == pending_projection_marker:
+                    raise ContextLimitExceeded("internal_projection_limit")
+                pending_projection_marker = None
+            if built.facts.candidate_overflow:
+                pending_projection_marker = _projection_state(built)
+                phase = (
+                    "mid_turn"
+                    if int(self.store.read_run(run.run_id)["modelStepCount"])
+                    else "pre_turn"
+                )
+                try:
+                    compactor.compact(run.run_id, phase)
+                except ContextCompactionError as error:
+                    raise ContextLimitExceeded(
+                        "internal_projection_limit"
+                    ) from error
+                continue
+            context_state = _context_state(built)
+            decision_budget = (
+                built.budget.model_copy(update={"fits": True})
+                if context_state in estimated_pressure_states
+                else built.budget
             )
+            budget_fact = self.store.run_budget(run.run_id)
             context_decision = decisions.decide(
-                context_budget=built.budget,
+                context_budget=decision_budget,
                 run_budget=RunBudget.model_validate(
                     {
                         "segment_steps_remaining": budget_fact["segmentStepsRemaining"],
@@ -249,13 +302,14 @@ class RuntimeEngine:
                     }
                 ),
                 compaction_count=built.facts.compaction_count,
-                loop_guard_result=compaction_guard,
                 pending_user_input=self.store.has_pending_input(run.run_id),
                 cancelled=cancel.is_set(),
             )
             if context_decision.action == LoopAction.CANCEL:
                 raise RuntimeCancelled
             if context_decision.action == LoopAction.COMPACT:
+                pending_compaction_baseline = built.budget.projected_input_tokens
+                pending_provider_recovery = False
                 phase = (
                     "mid_turn"
                     if int(self.store.read_run(run.run_id)["modelStepCount"])
@@ -266,6 +320,10 @@ class RuntimeEngine:
                 except ContextLimitExceeded:
                     raise
                 except ContextCompactionError:
+                    if built.budget.context_usage.source == "estimated":
+                        pending_compaction_baseline = None
+                        estimated_pressure_states.add(context_state)
+                        continue
                     finalizer.finalize(
                         run.run_id,
                         built.model_context,
@@ -362,6 +420,7 @@ class RuntimeEngine:
             )
             self._resume_effective_time()
 
+            context_recovered = False
             while True:
                 try:
                     self._pause_at(run.run_id, SafePoint.BEFORE_MODEL, cancel)
@@ -375,6 +434,52 @@ class RuntimeEngine:
                     )
                     self._fail(run.run_id, "SENSITIVE_SCAN_FAILED")
                     return
+                except SamplingContextExceeded:
+                    self.store.complete_current_step(
+                        run.run_id,
+                        "failed",
+                        reason="provider_context_exceeded",
+                    )
+                    recovery_state = _context_state(built)
+                    if recovery_state in provider_recovery_states:
+                        finalizer.finalize(
+                            run.run_id,
+                            built.model_context,
+                            "context_still_over_budget",
+                            cancel,
+                            instructions=built.instructions,
+                        )
+                        return
+                    provider_recovery_states.add(recovery_state)
+                    phase = (
+                        "mid_turn"
+                        if int(self.store.read_run(run.run_id)["modelStepCount"])
+                        else "pre_turn"
+                    )
+                    try:
+                        compacted = compactor.compact(run.run_id, phase)
+                    except ContextCompactionError:
+                        finalizer.finalize(
+                            run.run_id,
+                            built.model_context,
+                            "context_still_over_budget",
+                            cancel,
+                            instructions=built.instructions,
+                        )
+                        return
+                    if compacted is None:
+                        finalizer.finalize(
+                            run.run_id,
+                            built.model_context,
+                            "context_still_over_budget",
+                            cancel,
+                            instructions=built.instructions,
+                        )
+                        return
+                    context_recovered = True
+                    pending_compaction_baseline = built.budget.projected_input_tokens
+                    pending_provider_recovery = True
+                    break
                 except SamplingError as error:
                     self._handle_sampling_failure(run.run_id, error)
                     return
@@ -470,6 +575,10 @@ class RuntimeEngine:
                     )
                 break
 
+            if context_recovered:
+                run = run.model_copy(update={"model_context": ()})
+                continue
+
             decision = decisions.decide(
                 sampling=sampled,
                 tool_batch=validation,
@@ -526,7 +635,7 @@ class RuntimeEngine:
                 step.reconciliation_epoch,
             )
             zero_argument_repeat = bool(validation.tool_calls) and all(
-                not call.arguments for call in validation.tool_calls
+                _is_zero_argument_tool_call(call) for call in validation.tool_calls
             )
             if (
                 repeated is not None
@@ -727,6 +836,41 @@ class RuntimeEngine:
                 for item in self.store.canceled_items_for_run(run_id)
             }
             self.events.publish(mutation, run=mutation.value, items=items)
+
+
+def _context_state(built: ContextBuild) -> tuple[object, ...]:
+    """Identify one projected context without using a retry counter."""
+    return (
+        built.facts.compaction_count,
+        built.facts.current_user_goal_id,
+        built.facts.candidate_overflow,
+        tuple(item.item_id for item in built.facts.items),
+    )
+
+
+def _projection_state(built: ContextBuild) -> tuple[object, ...]:
+    """Identify durable projection coverage, not a retry or compaction count."""
+    summary_sources = (
+        built.facts.compact_summary.source_item_ids
+        if built.facts.compact_summary is not None else ()
+    )
+    return (
+        summary_sources,
+        built.facts.projection_candidate_count,
+        built.facts.projection_candidate_bytes,
+        built.facts.projection_omitted_count,
+        built.facts.projection_omitted_bytes,
+    )
+
+
+def _is_zero_argument_tool_call(call: ModelToolCall) -> bool:
+    if not call.arguments:
+        return True
+    if call.name != "list_files":
+        return False
+    return call.arguments == ListFilesInput.model_validate({}).model_dump(
+        mode="json", by_alias=True
+    )
 
 
 RuntimeLoop = RuntimeEngine

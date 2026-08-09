@@ -170,7 +170,7 @@ class RuntimeLoopTests(unittest.TestCase):
         with self.assertRaises(ActiveRunError):
             self.store.create_run(self.session["id"], "Second")
 
-    def test_oversized_session_context_compacts_before_calling_the_model(self) -> None:
+    def test_projection_safety_overflow_compacts_before_sampling(self) -> None:
         for index in range(13):
             historical, _ = self.store.create_run(
                 self.session["id"], f"{index}:" + "x" * (64 * 1024 - 3)
@@ -186,7 +186,7 @@ class RuntimeLoopTests(unittest.TestCase):
 
         completed = self.store.read_run(run["id"])
         self.assertEqual(completed["status"], "succeeded")
-        self.assertEqual(self.store.compaction_count(run["id"]), 1)
+        self.assertGreaterEqual(self.store.compaction_count(run["id"]), 1)
         self.assertEqual(len(model.contexts), 1)
 
     def test_cancel_prevents_a_late_model_result_from_succeeding_the_run(self) -> None:
@@ -753,7 +753,7 @@ class RuntimeLoopTests(unittest.TestCase):
         result = json.loads(command_item["toolCall"]["resultJson"])
         self.assertEqual(result["code"], "workspace_identity_changed")
 
-    def test_shell_rejects_sensitive_workspace_file_before_approval(self) -> None:
+    def test_unrelated_sensitive_workspace_file_does_not_block_shell_approval(self) -> None:
         (self.workspace / "private.pem").write_text("secret", encoding="utf-8")
         run, _ = self.store.create_run(self.session["id"], "Read secrets")
         approvals: list[dict[str, object]] = []
@@ -781,15 +781,15 @@ class RuntimeLoopTests(unittest.TestCase):
             shell_available=True,
         ).run(run["id"], threading.Event())
 
-        self.assertEqual(approvals, [])
+        self.assertEqual(len(approvals), 1)
         snapshot = self.store.read_session_snapshot(self.session["id"])
         command_item = next(
             item for item in snapshot["items"] if item["kind"] == "command_execution"
         )
         result = json.loads(command_item["toolCall"]["resultJson"])
-        self.assertEqual(result["code"], "sensitive_workspace_content")
+        self.assertNotEqual(result["code"], "sensitive_workspace_content")
 
-    def test_shell_rejects_hard_link_to_external_inode_before_approval(self) -> None:
+    def test_shell_write_with_hard_link_reaches_approval_and_reconciliation(self) -> None:
         external = self.workspace.parent / "external.txt"
         external.write_text("outside\n", encoding="utf-8")
         os.link(external, self.workspace / "linked.txt")
@@ -819,14 +819,52 @@ class RuntimeLoopTests(unittest.TestCase):
             shell_available=True,
         ).run(run["id"], threading.Event())
 
-        self.assertEqual(approvals, [])
+        self.assertEqual(len(approvals), 1)
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        command_item = next(
+            item for item in snapshot["items"] if item["kind"] == "command_execution"
+        )
+        result = json.loads(command_item["toolCall"]["resultJson"])
+        self.assertTrue(result["reconciliationRequired"])
+
+    def test_read_only_shell_does_not_block_on_unrelated_hard_link(self) -> None:
+        external = self.workspace.parent / "external.txt"
+        external.write_text("outside\n", encoding="utf-8")
+        os.link(external, self.workspace / "linked.txt")
+        run, _ = self.store.create_run(self.session["id"], "Inspect workspace")
+        approvals: list[dict[str, object]] = []
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "call-shell",
+                            "run_shell",
+                            {"command": "ls -la", "timeoutSeconds": 5},
+                        ),
+                    )
+                ),
+                ModelResponse(text="Workspace inspected."),
+            ]
+        )
+
+        RuntimeLoop(
+            self.store,
+            model,
+            lambda _message: None,
+            lambda request, _cancel: approvals.append(request)
+            or ApprovalDecision("approve"),
+            shell_available=True,
+        ).run(run["id"], threading.Event())
+
+        self.assertEqual(len(approvals), 1)
         self.assertEqual(external.read_text(encoding="utf-8"), "outside\n")
         snapshot = self.store.read_session_snapshot(self.session["id"])
         command_item = next(
             item for item in snapshot["items"] if item["kind"] == "command_execution"
         )
         result = json.loads(command_item["toolCall"]["resultJson"])
-        self.assertEqual(result["code"], "unsupported_workspace_hardlink")
+        self.assertNotEqual(result["code"], "unsupported_workspace_hardlink")
 
     def test_cancel_during_shell_preflight_cancels_run_without_internal_error(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Run a command")

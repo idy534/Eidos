@@ -57,6 +57,8 @@ from eidos_runtime.tools.registry import (
 from eidos_runtime.tools.contracts import (
     ApplyPatchInput,
     DeleteFileInput,
+    LIST_FILES_MAX_DEPTH,
+    LIST_FILES_MAX_ENTRIES,
     ListFilesInput,
     ListFilesResultData,
     ReadFileInput,
@@ -65,6 +67,7 @@ from eidos_runtime.tools.contracts import (
     ReadFileResultData,
     RunShellInput,
     RunShellResultData,
+    SEARCH_TEXT_MAX_RESULTS,
     SearchTextInput,
     SearchTextResultData,
     WorkspaceResultData,
@@ -76,9 +79,9 @@ from eidos_runtime.tools.contracts import (
 MAX_FILE_BYTES = 256 * 1024
 MAX_READ_FILE_BYTES = 2 * 1024 * 1024
 MAX_RANGE_LINES = 2_000
-MAX_LIST_DEPTH = 5
-MAX_LIST_ENTRIES = 2_000
-MAX_SEARCH_RESULTS = 100
+MAX_LIST_DEPTH = LIST_FILES_MAX_DEPTH
+MAX_LIST_ENTRIES = LIST_FILES_MAX_ENTRIES
+MAX_SEARCH_RESULTS = SEARCH_TEXT_MAX_RESULTS
 MAX_FILE_CHANGE_BYTES = 256 * 1024
 MAX_DIFF_BYTES = 512 * 1024
 TOOL_DEADLINE_SECONDS = 5.0
@@ -128,10 +131,10 @@ class FileChange:
 
 
 _BUILTIN_CONTRACTS = (
-    ("list_files", "List bounded regular files. Results may be truncated; refine the workspace path when needed.", "none", False, 5, "parallel", ListFilesInput, ListFilesResultData, "list_files"),
+    ("list_files", "List bounded regular files under a workspace-relative path (default '.'); supports maxDepth and maxEntries. Results are workspace-relative and may be truncated.", "none", False, 5, "parallel", ListFilesInput, ListFilesResultData, "list_files"),
     ("read_file", "Read one bounded UTF-8 file. Large files return head/tail content; use read_file_range to continue.", "none", False, 5, "parallel", ReadFileInput, ReadFileResultData, "read_file"),
     ("read_file_range", "Read an inclusive bounded line range from one UTF-8 file. Continue from nextLine when present.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
-    ("search_text", "Search workspace text for one literal single-line query. Results are bounded and may be truncated.", "none", False, 5, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
+    ("search_text", "Search a workspace-relative path (default '.') for a single-line query; supports maxResults, regex, and includeGlobs. Results are workspace-relative, bounded, and may be truncated.", "none", False, 5, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
     ("write_file", "Create or replace one UTF-8 file after approval and verify the final hash. Modifies the workspace.", "workspace", True, 5, "single", WriteFileInput, WorkspaceResultData, "file_change"),
     ("apply_patch", "Apply one strict unified diff to one previously read file after approval. Modifies the workspace.", "workspace", True, 5, "single", ApplyPatchInput, WorkspaceResultData, "file_change"),
     ("delete_file", "Delete one previously read regular UTF-8 file after approval. Modifies the workspace.", "workspace", True, 5, "single", DeleteFileInput, WorkspaceResultData, "file_change"),
@@ -382,8 +385,14 @@ class ToolExecutor:
     def prepare_shell(
         self, value: str, cancel: threading.Event
     ) -> WorkspaceIdentity:
+        """Validate only the process launch boundary.
+
+        Workspace-wide indexing is reconciliation work, not a prerequisite for
+        starting a bounded shell process. The caller still re-checks the root
+        identity and cwd after approval, while ``refresh_workspace_index`` is
+        kept for post-execution mutation and safety reconciliation.
+        """
         self._verify_root()
-        self._verify_shell_workspace(cancel)
         cwd = self.shell_cwd(value)
         self._verify_root()
         return cwd
@@ -717,12 +726,32 @@ class ToolExecutor:
                 os.close(parent_fd)
 
     def _list_files(
-        self, _arguments: dict[str, object], cancel: threading.Event
+        self, arguments: dict[str, object], cancel: threading.Event
     ) -> dict[str, object]:
         scope = WorkspaceDiscoveryScope.load(self.root_fd)
+        path_value = arguments["path"]
+        max_depth = arguments["maxDepth"]
+        max_entries = arguments["maxEntries"]
+        assert isinstance(path_value, str)
+        assert isinstance(max_depth, int) and not isinstance(max_depth, bool)
+        assert isinstance(max_entries, int) and not isinstance(max_entries, bool)
         paths: list[str] = []
         truncated = False
         deadline = time.monotonic() + TOOL_DEADLINE_SECONDS
+
+        directory_fd = os.dup(self.root_fd)
+        prefix = ""
+        if path_value != ".":
+            parts = _validate_relative_path(path_value)
+            try:
+                for part in parts:
+                    next_fd = self._open_directory(directory_fd, part)
+                    os.close(directory_fd)
+                    directory_fd = next_fd
+            except Exception:
+                os.close(directory_fd)
+                raise
+            prefix = f"{path_value}/"
 
         def visit(directory_fd: int, prefix: str, depth: int) -> None:
             nonlocal truncated
@@ -730,14 +759,14 @@ class ToolExecutor:
                 return
             names, directory_truncated = self._bounded_names(
                 directory_fd,
-                MAX_LIST_ENTRIES + 1,
+                max_entries + 1,
                 cancel,
                 deadline,
             )
             truncated = truncated or directory_truncated
             for name in names:
                 _check_budget(cancel, deadline)
-                if len(paths) >= MAX_LIST_ENTRIES:
+                if len(paths) >= max_entries:
                     truncated = True
                     return
                 if _is_sensitive_name(name):
@@ -754,7 +783,7 @@ class ToolExecutor:
                         continue
                     if not scope.is_ignored(relative, is_directory=True):
                         paths.append(f"{relative}/")
-                    if depth < MAX_LIST_DEPTH:
+                    if depth < max_depth:
                         child_fd = self._open_directory(directory_fd, name)
                         try:
                             visit(child_fd, f"{relative}/", depth + 1)
@@ -764,11 +793,10 @@ class ToolExecutor:
                     if not scope.is_ignored(relative, is_directory=False):
                         paths.append(relative)
 
-        root_fd = os.dup(self.root_fd)
         try:
-            visit(root_fd, "", 1)
+            visit(directory_fd, prefix, 1)
         finally:
-            os.close(root_fd)
+            os.close(directory_fd)
         return _success(
             "list_files",
             "Listed files",
@@ -870,15 +898,26 @@ class ToolExecutor:
     ) -> dict[str, object]:
         scope = WorkspaceDiscoveryScope.load(self.root_fd)
         query = arguments["query"]
+        path = arguments["path"]
+        regex = arguments["regex"]
+        include_globs = arguments["includeGlobs"]
+        max_results = arguments["maxResults"]
         assert isinstance(query, str)
+        assert isinstance(path, str)
+        assert isinstance(regex, bool)
+        assert isinstance(include_globs, (list, tuple))
+        assert isinstance(max_results, int) and not isinstance(max_results, bool)
         result = self.search_driver.search(
             WorkspaceSearchRequest(
                 query=query,
                 workspace_path=self.workspace.path,
                 deadline=time.monotonic() + TOOL_DEADLINE_SECONDS,
-                max_results=MAX_SEARCH_RESULTS,
+                max_results=max_results,
                 max_preview_characters=MAX_RG_PREVIEW_CHARACTERS,
                 discovery_scope=scope,
+                path=path,
+                regex=regex,
+                include_globs=tuple(include_globs),
             ),
             cancel,
         )

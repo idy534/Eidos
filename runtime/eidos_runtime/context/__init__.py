@@ -1,4 +1,5 @@
 """Model-visible context projection and budgeting."""
+from eidos_runtime.context.budget import ContextBudget, ContextUsageSnapshot
 from eidos_runtime.context.plan import (
     ContextMessage,
     ContextPlan,
@@ -15,6 +16,7 @@ from eidos_runtime.context.verified_compaction import (
 
 __all__ = [
     "CompactionVerificationError",
+    "ContextBudget",
     "ContextCompactionVerifier",
     "ContextMessage",
     "ContextPlan",
@@ -22,5 +24,6 @@ __all__ = [
     "ContextPlanner",
     "ContextSectionBudget",
     "ContextSnapshot",
+    "ContextUsageSnapshot",
     "VerifiedCompactSummary",
 ]

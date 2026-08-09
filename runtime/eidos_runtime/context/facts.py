@@ -46,6 +46,10 @@ class ContextFacts(_Fact):
     reconciliation_epoch: int = 0
     last_diff_hash: str | None = None
     candidate_overflow: bool = False
+    projection_candidate_count: int = 0
+    projection_candidate_bytes: int = 0
+    projection_omitted_count: int = 0
+    projection_omitted_bytes: int = 0
     current_user_goal_id: str | None = None
     reconciliation_required: bool = False
     active_error_fingerprints: tuple[str, ...] = ()

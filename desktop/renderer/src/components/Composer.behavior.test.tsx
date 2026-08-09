@@ -21,6 +21,7 @@ const defaultProps: ComposerProps = {
   input: "",
   modelList: mockModelList,
   selectedModelId: "deepseek-v4-flash",
+  contextUsage: undefined,
   modelConfigured: true,
   modelLoading: false,
   isSubmitting: false,
@@ -64,6 +65,32 @@ describe("Composer DOM interaction & state behavior", () => {
 
     fireEvent.change(screen.getByLabelText("本次模型"), { target: { value: "deepseek-v4-flash" } });
     expect(onModelChange).toHaveBeenCalledWith("deepseek-v4-flash");
+  });
+
+  it("shows provider, estimated, and empty context usage states beside the model", () => {
+    const { rerender } = render(
+      <Composer
+        {...defaultProps}
+        contextUsage={{
+          activeTokens: 185_000,
+          windowTokens: 258_000,
+          percentUsed: 71.7,
+          source: "provider",
+        }}
+      />,
+    );
+    expect(screen.getByText("上下文 72% · 185K / 258K")).toBeInTheDocument();
+
+    rerender(<Composer {...defaultProps} contextUsage={{
+      activeTokens: 185_000,
+      windowTokens: 803_000,
+      percentUsed: 23,
+      source: "estimated",
+    }} />);
+    expect(screen.getByText("上下文 ≈23% · ≈185K / 803K")).toBeInTheDocument();
+
+    rerender(<Composer {...defaultProps} contextUsage={undefined} />);
+    expect(screen.getByText("上下文 --")).toBeInTheDocument();
   });
 
   it("empty local model configuration disables submit and guides to settings", () => {

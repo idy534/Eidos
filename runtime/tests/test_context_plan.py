@@ -120,6 +120,7 @@ def test_context_plan_freezes_all_snapshots_and_reserves_output_budget(tmp_path:
     )
     assert persisted == snapshot
     assert snapshots.read_for_model_attempt("attempt-1") == snapshot
+    assert snapshots.read_latest_for_run("run") == snapshot
     database.close()
 
 

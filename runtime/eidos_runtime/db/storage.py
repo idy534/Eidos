@@ -185,6 +185,9 @@ class SessionStore:
     def read_running_context_snapshot(self, run_id: str) -> ContextSnapshot | None:
         return self.context_snapshot_repository().read_running_for_run(run_id)
 
+    def read_latest_context_snapshot(self, run_id: str) -> ContextSnapshot | None:
+        return self.context_snapshot_repository().read_latest_for_run(run_id)
+
     def verified_compaction_repository(self) -> VerifiedCompactionRepository:
         self._repository(self._sessions)
         if self._verified_compaction_repository is None:
@@ -670,6 +673,9 @@ class SessionStore:
 
     def read_model_attempts(self, run_id: str) -> list[dict[str, object]]:
         return self._repository(self._execution).read_model_attempts(run_id)
+
+    def latest_model_usage(self, run_id: str) -> ModelUsage | None:
+        return self._repository(self._execution).latest_model_usage(run_id)
 
     def create_assistant_item(
         self, run_id: str, model_step_index: int

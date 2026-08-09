@@ -11,7 +11,11 @@ from pydantic import ValidationError
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
-from eidos_runtime.tools.contracts import RunShellInput  # noqa: E402
+from eidos_runtime.tools.contracts import (  # noqa: E402
+    ListFilesInput,
+    RunShellInput,
+    SearchTextInput,
+)
 from eidos_runtime.tools.workspace import (  # noqa: E402
     TOOL_SPECS,
     canonical_tool_result,
@@ -58,6 +62,26 @@ class ToolContractTests(unittest.TestCase):
         })
 
         self.assertTrue(result["sideEffectsMayExist"])
+
+    def test_successful_shell_result_can_require_reconciliation(self) -> None:
+        result = canonical_tool_result("run_shell", {
+            "outcome": "success",
+            "code": "ok",
+            "summary": "Command completed",
+            "data": {
+                "exitCode": 0,
+                "stdout": "",
+                "stderr": "",
+                "truncated": False,
+                "termination": "exit",
+                "workspaceChanged": False,
+                "workspaceChangeState": "unknown",
+            },
+            "sideEffectsMayExist": True,
+            "reconciliationRequired": True,
+        })
+
+        self.assertTrue(result["reconciliationRequired"])
 
     def test_shell_permission_contract_is_closed_and_backwards_compatible(self) -> None:
         default = RunShellInput.model_validate({"command": "true"})
@@ -109,6 +133,36 @@ class ToolContractTests(unittest.TestCase):
         self.assertIn("with_additional_permissions", description)
         self.assertIn("additionalPermissions.network.enabled", description)
         self.assertNotIn("network-disabled", description)
+
+    def test_discovery_contracts_describe_and_validate_scopes(self) -> None:
+        list_default = ListFilesInput.model_validate({})
+        search_default = SearchTextInput.model_validate({"query": "ConfigBuilder"})
+
+        self.assertEqual(list_default.path, ".")
+        self.assertEqual(list_default.maxDepth, 5)
+        self.assertEqual(list_default.maxEntries, 2_000)
+        self.assertEqual(search_default.path, ".")
+        self.assertEqual(search_default.maxResults, 100)
+        self.assertFalse(search_default.regex)
+        self.assertEqual(search_default.includeGlobs, ())
+
+        list_spec = next(spec for spec in TOOL_SPECS if spec.name == "list_files")
+        search_spec = next(spec for spec in TOOL_SPECS if spec.name == "search_text")
+        self.assertIn("path", list_spec.description)
+        self.assertIn("maxDepth", list_spec.description)
+        self.assertIn("maxEntries", list_spec.description)
+        self.assertIn("path", search_spec.description)
+        self.assertIn("maxResults", search_spec.description)
+        self.assertIn("regex", search_spec.description)
+        self.assertIn("includeGlobs", search_spec.description)
+        self.assertEqual(
+            set(list_spec.input_schema["properties"]),
+            {"path", "maxDepth", "maxEntries"},
+        )
+        self.assertEqual(
+            set(search_spec.input_schema["properties"]),
+            {"query", "path", "regex", "includeGlobs", "maxResults"},
+        )
 
 
 if __name__ == "__main__":
