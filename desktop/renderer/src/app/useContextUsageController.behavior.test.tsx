@@ -66,11 +66,17 @@ describe("useContextUsageController", () => {
     expect(readContextUsage).toHaveBeenCalledTimes(2);
   });
 
-  it("clears a new Run until Runtime has a new usage snapshot", async () => {
-    const readContextUsage = vi.fn().mockResolvedValueOnce(usage).mockResolvedValueOnce(null);
+  it("maintains usage continuity during a new Run instead of wiping to blank", async () => {
+    const updatedUsage = { ...usage, activeTokens: 190_000, percentUsed: 73.6 };
+    const readContextUsage = vi.fn()
+      .mockResolvedValueOnce(usage)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(updatedUsage);
+
     (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = {
       readContextUsage,
     } as EidosRuntimeAPI;
+
     const { result, rerender } = renderHook(
       (runId: string | undefined) => useContextUsageController({
         ready: true,
@@ -83,9 +89,23 @@ describe("useContextUsageController", () => {
 
     await act(async () => { await Promise.resolve(); });
     expect(result.current[0].usage).toEqual(usage);
+
+    // Transitioning to run-2 should preserve usage while waiting for new snapshot
     rerender("run-2");
-    expect(result.current[0].usage).toBeUndefined();
+    expect(result.current[0].usage).toEqual(usage);
+
     await act(async () => { await Promise.resolve(); });
-    expect(result.current[0].usage).toBeUndefined();
+    // When readContextUsage returns null before new snapshot, keep existing usage
+    expect(result.current[0].usage).toEqual(usage);
+
+    // Real-time notification updates usage when new snapshot becomes available
+    await act(async () => {
+      result.current[1].handleNotification({
+        method: "item/completed",
+        params: { sessionId: "session-1", runId: "run-2", item: {} as any },
+      });
+      await Promise.resolve();
+    });
+    expect(result.current[0].usage).toEqual(updatedUsage);
   });
 });

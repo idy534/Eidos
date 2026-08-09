@@ -3,6 +3,7 @@ import type { ContextUsage, ModelId, Run } from "../contracts.js";
 import type { ComposerMode } from "../session-state.js";
 import { formatContextUsage } from "../context-usage.js";
 import { Button } from "./Button.js";
+import { ContextIndicator } from "./ContextIndicator.js";
 
 export interface ComposerProps {
   composerMode: ComposerMode;
@@ -150,13 +151,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
               </option>
             ))}
           </select>
-          <span
-            className="composer-context-usage"
-            aria-live="polite"
-            title="当前模型最近一次请求的有效上下文"
-          >
-            {formatContextUsage(contextUsage)}
-          </span>
+          <ContextIndicator usage={contextUsage} />
           {!isIdle && <span>{statusLabel}</span>}
           {!modelConfigured && (
             <Button type="button" variant="ghost" size="small" onClick={onOpenModelSettings}>

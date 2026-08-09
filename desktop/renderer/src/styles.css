@@ -2260,7 +2260,98 @@ input:focus, textarea:focus {
 .composer-meta { display: flex; gap: 0.45rem; align-items: center; min-width: 0; color: var(--muted); font-size: var(--font-size-xs); }
 .composer-meta label { padding-left: 0.5rem; }
 .composer-meta select { max-width: 15rem; border: 1px solid var(--line); border-radius: 0.45rem; padding: 0.3rem 1.8rem 0.3rem 0.45rem; color: var(--text); background: white; font-size: var(--font-size-caption); }
-.composer-context-usage { flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* Circular Context Usage Indicator */
+.composer-context-usage {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 50%;
+  color: var(--muted);
+  outline: none;
+  flex: none;
+  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.composer-context-usage:hover,
+.composer-context-usage:focus-visible {
+  transform: scale(1.12);
+}
+
+.composer-context-usage:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.context-progress-ring {
+  width: 18px;
+  height: 18px;
+  display: block;
+  flex: none;
+}
+
+.context-progress-track {
+  stroke: var(--line, rgba(0, 0, 0, 0.12));
+}
+
+.context-progress-arc {
+  transition: stroke-dashoffset 0.3s cubic-bezier(0.16, 1, 0.3, 1), stroke 0.3s ease;
+}
+
+/* Floating hover detail tooltip */
+.composer-context-tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+  background: var(--surface-raised, #ffffff);
+  color: var(--text, #20241f);
+  border: 1px solid var(--line, #d7d6cf);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.05);
+  padding: 0.35rem 0.65rem;
+  border-radius: var(--radius-sm, 6px);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  z-index: 100;
+  transition: opacity 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+              visibility 0.15s;
+}
+
+.composer-context-tooltip::before {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 5px;
+  border-style: solid;
+  border-color: var(--line, #d7d6cf) transparent transparent transparent;
+}
+
+.composer-context-tooltip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 4px;
+  border-style: solid;
+  border-color: var(--surface-raised, #ffffff) transparent transparent transparent;
+}
+
+.composer-context-usage:hover .composer-context-tooltip,
+.composer-context-usage:focus-visible .composer-context-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
 .composer-actions button { min-height: 2rem; padding: 0.25rem 0.75rem; border-radius: 0.625rem; font-size: var(--font-size-sidebar); }
 
 /* Circular Up-Arrow / Stop Action Button */

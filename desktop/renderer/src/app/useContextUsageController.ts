@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { ContextUsage, RuntimeNotification, Run } from "../contracts.js";
+import type { ContextUsage, RuntimeNotification } from "../contracts.js";
 
 export interface ContextUsageControllerState {
   usage: ContextUsage | undefined;
@@ -21,9 +21,9 @@ interface ContextUsageControllerInput {
 /**
  * Reads the latest effective context projection for the selected Run.
  *
- * Context usage is deliberately refreshed from the Runtime after durable Run
- * notifications. The UI never derives it from cumulative session usage or
- * from serialized bytes in the Renderer.
+ * Context usage is refreshed from the Runtime after durable Run & Step
+ * notifications. It maintains real-time continuity during execution
+ * without clearing to empty during active runs.
  */
 export function useContextUsageController({
   ready,
@@ -38,51 +38,64 @@ export function useContextUsageController({
   const [loading, setLoading] = useState(false);
   const requestSequence = useRef(0);
   const current = useRef({ ready, sessionId, modelId, runId });
+  const prevIds = useRef({ sessionId, modelId });
+
   current.current = { ready, sessionId, modelId, runId };
 
   useEffect(() => {
-    const sequence = ++requestSequence.current;
-    setUsage(undefined);
-    setLoading(false);
-    if (!ready || !sessionId || !modelId || !runId) {
+    if (!ready || !sessionId || !modelId) {
+      setUsage(undefined);
+      setLoading(false);
+      prevIds.current = { sessionId, modelId };
       return;
     }
 
+    if (prevIds.current.sessionId !== sessionId || prevIds.current.modelId !== modelId) {
+      setUsage(undefined);
+      prevIds.current = { sessionId, modelId };
+    }
+
+    if (!runId) return;
+
+    const sequence = ++requestSequence.current;
     setLoading(true);
     void window.eidosRuntime.readContextUsage(runId).then((next) => {
       if (sequence !== requestSequence.current) return;
-      setUsage(next ?? undefined);
+      if (next) {
+        setUsage(next);
+      }
     }).catch(() => {
-      if (sequence === requestSequence.current) setUsage(undefined);
+      // preserve current usage on error
     }).finally(() => {
       if (sequence === requestSequence.current) setLoading(false);
     });
   }, [modelId, ready, runId, sessionId]);
 
-  const refreshFromRun = useCallback((run: Run, clear: boolean): void => {
+  const refreshFromRunId = useCallback((targetRunId: string, targetSessionId: string, targetModelId: string): void => {
     const state = current.current;
     if (
       !state.ready
-      || state.sessionId !== run.sessionId
-      || state.modelId !== run.modelId
+      || state.sessionId !== targetSessionId
+      || state.modelId !== targetModelId
     ) {
       return;
     }
     const sequence = ++requestSequence.current;
-    if (clear) setUsage(undefined);
     setLoading(true);
-    void window.eidosRuntime.readContextUsage(run.id).then((next) => {
+    void window.eidosRuntime.readContextUsage(targetRunId).then((next) => {
       const latest = current.current;
       if (
         sequence !== requestSequence.current
-        || latest.sessionId !== run.sessionId
-        || latest.modelId !== run.modelId
+        || latest.sessionId !== targetSessionId
+        || latest.modelId !== targetModelId
       ) {
         return;
       }
-      setUsage(next ?? undefined);
+      if (next) {
+        setUsage(next);
+      }
     }).catch(() => {
-      if (sequence === requestSequence.current) setUsage(undefined);
+      // preserve current usage
     }).finally(() => {
       if (sequence === requestSequence.current) setLoading(false);
     });
@@ -94,23 +107,26 @@ export function useContextUsageController({
       || notification.method === "run/updated"
       || notification.method === "run/completed"
     ) {
-      refreshFromRun(notification.params.run, notification.method === "run/started");
+      const run = notification.params.run;
+      refreshFromRunId(run.id, run.sessionId, run.modelId);
       return;
     }
-    if (notification.method === "item/completed") {
+
+    if (
+      notification.method === "item/started"
+      || notification.method === "item/delta"
+      || notification.method === "item/completed"
+      || notification.method === "approval/requested"
+      || notification.method === "approval/resolved"
+    ) {
       const state = current.current;
-      if (state.runId === notification.params.runId && state.sessionId) {
-        void window.eidosRuntime.readContextUsage(notification.params.runId).then((next) => {
-          if (
-            current.current.runId === notification.params.runId
-            && current.current.sessionId === notification.params.sessionId
-          ) {
-            setUsage(next ?? undefined);
-          }
-        }).catch(() => undefined);
+      const targetRunId = "runId" in notification.params ? notification.params.runId : undefined;
+      const targetSessionId = "sessionId" in notification.params ? notification.params.sessionId : undefined;
+      if (targetRunId && targetSessionId && state.sessionId === targetSessionId && state.modelId) {
+        refreshFromRunId(targetRunId, targetSessionId, state.modelId);
       }
     }
-  }, [refreshFromRun]);
+  }, [refreshFromRunId]);
 
   return [{ usage, loading }, { handleNotification }];
 }
