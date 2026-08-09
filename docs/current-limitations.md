@@ -3,7 +3,7 @@
 本文只描述当前代码边界，不列未来路线图。
 
 - 仅支持 macOS Desktop。Shell 隔离依赖可用的原生 `/usr/bin/sandbox-exec` 与随包策略资源；Self-Test 失败时 Shell 能力 fail-closed。
-- Shell 的 Workspace 变化证据在首次运行或仓库扫描超时/发现不安全条目时可能为 `unknown`；Shell 启动不依赖全仓内容预扫描，已启动进程不会把不完整 before manifest 的全部条目伪装成 created，但 canonical result 会保留 `reconciliationRequired`。Seatbelt、Workspace identity/cwd、Approval、fd-relative 文件边界、输出敏感扫描和 post-execution reconciliation 仍然生效。
+- Shell 的 Workspace 变化证据在首次运行或仓库扫描超时/发现不安全条目时可能为 `unknown`；Shell 启动不依赖全仓内容预扫描，已启动进程不会把不完整 before manifest 的全部条目伪装成 created。已知成功退出不会仅因 observation incomplete 进入 reconciliation；Shell execution 或 Runtime 明确报告的 uncertainty 仍会保留 `reconciliationRequired`。Seatbelt、Workspace identity/cwd、Approval、fd-relative 文件边界、输出敏感扫描和 post-execution reconciliation 仍然生效。
 - 模型 Provider 限定为内置 DeepSeek、MiniMax、Kimi 目录，wire API 固定为 OpenAI-compatible Chat Completions；不支持自定义 Provider、URL、Responses API、连接测试或能力探测。
 - 全局同一时间只执行一个 Run。单个模型响应内只有安全只读工具可并发；Workspace 写入、Shell、Eidos-state 和 MCP/外部工具不得并发。
 - Eidos 1.0 不追求零线程架构：Durable Runtime core 与 SQLite 仍保持同步，每个活跃 Run 一个 Worker Thread 是刻意的隔离边界。异步网络 I/O、MCP、Managed Task 和并行只读 Batch 统一由唯一进程级 AnyIO Kernel 管理；blocking callback 不得在 Kernel Event Loop 上运行。

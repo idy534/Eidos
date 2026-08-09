@@ -22,7 +22,11 @@ from eidos_runtime.sandbox.seatbelt import (  # noqa: E402
     SeatbeltUnavailableError,
     is_seatbelt_ready,
 )
-from eidos_runtime.tools.workspace import ToolCancelled, ToolExecutor  # noqa: E402
+from eidos_runtime.tools.workspace import (  # noqa: E402
+    ToolCancelled,
+    ToolExecutor,
+    WorkspacePathError,
+)
 
 
 class RuntimeLoopTests(unittest.TestCase):
@@ -513,6 +517,110 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result["data"]["stdout"], "shell-ok")
         self.assertEqual(result["data"]["stderr"], "")
 
+    def test_successful_first_shell_with_incomplete_manifest_continues_run(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Inspect a large repo")
+        command = 'ls . && echo "---" && ls codex-rs 2>/dev/null'
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "call-shell",
+                            "run_shell",
+                            {"command": command, "timeoutSeconds": 5},
+                        ),
+                    )
+                ),
+                ModelResponse(text="Inspection continued after Shell."),
+            ]
+        )
+        shell_result = {
+            "schemaVersion": 1,
+            "toolName": "run_shell",
+            "outcome": "success",
+            "code": "ok",
+            "summary": "Command completed",
+            "data": {
+                "exitCode": 0,
+                "stdout": "hello.txt\n---\n",
+                "stderr": "",
+                "truncated": False,
+                "termination": "exit",
+                "durationMs": 1,
+            },
+            "sideEffectsMayExist": True,
+        }
+
+        with (
+            mock_patch(
+                "eidos_runtime.runtime.tool_runtime.run_shell",
+                return_value=shell_result,
+            ),
+            mock_patch.object(
+                ToolExecutor,
+                "refresh_workspace_index",
+                side_effect=WorkspacePathError("WORKSPACE_INDEX_INCOMPLETE"),
+            ),
+        ):
+            RuntimeLoop(
+                self.store,
+                model,
+                lambda _message: None,
+                lambda _request, _cancel: ApprovalDecision("approve"),
+                shell_available=True,
+            ).run(run["id"], threading.Event())
+
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        command_item = next(
+            item for item in snapshot["items"] if item["kind"] == "command_execution"
+        )
+        result = json.loads(command_item["toolCall"]["resultJson"])
+        self.assertEqual(command_item["toolCall"]["status"], "completed")
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(result["code"], "ok")
+        self.assertEqual(result["data"]["exitCode"], 0)
+        self.assertEqual(result["data"]["termination"], "exit")
+        self.assertEqual(result["data"]["workspaceChangeState"], "unknown")
+        self.assertTrue(result["data"]["workspaceDiffIncomplete"])
+        self.assertFalse(result["reconciliationRequired"])
+        self.assertEqual(len(model.contexts), 2)
+        persisted_run = self.store.read_run(run["id"])
+        self.assertEqual(persisted_run["status"], "succeeded")
+        self.assertEqual(
+            tuple(self.store.connection.execute(
+                """
+                SELECT reconciliation_required, side_effects_may_exist
+                FROM runs WHERE id = ?
+                """,
+                (run["id"],),
+            ).fetchone()),
+            (0, 0),
+        )
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT status FROM durable_intents WHERE run_id = ?",
+                (run["id"],),
+            ).fetchone()[0],
+            "completed",
+        )
+        self.assertEqual(
+            self.store.connection.execute(
+                """
+                SELECT COUNT(*) FROM events
+                WHERE run_id = ? AND event_type = 'reconciliation.required'
+                """,
+                (run["id"],),
+            ).fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT COUNT(*) FROM steps WHERE run_id = ? AND status = 'completed'",
+                (run["id"],),
+            ).fetchone()[0],
+            2,
+        )
+
     def test_unavailable_shell_fails_before_approval_or_execution(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Run a command")
         sentinel = self.workspace / "must-not-exist"
@@ -788,6 +896,12 @@ class RuntimeLoopTests(unittest.TestCase):
         )
         result = json.loads(command_item["toolCall"]["resultJson"])
         self.assertNotEqual(result["code"], "sensitive_workspace_content")
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(result["data"]["workspaceChangeState"], "unknown")
+        self.assertTrue(result["data"]["workspaceDiffIncomplete"])
+        self.assertFalse(result["reconciliationRequired"])
+        self.assertEqual(len(model.contexts), 2)
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
 
     def test_shell_write_with_hard_link_reaches_approval_and_reconciliation(self) -> None:
         external = self.workspace.parent / "external.txt"
