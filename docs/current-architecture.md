@@ -144,6 +144,12 @@ Workspace discovery is a separate presentation boundary. `list_files` and
 the Workspace descriptor and use PathSpec only to filter ordinary discovery
 results. The later `.eidosignore` rules may refine ordinary Git-ignore
 matches; Eidos-owned hard discovery directories remain non-overridable.
+`list_files` accepts a workspace-relative `path`, bounded `maxDepth` and
+`maxEntries`; `search_text` accepts a workspace-relative `path`, bounded
+`maxResults`, optional `regex`, and optional positive `includeGlobs`. The
+default empty argument objects retain root-scope literal discovery. Every
+returned path remains Workspace-relative and the input contract rejects
+absolute or parent-traversing scopes.
 Ignore rules are not permissions: explicit file operations retain their
 existing Workspace and sensitive-content checks. Shell launch validates the
 Workspace root identity, workspace-relative cwd, approval and Seatbelt
@@ -162,12 +168,19 @@ Ripgrep 15.2.0 macOS arm64 resource at
 `runtime/eidos_runtime/resources/bin/ripgrep/darwin-arm64/rg`, verifies its
 manifest identity, owner, mode and SHA256, and never searches `PATH` or
 downloads a binary. The driver launches a fixed argv with `shell=False`, a
-minimal environment, `--no-config`, fixed-string matching and ASCII-only
-case folding. Ripgrep ignore sources are disabled so nested/global/user ignore
+minimal environment, `--no-config`, caller-selected literal or regex matching,
+and ASCII-only case folding. Ripgrep ignore sources are disabled so nested/global/user ignore
 files cannot change C2 semantics; the already-loaded `WorkspaceDiscoveryScope`
 and shared Eidos discovery policy filter every returned path. Hard and
 sensitive directories are also excluded in argv as defense in depth, but argv
 globs and ignore rules are not treated as security authorization.
+
+Context projection separately deduplicates identical complete results from
+read-only discovery tools when their canonical arguments, result and observed
+Workspace state are unchanged. It leaves the first result authoritative,
+replaces later copies with a small `duplicateOf` marker, and resets the
+deduplication state after a reported Workspace change; this is independent of
+LoopGuard's no-progress detection.
 
 `apply_patch` delegates Unified Diff structure and metadata parsing to
 `unidiff`. Eidos accepts only one existing-file modification whose headers

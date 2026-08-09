@@ -464,6 +464,57 @@ class ContextPersistenceTests(unittest.TestCase):
         self.assertGreater(after.budget.projected_input_tokens, before.budget.projected_input_tokens)
         self.assertGreater(after.budget.projected_input_tokens, 185_000)
 
+    def test_context_builder_deduplicates_identical_read_results_per_workspace_state(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "inspect")
+        read_result = json.dumps({
+            "outcome": "success",
+            "code": "ok",
+            "summary": "Read file",
+            "data": {
+                "path": "a.txt",
+                "content": "same content",
+                "sha256": "a" * 64,
+            },
+        })
+        first = self.store.create_tool_item(
+            run["id"], 1, 0, "read-1", "read_file", '{"path":"a.txt"}'
+        )
+        second = self.store.create_tool_item(
+            run["id"], 1, 1, "read-2", "read_file", '{"path":"a.txt"}'
+        )
+        for item in (first, second):
+            self.store.complete_tool_item(item["id"], read_result)
+
+        write = self.store.create_tool_item(
+            run["id"], 2, 0, "write-1", "write_file", '{"path":"a.txt"}'
+        )
+        self.store.complete_tool_item(
+            write["id"],
+            json.dumps({
+                "outcome": "success",
+                "code": "ok",
+                "data": {"path": "a.txt", "workspaceChanged": True},
+            }),
+            workspace_changed=True,
+        )
+        third = self.store.create_tool_item(
+            run["id"], 3, 0, "read-3", "read_file", '{"path":"a.txt"}'
+        )
+        self.store.complete_tool_item(third["id"], read_result)
+
+        built = ContextBuilder(self.store).build(run["id"])
+        results = {
+            item["callId"]: item["result"]
+            for item in built.model_context
+            if item.get("type") == "tool_result"
+        }
+
+        self.assertIn("same content", results["read-1"])
+        duplicate = json.loads(results["read-2"])
+        self.assertTrue(duplicate["contextDeduplicated"])
+        self.assertEqual(duplicate["duplicateOf"], "read-1")
+        self.assertIn("same content", results["read-3"])
+
     def test_context_projection_keeps_unresolved_errors_and_reconciliation_state(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "inspect failure")
         self.store.increment_model_step(run["id"])

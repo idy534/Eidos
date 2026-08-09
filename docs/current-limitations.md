@@ -12,9 +12,10 @@
 - Repository discovery 目前只读取 Workspace 根目录的 `.gitignore` 和 `.eidosignore`；
   不支持嵌套 `.gitignore`。这些规则只控制 `list_files` / `search_text` 的普通展示，
   不是文件权限，也不会缩小安全扫描或副作用证据范围。
-- `search_text` 只支持 Literal、ASCII case-insensitive 搜索，没有 Regex、Glob、
-  文件类型筛选、分页或 Repo Intelligence。结果上限为 100，preview 上限为 300 字符，
-  单文件上限为 256 KiB；`scannedBytes` 仅统计通过 Eidos 后置策略且产生 Match 的文件。
+- `search_text` 的 `includeGlobs` 只提供 bounded positive file globs，尚未提供分页、
+  AST/LSP 或 Repo Intelligence；regex 仍使用同一受管 Ripgrep 后端和 ASCII
+  case-insensitive 选项。结果上限为 100，preview 上限为 300 字符，单文件上限为
+  256 KiB；`scannedBytes` 仅统计通过 Eidos 后置策略且产生 Match 的文件。
 - 当前只提交 Ripgrep 15.2.0 的 macOS arm64 受管资源。最终应用打包必须把
   `runtime/eidos_runtime/resources/bin/ripgrep/` 原样放入 Python Runtime 资源树并保留
   `darwin-arm64/rg` 的可执行位；当前 PR 不扩展 Electron Packager，也不支持 macOS x64、
