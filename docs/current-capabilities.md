@@ -20,7 +20,9 @@
 - 每个 Step 确定性解析并固化分层系统指令：System Safety、Base Agent、Runtime Policy、带来源的 Project Rules 和当前 Turn 的 Selected Skills；消息、工具与输出预算和最终 instructions 一起计入 Context Budget。
 - Project Rules 与 Selected Skill 内容只进入声明的指令层，不在普通 user 消息中重复；Skill Catalog、历史、Tool Result、文件内容和元数据继续作为普通上下文数据。Step 快照保存实际发送的完整 instructions 与 UTF-8 SHA-256。
 - Finalization 复用当前解析结果并临时追加无工具的 `finalization-policy`；标题生成使用隔离的标题系统指令、当前用户请求和空 Tool Definitions。
-- 上下文构建、压缩、Run/Segment 预算、协议错误反馈、Loop Guard 和最终化。
+- 上下文构建、压缩、Run/Segment 预算、协议错误反馈、Loop Guard 和最终化；Context
+  Usage 优先使用最近 Provider usage 的 Active Context，缺失时才使用标记为
+  `estimated` 的有界 fallback，并区分模型窗口与投影安全上限。
 - `parallel_tool_calls=true` 允许模型声明多调用；Runtime 只并发安全只读批次并保持声明顺序。
 
 ## 内置工具

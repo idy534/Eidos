@@ -32,11 +32,10 @@ class LoopDecisionEngine:
         if loop_guard_result is not None:
             return LoopDecision(action=LoopAction.PAUSE, reason=loop_guard_result)
         if context_budget is not None and not context_budget.fits:
-            if compaction_count < 2:
-                return LoopDecision(action=LoopAction.COMPACT, reason="context_over_budget")
-            return LoopDecision(
-                action=LoopAction.PAUSE, reason="context_still_over_budget"
-            )
+            # Compaction availability is determined by actual compactable
+            # history. The durable compaction count is telemetry, never a
+            # Run-lifetime fuse.
+            return LoopDecision(action=LoopAction.COMPACT, reason="context_over_budget")
         if run_budget is not None:
             if run_budget.run_steps_remaining <= 0 or run_budget.run_effective_ms_remaining <= 0:
                 return LoopDecision(action=LoopAction.FINALIZE, reason="run_budget_exhausted")

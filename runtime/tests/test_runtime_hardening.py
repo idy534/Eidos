@@ -741,7 +741,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertEqual(failed["status"], "failed")
         self.assertEqual(failed["errorCode"], "CONTEXT_INPUT_TOO_LARGE")
 
-    def test_two_compactions_still_over_budget_finalize_with_stable_reason(self) -> None:
+    def test_compaction_count_does_not_terminate_a_run(self) -> None:
         run, _ = self.store.create_run(
             self.session["id"],
             "x" * 20_000,
@@ -755,13 +755,17 @@ class RuntimeHardeningTests(unittest.TestCase):
         )
         self.store.connection.commit()
 
-        RuntimeEngine(self.store, ScriptedModel([]), lambda _message: None).run(
+        RuntimeEngine(
+            self.store,
+            ScriptedModel([ModelResponse(text="done")]),
+            lambda _message: None,
+        ).run(
             run["id"], threading.Event()
         )
 
-        stopped = self.store.read_run(run["id"])
-        self.assertEqual(stopped["status"], "stopped")
-        self.assertEqual(stopped["stopReason"], "context_still_over_budget")
+        completed = self.store.read_run(run["id"])
+        self.assertEqual(completed["status"], "succeeded")
+        self.assertEqual(self.store.compaction_count(run["id"]), 2)
 
     def test_steer_refreshes_skill_context_and_deferred_tools_next_step(self) -> None:
         plugin_root = Path(self.temporary.name) / "plugin"

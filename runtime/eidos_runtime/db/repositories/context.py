@@ -16,8 +16,10 @@ from eidos_runtime.db.mappers import _compact_summary_from_row, _json_tuple
 from eidos_runtime.runtime.contracts import ProgressSignature
 from eidos_runtime.runtime.state_machine import EventType
 
-MAX_CONTEXT_BYTES = 768 * 1024
-MAX_CONTEXT_ITEMS = 200
+# These limits protect the SQLite-to-model projection from unbounded memory and
+# serialization work. They are not the provider model context window.
+CONTEXT_PROJECTION_MAX_BYTES = 768 * 1024
+CONTEXT_PROJECTION_MAX_ITEMS = 200
 RECENT_CONTEXT_STEPS = 3
 
 
@@ -147,14 +149,18 @@ class ContextRepository(Repository):
                 {base}
                 ORDER BY items.creation_seq {'DESC' if newest else 'ASC'} LIMIT ?
                 """,
-                (run["session_id"], *excluded_values, MAX_CONTEXT_ITEMS + 1),
+                (
+                    run["session_id"],
+                    *excluded_values,
+                    CONTEXT_PROJECTION_MAX_ITEMS + 1,
+                ),
             ).fetchall()
             goal_size = (
                 len(str(goal_row["content"] or "").encode("utf-8")) + 256
                 if goal_row is not None else 0
             )
-            if goal_size > MAX_CONTEXT_BYTES:
-                raise ContextLimitExceeded("current_user_goal")
+            if goal_size > CONTEXT_PROJECTION_MAX_BYTES:
+                raise ContextLimitExceeded("current_user_goal_too_large")
             selected_ids = list(protected_ids) if newest else []
             protected_bytes = 0
             if newest and protected_ids:
@@ -168,14 +174,17 @@ class ContextRepository(Repository):
                     tuple(protected_ids),
                 ).fetchone()[0])
             selected_bytes = protected_bytes
-            if len(selected_ids) > MAX_CONTEXT_ITEMS or selected_bytes > MAX_CONTEXT_BYTES:
-                raise ContextLimitExceeded("protected_context")
+            if (
+                len(selected_ids) > CONTEXT_PROJECTION_MAX_ITEMS
+                or selected_bytes > CONTEXT_PROJECTION_MAX_BYTES
+            ):
+                raise ContextLimitExceeded("internal_projection_limit")
             base_selected = 0
             for row in metadata:
                 fact_bytes = int(row["fact_bytes"])
                 if (
-                    len(selected_ids) >= MAX_CONTEXT_ITEMS
-                    or selected_bytes + fact_bytes > MAX_CONTEXT_BYTES
+                    len(selected_ids) >= CONTEXT_PROJECTION_MAX_ITEMS
+                    or selected_bytes + fact_bytes > CONTEXT_PROJECTION_MAX_BYTES
                 ):
                     break
                 selected_ids.append(str(row["id"]))
@@ -198,7 +207,8 @@ class ContextRepository(Repository):
                 ).fetchall()
             candidate_overflow = (
                 int(aggregate[0]) > base_selected
-                or int(aggregate[1]) > MAX_CONTEXT_BYTES - protected_bytes
+                or int(aggregate[1])
+                > CONTEXT_PROJECTION_MAX_BYTES - protected_bytes
             )
             latest_signature = connection.execute(
                 """
@@ -242,12 +252,12 @@ class ContextRepository(Repository):
                 ensure_ascii=False,
                 separators=(",", ":"),
             ).encode("utf-8")) + 1
-            if serialized_bytes + size > MAX_CONTEXT_BYTES:
+            if serialized_bytes + size > CONTEXT_PROJECTION_MAX_BYTES:
                 candidate_overflow = True
                 if goal_row is not None and row["id"] == goal_row["id"]:
-                    raise ContextLimitExceeded("current_user_goal")
+                    raise ContextLimitExceeded("current_user_goal_too_large")
                 if str(row["id"]) in protected_ids:
-                    raise ContextLimitExceeded("protected_context")
+                    raise ContextLimitExceeded("internal_projection_limit")
                 continue
             items.append(fact)
             serialized_bytes += size
@@ -302,8 +312,6 @@ class ContextRepository(Repository):
             ).fetchone()
             if run is None:
                 raise InvalidRunStateError("run is not active")
-            if int(run["compaction_count"]) >= 2:
-                raise ContextLimitExceeded("compaction_limit")
             connection.execute(
                 """
                 INSERT INTO compact_summaries (
@@ -327,7 +335,7 @@ class ContextRepository(Repository):
             updated = connection.execute(
                 """
                 UPDATE runs SET compaction_count = compaction_count + 1, updated_at = ?
-                WHERE id = ? AND status = 'running' AND compaction_count < 2
+                WHERE id = ? AND status = 'running'
                 """,
                 (now, run_id),
             )

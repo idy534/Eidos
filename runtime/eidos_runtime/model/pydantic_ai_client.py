@@ -508,10 +508,16 @@ def map_model_response(
 
 def _map_usage(usage: RequestUsage) -> ModelUsage:
     return ModelUsage(
-        input_tokens=usage.input_tokens or None,
-        output_tokens=usage.output_tokens or None,
-        cache_read_tokens=usage.cache_read_tokens or None,
-        cache_write_tokens=usage.cache_write_tokens or None,
+        input_tokens=usage.input_tokens if usage.input_tokens is not None else None,
+        output_tokens=usage.output_tokens if usage.output_tokens is not None else None,
+        cache_read_tokens=(
+            usage.cache_read_tokens
+            if usage.cache_read_tokens is not None else None
+        ),
+        cache_write_tokens=(
+            usage.cache_write_tokens
+            if usage.cache_write_tokens is not None else None
+        ),
         details={
             key: value
             for key, value in usage.details.items()

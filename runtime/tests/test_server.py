@@ -577,7 +577,7 @@ class RuntimeProtocolTests(unittest.TestCase):
 
                 current, _ = store.create_run(session["id"], "continue")
                 built = ContextBuilder(store).build(current["id"])
-                self.assertFalse(built.budget.fits)
+                self.assertTrue(built.budget.fits)
                 self.assertTrue(built.facts.candidate_overflow)
                 self.assertLessEqual(len(built.facts.items), 200)
                 self.assertIn(

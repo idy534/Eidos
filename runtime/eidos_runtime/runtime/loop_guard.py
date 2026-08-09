@@ -14,12 +14,10 @@ class LoopGuard:
         max_same_tool_fingerprint: int = 3,
         max_same_error_fingerprint: int = 3,
         max_no_progress_rounds: int = 3,
-        max_compactions_per_run: int = 2,
     ) -> None:
         self.max_same_tool_fingerprint = max_same_tool_fingerprint
         self.max_same_error_fingerprint = max_same_error_fingerprint
         self.max_no_progress_rounds = max_no_progress_rounds
-        self.max_compactions_per_run = max_compactions_per_run
         self._last_tool: str | None = None
         self._same_tool = 0
         self._recovered_tool: str | None = None
@@ -31,7 +29,6 @@ class LoopGuard:
         self._seen_facts: set[str] = set()
         self._active_errors: set[str] = set()
         self._empty_responses = 0
-        self._post_compaction_overflows = 0
 
     @classmethod
     def from_signatures(
@@ -154,15 +151,6 @@ class LoopGuard:
     def observe_empty_response(self, empty: bool) -> str | None:
         self._empty_responses = self._empty_responses + 1 if empty else 0
         return "repeated_empty_response" if self._empty_responses >= 2 else None
-
-    def observe_compaction_overflow(self, overflow: bool) -> str | None:
-        self._post_compaction_overflows = self._post_compaction_overflows + 1 if overflow else 0
-        return (
-            "context_still_over_budget"
-            if self._post_compaction_overflows >= self.max_compactions_per_run
-            else None
-        )
-
 
 def tool_call_fingerprint(
     calls: tuple[ModelToolCall, ...],

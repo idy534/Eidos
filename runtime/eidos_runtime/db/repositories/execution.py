@@ -694,6 +694,29 @@ class ExecutionRepository(Repository):
                 (run_id,),
             ).fetchall()
         return [_model_attempt_from_row(row) for row in rows]
+
+    def latest_model_usage(self, run_id: str) -> ModelUsage | None:
+        """Return the latest provider-reported usage for this Run.
+
+        ModelAttempt usage is the durable provider fact.  Context projection
+        callers must not reconstruct active context from cumulative attempts.
+        """
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT model_attempts.usage_json
+                FROM model_attempts
+                JOIN steps ON steps.id = model_attempts.step_id
+                WHERE steps.run_id = ? AND model_attempts.usage_json IS NOT NULL
+                ORDER BY model_attempts.creation_seq DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ModelUsage.model_validate_json(row["usage_json"])
+
     def create_assistant_item(
         self, run_id: str, model_step_index: int
     ) -> dict[str, object]:

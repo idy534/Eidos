@@ -87,6 +87,17 @@ stop reason 只作为上下文数据。Title Generation 使用独立的
 `TITLE_SYSTEM_INSTRUCTIONS` 与单条当前用户请求，不接收主 Agent 指令、项目规则、
 Skill、历史或 Tool Definitions。
 
+在线 `ContextBuilder` 的 Context Usage 以当前 Run 最近一个有 Provider usage 的
+`ModelAttempt.usage_json.input_tokens` 作为 Active Context 事实；它不把多个 Attempt
+的 input tokens 累加，也不重复加 cache read/write tokens。Provider usage 不可用时才使用
+有界的字符估算，并将来源标记为 `estimated`。`ContextUsageSnapshot` 将 Active Context、
+模型 Context Window、占用百分比和来源分开保存。`CONTEXT_PROJECTION_MAX_BYTES` 与
+`CONTEXT_PROJECTION_MAX_ITEMS` 只保护 SQLite 到模型的有界投影，不代表模型窗口；候选
+投影溢出保留在 Context Facts，不伪装成 Provider Context Limit。Compaction count 只作
+持久 telemetry；真实无可压缩历史时才停止。Provider 明确返回 `context_exceeded` 时，
+Runtime 会先执行一次有效 compaction、重新投影并重试，重复同一 Context 状态或无进展时
+以 `context_still_over_budget` 收敛。
+
 Long-task progress is stored as typed JSON in the existing `operations` table
 under `long_task/control`, with compare-and-set updates. Pause is reported only at
 explicit safe points; resume checks Workspace identity, Git HEAD, rules, index,

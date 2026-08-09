@@ -170,7 +170,7 @@ class RuntimeLoopTests(unittest.TestCase):
         with self.assertRaises(ActiveRunError):
             self.store.create_run(self.session["id"], "Second")
 
-    def test_oversized_session_context_compacts_before_calling_the_model(self) -> None:
+    def test_projection_safety_overflow_does_not_force_compaction(self) -> None:
         for index in range(13):
             historical, _ = self.store.create_run(
                 self.session["id"], f"{index}:" + "x" * (64 * 1024 - 3)
@@ -186,7 +186,7 @@ class RuntimeLoopTests(unittest.TestCase):
 
         completed = self.store.read_run(run["id"])
         self.assertEqual(completed["status"], "succeeded")
-        self.assertEqual(self.store.compaction_count(run["id"]), 1)
+        self.assertEqual(self.store.compaction_count(run["id"]), 0)
         self.assertEqual(len(model.contexts), 1)
 
     def test_cancel_prevents_a_late_model_result_from_succeeding_the_run(self) -> None:

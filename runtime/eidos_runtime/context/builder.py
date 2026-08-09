@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import platform
+import time
 
 from pydantic import BaseModel, ConfigDict
 
@@ -166,9 +167,9 @@ class ContextBuilder:
             message_count=len(context),
             tool_call_count=tool_calls,
             tool_result_count=tool_results,
+            provider_usage=self.store.latest_model_usage(run_id),
+            usage_updated_at=time.time_ns() // 1_000_000,
         )
-        if facts.candidate_overflow and budget.fits:
-            budget = budget.model_copy(update={"fits": False})
         return ContextBuild(
             model_context=tuple(context),
             instructions=instructions,
