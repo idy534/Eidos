@@ -2259,7 +2259,10 @@ input:focus, textarea:focus {
 .composer-actions span { padding-left: 0.5rem; color: var(--muted); font-size: var(--font-size-xs); }
 .composer-meta { display: flex; gap: 0.45rem; align-items: center; min-width: 0; color: var(--muted); font-size: var(--font-size-xs); }
 .composer-meta label { padding-left: 0.5rem; }
-.composer-meta select { max-width: 15rem; border: 1px solid var(--line); border-radius: 0.45rem; padding: 0.3rem 1.8rem 0.3rem 0.45rem; color: var(--text); background: white; font-size: var(--font-size-caption); }
+.composer-options { display: flex; gap: 0.65rem; align-items: center; margin-left: auto; }
+.composer-options .composer-submit-btn { margin-left: 0.25rem; }
+.composer-meta select,
+.composer-options select { max-width: 15rem; border: 1px solid var(--line); border-radius: 0.45rem; padding: 0.3rem 1.8rem 0.3rem 0.45rem; color: var(--text); background: white; font-size: var(--font-size-caption); cursor: pointer; }
 /* Circular Context Usage Indicator */
 .composer-context-usage {
   position: relative;

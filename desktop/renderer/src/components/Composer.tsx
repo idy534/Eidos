@@ -138,7 +138,19 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       />
       <div className="composer-actions">
         <div className="composer-meta">
-          <label htmlFor="run-model">本次模型</label>
+          {!isIdle && <span>{statusLabel}</span>}
+          {!modelConfigured && (
+            <Button type="button" variant="ghost" size="small" onClick={onOpenModelSettings}>
+              前往模型设置
+            </Button>
+          )}
+        </div>
+
+        <div className="composer-options">
+          <ContextIndicator usage={contextUsage} />
+          <label htmlFor="run-model" className="sr-only">
+            本次模型
+          </label>
           <select
             id="run-model"
             value={selectedModelId ?? ""}
@@ -151,16 +163,8 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
               </option>
             ))}
           </select>
-          <ContextIndicator usage={contextUsage} />
-          {!isIdle && <span>{statusLabel}</span>}
-          {!modelConfigured && (
-            <Button type="button" variant="ghost" size="small" onClick={onOpenModelSettings}>
-              前往模型设置
-            </Button>
-          )}
-        </div>
 
-        {canCancel ? (
+          {canCancel ? (
           <Button
             type="button"
             variant="primary"
@@ -194,6 +198,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
             <span className="sr-only">{buttonLabel}</span>
           </Button>
         )}
+        </div>
       </div>
     </form>
   );

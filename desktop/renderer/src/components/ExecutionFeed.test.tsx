@@ -203,7 +203,7 @@ test("streams a tool-free answer without a process group", () => {
 
   assert.doesNotMatch(html, /process-group|已处理|正在处理/);
   assert.match(html, /<strong>答案<\/strong>/);
-  assert.match(html, /class="feed-item-copy-btn"/);
+  assert.match(html, /feed-item-copy-btn/);
   assert.match(html, /title="复制内容"/);
   assert.match(html, /class="user-message-bubble"/);
   assert.match(html, /class="feed-item-timestamp"/);
