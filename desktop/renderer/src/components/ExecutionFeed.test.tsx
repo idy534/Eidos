@@ -261,6 +261,38 @@ test("does not describe a failed file write as edited", () => {
   assert.doesNotMatch(html, /已编辑 summary\.txt/);
 });
 
+test("shows canonical shell failure code, summary, and stderr", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({
+        id: "failed-shell", ordinal: 1, kind: "command_execution", status: "failed",
+        toolCall: {
+          id: "tool-shell-failure", itemId: "failed-shell", modelStepIndex: 1, batchOrder: 0,
+          providerCallId: "provider-shell-failure", toolName: "run_shell",
+          status: "failed", startedAt: 1_000, completedAt: 2_000,
+          argumentsJson: JSON.stringify({ command: "ls -la" }),
+          resultJson: JSON.stringify({
+            outcome: "error",
+            code: "WORKSPACE_INDEX_INCOMPLETE",
+            summary: "Workspace index could not be completed before shell launch.",
+            data: { exitCode: null, stdout: "", stderr: "index deadline exceeded" },
+          }),
+        },
+      })]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(html, /失败 · WORKSPACE_INDEX_INCOMPLETE/);
+  assert.match(html, /Workspace index could not be completed before shell launch\./);
+  assert.match(html, /index deadline exceeded/);
+});
+
 test("shows the exact host and target for network approval", () => {
   const { completedAt: _completedAt, ...runWithoutCompletion } = run;
   const waitingRun: Run = {

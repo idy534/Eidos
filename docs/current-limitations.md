@@ -3,6 +3,7 @@
 本文只描述当前代码边界，不列未来路线图。
 
 - 仅支持 macOS Desktop。Shell 隔离依赖可用的原生 `/usr/bin/sandbox-exec` 与随包策略资源；Self-Test 失败时 Shell 能力 fail-closed。
+- Shell 的 Workspace 变化证据在首次运行或仓库扫描超时/发现不安全条目时可能为 `unknown`；Shell 启动不依赖全仓内容预扫描，已启动进程不会把不完整 before manifest 的全部条目伪装成 created，但 canonical result 会保留 `reconciliationRequired`。Seatbelt、Workspace identity/cwd、Approval、fd-relative 文件边界、输出敏感扫描和 post-execution reconciliation 仍然生效。
 - 模型 Provider 限定为内置 DeepSeek、MiniMax、Kimi 目录，wire API 固定为 OpenAI-compatible Chat Completions；不支持自定义 Provider、URL、Responses API、连接测试或能力探测。
 - 全局同一时间只执行一个 Run。单个模型响应内只有安全只读工具可并发；Workspace 写入、Shell、Eidos-state 和 MCP/外部工具不得并发。
 - Eidos 1.0 不追求零线程架构：Durable Runtime core 与 SQLite 仍保持同步，每个活跃 Run 一个 Worker Thread 是刻意的隔离边界。异步网络 I/O、MCP、Managed Task 和并行只读 Batch 统一由唯一进程级 AnyIO Kernel 管理；blocking callback 不得在 Kernel Event Loop 上运行。
@@ -11,9 +12,12 @@
 - Repository discovery 目前只读取 Workspace 根目录的 `.gitignore` 和 `.eidosignore`；
   不支持嵌套 `.gitignore`。这些规则只控制 `list_files` / `search_text` 的普通展示，
   不是文件权限，也不会缩小安全扫描或副作用证据范围。
-- `search_text` 只支持 Literal、ASCII case-insensitive 搜索，没有 Regex、Glob、
-  文件类型筛选、分页或 Repo Intelligence。结果上限为 100，preview 上限为 300 字符，
-  单文件上限为 256 KiB；`scannedBytes` 仅统计通过 Eidos 后置策略且产生 Match 的文件。
+- `search_text` 的 `includeGlobs` 只提供 bounded positive file globs，尚未提供分页、
+  AST/LSP 或 Repo Intelligence；regex 仍使用同一受管 Ripgrep 后端和 ASCII
+  case-insensitive 选项。结果上限为 100，preview 上限为 300 字符，单文件上限为
+  256 KiB；`scannedBytes` 仅统计通过 Eidos 后置策略且产生 Match 的文件。
+- Compaction Quality 当前是 deterministic bounded extraction，不做 model-assisted summary；
+  它保留结构化路径、symbol、hash 和状态证据，但不会把完整大文件内容复制进摘要。
 - 当前只提交 Ripgrep 15.2.0 的 macOS arm64 受管资源。最终应用打包必须把
   `runtime/eidos_runtime/resources/bin/ripgrep/` 原样放入 Python Runtime 资源树并保留
   `darwin-arm64/rg` 的可执行位；当前 PR 不扩展 Electron Packager，也不支持 macOS x64、

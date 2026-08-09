@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 V9_SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -815,9 +815,15 @@ CREATE INDEX run_revisions_source
 ON run_revisions(source_run_id);
 """
 
+V14_COMPACTION_QUALITY_SCHEMA_SQL = """
+ALTER TABLE compact_summaries
+ADD COLUMN summary_metadata_json TEXT NOT NULL DEFAULT '{}';
+"""
+
 SCHEMA_SQL = (
     V12_BASE_SCHEMA_SQL
     + V10_REPOSITORY_SCHEMA_SQL
     + V10_CONTEXT_SCHEMA_SQL
     + V13_RESPONSE_ACTIONS_SCHEMA_SQL
+    + V14_COMPACTION_QUALITY_SCHEMA_SQL
 )
