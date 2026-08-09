@@ -33,7 +33,7 @@
 | Q9 | 单次模型响应可包含多个只读 ToolCall，按声明顺序执行；有副作用工具必须独占响应。 | TDD ToolCall 批次 |
 | Q10 | 非法 ToolCall 组合整批原子拒绝，零执行。 | TDD Runtime 校验 |
 | Q11 | 合法只读批次中，单项失败不阻断后续调用。 | TDD Runtime 校验 |
-| Q12 | 每个 Execution Segment 最多 20 Steps/30 分钟；整个 Run 最多 80 Steps/120 分钟。 | PRD 限制；TDD 预算 |
+| Q12 | 历史 20/80 Steps 与 30/120 分钟任务预算已废止；Step/有效时间仅作 telemetry，30 分钟只触发非终止 Segment rollover。 | 当前 Runtime lifecycle |
 | Q13 | Run 达到硬上限后进入终态 `stopped`，记录结构化 `stop_reason`。 | PRD 状态；TDD 状态机 |
 | Q14 | 硬停止前允许一次最长 60 秒、无工具权限的 Finalization Call；失败时降级为结构化摘要。 | TDD Finalization |
 | Q15 | 所有写操作在获批后、执行前复检目标版本；冲突使审批失效并返回 `file_version_conflict`。 | PRD 审批；TDD 文件事务 |

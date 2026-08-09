@@ -11,24 +11,25 @@ from eidos_runtime.context.compactor import ContextCompactionError, ContextCompa
 from eidos_runtime.db.storage import (
     ContextLimitExceeded,
     InvalidRunStateError,
-    RunLimitReached,
-    SegmentLimitReached,
     SessionStore,
 )
-from eidos_runtime.model.client import ModelClient, ModelToolCall
+from eidos_runtime.model.client import ModelClient
 from eidos_runtime.domain.long_task import LongTaskStatus, SafePoint
 from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalDecision
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.contracts import (
     LoopAction,
     RunContext,
-    RunBudget,
     RuntimeCancelled,
 )
 from eidos_runtime.runtime.decision import LoopDecisionEngine
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.finalizer import RunFinalizer
-from eidos_runtime.runtime.loop_guard import LoopGuard, tool_call_fingerprint
+from eidos_runtime.runtime.loop_guard import (
+    LoopGuard,
+    context_fact_frontier_hash,
+    tool_call_fingerprint,
+)
 from eidos_runtime.runtime.run_resources import RunResourceError, RunResources
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.runtime.sampling import (
@@ -57,7 +58,6 @@ from eidos_runtime.sandbox.permissions import (
     unsandboxed_execution_allowed,
 )
 from eidos_runtime.model.instructions import StepPermissionPolicy
-from eidos_runtime.tools.contracts import ListFilesInput
 
 
 EMPTY_EXTENSION_SNAPSHOT = {
@@ -286,21 +286,8 @@ class RuntimeEngine:
                 if context_state in estimated_pressure_states
                 else built.budget
             )
-            budget_fact = self.store.run_budget(run.run_id)
             context_decision = decisions.decide(
                 context_budget=decision_budget,
-                run_budget=RunBudget.model_validate(
-                    {
-                        "segment_steps_remaining": budget_fact["segmentStepsRemaining"],
-                        "run_steps_remaining": budget_fact["runStepsRemaining"],
-                        "segment_effective_ms_remaining": budget_fact[
-                            "segmentEffectiveMsRemaining"
-                        ],
-                        "run_effective_ms_remaining": budget_fact[
-                            "runEffectiveMsRemaining"
-                        ],
-                    }
-                ),
                 compaction_count=built.facts.compaction_count,
                 pending_user_input=self.store.has_pending_input(run.run_id),
                 cancelled=cancel.is_set(),
@@ -333,28 +320,8 @@ class RuntimeEngine:
                     )
                     return
                 continue
-            if context_decision.action == LoopAction.FINALIZE:
-                reason = (
-                    "max_effective_runtime"
-                    if budget_fact["runEffectiveMsRemaining"] <= 0
-                    else "max_total_steps"
-                )
-                finalizer.finalize(
-                    run.run_id,
-                    built.model_context,
-                    reason,
-                    cancel,
-                    instructions=built.instructions,
-                )
-                return
             if context_decision.action == LoopAction.PAUSE:
                 reason = context_decision.reason or "context_over_budget"
-                if reason == "segment_budget_exhausted":
-                    reason = (
-                        "segment_time_limit"
-                        if budget_fact["segmentEffectiveMsRemaining"] <= 0
-                        else "segment_step_limit"
-                    )
                 finalizer.finalize(
                     run.run_id,
                     built.model_context,
@@ -363,46 +330,17 @@ class RuntimeEngine:
                     instructions=built.instructions,
                 )
                 return
-            try:
-                step = step_factory.create(
-                    run,
-                    resources,
-                    model_context=built.model_context,
-                    instructions=built.instructions,
-                    tool_snapshot=snapshot,
-                    rule_resolution_snapshot=rule_snapshot,
-                    context_budget=built.budget,
-                    workspace_version=built.facts.workspace_version,
-                    new_user_input_ids=tuple(item_id for item_id, _content in injected),
-                )
-            except SegmentLimitReached as error:
-                reason = (
-                    "segment_time_limit"
-                    if "time" in str(error)
-                    else "segment_step_limit"
-                )
-                finalizer.finalize(
-                    run.run_id,
-                    built.model_context,
-                    reason,
-                    cancel,
-                    instructions=built.instructions,
-                )
-                return
-            except RunLimitReached as error:
-                reason = (
-                    "max_effective_runtime"
-                    if "time" in str(error)
-                    else "max_total_steps"
-                )
-                finalizer.finalize(
-                    run.run_id,
-                    built.model_context,
-                    reason,
-                    cancel,
-                    instructions=built.instructions,
-                )
-                return
+            step = step_factory.create(
+                run,
+                resources,
+                model_context=built.model_context,
+                instructions=built.instructions,
+                tool_snapshot=snapshot,
+                rule_resolution_snapshot=rule_snapshot,
+                context_budget=built.budget,
+                workspace_version=built.facts.workspace_version,
+                new_user_input_ids=tuple(item_id for item_id, _content in injected),
+            )
 
             tools = ToolCallRuntime(
                 self.store,
@@ -633,29 +571,33 @@ class RuntimeEngine:
                 validation.tool_calls,
                 step.workspace_version,
                 step.reconciliation_epoch,
+                context_fact_frontier_hash=context_fact_frontier_hash(built.facts),
+                active_error_fingerprints=built.facts.active_error_fingerprints,
             )
-            zero_argument_repeat = bool(validation.tool_calls) and all(
-                _is_zero_argument_tool_call(call) for call in validation.tool_calls
-            )
-            if (
-                repeated is not None
-                and zero_argument_repeat
-                and guard.should_recover_repeated_tool_call()
-            ):
+            if repeated == "recover_repeated_tool_call":
+                recovery_state = guard.mark_recovery_attempted()
+                recovery_signature = guard.make_signature(
+                    workspace_version=step.workspace_version,
+                    diff_hash=built.facts.last_diff_hash,
+                    successful_tool_result_hashes=(),
+                    context_fact_ids=(),
+                    error_fingerprints=built.facts.active_error_fingerprints,
+                    reconciliation_epoch=step.reconciliation_epoch,
+                    new_user_input_ids=step.new_user_input_ids,
+                    tool_call_fingerprint=tool_call_fingerprint(
+                        validation.tool_calls
+                    ),
+                    loop_state_fingerprint=recovery_state,
+                    recovery_state_fingerprint=recovery_state,
+                )
                 self.store.complete_current_step(
-                    run.run_id, "completed", reason="repeated_tool_call_recovery"
+                    run.run_id,
+                    "completed",
+                    reason="repeated_tool_call_recovery",
+                    progress_signature=recovery_signature,
                 )
                 run = run.model_copy(update={
-                    "model_context": ({
-                        "type": "user",
-                        "sectionId": "runtime-loop-recovery",
-                        "content": (
-                            "Runtime loop recovery: the same zero-argument tool call "
-                            "has already been attempted repeatedly against an unchanged "
-                            "workspace. Do not repeat it. Choose a different tool, or "
-                            "finish with the evidence already collected."
-                        ),
-                    },)
+                    "model_context": (_loop_recovery_context("duplicate_tool_state"),)
                 })
                 continue
             if repeated is not None:
@@ -671,25 +613,50 @@ class RuntimeEngine:
             self._pause_at(run.run_id, SafePoint.BEFORE_TOOL, cancel)
             outcome = tools.execute(step, validation.tool_calls, cancel)
             self._pause_at(run.run_id, SafePoint.AFTER_TOOL, cancel)
-            signature = guard.make_signature(
-                workspace_version=outcome.workspace_version,
-                diff_hash=outcome.diff_hash,
-                successful_tool_result_hashes=outcome.successful_tool_result_hashes,
-                context_fact_ids=outcome.context_fact_ids,
-                error_fingerprints=outcome.error_fingerprints,
-                reconciliation_epoch=outcome.reconciliation_epoch,
-                new_user_input_ids=step.new_user_input_ids,
-                tool_call_fingerprint=tool_call_fingerprint(
+            guard_reason = None
+            signature = None
+            if outcome.status == "completed":
+                post_facts = self.store.context_projection_facts(run.run_id)
+                loop_state = guard.record_tool_result_state(
                     validation.tool_calls,
-                    step.workspace_version,
-                    step.reconciliation_epoch,
-                ),
-            )
-            guard_reason = guard.observe_progress(signature)
+                    outcome.workspace_version,
+                    outcome.reconciliation_epoch,
+                    context_fact_frontier_hash=context_fact_frontier_hash(post_facts),
+                    active_error_fingerprints=outcome.error_fingerprints,
+                )
+                signature = guard.make_signature(
+                    workspace_version=outcome.workspace_version,
+                    diff_hash=outcome.diff_hash,
+                    successful_tool_result_hashes=(
+                        outcome.successful_tool_result_hashes
+                    ),
+                    context_fact_ids=outcome.context_fact_ids,
+                    error_fingerprints=outcome.error_fingerprints,
+                    reconciliation_epoch=outcome.reconciliation_epoch,
+                    new_user_input_ids=step.new_user_input_ids,
+                    tool_call_fingerprint=tool_call_fingerprint(
+                        validation.tool_calls
+                    ),
+                    loop_state_fingerprint=loop_state,
+                )
+                guard_reason = guard.observe_progress(signature)
+                if guard_reason == "recover_no_progress":
+                    recovery_state = guard.mark_recovery_attempted()
+                    signature = signature.model_copy(update={
+                        "recovery_state_fingerprint": recovery_state,
+                    })
             if outcome.status in {"completed", "paused"}:
                 self.store.complete_current_step(
                     run.run_id, "completed", progress_signature=signature
                 )
+            if guard_reason == "recover_no_progress":
+                mutation = self._pause_effective_time(run.run_id)
+                if mutation is not None:
+                    self.events.publish(mutation, run=mutation.value)
+                run = run.model_copy(update={
+                    "model_context": (_loop_recovery_context("no_progress_state"),)
+                })
+                continue
             tool_decision = decisions.decide(
                 sampling=sampled,
                 tool_batch=outcome,
@@ -863,14 +830,23 @@ def _projection_state(built: ContextBuild) -> tuple[object, ...]:
     )
 
 
-def _is_zero_argument_tool_call(call: ModelToolCall) -> bool:
-    if not call.arguments:
-        return True
-    if call.name != "list_files":
-        return False
-    return call.arguments == ListFilesInput.model_validate({}).model_dump(
-        mode="json", by_alias=True
+def _loop_recovery_context(reason: str) -> dict[str, object]:
+    detail = (
+        "This exact tool batch already completed in the current unchanged "
+        "semantic state, and its durable result remains valid."
+        if reason == "duplicate_tool_state"
+        else "Execution returned to a previously observed semantic state "
+        "without new durable evidence."
     )
+    return {
+        "type": "user",
+        "sectionId": "runtime-loop-recovery",
+        "content": (
+            f"Runtime loop recovery: {detail} Do not repeat the same action. "
+            "Choose a different investigation path, or finish with the "
+            "evidence already collected."
+        ),
+    }
 
 
 RuntimeLoop = RuntimeEngine

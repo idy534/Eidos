@@ -141,7 +141,7 @@ context reconstruction remains a documented limitation.
 
 | 组件 | 当前职责 | 不负责 |
 |---|---|---|
-| `RuntimeEngine` | 单个 Run 的模型/工具循环协调、预算决策、终止与错误收敛 | 具体工具实现、单 ToolCall 生命周期、沙箱策略 |
+| `RuntimeEngine` | 单个 Run 的模型/工具循环协调、Context 决策、终止与错误收敛 | 具体工具实现、单 ToolCall 生命周期、沙箱策略 |
 | `ToolCallRuntime` | 一个 Step 的 ToolCall 批次校验、创建顺序、并发选择和有序汇总 | Durable Intent/终态提交、权限升级 |
 | `ToolExecutionController` | 单个 ToolCall 的 prepare/execute/verify、deadline、取消、Durable Intent、结果校验/投影、终态与 reconciliation | 模型循环、批次调度、Seatbelt 策略 |
 | `ToolOrchestrator` | Shell attempt 的有效权限物化、审批要求、Seatbelt/unsandboxed attempt 选择和一次权限升级 | ToolCall DB 生命周期、批次、进程监督实现 |
@@ -187,7 +187,14 @@ read-only discovery tools when their canonical arguments, result and observed
 Workspace state are unchanged. It leaves the first result authoritative,
 replaces later copies with a small `duplicateOf` marker, and resets the
 deduplication state after a reported Workspace change; this is independent of
-LoopGuard's no-progress detection.
+LoopGuard convergence. LoopGuard fingerprints the exact Tool batch together
+with Workspace version, reconciliation epoch, active errors and a canonical
+durable-context frontier that excludes timestamps, Step indexes and call IDs.
+After a Tool result is committed, the first return to the same semantic state
+skips duplicate execution and injects one generic recovery fact. Only returning
+to that same fingerprint after recovery gracefully stops the Run. New verified
+evidence, user input, Workspace/diff change, resolved errors or reconciliation
+change advances the frontier and keeps the Run alive.
 
 `apply_patch` delegates Unified Diff structure and metadata parsing to
 `unidiff`. Eidos accepts only one existing-file modification whose headers

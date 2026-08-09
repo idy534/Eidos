@@ -4,9 +4,9 @@
 
 范围说明：本文描述目标态状态机草案。历史第一期基线见 [MVP Lite](../archive/phases/mvp-lite.md)；第二期记录见 [第二期清单](../archive/phases/mvp-phase-2.md)。当前实现以 `docs/current-*.md`、代码和测试为准。
 
-MVP Lite 当前实施状态：✅ 全局单活动 Run；✅ `running/waiting_approval/succeeded/failed/canceled/interrupted`；✅ 串行模型/工具循环与 20 Step 上限；✅ 连续两次非法响应失败；✅ Cancel、迟到审批和 worker 异常收敛；✅ 未完成 Run 启动时标记 `interrupted` 且不重放。
+MVP Lite 历史基线包含 20 Step 上限；当前实现保留全局单活动 Run、串行模型/工具循环、Cancel、迟到审批和 worker 异常收敛，但已删除固定 Step 任务寿命。
 
-第二期实施状态：✅ 持久 FIFO 与单执行槽；✅ waiting_approval 释放执行槽并重新排队；✅ Segment/Step/Attempt；✅ 20/80 Step 与 30/120 分钟有效时间预算；✅ 无工具 Finalization；✅ Reject 两次暂停、用户补充新 Segment、Durable Intent 与 reconciliation 屏障。
+第二期历史基线曾包含 20/80 Step 与 30/120 分钟预算；当前实现保留持久 FIFO、单执行槽、Segment/Step/Attempt、Finalization、Durable Intent 与 reconciliation 屏障，但 Step/Run effective time 只作 telemetry，30 分钟只触发非终止 Segment rollover。
 
 ## 1. 核心实体
 
@@ -23,7 +23,7 @@ Session
 ```
 
 - Run 是一次可排队、执行并进入明确终态的任务执行。
-- Execution Segment 是一次连续执行预算。
+- Execution Segment 是一次实际 Runtime execution/lifecycle slice。
 - Step 对应一次完整模型响应及其 ToolCall 批次。
 - ModelAttempt 记录一次真实模型网络发送；同一 Step 的 Attempt 共享逻辑请求 ID，并由 Step 级 10 分钟 request cycle deadline 统一约束。
 
@@ -79,11 +79,9 @@ queued|waiting_approval -> canceled
 running|waiting_approval|finalizing -> interrupted
 ```
 
-`stopped` 是硬预算耗尽的终态：
+`stopped` 是 graceful-but-forced 的终态，例如 Context 压缩后仍不可恢复或 LoopGuard 确认循环。历史 SQLite 可能包含 `max_total_steps|max_effective_runtime|segment_step_limit|segment_time_limit`；当前 Runtime 不再产生这些 stop reason。
 
-- `stop_reason=max_total_steps|max_effective_runtime`
-- 不允许恢复原 Run。
-- 用户可基于摘要和当前 Workspace 创建新 Run。
+LoopGuard 不按相同 Tool、Error 或 no-progress 的累计轮数终止。`LoopStateFingerprint` 包含 exact Tool batch、Workspace version、reconciliation epoch、active errors 与 canonical durable-context frontier，排除 timestamp、Step index、Attempt/Call ID。已持久化结果仍有效时，第一次返回相同 state 会跳过 Tool 执行并注入一次 generic recovery；只有 recovery 后再次返回相同 fingerprint 才以 `repeated_tool_call|no_progress` graceful Finalization。`ProgressSignature` 持久化 state/recovery fingerprint，使重启后仍能恢复 convergence 状态。
 
 ### 3.1 执行态 RuntimeState
 
@@ -105,20 +103,13 @@ class RuntimeState(str, Enum):
 - 每次迁移先由 StateMachine 校验，再与 Run/Segment/Step/Approval 的持久事实和 Event 同事务提交；任何非法迁移安全失败，不能由调用方绕过。
 - Sidecar 重启不反序列化旧 `RuntimeState`：它从持久 Run 状态和最后已提交事实重建可调度状态，绝不恢复已在内存中的模型或工具执行。
 
-## 4. Execution Segment 与预算
+## 4. Execution Segment 与 telemetry
 
-每次 Run 首次执行或 user-input 恢复都创建新 Segment：
-
-```text
-max_steps = 20
-max_effective_seconds = 1800
-```
-
-Run 硬上限：
+每次 Run 首次执行、user-input 恢复或 operational lifecycle rollover 都创建新 Segment。Step 数不触发 rollover；30 分钟 effective-time quantum 只在安全 Step boundary 完成旧 Segment 并启动新 Segment，同一 Run 继续：
 
 ```text
-max_total_steps = 80
-max_total_effective_seconds = 7200
+operational_effective_seconds = 1800
+step_count = telemetry_only
 ```
 
 以下时间不计入有效执行时间：
@@ -126,9 +117,7 @@ max_total_effective_seconds = 7200
 - queued
 - waiting_approval
 
-有效执行区间只用 TimeProvider monotonic clock 累计；区间结束时一次性向上取整为毫秒并持久化。wall `started_at/finished_at` 只用于审计和展示，不可相减驱动预算。
-
-Segment 或 Run 到限时进入 Finalization，随后 `stopped`，并通过 `stop_reason` 记录具体上限。
+有效执行区间只用 TimeProvider monotonic clock 累计；区间结束时一次性向上取整为毫秒并持久化。wall `started_at/finished_at` 只用于审计和展示，不可相减驱动生命周期。`model_step_count`、Segment `step_count/effective_ms` 和 Run `total_effective_ms` 均持续持久化，但不能决定任务终止。
 
 ## 5. Step 与 ToolCall 批次
 
@@ -336,7 +325,7 @@ applied | not_applied | outcome_unknown
 
 ## 12. Finalization
 
-达到硬上限后：
+确认 graceful-but-forced stop condition 后：
 
 1. Run 进入 finalizing 并释放普通工具权限。
 2. 执行一次最多 60 秒的无工具模型调用。
@@ -344,4 +333,4 @@ applied | not_applied | outcome_unknown
 4. 成功保存摘要；失败由 Runtime 生成结构化降级摘要。
 5. Run 进入 stopped。
 
-Finalization 不计入 80 个业务 Steps，不能产生 ToolCall。
+Finalization 不能产生 ToolCall，也不伪造业务 Model Step telemetry。

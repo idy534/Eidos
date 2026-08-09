@@ -108,13 +108,22 @@ class ProgressSignature(_FrozenModel):
     reconciliation_epoch: int
     new_user_input_ids: tuple[str, ...] = ()
     tool_call_fingerprint: str | None = None
+    loop_state_fingerprint: str | None = None
+    recovery_state_fingerprint: str | None = None
+
+
+class LoopStateFingerprint(_FrozenModel):
+    tool_call_fingerprint: str
+    workspace_version: int
+    reconciliation_epoch: int
+    active_error_fingerprints: tuple[str, ...]
+    context_fact_frontier_hash: str
 
 
 class LoopAction(StrEnum):
     CONTINUE = "continue"
     COMPACT = "compact"
     PAUSE = "pause"
-    FINALIZE = "finalize"
     COMPLETE = "complete"
     FAIL = "fail"
     CANCEL = "cancel"
@@ -130,13 +139,6 @@ class LoopDecision(_FrozenModel):
     action: LoopAction
     reason: str | None = None
     failure: RuntimeFailure | None = None
-
-
-class RunBudget(_FrozenModel):
-    segment_steps_remaining: int
-    run_steps_remaining: int
-    segment_effective_ms_remaining: int
-    run_effective_ms_remaining: int
 
 
 class RuntimeCancelled(RuntimeError):

@@ -375,7 +375,7 @@ estimated_input_tokens <= usable_input_budget
 - 已提交 content chunk 保留为 `assistant_progress/incomplete`，不得升级为 final_answer。
 - 部分 tool_call_delta 丢弃，不创建 ToolCall row。
 - Run 进入 failed；用户后续可创建新 Run。
-- 失败 Step 计入 Run 的 80 Steps 硬上限。
+- 失败 Step 继续计入 Run 的 Model Step telemetry，但不存在固定 Step 硬上限。
 - Provider validation/auth 错误不重试。
 - `401/403` 认证错误、确定性的 model not found、invalid request 或不支持参数直接终止 Run。
 - TLS 证书/主机名/信任链错误不重试，保存 `model_tls_validation_failed`；不存在关闭校验后继续的分支。

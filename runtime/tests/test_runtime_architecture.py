@@ -206,7 +206,10 @@ class RuntimeArchitectureTests(unittest.TestCase):
             )
 
     def test_finalization_failure_is_reported_and_uses_no_magic_step(self) -> None:
-        from eidos_runtime.runtime.engine import RuntimeEngine
+        from eidos_runtime.runtime.events import RuntimeEvents
+        from eidos_runtime.runtime.finalizer import RunFinalizer
+        from eidos_runtime.runtime.state_machine import RuntimePhaseTracker
+        from eidos_runtime.sandbox.sensitive import SensitiveScanner
 
         class FinalizationFailure:
             def complete(self, *_args, **_kwargs):
@@ -220,9 +223,18 @@ class RuntimeArchitectureTests(unittest.TestCase):
             )
             store.connection.commit()
             with self.assertLogs("eidos.runtime", level="WARNING") as logs:
-                RuntimeEngine(
-                    store, FinalizationFailure(), lambda _message: None
-                ).run(run["id"], threading.Event())
+                RunFinalizer(
+                    store,
+                    FinalizationFailure(),
+                    RuntimeEvents(lambda _message: None),
+                    SensitiveScanner(),
+                    RuntimePhaseTracker(),
+                ).finalize(
+                    run["id"],
+                    (),
+                    "context_still_over_budget",
+                    threading.Event(),
+                )
             self.assertEqual(store.read_run(run["id"])["status"], "stopped")
             self.assertEqual(
                 store.connection.execute(

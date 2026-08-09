@@ -343,32 +343,6 @@ class RunRepository(Repository):
         except (TypeError, ValueError):
             raise StorageError("model_profile_invalid") from None
 
-    def run_budget(self, run_id: str) -> dict[str, int]:
-        with self.lock:
-            connection = self._connection()
-            run = connection.execute(
-                "SELECT model_step_count, total_effective_ms FROM runs WHERE id = ?",
-                (run_id,),
-            ).fetchone()
-            segment = connection.execute(
-                """
-                SELECT step_count, effective_ms FROM execution_segments
-                WHERE run_id = ? AND status = 'running'
-                ORDER BY ordinal DESC LIMIT 1
-                """,
-                (run_id,),
-            ).fetchone()
-        if run is None:
-            raise ResourceNotFoundError("run not found")
-        return {
-            "segmentStepsRemaining": max(0, 20 - int(segment["step_count"] if segment else 0)),
-            "runStepsRemaining": max(0, 80 - int(run["model_step_count"])),
-            "segmentEffectiveMsRemaining": max(
-                0, 1_800_000 - int(segment["effective_ms"] if segment else 0)
-            ),
-            "runEffectiveMsRemaining": max(0, 7_200_000 - int(run["total_effective_ms"])),
-        }
-
     def read_runtime_start_event(self, run_id: str) -> dict[str, object]:
         with self.lock:
             row = self._connection().execute(
