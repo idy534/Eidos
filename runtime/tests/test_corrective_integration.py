@@ -161,3 +161,56 @@ def test_recent_bounded_projection_can_exceed_soft_ceiling_without_being_dropped
             ]) == 16
         finally:
             store.close()
+
+
+def test_context_projection_uses_bounded_result_instead_of_full_canonical_payload() -> None:
+    with tempfile.TemporaryDirectory(prefix="eidos-bounded-result-") as temporary:
+        root = Path(temporary)
+        data = root / "data"
+        workspace = root / "workspace"
+        data.mkdir(mode=0o700)
+        workspace.mkdir()
+        store = SessionStore(data)
+        store.initialize()
+        try:
+            session = store.create_session(str(workspace))
+            run, _ = store.create_run(
+                session["id"],
+                "Keep bounded model results",
+                model_profile=default_profile_snapshot("deepseek-v4-flash").model_copy(
+                    update={"context_window_tokens": 2_000_000, "max_output_tokens": 8_192}
+                ),
+            )
+            canonical_result = json.dumps({
+                "outcome": "success",
+                "code": "ok",
+                "summary": "Full canonical result",
+                "data": {"content": "x" * 300_000},
+            })
+            model_result = json.dumps({
+                "outcome": "success",
+                "code": "ok",
+                "summary": "Bounded model result",
+                "data": {"path": "source.py"},
+            })
+            for index in range(4):
+                item = store.create_tool_item(
+                    run["id"], 1, index, f"bounded-{index}", "read_file",
+                    json.dumps({"path": "source.py"}),
+                )
+                store.complete_tool_item(
+                    item["id"], canonical_result, model_result_json=model_result
+                )
+
+            model = ScriptedModel([ModelResponse(text="bounded results retained")])
+            RuntimeEngine(store, model, lambda _message: None).run(
+                run["id"], threading.Event()
+            )
+
+            assert store.read_run(run["id"])["status"] == "succeeded"
+            assert len([
+                item for item in model.contexts[0]
+                if item.get("type") == "tool_result"
+            ]) == 4
+        finally:
+            store.close()

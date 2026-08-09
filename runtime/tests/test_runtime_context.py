@@ -374,7 +374,7 @@ class ContextPersistenceTests(unittest.TestCase):
         self.assertTrue(set(recent_ids).isdisjoint(summary.source_item_ids))
         self.assertIn("current goal", encoded)
         recent_values = {
-            json.loads(item.result_json)["data"]["value"]
+            json.loads(item.model_result_json or item.result_json or "{}")["data"]["value"]
             for item in projected.items
             if item.item_id in recent_ids
         }
@@ -780,7 +780,10 @@ class ContextPersistenceTests(unittest.TestCase):
         stopped = self.store.read_run(run["id"])
         self.assertEqual(stopped["status"], "succeeded")
         facts = self.store.context_projection_facts(run["id"])
-        self.assertTrue(any("x" * 1_000 in (item.result_json or "") for item in facts.items))
+        self.assertTrue(any(
+            "x" * 1_000 in (item.model_result_json or item.result_json or "")
+            for item in facts.items
+        ))
 
     def test_compaction_event_failure_rolls_back_summary_and_count(self) -> None:
         old, _ = self.store.create_run(self.session["id"], "old")

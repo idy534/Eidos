@@ -286,6 +286,11 @@ class ContextRepository(Repository):
         projected_candidate_count = 0
         for row in item_rows:
             tool = tools_by_item.get(row["id"])
+            model_result_json = (
+                str(tool["model_result_json"])
+                if tool and tool["model_result_json"] is not None
+                else None
+            )
             fact = ContextItemFact(
                 item_id=str(row["id"]),
                 run_id=str(row["run_id"]),
@@ -297,14 +302,12 @@ class ContextRepository(Repository):
                 arguments_json=str(tool["arguments_json"]) if tool else None,
                 result_json=(
                     str(tool["result_json"])
-                    if tool and tool["result_json"] is not None
+                    if tool
+                    and tool["result_json"] is not None
+                    and model_result_json is None
                     else None
                 ),
-                model_result_json=(
-                    str(tool["model_result_json"])
-                    if tool and tool["model_result_json"] is not None
-                    else None
-                ),
+                model_result_json=model_result_json,
             )
             size = len(json.dumps(
                 fact.model_dump(),
