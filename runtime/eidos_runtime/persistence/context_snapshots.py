@@ -166,7 +166,7 @@ class ContextSnapshotRepository(Repository):
                 """
                 SELECT snapshot_json FROM context_snapshots
                 WHERE run_id = ?
-                ORDER BY created_at DESC, snapshot_id DESC
+                ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """,
                 (run_id,),
