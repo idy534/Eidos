@@ -35,6 +35,13 @@ class ContextBuilder:
         store: SessionStore,
     ) -> None:
         self.store = store
+        # A provider's input usage describes the request just completed. Keep
+        # the local estimate from the request that produced that usage so the
+        # next projection can be calibrated without treating the old usage as
+        # the next request's size.
+        self._last_estimated_input_tokens: int | None = None
+        self._last_provider_usage = None
+        self._provider_calibration_estimate: int | None = None
 
     def build(
         self,
@@ -160,6 +167,14 @@ class ContextBuilder:
             "messages": context,
             "tools": [tool.model_dump(mode="json") for tool in tool_definitions],
         }
+        provider_usage = self.store.latest_model_usage(run_id)
+        if provider_usage is None:
+            self._last_provider_usage = None
+            self._provider_calibration_estimate = None
+        elif provider_usage != self._last_provider_usage:
+            if self._last_estimated_input_tokens is not None:
+                self._provider_calibration_estimate = self._last_estimated_input_tokens
+            self._last_provider_usage = provider_usage
         budget = estimate_context_budget(
             payload,
             context_window_tokens=profile.context_window_tokens,
@@ -167,9 +182,14 @@ class ContextBuilder:
             message_count=len(context),
             tool_call_count=tool_calls,
             tool_result_count=tool_results,
-            provider_usage=self.store.latest_model_usage(run_id),
+            provider_usage=provider_usage,
+            provider_calibration_estimate=(
+                self._provider_calibration_estimate
+                if provider_usage is not None else None
+            ),
             usage_updated_at=time.time_ns() // 1_000_000,
         )
+        self._last_estimated_input_tokens = budget.estimated_input_tokens
         return ContextBuild(
             model_context=tuple(context),
             instructions=instructions,

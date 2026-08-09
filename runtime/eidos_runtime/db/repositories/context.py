@@ -225,6 +225,8 @@ class ContextRepository(Repository):
         tools_by_item = {row["item_id"]: row for row in tool_rows}
         items: list[ContextItemFact] = []
         serialized_bytes = 2
+        projected_candidate_bytes = 0
+        projected_candidate_count = 0
         for row in item_rows:
             tool = tools_by_item.get(row["id"])
             fact = ContextItemFact(
@@ -261,6 +263,13 @@ class ContextRepository(Repository):
                 continue
             items.append(fact)
             serialized_bytes += size
+            if str(row["id"]) not in protected_ids:
+                projected_candidate_bytes += size
+                projected_candidate_count += 1
+        candidate_count = int(aggregate[0])
+        candidate_bytes = int(aggregate[1])
+        omitted_count = max(0, candidate_count - projected_candidate_count)
+        omitted_bytes = max(0, candidate_bytes - projected_candidate_bytes)
         return ContextFacts(
             run_id=run_id,
             session_id=str(run["session_id"]),
@@ -271,6 +280,10 @@ class ContextRepository(Repository):
             reconciliation_epoch=int(run["reconciliation_epoch"]),
             last_diff_hash=run["last_diff_hash"],
             candidate_overflow=candidate_overflow,
+            projection_candidate_count=candidate_count,
+            projection_candidate_bytes=candidate_bytes,
+            projection_omitted_count=omitted_count,
+            projection_omitted_bytes=omitted_bytes,
             current_user_goal_id=(
                 str(goal_row["id"]) if goal_row is not None else None
             ),

@@ -180,6 +180,8 @@ class RuntimeEngine:
         provider_recovery_states: set[tuple[object, ...]] = set()
         estimated_pressure_states: set[tuple[object, ...]] = set()
         pending_compaction_baseline: int | None = None
+        pending_provider_recovery = False
+        pending_projection_marker: tuple[object, ...] | None = None
         finalizer = RunFinalizer(
             self.store,
             self.model,
@@ -236,16 +238,47 @@ class RuntimeEngine:
                 step_policy=step_policy,
             )
             if pending_compaction_baseline is not None:
-                if built.budget.estimated_input_tokens >= pending_compaction_baseline:
-                    finalizer.finalize(
-                        run.run_id,
-                        built.model_context,
-                        "context_still_over_budget",
-                        cancel,
-                        instructions=built.instructions,
-                    )
-                    return
+                if built.budget.projected_input_tokens >= pending_compaction_baseline:
+                    if pending_provider_recovery:
+                        finalizer.finalize(
+                            run.run_id,
+                            built.model_context,
+                            "context_still_over_budget",
+                            cancel,
+                            instructions=built.instructions,
+                        )
+                        return
+                    if built.budget.context_usage.source == "estimated":
+                        estimated_pressure_states.add(_context_state(built))
+                    else:
+                        finalizer.finalize(
+                            run.run_id,
+                            built.model_context,
+                            "context_still_over_budget",
+                            cancel,
+                            instructions=built.instructions,
+                        )
+                        return
                 pending_compaction_baseline = None
+                pending_provider_recovery = False
+            if pending_projection_marker is not None:
+                if _projection_state(built) == pending_projection_marker:
+                    raise ContextLimitExceeded("internal_projection_limit")
+                pending_projection_marker = None
+            if built.facts.candidate_overflow:
+                pending_projection_marker = _projection_state(built)
+                phase = (
+                    "mid_turn"
+                    if int(self.store.read_run(run.run_id)["modelStepCount"])
+                    else "pre_turn"
+                )
+                try:
+                    compactor.compact(run.run_id, phase)
+                except ContextCompactionError as error:
+                    raise ContextLimitExceeded(
+                        "internal_projection_limit"
+                    ) from error
+                continue
             context_state = _context_state(built)
             decision_budget = (
                 built.budget.model_copy(update={"fits": True})
@@ -274,7 +307,8 @@ class RuntimeEngine:
             if context_decision.action == LoopAction.CANCEL:
                 raise RuntimeCancelled
             if context_decision.action == LoopAction.COMPACT:
-                pending_compaction_baseline = built.budget.estimated_input_tokens
+                pending_compaction_baseline = built.budget.projected_input_tokens
+                pending_provider_recovery = False
                 phase = (
                     "mid_turn"
                     if int(self.store.read_run(run.run_id)["modelStepCount"])
@@ -422,13 +456,17 @@ class RuntimeEngine:
                         else "pre_turn"
                     )
                     try:
-                        compactor.compact(run.run_id, phase)
+                        compacted = compactor.compact(run.run_id, phase)
                     except ContextCompactionError:
-                        if built.budget.context_usage.source == "estimated":
-                            estimated_pressure_states.add(context_state)
-                            run = run.model_copy(update={"model_context": ()})
-                            context_recovered = True
-                            break
+                        finalizer.finalize(
+                            run.run_id,
+                            built.model_context,
+                            "context_still_over_budget",
+                            cancel,
+                            instructions=built.instructions,
+                        )
+                        return
+                    if compacted is None:
                         finalizer.finalize(
                             run.run_id,
                             built.model_context,
@@ -438,7 +476,8 @@ class RuntimeEngine:
                         )
                         return
                     context_recovered = True
-                    pending_compaction_baseline = built.budget.estimated_input_tokens
+                    pending_compaction_baseline = built.budget.projected_input_tokens
+                    pending_provider_recovery = True
                     break
                 except SamplingError as error:
                     self._handle_sampling_failure(run.run_id, error)
@@ -805,6 +844,21 @@ def _context_state(built: ContextBuild) -> tuple[object, ...]:
         built.facts.current_user_goal_id,
         built.facts.candidate_overflow,
         tuple(item.item_id for item in built.facts.items),
+    )
+
+
+def _projection_state(built: ContextBuild) -> tuple[object, ...]:
+    """Identify durable projection coverage, not a retry or compaction count."""
+    summary_sources = (
+        built.facts.compact_summary.source_item_ids
+        if built.facts.compact_summary is not None else ()
+    )
+    return (
+        summary_sources,
+        built.facts.projection_candidate_count,
+        built.facts.projection_candidate_bytes,
+        built.facts.projection_omitted_count,
+        built.facts.projection_omitted_bytes,
     )
 
 

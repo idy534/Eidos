@@ -114,6 +114,46 @@ class ContextBudgetTests(unittest.TestCase):
         self.assertAlmostEqual(budget.context_usage.percent_used, 71.7, delta=0.1)
         self.assertTrue(budget.fits)
 
+    def test_projected_input_uses_current_payload_after_provider_usage(self) -> None:
+        provider_usage = ModelUsage(
+            input_tokens=185_000,
+            output_tokens=1_000,
+        )
+        previous = estimate_context_budget(
+            {"messages": [{"content": "small"}]},
+            context_window_tokens=258_000,
+            request_max_output_tokens=8_192,
+            message_count=1,
+            tool_call_count=0,
+            tool_result_count=0,
+        )
+        expanded = estimate_context_budget(
+            {"messages": [{"content": "tool result " + "x" * 300_000}]},
+            context_window_tokens=258_000,
+            request_max_output_tokens=8_192,
+            message_count=1,
+            tool_call_count=0,
+            tool_result_count=1,
+            provider_usage=provider_usage,
+            provider_calibration_estimate=previous.estimated_input_tokens,
+        )
+
+        self.assertEqual(expanded.context_usage.active_tokens, 185_000)
+        self.assertGreater(expanded.projected_input_tokens, 185_000)
+        self.assertFalse(expanded.fits)
+
+        compacted = estimate_context_budget(
+            {"messages": [{"content": "compact summary"}]},
+            context_window_tokens=258_000,
+            request_max_output_tokens=8_192,
+            message_count=1,
+            tool_call_count=0,
+            tool_result_count=0,
+            provider_usage=provider_usage,
+            provider_calibration_estimate=previous.estimated_input_tokens,
+        )
+        self.assertLess(compacted.projected_input_tokens, expanded.projected_input_tokens)
+
     def test_estimate_is_not_serialized_utf8_bytes(self) -> None:
         payload = {
             "english_code": "def main():\n    return 'done'\n" * 2_000,
@@ -426,7 +466,7 @@ class ContextPersistenceTests(unittest.TestCase):
         self.assertIn("error-a", str(built.model_context))
         self.assertIn('"reconciliationRequired":true', str(built.model_context))
 
-    def test_projection_overflow_does_not_make_provider_budget_fail(self) -> None:
+    def test_projection_overflow_compacts_all_eligible_history_without_loss(self) -> None:
         old, _ = self.store.create_run(self.session["id"], "old history")
         assert self.store.connection is not None
         now = int(time.time() * 1000)
@@ -462,7 +502,7 @@ class ContextPersistenceTests(unittest.TestCase):
         ):
             built = ContextBuilder(self.store).build(current["id"])
             self.assertTrue(built.facts.candidate_overflow)
-            self.assertTrue(built.budget.fits)
+            self.assertEqual(built.budget.context_usage.active_tokens, 185_000)
 
             RuntimeEngine(
                 self.store,
@@ -471,6 +511,50 @@ class ContextPersistenceTests(unittest.TestCase):
             ).run(current["id"], threading.Event())
 
         self.assertEqual(self.store.read_run(current["id"])["status"], "succeeded")
+        summary = self.store.latest_compact_summary(current["id"])
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(len(summary.source_item_ids), 251)
+        current_item = self.store.get_user_item(current["id"])
+        self.assertNotIn(current_item["id"], summary.source_item_ids)
+        self.assertGreaterEqual(self.store.compaction_count(current["id"]), 2)
+
+    def test_projection_overflow_without_durable_progress_fails_explicitly(self) -> None:
+        old, _ = self.store.create_run(self.session["id"], "old history")
+        assert self.store.connection is not None
+        now = int(time.time() * 1000)
+        self.store.connection.executemany(
+            """
+            INSERT INTO items (
+                id, session_id, run_id, ordinal, kind, status,
+                content, incomplete, created_at, completed_at
+            ) VALUES (?, ?, ?, ?, 'assistant_message', 'completed', ?, 0, ?, ?)
+            """,
+            (
+                (
+                    f"stalled-projection-{index}", self.session["id"], old["id"],
+                    index + 2, "x" * 5_000, now + index, now + index,
+                )
+                for index in range(250)
+            ),
+        )
+        self.store.connection.commit()
+        self.store.fail_run(old["id"], "fixture")
+        current, _ = self.store.create_run(self.session["id"], "continue")
+
+        with patch(
+            "eidos_runtime.runtime.engine.ContextCompactor.compact",
+            return_value=None,
+        ):
+            RuntimeEngine(
+                self.store,
+                ScriptedModel([ModelResponse(text="unreachable")]),
+                lambda _message: None,
+            ).run(current["id"], threading.Event())
+
+        stopped = self.store.read_run(current["id"])
+        self.assertEqual(stopped["status"], "failed")
+        self.assertEqual(stopped["errorCode"], "CONTEXT_PROJECTION_OVERFLOW")
 
     def test_provider_context_exceeded_compacts_and_retries(self) -> None:
         old, _ = self.store.create_run(

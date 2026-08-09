@@ -91,12 +91,16 @@ Skill、历史或 Tool Definitions。
 `ModelAttempt.usage_json.input_tokens` 作为 Active Context 事实；它不把多个 Attempt
 的 input tokens 累加，也不重复加 cache read/write tokens。Provider usage 不可用时才使用
 有界的字符估算，并将来源标记为 `estimated`。`ContextUsageSnapshot` 将 Active Context、
-模型 Context Window、占用百分比和来源分开保存。`CONTEXT_PROJECTION_MAX_BYTES` 与
-`CONTEXT_PROJECTION_MAX_ITEMS` 只保护 SQLite 到模型的有界投影，不代表模型窗口；候选
-投影溢出保留在 Context Facts，不伪装成 Provider Context Limit。Compaction count 只作
-持久 telemetry；真实无可压缩历史时才停止。Provider 明确返回 `context_exceeded` 时，
-Runtime 会先执行一次有效 compaction、重新投影并重试，重复同一 Context 状态或无进展时
-以 `context_still_over_budget` 收敛。
+模型 Context Window、占用百分比和来源分开保存；`ContextBudget.projected_input_tokens`
+则用当前投影估算下一次请求，若有上一请求的 Provider usage 会用该请求的本地估算做
+比例校准。因此 Active Context 不会被误当成累计 token，也不会被直接复用成下一请求大小。
+`CONTEXT_PROJECTION_MAX_BYTES` 与 `CONTEXT_PROJECTION_MAX_ITEMS` 只保护 SQLite 到模型的
+有界投影，不代表模型窗口。候选投影溢出是独立的 projection fact：Runtime 会压缩受保护
+边界之外的最旧可压缩历史，直到 `source_item_ids` 覆盖所有被省略的事实；没有持久覆盖
+进展时以 `CONTEXT_PROJECTION_OVERFLOW` 失败，不伪装成 Provider Context Limit。Compaction
+count 只作持久 telemetry。Provider 明确返回 `context_exceeded` 时，Runtime 会先执行一次
+有进展的 compaction、重新投影并重试，重复同一 Context 状态或无进展时以
+`context_still_over_budget` 收敛。
 
 Long-task progress is stored as typed JSON in the existing `operations` table
 under `long_task/control`, with compare-and-set updates. Pause is reported only at

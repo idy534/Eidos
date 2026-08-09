@@ -26,6 +26,7 @@ class ContextBudget(BaseModel):
     payload_estimate_tokens: int
     protocol_overhead_tokens: int
     estimated_input_tokens: int
+    projected_input_tokens: int
     safety_margin_tokens: int
     usable_input_budget: int
     context_usage: ContextUsageSnapshot
@@ -41,12 +42,15 @@ def estimate_context_budget(
     tool_call_count: int,
     tool_result_count: int,
     provider_usage: ModelUsage | None = None,
+    provider_calibration_estimate: int | None = None,
     usage_updated_at: int = 0,
 ) -> ContextBudget:
     if context_window_tokens <= 0 or not 0 <= request_max_output_tokens < context_window_tokens:
         raise ValueError("invalid context budget")
     if min(message_count, tool_call_count, tool_result_count) < 0:
         raise ValueError("invalid context counts")
+    if provider_calibration_estimate is not None and provider_calibration_estimate <= 0:
+        raise ValueError("invalid provider calibration estimate")
     payload_text = json.dumps(
         canonical_model_visible_payload,
         ensure_ascii=False,
@@ -66,6 +70,19 @@ def estimate_context_budget(
     active_tokens = (
         provider_active_tokens if provider_active_tokens is not None else estimated
     )
+    projected = estimated
+    if (
+        provider_active_tokens is not None
+        and provider_calibration_estimate is not None
+    ):
+        projected = max(
+            0,
+            round(
+                provider_active_tokens
+                * estimated
+                / provider_calibration_estimate
+            ),
+        )
     source: Literal["provider", "estimated"] = (
         "provider" if provider_active_tokens is not None else "estimated"
     )
@@ -83,10 +100,11 @@ def estimate_context_budget(
         payload_estimate_tokens=payload_tokens,
         protocol_overhead_tokens=overhead,
         estimated_input_tokens=estimated,
+        projected_input_tokens=projected,
         safety_margin_tokens=margin,
         usable_input_budget=usable,
         context_usage=context_usage,
-        fits=active_tokens <= usable,
+        fits=projected <= usable,
     )
 
 
