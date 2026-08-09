@@ -380,6 +380,98 @@ class ContextPersistenceTests(unittest.TestCase):
         }
         self.assertEqual(recent_values, {"A", "B", "C"})
 
+    def test_compaction_summary_preserves_structured_task_evidence_and_reloads(self) -> None:
+        old, _ = self.store.create_run(
+            self.session["id"],
+            "Analyze startup flow. Must preserve project rules and do not modify code.",
+        )
+        assistant = self.store.create_assistant_item(old["id"], 1)
+        self.store.append_item_content(
+            assistant["id"],
+            "I decided to trace RuntimeEngine before inspecting the model gateway. Next, run the tests.",
+        )
+        self.store.complete_assistant_item(assistant["id"])
+        read = self.store.create_tool_item(
+            old["id"], 2, 0, "read-engine", "read_file",
+            '{"path":"runtime/eidos_runtime/runtime/engine.py"}',
+        )
+        self.store.complete_tool_item(read["id"], json.dumps({
+            "outcome": "success",
+            "code": "ok",
+            "summary": "Read file",
+            "data": {
+                "path": "runtime/eidos_runtime/runtime/engine.py",
+                "content": "class RuntimeEngine:\n    def run(self):\n        pass\n",
+                "sizeBytes": 54,
+                "sha256": "a" * 64,
+            },
+        }))
+        search = self.store.create_tool_item(
+            old["id"], 3, 0, "search-engine", "search_text",
+            '{"query":"RuntimeEngine"}',
+        )
+        self.store.complete_tool_item(search["id"], json.dumps({
+            "outcome": "success",
+            "code": "ok",
+            "summary": "Searched text",
+            "data": {
+                "matches": [{
+                    "path": "runtime/eidos_runtime/runtime/engine.py",
+                    "line": 1,
+                    "column": 7,
+                    "preview": "class RuntimeEngine:",
+                }],
+                "scannedBytes": 54,
+            },
+        }))
+        write = self.store.create_tool_item(
+            old["id"], 4, 0, "write-engine", "write_file",
+            '{"path":"notes.txt"}',
+        )
+        self.store.complete_tool_item(write["id"], json.dumps({
+            "outcome": "success",
+            "code": "ok",
+            "summary": "File change committed",
+            "data": {
+                "path": "notes.txt",
+                "sha256": "b" * 64,
+                "sizeBytes": 12,
+                "workspaceChanged": True,
+            },
+        }), workspace_changed=True)
+        failed = self.store.create_tool_item(
+            old["id"], 5, 0, "shell-failed", "run_shell", '{"command":"make test"}',
+        )
+        self.store.complete_tool_item(failed["id"], json.dumps({
+            "outcome": "error",
+            "code": "shell_failed",
+            "summary": "The test command failed",
+            "data": {"stderr": "missing fixture"},
+        }), item_status="failed", tool_status="failed")
+        self.store.fail_run(old["id"], "fixture")
+        current, _ = self.store.create_run(self.session["id"], "continue")
+
+        summary = ContextCompactor(self.store).compact(current["id"], "pre_turn")
+
+        self.assertIn("Analyze startup flow", summary.task_goal)
+        self.assertTrue(any("Must preserve" in value for value in summary.constraints))
+        self.assertTrue(any("engine.py" in value for value in summary.important_facts))
+        self.assertTrue(any("RuntimeEngine" in value for value in summary.important_facts))
+        self.assertTrue(any("workspace state" in value for value in summary.important_facts))
+        self.assertTrue(any("notes.txt" in value for value in summary.workspace_changes))
+        self.assertTrue(any("shell_failed" in value for value in summary.failed_attempts))
+        self.assertTrue(summary.important_decisions)
+        self.assertTrue(summary.next_actions)
+        self.assertLessEqual(
+            len(summary.model_dump_json(exclude={"source_item_ids"}).encode("utf-8")),
+            4 * 1_024,
+        )
+
+        self.store.close()
+        self.store = SessionStore(self.data)
+        self.store.initialize()
+        self.assertEqual(self.store.latest_compact_summary(current["id"]), summary)
+
     def test_compaction_candidates_exclude_latest_input_recent_steps_and_reconciliation(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "current goal")
         item_ids: dict[int, str] = {}

@@ -66,6 +66,7 @@ EXPECTED_TABLES = {
 
 EXPECTED_COLUMNS = {
     "sessions": {"workspace_dev", "workspace_inode", "workspace_uid"},
+    "compact_summaries": {"summary_metadata_json"},
     "items": {"incomplete"},
     "runs": {
         "extension_snapshot_json",

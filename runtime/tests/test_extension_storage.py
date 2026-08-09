@@ -107,7 +107,7 @@ class ExtensionStorageTests(unittest.TestCase):
         connection = self.store.connection
         assert connection is not None
 
-        self.assertEqual(SCHEMA_REVISION, 13)
+        self.assertEqual(SCHEMA_REVISION, 14)
         self.assertIn(
             "extension_snapshot_json",
             {row[1] for row in connection.execute("PRAGMA table_info(runs)")},
