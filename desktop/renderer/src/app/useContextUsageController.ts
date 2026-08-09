@@ -39,6 +39,22 @@ export function useContextUsageController({
   const requestSequence = useRef(0);
   const current = useRef({ ready, sessionId, modelId, runId });
   current.current = { ready, sessionId, modelId, runId };
+  const requestIsCurrent = useCallback(
+    (
+      sequence: number,
+      requestedRunId: string,
+      requestedSessionId: string,
+      requestedModelId: string,
+    ): boolean => {
+      const latest = current.current;
+      return sequence === requestSequence.current
+        && latest.ready
+        && latest.runId === requestedRunId
+        && latest.sessionId === requestedSessionId
+        && latest.modelId === requestedModelId;
+    },
+    [],
+  );
 
   useEffect(() => {
     const sequence = ++requestSequence.current;
@@ -48,16 +64,34 @@ export function useContextUsageController({
       return;
     }
 
+    const requestedRunId = runId;
+    const requestedSessionId = sessionId;
+    const requestedModelId = modelId;
     setLoading(true);
-    void window.eidosRuntime.readContextUsage(runId).then((next) => {
-      if (sequence !== requestSequence.current) return;
+    void window.eidosRuntime.readContextUsage(requestedRunId).then((next) => {
+      if (!requestIsCurrent(
+        sequence,
+        requestedRunId,
+        requestedSessionId,
+        requestedModelId,
+      )) return;
       setUsage(next ?? undefined);
     }).catch(() => {
-      if (sequence === requestSequence.current) setUsage(undefined);
+      if (requestIsCurrent(
+        sequence,
+        requestedRunId,
+        requestedSessionId,
+        requestedModelId,
+      )) setUsage(undefined);
     }).finally(() => {
-      if (sequence === requestSequence.current) setLoading(false);
+      if (requestIsCurrent(
+        sequence,
+        requestedRunId,
+        requestedSessionId,
+        requestedModelId,
+      )) setLoading(false);
     });
-  }, [modelId, ready, runId, sessionId]);
+  }, [modelId, ready, requestIsCurrent, runId, sessionId]);
 
   const refreshFromRun = useCallback((run: Run, clear: boolean): void => {
     const state = current.current;
@@ -65,28 +99,40 @@ export function useContextUsageController({
       !state.ready
       || state.sessionId !== run.sessionId
       || state.modelId !== run.modelId
+      || state.runId !== run.id
     ) {
       return;
     }
     const sequence = ++requestSequence.current;
+    const requestedRunId = run.id;
+    const requestedSessionId = run.sessionId;
+    const requestedModelId = run.modelId;
     if (clear) setUsage(undefined);
     setLoading(true);
-    void window.eidosRuntime.readContextUsage(run.id).then((next) => {
-      const latest = current.current;
-      if (
-        sequence !== requestSequence.current
-        || latest.sessionId !== run.sessionId
-        || latest.modelId !== run.modelId
-      ) {
-        return;
-      }
+    void window.eidosRuntime.readContextUsage(requestedRunId).then((next) => {
+      if (!requestIsCurrent(
+        sequence,
+        requestedRunId,
+        requestedSessionId,
+        requestedModelId,
+      )) return;
       setUsage(next ?? undefined);
     }).catch(() => {
-      if (sequence === requestSequence.current) setUsage(undefined);
+      if (requestIsCurrent(
+        sequence,
+        requestedRunId,
+        requestedSessionId,
+        requestedModelId,
+      )) setUsage(undefined);
     }).finally(() => {
-      if (sequence === requestSequence.current) setLoading(false);
+      if (requestIsCurrent(
+        sequence,
+        requestedRunId,
+        requestedSessionId,
+        requestedModelId,
+      )) setLoading(false);
     });
-  }, []);
+  }, [requestIsCurrent]);
 
   const handleNotification = useCallback((notification: RuntimeNotification): void => {
     if (
@@ -99,18 +145,42 @@ export function useContextUsageController({
     }
     if (notification.method === "item/completed") {
       const state = current.current;
-      if (state.runId === notification.params.runId && state.sessionId) {
-        void window.eidosRuntime.readContextUsage(notification.params.runId).then((next) => {
-          if (
-            current.current.runId === notification.params.runId
-            && current.current.sessionId === notification.params.sessionId
-          ) {
-            setUsage(next ?? undefined);
-          }
-        }).catch(() => undefined);
+      if (
+        state.runId === notification.params.runId
+        && state.sessionId === notification.params.sessionId
+        && state.modelId
+      ) {
+        const sequence = ++requestSequence.current;
+        const requestedRunId = notification.params.runId;
+        const requestedSessionId = notification.params.sessionId;
+        const requestedModelId = state.modelId;
+        setLoading(true);
+        void window.eidosRuntime.readContextUsage(requestedRunId).then((next) => {
+          if (!requestIsCurrent(
+            sequence,
+            requestedRunId,
+            requestedSessionId,
+            requestedModelId,
+          )) return;
+          setUsage(next ?? undefined);
+        }).catch(() => {
+          if (requestIsCurrent(
+            sequence,
+            requestedRunId,
+            requestedSessionId,
+            requestedModelId,
+          )) setUsage(undefined);
+        }).finally(() => {
+          if (requestIsCurrent(
+            sequence,
+            requestedRunId,
+            requestedSessionId,
+            requestedModelId,
+          )) setLoading(false);
+        });
       }
     }
-  }, [refreshFromRun]);
+  }, [requestIsCurrent, refreshFromRun]);
 
   return [{ usage, loading }, { handleNotification }];
 }
