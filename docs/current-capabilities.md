@@ -23,6 +23,9 @@
 - 上下文构建、压缩、Run/Segment 预算、协议错误反馈、Loop Guard 和最终化；Context
   Usage 优先使用最近 Provider usage 的 Active Context，缺失时才使用标记为
   `estimated` 的有界 fallback，并区分模型窗口与投影安全上限。
+- Compaction Summary 使用 deterministic structured extraction 保留任务目标、用户约束、
+  workspace state、路径/hash/symbol 证据、修改状态、失败尝试、未解决问题、决定、待处理
+  审批和下一步；摘要 metadata 与摘要主体一起持久化，完整历史仍保留在 SQLite。
 - Composer 在模型选择器右侧显示当前模型最近 Run 的 Context Usage；Provider 数据显示
   `上下文 xx% · xxK / xxxK`，估算数据明确显示 `≈`，无可用快照显示 `上下文 --`。
   该展示通过 `context/usage` Runtime RPC 进入 Main 和 typed preload，不使用累计 Session

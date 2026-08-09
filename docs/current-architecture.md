@@ -121,6 +121,12 @@ Desktop 的 Context Usage 通过 `context/usage` JSON-RPC 方法按 Run 读取�
 Renderer 只负责紧凑格式化与状态刷新。该值不是新的 SQLite 事实表，也不把累计请求 Token
 投影到 Composer。
 
+`ContextCompactor` 使用 deterministic structured extraction 生成并持久化摘要：任务目标与
+用户约束、workspace version/reconciliation state、Tool Result 中的路径/hash/symbol/匹配、
+成功事实、实际修改、失败尝试、未解决问题、决定和下一步分别保留；完整历史 Item 仍是
+SQLite source of truth。摘要 metadata 与主摘要在同一 SQLite 事务提交，重启后不丢失可恢复
+的 optional fields。项目规则不复制进摘要，而由每次 `ContextBuilder` 构建重新注入。
+
 Long-task progress is stored as typed JSON in the existing `operations` table
 under `long_task/control`, with compare-and-set updates. Pause is reported only at
 explicit safe points; resume checks Workspace identity, Git HEAD, rules, index,

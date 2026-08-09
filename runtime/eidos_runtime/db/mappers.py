@@ -164,6 +164,21 @@ def _truncate_snapshot_text(value: str) -> str:
 def _compact_summary_from_row(row: sqlite3.Row | None) -> CompactSummary | None:
     if row is None:
         return None
+    metadata: dict[str, object] = {}
+    if "summary_metadata_json" in row.keys():
+        try:
+            parsed = json.loads(row["summary_metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            metadata = parsed
+
+    def metadata_tuple(name: str) -> tuple[str, ...]:
+        value = metadata.get(name, ())
+        if not isinstance(value, list):
+            return ()
+        return tuple(item for item in value if isinstance(item, str))
+
     return CompactSummary(
         task_goal=str(row["task_goal"]),
         constraints=tuple(json.loads(row["constraints_json"])),
@@ -173,6 +188,10 @@ def _compact_summary_from_row(row: sqlite3.Row | None) -> CompactSummary | None:
         unresolved_problems=tuple(json.loads(row["unresolved_problems_json"])),
         next_actions=tuple(json.loads(row["next_actions_json"])),
         source_item_ids=tuple(json.loads(row["source_item_ids_json"])),
+        important_decisions=metadata_tuple("important_decisions"),
+        failed_attempts=metadata_tuple("failed_attempts"),
+        pending_approvals=metadata_tuple("pending_approvals"),
+        uncertain_side_effects=metadata_tuple("uncertain_side_effects"),
     )
 
 def _run_from_row(

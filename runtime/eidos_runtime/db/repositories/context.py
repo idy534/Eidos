@@ -274,6 +274,15 @@ class ContextRepository(Repository):
                 ProgressSignature.model_validate_json(latest_signature[0]).error_fingerprints
                 if latest_signature is not None else ()
             )
+            pending_approval_rows = connection.execute(
+                """
+                SELECT id FROM approvals
+                WHERE run_id = ? AND status = 'pending'
+                ORDER BY creation_seq
+                """,
+                (run_id,),
+            ).fetchall()
+            pending_approval_ids = tuple(str(row["id"]) for row in pending_approval_rows)
         tools_by_item = {row["item_id"]: row for row in tool_rows}
         items: list[ContextItemFact] = []
         serialized_bytes = 2
@@ -349,6 +358,8 @@ class ContextRepository(Repository):
             ),
             reconciliation_required=bool(run["reconciliation_required"]),
             active_error_fingerprints=tuple(active_errors),
+            pending_approval_ids=pending_approval_ids,
+            side_effects_may_exist=bool(run["side_effects_may_exist"]),
         )
 
     def latest_compact_summary(self, run_id: str) -> CompactSummary | None:
@@ -391,8 +402,9 @@ class ContextRepository(Repository):
                     id, session_id, run_id, task_goal, constraints_json,
                     completed_actions_json, workspace_changes_json,
                     important_facts_json, unresolved_problems_json,
-                    next_actions_json, source_item_ids_json, phase, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    next_actions_json, source_item_ids_json,
+                    summary_metadata_json, phase, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     summary_id, run["session_id"], run_id, summary.task_goal,
@@ -402,7 +414,19 @@ class ContextRepository(Repository):
                     _json_tuple(summary.important_facts),
                     _json_tuple(summary.unresolved_problems),
                     _json_tuple(summary.next_actions),
-                    _json_tuple(summary.source_item_ids), phase, now,
+                    _json_tuple(summary.source_item_ids),
+                    json.dumps(
+                        {
+                            "important_decisions": summary.important_decisions,
+                            "failed_attempts": summary.failed_attempts,
+                            "pending_approvals": summary.pending_approvals,
+                            "uncertain_side_effects": summary.uncertain_side_effects,
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    phase, now,
                 ),
             )
             updated = connection.execute(

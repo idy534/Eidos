@@ -16,6 +16,8 @@
   AST/LSP 或 Repo Intelligence；regex 仍使用同一受管 Ripgrep 后端和 ASCII
   case-insensitive 选项。结果上限为 100，preview 上限为 300 字符，单文件上限为
   256 KiB；`scannedBytes` 仅统计通过 Eidos 后置策略且产生 Match 的文件。
+- Compaction Quality 当前是 deterministic bounded extraction，不做 model-assisted summary；
+  它保留结构化路径、symbol、hash 和状态证据，但不会把完整大文件内容复制进摘要。
 - 当前只提交 Ripgrep 15.2.0 的 macOS arm64 受管资源。最终应用打包必须把
   `runtime/eidos_runtime/resources/bin/ripgrep/` 原样放入 Python Runtime 资源树并保留
   `darwin-arm64/rg` 的可执行位；当前 PR 不扩展 Electron Packager，也不支持 macOS x64、
