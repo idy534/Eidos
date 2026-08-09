@@ -504,7 +504,9 @@ class RuntimeEngine:
                     retry=False,
                     retry_reason="completed",
                 )
-                if validation.status == "no_tools" and sampled.text:
+                if validation.status == "ready" and sampled.text:
+                    sampling.commit_commentary(step, sampled.text, cancel)
+                elif validation.status == "no_tools" and sampled.text:
                     assistant_item = sampling.commit_assistant(
                         step, sampled.text, cancel
                     )
@@ -564,9 +566,6 @@ class RuntimeEngine:
                 self.state_machine.track(RuntimeState.COMPLETED, "run_succeeded")
                 return
 
-            # Text accompanying tool calls is provisional narration rather than a
-            # committed conversation fact. Tool items provide durable progress;
-            # only a validated no-tool response becomes an assistant message.
             repeated = guard.observe_tool_calls(
                 validation.tool_calls,
                 step.workspace_version,

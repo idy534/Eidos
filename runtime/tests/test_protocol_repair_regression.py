@@ -39,10 +39,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         run, _ = self.store.create_run(self.session["id"], "Create a Go skeleton")
         model = ScriptedModel([
             ModelResponse(
-                text=(
-                    "I will create the files. "
-                    "<|DSML|tool_calls><|DSML|invoke name=\"write_file\">"
-                ),
+                text="I will create the files.",
                 tool_calls=(
                     ModelToolCall(
                         "write-go-mod",
@@ -89,7 +86,10 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             for item in snapshot["items"]
             if item["kind"] == "assistant_message"
         ]
-        self.assertEqual(assistant_text, ["Created the Go project skeleton."])
+        self.assertEqual(
+            assistant_text,
+            ["I will create the files.", "Created the Go project skeleton."],
+        )
         self.assertFalse(any("DSML" in str(value) for value in assistant_text))
 
     def test_protocol_repair_retries_same_step_without_context_pollution(self) -> None:

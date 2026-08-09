@@ -225,6 +225,25 @@ class SamplingRuntime:
         writer.flush()
         return writer.item
 
+    def commit_commentary(
+        self,
+        step: StepContext,
+        text: str,
+        cancel: threading.Event,
+    ) -> dict[str, object] | None:
+        """Persist validated mid-turn text as a completed Assistant Item."""
+        if not text:
+            return None
+        writer = AssistantStreamWriter(
+            self.store,
+            self.events,
+            step.run_id,
+            step.step_index,
+            check_cancel=lambda: self._check_cancel(cancel),
+        )
+        writer.write(text)
+        return writer.complete()
+
     @staticmethod
     def _check_cancel(cancel: threading.Event) -> None:
         if cancel.is_set():

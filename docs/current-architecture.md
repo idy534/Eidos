@@ -87,6 +87,16 @@ stop reason 只作为上下文数据。Title Generation 使用独立的
 `TITLE_SYSTEM_INSTRUCTIONS` 与单条当前用户请求，不接收主 Agent 指令、项目规则、
 Skill、历史或 Tool Definitions。
 
+模型文字在完整响应返回前保持 provisional，并继续经过 `ModelRunner` 的 Sensitive
+Scanner。`ToolCallRuntime` 验证结构化 ToolCall 时，只要响应包含文字，就会先拒绝
+provider control syntax；非法文字不会写入 Item，也不会先执行伴随的 ToolCall。验证通过的
+`text + tool_calls` 由 `SamplingRuntime.commit_commentary()` 创建、写入并立即完成一个
+`assistant_message`，随后才进入 LoopGuard 和 Tool 执行。该中间消息不持有 Run 完成语义，
+但作为普通 Assistant Item 参与后续 Context Projection、Compaction 和 Budget。只有
+`text + no tool_calls` 进入既有 Final Assistant 路径并与 `Run.status=succeeded` 原子收敛。
+Desktop 按 Item ordinal 将最后一个 Tool 之前的 Assistant Item 放入 Process Feed，最后一个
+Tool 之后的 Assistant Item 继续作为带反馈与重新回答操作的最终响应；Reasoning 不进入该路径。
+
 在线 `ContextBuilder` 的 Context Usage 以当前 Run 最近一个有 Provider usage 的
 `ModelAttempt.usage_json.input_tokens` 作为 Active Context 事实；它不把多个 Attempt
 的 input tokens 累加，也不重复加 cache read/write tokens。Provider usage 不可用时才使用

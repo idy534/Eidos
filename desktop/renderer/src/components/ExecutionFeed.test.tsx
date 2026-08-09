@@ -98,7 +98,7 @@ test("does not render request snapshot tail in execution feed", () => {
   assert.doesNotMatch(html, /Request hash/);
 });
 
-test("folds tool execution before the final answer and omits the success pill", () => {
+test("groups multi-stage commentary with tools and reserves response actions for the final answer", () => {
   const items = [
     item({ id: "user", ordinal: 1, kind: "user_message", content: "检查改动" }),
     item({ id: "progress", ordinal: 2, kind: "assistant_message", content: "我先检查工作区。" }),
@@ -125,7 +125,31 @@ test("folds tool execution before the final answer and omits the success pill", 
         }),
       },
     }),
-    item({ id: "final", ordinal: 4, kind: "assistant_message", content: "# 检查完成" }),
+    item({ id: "progress-2", ordinal: 4, kind: "assistant_message", content: "工作区已经确认，接下来检查配置。" }),
+    item({
+      id: "search",
+      ordinal: 5,
+      kind: "tool_call",
+      toolCall: {
+        id: "tool-2",
+        itemId: "search",
+        modelStepIndex: 2,
+        batchOrder: 0,
+        providerCallId: "provider-2",
+        toolName: "search_text",
+        status: "completed",
+        startedAt: 1_000,
+        completedAt: 66_000,
+        argumentsJson: JSON.stringify({ query: "config" }),
+        resultJson: JSON.stringify({
+          outcome: "success",
+          code: "ok",
+          summary: "Search completed",
+          data: { matches: [] },
+        }),
+      },
+    }),
+    item({ id: "final", ordinal: 6, kind: "assistant_message", content: "# 检查完成" }),
   ];
 
   const html = renderToStaticMarkup(
@@ -143,9 +167,14 @@ test("folds tool execution before the final answer and omits the success pill", 
   assert.match(html, /<details class="process-group">/);
   assert.match(html, /已处理 1m 5s/);
   assert.match(html, /已运行 git diff --check/);
+  assert.match(html, /我先检查工作区/);
+  assert.match(html, /工作区已经确认，接下来检查配置/);
   assert.match(html, /无输出/);
   assert.doesNotMatch(html, /已完成/);
   assert.ok(html.indexOf("</details>") < html.indexOf("<h1>检查完成</h1>"));
+  assert.equal((html.match(/aria-label="点赞"/g) ?? []).length, 1);
+  assert.equal((html.match(/aria-label="差评"/g) ?? []).length, 1);
+  assert.equal((html.match(/title="本次回复模型：/g) ?? []).length, 1);
 });
 
 test("formatItemTime formats timestamp to Month日 Hour:Minute", () => {
