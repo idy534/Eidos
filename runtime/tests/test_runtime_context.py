@@ -185,26 +185,102 @@ class ContextBudgetTests(unittest.TestCase):
 
 
 class LoopGuardTests(unittest.TestCase):
-    def test_same_tool_call_pauses_on_third_identical_workspace_view(self) -> None:
+    def test_exact_duplicate_tool_state_recovers_on_first_repeat(self) -> None:
         guard = LoopGuard()
         call = ModelToolCall("call", "read_file", {"path": "a.txt"})
 
-        self.assertIsNone(guard.observe_tool_calls((call,), 0, 0))
-        self.assertIsNone(guard.observe_tool_calls((call,), 0, 0))
+        self.assertIsNone(guard.observe_tool_calls(
+            (call,), 0, 0, context_fact_frontier_hash="before"
+        ))
+        guard.record_tool_result_state(
+            (call,), 0, 0, context_fact_frontier_hash="after"
+        )
         self.assertEqual(
-            guard.observe_tool_calls((call,), 0, 0),
+            guard.observe_tool_calls(
+                (call,), 0, 0, context_fact_frontier_hash="after"
+            ),
+            "recover_repeated_tool_call",
+        )
+        guard.mark_recovery_attempted()
+        self.assertEqual(
+            guard.observe_tool_calls(
+                (call,), 0, 0, context_fact_frontier_hash="after"
+            ),
             "repeated_tool_call",
         )
 
     def test_workspace_change_allows_the_same_tool_call_again(self) -> None:
         guard = LoopGuard()
         call = ModelToolCall("call", "read_file", {"path": "a.txt"})
-        guard.observe_tool_calls((call,), 0, 0)
-        guard.observe_tool_calls((call,), 0, 0)
+        guard.observe_tool_calls(
+            (call,), 0, 0, context_fact_frontier_hash="before"
+        )
+        guard.record_tool_result_state(
+            (call,), 0, 0, context_fact_frontier_hash="after"
+        )
 
-        self.assertIsNone(guard.observe_tool_calls((call,), 1, 0))
+        self.assertIsNone(guard.observe_tool_calls(
+            (call,), 1, 0, context_fact_frontier_hash="after"
+        ))
 
-    def test_no_progress_pauses_on_third_round(self) -> None:
+    def test_context_frontier_change_allows_the_same_tool_call_again(self) -> None:
+        guard = LoopGuard()
+        call = ModelToolCall("call", "search_text", {"query": "foo"})
+        guard.record_tool_result_state(
+            (call,), 0, 0, context_fact_frontier_hash="evidence-a"
+        )
+
+        self.assertIsNone(guard.observe_tool_calls(
+            (call,), 0, 0, context_fact_frontier_hash="evidence-b"
+        ))
+
+    def test_tool_recovery_state_is_reconstructed_from_progress_signatures(self) -> None:
+        guard = LoopGuard()
+        call = ModelToolCall("call", "read_file", {"path": "a.txt"})
+        state = guard.record_tool_result_state(
+            (call,), 0, 0, context_fact_frontier_hash="evidence-a"
+        )
+        completed = guard.make_signature(
+            workspace_version=0,
+            diff_hash=None,
+            successful_tool_result_hashes=("result-a",),
+            context_fact_ids=("fact-a",),
+            error_fingerprints=(),
+            reconciliation_epoch=0,
+            tool_call_fingerprint="tool-a",
+            loop_state_fingerprint=state,
+        )
+        guard.observe_progress(completed)
+
+        restored = LoopGuard.from_signatures((completed,))
+        self.assertEqual(
+            restored.observe_tool_calls(
+                (call,), 0, 0, context_fact_frontier_hash="evidence-a"
+            ),
+            "recover_repeated_tool_call",
+        )
+        recovery_state = restored.mark_recovery_attempted()
+        recovery = restored.make_signature(
+            workspace_version=0,
+            diff_hash=None,
+            successful_tool_result_hashes=(),
+            context_fact_ids=(),
+            error_fingerprints=(),
+            reconciliation_epoch=0,
+            tool_call_fingerprint="tool-a",
+            loop_state_fingerprint=state,
+            recovery_state_fingerprint=recovery_state,
+        )
+
+        recovered_again = LoopGuard.from_signatures((completed, recovery))
+        self.assertEqual(
+            recovered_again.observe_tool_calls(
+                (call,), 0, 0, context_fact_frontier_hash="evidence-a"
+            ),
+            "repeated_tool_call",
+        )
+
+    def test_no_progress_recovers_then_stops_on_the_same_semantic_state(self) -> None:
         guard = LoopGuard()
         signature = ProgressSignature(
             workspace_version=0,
@@ -217,7 +293,8 @@ class LoopGuardTests(unittest.TestCase):
         )
 
         self.assertIsNone(guard.observe_progress(signature))
-        self.assertIsNone(guard.observe_progress(signature))
+        self.assertEqual(guard.observe_progress(signature), "recover_no_progress")
+        guard.mark_recovery_attempted()
         self.assertEqual(guard.observe_progress(signature), "no_progress")
 
     def test_workspace_change_is_progress_even_with_unchanged_diff_hash(self) -> None:
@@ -233,11 +310,31 @@ class LoopGuardTests(unittest.TestCase):
                 reconciliation_epoch=0,
             )))
 
-    def test_same_error_pauses_on_third_occurrence(self) -> None:
+    def test_same_error_with_new_facts_never_stops_progress(self) -> None:
         guard = LoopGuard()
-        self.assertIsNone(guard.observe_errors(("same",)))
-        self.assertIsNone(guard.observe_errors(("same",)))
-        self.assertEqual(guard.observe_errors(("same",)), "repeated_tool_error")
+        for index in range(6):
+            signature = guard.make_signature(
+                workspace_version=0,
+                diff_hash=None,
+                successful_tool_result_hashes=(),
+                context_fact_ids=(f"fact-{index}",),
+                error_fingerprints=("same",),
+                reconciliation_epoch=0,
+            )
+            self.assertIsNone(guard.observe_progress(signature))
+
+    def test_two_hundred_progressive_rounds_never_converge(self) -> None:
+        guard = LoopGuard()
+        for index in range(200):
+            signature = guard.make_signature(
+                workspace_version=0,
+                diff_hash=None,
+                successful_tool_result_hashes=(f"result-{index}",),
+                context_fact_ids=(f"fact-{index}",),
+                error_fingerprints=(),
+                reconciliation_epoch=0,
+            )
+            self.assertIsNone(guard.observe_progress(signature))
 
     def test_second_empty_response_pauses_instead_of_failing(self) -> None:
         guard = LoopGuard()

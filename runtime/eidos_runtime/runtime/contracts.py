@@ -108,6 +108,16 @@ class ProgressSignature(_FrozenModel):
     reconciliation_epoch: int
     new_user_input_ids: tuple[str, ...] = ()
     tool_call_fingerprint: str | None = None
+    loop_state_fingerprint: str | None = None
+    recovery_state_fingerprint: str | None = None
+
+
+class LoopStateFingerprint(_FrozenModel):
+    tool_call_fingerprint: str
+    workspace_version: int
+    reconciliation_epoch: int
+    active_error_fingerprints: tuple[str, ...]
+    context_fact_frontier_hash: str
 
 
 class LoopAction(StrEnum):

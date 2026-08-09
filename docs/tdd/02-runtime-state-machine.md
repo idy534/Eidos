@@ -81,6 +81,8 @@ running|waiting_approval|finalizing -> interrupted
 
 `stopped` 是 graceful-but-forced 的终态，例如 Context 压缩后仍不可恢复或 LoopGuard 确认循环。历史 SQLite 可能包含 `max_total_steps|max_effective_runtime|segment_step_limit|segment_time_limit`；当前 Runtime 不再产生这些 stop reason。
 
+LoopGuard 不按相同 Tool、Error 或 no-progress 的累计轮数终止。`LoopStateFingerprint` 包含 exact Tool batch、Workspace version、reconciliation epoch、active errors 与 canonical durable-context frontier，排除 timestamp、Step index、Attempt/Call ID。已持久化结果仍有效时，第一次返回相同 state 会跳过 Tool 执行并注入一次 generic recovery；只有 recovery 后再次返回相同 fingerprint 才以 `repeated_tool_call|no_progress` graceful Finalization。`ProgressSignature` 持久化 state/recovery fingerprint，使重启后仍能恢复 convergence 状态。
+
 ### 3.1 执行态 RuntimeState
 
 Run `status` 是可跨重启的事实；它不能直接替代单次执行循环的控制状态。第二期新增仅在内存中存在、由 StateMachine 维护的 `RuntimeState`：

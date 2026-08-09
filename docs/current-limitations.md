@@ -27,6 +27,7 @@
 - MCP startup 受单一、有界的 readiness deadline 约束；ready 后 Connection 是无 deadline 的长生命周期 Service。MCP Tool List Changed 只做本地、串行的 SQLite bookkeeping，可能在关闭时等待一个已经开始的 callback 完成；callback 失败不会终止已建立的 MCP session。
 - Runtime 不恢复内存中的模型请求、进程或 ToolCall。重启从 SQLite 事实收敛，可能有副作用的未确认执行要求 reconciliation，不自动重放。
 - Runtime 没有隐藏的 Model Step、ToolCall、Segment Step 或固定有效时长 Run fuse；这些计数仅用于持久 telemetry。资源/成本上限尚未提供用户可配置 policy，单次模型、Shell、MCP、审批和关闭操作仍各自保持有界 timeout。
+- LoopGuard 只在 durable semantic state 重现并且一次 recovery 未改变轨迹后停止；它不会按相同 Tool/Error 或 no-progress 的固定轮数停止。Fingerprint 依赖当前有界 Context projection，未来若 Retriever evidence 默认接入在线路径，需要把相应 evidence frontier 纳入同一 canonical state。
 - 数据库接受完整 schema v10、全新数据库和受支持的原子 v9 → v10 migration；v8、v11 与未知版本 fail closed。迁移框架目前只实现这一条升级路径。
 - Phase E-F 的 Repository Inventory、Tree-sitter Index、Repository Map、
   Retrieval、ContextPlan 和 LongTaskRepository 已有严格 typed seam 与 focused
