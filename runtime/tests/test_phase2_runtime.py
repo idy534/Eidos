@@ -49,8 +49,8 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.assertEqual(connection.execute("SELECT status FROM steps").fetchone()[0], "completed")
         self.assertEqual(connection.execute("SELECT status FROM model_attempts").fetchone()[0], "completed")
 
-    def test_segment_limit_uses_toolless_finalization(self) -> None:
-        run, _ = self.store.create_run(self.session["id"], "pause")
+    def test_segment_limit_rolls_over_and_continues_run(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "continue")
         self.store.increment_model_step(run["id"])
         self.store.complete_current_step(run["id"], "completed")
         connection = self.store.connection
@@ -60,14 +60,26 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
             (run["id"],),
         )
         connection.commit()
-        model = ScriptedModel([ModelResponse(text="must not run")])
+        model = ScriptedModel([ModelResponse(text="continued")])
         RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
-        stopped = self.store.read_run(run["id"])
-        self.assertEqual(stopped["status"], "stopped")
-        self.assertEqual(stopped["stopReason"], "segment_step_limit")
-        self.assertEqual(model.allow_tools_history, [False])
+        completed = self.store.read_run(run["id"])
+        self.assertEqual(completed["status"], "succeeded")
+        self.assertIsNone(completed.get("stopReason"))
+        self.assertEqual(completed["modelStepCount"], 2)
+        self.assertEqual(model.allow_tools_history, [True])
+        segments = connection.execute(
+            """
+            SELECT ordinal, status, step_count FROM execution_segments
+            WHERE run_id = ? ORDER BY ordinal
+            """,
+            (run["id"],),
+        ).fetchall()
+        self.assertEqual(
+            [tuple(row) for row in segments],
+            [(1, "completed", 20), (2, "completed", 1)],
+        )
 
     def test_run_limit_uses_one_toolless_finalization_then_stops(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "stop")

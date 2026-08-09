@@ -17,7 +17,7 @@ from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
 from eidos_runtime.tools.search import tool_search_entry
-from eidos_runtime.tools.workspace import ToolExecutor
+from eidos_runtime.tools.runtime_workspace import ToolExecutor
 
 
 class RunResourceError(RuntimeError):

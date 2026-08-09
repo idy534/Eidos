@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ModelToolDefinition
+from eidos_runtime.runtime.provider_control import contains_provider_control_syntax
 from eidos_runtime.tools.registry import (
     StepToolBinding,
     StepToolSnapshot,
@@ -98,7 +99,7 @@ class ToolDispatcher:
         if (
             response.text
             and not response.tool_calls
-            and _contains_provider_control_syntax(response.text)
+            and contains_provider_control_syntax(response.text)
         ):
             return ToolValidationResult((), "provider_control_syntax")
         if len(response.tool_calls) > 16:
@@ -240,10 +241,6 @@ class ToolDispatcher:
             and entry.execution_policy.concurrency.mode == "parallel_safe"
             for call in calls
         )
-
-
-def _contains_provider_control_syntax(text: str) -> bool:
-    return "<|DSML|" in text or "<｜DSML｜" in text
 
 
 def _valid_arguments(value: object) -> bool:
