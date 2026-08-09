@@ -139,9 +139,15 @@ the Workspace descriptor and use PathSpec only to filter ordinary discovery
 results. The later `.eidosignore` rules may refine ordinary Git-ignore
 matches; Eidos-owned hard discovery directories remain non-overridable.
 Ignore rules are not permissions: explicit file operations retain their
-existing Workspace and sensitive-content checks, while WorkspaceIndex shell
-preflight and side-effect manifests continue their independent security and
-evidence traversals.
+existing Workspace and sensitive-content checks. Shell launch validates the
+Workspace root identity, workspace-relative cwd, approval and Seatbelt
+boundary without requiring a complete repository-wide content scan. The
+Obvious read-only shell queries use only that launch boundary. Unknown or
+write-capable shell commands retain a bounded integrity scan for the
+symlink/hardlink/special-file protections before Approval. The WorkspaceIndex
+refresh remains an independent post-execution reconciliation and evidence
+traversal; if it is incomplete after a started process, the canonical result
+reports an unknown Workspace change state and keeps reconciliation required.
 
 `search_text` delegates text matching to the synchronous
 `RipgrepSearchDriver`. The production resolver accepts only the pinned

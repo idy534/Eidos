@@ -198,6 +198,9 @@ class _BuiltinAdapter:
     def prepare_shell(self, cwd: str, cancel: threading.Event) -> WorkspaceIdentity:
         return self.executor.prepare_shell(cwd, cancel)
 
+    def verify_shell_workspace(self, cancel: threading.Event) -> None:
+        self.executor.verify_shell_workspace(cancel)
+
 
 def builtin_tool_registry(executor: ToolExecutor) -> ToolRegistry:
     operations = (
@@ -382,8 +385,14 @@ class ToolExecutor:
     def prepare_shell(
         self, value: str, cancel: threading.Event
     ) -> WorkspaceIdentity:
+        """Validate only the process launch boundary.
+
+        Workspace-wide indexing is reconciliation work, not a prerequisite for
+        starting a bounded shell process. The caller still re-checks the root
+        identity and cwd after approval, while ``refresh_workspace_index`` is
+        kept for post-execution mutation and safety reconciliation.
+        """
         self._verify_root()
-        self._verify_shell_workspace(cancel)
         cwd = self.shell_cwd(value)
         self._verify_root()
         return cwd
@@ -394,6 +403,11 @@ class ToolExecutor:
         self._verify_root()
         self._verify_shell_workspace(cancel)
         return self.workspace_index.manifest()
+
+    def verify_shell_workspace(self, cancel: threading.Event) -> None:
+        """Run the bounded integrity scan required for write-capable Shell."""
+        self._verify_root()
+        self._verify_shell_workspace(cancel)
 
     def execute_read(
         self,

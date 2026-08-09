@@ -383,6 +383,7 @@ class WorkspaceResultData(StrictToolModel):
 
 
 class RunShellResultData(WorkspaceResultData):
+    ALLOW_SUCCESS_RECONCILIATION: ClassVar[bool] = True
     SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = (
         "exitCode", "stdout", "stderr", "truncated", "termination",
         "workspaceChanged",
@@ -506,7 +507,11 @@ def result_model(data_model: type[BaseModel]) -> type[BaseModel]:
             outcome=(Literal["success"], "success"),
             data=(success_data_model, ...),
             sideEffectsMayExist=(bool, False),
-            reconciliationRequired=(Literal[False], False),
+            reconciliationRequired=(
+                bool if getattr(data_model, "ALLOW_SUCCESS_RECONCILIATION", False)
+                else Literal[False],
+                False,
+            ),
         )
         failure_envelope = create_model(
             f"{data_model.__name__.removesuffix('Data')}FailureResult",

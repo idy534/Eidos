@@ -35,7 +35,10 @@ from eidos_runtime.runtime.tool_runtime import (  # noqa: E402
 )
 from eidos_runtime.sandbox.permissions import BasePermissionProfile  # noqa: E402
 from eidos_runtime.sandbox.sensitive import default_scanner  # noqa: E402
-from eidos_runtime.tools.workspace import ToolExecutor  # noqa: E402
+from eidos_runtime.tools.workspace import (  # noqa: E402
+    ToolExecutor,
+    WorkspacePathError,
+)
 
 
 class WorkspaceManifestTests(unittest.TestCase):
@@ -285,6 +288,37 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             self.store.context_projection_facts(self.run["id"]).workspace_version,
             0,
         )
+
+    def test_shell_process_starts_when_post_launch_index_is_incomplete(self) -> None:
+        result = {
+            "outcome": "success",
+            "code": "ok",
+            "summary": "Command completed",
+            "data": {"exitCode": 0, "stdout": "shell-started", "stderr": ""},
+            "sideEffectsMayExist": True,
+        }
+
+        with patch.object(
+            self.executor,
+            "refresh_workspace_index",
+            side_effect=WorkspacePathError("WORKSPACE_INDEX_INCOMPLETE"),
+        ):
+            outcome = self._execute(
+                result,
+                output=("shell-started",),
+                arguments={
+                    "command": "ls -la",
+                    "cwd": ".",
+                    "timeoutSeconds": 120,
+                    "sandboxPermissions": "use_default",
+                    "additionalPermissions": None,
+                    "justification": None,
+                },
+            )
+
+        self.assertEqual(outcome.result["code"], "ok")
+        self.assertEqual(outcome.result["data"]["workspaceChangeState"], "unknown")
+        self.assertTrue(outcome.result["reconciliationRequired"])
 
     def test_failed_shell_with_file_change_increments_workspace_version(self) -> None:
         outcome = self._execute(

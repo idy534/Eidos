@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import errno
 import hashlib
 import json
+import shlex
 import threading
 from typing import Callable
 
@@ -101,6 +102,82 @@ class _HandlerDependencies:
     authorize_side_effect: Callable[..., ApprovalOutcome]
     resources: ResourceRegistry = field(default_factory=ResourceRegistry)
     base_permissions: BasePermissionProfile | None = None
+
+
+_READ_ONLY_SHELL_COMMANDS = frozenset({
+    "awk",
+    "cat",
+    "command",
+    "diff",
+    "du",
+    "echo",
+    "env",
+    "file",
+    "find",
+    "git",
+    "grep",
+    "head",
+    "ls",
+    "pwd",
+    "printf",
+    "rg",
+    "sed",
+    "sort",
+    "stat",
+    "tail",
+    "test",
+    "type",
+    "true",
+    "wc",
+    "which",
+})
+_READ_ONLY_GIT_COMMANDS = frozenset({
+    "branch",
+    "cat-file",
+    "diff",
+    "log",
+    "ls-files",
+    "ls-tree",
+    "rev-parse",
+    "show",
+    "status",
+})
+
+
+def _shell_requires_workspace_integrity(command: str) -> bool:
+    """Keep hardlink/special-file preflight for commands that may write.
+
+    This is intentionally a conservative launch hint, not a shell parser or
+    a security authority. Seatbelt and post-execution reconciliation remain
+    authoritative. Obvious read-only queries avoid making a full repository
+    scan a prerequisite for process startup.
+    """
+    if any(operator in command for operator in (">", ";", "&&", "||", "|")):
+        return True
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return True
+    if not argv:
+        return False
+    executable = argv[0].rsplit("/", 1)[-1]
+    if executable not in _READ_ONLY_SHELL_COMMANDS:
+        return True
+    if executable == "git":
+        subcommand = next(
+            (argument for argument in argv[1:] if not argument.startswith("-")),
+            None,
+        )
+        return subcommand not in _READ_ONLY_GIT_COMMANDS
+    if executable == "find" and any(
+        argument in {"-delete", "-exec", "-execdir"} for argument in argv[1:]
+    ):
+        return True
+    if executable == "sed" and any(
+        argument == "-i" or argument.startswith("-i") for argument in argv[1:]
+    ):
+        return True
+    return False
 
 class ReadOnlyToolHandler:
     def __init__(self, dependencies: _HandlerDependencies) -> None:
@@ -270,6 +347,19 @@ class ShellToolHandler:
                 "failed",
                 "failed",
             )
+        if _shell_requires_workspace_integrity(command):
+            try:
+                runtime.implementation.verify_shell_workspace(  # type: ignore[attr-defined]
+                    cancel
+                )
+            except ToolCancelled:
+                raise RuntimeCancelled from None
+            except WorkspacePathError as error:
+                return HandlerOutcome(
+                    tool_error(call.name, error.code, "Shell workspace is unsafe"),
+                    "failed",
+                    "failed",
+                )
         workspace_diff = None
         delta_sequence = 0
 

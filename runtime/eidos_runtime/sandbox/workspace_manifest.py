@@ -171,12 +171,18 @@ def attach_workspace_diff(
 ) -> dict[str, object]:
     attached = dict(result)
     data = dict(result.get("data") if isinstance(result.get("data"), dict) else {})
+    process_not_started = (
+        data.get("termination") == "not_started"
+        and result.get("sideEffectsMayExist") is not True
+    )
     change_state = (
-        "changed" if diff.changed else "unchanged" if diff.complete else "unknown"
+        "unchanged"
+        if process_not_started
+        else "changed" if diff.changed else "unchanged" if diff.complete else "unknown"
     )
     data.update({
         "commandOutcome": str(result.get("outcome", "error")),
-        "workspaceChanged": diff.changed,
+        "workspaceChanged": False if process_not_started else diff.changed,
         "workspaceDiffHash": diff.diff_hash,
         "workspaceManifestComplete": diff.complete,
         "workspaceManifestTruncated": diff.truncated,
@@ -193,9 +199,13 @@ def attach_workspace_diff(
     )
     attached["reconciliationRequired"] = (
         result.get("reconciliationRequired") is True
+        and not process_not_started
         or change_state == "unknown"
         or result.get("outcome") != "success" and diff.changed
     )
+    if process_not_started:
+        attached["reconciliationRequired"] = False
+        attached["sideEffectsMayExist"] = False
     return attached
 
 

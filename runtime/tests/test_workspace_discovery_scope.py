@@ -186,31 +186,36 @@ class ToolExecutorDiscoveryScopeTests(unittest.TestCase):
         self.assertNotIsInstance(patched, dict)
         self.assertNotIsInstance(deleted, dict)
 
-    def test_shell_preflight_still_scans_gitignored_sensitive_and_unsafe_entries(self) -> None:
+    def test_shell_launch_does_not_scan_gitignored_sensitive_and_unsafe_entries(self) -> None:
         ignored = self.workspace / "ignored"
         ignored.mkdir()
         (self.workspace / ".gitignore").write_text("ignored/\n", encoding="utf-8")
         (ignored / "credentials.json").write_text("secret\n", encoding="utf-8")
 
+        identity = self.executor.prepare_shell(".", threading.Event())
+
+        self.assertEqual(identity.path, self.workspace.resolve())
         with self.assertRaisesRegex(WorkspacePathError, "sensitive_workspace_content"):
-            self.executor.prepare_shell(".", threading.Event())
+            self.executor.refresh_workspace_index(threading.Event())
 
         (ignored / "credentials.json").unlink()
         target = ignored / "target.txt"
         target.write_text("x\n", encoding="utf-8")
         os.link(target, ignored / "alias.txt")
         with self.assertRaisesRegex(WorkspacePathError, "unsupported_workspace_hardlink"):
-            self.executor.prepare_shell(".", threading.Event())
+            self.executor.refresh_workspace_index(threading.Event())
 
-    def test_shell_preflight_still_scans_gitignored_special_files(self) -> None:
+    def test_shell_launch_does_not_scan_gitignored_special_files(self) -> None:
         ignored = self.workspace / "ignored"
         ignored.mkdir()
         (self.workspace / ".gitignore").write_text("ignored/\n", encoding="utf-8")
         fifo = ignored / "stream"
         os.mkfifo(fifo)
         try:
+            identity = self.executor.prepare_shell(".", threading.Event())
+            self.assertEqual(identity.path, self.workspace.resolve())
             with self.assertRaisesRegex(WorkspacePathError, "unsupported_workspace_entry"):
-                self.executor.prepare_shell(".", threading.Event())
+                self.executor.refresh_workspace_index(threading.Event())
         finally:
             fifo.unlink(missing_ok=True)
 

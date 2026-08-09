@@ -59,6 +59,26 @@ class ToolContractTests(unittest.TestCase):
 
         self.assertTrue(result["sideEffectsMayExist"])
 
+    def test_successful_shell_result_can_require_reconciliation(self) -> None:
+        result = canonical_tool_result("run_shell", {
+            "outcome": "success",
+            "code": "ok",
+            "summary": "Command completed",
+            "data": {
+                "exitCode": 0,
+                "stdout": "",
+                "stderr": "",
+                "truncated": False,
+                "termination": "exit",
+                "workspaceChanged": False,
+                "workspaceChangeState": "unknown",
+            },
+            "sideEffectsMayExist": True,
+            "reconciliationRequired": True,
+        })
+
+        self.assertTrue(result["reconciliationRequired"])
+
     def test_shell_permission_contract_is_closed_and_backwards_compatible(self) -> None:
         default = RunShellInput.model_validate({"command": "true"})
         expanded = RunShellInput.model_validate_json(json.dumps({
