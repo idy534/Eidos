@@ -35,9 +35,22 @@
   (literal (param "FILE_COMMIT_HELPER")))
 
 (allow file-read-metadata file-test-existence
-  (path-ancestors "/Library/Developer/CommandLineTools/usr/bin/python3")
   (path-ancestors "/opt/homebrew")
-  (path-ancestors "/usr/local"))
+  (path-ancestors "/usr/local")
+  (path-ancestors (param "PYTHON_RUNTIME_ROOT"))
+  (path-ancestors (param "PYTHON_BASE_RUNTIME_ROOT")))
+
+; The active Eidos interpreter and its stdlib/dynamic libraries are bundled or
+; uv-managed. They are read-only and may be mapped for Python execution.
+(allow file-read* file-test-existence
+  (subpath (param "PYTHON_RUNTIME_ROOT"))
+  (subpath (param "PYTHON_BASE_RUNTIME_ROOT")))
+(allow file-map-executable
+  (subpath (param "PYTHON_RUNTIME_ROOT"))
+  (subpath (param "PYTHON_BASE_RUNTIME_ROOT")))
+(deny file-write*
+  (subpath (param "PYTHON_RUNTIME_ROOT"))
+  (subpath (param "PYTHON_BASE_RUNTIME_ROOT")))
 
 (allow file-map-executable
   (subpath "/System")

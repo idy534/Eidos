@@ -18,11 +18,16 @@
   256 KiB；`scannedBytes` 仅统计通过 Eidos 后置策略且产生 Match 的文件。
 - Compaction Quality 当前是 deterministic bounded extraction，不做 model-assisted summary；
   它保留结构化路径、symbol、hash 和状态证据，但不会把完整大文件内容复制进摘要。
-- 当前只提交 Ripgrep 15.2.0 的 macOS arm64 受管资源。最终应用打包必须把
-  `runtime/eidos_runtime/resources/bin/ripgrep/` 原样放入 Python Runtime 资源树并保留
-  `darwin-arm64/rg` 的可执行位；当前 PR 不扩展 Electron Packager，也不支持 macOS x64、
-  Linux 或 Windows artifact。资源缺失或校验失败时 `search_text` 明确失败，不使用 PATH
-  或 Python 搜索 fallback。
+- 当前只支持 macOS arm64 Runtime distribution。`pnpm build:runtime:mac` 会生成独立的
+  `build/macos-runtime/`，使用 uv managed CPython 3.12（默认）、`uv.lock` 的 locked
+  production dependencies 和完整 `runtime/eidos_runtime/` resource tree；Bundle 不依赖
+  仓库 `.venv`、目标机 Python、uv 或 Xcode Command Line Tools Python。完整 Electron
+  `.app`/`.dmg` packaging、签名、notarization、macOS x64、Linux 和 Windows artifact
+  尚未实现。资源缺失或校验失败时 `search_text` 明确失败，不使用 PATH 或 Python 搜索
+  fallback。
+- Ripgrep 15.2.0 的受管资源仍只包含 `darwin-arm64/rg`；构建与 smoke test 会保留其
+  executable bit、manifest artifact key 和 SHA256，并执行一次真实搜索。其它平台没有
+  bundled Ripgrep artifact。
 - Plugin 只支持本地受管包；MCP 只支持 stdio Tools。没有远程市场、OAuth、Streamable HTTP、Resources、Prompts、Sampling 或 Tasks。
 - MCP startup 受单一、有界的 readiness deadline 约束；ready 后 Connection 是无 deadline 的长生命周期 Service。MCP Tool List Changed 只做本地、串行的 SQLite bookkeeping，可能在关闭时等待一个已经开始的 callback 完成；callback 失败不会终止已建立的 MCP session。
 - Runtime 不恢复内存中的模型请求、进程或 ToolCall。重启从 SQLite 事实收敛，可能有副作用的未确认执行要求 reconciliation，不自动重放。

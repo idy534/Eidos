@@ -29,7 +29,10 @@
     "test:main": "pnpm build:main && node --test \"dist/main/*.test.js\"",
     "test:desktop": "pnpm build && pnpm test:contracts && pnpm test:renderer-state && pnpm test:renderer-behavior && pnpm test:main",
     "test:seatbelt-native": ".venv/bin/python scripts/test-seatbelt-native.py",
-    "test:electron-smoke": "node scripts/electron-smoke.mjs"
+    "test:electron-smoke": "node scripts/electron-smoke.mjs",
+    "build:runtime:mac": "bash scripts/build-macos-runtime.sh",
+    "test:runtime:bundled": "node scripts/bundled-runtime-smoke.mjs",
+    "test:runtime:bundled-seatbelt": "node scripts/bundled-seatbelt-smoke.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",

@@ -11,8 +11,8 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.sandbox.seatbelt import (  # noqa: E402
-    SYSTEM_PYTHON,
     is_seatbelt_usable,
+    runtime_python_executable,
     secure_workspace_move,
 )
 
@@ -39,7 +39,7 @@ class SeatbeltFileCommitCacheTests(unittest.TestCase):
 
             self.assertEqual(status, "committed")
             command = run.call_args.args[0]
-            python_index = command.index(SYSTEM_PYTHON)
+            python_index = command.index(str(runtime_python_executable()))
             self.assertEqual(command[python_index + 1], "-B")
 
     @unittest.skipUnless(

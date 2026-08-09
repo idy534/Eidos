@@ -17,12 +17,16 @@ from eidos_runtime.extensions.mcp import McpManager  # noqa: E402
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 from eidos_runtime.runtime.resource_registry import ResourceRegistry  # noqa: E402
-from eidos_runtime.sandbox.seatbelt import is_seatbelt_usable  # noqa: E402
+from eidos_runtime.sandbox.seatbelt import (  # noqa: E402
+    is_seatbelt_usable,
+    python_runtime_policy_arguments,
+    runtime_python_executable,
+)
 
 
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 SANDBOX_DIR = Path(__file__).resolve().parents[1] / "eidos_runtime" / "sandbox"
-PYTHON = "/Library/Developer/CommandLineTools/usr/bin/python3"
+PYTHON = str(runtime_python_executable())
 
 
 @unittest.skipUnless(
@@ -129,6 +133,7 @@ class McpSeatbeltTests(unittest.TestCase):
             f"-DWORKSPACE_ROOT={self.workspace}",
             f"-DSANDBOX_HOME={self.sandbox_home}",
             f"-DSANDBOX_TMP={self.sandbox_tmp}",
+            *python_runtime_policy_arguments(),
             "--", PYTHON, "-c", code,
         ]
         try:

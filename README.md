@@ -25,6 +25,18 @@ pnpm start
 
 `uv` 在仓库根目录创建 `.venv`；Electron 在源码开发时刻意从该路径使用 `.venv/bin/python`。`uv.lock` 已提交，只有在有意修改 `pyproject.toml` 中的生产依赖后才应更新它；`pip install -r runtime/requirements.txt` 已废弃。
 
+## Runtime distribution
+
+macOS arm64 的独立 Python Runtime Bundle 可由构建机生成：
+
+```bash
+pnpm build:runtime:mac
+pnpm test:runtime:bundled
+pnpm test:runtime:bundled-seatbelt
+```
+
+输出为 `build/macos-runtime/`，包含 uv managed CPython、锁定的 production dependencies、Eidos Runtime 和受管 Ripgrep 资源。日常 `pnpm start` 仍使用仓库 `.venv`；打包应用通过 `process.resourcesPath/runtime/` 使用该 Bundle。完整 Electron `.app`/`.dmg` packaging、签名和 notarization 尚未在当前阶段实现。
+
 ## 验证
 
 ```bash

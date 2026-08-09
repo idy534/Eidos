@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { RuntimeClient } from "./runtime-client.js";
+import { resolveRuntimePaths } from "./runtime-paths.js";
 import "./response-runtime-client.js";
 import { redactLogLine, sanitizeLogValue } from "./log-redaction.js";
 import { dispatchAppCommand as dispatchCommand, ensureAppWindow as ensureWindow } from "./app-command-dispatch.js";
@@ -323,31 +324,35 @@ function buildMenu(): void {
 // ---------------------------------------------------------------------------
 
 async function startRuntime(): Promise<void> {
-  const runtimeRoot = path.join(app.getAppPath(), "runtime");
-  const client = new RuntimeClient({
-    pythonExecutable: process.env.EIDOS_PYTHON
-      ?? path.join(app.getAppPath(), ".venv", "bin", "python"),
-    runtimeRoot,
-    dataDirectory: process.env.EIDOS_DATA_DIR ?? path.join(app.getPath("home"), ".eidos"),
-    onNotification: publishNotification,
-    onApprovalRequest: requestApproval,
-    onStderr: (line) => {
-      console.error(`[runtime] ${redactLogLine(line)}`);
-    },
-  });
-  runtimeClient = client;
-
-  void client.waitForExit().then((code) => {
-    if (!quitFlowController.getState().isQuitting && runtimeStatus.state !== "error") {
-      log("error", "runtime", "Runtime exited unexpectedly", { code });
-      publishStatus({
-        state: "error",
-        message: `Runtime exited unexpectedly (code ${code}).`,
-      });
-    }
-  });
-
   try {
+    const runtimePaths = resolveRuntimePaths({
+      isPackaged: app.isPackaged,
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      environment: process.env,
+    });
+    const client = new RuntimeClient({
+      pythonExecutable: runtimePaths.pythonExecutable,
+      runtimeRoot: runtimePaths.runtimeRoot,
+      dataDirectory: process.env.EIDOS_DATA_DIR ?? path.join(app.getPath("home"), ".eidos"),
+      onNotification: publishNotification,
+      onApprovalRequest: requestApproval,
+      onStderr: (line) => {
+        console.error(`[runtime] ${redactLogLine(line)}`);
+      },
+    });
+    runtimeClient = client;
+
+    void client.waitForExit().then((code) => {
+      if (!quitFlowController.getState().isQuitting && runtimeStatus.state !== "error") {
+        log("error", "runtime", "Runtime exited unexpectedly", { code });
+        publishStatus({
+          state: "error",
+          message: `Runtime exited unexpectedly (code ${code}).`,
+        });
+      }
+    });
+
     const initialized = await client.initialize();
     const storageHealth = await client.health();
     log("info", "runtime", "Runtime initialized", {
