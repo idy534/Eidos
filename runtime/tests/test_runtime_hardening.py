@@ -490,7 +490,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertEqual(failed["errorCode"], "RUNTIME_STATE_CONFLICT")
         self.assertNotIn("fixture internal state detail", json.dumps(notifications))
 
-    def test_progress_signature_requires_three_truly_empty_rounds(self) -> None:
+    def test_progress_state_recovers_then_converges_when_unchanged(self) -> None:
         from eidos_runtime.runtime.loop_guard import LoopGuard
 
         guard = LoopGuard()
@@ -505,7 +505,8 @@ class RuntimeHardeningTests(unittest.TestCase):
         )
 
         self.assertIsNone(guard.observe_progress(empty))
-        self.assertIsNone(guard.observe_progress(empty))
+        self.assertEqual(guard.observe_progress(empty), "recover_no_progress")
+        guard.mark_recovery_attempted()
         self.assertEqual(guard.observe_progress(empty), "no_progress")
 
     def test_new_successful_read_results_never_count_as_no_progress(self) -> None:
@@ -546,14 +547,14 @@ class RuntimeHardeningTests(unittest.TestCase):
             reconciliation_epoch=0,
         )
         self.assertIsNone(guard.observe_progress(changed))
-        self.assertEqual(guard._no_progress, 0)
 
     def test_loop_guard_recovers_recent_no_progress_rounds_from_steps(self) -> None:
         from eidos_runtime.runtime.loop_guard import LoopGuard
 
         run, _ = self.store.create_run(self.session["id"], "recover loop guard")
         signatures = []
-        for _ in range(2):
+        guard = LoopGuard()
+        for index in range(2):
             self.store.increment_model_step(run["id"])
             signature = ProgressSignature(
                 workspace_version=0,
@@ -564,6 +565,13 @@ class RuntimeHardeningTests(unittest.TestCase):
                 resolved_error_fingerprints=(),
                 reconciliation_epoch=0,
             )
+            reason = guard.observe_progress(signature)
+            if index == 1:
+                self.assertEqual(reason, "recover_no_progress")
+                recovery_state = guard.mark_recovery_attempted()
+                signature = signature.model_copy(update={
+                    "recovery_state_fingerprint": recovery_state,
+                })
             self.store.complete_current_step(
                 run["id"], "completed", progress_signature=signature
             )
@@ -602,23 +610,23 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertEqual(recovered.resolved_error_fingerprints, ("read-error",))
         self.assertIsNone(guard.observe_progress(recovered))
 
-    def test_repeated_error_counts_once_per_step_and_recovers_after_restart(self) -> None:
+    def test_same_error_with_new_facts_continues_across_restart(self) -> None:
         from eidos_runtime.runtime.loop_guard import LoopGuard
 
         run, _ = self.store.create_run(self.session["id"], "error signatures")
         duplicate_batch = ("same", "same", "same")
         guard = LoopGuard()
-        for expected in (None, None):
+        for index in range(5):
             self.store.increment_model_step(run["id"])
             signature = guard.make_signature(
                 workspace_version=0,
                 diff_hash=None,
                 successful_tool_result_hashes=(),
-                context_fact_ids=(),
+                context_fact_ids=(f"fact-{index}",),
                 error_fingerprints=duplicate_batch,
                 reconciliation_epoch=0,
             )
-            self.assertEqual(guard.observe_progress(signature), expected)
+            self.assertIsNone(guard.observe_progress(signature))
             self.store.complete_current_step(
                 run["id"], "completed", progress_signature=signature
             )
@@ -629,33 +637,16 @@ class RuntimeHardeningTests(unittest.TestCase):
         recovered = LoopGuard.from_signatures(
             self.store.recent_progress_signatures(run["id"])
         )
-        third = recovered.make_signature(
+        next_signature = recovered.make_signature(
             workspace_version=0,
             diff_hash=None,
             successful_tool_result_hashes=(),
-            context_fact_ids=(),
+            context_fact_ids=("fact-after-restart",),
             error_fingerprints=duplicate_batch,
             reconciliation_epoch=0,
         )
-        self.assertEqual(third.error_fingerprints, ("same",))
-        self.assertEqual(recovered.observe_progress(third), "repeated_tool_error")
-
-    def test_error_signature_resets_on_success_and_switches_on_different_error(self) -> None:
-        from eidos_runtime.runtime.loop_guard import LoopGuard
-
-        guard = LoopGuard()
-        for errors in (("a",), ("a",), (), ("a",), ("b",), ("b",)):
-            signature = guard.make_signature(
-                workspace_version=0,
-                diff_hash=None,
-                successful_tool_result_hashes=(),
-                context_fact_ids=(),
-                error_fingerprints=errors,
-                reconciliation_epoch=0,
-            )
-            self.assertNotEqual(
-                guard.observe_progress(signature), "repeated_tool_error"
-            )
+        self.assertEqual(next_signature.error_fingerprints, ("same",))
+        self.assertIsNone(recovered.observe_progress(next_signature))
 
     def test_parallel_safe_reads_reset_sensitive_input_streak(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "sensitive streak")

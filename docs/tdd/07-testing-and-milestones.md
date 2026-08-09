@@ -116,6 +116,7 @@
 - Reject feedback 的 1..4,096 UTF-8 bytes、扫描失败保持 pending、成功后仅进入 approval_rejected data；未提供时 `{}`，summary 不含反馈。
 - Segment 可超过 20 Steps；30 分钟 effective-time quantum 只 rollover，Run 继续。
 - Run 可超过 80 Steps 和 120 分钟，不因固定 task lifetime Finalization。
+- LoopGuard 覆盖 200 progressive rounds、相同 Error 加新事实、exact duplicate Tool batch 首次 recovery 零重复执行、recovery 后改路径继续、recovery 后同 state 收敛、Workspace/Context frontier 变化后允许相同 ToolCall，以及跨重启恢复 state/recovery fingerprint。
 - Finalization 超时/失败生成降级摘要。
 - reconciliation_required 屏障拒绝副作用；每次新不确定性递增 epoch，Step 冻结 observed epoch，只有正常 completed 且至少一个只读 success 才 CAS 清除。部分成功、合法空结果、truncated/workspace_changed 可计，error/无工具/中断不计，旧 Step 不能清新 episode，未清除 final 保留审计。
 - allowed_actions 覆盖所有 status、闭合 pause reason、Workspace available/unavailable、Approval pending/decided/invalidated；持久化 RPC 在写事务内重算，cancel canceled 幂等，其他终态和未知 pause fail closed。
