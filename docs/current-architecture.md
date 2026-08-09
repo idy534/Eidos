@@ -108,6 +108,12 @@ Desktop 的 Context Usage 通过 `context/usage` JSON-RPC 方法按 Run 读取�
 Renderer 只负责紧凑格式化与状态刷新。该值不是新的 SQLite 事实表，也不把累计请求 Token
 投影到 Composer。
 
+Desktop 的 Context Usage 通过 `context/usage` JSON-RPC 方法按 Run 读取：Runtime 先读取
+持久化的最近 Provider `ModelAttempt.usage_json.input_tokens`，无 Provider usage 时回退到
+最近精确 `ContextSnapshot` 中已标记为 `estimated` 的预算；Main 只做 DTO 校验和字段映射，
+Renderer 只负责紧凑格式化与状态刷新。该值不是新的 SQLite 事实表，也不把累计请求 Token
+投影到 Composer。
+
 Long-task progress is stored as typed JSON in the existing `operations` table
 under `long_task/control`, with compare-and-set updates. Pause is reported only at
 explicit safe points; resume checks Workspace identity, Git HEAD, rules, index,
