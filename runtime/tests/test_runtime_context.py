@@ -890,7 +890,7 @@ class ContextPersistenceTests(unittest.TestCase):
             self.session["id"],
             "continue",
             model_profile=default_profile_snapshot("deepseek-v4-flash").model_copy(
-                update={"context_window_tokens": 8_000, "max_output_tokens": 1_000}
+                update={"context_window_tokens": 9_000, "max_output_tokens": 1_000}
             ),
         )
         builder = ContextBuilder(self.store)

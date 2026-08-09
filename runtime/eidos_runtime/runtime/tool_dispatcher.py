@@ -96,11 +96,7 @@ class ToolDispatcher:
             # Empty output is a runtime liveness condition rather than a malformed
             # ToolCall protocol. Keep it on the dedicated empty-response path.
             return ToolValidationResult(())
-        if (
-            response.text
-            and not response.tool_calls
-            and contains_provider_control_syntax(response.text)
-        ):
+        if response.text and contains_provider_control_syntax(response.text):
             return ToolValidationResult((), "provider_control_syntax")
         if len(response.tool_calls) > 16:
             return ToolValidationResult((), "too_many_tool_calls")

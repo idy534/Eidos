@@ -78,6 +78,11 @@ class ModelContractTests(unittest.TestCase):
     def test_prompts_are_provider_neutral_model_resources(self) -> None:
         self.assertIn("Eidos", SYSTEM_SAFETY_INSTRUCTIONS)
         self.assertIn("smallest coherent set of changes", BASE_AGENT_INSTRUCTIONS)
+        self.assertIn("Progress communication", BASE_AGENT_INSTRUCTIONS)
+        self.assertIn("confirmed findings", BASE_AGENT_INSTRUCTIONS)
+        self.assertIn("not required in every response", BASE_AGENT_INSTRUCTIONS)
+        self.assertIn("routine follow-up reads and searches", BASE_AGENT_INSTRUCTIONS)
+        self.assertIn("Never return a tool-free message", BASE_AGENT_INSTRUCTIONS)
         self.assertIn("do not request another approval", RUNTIME_POLICY_INSTRUCTIONS)
         self.assertIn("natural, concise task title", TITLE_SYSTEM_INSTRUCTIONS)
         self.assertIn("User query", TITLE_PROMPT)
