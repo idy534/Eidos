@@ -31,12 +31,18 @@ from eidos_runtime.sandbox.permissions import (  # noqa: E402
     NetworkPermissions,
     materialize_effective_profile,
 )
-from eidos_runtime.workspace.search_driver import RipgrepBinaryResolver  # noqa: E402
+from eidos_runtime.workspace.search_driver import (  # noqa: E402
+    RipgrepBinaryResolver,
+    SearchDriverError,
+)
 
 
 class SeatbeltProfileTests(unittest.TestCase):
     def test_profile_path_includes_verified_bundled_ripgrep(self) -> None:
-        binary = RipgrepBinaryResolver().resolve()
+        try:
+            binary = RipgrepBinaryResolver().resolve()
+        except SearchDriverError:
+            self.skipTest("bundled ripgrep is unavailable for this platform")
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             for directory in (root / "workspace", root / "home", root / "tmp"):
