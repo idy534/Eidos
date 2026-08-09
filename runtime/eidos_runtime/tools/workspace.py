@@ -198,9 +198,6 @@ class _BuiltinAdapter:
     def prepare_shell(self, cwd: str, cancel: threading.Event) -> WorkspaceIdentity:
         return self.executor.prepare_shell(cwd, cancel)
 
-    def verify_shell_workspace(self, cancel: threading.Event) -> None:
-        self.executor.verify_shell_workspace(cancel)
-
 
 def builtin_tool_registry(executor: ToolExecutor) -> ToolRegistry:
     operations = (
@@ -403,11 +400,6 @@ class ToolExecutor:
         self._verify_root()
         self._verify_shell_workspace(cancel)
         return self.workspace_index.manifest()
-
-    def verify_shell_workspace(self, cancel: threading.Event) -> None:
-        """Run the bounded integrity scan required for write-capable Shell."""
-        self._verify_root()
-        self._verify_shell_workspace(cancel)
 
     def execute_read(
         self,

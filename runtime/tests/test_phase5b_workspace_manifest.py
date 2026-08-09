@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.sandbox.workspace_manifest import (  # noqa: E402
     WorkspaceManifest,
+    WorkspaceManifestEntry,
     attach_workspace_diff,
     capture_workspace_manifest,
     diff_workspace_manifests,
@@ -98,6 +99,56 @@ class WorkspaceManifestTests(unittest.TestCase):
         self.assertEqual(first.deleted, ("deleted.txt",))
         self.assertEqual(first.diff_hash, second.diff_hash)
         self.assertTrue(first.complete)
+
+    def test_incomplete_baseline_does_not_report_whole_workspace_as_created(self) -> None:
+        before = WorkspaceManifest((), False, True)
+        after = WorkspaceManifest((WorkspaceManifestEntry(
+            "runtime/eidos_runtime/runtime/engine.py",
+            12,
+            1,
+            0o644,
+            7,
+            "a" * 64,
+        ),), True, False)
+
+        diff = diff_workspace_manifests(before, after)
+        attached = attach_workspace_diff(
+            {
+                "outcome": "success",
+                "code": "ok",
+                "summary": "Command completed",
+                "data": {"termination": "exit"},
+            },
+            diff,
+        )
+
+        self.assertFalse(diff.changed)
+        self.assertFalse(attached["data"]["workspaceChanged"])
+        self.assertEqual(attached["data"]["workspaceChangeState"], "unknown")
+        self.assertTrue(attached["reconciliationRequired"])
+        self.assertEqual(attached["data"]["created"], [])
+        self.assertEqual(attached["data"]["modified"], [])
+        self.assertEqual(attached["data"]["deleted"], [])
+
+    def test_complete_baseline_reports_real_mutation(self) -> None:
+        before = WorkspaceManifest((WorkspaceManifestEntry(
+            "before.txt", 1, 1, 0o644, 7, "a" * 64
+        ),), True, False)
+        after = WorkspaceManifest((
+            WorkspaceManifestEntry("before.txt", 2, 2, 0o644, 7, "b" * 64),
+            WorkspaceManifestEntry("created.txt", 1, 1, 0o644, 8, "c" * 64),
+        ), True, False)
+
+        attached = attach_workspace_diff(
+            {"outcome": "success", "code": "ok", "data": {}},
+            diff_workspace_manifests(before, after),
+        )
+
+        self.assertTrue(attached["data"]["workspaceChanged"])
+        self.assertEqual(attached["data"]["workspaceChangeState"], "changed")
+        self.assertEqual(attached["data"]["created"], ["created.txt"])
+        self.assertEqual(attached["data"]["modified"], ["before.txt"])
+        self.assertFalse(attached["reconciliationRequired"])
 
     def test_entry_limit_marks_manifest_incomplete(self) -> None:
         for index in range(3):
@@ -320,7 +371,44 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         self.assertEqual(outcome.result["data"]["workspaceChangeState"], "unknown")
         self.assertTrue(outcome.result["reconciliationRequired"])
 
-    def test_failed_shell_with_file_change_increments_workspace_version(self) -> None:
+    def test_compound_read_only_shell_starts_without_workspace_preflight(self) -> None:
+        (self.workspace / "token_budget.rs").write_text(
+            "pub const LIMIT: usize = 1;\n", encoding="utf-8"
+        )
+        attempts = []
+        result = {
+            "outcome": "success",
+            "code": "ok",
+            "summary": "Command completed",
+            "data": {"exitCode": 0, "stdout": "ready", "stderr": ""},
+            "sideEffectsMayExist": True,
+        }
+
+        with patch.object(
+            self.executor,
+            "_verify_shell_workspace",
+            side_effect=WorkspacePathError("sensitive_workspace_content"),
+        ):
+            outcome = self._execute(
+                result,
+                arguments={
+                    "command": (
+                        "git status --short --branch && "
+                        "find . -maxdepth 2 -type f"
+                    ),
+                    "cwd": ".",
+                    "timeoutSeconds": 120,
+                    "sandboxPermissions": "use_default",
+                    "additionalPermissions": None,
+                    "justification": None,
+                },
+                attempts=attempts,
+            )
+
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(outcome.result["code"], "ok")
+
+    def test_first_shell_change_with_incomplete_baseline_is_unknown(self) -> None:
         outcome = self._execute(
             {
                 "outcome": "error",
@@ -333,11 +421,13 @@ class ShellManifestIntegrationTests(unittest.TestCase):
                 "changed", encoding="utf-8"
             ),
         )
-        self.assertTrue(outcome.result["data"]["workspaceChanged"])
+        self.assertFalse(outcome.result["data"]["workspaceChanged"])
+        self.assertEqual(outcome.result["data"]["workspaceChangeState"], "unknown")
         self.assertEqual(
             self.store.context_projection_facts(self.run["id"]).workspace_version,
-            1,
+            0,
         )
+        self.assertTrue(outcome.result["reconciliationRequired"])
         self.assertTrue(self.store.read_run(self.run["id"])["sideEffectsMayExist"])
 
     def test_shell_safe_lines_stream_before_process_exit(self) -> None:

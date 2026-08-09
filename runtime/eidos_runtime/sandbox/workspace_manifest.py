@@ -51,7 +51,9 @@ class WorkspaceDiff:
 
     @property
     def changed(self) -> bool:
-        return bool(self.created or self.modified or self.deleted)
+        # An incomplete before/after pair cannot distinguish a pre-existing
+        # entry from a mutation. Only a complete pair can establish a change.
+        return self.complete and bool(self.created or self.modified or self.deleted)
 
 
 def capture_workspace_manifest(
@@ -180,6 +182,9 @@ def attach_workspace_diff(
         if process_not_started
         else "changed" if diff.changed else "unchanged" if diff.complete else "unknown"
     )
+    reported_created = list(diff.created) if diff.complete else []
+    reported_modified = list(diff.modified) if diff.complete else []
+    reported_deleted = list(diff.deleted) if diff.complete else []
     data.update({
         "commandOutcome": str(result.get("outcome", "error")),
         "workspaceChanged": False if process_not_started else diff.changed,
@@ -188,9 +193,9 @@ def attach_workspace_diff(
         "workspaceManifestTruncated": diff.truncated,
         "workspaceDiffIncomplete": not diff.complete,
         "workspaceChangeState": change_state,
-        "created": list(diff.created),
-        "modified": list(diff.modified),
-        "deleted": list(diff.deleted),
+        "created": reported_created,
+        "modified": reported_modified,
+        "deleted": reported_deleted,
     })
     attached["data"] = data
     attached["sideEffectsMayExist"] = (
