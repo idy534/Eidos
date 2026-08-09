@@ -12,6 +12,9 @@ from pydantic import Field, StrictStr, field_validator, model_validator
 from eidos_runtime.protocol.schemas import ClosedModel
 
 
+_RUNTIME_RESOURCE_ROOT = Path(__file__).resolve().parents[1] / "resources"
+
+
 class SandboxPermissions(StrEnum):
     USE_DEFAULT = "use_default"
     REQUIRE_ESCALATED = "require_escalated"
@@ -152,6 +155,7 @@ def base_permission_profile_for_workspace(
         workspace_root=workspace_root,
         protected_paths=(data_directory,) if data_directory is not None else (),
         protected_write_paths=(Path(__file__).resolve().parents[1],),
+        runtime_roots=(_RUNTIME_RESOURCE_ROOT,),
     )
 
 

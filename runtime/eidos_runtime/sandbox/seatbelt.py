@@ -13,6 +13,7 @@ from typing import Sequence
 
 from eidos_runtime.sandbox.permissions import EffectivePermissionProfile
 from eidos_runtime.sandbox.seatbelt_policy import SeatbeltPolicyCompiler
+from eidos_runtime.workspace.search_driver import RipgrepBinaryResolver, SearchDriverError
 
 
 SANDBOX_EXECUTABLE = "/usr/bin/sandbox-exec"
@@ -134,10 +135,22 @@ class SeatbeltProfile:
         ]
 
     def environment(self) -> dict[str, str]:
+        path_entries = [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ]
+        try:
+            path_entries.insert(0, str(RipgrepBinaryResolver().resolve().parent))
+        except SearchDriverError:
+            pass
         return {
             "HOME": str(self.sandbox_home),
             "TMPDIR": str(self.sandbox_tmp),
-            "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "PATH": os.pathsep.join(path_entries),
             "LANG": "en_US.UTF-8",
             "LC_ALL": "en_US.UTF-8",
             "GIT_OPTIONAL_LOCKS": "0",
