@@ -35,7 +35,6 @@ from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
 from eidos_runtime.runtime.contracts import (  # noqa: E402
     LoopAction,
     ProgressSignature,
-    RunBudget,
 )
 from eidos_runtime.runtime.decision import LoopDecisionEngine  # noqa: E402
 from eidos_runtime.runtime.tool_runtime import ReadOnlyToolHandler  # noqa: E402
@@ -247,14 +246,8 @@ class LoopGuardTests(unittest.TestCase):
             guard.observe_empty_response(True), "repeated_empty_response"
         )
 
-    def test_loop_decision_priority_is_cancel_guard_context_then_budget(self) -> None:
+    def test_loop_decision_priority_is_cancel_guard_then_context(self) -> None:
         decision = LoopDecisionEngine()
-        exhausted = RunBudget(
-            segment_steps_remaining=0,
-            run_steps_remaining=0,
-            segment_effective_ms_remaining=0,
-            run_effective_ms_remaining=0,
-        )
         over = estimate_context_budget(
             [],
             context_window_tokens=4_096,
@@ -266,14 +259,13 @@ class LoopGuardTests(unittest.TestCase):
         self.assertEqual(
             decision.decide(
                 cancelled=True,
-                run_budget=exhausted,
                 loop_guard_result="no_progress",
                 context_budget=over,
             ).action,
             LoopAction.CANCEL,
         )
         self.assertEqual(
-            decision.decide(run_budget=exhausted, context_budget=over).action,
+            decision.decide(context_budget=over).action,
             LoopAction.COMPACT,
         )
         fitting = estimate_context_budget(
@@ -285,25 +277,14 @@ class LoopGuardTests(unittest.TestCase):
             tool_result_count=0,
         )
         self.assertEqual(
-            decision.decide(run_budget=exhausted, context_budget=fitting).action,
-            LoopAction.FINALIZE,
-        )
-        available = exhausted.model_copy(update={
-            "segment_steps_remaining": 1,
-            "run_steps_remaining": 1,
-            "segment_effective_ms_remaining": 1,
-            "run_effective_ms_remaining": 1,
-        })
-        self.assertEqual(
             decision.decide(
-                run_budget=available,
                 loop_guard_result="no_progress",
                 context_budget=fitting,
             ).action,
             LoopAction.PAUSE,
         )
         self.assertEqual(
-            decision.decide(run_budget=available, context_budget=over).action,
+            decision.decide(context_budget=over).action,
             LoopAction.COMPACT,
         )
 

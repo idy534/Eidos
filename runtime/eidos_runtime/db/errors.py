@@ -41,11 +41,3 @@ class OperationConflictError(RuntimeError):
 
 class OperationInProgressError(RuntimeError):
     pass
-
-
-class SegmentLimitReached(RuntimeError):
-    pass
-
-
-class RunLimitReached(RuntimeError):
-    pass

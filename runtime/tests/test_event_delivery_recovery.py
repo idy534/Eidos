@@ -171,24 +171,19 @@ class EventDeliveryTests(unittest.TestCase):
                 self.assertEqual(row["status"], f"{decision}d" if decision == "approve" else "rejected")
                 self.assertEqual(row["approval_decision"], decision)
 
-    def test_finalization_and_terminal_watermark_survive_broken_notifications(self) -> None:
-        run, _ = self.store.enqueue_run(self.session["id"], "finalize")
+    def test_natural_completion_and_terminal_watermark_survive_broken_notifications(self) -> None:
+        run, _ = self.store.enqueue_run(self.session["id"], "complete")
         claimed = self.store.claim_next_run()
         assert claimed is not None
         assert self.store.connection is not None
-        self.store.connection.execute(
-            "UPDATE runs SET model_step_count = 80 WHERE id = ?", (run["id"],)
-        )
-        self.store.connection.commit()
-
         RuntimeEngine(
             self.store,
             ScriptedModel([ModelResponse(text="final answer")]),
             self._broken_notify,
         ).run(run["id"], threading.Event())
 
-        stopped = self.store.read_run(run["id"])
-        self.assertEqual(stopped["status"], "stopped")
+        completed = self.store.read_run(run["id"])
+        self.assertEqual(completed["status"], "succeeded")
         rows = self.store.connection.execute(
             "SELECT kind, status FROM items WHERE run_id = ? ORDER BY ordinal",
             (run["id"],),
@@ -206,7 +201,7 @@ class EventDeliveryTests(unittest.TestCase):
         terminal = [
             event for event in events["items"]
             if event["eventType"] == "run.status_changed"
-            and event["payload"]["current"] == "stopped"
+            and event["payload"]["current"] == "succeeded"
         ]
         self.assertEqual(len(terminal), 1)
         self.assertEqual(events["throughEventId"], events["items"][-1]["eventId"])

@@ -114,7 +114,6 @@ class LoopAction(StrEnum):
     CONTINUE = "continue"
     COMPACT = "compact"
     PAUSE = "pause"
-    FINALIZE = "finalize"
     COMPLETE = "complete"
     FAIL = "fail"
     CANCEL = "cancel"
@@ -130,13 +129,6 @@ class LoopDecision(_FrozenModel):
     action: LoopAction
     reason: str | None = None
     failure: RuntimeFailure | None = None
-
-
-class RunBudget(_FrozenModel):
-    segment_steps_remaining: int
-    run_steps_remaining: int
-    segment_effective_ms_remaining: int
-    run_effective_ms_remaining: int
 
 
 class RuntimeCancelled(RuntimeError):

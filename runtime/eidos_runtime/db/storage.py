@@ -24,8 +24,6 @@ from eidos_runtime.db.errors import (
     OperationConflictError,
     OperationInProgressError,
     ResourceNotFoundError,
-    RunLimitReached,
-    SegmentLimitReached,
     SessionActiveError,
     StorageError,
     WorkspaceBoundaryError,
@@ -451,9 +449,6 @@ class SessionStore:
 
     def read_run_resolution_snapshot(self, run_id: str) -> RunResolutionSnapshot:
         return self._repository(self._runs).read_resolution_snapshot(run_id)
-
-    def run_budget(self, run_id: str) -> dict[str, int]:
-        return self._repository(self._runs).run_budget(run_id)
 
     def read_runtime_start_event(self, run_id: str) -> dict[str, object]:
         return self._repository(self._runs).read_runtime_start_event(run_id)

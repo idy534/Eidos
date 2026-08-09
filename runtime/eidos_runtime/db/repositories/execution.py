@@ -16,8 +16,6 @@ from eidos_runtime.db.database import (
 from eidos_runtime.db.errors import (
     InvalidRunStateError,
     ResourceNotFoundError,
-    RunLimitReached,
-    SegmentLimitReached,
     StorageError,
 )
 from eidos_runtime.db.events import append_event
@@ -216,10 +214,6 @@ class ExecutionRepository(Repository):
                 or resolution_snapshot.tool_set_hash != tool_set_hash
             ):
                 raise ValueError("step_resolution_snapshot_invalid")
-            if run["model_step_count"] >= 80:
-                raise RunLimitReached("run step limit reached")
-            if run["total_effective_ms"] >= 7_200_000:
-                raise RunLimitReached("run time limit reached")
             segment = connection.execute(
                 """
                 SELECT * FROM execution_segments
@@ -246,10 +240,6 @@ class ExecutionRepository(Repository):
                 segment = connection.execute(
                     "SELECT * FROM execution_segments WHERE id = ?", (segment_id,)
                 ).fetchone()
-            if segment["step_count"] >= 20:
-                raise SegmentLimitReached("segment step limit reached")
-            if segment["effective_ms"] >= 1_800_000:
-                raise SegmentLimitReached("segment time limit reached")
             now = _now_ms()
             step_id = str(uuid.uuid4())
             attempt_id = str(uuid.uuid4())

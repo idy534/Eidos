@@ -12,8 +12,6 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.model.client import ModelResponse, ScriptedModel  # noqa: E402
-from eidos_runtime.runtime.contracts import LoopAction, RunBudget  # noqa: E402
-from eidos_runtime.runtime.decision import LoopDecisionEngine  # noqa: E402
 from eidos_runtime.runtime.events import RuntimeEvents  # noqa: E402
 from eidos_runtime.runtime.finalizer import RunFinalizer  # noqa: E402
 from eidos_runtime.runtime.provider_control import (  # noqa: E402
@@ -42,19 +40,7 @@ class RuntimeReliabilityRegressionTests(unittest.TestCase):
         self.store.close()
         self.temporary.cleanup()
 
-    def test_segment_quantum_exhaustion_does_not_finalize_run(self) -> None:
-        decision = LoopDecisionEngine().decide(
-            run_budget=RunBudget(
-                segment_steps_remaining=0,
-                run_steps_remaining=60,
-                segment_effective_ms_remaining=0,
-                run_effective_ms_remaining=3_600_000,
-            )
-        )
-
-        self.assertEqual(decision.action, LoopAction.CONTINUE)
-
-    def test_twenty_first_model_step_rolls_to_a_new_segment(self) -> None:
+    def test_twenty_first_model_step_remains_in_the_same_segment(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "long repository analysis")
 
         for expected in range(1, 22):
@@ -74,7 +60,7 @@ class RuntimeReliabilityRegressionTests(unittest.TestCase):
         ).fetchall()
         self.assertEqual(
             [(row["ordinal"], row["status"], row["step_count"]) for row in rows],
-            [(1, "completed", 20), (2, "running", 1)],
+            [(1, "running", 21)],
         )
         current = self.store.read_run(run["id"])
         self.assertEqual(current["status"], "running")
@@ -113,7 +99,7 @@ class RuntimeReliabilityRegressionTests(unittest.TestCase):
         ).finalize(
             run["id"],
             (),
-            "max_total_steps",
+            "context_still_over_budget",
             threading.Event(),
         )
 

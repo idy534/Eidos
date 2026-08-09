@@ -589,7 +589,6 @@ mode=public    -> workspace_id IS NULL
 creation_seq INTEGER PRIMARY KEY AUTOINCREMENT, id UUID UNIQUE, session_id, agent_id, status
 creation_operation_id UNIQUE, enqueued_at, executor_lease_id
 current_segment_id, total_steps, effective_elapsed_ms
-max_total_steps=80, max_total_effective_seconds=7200
 consecutive_rejects, consecutive_protocol_errors, consecutive_sensitive_tool_inputs
 reconciliation_required, reconciliation_epoch, ruleset_version_snapshot
 stop_reason, error_code, error_message
@@ -606,11 +605,12 @@ Profile 不允许硬删除；Session/Run/snapshot 外键均使用 `ON DELETE RES
 
 ```text
 id, run_id, segment_index, status
-step_budget=20, time_budget_seconds=1800
 steps_used, effective_elapsed_ms
 started_at, finished_at
 UNIQUE(run_id, segment_index)
 ```
+
+`total_steps`、`effective_elapsed_ms`、`steps_used` 只作 telemetry。30 分钟 effective-time operational quantum 可在安全边界 rollover Segment，但不停止 Run；Step 数不触发 rollover。
 
 每次新的不确定副作用即使 `reconciliation_required` 已为 true，也递增 Run epoch，并创建闭合 `reconciliation_episodes(run_id,epoch,trigger_tool_call_id,reason_code,trigger_step_id,created_at,cleared_at,cleared_by_step_id)`；`UNIQUE(run_id,epoch)`。Qualifying ToolCall ids 使用关联表持久化，不使用自由 JSON map。
 

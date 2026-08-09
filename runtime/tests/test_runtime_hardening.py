@@ -114,7 +114,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         )
         with self.assertLogs("eidos.runtime", level="WARNING") as logs:
             outcome = finalizer.finalize(
-                run["id"], (), "max_total_steps", threading.Event()
+                run["id"], (), "context_still_over_budget", threading.Event()
             )
 
         self.assertTrue(model.request_was_canceled)
@@ -146,7 +146,7 @@ class RuntimeHardeningTests(unittest.TestCase):
             RuntimeEvents(notifications.append),
             default_scanner(),
             RuntimePhaseTracker(),
-        ).finalize(run["id"], (), "max_total_steps", threading.Event())
+        ).finalize(run["id"], (), "context_still_over_budget", threading.Event())
 
         self.assertEqual(outcome.run["status"], "stopped")
         self.assertEqual(outcome.item["content"], "first line\nsecond line")
@@ -180,7 +180,7 @@ class RuntimeHardeningTests(unittest.TestCase):
             RuntimeEvents(lambda _message: None),
             default_scanner(),
             RuntimePhaseTracker(),
-        ).finalize(run["id"], (), "max_total_steps", threading.Event())
+        ).finalize(run["id"], (), "context_still_over_budget", threading.Event())
 
         assert self.store.connection is not None
         rows = self.store.connection.execute(
@@ -194,7 +194,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         run, writer = self._pending_finalization("atomic finalization")
 
         mutation = self.store.complete_finalization_and_stop_committed(
-            str(writer.item["id"]), run["id"], "max_total_steps"
+            str(writer.item["id"]), run["id"], "context_still_over_budget"
         )
 
         item, stopped = mutation.value
@@ -218,7 +218,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(ValueError, "fixture event failure"):
                 self.store.complete_finalization_and_stop_committed(
-                    str(writer.item["id"]), run["id"], "max_total_steps"
+                    str(writer.item["id"]), run["id"], "context_still_over_budget"
                 )
 
         self.assertEqual(self.store.read_run(run["id"])["status"], "finalizing")
@@ -251,7 +251,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         def stop() -> None:
             try:
                 self.store.complete_finalization_and_stop_committed(
-                    str(writer.item["id"]), run["id"], "max_total_steps"
+                    str(writer.item["id"]), run["id"], "context_still_over_budget"
                 )
             except Exception as error:
                 errors.append(error)
@@ -297,7 +297,7 @@ class RuntimeHardeningTests(unittest.TestCase):
             thread.start()
             self.assertTrue(cancel_entered.wait(1))
             self.store.complete_finalization_and_stop_committed(
-                str(writer.item["id"]), run["id"], "max_total_steps"
+                str(writer.item["id"]), run["id"], "context_still_over_budget"
             )
             release_cancel.set()
             thread.join(1)
@@ -313,7 +313,7 @@ class RuntimeHardeningTests(unittest.TestCase):
     def test_assistant_stream_abort_never_rewrites_completed_item(self) -> None:
         run, writer = self._pending_finalization("safe abort")
         self.store.complete_finalization_and_stop_committed(
-            str(writer.item["id"]), run["id"], "max_total_steps"
+            str(writer.item["id"]), run["id"], "context_still_over_budget"
         )
 
         self.assertIsNone(writer.abort())

@@ -114,8 +114,8 @@
 - approve/reject/cancel 并发只有一个成功。
 - Reject 计数增加和两种清零条件。
 - Reject feedback 的 1..4,096 UTF-8 bytes、扫描失败保持 pending、成功后仅进入 approval_rejected data；未提供时 `{}`，summary 不含反馈。
-- Segment 20 Steps/30 分钟暂停。
-- Run 80 Steps/120 分钟 Finalization -> stopped。
+- Segment 可超过 20 Steps；30 分钟 effective-time quantum 只 rollover，Run 继续。
+- Run 可超过 80 Steps 和 120 分钟，不因固定 task lifetime Finalization。
 - Finalization 超时/失败生成降级摘要。
 - reconciliation_required 屏障拒绝副作用；每次新不确定性递增 epoch，Step 冻结 observed epoch，只有正常 completed 且至少一个只读 success 才 CAS 清除。部分成功、合法空结果、truncated/workspace_changed 可计，error/无工具/中断不计，旧 Step 不能清新 episode，未清除 final 保留审计。
 - allowed_actions 覆盖所有 status、闭合 pause reason、Workspace available/unavailable、Approval pending/decided/invalidated；持久化 RPC 在写事务内重算，cancel canceled 幂等，其他终态和未知 pause fail closed。
@@ -326,7 +326,7 @@ MVP Lite 已验证：
 - ✅ DeepSeek Chat SSE 可见文本、隐藏 reasoning、跨 chunk ToolCall/arguments 归并与私有 `0600` 模型配置。
 - ✅ 真实 DeepSeek 联网端到端：读取 README、文件写入审批、Shell 首次失败 ToolResult 回填、安全替代命令审批、最终回答与 `succeeded` 持久化终态。
 - ✅ 文件 Approve/Reject、既有文件读取证据、完整 diff、版本冲突、CAS swap/rollback、原子提交、post-commit uncertain 与迟到审批。
-- ✅ Runtime Loop 覆盖只读多工具声明顺序、连续两次非法响应、20 Step 硬上限与本地上下文超限零 Provider 请求。
+- ✅ Runtime Loop 覆盖只读多工具声明顺序、连续两次非法响应、120+ progressive Steps、单 Segment 超过 20 Steps、超过 2 小时 telemetry 与本地上下文超限零 Provider 请求。
 - ✅ `protocol/fixtures/v1.json` 固定代表性 envelope、错误、审批与通知 DTO：Python 验证初始化/错误 envelope，TypeScript 验证完整向量解析，真实双向审批/通知由双进程集成测试覆盖；增量 framing 覆盖无换行超限和慢消费者通知突发。
 - ⏳ 以下条目属于目标态候选或后续阶段增量。
 

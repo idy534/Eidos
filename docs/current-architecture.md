@@ -141,7 +141,7 @@ context reconstruction remains a documented limitation.
 
 | 组件 | 当前职责 | 不负责 |
 |---|---|---|
-| `RuntimeEngine` | 单个 Run 的模型/工具循环协调、预算决策、终止与错误收敛 | 具体工具实现、单 ToolCall 生命周期、沙箱策略 |
+| `RuntimeEngine` | 单个 Run 的模型/工具循环协调、Context 决策、终止与错误收敛 | 具体工具实现、单 ToolCall 生命周期、沙箱策略 |
 | `ToolCallRuntime` | 一个 Step 的 ToolCall 批次校验、创建顺序、并发选择和有序汇总 | Durable Intent/终态提交、权限升级 |
 | `ToolExecutionController` | 单个 ToolCall 的 prepare/execute/verify、deadline、取消、Durable Intent、结果校验/投影、终态与 reconciliation | 模型循环、批次调度、Seatbelt 策略 |
 | `ToolOrchestrator` | Shell attempt 的有效权限物化、审批要求、Seatbelt/unsandboxed attempt 选择和一次权限升级 | ToolCall DB 生命周期、批次、进程监督实现 |

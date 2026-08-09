@@ -341,7 +341,7 @@ class FinalizationPersistenceTests(unittest.TestCase):
         ).finalize(
             run["id"],
             (),
-            "max_total_steps",
+            "context_still_over_budget",
             threading.Event(),
             instructions=instructions,
         )
@@ -409,7 +409,7 @@ class FinalizationPersistenceTests(unittest.TestCase):
             {
                 "type": "finalization",
                 "toolsAllowed": False,
-                "stopReason": "max_total_steps",
+                "stopReason": "context_still_over_budget",
             },
         )
         self.assertNotIn("Do not call tools", json.dumps(model.contexts[0]))

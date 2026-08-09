@@ -11,8 +11,6 @@ from eidos_runtime.context.compactor import ContextCompactionError, ContextCompa
 from eidos_runtime.db.storage import (
     ContextLimitExceeded,
     InvalidRunStateError,
-    RunLimitReached,
-    SegmentLimitReached,
     SessionStore,
 )
 from eidos_runtime.model.client import ModelClient, ModelToolCall
@@ -22,7 +20,6 @@ from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.contracts import (
     LoopAction,
     RunContext,
-    RunBudget,
     RuntimeCancelled,
 )
 from eidos_runtime.runtime.decision import LoopDecisionEngine
@@ -286,21 +283,8 @@ class RuntimeEngine:
                 if context_state in estimated_pressure_states
                 else built.budget
             )
-            budget_fact = self.store.run_budget(run.run_id)
             context_decision = decisions.decide(
                 context_budget=decision_budget,
-                run_budget=RunBudget.model_validate(
-                    {
-                        "segment_steps_remaining": budget_fact["segmentStepsRemaining"],
-                        "run_steps_remaining": budget_fact["runStepsRemaining"],
-                        "segment_effective_ms_remaining": budget_fact[
-                            "segmentEffectiveMsRemaining"
-                        ],
-                        "run_effective_ms_remaining": budget_fact[
-                            "runEffectiveMsRemaining"
-                        ],
-                    }
-                ),
                 compaction_count=built.facts.compaction_count,
                 pending_user_input=self.store.has_pending_input(run.run_id),
                 cancelled=cancel.is_set(),
@@ -333,28 +317,8 @@ class RuntimeEngine:
                     )
                     return
                 continue
-            if context_decision.action == LoopAction.FINALIZE:
-                reason = (
-                    "max_effective_runtime"
-                    if budget_fact["runEffectiveMsRemaining"] <= 0
-                    else "max_total_steps"
-                )
-                finalizer.finalize(
-                    run.run_id,
-                    built.model_context,
-                    reason,
-                    cancel,
-                    instructions=built.instructions,
-                )
-                return
             if context_decision.action == LoopAction.PAUSE:
                 reason = context_decision.reason or "context_over_budget"
-                if reason == "segment_budget_exhausted":
-                    reason = (
-                        "segment_time_limit"
-                        if budget_fact["segmentEffectiveMsRemaining"] <= 0
-                        else "segment_step_limit"
-                    )
                 finalizer.finalize(
                     run.run_id,
                     built.model_context,
@@ -363,46 +327,17 @@ class RuntimeEngine:
                     instructions=built.instructions,
                 )
                 return
-            try:
-                step = step_factory.create(
-                    run,
-                    resources,
-                    model_context=built.model_context,
-                    instructions=built.instructions,
-                    tool_snapshot=snapshot,
-                    rule_resolution_snapshot=rule_snapshot,
-                    context_budget=built.budget,
-                    workspace_version=built.facts.workspace_version,
-                    new_user_input_ids=tuple(item_id for item_id, _content in injected),
-                )
-            except SegmentLimitReached as error:
-                reason = (
-                    "segment_time_limit"
-                    if "time" in str(error)
-                    else "segment_step_limit"
-                )
-                finalizer.finalize(
-                    run.run_id,
-                    built.model_context,
-                    reason,
-                    cancel,
-                    instructions=built.instructions,
-                )
-                return
-            except RunLimitReached as error:
-                reason = (
-                    "max_effective_runtime"
-                    if "time" in str(error)
-                    else "max_total_steps"
-                )
-                finalizer.finalize(
-                    run.run_id,
-                    built.model_context,
-                    reason,
-                    cancel,
-                    instructions=built.instructions,
-                )
-                return
+            step = step_factory.create(
+                run,
+                resources,
+                model_context=built.model_context,
+                instructions=built.instructions,
+                tool_snapshot=snapshot,
+                rule_resolution_snapshot=rule_snapshot,
+                context_budget=built.budget,
+                workspace_version=built.facts.workspace_version,
+                new_user_input_ids=tuple(item_id for item_id, _content in injected),
+            )
 
             tools = ToolCallRuntime(
                 self.store,

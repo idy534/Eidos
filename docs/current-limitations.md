@@ -26,6 +26,7 @@
 - Plugin 只支持本地受管包；MCP 只支持 stdio Tools。没有远程市场、OAuth、Streamable HTTP、Resources、Prompts、Sampling 或 Tasks。
 - MCP startup 受单一、有界的 readiness deadline 约束；ready 后 Connection 是无 deadline 的长生命周期 Service。MCP Tool List Changed 只做本地、串行的 SQLite bookkeeping，可能在关闭时等待一个已经开始的 callback 完成；callback 失败不会终止已建立的 MCP session。
 - Runtime 不恢复内存中的模型请求、进程或 ToolCall。重启从 SQLite 事实收敛，可能有副作用的未确认执行要求 reconciliation，不自动重放。
+- Runtime 没有隐藏的 Model Step、ToolCall、Segment Step 或固定有效时长 Run fuse；这些计数仅用于持久 telemetry。资源/成本上限尚未提供用户可配置 policy，单次模型、Shell、MCP、审批和关闭操作仍各自保持有界 timeout。
 - 数据库接受完整 schema v10、全新数据库和受支持的原子 v9 → v10 migration；v8、v11 与未知版本 fail closed。迁移框架目前只实现这一条升级路径。
 - Phase E-F 的 Repository Inventory、Tree-sitter Index、Repository Map、
   Retrieval、ContextPlan 和 LongTaskRepository 已有严格 typed seam 与 focused

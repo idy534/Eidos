@@ -202,8 +202,11 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
 };
 
 const STOP_REASON_MESSAGES: Record<string, string> = {
+  // Legacy persisted stop reasons; Runtime no longer emits these.
   max_total_steps: "已达到任务执行预算",
   max_effective_runtime: "已达到最长执行时间",
+  segment_step_limit: "已达到单段任务执行预算",
+  segment_time_limit: "已达到单段执行时间",
   context_still_over_budget: "上下文容量已达到上限",
   repeated_tool_call: "检测到重复工具调用，任务已停止",
   repeated_tool_error: "工具持续失败，任务已停止",

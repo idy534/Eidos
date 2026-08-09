@@ -49,7 +49,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.assertEqual(connection.execute("SELECT status FROM steps").fetchone()[0], "completed")
         self.assertEqual(connection.execute("SELECT status FROM model_attempts").fetchone()[0], "completed")
 
-    def test_segment_limit_rolls_over_and_continues_run(self) -> None:
+    def test_segment_step_count_is_telemetry_and_does_not_roll_over(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "continue")
         self.store.increment_model_step(run["id"])
         self.store.complete_current_step(run["id"], "completed")
@@ -78,28 +78,29 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         ).fetchall()
         self.assertEqual(
             [tuple(row) for row in segments],
-            [(1, "completed", 20), (2, "completed", 1)],
+            [(1, "completed", 21)],
         )
 
-    def test_run_limit_uses_one_toolless_finalization_then_stops(self) -> None:
-        run, _ = self.store.create_run(self.session["id"], "stop")
+    def test_model_step_count_above_eighty_completes_naturally(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "continue")
         connection = self.store.connection
         assert connection is not None
         connection.execute("UPDATE runs SET model_step_count = 80 WHERE id = ?", (run["id"],))
         connection.commit()
-        model = ScriptedModel([ModelResponse(text="final summary")])
+        model = ScriptedModel([ModelResponse(text="natural answer")])
         RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
-        stopped = self.store.read_run(run["id"])
-        self.assertEqual(stopped["status"], "stopped")
-        self.assertEqual(stopped["stopReason"], "max_total_steps")
-        self.assertEqual(model.allow_tools_history, [False])
+        completed = self.store.read_run(run["id"])
+        self.assertEqual(completed["status"], "succeeded")
+        self.assertIsNone(completed.get("stopReason"))
+        self.assertEqual(completed["modelStepCount"], 81)
+        self.assertEqual(model.allow_tools_history, [True])
         item = connection.execute(
             "SELECT model_step_index FROM items WHERE kind = 'assistant_message'"
         ).fetchone()
         self.assertIsNotNone(item)
-        self.assertIsNone(item["model_step_index"])
+        self.assertEqual(item["model_step_index"], 81)
 
     def test_rejections_do_not_pause_for_more_user_input(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "change")

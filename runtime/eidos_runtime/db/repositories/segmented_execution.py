@@ -12,16 +12,15 @@ from eidos_runtime.runtime.resolution import (
 from eidos_runtime.runtime.state_machine import SegmentStatus, ensure_transition
 
 
-SEGMENT_STEP_QUANTUM = 20
 SEGMENT_EFFECTIVE_MS_QUANTUM = 1_800_000
 
 
 class ExecutionRepository(BaseExecutionRepository):
     """Execution persistence with non-terminal Segment rollover semantics.
 
-    A Segment is a bounded execution slice. Exhausting its local step/time quota
-    must not terminate an otherwise healthy Run; the next Step starts in a fresh
-    Segment while Run-level hard budgets and LoopGuard remain authoritative.
+    A Segment is an operational execution slice. Crossing its effective-time
+    quantum starts a fresh Segment at the next safe Step boundary without
+    terminating the Run. Step counts remain telemetry only.
     """
 
     def increment_model_step(
@@ -53,10 +52,7 @@ class ExecutionRepository(BaseExecutionRepository):
             ).fetchone()
             if segment is None:
                 return
-            if (
-                int(segment["step_count"]) < SEGMENT_STEP_QUANTUM
-                and int(segment["effective_ms"]) < SEGMENT_EFFECTIVE_MS_QUANTUM
-            ):
+            if int(segment["effective_ms"]) < SEGMENT_EFFECTIVE_MS_QUANTUM:
                 return
             running_step = connection.execute(
                 """
