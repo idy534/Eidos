@@ -158,5 +158,27 @@ class ContextSnapshotRepository(Repository):
                 "persistence_record_invalid", record="context_snapshot"
             ) from None
 
+    def read_latest_for_run(self, run_id: str) -> ContextSnapshot | None:
+        """Return the latest exact model-request projection for a Run."""
+
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT snapshot_json FROM context_snapshots
+                WHERE run_id = ?
+                ORDER BY created_at DESC, snapshot_id DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return ContextSnapshot.model_validate_json(row["snapshot_json"])
+        except (TypeError, ValidationError, ValueError):
+            raise PersistenceCorruptionError(
+                "persistence_record_invalid", record="context_snapshot"
+            ) from None
+
 
 __all__ = ["ContextSnapshotRepository"]

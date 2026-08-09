@@ -29,6 +29,7 @@ export const IPC = {
   RUN_START: "run:start",
   RUN_CANCEL: "run:cancel",
   RUN_REVISE: "run:revise",
+  CONTEXT_USAGE: "context:usage",
 
   // Response actions
   RESPONSE_ACTION_STATE: "response-action:state",

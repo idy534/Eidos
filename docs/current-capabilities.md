@@ -23,6 +23,10 @@
 - 上下文构建、压缩、Run/Segment 预算、协议错误反馈、Loop Guard 和最终化；Context
   Usage 优先使用最近 Provider usage 的 Active Context，缺失时才使用标记为
   `estimated` 的有界 fallback，并区分模型窗口与投影安全上限。
+- Composer 在模型选择器右侧显示当前模型最近 Run 的 Context Usage；Provider 数据显示
+  `上下文 xx% · xxK / xxxK`，估算数据明确显示 `≈`，无可用快照显示 `上下文 --`。
+  该展示通过 `context/usage` Runtime RPC 进入 Main 和 typed preload，不使用累计 Session
+  Token Consumption。
 - `parallel_tool_calls=true` 允许模型声明多调用；Runtime 只并发安全只读批次并保持声明顺序。
 
 ## 内置工具

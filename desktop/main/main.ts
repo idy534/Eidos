@@ -441,6 +441,10 @@ ipcMain.handle(IPC.RUN_CANCEL, (_event, runId: unknown) => {
   log("info", "run", "Cancel requested", { runId });
   return clientOrThrow().cancelRun(runId);
 });
+ipcMain.handle(IPC.CONTEXT_USAGE, (_event, runId: unknown) => {
+  if (typeof runId !== "string") throw new Error("Context Usage 参数无效。");
+  return clientOrThrow().readContextUsage(runId);
+});
 ipcMain.handle(IPC.RUN_REVISE, (_event, sourceRunId: unknown, userInput: unknown) => {
   if (
     typeof sourceRunId !== "string"

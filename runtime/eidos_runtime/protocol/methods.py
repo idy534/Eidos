@@ -16,6 +16,7 @@ from pydantic import field_validator, model_validator
 
 from eidos_runtime.protocol.schemas import (
     ClosedModel,
+    ContextUsageSnapshotDto,
     EventEnvelopeDto,
     ItemDto,
     McpServerRecordDto,
@@ -129,6 +130,11 @@ class RunResumeRequestDto(_OperationRequest):
 
 
 class RunStatusRequestDto(_CanonicalIdRequest):
+    run_id: StrictStr = Field(alias="runId")
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("run_id",)
+
+
+class ContextUsageRequestDto(_CanonicalIdRequest):
     run_id: StrictStr = Field(alias="runId")
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("run_id",)
 
@@ -358,6 +364,12 @@ class RunResumeResponseDto(_RunLifecycleResponseDto):
 
 class RunStatusResponseDto(_RunLifecycleResponseDto):
     pass
+
+
+class ContextUsageResponseDto(MethodResultDto):
+    context_usage: ContextUsageSnapshotDto | None = Field(
+        default=None, alias="contextUsage"
+    )
 
 
 class ModelReasoningDto(ClosedModel):

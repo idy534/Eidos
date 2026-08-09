@@ -37,9 +37,11 @@
   `ContextCompactor` 仍写入现有 `compact_summaries` 结构，因此 Event、ToolCall
   和 Repository Evidence provenance 已有 verified v10 持久表，但兼容
   `ContextCompactor` 尚未自动切换到该验证写路径。
-- Context Usage Desktop 展示尚未接入；Runtime 当前只在内部保留
-  `ContextUsageSnapshot`。Provider usage 缺失时的 `estimated` 值是有界 fallback，
-  不是 tokenizer 精确值；它只用于压力预警和恢复决策，不能单独证明 Provider 已拒绝
+- Context Usage Desktop 展示只显示当前选中模型对应的最近 Run；新 Run 在 Runtime
+  返回首个 Usage 或可用投影前显示 `上下文 --`。Runtime 通过 `context/usage` 返回
+  `ContextUsageSnapshot` 的 Active Context、模型窗口、百分比和 `provider`/`estimated`
+  来源，不向 Desktop 暴露累计 Session Token。Provider usage 缺失时的 `estimated`
+  值是有界 fallback，不是 tokenizer 精确值；它只用于压力预警和恢复决策，不能单独证明 Provider 已拒绝
   请求。Provider 明确 `context_exceeded` 后，若没有新的可压缩历史或 Context 投影没有
   进展，Runtime 会以 `context_still_over_budget` 停止。
 - Checkpoint create/list 与 append-only rewind/fork lineage 已持久化并暴露 typed RPC；

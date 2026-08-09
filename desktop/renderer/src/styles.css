@@ -2278,6 +2278,7 @@ input:focus, textarea:focus {
 .composer-meta { display: flex; gap: 0.45rem; align-items: center; min-width: 0; color: var(--muted); font-size: var(--font-size-xs); }
 .composer-meta label { padding-left: 0.5rem; }
 .composer-meta select { max-width: 15rem; border: 1px solid var(--line); border-radius: 0.45rem; padding: 0.3rem 1.8rem 0.3rem 0.45rem; color: var(--text); background: white; font-size: var(--font-size-caption); }
+.composer-context-usage { flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .composer-actions button { min-height: 2rem; padding: 0.25rem 0.75rem; border-radius: 0.625rem; font-size: var(--font-size-sidebar); }
 
 /* Circular Up-Arrow / Stop Action Button */
