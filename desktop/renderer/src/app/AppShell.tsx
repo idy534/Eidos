@@ -15,6 +15,7 @@ import { useRunController } from "./useRunController.js";
 import { useApprovalController } from "./useApprovalController.js";
 import { useModelController } from "./useModelController.js";
 import { useResponseActionController } from "./useResponseActionController.js";
+import { useContextUsageController } from "./useContextUsageController.js";
 import { resolveSessionModelId } from "./session-model-resolver.js";
 import { useExtensionController } from "./useExtensionController.js";
 import { applyNotification, userFacingError } from "../session-state.js";
@@ -47,6 +48,20 @@ export function AppShell({ runtime }: AppShellProps) {
   const [responseActionState, responseActionActions] = useResponseActionController(
     sessionState.snapshot?.session.id,
   );
+  const latestRun = sessionState.snapshot?.runs.length
+    ? sessionState.snapshot.runs[sessionState.snapshot.runs.length - 1]
+    : undefined;
+  const contextRun = runState.activeRun ?? latestRun;
+  const contextRunId = contextRun && contextRun.modelId === modelState.selectedModelId
+    ? contextRun.id
+    : undefined;
+  const [contextUsageState, contextUsageActions] = useContextUsageController({
+    ready: runtimeStatus.state === "ready" && isStorageReady,
+    sessionId: sessionState.snapshot?.session.id,
+    modelId: modelState.selectedModelId,
+    runId: contextRunId,
+  });
+  const handleContextUsageNotification = contextUsageActions.handleNotification;
 
   // UI-only state (not domain state)
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -104,6 +119,7 @@ export function AppShell({ runtime }: AppShellProps) {
   // -----------------------------------------------------------------------
   useEffect(() => {
     const unsubNotifications = window.eidosRuntime.onNotification((notification) => {
+      handleContextUsageNotification(notification);
       if (notification.method === "session/titleUpdated") {
         sessionActions.handleTitleNotification(notification.params);
       } else if (
@@ -135,7 +151,7 @@ export function AppShell({ runtime }: AppShellProps) {
       unsubApprovals();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [handleContextUsageNotification]);
 
   // -----------------------------------------------------------------------
   // Keyboard shortcuts from Main process menu
@@ -418,6 +434,7 @@ export function AppShell({ runtime }: AppShellProps) {
               input={input}
               modelList={modelState.list}
               selectedModelId={modelState.selectedModelId}
+              contextUsage={contextUsageState.usage}
               modelConfigured={Boolean(modelState.list?.models.length)}
               modelLoading={modelState.loading}
               isSubmitting={runState.isSubmitting}

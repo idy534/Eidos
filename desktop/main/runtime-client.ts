@@ -58,6 +58,7 @@ import type {
   PluginListResult,
   PluginRecord,
   Run,
+  ContextUsage,
   RuntimeEvent,
   RuntimeHealth,
   RuntimeNotification,
@@ -100,6 +101,7 @@ export type {
   PluginListResult,
   PluginRecord,
   Run,
+  ContextUsage,
   RuntimeEvent,
   RuntimeHealth,
   RuntimeNotification,
@@ -272,6 +274,24 @@ export class RuntimeClient {
 
   cancelRun(runId: string, operationId = randomUUID()): Promise<Run> {
     return this.validatedRequest("run/cancel", { runId, operationId }, isRun);
+  }
+
+  async readContextUsage(runId: string): Promise<ContextUsage | null> {
+    const result = await this.validatedRequest(
+      "context/usage",
+      { runId },
+      isContextUsageResult,
+    );
+    const usage = result.contextUsage;
+    return usage
+      ? {
+          activeTokens: usage.activeTokens,
+          windowTokens: usage.contextWindowTokens,
+          percentUsed: usage.percentUsed,
+          source: usage.source,
+          ...(usage.updatedAt !== undefined ? { updatedAt: usage.updatedAt } : {}),
+        }
+      : null;
   }
 
   listModelPresets(): Promise<ModelPresetsResult> {
@@ -958,6 +978,37 @@ function isRun(value: unknown): value is Run {
       Array.isArray(value.activatedTools)
       && value.activatedTools.every((name) => typeof name === "string")
     ))
+  );
+}
+
+type RuntimeContextUsage = Omit<ContextUsage, "windowTokens"> & {
+  contextWindowTokens: number;
+};
+
+function isContextUsage(value: unknown): value is RuntimeContextUsage {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "activeTokens", "contextWindowTokens", "percentUsed", "source", "updatedAt",
+    ])
+    && isNonNegativeInteger(value.activeTokens)
+    && isPositiveInteger(value.contextWindowTokens)
+    && typeof value.percentUsed === "number"
+    && Number.isFinite(value.percentUsed)
+    && value.percentUsed >= 0
+    && value.percentUsed <= 100
+    && ["provider", "estimated"].includes(String(value.source))
+    && (value.updatedAt === undefined || isNonNegativeInteger(value.updatedAt))
+  );
+}
+
+function isContextUsageResult(
+  value: unknown,
+): value is { contextUsage?: RuntimeContextUsage } {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["contextUsage"])
+    && (value.contextUsage === undefined || isContextUsage(value.contextUsage))
   );
 }
 

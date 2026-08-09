@@ -595,6 +595,14 @@ class RuntimeServer:
                 lambda _id, request: self._applications_or_error().runs.status(request),
             ),
             (
+                "context/usage",
+                method_dtos.ContextUsageRequestDto,
+                method_dtos.ContextUsageResponseDto,
+                lambda _id, request: self._applications_or_error().runs.context_usage(
+                    request
+                ),
+            ),
+            (
                 "run/pause",
                 method_dtos.RunPauseRequestDto,
                 method_dtos.RunPauseResponseDto,

@@ -57,6 +57,9 @@ class WorkspaceSearchRequest:
     max_results: int
     max_preview_characters: int
     discovery_scope: WorkspaceDiscoveryScope
+    path: str = "."
+    regex: bool = False
+    include_globs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -186,7 +189,13 @@ class RipgrepSearchDriver:
         cancel: threading.Event,
     ) -> WorkspaceSearchResult:
         binary = self._resolver.resolve()
-        argv = _build_argv(binary, request.query)
+        argv = _build_argv(
+            binary,
+            request.query,
+            path=request.path,
+            regex=request.regex,
+            include_globs=request.include_globs,
+        )
         try:
             process = subprocess.Popen(
                 argv,
@@ -370,6 +379,7 @@ class _RipgrepEventParser:
         if path not in self.accepted_paths:
             if (
                 not is_discovery_path_allowed(path)
+                or not _is_within_search_path(path, self.request.path)
                 or self.request.discovery_scope.is_ignored(path, is_directory=False)
             ):
                 self.rejected_paths.add(path)
@@ -426,11 +436,20 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _build_argv(binary: Path, query: str) -> list[str]:
+def _build_argv(
+    binary: Path,
+    query: str,
+    *,
+    path: str = ".",
+    regex: bool = False,
+    include_globs: tuple[str, ...] = (),
+) -> list[str]:
+    _validate_search_path(path)
+    for glob in include_globs:
+        _validate_include_glob(glob)
     argv = [
         str(binary),
         "--json",
-        "--fixed-strings",
         "--ignore-case",
         "--no-unicode",
         "--line-number",
@@ -451,6 +470,10 @@ def _build_argv(binary: Path, query: str) -> list[str]:
         "--sort",
         "path",
     ]
+    if not regex:
+        argv.insert(2, "--fixed-strings")
+    for glob in include_globs:
+        argv.extend(("--glob", glob))
     for directory in sorted(HARD_DISCOVERY_DIRECTORIES | SENSITIVE_DIRECTORIES):
         argv.extend(("--glob", f"!**/{directory}/**"))
     for name in sorted(SENSITIVE_NAMES | {".env"}):
@@ -460,8 +483,40 @@ def _build_argv(binary: Path, query: str) -> list[str]:
     for keyword in sorted(SENSITIVE_KEYWORDS):
         argv.extend(("--glob", f"!**/*{keyword}*"))
     argv.extend(("--glob", "!**/.eidos-*"))
-    argv.extend(("--", query, "."))
+    argv.extend(("--", query, path))
     return argv
+
+
+def _validate_search_path(path: str) -> None:
+    if path == ".":
+        return
+    if (
+        path
+        and not path.startswith("/")
+        and "\\" not in path
+        and "\x00" not in path
+        and all(part not in {"", ".", ".."} for part in path.split("/"))
+    ):
+        return
+    raise SearchDriverError("search_backend_protocol_error")
+
+
+def _validate_include_glob(value: str) -> None:
+    if (
+        not value
+        or "\x00" in value
+        or "\n" in value
+        or "\r" in value
+        or "\\" in value
+        or value.startswith("/")
+        or any(part in {"", ".", ".."} for part in value.split("/")
+               if part not in {"**"})
+    ):
+        raise SearchDriverError("search_backend_protocol_error")
+
+
+def _is_within_search_path(path: str, search_path: str) -> bool:
+    return search_path == "." or path.startswith(f"{search_path}/")
 
 
 def _event_path(data: dict[str, object]) -> str:

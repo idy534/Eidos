@@ -374,11 +374,103 @@ class ContextPersistenceTests(unittest.TestCase):
         self.assertTrue(set(recent_ids).isdisjoint(summary.source_item_ids))
         self.assertIn("current goal", encoded)
         recent_values = {
-            json.loads(item.result_json)["data"]["value"]
+            json.loads(item.model_result_json or item.result_json or "{}")["data"]["value"]
             for item in projected.items
             if item.item_id in recent_ids
         }
         self.assertEqual(recent_values, {"A", "B", "C"})
+
+    def test_compaction_summary_preserves_structured_task_evidence_and_reloads(self) -> None:
+        old, _ = self.store.create_run(
+            self.session["id"],
+            "Analyze startup flow. Must preserve project rules and do not modify code.",
+        )
+        assistant = self.store.create_assistant_item(old["id"], 1)
+        self.store.append_item_content(
+            assistant["id"],
+            "I decided to trace RuntimeEngine before inspecting the model gateway. Next, run the tests.",
+        )
+        self.store.complete_assistant_item(assistant["id"])
+        read = self.store.create_tool_item(
+            old["id"], 2, 0, "read-engine", "read_file",
+            '{"path":"runtime/eidos_runtime/runtime/engine.py"}',
+        )
+        self.store.complete_tool_item(read["id"], json.dumps({
+            "outcome": "success",
+            "code": "ok",
+            "summary": "Read file",
+            "data": {
+                "path": "runtime/eidos_runtime/runtime/engine.py",
+                "content": "class RuntimeEngine:\n    def run(self):\n        pass\n",
+                "sizeBytes": 54,
+                "sha256": "a" * 64,
+            },
+        }))
+        search = self.store.create_tool_item(
+            old["id"], 3, 0, "search-engine", "search_text",
+            '{"query":"RuntimeEngine"}',
+        )
+        self.store.complete_tool_item(search["id"], json.dumps({
+            "outcome": "success",
+            "code": "ok",
+            "summary": "Searched text",
+            "data": {
+                "matches": [{
+                    "path": "runtime/eidos_runtime/runtime/engine.py",
+                    "line": 1,
+                    "column": 7,
+                    "preview": "class RuntimeEngine:",
+                }],
+                "scannedBytes": 54,
+            },
+        }))
+        write = self.store.create_tool_item(
+            old["id"], 4, 0, "write-engine", "write_file",
+            '{"path":"notes.txt"}',
+        )
+        self.store.complete_tool_item(write["id"], json.dumps({
+            "outcome": "success",
+            "code": "ok",
+            "summary": "File change committed",
+            "data": {
+                "path": "notes.txt",
+                "sha256": "b" * 64,
+                "sizeBytes": 12,
+                "workspaceChanged": True,
+            },
+        }), workspace_changed=True)
+        failed = self.store.create_tool_item(
+            old["id"], 5, 0, "shell-failed", "run_shell", '{"command":"make test"}',
+        )
+        self.store.complete_tool_item(failed["id"], json.dumps({
+            "outcome": "error",
+            "code": "shell_failed",
+            "summary": "The test command failed",
+            "data": {"stderr": "missing fixture"},
+        }), item_status="failed", tool_status="failed")
+        self.store.fail_run(old["id"], "fixture")
+        current, _ = self.store.create_run(self.session["id"], "continue")
+
+        summary = ContextCompactor(self.store).compact(current["id"], "pre_turn")
+
+        self.assertIn("Analyze startup flow", summary.task_goal)
+        self.assertTrue(any("Must preserve" in value for value in summary.constraints))
+        self.assertTrue(any("engine.py" in value for value in summary.important_facts))
+        self.assertTrue(any("RuntimeEngine" in value for value in summary.important_facts))
+        self.assertTrue(any("workspace state" in value for value in summary.important_facts))
+        self.assertTrue(any("notes.txt" in value for value in summary.workspace_changes))
+        self.assertTrue(any("shell_failed" in value for value in summary.failed_attempts))
+        self.assertTrue(summary.important_decisions)
+        self.assertTrue(summary.next_actions)
+        self.assertLessEqual(
+            len(summary.model_dump_json(exclude={"source_item_ids"}).encode("utf-8")),
+            4 * 1_024,
+        )
+
+        self.store.close()
+        self.store = SessionStore(self.data)
+        self.store.initialize()
+        self.assertEqual(self.store.latest_compact_summary(current["id"]), summary)
 
     def test_compaction_candidates_exclude_latest_input_recent_steps_and_reconciliation(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "current goal")
@@ -463,6 +555,57 @@ class ContextPersistenceTests(unittest.TestCase):
         self.assertEqual(after.budget.context_usage.source, "provider")
         self.assertGreater(after.budget.projected_input_tokens, before.budget.projected_input_tokens)
         self.assertGreater(after.budget.projected_input_tokens, 185_000)
+
+    def test_context_builder_deduplicates_identical_read_results_per_workspace_state(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "inspect")
+        read_result = json.dumps({
+            "outcome": "success",
+            "code": "ok",
+            "summary": "Read file",
+            "data": {
+                "path": "a.txt",
+                "content": "same content",
+                "sha256": "a" * 64,
+            },
+        })
+        first = self.store.create_tool_item(
+            run["id"], 1, 0, "read-1", "read_file", '{"path":"a.txt"}'
+        )
+        second = self.store.create_tool_item(
+            run["id"], 1, 1, "read-2", "read_file", '{"path":"a.txt"}'
+        )
+        for item in (first, second):
+            self.store.complete_tool_item(item["id"], read_result)
+
+        write = self.store.create_tool_item(
+            run["id"], 2, 0, "write-1", "write_file", '{"path":"a.txt"}'
+        )
+        self.store.complete_tool_item(
+            write["id"],
+            json.dumps({
+                "outcome": "success",
+                "code": "ok",
+                "data": {"path": "a.txt", "workspaceChanged": True},
+            }),
+            workspace_changed=True,
+        )
+        third = self.store.create_tool_item(
+            run["id"], 3, 0, "read-3", "read_file", '{"path":"a.txt"}'
+        )
+        self.store.complete_tool_item(third["id"], read_result)
+
+        built = ContextBuilder(self.store).build(run["id"])
+        results = {
+            item["callId"]: item["result"]
+            for item in built.model_context
+            if item.get("type") == "tool_result"
+        }
+
+        self.assertIn("same content", results["read-1"])
+        duplicate = json.loads(results["read-2"])
+        self.assertTrue(duplicate["contextDeduplicated"])
+        self.assertEqual(duplicate["duplicateOf"], "read-1")
+        self.assertIn("same content", results["read-3"])
 
     def test_context_projection_keeps_unresolved_errors_and_reconciliation_state(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "inspect failure")
@@ -729,7 +872,10 @@ class ContextPersistenceTests(unittest.TestCase):
         stopped = self.store.read_run(run["id"])
         self.assertEqual(stopped["status"], "succeeded")
         facts = self.store.context_projection_facts(run["id"])
-        self.assertTrue(any("x" * 1_000 in (item.result_json or "") for item in facts.items))
+        self.assertTrue(any(
+            "x" * 1_000 in (item.model_result_json or item.result_json or "")
+            for item in facts.items
+        ))
 
     def test_compaction_event_failure_rolls_back_summary_and_count(self) -> None:
         old, _ = self.store.create_run(self.session["id"], "old")

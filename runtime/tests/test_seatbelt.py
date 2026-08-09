@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 import socketserver
 import sys
@@ -30,9 +31,63 @@ from eidos_runtime.sandbox.permissions import (  # noqa: E402
     NetworkPermissions,
     materialize_effective_profile,
 )
+from eidos_runtime.workspace.search_driver import (  # noqa: E402
+    RipgrepBinaryResolver,
+    SearchDriverError,
+)
 
 
 class SeatbeltProfileTests(unittest.TestCase):
+    def test_profile_path_includes_verified_bundled_ripgrep(self) -> None:
+        try:
+            binary = RipgrepBinaryResolver().resolve()
+        except SearchDriverError:
+            self.skipTest("bundled ripgrep is unavailable for this platform")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            for directory in (root / "workspace", root / "home", root / "tmp"):
+                directory.mkdir(parents=True)
+            profile = SeatbeltProfile.create(
+                workspace_root=root / "workspace",
+                sandbox_home=root / "home",
+                sandbox_tmp=root / "tmp",
+                sensitive_path=root / "workspace" / ".env",
+            )
+
+            self.assertIn(str(binary.parent), profile.environment()["PATH"].split(os.pathsep))
+
+    def test_bundled_ripgrep_runs_inside_the_shell_profile(self) -> None:
+        if not is_seatbelt_usable():
+            self.skipTest("macOS Seatbelt is unavailable")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            workspace = root / "workspace"
+            home = root / "home"
+            sandbox_tmp = root / "tmp"
+            for directory in (workspace, home, sandbox_tmp):
+                directory.mkdir(parents=True)
+            resources = RUNTIME_ROOT / "eidos_runtime" / "resources"
+            permissions = materialize_effective_profile(
+                BasePermissionProfile.for_workspace(
+                    workspace_root=workspace,
+                    runtime_roots=(resources,),
+                )
+            )
+            profile = SeatbeltProfile.create(
+                workspace_root=workspace,
+                sandbox_home=home,
+                sandbox_tmp=sandbox_tmp,
+                sensitive_path=workspace / ".env",
+                effective_permissions=permissions,
+            )
+
+            result = run_sandboxed(
+                profile, ["/bin/sh", "-c", "rg --version"], timeout_seconds=5
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("ripgrep", result.stdout)
+
     def test_profile_uses_static_template_and_path_parameters(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
-import type { ModelId, Run } from "../contracts.js";
+import type { ContextUsage, ModelId, Run } from "../contracts.js";
 import type { ComposerMode } from "../session-state.js";
+import { formatContextUsage } from "../context-usage.js";
 import { Button } from "./Button.js";
 
 export interface ComposerProps {
@@ -9,6 +10,7 @@ export interface ComposerProps {
   input: string;
   modelList: import("../contracts.js").ModelListResult | undefined;
   selectedModelId: ModelId | undefined;
+  contextUsage: ContextUsage | undefined;
   modelConfigured: boolean;
   modelLoading: boolean;
   isSubmitting: boolean;
@@ -27,6 +29,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   input,
   modelList,
   selectedModelId,
+  contextUsage,
   modelConfigured,
   modelLoading,
   isSubmitting,
@@ -147,6 +150,13 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
               </option>
             ))}
           </select>
+          <span
+            className="composer-context-usage"
+            aria-live="polite"
+            title="当前模型最近一次请求的有效上下文"
+          >
+            {formatContextUsage(contextUsage)}
+          </span>
           {!isIdle && <span>{statusLabel}</span>}
           {!modelConfigured && (
             <Button type="button" variant="ghost" size="small" onClick={onOpenModelSettings}>

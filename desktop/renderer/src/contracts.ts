@@ -18,6 +18,7 @@ export type {
   StepResolutionReview,
   DeleteSessionResult,
   Run,
+  ContextUsage,
   Item,
   ToolProvenance,
   ToolCall,

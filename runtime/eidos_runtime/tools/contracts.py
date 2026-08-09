@@ -31,6 +31,12 @@ class StrictToolModel(BaseModel):
     model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
 
+LIST_FILES_MAX_DEPTH = 5
+LIST_FILES_MAX_ENTRIES = 2_000
+SEARCH_TEXT_MAX_RESULTS = 100
+SEARCH_TEXT_MAX_INCLUDE_GLOBS = 32
+
+
 def _relative_path(value: str, *, allow_dot: bool = False) -> str:
     if not value or "\x00" in value or "\\" in value:
         raise ValueError("invalid_relative_path")
@@ -53,7 +59,26 @@ def _utf8_limit(value: str, limit: int, code: str) -> str:
 
 
 class ListFilesInput(StrictToolModel):
-    pass
+    path: StrictStr = Field(
+        default=".", description="Workspace-relative directory scope; defaults to '.'."
+    )
+    maxDepth: StrictInt = Field(
+        default=LIST_FILES_MAX_DEPTH,
+        ge=1,
+        le=LIST_FILES_MAX_DEPTH,
+        description="Maximum directory depth below path.",
+    )
+    maxEntries: StrictInt = Field(
+        default=LIST_FILES_MAX_ENTRIES,
+        ge=1,
+        le=LIST_FILES_MAX_ENTRIES,
+        description="Maximum workspace-relative entries to return.",
+    )
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        return _relative_path(value, allow_dot=True)
 
 
 class ReadFileInput(StrictToolModel):
@@ -80,8 +105,31 @@ class SearchTextInput(StrictToolModel):
     query: StrictStr = Field(
         min_length=1,
         max_length=512,
-        description="Literal single-line text to find.",
+        description="Single-line text to find; set regex=true to interpret it as a regular expression.",
     )
+    path: StrictStr = Field(
+        default=".", description="Workspace-relative search scope; defaults to '.'."
+    )
+    regex: bool = Field(
+        default=False,
+        description="Treat query as a regular expression instead of a literal.",
+    )
+    includeGlobs: tuple[StrictStr, ...] = Field(
+        default=(),
+        max_length=SEARCH_TEXT_MAX_INCLUDE_GLOBS,
+        description="Optional workspace-relative file globs to include.",
+    )
+    maxResults: StrictInt = Field(
+        default=SEARCH_TEXT_MAX_RESULTS,
+        ge=1,
+        le=SEARCH_TEXT_MAX_RESULTS,
+        description="Maximum matching lines to return.",
+    )
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        return _relative_path(value, allow_dot=True)
 
     @field_validator("query")
     @classmethod
@@ -89,6 +137,23 @@ class SearchTextInput(StrictToolModel):
         if "\n" in value or "\r" in value:
             raise ValueError("query_must_be_single_line")
         return _utf8_limit(value, 512, "query_too_large")
+
+    @field_validator("includeGlobs")
+    @classmethod
+    def validate_include_globs(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        for value in values:
+            if (
+                not value
+                or "\x00" in value
+                or "\n" in value
+                or "\r" in value
+                or "\\" in value
+                or value.startswith("/")
+                or any(part in {"", ".", ".."} for part in value.split("/"))
+            ):
+                raise ValueError("invalid_include_glob")
+            _utf8_limit(value, 512, "include_glob_too_large")
+        return values
 
 
 class WriteFileInput(ReadFileInput):
@@ -383,6 +448,7 @@ class WorkspaceResultData(StrictToolModel):
 
 
 class RunShellResultData(WorkspaceResultData):
+    ALLOW_SUCCESS_RECONCILIATION: ClassVar[bool] = True
     SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = (
         "exitCode", "stdout", "stderr", "truncated", "termination",
         "workspaceChanged",
@@ -506,7 +572,11 @@ def result_model(data_model: type[BaseModel]) -> type[BaseModel]:
             outcome=(Literal["success"], "success"),
             data=(success_data_model, ...),
             sideEffectsMayExist=(bool, False),
-            reconciliationRequired=(Literal[False], False),
+            reconciliationRequired=(
+                bool if getattr(data_model, "ALLOW_SUCCESS_RECONCILIATION", False)
+                else Literal[False],
+                False,
+            ),
         )
         failure_envelope = create_model(
             f"{data_model.__name__.removesuffix('Data')}FailureResult",

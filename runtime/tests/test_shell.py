@@ -140,6 +140,33 @@ class ShellLifecycleUnitTests(unittest.TestCase):
         self.assertEqual(canceled["code"], "canceled")
         self.assertLess(timeout["data"]["durationMs"], 3_000)
 
+    def test_shell_supports_workspace_paths_with_spaces(self) -> None:
+        workspace = self.workspace.parent / "workspace with spaces"
+        workspace.mkdir()
+        metadata = workspace.stat()
+        identity = WorkspaceIdentity(
+            path=workspace.resolve(),
+            device=metadata.st_dev,
+            inode=metadata.st_ino,
+            owner=metadata.st_uid,
+        )
+
+        with patch(
+            "eidos_runtime.sandbox.shell.SeatbeltProfile.create",
+            return_value=_PassthroughProfile(),
+        ):
+            result = run_shell(
+                identity,
+                "pwd",
+                identity,
+                2,
+                threading.Event(),
+                lambda _delta: None,
+            )
+
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(result["data"]["stdout"].strip(), str(workspace.resolve()))
+
 
 @unittest.skipUnless(sys.platform == "darwin", "Seatbelt is macOS-only")
 class ShellProcessGroupTests(unittest.TestCase):

@@ -10,6 +10,7 @@ import type {
   Session,
   DeleteSessionResult,
   Run,
+  ContextUsage,
   ModelId,
   ModelListResult,
   ModelOption,
@@ -62,6 +63,8 @@ const api: EidosRuntimeAPI = {
   startRun: (sessionId: string, userInput: string, modelId: ModelId): Promise<Run> =>
     ipcRenderer.invoke(IPC.RUN_START, sessionId, userInput, modelId),
   cancelRun: (runId: string): Promise<Run> => ipcRenderer.invoke(IPC.RUN_CANCEL, runId),
+  readContextUsage: (runId: string): Promise<ContextUsage | null> =>
+    ipcRenderer.invoke(IPC.CONTEXT_USAGE, runId),
   reviseRun: (sourceRunId: string, userInput?: string): Promise<RunRevisionResult> =>
     ipcRenderer.invoke(IPC.RUN_REVISE, sourceRunId, userInput),
 

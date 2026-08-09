@@ -3,11 +3,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from threading import Lock
+import time
 from typing import Protocol, TypeVar
 
 from pydantic import ValidationError
 
 from eidos_runtime.application.errors import ApplicationError
+from eidos_runtime.context.budget import ContextUsageSnapshot
+from eidos_runtime.context.plan import ContextSnapshot
 from eidos_runtime.application.task_lifecycle import (
     LifecycleAction,
     TaskLifecycleApplication,
@@ -20,7 +23,7 @@ from eidos_runtime.db.errors import (
     ResourceNotFoundError,
     WorkspaceBoundaryError,
 )
-from eidos_runtime.model.client import ModelClient, ModelProfileSnapshot
+from eidos_runtime.model.client import ModelClient, ModelProfileSnapshot, ModelUsage
 from eidos_runtime.model.config import (
     ModelConfig,
     ModelConfigError,
@@ -43,6 +46,8 @@ from eidos_runtime.protocol.methods import (
     RunStartResponseDto,
     RunStatusRequestDto,
     RunStatusResponseDto,
+    ContextUsageRequestDto,
+    ContextUsageResponseDto,
 )
 from eidos_runtime.runtime.supervisor import (
     RunCancelTimeout,
@@ -81,6 +86,12 @@ class RunStorePort(Protocol):
     ) -> tuple[dict[str, object], dict[str, object]]: ...
 
     def read_run(self, run_id: str) -> dict[str, object]: ...
+
+    def read_model_profile(self, run_id: str) -> ModelProfileSnapshot: ...
+
+    def latest_model_usage(self, run_id: str) -> ModelUsage | None: ...
+
+    def read_latest_context_snapshot(self, run_id: str) -> ContextSnapshot | None: ...
 
     def interrupt_run(self, run_id: str) -> dict[str, object]: ...
 
@@ -379,6 +390,27 @@ class RunApplication:
             RunStatusResponseDto, request.run_id, action=None
         )
 
+    def context_usage(
+        self, request: ContextUsageRequestDto
+    ) -> ContextUsageResponseDto:
+        store, _runtime = self._cancel_dependencies()
+        try:
+            profile = store.read_model_profile(request.run_id)
+            usage = _context_usage_snapshot(
+                profile.context_window_tokens,
+                store.latest_model_usage(request.run_id),
+                store.read_latest_context_snapshot(request.run_id),
+            )
+        except ResourceNotFoundError as error:
+            raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
+        return ContextUsageResponseDto(
+            contextUsage=(
+                usage.model_dump(mode="json", by_alias=True)
+                if usage is not None
+                else None
+            )
+        )
+
     def pause(self, request: RunPauseRequestDto) -> RunPauseResponseDto:
         return self._lifecycle_response(
             RunPauseResponseDto,
@@ -502,6 +534,32 @@ def _result(result_type: type[ResultT], value: object) -> ResultT:
         raise ApplicationError(
             "INTERNAL_ERROR", "stored Run result violates its protocol contract"
         ) from error
+
+
+def _context_usage_snapshot(
+    context_window_tokens: int,
+    provider_usage: ModelUsage | None,
+    latest_context_snapshot: ContextSnapshot | None,
+) -> ContextUsageSnapshot | None:
+    refreshed_at = int(time.time() * 1000)
+    if provider_usage is not None and provider_usage.input_tokens is not None:
+        active_tokens = provider_usage.input_tokens
+        return ContextUsageSnapshot(
+            active_tokens=active_tokens,
+            context_window_tokens=context_window_tokens,
+            percent_used=min(
+                100.0,
+                round(active_tokens / context_window_tokens * 100, 1),
+            ),
+            source="provider",
+            updated_at=refreshed_at,
+        )
+    plan = getattr(latest_context_snapshot, "plan", None)
+    budget = getattr(plan, "token_budget", None)
+    estimated = getattr(budget, "context_usage", None)
+    if isinstance(estimated, ContextUsageSnapshot):
+        return estimated.model_copy(update={"updated_at": refreshed_at})
+    return None
 
 
 __all__ = [

@@ -118,6 +118,8 @@ class ContextBuilder:
                     sort_keys=True,
                 ),
             })
+        workspace_state = facts.workspace_version
+        read_result_fingerprints: dict[tuple[str, str, str, int], str] = {}
         for item in facts.items:
             if (
                 item.item_id in source_ids
@@ -129,6 +131,22 @@ class ContextBuilder:
             elif item.kind == "assistant_message":
                 context.append({"type": "assistant", "content": item.content or ""})
             elif item.provider_call_id is not None:
+                result_json = item.model_result_json or item.result_json or "{}"
+                projected_result = result_json
+                if item.tool_name in _CONTEXT_DEDUPE_READ_TOOLS:
+                    dedupe_key = (
+                        item.tool_name,
+                        _canonical_json(item.arguments_json or "{}"),
+                        _canonical_json(result_json),
+                        workspace_state,
+                    )
+                    duplicate_of = read_result_fingerprints.get(dedupe_key)
+                    if duplicate_of is None:
+                        read_result_fingerprints[dedupe_key] = item.provider_call_id
+                    else:
+                        projected_result = _context_deduplicated_result(
+                            duplicate_of, workspace_state
+                        )
                 context.extend((
                     {
                         "type": "tool_call",
@@ -140,9 +158,11 @@ class ContextBuilder:
                         "type": "tool_result",
                         "callId": item.provider_call_id,
                         "name": item.tool_name or "",
-                        "result": item.model_result_json or item.result_json or "{}",
+                        "result": projected_result,
                     },
                 ))
+                if _tool_result_changes_workspace(result_json):
+                    workspace_state += 1
         context.extend(extra_context)
         if facts.reconciliation_required or facts.active_error_fingerprints:
             context.append({
@@ -196,3 +216,52 @@ class ContextBuilder:
             budget=budget,
             facts=facts,
         )
+
+
+_CONTEXT_DEDUPE_READ_TOOLS = frozenset({
+    "list_files", "read_file", "read_file_range", "search_text"
+})
+
+
+def _canonical_json(value: str) -> str:
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        return value
+    return json.dumps(
+        decoded, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    )
+
+
+def _context_deduplicated_result(provider_call_id: str, workspace_state: int) -> str:
+    return json.dumps(
+        {
+            "contextDeduplicated": True,
+            "duplicateOf": provider_call_id,
+            "summary": "Identical read result already appears for this workspace state.",
+            "workspaceVersion": workspace_state,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _tool_result_changes_workspace(result_json: str) -> bool:
+    try:
+        result = json.loads(result_json)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(result, dict):
+        return False
+    if result.get("sideEffectsMayExist") is True or result.get(
+        "reconciliationRequired"
+    ) is True:
+        return True
+    data = result.get("data")
+    if not isinstance(data, dict):
+        return False
+    return (
+        data.get("workspaceChanged") is True
+        or data.get("workspaceChangeState") in {"changed", "unknown"}
+    )

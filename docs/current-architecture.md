@@ -94,13 +94,38 @@ Skill、历史或 Tool Definitions。
 模型 Context Window、占用百分比和来源分开保存；`ContextBudget.projected_input_tokens`
 则用当前投影估算下一次请求，若有上一请求的 Provider usage 会用该请求的本地估算做
 比例校准。因此 Active Context 不会被误当成累计 token，也不会被直接复用成下一请求大小。
-`CONTEXT_PROJECTION_MAX_BYTES` 与 `CONTEXT_PROJECTION_MAX_ITEMS` 只保护 SQLite 到模型的
-有界投影，不代表模型窗口。候选投影溢出是独立的 projection fact：Runtime 会压缩受保护
-边界之外的最旧可压缩历史，直到 `source_item_ids` 覆盖所有被省略的事实；没有持久覆盖
-进展时以 `CONTEXT_PROJECTION_OVERFLOW` 失败，不伪装成 Provider Context Limit。Compaction
-count 只作持久 telemetry。Provider 明确返回 `context_exceeded` 时，Runtime 会先执行一次
+`CONTEXT_PROJECTION_MAX_BYTES` 与 `CONTEXT_PROJECTION_MAX_ITEMS` 是未受保护历史的软投影
+上限，不代表模型窗口；最近事实可在独立的 8 MiB/2000-item 硬序列化上限内继续保留。
+候选投影溢出是独立的 projection fact：Runtime 会压缩受保护边界之外的最旧可压缩历史，
+直到 `source_item_ids` 覆盖所有被省略的事实；没有持久覆盖进展时以
+`CONTEXT_PROJECTION_OVERFLOW` 失败，不伪装成 Provider Context Limit。Compaction count
+只作持久 telemetry。Provider 明确返回 `context_exceeded` 时，Runtime 会先执行一次
 有进展的 compaction、重新投影并重试，重复同一 Context 状态或无进展时以
 `context_still_over_budget` 收敛。
+
+Desktop 的 Context Usage 通过 `context/usage` JSON-RPC 方法按 Run 读取：Runtime 先读取
+持久化的最近 Provider `ModelAttempt.usage_json.input_tokens`，无 Provider usage 时回退到
+最近精确 `ContextSnapshot` 中已标记为 `estimated` 的预算；Main 只做 DTO 校验和字段映射，
+Renderer 只负责紧凑格式化与状态刷新。该值不是新的 SQLite 事实表，也不把累计请求 Token
+投影到 Composer。
+
+Desktop 的 Context Usage 通过 `context/usage` JSON-RPC 方法按 Run 读取：Runtime 先读取
+持久化的最近 Provider `ModelAttempt.usage_json.input_tokens`，无 Provider usage 时回退到
+最近精确 `ContextSnapshot` 中已标记为 `estimated` 的预算；Main 只做 DTO 校验和字段映射，
+Renderer 只负责紧凑格式化与状态刷新。该值不是新的 SQLite 事实表，也不把累计请求 Token
+投影到 Composer。
+
+Desktop 的 Context Usage 通过 `context/usage` JSON-RPC 方法按 Run 读取：Runtime 先读取
+持久化的最近 Provider `ModelAttempt.usage_json.input_tokens`，无 Provider usage 时回退到
+最近精确 `ContextSnapshot` 中已标记为 `estimated` 的预算；Main 只做 DTO 校验和字段映射，
+Renderer 只负责紧凑格式化与状态刷新。该值不是新的 SQLite 事实表，也不把累计请求 Token
+投影到 Composer。
+
+`ContextCompactor` 使用 deterministic structured extraction 生成并持久化摘要：任务目标与
+用户约束、workspace version/reconciliation state、Tool Result 中的路径/hash/symbol/匹配、
+成功事实、实际修改、失败尝试、未解决问题、决定和下一步分别保留；完整历史 Item 仍是
+SQLite source of truth。摘要 metadata 与主摘要在同一 SQLite 事务提交，重启后不丢失可恢复
+的 optional fields。项目规则不复制进摘要，而由每次 `ContextBuilder` 构建重新注入。
 
 Long-task progress is stored as typed JSON in the existing `operations` table
 under `long_task/control`, with compare-and-set updates. Pause is reported only at
@@ -126,10 +151,23 @@ Workspace discovery is a separate presentation boundary. `list_files` and
 the Workspace descriptor and use PathSpec only to filter ordinary discovery
 results. The later `.eidosignore` rules may refine ordinary Git-ignore
 matches; Eidos-owned hard discovery directories remain non-overridable.
+`list_files` accepts a workspace-relative `path`, bounded `maxDepth` and
+`maxEntries`; `search_text` accepts a workspace-relative `path`, bounded
+`maxResults`, optional `regex`, and optional positive `includeGlobs`. The
+default empty argument objects retain root-scope literal discovery. Every
+returned path remains Workspace-relative and the input contract rejects
+absolute or parent-traversing scopes.
 Ignore rules are not permissions: explicit file operations retain their
-existing Workspace and sensitive-content checks, while WorkspaceIndex shell
-preflight and side-effect manifests continue their independent security and
-evidence traversals.
+existing Workspace and sensitive-content checks. Shell launch validates the
+Workspace root identity, workspace-relative cwd, approval and Seatbelt
+boundary without requiring a complete repository-wide content scan or a shell
+command allowlist/parser. The WorkspaceIndex refresh remains an independent
+post-execution reconciliation and evidence traversal; if the before manifest
+was incomplete, or the after scan is incomplete, the canonical result does not
+claim the visible entries were created and reports an unknown Workspace change
+state with reconciliation required. Seatbelt, fd-relative Workspace checks,
+explicit file-operation validation and output scanning remain authoritative
+security boundaries.
 
 `search_text` delegates text matching to the synchronous
 `RipgrepSearchDriver`. The production resolver accepts only the pinned
@@ -137,12 +175,19 @@ Ripgrep 15.2.0 macOS arm64 resource at
 `runtime/eidos_runtime/resources/bin/ripgrep/darwin-arm64/rg`, verifies its
 manifest identity, owner, mode and SHA256, and never searches `PATH` or
 downloads a binary. The driver launches a fixed argv with `shell=False`, a
-minimal environment, `--no-config`, fixed-string matching and ASCII-only
-case folding. Ripgrep ignore sources are disabled so nested/global/user ignore
+minimal environment, `--no-config`, caller-selected literal or regex matching,
+and ASCII-only case folding. Ripgrep ignore sources are disabled so nested/global/user ignore
 files cannot change C2 semantics; the already-loaded `WorkspaceDiscoveryScope`
 and shared Eidos discovery policy filter every returned path. Hard and
 sensitive directories are also excluded in argv as defense in depth, but argv
 globs and ignore rules are not treated as security authorization.
+
+Context projection separately deduplicates identical complete results from
+read-only discovery tools when their canonical arguments, result and observed
+Workspace state are unchanged. It leaves the first result authoritative,
+replaces later copies with a small `duplicateOf` marker, and resets the
+deduplication state after a reported Workspace change; this is independent of
+LoopGuard's no-progress detection.
 
 `apply_patch` delegates Unified Diff structure and metadata parsing to
 `unidiff`. Eidos accepts only one existing-file modification whose headers

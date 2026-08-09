@@ -15,7 +15,7 @@ from eidos_runtime.db.storage import (
     SegmentLimitReached,
     SessionStore,
 )
-from eidos_runtime.model.client import ModelClient
+from eidos_runtime.model.client import ModelClient, ModelToolCall
 from eidos_runtime.domain.long_task import LongTaskStatus, SafePoint
 from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalDecision
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
@@ -57,6 +57,7 @@ from eidos_runtime.sandbox.permissions import (
     unsandboxed_execution_allowed,
 )
 from eidos_runtime.model.instructions import StepPermissionPolicy
+from eidos_runtime.tools.contracts import ListFilesInput
 
 
 EMPTY_EXTENSION_SNAPSHOT = {
@@ -634,7 +635,7 @@ class RuntimeEngine:
                 step.reconciliation_epoch,
             )
             zero_argument_repeat = bool(validation.tool_calls) and all(
-                not call.arguments for call in validation.tool_calls
+                _is_zero_argument_tool_call(call) for call in validation.tool_calls
             )
             if (
                 repeated is not None
@@ -859,6 +860,16 @@ def _projection_state(built: ContextBuild) -> tuple[object, ...]:
         built.facts.projection_candidate_bytes,
         built.facts.projection_omitted_count,
         built.facts.projection_omitted_bytes,
+    )
+
+
+def _is_zero_argument_tool_call(call: ModelToolCall) -> bool:
+    if not call.arguments:
+        return True
+    if call.name != "list_files":
+        return False
+    return call.arguments == ListFilesInput.model_validate({}).model_dump(
+        mode="json", by_alias=True
     )
 
 

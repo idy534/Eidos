@@ -720,6 +720,8 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
   const stdout = stringField(data, "stdout");
   const stderr = stringField(data, "stderr");
   const exitCode = numberField(data, "exitCode");
+  const code = stringField(result, "code");
+  const summary = stringField(result, "summary");
   const success = item.status === "completed" && (exitCode === undefined || exitCode === 0);
   const [open, setOpen] = useState(item.status === "in_progress");
 
@@ -740,7 +742,9 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
         <pre className="shell-command"><span aria-hidden="true">$ </span>{command}</pre>
         {stdout && <pre className="shell-output">{stdout}</pre>}
         {stderr && <pre className="shell-output shell-output--error">{stderr}</pre>}
-        {!stdout && !stderr && <p className="shell-empty">无输出</p>}
+        {!success && code && <p className="shell-error-code">失败 · {code}</p>}
+        {!success && summary && <p className="shell-error-summary">{summary}</p>}
+        {!stdout && !stderr && (success || (!code && !summary)) && <p className="shell-empty">无输出</p>}
         <p className={`shell-status ${success ? "shell-status--success" : "shell-status--error"}`}>
           {item.status === "in_progress" ? "运行中" : success ? "✓ 成功" : statusLabel(item.status)}
         </p>
