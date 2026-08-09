@@ -5,7 +5,11 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import test from "node:test";
 
-import { RuntimeClient, RuntimeRequestError } from "./runtime-client.js";
+import {
+  buildRuntimeEnvironment,
+  RuntimeClient,
+  RuntimeRequestError,
+} from "./runtime-client.js";
 import type { RuntimeNotification } from "./runtime-client.js";
 
 
@@ -53,6 +57,58 @@ test("preserves a closed business error code without exposing runtime details", 
 
   assert.equal(error.message, "EIDOS_RUNTIME_ERROR:RUN_ALREADY_ACTIVE");
   assert.equal(error.businessCode, "RUN_ALREADY_ACTIVE");
+});
+
+
+test("development Runtime environment preserves inherited Python settings", () => {
+  const environment = buildRuntimeEnvironment({
+    runtimeRoot: "/workspace/runtime",
+    baseEnvironment: {
+      PYTHONPATH: "/developer/python",
+      PYTHONHOME: "/developer/python-home",
+      PYTHONNOUSERSITE: "0",
+      PYTHONDONTWRITEBYTECODE: "0",
+      EIDOS_PYTHON: "/developer/python/bin/python",
+    },
+    overrides: { EIDOS_FAKE_MODEL: "1" },
+    policy: "development",
+  });
+
+  assert.equal(environment.PYTHONPATH, [
+    "/workspace/runtime",
+    "/developer/python",
+  ].join(path.delimiter));
+  assert.equal(environment.PYTHONHOME, "/developer/python-home");
+  assert.equal(environment.PYTHONNOUSERSITE, "0");
+  assert.equal(environment.PYTHONDONTWRITEBYTECODE, "0");
+  assert.equal(environment.EIDOS_PYTHON, "/developer/python/bin/python");
+  assert.equal(environment.EIDOS_FAKE_MODEL, "1");
+});
+
+
+test("packaged Runtime environment is isolated to the bundled app root", () => {
+  const environment = buildRuntimeEnvironment({
+    runtimeRoot: "/Applications/Eidos.app/Contents/Resources/runtime/app",
+    baseEnvironment: {
+      PYTHONPATH: "/developer/python",
+      PYTHONHOME: "/developer/python-home",
+      PYTHONNOUSERSITE: "0",
+      PYTHONDONTWRITEBYTECODE: "0",
+      EIDOS_PYTHON: "/developer/python/bin/python",
+    },
+    overrides: { EIDOS_FAKE_MODEL: "1" },
+    policy: "packaged",
+  });
+
+  assert.equal(
+    environment.PYTHONPATH,
+    "/Applications/Eidos.app/Contents/Resources/runtime/app",
+  );
+  assert.equal(environment.PYTHONHOME, undefined);
+  assert.equal(environment.PYTHONNOUSERSITE, "1");
+  assert.equal(environment.PYTHONDONTWRITEBYTECODE, "1");
+  assert.equal(environment.EIDOS_PYTHON, undefined);
+  assert.equal(environment.EIDOS_FAKE_MODEL, "1");
 });
 
 

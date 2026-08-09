@@ -35,7 +35,29 @@ pnpm test:runtime:bundled
 pnpm test:runtime:bundled-seatbelt
 ```
 
-输出为 `build/macos-runtime/`，包含 uv managed CPython、锁定的 production dependencies、Eidos Runtime 和受管 Ripgrep 资源。日常 `pnpm start` 仍使用仓库 `.venv`；打包应用通过 `process.resourcesPath/runtime/` 使用该 Bundle。完整 Electron `.app`/`.dmg` packaging、签名和 notarization 尚未在当前阶段实现。
+输出为 `build/macos-runtime/`，包含固定版本的 uv managed CPython 3.12.13、锁定的 production dependencies、Eidos Runtime 和受管 Ripgrep 资源。日常 `pnpm start` 仍使用仓库 `.venv`；打包应用通过 `process.resourcesPath/runtime/` 使用该 Bundle。
+
+## macOS 打包
+
+以下命令需要在 Apple Silicon macOS 构建机执行。Node.js 22+、pnpm 11 和 uv 是构建机依赖；安装后的 Eidos 用户不需要安装 Node、Python 或 uv。
+
+```bash
+pnpm package:mac
+```
+
+该命令生成未签名的本地安装包：
+
+```text
+release/Eidos-<version>-mac-arm64-local.dmg
+```
+
+正式发行模式使用 Apple Developer 的 Developer ID Application 证书和 notarization credentials：
+
+```bash
+pnpm package:mac:release
+```
+
+正式 artifact 为 `release/Eidos-<version>-mac-arm64.dmg`，会执行 hardened runtime、签名、notarization、stapling 和 Gatekeeper 验证。Python Runtime 已包含在 `Eidos.app/Contents/Resources/runtime`；完整发布仍不包含 GitHub Release、Auto Update 或其它平台 artifact。
 
 ## 验证
 

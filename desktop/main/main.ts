@@ -335,6 +335,7 @@ async function startRuntime(): Promise<void> {
       pythonExecutable: runtimePaths.pythonExecutable,
       runtimeRoot: runtimePaths.runtimeRoot,
       dataDirectory: process.env.EIDOS_DATA_DIR ?? path.join(app.getPath("home"), ".eidos"),
+      environmentPolicy: app.isPackaged ? "packaged" : "development",
       onNotification: publishNotification,
       onApprovalRequest: requestApproval,
       onStderr: (line) => {
