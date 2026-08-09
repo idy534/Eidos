@@ -339,18 +339,18 @@ function CopyButton({ content }: { content: string }) {
   return (
     <button
       type="button"
-      className="feed-item-copy-btn"
+      className="response-action-button feed-item-copy-btn"
       onClick={handleCopy}
       title={copied ? "已复制" : "复制内容"}
       aria-label={copied ? "已复制" : "复制内容"}
     >
       <svg
-        width="14"
-        height="14"
+        width="15"
+        height="15"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
-        strokeWidth="2"
+        strokeWidth="1.8"
         strokeLinecap="round"
         strokeLinejoin="round"
         aria-hidden="true"

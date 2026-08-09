@@ -13,17 +13,14 @@
   min-width: 0;
 }
 
-.response-actions-left .feed-item-copy-btn,
 .response-action-button {
+  flex: 0 0 28px;
   width: 28px;
   height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 7px;
-}
-
-.response-action-button {
   flex: 0 0 28px;
   padding: 0;
   border: 0;
