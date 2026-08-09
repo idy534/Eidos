@@ -16,14 +16,18 @@ from eidos_runtime.db.mappers import _compact_summary_from_row, _json_tuple
 from eidos_runtime.runtime.contracts import ProgressSignature
 from eidos_runtime.runtime.state_machine import EventType
 
-# These limits protect the SQLite-to-model projection from unbounded memory and
-# serialization work. They are not the provider model context window.
+# The soft limits bound unprotected history selected in one projection. Recent
+# facts are protected from compaction and may exceed the soft limit when the
+# model-visible projection still fits the separate hard serialization ceiling.
+# Neither limit is the provider model context window.
 CONTEXT_PROJECTION_MAX_BYTES = 768 * 1024
 CONTEXT_PROJECTION_MAX_ITEMS = 200
 # Compaction candidates are never sent to the model. Keep their payloads
 # bounded independently of the model projection so an oversized historical
 # item can still be represented by its durable source id and summarized.
 COMPACTION_FACT_VALUE_MAX_CHARS = 8 * 1024
+CONTEXT_PROJECTION_HARD_MAX_BYTES = 8 * 1024 * 1024
+CONTEXT_PROJECTION_HARD_MAX_ITEMS = 2_000
 RECENT_CONTEXT_STEPS = 3
 
 
@@ -177,18 +181,33 @@ class ContextRepository(Repository):
                     """,
                     tuple(protected_ids),
                 ).fetchone()[0])
+            if (
+                len(protected_ids) > CONTEXT_PROJECTION_HARD_MAX_ITEMS
+                or protected_bytes > CONTEXT_PROJECTION_HARD_MAX_BYTES
+            ):
+                raise ContextLimitExceeded("internal_projection_limit")
+            selection_item_limit = max(
+                CONTEXT_PROJECTION_MAX_ITEMS, len(protected_ids)
+            )
+            selection_byte_limit = max(
+                CONTEXT_PROJECTION_MAX_BYTES, protected_bytes
+            )
             selected_bytes = protected_bytes
             if (
-                len(selected_ids) > CONTEXT_PROJECTION_MAX_ITEMS
-                or selected_bytes > CONTEXT_PROJECTION_MAX_BYTES
+                len(selected_ids) > selection_item_limit
+                or selected_bytes > selection_byte_limit
             ):
                 raise ContextLimitExceeded("internal_projection_limit")
             base_selected = 0
             for row in metadata:
                 fact_bytes = int(row["fact_bytes"])
-                if len(selected_ids) >= CONTEXT_PROJECTION_MAX_ITEMS:
-                    break
-                if newest and selected_bytes + fact_bytes > CONTEXT_PROJECTION_MAX_BYTES:
+                if (
+                    len(selected_ids) >= selection_item_limit
+                    or (
+                        newest
+                        and selected_bytes + fact_bytes > selection_byte_limit
+                    )
+                ):
                     break
                 selected_ids.append(str(row["id"]))
                 selected_bytes += fact_bytes
@@ -241,7 +260,7 @@ class ContextRepository(Repository):
             candidate_overflow = (
                 int(aggregate[0]) > base_selected
                 or int(aggregate[1])
-                > CONTEXT_PROJECTION_MAX_BYTES - protected_bytes
+                > max(0, CONTEXT_PROJECTION_MAX_BYTES - protected_bytes)
             )
             latest_signature = connection.execute(
                 """
@@ -258,6 +277,11 @@ class ContextRepository(Repository):
         tools_by_item = {row["item_id"]: row for row in tool_rows}
         items: list[ContextItemFact] = []
         serialized_bytes = 2
+        serialization_limit = (
+            CONTEXT_PROJECTION_HARD_MAX_BYTES
+            if protected_bytes > CONTEXT_PROJECTION_MAX_BYTES
+            else CONTEXT_PROJECTION_MAX_BYTES
+        )
         projected_candidate_bytes = 0
         projected_candidate_count = 0
         for row in item_rows:
@@ -287,7 +311,7 @@ class ContextRepository(Repository):
                 ensure_ascii=False,
                 separators=(",", ":"),
             ).encode("utf-8")) + 1
-            if serialized_bytes + size > CONTEXT_PROJECTION_MAX_BYTES:
+            if serialized_bytes + size > serialization_limit:
                 candidate_overflow = True
                 if goal_row is not None and row["id"] == goal_row["id"]:
                     raise ContextLimitExceeded("current_user_goal_too_large")

@@ -117,3 +117,47 @@ def test_projection_recovery_preserves_scoped_discovery_and_deduplicates_reads()
         finally:
             store.close()
 
+
+def test_recent_bounded_projection_can_exceed_soft_ceiling_without_being_dropped() -> None:
+    with tempfile.TemporaryDirectory(prefix="eidos-protected-projection-") as temporary:
+        root = Path(temporary)
+        data = root / "data"
+        workspace = root / "workspace"
+        data.mkdir(mode=0o700)
+        workspace.mkdir()
+        store = SessionStore(data)
+        store.initialize()
+        try:
+            session = store.create_session(str(workspace))
+            run, _ = store.create_run(
+                session["id"],
+                "Keep recent tool evidence",
+                model_profile=default_profile_snapshot("deepseek-v4-flash").model_copy(
+                    update={"context_window_tokens": 2_000_000, "max_output_tokens": 8_192}
+                ),
+            )
+            bounded_result = json.dumps({
+                "outcome": "success",
+                "code": "ok",
+                "summary": "Bounded recent evidence",
+                "data": {"content": "x" * 60_000},
+            })
+            for index in range(16):
+                item = store.create_tool_item(
+                    run["id"], 1, index, f"recent-{index}", "read_file",
+                    json.dumps({"path": f"recent-{index}.txt"}),
+                )
+                store.complete_tool_item(item["id"], bounded_result)
+
+            model = ScriptedModel([ModelResponse(text="recent evidence retained")])
+            RuntimeEngine(store, model, lambda _message: None).run(
+                run["id"], threading.Event()
+            )
+
+            assert store.read_run(run["id"])["status"] == "succeeded"
+            assert len([
+                item for item in model.contexts[0]
+                if item.get("type") == "tool_result"
+            ]) == 16
+        finally:
+            store.close()
