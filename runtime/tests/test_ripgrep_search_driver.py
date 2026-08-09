@@ -131,6 +131,37 @@ def test_tool_executor_maps_driver_result_without_changing_contract(tmp_path: Pa
     assert fake.requests[0].max_preview_characters == 300
 
 
+def test_tool_executor_passes_scoped_search_options_to_driver(tmp_path: Path) -> None:
+    fake = _FakeSearchDriver(
+        WorkspaceSearchResult(
+            matches=(WorkspaceSearchMatch("core/config.rs", 3, 1, "ConfigBuilder"),),
+            scanned_bytes=12,
+            truncated=False,
+            truncation_reason=None,
+        )
+    )
+
+    with ToolExecutor(tmp_path, search_driver=fake) as executor:
+        result = executor.execute(
+            "search_text",
+            {
+                "query": "ConfigBuilder",
+                "path": "core",
+                "regex": True,
+                "includeGlobs": ["*.rs"],
+                "maxResults": 7,
+            },
+            threading.Event(),
+        )
+
+    assert result["outcome"] == "success"
+    request = fake.requests[0]
+    assert request.path == "core"
+    assert request.regex is True
+    assert request.include_globs == ("*.rs",)
+    assert request.max_results == 7
+
+
 @pytest.mark.parametrize(
     ("driver_code", "tool_code"),
     [
@@ -465,6 +496,46 @@ def test_driver_uses_fixed_argv_no_shell_path_or_user_config(
     assert kwargs["shell"] is False
     assert "PATH" not in kwargs["env"]
     assert "RIPGREP_CONFIG_PATH" not in kwargs["env"]
+
+
+def test_driver_argv_supports_scoped_regex_and_include_glob(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary = _fixture_binary(tmp_path, "import sys\nsys.exit(1)\n")
+    original_popen = subprocess.Popen
+    observed: dict[str, object] = {}
+
+    def recording_popen(*args: object, **kwargs: object):
+        observed["args"] = args
+        observed["kwargs"] = kwargs
+        return original_popen(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", recording_popen)
+
+    _driver(binary).search(
+        _request(tmp_path), threading.Event()
+    )
+
+    request = _request(tmp_path)
+    request = WorkspaceSearchRequest(
+        query="ConfigBuilder",
+        workspace_path=tmp_path,
+        deadline=request.deadline,
+        max_results=7,
+        max_preview_characters=300,
+        discovery_scope=request.discovery_scope,
+        path="codex-rs/core",
+        regex=True,
+        include_globs=("*.rs",),
+    )
+    _driver(binary).search(request, threading.Event())
+
+    argv = observed["args"][0]
+    assert isinstance(argv, list)
+    assert "--fixed-strings" not in argv
+    assert "--glob" in argv
+    assert "*.rs" in argv
+    assert argv[-3:] == ["--", "ConfigBuilder", "codex-rs/core"]
 
 
 def test_repository_manifest_matches_managed_binary() -> None:

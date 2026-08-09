@@ -1,9 +1,10 @@
-"""Schema migration tests for the supported V11 → V12 → V13 window.
+"""Schema migration tests for the supported V11 → V12 → V13 → V14 window.
 
 V11: drops legacy model storage tables.
 V12: adds effective_cwd to runs; adds resolved_instructions_hash and
      effective_cwd to step_resolution_snapshots.
 V13: adds response feedback and run revision persistence.
+V14: persists structured compaction-summary metadata.
 """
 from __future__ import annotations
 
@@ -30,7 +31,7 @@ from eidos_runtime.db.storage import DATABASE_NAME, SessionStore  # noqa: E402
 
 
 class SchemaV11MigrationTests(unittest.TestCase):
-    """Validate the current two-revision migration support window."""
+    """Validate the current migration support window."""
 
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="eidos-v11-migration-")
@@ -166,7 +167,7 @@ class SchemaV11MigrationTests(unittest.TestCase):
         store.close()
 
     # ------------------------------------------------------------------
-    # V11 → V12 → V13 migration chain.
+    # V11 → V12 → V13 → V14 migration chain.
     # ------------------------------------------------------------------
 
     def test_v11_upgrades_to_v13_and_preserves_current_contract(self) -> None:
@@ -192,6 +193,12 @@ class SchemaV11MigrationTests(unittest.TestCase):
         }
         self.assertIn("resolved_instructions_hash", srs_columns)
         self.assertIn("effective_cwd", srs_columns)
+        compact_columns = {
+            row[1] for row in store.connection.execute(
+                "PRAGMA table_info(compact_summaries)"
+            )
+        }
+        self.assertIn("summary_metadata_json", compact_columns)
         _, tables = self._revision_and_tables()
         self.assertIn("response_feedback", tables)
         self.assertIn("run_revisions", tables)
