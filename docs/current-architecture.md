@@ -175,7 +175,9 @@ command allowlist/parser. The WorkspaceIndex refresh remains an independent
 post-execution reconciliation and evidence traversal; if the before manifest
 was incomplete, or the after scan is incomplete, the canonical result does not
 claim the visible entries were created and reports an unknown Workspace change
-state with reconciliation required. Seatbelt, fd-relative Workspace checks,
+state. A known successful exit remains completed unless the Shell execution or
+Runtime layer explicitly reports uncertainty; incomplete Workspace observation
+alone does not require reconciliation. Seatbelt, fd-relative Workspace checks,
 explicit file-operation validation and output scanning remain authoritative
 security boundaries.
 

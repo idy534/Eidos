@@ -117,7 +117,7 @@ class WorkspaceManifestTests(unittest.TestCase):
                 "outcome": "success",
                 "code": "ok",
                 "summary": "Command completed",
-                "data": {"termination": "exit"},
+                "data": {"exitCode": 0, "termination": "exit"},
             },
             diff,
         )
@@ -125,10 +125,33 @@ class WorkspaceManifestTests(unittest.TestCase):
         self.assertFalse(diff.changed)
         self.assertFalse(attached["data"]["workspaceChanged"])
         self.assertEqual(attached["data"]["workspaceChangeState"], "unknown")
-        self.assertTrue(attached["reconciliationRequired"])
+        self.assertTrue(attached["data"]["workspaceDiffIncomplete"])
+        self.assertFalse(attached["reconciliationRequired"])
         self.assertEqual(attached["data"]["created"], [])
         self.assertEqual(attached["data"]["modified"], [])
         self.assertEqual(attached["data"]["deleted"], [])
+
+    def test_explicit_execution_uncertainty_survives_successful_exit(self) -> None:
+        diff = diff_workspace_manifests(
+            WorkspaceManifest((), False, True),
+            WorkspaceManifest((), False, True),
+        )
+
+        attached = attach_workspace_diff(
+            {
+                "outcome": "success",
+                "code": "ok",
+                "summary": "Command completed with uncertain cleanup",
+                "data": {"exitCode": 0, "termination": "exit"},
+                "sideEffectsMayExist": True,
+                "reconciliationRequired": True,
+            },
+            diff,
+        )
+
+        self.assertEqual(attached["data"]["workspaceChangeState"], "unknown")
+        self.assertTrue(attached["sideEffectsMayExist"])
+        self.assertTrue(attached["reconciliationRequired"])
 
     def test_complete_baseline_reports_real_mutation(self) -> None:
         before = WorkspaceManifest((WorkspaceManifestEntry(
@@ -369,7 +392,35 @@ class ShellManifestIntegrationTests(unittest.TestCase):
 
         self.assertEqual(outcome.result["code"], "ok")
         self.assertEqual(outcome.result["data"]["workspaceChangeState"], "unknown")
-        self.assertTrue(outcome.result["reconciliationRequired"])
+        self.assertTrue(outcome.result["data"]["workspaceDiffIncomplete"])
+        self.assertFalse(outcome.result["reconciliationRequired"])
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT status FROM durable_intents WHERE run_id = ?",
+                (self.run["id"],),
+            ).fetchone()[0],
+            "completed",
+        )
+        self.assertEqual(
+            tuple(self.store.connection.execute(
+                """
+                SELECT reconciliation_required, side_effects_may_exist
+                FROM runs WHERE id = ?
+                """,
+                (self.run["id"],),
+            ).fetchone()),
+            (0, 0),
+        )
+        self.assertEqual(
+            self.store.connection.execute(
+                """
+                SELECT COUNT(*) FROM events
+                WHERE run_id = ? AND event_type = 'reconciliation.required'
+                """,
+                (self.run["id"],),
+            ).fetchone()[0],
+            0,
+        )
 
     def test_compound_read_only_shell_starts_without_workspace_preflight(self) -> None:
         (self.workspace / "token_budget.rs").write_text(
@@ -429,6 +480,45 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         )
         self.assertTrue(outcome.result["reconciliationRequired"])
         self.assertTrue(self.store.read_run(self.run["id"])["sideEffectsMayExist"])
+
+    def test_successful_mutating_shell_completes_intent_and_increments_version(self) -> None:
+        self.executor.refresh_workspace_index(threading.Event())
+
+        outcome = self._execute(
+            {
+                "outcome": "success",
+                "code": "ok",
+                "summary": "Command completed",
+                "data": {"exitCode": 0, "stdout": "", "stderr": ""},
+                "sideEffectsMayExist": True,
+            },
+            mutate=lambda: (self.workspace / "foo.txt").touch(),
+        )
+
+        self.assertTrue(outcome.result["data"]["workspaceChanged"])
+        self.assertEqual(outcome.result["data"]["workspaceChangeState"], "changed")
+        self.assertFalse(outcome.result["reconciliationRequired"])
+        self.assertEqual(
+            self.store.context_projection_facts(self.run["id"]).workspace_version,
+            1,
+        )
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT status FROM durable_intents WHERE run_id = ?",
+                (self.run["id"],),
+            ).fetchone()[0],
+            "completed",
+        )
+        self.assertEqual(
+            tuple(self.store.connection.execute(
+                """
+                SELECT reconciliation_required, side_effects_may_exist
+                FROM runs WHERE id = ?
+                """,
+                (self.run["id"],),
+            ).fetchone()),
+            (0, 0),
+        )
 
     def test_shell_safe_lines_stream_before_process_exit(self) -> None:
         seen_during_process = []

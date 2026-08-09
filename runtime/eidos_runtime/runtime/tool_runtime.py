@@ -359,10 +359,15 @@ class ShellToolHandler:
                         cancel
                     )
                 )
-            except WorkspacePathError:
+            except WorkspacePathError as error:
                 manifest_after = (
                     runtime.implementation.executor.workspace_index.manifest()  # type: ignore[attr-defined]
                 )
+                if str(error) not in {
+                    "WORKSPACE_INDEX_INCOMPLETE",
+                    "sensitive_workspace_content",
+                }:
+                    raw_result["reconciliationRequired"] = True
             workspace_diff = diff_workspace_manifests(
                 manifest_before, manifest_after
             )
