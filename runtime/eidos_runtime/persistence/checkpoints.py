@@ -6,30 +6,42 @@ import time
 import uuid
 
 from eidos_runtime.db.database import Database, Repository
+from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
+from eidos_runtime.db.repositories.workspace import execution_workspace_for_run
 from eidos_runtime.domain.checkpoint import Checkpoint
 from eidos_runtime.domain.long_task import LongTaskProgress
 from eidos_runtime.persistence.errors import PersistenceCorruptionError
+from eidos_runtime.runtime.resolution import RunResolutionSnapshot
 
 
 class CheckpointRepository(Repository):
     def __init__(self, database: Database) -> None:
         super().__init__(database)
 
-    def create(self, run_id: str) -> Checkpoint:
+    def create(self, run_id: str, *, git_head: str | None = None) -> Checkpoint:
         now = int(time.time() * 1000)
         with self.lock, self._connection() as connection:
             run = connection.execute(
                 """
                 SELECT r.reconciliation_required, r.model_profile_json,
-                       s.workspace_root, s.workspace_dev, s.workspace_inode,
-                       s.workspace_uid
-                FROM runs r JOIN sessions s ON s.id = r.session_id
+                       resolution.snapshot_json
+                FROM runs r
+                LEFT JOIN run_resolution_snapshots resolution ON resolution.run_id = r.id
                 WHERE r.id = ?
                 """,
                 (run_id,),
             ).fetchone()
             if run is None:
                 raise KeyError(run_id)
+            try:
+                resolution = RunResolutionSnapshot.model_validate_json(
+                    run["snapshot_json"]
+                )
+            except (TypeError, ValueError):
+                raise PersistenceCorruptionError(
+                    "persistence_record_invalid",
+                    record="run_resolution_snapshot",
+                ) from None
             task = connection.execute(
                 "SELECT result_json FROM operations WHERE id = ? AND scope = 'long_task/control'",
                 (run_id,),
@@ -50,12 +62,12 @@ class CheckpointRepository(Repository):
                 "SELECT COALESCE(MAX(ordinal), 0) FROM items WHERE run_id = ?",
                 (run_id,),
             ).fetchone()[0]
-            workspace_hash = _hash({
-                "root": run["workspace_root"],
-                "device": run["workspace_dev"],
-                "inode": run["workspace_inode"],
-                "owner": run["workspace_uid"],
-            })
+            workspace_hash = _workspace_identity_hash(
+                path=resolution.workspace_identity.path,
+                device=resolution.workspace_identity.device,
+                inode=resolution.workspace_identity.inode,
+                owner=resolution.workspace_identity.owner,
+            )
             checkpoint = Checkpoint(
                 id=str(uuid.uuid4()),
                 run_id=run_id,
@@ -70,7 +82,11 @@ class CheckpointRepository(Repository):
                 context_snapshot_id=context["id"] if context is not None else None,
                 compact_summary_id=compact["id"] if compact is not None else None,
                 workspace_identity_hash=workspace_hash,
-                git_head=task_progress.git_head if task_progress is not None else None,
+                git_head=(
+                    git_head
+                    if git_head is not None
+                    else task_progress.git_head if task_progress is not None else None
+                ),
                 permission_snapshot_hash=(
                     task_progress.permission_snapshot_hash
                     if task_progress is not None else None
@@ -139,19 +155,29 @@ class CheckpointRepository(Repository):
 
     def workspace_is_compatible(self, checkpoint: Checkpoint) -> bool:
         with self.lock:
-            row = self._connection().execute(
-                """
-                SELECT s.workspace_root, s.workspace_dev, s.workspace_inode, s.workspace_uid
-                FROM runs r JOIN sessions s ON s.id = r.session_id WHERE r.id = ?
-                """,
-                (checkpoint.run_id,),
-            ).fetchone()
-        if row is None:
-            return False
-        return checkpoint.workspace_identity_hash == _hash({
-            "root": row["workspace_root"], "device": row["workspace_dev"],
-            "inode": row["workspace_inode"], "owner": row["workspace_uid"],
-        })
+            try:
+                identity = execution_workspace_for_run(
+                    self._connection(), checkpoint.run_id
+                )
+            except (ResourceNotFoundError, StorageError, OSError):
+                return False
+        return checkpoint.workspace_identity_hash == _workspace_identity_hash(
+            path=str(identity.path),
+            device=identity.device,
+            inode=identity.inode,
+            owner=identity.owner,
+        )
+
+
+def _workspace_identity_hash(
+    *, path: str, device: int, inode: int, owner: int
+) -> str:
+    return _hash({
+        "root": path,
+        "device": device,
+        "inode": inode,
+        "owner": owner,
+    })
 
 
 def _map_checkpoint(row: object) -> Checkpoint | None:

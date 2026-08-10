@@ -251,8 +251,8 @@ class CheckpointRewindRequestDto(_OperationRequest):
 
 class CheckpointForkRequestDto(_OperationRequest):
     checkpoint_id: StrictStr = Field(alias="checkpointId")
-    workspace_root: StrictStr = Field(
-        alias="workspaceRoot", min_length=1, max_length=4096
+    workspace_root: StrictStr | None = Field(
+        default=None, alias="workspaceRoot", min_length=1, max_length=4096
     )
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("operation_id", "checkpoint_id")
 

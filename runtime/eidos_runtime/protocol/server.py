@@ -859,7 +859,9 @@ class RuntimeServer:
                 verified_compactions=self.store.verified_compaction_repository(),
             ),
             checkpoints=CheckpointApplication(
-                self.store, self.store.checkpoint_repository()
+                self.store,
+                self.store.checkpoint_repository(),
+                worktree_manager=self.worktree_manager,
             ),
             task_lifecycle=task_lifecycle,
         )
