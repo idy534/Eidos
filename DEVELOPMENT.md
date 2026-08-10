@@ -37,7 +37,53 @@ uv sync --locked
 
 Electron 第一次安装或启动时需要从官方源下载对应 macOS 架构的 Chromium 二进制，耗时会明显长于普通前端依赖。后续启动会复用本地缓存。
 
-## 3. 自动化验证
+## 3. macOS Runtime distribution
+
+需要验证独立 Runtime 时，在 arm64 macOS 构建机执行：
+
+```bash
+pnpm build:runtime:mac
+pnpm test:runtime:bundled
+pnpm test:runtime:bundled-seatbelt
+```
+
+Builder 使用固定的 uv managed CPython 3.12.13（可通过显式 `EIDOS_PYTHON_VERSION` override），从 `pyproject.toml` 与 `uv.lock` 导出 locked production dependencies，并生成 `build/macos-runtime/`。最终 Bundle 不依赖仓库 `.venv`、目标机 Python、uv 或 Xcode Command Line Tools Python；开发者不需要先构建 Bundle 才能运行 `pnpm start`。当前只构建 `Darwin + arm64`。
+
+## 4. macOS App / DMG packaging
+
+打包构建机必须是 Apple Silicon macOS，并安装 Node.js 22.12+、pnpm 11 和 uv。安装后的 Eidos App 不需要这些工具；Runtime、Python 3.12.13、production Python dependencies 和 Ripgrep 都位于 App 的 `Contents/Resources/runtime/`。
+
+本地打包命令：
+
+```bash
+pnpm package:mac
+```
+
+`scripts/package-macos.sh local` 会执行 frozen JavaScript/Python dependency install、项目与 Runtime 验证、`build/macos-runtime`、Electron application build、native icon 生成、electron-builder 26.15.3、DMG layout 检查，以及从 DMG 复制到临时目录后的 packaged smoke。输出为：
+
+```text
+release/Eidos-<version>-mac-arm64-local.dmg
+```
+
+正式发行命令：
+
+```bash
+pnpm package:mac:release
+```
+
+Release 模式在构建开始阶段要求 Developer ID Application signing credentials 和完整的 Apple notarization credentials；随后启用 hardened runtime、签名、notarization、stapling，并执行：
+
+```bash
+codesign --verify --deep --strict --verbose=2 Eidos.app
+spctl --assess --type execute --verbose=2 Eidos.app
+xcrun stapler validate Eidos.app
+```
+
+支持的 credentials 通过 electron-builder 标准环境变量提供，例如 `CSC_LINK` / `CSC_KEY_PASSWORD`、`APPLE_API_KEY` / `APPLE_API_KEY_ID` / `APPLE_API_ISSUER`，或 Apple ID app-specific password 组合。不要把证书或 secret 写入仓库。
+
+开发者只有在有意跳过项目验证时才设置 `EIDOS_PACKAGE_SKIP_TESTS=1`；该 override 会打印 warning，Release 模式拒绝它。旧的 `release/`、`build/macos-runtime/` 和生成的 `packaging/icon.icns` 不提交到 Git。
+
+## 5. 自动化验证
 
 运行全部当前阶段测试：
 
@@ -107,7 +153,7 @@ Git Worktree 重建，以及兼容 compactor 自动切换，不应在手工验�
 uv run --locked pytest -m large_repository runtime/tests/test_repository_large_scale.py
 ```
 
-## 4. 手动界面验证
+## 6. 手动界面验证
 
 启动应用：
 
@@ -165,7 +211,7 @@ Shell 启动前会有界扫描 Workspace：常见凭证文件、特殊文件或�
 
 日志应只出现在终端，不应出现在协议 stdout 或界面正文中。
 
-## 5. 关闭验证
+## 7. 关闭验证
 
 使用 `Command + Q` 退出 Eidos。终端应结束 Electron 进程，Python Runtime 不应残留。
 
@@ -177,7 +223,7 @@ pgrep -af eidos_runtime
 
 没有输出表示 Runtime 已随桌面端退出。
 
-## 6. 常见失败
+## 8. 常见失败
 
 ### 窗口显示 Runtime 启动失败
 

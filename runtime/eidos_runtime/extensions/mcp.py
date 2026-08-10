@@ -41,6 +41,10 @@ from eidos_runtime.runtime.async_kernel import (
     RuntimeAsyncTask,
 )
 from eidos_runtime.runtime.fault_injection import hit_fault
+from eidos_runtime.sandbox.seatbelt import (
+    python_runtime_policy_arguments,
+    runtime_python_executable,
+)
 
 
 MAX_LIST_PAGES = 32
@@ -405,6 +409,8 @@ class McpConnection:
         executable = self.config.executable
         if "/" in executable and not Path(executable).is_absolute():
             executable = str(self.plugin_root / executable)
+        if Path(executable).resolve() == runtime_python_executable():
+            executable = str(runtime_python_executable())
         arguments = list(self.config.argv)
         environment = {
             "HOME": str(self.runtime_root / "home"),
@@ -433,6 +439,7 @@ class McpConnection:
                 f"-DWORKSPACE_ROOT={self.workspace_root}",
                 f"-DSANDBOX_HOME={environment['HOME']}",
                 f"-DSANDBOX_TMP={environment['TMPDIR']}",
+                *python_runtime_policy_arguments(),
                 "--", executable, *arguments,
             ]
             executable = SANDBOX_EXECUTABLE

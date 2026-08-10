@@ -119,10 +119,43 @@ interface RuntimeClientOptions {
   pythonExecutable: string;
   runtimeRoot: string;
   dataDirectory?: string;
-  environment?: Record<string, string>;
+  environment?: NodeJS.ProcessEnv;
+  environmentPolicy?: RuntimeEnvironmentPolicy;
   onNotification?: (notification: RuntimeNotification) => void;
   onApprovalRequest?: (request: ApprovalRequest) => Promise<ApprovalDecision>;
   onStderr?: (line: string) => void;
+}
+
+export type RuntimeEnvironmentPolicy = "development" | "packaged";
+
+export interface RuntimeEnvironmentOptions {
+  runtimeRoot: string;
+  baseEnvironment: NodeJS.ProcessEnv;
+  overrides?: NodeJS.ProcessEnv | undefined;
+  policy: RuntimeEnvironmentPolicy;
+}
+
+export function buildRuntimeEnvironment(
+  options: RuntimeEnvironmentOptions,
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {
+    ...options.baseEnvironment,
+    ...options.overrides,
+  };
+  if (options.policy === "packaged") {
+    environment.PYTHONPATH = options.runtimeRoot;
+    delete environment.PYTHONHOME;
+    delete environment.EIDOS_PYTHON;
+    environment.PYTHONNOUSERSITE = "1";
+    environment.PYTHONDONTWRITEBYTECODE = "1";
+    return environment;
+  }
+
+  environment.PYTHONPATH = [
+    options.runtimeRoot,
+    options.baseEnvironment.PYTHONPATH,
+  ].filter((entry): entry is string => Boolean(entry)).join(path.delimiter);
+  return environment;
 }
 
 interface PendingRequest {
@@ -166,14 +199,12 @@ export class RuntimeClient {
   private closed = false;
 
   constructor(options: RuntimeClientOptions) {
-    const pythonPath = [options.runtimeRoot, process.env.PYTHONPATH]
-      .filter((entry): entry is string => Boolean(entry))
-      .join(path.delimiter);
-    const environment: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...options.environment,
-      PYTHONPATH: pythonPath,
-    };
+    const environment = buildRuntimeEnvironment({
+      runtimeRoot: options.runtimeRoot,
+      baseEnvironment: process.env,
+      overrides: options.environment,
+      policy: options.environmentPolicy ?? "development",
+    });
     if (options.dataDirectory) {
       environment.EIDOS_DATA_DIR = options.dataDirectory;
     }

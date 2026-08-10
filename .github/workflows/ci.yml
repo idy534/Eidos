@@ -38,4 +38,9 @@ jobs:
       - run: pnpm build
       - run: pnpm test:seatbelt-native
       - run: pnpm test:electron-smoke
+      - run: pnpm build:runtime:mac
+      - run: pnpm test:runtime:bundled
+      - run: pnpm test:runtime:bundled-seatbelt
+      - name: Build and smoke-test the local packaged macOS DMG
+        run: pnpm package:mac
       - run: git diff --check

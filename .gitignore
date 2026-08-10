@@ -14,6 +14,8 @@ node_modules/
 data/postgres/
 dist/
 build/
+release/
+packaging/icon.icns
 *.egg-info/
 desktop/shared/*.js
 desktop/shared/*.js.map

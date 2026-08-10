@@ -19,7 +19,34 @@ from eidos_runtime.workspace.search_driver import RipgrepBinaryResolver, SearchD
 SANDBOX_EXECUTABLE = "/usr/bin/sandbox-exec"
 PROFILE_PATH = Path(__file__).with_name("seatbelt.sbpl")
 FILE_COMMIT_HELPER = Path(__file__).with_name("file_commit_helper.py")
-SYSTEM_PYTHON = "/Library/Developer/CommandLineTools/usr/bin/python3"
+
+
+def runtime_python_executable() -> Path:
+    """Return the interpreter that owns the current Eidos Runtime process."""
+    # Seatbelt evaluates the real executable after following venv/bundle
+    # symlinks. Passing that same resolved path avoids an exec denial while
+    # preserving the current Runtime interpreter.
+    return Path(sys.executable).resolve()
+
+
+def runtime_python_roots() -> tuple[Path, ...]:
+    """Return the interpreter prefixes needed by a venv or standalone Python."""
+    roots: list[Path] = []
+    for candidate in (sys.prefix, sys.base_prefix):
+        root = Path(candidate).resolve()
+        if root not in roots:
+            roots.append(root)
+    return tuple(roots)
+
+
+def python_runtime_policy_arguments() -> list[str]:
+    """Build read/map-only Seatbelt definitions for the active Python runtime."""
+    roots = runtime_python_roots()
+    base_root = roots[-1]
+    return [
+        f"-DPYTHON_RUNTIME_ROOT={roots[0]}",
+        f"-DPYTHON_BASE_RUNTIME_ROOT={base_root}",
+    ]
 
 class SeatbeltUnavailableError(RuntimeError):
     pass
@@ -129,6 +156,7 @@ class SeatbeltProfile:
             f"-DSANDBOX_HOME={self.sandbox_home}",
             f"-DSANDBOX_TMP={self.sandbox_tmp}",
             f"-DFILE_COMMIT_HELPER={FILE_COMMIT_HELPER}",
+            *python_runtime_policy_arguments(),
             *additional_definitions,
             "--",
             *command,
@@ -228,10 +256,11 @@ def secure_workspace_move(
     except ValueError:
         return "failed"
 
+    python_executable = runtime_python_executable()
     if (
         sys.platform != "darwin"
         or not is_seatbelt_ready()
-        or not os.access(SYSTEM_PYTHON, os.X_OK)
+        or not os.access(python_executable, os.X_OK)
     ):
         return "failed"
     command = [
@@ -244,8 +273,9 @@ def secure_workspace_move(
         f"-DSANDBOX_HOME={workspace / '.eidos-sandbox-home-unavailable'}",
         f"-DSANDBOX_TMP={workspace / '.eidos-sandbox-tmp-unavailable'}",
         f"-DFILE_COMMIT_HELPER={FILE_COMMIT_HELPER}",
+        *python_runtime_policy_arguments(),
         "--",
-        SYSTEM_PYTHON,
+        str(python_executable),
         "-B",
         str(FILE_COMMIT_HELPER),
         str(source_path),

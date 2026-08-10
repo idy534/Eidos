@@ -20,6 +20,23 @@ flowchart LR
 
 Renderer 只通过 context-isolated preload 暴露的 typed IPC 访问 Main。Main 启动 Python sidecar、校验 JSON-RPC 响应和通知，并负责 Desktop 生命周期。Runtime stdout 只输出协议，日志写 stderr；本地不开放 HTTP、WebSocket 或其他控制端口。
 
+## Runtime Distribution Boundary
+
+Runtime 的业务循环、JSON-RPC 2.0 over stdio 和 `RuntimeClient` 的进程边界在开发与打包模式之间保持一致。Electron Main 在 `desktop/main/runtime-paths.ts` 解析来源：
+
+| 模式 | Python interpreter | Runtime root |
+|---|---|---|
+| Development | `<appPath>/.venv/bin/python`，可由 `EIDOS_PYTHON` 覆盖 | `<appPath>/runtime` |
+| Packaged | `<process.resourcesPath>/runtime/python/bin/python3` | `<process.resourcesPath>/runtime/app` |
+
+Packaged 模式只接受 `process.resourcesPath` 下的 Runtime；缺少 bundled interpreter 或 `app/eidos_runtime` 时直接报告 `bundled runtime unavailable`，不会回退到 PATH、系统 Python 或 `.venv`。`RuntimeClient` 只接收解析后的 `pythonExecutable` 与 `runtimeRoot`，不感知 Electron packaging 状态。Main 额外传入最小的 development/packaged environment policy：Development 保留继承的 Python 环境和 `EIDOS_PYTHON` 兼容行为；Packaged 强制 `PYTHONPATH=<Resources>/runtime/app`，移除 `PYTHONHOME`/`EIDOS_PYTHON`，并设置 `PYTHONNOUSERSITE=1` 与 `PYTHONDONTWRITEBYTECODE=1`。
+
+`scripts/build-macos-runtime.sh` 只负责生成 `build/macos-runtime/`：它使用固定的 uv managed CPython 3.12.13（可通过显式 override）和 `uv.lock` 的 `--no-dev` production export，复制完整 `runtime/eidos_runtime` package tree，并校验所有 `Path(__file__)` 资源。当前 bundle 只支持 Darwin arm64。
+
+`electron-builder.yml` 负责 Electron application packaging：`dist/main`、`dist/shared`、`dist/renderer` 和 `package.json` 进入 `app.asar`；`build/macos-runtime` 通过 `extraResources` 原样进入 `Contents/Resources/runtime`，不进入 ASAR。`scripts/package-macos.sh local` 生成 arm64 DMG 和 `/Applications` symlink，并在 builder App 与从 DMG 复制出的临时 App 上运行 `scripts/packaged-electron-smoke.mjs`。`scripts/package-macos.sh release` 复用同一配置，通过 CLI policy override 开启 hardened runtime、Developer ID signing、notarization、stapling 和最终验证。
+
+Seatbelt 的 commit helper、普通 Shell policy 和 MCP policies 都从当前 Runtime 的 `sys.executable`、`sys.prefix` 与 `sys.base_prefix` 物化 Python root 的只读、metadata、test-existence 和 executable-map 权限；这些 root 不获得写权限。MCP 仍通过真实 Python interpreter 启动 `mcp_launcher.py`，不改变 MCP stdio 协议；Packaged 模式的 `sys.executable` 来自 `Contents/Resources/runtime/python/bin/python3`。
+
 ## 状态与恢复权威
 
 - SQLite schema v11 保存 Runtime 事实、Repository generations、retrieval/context snapshots、verified compact summaries 和 checkpoints。全新数据库直接建立完整 v11；v10 数据库在 `BEGIN IMMEDIATE` 内校验并删除旧 `model_profiles`、Capability 与 Run Model Snapshot 表后才更新 `user_version`，失败进入 health-only 且保留原数据。模型配置不写 SQLite。
