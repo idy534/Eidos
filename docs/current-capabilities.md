@@ -1,126 +1,173 @@
 # Eidos 当前能力
 
-本文只列出当前代码已经实现并有测试入口的能力。
+本文只回答“当前 main 已经能做什么”。每项能力都对应生产代码和测试入口。能力存在但没有进入默认 Run 的部分会明确标注。
 
-## Desktop 与任务
+## Desktop
 
-- macOS Electron Desktop，Renderer/Main 隔离，typed preload IPC。
-- 创建、分页列出、读取、重命名和删除 Session。
-- 创建、排队、执行和取消 Run；持久 FIFO 与全局单执行 slot。
-- 展示模型流式文本、ToolCall、审批、终态和恢复后的历史快照。
-- 正常退出时取消活动任务、关闭 Runtime，并在有界等待后收敛资源。
+- Eidos 提供 macOS Electron Desktop。
+- Renderer、Preload 和 Main 之间使用 context-isolated typed IPC。
+- Main 可以启动、健康检查、通知和关闭 Python Runtime。
+- Desktop 可以选择 Workspace，创建、列出、读取、重命名和删除 Session。
+- Execution Feed 可以展示用户消息、模型文本、ToolCall、Tool Result、Approval、终态和恢复后的历史。
+- Composer 可以选择已配置 Model，并显示当前选中 Model 最近 Run 的 Context Usage。
+- Desktop 支持上下文使用率的 Provider 来源和 estimated 来源展示。没有快照时显示无数据状态。
+- Quit 流程会先处理活动 Run，再关闭 Runtime 和窗口资源。
 
-## 模型与循环
+## Session / Run
 
-- 本地多模型配置：DeepSeek V4 Pro/Flash、MiniMax M3、Kimi K3、Kimi K2.7 Code；配置持久化到 `~/.eidos/models.json`。
-- OpenAI-compatible Chat Completions/SSE，通过 Pydantic AI Direct Model API 接入。
-- 完整模型响应同时包含文字和有效 ToolCall 时，文字经 Sensitive Scanner 与 provider-control
-  校验后作为已完成的 `assistant_message` 在 ToolCall 前进入 Process Feed，Run 继续执行；
-  无 ToolCall 的文字仍作为 Final Assistant 完成 Run。Commentary 继续参与普通 Context，
-  不暴露 provider reasoning 或 chain-of-thought。
-- 同步 Runtime 共享一个由 `RuntimeServer` 管理的 AnyIO `BlockingPortal` 执行模型异步 I/O；Model Client 不拥有 Event Loop 或线程。
-- Session 选择器只展示已配置模型；新 Session 选择第一项，历史 Session 恢复最近 Run 模型，并支持 Turn 之间切换。
-- 每个 Run 固化实际模型配置与扩展快照；活动 Run 不受模型配置后续编辑或删除影响。保留模型尝试记录、usage 和有限重试。
-- 每个 Step 确定性解析并固化分层系统指令：System Safety、Base Agent、Runtime Policy、带来源的 Project Rules 和当前 Turn 的 Selected Skills；消息、工具与输出预算和最终 instructions 一起计入 Context Budget。
-- Project Rules 与 Selected Skill 内容只进入声明的指令层，不在普通 user 消息中重复；Skill Catalog、历史、Tool Result、文件内容和元数据继续作为普通上下文数据。Step 快照保存实际发送的完整 instructions 与 UTF-8 SHA-256。
-- Finalization 复用当前解析结果并临时追加无工具的 `finalization-policy`；标题生成使用隔离的标题系统指令、当前用户请求和空 Tool Definitions。
-- 上下文构建、压缩、协议错误反馈、Loop Guard 和最终化；Model Step、ToolCall、Segment Step
-  与有效执行时间只作为 telemetry，不是 Run 生命周期预算。Segment 代表实际 execution
-  slice，只有达到 30 分钟 effective-time operational quantum 等生命周期边界才安全 rollover，
-  rollover 不停止 Run；Context
-  Usage 优先使用最近 Provider usage 的 Active Context，缺失时才使用标记为
-  `estimated` 的有界 fallback，并区分模型窗口与投影安全上限。
-- Compaction Summary 使用 deterministic structured extraction 保留任务目标、用户约束、
-  workspace state、路径/hash/symbol 证据、修改状态、失败尝试、未解决问题、决定、待处理
-  审批和下一步；摘要 metadata 与摘要主体一起持久化，完整历史仍保留在 SQLite。
-- Composer 在模型选择器右侧显示当前模型最近 Run 的 Context Usage；Provider 数据显示
-  `上下文 xx% · xxK / xxxK`，估算数据明确显示 `≈`，无可用快照显示 `上下文 --`。
-  该展示通过 `context/usage` Runtime RPC 进入 Main 和 typed preload，不使用累计 Session
-  Token Consumption。
-- `parallel_tool_calls=true` 允许模型声明多调用；Runtime 只并发安全只读批次并保持声明顺序。
+- Runtime 可以创建、排队、执行、取消、暂停、恢复和查询 Run。
+- Run 使用持久 FIFO 和全局单 Execution Slot。
+- Run 状态、Item、Step、ToolCall、Approval 和终态写入 SQLite，并通过 Event/Outbox 投影到 Desktop。
+- 取消会传播到 Model、Tool、Shell、Approval 和 Async Task。已取消 Run 不会被迟到模型结果改成成功。
+- Model Step Count、Segment Step Count 和 effective time 可以作为持久 telemetry 读取。
+- 健康 Run 不受固定 model-step、Run duration 或 fixed repeated-call counter 限制。Segment rollover 不会把 Run 变成终态。
 
-## 内置工具
+## Model
 
-- 安全只读：`list_files`、`read_file`、`read_file_range`、`search_text`。
-- `list_files` 与 `search_text` 使用 Workspace 根目录的 `.gitignore`，再使用
-  `.eidosignore` 过滤普通发现结果；后者可覆盖前者的普通忽略规则。
-- `list_files` 支持 workspace-relative `path`、`maxDepth` 和 `maxEntries`；默认
-  `{}` 仍从 Workspace 根目录开始，结果始终是 workspace-relative，并保留敏感目录、
-  generated/dependency pruning。
-- `search_text` 使用 Eidos 随 Runtime 管理并校验 SHA256 的 Ripgrep 15.2.0
-  macOS arm64 二进制；通过固定 argv、`shell=False`、最小环境和 JSON 事件协议执行，
-  不读取用户 `PATH`、Ripgrep Config、嵌套或全局 Ignore，也不在运行时下载。
-- `search_text` 支持 workspace-relative `path`、最大 512 UTF-8 bytes 的单行查询、
-  bounded `maxResults`、可选 regex 和 include globs；默认仍是 Literal、ASCII
-  case-insensitive 查询。单文件最大 256 KiB、preview 最大 300 字符、最多返回
-  100 个 Match。超时、取消和结果上限都会终止并回收 Ripgrep 进程组。
-- Context Builder 对 workspace state 未变化时完全相同的只读 Tool Result 做上下文去重；
-  LoopGuard 仍独立负责检测 Agent 无进展循环。它不使用 3/3/3 round counters：exact
-  duplicate Tool state 首次重复时跳过执行并注入一次 generic recovery，只有 recovery
-  后再次回到同一 semantic fingerprint 才以 `repeated_tool_call` 或 `no_progress` 停止；
-  新 Evidence、Workspace、Context、User Input、Error resolution 或 reconciliation 状态会继续 Run。
-- Workspace 变更：`write_file`、`apply_patch`、`delete_file`，均要求审批、版本复检和安全提交。`apply_patch` 使用 `unidiff` 解析结构与 metadata，但仍只接受单个已存在文件的严格 Unified Diff；Eidos 负责拒绝 Git 扩展、精确上下文校验和候选构建。
-- Shell：`run_shell`，要求审批，默认经 macOS Seatbelt 执行并记录有界输出、进程终态和 Workspace 变化；启动只验证 Workspace identity、cwd、Approval 和 Seatbelt 边界，不依赖全仓扫描或 Shell 命令 allowlist/parser，失败时 UI 展示 canonical `code`、`summary` 和 `stderr`；索引不完整时保留 unknown observation，但已知成功退出不会仅因此进入 reconciliation。
-- 工具发现：`tool_search`。
-- Skill 管理：`skill_create`、`skill_install`，使用专用 Eidos-state 路径和审批。
+- ModelConfigStore 支持内置 Catalog 中的五个 Model：`deepseek-v4-pro`、`deepseek-v4-flash`、`MiniMax-M3`、`kimi-k3` 和 `kimi-k2.7-code-highspeed`。
+- Model 配置保存在 `models.json`。默认位置是 `~/.eidos/models.json`。本地文件使用 owner-only 权限。
+- Runtime 使用 OpenAI-compatible Chat Completions 和 SSE 流。
+- Runtime 使用 Pydantic AI Model API 处理 Provider 构造、流式 Model Response、Usage 和 ToolCall 归一化。
+- 每个 Run 固化 Model Profile、Model capability declaration 和 Extension Snapshot。活动 Run 不会被后续 Model 配置编辑或删除改变。
+- Runtime 记录 Model Attempt、usage、response metadata、transport retry 诊断和稳定错误码。
+- Runtime 可以声明和保存 reasoning capability，但不会把 Provider reasoning 或 chain-of-thought 当作普通 Feed 内容展示。
 
-## 工具安全与结果
+## Agent Loop
 
-- Pydantic/JSON Schema 输入校验、闭合 ToolSpec、Step 固化 tool set/hash。
-- ToolCall 单生命周期控制、deadline/cancel 仲裁、Durable Intent、结果验证和敏感信息扫描。
-- Canonical ToolResult、模型投影与 UI 投影；副作用不确定时保留 `sideEffectsMayExist` 和 reconciliation。
-- Workspace 路径/身份检查、敏感路径拒绝、原子文件提交和变更 manifest。
-- 发现忽略规则不是权限：显式读写 ignored path 仍遵循既有 Workspace、安全内容与审批规则；
-  Shell security scan 和副作用 evidence 不使用这些忽略规则。
-- Ripgrep 的 argv 排除仅是搜索缩减；每个候选 Match 仍由 Eidos 对 Workspace-relative
-  路径、C2 DiscoveryScope、硬目录、敏感名称、symlink、普通文件、大小、稳定性、
-  binary 与严格 UTF-8 进行独立后置校验。
-- Shell Seatbelt fail-closed、动态权限物化、显式审批和最多一次权限升级。
+- `RuntimeEngine` 驱动 Context → Model Attempt → Response validation → Tool 或 Final Answer 的循环。
+- Runtime 接受同一模型响应中的文本和有效 ToolCall。已校验的文本可以先作为普通 `assistant_message` 写入 Feed，Tool 执行完成后 Run 继续。
+- Provider context pressure、`context_exceeded`、projection overflow 和 compaction progress 会参与下一次决策。
+- Protocol validation failure 会被转换为受控的 protocol repair context。空响应有独立的重复响应处理。
+- Cancellation、Approval、Reconciliation 和 operational segment rollover 都在安全点处理。
+- LoopGuard 使用 ToolCall、Workspace version、reconciliation epoch、Context fact frontier 和 active error 的 semantic fingerprint。首次重复会注入恢复信息，恢复后再次回到同一状态才会以 `repeated_tool_call` 或 `no_progress` 停止。
+- Runtime 没有固定的模型步数、Run 时长或 repeated-call counter 生命周期规则。
 
-## 扩展
+## Context
 
-- 导入、启用、禁用和移除本地 Plugin v1。
-- 内置、用户和 Plugin Skill Catalog；Run/Step 固化来源与内容 hash。
-- stdio MCP Tools、显式 Server consent、`connector`/`workspace_read` 权限档案、逐次外部工具审批。
-- MCP 和延迟工具进入统一 Registry、ToolSpec、ToolResult 与 provenance。
-- 每个 MCP Connection 是进程级 `RuntimeAsyncKernel` 拥有的长生命周期 AnyIO Service；连接不再创建专用线程或 Event Loop，同一 `ClientSession` 的 Tool Call 与 Tool List Refresh 串行进入受控同步/异步边界。
+- ContextBuilder 从 SQLite facts、当前 Run、Model Profile、Project Rule Snapshot、Selected Skill、历史 Item、Tool Result、Workspace state 和额外上下文构建模型 Context。
+- Context Budget 记录 active tokens、模型窗口、百分比和 `provider`/`estimated` 来源。
+- Provider Usage 优先作为 active Context truth。Provider Usage 缺失时，Runtime 使用有界 estimated fallback。
+- ContextBuilder 对 Workspace state 未变化时完全相同的部分只读 Tool Result 做去重。
+- ContextCompactor 使用 deterministic bounded extraction 保存任务目标、约束、动作、证据、修改、失败尝试、决定、待处理 Approval、未解决问题和下一步。
+- Compaction Summary metadata 与主体一起持久化。原始历史不会被摘要替换。
+- ContextPlan、ContextSnapshot 和 Verified Compaction 具有 typed persistence boundary，但它们还没有全部成为默认在线 Run 的强制组装路径。
 
-## 持久化、事件与恢复
+## Project Rules
 
-- SQLite schema v10，支持原子 v9 → v10 migration、私有数据目录、单实例状态锁、WAL、完整性检查和 health-only 失败模式。
-- Session/Run/Item/ToolCall、审批、Segment/Step/Attempt、Durable Intent、事件/Outbox、异步操作和扩展状态持久化。
-- 业务事件与 Outbox 原子提交，按数据库 event ID 投影通知；发送失败保留待投递事实。
-- 启动时收敛未完成 Run、ToolCall、审批和资源状态，不自动重放可能产生副作用的操作。
-- `ResourceRegistry` 跟踪 Run worker、唯一异步内核、Kernel-owned async task、模型 lease、工具、Shell、MCP、finalization 和异步请求；成功 shutdown 要求资源清空。Kernel-owned task 通过有界 handle 诊断记录 owner、task、状态、deadline 和稳定错误码；shutdown 不依赖线程名前缀或重复的全局 Tool 计数。
-- Title Generation 与 Plugin Import 等 Managed Task 由 Kernel Task Handle 拥有；现有同步 target 通过 AnyIO worker thread bridge 执行并保留 cooperative cancellation Event，不再创建 Eidos 专用命名线程。
-- 符合 `parallel_safe` policy 的只读 Tool Batch 由共享 Kernel 内的 AnyIO TaskGroup 协调；现有同步 Driver 通过有界 worker thread bridge 执行，结果、Item、Event 和 Context Fact 仍按模型声明顺序提交。
+- ProjectRuleResolver 支持 `EIDOS.override.md`、`EIDOS.md`、`AGENTS.override.md`、`AGENTS.md` 和 `CLAUDE.md`。
+- Resolver 从 Workspace root 到 effective cwd 逐目录解析。
+- 每个目录只选一个最高优先级的非空候选。
+- Resolver 使用共享 32 KiB byte budget，并记录 shadowed candidates、warning、原始 hash、包含字节数、directory level 和 effective cwd。
+- InstructionResolver 将 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 组成有来源的 immutable instructions。
+- Step Resolution 保存 resolved instruction hash。Project Rules 不会改变 Runtime Permission、Approval 或 Sandbox 的真实执行约束。
 
-## Typed Runtime and Repository Intelligence
+## Repository Discovery
 
-- Strict/frozen domain records and typed SQLite mappers for Session-adjacent
-  Run, Item, Step, ToolCall, Approval and ModelAttempt reads; corrupted rows
-  fail through explicit persistence diagnostics.
-- JSON-RPC method lookup and request validation through a duplicate-safe typed
-  Method Registry, while initialization/draining/reconfiguration gates remain
-  explicit.
-- Bounded Repository Inventory with UTF-8/binary classification, content
-  hashes, generation IDs, generated/vendor flags and cancellable scans.
-- Tree-sitter index snapshots for Python, TypeScript/TSX, JavaScript and Go,
-  including bounded symbols, imports, references, chunks and parse diagnostics.
-- Deterministic Repository Map discovery and hybrid FTS5/RapidFuzz retrieval;
-  every selected evidence record exposes its score breakdown and reasons.
-- Persisted generation-scoped FTS5 and typed symbol/definition/import/
-  reference/path/test-source queries with bounded cancellation.
-- Immutable rule, context-plan and per-model-attempt context snapshots with
-  frozen model budget, repository generations and stale-evidence rejection.
-- Typed compaction verification against persisted source Items and required
-  reconciliation facts, without replacing SQLite business facts.
-- Typed long-task progress/control facts with compare-and-set pause, resume,
-  cancel and interruption transitions, plus Workspace/Git/rule/index/context/
-  permission/side-effect resume verification.
-- Typed `run/status`, `run/pause`, `run/resume` and checkpoint create/list/
-  rewind/fork JSON-RPC boundaries; RuntimeEngine consumes pause intent at
-  explicit model/tool/approval/slot safe points.
-- Thin `RepositoryApplication` and `ContextApplication` boundaries compose the
-  typed snapshot builders and context verification without creating a second
-  scheduler or business-fact authority.
+- `list_files` 和 `search_text` 可以在 Workspace 内执行有界文件发现和文本搜索。
+- Workspace discovery 使用根目录 `.gitignore` 与 `.eidosignore`，并把发现规则和安全权限分开处理。
+- `search_text` 使用随 Runtime 管理、manifest 校验和 SHA256 校验的 macOS arm64 Ripgrep 资源。
+- Repository Intelligence 基础设施已经实现 Inventory、Repository generation、Tree-sitter Index、symbols/imports/references/chunks、Repository Map、SQLite FTS5、RapidFuzz retrieval、Retrieval Snapshot 和 ContextPlan。
+- Repository Intelligence 的不完整 generation 不会替换上一个完整 generation。Watcher 只提供失效信号，不改变活动 Snapshot。
+- RepositoryApplication、ContextApplication 和相关 persistence repositories 已提供 typed composition boundary。它们还没有全部成为 RuntimeEngine 默认 online Run 的强制路径。
+
+## Tools
+
+- Tool Registry 统一保存 ToolSpec、Schema、Execution Policy、Concurrency Policy、Projection Policy 和 provenance。
+- 内置只读 Tool 包括 `list_files`、`read_file`、`read_file_range` 和 `search_text`。
+- Workspace mutation Tool 包括 `write_file`、`apply_patch` 和 `delete_file`。
+- `apply_patch` 使用 bounded Unified Diff 解析，并要求单文件、Read Evidence、Base Hash、Approval 和版本复检。
+- `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
+- `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
+- ToolCallRuntime 和 ToolExecutionController 会执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。
+- 只有安全只读的 `parallel_safe` Tool 批次可以并发。副作用 Tool 保持独占，结果按模型声明顺序提交。
+
+## Shell
+
+- `run_shell` 需要 Approval。
+- 默认 Shell attempt 使用 macOS Seatbelt，使用明确 cwd、受控环境、超时、有界 stdout/stderr 和进程组终止。
+- Shell 不继承宿主 API Key、`HOME` 或任意敏感环境变量。
+- Shell launch boundary 验证 Workspace identity 和 cwd。post-execution observation 记录 Workspace diff、退出状态和 reconciliation 需要性。
+- Workspace manifest observation 不完整时可以产生 `unknown` observation。已知成功退出不会仅因为观察不完整而被改成不确定副作用。
+- Shell 支持最多一次明确的权限升级 attempt。升级仍需要新的 Approval，并且不能移除 hard confidentiality deny。
+
+## Approval / Sandbox
+
+- File change Approval 展示完整 diff。磁盘在 Approval 前不发生写入。
+- File change Approval 后会重新验证版本并原子提交，再验证最终内容。
+- Command Execution Approval 展示 command、cwd、timeout、network 和 effective sandbox permissions。
+- MCP external Tool 使用同一 Approval、Sandbox、Tool Result 和 reconciliation 语义。
+- Seatbelt Policy、Workspace boundary、Eidos data/runtime protection、sensitive scanning 和 resource cleanup 失败时 fail closed。
+- Durable Intent 记录已授权但可能有副作用的执行。未知结果会进入 reconciliation，Runtime 不会猜测成功或失败。
+
+## Response Actions
+
+- 已完成的 assistant response 支持 `up` 和 `down` feedback。
+- 最新可见的终态 Run 支持 regenerate。
+- 最新可见的用户输入支持 edit resend。
+- Response Action 通过 `responseAction/state`、`item/setFeedback` 和 `run/revise` 持久化到 `response_feedback` 与 `run_revisions`。
+- Revision 会创建新的 Run，并保存 source Run 与 revision kind。Source Run 的历史不会被当作新的可见 Run 重复参与后续 Revision。
+
+## Plugin / Skill / MCP
+
+- PluginCatalog 支持本地 Plugin v1 的导入、启用、禁用和移除。
+- Plugin manifest 可以声明 Skill 和 MCP Server。安装内容有文件数量、大小、路径、manifest、版本冲突和 content hash 校验。
+- SkillCatalog 支持 bundled system Skill、用户 Skill、Plugin Skill、Catalog Snapshot、SelectedSkillSet、主资源和受控 Resource 读取。
+- Skill provenance、Plugin hash、Skill content hash 和 activation snapshot 进入 Run/Step 边界。
+- MCP 当前支持 stdio Tools。Server consent、`connector`/`workspace_read` permission profile、Tool discovery、Tool call、timeout、结果 schema 和 Tool List Changed bookkeeping 已接入。
+- MCP Connection 由唯一 RuntimeAsyncKernel 持有，不为每个连接创建专用 Event Loop。
+
+## Persistence
+
+- 当前 SQLite schema version 是 14。
+- 新数据库直接创建 v14。已有 v11、v12 或 v13 数据库可以逐步迁移到 v14。v10 及更早版本不在当前启动迁移窗口。
+- SQLite 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context、Repository Snapshot、Compaction、Checkpoint、Response Feedback 和 Run Revision。
+- 业务事实变化与 Event/Outbox 在同一 transaction 中提交。
+- SQLite 使用私有数据目录、WAL、busy timeout、完整性检查、单实例锁和 health-only 失败状态。
+
+## Recovery
+
+- Runtime 重启时会从 SQLite 收敛未完成 Run、ToolCall、Approval、Outbox、Long Task 和资源状态。
+- Runtime 支持 cancel、pause、resume 和 restart verification 的 typed boundary。
+- Resume 前会检查 Workspace identity、规则、Repository/Context snapshot、permission snapshot、Git 和 side-effect reconciliation 字段。
+- Cancel、Tool timeout、Shell cleanup、MCP shutdown 和 Runtime shutdown 都有资源跟踪和有界等待。
+- 不确定副作用不会自动重放。需要核验的事实会进入 reconciliation。
+
+## Checkpoint
+
+- Runtime 提供 checkpoint create/list 和 rewind/fork action lineage 的 typed RPC。
+- Checkpoint 记录 Rule Snapshot、Repository Snapshot、Context Snapshot、Compaction Summary、Workspace identity、Git、permission、Model snapshot 和 reconciliation 状态引用。
+- Checkpoint action 以 append-only lineage 保存 source Run、target Run 和 action kind。完整 rewind/fork Context 重建和 Git Worktree 隔离仍属于限制，而不是已完成闭环。
+
+## Distribution
+
+- `pnpm build:runtime:mac` 可以构建 macOS arm64 的 self-contained Runtime Bundle。
+- Bundle 使用 managed CPython 3.12.13、锁定的 production dependencies、Runtime 资源和受管 Ripgrep。
+- Packaged Electron 使用 `Contents/Resources/runtime/`，不回退到系统 Python、PATH、`.venv` 或用户 `PYTHONHOME`。
+- `pnpm package:mac` 生成未签名的本地 arm64 DMG，并执行 packaged smoke。
+- `pnpm package:mac:release` 接入签名、hardened runtime、notarization、stapling 和 Gatekeeper 验证。Release 需要构建机提供 Apple credentials。
+
+## Diagnostics / Tests
+
+- Runtime stdout、stderr、JSON-RPC 行大小、未知 response id、非协议 stdout 和协议错误都有边界检查。
+- `pnpm test` 覆盖 Runtime、contracts、Renderer state、Main 和 Renderer behavior。
+- `pnpm check:python` 覆盖 Ruff、deptry、Runtime tests 和 Python dependency audit。
+- Seatbelt native、Electron startup/shutdown、bundled Runtime、packaged App 和 packaging config 都有独立测试入口。
+- Repository、Project Rules、Context、LoopGuard、response actions、schema migration、checkpoint、long task 和 MCP 都有 focused test files。
+
+## Implementation Anchors
+
+- `desktop/main/main.ts`
+- `desktop/main/preload.ts`
+- `desktop/renderer/src/components/ExecutionFeed.tsx`
+- `desktop/renderer/src/components/ContextIndicator.tsx`
+- `runtime/eidos_runtime/protocol/response_server.py`
+- `runtime/eidos_runtime/runtime/engine.py`
+- `runtime/eidos_runtime/runtime/loop_guard.py`
+- `runtime/eidos_runtime/context/`
+- `runtime/eidos_runtime/model/config.py`
+- `runtime/eidos_runtime/tools/`
+- `runtime/eidos_runtime/sandbox/`
+- `runtime/eidos_runtime/extensions/`
+- `runtime/eidos_runtime/repo_intelligence/`
+- `runtime/eidos_runtime/db/schema.py`
+- `runtime/eidos_runtime/persistence/`

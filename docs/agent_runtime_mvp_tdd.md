@@ -1,20 +1,5 @@
-# Eidos Agent Runtime MVP TDD
+# 历史 TDD 兼容入口
 
-版本：v0.4
+本文件只保留旧链接兼容用途。原 TDD 已归档到 [design-v0.4 TDD](archive/design-v0.4/tdd/README.md)。
 
-当前实现请先阅读 [当前架构](current-architecture.md)；第一期历史范围见 [MVP Lite 归档](archive/phases/mvp-lite.md)。
-
-TDD 已按实现边界拆分，请从 [TDD 索引](tdd/README.md) 开始阅读。
-
-主要文档：
-
-- [总体架构](tdd/01-architecture.md)
-- [Runtime、队列与状态机](tdd/02-runtime-state-machine.md)
-- [工具、审批与沙箱](tdd/03-tools-approval-sandbox.md)
-- [模型、上下文与流式输出](tdd/04-model-context-streaming.md)
-- [协议、事件与存储](tdd/05-api-events-storage.md)
-- [桌面端安全与生命周期](tdd/06-desktop-security-lifecycle.md)
-- [测试与里程碑](tdd/07-testing-and-milestones.md)
-- [Q1-Q180 设计决策](decisions.md)
-
-本文件只作为旧链接兼容入口，不再维护重复正文。
+当前行为请阅读 [当前架构](current-architecture.md)、[当前能力](current-capabilities.md)、[当前限制](current-limitations.md)、生产代码和自动化测试。

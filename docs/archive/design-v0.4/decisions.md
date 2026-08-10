@@ -3,7 +3,7 @@
 版本：v0.4
 范围：Grilling Q1-Q165；第三期实施与补充 Q166-Q185
 
-本文件记录产品与技术决策的演进背景，包含历史阶段结论和目标态约束。它不是当前实现清单；判断当前行为请以 [当前架构](current-architecture.md)、[当前能力](current-capabilities.md)、[当前限制](current-limitations.md)、代码和测试为准。PRD、TDD 与归档 Phase 文档同样不能替代当前实现依据。
+本文件记录产品与技术决策的演进背景，包含历史阶段结论和目标态约束。它不是当前实现清单；判断当前行为请以 [当前架构](../../current-architecture.md)、[当前能力](../../current-capabilities.md)、[当前限制](../../current-limitations.md)、代码和测试为准。PRD、TDD 与归档 Phase 文档同样不能替代当前实现依据。
 
 ## Phase E-F implementation notes
 

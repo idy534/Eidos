@@ -2,7 +2,7 @@
 
 版本：v0.4（探索草案）
 
-范围说明：本文描述目标态状态机草案。历史第一期基线见 [MVP Lite](../archive/phases/mvp-lite.md)；第二期记录见 [第二期清单](../archive/phases/mvp-phase-2.md)。当前实现以 `docs/current-*.md`、代码和测试为准。
+范围说明：本文描述目标态状态机草案。历史第一期基线见 [MVP Lite](../../phases/mvp-lite.md)；第二期记录见 [第二期清单](../../phases/mvp-phase-2.md)。当前实现以 `docs/current-*.md`、代码和测试为准。
 
 MVP Lite 历史基线包含 20 Step 上限；当前实现保留全局单活动 Run、串行模型/工具循环、Cancel、迟到审批和 worker 异常收敛，但已删除固定 Step 任务寿命。
 

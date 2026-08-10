@@ -2,7 +2,7 @@
 
 版本：v0.4（探索草案）
 
-范围说明：本文保留目标态安全要求。第一期历史安全底线见 [MVP Lite 归档](../archive/phases/mvp-lite.md)；当前实现以 `docs/current-*.md`、代码和测试为准。
+范围说明：本文保留目标态安全要求。第一期历史安全底线见 [MVP Lite 归档](../../phases/mvp-lite.md)；当前实现以 `docs/current-*.md`、代码和测试为准。
 
 ## 1. 安全承诺
 
