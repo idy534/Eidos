@@ -258,15 +258,16 @@
           <text class="svg-small" x="642" y="447">Extensions · Context · Checkpoints</text>
           <rect class="svg-panel" x="880" y="374" width="230" height="96" rx="11"></rect>
           <text class="svg-label" x="902" y="405">RunSupervisor</text>
-          <text class="svg-small" x="902" y="428">FIFO · execution slot</text>
-          <text class="svg-small" x="902" y="447">cancel · pause · approval · shutdown</text>
+          <text class="svg-small" x="902" y="428">FIFO · single execution slot</text>
+          <text class="svg-small" x="902" y="447">park approval wait · schedule next Run</text>
           <rect class="svg-panel" x="1140" y="374" width="230" height="96" rx="11"></rect>
           <text class="svg-label" x="1162" y="405">RuntimeEngine</text>
-          <text class="svg-small" x="1162" y="428">RuntimeAsyncKernel</text>
-          <text class="svg-small" x="1162" y="447">Run / Step coordination</text>
+          <text class="svg-small" x="1162" y="428">Run / Step coordination</text>
+          <text class="svg-small" x="1162" y="447">uses RuntimeAsyncKernel for async I/O</text>
           <path class="svg-arrow-soft" d="M 590 422 L 620 422"></path>
           <path class="svg-arrow-soft" d="M 850 422 L 880 422"></path>
           <path class="svg-arrow-soft" d="M 1110 422 L 1140 422"></path>
+          <text class="svg-small" x="58" y="486">RuntimeServer process also owns RuntimeAsyncKernel and TelemetryProvider · OpenTelemetry tracing defaults to exporter=none</text>
           <path class="svg-arrow" d="M 720 508 L 720 542"></path>
 
           <rect class="svg-panel" x="34" y="544" width="1372" height="202" rx="15"></rect>
@@ -305,27 +306,27 @@
 
           <rect class="svg-external" x="34" y="784" width="1372" height="108" rx="15"></rect>
           <text class="svg-title" x="58" y="814">Infrastructure / External</text>
-          <text class="svg-subtitle" x="58" y="835">process, network and sandbox trust boundaries</text>
+          <text class="svg-subtitle" x="58" y="835">process, network, sandbox and observability boundaries</text>
           <text class="svg-label" x="362" y="818">SQLite</text>
           <text class="svg-small" x="362" y="842">durable business facts · Event / Outbox</text>
           <text class="svg-label" x="620" y="818">Workspace · Git</text>
           <text class="svg-small" x="620" y="842">fd-relative paths · identity · diff evidence</text>
           <text class="svg-label" x="930" y="818">/usr/bin/sandbox-exec</text>
           <text class="svg-small" x="930" y="842">Seatbelt Policy · OS enforcement</text>
-          <text class="svg-label" x="1240" y="818">Remote Provider · MCP Server</text>
-          <text class="svg-small" x="1240" y="842">HTTP/SSE or stdio external process</text>
+          <text class="svg-label" x="1210" y="818">Provider · MCP · OTel backend</text>
+          <text class="svg-small" x="1210" y="842">HTTP/SSE · stdio · console/OTLP HTTP</text>
         </svg>
         <div class="legend" aria-label="图例">
           <span class="legend-item"><span class="legend-line"></span>Solid line = current default online path</span>
           <span class="legend-item"><span class="legend-line dashed"></span>Dashed line = implemented infrastructure but partial / not always default online path</span>
-          <span class="legend-item"><span class="legend-boundary"></span>External boundary = process / network / sandbox trust boundary</span>
+          <span class="legend-item"><span class="legend-boundary"></span>External boundary = process / network / sandbox / observability boundary</span>
         </div>
       </div>
     </section>
 
     <section aria-labelledby="run-title">
       <h2 id="run-title">One Run</h2>
-      <p class="section-intro">Runtime 以 SQLite 事实、immutable snapshots、受控 Tool 执行和语义进展推进一次 Run。</p>
+      <p class="section-intro">Runtime 以 SQLite 事实、immutable snapshots、受控 Tool 执行和语义进展推进一次 Run。多个非终态 Run 可以共存，但只有一个 Run 占用全局 Execution Slot；等待 Approval 的 Run 会释放 Slot。</p>
       <div class="diagram-card">
         <svg viewBox="0 0 1440 520" role="img" aria-labelledby="run-svg-title run-svg-desc">
           <title id="run-svg-title">One Run execution flow</title>
@@ -419,7 +420,7 @@
 
     <section aria-labelledby="authority-title">
       <h2 id="authority-title">State Authority</h2>
-      <p class="section-intro">SQLite 是 durable business fact authority。In-memory state 只服务于 Runtime coordination。</p>
+      <p class="section-intro">SQLite 是 durable business fact authority。In-memory state 和 OpenTelemetry 只服务于 Runtime coordination / observability。</p>
       <div class="authority-grid">
         <div class="authority-card authority-source">
           <div><strong>SQLite</strong><br><span>durable business fact authority</span></div>
@@ -449,7 +450,17 @@
         <div class="trust-card authority"><h3>Runtime</h3><p>Validation、Tool contract、lifecycle、policy 和 reconciliation authority。</p></div>
         <div class="trust-card proposal"><h3>Approval</h3><p>User authorization。Approval 不能改变 Tool 参数或移除 hard deny。</p></div>
         <div class="trust-card enforcement"><h3>Seatbelt</h3><p>OS enforcement。默认 Shell attempt 使用 Seatbelt Policy 和有效权限。</p></div>
-        <div class="trust-card authority"><h3>SQLite</h3><p>Durable fact authority。内存对象不能替代已提交的业务事实。</p></div>
+        <div class="trust-card authority"><h3>SQLite</h3><p>Durable fact authority。内存对象和 Trace 不能替代已提交的业务事实。</p></div>
+      </div>
+    </section>
+
+    <section aria-labelledby="observability-title">
+      <h2 id="observability-title">Observability</h2>
+      <p class="section-intro">OpenTelemetry 是非权威诊断层。默认 exporter 为 none；显式启用后可以写 console 或 OTLP HTTP。</p>
+      <div class="trust-grid">
+        <div class="trust-card presentation"><h3>eidos.run</h3><p>Run、Session、Model 与最终状态。Trace 不驱动 Run 状态迁移。</p></div>
+        <div class="trust-card proposal"><h3>eidos.model.attempt</h3><p>Provider、model、finish reason、TTFT、duration、retry 与 token usage。</p></div>
+        <div class="trust-card enforcement"><h3>eidos.tool.call</h3><p>Tool、Call ID、Tool status、Workspace changed 与异常状态。</p></div>
       </div>
     </section>
 

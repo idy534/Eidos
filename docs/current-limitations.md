@@ -18,7 +18,7 @@
 
 ## Run 并发与资源模型
 
-- Runtime 同一时间只运行一个活动 Run。当前没有 parallel Run 或 parallel Agent。
+- 多个非终态 Run 可以同时存在，但 Runtime 同一时间只有一个 Run 可以占用全局 Execution Slot。等待 Approval 的 Run 会释放 Slot，因此它可以和另一个正在执行的 Run 并存。当前没有多个 Run 同时占用执行槽的 parallel Run，也没有 parallel Agent。
 - 当前每个活动 Run 使用一个 Worker Thread。模型异步 I/O、MCP、Managed Task 和安全只读批次由唯一 RuntimeAsyncKernel 管理。当前没有把整个 RuntimeEngine/RunSupervisor 改成原生 async 的实现。
 - Workspace 写入、Shell、Eidos-state、MCP 和 external Tool 不支持并发执行。
 - 当前没有用户可配置的统一 Run 成本、模型步数或有效时长上限。现有 step、segment 和 effective time 字段主要用于 telemetry 和 operational lifecycle。
@@ -49,7 +49,7 @@
 
 - 默认 ContextCompactor 是 deterministic bounded extraction。当前没有 model-assisted compaction。
 - ContextCompactionVerifier、VerifiedCompaction persistence、ContextPlan 和 ContextSnapshot 已经存在，但兼容的默认 ContextCompactor 尚未自动切换到完整 verified compaction write path。
-- Context Usage Desktop 只展示当前选中 Model 对应的最近 Run。新 Run 在拿到首个 Provider Usage 或可用 projection 前会显示无数据。
+- Context Usage Desktop 只展示当前选中 Model 对应 Run 的有效 Context Usage。同一 Session、同一 Model 启动或切换到新 Run 时，如果新 Run 尚未产生 Usage，Renderer 会保留上一份可用 Usage，直到新快照到达；切换 Session/Model 或本来没有历史 Usage 时才显示无数据状态。
 - Provider 明确 `context_exceeded` 后，如果没有新的可压缩历史或 Context projection 没有进展，Runtime 会以 `context_still_over_budget` 停止。
 
 ## Extension 与 MCP
@@ -57,6 +57,12 @@
 - Plugin 当前只支持本地受管 Plugin v1。当前没有远程 Plugin marketplace、OAuth 安装或任意运行时动态 import 用户 Plugin 的能力。
 - MCP 当前只支持 stdio Tools。当前没有 Streamable HTTP、远程 MCP transport、OAuth、Resources、Prompts、Sampling 或 Tasks。
 - MCP ready connection 是长生命周期 Service，但 startup、Tool call、Tool list、cancel 和 shutdown 都有各自的有界等待。已经开始的 Tool List Changed bookkeeping callback 可能在关闭时需要等待完成。
+
+## Observability / OpenTelemetry
+
+- 当前 OpenTelemetry 集成只配置 Traces。Runtime 没有建立 OTel Metrics 或 Logs pipeline，也没有把 Trace 作为 SQLite 业务事实或恢复依据。
+- `OTEL_TRACES_EXPORTER` 默认是 `none`，因此默认不会把 Trace 导出到外部 Observability 后端。需要显式配置 `console` 或 `otlp` 才会导出。
+- 当前 Trace 主要覆盖 Run、Model Attempt 和 Tool Call。它不是完整的 Desktop 操作链、SQLite transaction、Repository Intelligence、Approval 或 Sandbox 内部阶段的全链路 tracing。
 
 ## Application 边界
 
@@ -79,5 +85,7 @@
 - `runtime/eidos_runtime/persistence/repository_intelligence.py`
 - `runtime/eidos_runtime/extensions/`
 - `runtime/eidos_runtime/sandbox/`
+- `runtime/eidos_runtime/telemetry/provider.py`
+- `runtime/eidos_runtime/telemetry/tracing.py`
 - `runtime/eidos_runtime/db/schema.py`
 - `runtime/eidos_runtime/db/database.py`

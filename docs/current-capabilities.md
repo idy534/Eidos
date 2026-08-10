@@ -16,7 +16,7 @@
 ## Session / Run
 
 - Runtime 可以创建、排队、执行、取消、暂停、恢复和查询 Run。
-- Run 使用持久 FIFO 和全局单 Execution Slot。
+- Run 使用持久 FIFO 和全局单 Execution Slot。多个非终态 Run 可以共存；等待 Approval 的 Run 会释放 Slot，让其他排队 Run 继续执行。
 - Run 状态、Item、Step、ToolCall、Approval 和终态写入 SQLite，并通过 Event/Outbox 投影到 Desktop。
 - 取消会传播到 Model、Tool、Shell、Approval 和 Async Task。已取消 Run 不会被迟到模型结果改成成功。
 - Model Step Count、Segment Step Count 和 effective time 可以作为持久 telemetry 读取。
@@ -26,6 +26,7 @@
 
 - ModelConfigStore 支持内置 Catalog 中的五个 Model：`deepseek-v4-pro`、`deepseek-v4-flash`、`MiniMax-M3`、`kimi-k3` 和 `kimi-k2.7-code-highspeed`。
 - Model 配置保存在 `models.json`。默认位置是 `~/.eidos/models.json`。本地文件使用 owner-only 权限。
+- API Key 通过本地 Model 配置写请求链路传到 Runtime：Renderer typed IPC → Electron Main → `model/create` / `model/update` JSON-RPC request → ModelConfigStore。Key 不进入模型列表/读取响应、SQLite、Event/Feed 或正常日志。
 - Runtime 使用 OpenAI-compatible Chat Completions 和 SSE 流。
 - Runtime 使用 Pydantic AI Model API 处理 Provider 构造、流式 Model Response、Usage 和 ToolCall 归一化。
 - 每个 Run 固化 Model Profile、Model capability declaration 和 Extension Snapshot。活动 Run 不会被后续 Model 配置编辑或删除改变。
@@ -146,13 +147,22 @@
 - `pnpm package:mac` 生成未签名的本地 arm64 DMG，并执行 packaged smoke。
 - `pnpm package:mac:release` 接入签名、hardened runtime、notarization、stapling 和 Gatekeeper 验证。Release 需要构建机提供 Apple credentials。
 
+## Observability / OpenTelemetry
+
+- Runtime 入口初始化进程级 OpenTelemetry Trace Provider。默认 `OTEL_TRACES_EXPORTER=none`，因此默认不会向外部后端导出 Trace。
+- 当前支持 `console` 和 OTLP HTTP Trace exporter。`OTEL_SDK_DISABLED` 可以关闭 SDK，`OTEL_SERVICE_NAME` 可以覆盖服务名，`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 可以配置 OTLP Trace endpoint。
+- Runtime 创建 `eidos.run`、`eidos.model.attempt` 和 `eidos.tool.call` Span。
+- Model Attempt Trace 可以记录 Provider、resolved model、finish reason、TTFT、duration、transport retry、input/output token 和 cache token usage。
+- Tool Trace 可以记录 Tool 名称、Call ID、终态、Workspace changed 和异常；Run Trace 可以记录 Run、Session、Model 和最终状态。
+- OpenTelemetry 只提供 Observability，不参与 SQLite 事实、Run 状态迁移、Approval 或 Reconciliation 决策。
+
 ## Diagnostics / Tests
 
 - Runtime stdout、stderr、JSON-RPC 行大小、未知 response id、非协议 stdout 和协议错误都有边界检查。
 - `pnpm test` 覆盖 Runtime、contracts、Renderer state、Main 和 Renderer behavior。
 - `pnpm check:python` 覆盖 Ruff、deptry、Runtime tests 和 Python dependency audit。
 - Seatbelt native、Electron startup/shutdown、bundled Runtime、packaged App 和 packaging config 都有独立测试入口。
-- Repository、Project Rules、Context、LoopGuard、response actions、schema migration、checkpoint、long task 和 MCP 都有 focused test files。
+- Repository、Project Rules、Context、LoopGuard、response actions、schema migration、checkpoint、long task、MCP 和 telemetry 都有 focused test files。
 
 ## Implementation Anchors
 
@@ -169,5 +179,7 @@
 - `runtime/eidos_runtime/sandbox/`
 - `runtime/eidos_runtime/extensions/`
 - `runtime/eidos_runtime/repo_intelligence/`
+- `runtime/eidos_runtime/telemetry/provider.py`
+- `runtime/eidos_runtime/telemetry/tracing.py`
 - `runtime/eidos_runtime/db/schema.py`
 - `runtime/eidos_runtime/persistence/`

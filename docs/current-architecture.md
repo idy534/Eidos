@@ -65,7 +65,7 @@ Response Action 使用同一条 typed IPC 边界。Main 把 `responseAction/stat
 
 ## 5. Run Orchestration
 
-RunSupervisor 负责持久 FIFO、全局 Execution Slot、Run Worker、Approval 等待、取消、暂停、恢复和关闭收敛。当前系统一次只运行一个活动 Run。Run Worker 可以在等待 Approval 或等待 Slot 时停放，Approval 等待不会把模型执行结果当作已完成事实。
+RunSupervisor 负责持久 FIFO、全局 Execution Slot、Run Worker、Approval 等待、取消、暂停、恢复和关闭收敛。多个非终态 Run 可以同时存在，但同一时刻只有一个 Run 占用 Execution Slot。等待 Approval 的 Run 会停放并释放 Execution Slot，Supervisor 可以继续调度下一个排队 Run；等待 Slot 的 Worker 也不会形成第二个执行权威。
 
 RunSupervisor 把同步 Durable Runtime Core 与进程级 `RuntimeAsyncKernel` 连接起来。RuntimeAsyncKernel 持有一个 AnyIO Blocking Portal。Model 异步 I/O、MCP Connection、Managed Task 和安全只读并行批次通过这个 Kernel 执行。Run Worker 仍是当前 Run 的同步控制边界。
 
@@ -115,7 +115,9 @@ Context Budget 优先使用最近 Provider Usage 的 active input tokens。Provi
 
 ## 7. Model Gateway
 
-ModelConfigStore 使用受保护的 `models.json` 保存本地配置。默认位置是 `~/.eidos/models.json`，显式数据目录会改变 Runtime-owned 数据位置。文件按 owner-only 权限保存，API Key 不进入公共 DTO、SQLite、事件和日志。
+ModelConfigStore 使用受保护的 `models.json` 保存本地配置。默认位置是 `~/.eidos/models.json`，显式数据目录会改变 Runtime-owned 数据位置。文件按 owner-only 权限保存。
+
+API Key 会经过本地模型配置写入链路：Renderer 通过 typed IPC 把配置交给 Electron Main，Main 再通过 `model/create` 或 `model/update` JSON-RPC request 把 `apiKey` 发送给 Runtime。Runtime 将 Key 写入受保护的 `models.json`。Key 不应出现在模型列表/读取响应、SQLite、Event/Execution Feed 或正常日志中。
 
 当前 Model Catalog 只包含以下 Provider 和 Model ID：
 
@@ -176,7 +178,23 @@ SQLite 是业务事实唯一权威。Session、Run、Item、ToolCall、Approval�
 
 In-memory 对象只保存当前协调状态、缓存、活跃资源引用和诊断信息。它不是 Session、Run、Tool 或 Event 的第二个事实来源。
 
-## 12. Extension Runtime
+## 12. Observability / OpenTelemetry
+
+Runtime 入口初始化进程级 `TelemetryProvider`。OpenTelemetry 是非权威 Observability 层，不参与 Run 状态迁移，也不替代 SQLite 业务事实。Telemetry 初始化、Span 写入、flush 或 shutdown 失败会被 Runtime 自身日志捕获，不应成为 Agent Loop 的状态来源。
+
+当前 Trace 覆盖三个主要执行边界：
+
+```text
+eidos.run
+  ├── eidos.model.attempt
+  └── eidos.tool.call
+```
+
+Run Span 记录 Run、Session、Model 和终态。Model Attempt Span 记录 Provider、resolved model、finish reason、TTFT、duration、transport retry 和 input/output/cache token usage。Tool Call Span 记录 Tool 名称、Call ID、Tool status、Workspace changed 和异常状态。
+
+`OTEL_TRACES_EXPORTER` 默认是 `none`。当前支持 `console` 和 `otlp`；console exporter 写 stderr，OTLP 使用 HTTP Trace exporter。`OTEL_SDK_DISABLED` 可以关闭 SDK，`OTEL_SERVICE_NAME` 可以覆盖默认的 `eidos-runtime`，`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 可以设置 OTLP Trace endpoint。
+
+## 13. Extension Runtime
 
 PluginCatalog 只接收受控的本地 Plugin v1 包。Runtime 校验 manifest、文件数量、单文件和总大小、content hash，并把安装内容写入私有 extensions 目录。Plugin 可以声明 Skill 和 MCP Server。Plugin 的启用状态、版本、hash 和引用关系进入 SQLite。
 
@@ -184,7 +202,7 @@ SkillCatalog 管理 bundled system skills、用户和 Plugin Skill。Turn 开始
 
 MCP 当前使用官方 Python MCP SDK 的 stdio client。MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。Server Tool 会进入统一 Tool Registry，保留 MCP provenance，并按 external Tool 经过 Approval、Sandbox、timeout、结果校验和 reconciliation。MCP 进程使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。
 
-## 13. Packaging & Distribution
+## 14. Packaging & Distribution
 
 源码开发使用仓库 `.venv/bin/python`，Runtime root 是仓库 `runtime/`。打包开发路径从 `process.resourcesPath/runtime/` 解析 bundled Python 和 `runtime/app`，不回退到系统 Python、PATH、`.venv` 或用户 `PYTHONHOME`。
 
@@ -192,7 +210,7 @@ MCP 当前使用官方 Python MCP SDK 的 stdio client。MCP Server 由 RuntimeA
 
 `package:mac` 生成未签名本地 DMG，并执行 packaged App、Runtime、SQLite、Seatbelt 和从 DMG 复制 App 的 smoke。`package:mac:release` 要求 Developer ID 和 Apple notarization credentials，随后执行 hardened runtime、签名、notarization、stapling、`codesign`、`spctl` 和 `stapler` 验证。
 
-## 14. Runtime Recovery
+## 15. Runtime Recovery
 
 Runtime 启动时会收敛未完成的 Run、ToolCall、Approval、Outbox 和资源状态。Cancellation 在 SQLite 中先记录 request，再通过 Run Worker、Model request、Tool process、Approval wait 和 Async Task 传播。迟到结果不能把已取消 Run 改回成功。
 
@@ -200,7 +218,7 @@ Long Task 控制事实写入 `operations` 的 `long_task/control` scope。`run/p
 
 Checkpoint create/list 和 rewind/fork action lineage 通过 typed RPC 暴露。Checkpoint 保存规则、Repository、Context、compaction、Workspace identity、Git、permission、Model snapshot 和 reconciliation 引用。当前这些接口提供持久 lineage，但完整 Context 重建、Git Worktree 隔离和所有 immutable snapshot 的兼容复制仍不是完整产品闭环。
 
-## 15. Implementation Anchors
+## 16. Implementation Anchors
 
 维护者核对本文时，优先从以下稳定入口读取代码：
 
@@ -210,6 +228,7 @@ Checkpoint create/list 和 rewind/fork action lineage 通过 typed RPC 暴露。
 - `desktop/main/preload.ts`
 - `desktop/shared/`
 - `runtime/eidos_runtime/protocol/server.py`
+- `runtime/eidos_runtime/protocol/response_server.py`
 - `runtime/eidos_runtime/protocol/registry.py`
 - `runtime/eidos_runtime/application/`
 - `runtime/eidos_runtime/runtime/supervisor.py`
@@ -220,6 +239,8 @@ Checkpoint create/list 和 rewind/fork action lineage 通过 typed RPC 暴露。
 - `runtime/eidos_runtime/sandbox/`
 - `runtime/eidos_runtime/extensions/`
 - `runtime/eidos_runtime/repo_intelligence/`
+- `runtime/eidos_runtime/telemetry/provider.py`
+- `runtime/eidos_runtime/telemetry/tracing.py`
 - `runtime/eidos_runtime/db/schema.py`
 - `runtime/eidos_runtime/db/storage.py`
 - `runtime/eidos_runtime/persistence/`
