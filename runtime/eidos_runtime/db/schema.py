@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 V9_SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -853,6 +853,14 @@ CREATE INDEX worktrees_project_ownership
 ON worktrees(project_id, ownership, state);
 """
 
+V16_SESSION_WORKTREE_SCHEMA_SQL = """
+ALTER TABLE sessions
+ADD COLUMN worktree_id TEXT REFERENCES worktrees(id) ON DELETE RESTRICT;
+
+CREATE INDEX sessions_worktree_id
+ON sessions(worktree_id);
+"""
+
 SCHEMA_SQL = (
     V12_BASE_SCHEMA_SQL
     + V10_REPOSITORY_SCHEMA_SQL
@@ -860,4 +868,5 @@ SCHEMA_SQL = (
     + V13_RESPONSE_ACTIONS_SCHEMA_SQL
     + V14_COMPACTION_QUALITY_SCHEMA_SQL
     + V15_WORKTREE_SCHEMA_SQL
+    + V16_SESSION_WORKTREE_SCHEMA_SQL
 )

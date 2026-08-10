@@ -55,6 +55,7 @@ from eidos_runtime.model.pydantic_ai_client import (
 )
 from eidos_runtime.model_gateway.gateway import ModelGateway
 from eidos_runtime.domain.long_task import LongTaskProgress
+from eidos_runtime.git.manager import WorktreeManager
 from eidos_runtime.protocol import methods as method_dtos
 from eidos_runtime.protocol.registry import (
     DeferredMethodResult,
@@ -415,6 +416,7 @@ class RuntimeServer:
         self.shell_available = False
         self.sensitive: SensitiveScanner | None = None
         self.plugins: PluginCatalog | None = None
+        self.worktree_manager: WorktreeManager | None = None
         self._applications: _RuntimeApplications | None = None
         self.supervisor = RunSupervisor(
             self.store,
@@ -806,11 +808,17 @@ class RuntimeServer:
         return self._applications
 
     def _build_applications(self) -> _RuntimeApplications:
+        if self.worktree_manager is None:
+            self.worktree_manager = WorktreeManager(self.store.database)
         task_lifecycle = TaskLifecycleApplication(
             _ServerTaskLifecycleRuntime(self.supervisor)
         )
         return _RuntimeApplications(
-            sessions=SessionApplication(self.store, scan_text=self._scan_text),
+            sessions=SessionApplication(
+                self.store,
+                scan_text=self._scan_text,
+                worktree_manager=self.worktree_manager,
+            ),
             runs=RunApplication(
                 store=self.store,
                 runtime=self.supervisor,

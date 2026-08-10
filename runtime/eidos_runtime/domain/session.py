@@ -19,6 +19,7 @@ class SessionTaskStatus(StrEnum):
 class Session(EidosFrozenStrictModel):
     id: str = Field(min_length=1)
     workspace_root: str = Field(min_length=1, max_length=4096)
+    worktree_id: str | None = Field(default=None, min_length=1)
     title: str | None = None
     task_status: SessionTaskStatus
     created_at: datetime

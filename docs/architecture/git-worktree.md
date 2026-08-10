@@ -1,6 +1,6 @@
 # Runtime Git Worktree Kernel
 
-本文描述当前 Runtime Git Worktree Kernel 的实现。本文不描述 Session binding、Desktop UI、Checkpoint Fork 或 Parallel Agent。
+本文描述当前 Runtime Git Worktree Kernel 和 Session binding 的实现。本文不描述 Desktop UI、Checkpoint Fork 或 Parallel Agent。
 
 ## Project
 
@@ -32,6 +32,16 @@ Runtime 决定 managed root。默认 root 是 Runtime data directory 的 sibling
 Managed root 不得和 Runtime data directory overlap。模型不能提供 managed absolute path。模型也不能调用 WorktreeManager。
 
 Runtime 生成 `eidos/<short-worktree-id>` branch 和 `managed_root/<worktree-id>` path。Runtime 在 `git worktree add` 前检查 branch collision。SQLite 的 `(project_id, branch)` unique constraint 负责最后一道保护。
+
+## Session binding
+
+新的 `session/create(workspaceRoot)` 把 `workspaceRoot` 作为 repository seed path。Runtime 先解析 canonical repository root，再创建一个 managed Worktree。`sessions.worktree_id` 只保存 Worktree 外键。`sessions.workspace_root` 继续保存 repository root，保持现有 Desktop wire contract 的兼容语义。
+
+已有 Session 的 `worktree_id` 可以是 NULL。Legacy Session 继续使用 `sessions.workspace_root` 作为执行 Workspace。Runtime 不在 migration 中执行 Git，也不为旧 Session 自动创建 Worktree。
+
+Session 创建的 application compensation 会在 Session persistence 失败时调用不带 `--force` 的 `WorktreeManager.delete`。Worktree dirty、branch ownership 或 Git observation 不满足安全条件时，Runtime 保留用户数据并写入 recovery-needed 日志。
+
+Run、Tool、Shell cwd、Project Rules 和 Repository Intelligence 通过统一 execution workspace resolver 选择 root。Managed Session 使用 `worktrees.worktree_root`，Legacy Session 使用 `sessions.workspace_root`。
 
 ## Lifecycle and compensation
 
@@ -100,8 +110,8 @@ Baseline diff 不使用当前 branch name。Diff 返回 scope、base commit、HE
 
 Runtime Git lifecycle、status 和 diff 通过可信 `GitProcess` 执行固定 argv。Git command 使用 `shell=False`、显式 cwd、有界 timeout、有界 stdout/stderr 和受控环境。
 
-Agent 的 Workspace root 仍然是 Session 当前的 `workspace_root`。本 PR 不把 repository root、git common dir 或 `.git/worktrees` 加入 Seatbelt writable roots。linked worktree 的 `.git` pointer file 仍由现有 Agent Sandbox 视为不可写。Runtime Git Service 不等于 Agent filesystem permission。
+Agent 的 Workspace root 对 Managed Session 是 Worktree root，对 Legacy Session 是 Session 的 `workspace_root`。本 PR 不把 repository root、git common dir 或 `.git/worktrees` 加入 Seatbelt writable roots。linked worktree 的 `.git` pointer file 仍由现有 Agent Sandbox 视为不可写。Runtime Git Service 不等于 Agent filesystem permission。
 
-## Later Session relation
+## Known incomplete lifecycle
 
-下一阶段可以把一个 managed Thread 绑定到一个 managed Worktree。该关系不是本 PR 的数据库字段，也不是当前 Session 创建语义。当前没有 `sessions.worktree_id`，没有 Session 自动 Worktree，没有 Desktop Project UI，也没有 Checkpoint Fork Worktree。
+Session delete 还没有完整的 dirty detection、active Run race 和 Worktree cleanup 闭环。Git worktree add 成功而 Session persistence 尚未提交的 restart crash window 还没有 durable provisioning recovery。当前也没有 Desktop Project UI、Checkpoint Fork Worktree 或 Parallel Agent。

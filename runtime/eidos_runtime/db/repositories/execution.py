@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 import sqlite3
 import uuid
 
@@ -18,6 +17,7 @@ from eidos_runtime.db.errors import (
     ResourceNotFoundError,
     StorageError,
 )
+from eidos_runtime.db.repositories.workspace import execution_workspace_for_run
 from eidos_runtime.db.events import append_event
 from eidos_runtime.db.mappers import (
     _bounded_canonical_json,
@@ -103,29 +103,7 @@ class ExecutionRepository(Repository):
 
     def workspace_for_run(self, run_id: str) -> WorkspaceIdentity:
         with self.lock:
-            row = self._connection().execute(
-                """
-                SELECT sessions.workspace_root, sessions.workspace_dev,
-                       sessions.workspace_inode, sessions.workspace_uid
-                FROM sessions
-                JOIN runs ON runs.session_id = sessions.id
-                WHERE runs.id = ?
-                """,
-                (run_id,),
-            ).fetchone()
-        if row is None:
-            raise ResourceNotFoundError("run not found")
-        if any(
-            row[field] is None
-            for field in ("workspace_dev", "workspace_inode", "workspace_uid")
-        ):
-            raise StorageError("workspace identity is unavailable")
-        return WorkspaceIdentity(
-            path=Path(row["workspace_root"]),
-            device=row["workspace_dev"],
-            inode=row["workspace_inode"],
-            owner=row["workspace_uid"],
-        )
+            return execution_workspace_for_run(self._connection(), run_id)
 
     def increment_model_step(
         self,

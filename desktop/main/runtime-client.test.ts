@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import {
   buildRuntimeEnvironment,
@@ -19,6 +21,46 @@ const toolResultsV1Fixture = path.join(projectRoot, "protocol", "fixtures", "too
 const extensionsV1Fixture = path.join(projectRoot, "protocol", "fixtures", "extensions-v1.json");
 const pythonExecutable = process.env.EIDOS_PYTHON
   ?? path.join(projectRoot, ".venv", "bin", "python");
+const execFileAsync = promisify(execFile);
+
+
+async function createGitRepository(prefix: string): Promise<string> {
+  const repository = await mkdtemp(path.join(os.tmpdir(), prefix));
+  await execFileAsync("git", ["init", "-q", "-b", "main"], { cwd: repository });
+  await execFileAsync("git", ["config", "user.email", "eidos-tests@example.com"], {
+    cwd: repository,
+  });
+  await execFileAsync("git", ["config", "user.name", "Eidos Tests"], {
+    cwd: repository,
+  });
+  await writeFile(path.join(repository, "README.md"), "# Fixture\n", "utf8");
+  await execFileAsync("git", ["add", "README.md"], { cwd: repository });
+  await execFileAsync("git", ["commit", "-qm", "initial"], { cwd: repository });
+  return repository;
+}
+
+
+async function managedWorktreeRoot(repository: string): Promise<string> {
+  const result = await execFileAsync("git", ["worktree", "list", "--porcelain"], {
+    cwd: repository,
+  });
+  const repositoryRoot = await realpath(repository);
+  const roots = result.stdout
+    .split("\n")
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice("worktree ".length));
+  const managed = await (async () => {
+    for (const root of roots) {
+      const canonicalRoot = await realpath(root);
+      if (canonicalRoot !== repositoryRoot) {
+        return canonicalRoot;
+      }
+    }
+    return undefined;
+  })();
+  assert.ok(managed, "session create did not create a managed worktree");
+  return managed;
+}
 
 
 test("shares canonical ToolResult vectors with the Python runtime", async () => {
@@ -141,7 +183,7 @@ test("spawns the Python runtime and completes initialize then shutdown", async (
 
 test("creates and reads a persisted session across runtime restarts", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
-  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-workspace-"));
+  const workspaceRoot = await createGitRepository("eidos-workspace-");
 
   try {
     const firstClient = new RuntimeClient({
@@ -171,6 +213,7 @@ test("creates and reads a persisted session across runtime restarts", async () =
     });
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
+    await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
   }
 });
@@ -235,8 +278,10 @@ test("imports and manages closed Plugin Skill and MCP records", async () => {
 
 test("lists only configured models and keeps task model history during session mutations", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
-  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-workspace-"));
+  const workspaceRoot = await createGitRepository("eidos-workspace-");
   await writeFile(path.join(workspaceRoot, "README.md"), "# Keep me\n", "utf8");
+  await execFileAsync("git", ["add", "README.md"], { cwd: workspaceRoot });
+  await execFileAsync("git", ["commit", "-qm", "fixture"], { cwd: workspaceRoot });
 
   try {
     let completeRun: ((notification: RuntimeNotification) => void) | undefined;
@@ -277,14 +322,14 @@ test("lists only configured models and keeps task model history during session m
     assert.equal(await readFile(path.join(workspaceRoot, "README.md"), "utf8"), "# Keep me\n");
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
+    await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
   }
 });
 
 test("routes runtime notifications during a fake model read loop", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
-  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-workspace-"));
-  await writeFile(path.join(workspaceRoot, "README.md"), "# Fixture\n", "utf8");
+  const workspaceRoot = await createGitRepository("eidos-workspace-");
   const notifications: RuntimeNotification[] = [];
 
   try {
@@ -348,13 +393,14 @@ test("routes runtime notifications during a fake model read loop", async () => {
     );
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
+    await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
   }
 });
 
 test("routes a runtime approval request and commits only after approval", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
-  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-workspace-"));
+  const workspaceRoot = await createGitRepository("eidos-workspace-");
   const approvals: string[] = [];
   const approvalNotifications: string[] = [];
 
@@ -387,13 +433,16 @@ test("routes a runtime approval request and commits only after approval", async 
 
     await client.initialize();
     const session = await client.createSession(workspaceRoot);
+    const executionRoot = await managedWorktreeRoot(workspaceRoot);
+    assert.notEqual(executionRoot, path.resolve(workspaceRoot));
     await client.startRun(session.id, "Create approved.txt", "deepseek-v4-flash");
     const completed = await withTimeout(runCompleted, 5_000);
     await client.shutdown();
     assert.equal(await client.waitForExit(), 0);
 
     assert.equal(completed.method, "run/completed");
-    assert.equal(await readFile(path.join(workspaceRoot, "approved.txt"), "utf8"), "approved\n");
+    assert.equal(await readFile(path.join(executionRoot, "approved.txt"), "utf8"), "approved\n");
+    await assert.rejects(readFile(path.join(workspaceRoot, "approved.txt"), "utf8"));
     assert.equal(approvals.length, 1);
     assert.deepEqual(
       approvalNotifications,
@@ -402,13 +451,14 @@ test("routes a runtime approval request and commits only after approval", async 
     assert.match(approvals[0] ?? "", /\+\+\+ b\/approved\.txt/);
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
+    await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
   }
 });
 
 test("cancel while awaiting approval ignores a late approve response", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
-  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-workspace-"));
+  const workspaceRoot = await createGitRepository("eidos-workspace-");
 
   try {
     let resolveApproval: ((decision: { decision: "approve" }) => void) | undefined;
@@ -441,6 +491,7 @@ test("cancel while awaiting approval ignores a late approve response", async () 
 
     await client.initialize();
     const session = await client.createSession(workspaceRoot);
+    const executionRoot = await managedWorktreeRoot(workspaceRoot);
     const run = await client.startRun(session.id, "Create approved.txt", "deepseek-v4-flash");
     await withTimeout(approvalRequested, 5_000);
     await client.cancelRun(run.id);
@@ -454,9 +505,11 @@ test("cancel while awaiting approval ignores a late approve response", async () 
     assert.equal(completed.method, "run/completed");
     assert.equal(completed.params.run.status, "canceled");
     assert.equal(snapshot.runs[0]?.status, "canceled");
+    await assert.rejects(readFile(path.join(executionRoot, "approved.txt"), "utf8"));
     await assert.rejects(readFile(path.join(workspaceRoot, "approved.txt"), "utf8"));
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
+    await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
   }
 });
@@ -514,7 +567,7 @@ test("degraded Shell capability rejects execution without approval or workspace 
 
 test("routes shell approval and streams sandboxed command completion", async (context) => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
-  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-workspace-"));
+  const workspaceRoot = await createGitRepository("eidos-workspace-");
   const approvals: string[] = [];
   let client: RuntimeClient | undefined;
 
@@ -563,6 +616,7 @@ test("routes shell approval and streams sandboxed command completion", async (co
   } finally {
     client?.terminate();
     await rm(dataDirectory, { recursive: true, force: true });
+    await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
   }
 });

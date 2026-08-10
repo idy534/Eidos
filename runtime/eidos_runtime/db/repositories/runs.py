@@ -42,6 +42,7 @@ from eidos_runtime.runtime.resolution import (
     canonical_json,
     create_run_resolution_snapshot,
 )
+from eidos_runtime.db.repositories.workspace import execution_workspace_for_session
 
 EMPTY_EXTENSION_SNAPSHOT = {
     "schemaVersion": 1,
@@ -108,8 +109,7 @@ class RunRepository(Repository):
         ) -> dict[str, object]:
             session = connection.execute(
                 """
-                SELECT id, workspace_root, workspace_dev, workspace_inode,
-                       workspace_uid, title
+                SELECT id, workspace_root, title
                 FROM sessions WHERE id = ?
                 """,
                 (session_id,),
@@ -118,6 +118,9 @@ class RunRepository(Repository):
                 raise ResourceNotFoundError("session not found")
             if self._workspace_overlaps_data(Path(session["workspace_root"])):
                 raise WorkspaceBoundaryError("workspace overlaps runtime data")
+            execution_workspace = execution_workspace_for_session(
+                connection, session_id
+            )
             if session["title"] is None and session_title is not None:
                 connection.execute(
                     "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
@@ -158,10 +161,10 @@ class RunRepository(Repository):
                 model_profile=profile,
                 extension_snapshot=json.loads(extension_snapshot_json),
                 workspace_identity=WorkspaceIdentitySnapshot(
-                    path=session["workspace_root"],
-                    device=session["workspace_dev"],
-                    inode=session["workspace_inode"],
-                    owner=session["workspace_uid"],
+                    path=str(execution_workspace.path),
+                    device=execution_workspace.device,
+                    inode=execution_workspace.inode,
+                    owner=execution_workspace.owner,
                 ),
                 data_directory=self.database.data_directory,
                 created_at=now,

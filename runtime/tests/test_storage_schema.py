@@ -67,7 +67,9 @@ EXPECTED_TABLES = {
 }
 
 EXPECTED_COLUMNS = {
-    "sessions": {"workspace_dev", "workspace_inode", "workspace_uid"},
+    "sessions": {
+        "workspace_dev", "workspace_inode", "workspace_uid", "worktree_id"
+    },
     "compact_summaries": {"summary_metadata_json"},
     "items": {"incomplete"},
     "runs": {
@@ -243,6 +245,7 @@ class StorageSchemaTests(unittest.TestCase):
                 "run_revisions_source",
                 "worktrees_project_state",
                 "worktrees_project_ownership",
+                "sessions_worktree_id",
             },
         )
         for table, expected in EXPECTED_COLUMNS.items():
@@ -251,6 +254,15 @@ class StorageSchemaTests(unittest.TestCase):
                 for row in connection.execute(f"PRAGMA table_info({table})")
             }
             self.assertTrue(expected <= columns, (table, expected - columns))
+        session_worktree_fk = [
+            row
+            for row in connection.execute("PRAGMA foreign_key_list(sessions)")
+            if row[3] == "worktree_id"
+        ]
+        self.assertEqual(len(session_worktree_fk), 1)
+        self.assertEqual(tuple(session_worktree_fk[0][2:7]), (
+            "worktrees", "worktree_id", "id", "NO ACTION", "RESTRICT"
+        ))
         self.assertEqual(
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,

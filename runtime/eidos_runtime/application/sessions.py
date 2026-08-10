@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
+from pathlib import Path
 import unicodedata
 from typing import Protocol, TypeVar
 
@@ -17,8 +19,13 @@ from eidos_runtime.db.errors import (
     OperationInProgressError,
     ResourceNotFoundError,
     SessionActiveError,
+    StorageError,
     WorkspaceBoundaryError,
 )
+from eidos_runtime.domain.project import Project
+from eidos_runtime.domain.worktree import Worktree
+from eidos_runtime.git.errors import WorktreeError
+from eidos_runtime.git.models import GitRepositoryDiscovery
 from eidos_runtime.protocol.methods import (
     EventListRequestDto,
     EventListResponseDto,
@@ -54,7 +61,11 @@ class TypedSessionRepositoryPort(Protocol):
     """Typed Session reads/writes consumed by the application layer."""
 
     def create_session(
-        self, workspace_root: str, *, operation_id: str | None = None
+        self,
+        workspace_root: str,
+        *,
+        worktree_id: str | None = None,
+        operation_id: str | None = None,
     ) -> CommittedMutation[Session]: ...
 
     def list_sessions(
@@ -98,6 +109,22 @@ class SessionStorePort(Protocol):
         self, session_id: str, *, after_event_id: int, limit: int
     ) -> dict[str, object]: ...
 
+    def operation_result(
+        self, operation_id: str, scope: str, request: dict[str, object]
+    ) -> object | None: ...
+
+
+class ManagedWorktreePort(Protocol):
+    """Application port for Session-owned Worktree provisioning."""
+
+    def discover(self, repository_seed: Path | str) -> GitRepositoryDiscovery: ...
+
+    def create(self, repository_root: Path | str) -> Worktree: ...
+
+    def project(self, project_id: str) -> Project: ...
+
+    def delete(self, worktree_id: str) -> Worktree: ...
+
 
 def clean_session_title(value: str) -> str:
     """Apply the established title canonicalization before durable storage."""
@@ -126,14 +153,19 @@ class SessionApplication:
         store: SessionStorePort,
         *,
         scan_text: Callable[[str], str],
+        worktree_manager: ManagedWorktreePort | None = None,
     ) -> None:
         self._store = store
         self._repository: TypedSessionRepositoryPort = (
             store.typed_runtime_repository()
         )
         self._scan_text = scan_text
+        self._worktree_manager = worktree_manager
+        self._logger = logging.getLogger(__name__)
 
     def create(self, request: SessionCreateRequestDto) -> SessionCreateResponseDto:
+        if self._worktree_manager is not None:
+            return self._create_managed(request)
         try:
             mutation = self._repository.create_session(
                 request.workspace_root,
@@ -148,6 +180,93 @@ class SessionApplication:
         except OperationInProgressError as error:
             raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
         return _result(SessionCreateResponseDto, session_to_legacy_dict(mutation.value))
+
+    def _create_managed(
+        self, request: SessionCreateRequestDto
+    ) -> SessionCreateResponseDto:
+        manager = self._worktree_manager
+        assert manager is not None
+        try:
+            seed = Path(request.workspace_root)
+            if seed.is_symlink():
+                raise WorkspaceBoundaryError("workspace root is a symlink")
+            discovery = manager.discover(seed)
+        except WorkspaceBoundaryError as error:
+            raise ApplicationError(
+                "WORKSPACE_BOUNDARY_VIOLATION", str(error)
+            ) from error
+        except WorktreeError as error:
+            raise ApplicationError(_worktree_error_code(error), str(error)) from error
+
+        operation_request = {"workspaceRoot": discovery.repository_root}
+        if request.operation_id is not None:
+            try:
+                replay = self._store.operation_result(
+                    request.operation_id, "session/create", operation_request
+                )
+            except OperationConflictError as error:
+                raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+            except OperationInProgressError as error:
+                raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
+            if replay is not None:
+                return _result(
+                    SessionCreateResponseDto,
+                    _wire_session_operation_result(replay),
+                )
+
+        try:
+            worktree = manager.create(discovery.repository_root)
+            project = manager.project(worktree.project_id)
+            mutation = self._repository.create_session(
+                project.repository_root,
+                worktree_id=worktree.id,
+                operation_id=request.operation_id,
+            )
+            if mutation.value.worktree_id != worktree.id:
+                self._compensate_managed_worktree(manager, worktree)
+        except WorktreeError as error:
+            if "worktree" in locals():
+                self._compensate_managed_worktree(manager, worktree)
+            raise ApplicationError(_worktree_error_code(error), str(error)) from error
+        except OperationConflictError as error:
+            if "worktree" in locals():
+                self._compensate_managed_worktree(manager, worktree)
+            raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+        except OperationInProgressError as error:
+            if "worktree" in locals():
+                self._compensate_managed_worktree(manager, worktree)
+            raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
+        except Exception as error:
+            if "worktree" in locals():
+                self._compensate_managed_worktree(manager, worktree)
+            if isinstance(error, WorkspaceBoundaryError):
+                raise ApplicationError(
+                    "WORKSPACE_BOUNDARY_VIOLATION", str(error)
+                ) from error
+            if isinstance(error, ResourceNotFoundError):
+                raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
+            if isinstance(error, StorageError):
+                raise ApplicationError(
+                    "SESSION_PERSISTENCE_FAILED", str(error)
+                ) from error
+            raise
+        return _result(SessionCreateResponseDto, session_to_legacy_dict(mutation.value))
+
+    def _compensate_managed_worktree(
+        self, manager: ManagedWorktreePort, worktree: Worktree
+    ) -> None:
+        try:
+            manager.delete(worktree.id)
+        except Exception as error:
+            self._logger.error(
+                "session create worktree compensation needs recovery",
+                extra={
+                    "worktree_id": worktree.id,
+                    "operation": "session/create",
+                    "result": "recovery-needed",
+                    "error": str(error),
+                },
+            )
 
     def list(self, request: SessionListRequestDto) -> SessionListResponseDto:
         try:
@@ -242,7 +361,23 @@ def _result(result_type: type[ResultT], value: object) -> ResultT:
 __all__ = [
     "MAX_SESSION_TITLE_BYTES",
     "SessionApplication",
+    "ManagedWorktreePort",
     "SessionStorePort",
     "TypedSessionRepositoryPort",
     "clean_session_title",
 ]
+
+
+def _wire_session_operation_result(value: object) -> object:
+    if not isinstance(value, dict):
+        return value
+    return {key: item for key, item in value.items() if key != "worktreeId"}
+
+
+def _worktree_error_code(error: WorktreeError) -> str:
+    return {
+        "repository_not_found": "REPOSITORY_NOT_FOUND",
+        "not_a_git_repository": "NOT_A_GIT_REPOSITORY",
+        "git_command_timeout": "GIT_COMMAND_TIMEOUT",
+        "worktree_persistence_failed": "WORKTREE_PERSISTENCE_FAILED",
+    }.get(error.code, "WORKTREE_CREATE_FAILED")

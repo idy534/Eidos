@@ -711,7 +711,7 @@ def test_recovery_reports_replaced_worktree_repository_as_invalid(
 
 
 def test_schema_is_current_and_has_project_worktree_tables(database: Database) -> None:
-    assert SCHEMA_VERSION == 15
+    assert SCHEMA_VERSION == 16
     tables = {
         row[0]
         for row in database.connection().execute(
@@ -719,5 +719,9 @@ def test_schema_is_current_and_has_project_worktree_tables(database: Database) -
         )
     }
     assert {"projects", "worktrees"} <= tables
+    session_columns = {
+        row[1] for row in database.connection().execute("PRAGMA table_info(sessions)")
+    }
+    assert "worktree_id" in session_columns
     assert database.connection().execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     assert database.connection().execute("PRAGMA foreign_key_check").fetchall() == []
