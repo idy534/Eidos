@@ -47,6 +47,10 @@ from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeStat
 from eidos_runtime.runtime.step_context import StepContextFactory
 from eidos_runtime.runtime.tool_runtime import ToolCallRuntime
 from eidos_runtime.runtime.tool_execution import ToolInfrastructureError
+from eidos_runtime.telemetry.tracing import (
+    finish_run,
+    run_span,
+)
 from eidos_runtime.sandbox.sensitive import (
     SensitiveScanError,
     SensitiveScanner,
@@ -108,6 +112,28 @@ class RuntimeEngine:
 
     def run(self, run_id: str, cancel: threading.Event) -> None:
         run = self.store.read_run(run_id)
+        with run_span(
+            run_id,
+            str(run["modelId"]),
+            run.get("sessionId") if isinstance(run.get("sessionId"), str) else None,
+        ) as span:
+            try:
+                self._run(run_id, cancel, run)
+            finally:
+                try:
+                    finish_run(span, self.store.read_run(run_id).get("status"))
+                except Exception:
+                    logger.debug(
+                        "Could not read final run status for telemetry",
+                        exc_info=True,
+                    )
+
+    def _run(
+        self,
+        run_id: str,
+        cancel: threading.Event,
+        run: dict[str, object],
+    ) -> None:
         self._emit_started(run_id, run)
         extension_snapshot = run.get("extensionSnapshot")
         if not isinstance(extension_snapshot, dict):

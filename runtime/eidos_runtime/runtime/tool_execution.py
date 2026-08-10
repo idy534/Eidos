@@ -38,6 +38,11 @@ from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatch
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
 from eidos_runtime.tools.contracts import GENERIC_PROJECTOR
 from eidos_runtime.tools.registry import ToolConcurrencyPolicy
+from eidos_runtime.telemetry.tracing import (
+    finish_tool_call,
+    record_current_exception,
+    tool_call_span,
+)
 
 
 logger = logging.getLogger("eidos.runtime")
@@ -324,6 +329,32 @@ class ToolExecutionController:
         cancel: threading.Event,
         deadline: float | None,
     ) -> HandlerOutcome:
+        tool_call = item.get("toolCall")
+        call_id = call.provider_call_id
+        if isinstance(tool_call, dict) and isinstance(tool_call.get("id"), str):
+            call_id = tool_call["id"]
+        with tool_call_span(run_id, call.name, call_id) as span:
+            outcome = self._execute(
+                run_id=run_id,
+                item=item,
+                call=call,
+                plan=plan,
+                cancel=cancel,
+                deadline=deadline,
+            )
+            finish_tool_call(span, outcome)
+            return outcome
+
+    def _execute(
+        self,
+        *,
+        run_id: str,
+        item: dict[str, object],
+        call: ModelToolCall,
+        plan: ToolDispatchPlan,
+        cancel: threading.Event,
+        deadline: float | None,
+    ) -> HandlerOutcome:
         started = self.monotonic()
         effective_deadline = min(
             deadline if deadline is not None else float("inf"),
@@ -438,6 +469,7 @@ class ToolExecutionController:
                             "TOOL_INFRASTRUCTURE_FAILURE"
                         ) from error
                     except Exception as error:
+                        record_current_exception(error)
                         logger.exception("Tool execution failed")
                         contract_violation = (
                             "tool execution contract violation" in str(error)

@@ -15,6 +15,10 @@ from eidos_runtime.runtime.contracts import SamplingOutcome, StepContext
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.model_runner import ModelRunner, ModelStreamInterrupted
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
+from eidos_runtime.telemetry.tracing import (
+    finish_model_attempt,
+    model_attempt_span,
+)
 
 
 class SamplingError(RuntimeError):
@@ -78,6 +82,14 @@ class SamplingRuntime:
         self.events = events
 
     def sample(
+        self, step: StepContext, cancel: threading.Event
+    ) -> SamplingOutcome:
+        with model_attempt_span(step.run_id, step.step_id, step.model_id) as span:
+            outcome = self._sample(step, cancel)
+            finish_model_attempt(span, outcome)
+            return outcome
+
+    def _sample(
         self, step: StepContext, cancel: threading.Event
     ) -> SamplingOutcome:
         provisional_text: list[str] = []
