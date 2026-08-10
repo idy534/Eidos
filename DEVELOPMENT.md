@@ -80,7 +80,7 @@ pnpm build
 当前关键行为可以先运行 focused tests：
 
 ```bash
-uv run --locked pytest runtime/tests -k "schema or migration or instruction or context or response or loop or checkpoint or long_task or repository or mcp"
+uv run --locked pytest runtime/tests -k "schema or migration or instruction or context or response or loop or checkpoint or long_task or repository or mcp or telemetry"
 node --test scripts/packaging-config.test.mjs scripts/package-macos.test.mjs
 ```
 
@@ -151,7 +151,9 @@ Release 模式拒绝 `EIDOS_PACKAGE_SKIP_TESTS=1`。本地模式只有在维护�
 
 `EIDOS_DATA_DIR` 可以把 SQLite、Runtime lock、reserve file、Extension 数据和其他 Runtime-owned 数据放到独立目录。目录应当是明确的私有临时目录，不要把 Workspace 根目录作为数据目录。
 
-ModelConfigStore 默认使用 `~/.eidos/models.json`。显式数据目录由 Runtime 传给 ModelConfigStore 时，模型配置会跟随该 Runtime-owned 数据位置。模型配置文件保持 owner-only 权限。API Key 不会进入 SQLite、JSON-RPC public DTO、Feed 或日志。
+ModelConfigStore 默认使用 `~/.eidos/models.json`。显式数据目录由 Runtime 传给 ModelConfigStore 时，模型配置会跟随该 Runtime-owned 数据位置。模型配置文件保持 owner-only 权限。
+
+API Key 会经过本地模型配置写入链路：Renderer typed IPC → Electron Main → `model/create` / `model/update` JSON-RPC request → Runtime。Runtime 最终把 Key 写入受保护的 `models.json`。Key 不应进入模型列表/读取响应、SQLite、Event/Execution Feed 或正常日志。
 
 ## 10. Diagnostics
 
@@ -167,7 +169,34 @@ Runtime 初始化失败时，先检查启动终端中的 stderr 日志和 `runti
 - Release packaging 错误：检查 signing、notarization、stapling credentials。脚本不会用 unsigned artifact 冒充 Release；
 - 非协议 stdout：RuntimeClient 会终止违反 JSON-RPC stdout 契约的 Runtime，并在 Main 侧报告协议失败。
 
-## Shell manual test
+## 11. OpenTelemetry tracing
+
+Runtime 默认初始化 OpenTelemetry SDK，但 `OTEL_TRACES_EXPORTER` 默认值是 `none`，所以默认不会导出 Trace。
+
+在开发环境把 Trace 打到 Runtime stderr：
+
+```bash
+OTEL_TRACES_EXPORTER=console pnpm start
+```
+
+发送到 OTLP HTTP Trace endpoint：
+
+```bash
+OTEL_TRACES_EXPORTER=otlp \
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces \
+pnpm start
+```
+
+可用环境变量：
+
+- `OTEL_SDK_DISABLED=1`：关闭 OpenTelemetry SDK；
+- `OTEL_SERVICE_NAME=<name>`：覆盖默认 `eidos-runtime` 服务名；
+- `OTEL_TRACES_EXPORTER=none|console|otlp`：选择 Trace exporter；
+- `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=<url>`：设置 OTLP HTTP Trace endpoint。
+
+当前 Trace 主要覆盖 `eidos.run`、`eidos.model.attempt` 和 `eidos.tool.call`。它用于诊断，不是 SQLite 业务事实来源，也不改变 Run、Approval、Tool 或 Reconciliation 行为。
+
+## 12. Shell manual test
 
 Shell 手工验收应使用可丢弃的 Workspace。当前 Shell 流程如下：
 
