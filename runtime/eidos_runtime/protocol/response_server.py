@@ -28,6 +28,7 @@ from eidos_runtime.protocol.server import (
     read_bounded_line,
     valid_request_id,
 )
+from eidos_runtime.telemetry.provider import initialize_telemetry
 
 
 logger = logging.getLogger("eidos.runtime")
@@ -113,12 +114,14 @@ def run() -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    server = ResponseActionRuntimeServer(
-        sys.stdout,
-        model=_model_from_environment(),
-    )
+    telemetry = initialize_telemetry()
+    server: ResponseActionRuntimeServer | None = None
 
     try:
+        server = ResponseActionRuntimeServer(
+            sys.stdout,
+            model=_model_from_environment(),
+        )
         while not server.shutting_down:
             raw_line, too_large = read_bounded_line(sys.stdin.buffer)
             if too_large:
@@ -141,7 +144,12 @@ def run() -> int:
                 if valid_request_id(request_id):
                     server.send(business_error(request_id, "INTERNAL_ERROR"))
     finally:
-        server.close()
+        try:
+            if server is not None:
+                server.close()
+        finally:
+            telemetry.force_flush()
+            telemetry.shutdown()
 
     return 0
 
