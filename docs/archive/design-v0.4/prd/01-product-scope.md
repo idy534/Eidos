@@ -2,9 +2,9 @@
 
 版本：v0.4（探索草案）
 
-范围说明：本文描述目标态候选方向。第一期历史交付范围见 [MVP Lite 归档](../archive/phases/mvp-lite.md)；当前实现以 `docs/current-*.md`、代码和测试为准。
+范围说明：本文描述目标态候选方向。第一期历史交付范围见 [MVP Lite 归档](../../phases/mvp-lite.md)；当前实现以 `docs/current-*.md`、代码和测试为准。
 
-第二期与第三期历史范围分别见 [第二期实施范围清单](../archive/phases/mvp-phase-2.md) 和 [第三期实施范围清单](../archive/phases/mvp-phase-3.md)。这些记录不代表当前实现依据。
+第二期与第三期历史范围分别见 [第二期实施范围清单](../../phases/mvp-phase-2.md) 和 [第三期实施范围清单](../../phases/mvp-phase-3.md)。这些记录不代表当前实现依据。
 
 ## 1. 产品定位
 

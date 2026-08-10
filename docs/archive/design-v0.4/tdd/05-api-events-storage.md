@@ -50,7 +50,7 @@ Wire 字段统一使用 `lowerCamelCase`，状态和错误枚举继续使用稳�
 | Runtime → Main | `item/requestApproval` | 双向 RPC 审批；Main response 只能 approve/reject，不修改参数 |
 | Runtime → Main | `event/committed` notification | 投影一个已提交的 Event envelope；Main 按 eventId 去重和续接 |
 
-`publish_artifact` 是目标态 Agent Tool，不是 Renderer 创建 Artifact 的 method。MVP Lite v1 的历史 `run/*`、`item/*` 生命周期 notifications 见 [MVP Lite 归档](../archive/phases/mvp-lite.md)；目标态 `event/committed` 必须通过显式 protocol version 迁移，不能在同一版本同时发送两套等价事件，也不能用另一套 HTTP 命名重建相同能力。
+`publish_artifact` 是目标态 Agent Tool，不是 Renderer 创建 Artifact 的 method。MVP Lite v1 的历史 `run/*`、`item/*` 生命周期 notifications 见 [MVP Lite 归档](../../phases/mvp-lite.md)；目标态 `event/committed` 必须通过显式 protocol version 迁移，不能在同一版本同时发送两套等价事件，也不能用另一套 HTTP 命名重建相同能力。
 
 Session list/read DTO 增加可选 `title` 与必填 `taskStatus=new|in_progress|completed|failed|canceled`。Renderer 只按 canonical `workspaceRoot` 分组，不从标题或目录 basename 推断 Workspace 身份；每组以最早保留 Session 的 `createdAt` 作为项目创建时间倒序排列，组内 Session 按 `createdAt` 倒序。Runtime 按 Session 全部 Run 投影 `taskStatus`：存在任一 `queued|running|waiting_approval|finalizing` Run 时为 `in_progress`；否则按最新 Run 将 `succeeded` 映射为 `completed`，`failed|stopped|interrupted` 映射为 `failed`，`canceled` 映射为 `canceled`；无 Run 为 `new`。完成是否已读是 Renderer 展示状态，不改变 Runtime `taskStatus`；Renderer 记录已查看的完成 Session，新的活动 Run 会清除该展示记录。
 

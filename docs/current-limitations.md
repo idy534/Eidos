@@ -1,69 +1,83 @@
 # Eidos 当前限制
 
-本文只描述当前代码边界，不列未来路线图。
+本文只回答“当前 main 还不能做什么，或者哪些能力还没有形成完整闭环”。本文不记录已经解决的问题，也不记录历史 Phase。
 
-- 仅支持 macOS Desktop。Shell 隔离依赖可用的原生 `/usr/bin/sandbox-exec` 与随包策略资源；Self-Test 失败时 Shell 能力 fail-closed。
-- Shell 的 Workspace 变化证据在首次运行或仓库扫描超时/发现不安全条目时可能为 `unknown`；Shell 启动不依赖全仓内容预扫描，已启动进程不会把不完整 before manifest 的全部条目伪装成 created。已知成功退出不会仅因 observation incomplete 进入 reconciliation；Shell execution 或 Runtime 明确报告的 uncertainty 仍会保留 `reconciliationRequired`。Seatbelt、Workspace identity/cwd、Approval、fd-relative 文件边界、输出敏感扫描和 post-execution reconciliation 仍然生效。
-- 模型 Provider 限定为内置 DeepSeek、MiniMax、Kimi 目录，wire API 固定为 OpenAI-compatible Chat Completions；不支持自定义 Provider、URL、Responses API、连接测试或能力探测。
-- 全局同一时间只执行一个 Run。单个模型响应内只有安全只读工具可并发；Workspace 写入、Shell、Eidos-state 和 MCP/外部工具不得并发。
-- Eidos 1.0 不追求零线程架构：Durable Runtime core 与 SQLite 仍保持同步，每个活跃 Run 一个 Worker Thread 是刻意的隔离边界。异步网络 I/O、MCP、Managed Task 和并行只读 Batch 统一由唯一进程级 AnyIO Kernel 管理；blocking callback 不得在 Kernel Event Loop 上运行。
-- 原生 async `RuntimeEngine`/`RunSupervisor` 不是 Eidos 1.0 路线图。只有 Run-thread scalability 成为实测瓶颈、并行 Agent 数超过有界线程模型、SQLite 被替换为 async persistence boundary，或 profiling 证明显著 Event Loop/线程竞争时，才重新评估该转换。
-- 内置文件工具只处理当前 Workspace 内受支持的普通 UTF-8 文件；没有通用二进制编辑、内嵌 Terminal、浏览器自动化或 Artifact 发布工具。
-- Repository discovery 目前只读取 Workspace 根目录的 `.gitignore` 和 `.eidosignore`；
-  不支持嵌套 `.gitignore`。这些规则只控制 `list_files` / `search_text` 的普通展示，
-  不是文件权限，也不会缩小安全扫描或副作用证据范围。
-- `search_text` 的 `includeGlobs` 只提供 bounded positive file globs，尚未提供分页、
-  AST/LSP 或 Repo Intelligence；regex 仍使用同一受管 Ripgrep 后端和 ASCII
-  case-insensitive 选项。结果上限为 100，preview 上限为 300 字符，单文件上限为
-  256 KiB；`scannedBytes` 仅统计通过 Eidos 后置策略且产生 Match 的文件。
-- Compaction Quality 当前是 deterministic bounded extraction，不做 model-assisted summary；
-  它保留结构化路径、symbol、hash 和状态证据，但不会把完整大文件内容复制进摘要。
-- 当前只支持 macOS arm64 Runtime distribution 和 Electron `.app`/`.dmg` packaging。
-  `pnpm build:runtime:mac` 会生成独立的 `build/macos-runtime/`，使用固定的 uv managed
-  CPython 3.12.13、`uv.lock` 的 locked production dependencies 和完整
-  `runtime/eidos_runtime/` resource tree；`pnpm package:mac` 会生成未签名的
-  `release/Eidos-<version>-mac-arm64-local.dmg`。Bundle 不依赖仓库 `.venv`、目标机
-  Python、uv 或 Xcode Command Line Tools Python；安装后的 App 也不需要 Node、pnpm 或
-  uv。`pnpm package:mac:release` 已接入 Developer ID、hardened runtime、notarization、
-  stapling 和 Gatekeeper 验证，但这些步骤需要当前构建机提供 Apple credentials；没有
-  credentials 时不会生成伪装成 Release 的 unsigned artifact。macOS x64、Universal、
-  Linux、Windows、GitHub Release 和 Auto Update artifact 尚未实现。资源缺失或校验失败
-  时 `search_text` 明确失败，不使用 PATH 或 Python 搜索 fallback。
-- Ripgrep 15.2.0 的受管资源仍只包含 `darwin-arm64/rg`；构建与 smoke test 会保留其
-  executable bit、manifest artifact key 和 SHA256，并执行一次真实搜索。其它平台没有
-  bundled Ripgrep artifact。
-- Plugin 只支持本地受管包；MCP 只支持 stdio Tools。没有远程市场、OAuth、Streamable HTTP、Resources、Prompts、Sampling 或 Tasks。
-- MCP startup 受单一、有界的 readiness deadline 约束；ready 后 Connection 是无 deadline 的长生命周期 Service。MCP Tool List Changed 只做本地、串行的 SQLite bookkeeping，可能在关闭时等待一个已经开始的 callback 完成；callback 失败不会终止已建立的 MCP session。
-- Runtime 不恢复内存中的模型请求、进程或 ToolCall。重启从 SQLite 事实收敛，可能有副作用的未确认执行要求 reconciliation，不自动重放。
-- Runtime 没有隐藏的 Model Step、ToolCall、Segment Step 或固定有效时长 Run fuse；这些计数仅用于持久 telemetry。资源/成本上限尚未提供用户可配置 policy，单次模型、Shell、MCP、审批和关闭操作仍各自保持有界 timeout。
-- LoopGuard 只在 durable semantic state 重现并且一次 recovery 未改变轨迹后停止；它不会按相同 Tool/Error 或 no-progress 的固定轮数停止。Fingerprint 依赖当前有界 Context projection，未来若 Retriever evidence 默认接入在线路径，需要把相应 evidence frontier 纳入同一 canonical state。
-- 数据库接受完整 schema v10、全新数据库和受支持的原子 v9 → v10 migration；v8、v11 与未知版本 fail closed。迁移框架目前只实现这一条升级路径。
-- Phase E-F 的 Repository Inventory、Tree-sitter Index、Repository Map、
-  Retrieval、ContextPlan 和 LongTaskRepository 已有严格 typed seam 与 focused
-  tests，但尚未全部成为 RuntimeEngine 的默认在线路径。Inventory、Index 与 FTS5
-  generations 已持久化，Retriever 绑定指定 Index Snapshot；当前缺口是 Run 首次
-  ModelAttempt 前仍未强制执行 restore/reconcile/retrieve/context 组装。
-- `LongTaskRepository` 与 `ResumeVerifier` 已持久化控制意图、进度和校验结果，
-  `run/status`、`run/pause`、`run/resume` 和 `run/cancel` 已通过 Application 与
-  RunSupervisor 接入，RuntimeEngine 在模型/工具/审批/slot 安全点消费暂停事实。
-  Restart Verification 尚未核验完整 Git diff、credential、MCP、Seatbelt、pending
-  Approval、unfinished ToolCall/Durable Intent 和 Checkpoint 完整性集合。
-- `ContextCompactionVerifier` 是可复用的验证边界；兼容性的
-  `ContextCompactor` 仍写入现有 `compact_summaries` 结构，因此 Event、ToolCall
-  和 Repository Evidence provenance 已有 verified v10 持久表，但兼容
-  `ContextCompactor` 尚未自动切换到该验证写路径。
-- Context Usage Desktop 展示只显示当前选中模型对应的最近 Run；新 Run 在 Runtime
-  返回首个 Usage 或可用投影前显示 `上下文 --`。Runtime 通过 `context/usage` 返回
-  `ContextUsageSnapshot` 的 Active Context、模型窗口、百分比和 `provider`/`estimated`
-  来源，不向 Desktop 暴露累计 Session Token。Provider usage 缺失时的 `estimated`
-  值是有界 fallback，不是 tokenizer 精确值；它只用于压力预警和恢复决策，不能单独证明 Provider 已拒绝
-  请求。Provider 明确 `context_exceeded` 后，若没有新的可压缩历史或 Context 投影没有
-  进展，Runtime 会以 `context_still_over_budget` 停止。
-- Checkpoint create/list 与 append-only rewind/fork lineage 已持久化并暴露 typed RPC；
-  rewind 尚未重建完整逻辑 Context，fork 尚未验证或复制所有兼容 immutable snapshots，
-  也尚未创建和校验独立 Git Worktree，因此不能视为完整产品闭环。
-- `application/` 已建立 Session、Run、Repository、Context 和 TaskLifecycle 的最小边界，但部分
-  RuntimeServer handler 仍通过 `SessionStore` 兼容入口执行，尚未完成所有顶层
-  use case 的迁移。
-- `Run.runtimeState` 是可选跨语言契约字段，不是持久恢复权威；当前稳定权威是 `Run.status` 加 SQLite 中的审批、Step、ToolCall 和 reconciliation 事实。
-- 原生 Seatbelt、进程组和 Electron 启动验证需要真实 macOS 执行环境；受限嵌套沙箱不能替代该证据。
+## 平台与分发
+
+- Eidos 当前只支持 macOS arm64 Desktop、Runtime Bundle、App 和 DMG。
+- Linux、Windows、macOS x64、Universal binary 和其他平台的 bundled Runtime 与 Ripgrep artifact 尚未实现。
+- Auto Update、GitHub Release 发布闭环和其他平台 artifact 尚未实现。
+- Release packaging 的签名、notarization、stapling 和 Gatekeeper 命令已经接入脚本，但这些步骤需要 Apple credentials。没有 credentials 时不能证明已生成可发布的 Release artifact。
+
+## Model Provider
+
+- ModelConfigStore 只接受内置 DeepSeek、MiniMax 和 Kimi Catalog 中的五个 Model ID。
+- 当前不支持 arbitrary custom provider、arbitrary base URL、arbitrary model ID、Responses API、连接测试或主动 capability probe。
+- 当前 wire API 固定为 OpenAI-compatible Chat Completions/SSE。
+- Context Usage 的 estimated 值是有界 fallback，不是 tokenizer 精确值。它不能单独证明 Provider 已拒绝请求。
+
+## Run 并发与资源模型
+
+- Runtime 同一时间只运行一个活动 Run。当前没有 parallel Run 或 parallel Agent。
+- 当前每个活动 Run 使用一个 Worker Thread。模型异步 I/O、MCP、Managed Task 和安全只读批次由唯一 RuntimeAsyncKernel 管理。当前没有把整个 RuntimeEngine/RunSupervisor 改成原生 async 的实现。
+- Workspace 写入、Shell、Eidos-state、MCP 和 external Tool 不支持并发执行。
+- 当前没有用户可配置的统一 Run 成本、模型步数或有效时长上限。现有 step、segment 和 effective time 字段主要用于 telemetry 和 operational lifecycle。
+
+## Workspace 与工具
+
+- 内置文件工具只处理当前 Workspace 内受支持的普通 UTF-8 文件。当前没有通用二进制编辑、内嵌 Terminal、浏览器自动化或 Artifact 发布工具。
+- Workspace discovery 只读取 Workspace root 的 `.gitignore` 和 `.eidosignore`。当前不支持 nested `.gitignore`。
+- Ignore 规则只影响普通 `list_files`/`search_text` 发现结果。Ignore 规则不是权限，也不会缩小 Shell security scan 或副作用 evidence 范围。
+- `search_text` 没有 LSP、AST 查询和基于 Repo Intelligence 的默认搜索路径。它仍然使用受管 Ripgrep，结果、preview、单文件和查询大小都有界。
+- Shell post-execution observation 在扫描超时、敏感条目或不完整 Workspace manifest 时可能是 `unknown`。这类 observation 不能替代 Runtime 明确报告的执行 uncertainty。完整的 Workspace 状态与安全事实仍需要后置核验。
+
+## Repository Intelligence
+
+- Inventory、Repository generations、Tree-sitter Index、symbols/imports/references/chunks、Repository Map、SQLite FTS5、Retrieval Snapshot、ContextPlan 和 ContextSnapshot 已经有 typed infrastructure、persistence 和 focused tests。
+- 这些基础设施还没有全部进入 RuntimeEngine 的默认 online Run path。默认 Model Attempt 前不会强制执行完整的 Inventory → Index → Map → Retrieval → ContextPlan → ContextSnapshot 组装。
+- 因此，当前不能把 Repository Intelligence 描述成“没有实现”，也不能把它描述成“每次 Run 都自动使用”。正确状态是 implemented infrastructure、partially wired、not yet product-complete。
+- Watcher 只提供缓存失效信号。Watcher 事件不是 Workspace 安全事实，也不会静默修改当前 Run 的 immutable snapshot。
+
+## Recovery 与 Checkpoint
+
+- Runtime 可以持久化 Long Task 控制、pause/resume/cancel、restart verification 结果和 reconciliation 状态，但 Restart Verification 尚未覆盖完整的 Git diff、credential、MCP、Seatbelt、pending Approval、unfinished ToolCall、Durable Intent 和 Checkpoint 兼容性集合。
+- Checkpoint create/list 和 rewind/fork lineage 已持久化并暴露 typed RPC。Rewind 尚未重建完整逻辑 Context。Fork 尚未验证或复制全部 immutable snapshots，也没有创建和校验独立 Git Worktree。
+- 当前不支持 Git Worktree 产品闭环。Checkpoint 不能被当作完整的 branch/worktree fork。
+- Runtime 不会恢复内存中的 Model request、Process 或 ToolCall。可能有副作用的未确认执行必须先进入 reconciliation，Runtime 不会自动重放。
+
+## Compaction 与 Context
+
+- 默认 ContextCompactor 是 deterministic bounded extraction。当前没有 model-assisted compaction。
+- ContextCompactionVerifier、VerifiedCompaction persistence、ContextPlan 和 ContextSnapshot 已经存在，但兼容的默认 ContextCompactor 尚未自动切换到完整 verified compaction write path。
+- Context Usage Desktop 只展示当前选中 Model 对应的最近 Run。新 Run 在拿到首个 Provider Usage 或可用 projection 前会显示无数据。
+- Provider 明确 `context_exceeded` 后，如果没有新的可压缩历史或 Context projection 没有进展，Runtime 会以 `context_still_over_budget` 停止。
+
+## Extension 与 MCP
+
+- Plugin 当前只支持本地受管 Plugin v1。当前没有远程 Plugin marketplace、OAuth 安装或任意运行时动态 import 用户 Plugin 的能力。
+- MCP 当前只支持 stdio Tools。当前没有 Streamable HTTP、远程 MCP transport、OAuth、Resources、Prompts、Sampling 或 Tasks。
+- MCP ready connection 是长生命周期 Service，但 startup、Tool call、Tool list、cancel 和 shutdown 都有各自的有界等待。已经开始的 Tool List Changed bookkeeping callback 可能在关闭时需要等待完成。
+
+## Application 边界
+
+- `application/` 已建立 Session、Run、Response Action、Model、Extension、Repository、Context、Checkpoint 和 TaskLifecycle 的部分边界。
+- 部分 RuntimeServer handler 仍通过 SessionStore 兼容入口执行。所有顶层 use case 尚未完成统一 Application migration。
+- `Run.runtimeState` 是可选跨语言 DTO 字段，不是恢复权威。当前恢复权威仍然是 SQLite 中的 Run status、Approval、Step、ToolCall、Durable Intent 和 reconciliation 事实。
+
+## Implementation Anchors
+
+- `runtime/eidos_runtime/model/config.py`
+- `runtime/eidos_runtime/model_gateway/`
+- `runtime/eidos_runtime/runtime/supervisor.py`
+- `runtime/eidos_runtime/runtime/engine.py`
+- `runtime/eidos_runtime/context/compactor.py`
+- `runtime/eidos_runtime/context/verified_compaction.py`
+- `runtime/eidos_runtime/application/repository.py`
+- `runtime/eidos_runtime/application/context.py`
+- `runtime/eidos_runtime/repo_intelligence/`
+- `runtime/eidos_runtime/persistence/checkpoints.py`
+- `runtime/eidos_runtime/persistence/repository_intelligence.py`
+- `runtime/eidos_runtime/extensions/`
+- `runtime/eidos_runtime/sandbox/`
+- `runtime/eidos_runtime/db/schema.py`
+- `runtime/eidos_runtime/db/database.py`

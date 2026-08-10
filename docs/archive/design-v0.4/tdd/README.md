@@ -2,7 +2,7 @@
 
 版本：v0.4（探索草案）
 
-本 TDD 描述目标技术设计和长期约束，不代表当前代码已经实现。当前架构以 [当前架构](../current-architecture.md)、代码和测试为准；旧阶段记录已归档到 [`archive/phases/`](../archive/phases/README.md)。
+本 TDD 描述目标技术设计和长期约束，不代表当前代码已经实现。当前架构以 [当前架构](../../../current-architecture.md)、代码和测试为准；旧阶段记录已归档到 [`archive/phases/`](../../phases/README.md)。
 
 ## 1. 系统全景
 
@@ -99,7 +99,7 @@ flowchart TD
 
 ## 5. 从 Codex 借鉴的边界
 
-[Codex 技术架构参考](../codex-technical-architecture.md) 只作为能力地图；Eidos 的阶段清单、协议和安全合同优先，不能把参考文档中的产品规模直接变成需求。
+[Codex 技术架构参考](../../references/codex-technical-architecture.md) 只作为能力地图；Eidos 的阶段清单、协议和安全合同优先，不能把参考文档中的产品规模直接变成需求。
 
 借鉴：
 

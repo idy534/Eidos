@@ -1,18 +1,5 @@
-# Eidos Agent Runtime MVP PRD
+# 历史 PRD 兼容入口
 
-版本：v0.4
+本文件只保留旧链接兼容用途。原 PRD 已归档到 [design-v0.4 PRD](archive/design-v0.4/prd/README.md)。
 
-当前实现请先阅读 [当前能力](current-capabilities.md)；第一期历史范围见 [MVP Lite 归档](archive/phases/mvp-lite.md)。
-
-PRD 已按职责拆分，请从 [PRD 索引](prd/README.md) 开始阅读。
-
-主要文档：
-
-- [产品定位与范围](prd/01-product-scope.md)
-- [用户流程与界面](prd/02-user-flows-and-ui.md)
-- [功能需求](prd/03-functional-requirements.md)
-- [安全与非功能需求](prd/04-security-and-nfr.md)
-- [验收标准](prd/05-acceptance-criteria.md)
-- [Q1-Q180 设计决策](decisions.md)
-
-本文件只作为旧链接兼容入口，不再维护重复正文。
+当前行为请阅读 [当前架构](current-architecture.md)、[当前能力](current-capabilities.md)、[当前限制](current-limitations.md)、生产代码和自动化测试。

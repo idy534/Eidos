@@ -2,7 +2,7 @@
 
 版本：v0.4（探索草案）
 
-范围说明：本文件是目标态功能合同索引。第一期、第二期与第三期历史范围分别见 [MVP Lite](../archive/phases/mvp-lite.md)、[第二期实施范围](../archive/phases/mvp-phase-2.md) 和 [第三期实施范围](../archive/phases/mvp-phase-3.md)；当前实现以 `docs/current-*.md`、代码和测试为准。
+范围说明：本文件是目标态功能合同索引。第一期、第二期与第三期历史范围分别见 [MVP Lite](../../phases/mvp-lite.md)、[第二期实施范围](../../phases/mvp-phase-2.md) 和 [第三期实施范围](../../phases/mvp-phase-3.md)；当前实现以 `docs/current-*.md`、代码和测试为准。
 
 旧 MVP Lite 状态说明已移入历史归档，不再用于判断当前实现。本文件中的 F 编号是目标态需求；当前能力与限制以 `docs/current-*.md`、代码和测试为准。
 

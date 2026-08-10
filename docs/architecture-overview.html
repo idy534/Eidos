@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Eidos 当前宏观架构</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #647087;
+      --line: #cbd3e1;
+      --blue: #2f6fed;
+      --blue-soft: #edf3ff;
+      --green: #16866a;
+      --green-soft: #eaf8f3;
+      --amber: #ae7418;
+      --amber-soft: #fff7e8;
+      --purple: #7656b8;
+      --purple-soft: #f5f0ff;
+      --card: #ffffff;
+      --page: #f5f7fb;
+      --shadow: 0 14px 34px rgba(26, 43, 75, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.5;
+    }
+
+    .page {
+      width: min(1440px, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 42px 0 64px;
+    }
+
+    header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 28px;
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 8px; font-size: clamp(28px, 4vw, 46px); letter-spacing: -.035em; line-height: 1.08; }
+    h2 { margin-bottom: 8px; font-size: 23px; letter-spacing: -.02em; }
+    h3 { margin-bottom: 6px; font-size: 15px; }
+
+    .lede {
+      max-width: 720px;
+      margin-bottom: 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .source-note {
+      flex: 0 0 auto;
+      max-width: 330px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, .75);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    section { margin-top: 34px; }
+    .section-intro { color: var(--muted); font-size: 14px; }
+
+    .diagram-card, .authority-card, .trust-card {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+
+    .diagram-card { overflow: hidden; padding: 18px; }
+    svg { display: block; width: 100%; height: auto; }
+    svg text { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif; }
+    .svg-title { fill: var(--ink); font-size: 19px; font-weight: 700; }
+    .svg-subtitle { fill: var(--muted); font-size: 12px; }
+    .svg-label { fill: var(--ink); font-size: 14px; font-weight: 650; }
+    .svg-small { fill: var(--muted); font-size: 11px; }
+    .svg-panel { fill: #fff; stroke: var(--line); stroke-width: 1.5; }
+    .svg-blue { fill: var(--blue-soft); stroke: #a9c1f7; }
+    .svg-green { fill: var(--green-soft); stroke: #9ad7c4; }
+    .svg-purple { fill: var(--purple-soft); stroke: #c9b9ed; }
+    .svg-amber { fill: var(--amber-soft); stroke: #e9c889; }
+    .svg-external { fill: #fbfcfe; stroke: #a8b4c8; stroke-width: 1.5; stroke-dasharray: 7 6; }
+    .svg-partial { stroke-dasharray: 7 6; }
+    .svg-arrow { fill: none; stroke: var(--blue); stroke-width: 2.4; marker-end: url(#arrow); }
+    .svg-arrow-soft { fill: none; stroke: #8290aa; stroke-width: 2; marker-end: url(#arrowSoft); }
+    .svg-arrow-partial { fill: none; stroke: #8290aa; stroke-width: 2; stroke-dasharray: 7 6; marker-end: url(#arrowSoft); }
+    .svg-boundary { fill: none; stroke: #b7c1d1; stroke-width: 1.5; stroke-dasharray: 8 7; }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 22px;
+      align-items: center;
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .legend-item { display: inline-flex; align-items: center; gap: 8px; }
+    .legend-line { width: 34px; height: 0; border-top: 2px solid var(--blue); }
+    .legend-line.dashed { border-top-style: dashed; border-top-color: #8290aa; }
+    .legend-boundary { width: 34px; height: 16px; border: 1px dashed #8290aa; border-radius: 4px; }
+
+    .authority-grid {
+      display: grid;
+      grid-template-columns: 270px 1fr;
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .authority-card { padding: 20px; }
+    .authority-source {
+      display: flex;
+      min-height: 190px;
+      flex-direction: column;
+      justify-content: space-between;
+      border-color: #9ad7c4;
+      background: var(--green-soft);
+    }
+
+    .authority-source strong { font-size: 22px; }
+    .authority-source span { color: #246d5c; font-size: 12px; }
+    .fact-list {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .fact-list li {
+      min-height: 72px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: #fbfcff;
+      color: var(--ink);
+      font-size: 13px;
+    }
+
+    .trust-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .trust-card { min-height: 114px; padding: 16px; box-shadow: none; }
+    .trust-card p { margin-bottom: 0; color: var(--muted); font-size: 13px; }
+    .trust-card.presentation { border-color: #a9c1f7; background: var(--blue-soft); }
+    .trust-card.proposal { border-color: #e9c889; background: var(--amber-soft); }
+    .trust-card.authority { border-color: #9ad7c4; background: var(--green-soft); }
+    .trust-card.enforcement { border-color: #c9b9ed; background: var(--purple-soft); }
+
+    footer {
+      margin-top: 36px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 900px) {
+      .page { width: min(100% - 28px, 760px); padding-top: 26px; }
+      header { display: block; }
+      .source-note { max-width: none; margin-top: 16px; }
+      .authority-grid { grid-template-columns: 1fr; }
+      .fact-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .trust-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 520px) {
+      .page { width: min(100% - 20px, 480px); }
+      .diagram-card { padding: 8px; border-radius: 14px; }
+      .fact-list, .trust-grid { grid-template-columns: 1fr; }
+      .legend { display: grid; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <div>
+        <p class="eyebrow">Eidos / Current Documentation Baseline</p>
+        <h1>宏观架构</h1>
+        <p class="lede">这张图只显示当前代码中已经存在的边界、默认在线路径和持久事实。虚线表示已经实现但还没有全部接入默认 Run 的基础设施。</p>
+      </div>
+      <div class="source-note">事实顺序：生产代码 + 自动化测试 → Current 文档 → 本图。历史 PRD、TDD、Decision 和参考资料不作为当前行为证据。</div>
+    </header>
+
+    <section aria-labelledby="system-title">
+      <h2 id="system-title">System Architecture</h2>
+      <p class="section-intro">Presentation、Desktop Control Plane、Python Runtime、Agent Core 和 Infrastructure / External 的边界。</p>
+      <div class="diagram-card">
+        <svg viewBox="0 0 1440 930" role="img" aria-labelledby="system-svg-title system-svg-desc">
+          <title id="system-svg-title">Eidos system architecture</title>
+          <desc id="system-svg-desc">Electron Renderer 通过 typed IPC 进入 Electron Main，再通过 JSON-RPC over stdio 进入 Python Runtime。Runtime 调度 Agent Core 和受控的基础设施。</desc>
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2f6fed"></path></marker>
+            <marker id="arrowSoft" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8290aa"></path></marker>
+          </defs>
+
+          <rect class="svg-boundary" x="12" y="12" width="1416" height="906" rx="20"></rect>
+          <text class="svg-small" x="34" y="35">Eidos local runtime boundary</text>
+
+          <rect class="svg-panel svg-blue" x="34" y="52" width="1372" height="112" rx="15"></rect>
+          <text class="svg-title" x="58" y="82">Presentation</text>
+          <text class="svg-subtitle" x="58" y="103">untrusted presentation boundary</text>
+          <text class="svg-label" x="350" y="86">Electron Renderer</text>
+          <text class="svg-small" x="350" y="109">Session · Execution Feed · Composer</text>
+          <text class="svg-small" x="350" y="128">Model Settings · Approval / Diff</text>
+          <text class="svg-label" x="900" y="86">typed IPC</text>
+          <text class="svg-small" x="900" y="109">context-isolated preload API</text>
+          <path class="svg-arrow" d="M 720 164 L 720 198"></path>
+          <text class="svg-small" x="744" y="185">typed IPC</text>
+
+          <rect class="svg-panel svg-blue" x="34" y="200" width="1372" height="116" rx="15"></rect>
+          <text class="svg-title" x="58" y="230">Desktop Control Plane</text>
+          <text class="svg-subtitle" x="58" y="251">Electron Main owns lifecycle and protocol client</text>
+          <text class="svg-label" x="430" y="234">Electron Main</text>
+          <text class="svg-small" x="430" y="257">RuntimeClient · Window / App Lifecycle</text>
+          <text class="svg-small" x="430" y="276">Runtime Path Resolution · notification / approval bridge</text>
+          <text class="svg-label" x="1010" y="234">JSON-RPC 2.0</text>
+          <text class="svg-small" x="1010" y="257">JSONL · stdio · bounded protocol lines</text>
+          <path class="svg-arrow" d="M 720 316 L 720 350"></path>
+          <text class="svg-small" x="744" y="337">JSON-RPC 2.0 / JSONL / stdio</text>
+
+          <rect class="svg-panel svg-green" x="34" y="352" width="1372" height="156" rx="15"></rect>
+          <text class="svg-title" x="58" y="382">Python Runtime</text>
+          <text class="svg-subtitle" x="58" y="403">protocol, application and durable coordination</text>
+          <rect class="svg-panel" x="360" y="374" width="230" height="96" rx="11"></rect>
+          <text class="svg-label" x="382" y="405">RuntimeServer</text>
+          <text class="svg-small" x="382" y="428">initialize · health · shutdown</text>
+          <text class="svg-small" x="382" y="447">Method Registry</text>
+          <rect class="svg-panel" x="620" y="374" width="230" height="96" rx="11"></rect>
+          <text class="svg-label" x="642" y="405">Application Layer</text>
+          <text class="svg-small" x="642" y="428">Sessions · Runs · Models</text>
+          <text class="svg-small" x="642" y="447">Extensions · Context · Checkpoints</text>
+          <rect class="svg-panel" x="880" y="374" width="230" height="96" rx="11"></rect>
+          <text class="svg-label" x="902" y="405">RunSupervisor</text>
+          <text class="svg-small" x="902" y="428">FIFO · execution slot</text>
+          <text class="svg-small" x="902" y="447">cancel · pause · approval · shutdown</text>
+          <rect class="svg-panel" x="1140" y="374" width="230" height="96" rx="11"></rect>
+          <text class="svg-label" x="1162" y="405">RuntimeEngine</text>
+          <text class="svg-small" x="1162" y="428">RuntimeAsyncKernel</text>
+          <text class="svg-small" x="1162" y="447">Run / Step coordination</text>
+          <path class="svg-arrow-soft" d="M 590 422 L 620 422"></path>
+          <path class="svg-arrow-soft" d="M 850 422 L 880 422"></path>
+          <path class="svg-arrow-soft" d="M 1110 422 L 1140 422"></path>
+          <path class="svg-arrow" d="M 720 508 L 720 542"></path>
+
+          <rect class="svg-panel" x="34" y="544" width="1372" height="202" rx="15"></rect>
+          <text class="svg-title" x="58" y="574">Agent Core</text>
+          <text class="svg-subtitle" x="58" y="595">每个 Step 使用 immutable resolution、tool 和 extension snapshot</text>
+
+          <rect class="svg-panel svg-blue" x="72" y="615" width="300" height="105" rx="12"></rect>
+          <text class="svg-label" x="94" y="646">Context</text>
+          <text class="svg-small" x="94" y="667">Project Rules · Instructions</text>
+          <text class="svg-small" x="94" y="685">Context Builder · Compaction</text>
+          <rect class="svg-external svg-partial" x="94" y="694" width="230" height="18" rx="6"></rect>
+          <text class="svg-small" x="104" y="707">Repository Intelligence · partial path</text>
+
+          <rect class="svg-panel svg-purple" x="400" y="615" width="300" height="105" rx="12"></rect>
+          <text class="svg-label" x="422" y="646">Model</text>
+          <text class="svg-small" x="422" y="667">Model Gateway · Sampling Runtime</text>
+          <text class="svg-small" x="422" y="685">Chat Completions · SSE · Usage</text>
+          <text class="svg-small" x="422" y="704">Model Attempt snapshot</text>
+
+          <rect class="svg-panel svg-amber" x="728" y="615" width="300" height="105" rx="12"></rect>
+          <text class="svg-label" x="750" y="646">Tools</text>
+          <text class="svg-small" x="750" y="667">Tool Registry · ToolCallRuntime</text>
+          <text class="svg-small" x="750" y="685">ExecutionController · Approval</text>
+          <text class="svg-small" x="750" y="704">ToolOrchestrator · Reconciliation</text>
+
+          <rect class="svg-panel svg-green" x="1056" y="615" width="300" height="105" rx="12"></rect>
+          <text class="svg-label" x="1078" y="646">Extensions</text>
+          <text class="svg-small" x="1078" y="667">Plugin · Skill · MCP stdio</text>
+          <text class="svg-small" x="1078" y="685">Catalog / activation / provenance</text>
+          <text class="svg-small" x="1078" y="704">MCP Tool snapshot · partial activation</text>
+
+          <path class="svg-arrow-partial" d="M 230 746 L 230 782"></path>
+          <path class="svg-arrow" d="M 550 746 L 550 782"></path>
+          <path class="svg-arrow" d="M 878 746 L 878 782"></path>
+          <path class="svg-arrow-partial" d="M 1206 746 L 1206 782"></path>
+
+          <rect class="svg-external" x="34" y="784" width="1372" height="108" rx="15"></rect>
+          <text class="svg-title" x="58" y="814">Infrastructure / External</text>
+          <text class="svg-subtitle" x="58" y="835">process, network and sandbox trust boundaries</text>
+          <text class="svg-label" x="362" y="818">SQLite</text>
+          <text class="svg-small" x="362" y="842">durable business facts · Event / Outbox</text>
+          <text class="svg-label" x="620" y="818">Workspace · Git</text>
+          <text class="svg-small" x="620" y="842">fd-relative paths · identity · diff evidence</text>
+          <text class="svg-label" x="930" y="818">/usr/bin/sandbox-exec</text>
+          <text class="svg-small" x="930" y="842">Seatbelt Policy · OS enforcement</text>
+          <text class="svg-label" x="1240" y="818">Remote Provider · MCP Server</text>
+          <text class="svg-small" x="1240" y="842">HTTP/SSE or stdio external process</text>
+        </svg>
+        <div class="legend" aria-label="图例">
+          <span class="legend-item"><span class="legend-line"></span>Solid line = current default online path</span>
+          <span class="legend-item"><span class="legend-line dashed"></span>Dashed line = implemented infrastructure but partial / not always default online path</span>
+          <span class="legend-item"><span class="legend-boundary"></span>External boundary = process / network / sandbox trust boundary</span>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="run-title">
+      <h2 id="run-title">One Run</h2>
+      <p class="section-intro">Runtime 以 SQLite 事实、immutable snapshots、受控 Tool 执行和语义进展推进一次 Run。</p>
+      <div class="diagram-card">
+        <svg viewBox="0 0 1440 520" role="img" aria-labelledby="run-svg-title run-svg-desc">
+          <title id="run-svg-title">One Run execution flow</title>
+          <desc id="run-svg-desc">用户输入进入队列，Runtime 构建规则、Context 和 Tool 快照，执行 Model Attempt，验证结果，再执行 Tool 或生成最终回答。</desc>
+          <defs>
+            <marker id="runArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2f6fed"></path></marker>
+          </defs>
+          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 190 88 L 226 88"></path>
+          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 386 88 L 422 88"></path>
+          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 582 88 L 618 88"></path>
+          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 778 88 L 814 88"></path>
+          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 974 88 L 1010 88"></path>
+          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 1170 88 L 1206 88"></path>
+
+          <rect class="svg-panel svg-blue" x="30" y="48" width="160" height="80" rx="12"></rect>
+          <text class="svg-label" x="52" y="81">User Input</text>
+          <text class="svg-small" x="52" y="103">typed IPC</text>
+          <rect class="svg-panel" x="226" y="48" width="160" height="80" rx="12"></rect>
+          <text class="svg-label" x="248" y="78">Run Created</text>
+          <text class="svg-small" x="248" y="101">/ Queued</text>
+          <rect class="svg-panel" x="422" y="48" width="160" height="80" rx="12"></rect>
+          <text class="svg-label" x="444" y="81">Execution Slot</text>
+          <text class="svg-small" x="444" y="103">FIFO supervisor</text>
+          <rect class="svg-panel svg-blue" x="618" y="48" width="160" height="80" rx="12"></rect>
+          <text class="svg-label" x="640" y="74">Build Rules</text>
+          <text class="svg-small" x="640" y="96">Context + Tool Snapshot</text>
+          <rect class="svg-panel svg-purple" x="814" y="48" width="160" height="80" rx="12"></rect>
+          <text class="svg-label" x="836" y="81">Model Attempt</text>
+          <text class="svg-small" x="836" y="103">Chat Completions / SSE</text>
+          <rect class="svg-panel svg-purple" x="1010" y="48" width="160" height="80" rx="12"></rect>
+          <text class="svg-label" x="1032" y="81">Text / Tool Calls</text>
+          <text class="svg-small" x="1032" y="103">untrusted proposal</text>
+          <rect class="svg-panel svg-amber" x="1206" y="48" width="160" height="80" rx="12"></rect>
+          <text class="svg-label" x="1228" y="81">Validation</text>
+          <text class="svg-small" x="1228" y="103">contract + policy</text>
+
+          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 1286 128 C 1286 181 1120 190 1000 236"></path>
+          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 1286 128 C 1286 181 1340 190 1340 236"></path>
+          <text class="svg-small" x="1018" y="177">ToolCall branch</text>
+          <text class="svg-small" x="1310" y="177">final branch</text>
+
+          <rect class="svg-panel svg-amber" x="870" y="236" width="260" height="78" rx="12"></rect>
+          <text class="svg-label" x="892" y="268">Tool execution</text>
+          <text class="svg-small" x="892" y="291">Approval · Sandbox · Execute · Verify</text>
+          <rect class="svg-panel svg-blue" x="1150" y="236" width="220" height="78" rx="12"></rect>
+          <text class="svg-label" x="1172" y="268">Final Answer</text>
+          <text class="svg-small" x="1172" y="291">RunFinalizer / no Tool</text>
+          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 870 275 L 735 275"></path>
+          <rect class="svg-panel" x="480" y="236" width="255" height="78" rx="12"></rect>
+          <text class="svg-label" x="502" y="268">Context updated</text>
+          <text class="svg-small" x="502" y="291">facts · Tool Result · progress</text>
+          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 480 275 L 340 275 C 290 275 290 145 840 145"></path>
+          <text class="svg-small" x="354" y="216">next model step</text>
+
+          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 1260 314 L 1260 386"></path>
+          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 1000 314 C 1000 368 1080 386 1180 386"></path>
+          <rect class="svg-panel svg-green" x="1060" y="386" width="300" height="78" rx="12"></rect>
+          <text class="svg-label" x="1082" y="418">Run terminal state</text>
+          <text class="svg-small" x="1082" y="441">succeeded · stopped · failed · canceled</text>
+        </svg>
+      </div>
+
+      <div class="diagram-card" style="margin-top: 14px;">
+        <svg viewBox="0 0 1440 190" role="img" aria-labelledby="approval-svg-title approval-svg-desc">
+          <title id="approval-svg-title">Approval branch</title>
+          <desc id="approval-svg-desc">副作用 Tool 先进入 Approval，再进入受控 Sandbox 和执行，最后验证或进入 reconciliation。</desc>
+          <defs>
+            <marker id="approvalArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#ae7418"></path></marker>
+          </defs>
+          <path class="svg-arrow-soft" stroke="#ae7418" marker-end="url(#approvalArrow)" d="M 260 93 L 380 93"></path>
+          <path class="svg-arrow-soft" stroke="#ae7418" marker-end="url(#approvalArrow)" d="M 590 93 L 710 93"></path>
+          <path class="svg-arrow-soft" stroke="#ae7418" marker-end="url(#approvalArrow)" d="M 920 93 L 1040 93"></path>
+          <path class="svg-arrow-soft" stroke="#ae7418" marker-end="url(#approvalArrow)" d="M 1250 93 L 1370 93"></path>
+          <rect class="svg-panel svg-amber" x="50" y="52" width="210" height="82" rx="12"></rect>
+          <text class="svg-label" x="72" y="84">Side-effect Tool</text>
+          <text class="svg-small" x="72" y="108">file · shell · external</text>
+          <rect class="svg-panel svg-amber" x="380" y="52" width="210" height="82" rx="12"></rect>
+          <text class="svg-label" x="402" y="84">Approval</text>
+          <text class="svg-small" x="402" y="108">user authorization</text>
+          <rect class="svg-panel svg-purple" x="710" y="52" width="210" height="82" rx="12"></rect>
+          <text class="svg-label" x="732" y="84">Seatbelt / Policy</text>
+          <text class="svg-small" x="732" y="108">effective permissions</text>
+          <rect class="svg-panel svg-amber" x="1040" y="52" width="210" height="82" rx="12"></rect>
+          <text class="svg-label" x="1062" y="84">Execute</text>
+          <text class="svg-small" x="1062" y="108">bounded process / write</text>
+          <rect class="svg-panel svg-green" x="1370" y="52" width="60" height="82" rx="12"></rect>
+          <text class="svg-small" transform="translate(1401 80) rotate(90)">Verify / Reconcile</text>
+        </svg>
+      </div>
+    </section>
+
+    <section aria-labelledby="authority-title">
+      <h2 id="authority-title">State Authority</h2>
+      <p class="section-intro">SQLite 是 durable business fact authority。In-memory state 只服务于 Runtime coordination。</p>
+      <div class="authority-grid">
+        <div class="authority-card authority-source">
+          <div><strong>SQLite</strong><br><span>durable business fact authority</span></div>
+          <div><span>Events / Outbox 与业务状态在同一 transaction 中提交。</span></div>
+        </div>
+        <div class="authority-card">
+          <ul class="fact-list">
+            <li>Session / Run / Item</li>
+            <li>Step / ModelAttempt</li>
+            <li>ToolCall / Approval / Intent</li>
+            <li>Event / Outbox</li>
+            <li>Context / Compaction</li>
+            <li>Repository Snapshots</li>
+            <li>Checkpoints</li>
+            <li>Response Feedback / Revisions</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="trust-title">
+      <h2 id="trust-title">Trust Boundary</h2>
+      <p class="section-intro">Proposal、authorization、policy enforcement 和 durable facts 属于不同边界。</p>
+      <div class="trust-grid">
+        <div class="trust-card presentation"><h3>Renderer</h3><p>Untrusted presentation boundary。只通过 typed IPC 观察和请求状态。</p></div>
+        <div class="trust-card proposal"><h3>Model output</h3><p>Untrusted proposal。文本和 ToolCall 必须经过 Runtime validation。</p></div>
+        <div class="trust-card authority"><h3>Runtime</h3><p>Validation、Tool contract、lifecycle、policy 和 reconciliation authority。</p></div>
+        <div class="trust-card proposal"><h3>Approval</h3><p>User authorization。Approval 不能改变 Tool 参数或移除 hard deny。</p></div>
+        <div class="trust-card enforcement"><h3>Seatbelt</h3><p>OS enforcement。默认 Shell attempt 使用 Seatbelt Policy 和有效权限。</p></div>
+        <div class="trust-card authority"><h3>SQLite</h3><p>Durable fact authority。内存对象不能替代已提交的业务事实。</p></div>
+      </div>
+    </section>
+
+    <footer>Current baseline · 离线单文件 · HTML + inline CSS + inline SVG · 不依赖 CDN 或 npm package</footer>
+  </main>
+</body>
+</html>

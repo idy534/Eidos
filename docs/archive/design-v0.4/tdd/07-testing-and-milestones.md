@@ -2,9 +2,9 @@
 
 版本：v0.4（探索草案）
 
-范围说明：本文保留目标态测试设计草案与历史风险里程碑。第一期执行顺序和退出标准见 [MVP Lite 归档](../archive/phases/mvp-lite.md)。
+范围说明：本文保留目标态测试设计草案与历史风险里程碑。第一期执行顺序和退出标准见 [MVP Lite 归档](../../phases/mvp-lite.md)。
 
-第二期历史记录见 [第二期实施范围清单](../archive/phases/mvp-phase-2.md)，第三期历史记录见 [第三期实施范围清单](../archive/phases/mvp-phase-3.md)。当前实现以 `docs/current-*.md`、代码和测试为准。
+第二期历史记录见 [第二期实施范围清单](../../phases/mvp-phase-2.md)，第三期历史记录见 [第三期实施范围清单](../../phases/mvp-phase-3.md)。当前实现以 `docs/current-*.md`、代码和测试为准。
 
 ## 1. 测试原则
 
