@@ -3,12 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-import subprocess
 import tomllib
 from typing import Final
 
 from pydantic import Field, model_validator
 
+from eidos_runtime.git.errors import GitError
+from eidos_runtime.git.process import GitProcess
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 from eidos_runtime.repo_intelligence.inventory import RepositoryInventory
 
@@ -219,18 +220,16 @@ class RepositoryMapBuilder:
 
 
 def _git_state(root: Path) -> tuple[str | None, str | None]:
+    process = GitProcess(timeout_seconds=0.5)
     try:
-        branch = subprocess.run(
-            ["git", "branch", "--show-current"], cwd=root, capture_output=True,
-            text=True, timeout=0.5, check=False,
-        ).stdout.strip() or None
-        head = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,
-            text=True, timeout=0.5, check=False,
-        ).stdout.strip() or None
-        return branch, head
-    except (OSError, subprocess.SubprocessError):
-        return None, None
+        branch = process.symbolic_ref_short(root)
+    except (GitError, ValueError):
+        branch = None
+    try:
+        head = process.resolve_ref(root, "HEAD")
+    except (GitError, ValueError):
+        head = None
+    return branch, head
 
 
 def _hash(value: object) -> str:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 V9_SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -820,10 +820,44 @@ ALTER TABLE compact_summaries
 ADD COLUMN summary_metadata_json TEXT NOT NULL DEFAULT '{}';
 """
 
+V15_WORKTREE_SCHEMA_SQL = """
+CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
+    repository_root TEXT NOT NULL UNIQUE,
+    git_common_dir TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE worktrees (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+    worktree_root TEXT NOT NULL UNIQUE,
+    git_dir TEXT NOT NULL,
+    base_ref TEXT NOT NULL,
+    base_commit TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    ownership TEXT NOT NULL CHECK (ownership IN ('managed', 'adopted')),
+    state TEXT NOT NULL CHECK (
+        state IN ('active', 'missing', 'invalid', 'deleted')
+    ),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(project_id, branch)
+);
+
+CREATE INDEX worktrees_project_state
+ON worktrees(project_id, state, updated_at DESC);
+
+CREATE INDEX worktrees_project_ownership
+ON worktrees(project_id, ownership, state);
+"""
+
 SCHEMA_SQL = (
     V12_BASE_SCHEMA_SQL
     + V10_REPOSITORY_SCHEMA_SQL
     + V10_CONTEXT_SCHEMA_SQL
     + V13_RESPONSE_ACTIONS_SCHEMA_SQL
     + V14_COMPACTION_QUALITY_SCHEMA_SQL
+    + V15_WORKTREE_SCHEMA_SQL
 )

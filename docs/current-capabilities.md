@@ -71,6 +71,15 @@
 - Repository Intelligence 的不完整 generation 不会替换上一个完整 generation。Watcher 只提供失效信号，不改变活动 Snapshot。
 - RepositoryApplication、ContextApplication 和相关 persistence repositories 已提供 typed composition boundary。它们还没有全部成为 RuntimeEngine 默认 online Run 的强制路径。
 
+## Runtime Git Worktree Kernel
+
+- Runtime 可以从 verified Git repository discovery Project，并保存 canonical repository root 和 Git common directory。
+- Runtime 可以创建、打开、验证、列出、恢复、清理和删除 managed Worktree。Worktree 使用 Runtime-controlled root 和 Runtime-generated branch。
+- Runtime 可以实时查询 Worktree 的 HEAD、branch、dirty、staged、unstaged、untracked 和 conflict 状态。
+- Runtime 可以返回 HEAD diff 和基于创建时 immutable `base_commit` 的 baseline diff。Diff 有界并返回 truncation metadata。
+- SQLite v15 保存 Project、Worktree ownership 和 lifecycle state。Migration tests 覆盖 v14 → v15。
+- Git lifecycle 不经过 Model Tool。当前能力只属于 Runtime infrastructure，Session binding 和 Desktop Project UI 尚未接入。
+
 ## Tools
 
 - Tool Registry 统一保存 ToolSpec、Schema、Execution Policy、Concurrency Policy、Projection Policy 和 provenance。
@@ -119,9 +128,9 @@
 
 ## Persistence
 
-- 当前 SQLite schema version 是 14。
-- 新数据库直接创建 v14。已有 v11、v12 或 v13 数据库可以逐步迁移到 v14。v10 及更早版本不在当前启动迁移窗口。
-- SQLite 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context、Repository Snapshot、Compaction、Checkpoint、Response Feedback 和 Run Revision。
+- 当前 SQLite schema version 是 15。
+- 新数据库直接创建 v15。已有 v11、v12、v13 或 v14 数据库可以逐步迁移到 v15。v10 及更早版本不在当前启动迁移窗口。
+- SQLite 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context、Repository Snapshot、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。
 - 业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - SQLite 使用私有数据目录、WAL、busy timeout、完整性检查、单实例锁和 health-only 失败状态。
 
@@ -159,6 +168,7 @@
 ## Diagnostics / Tests
 
 - Runtime stdout、stderr、JSON-RPC 行大小、未知 response id、非协议 stdout 和协议错误都有边界检查。
+- GitProcess 对固定 Git argv 使用显式 cwd、shell=False、timeout、进程组终止和有界 stdout/stderr。Git diff 也有独立大小上限。
 - `pnpm test` 覆盖 Runtime、contracts、Renderer state、Main 和 Renderer behavior。
 - `pnpm check:python` 覆盖 Ruff、deptry、Runtime tests 和 Python dependency audit。
 - Seatbelt native、Electron startup/shutdown、bundled Runtime、packaged App 和 packaging config 都有独立测试入口。
@@ -181,5 +191,6 @@
 - `runtime/eidos_runtime/repo_intelligence/`
 - `runtime/eidos_runtime/telemetry/provider.py`
 - `runtime/eidos_runtime/telemetry/tracing.py`
+- `runtime/eidos_runtime/git/`
 - `runtime/eidos_runtime/db/schema.py`
 - `runtime/eidos_runtime/persistence/`

@@ -17,6 +17,7 @@ from eidos_runtime.domain.long_task import (
     ResumeOutcome,
 )
 from eidos_runtime.domain.checkpoint import Checkpoint
+from eidos_runtime.domain.project import Project
 from eidos_runtime.domain.run import (
     Run,
     RunControlState,
@@ -44,6 +45,16 @@ from eidos_runtime.domain.tool import (
     ToolCall,
     ToolCallStatus,
 )
+from eidos_runtime.domain.worktree import (
+    OrphanWorktreeCandidate,
+    Worktree,
+    WorktreeCleanupReport,
+    WorktreeOwnership,
+    WorktreeRecoveryReport,
+    WorktreeState,
+    WorktreeValidation,
+    WorktreeView,
+)
 
 __all__ = [
     "Checkpoint",
@@ -62,6 +73,8 @@ __all__ = [
     "LongTaskStatus",
     "ModelAttempt",
     "ModelAttemptStatus",
+    "OrphanWorktreeCandidate",
+    "Project",
     "PermissionSnapshot",
     "Run",
     "RunControlState",
@@ -81,5 +94,12 @@ __all__ = [
     "ToolAttemptStatus",
     "ToolCall",
     "ToolCallStatus",
+    "Worktree",
+    "WorktreeCleanupReport",
+    "WorktreeOwnership",
+    "WorktreeRecoveryReport",
+    "WorktreeState",
+    "WorktreeValidation",
+    "WorktreeView",
     "ResumeOutcome",
 ]
