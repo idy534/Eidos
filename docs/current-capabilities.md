@@ -76,7 +76,7 @@
 - Runtime 可以从 verified Git repository discovery Project，并保存 canonical repository root 和 Git common directory。
 - Runtime 可以创建、打开、验证、列出、恢复、清理和删除 managed Worktree。Worktree 使用 Runtime-controlled root 和 Runtime-generated branch。
 - Runtime 可以实时查询 Worktree 的 HEAD、branch、dirty、staged、unstaged、untracked 和 conflict 状态。
-- Runtime 可以返回 HEAD diff 和基于创建时 immutable `base_commit` 的 baseline diff。Diff 有界并返回 truncation metadata。
+- Runtime 可以返回 HEAD diff 和基于创建时 immutable `base_commit` 的 baseline diff。两种 Diff 都包含 tracked 和 untracked files。Diff 使用 NUL-safe machine output、有界输出和 truncation metadata，不修改 Git Index。
 - SQLite v15 保存 Project、Worktree ownership 和 lifecycle state。Migration tests 覆盖 v14 → v15。
 - Git lifecycle 不经过 Model Tool。当前能力只属于 Runtime infrastructure，Session binding 和 Desktop Project UI 尚未接入。
 

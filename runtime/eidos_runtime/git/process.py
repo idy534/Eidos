@@ -112,12 +112,12 @@ class GitProcess:
             stderr=result.stderr,
         )
 
-    def worktree_list(self, cwd: Path) -> str:
+    def worktree_list(self, cwd: Path) -> GitCommandResult:
         return self._run(
             "worktree-list",
             cwd,
-            ("worktree", "list", "--porcelain"),
-        ).stdout
+            ("worktree", "list", "--porcelain", "-z"),
+        )
 
     def worktree_add(
         self,
@@ -156,17 +156,18 @@ class GitProcess:
             ("worktree", "prune", "--verbose"),
         )
 
-    def status_porcelain_v2(self, cwd: Path) -> str:
+    def status_porcelain_v2(self, cwd: Path) -> GitCommandResult:
         return self._run(
             "status-porcelain-v2",
             cwd,
             (
                 "status",
                 "--porcelain=v2",
+                "-z",
                 "--untracked-files=all",
                 "--no-renames",
             ),
-        ).stdout
+        )
 
     def diff_head(self, cwd: Path) -> GitCommandResult:
         return self._run(
@@ -212,10 +213,76 @@ class GitProcess:
             (
                 "diff",
                 "--name-only",
+                "-z",
                 "--no-ext-diff",
                 "--no-color",
                 "--no-renames",
                 *ref_args,
+            ),
+        )
+
+    def untracked_files(self, cwd: Path) -> GitCommandResult:
+        return self._run(
+            "untracked-files",
+            cwd,
+            ("ls-files", "--others", "--exclude-standard", "-z"),
+        )
+
+    def diff_untracked(
+        self,
+        cwd: Path,
+        relative_path: str,
+        *,
+        output_limit_bytes: int = DEFAULT_GIT_DIFF_BYTES,
+    ) -> GitCommandResult:
+        _validate_relative_path(relative_path)
+        result = self._execute(
+            "diff-untracked",
+            cwd,
+            (
+                "diff",
+                "--no-index",
+                "--no-ext-diff",
+                "--no-color",
+                "--no-renames",
+                "--",
+                "/dev/null",
+                relative_path,
+            ),
+            output_limit_bytes=output_limit_bytes,
+        )
+        if result.returncode not in (0, 1):
+            self.logger.error(
+                "git command failed",
+                extra={
+                    "operation": "diff-untracked",
+                    "returncode": result.returncode,
+                    "stderr_truncated": result.stderr_truncated,
+                },
+            )
+            raise GitCommandFailedError(
+                "diff-untracked",
+                returncode=result.returncode,
+                stderr=result.stderr,
+            )
+        return result
+
+    def update_ref_delete(
+        self,
+        cwd: Path,
+        branch: str,
+        expected_base_commit: str,
+    ) -> None:
+        _validate_branch(branch)
+        _validate_ref(expected_base_commit)
+        self._run(
+            "update-ref-delete",
+            cwd,
+            (
+                "update-ref",
+                "-d",
+                f"refs/heads/{branch}",
+                expected_base_commit,
             ),
         )
 
@@ -429,6 +496,19 @@ def _validate_branch(branch: str) -> None:
     _validate_ref(branch)
     if branch.startswith("-") or ".." in branch or branch.endswith("."):
         raise ValueError("Git branch is invalid")
+
+
+def _validate_relative_path(relative_path: str) -> None:
+    if (
+        not relative_path
+        or "\x00" in relative_path
+        or relative_path.startswith("/")
+        or relative_path in {".", ".."}
+        or relative_path.startswith("../")
+        or "/../" in relative_path
+        or relative_path.endswith("/..")
+    ):
+        raise ValueError("Git relative path is invalid")
 
 
 __all__ = ["GitCommandResult", "GitProcess"]

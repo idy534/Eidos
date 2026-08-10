@@ -48,15 +48,15 @@ discover repository
   → persist Project/Worktree
 ```
 
-Git 和 SQLite 没有真正的原子事务。如果 Git 已创建而 SQLite persistence 失败，Runtime 只尝试删除本次创建、已验证为 clean 的 Worktree。Runtime 不使用 `--force`。Runtime 如果无法确认删除成功，就保留目录并写入 recovery-needed 日志。下一次 `recover()` 会把没有 SQLite record 的 Git Worktree 返回为 orphan candidate。
+Git 和 SQLite 没有真正的原子事务。如果 Git 已创建而 SQLite persistence 失败，Runtime 只尝试删除本次创建、已验证为 clean 的 Worktree。Runtime 会再次确认没有 Worktree 使用本次生成的 branch，并用 `git update-ref -d` 加 expected base commit 条件删除本次生成的 branch。branch 已变化、仍被使用或无法确认时，Runtime 会保留 branch 并写入 recovery-needed 日志。Runtime 不使用 `--force`。Runtime 如果无法确认删除成功，就保留目录。下一次 `recover()` 会把没有 SQLite record 的 Git Worktree 返回为 orphan candidate。
 
 `delete` 只接受 `managed` Worktree。Runtime 会先 validate，再查询 status。dirty 或 conflict Worktree 会被拒绝。Runtime 使用不带 `--force` 的 `git worktree remove`。Runtime 成功 remove 后才把 SQLite state 更新为 `deleted`。Git branch 默认保留。
 
-`cleanup` 只执行 `git worktree prune`，并把已经确认不存在的 managed stale record 收敛为 `deleted`。它不删除 dirty Worktree、未知目录、adopted workspace 或 branch。
+`deleted` 是 Runtime 的 terminal state。原路径之后重新出现时，Runtime 只把它显示为已删除记录的外部重现，不会恢复 managed ownership，也不会自动删除该目录。`cleanup` 只执行 `git worktree prune`，并把已经确认不存在的 managed stale record 收敛为 `deleted`。它不删除 dirty Worktree、未知目录、adopted workspace 或 branch。
 
 ## Status and diff
 
-Git status 使用 `git status --porcelain=v2`。返回 typed snapshot，包含 staged、unstaged、untracked、conflict counts、当前 HEAD、branch 和 observed timestamp。
+Git status 使用 `git status --porcelain=v2 -z`。Runtime 只有在机器输出没有截断且完整解析时才返回精确的 staged、unstaged、untracked、conflict counts、当前 HEAD、branch 和 observed timestamp。输出失败、超时、截断或解析不完整时，Runtime 返回 typed observation error，不把部分输出当作完整事实。
 
 HEAD diff 使用：
 
@@ -72,6 +72,8 @@ base_commit → current working tree
 
 Baseline diff 不使用当前 branch name。Diff 返回 scope、base commit、HEAD、dirty、changed files、unified diff 和 truncation metadata。完整 Diff 不会写入日志。
 
+两种 Diff 都加入 tracked changes 和 `git ls-files --others --exclude-standard -z` 返回的 untracked files。Runtime 使用只读的 bounded `git diff --no-index` 生成 untracked 内容，不修改 Git Index。Diff 总输出受统一 byte budget 限制。
+
 ## Validation and recovery
 
 `validate` 同时检查 filesystem 和 Git：
@@ -79,11 +81,11 @@ Baseline diff 不使用当前 branch name。Diff 返回 scope、base commit、HE
 - root 存在并且是 working tree；
 - Git dir 与 SQLite record 一致；
 - Git common dir 与 Project 一致；
-- Worktree path 属于 Project 的 `git worktree list --porcelain`；
+- Worktree path 属于 Project 的 `git worktree list --porcelain -z`，并且机器输出完整；
 - branch 与 SQLite record 一致；
 - HEAD 可以解析。
 
-`recover` 结合 SQLite records、filesystem 和 `git worktree list --porcelain`：
+`recover` 结合 SQLite records、filesystem 和 `git worktree list --porcelain -z`：
 
 | 观察 | Runtime 结果 |
 | --- | --- |
@@ -92,7 +94,7 @@ Baseline diff 不使用当前 branch name。Diff 返回 scope、base commit、HE
 | DB record 存在，但 Project common dir、Git dir、root 或 branch 不一致 | `invalid` |
 | Git Worktree 存在，但没有 DB record | orphan candidate，不自动删除 |
 
-`recover` 只更新可以证明的 state。它不丢弃用户修改，也不执行 force remove。
+如果 Git observation 失败、超时、输出截断或解析不完整，`validate`、`list`、`recover` 和 `delete` 不更新 lifecycle state。`recover` 只更新可以证明的 state。它不丢弃用户修改，也不执行 force remove。
 
 ## Sandbox boundary
 

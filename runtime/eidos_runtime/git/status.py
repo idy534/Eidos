@@ -45,7 +45,13 @@ def parse_porcelain_v2_status(output: str) -> tuple[int, int, int, int]:
     unstaged = 0
     untracked = 0
     conflicts = 0
-    for line in output.splitlines():
+    if "\x00" in output:
+        if output and not output.endswith("\x00"):
+            raise ValueError("Git status output is incomplete")
+        records = output.split("\x00")[:-1]
+    else:
+        records = output.splitlines()
+    for line in records:
         if line.startswith("?"):
             untracked += 1
             continue

@@ -27,7 +27,11 @@ from eidos_runtime.git.errors import (
     WorktreeError,
 )
 from eidos_runtime.git.models import GitWorktreeEntry
-from eidos_runtime.git.process import GitProcess
+from eidos_runtime.git.process import (
+    DEFAULT_GIT_DIFF_BYTES,
+    GitCommandResult,
+    GitProcess,
+)
 from eidos_runtime.git.status import (
     DiffScope,
     GitDiffSnapshot,
@@ -192,6 +196,8 @@ class WorktreeManager:
 
     def validate(self, worktree_id: str) -> WorktreeValidation:
         worktree = self._read_worktree(worktree_id)
+        if worktree.state is WorktreeState.DELETED:
+            return self._deleted_validation(worktree)
         project = self.repository.read_project(worktree.project_id)
         if project is None:
             return self._record_validation(
@@ -222,7 +228,7 @@ class WorktreeManager:
                     worktree,
                     project,
                     entries=entries,
-                    persist_state=True,
+                    persist_state=False,
                 )
                 entry = by_root.get(worktree.worktree_root)
                 dirty: bool | None = None
@@ -248,9 +254,7 @@ class WorktreeManager:
             known = self.repository.list_worktrees(project.id)
             known_roots = {worktree.worktree_root for worktree in known}
             for worktree in known:
-                if worktree.state is WorktreeState.DELETED and not Path(
-                    worktree.worktree_root
-                ).exists():
+                if worktree.state is WorktreeState.DELETED:
                     continue
                 validation = self._validate_record(
                     worktree,
@@ -331,7 +335,7 @@ class WorktreeManager:
             worktree,
             project,
             entries=self._entries_for_observation(project),
-            persist_state=True,
+            persist_state=False,
         )
         if not validation.valid:
             raise WorktreeError(validation.code or "worktree_invalid")
@@ -384,9 +388,14 @@ class WorktreeManager:
         return deleted
 
     def status(self, worktree_id: str) -> GitStatusSnapshot:
-        worktree = self.open(worktree_id)
+        worktree = self._read_worktree(worktree_id)
         project = self._project_for(worktree)
-        validation = self.validate(worktree.id)
+        validation = self._validate_record(
+            worktree,
+            project,
+            entries=self._entries_for_observation(project),
+            persist_state=False,
+        )
         if not validation.valid:
             raise WorktreeError(validation.code or "worktree_invalid")
         staged, unstaged, untracked, conflicts, dirty = self._status_counts(
@@ -418,8 +427,14 @@ class WorktreeManager:
         *,
         scope: DiffScope = DiffScope.HEAD,
     ) -> GitDiffSnapshot:
-        worktree = self.open(worktree_id)
-        validation = self.validate(worktree.id)
+        worktree = self._read_worktree(worktree_id)
+        project = self._project_for(worktree)
+        validation = self._validate_record(
+            worktree,
+            project,
+            entries=self._entries_for_observation(project),
+            persist_state=False,
+        )
         if not validation.valid or validation.head is None:
             raise WorktreeError(validation.code or "worktree_invalid")
         root = Path(worktree.worktree_root)
@@ -434,18 +449,72 @@ class WorktreeManager:
             scope=scope.value,
             base_commit=worktree.base_commit if scope is DiffScope.BASELINE else None,
         )
+        tracked_files = self._machine_paths(names)
+        untracked_result = self.git.untracked_files(root)
+        untracked_files = self._machine_paths(untracked_result)
         _, _, _, _, dirty = self._status_counts(root)
+        changed_files = _unique_paths((*tracked_files, *untracked_files))
+        unified_diff = diff_result.stdout
+        truncated = (
+            diff_result.stdout_truncated
+            or diff_result.stderr_truncated
+        )
+        for relative_path in untracked_files:
+            path_parts = Path(relative_path).parts
+            if (
+                Path(relative_path).is_absolute()
+                or any(part == ".." for part in path_parts)
+            ):
+                raise WorktreeError("git_observation_incomplete")
+            used_bytes = len(unified_diff.encode("utf-8"))
+            separator_bytes = int(bool(unified_diff and not unified_diff.endswith("\n")))
+            remaining_bytes = DEFAULT_GIT_DIFF_BYTES - used_bytes - separator_bytes
+            if remaining_bytes <= 0:
+                truncated = True
+                break
+            try:
+                untracked_diff = self.git.diff_untracked(
+                    root,
+                    relative_path,
+                    output_limit_bytes=remaining_bytes,
+                )
+            except GitCommandTimeoutError:
+                raise WorktreeError("git_command_timeout") from None
+            except GitCommandFailedError as error:
+                raise WorktreeError("git_command_failed") from error
+            except ValueError as error:
+                raise WorktreeError("git_observation_incomplete") from error
+            if untracked_diff.stdout:
+                if unified_diff and not unified_diff.endswith("\n"):
+                    unified_diff += "\n"
+                unified_diff += untracked_diff.stdout
+            truncated = truncated or untracked_diff.stdout_truncated
         return GitDiffSnapshot(
             scope=scope,
             base_commit=worktree.base_commit,
             head=validation.head,
             dirty=dirty,
-            changed_files=tuple(
-                line for line in names.stdout.splitlines() if line
-            ),
-            unified_diff=diff_result.stdout,
-            truncated=diff_result.stdout_truncated or names.stdout_truncated,
+            changed_files=changed_files,
+            unified_diff=unified_diff,
+            truncated=truncated,
             observed_at=utc_now(),
+        )
+
+    def _deleted_validation(
+        self,
+        worktree: Worktree,
+        *,
+        entry: GitWorktreeEntry | None = None,
+    ) -> WorktreeValidation:
+        return WorktreeValidation(
+            worktree=worktree,
+            valid=False,
+            code="worktree_deleted",
+            head=entry.head if entry is not None else None,
+            observed_worktree_root=(
+                entry.worktree_root if entry is not None else None
+            ),
+            observed_branch=entry.branch if entry is not None else None,
         )
 
     def _validate_record(
@@ -461,6 +530,8 @@ class WorktreeManager:
             (item for item in entries if item.worktree_root == worktree.worktree_root),
             None,
         )
+        if worktree.state is WorktreeState.DELETED:
+            return self._deleted_validation(worktree, entry=entry)
         if not root.exists() or not root.is_dir() or root.is_symlink():
             return self._record_validation(
                 worktree,
@@ -596,7 +667,11 @@ class WorktreeManager:
         persist_state: bool = False,
     ) -> WorktreeValidation:
         persisted = worktree
-        if persist_state and worktree.state is not state:
+        if (
+            persist_state
+            and worktree.state is not WorktreeState.DELETED
+            and worktree.state is not state
+        ):
             try:
                 persisted = self.repository.update_state(worktree.id, state)
             except ResourceNotFoundError:
@@ -614,23 +689,22 @@ class WorktreeManager:
 
     def _worktree_entries(self, project: Project) -> tuple[GitWorktreeEntry, ...]:
         try:
-            return _parse_worktree_list(
-                self.git.worktree_list(Path(project.repository_root))
-            )
+            result = self.git.worktree_list(Path(project.repository_root))
         except GitCommandTimeoutError:
             raise WorktreeError("git_command_timeout") from None
         except GitCommandFailedError as error:
-            raise WorktreeError("git_command_failed") from error
+            raise WorktreeError("git_observation_failed") from error
+        if result.stdout_truncated or result.stderr_truncated:
+            raise WorktreeError("git_observation_incomplete")
+        try:
+            return _parse_worktree_list(result.stdout)
+        except ValueError as error:
+            raise WorktreeError("git_observation_incomplete") from error
 
     def _entries_for_observation(
         self, project: Project
     ) -> tuple[GitWorktreeEntry, ...]:
-        try:
-            return self._worktree_entries(project)
-        except WorktreeError as error:
-            if error.code == "git_command_timeout":
-                raise
-            return ()
+        return self._worktree_entries(project)
 
     def _project_for(self, worktree: Worktree) -> Project:
         project = self.repository.read_project(worktree.project_id)
@@ -646,15 +720,30 @@ class WorktreeManager:
 
     def _status_counts(self, root: Path) -> tuple[int, int, int, int, bool]:
         try:
-            output = self.git.status_porcelain_v2(root)
+            result = self.git.status_porcelain_v2(root)
         except GitCommandTimeoutError:
             raise WorktreeError("git_command_timeout") from None
         except GitCommandFailedError as error:
             raise WorktreeError("git_command_failed") from error
-        staged, unstaged, untracked, conflicts = parse_porcelain_v2_status(output)
+        if result.stdout_truncated or result.stderr_truncated:
+            raise WorktreeError("git_observation_incomplete")
+        try:
+            staged, unstaged, untracked, conflicts = parse_porcelain_v2_status(
+                result.stdout
+            )
+        except ValueError as error:
+            raise WorktreeError("git_observation_incomplete") from error
         return staged, unstaged, untracked, conflicts, bool(
             staged or unstaged or untracked or conflicts
         )
+
+    def _machine_paths(self, result: GitCommandResult) -> tuple[str, ...]:
+        if result.stdout_truncated or result.stderr_truncated:
+            raise WorktreeError("git_observation_incomplete")
+        try:
+            return _parse_nul_paths(result.stdout)
+        except ValueError as error:
+            raise WorktreeError("git_observation_incomplete") from error
 
     def _allocate_identity(self, repository_root: Path) -> tuple[str, str, Path]:
         for _ in range(MAX_BRANCH_COLLISION_ATTEMPTS):
@@ -716,11 +805,30 @@ class WorktreeManager:
         root = Path(worktree.worktree_root)
         try:
             entries = self._worktree_entries(project)
-            if not any(entry.worktree_root == worktree.worktree_root for entry in entries):
-                return
-            self.git.worktree_remove(Path(project.repository_root), root)
+            created_entry = next(
+                (
+                    entry
+                    for entry in entries
+                    if entry.worktree_root == worktree.worktree_root
+                ),
+                None,
+            )
+            if created_entry is not None:
+                self.git.worktree_remove(Path(project.repository_root), root)
             if root.exists():
                 raise RuntimeError("created worktree root remains after remove")
+            remaining_entries = self._worktree_entries(project)
+            if any(
+                entry.worktree_root == worktree.worktree_root
+                for entry in remaining_entries
+            ):
+                raise RuntimeError("created worktree metadata remains after remove")
+            if not self._remove_created_branch_if_safe(
+                project,
+                worktree,
+                remaining_entries,
+            ):
+                return
             self.logger.info(
                 "worktree create compensation completed",
                 extra={
@@ -740,6 +848,81 @@ class WorktreeManager:
                     "result": "recovery_needed",
                 },
             )
+
+    def _remove_created_branch_if_safe(
+        self,
+        project: Project,
+        worktree: Worktree,
+        entries: tuple[GitWorktreeEntry, ...],
+    ) -> bool:
+        if any(entry.branch == worktree.branch for entry in entries):
+            self._log_compensation_recovery(
+                worktree,
+                "runtime-created branch is still used by a worktree",
+            )
+            return False
+        repository_root = Path(project.repository_root)
+        try:
+            current = self.git.try_resolve_ref(
+                repository_root,
+                f"refs/heads/{worktree.branch}",
+            )
+        except (GitCommandFailedError, GitCommandTimeoutError):
+            self._log_compensation_recovery(
+                worktree,
+                "runtime-created branch could not be observed",
+            )
+            return False
+        if current is None:
+            return True
+        if current != worktree.base_commit:
+            self._log_compensation_recovery(
+                worktree,
+                "runtime-created branch changed before compensation",
+            )
+            return False
+        try:
+            self.git.update_ref_delete(
+                repository_root,
+                worktree.branch,
+                worktree.base_commit,
+            )
+        except (GitCommandFailedError, GitCommandTimeoutError):
+            self._log_compensation_recovery(
+                worktree,
+                "runtime-created branch conditional delete failed",
+            )
+            return False
+        try:
+            remaining = self.git.try_resolve_ref(
+                repository_root,
+                f"refs/heads/{worktree.branch}",
+            )
+        except (GitCommandFailedError, GitCommandTimeoutError):
+            self._log_compensation_recovery(
+                worktree,
+                "runtime-created branch deletion could not be verified",
+            )
+            return False
+        if remaining is not None:
+            self._log_compensation_recovery(
+                worktree,
+                "runtime-created branch remains after compensation",
+            )
+            return False
+        return True
+
+    def _log_compensation_recovery(self, worktree: Worktree, reason: str) -> None:
+        self.logger.error(
+            "worktree create compensation needs recovery",
+            extra={
+                "worktree_id": worktree.id,
+                "project_id": worktree.project_id,
+                "operation": "create-compensation",
+                "result": "recovery_needed",
+                "reason": reason,
+            },
+        )
 
     def _orphan_candidate(
         self,
@@ -786,9 +969,13 @@ class WorktreeManager:
 def _parse_worktree_list(output: str) -> tuple[GitWorktreeEntry, ...]:
     entries: list[GitWorktreeEntry] = []
     current: dict[str, object] = {}
-    for line in output.splitlines() + [""]:
-        if not line:
-            if "worktree" in current:
+    if output and not output.endswith("\x00\x00"):
+        raise ValueError("Git worktree list output is incomplete")
+    for field in output.split("\x00"):
+        if not field:
+            if current:
+                if "worktree" not in current:
+                    raise ValueError("Git worktree record is incomplete")
                 head = current.get("head")
                 branch = current.get("branch")
                 entries.append(
@@ -801,7 +988,9 @@ def _parse_worktree_list(output: str) -> tuple[GitWorktreeEntry, ...]:
                 )
             current = {}
             continue
-        key, _, value = line.partition(" ")
+        key, separator, value = field.partition(" ")
+        if key == "worktree" and not separator:
+            raise ValueError("Git worktree path is missing")
         if key == "worktree":
             current["worktree"] = str(Path(value).resolve(strict=False))
         elif key == "HEAD":
@@ -812,7 +1001,25 @@ def _parse_worktree_list(output: str) -> tuple[GitWorktreeEntry, ...]:
             current["branch"] = None
         elif key == "prunable":
             current["prunable"] = True
+    if current:
+        raise ValueError("Git worktree list output is incomplete")
     return tuple(entries)
+
+
+def _parse_nul_paths(output: str) -> tuple[str, ...]:
+    if output and not output.endswith("\x00"):
+        raise ValueError("Git path output is incomplete")
+    return tuple(path for path in output.split("\x00") if path)
+
+
+def _unique_paths(paths: tuple[str, ...]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for path in paths:
+        if path not in seen:
+            seen.add(path)
+            unique.append(path)
+    return tuple(unique)
 
 
 def _looks_like_branch_conflict(error: GitCommandFailedError) -> bool:

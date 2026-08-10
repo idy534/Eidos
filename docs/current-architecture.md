@@ -196,7 +196,7 @@ Run Span 记录 Run、Session、Model 和终态。Model Attempt Span 记录 Prov
 
 ## 13. Runtime Git Worktree Kernel
 
-Runtime Git Worktree Kernel 由 `runtime/eidos_runtime/git/` 和 `runtime/eidos_runtime/persistence/worktrees.py` 提供。`WorktreeManager` 管理 Project discovery、managed Worktree create/open/validate/list/recover/cleanup/delete、实时 Git status 和 HEAD/baseline diff。Git 和 filesystem 是动态观察来源。SQLite 只保存 Project、Worktree ownership、base commit 和 lifecycle state。Kernel 不修改 Session binding、Run 并发或 Checkpoint Fork。
+Runtime Git Worktree Kernel 由 `runtime/eidos_runtime/git/` 和 `runtime/eidos_runtime/persistence/worktrees.py` 提供。`WorktreeManager` 管理 Project discovery、managed Worktree create/open/validate/list/recover/cleanup/delete、实时 Git status 和 HEAD/baseline diff。Git 和 filesystem 是动态观察来源。SQLite 只保存 Project、Worktree ownership、base commit 和 lifecycle state。Runtime 对 machine-readable Git output 使用 NUL-safe format，并在 observation failure、timeout、truncation 或 parse incomplete 时不更新 lifecycle state。`deleted` 是 terminal state。Kernel 不修改 Session binding、Run 并发或 Checkpoint Fork。
 
 ## 14. Extension Runtime
 
