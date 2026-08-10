@@ -51,6 +51,32 @@ def run_runtime(
     )
 
 
+def _git(cwd: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip()
+
+
+def _init_repository(repository: Path) -> Path:
+    repository.mkdir(exist_ok=True)
+    _git(repository, "init", "-q", "-b", "main")
+    _git(repository, "config", "user.email", "eidos-tests@example.com")
+    _git(repository, "config", "user.name", "Eidos Tests")
+    (repository / "README.md").write_text("base\n", encoding="utf-8")
+    _git(repository, "add", "README.md")
+    _git(repository, "commit", "-qm", "initial")
+    return repository
+
+
+def _repository(parent: Path) -> Path:
+    return _init_repository(parent / "repository")
+
+
 class RuntimeProtocolTests(unittest.TestCase):
     def test_generated_session_title_is_single_line_and_bounded(self) -> None:
         title = clean_session_title('  “分析\nCodex\u202e 架构”  ')
@@ -415,8 +441,9 @@ class RuntimeProtocolTests(unittest.TestCase):
     def test_session_persists_across_runtime_restart(self) -> None:
         with (
             tempfile.TemporaryDirectory(prefix="eidos-data-") as data_directory,
-            tempfile.TemporaryDirectory(prefix="eidos-workspace-") as workspace,
+            tempfile.TemporaryDirectory(prefix="eidos-workspace-") as workspace_parent,
         ):
+            repository = _repository(Path(workspace_parent))
             first = run_runtime(
                 [
                     initialize_message("client-1"),
@@ -425,7 +452,7 @@ class RuntimeProtocolTests(unittest.TestCase):
                             "jsonrpc": "2.0",
                             "id": "client-2",
                             "method": "session/create",
-                            "params": {"workspaceRoot": workspace},
+                            "params": {"workspaceRoot": str(repository)},
                         }
                     ),
                     shutdown_message("client-3"),
@@ -433,6 +460,27 @@ class RuntimeProtocolTests(unittest.TestCase):
                 Path(data_directory),
             )
             created = json.loads(first.stdout.splitlines()[1])["result"]
+
+            inspection = SessionStore(Path(data_directory))
+            inspection.initialize()
+            try:
+                assert inspection.connection is not None
+                binding = inspection.connection.execute(
+                    """
+                    SELECT sessions.workspace_root, sessions.worktree_id,
+                           worktrees.worktree_root
+                    FROM sessions
+                    JOIN worktrees ON worktrees.id = sessions.worktree_id
+                    WHERE sessions.id = ?
+                    """,
+                    (created["id"],),
+                ).fetchone()
+                self.assertIsNotNone(binding)
+                self.assertEqual(binding["workspace_root"], str(repository.resolve()))
+                self.assertTrue(binding["worktree_id"])
+                self.assertTrue(Path(binding["worktree_root"]).is_dir())
+            finally:
+                inspection.close()
 
             second = run_runtime(
                 [
@@ -459,7 +507,7 @@ class RuntimeProtocolTests(unittest.TestCase):
             )
             responses = [json.loads(line) for line in second.stdout.splitlines()]
 
-            self.assertEqual(created["workspaceRoot"], str(Path(workspace).resolve()))
+            self.assertEqual(created["workspaceRoot"], str(repository.resolve()))
             self.assertEqual(responses[1]["result"], {"items": [created]})
             self.assertEqual(
                 responses[2]["result"],
@@ -476,6 +524,7 @@ class RuntimeProtocolTests(unittest.TestCase):
     def test_session_rejects_workspace_containing_runtime_data(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-overlap-") as root_directory:
             root = Path(root_directory)
+            _init_repository(root)
             data_directory = root / ".eidos"
             completed = run_runtime(
                 [
@@ -614,8 +663,9 @@ class RuntimeProtocolTests(unittest.TestCase):
     def test_session_list_uses_an_opaque_cursor(self) -> None:
         with (
             tempfile.TemporaryDirectory(prefix="eidos-data-") as data_directory,
-            tempfile.TemporaryDirectory(prefix="eidos-workspace-") as workspace,
+            tempfile.TemporaryDirectory(prefix="eidos-workspace-") as workspace_parent,
         ):
+            repository = _repository(Path(workspace_parent))
             messages = [initialize_message("client-1")]
             for index in range(3):
                 messages.append(
@@ -624,7 +674,7 @@ class RuntimeProtocolTests(unittest.TestCase):
                             "jsonrpc": "2.0",
                             "id": f"client-{index + 2}",
                             "method": "session/create",
-                            "params": {"workspaceRoot": workspace},
+                            "params": {"workspaceRoot": str(repository)},
                         }
                     )
                 )
@@ -677,7 +727,7 @@ class RuntimeProtocolTests(unittest.TestCase):
         ):
             real_workspace = Path(workspace_parent) / "real"
             linked_workspace = Path(workspace_parent) / "linked"
-            real_workspace.mkdir()
+            _init_repository(real_workspace)
             linked_workspace.symlink_to(real_workspace, target_is_directory=True)
 
             completed = run_runtime(

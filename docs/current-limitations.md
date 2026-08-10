@@ -42,7 +42,7 @@
 
 - Runtime 可以持久化 Long Task 控制、pause/resume/cancel、restart verification 结果和 reconciliation 状态，但 Restart Verification 尚未覆盖完整的 Git diff、credential、MCP、Seatbelt、pending Approval、unfinished ToolCall、Durable Intent 和 Checkpoint 兼容性集合。
 - Checkpoint create/list 和 rewind/fork lineage 已持久化并暴露 typed RPC。Rewind 尚未重建完整逻辑 Context。Fork 尚未验证或复制全部 immutable snapshots，也没有使用本 PR 的 Worktree Kernel 创建独立 Git Worktree。
-- Runtime Git Worktree Kernel 已提供 infrastructure，但当前不支持完整 Git Worktree 产品闭环。当前没有 `sessions.worktree_id`、Session 自动 Worktree、Desktop Project UI 或 Checkpoint Fork binding。Kernel 也不提供 Git commit、branch delete、merge、rebase 或 force delete。
+- Runtime Git Worktree Kernel 已绑定新的 Session。当前 Session delete 还没有完整的 dirty detection、active Run race 和 Worktree cleanup 闭环。Git worktree add 成功而 Session persistence 尚未提交的 restart crash window 还没有 durable provisioning recovery。linked Worktree 的真实 Git metadata 还没有加入 Sandbox writable permission。Desktop Project UI、Checkpoint Fork binding、Git commit、branch delete、merge、rebase 和 force delete 仍未实现。
 - Runtime 不会恢复内存中的 Model request、Process 或 ToolCall。可能有副作用的未确认执行必须先进入 reconciliation，Runtime 不会自动重放。
 
 ## Compaction 与 Context

@@ -26,7 +26,7 @@ from eidos_runtime.git.errors import (
     GitCommandTimeoutError,
     WorktreeError,
 )
-from eidos_runtime.git.models import GitWorktreeEntry
+from eidos_runtime.git.models import GitRepositoryDiscovery, GitWorktreeEntry
 from eidos_runtime.git.process import (
     DEFAULT_GIT_DIFF_BYTES,
     GitCommandResult,
@@ -78,6 +78,11 @@ class WorktreeManager:
         if project is None:
             raise WorktreeError("repository_not_found")
         return project
+
+    def discover(self, repository_seed: Path | str) -> GitRepositoryDiscovery:
+        """Expose read-only repository discovery to application ports."""
+
+        return self.discovery.discover(repository_seed)
 
     def create(
         self,

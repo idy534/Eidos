@@ -166,13 +166,13 @@ Repository Intelligence 已实现为独立的 typed infrastructure。它包括�
 - generation-scoped persistence、完整代和 incomplete candidate 的区分；
 - Retrieval Snapshot、ContextPlan 和 ContextSnapshot 的 hash 与证据绑定。
 
-这些基础设施由 RepositoryApplication、ContextApplication 和 persistence repositories 提供。当前默认在线 Run 仍主要使用 ContextBuilder、Workspace Tool Result 和 SQLite Context Facts。RuntimeEngine 在每次 Model Attempt 前不会强制执行完整 Inventory → Index → Map → Retrieval → ContextPlan 组装。因此，Repository Intelligence 的结构和持久化是当前实现，自动进入每次 Run 仍是部分接线能力。
+这些基础设施由 RepositoryApplication、ContextApplication 和 persistence repositories 提供。Managed Session 的 Repository Intelligence root 使用该 Session 的 Worktree root。Legacy Session 使用 `sessions.workspace_root`。当前默认在线 Run 仍主要使用 ContextBuilder、Workspace Tool Result 和 SQLite Context Facts。RuntimeEngine 在每次 Model Attempt 前不会强制执行完整 Inventory → Index → Map → Retrieval → ContextPlan 组装。因此，Repository Intelligence 的结构和持久化是当前实现，自动进入每次 Run 仍是部分接线能力。
 
 ## 11. Persistence & Events
 
 SQLite 是业务事实唯一权威。Session、Run、Item、ToolCall、Approval、Tool Attempt、Execution Segment、Step、Model Attempt、Durable Intent、Event、Outbox、Async Operation、Extension Snapshot、Context、Repository Snapshot、Compaction 和 Checkpoint 都有持久化边界。
 
-当前 `SCHEMA_VERSION` 是 15。新数据库直接创建 v15。已有数据库的启动窗口接受 v11、v12、v13、v14 和 v15，并按 v11 → v12 → v13 → v14 → v15 逐步迁移。v10 及更早版本不在当前启动迁移窗口内，未知版本 fail closed。当前版本包含 legacy model storage removal、effective cwd 与 resolved instructions、response feedback 与 run revisions、compaction metadata、Project 和 Worktree facts。
+当前 `SCHEMA_VERSION` 是 16。新数据库直接创建 v16。已有数据库的启动窗口接受 v11、v12、v13、v14、v15 和 v16，并按 v11 → v12 → v13 → v14 → v15 → v16 逐步迁移。v10 及更早版本不在当前启动迁移窗口内，未知版本 fail closed。v16 增加 `sessions.worktree_id` 和索引。旧 Session 保持 NULL，不执行 Git provisioning。
 
 业务状态变化与 Event/Outbox 在同一 SQLite transaction 中提交。Outbox 投递失败不会删除事实。Runtime 重启会从 SQLite、Outbox、Long Task 和 Resource 状态恢复或进入 reconciliation。
 
@@ -196,7 +196,7 @@ Run Span 记录 Run、Session、Model 和终态。Model Attempt Span 记录 Prov
 
 ## 13. Runtime Git Worktree Kernel
 
-Runtime Git Worktree Kernel 由 `runtime/eidos_runtime/git/` 和 `runtime/eidos_runtime/persistence/worktrees.py` 提供。`WorktreeManager` 管理 Project discovery、managed Worktree create/open/validate/list/recover/cleanup/delete、实时 Git status 和 HEAD/baseline diff。Git 和 filesystem 是动态观察来源。SQLite 只保存 Project、Worktree ownership、base commit 和 lifecycle state。Runtime 对 machine-readable Git output 使用 NUL-safe format，并在 observation failure、timeout、truncation 或 parse incomplete 时不更新 lifecycle state。`deleted` 是 terminal state。Kernel 不修改 Session binding、Run 并发或 Checkpoint Fork。
+Runtime Git Worktree Kernel 由 `runtime/eidos_runtime/git/` 和 `runtime/eidos_runtime/persistence/worktrees.py` 提供。`WorktreeManager` 管理 Project discovery、managed Worktree create/open/validate/list/recover/cleanup/delete、实时 Git status 和 HEAD/baseline diff。新的 `session/create` 先把用户选择的 repository seed path 解析为 canonical repository root，再创建 managed Worktree，并在同一 Session 记录 `worktree_id`。`sessions.workspace_root` 继续保存 repository root，作为 Desktop 兼容字段。Run 通过统一 execution workspace resolver 选择 Worktree root；Legacy Session 继续选择 `sessions.workspace_root`。Git 和 filesystem 是动态观察来源。SQLite 只保存 Project、Worktree ownership、base commit 和 lifecycle state，Session 只保存 `worktree_id` 关系以及现有的 repository-root 兼容字段。Runtime 对 machine-readable Git output 使用 NUL-safe format，并在 observation failure、timeout、truncation 或 parse incomplete 时不更新 lifecycle state。`deleted` 是 terminal state。Session delete 的 Worktree 生命周期、provisioning crash window 和 linked Worktree Git metadata sandbox 尚未闭环。Kernel 不修改 Run 并发或 Checkpoint Fork。
 
 ## 14. Extension Runtime
 

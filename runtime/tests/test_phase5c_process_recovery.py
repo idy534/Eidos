@@ -30,12 +30,36 @@ def _request(request_id: str, method: str, params: dict[str, object]) -> bytes:
     ).encode()
 
 
+def _init_repository(repository: Path) -> None:
+    commands = (
+        ("git", "init", "-q", "-b", "main"),
+        ("git", "config", "user.email", "eidos-tests@example.com"),
+        ("git", "config", "user.name", "Eidos Tests"),
+    )
+    for command in commands:
+        subprocess.run(command, cwd=repository, check=True, capture_output=True)
+    (repository / "README.md").write_text("base\n", encoding="utf-8")
+    subprocess.run(
+        ("git", "add", "README.md"),
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ("git", "commit", "-qm", "initial"),
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+
+
 class RuntimeProcessRecoveryTests(unittest.TestCase):
     def test_kill_during_real_approval_recovers_persisted_facts(self) -> None:
         with (
             tempfile.TemporaryDirectory(prefix="eidos-process-data-") as data,
             tempfile.TemporaryDirectory(prefix="eidos-process-workspace-") as workspace,
         ):
+            _init_repository(Path(workspace))
             environment = os.environ.copy()
             environment.update({
                 "PYTHONPATH": str(RUNTIME_ROOT),

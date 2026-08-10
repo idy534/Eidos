@@ -1,4 +1,4 @@
-"""Schema migration tests for the supported V11 → V12 → V13 → V14 → V15 window.
+"""Schema migration tests for the supported V11 → V12 → V13 → V14 → V15 → V16 window.
 
 V11: drops legacy model storage tables.
 V12: adds effective_cwd to runs; adds resolved_instructions_hash and
@@ -6,6 +6,7 @@ V12: adds effective_cwd to runs; adds resolved_instructions_hash and
 V13: adds response feedback and run revision persistence.
 V14: persists structured compaction-summary metadata.
 V15: adds Runtime-owned Project and Worktree persistence.
+V16: binds Sessions to Runtime-owned Worktrees while retaining legacy NULLs.
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ from eidos_runtime.db.schema import (  # noqa: E402
     V10_REPOSITORY_SCHEMA_SQL,
     V11_BASE_SCHEMA_SQL,
     V15_WORKTREE_SCHEMA_SQL,
+    V16_SESSION_WORKTREE_SCHEMA_SQL,
     SCHEMA_SQL,
 )
 from eidos_runtime.db.storage import DATABASE_NAME, SessionStore  # noqa: E402
@@ -170,10 +172,10 @@ class SchemaV11MigrationTests(unittest.TestCase):
         store.close()
 
     # ------------------------------------------------------------------
-    # V11 → V12 → V13 → V14 → V15 migration chain.
+    # V11 → V12 → V13 → V14 → V15 → V16 migration chain.
     # ------------------------------------------------------------------
 
-    def test_v11_upgrades_to_v15_and_preserves_current_contract(self) -> None:
+    def test_v11_upgrades_to_v16_and_preserves_current_contract(self) -> None:
         self._create_v11(with_facts=True)
 
         store = SessionStore(self.data)
@@ -207,11 +209,25 @@ class SchemaV11MigrationTests(unittest.TestCase):
         self.assertIn("run_revisions", tables)
         self.assertIn("projects", tables)
         self.assertIn("worktrees", tables)
+        session_columns = {
+            row[1]
+            for row in store.connection.execute("PRAGMA table_info(sessions)")
+        }
+        self.assertIn("worktree_id", session_columns)
+        self.assertIsNone(
+            store.connection.execute(
+                "SELECT worktree_id FROM sessions WHERE id = 'session'"
+            ).fetchone()[0]
+        )
         store.close()
 
-    def test_v14_upgrades_to_v15_and_passes_integrity_checks(self) -> None:
+    def test_v14_upgrades_to_v16_and_passes_integrity_checks(self) -> None:
         connection = sqlite3.connect(self.database)
-        connection.executescript(SCHEMA_SQL.replace(V15_WORKTREE_SCHEMA_SQL, "", 1))
+        connection.executescript(
+            SCHEMA_SQL
+            .replace(V15_WORKTREE_SCHEMA_SQL, "", 1)
+            .replace(V16_SESSION_WORKTREE_SCHEMA_SQL, "", 1)
+        )
         connection.execute("PRAGMA user_version = 14")
         connection.commit()
         connection.close()
@@ -237,7 +253,11 @@ class SchemaV11MigrationTests(unittest.TestCase):
 
     def test_v15_migration_failure_rolls_back_without_worktree_tables(self) -> None:
         connection = sqlite3.connect(self.database)
-        connection.executescript(SCHEMA_SQL.replace(V15_WORKTREE_SCHEMA_SQL, "", 1))
+        connection.executescript(
+            SCHEMA_SQL
+            .replace(V15_WORKTREE_SCHEMA_SQL, "", 1)
+            .replace(V16_SESSION_WORKTREE_SCHEMA_SQL, "", 1)
+        )
         connection.execute("PRAGMA user_version = 14")
         connection.commit()
         connection.close()
@@ -261,6 +281,37 @@ class SchemaV11MigrationTests(unittest.TestCase):
         self.assertEqual(revision, 14)
         self.assertNotIn("projects", tables)
         self.assertNotIn("worktrees", tables)
+
+    def test_v16_migration_failure_rolls_back_without_session_binding(self) -> None:
+        connection = sqlite3.connect(self.database)
+        connection.executescript(SCHEMA_SQL.replace(V16_SESSION_WORKTREE_SCHEMA_SQL, "", 1))
+        connection.execute("PRAGMA user_version = 15")
+        connection.commit()
+        connection.close()
+        os.chmod(self.database, 0o600)
+
+        def fail_migration(connection: sqlite3.Connection) -> None:
+            raise sqlite3.OperationalError("injected v16 migration failure")
+
+        with patch(
+            "eidos_runtime.db.migrations.v015_to_v016.migrate",
+            side_effect=fail_migration,
+        ):
+            store = SessionStore(self.data)
+            store.initialize()
+
+        self.assertEqual(
+            store.health(),
+            {"state": "health_only", "code": "schema_migration_failed"},
+        )
+        revision, _ = self._revision_and_tables()
+        self.assertEqual(revision, 15)
+        check = sqlite3.connect(self.database)
+        self.assertNotIn(
+            "worktree_id",
+            {row[1] for row in check.execute("PRAGMA table_info(sessions)")},
+        )
+        check.close()
 
     def test_v12_migration_failure_rolls_back_to_intact_v11(self) -> None:
         self._create_v11(with_facts=True)

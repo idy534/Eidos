@@ -15,6 +15,8 @@
 
 ## Session / Run
 
+- 新的 `session/create` 会把 repository seed path 解析为 canonical repository root，创建一个 Runtime-managed Git Worktree，并把 Session 绑定到该 Worktree。
+- `Session.workspaceRoot` 继续返回 repository root。Managed Session 的 Run、Tool、Shell cwd、Project Rules 和 Repository Intelligence 使用 Worktree root。Legacy Session 使用原有 `workspaceRoot`。
 - Runtime 可以创建、排队、执行、取消、暂停、恢复和查询 Run。
 - Run 使用持久 FIFO 和全局单 Execution Slot。多个非终态 Run 可以共存；等待 Approval 的 Run 会释放 Slot，让其他排队 Run 继续执行。
 - Run 状态、Item、Step、ToolCall、Approval 和终态写入 SQLite，并通过 Event/Outbox 投影到 Desktop。
@@ -77,8 +79,8 @@
 - Runtime 可以创建、打开、验证、列出、恢复、清理和删除 managed Worktree。Worktree 使用 Runtime-controlled root 和 Runtime-generated branch。
 - Runtime 可以实时查询 Worktree 的 HEAD、branch、dirty、staged、unstaged、untracked 和 conflict 状态。
 - Runtime 可以返回 HEAD diff 和基于创建时 immutable `base_commit` 的 baseline diff。两种 Diff 都包含 tracked 和 untracked files。Diff 使用 NUL-safe machine output、有界输出和 truncation metadata，不修改 Git Index。
-- SQLite v15 保存 Project、Worktree ownership 和 lifecycle state。Migration tests 覆盖 v14 → v15。
-- Git lifecycle 不经过 Model Tool。当前能力只属于 Runtime infrastructure，Session binding 和 Desktop Project UI 尚未接入。
+- SQLite v16 保存 Project、Worktree ownership、lifecycle state 和 `sessions.worktree_id`。Migration tests 覆盖 v14 → v16，并验证旧 Session 的 NULL binding。
+- Git lifecycle 不经过 Model Tool。Session binding 已接入 Runtime application path，Desktop Project UI 尚未接入。
 
 ## Tools
 
@@ -128,8 +130,8 @@
 
 ## Persistence
 
-- 当前 SQLite schema version 是 15。
-- 新数据库直接创建 v15。已有 v11、v12、v13 或 v14 数据库可以逐步迁移到 v15。v10 及更早版本不在当前启动迁移窗口。
+- 当前 SQLite schema version 是 16。
+- 新数据库直接创建 v16。已有 v11、v12、v13、v14 或 v15 数据库可以逐步迁移到 v16。v10 及更早版本不在当前启动迁移窗口。
 - SQLite 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context、Repository Snapshot、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。
 - 业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - SQLite 使用私有数据目录、WAL、busy timeout、完整性检查、单实例锁和 health-only 失败状态。

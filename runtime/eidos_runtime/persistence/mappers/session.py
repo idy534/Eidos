@@ -26,6 +26,11 @@ def session_from_row(row: RowValues | Mapping[str, object]) -> Session:
     # reports its first missing column instead of a later enum conversion.
     session_id = values.text("id")
     workspace_root = values.text("workspace_root")
+    worktree_id = (
+        values.optional_text("worktree_id")
+        if "worktree_id" in row.keys()
+        else None
+    )
     title = values.optional_text("title")
     created_at = utc_datetime_from_millis(
         values.value("created_at"),
@@ -50,6 +55,7 @@ def session_from_row(row: RowValues | Mapping[str, object]) -> Session:
         return Session(
             id=session_id,
             workspace_root=workspace_root,
+            worktree_id=worktree_id,
             title=title,
             task_status=task_status,
             created_at=created_at,
@@ -74,6 +80,9 @@ def session_from_legacy_dict(value: object) -> Session:
     return session_from_row({
         "id": reader.text("id"),
         "workspace_root": reader.text("workspaceRoot"),
+        "worktree_id": (
+            reader.optional_text("worktreeId") if "worktreeId" in value else None
+        ),
         "title": (
             reader.optional_text("title") if "title" in value else None
         ),
@@ -93,6 +102,15 @@ def session_to_legacy_dict(session: Session) -> dict[str, object]:
     }
     if session.title is not None:
         value["title"] = session.title
+    return value
+
+
+def session_to_operation_dict(session: Session) -> dict[str, object]:
+    """Keep the managed binding in internal operation replay state only."""
+
+    value = session_to_legacy_dict(session)
+    if session.worktree_id is not None:
+        value["worktreeId"] = session.worktree_id
     return value
 
 

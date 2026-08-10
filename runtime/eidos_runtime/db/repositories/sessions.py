@@ -31,6 +31,7 @@ from eidos_runtime.persistence.mappers.session import (
     session_from_legacy_dict,
     session_from_row,
     session_to_legacy_dict,
+    session_to_operation_dict,
 )
 from eidos_runtime.runtime.state_machine import EventType
 
@@ -40,7 +41,7 @@ SESSION_CURSOR_PREFIX = "session-v2:"
 MAX_SNAPSHOT_BYTES = 768 * 1024
 
 SESSION_SELECT = """
-    SELECT s.creation_seq, s.id, s.workspace_root, s.title,
+    SELECT s.creation_seq, s.id, s.workspace_root, s.worktree_id, s.title,
            s.created_at, s.updated_at,
            CASE
              WHEN EXISTS (
@@ -70,14 +71,24 @@ SESSION_SELECT = """
 
 class SessionRepository(Repository):
     def create_session(
-        self, workspace_root: str, *, operation_id: str | None = None
+        self,
+        workspace_root: str,
+        *,
+        worktree_id: str | None = None,
+        operation_id: str | None = None,
     ) -> Session:
         return self.create_session_committed(
-            workspace_root, operation_id=operation_id
+            workspace_root,
+            worktree_id=worktree_id,
+            operation_id=operation_id,
         ).value
 
     def create_session_committed(
-        self, workspace_root: str, *, operation_id: str | None = None
+        self,
+        workspace_root: str,
+        *,
+        worktree_id: str | None = None,
+        operation_id: str | None = None,
     ) -> CommittedMutation[Session]:
         workspace = _canonical_workspace(workspace_root)
         if self._workspace_overlaps_data(workspace):
@@ -88,6 +99,7 @@ class SessionRepository(Repository):
         session = session_from_row({
             "id": session_id,
             "workspace_root": str(workspace),
+            "worktree_id": worktree_id,
             "title": None,
             "task_status": "new",
             "created_at": now,
@@ -95,12 +107,28 @@ class SessionRepository(Repository):
         })
 
         def write(connection: sqlite3.Connection) -> CommittedMutation[Session]:
+            if worktree_id is not None:
+                worktree = connection.execute(
+                    """
+                    SELECT p.repository_root
+                    FROM worktrees w
+                    JOIN projects p ON p.id = w.project_id
+                    WHERE w.id = ?
+                    """,
+                    (worktree_id,),
+                ).fetchone()
+                if worktree is None:
+                    raise ResourceNotFoundError("worktree not found")
+                if worktree["repository_root"] != str(workspace):
+                    raise WorkspaceBoundaryError(
+                        "session repository does not match worktree"
+                    )
             connection.execute(
                 """
                 INSERT INTO sessions (
                     id, workspace_root, workspace_dev, workspace_inode,
-                    workspace_uid, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    workspace_uid, worktree_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -108,6 +136,7 @@ class SessionRepository(Repository):
                     metadata.st_dev,
                     metadata.st_ino,
                     metadata.st_uid,
+                    worktree_id,
                     now,
                     now,
                 ),
@@ -126,7 +155,7 @@ class SessionRepository(Repository):
             operation_id=operation_id,
             operation_scope="session/create",
             operation_request={"workspaceRoot": str(workspace)},
-            serialize_value=session_to_legacy_dict,
+            serialize_value=session_to_operation_dict,
             deserialize_value=session_from_legacy_dict,
         )
 
