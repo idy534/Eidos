@@ -437,6 +437,28 @@ def test_git_process_bounds_stderr_exposed_by_failed_commands(tmp_path: Path) ->
     assert len(error.value.stderr.encode("utf-8")) <= 1024
 
 
+def test_worktree_diff_maps_git_observation_failures_to_stable_errors(
+    tmp_path: Path, database: Database
+) -> None:
+    repository = _repository(tmp_path)
+
+    class FailingDiffGitProcess(GitProcess):
+        def diff_head(self, cwd: Path) -> GitCommandResult:
+            raise GitCommandTimeoutError("diff-head")
+
+    manager = WorktreeManager(
+        database,
+        managed_root=tmp_path / "managed",
+        git_process=FailingDiffGitProcess(),
+    )
+    worktree = manager.create(repository)
+
+    with pytest.raises(WorktreeError) as error:
+        manager.diff(worktree.id)
+
+    assert error.value.code == "git_command_timeout"
+
+
 def test_worktree_add_failure_after_filesystem_creation_is_compensated(
     tmp_path: Path, database: Database
 ) -> None:

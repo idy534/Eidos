@@ -24,12 +24,19 @@ from eidos_runtime.db.mappers import (
     _snapshot_item,
     _step_resolution_review,
 )
-from eidos_runtime.domain.session import DeletedSession, Session, SessionPage
+from eidos_runtime.domain.session import (
+    DeletedSession,
+    Session,
+    SessionPage,
+    SessionProjection,
+    SessionProjectionPage,
+)
 from eidos_runtime.persistence.mappers.session import (
     deleted_session_from_legacy_dict,
     deleted_session_to_legacy_dict,
     session_from_legacy_dict,
     session_from_row,
+    session_projection_from_row,
     session_to_legacy_dict,
     session_to_operation_dict,
 )
@@ -65,8 +72,18 @@ SESSION_SELECT = """
                ORDER BY latest.creation_seq DESC
                LIMIT 1
              ), 'new')
-           END AS task_status
+           END AS task_status,
+           w.id AS projection_worktree_id,
+           w.project_id AS projection_project_id,
+           p.repository_root AS projection_repository_root,
+           w.worktree_root AS projection_worktree_root,
+           w.base_ref AS projection_base_ref,
+           w.base_commit AS projection_base_commit,
+           w.branch AS projection_branch,
+           w.state AS projection_worktree_state
     FROM sessions s
+    LEFT JOIN worktrees w ON w.id = s.worktree_id
+    LEFT JOIN projects p ON p.id = w.project_id
 """
 
 class SessionRepository(Repository):
@@ -162,6 +179,24 @@ class SessionRepository(Repository):
     def list_sessions(
         self, *, limit: int = DEFAULT_LIST_LIMIT, cursor: str | None = None
     ) -> SessionPage:
+        page, next_cursor = self._list_session_rows(limit=limit, cursor=cursor)
+        return SessionPage(
+            items=tuple(session_from_row(row) for row in page),
+            next_cursor=next_cursor,
+        )
+
+    def list_session_projections(
+        self, *, limit: int = DEFAULT_LIST_LIMIT, cursor: str | None = None
+    ) -> SessionProjectionPage:
+        page, next_cursor = self._list_session_rows(limit=limit, cursor=cursor)
+        return SessionProjectionPage(
+            items=tuple(session_projection_from_row(row) for row in page),
+            next_cursor=next_cursor,
+        )
+
+    def _list_session_rows(
+        self, *, limit: int, cursor: str | None
+    ) -> tuple[list[sqlite3.Row], str | None]:
         cursor_state = _decode_cursor(cursor) if cursor is not None else None
         sql = SESSION_SELECT
         with self.lock:
@@ -181,15 +216,12 @@ class SessionRepository(Repository):
             ).fetchall()
         has_more = len(rows) > limit
         page = rows[:limit]
-        return SessionPage(
-            items=tuple(session_from_row(row) for row in page),
-            next_cursor=(
+        return page, (
                 _encode_cursor(
                 high_water, page[-1]["creation_seq"]
                 )
                 if has_more
                 else None
-            )
         )
 
     def read_session(self, session_id: str) -> Session | None:
@@ -199,6 +231,14 @@ class SessionRepository(Repository):
                 (session_id,),
             ).fetchone()
         return session_from_row(row) if row is not None else None
+
+    def read_session_projection(self, session_id: str) -> SessionProjection | None:
+        with self.lock:
+            row = self._connection().execute(
+                SESSION_SELECT + " WHERE s.id = ?",
+                (session_id,),
+            ).fetchone()
+        return session_projection_from_row(row) if row is not None else None
 
     def session_model_id(self, session_id: str) -> str | None:
         with self.lock:

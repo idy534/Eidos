@@ -51,6 +51,7 @@ def test_runtime_application_container_composes_all_phase_ef_boundaries(tmp_path
 
     registered = {registration.name for registration in server.method_registry}
     assert {
+        "session/gitStatus", "session/gitDiff",
         "run/status", "run/pause", "run/resume", "run/cancel",
         "context/usage",
         "checkpoint/create", "checkpoint/list", "checkpoint/rewind",

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 
-import type { Session } from "../contracts.js";
+import type { Session, SessionGitStatus } from "../contracts.js";
 import type { RuntimePresentation } from "../session-state.js";
-import { groupSessionsByWorkspace, taskStatusPresentation } from "../session-state.js";
+import { groupSessionsByProject, taskStatusPresentation } from "../session-state.js";
 import { ContextMenu } from "./DropdownMenu.js";
 import { EidosMark } from "./EidosMark.js";
 import { PrimaryActionButton } from "./PrimaryActionButton.js";
@@ -18,8 +18,9 @@ interface Props {
   runtimePresentation: RuntimePresentation;
   /** Session ID currently being selected (shows local loading) */
   isSelectingSessionId?: string | undefined;
+  gitStatusBySessionId?: ReadonlyMap<string, SessionGitStatus>;
   onCreate: () => void;
-  onCreateInWorkspace: (workspaceRoot: string) => void;
+  onCreateInProject: (repositoryRoot: string) => void;
   onSelect: (session: Session) => void;
   onRename: (session: Session) => void;
   onDelete: (session: Session) => void;
@@ -35,11 +36,11 @@ interface ContextMenuState {
 
 export function SessionSidebar({
   sessions, selectedId, disabled, readCompletedSessions,
-  runtimePresentation, isSelectingSessionId,
-  onCreate, onCreateInWorkspace, onSelect, onRename, onDelete, onOpenSettings,
+  runtimePresentation, isSelectingSessionId, gitStatusBySessionId = new Map(),
+  onCreate, onCreateInProject, onSelect, onRename, onDelete, onOpenSettings,
 }: Props) {
-  const workspaces = groupSessionsByWorkspace(sessions);
-  const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Set<string>>(new Set());
+  const projects = groupSessionsByProject(sessions);
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<ContextMenuState | undefined>(undefined);
 
   useEffect(() => {
@@ -78,50 +79,51 @@ export function SessionSidebar({
           <p className="nav-empty">还没有任务，点击上方按键创建</p>
         ) : (
           <ul className="workspace-list">
-            {workspaces.map((workspace) => (
-              <li key={workspace.workspaceRoot}>
-                <section className="workspace-group" aria-label={basename(workspace.workspaceRoot)}>
-                  <div className="workspace-title-row" title={workspace.workspaceRoot}>
+            {projects.map((project) => (
+              <li key={project.key}>
+                <section className="workspace-group" aria-label={project.displayName}>
+                  <div className="workspace-title-row" title={project.repositoryRoot}>
                     <button
                       className="workspace-toggle"
-                      aria-expanded={!collapsedWorkspaces.has(workspace.workspaceRoot)}
-                      onClick={() => setCollapsedWorkspaces((current) => {
+                      aria-expanded={!collapsedProjects.has(project.key)}
+                      onClick={() => setCollapsedProjects((current) => {
                         const next = new Set(current);
-                        if (next.has(workspace.workspaceRoot)) {
-                          next.delete(workspace.workspaceRoot);
+                        if (next.has(project.key)) {
+                          next.delete(project.key);
                         } else {
-                          next.add(workspace.workspaceRoot);
+                          next.add(project.key);
                         }
                         return next;
                       })}
                     >
-                      <ChevronIcon open={!collapsedWorkspaces.has(workspace.workspaceRoot)} />
-                      <FolderIcon open={!collapsedWorkspaces.has(workspace.workspaceRoot)} />
-                      <span className="workspace-name">{basename(workspace.workspaceRoot)}</span>
+                      <ChevronIcon open={!collapsedProjects.has(project.key)} />
+                      <FolderIcon open={!collapsedProjects.has(project.key)} />
+                      <span className="workspace-name">{project.displayName}</span>
                     </button>
                     <button
                       className="workspace-add"
-                      aria-label={`在 ${basename(workspace.workspaceRoot)} 中新建任务`}
+                      aria-label={`在 ${project.displayName} 中新建任务`}
                       disabled={disabled}
                       onClick={() => {
-                        setCollapsedWorkspaces((current) => {
+                        setCollapsedProjects((current) => {
                           const next = new Set(current);
-                          next.delete(workspace.workspaceRoot);
+                          next.delete(project.key);
                           return next;
                         });
-                        onCreateInWorkspace(workspace.workspaceRoot);
+                        onCreateInProject(project.repositoryRoot);
                       }}
                     >＋</button>
                   </div>
-                  {!collapsedWorkspaces.has(workspace.workspaceRoot) && (
+                  {!collapsedProjects.has(project.key) && (
                     <ul className="session-list">
-                      {workspace.sessions.map((session) => {
+                      {project.sessions.map((session) => {
                         const status = taskStatusPresentation(
                           session.taskStatus,
                           readCompletedSessions.has(session.id),
                         );
                         const isSelected = session.id === selectedId;
                         const isLoading = session.id === isSelectingSessionId;
+                        const gitStatus = gitStatusBySessionId.get(session.id);
                         return (
                           <li className="session-item" key={session.id}>
                             <button
@@ -156,16 +158,32 @@ export function SessionSidebar({
                                 }
                               }}
                             >
-                              <span className="session-title">{session.title ?? "新任务"}</span>
-                              {isLoading && (
-                                <span className="session-loading-dot" aria-label="加载中" />
-                              )}
-                              {status && !isLoading && (
-                                <span
-                                  className={`task-indicator task-indicator--${status.tone}${status.spinning ? " task-indicator--spinning" : ""}`}
-                                  title={status.label}
-                                  aria-label={status.label}
-                                />
+                              <span className="session-labels">
+                                <span className="session-title">{session.title ?? "新任务"}</span>
+                                {session.worktree && (
+                                  <span className="session-branch">{session.worktree.branch}</span>
+                                )}
+                              </span>
+                              {(isLoading || gitStatus?.dirty || status) && (
+                                <span className="session-indicators">
+                                  {isLoading && (
+                                    <span className="session-loading-dot" aria-label="加载中" />
+                                  )}
+                                  {gitStatus?.dirty && !isLoading && (
+                                    <span
+                                      className="git-dirty-indicator"
+                                      aria-label="有未提交改动"
+                                      title="有未提交改动"
+                                    />
+                                  )}
+                                  {status && !isLoading && (
+                                    <span
+                                      className={`task-indicator task-indicator--${status.tone}${status.spinning ? " task-indicator--spinning" : ""}`}
+                                      title={status.label}
+                                      aria-label={status.label}
+                                    />
+                                  )}
+                                </span>
                               )}
                             </button>
                           </li>
@@ -223,10 +241,6 @@ export function SessionSidebar({
       )}
     </aside>
   );
-}
-
-function basename(path: string): string {
-  return path.split("/").filter(Boolean).at(-1) ?? path;
 }
 
 function FolderIcon({ open }: { open: boolean }) {

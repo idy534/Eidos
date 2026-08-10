@@ -82,6 +82,17 @@ class SessionReadRequestDto(_CanonicalIdRequest):
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id", "before_item_id")
 
 
+class SessionGitStatusRequestDto(_CanonicalIdRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
+
+
+class SessionGitDiffRequestDto(_CanonicalIdRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    scope: Literal["head", "baseline"] = "head"
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
+
+
 class SessionRenameRequestDto(_OperationRequest):
     session_id: StrictStr = Field(alias="sessionId")
     title: StrictStr
@@ -266,6 +277,31 @@ class SessionReadResponseDto(MethodResultDto):
     step_resolutions: list[StepResolutionReviewDto] = Field(alias="stepResolutions")
     previous_item_id: StrictStr | None = Field(default=None, alias="previousItemId")
     through_event_id: StrictInt | None = Field(default=None, alias="throughEventId")
+
+
+class SessionGitStatusResponseDto(MethodResultDto):
+    worktree_id: StrictStr = Field(alias="worktreeId")
+    branch: StrictStr
+    head: StrictStr
+    base_ref: StrictStr = Field(alias="baseRef")
+    base_commit: StrictStr = Field(alias="baseCommit")
+    dirty: bool
+    staged_count: StrictInt = Field(alias="stagedCount", ge=0)
+    unstaged_count: StrictInt = Field(alias="unstagedCount", ge=0)
+    untracked_count: StrictInt = Field(alias="untrackedCount", ge=0)
+    conflict_count: StrictInt = Field(alias="conflictCount", ge=0)
+    observed_at: StrictInt = Field(alias="observedAt", ge=0)
+
+
+class SessionGitDiffResponseDto(MethodResultDto):
+    scope: Literal["head", "baseline"]
+    base_commit: StrictStr = Field(alias="baseCommit")
+    head: StrictStr
+    dirty: bool
+    changed_files: list[StrictStr] = Field(alias="changedFiles")
+    unified_diff: StrictStr = Field(alias="unifiedDiff")
+    truncated: bool
+    observed_at: StrictInt = Field(alias="observedAt", ge=0)
 
 
 class SessionRenameResponseDto(_SessionResponseDto):

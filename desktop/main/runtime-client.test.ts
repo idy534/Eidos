@@ -218,6 +218,66 @@ test("creates and reads a persisted session across runtime restarts", async () =
   }
 });
 
+test("projects managed Worktrees and keeps Git review isolated per session", async () => {
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
+  const repositoryRoot = await createGitRepository("eidos-git-review-");
+  const client = new RuntimeClient({
+    pythonExecutable,
+    runtimeRoot: path.join(projectRoot, "runtime"),
+    dataDirectory,
+  });
+
+  try {
+    await client.initialize();
+    const first = await client.createSession(repositoryRoot);
+    const second = await client.createSession(repositoryRoot);
+    assert.ok(first.worktree);
+    assert.ok(second.worktree);
+    assert.equal(first.worktree.projectId, second.worktree.projectId);
+    assert.equal(first.worktree.repositoryRoot, second.worktree.repositoryRoot);
+    assert.notEqual(first.worktree.worktreeId, second.worktree.worktreeId);
+    assert.notEqual(first.worktree.worktreeRoot, second.worktree.worktreeRoot);
+    assert.notEqual(first.worktree.branch, second.worktree.branch);
+
+    const firstSnapshot = await client.readSession(first.id);
+    const listed = await client.listSessions();
+    assert.deepEqual(firstSnapshot.session.worktree, first.worktree);
+    assert.deepEqual(
+      new Map(listed.items.map((session) => [session.id, session.worktree])),
+      new Map([[first.id, first.worktree], [second.id, second.worktree]]),
+    );
+
+    await writeFile(path.join(first.worktree.worktreeRoot, "README.md"), "# Committed in A\n", "utf8");
+    await execFileAsync("git", ["add", "README.md"], { cwd: first.worktree.worktreeRoot });
+    await execFileAsync("git", ["commit", "-qm", "session A commit"], {
+      cwd: first.worktree.worktreeRoot,
+    });
+    await writeFile(path.join(first.worktree.worktreeRoot, "ONLY_A.txt"), "isolated\n", "utf8");
+
+    const [firstStatus, secondStatus, headDiff, baselineDiff] = await Promise.all([
+      client.readSessionGitStatus(first.id),
+      client.readSessionGitStatus(second.id),
+      client.readSessionGitDiff(first.id, "head"),
+      client.readSessionGitDiff(first.id, "baseline"),
+    ]);
+
+    assert.equal(firstStatus.dirty, true);
+    assert.equal(secondStatus.dirty, false);
+    assert.deepEqual(headDiff.changedFiles, ["ONLY_A.txt"]);
+    assert.equal(headDiff.scope, "head");
+    assert.equal(baselineDiff.scope, "baseline");
+    assert.ok(baselineDiff.changedFiles.includes("README.md"));
+    assert.ok(baselineDiff.changedFiles.includes("ONLY_A.txt"));
+    assert.match(headDiff.unifiedDiff, /ONLY_A\.txt/);
+  } finally {
+    await client.shutdown().catch(() => undefined);
+    await client.waitForExit().catch(() => undefined);
+    await rm(dataDirectory, { recursive: true, force: true });
+    await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
 test("imports and manages closed Plugin Skill and MCP records", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
   const pluginRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-plugin-"));

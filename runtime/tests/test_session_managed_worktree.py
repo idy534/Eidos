@@ -6,6 +6,7 @@ import threading
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.application.repository import RepositoryApplicationFactory
@@ -14,7 +15,13 @@ from eidos_runtime.context.project_rules import ProjectRuleResolver
 from eidos_runtime.db.errors import StorageError
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.git import WorktreeManager
-from eidos_runtime.protocol.methods import SessionCreateRequestDto
+from eidos_runtime.protocol.methods import (
+    SessionCreateRequestDto,
+    SessionGitDiffRequestDto,
+    SessionGitStatusRequestDto,
+    SessionListRequestDto,
+    SessionReadRequestDto,
+)
 from eidos_runtime.tools.runtime_workspace import ToolExecutor
 from eidos_runtime.tools.workspace import FileChange
 
@@ -107,6 +114,43 @@ def test_session_create_binds_worktree_and_run_uses_its_identity(tmp_path: Path)
         store.close()
 
 
+def test_managed_session_create_list_and_read_share_worktree_projection(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    store, manager, application = _application(tmp_path)
+    try:
+        created = _create(application, repository)
+        listed = application.list(SessionListRequestDto()).root["items"][0]
+        snapshot = application.read_snapshot(
+            SessionReadRequestDto(sessionId=created["id"])
+        ).root["session"]
+
+        row = store.connection.execute(
+            "SELECT worktree_id FROM sessions WHERE id = ?", (created["id"],)
+        ).fetchone()
+        assert row is not None
+        worktree = manager.open(row["worktree_id"])
+        project = manager.project(worktree.project_id)
+        expected = {
+            "worktreeId": worktree.id,
+            "projectId": project.id,
+            "repositoryRoot": project.repository_root,
+            "worktreeRoot": worktree.worktree_root,
+            "baseRef": worktree.base_ref,
+            "baseCommit": worktree.base_commit,
+            "branch": worktree.branch,
+            "state": "active",
+        }
+
+        assert created["worktree"] == expected
+        assert listed["worktree"] == expected
+        assert snapshot["worktree"] == expected
+        assert created["workspaceRoot"] == project.repository_root
+    finally:
+        store.close()
+
+
 def test_two_managed_sessions_isolate_files_and_execution_tools(tmp_path: Path) -> None:
     repository = _repository(tmp_path)
     store, manager, application = _application(tmp_path)
@@ -166,6 +210,75 @@ def test_two_managed_sessions_isolate_files_and_execution_tools(tmp_path: Path) 
         assert repository_application.inventory_builder.root == identity.path
     finally:
         store.close()
+
+
+def test_session_git_status_and_diff_are_resolved_from_the_managed_binding(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    store, _manager, application = _application(tmp_path)
+    try:
+        first = _create(application, repository)
+        second = _create(application, repository)
+        first_root = Path(first["worktree"]["worktreeRoot"])
+        (first_root / "README.md").write_text("changed\n", encoding="utf-8")
+        (first_root / "a.txt").write_text("from first\n", encoding="utf-8")
+
+        first_status = application.git_status(
+            SessionGitStatusRequestDto(sessionId=first["id"])
+        ).root
+        second_status = application.git_status(
+            SessionGitStatusRequestDto(sessionId=second["id"])
+        ).root
+        head_diff = application.git_diff(
+            SessionGitDiffRequestDto(sessionId=first["id"], scope="head")
+        ).root
+        baseline_diff = application.git_diff(
+            SessionGitDiffRequestDto(sessionId=first["id"], scope="baseline")
+        ).root
+        second_diff = application.git_diff(
+            SessionGitDiffRequestDto(sessionId=second["id"], scope="head")
+        ).root
+
+        assert first_status["worktreeId"] == first["worktree"]["worktreeId"]
+        assert first_status["dirty"] is True
+        assert first_status["unstagedCount"] == 1
+        assert first_status["untrackedCount"] == 1
+        assert second_status["dirty"] is False
+        assert {"README.md", "a.txt"} <= set(head_diff["changedFiles"])
+        assert "a.txt" in head_diff["unifiedDiff"]
+        assert baseline_diff["scope"] == "baseline"
+        assert "a.txt" in baseline_diff["unifiedDiff"]
+        assert second_diff["changedFiles"] == []
+        assert second_diff["unifiedDiff"] == ""
+    finally:
+        store.close()
+
+
+def test_legacy_session_git_review_is_rejected_with_a_stable_error(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "legacy-workspace"
+    workspace.mkdir()
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    application = SessionApplication(store, scan_text=lambda value: value)
+    try:
+        session = store.create_session(str(workspace))
+        with pytest.raises(ApplicationError) as error:
+            application.git_status(
+                SessionGitStatusRequestDto(sessionId=session["id"])
+            )
+        assert error.value.code == "GIT_WORKTREE_NOT_MANAGED"
+    finally:
+        store.close()
+
+
+def test_session_git_review_requests_reject_filesystem_paths() -> None:
+    with pytest.raises(ValidationError):
+        SessionGitStatusRequestDto.model_validate(
+            {"sessionId": str(uuid4()), "worktreeRoot": "/caller/path"}
+        )
 
 
 def test_legacy_session_still_uses_workspace_root(tmp_path: Path) -> None:

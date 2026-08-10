@@ -29,7 +29,10 @@ from eidos_runtime.domain.session import (
     DeletedSession,
     Session,
     SessionPage,
+    SessionProjection,
+    SessionProjectionPage,
     SessionTaskStatus,
+    SessionWorktreeProjection,
 )
 from eidos_runtime.domain.tool import (
     Approval,
@@ -87,7 +90,10 @@ __all__ = [
     "SegmentStatus",
     "Session",
     "SessionPage",
+    "SessionProjection",
+    "SessionProjectionPage",
     "SessionTaskStatus",
+    "SessionWorktreeProjection",
     "Step",
     "StepStatus",
     "ToolAttempt",

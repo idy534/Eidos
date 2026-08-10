@@ -9,6 +9,9 @@ import type {
   EventListResult,
   Session,
   DeleteSessionResult,
+  GitDiffScope,
+  SessionGitDiff,
+  SessionGitStatus,
   Run,
   ContextUsage,
   ModelId,
@@ -58,6 +61,10 @@ const api: EidosRuntimeAPI = {
     ipcRenderer.invoke(IPC.SESSION_RENAME, sessionId, title),
   deleteSession: (sessionId: string): Promise<DeleteSessionResult> =>
     ipcRenderer.invoke(IPC.SESSION_DELETE, sessionId),
+  readSessionGitStatus: (sessionId: string): Promise<SessionGitStatus> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_STATUS, sessionId),
+  readSessionGitDiff: (sessionId: string, scope: GitDiffScope): Promise<SessionGitDiff> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_DIFF, sessionId, scope),
 
   // Runs
   startRun: (sessionId: string, userInput: string, modelId: ModelId): Promise<Run> =>

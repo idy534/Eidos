@@ -21,6 +21,8 @@ export const IPC = {
   SESSION_CREATE: "session:create",
   SESSION_RENAME: "session:rename",
   SESSION_DELETE: "session:delete",
+  SESSION_GIT_STATUS: "session:git-status",
+  SESSION_GIT_DIFF: "session:git-diff",
 
   // Events
   EVENT_LIST: "event:list",

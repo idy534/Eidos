@@ -443,20 +443,29 @@ class WorktreeManager:
         if not validation.valid or validation.head is None:
             raise WorktreeError(validation.code or "worktree_invalid")
         root = Path(worktree.worktree_root)
-        if scope is DiffScope.HEAD:
-            diff_result = self.git.diff_head(root)
-        elif scope is DiffScope.BASELINE:
-            diff_result = self.git.diff_baseline(root, worktree.base_commit)
-        else:
-            raise WorktreeError("worktree_invalid")
-        names = self.git.diff_name_only(
-            root,
-            scope=scope.value,
-            base_commit=worktree.base_commit if scope is DiffScope.BASELINE else None,
-        )
-        tracked_files = self._machine_paths(names)
-        untracked_result = self.git.untracked_files(root)
-        untracked_files = self._machine_paths(untracked_result)
+        try:
+            if scope is DiffScope.HEAD:
+                diff_result = self.git.diff_head(root)
+            elif scope is DiffScope.BASELINE:
+                diff_result = self.git.diff_baseline(root, worktree.base_commit)
+            else:
+                raise WorktreeError("worktree_invalid")
+            names = self.git.diff_name_only(
+                root,
+                scope=scope.value,
+                base_commit=(
+                    worktree.base_commit if scope is DiffScope.BASELINE else None
+                ),
+            )
+            tracked_files = self._machine_paths(names)
+            untracked_result = self.git.untracked_files(root)
+            untracked_files = self._machine_paths(untracked_result)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_command_failed") from error
+        except ValueError as error:
+            raise WorktreeError("git_observation_incomplete") from error
         _, _, _, _, dirty = self._status_counts(root)
         changed_files = _unique_paths((*tracked_files, *untracked_files))
         unified_diff = diff_result.stdout

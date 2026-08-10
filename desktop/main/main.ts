@@ -425,6 +425,16 @@ ipcMain.handle(IPC.SESSION_DELETE, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
   return clientOrThrow().deleteSession(sessionId);
 });
+ipcMain.handle(IPC.SESSION_GIT_STATUS, (_event, sessionId: unknown) => {
+  if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
+  return clientOrThrow().readSessionGitStatus(sessionId);
+});
+ipcMain.handle(IPC.SESSION_GIT_DIFF, (_event, sessionId: unknown, scope: unknown) => {
+  if (typeof sessionId !== "string" || (scope !== "head" && scope !== "baseline")) {
+    throw new Error("Git Diff 参数无效。");
+  }
+  return clientOrThrow().readSessionGitDiff(sessionId, scope);
+});
 
 ipcMain.handle(IPC.RUN_START, (_event, sessionId: unknown, userInput: unknown, modelId: unknown) => {
   if (

@@ -555,6 +555,22 @@ class RuntimeServer:
                 request: self._applications_or_error().sessions.read_snapshot(request),
             ),
             (
+                "session/gitStatus",
+                method_dtos.SessionGitStatusRequestDto,
+                method_dtos.SessionGitStatusResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_status(
+                    request
+                ),
+            ),
+            (
+                "session/gitDiff",
+                method_dtos.SessionGitDiffRequestDto,
+                method_dtos.SessionGitDiffResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_diff(
+                    request
+                ),
+            ),
+            (
                 "session/rename",
                 method_dtos.SessionRenameRequestDto,
                 method_dtos.SessionRenameResponseDto,

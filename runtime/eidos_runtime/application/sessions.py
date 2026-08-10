@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 import logging
 from pathlib import Path
 import unicodedata
@@ -26,6 +27,7 @@ from eidos_runtime.domain.project import Project
 from eidos_runtime.domain.worktree import Worktree
 from eidos_runtime.git.errors import WorktreeError
 from eidos_runtime.git.models import GitRepositoryDiscovery
+from eidos_runtime.git.status import DiffScope, GitDiffSnapshot, GitStatusSnapshot
 from eidos_runtime.protocol.methods import (
     EventListRequestDto,
     EventListResponseDto,
@@ -34,6 +36,10 @@ from eidos_runtime.protocol.methods import (
     SessionCreateResponseDto,
     SessionDeleteRequestDto,
     SessionDeleteResponseDto,
+    SessionGitDiffRequestDto,
+    SessionGitDiffResponseDto,
+    SessionGitStatusRequestDto,
+    SessionGitStatusResponseDto,
     SessionListRequestDto,
     SessionListResponseDto,
     SessionReadRequestDto,
@@ -41,12 +47,19 @@ from eidos_runtime.protocol.methods import (
     SessionRenameRequestDto,
     SessionRenameResponseDto,
 )
-from eidos_runtime.domain.session import DeletedSession, Session, SessionPage
+from eidos_runtime.domain.session import (
+    DeletedSession,
+    Session,
+    SessionPage,
+    SessionProjection,
+    SessionProjectionPage,
+)
 from eidos_runtime.persistence.mappers.session import (
     deleted_session_to_legacy_dict,
-    session_page_to_legacy_dict,
+    session_from_legacy_dict,
     session_to_legacy_dict,
 )
+from eidos_runtime.protocol.schemas import SessionDto, SessionWorktreeDto
 from eidos_runtime.sandbox.sensitive import (
     SensitiveContentDenied,
     SensitiveScanError,
@@ -72,7 +85,13 @@ class TypedSessionRepositoryPort(Protocol):
         self, *, limit: int, cursor: str | None
     ) -> SessionPage: ...
 
+    def list_session_projections(
+        self, *, limit: int, cursor: str | None
+    ) -> SessionProjectionPage: ...
+
     def read_session(self, session_id: str) -> Session | None: ...
+
+    def read_session_projection(self, session_id: str) -> SessionProjection | None: ...
 
     def rename_session(
         self,
@@ -122,6 +141,12 @@ class ManagedWorktreePort(Protocol):
     def create(self, repository_root: Path | str) -> Worktree: ...
 
     def project(self, project_id: str) -> Project: ...
+
+    def status(self, worktree_id: str) -> GitStatusSnapshot: ...
+
+    def diff(
+        self, worktree_id: str, *, scope: DiffScope = DiffScope.HEAD
+    ) -> GitDiffSnapshot: ...
 
     def delete(self, worktree_id: str) -> Worktree: ...
 
@@ -179,7 +204,10 @@ class SessionApplication:
             raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
         except OperationInProgressError as error:
             raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
-        return _result(SessionCreateResponseDto, session_to_legacy_dict(mutation.value))
+        return _result(
+            SessionCreateResponseDto,
+            self._project_session(self._projection_for_session(mutation.value.id)),
+        )
 
     def _create_managed(
         self, request: SessionCreateRequestDto
@@ -209,9 +237,12 @@ class SessionApplication:
             except OperationInProgressError as error:
                 raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
             if replay is not None:
+                replayed_session = session_from_legacy_dict(replay)
                 return _result(
                     SessionCreateResponseDto,
-                    _wire_session_operation_result(replay),
+                    self._project_session(
+                        self._projection_for_session(replayed_session.id)
+                    ),
                 )
 
         try:
@@ -250,7 +281,10 @@ class SessionApplication:
                     "SESSION_PERSISTENCE_FAILED", str(error)
                 ) from error
             raise
-        return _result(SessionCreateResponseDto, session_to_legacy_dict(mutation.value))
+        return _result(
+            SessionCreateResponseDto,
+            self._project_session(self._projection_for_session(mutation.value.id)),
+        )
 
     def _compensate_managed_worktree(
         self, manager: ManagedWorktreePort, worktree: Worktree
@@ -270,18 +304,24 @@ class SessionApplication:
 
     def list(self, request: SessionListRequestDto) -> SessionListResponseDto:
         try:
-            page = self._repository.list_sessions(
+            page = self._repository.list_session_projections(
                 limit=request.limit,
                 cursor=request.cursor,
             )
         except InvalidCursorError as error:
             raise ApplicationInvalidParamsError("INVALID_CURSOR", str(error)) from error
-        return _result(SessionListResponseDto, session_page_to_legacy_dict(page))
+        value: dict[str, object] = {
+            "items": [self._project_session(projection) for projection in page.items]
+        }
+        if page.next_cursor is not None:
+            value["nextCursor"] = page.next_cursor
+        return _result(SessionListResponseDto, value)
 
     def read_snapshot(
         self, request: SessionReadRequestDto
     ) -> SessionReadResponseDto:
-        if self._repository.read_session(request.session_id) is None:
+        projection = self._repository.read_session_projection(request.session_id)
+        if projection is None:
             raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
         try:
             snapshot = self._store.read_session_snapshot(
@@ -291,7 +331,56 @@ class SessionApplication:
             )
         except ResourceNotFoundError as error:
             raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
-        return _result(SessionReadResponseDto, snapshot)
+        projected_snapshot = dict(snapshot)
+        projected_snapshot["session"] = self._project_session(projection)
+        return _result(SessionReadResponseDto, projected_snapshot)
+
+    def git_status(
+        self, request: SessionGitStatusRequestDto
+    ) -> SessionGitStatusResponseDto:
+        manager, worktree_id = self._managed_binding(request.session_id)
+        try:
+            status = manager.status(worktree_id)
+        except WorktreeError as error:
+            raise ApplicationError(_git_review_error_code(error), str(error)) from error
+        return _result(
+            SessionGitStatusResponseDto,
+            {
+                "worktreeId": status.worktree_id,
+                "branch": status.branch,
+                "head": status.head,
+                "baseRef": status.base_ref,
+                "baseCommit": status.base_commit,
+                "dirty": status.dirty,
+                "stagedCount": status.staged_count,
+                "unstagedCount": status.unstaged_count,
+                "untrackedCount": status.untracked_count,
+                "conflictCount": status.conflict_count,
+                "observedAt": _timestamp_millis(status.observed_at),
+            },
+        )
+
+    def git_diff(
+        self, request: SessionGitDiffRequestDto
+    ) -> SessionGitDiffResponseDto:
+        manager, worktree_id = self._managed_binding(request.session_id)
+        try:
+            diff = manager.diff(worktree_id, scope=DiffScope(request.scope))
+        except WorktreeError as error:
+            raise ApplicationError(_git_review_error_code(error), str(error)) from error
+        return _result(
+            SessionGitDiffResponseDto,
+            {
+                "scope": diff.scope.value,
+                "baseCommit": diff.base_commit,
+                "head": diff.head,
+                "dirty": diff.dirty,
+                "changedFiles": list(diff.changed_files),
+                "unifiedDiff": diff.unified_diff,
+                "truncated": diff.truncated,
+                "observedAt": _timestamp_millis(diff.observed_at),
+            },
+        )
 
     def rename(self, request: SessionRenameRequestDto) -> SessionRenameResponseDto:
         title = clean_session_title(request.title)
@@ -316,7 +405,10 @@ class SessionApplication:
             raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
         except ValueError as error:
             raise ApplicationError("INVALID_SESSION_TITLE", str(error)) from error
-        return _result(SessionRenameResponseDto, session_to_legacy_dict(mutation.value))
+        return _result(
+            SessionRenameResponseDto,
+            self._project_session(self._projection_for_session(mutation.value.id)),
+        )
 
     def delete(self, request: SessionDeleteRequestDto) -> SessionDeleteResponseDto:
         try:
@@ -348,6 +440,48 @@ class SessionApplication:
             raise ApplicationInvalidParamsError("INVALID_EVENT_CURSOR", str(error)) from error
         return _result(EventListResponseDto, events)
 
+    def _project_session(self, projection: SessionProjection) -> dict[str, object]:
+        session = projection.session
+        value = session_to_legacy_dict(session)
+        if projection.worktree is not None:
+            worktree = projection.worktree
+            value["worktree"] = SessionWorktreeDto(
+                worktreeId=worktree.worktree_id,
+                projectId=worktree.project_id,
+                repositoryRoot=worktree.repository_root,
+                worktreeRoot=worktree.worktree_root,
+                baseRef=worktree.base_ref,
+                baseCommit=worktree.base_commit,
+                branch=worktree.branch,
+                state=worktree.state.value,
+            )
+        return SessionDto.model_validate(value).to_json_value()
+
+    def _projection_for_session(self, session_id: str) -> SessionProjection:
+        projection = self._repository.read_session_projection(session_id)
+        if projection is None:
+            raise ApplicationError(
+                "INTERNAL_ERROR", "committed Session projection is unavailable"
+            )
+        return projection
+
+    def _managed_binding(
+        self, session_id: str
+    ) -> tuple[ManagedWorktreePort, str]:
+        session = self._repository.read_session(session_id)
+        if session is None:
+            raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
+        if session.worktree_id is None:
+            raise ApplicationError(
+                "GIT_WORKTREE_NOT_MANAGED", "session has no managed Worktree"
+            )
+        manager = self._worktree_manager
+        if manager is None:
+            raise ApplicationError(
+                "INTERNAL_ERROR", "managed Session has no Worktree application boundary"
+            )
+        return manager, session.worktree_id
+
 
 def _result(result_type: type[ResultT], value: object) -> ResultT:
     try:
@@ -368,12 +502,6 @@ __all__ = [
 ]
 
 
-def _wire_session_operation_result(value: object) -> object:
-    if not isinstance(value, dict):
-        return value
-    return {key: item for key, item in value.items() if key != "worktreeId"}
-
-
 def _worktree_error_code(error: WorktreeError) -> str:
     return {
         "repository_not_found": "REPOSITORY_NOT_FOUND",
@@ -381,3 +509,24 @@ def _worktree_error_code(error: WorktreeError) -> str:
         "git_command_timeout": "GIT_COMMAND_TIMEOUT",
         "worktree_persistence_failed": "WORKTREE_PERSISTENCE_FAILED",
     }.get(error.code, "WORKTREE_CREATE_FAILED")
+
+
+def _git_review_error_code(error: WorktreeError) -> str:
+    if error.code in {
+        "git_command_failed",
+        "git_command_timeout",
+        "git_observation_failed",
+        "git_observation_incomplete",
+    }:
+        return "GIT_OBSERVATION_UNAVAILABLE"
+    if error.code == "worktree_not_found":
+        return "GIT_WORKTREE_NOT_FOUND"
+    if error.code == "worktree_missing":
+        return "GIT_WORKTREE_MISSING"
+    if error.code.startswith("worktree_"):
+        return "GIT_WORKTREE_INVALID"
+    return "GIT_REVIEW_FAILED"
+
+
+def _timestamp_millis(value: datetime) -> int:
+    return int(value.timestamp() * 1000)

@@ -57,9 +57,21 @@ class ApprovalDecisionDto(ClosedModel):
         return self
 
 
+class SessionWorktreeDto(ClosedModel):
+    worktree_id: StrictStr = Field(alias="worktreeId")
+    project_id: StrictStr = Field(alias="projectId")
+    repository_root: StrictStr = Field(alias="repositoryRoot")
+    worktree_root: StrictStr = Field(alias="worktreeRoot")
+    base_ref: StrictStr = Field(alias="baseRef")
+    base_commit: StrictStr = Field(alias="baseCommit")
+    branch: StrictStr
+    state: Literal["active", "missing", "invalid", "deleted"]
+
+
 class SessionDto(ClosedModel):
     id: StrictStr
     workspace_root: StrictStr = Field(alias="workspaceRoot")
+    worktree: SessionWorktreeDto | None = None
     title: StrictStr | None = None
     task_status: Literal[
         "new", "in_progress", "completed", "failed", "canceled"
