@@ -172,7 +172,7 @@ Repository Intelligence 已实现为独立的 typed infrastructure。它包括�
 
 SQLite 是业务事实唯一权威。Session、Run、Item、ToolCall、Approval、Tool Attempt、Execution Segment、Step、Model Attempt、Durable Intent、Event、Outbox、Async Operation、Extension Snapshot、Context、Repository Snapshot、Compaction 和 Checkpoint 都有持久化边界。
 
-当前 `SCHEMA_VERSION` 是 14。新数据库直接创建 v14。已有数据库的启动窗口接受 v11、v12、v13 和 v14，并按 v11 → v12 → v13 → v14 逐步迁移。v10 及更早版本不在当前启动迁移窗口内，未知版本 fail closed。当前版本包含 legacy model storage removal、effective cwd 与 resolved instructions、response feedback 与 run revisions、compaction metadata。
+当前 `SCHEMA_VERSION` 是 15。新数据库直接创建 v15。已有数据库的启动窗口接受 v11、v12、v13、v14 和 v15，并按 v11 → v12 → v13 → v14 → v15 逐步迁移。v10 及更早版本不在当前启动迁移窗口内，未知版本 fail closed。当前版本包含 legacy model storage removal、effective cwd 与 resolved instructions、response feedback 与 run revisions、compaction metadata、Project 和 Worktree facts。
 
 业务状态变化与 Event/Outbox 在同一 SQLite transaction 中提交。Outbox 投递失败不会删除事实。Runtime 重启会从 SQLite、Outbox、Long Task 和 Resource 状态恢复或进入 reconciliation。
 
@@ -194,7 +194,11 @@ Run Span 记录 Run、Session、Model 和终态。Model Attempt Span 记录 Prov
 
 `OTEL_TRACES_EXPORTER` 默认是 `none`。当前支持 `console` 和 `otlp`；console exporter 写 stderr，OTLP 使用 HTTP Trace exporter。`OTEL_SDK_DISABLED` 可以关闭 SDK，`OTEL_SERVICE_NAME` 可以覆盖默认的 `eidos-runtime`，`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 可以设置 OTLP Trace endpoint。
 
-## 13. Extension Runtime
+## 13. Runtime Git Worktree Kernel
+
+Runtime Git Worktree Kernel 由 `runtime/eidos_runtime/git/` 和 `runtime/eidos_runtime/persistence/worktrees.py` 提供。`WorktreeManager` 管理 Project discovery、managed Worktree create/open/validate/list/recover/cleanup/delete、实时 Git status 和 HEAD/baseline diff。Git 和 filesystem 是动态观察来源。SQLite 只保存 Project、Worktree ownership、base commit 和 lifecycle state。Runtime 对 machine-readable Git output 使用 NUL-safe format，并在 observation failure、timeout、truncation 或 parse incomplete 时不更新 lifecycle state。`deleted` 是 terminal state。Kernel 不修改 Session binding、Run 并发或 Checkpoint Fork。
+
+## 14. Extension Runtime
 
 PluginCatalog 只接收受控的本地 Plugin v1 包。Runtime 校验 manifest、文件数量、单文件和总大小、content hash，并把安装内容写入私有 extensions 目录。Plugin 可以声明 Skill 和 MCP Server。Plugin 的启用状态、版本、hash 和引用关系进入 SQLite。
 
@@ -202,7 +206,7 @@ SkillCatalog 管理 bundled system skills、用户和 Plugin Skill。Turn 开始
 
 MCP 当前使用官方 Python MCP SDK 的 stdio client。MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。Server Tool 会进入统一 Tool Registry，保留 MCP provenance，并按 external Tool 经过 Approval、Sandbox、timeout、结果校验和 reconciliation。MCP 进程使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。
 
-## 14. Packaging & Distribution
+## 15. Packaging & Distribution
 
 源码开发使用仓库 `.venv/bin/python`，Runtime root 是仓库 `runtime/`。打包开发路径从 `process.resourcesPath/runtime/` 解析 bundled Python 和 `runtime/app`，不回退到系统 Python、PATH、`.venv` 或用户 `PYTHONHOME`。
 
@@ -210,7 +214,7 @@ MCP 当前使用官方 Python MCP SDK 的 stdio client。MCP Server 由 RuntimeA
 
 `package:mac` 生成未签名本地 DMG，并执行 packaged App、Runtime、SQLite、Seatbelt 和从 DMG 复制 App 的 smoke。`package:mac:release` 要求 Developer ID 和 Apple notarization credentials，随后执行 hardened runtime、签名、notarization、stapling、`codesign`、`spctl` 和 `stapler` 验证。
 
-## 15. Runtime Recovery
+## 16. Runtime Recovery
 
 Runtime 启动时会收敛未完成的 Run、ToolCall、Approval、Outbox 和资源状态。Cancellation 在 SQLite 中先记录 request，再通过 Run Worker、Model request、Tool process、Approval wait 和 Async Task 传播。迟到结果不能把已取消 Run 改回成功。
 
@@ -218,7 +222,7 @@ Long Task 控制事实写入 `operations` 的 `long_task/control` scope。`run/p
 
 Checkpoint create/list 和 rewind/fork action lineage 通过 typed RPC 暴露。Checkpoint 保存规则、Repository、Context、compaction、Workspace identity、Git、permission、Model snapshot 和 reconciliation 引用。当前这些接口提供持久 lineage，但完整 Context 重建、Git Worktree 隔离和所有 immutable snapshot 的兼容复制仍不是完整产品闭环。
 
-## 16. Implementation Anchors
+## 17. Implementation Anchors
 
 维护者核对本文时，优先从以下稳定入口读取代码：
 
@@ -241,6 +245,7 @@ Checkpoint create/list 和 rewind/fork action lineage 通过 typed RPC 暴露。
 - `runtime/eidos_runtime/repo_intelligence/`
 - `runtime/eidos_runtime/telemetry/provider.py`
 - `runtime/eidos_runtime/telemetry/tracing.py`
+- `runtime/eidos_runtime/git/`
 - `runtime/eidos_runtime/db/schema.py`
 - `runtime/eidos_runtime/db/storage.py`
 - `runtime/eidos_runtime/persistence/`

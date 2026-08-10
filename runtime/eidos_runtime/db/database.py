@@ -95,9 +95,7 @@ class Database:
             tables = _table_names(connection)
             revision = connection.execute("PRAGMA user_version").fetchone()[0]
             if (
-                (tables and revision not in range(
-                    SCHEMA_VERSION - 3, SCHEMA_VERSION + 1
-                ))
+                (tables and revision not in range(11, SCHEMA_VERSION + 1))
                 or (not tables and revision != 0)
             ):
                 raise StorageError("schema_revision_unsupported")

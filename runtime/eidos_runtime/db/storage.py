@@ -121,6 +121,11 @@ class SessionStore:
         return self._database.data_directory
 
     @property
+    def database(self) -> Database:
+        """Expose the shared SQLite authority to Runtime-owned modules."""
+        return self._database
+
+    @property
     def connection(self) -> sqlite3.Connection | None:
         return self._database.raw_connection
 

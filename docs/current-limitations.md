@@ -41,8 +41,8 @@
 ## Recovery 与 Checkpoint
 
 - Runtime 可以持久化 Long Task 控制、pause/resume/cancel、restart verification 结果和 reconciliation 状态，但 Restart Verification 尚未覆盖完整的 Git diff、credential、MCP、Seatbelt、pending Approval、unfinished ToolCall、Durable Intent 和 Checkpoint 兼容性集合。
-- Checkpoint create/list 和 rewind/fork lineage 已持久化并暴露 typed RPC。Rewind 尚未重建完整逻辑 Context。Fork 尚未验证或复制全部 immutable snapshots，也没有创建和校验独立 Git Worktree。
-- 当前不支持 Git Worktree 产品闭环。Checkpoint 不能被当作完整的 branch/worktree fork。
+- Checkpoint create/list 和 rewind/fork lineage 已持久化并暴露 typed RPC。Rewind 尚未重建完整逻辑 Context。Fork 尚未验证或复制全部 immutable snapshots，也没有使用本 PR 的 Worktree Kernel 创建独立 Git Worktree。
+- Runtime Git Worktree Kernel 已提供 infrastructure，但当前不支持完整 Git Worktree 产品闭环。当前没有 `sessions.worktree_id`、Session 自动 Worktree、Desktop Project UI 或 Checkpoint Fork binding。Kernel 也不提供 Git commit、branch delete、merge、rebase 或 force delete。
 - Runtime 不会恢复内存中的 Model request、Process 或 ToolCall。可能有副作用的未确认执行必须先进入 reconciliation，Runtime 不会自动重放。
 
 ## Compaction 与 Context
@@ -89,3 +89,5 @@
 - `runtime/eidos_runtime/telemetry/tracing.py`
 - `runtime/eidos_runtime/db/schema.py`
 - `runtime/eidos_runtime/db/database.py`
+- `runtime/eidos_runtime/git/`
+- `runtime/eidos_runtime/persistence/worktrees.py`
