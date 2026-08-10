@@ -1,0 +1,37 @@
+appId: com.idy.eidos
+productName: Eidos
+asar: true
+artifactName: Eidos-${version}-mac-${arch}.dmg
+
+directories:
+  output: release
+
+files:
+  - dist/main/**/*
+  - dist/shared/**/*
+  - dist/renderer/**/*
+  - package.json
+  - "!dist/**/*.map"
+  - "!dist/**/*.test.js"
+  - "!dist/renderer-test/**/*"
+
+extraResources:
+  - from: build/macos-runtime
+    to: runtime
+    filter:
+      - "**/*"
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  category: public.app-category.developer-tools
+  icon: packaging/icon.icns
+  entitlements: packaging/entitlements.mac.plist
+  entitlementsInherit: packaging/entitlements.mac.plist
+  hardenedRuntime: false
+  notarize: false
+
+dmg:
+  title: Eidos ${version}
