@@ -42,8 +42,8 @@ test("multiple mapped Runtime domains keep all focused selections without Fast f
 
 test("a directly changed Runtime test is selected by its current path", () => {
   assert.deepEqual(
-    commandLines(["runtime/tests/test_run_supervisor.py"]),
-    ["uv run --locked pytest runtime/tests/test_run_supervisor.py"],
+    commandLines(["runtime/tests/test_runtime_loop.py"]),
+    ["uv run --locked pytest runtime/tests/test_runtime_loop.py"],
   );
 });
 
