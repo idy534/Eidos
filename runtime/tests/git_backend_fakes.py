@@ -97,6 +97,10 @@ class FakeGitBackend:
         self._fail("clean_worktree_for_compensation")
         self.delegate.clean_worktree_for_compensation(cwd)
 
+    def clean_worktree_after_handoff(self, cwd: Path) -> None:
+        self._fail("clean_worktree_after_handoff")
+        self.delegate.clean_worktree_after_handoff(cwd)
+
     def worktree_prune(self, cwd: Path) -> None:
         self._fail("worktree_prune")
         self.delegate.worktree_prune(cwd)

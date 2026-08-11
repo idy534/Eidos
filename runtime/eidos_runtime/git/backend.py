@@ -36,6 +36,7 @@ from eidos_runtime.git.native import (
     NativeBranchAttacher,
     NativeWorktreeChangeTransfer,
     NativeWorktreeCleaner,
+    NativeWorktreeHandoffCleaner,
     NativeWorktreeCheckout,
     NativeWorktreeCreator,
 )
@@ -84,6 +85,8 @@ class GitBackend(Protocol):
 
     def clean_worktree_for_compensation(self, cwd: Path) -> None: ...
 
+    def clean_worktree_after_handoff(self, cwd: Path) -> None: ...
+
     def worktree_prune(self, cwd: Path) -> None: ...
 
     def capture_worktree_changes(self, cwd: Path) -> GitWorkingTreePatch: ...
@@ -115,6 +118,7 @@ class DulwichGitBackend:
         native_change_transfer: NativeWorktreeChangeTransfer | None = None,
         native_branch_attacher: NativeBranchAttacher | None = None,
         native_worktree_cleaner: NativeWorktreeCleaner | None = None,
+        native_worktree_handoff_cleaner: NativeWorktreeHandoffCleaner | None = None,
         native_worktree_checkout: NativeWorktreeCheckout | None = None,
         diff_output_limit_bytes: int = DEFAULT_GIT_DIFF_BYTES,
     ) -> None:
@@ -124,6 +128,7 @@ class DulwichGitBackend:
         self._native_change_transfer = native_change_transfer
         self._native_branch_attacher = native_branch_attacher
         self._native_worktree_cleaner = native_worktree_cleaner
+        self._native_worktree_handoff_cleaner = native_worktree_handoff_cleaner
         self._native_worktree_checkout = native_worktree_checkout
         self._diff_output_limit_bytes = diff_output_limit_bytes
 
@@ -365,6 +370,11 @@ class DulwichGitBackend:
         if self._native_worktree_cleaner is None:
             self._native_worktree_cleaner = NativeWorktreeCleaner()
         self._native_worktree_cleaner.clean(cwd)
+
+    def clean_worktree_after_handoff(self, cwd: Path) -> None:
+        if self._native_worktree_handoff_cleaner is None:
+            self._native_worktree_handoff_cleaner = NativeWorktreeHandoffCleaner()
+        self._native_worktree_handoff_cleaner.clean(cwd)
 
     def capture_worktree_changes(self, cwd: Path) -> GitWorkingTreePatch:
         if self._native_change_transfer is None:

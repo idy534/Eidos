@@ -44,6 +44,37 @@ def _repository(tmp_path: Path) -> Path:
     return repository
 
 
+def _ignored_handoff_repository(tmp_path: Path) -> Path:
+    repository = _repository(tmp_path)
+    (repository / ".gitignore").write_text(
+        ".env\n"
+        ".env.local\n"
+        ".worktreeinclude\n"
+        "node_modules/\n"
+        "EIDOS.override.md\n"
+        "AGENTS.override.md\n",
+        encoding="utf-8",
+    )
+    _git(repository, "add", ".gitignore")
+    _git(repository, "commit", "-qm", "ignore local Worktree environment")
+    (repository / ".worktreeinclude").write_text(
+        ".env\n.env.local\nnode_modules/**\n", encoding="utf-8"
+    )
+    (repository / ".env").write_text("TOKEN=local\n", encoding="utf-8")
+    (repository / ".env.local").write_text("MODE=test\n", encoding="utf-8")
+    (repository / "node_modules").mkdir()
+    (repository / "node_modules" / "example").write_text(
+        "installed\n", encoding="utf-8"
+    )
+    (repository / "EIDOS.override.md").write_text(
+        "Eidos override\n", encoding="utf-8"
+    )
+    (repository / "AGENTS.override.md").write_text(
+        "Agents override\n", encoding="utf-8"
+    )
+    return repository
+
+
 def _setup(tmp_path: Path) -> tuple[
     SessionStore, WorktreeManager, SessionApplication
 ]:
@@ -258,6 +289,90 @@ def test_local_dirty_state_transfers_to_a_new_worktree(
         store.close()
 
 
+def test_handoff_keeps_ignored_worktree_environment_across_round_trip(
+    tmp_path: Path,
+) -> None:
+    repository = _ignored_handoff_repository(tmp_path)
+    store, manager, application = _setup(tmp_path)
+    try:
+        session = application.create(
+            SessionCreateRequestDto(workspaceRoot=str(repository))
+        ).root
+        worktree_result = application.handoff(
+            SessionHandoffRequestDto(
+                sessionId=str(session["id"]),
+                target="worktree",
+                operationId="00000000-0000-0000-0000-000000000035",
+            )
+        ).root
+        worktree = manager.repository.read_worktree(
+            str(worktree_result["worktree"]["worktreeId"])
+        )
+        assert worktree is not None
+        worktree_root = Path(worktree.worktree_root)
+        for relative in (
+            ".env",
+            ".env.local",
+            "node_modules/example",
+            "EIDOS.override.md",
+            "AGENTS.override.md",
+        ):
+            assert (worktree_root / relative).exists()
+
+        (worktree_root / "README.md").write_text(
+            "worktree tracked change\n", encoding="utf-8"
+        )
+        (worktree_root / "untracked.txt").write_text(
+            "worktree untracked change\n", encoding="utf-8"
+        )
+
+        local_result = application.handoff(
+            SessionHandoffRequestDto(
+                sessionId=str(session["id"]),
+                target="local",
+                operationId="00000000-0000-0000-0000-000000000036",
+            )
+        ).root
+        assert local_result["executionMode"] == "local"
+        assert (repository / "README.md").read_text(encoding="utf-8") == (
+            "worktree tracked change\n"
+        )
+        assert (repository / "untracked.txt").read_text(encoding="utf-8") == (
+            "worktree untracked change\n"
+        )
+        assert not (worktree_root / "untracked.txt").exists()
+        assert (worktree_root / "README.md").read_text(encoding="utf-8") == (
+            "main\n"
+        )
+        for relative in (
+            ".env",
+            ".env.local",
+            "node_modules/example",
+            "EIDOS.override.md",
+            "AGENTS.override.md",
+        ):
+            assert (worktree_root / relative).exists()
+
+        returned = application.handoff(
+            SessionHandoffRequestDto(
+                sessionId=str(session["id"]),
+                target="worktree",
+                operationId="00000000-0000-0000-0000-000000000037",
+            )
+        ).root
+        assert returned["worktree"]["worktreeId"] == worktree.id
+        for relative in (
+            ".env",
+            ".env.local",
+            "node_modules/example",
+            "EIDOS.override.md",
+            "AGENTS.override.md",
+        ):
+            assert (worktree_root / relative).exists()
+    finally:
+        store.close()
+
+
 def test_worktree_commits_and_dirty_state_move_to_local_detached_head(
     tmp_path: Path,
 ) -> None:
@@ -344,7 +459,7 @@ def test_handoff_only_changes_workspace_identity_for_new_runs(
         store.close()
 
 
-def test_attached_user_branch_is_released_before_local_acquires_it(
+def test_user_branch_is_released_before_local_acquires_it_and_can_create_another_branch(
     tmp_path: Path,
 ) -> None:
     repository = _repository(tmp_path)
@@ -369,6 +484,15 @@ def test_attached_user_branch_is_released_before_local_acquires_it(
             )
         ).root
         assert branch_result["branch"] == "feature/handoff"
+        worktree = manager.repository.read_worktree(worktree_id)
+        assert worktree is not None
+        worktree_root = Path(worktree.worktree_root)
+        (worktree_root / "feature.txt").write_text(
+            "feature commit\n", encoding="utf-8"
+        )
+        _git(worktree_root, "add", "feature.txt")
+        _git(worktree_root, "commit", "-qm", "feature commit")
+        feature_head = _git(worktree_root, "rev-parse", "HEAD")
         local_result = application.handoff(
             SessionHandoffRequestDto(
                 sessionId=str(session["id"]),
@@ -380,12 +504,19 @@ def test_attached_user_branch_is_released_before_local_acquires_it(
         assert _git(repository, "branch", "--show-current") == "feature/handoff"
         worktree = manager.repository.read_worktree(worktree_id)
         assert worktree is not None
-        assert worktree.branch == "feature/handoff"
+        assert worktree.branch is None
         assert worktree.checkout_branch is None
+        assert worktree.branch_ownership.value == "none"
         assert _git(Path(worktree.worktree_root), "branch", "--show-current") == ""
         assert _git(repository, "rev-parse", "feature/handoff") == _git(
             Path(worktree.worktree_root), "rev-parse", "HEAD"
         )
+        assert _git(repository, "rev-parse", "feature/handoff") == feature_head
+
+        (repository / "local.txt").write_text("local commit\n", encoding="utf-8")
+        _git(repository, "add", "local.txt")
+        _git(repository, "commit", "-qm", "local commit")
+        latest_head = _git(repository, "rev-parse", "HEAD")
 
         returned = application.handoff(
             SessionHandoffRequestDto(
@@ -395,8 +526,35 @@ def test_attached_user_branch_is_released_before_local_acquires_it(
             )
         ).root
         assert returned["worktree"]["worktreeId"] == worktree_id
-        assert manager.repository.read_worktree(worktree_id).checkout_branch is None
+        returned_worktree = manager.repository.read_worktree(worktree_id)
+        assert returned_worktree is not None
+        assert returned_worktree.branch is None
+        assert returned_worktree.checkout_branch is None
+        assert returned_worktree.branch_ownership.value == "none"
+        assert _git(Path(returned_worktree.worktree_root), "branch", "--show-current") == ""
+        assert _git(Path(returned_worktree.worktree_root), "rev-parse", "HEAD") == latest_head
         assert _git(repository, "branch", "--show-current") == "feature/handoff"
+
+        next_branch_result = application.create_branch(
+            SessionCreateBranchRequestDto(
+                sessionId=str(session["id"]),
+                branch="feature/next",
+                operationId="00000000-0000-0000-0000-000000000054",
+            )
+        ).root
+        assert next_branch_result["branch"] == "feature/next"
+        assert _git(
+            repository,
+            "show-ref",
+            "--verify",
+            "refs/heads/feature/handoff",
+        )
+        assert _git(
+            Path(returned_worktree.worktree_root),
+            "show-ref",
+            "--verify",
+            "refs/heads/feature/next",
+        )
     finally:
         store.close()
 
@@ -742,5 +900,86 @@ def test_worktree_to_local_recovery_accepts_detached_source_after_git_transfer(
         )
         assert source_after.branch is None
         assert not source_after.status.dirty
+    finally:
+        restarted.close()
+
+
+def test_user_branch_metadata_release_recovers_after_local_checkout_crash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    store, manager, application = _setup(tmp_path)
+    operation_id = "00000000-0000-0000-0000-000000000103"
+    try:
+        session = application.create(
+            SessionCreateRequestDto(workspaceRoot=str(repository))
+        ).root
+        worktree_result = application.handoff(
+            SessionHandoffRequestDto(
+                sessionId=str(session["id"]),
+                target="worktree",
+                operationId="00000000-0000-0000-0000-000000000104",
+            )
+        ).root
+        worktree_id = str(worktree_result["worktree"]["worktreeId"])
+        application.create_branch(
+            SessionCreateBranchRequestDto(
+                sessionId=str(session["id"]),
+                branch="feature/recovery-release",
+                operationId="00000000-0000-0000-0000-000000000105",
+            )
+        )
+        worktree = manager.repository.read_worktree(worktree_id)
+        assert worktree is not None
+        expected_head = _git(Path(worktree.worktree_root), "rev-parse", "HEAD")
+
+        def crash_before_metadata_release(*args: object, **kwargs: object) -> object:
+            raise SystemExit("crash before user branch metadata release")
+
+        monkeypatch.setattr(
+            manager,
+            "release_user_branch_after_handoff",
+            crash_before_metadata_release,
+        )
+        with pytest.raises(SystemExit):
+            application.handoff(
+                SessionHandoffRequestDto(
+                    sessionId=str(session["id"]),
+                    target="local",
+                    operationId=operation_id,
+                )
+            )
+        assert _git(repository, "branch", "--show-current") == (
+            "feature/recovery-release"
+        )
+        assert _git(repository, "rev-parse", "HEAD") == expected_head
+    finally:
+        store.close()
+
+    restarted, restarted_manager, restarted_application = _setup(tmp_path)
+    try:
+        restarted_application.recover_handoffs()
+        recovered_worktree = restarted_manager.repository.read_worktree(worktree_id)
+        assert recovered_worktree is not None
+        assert recovered_worktree.branch is None
+        assert recovered_worktree.checkout_branch is None
+        assert recovered_worktree.branch_ownership.value == "none"
+        assert _git(repository, "branch", "--show-current") == (
+            "feature/recovery-release"
+        )
+        assert _git(
+            repository,
+            "show-ref",
+            "--verify",
+            "refs/heads/feature/recovery-release",
+        )
+        recovered_session = restarted_application._repository.read_session(
+            str(session["id"])
+        )
+        assert recovered_session is not None
+        assert recovered_session.execution_mode.value == "local"
+        assert recovered_session.worktree_id is None
+        assert recovered_session.associated_worktree_id == worktree_id
     finally:
         restarted.close()

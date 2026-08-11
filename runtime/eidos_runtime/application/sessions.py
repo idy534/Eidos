@@ -307,6 +307,16 @@ class ManagedWorktreePort(Protocol):
         self, worktree_id: str, *, expected_head: str
     ) -> Worktree: ...
 
+    def release_user_branch_after_handoff(
+        self,
+        worktree_id: str,
+        *,
+        expected_branch: str,
+        expected_head: str,
+        target_root: Path,
+        expected_target_fingerprint: str | None = None,
+    ) -> Worktree: ...
+
 
 def clean_session_title(value: str) -> str:
     """Apply the established title canonicalization before durable storage."""
@@ -1319,6 +1329,17 @@ class SessionApplication:
                 source_after_branch=source_after_branch,
                 source_after_fingerprint=source_after_fingerprint,
             )
+            if (
+                current.source_mode is SessionExecutionMode.WORKTREE
+                and current.source_branch is not None
+            ):
+                manager.release_user_branch_after_handoff(
+                    current.associated_worktree_id,
+                    expected_branch=current.source_branch,
+                    expected_head=current.source_head,
+                    target_root=Path(current.target_root),
+                    expected_target_fingerprint=current.target_after_fingerprint,
+                )
         if current.state is SessionHandoffState.TARGET_MATERIALIZED:
             active_worktree_id = (
                 current.associated_worktree_id

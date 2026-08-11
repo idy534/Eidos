@@ -365,6 +365,27 @@ class NativeWorktreeCleaner:
         )
 
 
+class NativeWorktreeHandoffCleaner:
+    """Clear transient Worktree changes while preserving ignored resources."""
+
+    def __init__(self, *, runner: HardenedGitRunner | None = None) -> None:
+        self._runner = runner or HardenedGitRunner()
+
+    def clean(self, worktree_root: Path) -> None:
+        overrides = filter_config_overrides(self._runner, worktree_root)
+        self._runner.run(
+            ("reset", "--hard", "HEAD"),
+            cwd=worktree_root,
+            operation="worktree-handoff-reset",
+            config_overrides=overrides,
+        )
+        self._runner.run(
+            ("clean", "-fd", "--"),
+            cwd=worktree_root,
+            operation="worktree-handoff-clean",
+        )
+
+
 class NativeWorktreeCheckout:
     """Move a checkout without force, reset, branch deletion, or cleanup."""
 
@@ -636,6 +657,7 @@ __all__ = [
     "NativeBranchAttacher",
     "NativeWorktreeChangeTransfer",
     "NativeWorktreeCleaner",
+    "NativeWorktreeHandoffCleaner",
     "NativeWorktreeCheckout",
     "NativeWorktreeCreator",
     "filter_config_overrides",

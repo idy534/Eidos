@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Callable
 
 from eidos_runtime.db.database import Database, WorkspaceIdentity
-from eidos_runtime.db.errors import ResourceNotFoundError
+from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
 from eidos_runtime.domain.project import Project
 from eidos_runtime.domain.worktree import (
     BranchOwnership,
@@ -662,7 +662,7 @@ class WorktreeManager:
         if self.head(root) != expected_head or self.current_branch(root) is not None:
             raise WorktreeError("worktree_recovery_required")
         try:
-            self.git.clean_worktree_for_compensation(root)
+            self.git.clean_worktree_after_handoff(root)
         except GitCommandTimeoutError:
             raise WorktreeError("git_command_timeout") from None
         except GitCommandFailedError as error:
@@ -670,6 +670,57 @@ class WorktreeManager:
         if self.source_snapshot(root, include_local_changes=False).status.dirty:
             raise WorktreeError("worktree_cleanup_required")
         return worktree
+
+    def release_user_branch_after_handoff(
+        self,
+        worktree_id: str,
+        *,
+        expected_branch: str,
+        expected_head: str,
+        target_root: Path,
+        expected_target_fingerprint: str | None = None,
+    ) -> Worktree:
+        """Release only Eidos branch metadata after Local owns the branch."""
+
+        worktree = self._read_worktree(worktree_id)
+        if worktree.state is not WorktreeState.ACTIVE:
+            raise WorktreeError("worktree_invalid")
+        root = Path(worktree.worktree_root)
+        if self.head(root) != expected_head or self.current_branch(root) is not None:
+            raise WorktreeError("worktree_recovery_required")
+        try:
+            target = self.source_snapshot(target_root, include_local_changes=True)
+        except WorktreeError as error:
+            if error.code == "worktree_local_changes_conflict":
+                raise WorktreeError("handoff_target_changed") from error
+            raise
+        if target.head != expected_head or target.branch != expected_branch:
+            raise WorktreeError("handoff_target_changed")
+        if (
+            expected_target_fingerprint is not None
+            and target.fingerprint != expected_target_fingerprint
+        ):
+            raise WorktreeError("handoff_target_changed")
+        if (
+            worktree.branch is None
+            and worktree.checkout_branch is None
+            and worktree.branch_ownership is BranchOwnership.NONE
+        ):
+            return worktree
+        if (
+            worktree.branch != expected_branch
+            or worktree.checkout_branch is not None
+            or worktree.branch_ownership is not BranchOwnership.USER
+        ):
+            raise WorktreeError("worktree_recovery_required")
+        try:
+            return self.repository.release_user_branch_metadata(
+                worktree_id, expected_branch
+            )
+        except ResourceNotFoundError:
+            raise WorktreeError("worktree_not_found") from None
+        except StorageError as error:
+            raise WorktreeError("worktree_recovery_required") from error
 
     def persist_branch(
         self,

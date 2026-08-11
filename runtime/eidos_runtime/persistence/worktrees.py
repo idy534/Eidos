@@ -252,6 +252,47 @@ class ProjectWorktreeRepository(Repository):
         assert row is not None
         return worktree_from_row(row)
 
+    def release_user_branch_metadata(
+        self, worktree_id: str, expected_branch: str
+    ) -> Worktree:
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM worktrees WHERE id = ?", (worktree_id,)
+            ).fetchone()
+            if row is None:
+                raise ResourceNotFoundError("worktree not found")
+            existing = worktree_from_row(row)
+            if (
+                existing.branch is None
+                and existing.checkout_branch is None
+                and existing.branch_ownership is BranchOwnership.NONE
+            ):
+                return existing
+            updated = connection.execute(
+                """
+                UPDATE worktrees
+                SET branch = NULL, checkout_branch = NULL,
+                    branch_ownership = ?, updated_at = ?
+                WHERE id = ? AND branch = ? AND checkout_branch IS NULL
+                    AND branch_ownership = ?
+                """,
+                (
+                    BranchOwnership.NONE.value,
+                    now,
+                    worktree_id,
+                    expected_branch,
+                    BranchOwnership.USER.value,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise StorageError("worktree_branch_release_conflict")
+            row = connection.execute(
+                "SELECT * FROM worktrees WHERE id = ?", (worktree_id,)
+            ).fetchone()
+        assert row is not None
+        return worktree_from_row(row)
+
 
 def _project_id(git_common_dir: str) -> str:
     import hashlib

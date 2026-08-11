@@ -8,6 +8,7 @@ from eidos_runtime.git.native import (
     NativeBranchAttacher,
     NativeWorktreeChangeTransfer,
     NativeWorktreeCleaner,
+    NativeWorktreeHandoffCleaner,
     NativeWorktreeCheckout,
     NativeWorktreeCreator,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "NativeBranchAttacher",
     "NativeWorktreeChangeTransfer",
     "NativeWorktreeCleaner",
+    "NativeWorktreeHandoffCleaner",
     "NativeWorktreeCheckout",
     "NativeWorktreeCreator",
     "WorktreeError",
