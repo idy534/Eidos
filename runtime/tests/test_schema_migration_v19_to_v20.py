@@ -70,10 +70,10 @@ def test_v19_to_v20_preserves_worktrees_and_adds_phase3b_fields(
             "SELECT branch_ownership FROM worktrees WHERE id = 'worktree'"
         ).fetchone()[0] == "legacy_managed"
         lifecycle = store.connection.execute(
-            "SELECT include_local_changes, source_head, source_branch, source_dirty "
+            "SELECT expected_head, include_local_changes, source_head, source_branch, source_dirty "
             "FROM worktree_lifecycle_operations WHERE operation_id = 'create'"
         ).fetchone()
-        assert tuple(lifecycle) == (0, None, None, None)
+        assert tuple(lifecycle) == (None, 0, None, None, None)
         assert store.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert store.connection.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:

@@ -45,6 +45,10 @@ class FakeGitBackend:
         self._fail("current_branch")
         return self.delegate.current_branch(cwd)
 
+    def is_ignored(self, cwd: Path, relative_path: str) -> bool:
+        self._fail("is_ignored")
+        return self.delegate.is_ignored(cwd, relative_path)
+
     def resolve_revision(self, cwd: Path, revision: str) -> str:
         self._fail("resolve_revision")
         return self.delegate.resolve_revision(cwd, revision)

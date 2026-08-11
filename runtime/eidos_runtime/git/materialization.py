@@ -5,7 +5,7 @@ from pathlib import Path
 import shutil
 import stat
 import tempfile
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 
 from pathspec import PathSpec
 from pathspec.patterns.gitwildmatch import GitIgnoreSpecPattern
@@ -15,15 +15,20 @@ from eidos_runtime.git.errors import WorktreeError
 
 INCLUDE_FILENAME = ".worktreeinclude"
 MAX_INCLUDE_SPEC_BYTES = 64 * 1024
+AUTO_MATERIALIZED_RULE_FILENAMES = frozenset({
+    "EIDOS.override.md",
+    "AGENTS.override.md",
+})
 
 
 def materialize_worktree_include(
     source_root: Path,
     worktree_root: Path,
     *,
+    is_ignored: Callable[[str], bool],
     exclude_paths: Collection[str] = (),
 ) -> tuple[str, ...]:
-    """Copy explicitly included local files into one managed Worktree.
+    """Copy ignored local files into one managed Worktree.
 
     The source file is the only authority.  The target copy is never read as
     an include specification.  Symlinks are copied as symlinks only after
@@ -35,22 +40,20 @@ def materialize_worktree_include(
     if _paths_overlap(source, target):
         raise WorktreeError("worktree_include_target_invalid")
     include_file = source / INCLUDE_FILENAME
-    if not include_file.is_file() or include_file.is_symlink():
-        return ()
-    try:
-        if include_file.stat().st_size > MAX_INCLUDE_SPEC_BYTES:
-            raise WorktreeError("worktree_include_invalid")
-        lines = include_file.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeError) as error:
-        raise WorktreeError("worktree_include_invalid") from error
-
     patterns: list[str] = []
-    for line in lines:
-        pattern = line.strip()
-        if not pattern or pattern.startswith("#"):
-            continue
-        _validate_pattern(pattern)
-        patterns.append(pattern)
+    if include_file.is_file() and not include_file.is_symlink():
+        try:
+            if include_file.stat().st_size > MAX_INCLUDE_SPEC_BYTES:
+                raise WorktreeError("worktree_include_invalid")
+            lines = include_file.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError) as error:
+            raise WorktreeError("worktree_include_invalid") from error
+        for line in lines:
+            pattern = line.strip()
+            if not pattern or pattern.startswith("#"):
+                continue
+            _validate_pattern(pattern)
+            patterns.append(pattern)
     try:
         spec = PathSpec.from_lines(GitIgnoreSpecPattern, patterns)
     except (TypeError, ValueError) as error:
@@ -79,7 +82,11 @@ def materialize_worktree_include(
             if (
                 _contains_git_segment(relative)
                 or relative in exclude_paths
-                or not spec.match_file(relative)
+                or not (
+                    spec.match_file(relative)
+                    or Path(relative).name in AUTO_MATERIALIZED_RULE_FILENAMES
+                )
+                or not is_ignored(relative)
             ):
                 continue
             _copy_entry(source, target, source_path, relative)
@@ -223,4 +230,8 @@ def _paths_overlap(left: Path, right: Path) -> bool:
     return _inside(left, right) or _inside(right, left)
 
 
-__all__ = ["INCLUDE_FILENAME", "materialize_worktree_include"]
+__all__ = [
+    "AUTO_MATERIALIZED_RULE_FILENAMES",
+    "INCLUDE_FILENAME",
+    "materialize_worktree_include",
+]

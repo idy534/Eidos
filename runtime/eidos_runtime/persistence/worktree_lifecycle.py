@@ -52,11 +52,12 @@ class WorktreeLifecycleRepository(Repository):
                     INSERT INTO worktree_lifecycle_operations (
                         scope, operation_id, state, project_id,
                         repository_root, worktree_id, worktree_root,
-                        base_ref, branch, base_commit, session_id, run_id,
+                        base_ref, branch, base_commit, expected_head,
+                        session_id, run_id,
                         checkpoint_id, include_local_changes, source_head,
                         source_branch, source_dirty, source_fingerprint,
                         error_code, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         operation.scope.value,
@@ -69,6 +70,7 @@ class WorktreeLifecycleRepository(Repository):
                         operation.base_ref,
                         operation.branch,
                         operation.base_commit,
+                        operation.expected_head,
                         operation.session_id,
                         operation.run_id,
                         operation.checkpoint_id,
@@ -207,6 +209,7 @@ def _same_plan(
             "base_ref",
             "branch",
             "base_commit",
+            "expected_head",
             "session_id",
             "run_id",
             "checkpoint_id",
@@ -233,6 +236,7 @@ def _map(row: sqlite3.Row | None) -> WorktreeLifecycleOperation | None:
         "base_ref": row["base_ref"],
         "branch": row["branch"],
         "base_commit": row["base_commit"],
+        "expected_head": row["expected_head"],
         "session_id": row["session_id"],
         "run_id": row["run_id"],
         "checkpoint_id": row["checkpoint_id"],

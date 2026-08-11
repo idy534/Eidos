@@ -107,6 +107,7 @@ EXPECTED_COLUMNS = {
     "approvals": {
         "request_json", "attempt_ordinal", "approval_kind",
     },
+    "worktree_lifecycle_operations": {"expected_head"},
     "model_attempts": {
         "lease_id", "wire_api", "model_id", "request_timeout",
         "retry_decision_json",

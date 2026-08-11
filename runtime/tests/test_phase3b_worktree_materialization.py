@@ -12,7 +12,7 @@ from eidos_runtime.domain.worktree import (
     WorktreeLifecycleScope,
     WorktreeLifecycleState,
 )
-from eidos_runtime.git import WorktreeManager
+from eidos_runtime.git import DulwichGitBackend, WorktreeManager
 from eidos_runtime.git.errors import GitCommandFailedError, WorktreeError
 from eidos_runtime.git.materialization import materialize_worktree_include
 from eidos_runtime.protocol.methods import (
@@ -69,6 +69,32 @@ def _setup(
     return store, manager, application
 
 
+def _always_ignored(_relative: str) -> bool:
+    return True
+
+
+def _include_scenario(tmp_path: Path) -> Path:
+    repository = _repository(tmp_path)
+    (repository / ".worktreeinclude").write_text(
+        "tracked.txt\nuntracked.txt\n.env\n", encoding="utf-8"
+    )
+    (repository / ".env").write_text("TOKEN=local\n", encoding="utf-8")
+    (repository / "tracked.txt").write_text("modified\n", encoding="utf-8")
+    (repository / "untracked.txt").write_text("untracked\n", encoding="utf-8")
+    return repository
+
+
+def _ignored_override_repository(tmp_path: Path) -> Path:
+    repository = _repository(tmp_path)
+    (repository / ".gitignore").write_text(
+        ".env*\nconfig/local.json\nEIDOS.override.md\nAGENTS.override.md\n",
+        encoding="utf-8",
+    )
+    _git(repository, "add", ".gitignore")
+    _git(repository, "commit", "-qm", "ignore local rule overrides")
+    return repository
+
+
 def test_worktree_session_transfers_include_files_and_all_local_changes(
     tmp_path: Path,
 ) -> None:
@@ -122,6 +148,152 @@ def test_worktree_session_transfers_include_files_and_all_local_changes(
         assert status.untracked_count >= 1
         assert _git(repository, "status", "--short") == source_status
         assert source_index.read_bytes() == source_index_bytes
+    finally:
+        store.close()
+
+
+def test_worktreeinclude_does_not_copy_tracked_clean_file(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    target = tmp_path / "target"
+    target.mkdir()
+    (repository / ".worktreeinclude").write_text("tracked.txt\n", encoding="utf-8")
+    backend = DulwichGitBackend()
+
+    copied = materialize_worktree_include(
+        repository,
+        target,
+        is_ignored=lambda relative: backend.is_ignored(repository, relative),
+    )
+
+    assert copied == ()
+    assert not (target / "tracked.txt").exists()
+
+
+def test_tracked_modified_and_untracked_nonignored_files_stay_out_without_dirty_transfer(
+    tmp_path: Path,
+) -> None:
+    repository = _include_scenario(tmp_path)
+    store, _manager, application = _setup(tmp_path)
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repository),
+                executionMode="worktree",
+                includeLocalChanges=False,
+            )
+        ).root
+        root = Path(str(session["worktree"]["worktreeRoot"]))
+
+        assert (root / "tracked.txt").read_text(encoding="utf-8") == "base\n"
+        assert not (root / "untracked.txt").exists()
+        assert (root / ".env").read_text(encoding="utf-8") == "TOKEN=local\n"
+    finally:
+        store.close()
+
+
+def test_tracked_modified_and_untracked_nonignored_files_use_dirty_transfer(
+    tmp_path: Path,
+) -> None:
+    repository = _include_scenario(tmp_path)
+    store, _manager, application = _setup(tmp_path)
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repository),
+                executionMode="worktree",
+                includeLocalChanges=True,
+            )
+        ).root
+        root = Path(str(session["worktree"]["worktreeRoot"]))
+
+        assert (root / "tracked.txt").read_text(encoding="utf-8") == "modified\n"
+        assert (root / "untracked.txt").read_text(encoding="utf-8") == "untracked\n"
+        assert (root / ".env").read_text(encoding="utf-8") == "TOKEN=local\n"
+    finally:
+        store.close()
+
+
+def test_managed_worktree_materializes_only_ignored_rule_overrides(
+    tmp_path: Path,
+) -> None:
+    repository = _ignored_override_repository(tmp_path)
+    (repository / "EIDOS.override.md").write_text(
+        "local Eidos rules\n", encoding="utf-8"
+    )
+    (repository / "AGENTS.override.md").write_text(
+        "local agent rules\n", encoding="utf-8"
+    )
+    (repository / "nested").mkdir()
+    (repository / "nested" / "EIDOS.override.md").write_text(
+        "nested rules\n", encoding="utf-8"
+    )
+    store, _manager, application = _setup(tmp_path)
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repository), executionMode="worktree"
+            )
+        ).root
+        root = Path(str(session["worktree"]["worktreeRoot"]))
+
+        assert (root / "EIDOS.override.md").read_text(encoding="utf-8") == (
+            "local Eidos rules\n"
+        )
+        assert (root / "AGENTS.override.md").read_text(encoding="utf-8") == (
+            "local agent rules\n"
+        )
+        assert (root / "nested" / "EIDOS.override.md").read_text(
+            encoding="utf-8"
+        ) == "nested rules\n"
+    finally:
+        store.close()
+
+
+def test_tracked_rule_override_uses_git_checkout_without_extra_copy(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    (repository / "EIDOS.override.md").write_text(
+        "tracked rules\n", encoding="utf-8"
+    )
+    _git(repository, "add", "EIDOS.override.md")
+    _git(repository, "commit", "-qm", "track rule override")
+    store, _manager, application = _setup(tmp_path)
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repository), executionMode="worktree"
+            )
+        ).root
+        root = Path(str(session["worktree"]["worktreeRoot"]))
+
+        assert (root / "EIDOS.override.md").read_text(encoding="utf-8") == (
+            "tracked rules\n"
+        )
+    finally:
+        store.close()
+
+
+def test_ignored_rule_override_symlink_escape_is_rejected(
+    tmp_path: Path,
+) -> None:
+    repository = _ignored_override_repository(tmp_path)
+    outside = tmp_path / "outside-rules.md"
+    outside.write_text("outside\n", encoding="utf-8")
+    (repository / "EIDOS.override.md").symlink_to(outside)
+    store, manager, application = _setup(tmp_path)
+    try:
+        with pytest.raises(ApplicationError) as error:
+            application.create(
+                SessionCreateRequestDto(
+                    workspaceRoot=str(repository), executionMode="worktree"
+                )
+            )
+
+        assert error.value.code == "WORKTREE_INCLUDE_INVALID"
+        assert manager.list() == ()
     finally:
         store.close()
 
@@ -352,6 +524,149 @@ def test_detached_worktree_can_create_user_branch_without_changing_head_or_dirty
         store.close()
 
 
+def test_create_branch_uses_current_head_and_preserves_creation_baseline(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    store, manager, application = _setup(tmp_path)
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repository), executionMode="worktree"
+            )
+        ).root
+        worktree_id = str(session["worktree"]["worktreeId"])
+        root = Path(str(session["worktree"]["worktreeRoot"]))
+        baseline = manager.repository.read_worktree(worktree_id)
+        assert baseline is not None
+        baseline_commit = baseline.base_commit
+
+        (root / "commit-b.txt").write_text("B\n", encoding="utf-8")
+        _git(root, "add", "commit-b.txt")
+        _git(root, "commit", "-qm", "commit B")
+        (root / "commit-c.txt").write_text("C\n", encoding="utf-8")
+        _git(root, "add", "commit-c.txt")
+        commit_c = _git(root, "commit", "-qm", "commit C")
+        commit_c = _git(root, "rev-parse", "HEAD")
+
+        result = application.create_branch(
+            SessionCreateBranchRequestDto(
+                sessionId=str(session["id"]), branch="feature/from-current-head"
+            )
+        ).root
+        persisted = manager.repository.read_worktree(worktree_id)
+
+        assert result["head"] == commit_c
+        assert _git(root, "branch", "--show-current") == "feature/from-current-head"
+        assert _git(root, "rev-parse", "HEAD") == commit_c
+        assert persisted is not None
+        assert persisted.base_commit == baseline_commit
+        assert _git(repository, "rev-parse", "refs/heads/feature/from-current-head") == commit_c
+    finally:
+        store.close()
+
+
+def test_branch_attach_head_change_after_git_create_requires_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    store, manager, application = _setup(tmp_path)
+    operation_id = "66666666-6666-4666-8666-666666666666"
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repository), executionMode="worktree"
+            )
+        ).root
+        original_create_branch = manager.git.create_branch
+
+        def create_branch_then_advance_head(worktree_root: Path, branch: str) -> None:
+            original_create_branch(worktree_root, branch)
+            (worktree_root / "external.txt").write_text("external\n", encoding="utf-8")
+            _git(worktree_root, "add", "external.txt")
+            _git(worktree_root, "commit", "-qm", "external head change")
+
+        monkeypatch.setattr(manager.git, "create_branch", create_branch_then_advance_head)
+        with pytest.raises(ApplicationError) as error:
+            application.create_branch(
+                SessionCreateBranchRequestDto(
+                    sessionId=str(session["id"]),
+                    branch="feature/external-head",
+                    operationId=operation_id,
+                )
+            )
+
+        assert error.value.code == "WORKTREE_RECOVERY_REQUIRED"
+        operation = manager.lifecycle.read(
+            WorktreeLifecycleScope.ATTACH_BRANCH, operation_id
+        )
+        assert operation is not None
+        assert operation.expected_head is not None
+        assert operation.state is WorktreeLifecycleState.CLEANUP_REQUIRED
+        assert operation.error_code == "worktree_branch_recovery_required"
+    finally:
+        store.close()
+
+
+def test_branch_attach_head_change_before_persist_requires_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    store, manager, application = _setup(tmp_path)
+    operation_id = "67676767-6767-4676-8676-676767676767"
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repository), executionMode="worktree"
+            )
+        ).root
+        original_persist_branch = manager.persist_branch
+
+        def persist_after_external_head_change(
+            worktree_id: str,
+            branch: str,
+            *,
+            expected_head: str | None = None,
+        ) -> object:
+            root = Path(str(session["worktree"]["worktreeRoot"]))
+            (root / "external-after-attach.txt").write_text(
+                "external\n", encoding="utf-8"
+            )
+            _git(root, "add", "external-after-attach.txt")
+            _git(root, "commit", "-qm", "external head change")
+            return original_persist_branch(
+                worktree_id,
+                branch,
+                expected_head=expected_head,
+            )
+
+        monkeypatch.setattr(
+            manager,
+            "persist_branch",
+            persist_after_external_head_change,
+        )
+        with pytest.raises(ApplicationError) as error:
+            application.create_branch(
+                SessionCreateBranchRequestDto(
+                    sessionId=str(session["id"]),
+                    branch="feature/external-before-persist",
+                    operationId=operation_id,
+                )
+            )
+
+        assert error.value.code == "WORKTREE_RECOVERY_REQUIRED"
+        operation = manager.lifecycle.read(
+            WorktreeLifecycleScope.ATTACH_BRANCH, operation_id
+        )
+        assert operation is not None
+        assert operation.state is WorktreeLifecycleState.CLEANUP_REQUIRED
+        assert operation.error_code == "worktree_branch_recovery_required"
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize(
     ("execution_mode", "branch", "expected_code"),
     [
@@ -516,7 +831,7 @@ def test_branch_attach_state_change_enters_cleanup_required_without_force_switch
                     operationId="33333333-3333-4333-8333-333333333333",
                 )
             )
-        assert error.value.code == "WORKTREE_BRANCH_STATE_CHANGED"
+        assert error.value.code == "WORKTREE_RECOVERY_REQUIRED"
         assert _git(root, "branch", "--show-current") == ""
         operation = manager.lifecycle.read(
             WorktreeLifecycleScope.ATTACH_BRANCH,
@@ -524,7 +839,7 @@ def test_branch_attach_state_change_enters_cleanup_required_without_force_switch
         )
         assert operation is not None
         assert operation.state is WorktreeLifecycleState.CLEANUP_REQUIRED
-        assert operation.error_code == "worktree_branch_state_changed"
+        assert operation.error_code == "worktree_branch_recovery_required"
     finally:
         store.close()
 
@@ -581,7 +896,9 @@ def test_include_glob_nested_empty_binary_missing_and_internal_symlink(
         Path("local") / "target.txt"
     )
 
-    copied = materialize_worktree_include(source, target)
+    copied = materialize_worktree_include(
+        source, target, is_ignored=_always_ignored
+    )
 
     assert "config/local/empty.txt" in copied
     assert (target / "config/local/empty.txt").read_bytes() == b""
@@ -600,7 +917,9 @@ def test_include_rejects_unsafe_patterns(tmp_path: Path, pattern: str) -> None:
     (source / ".worktreeinclude").write_text(pattern + "\n", encoding="utf-8")
 
     with pytest.raises(WorktreeError) as error:
-        materialize_worktree_include(source, target)
+        materialize_worktree_include(
+            source, target, is_ignored=_always_ignored
+        )
     assert getattr(error.value, "code", None) == "worktree_include_invalid"
 
 
@@ -615,7 +934,9 @@ def test_include_rejects_symlink_escape(tmp_path: Path) -> None:
     (source / "secret.txt").symlink_to(outside)
 
     with pytest.raises(WorktreeError) as error:
-        materialize_worktree_include(source, target)
+        materialize_worktree_include(
+            source, target, is_ignored=_always_ignored
+        )
     assert getattr(error.value, "code", None) == "worktree_include_symlink_escape"
 
 
@@ -631,7 +952,9 @@ def test_include_rejects_overlapping_source_and_target(
     (source / ".worktreeinclude").write_text(pattern, encoding="utf-8")
 
     with pytest.raises(WorktreeError) as error:
-        materialize_worktree_include(source, target)
+        materialize_worktree_include(
+            source, target, is_ignored=_always_ignored
+        )
     assert getattr(error.value, "code", None) == "worktree_include_target_invalid"
 
 

@@ -356,6 +356,9 @@ class WorktreeManager:
             materialize_worktree_include(
                 source_root,
                 root,
+                is_ignored=lambda relative: self.git.is_ignored(
+                    source_root, relative
+                ),
                 exclude_paths=changed_paths,
             )
             if source_before is not None and source_before.changes is not None:
@@ -479,12 +482,20 @@ class WorktreeManager:
             raise WorktreeError("branch_already_exists")
         return worktree
 
-    def attach_branch_git(self, worktree_id: str, branch: str) -> Worktree:
+    def attach_branch_git(
+        self,
+        worktree_id: str,
+        branch: str,
+        *,
+        expected_head: str | None = None,
+    ) -> Worktree:
         initial = self._read_worktree(worktree_id)
         initial_root = Path(initial.worktree_root)
         initial_branch = self.current_branch(initial_root)
         initial_head = self.head(initial_root)
-        if initial_branch == branch and initial_head == initial.base_commit:
+        if expected_head is not None and initial_head != expected_head:
+            raise WorktreeError("worktree_branch_state_changed")
+        if initial_branch == branch:
             if initial.branch is not None and initial.branch != branch:
                 raise WorktreeError("worktree_state_changed")
             return initial.model_copy(
@@ -497,6 +508,10 @@ class WorktreeManager:
         root = Path(worktree.worktree_root)
         before_head = self.head(root)
         before_branch = self.current_branch(root)
+        if expected_head is None:
+            expected_head = before_head
+        if before_head != expected_head:
+            raise WorktreeError("worktree_branch_state_changed")
         if before_branch is not None and before_branch != branch:
             raise WorktreeError("worktree_state_changed")
         if before_branch == branch:
@@ -523,7 +538,7 @@ class WorktreeManager:
                 observed_head = self.git.head(root)
             except (GitCommandFailedError, GitCommandTimeoutError):
                 raise WorktreeError("worktree_branch_recovery_required") from error
-            if observed_branch == branch and observed_head == before_head:
+            if observed_branch == branch and observed_head == expected_head:
                 return worktree.model_copy(
                     update={
                         "branch": branch,
@@ -533,8 +548,8 @@ class WorktreeManager:
             raise WorktreeError("worktree_branch_attach_failed") from error
         observed_branch = self.current_branch(root)
         observed_head = self.head(root)
-        if observed_branch != branch or observed_head != before_head:
-            raise WorktreeError("worktree_branch_state_changed")
+        if observed_branch != branch or observed_head != expected_head:
+            raise WorktreeError("worktree_branch_recovery_required")
         return worktree.model_copy(
             update={
                 "branch": branch,
@@ -542,7 +557,13 @@ class WorktreeManager:
             }
         )
 
-    def persist_branch(self, worktree_id: str, branch: str) -> Worktree:
+    def persist_branch(
+        self,
+        worktree_id: str,
+        branch: str,
+        *,
+        expected_head: str | None = None,
+    ) -> Worktree:
         worktree = self._read_worktree(worktree_id)
         if worktree.state is not WorktreeState.ACTIVE:
             raise WorktreeError("worktree_invalid")
@@ -558,15 +579,26 @@ class WorktreeManager:
             raise WorktreeError("git_command_timeout") from None
         except GitCommandFailedError as error:
             raise WorktreeError("git_command_failed") from error
-        if observed_branch != branch or observed_head != worktree.base_commit:
-            raise WorktreeError("worktree_branch_state_changed")
+        expected_head_supplied = expected_head is not None
+        if expected_head is None:
+            expected_head = observed_head
+        if observed_branch != branch or observed_head != expected_head:
+            raise WorktreeError(
+                "worktree_branch_recovery_required"
+                if expected_head_supplied
+                else "worktree_branch_state_changed"
+            )
         if not any(
             entry.worktree_root == worktree.worktree_root
             and entry.branch == branch
-            and entry.head == worktree.base_commit
+            and entry.head == expected_head
             for entry in entries
         ):
-            raise WorktreeError("worktree_branch_state_changed")
+            raise WorktreeError(
+                "worktree_branch_recovery_required"
+                if expected_head_supplied
+                else "worktree_branch_state_changed"
+            )
         try:
             return self.repository.update_branch(
                 worktree.id,
@@ -698,7 +730,11 @@ class WorktreeManager:
         self,
         operation: WorktreeLifecycleOperation,
     ) -> WorktreeLifecycleOperation:
-        if operation.worktree_id is None or operation.branch is None:
+        if (
+            operation.worktree_id is None
+            or operation.branch is None
+            or operation.expected_head is None
+        ):
             raise WorktreeError("worktree_lifecycle_invalid")
         worktree = self._read_worktree(operation.worktree_id)
         if worktree.state is not WorktreeState.ACTIVE:
@@ -727,10 +763,12 @@ class WorktreeManager:
         ):
             raise WorktreeError("worktree_branch_in_use")
         if actual_branch == operation.branch:
-            if actual_head != worktree.base_commit:
-                raise WorktreeError("worktree_branch_state_changed")
+            if actual_head != operation.expected_head:
+                raise WorktreeError("worktree_branch_recovery_required")
         elif actual_branch is None and operation.state is WorktreeLifecycleState.PREPARED:
             if branch_commit is not None:
+                raise WorktreeError("worktree_branch_recovery_required")
+            if actual_head != operation.expected_head:
                 raise WorktreeError("worktree_branch_recovery_required")
             try:
                 self.git.create_branch(root, operation.branch)
@@ -742,7 +780,10 @@ class WorktreeManager:
                 raise WorktreeError("worktree_branch_recovery_required") from error
             actual_branch = self.current_branch(root)
             actual_head = self.head(root)
-            if actual_branch != operation.branch or actual_head != worktree.base_commit:
+            if (
+                actual_branch != operation.branch
+                or actual_head != operation.expected_head
+            ):
                 raise WorktreeError("worktree_branch_recovery_required")
         else:
             raise WorktreeError("worktree_branch_recovery_required")

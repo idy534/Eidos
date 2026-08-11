@@ -969,6 +969,7 @@ CREATE TABLE worktree_lifecycle_operations_v20 (
     base_ref TEXT,
     branch TEXT,
     base_commit TEXT,
+    expected_head TEXT,
     session_id TEXT,
     run_id TEXT,
     checkpoint_id TEXT,
@@ -988,14 +989,14 @@ CREATE TABLE worktree_lifecycle_operations_v20 (
 INSERT INTO worktree_lifecycle_operations_v20 (
     scope, operation_id, state, project_id,
     repository_root, worktree_id, worktree_root,
-    base_ref, branch, base_commit, session_id, run_id,
+    base_ref, branch, base_commit, expected_head, session_id, run_id,
     checkpoint_id, include_local_changes, source_head,
     source_branch, source_dirty, source_fingerprint, error_code,
     created_at, updated_at
 )
 SELECT scope, operation_id, state, project_id,
        repository_root, worktree_id, worktree_root,
-       base_ref, branch, base_commit, session_id, run_id,
+       base_ref, branch, base_commit, NULL, session_id, run_id,
        checkpoint_id, 0, NULL, NULL, NULL,
        NULL, error_code, created_at, updated_at
 FROM worktree_lifecycle_operations;

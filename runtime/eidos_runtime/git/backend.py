@@ -11,6 +11,7 @@ from typing import Protocol
 
 from dulwich.diff import iter_tree_contents, write_blob_diff
 from dulwich.errors import NotGitRepository
+from dulwich.ignore import IgnoreFilterManager
 from dulwich.index import ConflictedIndexEntry, Index, get_unstaged_changes
 from dulwich.objects import Blob
 from dulwich.objectspec import parse_commit
@@ -53,6 +54,8 @@ class GitBackend(Protocol):
     def head(self, cwd: Path) -> str: ...
 
     def current_branch(self, cwd: Path) -> str | None: ...
+
+    def is_ignored(self, cwd: Path, relative_path: str) -> bool: ...
 
     def resolve_revision(self, cwd: Path, revision: str) -> str: ...
 
@@ -155,6 +158,17 @@ class DulwichGitBackend:
             return None
         branch = os.fsdecode(value.removeprefix(b"ref: refs/heads/").strip())
         return branch or None
+
+    def is_ignored(self, cwd: Path, relative_path: str) -> bool:
+        _validate_relative_path(relative_path)
+        repo = self._open_repository(cwd, "is-ignored")
+        try:
+            index = repo.open_index(config=repo.get_config_stack())
+            if os.fsencode(relative_path) in index:
+                return False
+            return IgnoreFilterManager.from_repo(repo).is_ignored(relative_path) is True
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            raise _git_failure("is-ignored", error) from error
 
     def resolve_revision(self, cwd: Path, revision: str) -> str:
         _validate_ref(revision)
@@ -609,6 +623,19 @@ def _validate_branch(value: str) -> None:
     _validate_ref(value)
     if value.startswith("refs/") or value.endswith("/") or ".." in value:
         raise ValueError("Git branch is invalid")
+
+
+def _validate_relative_path(value: str) -> None:
+    path = Path(value)
+    if (
+        not isinstance(value, str)
+        or not value
+        or "\x00" in value
+        or path.is_absolute()
+        or any(part in {"", ".", ".."} for part in path.parts)
+        or any(part == ".git" for part in value.split("/"))
+    ):
+        raise ValueError("Git relative path is invalid")
 
 
 def _git_failure(operation: str, error: BaseException) -> GitCommandFailedError:

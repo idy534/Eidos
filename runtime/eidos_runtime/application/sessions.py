@@ -226,9 +226,21 @@ class ManagedWorktreePort(Protocol):
         self, worktree_id: str, branch: str
     ) -> Worktree: ...
 
-    def attach_branch_git(self, worktree_id: str, branch: str) -> Worktree: ...
+    def attach_branch_git(
+        self,
+        worktree_id: str,
+        branch: str,
+        *,
+        expected_head: str | None = None,
+    ) -> Worktree: ...
 
-    def persist_branch(self, worktree_id: str, branch: str) -> Worktree: ...
+    def persist_branch(
+        self,
+        worktree_id: str,
+        branch: str,
+        *,
+        expected_head: str | None = None,
+    ) -> Worktree: ...
 
     @property
     def lifecycle(self) -> WorktreeLifecycleRepository: ...
@@ -380,6 +392,7 @@ class SessionApplication:
                     prepared = manager.prepare_branch_attachment(
                         session.worktree_id, request.branch
                     )
+                    expected_head = manager.head(Path(prepared.worktree_root))
                     now = datetime.now(UTC).replace(microsecond=0)
                     lifecycle_operation = lifecycle.prepare(
                         WorktreeLifecycleOperation(
@@ -395,6 +408,7 @@ class SessionApplication:
                             base_ref=prepared.base_ref,
                             branch=request.branch,
                             base_commit=prepared.base_commit,
+                            expected_head=expected_head,
                             session_id=request.session_id,
                             created_at=now,
                             updated_at=now,
@@ -416,7 +430,13 @@ class SessionApplication:
                         or "branch attachment recovery is required",
                     )
                 if lifecycle_operation.state is WorktreeLifecycleState.PREPARED:
-                    manager.attach_branch_git(session.worktree_id, request.branch)
+                    if lifecycle_operation.expected_head is None:
+                        raise WorktreeError("worktree_lifecycle_invalid")
+                    manager.attach_branch_git(
+                        session.worktree_id,
+                        request.branch,
+                        expected_head=lifecycle_operation.expected_head,
+                    )
                     lifecycle_operation = lifecycle.update_state(
                         WorktreeLifecycleScope.ATTACH_BRANCH,
                         operation_id,
@@ -424,8 +444,12 @@ class SessionApplication:
                     )
                 worktree: Worktree | None = None
                 if lifecycle_operation.state is WorktreeLifecycleState.BRANCH_ATTACHED:
+                    if lifecycle_operation.expected_head is None:
+                        raise WorktreeError("worktree_lifecycle_invalid")
                     worktree = manager.persist_branch(
-                        session.worktree_id, request.branch
+                        session.worktree_id,
+                        request.branch,
+                        expected_head=lifecycle_operation.expected_head,
                     )
                     lifecycle_operation = lifecycle.update_state(
                         WorktreeLifecycleScope.ATTACH_BRANCH,
@@ -433,8 +457,12 @@ class SessionApplication:
                         WorktreeLifecycleState.COMPLETED,
                     )
                 if worktree is None:
+                    if lifecycle_operation.expected_head is None:
+                        raise WorktreeError("worktree_lifecycle_invalid")
                     worktree = manager.persist_branch(
-                        session.worktree_id, request.branch
+                        session.worktree_id,
+                        request.branch,
+                        expected_head=lifecycle_operation.expected_head,
                     )
                 head = manager.head(Path(worktree.worktree_root))
                 result = _result(

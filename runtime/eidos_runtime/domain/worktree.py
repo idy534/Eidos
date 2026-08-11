@@ -153,6 +153,12 @@ class WorktreeLifecycleOperation(EidosFrozenStrictModel):
     base_ref: str | None = None
     branch: str | None = None
     base_commit: str | None = None
+    expected_head: str | None = Field(
+        default=None,
+        min_length=40,
+        max_length=64,
+        pattern=r"^[0-9a-fA-F]+$",
+    )
     session_id: str | None = None
     run_id: str | None = None
     checkpoint_id: str | None = None
