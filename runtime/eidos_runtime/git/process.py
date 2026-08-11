@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path
+import re
 import selectors
 import signal
 import subprocess
@@ -85,8 +86,9 @@ class GitProcess:
             ("rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}"),
             output_limit_bytes=self.output_limit_bytes,
         )
+        self._reject_truncated_result("rev-parse-ref", result)
         if result.returncode == 0:
-            return result.stdout.strip()
+            return self._single_line_result("rev-parse-ref", result)
         if result.returncode in (1, 128):
             return None
         raise GitCommandFailedError(
@@ -102,8 +104,9 @@ class GitProcess:
             ("symbolic-ref", "--quiet", "--short", "HEAD"),
             output_limit_bytes=self.output_limit_bytes,
         )
+        self._reject_truncated_result("symbolic-ref-short", result)
         if result.returncode == 0:
-            return result.stdout.strip()
+            return self._single_line_result("symbolic-ref-short", result)
         if result.returncode == 1:
             return None
         raise GitCommandFailedError(
@@ -173,7 +176,15 @@ class GitProcess:
         return self._run(
             "diff-head",
             cwd,
-            ("diff", "--no-ext-diff", "--no-color", "--no-renames", "HEAD", "--"),
+            (
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--no-renames",
+                "HEAD",
+                "--",
+            ),
             output_limit_bytes=DEFAULT_GIT_DIFF_BYTES,
         )
 
@@ -185,6 +196,7 @@ class GitProcess:
             (
                 "diff",
                 "--no-ext-diff",
+                "--no-textconv",
                 "--no-color",
                 "--no-renames",
                 base_commit,
@@ -215,6 +227,7 @@ class GitProcess:
                 "--name-only",
                 "-z",
                 "--no-ext-diff",
+                "--no-textconv",
                 "--no-color",
                 "--no-renames",
                 *ref_args,
@@ -243,6 +256,7 @@ class GitProcess:
                 "diff",
                 "--no-index",
                 "--no-ext-diff",
+                "--no-textconv",
                 "--no-color",
                 "--no-renames",
                 "--",
@@ -296,7 +310,60 @@ class GitProcess:
         cwd: Path,
         args: Sequence[str],
     ) -> str:
-        return self._run(operation, cwd, args).stdout.strip()
+        return self._single_line_result(
+            operation,
+            self._run(operation, cwd, args),
+        )
+
+    def _single_line_result(
+        self,
+        operation: str,
+        result: GitCommandResult,
+    ) -> str:
+        self._reject_truncated_result(operation, result)
+        lines = result.stdout.splitlines()
+        if (
+            "\x00" in result.stdout
+            or len(lines) != 1
+            or not lines[0].strip()
+        ):
+            self.logger.error(
+                "git command output is incomplete",
+                extra={
+                    "operation": operation,
+                    "returncode": result.returncode,
+                    "stdout_truncated": result.stdout_truncated,
+                    "stderr_truncated": result.stderr_truncated,
+                },
+            )
+            raise GitCommandFailedError(
+                operation,
+                returncode=result.returncode,
+                stderr=result.stderr,
+            )
+        return lines[0].strip()
+
+    def _reject_truncated_result(
+        self,
+        operation: str,
+        result: GitCommandResult,
+    ) -> None:
+        if not result.stdout_truncated and not result.stderr_truncated:
+            return
+        self.logger.error(
+            "git command output is incomplete",
+            extra={
+                "operation": operation,
+                "returncode": result.returncode,
+                "stdout_truncated": result.stdout_truncated,
+                "stderr_truncated": result.stderr_truncated,
+            },
+        )
+        raise GitCommandFailedError(
+            operation,
+            returncode=result.returncode,
+            stderr=result.stderr,
+        )
 
     def _run(
         self,
@@ -335,19 +402,42 @@ class GitProcess:
         args: Sequence[str],
         *,
         output_limit_bytes: int,
+        apply_config_hardening: bool = True,
     ) -> GitCommandResult:
         if not cwd.is_absolute() or not cwd.is_dir():
             raise GitCommandFailedError(operation, returncode=None)
         if any(not isinstance(argument, str) or "\x00" in argument for argument in args):
             raise ValueError("Git argv contains an invalid argument")
-        argv = [self.git_executable, *args]
+        filter_overrides = (
+            self._filter_config_overrides(cwd)
+            if apply_config_hardening and operation != "config-filter-list"
+            else ()
+        )
+        argv = [
+            self.git_executable,
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "credential.helper=",
+            "-c",
+            "core.askPass=",
+            *filter_overrides,
+            *args,
+        ]
         environment = {
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
             "LANG": "C",
             "LC_ALL": "C",
+            "HOME": "/var/empty",
             "GIT_OPTIONAL_LOCKS": "0",
             "GIT_PAGER": "cat",
             "GIT_TERMINAL_PROMPT": "0",
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "GIT_CONFIG_SYSTEM": "/dev/null",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_ASKPASS": "/usr/bin/false",
         }
         started = time.monotonic()
         try:
@@ -404,6 +494,74 @@ class GitProcess:
             stdout_truncated=stdout_truncated,
             stderr_truncated=stderr_truncated,
         )
+
+    def _filter_config_overrides(self, cwd: Path) -> tuple[str, ...]:
+        """Disable executable clean/process filters without invoking them."""
+
+        result = self._execute(
+            "config-filter-list",
+            cwd,
+            (
+                "config",
+                "--includes",
+                "--null",
+                "--name-only",
+                "--get-regexp",
+                r"^filter\..*\.(clean|process)$",
+            ),
+            output_limit_bytes=self.output_limit_bytes,
+            apply_config_hardening=False,
+        )
+        self._reject_truncated_result("config-filter-list", result)
+        if result.returncode == 1:
+            return ()
+        if result.returncode != 0:
+            raise GitCommandFailedError(
+                "config-filter-list",
+                returncode=result.returncode,
+                stderr=result.stderr,
+            )
+        if result.stdout and not result.stdout.endswith("\x00"):
+            raise GitCommandFailedError(
+                "config-filter-list",
+                returncode=result.returncode,
+                stderr="filter config output is incomplete",
+            )
+        names: set[str] = set()
+        keys = result.stdout.split("\x00")
+        if keys and keys[-1] == "":
+            keys.pop()
+        for key in keys:
+            if not key:
+                raise GitCommandFailedError(
+                    "config-filter-list",
+                    returncode=result.returncode,
+                    stderr="filter config output is incomplete",
+                )
+            match = re.fullmatch(
+                r"filter\.([A-Za-z0-9][A-Za-z0-9_.-]*)\.(clean|process)",
+                key,
+            )
+            if match is None:
+                raise GitCommandFailedError(
+                    "config-filter-list",
+                    returncode=result.returncode,
+                    stderr="filter config key is invalid",
+                )
+            names.add(match.group(1))
+        overrides: list[str] = []
+        for name in sorted(names):
+            overrides.extend(
+                (
+                    "-c",
+                    f"filter.{name}.clean=",
+                    "-c",
+                    f"filter.{name}.process=",
+                    "-c",
+                    f"filter.{name}.required=false",
+                )
+            )
+        return tuple(overrides)
 
 
 def _communicate_bounded(

@@ -6,6 +6,9 @@ import type {
   EventListResult,
   Session,
   DeleteSessionResult,
+  GitDiffScope,
+  SessionGitDiff,
+  SessionGitStatus,
   Run,
   ContextUsage,
   ModelId,
@@ -48,6 +51,8 @@ export interface EidosRuntimeAPI {
   createSession(workspaceRoot: string): Promise<Session>;
   renameSession(sessionId: string, title: string): Promise<Session>;
   deleteSession(sessionId: string): Promise<DeleteSessionResult>;
+  readSessionGitStatus(sessionId: string): Promise<SessionGitStatus>;
+  readSessionGitDiff(sessionId: string, scope: GitDiffScope): Promise<SessionGitDiff>;
 
   // Runs
   startRun(sessionId: string, userInput: string, modelId: ModelId): Promise<Run>;

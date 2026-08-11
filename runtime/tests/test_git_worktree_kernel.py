@@ -143,7 +143,6 @@ def test_failed_worktree_observation_does_not_mutate_lifecycle_state(
     operations = (
         lambda: manager.validate(worktrees[0].id),
         lambda: manager.list(),
-        lambda: manager.recover(),
         lambda: manager.delete(worktrees[3].id),
     )
 
@@ -151,6 +150,8 @@ def test_failed_worktree_observation_does_not_mutate_lifecycle_state(
         with pytest.raises(WorktreeError) as error:
             operation()
         assert error.value.code == "git_observation_failed"
+    report = manager.recover()
+    assert report.updated_worktrees == ()
 
     monkeypatch.setattr(manager.git, "worktree_list", real_worktree_list)
     assert all(
@@ -204,10 +205,8 @@ def test_incomplete_worktree_observation_does_not_mutate_lifecycle_state(
 
     monkeypatch.setattr(manager.git, "worktree_list", incomplete_worktree_list)
 
-    with pytest.raises(WorktreeError) as error:
-        manager.recover()
-
-    assert error.value.code == "git_observation_incomplete"
+    report = manager.recover()
+    assert report.updated_worktrees == ()
     assert manager.repository.read_worktree(worktree.id).state is WorktreeState.ACTIVE
 
 
@@ -223,10 +222,8 @@ def test_timed_out_worktree_observation_does_not_mutate_lifecycle_state(
 
     monkeypatch.setattr(manager.git, "worktree_list", timeout_worktree_list)
 
-    with pytest.raises(WorktreeError) as error:
-        manager.recover()
-
-    assert error.value.code == "git_command_timeout"
+    report = manager.recover()
+    assert report.updated_worktrees == ()
     assert manager.repository.read_worktree(worktree.id).state is WorktreeState.ACTIVE
 
 
@@ -437,6 +434,28 @@ def test_git_process_bounds_stderr_exposed_by_failed_commands(tmp_path: Path) ->
     assert len(error.value.stderr.encode("utf-8")) <= 1024
 
 
+def test_worktree_diff_maps_git_observation_failures_to_stable_errors(
+    tmp_path: Path, database: Database
+) -> None:
+    repository = _repository(tmp_path)
+
+    class FailingDiffGitProcess(GitProcess):
+        def diff_head(self, cwd: Path) -> GitCommandResult:
+            raise GitCommandTimeoutError("diff-head")
+
+    manager = WorktreeManager(
+        database,
+        managed_root=tmp_path / "managed",
+        git_process=FailingDiffGitProcess(),
+    )
+    worktree = manager.create(repository)
+
+    with pytest.raises(WorktreeError) as error:
+        manager.diff(worktree.id)
+
+    assert error.value.code == "git_command_timeout"
+
+
 def test_worktree_add_failure_after_filesystem_creation_is_compensated(
     tmp_path: Path, database: Database
 ) -> None:
@@ -552,6 +571,38 @@ def test_clean_delete_preserves_branch_and_dirty_delete_is_rejected(
         manager.delete(dirty.id)
     assert error.value.code == "worktree_dirty"
     assert Path(dirty.worktree_root).exists()
+
+
+def test_delete_retry_converges_when_git_remove_preceded_state_persistence(
+    tmp_path: Path,
+    database: Database,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    manager = WorktreeManager(database, managed_root=tmp_path / "managed")
+    worktree = manager.create(repository)
+    real_update_state = manager.repository.update_state
+    failed_once = False
+
+    def fail_deleted_state(
+        worktree_id: str, state: WorktreeState
+    ) -> Worktree:
+        nonlocal failed_once
+        if state is WorktreeState.DELETED and not failed_once:
+            failed_once = True
+            raise StorageError("injected delete state failure")
+        return real_update_state(worktree_id, state)
+
+    monkeypatch.setattr(manager.repository, "update_state", fail_deleted_state)
+    with pytest.raises(WorktreeError) as first_error:
+        manager.delete(worktree.id)
+
+    assert first_error.value.code == "worktree_persistence_failed"
+    assert not Path(worktree.worktree_root).exists()
+    assert manager.repository.read_worktree(worktree.id).state is WorktreeState.ACTIVE
+
+    deleted = manager.delete(worktree.id)
+    assert deleted.state is WorktreeState.DELETED
 
 
 def test_deleted_worktree_is_terminal_when_the_original_path_reappears(
@@ -711,14 +762,14 @@ def test_recovery_reports_replaced_worktree_repository_as_invalid(
 
 
 def test_schema_is_current_and_has_project_worktree_tables(database: Database) -> None:
-    assert SCHEMA_VERSION == 16
+    assert SCHEMA_VERSION == 17
     tables = {
         row[0]
         for row in database.connection().execute(
             "SELECT name FROM sqlite_master WHERE type = 'table'"
         )
     }
-    assert {"projects", "worktrees"} <= tables
+    assert {"projects", "worktrees", "worktree_lifecycle_operations"} <= tables
     session_columns = {
         row[1] for row in database.connection().execute("PRAGMA table_info(sessions)")
     }

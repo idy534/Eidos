@@ -111,6 +111,14 @@ class ProjectWorktreeRepository(Repository):
             ).fetchone()
         return worktree_from_row(row) if row is not None else None
 
+    def worktree_is_bound(self, worktree_id: str) -> bool:
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT 1 FROM sessions WHERE worktree_id = ? LIMIT 1",
+                (worktree_id,),
+            ).fetchone()
+        return row is not None
+
     def list_worktrees(self, project_id: str | None = None) -> tuple[Worktree, ...]:
         sql = "SELECT * FROM worktrees"
         parameters: tuple[object, ...] = ()

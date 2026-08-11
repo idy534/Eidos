@@ -9,6 +9,7 @@ import { DropdownMenu } from "../components/DropdownMenu.js";
 import { PrimaryActionButton } from "../components/PrimaryActionButton.js";
 import { ConfirmDialog } from "../components/settings/ConfirmDialog.js";
 import { Composer } from "../components/Composer.js";
+import { GitChangesPanel } from "../components/GitChangesPanel.js";
 import type { RuntimeLifecycleState } from "./useRuntimeLifecycle.js";
 import { useSessionController } from "./useSessionController.js";
 import { useRunController } from "./useRunController.js";
@@ -18,6 +19,7 @@ import { useResponseActionController } from "./useResponseActionController.js";
 import { useContextUsageController } from "./useContextUsageController.js";
 import { resolveSessionModelId } from "./session-model-resolver.js";
 import { useExtensionController } from "./useExtensionController.js";
+import { useGitReviewController } from "./useGitReviewController.js";
 import { applyNotification, userFacingError } from "../session-state.js";
 import { IPC } from "../../../shared/ipc-channels.js";
 
@@ -45,6 +47,10 @@ export function AppShell({ runtime }: AppShellProps) {
   const [approvalState, approvalActions] = useApprovalController();
   const [modelState, modelActions] = useModelController();
   const [extensionState, extensionActions] = useExtensionController();
+  const [gitReviewState, gitReviewActions] = useGitReviewController({
+    ready: runtimeStatus.state === "ready" && isStorageReady,
+    session: sessionState.snapshot?.session,
+  });
   const [responseActionState, responseActionActions] = useResponseActionController(
     sessionState.snapshot?.session.id,
   );
@@ -71,6 +77,7 @@ export function AppShell({ runtime }: AppShellProps) {
   const [sessionToDelete, setSessionToDelete] = useState<Session | undefined>(undefined);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | undefined>(undefined);
+  const [contentView, setContentView] = useState<"conversation" | "changes">("conversation");
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const workspaceRef = useRef<HTMLElement>(null);
   const modelSessionInitializedRef = useRef<string | undefined>(undefined);
@@ -114,12 +121,17 @@ export function AppShell({ runtime }: AppShellProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionState.snapshot?.session.id, runtimeStatus.state, isStorageReady]);
 
+  useEffect(() => {
+    setContentView("conversation");
+  }, [sessionState.snapshot?.session.id]);
+
   // -----------------------------------------------------------------------
   // Runtime notifications
   // -----------------------------------------------------------------------
   useEffect(() => {
     const unsubNotifications = window.eidosRuntime.onNotification((notification) => {
       handleContextUsageNotification(notification);
+      gitReviewActions.handleNotification(notification);
       if (notification.method === "session/titleUpdated") {
         sessionActions.handleTitleNotification(notification.params);
       } else if (
@@ -151,7 +163,7 @@ export function AppShell({ runtime }: AppShellProps) {
       unsubApprovals();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handleContextUsageNotification]);
+  }, [handleContextUsageNotification, gitReviewActions.handleNotification]);
 
   // -----------------------------------------------------------------------
   // Keyboard shortcuts from Main process menu
@@ -297,8 +309,9 @@ export function AppShell({ runtime }: AppShellProps) {
         readCompletedSessions={sessionState.readCompletedSessions}
         runtimePresentation={runtimePresentation}
         isSelectingSessionId={sessionState.pending.selectingSessionId}
+        gitStatusBySessionId={gitReviewState.statusBySessionId}
         onCreate={() => void handleCreateSession()}
-        onCreateInWorkspace={(root) => void handleCreateSession(root)}
+        onCreateInProject={(root) => void handleCreateSession(root)}
         onSelect={(session) => void handleSelectSession(session)}
         onRename={(session) => void beginRename(session)}
         onDelete={(session) => requestDeleteSession(session)}
@@ -395,57 +408,100 @@ export function AppShell({ runtime }: AppShellProps) {
                   />
                 </div>
               )}
+              {snapshot.session.worktree && (
+                <div className="session-header-actions">
+                  <div className="session-git-summary" aria-label="当前 Git 状态">
+                    <span>{gitReviewState.status?.branch ?? snapshot.session.worktree.branch}</span>
+                    {gitReviewState.status && (
+                      <>
+                        <code>{gitReviewState.status.head.slice(0, 7)}</code>
+                        <span>{gitReviewState.status.dirty ? "有改动" : "干净"}</span>
+                      </>
+                    )}
+                  </div>
+                  <div className="workspace-view-switch" aria-label="工作区视图">
+                    <button
+                      type="button"
+                      aria-pressed={contentView === "conversation"}
+                      onClick={() => setContentView("conversation")}
+                    >
+                      对话
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={contentView === "changes"}
+                      onClick={() => setContentView("changes")}
+                    >
+                      Changes
+                    </button>
+                  </div>
+                </div>
+              )}
             </header>
 
-            {responseActionState.error && (
-              <p className="approval-error response-action-error" role="alert">
-                {responseActionState.error}
-              </p>
+            {contentView === "changes" && snapshot.session.worktree ? (
+              <GitChangesPanel
+                scope={gitReviewState.scope}
+                status={gitReviewState.status}
+                diff={gitReviewState.diff}
+                loading={gitReviewState.loadingStatus || gitReviewState.loadingDiff}
+                error={gitReviewState.error}
+                onScopeChange={gitReviewActions.selectScope}
+                onRefresh={gitReviewActions.refresh}
+              />
+            ) : (
+              <>
+                {responseActionState.error && (
+                  <p className="approval-error response-action-error" role="alert">
+                    {responseActionState.error}
+                  </p>
+                )}
+
+                <ExecutionFeed
+                  items={snapshot.items}
+                  runs={snapshot.runs}
+                  models={modelState.list?.models ?? []}
+                  responseActionState={responseActionState.responseState}
+                  pendingFeedbackItemIds={responseActionState.pendingFeedbackItemIds}
+                  revisionSubmitting={runState.isSubmitting}
+                  stepResolutions={snapshot.stepResolutions}
+                  approvals={approvals.filter((a) => a.sessionId === snapshot.session.id)}
+                  respondingApprovalIds={respondingApprovalIds}
+                  respondingKindByApprovalId={respondingKindByApprovalId}
+                  expiredApprovalIds={approvalState.expiredApprovalIds}
+                  errorsByApprovalId={errorsByApprovalId}
+                  approvalLoadError={approvalState.pendingApprovalsLoadError}
+                  loadingPendingApprovals={approvalState.loadingPendingApprovals}
+                  onRetryLoadPending={() => void approvalActions.loadPending()}
+                  onApprove={(request) => void approvalActions.approve(request)}
+                  onReject={(request) => void approvalActions.reject(request)}
+                  onFeedback={(itemId, feedback) =>
+                    responseActionActions.setFeedback(snapshot.session.id, itemId, feedback)}
+                  onRegenerate={(run) => reviseLatestRun(run)}
+                  onEditResend={(run, editedInput) => reviseLatestRun(run, editedInput)}
+                />
+
+                <Composer
+                  ref={composerRef}
+                  composerMode={composerMode}
+                  activeRun={activeRun}
+                  input={input}
+                  modelList={modelState.list}
+                  selectedModelId={modelState.selectedModelId}
+                  contextUsage={contextUsageState.usage}
+                  modelConfigured={Boolean(modelState.list?.models.length)}
+                  modelLoading={modelState.loading}
+                  isSubmitting={runState.isSubmitting}
+                  submitKind={runState.submitKind}
+                  cancelingRunId={runState.cancelingRunId}
+                  onInputChange={runActions.setInput}
+                  onSubmit={handleSubmit}
+                  onCancel={() => activeRun && snapshot && void runActions.cancelRun({ runId: activeRun.id, sessionId: snapshot.session.id })}
+                  onModelChange={(id) => modelActions.selectModel(id)}
+                  onOpenModelSettings={() => setSettingsOpen(true)}
+                />
+              </>
             )}
-
-            <ExecutionFeed
-              items={snapshot.items}
-              runs={snapshot.runs}
-              models={modelState.list?.models ?? []}
-              responseActionState={responseActionState.responseState}
-              pendingFeedbackItemIds={responseActionState.pendingFeedbackItemIds}
-              revisionSubmitting={runState.isSubmitting}
-              stepResolutions={snapshot.stepResolutions}
-              approvals={approvals.filter((a) => a.sessionId === snapshot.session.id)}
-              respondingApprovalIds={respondingApprovalIds}
-              respondingKindByApprovalId={respondingKindByApprovalId}
-              expiredApprovalIds={approvalState.expiredApprovalIds}
-              errorsByApprovalId={errorsByApprovalId}
-              approvalLoadError={approvalState.pendingApprovalsLoadError}
-              loadingPendingApprovals={approvalState.loadingPendingApprovals}
-              onRetryLoadPending={() => void approvalActions.loadPending()}
-              onApprove={(request) => void approvalActions.approve(request)}
-              onReject={(request) => void approvalActions.reject(request)}
-              onFeedback={(itemId, feedback) =>
-                responseActionActions.setFeedback(snapshot.session.id, itemId, feedback)}
-              onRegenerate={(run) => reviseLatestRun(run)}
-              onEditResend={(run, editedInput) => reviseLatestRun(run, editedInput)}
-            />
-
-            <Composer
-              ref={composerRef}
-              composerMode={composerMode}
-              activeRun={activeRun}
-              input={input}
-              modelList={modelState.list}
-              selectedModelId={modelState.selectedModelId}
-              contextUsage={contextUsageState.usage}
-              modelConfigured={Boolean(modelState.list?.models.length)}
-              modelLoading={modelState.loading}
-              isSubmitting={runState.isSubmitting}
-              submitKind={runState.submitKind}
-              cancelingRunId={runState.cancelingRunId}
-              onInputChange={runActions.setInput}
-              onSubmit={handleSubmit}
-              onCancel={() => activeRun && snapshot && void runActions.cancelRun({ runId: activeRun.id, sessionId: snapshot.session.id })}
-              onModelChange={(id) => modelActions.selectModel(id)}
-              onOpenModelSettings={() => setSettingsOpen(true)}
-            />
           </>
         ) : (
           <div className="empty-state">

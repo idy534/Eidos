@@ -11,8 +11,8 @@ from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
 _SESSION_WORKSPACE_SELECT = """
     SELECT s.id, s.workspace_root, s.workspace_dev, s.workspace_inode,
            s.workspace_uid, s.worktree_id,
-           w.worktree_root, w.state,
-           p.repository_root
+           w.worktree_root, w.state, w.git_dir,
+           p.repository_root, p.git_common_dir
     FROM sessions s
     LEFT JOIN worktrees w ON w.id = s.worktree_id
     LEFT JOIN projects p ON p.id = w.project_id
@@ -83,6 +83,16 @@ def _identity_from_session_row(row: sqlite3.Row) -> WorkspaceIdentity:
         device=metadata.st_dev,
         inode=metadata.st_ino,
         owner=metadata.st_uid,
+        git_dir=(
+            Path(row["git_dir"]).resolve(strict=False)
+            if row["git_dir"] is not None
+            else None
+        ),
+        git_common_dir=(
+            Path(row["git_common_dir"]).resolve(strict=False)
+            if row["git_common_dir"] is not None
+            else None
+        ),
     )
 
 

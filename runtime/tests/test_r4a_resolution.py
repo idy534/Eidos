@@ -391,7 +391,7 @@ class ResolutionPersistenceTests(unittest.TestCase):
             lambda _message: None,
         ).run(run["id"], threading.Event())
         stored = self.store.read_step_resolution_snapshots(run["id"])[0]
-        values = stored.model_dump(mode="json")
+        values = stored.model_dump(mode="json", exclude_none=True)
         request = json.loads(values["final_request_json"])
         request["systemPrompt"] = "historical resolved instructions"
         values["final_request_json"] = canonical_json(request)

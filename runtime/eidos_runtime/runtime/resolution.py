@@ -49,6 +49,8 @@ class WorkspaceIdentitySnapshot(_FrozenModel):
     device: int
     inode: int
     owner: int
+    git_dir: str | None = None
+    git_common_dir: str | None = None
 
 
 class RuleSourceSnapshot(_FrozenModel):
@@ -127,7 +129,11 @@ class RuleResolutionSnapshot(_FrozenModel):
 
     @model_validator(mode="after")
     def validate_hash(self) -> Self:
-        payload = self.model_dump(mode="json", exclude={"id", "snapshot_hash"})
+        payload = self.model_dump(
+            mode="json",
+            exclude={"id", "snapshot_hash"},
+            exclude_none=True,
+        )
         if self.snapshot_hash != canonical_sha256(payload) or self.id != f"rule_{self.snapshot_hash}":
             raise ValueError("rule resolution snapshot hash mismatch")
         return self
@@ -164,7 +170,11 @@ class RunResolutionSnapshot(_FrozenModel):
 
     @model_validator(mode="after")
     def validate_hash(self) -> Self:
-        payload = self.model_dump(mode="json", exclude={"id", "snapshot_hash"})
+        payload = self.model_dump(
+            mode="json",
+            exclude={"id", "snapshot_hash"},
+            exclude_none=True,
+        )
         if self.snapshot_hash != canonical_sha256(payload) or self.id != f"run_{self.snapshot_hash}":
             raise ValueError("run resolution snapshot hash mismatch")
         _validate_canonical_json(self.permission_profile_json)
@@ -215,7 +225,11 @@ class StepResolutionSnapshot(_FrozenModel):
 
     @model_validator(mode="after")
     def validate_hashes(self) -> Self:
-        payload = self.model_dump(mode="json", exclude={"id", "snapshot_hash"})
+        payload = self.model_dump(
+            mode="json",
+            exclude={"id", "snapshot_hash"},
+            exclude_none=True,
+        )
         if self.snapshot_hash != canonical_sha256(payload) or self.id != f"step_{self.snapshot_hash}":
             raise ValueError("step resolution snapshot hash mismatch")
         parsed = {
@@ -272,7 +286,7 @@ def _validate_canonical_json(value: str) -> object:
 
 def _json_value(value: object) -> object:
     if isinstance(value, BaseModel):
-        return value.model_dump(mode="json")
+        return value.model_dump(mode="json", exclude_none=True)
     if isinstance(value, dict):
         return {str(key): _json_value(child) for key, child in value.items()}
     if isinstance(value, tuple):

@@ -86,6 +86,16 @@ class StepContextFactory:
                 device=workspace.device,
                 inode=workspace.inode,
                 owner=workspace.owner,
+                git_dir=(
+                    str(workspace.git_dir)
+                    if workspace.git_dir is not None
+                    else None
+                ),
+                git_common_dir=(
+                    str(workspace.git_common_dir)
+                    if workspace.git_common_dir is not None
+                    else None
+                ),
             ),
             reconciliation_epoch=int(fact["reconciliationEpoch"]),
             workspace_version=workspace_version,

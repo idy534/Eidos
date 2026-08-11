@@ -24,6 +24,7 @@
   (subpath "/opt/homebrew")
   (subpath "/usr/local")
   (subpath "/private/etc")
+  (literal "/var/select/developer_dir")
   (literal "/private/var/select/sh")
   (literal "/dev/null")
   (literal "/dev/zero")
@@ -37,6 +38,7 @@
 (allow file-read-metadata file-test-existence
   (path-ancestors "/opt/homebrew")
   (path-ancestors "/usr/local")
+  (path-ancestors "/var/select")
   (path-ancestors (param "PYTHON_RUNTIME_ROOT"))
   (path-ancestors (param "PYTHON_BASE_RUNTIME_ROOT")))
 
@@ -73,6 +75,8 @@
 ; Permit traversal to parameterized roots without granting their parents.
 (allow file-read-metadata file-test-existence
   (path-ancestors (param "WORKSPACE_ROOT"))
+  (path-ancestors (param "GIT_WORKTREE_DIR"))
+  (path-ancestors (param "GIT_COMMON_DIR"))
   (path-ancestors (param "SANDBOX_HOME"))
   (path-ancestors (param "SANDBOX_TMP")))
 
@@ -83,12 +87,29 @@
     (require-not (literal (param "SENSITIVE_PATH")))
     (require-not (subpath (param "SENSITIVE_PATH")))))
 
+; Linked Worktrees keep their Git metadata in the verified common directory.
+; The original repository working tree is not granted by this rule.
+(allow file-read* file-read-metadata file-test-existence
+  (subpath (param "GIT_WORKTREE_DIR")))
+(deny file-write*
+  (literal (param "GIT_WORKTREE_DIR"))
+  (subpath (param "GIT_WORKTREE_DIR")))
+(allow file-read* file-read-metadata file-test-existence
+  (subpath (param "GIT_COMMON_DIR")))
+(deny file-write*
+  (literal (param "GIT_COMMON_DIR"))
+  (subpath (param "GIT_COMMON_DIR")))
+
 ; Workspace is writable except for .git and the sensitive carve-out.
 (allow file-write*
   (require-all
     (subpath (param "WORKSPACE_ROOT"))
     (require-not (literal (param "GIT_DIR")))
     (require-not (subpath (param "GIT_DIR")))
+    (require-not (literal (param "GIT_WORKTREE_DIR")))
+    (require-not (subpath (param "GIT_WORKTREE_DIR")))
+    (require-not (literal (param "GIT_COMMON_DIR")))
+    (require-not (subpath (param "GIT_COMMON_DIR")))
     (require-not (literal (param "SENSITIVE_PATH")))
     (require-not (subpath (param "SENSITIVE_PATH")))))
 

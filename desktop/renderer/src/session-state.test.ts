@@ -4,7 +4,7 @@ import test from "node:test";
 import type { Item, Run, RuntimeNotification, SessionSnapshot } from "./contracts.js";
 import {
   applyNotification,
-  groupSessionsByWorkspace,
+  groupSessionsByProject,
   SnapshotReadCoordinator,
   taskStatusPresentation,
   terminalRunPresentation,
@@ -224,13 +224,23 @@ test("closed runtime business errors map to safe user-facing guidance", () => {
     "当前已有一个 Run 正在执行，请先等待完成或取消。",
   );
   assert.equal(
+    userFacingError(
+      new Error("EIDOS_RUNTIME_ERROR:WORKSPACE_IDENTITY_CHANGED"),
+    ),
+    "任务目录的身份已经变化，Run 未启动。请刷新后重试。",
+  );
+  assert.equal(
+    userFacingError(new Error("EIDOS_RUNTIME_ERROR:WORKTREE_DIRTY")),
+    "任务仍有未提交或冲突的变更，不能删除。",
+  );
+  assert.equal(
     userFacingError(new Error("provider secret details")),
     "操作失败，请查看 Runtime 日志。",
   );
 });
 
 test("projects keep creation order while tasks stay newest first", () => {
-  const groups = groupSessionsByWorkspace([
+  const groups = groupSessionsByProject([
     { ...session, id: "session-2", workspaceRoot: "/old", title: "第二期规划", createdAt: 10, updatedAt: 10 },
     {
       ...session,
@@ -243,8 +253,50 @@ test("projects keep creation order while tasks stay newest first", () => {
     { ...session, id: "session-1", workspaceRoot: "/old", title: "分析架构", createdAt: 1, updatedAt: 1 },
   ]);
 
-  assert.deepEqual(groups.map((group) => group.workspaceRoot), ["/new", "/old"]);
+  assert.deepEqual(groups.map((group) => group.repositoryRoot), ["/new", "/old"]);
   assert.deepEqual(groups[1]?.sessions.map((item) => item.title), ["第二期规划", "分析架构"]);
+});
+
+test("managed threads group by Project while legacy paths remain separate", () => {
+  const managedWorktree = {
+    worktreeId: "worktree-a",
+    projectId: "project-a",
+    repositoryRoot: "/repository",
+    worktreeRoot: "/managed/a",
+    baseRef: "main",
+    baseCommit: "a".repeat(40),
+    branch: "eidos/a",
+    state: "active" as const,
+  };
+  const groups = groupSessionsByProject([
+    { ...session, id: "managed-a", createdAt: 3, worktree: managedWorktree },
+    {
+      ...session,
+      id: "managed-b",
+      createdAt: 2,
+      worktree: {
+        ...managedWorktree,
+        worktreeId: "worktree-b",
+        worktreeRoot: "/managed/b",
+        branch: "eidos/b",
+      },
+    },
+    { ...session, id: "legacy-same-path", workspaceRoot: "/repository", createdAt: 4 },
+    { ...session, id: "legacy-other", workspaceRoot: "/legacy", createdAt: 1 },
+  ]);
+
+  assert.equal(groups.length, 3);
+  assert.deepEqual(groups.map((group) => group.key), [
+    "legacy:/repository",
+    "project-a",
+    "legacy:/legacy",
+  ]);
+  assert.deepEqual(
+    groups.find((group) => group.key === "project-a")?.sessions.map((item) => item.id),
+    ["managed-a", "managed-b"],
+  );
+  assert.equal(groups.find((group) => group.key === "project-a")?.managed, true);
+  assert.equal(groups.find((group) => group.key === "legacy:/repository")?.managed, false);
 });
 
 test("task statuses use compact accessible indicators", () => {

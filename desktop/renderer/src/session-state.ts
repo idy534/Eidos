@@ -8,8 +8,12 @@ import type {
 } from "./contracts.js";
 
 
-export interface WorkspaceSessionGroup {
-  workspaceRoot: string;
+export interface ProjectSessionGroup {
+  key: string;
+  projectId?: string;
+  repositoryRoot: string;
+  displayName: string;
+  managed: boolean;
   createdAt: number;
   sessions: Session[];
 }
@@ -52,24 +56,40 @@ export function taskStatusFromRun(run: Run): Session["taskStatus"] {
   return "canceled";
 }
 
-export function groupSessionsByWorkspace(sessions: Session[]): WorkspaceSessionGroup[] {
-  const grouped = new Map<string, Session[]>();
+export function groupSessionsByProject(sessions: Session[]): ProjectSessionGroup[] {
+  const grouped = new Map<string, Omit<ProjectSessionGroup, "createdAt" | "sessions"> & {
+    sessions: Session[];
+  }>();
   for (const session of sessions) {
-    const existing = grouped.get(session.workspaceRoot);
+    const worktree = session.worktree;
+    const key = worktree?.projectId ?? `legacy:${session.workspaceRoot}`;
+    const repositoryRoot = worktree?.repositoryRoot ?? session.workspaceRoot;
+    const existing = grouped.get(key);
     if (existing) {
-      existing.push(session);
+      existing.sessions.push(session);
     } else {
-      grouped.set(session.workspaceRoot, [session]);
+      grouped.set(key, {
+        key,
+        ...(worktree ? { projectId: worktree.projectId } : {}),
+        repositoryRoot,
+        displayName: basename(repositoryRoot),
+        managed: worktree !== undefined,
+        sessions: [session],
+      });
     }
   }
-  return [...grouped].map(([workspaceRoot, groupedSessions]) => ({
-    workspaceRoot,
-    createdAt: Math.min(...groupedSessions.map((session) => session.createdAt)),
-    sessions: [...groupedSessions].sort((left, right) => right.createdAt - left.createdAt),
+  return [...grouped.values()].map((group) => ({
+    ...group,
+    createdAt: Math.min(...group.sessions.map((session) => session.createdAt)),
+    sessions: [...group.sessions].sort((left, right) => right.createdAt - left.createdAt),
   })).sort((left, right) => (
     right.createdAt - left.createdAt
-    || left.workspaceRoot.localeCompare(right.workspaceRoot)
+    || left.repositoryRoot.localeCompare(right.repositoryRoot)
   ));
+}
+
+function basename(path: string): string {
+  return path.split("/").filter(Boolean).at(-1) ?? path;
 }
 
 
@@ -197,6 +217,16 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   SENSITIVE_SCAN_FAILED: "内容安全扫描未完成，原文未被发送或保存。",
   INVALID_SESSION_TITLE: "任务标题不能为空，请换一个标题。",
   SESSION_HAS_ACTIVE_RUN: "任务仍在执行，请先取消或等待完成后再删除。",
+  GIT_WORKTREE_NOT_MANAGED: "这个旧版任务没有独立 Worktree，无法读取 Git 变更。",
+  GIT_OBSERVATION_UNAVAILABLE: "Git 状态暂时无法完整读取，请稍后重试。",
+  GIT_WORKTREE_NOT_FOUND: "任务绑定的 Worktree 记录已不存在。",
+  GIT_WORKTREE_MISSING: "任务绑定的 Worktree 目录已不存在。",
+  GIT_WORKTREE_INVALID: "任务绑定的 Worktree 已失效，请停止在其中执行任务。",
+  GIT_REVIEW_FAILED: "Git 变更读取失败，请查看 Runtime 日志。",
+  WORKSPACE_IDENTITY_CHANGED: "任务目录的身份已经变化，Run 未启动。请刷新后重试。",
+  WORKTREE_DIRTY: "任务仍有未提交或冲突的变更，不能删除。",
+  WORKTREE_DELETE_FAILED: "任务的 Worktree 删除失败，请查看 Runtime 日志后重试。",
+  SESSION_PERSISTENCE_FAILED: "任务状态写入失败。Worktree 已保留或可安全重试。",
   MODEL_NOT_AVAILABLE: "所选模型当前不可用，请重新选择。",
   INTERNAL_ERROR: "Runtime 遇到内部错误，请查看诊断日志。",
 };

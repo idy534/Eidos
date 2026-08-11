@@ -8,8 +8,11 @@ from eidos_runtime.domain.session import (
     DeletedSession,
     Session,
     SessionPage,
+    SessionProjection,
+    SessionWorktreeProjection,
     SessionTaskStatus,
 )
+from eidos_runtime.domain.worktree import WorktreeState
 from eidos_runtime.persistence.conversion import (
     RowReader,
     RowValues,
@@ -90,6 +93,50 @@ def session_from_legacy_dict(value: object) -> Session:
         "created_at": reader.value("createdAt"),
         "updated_at": reader.value("updatedAt"),
     })
+
+
+def session_projection_from_row(
+    row: RowValues | Mapping[str, object],
+) -> SessionProjection:
+    session = session_from_row(row)
+    values = RowReader(row, record="session_projection")
+    projected_worktree_id = values.optional_text("projection_worktree_id")
+    worktree: SessionWorktreeProjection | None = None
+    if projected_worktree_id is not None:
+        state_value = values.text("projection_worktree_state")
+        try:
+            state = WorktreeState(state_value)
+        except ValueError:
+            raise PersistenceCorruptionError(
+                "persistence_value_invalid",
+                record="session_projection",
+                field="projection_worktree_state",
+            ) from None
+        try:
+            worktree = SessionWorktreeProjection(
+                worktree_id=projected_worktree_id,
+                project_id=values.text("projection_project_id"),
+                repository_root=values.text("projection_repository_root"),
+                worktree_root=values.text("projection_worktree_root"),
+                base_ref=values.text("projection_base_ref"),
+                base_commit=values.text("projection_base_commit"),
+                branch=values.text("projection_branch"),
+                state=state,
+            )
+        except ValidationError as error:
+            raise PersistenceCorruptionError(
+                "persistence_record_invalid",
+                record="session_projection",
+                field=_validation_field(error),
+            ) from None
+    try:
+        return SessionProjection(session=session, worktree=worktree)
+    except ValidationError as error:
+        raise PersistenceCorruptionError(
+            "persistence_record_invalid",
+            record="session_projection",
+            field=_validation_field(error),
+        ) from None
 
 
 def session_to_legacy_dict(session: Session) -> dict[str, object]:

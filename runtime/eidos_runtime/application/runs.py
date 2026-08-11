@@ -9,20 +9,24 @@ from typing import Protocol, TypeVar
 from pydantic import ValidationError
 
 from eidos_runtime.application.errors import ApplicationError
+from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
 from eidos_runtime.context.budget import ContextUsageSnapshot
 from eidos_runtime.context.plan import ContextSnapshot
 from eidos_runtime.application.task_lifecycle import (
     LifecycleAction,
     TaskLifecycleApplication,
 )
-from eidos_runtime.db.database import Database
+from eidos_runtime.db.database import Database, WorkspaceIdentity
 from eidos_runtime.db.errors import (
     InvalidRunStateError,
     OperationConflictError,
     OperationInProgressError,
     ResourceNotFoundError,
     WorkspaceBoundaryError,
+    WorkspaceIdentityChangedError,
 )
+from eidos_runtime.domain.session import SessionProjection
+from eidos_runtime.git.errors import WorktreeError
 from eidos_runtime.model.client import ModelClient, ModelProfileSnapshot, ModelUsage
 from eidos_runtime.model.config import (
     ModelConfig,
@@ -83,6 +87,7 @@ class RunStorePort(Protocol):
         model_id: str,
         model_profile: ModelProfileSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
+        expected_workspace_identity: WorkspaceIdentity | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]: ...
 
     def read_run(self, run_id: str) -> dict[str, object]: ...
@@ -96,6 +101,14 @@ class RunStorePort(Protocol):
     def interrupt_run(self, run_id: str) -> dict[str, object]: ...
 
     def long_task_progress(self, run_id: str) -> LongTaskProgress | None: ...
+
+
+class RunSessionRepositoryPort(Protocol):
+    def read_session_projection(self, session_id: str) -> SessionProjection | None: ...
+
+
+class RunWorktreePort(Protocol):
+    def execution_identity(self, worktree_id: str) -> WorkspaceIdentity: ...
 
 
 class RunRuntimePort(Protocol):
@@ -213,6 +226,9 @@ class RunApplication:
         environment: RunStartEnvironmentPort | None = None,
         lifecycle: TaskLifecycleApplication | None = None,
         scan_text: Callable[[str], str] | None = None,
+        worktree_manager: RunWorktreePort | None = None,
+        session_repository: RunSessionRepositoryPort | None = None,
+        lifecycle_coordinator: SessionLifecycleCoordinator | None = None,
     ) -> None:
         self._typed_repository = (
             TypedRuntimeRepository(database) if database is not None else None
@@ -228,6 +244,11 @@ class RunApplication:
             else None
         )
         self._scan_text = scan_text
+        self._worktree_manager = worktree_manager
+        self._session_repository = session_repository
+        self._session_lifecycle = (
+            lifecycle_coordinator or SessionLifecycleCoordinator()
+        )
 
     def read(self, run_id: str) -> Run | None:
         if self._typed_repository is None:
@@ -288,19 +309,35 @@ class RunApplication:
                     _environment=environment,
                 )
 
-        needs_title = "title" not in session
         try:
-            created, _user_item = store.enqueue_run(
-                request.session_id,
-                user_input,
-                operation_id=request.operation_id,
-                session_title=None,
-                model_id=model_id,
-                model_profile=model_profile,
-                extension_snapshot=extension_snapshot,
-            )
+            with self._session_lifecycle.hold(request.session_id):
+                current_session = store.read_session(request.session_id)
+                if current_session is None:
+                    raise ResourceNotFoundError("session not found")
+                expected_workspace_identity = self._admit_session_workspace(
+                    request.session_id
+                )
+                needs_title = "title" not in current_session
+                created, _user_item = store.enqueue_run(
+                    request.session_id,
+                    user_input,
+                    operation_id=request.operation_id,
+                    session_title=None,
+                    model_id=model_id,
+                    model_profile=model_profile,
+                    extension_snapshot=extension_snapshot,
+                    expected_workspace_identity=expected_workspace_identity,
+                )
         except ResourceNotFoundError as error:
             raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
+        except WorktreeError as error:
+            raise ApplicationError(
+                _run_worktree_error_code(error), str(error)
+            ) from error
+        except WorkspaceIdentityChangedError as error:
+            raise ApplicationError(
+                "WORKSPACE_IDENTITY_CHANGED", str(error)
+            ) from error
         except WorkspaceBoundaryError as error:
             raise ApplicationError(
                 "WORKSPACE_BOUNDARY_VIOLATION", str(error)
@@ -344,6 +381,24 @@ class RunApplication:
                 else None
             ),
         )
+
+    def _admit_session_workspace(
+        self, session_id: str
+    ) -> WorkspaceIdentity | None:
+        manager = self._worktree_manager
+        if manager is None:
+            return None
+        repository = self._session_repository
+        if repository is None:
+            raise ApplicationError(
+                "INTERNAL_ERROR", "managed Run admission repository is unavailable"
+            )
+        projection = repository.read_session_projection(session_id)
+        if projection is None:
+            raise ResourceNotFoundError("session not found")
+        if projection.worktree is None:
+            return None
+        return manager.execution_identity(projection.worktree.worktree_id)
 
     def cancel(self, request: RunCancelRequestDto) -> RunCancelResponseDto:
         store, _runtime = self._cancel_dependencies()
@@ -534,6 +589,21 @@ def _result(result_type: type[ResultT], value: object) -> ResultT:
         raise ApplicationError(
             "INTERNAL_ERROR", "stored Run result violates its protocol contract"
         ) from error
+
+
+def _run_worktree_error_code(error: WorktreeError) -> str:
+    if error.code == "workspace_identity_changed":
+        return "WORKSPACE_IDENTITY_CHANGED"
+    if error.code in {
+        "git_command_failed",
+        "git_command_timeout",
+        "git_observation_failed",
+        "git_observation_incomplete",
+    }:
+        return "GIT_OBSERVATION_UNAVAILABLE"
+    if error.code in {"worktree_not_found", "worktree_missing"}:
+        return "GIT_WORKTREE_MISSING"
+    return "GIT_WORKTREE_INVALID"
 
 
 def _context_usage_snapshot(

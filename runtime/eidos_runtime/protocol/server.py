@@ -33,6 +33,7 @@ from eidos_runtime.application.extensions import (
 from eidos_runtime.application.models import ModelApplication
 from eidos_runtime.application.runs import RunApplication, RunStartOutcome
 from eidos_runtime.application.repository import RepositoryApplicationFactory
+from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
 from eidos_runtime.application.sessions import SessionApplication, clean_session_title
 from eidos_runtime.application.task_lifecycle import (
     LifecycleAction,
@@ -555,6 +556,22 @@ class RuntimeServer:
                 request: self._applications_or_error().sessions.read_snapshot(request),
             ),
             (
+                "session/gitStatus",
+                method_dtos.SessionGitStatusRequestDto,
+                method_dtos.SessionGitStatusResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_status(
+                    request
+                ),
+            ),
+            (
+                "session/gitDiff",
+                method_dtos.SessionGitDiffRequestDto,
+                method_dtos.SessionGitDiffResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_diff(
+                    request
+                ),
+            ),
+            (
                 "session/rename",
                 method_dtos.SessionRenameRequestDto,
                 method_dtos.SessionRenameResponseDto,
@@ -813,11 +830,13 @@ class RuntimeServer:
         task_lifecycle = TaskLifecycleApplication(
             _ServerTaskLifecycleRuntime(self.supervisor)
         )
+        session_lifecycle = SessionLifecycleCoordinator()
         return _RuntimeApplications(
             sessions=SessionApplication(
                 self.store,
                 scan_text=self._scan_text,
                 worktree_manager=self.worktree_manager,
+                lifecycle=session_lifecycle,
             ),
             runs=RunApplication(
                 store=self.store,
@@ -825,6 +844,9 @@ class RuntimeServer:
                 environment=_ServerRunEnvironment(self),
                 lifecycle=task_lifecycle,
                 scan_text=self._scan_text,
+                worktree_manager=self.worktree_manager,
+                session_repository=self.store.typed_runtime_repository(),
+                lifecycle_coordinator=session_lifecycle,
             ),
             approvals=ApprovalApplication(
                 self.store.typed_runtime_repository(),
@@ -843,7 +865,10 @@ class RuntimeServer:
                 verified_compactions=self.store.verified_compaction_repository(),
             ),
             checkpoints=CheckpointApplication(
-                self.store, self.store.checkpoint_repository()
+                self.store,
+                self.store.checkpoint_repository(),
+                worktree_manager=self.worktree_manager,
+                lifecycle=session_lifecycle,
             ),
             task_lifecycle=task_lifecycle,
         )
@@ -862,6 +887,8 @@ class RuntimeServer:
         try:
             self.store.initialize()
             if self.store.health_state == "ready":
+                self.worktree_manager = WorktreeManager(self.store.database)
+                self.worktree_manager.recover()
                 self.sensitive = SensitiveScanner()
                 assert self.store.data_directory is not None
                 deploy_system_skills(self.store.data_directory)

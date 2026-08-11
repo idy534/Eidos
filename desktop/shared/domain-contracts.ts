@@ -20,9 +20,21 @@ export type RuntimeStatus =
     }
   | { state: "error"; message: string };
 
+export interface SessionWorktree {
+  worktreeId: string;
+  projectId: string;
+  repositoryRoot: string;
+  worktreeRoot: string;
+  baseRef: string;
+  baseCommit: string;
+  branch: string;
+  state: "active" | "missing" | "invalid" | "deleted";
+}
+
 export interface Session {
   id: string;
   workspaceRoot: string;
+  worktree?: SessionWorktree;
   title?: string;
   taskStatus: "new" | "in_progress" | "completed" | "failed" | "canceled";
   createdAt: number;
@@ -36,6 +48,33 @@ export interface SessionListResult {
 
 export interface DeleteSessionResult {
   deletedSessionId: string;
+}
+
+export type GitDiffScope = "head" | "baseline";
+
+export interface SessionGitStatus {
+  worktreeId: string;
+  branch: string;
+  head: string;
+  baseRef: string;
+  baseCommit: string;
+  dirty: boolean;
+  stagedCount: number;
+  unstagedCount: number;
+  untrackedCount: number;
+  conflictCount: number;
+  observedAt: number;
+}
+
+export interface SessionGitDiff {
+  scope: GitDiffScope;
+  baseCommit: string;
+  head: string;
+  dirty: boolean;
+  changedFiles: string[];
+  unifiedDiff: string;
+  truncated: boolean;
+  observedAt: number;
 }
 
 export interface Run {

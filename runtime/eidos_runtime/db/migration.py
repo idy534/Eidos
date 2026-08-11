@@ -11,6 +11,7 @@ from eidos_runtime.db.migrations import (
     v013_to_v014,
     v014_to_v015,
     v015_to_v016,
+    v016_to_v017,
 )
 
 
@@ -28,6 +29,7 @@ def migrate_schema(
         (v013_to_v014.FROM_VERSION, v013_to_v014.TO_VERSION): v013_to_v014,
         (v014_to_v015.FROM_VERSION, v014_to_v015.TO_VERSION): v014_to_v015,
         (v015_to_v016.FROM_VERSION, v015_to_v016.TO_VERSION): v015_to_v016,
+        (v016_to_v017.FROM_VERSION, v016_to_v017.TO_VERSION): v016_to_v017,
     }.get((current_version, target_version))
     if migration is None:
         raise StorageError("schema_revision_unsupported")
@@ -47,6 +49,7 @@ def migrate_schema(
         v013_to_v014.InvalidV13SchemaError,
         v014_to_v015.InvalidV14SchemaError,
         v015_to_v016.InvalidV15SchemaError,
+        v016_to_v017.InvalidV16SchemaError,
     ) as error:
         if connection.in_transaction:
             connection.rollback()

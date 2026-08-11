@@ -64,6 +64,7 @@ EXPECTED_TABLES = {
     "run_revisions",
     "projects",
     "worktrees",
+    "worktree_lifecycle_operations",
 }
 
 EXPECTED_COLUMNS = {
@@ -246,6 +247,8 @@ class StorageSchemaTests(unittest.TestCase):
                 "worktrees_project_state",
                 "worktrees_project_ownership",
                 "sessions_worktree_id",
+                "worktree_lifecycle_operations_state",
+                "worktree_lifecycle_operations_session",
             },
         )
         for table, expected in EXPECTED_COLUMNS.items():

@@ -142,6 +142,8 @@ def _run_verified_shell(
             sandbox_home=home,
             sandbox_tmp=temp,
             sensitive_path=workspace.path / ".env",
+            git_worktree_dir=workspace.git_dir,
+            git_common_dir=workspace.git_common_dir,
             effective_permissions=(
                 attempt.permissions
                 if attempt is not None

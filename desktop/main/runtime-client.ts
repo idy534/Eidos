@@ -25,6 +25,16 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "SENSITIVE_SCAN_FAILED",
   "INVALID_SESSION_TITLE",
   "SESSION_HAS_ACTIVE_RUN",
+  "GIT_WORKTREE_NOT_MANAGED",
+  "GIT_OBSERVATION_UNAVAILABLE",
+  "GIT_WORKTREE_NOT_FOUND",
+  "GIT_WORKTREE_MISSING",
+  "GIT_WORKTREE_INVALID",
+  "GIT_REVIEW_FAILED",
+  "WORKSPACE_IDENTITY_CHANGED",
+  "WORKTREE_DIRTY",
+  "WORKTREE_DELETE_FAILED",
+  "SESSION_PERSISTENCE_FAILED",
   "MODEL_NOT_AVAILABLE",
   "RUN_CANCEL_TIMEOUT",
   "RUN_RECONCILIATION_REQUIRED",
@@ -63,6 +73,9 @@ import type {
   RuntimeHealth,
   RuntimeNotification,
   Session,
+  GitDiffScope,
+  SessionGitDiff,
+  SessionGitStatus,
   SessionListResult,
   SessionSnapshot,
   SkillListResult,
@@ -279,6 +292,18 @@ export class RuntimeClient {
   ): Promise<{ deletedSessionId: string }> {
     return this.validatedRequest(
       "session/delete", { sessionId, operationId }, isDeletedSessionResult,
+    );
+  }
+
+  readSessionGitStatus(sessionId: string): Promise<SessionGitStatus> {
+    return this.validatedRequest(
+      "session/gitStatus", { sessionId }, isSessionGitStatus,
+    );
+  }
+
+  readSessionGitDiff(sessionId: string, scope: GitDiffScope): Promise<SessionGitDiff> {
+    return this.validatedRequest(
+      "session/gitDiff", { sessionId, scope }, isSessionGitDiff,
     );
   }
 
@@ -811,13 +836,74 @@ function isRuntimeHealth(value: unknown): value is RuntimeHealth {
 function isSession(value: unknown): value is Session {
   return (
     isRecord(value)
-    && hasOnlyKeys(value, ["id", "workspaceRoot", "title", "taskStatus", "createdAt", "updatedAt"])
+    && hasOnlyKeys(value, [
+      "id", "workspaceRoot", "worktree", "title", "taskStatus", "createdAt", "updatedAt",
+    ])
     && typeof value.id === "string"
     && typeof value.workspaceRoot === "string"
+    && (value.worktree === undefined || isSessionWorktree(value.worktree))
     && (value.title === undefined || typeof value.title === "string")
     && ["new", "in_progress", "completed", "failed", "canceled"].includes(String(value.taskStatus))
     && isNonNegativeInteger(value.createdAt)
     && isNonNegativeInteger(value.updatedAt)
+  );
+}
+
+function isSessionWorktree(value: unknown): boolean {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "worktreeId", "projectId", "repositoryRoot", "worktreeRoot",
+      "baseRef", "baseCommit", "branch", "state",
+    ])
+    && typeof value.worktreeId === "string"
+    && typeof value.projectId === "string"
+    && typeof value.repositoryRoot === "string"
+    && typeof value.worktreeRoot === "string"
+    && typeof value.baseRef === "string"
+    && typeof value.baseCommit === "string"
+    && typeof value.branch === "string"
+    && ["active", "missing", "invalid", "deleted"].includes(String(value.state))
+  );
+}
+
+function isSessionGitStatus(value: unknown): value is SessionGitStatus {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "worktreeId", "branch", "head", "baseRef", "baseCommit", "dirty",
+      "stagedCount", "unstagedCount", "untrackedCount", "conflictCount", "observedAt",
+    ])
+    && typeof value.worktreeId === "string"
+    && typeof value.branch === "string"
+    && typeof value.head === "string"
+    && typeof value.baseRef === "string"
+    && typeof value.baseCommit === "string"
+    && typeof value.dirty === "boolean"
+    && isNonNegativeInteger(value.stagedCount)
+    && isNonNegativeInteger(value.unstagedCount)
+    && isNonNegativeInteger(value.untrackedCount)
+    && isNonNegativeInteger(value.conflictCount)
+    && isNonNegativeInteger(value.observedAt)
+  );
+}
+
+function isSessionGitDiff(value: unknown): value is SessionGitDiff {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "scope", "baseCommit", "head", "dirty", "changedFiles",
+      "unifiedDiff", "truncated", "observedAt",
+    ])
+    && ["head", "baseline"].includes(String(value.scope))
+    && typeof value.baseCommit === "string"
+    && typeof value.head === "string"
+    && typeof value.dirty === "boolean"
+    && Array.isArray(value.changedFiles)
+    && value.changedFiles.every((path) => typeof path === "string")
+    && typeof value.unifiedDiff === "string"
+    && typeof value.truncated === "boolean"
+    && isNonNegativeInteger(value.observedAt)
   );
 }
 

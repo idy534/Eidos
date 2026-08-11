@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 from eidos_runtime.application.checkpoints import CheckpointApplication
@@ -55,10 +57,29 @@ def test_checkpoint_freezes_snapshot_lineage_and_records_rewind_fork(
 
         assert created.checkpoint.rule_snapshot_id == "rule-1"
         assert created.checkpoint.repository_snapshot_id == "index-1"
+        assert created.checkpoint.workspace_identity_hash == hashlib.sha256(
+            json.dumps(
+                {
+                    "root": str(identity.path),
+                    "device": identity.device,
+                    "inode": identity.inode,
+                    "owner": identity.owner,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
         assert listed.checkpoints == [created.checkpoint]
         assert rewound.run.id == run_id
         assert forked.parent_run_id == run_id
         assert forked.run.id != run_id
+        fork_session = store.connection.execute(
+            "SELECT workspace_root, worktree_id FROM sessions WHERE id = ?",
+            (forked.run.session_id,),
+        ).fetchone()
+        assert fork_session is not None
+        assert fork_session["workspace_root"] == str(fork_workspace.resolve())
+        assert fork_session["worktree_id"] is None
         rows = store.connection.execute(
             "SELECT action, target_run_id FROM checkpoint_actions ORDER BY created_at, id"
         ).fetchall()

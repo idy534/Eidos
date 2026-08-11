@@ -20,6 +20,23 @@ class WorktreeState(StrEnum):
     DELETED = "deleted"
 
 
+class WorktreeLifecycleScope(StrEnum):
+    SESSION_CREATE = "session/create"
+    SESSION_DELETE = "session/delete"
+    CHECKPOINT_FORK = "checkpoint/fork"
+
+
+class WorktreeLifecycleState(StrEnum):
+    PREPARED = "prepared"
+    WORKTREE_CREATED = "worktree_created"
+    SESSION_CREATED = "session_created"
+    RUN_CREATED = "run_created"
+    CHECKPOINT_ACTION_CREATED = "checkpoint_action_created"
+    WORKTREE_DELETED = "worktree_deleted"
+    COMPLETED = "completed"
+    CLEANUP_REQUIRED = "cleanup_required"
+
+
 class Worktree(EidosFrozenStrictModel):
     """Durable Worktree facts. HEAD and dirty state are deliberately absent."""
 
@@ -95,6 +112,25 @@ class WorktreeRecoveryReport(EidosFrozenStrictModel):
     orphan_candidates: tuple[OrphanWorktreeCandidate, ...] = ()
 
 
+class WorktreeLifecycleOperation(EidosFrozenStrictModel):
+    scope: WorktreeLifecycleScope
+    operation_id: str = Field(min_length=1)
+    state: WorktreeLifecycleState
+    project_id: str | None = None
+    repository_root: str | None = None
+    worktree_id: str | None = None
+    worktree_root: str | None = None
+    base_ref: str | None = None
+    branch: str | None = None
+    base_commit: str | None = None
+    session_id: str | None = None
+    run_id: str | None = None
+    checkpoint_id: str | None = None
+    error_code: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class WorktreeCleanupReport(EidosFrozenStrictModel):
     pruned_project_ids: tuple[str, ...] = ()
     marked_deleted: tuple[Worktree, ...] = ()
@@ -104,6 +140,9 @@ __all__ = [
     "OrphanWorktreeCandidate",
     "Worktree",
     "WorktreeCleanupReport",
+    "WorktreeLifecycleOperation",
+    "WorktreeLifecycleScope",
+    "WorktreeLifecycleState",
     "WorktreeOwnership",
     "WorktreeRecoveryReport",
     "WorktreeState",
