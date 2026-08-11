@@ -66,3 +66,7 @@ test("unknown changes conservatively fall back to Fast instead of Full", () => {
 test("packaging changes select packaging tests without invoking a package build", () => {
   assert.deepEqual(commandLines(["scripts/package-macos.sh"]), ["pnpm test:packaging"]);
 });
+
+test("affected selector changes run test infrastructure checks", () => {
+  assert.deepEqual(commandLines(["scripts/test-affected.mjs"]), ["pnpm test:packaging"]);
+});
