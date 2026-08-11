@@ -43,6 +43,28 @@ test("packaging commands and pinned electron-builder are declared", async () => 
 });
 
 
+test("layered test commands keep Fast, Integration, Full, and Release separate", async () => {
+  const { packageJson } = await readPackagingFiles();
+  assert.equal(packageJson.scripts["test"], "pnpm test:full");
+  assert.equal(packageJson.scripts["test:affected"], "node scripts/test-affected.mjs");
+  assert.equal(
+    packageJson.scripts["test:runtime:fast"],
+    'uv run --locked pytest -m "not integration and not slow and not platform and not large_repository"',
+  );
+  assert.equal(packageJson.scripts["test:runtime:full"], "uv run --locked pytest");
+  assert.equal(
+    packageJson.scripts["test:integration"],
+    'uv run --locked pytest -m "integration or slow or platform or large_repository"',
+  );
+  assert.equal(packageJson.scripts["test:release"], "pnpm package:mac:release");
+  assert.equal(packageJson.scripts["check:python"], "pnpm check:python:static");
+  assert.equal(
+    packageJson.scripts["check:python:full"],
+    "pnpm check:python:static && pnpm test:runtime:full",
+  );
+});
+
+
 test("electron-builder keeps Runtime outside ASAR and targets only arm64 DMG", async () => {
   const { builderConfig } = await readPackagingFiles();
   assert.match(builderConfig, /^appId:\s+com\.idy\.eidos\s*$/m);
