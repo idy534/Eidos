@@ -101,6 +101,42 @@ test("preserves a closed business error code without exposing runtime details", 
   assert.equal(error.businessCode, "RUN_ALREADY_ACTIVE");
 });
 
+test("preserves every workspace and lifecycle business code in the closed contract", () => {
+  const codes = [
+    "INVALID_PARAMS",
+    "INVALID_CURSOR",
+    "INVALID_EVENT_CURSOR",
+    "REPOSITORY_NOT_FOUND",
+    "NOT_A_GIT_REPOSITORY",
+    "GIT_COMMAND_TIMEOUT",
+    "WORKTREE_CREATE_FAILED",
+    "WORKTREE_PERSISTENCE_FAILED",
+    "WORKTREE_RECOVERY_REQUIRED",
+    "WORKSPACE_IDENTITY_UNAVAILABLE",
+    "CHECKPOINT_GIT_STATE_UNAVAILABLE",
+    "CHECKPOINT_FORK_WORKTREE_FAILED",
+    "DIRECT_CHECKPOINT_FORK_PATH_FORBIDDEN",
+    "MANAGED_CHECKPOINT_FORK_PATH_FORBIDDEN",
+    "ASYNC_OPERATION_CANCELED",
+    "ASYNC_OPERATION_INTERRUPTED",
+  ];
+  for (const code of codes) {
+    const error = new RuntimeRequestError({
+      code: -32000,
+      message: "Request failed",
+      data: { code, retryable: false },
+    });
+    assert.equal(error.businessCode, code);
+    assert.equal(error.message, `EIDOS_RUNTIME_ERROR:${code}`);
+  }
+  const unknown = new RuntimeRequestError({
+    code: -32000,
+    message: "Request failed",
+    data: { code: "UNRECOGNIZED_RUNTIME_CODE", retryable: false },
+  });
+  assert.equal(unknown.businessCode, "INTERNAL_ERROR");
+});
+
 
 test("development Runtime environment preserves inherited Python settings", () => {
   const environment = buildRuntimeEnvironment({
@@ -212,6 +248,37 @@ test("creates and reads a persisted session across runtime restarts", async () =
       session: created, runs: [], items: [], stepResolutions: [], throughEventId: 1,
     });
   } finally {
+    await rm(dataDirectory, { recursive: true, force: true });
+    await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("creates first-class Direct Workspace sessions without Git review state", async () => {
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-direct-"));
+  const client = new RuntimeClient({
+    pythonExecutable,
+    runtimeRoot: path.join(projectRoot, "runtime"),
+    dataDirectory,
+  });
+
+  try {
+    await client.initialize();
+    const first = await client.createSession(workspaceRoot);
+    const second = await client.createSession(workspaceRoot);
+    assert.equal(first.project?.workspaceRoot, await realpath(workspaceRoot));
+    assert.equal(first.project?.gitAvailable, false);
+    assert.equal(first.project?.id, second.project?.id);
+    assert.equal(first.worktree, undefined);
+    assert.equal(second.worktree, undefined);
+    assert.deepEqual((await client.listSessions()).items.map((session) => session.project?.id), [
+      first.project?.id,
+      first.project?.id,
+    ]);
+  } finally {
+    await client.shutdown();
+    await client.waitForExit();
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });

@@ -20,7 +20,7 @@ interface Props {
   isSelectingSessionId?: string | undefined;
   gitStatusBySessionId?: ReadonlyMap<string, SessionGitStatus>;
   onCreate: () => void;
-  onCreateInProject: (repositoryRoot: string) => void;
+  onCreateInProject: (workspaceRoot: string) => void;
   onSelect: (session: Session) => void;
   onRename: (session: Session) => void;
   onDelete: (session: Session) => void;
@@ -82,7 +82,7 @@ export function SessionSidebar({
             {projects.map((project) => (
               <li key={project.key}>
                 <section className="workspace-group" aria-label={project.displayName}>
-                  <div className="workspace-title-row" title={project.repositoryRoot}>
+                  <div className="workspace-title-row" title={project.workspaceRoot}>
                     <button
                       className="workspace-toggle"
                       aria-expanded={!collapsedProjects.has(project.key)}
@@ -110,7 +110,7 @@ export function SessionSidebar({
                           next.delete(project.key);
                           return next;
                         });
-                        onCreateInProject(project.repositoryRoot);
+                        onCreateInProject(project.workspaceRoot);
                       }}
                     >＋</button>
                   </div>
@@ -160,16 +160,16 @@ export function SessionSidebar({
                             >
                               <span className="session-labels">
                                 <span className="session-title">{session.title ?? "新任务"}</span>
-                                {session.worktree && (
+                                {project.gitAvailable && session.worktree && (
                                   <span className="session-branch">{session.worktree.branch}</span>
                                 )}
                               </span>
-                              {(isLoading || gitStatus?.dirty || status) && (
+                              {(isLoading || (project.gitAvailable && gitStatus?.dirty) || status) && (
                                 <span className="session-indicators">
                                   {isLoading && (
                                     <span className="session-loading-dot" aria-label="加载中" />
                                   )}
-                                  {gitStatus?.dirty && !isLoading && (
+                                  {project.gitAvailable && gitStatus?.dirty && !isLoading && (
                                     <span
                                       className="git-dirty-indicator"
                                       aria-label="有未提交改动"

@@ -51,14 +51,15 @@ export function useGitReviewController({
   const statusRequestRef = useRef(0);
   const diffRequestRef = useRef(0);
   const selectedSessionIdRef = useRef<string | undefined>(undefined);
-  const managedRef = useRef(false);
+  const gitAvailableRef = useRef(false);
   const readyRef = useRef(ready);
   const scopeRef = useRef<GitDiffScope>(scope);
   const refreshTimerRef = useRef<number | undefined>(undefined);
 
   readyRef.current = ready;
   selectedSessionIdRef.current = session?.id;
-  managedRef.current = session?.worktree !== undefined;
+  gitAvailableRef.current = session?.project?.gitAvailable === true
+    && session?.worktree !== undefined;
 
   const loadStatus = useCallback((sessionId: string, generation: number): void => {
     const request = statusRequestRef.current + 1;
@@ -128,7 +129,7 @@ export function useGitReviewController({
 
   const refresh = useCallback((): void => {
     const sessionId = selectedSessionIdRef.current;
-    if (!readyRef.current || !managedRef.current || !sessionId) return;
+    if (!readyRef.current || !gitAvailableRef.current || !sessionId) return;
     const generation = generationRef.current;
     loadStatus(sessionId, generation);
     loadDiff(sessionId, scopeRef.current, generation);
@@ -139,7 +140,7 @@ export function useGitReviewController({
     setScope(nextScope);
     setDiff(undefined);
     const sessionId = selectedSessionIdRef.current;
-    if (!readyRef.current || !managedRef.current || !sessionId) return;
+    if (!readyRef.current || !gitAvailableRef.current || !sessionId) return;
     loadDiff(sessionId, nextScope, generationRef.current);
   }, [loadDiff]);
 
@@ -147,7 +148,7 @@ export function useGitReviewController({
     const sessionId = selectedSessionIdRef.current;
     if (
       !readyRef.current
-      || !managedRef.current
+      || !gitAvailableRef.current
       || !sessionId
       || notification.params.sessionId !== sessionId
     ) return;
@@ -179,10 +180,17 @@ export function useGitReviewController({
       window.clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = undefined;
     }
-    if (!ready || !session?.worktree) return;
+    if (!ready || session?.project?.gitAvailable !== true || !session.worktree) return;
     loadStatus(session.id, generation);
     loadDiff(session.id, "head", generation);
-  }, [loadDiff, loadStatus, ready, session?.id, session?.worktree?.worktreeId]);
+  }, [
+    loadDiff,
+    loadStatus,
+    ready,
+    session?.id,
+    session?.project?.gitAvailable,
+    session?.worktree?.worktreeId,
+  ]);
 
   useEffect(() => () => {
     generationRef.current += 1;

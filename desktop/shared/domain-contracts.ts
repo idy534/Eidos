@@ -31,9 +31,17 @@ export interface SessionWorktree {
   state: "active" | "missing" | "invalid" | "deleted";
 }
 
+export interface SessionProject {
+  id: string;
+  workspaceRoot: string;
+  gitAvailable: boolean;
+}
+
 export interface Session {
   id: string;
   workspaceRoot: string;
+  /** Optional only while older persisted event fixtures are read. */
+  project?: SessionProject;
   worktree?: SessionWorktree;
   title?: string;
   taskStatus: "new" | "in_progress" | "completed" | "failed" | "canceled";
