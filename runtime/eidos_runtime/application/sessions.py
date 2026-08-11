@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import nullcontext
-from datetime import datetime
+from datetime import UTC, datetime
 import logging
 from pathlib import Path
 import unicodedata
+import uuid
 from typing import Protocol, TypeVar
 
 from pydantic import ValidationError
@@ -26,7 +27,12 @@ from eidos_runtime.db.errors import (
     WorkspaceBoundaryError,
 )
 from eidos_runtime.domain.project import Project
-from eidos_runtime.domain.worktree import Worktree
+from eidos_runtime.domain.worktree import (
+    Worktree,
+    WorktreeLifecycleOperation,
+    WorktreeLifecycleScope,
+    WorktreeLifecycleState,
+)
 from eidos_runtime.git.errors import WorktreeError
 from eidos_runtime.git.models import GitRepositoryDiscovery
 from eidos_runtime.git.status import DiffScope, GitDiffSnapshot, GitStatusSnapshot
@@ -61,6 +67,7 @@ from eidos_runtime.persistence.mappers.session import (
     session_from_legacy_dict,
     session_to_legacy_dict,
 )
+from eidos_runtime.persistence.worktree_lifecycle import WorktreeLifecycleRepository
 from eidos_runtime.protocol.schemas import SessionDto, SessionWorktreeDto
 from eidos_runtime.sandbox.sensitive import (
     SensitiveContentDenied,
@@ -81,6 +88,7 @@ class TypedSessionRepositoryPort(Protocol):
         *,
         worktree_id: str | None = None,
         operation_id: str | None = None,
+        session_id: str | None = None,
     ) -> CommittedMutation[Session]: ...
 
     def list_sessions(
@@ -136,6 +144,13 @@ class SessionStorePort(Protocol):
         self, operation_id: str, scope: str, request: dict[str, object]
     ) -> object | None: ...
 
+    def record_operation_result(
+        self,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+        result: dict[str, object],
+    ) -> dict[str, object]: ...
 
 class ManagedWorktreePort(Protocol):
     """Application port for Session-owned Worktree provisioning."""
@@ -143,6 +158,21 @@ class ManagedWorktreePort(Protocol):
     def discover(self, repository_seed: Path | str) -> GitRepositoryDiscovery: ...
 
     def create(self, repository_root: Path | str) -> Worktree: ...
+
+    def prepare_create(
+        self, repository_root: Path | str
+    ) -> Worktree: ...
+
+    def create_prepared(
+        self,
+        plan: Worktree,
+        *,
+        compensate_on_failure: bool = True,
+    ) -> Worktree: ...
+
+    def prepared_from_lifecycle(
+        self, operation: WorktreeLifecycleOperation
+    ) -> Worktree: ...
 
     def project(self, project_id: str) -> Project: ...
 
@@ -155,6 +185,9 @@ class ManagedWorktreePort(Protocol):
     def delete(self, worktree_id: str) -> Worktree: ...
 
     def rollback_create(self, worktree_id: str) -> Worktree: ...
+
+    @property
+    def lifecycle(self) -> WorktreeLifecycleRepository: ...
 
 
 def clean_session_title(value: str) -> str:
@@ -198,7 +231,15 @@ class SessionApplication:
 
     def create(self, request: SessionCreateRequestDto) -> SessionCreateResponseDto:
         if self._worktree_manager is not None:
-            return self._create_managed(request)
+            operation_guard = (
+                self._lifecycle.hold_operation(
+                    "session/create", request.operation_id
+                )
+                if request.operation_id is not None
+                else nullcontext()
+            )
+            with operation_guard:
+                return self._create_managed(request)
         try:
             mutation = self._repository.create_session(
                 request.workspace_root,
@@ -253,31 +294,140 @@ class SessionApplication:
                     ),
                 )
 
+        lifecycle = manager.lifecycle
+        lifecycle_operation_id = request.operation_id or (
+            f"session-create-{uuid.uuid4().hex}"
+        )
+        lifecycle_operation = lifecycle.read(
+            WorktreeLifecycleScope.SESSION_CREATE,
+            lifecycle_operation_id,
+        )
+        worktree: Worktree | None = None
         try:
-            worktree = manager.create(discovery.repository_root)
-            project = manager.project(worktree.project_id)
-            mutation = self._repository.create_session(
-                project.repository_root,
-                worktree_id=worktree.id,
-                operation_id=request.operation_id,
+            if lifecycle_operation is None:
+                plan = manager.prepare_create(discovery.repository_root)
+                session_id = str(uuid.uuid4())
+                now = datetime.now(UTC).replace(microsecond=0)
+                lifecycle_operation = lifecycle.prepare(
+                    WorktreeLifecycleOperation(
+                        scope=WorktreeLifecycleScope.SESSION_CREATE,
+                        operation_id=lifecycle_operation_id,
+                        state=WorktreeLifecycleState.PREPARED,
+                        project_id=plan.project_id,
+                        repository_root=discovery.repository_root,
+                        worktree_id=plan.id,
+                        worktree_root=plan.worktree_root,
+                        base_ref=plan.base_ref,
+                        branch=plan.branch,
+                        base_commit=plan.base_commit,
+                        session_id=session_id,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            elif lifecycle_operation.repository_root != discovery.repository_root:
+                raise ApplicationError(
+                    "OPERATION_ID_REUSED",
+                    "operation id was reused for another repository",
+                )
+            if lifecycle_operation.state is WorktreeLifecycleState.CLEANUP_REQUIRED:
+                raise ApplicationError(
+                    "WORKTREE_RECOVERY_REQUIRED",
+                    lifecycle_operation.error_code
+                    or "worktree lifecycle recovery is required",
+                )
+            plan = manager.prepared_from_lifecycle(lifecycle_operation)
+            worktree = manager.create_prepared(
+                plan,
+                compensate_on_failure=False,
             )
-            if mutation.value.worktree_id != worktree.id:
-                self._compensate_managed_worktree(manager, worktree)
+            if lifecycle_operation.state is WorktreeLifecycleState.PREPARED:
+                lifecycle_operation = lifecycle.update_state(
+                    WorktreeLifecycleScope.SESSION_CREATE,
+                    lifecycle_operation_id,
+                    WorktreeLifecycleState.WORKTREE_CREATED,
+                )
+            project = manager.project(worktree.project_id)
+            session_id = lifecycle_operation.session_id
+            if session_id is None:
+                raise ApplicationError(
+                    "WORKTREE_RECOVERY_REQUIRED",
+                    "session create lifecycle has no session id",
+                )
+            existing_session = self._repository.read_session(session_id)
+            if existing_session is None:
+                try:
+                    mutation = self._repository.create_session(
+                        project.repository_root,
+                        worktree_id=worktree.id,
+                        operation_id=None,
+                        session_id=session_id,
+                    )
+                except TypeError as error:
+                    if "session_id" not in str(error):
+                        raise
+                    # Keep narrow compatibility with older injected repository
+                    # seams used by failure tests.
+                    mutation = self._repository.create_session(
+                        project.repository_root,
+                        worktree_id=worktree.id,
+                        operation_id=None,
+                    )
+                session = mutation.value
+            else:
+                if existing_session.worktree_id != worktree.id:
+                    raise ApplicationError(
+                        "WORKTREE_RECOVERY_REQUIRED",
+                        "session lifecycle binding does not match",
+                    )
+                session = existing_session
+            if lifecycle_operation.state in {
+                WorktreeLifecycleState.PREPARED,
+                WorktreeLifecycleState.WORKTREE_CREATED,
+            }:
+                lifecycle_operation = lifecycle.update_state(
+                    WorktreeLifecycleScope.SESSION_CREATE,
+                    lifecycle_operation_id,
+                    WorktreeLifecycleState.SESSION_CREATED,
+                )
+            lifecycle_operation = lifecycle.update_state(
+                WorktreeLifecycleScope.SESSION_CREATE,
+                lifecycle_operation_id,
+                WorktreeLifecycleState.COMPLETED,
+            )
+            result = _result(
+                SessionCreateResponseDto,
+                self._project_session(self._projection_for_session(session.id)),
+            )
+            if request.operation_id is not None:
+                return self._record_session_operation(
+                    request.operation_id,
+                    operation_request,
+                    result,
+                )
+            return result
         except WorktreeError as error:
-            if "worktree" in locals():
-                self._compensate_managed_worktree(manager, worktree)
             raise ApplicationError(_worktree_error_code(error), str(error)) from error
         except OperationConflictError as error:
-            if "worktree" in locals():
-                self._compensate_managed_worktree(manager, worktree)
             raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
         except OperationInProgressError as error:
-            if "worktree" in locals():
-                self._compensate_managed_worktree(manager, worktree)
             raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
-        except Exception as error:
-            if "worktree" in locals():
+        except StorageError as error:
+            if worktree is not None:
                 self._compensate_managed_worktree(manager, worktree)
+            try:
+                lifecycle.update_state(
+                    WorktreeLifecycleScope.SESSION_CREATE,
+                    lifecycle_operation_id,
+                    WorktreeLifecycleState.CLEANUP_REQUIRED,
+                    error_code="session_persistence_failed",
+                )
+            except Exception:
+                pass
+            raise ApplicationError(
+                "SESSION_PERSISTENCE_FAILED", str(error)
+            ) from error
+        except Exception as error:
             if isinstance(error, WorkspaceBoundaryError):
                 raise ApplicationError(
                     "WORKSPACE_BOUNDARY_VIOLATION", str(error)
@@ -289,10 +439,25 @@ class SessionApplication:
                     "SESSION_PERSISTENCE_FAILED", str(error)
                 ) from error
             raise
-        return _result(
-            SessionCreateResponseDto,
-            self._project_session(self._projection_for_session(mutation.value.id)),
-        )
+
+    def _record_session_operation(
+        self,
+        operation_id: str,
+        operation_request: dict[str, object],
+        result: SessionCreateResponseDto,
+    ) -> SessionCreateResponseDto:
+        try:
+            recorded = self._store.record_operation_result(
+                operation_id,
+                "session/create",
+                operation_request,
+                result.to_json_value(),
+            )
+        except OperationConflictError as error:
+            raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+        except OperationInProgressError as error:
+            raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
+        return _result(SessionCreateResponseDto, recorded)
 
     def _compensate_managed_worktree(
         self, manager: ManagedWorktreePort, worktree: Worktree
@@ -438,6 +603,55 @@ class SessionApplication:
                     if replay is not None:
                         return _result(SessionDeleteResponseDto, replay)
                 with self._lifecycle.hold(request.session_id):
+                    manager = self._worktree_manager
+                    lifecycle_operation = (
+                        manager.lifecycle.read(
+                            WorktreeLifecycleScope.SESSION_DELETE,
+                            request.operation_id,
+                        )
+                        if manager is not None and request.operation_id is not None
+                        else (
+                            manager.lifecycle.find_delete_for_session(
+                                request.session_id
+                            )
+                            if manager is not None
+                            else None
+                        )
+                    )
+                    if (
+                        lifecycle_operation is not None
+                        and lifecycle_operation.state
+                        is WorktreeLifecycleState.COMPLETED
+                        and request.operation_id is not None
+                    ):
+                        result = {"deletedSessionId": request.session_id}
+                        return self._record_delete_operation(
+                            request.operation_id,
+                            operation_request,
+                            result,
+                        )
+                    if lifecycle_operation is not None and lifecycle_operation.state in {
+                        WorktreeLifecycleState.WORKTREE_DELETED,
+                        WorktreeLifecycleState.COMPLETED,
+                    } and self._repository.read_session_projection(
+                        request.session_id
+                    ) is None:
+                        if lifecycle_operation.state is WorktreeLifecycleState.WORKTREE_DELETED:
+                            manager = self._worktree_manager
+                            assert manager is not None
+                            manager.lifecycle.update_state(
+                                WorktreeLifecycleScope.SESSION_DELETE,
+                                lifecycle_operation.operation_id,
+                                WorktreeLifecycleState.COMPLETED,
+                            )
+                        result = {"deletedSessionId": request.session_id}
+                        if request.operation_id is not None:
+                            return self._record_delete_operation(
+                                request.operation_id,
+                                operation_request,
+                                result,
+                            )
+                        return _result(SessionDeleteResponseDto, result)
                     projection = self._repository.read_session_projection(
                         request.session_id
                     )
@@ -445,18 +659,87 @@ class SessionApplication:
                         raise ResourceNotFoundError("session not found")
                     self._repository.assert_session_deletable(request.session_id)
                     if projection.worktree is not None:
-                        manager = self._worktree_manager
                         if manager is None:
                             raise ApplicationError(
                                 "INTERNAL_ERROR",
                                 "managed Session has no Worktree application boundary",
                             )
-                        if projection.worktree.state.value != "deleted":
-                            manager.delete(projection.worktree.worktree_id)
-                    mutation = self._repository.delete_session(
-                        request.session_id,
-                        operation_id=request.operation_id,
-                    )
+                        worktree_projection = projection.worktree
+                        if lifecycle_operation is None:
+                            if worktree_projection.state.value == "deleted":
+                                raise ApplicationError(
+                                    "WORKTREE_RECOVERY_REQUIRED",
+                                    "deleted Worktree has no durable Session delete intent",
+                                )
+                            project = manager.project(worktree_projection.project_id)
+                            now = datetime.now(UTC).replace(microsecond=0)
+                            lifecycle_operation_id = request.operation_id or (
+                                f"session-delete-{uuid.uuid4().hex}"
+                            )
+                            lifecycle_operation = manager.lifecycle.prepare(
+                                WorktreeLifecycleOperation(
+                                    scope=WorktreeLifecycleScope.SESSION_DELETE,
+                                    operation_id=lifecycle_operation_id,
+                                    state=WorktreeLifecycleState.PREPARED,
+                                    project_id=project.id,
+                                    repository_root=project.repository_root,
+                                    worktree_id=worktree_projection.worktree_id,
+                                    worktree_root=worktree_projection.worktree_root,
+                                    base_ref=worktree_projection.base_ref,
+                                    branch=worktree_projection.branch,
+                                    base_commit=worktree_projection.base_commit,
+                                    session_id=request.session_id,
+                                    created_at=now,
+                                    updated_at=now,
+                                )
+                            )
+                        if lifecycle_operation.state is WorktreeLifecycleState.CLEANUP_REQUIRED:
+                            raise ApplicationError(
+                                "WORKTREE_RECOVERY_REQUIRED",
+                                lifecycle_operation.error_code
+                                or "Session delete recovery is required",
+                            )
+                        if lifecycle_operation.state in {
+                            WorktreeLifecycleState.PREPARED,
+                            WorktreeLifecycleState.WORKTREE_DELETED,
+                        }:
+                            manager.delete(worktree_projection.worktree_id)
+                            if lifecycle_operation.state is not WorktreeLifecycleState.WORKTREE_DELETED:
+                                lifecycle_operation = manager.lifecycle.update_state(
+                                    WorktreeLifecycleScope.SESSION_DELETE,
+                                    lifecycle_operation.operation_id,
+                                    WorktreeLifecycleState.WORKTREE_DELETED,
+                                )
+                        elif lifecycle_operation.state is not WorktreeLifecycleState.WORKTREE_DELETED and (
+                            worktree_projection.state.value != "deleted"
+                        ):
+                            manager.delete(worktree_projection.worktree_id)
+                            lifecycle_operation = manager.lifecycle.update_state(
+                                WorktreeLifecycleScope.SESSION_DELETE,
+                                lifecycle_operation.operation_id,
+                                WorktreeLifecycleState.WORKTREE_DELETED,
+                            )
+                        mutation = self._repository.delete_session(
+                            request.session_id,
+                            operation_id=None,
+                        )
+                        manager.lifecycle.update_state(
+                            WorktreeLifecycleScope.SESSION_DELETE,
+                            lifecycle_operation.operation_id,
+                            WorktreeLifecycleState.COMPLETED,
+                        )
+                        result = deleted_session_to_legacy_dict(mutation.value)
+                        if request.operation_id is not None:
+                            return self._record_delete_operation(
+                                request.operation_id,
+                                operation_request,
+                                result,
+                            )
+                    else:
+                        mutation = self._repository.delete_session(
+                            request.session_id,
+                            operation_id=request.operation_id,
+                        )
         except ResourceNotFoundError as error:
             raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
         except SessionActiveError as error:
@@ -477,6 +760,25 @@ class SessionApplication:
             SessionDeleteResponseDto,
             deleted_session_to_legacy_dict(mutation.value),
         )
+
+    def _record_delete_operation(
+        self,
+        operation_id: str,
+        operation_request: dict[str, object],
+        result: dict[str, object],
+    ) -> SessionDeleteResponseDto:
+        try:
+            recorded = self._store.record_operation_result(
+                operation_id,
+                "session/delete",
+                operation_request,
+                result,
+            )
+        except OperationConflictError as error:
+            raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+        except OperationInProgressError as error:
+            raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
+        return _result(SessionDeleteResponseDto, recorded)
 
     def list_events(self, request: EventListRequestDto) -> EventListResponseDto:
         try:

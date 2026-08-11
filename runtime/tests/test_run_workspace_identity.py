@@ -78,6 +78,12 @@ def test_workspace_for_run_reads_the_frozen_resolution_snapshot(
             device=frozen.device,
             inode=frozen.inode,
             owner=frozen.owner,
+            git_dir=Path(frozen.git_dir) if frozen.git_dir is not None else None,
+            git_common_dir=(
+                Path(frozen.git_common_dir)
+                if frozen.git_common_dir is not None
+                else None
+            ),
         )
         with pytest.raises(
             WorkspacePathError, match="^workspace_identity_changed$"

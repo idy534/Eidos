@@ -868,6 +868,7 @@ class RuntimeServer:
                 self.store,
                 self.store.checkpoint_repository(),
                 worktree_manager=self.worktree_manager,
+                lifecycle=session_lifecycle,
             ),
             task_lifecycle=task_lifecycle,
         )
@@ -886,6 +887,8 @@ class RuntimeServer:
         try:
             self.store.initialize()
             if self.store.health_state == "ready":
+                self.worktree_manager = WorktreeManager(self.store.database)
+                self.worktree_manager.recover()
                 self.sensitive = SensitiveScanner()
                 assert self.store.data_directory is not None
                 deploy_system_skills(self.store.data_directory)

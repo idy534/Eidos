@@ -89,6 +89,8 @@ class RunRepository(Repository):
         model_profile: ModelProfileSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
         expected_workspace_identity: WorkspaceIdentity | None = None,
+        run_id: str | None = None,
+        item_id: str | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         if session_title is not None and (
             not session_title
@@ -108,8 +110,8 @@ class RunRepository(Repository):
             extension_snapshot or EMPTY_EXTENSION_SNAPSHOT,
             code="extension_snapshot_invalid",
         )
-        run_id = str(uuid.uuid4())
-        item_id = str(uuid.uuid4())
+        run_id = run_id or str(uuid.uuid4())
+        item_id = item_id or str(uuid.uuid4())
         now = _now_ms()
         def write(
             connection: sqlite3.Connection,
@@ -177,6 +179,16 @@ class RunRepository(Repository):
                     device=execution_workspace.device,
                     inode=execution_workspace.inode,
                     owner=execution_workspace.owner,
+                    git_dir=(
+                        str(execution_workspace.git_dir)
+                        if execution_workspace.git_dir is not None
+                        else None
+                    ),
+                    git_common_dir=(
+                        str(execution_workspace.git_common_dir)
+                        if execution_workspace.git_common_dir is not None
+                        else None
+                    ),
                 ),
                 data_directory=self.database.data_directory,
                 created_at=now,
@@ -247,6 +259,8 @@ class RunRepository(Repository):
         model_profile: ModelProfileSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
         expected_workspace_identity: WorkspaceIdentity | None = None,
+        run_id: str | None = None,
+        item_id: str | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         return self.create_run(
             session_id,
@@ -258,6 +272,8 @@ class RunRepository(Repository):
             model_profile=model_profile,
             extension_snapshot=extension_snapshot,
             expected_workspace_identity=expected_workspace_identity,
+            run_id=run_id,
+            item_id=item_id,
         )
 
     def claim_next_run(self) -> dict[str, object] | None:

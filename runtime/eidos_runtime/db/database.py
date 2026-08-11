@@ -57,6 +57,8 @@ class WorkspaceIdentity:
     device: int
     inode: int
     owner: int
+    git_dir: Path | None = None
+    git_common_dir: Path | None = None
 
 
 class Database:

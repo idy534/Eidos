@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 V9_SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -861,6 +861,47 @@ CREATE INDEX sessions_worktree_id
 ON sessions(worktree_id);
 """
 
+V17_WORKTREE_LIFECYCLE_SCHEMA_SQL = """
+CREATE TABLE worktree_lifecycle_operations (
+    scope TEXT NOT NULL CHECK (
+        scope IN ('session/create', 'session/delete', 'checkpoint/fork')
+    ),
+    operation_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (
+        state IN (
+            'prepared',
+            'worktree_created',
+            'session_created',
+            'run_created',
+            'checkpoint_action_created',
+            'worktree_deleted',
+            'completed',
+            'cleanup_required'
+        )
+    ),
+    project_id TEXT,
+    repository_root TEXT,
+    worktree_id TEXT,
+    worktree_root TEXT,
+    base_ref TEXT,
+    branch TEXT,
+    base_commit TEXT,
+    session_id TEXT,
+    run_id TEXT,
+    checkpoint_id TEXT,
+    error_code TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (scope, operation_id)
+);
+
+CREATE INDEX worktree_lifecycle_operations_state
+ON worktree_lifecycle_operations(state, updated_at);
+
+CREATE INDEX worktree_lifecycle_operations_session
+ON worktree_lifecycle_operations(session_id, scope);
+"""
+
 SCHEMA_SQL = (
     V12_BASE_SCHEMA_SQL
     + V10_REPOSITORY_SCHEMA_SQL
@@ -869,4 +910,5 @@ SCHEMA_SQL = (
     + V14_COMPACTION_QUALITY_SCHEMA_SQL
     + V15_WORKTREE_SCHEMA_SQL
     + V16_SESSION_WORKTREE_SCHEMA_SQL
+    + V17_WORKTREE_LIFECYCLE_SCHEMA_SQL
 )

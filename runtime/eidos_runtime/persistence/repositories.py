@@ -56,11 +56,13 @@ class TypedRuntimeRepository(Repository):
         *,
         worktree_id: str | None = None,
         operation_id: str | None = None,
+        session_id: str | None = None,
     ) -> CommittedMutation[Session]:
         return self._sessions.create_session_committed(
             workspace_root,
             worktree_id=worktree_id,
             operation_id=operation_id,
+            session_id=session_id,
         )
 
     def list_sessions(

@@ -93,11 +93,13 @@ class SessionRepository(Repository):
         *,
         worktree_id: str | None = None,
         operation_id: str | None = None,
+        session_id: str | None = None,
     ) -> Session:
         return self.create_session_committed(
             workspace_root,
             worktree_id=worktree_id,
             operation_id=operation_id,
+            session_id=session_id,
         ).value
 
     def create_session_committed(
@@ -106,12 +108,13 @@ class SessionRepository(Repository):
         *,
         worktree_id: str | None = None,
         operation_id: str | None = None,
+        session_id: str | None = None,
     ) -> CommittedMutation[Session]:
         workspace = _canonical_workspace(workspace_root)
         if self._workspace_overlaps_data(workspace):
             raise WorkspaceBoundaryError("workspace overlaps runtime data")
         metadata = workspace.stat()
-        session_id = str(uuid.uuid4())
+        session_id = session_id or str(uuid.uuid4())
         now = _now_ms()
         session = session_from_row({
             "id": session_id,

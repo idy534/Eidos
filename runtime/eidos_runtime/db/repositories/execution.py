@@ -124,6 +124,12 @@ class ExecutionRepository(Repository):
             device=identity.device,
             inode=identity.inode,
             owner=identity.owner,
+            git_dir=Path(identity.git_dir) if identity.git_dir is not None else None,
+            git_common_dir=(
+                Path(identity.git_common_dir)
+                if identity.git_common_dir is not None
+                else None
+            ),
         )
 
     def increment_model_step(

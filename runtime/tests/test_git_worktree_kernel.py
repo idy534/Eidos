@@ -143,7 +143,6 @@ def test_failed_worktree_observation_does_not_mutate_lifecycle_state(
     operations = (
         lambda: manager.validate(worktrees[0].id),
         lambda: manager.list(),
-        lambda: manager.recover(),
         lambda: manager.delete(worktrees[3].id),
     )
 
@@ -151,6 +150,8 @@ def test_failed_worktree_observation_does_not_mutate_lifecycle_state(
         with pytest.raises(WorktreeError) as error:
             operation()
         assert error.value.code == "git_observation_failed"
+    report = manager.recover()
+    assert report.updated_worktrees == ()
 
     monkeypatch.setattr(manager.git, "worktree_list", real_worktree_list)
     assert all(
@@ -204,10 +205,8 @@ def test_incomplete_worktree_observation_does_not_mutate_lifecycle_state(
 
     monkeypatch.setattr(manager.git, "worktree_list", incomplete_worktree_list)
 
-    with pytest.raises(WorktreeError) as error:
-        manager.recover()
-
-    assert error.value.code == "git_observation_incomplete"
+    report = manager.recover()
+    assert report.updated_worktrees == ()
     assert manager.repository.read_worktree(worktree.id).state is WorktreeState.ACTIVE
 
 
@@ -223,10 +222,8 @@ def test_timed_out_worktree_observation_does_not_mutate_lifecycle_state(
 
     monkeypatch.setattr(manager.git, "worktree_list", timeout_worktree_list)
 
-    with pytest.raises(WorktreeError) as error:
-        manager.recover()
-
-    assert error.value.code == "git_command_timeout"
+    report = manager.recover()
+    assert report.updated_worktrees == ()
     assert manager.repository.read_worktree(worktree.id).state is WorktreeState.ACTIVE
 
 
@@ -765,14 +762,14 @@ def test_recovery_reports_replaced_worktree_repository_as_invalid(
 
 
 def test_schema_is_current_and_has_project_worktree_tables(database: Database) -> None:
-    assert SCHEMA_VERSION == 16
+    assert SCHEMA_VERSION == 17
     tables = {
         row[0]
         for row in database.connection().execute(
             "SELECT name FROM sqlite_master WHERE type = 'table'"
         )
     }
-    assert {"projects", "worktrees"} <= tables
+    assert {"projects", "worktrees", "worktree_lifecycle_operations"} <= tables
     session_columns = {
         row[1] for row in database.connection().execute("PRAGMA table_info(sessions)")
     }

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from contextlib import nullcontext
+from datetime import UTC, datetime
 from typing import Protocol, TypeVar
+import uuid
 
 from pydantic import ValidationError
 
@@ -10,18 +13,28 @@ from eidos_runtime.application.errors import (
     ApplicationError,
     ApplicationInvalidParamsError,
 )
+from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
 from eidos_runtime.db.errors import (
     OperationConflictError,
     OperationInProgressError,
     ResourceNotFoundError,
+    StorageError,
 )
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.long_task import SafePoint
 from eidos_runtime.domain.project import Project
-from eidos_runtime.domain.worktree import Worktree
+from eidos_runtime.domain.checkpoint import Checkpoint
+from eidos_runtime.domain.session import SessionProjection
+from eidos_runtime.domain.worktree import (
+    Worktree,
+    WorktreeLifecycleOperation,
+    WorktreeLifecycleScope,
+    WorktreeLifecycleState,
+)
 from eidos_runtime.git.errors import WorktreeError
 from eidos_runtime.git.status import GitStatusSnapshot
 from eidos_runtime.persistence.checkpoints import CheckpointRepository
+from eidos_runtime.persistence.worktree_lifecycle import WorktreeLifecycleRepository
 from eidos_runtime.protocol.methods import (
     CheckpointCreateRequestDto,
     CheckpointCreateResponseDto,
@@ -43,11 +56,29 @@ class CheckpointWorktreePort(Protocol):
         self, repository_root: Path | str, base_ref: str | None = None
     ) -> Worktree: ...
 
+    def prepare_create(
+        self, repository_root: Path | str, base_ref: str | None = None
+    ) -> Worktree: ...
+
+    def create_prepared(
+        self,
+        plan: Worktree,
+        *,
+        compensate_on_failure: bool = True,
+    ) -> Worktree: ...
+
+    def prepared_from_lifecycle(
+        self, operation: WorktreeLifecycleOperation
+    ) -> Worktree: ...
+
     def project(self, project_id: str) -> Project: ...
 
     def status(self, worktree_id: str) -> GitStatusSnapshot: ...
 
     def rollback_create(self, worktree_id: str) -> Worktree: ...
+
+    @property
+    def lifecycle(self) -> WorktreeLifecycleRepository: ...
 
 
 class CheckpointApplication:
@@ -57,11 +88,13 @@ class CheckpointApplication:
         repository: CheckpointRepository,
         *,
         worktree_manager: CheckpointWorktreePort | None = None,
+        lifecycle: SessionLifecycleCoordinator | None = None,
     ) -> None:
         self._store = store
         self._repository = repository
         self._sessions = store.typed_runtime_repository()
         self._worktree_manager = worktree_manager
+        self._lifecycle = lifecycle or SessionLifecycleCoordinator()
         self._logger = logging.getLogger(__name__)
 
     def create(
@@ -131,6 +164,17 @@ class CheckpointApplication:
         })
 
     def fork(self, request: CheckpointForkRequestDto) -> CheckpointForkResponseDto:
+        operation_guard = (
+            self._lifecycle.hold_operation(
+                "checkpoint/fork", request.operation_id
+            )
+            if request.operation_id is not None
+            else nullcontext()
+        )
+        with operation_guard:
+            return self._fork(request)
+
+    def _fork(self, request: CheckpointForkRequestDto) -> CheckpointForkResponseDto:
         checkpoint = self._repository.read(request.checkpoint_id)
         if checkpoint is None:
             raise ApplicationError("RESOURCE_NOT_FOUND", "checkpoint not found")
@@ -158,40 +202,21 @@ class CheckpointApplication:
         if replay is not None:
             return replay
 
-        fork_manager: CheckpointWorktreePort | None = None
-        fork_worktree: Worktree | None = None
         if parent_projection.worktree is None:
             assert request.workspace_root is not None
             session = self._store.create_session(request.workspace_root)
             session_id = str(session["id"])
         else:
-            if checkpoint.git_head is None:
-                raise ApplicationError(
-                    "CHECKPOINT_GIT_STATE_UNAVAILABLE",
-                    "managed checkpoint has no Git HEAD",
-                )
-            fork_manager = self._manager_or_error()
-            try:
-                parent_project = fork_manager.project(
-                    parent_projection.worktree.project_id
-                )
-                fork_worktree = fork_manager.create(
-                    parent_project.repository_root,
-                    base_ref=checkpoint.git_head,
-                )
-                session_mutation = self._sessions.create_session(
-                    parent_project.repository_root,
-                    worktree_id=fork_worktree.id,
-                )
-            except WorktreeError as error:
-                raise ApplicationError(
-                    "CHECKPOINT_FORK_WORKTREE_FAILED", str(error)
-                ) from error
-            except Exception:
-                if fork_worktree is not None:
-                    self._discard_unbound_worktree(fork_manager, fork_worktree)
-                raise
-            session_id = session_mutation.value.id
+            return self._fork_managed(
+                request,
+                checkpoint=checkpoint,
+                parent=parent,
+                parent_projection=parent_projection,
+                operation_request=operation_request,
+            )
+
+        fork_manager: CheckpointWorktreePort | None = None
+        fork_worktree: Worktree | None = None
 
         try:
             run, _item = self._store.enqueue_run(
@@ -227,6 +252,197 @@ class CheckpointApplication:
                 "INTERNAL_ERROR", "managed checkpoint has no Worktree boundary"
             )
         return self._worktree_manager
+
+    def _fork_managed(
+        self,
+        request: CheckpointForkRequestDto,
+        *,
+        checkpoint: Checkpoint,
+        parent: dict[str, object],
+        parent_projection: SessionProjection,
+        operation_request: dict[str, object],
+    ) -> CheckpointForkResponseDto:
+        checkpoint_id = str(checkpoint.id)
+        git_head = checkpoint.git_head
+        if git_head is None:
+            raise ApplicationError(
+                "CHECKPOINT_GIT_STATE_UNAVAILABLE",
+                "managed checkpoint has no Git HEAD",
+            )
+        manager = self._manager_or_error()
+        parent_worktree = parent_projection.worktree
+        assert parent_worktree is not None
+        parent_project = manager.project(parent_worktree.project_id)
+        lifecycle = manager.lifecycle
+        lifecycle_operation_id = request.operation_id or (
+            f"checkpoint-fork-{uuid.uuid4().hex}"
+        )
+        lifecycle_operation = lifecycle.read(
+            WorktreeLifecycleScope.CHECKPOINT_FORK,
+            lifecycle_operation_id,
+        )
+        worktree: Worktree | None = None
+        session_id: str | None = None
+        try:
+            if lifecycle_operation is None:
+                plan = manager.prepare_create(
+                    parent_project.repository_root,
+                    base_ref=git_head,
+                )
+                token = uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"eidos:{WorktreeLifecycleScope.CHECKPOINT_FORK.value}:"
+                    f"{lifecycle_operation_id}",
+                ).hex
+                session_id = f"fork-session-{token}"
+                run_id = f"fork-run-{token}"
+                now = datetime.now(UTC).replace(microsecond=0)
+                lifecycle_operation = lifecycle.prepare(
+                    WorktreeLifecycleOperation(
+                        scope=WorktreeLifecycleScope.CHECKPOINT_FORK,
+                        operation_id=lifecycle_operation_id,
+                        state=WorktreeLifecycleState.PREPARED,
+                        project_id=plan.project_id,
+                        repository_root=parent_project.repository_root,
+                        worktree_id=plan.id,
+                        worktree_root=plan.worktree_root,
+                        base_ref=plan.base_ref,
+                        branch=plan.branch,
+                        base_commit=plan.base_commit,
+                        session_id=session_id,
+                        run_id=run_id,
+                        checkpoint_id=checkpoint_id,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            elif (
+                lifecycle_operation.repository_root
+                != parent_project.repository_root
+                or lifecycle_operation.checkpoint_id != checkpoint_id
+            ):
+                raise ApplicationError(
+                    "OPERATION_ID_REUSED",
+                    "checkpoint fork operation identity changed",
+                )
+            if lifecycle_operation.state is WorktreeLifecycleState.CLEANUP_REQUIRED:
+                raise ApplicationError(
+                    "WORKTREE_RECOVERY_REQUIRED",
+                    lifecycle_operation.error_code
+                    or "checkpoint fork recovery is required",
+                )
+            if lifecycle_operation.session_id is None or lifecycle_operation.run_id is None:
+                raise ApplicationError(
+                    "WORKTREE_RECOVERY_REQUIRED",
+                    "checkpoint fork lifecycle ids are incomplete",
+                )
+            session_id = lifecycle_operation.session_id
+            plan = manager.prepared_from_lifecycle(lifecycle_operation)
+            worktree = manager.create_prepared(
+                plan,
+                compensate_on_failure=False,
+            )
+            if lifecycle_operation.state is WorktreeLifecycleState.PREPARED:
+                lifecycle_operation = lifecycle.update_state(
+                    WorktreeLifecycleScope.CHECKPOINT_FORK,
+                    lifecycle_operation_id,
+                    WorktreeLifecycleState.WORKTREE_CREATED,
+                )
+
+            session = self._sessions.read_session(session_id)
+            if session is None:
+                session_mutation = self._sessions.create_session(
+                    parent_project.repository_root,
+                    worktree_id=worktree.id,
+                    operation_id=None,
+                    session_id=session_id,
+                )
+                session = session_mutation.value
+            elif session.worktree_id != worktree.id:
+                raise ApplicationError(
+                    "WORKTREE_RECOVERY_REQUIRED",
+                    "checkpoint fork session binding does not match",
+                )
+            if lifecycle_operation.state in {
+                WorktreeLifecycleState.PREPARED,
+                WorktreeLifecycleState.WORKTREE_CREATED,
+            }:
+                lifecycle_operation = lifecycle.update_state(
+                    WorktreeLifecycleScope.CHECKPOINT_FORK,
+                    lifecycle_operation_id,
+                    WorktreeLifecycleState.SESSION_CREATED,
+                )
+
+            try:
+                run = self._store.read_run(lifecycle_operation.run_id)
+            except ResourceNotFoundError:
+                run, _item = self._store.enqueue_run(
+                    session_id,
+                    str(parent["userInput"]),
+                    model_id=str(parent["modelId"]),
+                    operation_id=None,
+                    run_id=lifecycle_operation.run_id,
+                    item_id=f"{lifecycle_operation.run_id}-item",
+                )
+            if lifecycle_operation.state is WorktreeLifecycleState.SESSION_CREATED:
+                lifecycle_operation = lifecycle.update_state(
+                    WorktreeLifecycleScope.CHECKPOINT_FORK,
+                    lifecycle_operation_id,
+                    WorktreeLifecycleState.RUN_CREATED,
+                )
+
+            action_id = (
+                "checkpoint-fork-action-"
+                + uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"eidos:checkpoint-action:{lifecycle_operation_id}",
+                ).hex
+            )
+            if not self._repository.action_exists(action_id):
+                self._repository.record_action(
+                    checkpoint_id=checkpoint_id,
+                    action="fork",
+                    target_run_id=lifecycle_operation.run_id,
+                    action_id=action_id,
+                )
+            if lifecycle_operation.state is WorktreeLifecycleState.RUN_CREATED:
+                lifecycle_operation = lifecycle.update_state(
+                    WorktreeLifecycleScope.CHECKPOINT_FORK,
+                    lifecycle_operation_id,
+                    WorktreeLifecycleState.CHECKPOINT_ACTION_CREATED,
+                )
+            lifecycle.update_state(
+                WorktreeLifecycleScope.CHECKPOINT_FORK,
+                lifecycle_operation_id,
+                WorktreeLifecycleState.COMPLETED,
+            )
+            result = _validate(CheckpointForkResponseDto, {
+                "checkpoint": checkpoint.model_dump(by_alias=True),
+                "parentRunId": checkpoint.run_id,
+                "run": run,
+            })
+            return self._record_fork_operation(
+                request.operation_id,
+                operation_request,
+                result,
+            )
+        except StorageError:
+            if worktree is not None and session_id is not None:
+                self._discard_fork_session(manager, session_id, worktree)
+                try:
+                    lifecycle.update_state(
+                        WorktreeLifecycleScope.CHECKPOINT_FORK,
+                        lifecycle_operation_id,
+                        WorktreeLifecycleState.CLEANUP_REQUIRED,
+                        error_code="checkpoint_fork_persistence_failed",
+                    )
+                except Exception:
+                    pass
+            raise
+        except WorktreeError as error:
+            raise ApplicationError(
+                "CHECKPOINT_FORK_WORKTREE_FAILED", str(error)
+            ) from error
 
     def _fork_replay(
         self,

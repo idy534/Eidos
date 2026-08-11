@@ -133,25 +133,52 @@ class CheckpointRepository(Repository):
         return tuple(value for row in rows if (value := _map_checkpoint(row)) is not None)
 
     def record_action(
-        self, *, checkpoint_id: str, action: str, target_run_id: str
+        self,
+        *,
+        checkpoint_id: str,
+        action: str,
+        target_run_id: str,
+        action_id: str | None = None,
     ) -> None:
         checkpoint = self.read(checkpoint_id)
         if checkpoint is None:
             raise KeyError(checkpoint_id)
         if action not in {"rewind", "fork"}:
             raise ValueError("invalid checkpoint action")
+        action_id = action_id or f"checkpoint-action-{uuid.uuid4()}"
         with self.lock, self._connection() as connection:
             connection.execute(
                 """
-                INSERT INTO checkpoint_actions (
+                INSERT OR IGNORE INTO checkpoint_actions (
                     id, checkpoint_id, action, source_run_id, target_run_id, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    f"checkpoint-action-{uuid.uuid4()}", checkpoint_id, action,
+                    action_id, checkpoint_id, action,
                     checkpoint.run_id, target_run_id, int(time.time() * 1000),
                 ),
             )
+            row = connection.execute(
+                """
+                SELECT checkpoint_id, action, source_run_id, target_run_id
+                FROM checkpoint_actions WHERE id = ?
+                """,
+                (action_id,),
+            ).fetchone()
+            if row is None or (
+                row["checkpoint_id"] != checkpoint_id
+                or row["action"] != action
+                or row["source_run_id"] != checkpoint.run_id
+                or row["target_run_id"] != target_run_id
+            ):
+                raise StorageError("checkpoint_action_conflict")
+
+    def action_exists(self, action_id: str) -> bool:
+        with self.lock:
+            return self._connection().execute(
+                "SELECT 1 FROM checkpoint_actions WHERE id = ?",
+                (action_id,),
+            ).fetchone() is not None
 
     def workspace_is_compatible(self, checkpoint: Checkpoint) -> bool:
         with self.lock:
