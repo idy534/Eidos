@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import datetime
 import logging
 from pathlib import Path
@@ -13,6 +14,7 @@ from eidos_runtime.application.errors import (
     ApplicationError,
     ApplicationInvalidParamsError,
 )
+from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
 from eidos_runtime.db.database import CommittedMutation
 from eidos_runtime.db.errors import (
     InvalidCursorError,
@@ -105,6 +107,8 @@ class TypedSessionRepositoryPort(Protocol):
         self, session_id: str, *, operation_id: str | None = None
     ) -> CommittedMutation[DeletedSession]: ...
 
+    def assert_session_deletable(self, session_id: str) -> None: ...
+
 
 class SessionStorePort(Protocol):
     """Compatibility store for aggregate reads not yet represented as domains.
@@ -150,6 +154,8 @@ class ManagedWorktreePort(Protocol):
 
     def delete(self, worktree_id: str) -> Worktree: ...
 
+    def rollback_create(self, worktree_id: str) -> Worktree: ...
+
 
 def clean_session_title(value: str) -> str:
     """Apply the established title canonicalization before durable storage."""
@@ -179,6 +185,7 @@ class SessionApplication:
         *,
         scan_text: Callable[[str], str],
         worktree_manager: ManagedWorktreePort | None = None,
+        lifecycle: SessionLifecycleCoordinator | None = None,
     ) -> None:
         self._store = store
         self._repository: TypedSessionRepositoryPort = (
@@ -186,6 +193,7 @@ class SessionApplication:
         )
         self._scan_text = scan_text
         self._worktree_manager = worktree_manager
+        self._lifecycle = lifecycle or SessionLifecycleCoordinator()
         self._logger = logging.getLogger(__name__)
 
     def create(self, request: SessionCreateRequestDto) -> SessionCreateResponseDto:
@@ -290,7 +298,7 @@ class SessionApplication:
         self, manager: ManagedWorktreePort, worktree: Worktree
     ) -> None:
         try:
-            manager.delete(worktree.id)
+            manager.rollback_create(worktree.id)
         except Exception as error:
             self._logger.error(
                 "session create worktree compensation needs recovery",
@@ -411,15 +419,56 @@ class SessionApplication:
         )
 
     def delete(self, request: SessionDeleteRequestDto) -> SessionDeleteResponseDto:
-        try:
-            mutation = self._repository.delete_session(
-                request.session_id,
-                operation_id=request.operation_id,
+        operation_request = {"sessionId": request.session_id}
+        operation_guard = (
+            self._lifecycle.hold_operation(
+                "session/delete", request.operation_id
             )
+            if request.operation_id is not None
+            else nullcontext()
+        )
+        try:
+            with operation_guard:
+                if request.operation_id is not None:
+                    replay = self._store.operation_result(
+                        request.operation_id,
+                        "session/delete",
+                        operation_request,
+                    )
+                    if replay is not None:
+                        return _result(SessionDeleteResponseDto, replay)
+                with self._lifecycle.hold(request.session_id):
+                    projection = self._repository.read_session_projection(
+                        request.session_id
+                    )
+                    if projection is None:
+                        raise ResourceNotFoundError("session not found")
+                    self._repository.assert_session_deletable(request.session_id)
+                    if projection.worktree is not None:
+                        manager = self._worktree_manager
+                        if manager is None:
+                            raise ApplicationError(
+                                "INTERNAL_ERROR",
+                                "managed Session has no Worktree application boundary",
+                            )
+                        if projection.worktree.state.value != "deleted":
+                            manager.delete(projection.worktree.worktree_id)
+                    mutation = self._repository.delete_session(
+                        request.session_id,
+                        operation_id=request.operation_id,
+                    )
         except ResourceNotFoundError as error:
             raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
         except SessionActiveError as error:
             raise ApplicationError("SESSION_HAS_ACTIVE_RUN", str(error)) from error
+        except WorktreeError as error:
+            raise ApplicationError(
+                _managed_delete_error_code(error), str(error)
+            ) from error
+        except StorageError as error:
+            raise ApplicationError(
+                "SESSION_PERSISTENCE_FAILED", str(error)
+            ) from error
         except OperationConflictError as error:
             raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
         except OperationInProgressError as error:
@@ -523,9 +572,32 @@ def _git_review_error_code(error: WorktreeError) -> str:
         return "GIT_WORKTREE_NOT_FOUND"
     if error.code == "worktree_missing":
         return "GIT_WORKTREE_MISSING"
+    if error.code in {"worktree_remove_failed", "worktree_persistence_failed"}:
+        return "WORKTREE_DELETE_FAILED"
     if error.code.startswith("worktree_"):
         return "GIT_WORKTREE_INVALID"
     return "GIT_REVIEW_FAILED"
+
+
+def _managed_delete_error_code(error: WorktreeError) -> str:
+    if error.code == "worktree_dirty":
+        return "WORKTREE_DIRTY"
+    if error.code in {
+        "git_command_failed",
+        "git_command_timeout",
+        "git_observation_failed",
+        "git_observation_incomplete",
+    }:
+        return "GIT_OBSERVATION_UNAVAILABLE"
+    if error.code == "worktree_not_found":
+        return "GIT_WORKTREE_NOT_FOUND"
+    if error.code == "worktree_missing":
+        return "GIT_WORKTREE_MISSING"
+    if error.code in {"worktree_remove_failed", "worktree_persistence_failed"}:
+        return "WORKTREE_DELETE_FAILED"
+    if error.code.startswith("worktree_"):
+        return "GIT_WORKTREE_INVALID"
+    return "WORKTREE_DELETE_FAILED"
 
 
 def _timestamp_millis(value: datetime) -> int:

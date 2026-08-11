@@ -223,6 +223,10 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   GIT_WORKTREE_MISSING: "任务绑定的 Worktree 目录已不存在。",
   GIT_WORKTREE_INVALID: "任务绑定的 Worktree 已失效，请停止在其中执行任务。",
   GIT_REVIEW_FAILED: "Git 变更读取失败，请查看 Runtime 日志。",
+  WORKSPACE_IDENTITY_CHANGED: "任务目录的身份已经变化，Run 未启动。请刷新后重试。",
+  WORKTREE_DIRTY: "任务仍有未提交或冲突的变更，不能删除。",
+  WORKTREE_DELETE_FAILED: "任务的 Worktree 删除失败，请查看 Runtime 日志后重试。",
+  SESSION_PERSISTENCE_FAILED: "任务状态写入失败。Worktree 已保留或可安全重试。",
   MODEL_NOT_AVAILABLE: "所选模型当前不可用，请重新选择。",
   INTERNAL_ERROR: "Runtime 遇到内部错误，请查看诊断日志。",
 };

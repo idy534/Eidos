@@ -224,6 +224,16 @@ test("closed runtime business errors map to safe user-facing guidance", () => {
     "当前已有一个 Run 正在执行，请先等待完成或取消。",
   );
   assert.equal(
+    userFacingError(
+      new Error("EIDOS_RUNTIME_ERROR:WORKSPACE_IDENTITY_CHANGED"),
+    ),
+    "任务目录的身份已经变化，Run 未启动。请刷新后重试。",
+  );
+  assert.equal(
+    userFacingError(new Error("EIDOS_RUNTIME_ERROR:WORKTREE_DIRTY")),
+    "任务仍有未提交或冲突的变更，不能删除。",
+  );
+  assert.equal(
     userFacingError(new Error("provider secret details")),
     "操作失败，请查看 Runtime 日志。",
   );

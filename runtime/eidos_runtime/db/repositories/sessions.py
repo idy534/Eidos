@@ -376,6 +376,12 @@ class SessionRepository(Repository):
             session_id, operation_id=operation_id
         ).value
 
+    def assert_session_deletable(self, session_id: str) -> None:
+        """Check the durable preconditions before an external Git removal."""
+
+        with self.lock:
+            self._assert_session_deletable(self._connection(), session_id)
+
     def delete_session_committed(
         self,
         session_id: str,
@@ -385,22 +391,7 @@ class SessionRepository(Repository):
         def write(
             connection: sqlite3.Connection,
         ) -> CommittedMutation[DeletedSession]:
-            session = connection.execute(
-                "SELECT id FROM sessions WHERE id = ?", (session_id,)
-            ).fetchone()
-            if session is None:
-                raise ResourceNotFoundError("session not found")
-            active = connection.execute(
-                """
-                SELECT 1 FROM runs
-                WHERE session_id = ? AND status IN (
-                    'queued', 'running', 'waiting_approval', 'finalizing'
-                ) LIMIT 1
-                """,
-                (session_id,),
-            ).fetchone()
-            if active is not None:
-                raise SessionActiveError("session has an active run")
+            self._assert_session_deletable(connection, session_id)
             run_ids = "SELECT id FROM runs WHERE session_id = ?"
             connection.execute(
                 f"DELETE FROM durable_intents WHERE run_id IN ({run_ids})",
@@ -513,6 +504,27 @@ class SessionRepository(Repository):
             serialize_value=deleted_session_to_legacy_dict,
             deserialize_value=deleted_session_from_legacy_dict,
         )
+
+    @staticmethod
+    def _assert_session_deletable(
+        connection: sqlite3.Connection, session_id: str
+    ) -> None:
+        session = connection.execute(
+            "SELECT id FROM sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+        if session is None:
+            raise ResourceNotFoundError("session not found")
+        active = connection.execute(
+            """
+            SELECT 1 FROM runs
+            WHERE session_id = ? AND status IN (
+                'queued', 'running', 'waiting_approval', 'finalizing'
+            ) LIMIT 1
+            """,
+            (session_id,),
+        ).fetchone()
+        if active is not None:
+            raise SessionActiveError("session has an active run")
 
     def read_session_snapshot(
         self,

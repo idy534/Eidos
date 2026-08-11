@@ -100,6 +100,9 @@ class TypedRuntimeRepository(Repository):
             session_id, operation_id=operation_id
         )
 
+    def assert_session_deletable(self, session_id: str) -> None:
+        self._sessions.assert_session_deletable(session_id)
+
     def read_run(self, run_id: str) -> Run | None:
         with self.lock:
             row = self._connection().execute(

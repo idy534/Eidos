@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 import sqlite3
 import uuid
 
@@ -17,7 +18,6 @@ from eidos_runtime.db.errors import (
     ResourceNotFoundError,
     StorageError,
 )
-from eidos_runtime.db.repositories.workspace import execution_workspace_for_run
 from eidos_runtime.db.events import append_event
 from eidos_runtime.db.mappers import (
     _bounded_canonical_json,
@@ -103,7 +103,28 @@ class ExecutionRepository(Repository):
 
     def workspace_for_run(self, run_id: str) -> WorkspaceIdentity:
         with self.lock:
-            return execution_workspace_for_run(self._connection(), run_id)
+            row = self._connection().execute(
+                """
+                SELECT snapshot_json FROM run_resolution_snapshots
+                WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            raise ResourceNotFoundError("run resolution snapshot not found")
+        try:
+            snapshot = RunResolutionSnapshot.model_validate_json(
+                row["snapshot_json"]
+            )
+        except (TypeError, ValueError):
+            raise StorageError("run_resolution_snapshot_invalid") from None
+        identity = snapshot.workspace_identity
+        return WorkspaceIdentity(
+            path=Path(identity.path),
+            device=identity.device,
+            inode=identity.inode,
+            owner=identity.owner,
+        )
 
     def increment_model_step(
         self,

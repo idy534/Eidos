@@ -7,7 +7,7 @@ import time
 import uuid
 from collections.abc import Callable
 
-from eidos_runtime.db.database import Database
+from eidos_runtime.db.database import Database, WorkspaceIdentity
 from eidos_runtime.db.errors import ResourceNotFoundError
 from eidos_runtime.domain.project import Project
 from eidos_runtime.domain.worktree import (
@@ -218,6 +218,47 @@ class WorktreeManager:
             persist_state=True,
         )
 
+    def execution_identity(self, worktree_id: str) -> WorkspaceIdentity:
+        """Validate a managed Worktree and capture one stable path identity."""
+
+        worktree = self._read_worktree(worktree_id)
+        root = Path(worktree.worktree_root)
+        validation = self.validate(worktree_id)
+        if not validation.valid or validation.head is None:
+            raise WorktreeError(validation.code or "worktree_invalid")
+        try:
+            if root.is_symlink() or not root.is_dir():
+                raise WorktreeError("worktree_not_found")
+            before = root.stat()
+            resolved = root.resolve(strict=True)
+        except OSError:
+            raise WorktreeError("worktree_not_found") from None
+        validation = self.validate(worktree_id)
+        if not validation.valid or validation.head is None:
+            raise WorktreeError(validation.code or "worktree_invalid")
+        try:
+            if root.is_symlink() or root.resolve(strict=True) != resolved:
+                raise WorktreeError("workspace_identity_changed")
+            after = root.stat()
+        except OSError:
+            raise WorktreeError("workspace_identity_changed") from None
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_uid,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_uid,
+        ):
+            raise WorktreeError("workspace_identity_changed")
+        return WorkspaceIdentity(
+            path=resolved,
+            device=after.st_dev,
+            inode=after.st_ino,
+            owner=after.st_uid,
+        )
+
     def list(self, project_id: str | None = None) -> tuple[WorktreeView, ...]:
         projects = (
             (self.project(project_id),)
@@ -333,19 +374,28 @@ class WorktreeManager:
         worktree = self._read_worktree(worktree_id)
         if worktree.ownership is not WorktreeOwnership.MANAGED:
             raise WorktreeError("worktree_not_owned")
+        if worktree.state is WorktreeState.DELETED:
+            return worktree
         project = self.repository.read_project(worktree.project_id)
         if project is None:
             raise WorktreeError("worktree_repository_mismatch")
+        entries = self._entries_for_observation(project)
+        root = Path(worktree.worktree_root)
+        entry_present = any(
+            entry.worktree_root == worktree.worktree_root for entry in entries
+        )
+        if not root.exists() and not root.is_symlink() and not entry_present:
+            return self._mark_deleted_after_remove(worktree, project, started)
         validation = self._validate_record(
             worktree,
             project,
-            entries=self._entries_for_observation(project),
+            entries=entries,
             persist_state=False,
         )
         if not validation.valid:
             raise WorktreeError(validation.code or "worktree_invalid")
         staged, unstaged, untracked, conflicts, dirty = self._status_counts(
-            Path(worktree.worktree_root)
+            root
         )
         del staged, unstaged, untracked, conflicts
         if dirty:
@@ -360,12 +410,81 @@ class WorktreeManager:
             raise WorktreeError("worktree_dirty")
         try:
             self.git.worktree_remove(
-                Path(project.repository_root), Path(worktree.worktree_root)
+                Path(project.repository_root), root
             )
         except GitCommandTimeoutError:
             raise WorktreeError("git_command_timeout") from None
         except GitCommandFailedError as error:
             raise WorktreeError("worktree_remove_failed") from error
+        return self._mark_deleted_after_remove(worktree, project, started)
+
+    def rollback_create(self, worktree_id: str) -> Worktree:
+        """Remove an unbound Runtime-created Worktree and its unchanged branch."""
+
+        started = time.monotonic()
+        worktree = self._read_worktree(worktree_id)
+        if worktree.ownership is not WorktreeOwnership.MANAGED:
+            raise WorktreeError("worktree_not_owned")
+        if self.repository.worktree_is_bound(worktree_id):
+            raise WorktreeError("worktree_still_bound")
+        project = self._project_for(worktree)
+        entries = self._entries_for_observation(project)
+        root = Path(worktree.worktree_root)
+        entry_present = any(
+            entry.worktree_root == worktree.worktree_root for entry in entries
+        )
+        if worktree.state is not WorktreeState.DELETED:
+            if root.exists() or root.is_symlink() or entry_present:
+                validation = self._validate_record(
+                    worktree,
+                    project,
+                    entries=entries,
+                    persist_state=False,
+                )
+                if not validation.valid:
+                    raise WorktreeError(validation.code or "worktree_invalid")
+                if self._status_counts(root)[4]:
+                    raise WorktreeError("worktree_cleanup_required")
+                try:
+                    self.git.worktree_remove(Path(project.repository_root), root)
+                except GitCommandTimeoutError:
+                    raise WorktreeError("git_command_timeout") from None
+                except GitCommandFailedError as error:
+                    raise WorktreeError("worktree_remove_failed") from error
+            entries = self._entries_for_observation(project)
+            if root.exists() or root.is_symlink() or any(
+                entry.worktree_root == worktree.worktree_root for entry in entries
+            ):
+                raise WorktreeError("worktree_cleanup_required")
+        branch_removed = self._remove_created_branch_if_safe(
+            project,
+            worktree,
+            entries,
+        )
+        deleted = (
+            worktree
+            if worktree.state is WorktreeState.DELETED
+            else self._mark_deleted_after_remove(worktree, project, started)
+        )
+        if not branch_removed:
+            raise WorktreeError("worktree_cleanup_required")
+        self._log_lifecycle(
+            logging.INFO,
+            "worktree create rollback completed",
+            worktree_id=worktree.id,
+            project_id=worktree.project_id,
+            operation="create-rollback",
+            duration=time.monotonic() - started,
+            result="success",
+        )
+        return deleted
+
+    def _mark_deleted_after_remove(
+        self,
+        worktree: Worktree,
+        project: Project,
+        started: float,
+    ) -> Worktree:
         try:
             deleted = self.repository.update_state(
                 worktree.id, WorktreeState.DELETED
@@ -554,9 +673,35 @@ class WorktreeManager:
                 state=WorktreeState.MISSING,
                 persist_state=persist_state and worktree.state is not WorktreeState.DELETED,
             )
+        git_marker = root / ".git"
+        if not git_marker.exists() and not git_marker.is_symlink():
+            return self._record_validation(
+                worktree,
+                valid=False,
+                code="worktree_not_found",
+                state=WorktreeState.MISSING,
+                persist_state=persist_state
+                and worktree.state is not WorktreeState.DELETED,
+            )
         try:
             discovered = self.discovery.discover(root)
         except WorktreeError as error:
+            if error.code == "git_command_timeout":
+                return self._record_validation(
+                    worktree,
+                    valid=False,
+                    code="git_command_timeout",
+                    state=worktree.state,
+                    persist_state=False,
+                )
+            if isinstance(error.__cause__, GitCommandFailedError):
+                return self._record_validation(
+                    worktree,
+                    valid=False,
+                    code="git_observation_failed",
+                    state=worktree.state,
+                    persist_state=False,
+                )
             state = (
                 WorktreeState.MISSING
                 if error.code in {"not_a_git_repository", "repository_not_found"}
@@ -629,16 +774,16 @@ class WorktreeManager:
                 worktree,
                 valid=False,
                 code="git_command_timeout",
-                state=WorktreeState.INVALID,
+                state=worktree.state,
                 persist_state=False,
             )
         except GitCommandFailedError:
             return self._record_validation(
                 worktree,
                 valid=False,
-                code="worktree_invalid",
-                state=WorktreeState.INVALID,
-                persist_state=persist_state,
+                code="git_observation_failed",
+                state=worktree.state,
+                persist_state=False,
             )
         if branch != worktree.branch:
             return self._record_validation(

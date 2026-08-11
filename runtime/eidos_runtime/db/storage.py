@@ -405,6 +405,7 @@ class SessionStore:
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
+        expected_workspace_identity: WorkspaceIdentity | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         return self._repository(self._runs).create_run(
             session_id,
@@ -415,6 +416,7 @@ class SessionStore:
             model_id=model_id,
             model_profile=model_profile,
             extension_snapshot=extension_snapshot,
+            expected_workspace_identity=expected_workspace_identity,
         )
 
     def enqueue_run(
@@ -427,6 +429,7 @@ class SessionStore:
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
         extension_snapshot: dict[str, object] | None = None,
+        expected_workspace_identity: WorkspaceIdentity | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         return self._repository(self._runs).enqueue_run(
             session_id,
@@ -436,6 +439,7 @@ class SessionStore:
             model_id=model_id,
             model_profile=model_profile,
             extension_snapshot=extension_snapshot,
+            expected_workspace_identity=expected_workspace_identity,
         )
 
     def claim_next_run(self) -> dict[str, object] | None:

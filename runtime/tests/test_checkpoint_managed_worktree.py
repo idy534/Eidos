@@ -15,6 +15,7 @@ from eidos_runtime.application.errors import (
 )
 from eidos_runtime.application.sessions import SessionApplication
 from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.db.errors import StorageError
 from eidos_runtime.git import WorktreeManager
 from eidos_runtime.persistence.errors import PersistenceCorruptionError
 from eidos_runtime.protocol.methods import (
@@ -251,5 +252,48 @@ def test_managed_checkpoint_fork_rejects_caller_path_and_missing_head(
             store.connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             for table in ("sessions", "worktrees", "runs", "checkpoint_actions")
         ) == original_counts
+    finally:
+        store.close()
+
+
+def test_failed_checkpoint_fork_unbinds_session_before_create_rollback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    store, manager, sessions, checkpoints = _setup(tmp_path)
+    try:
+        parent = _create_session(sessions, repository)
+        parent_run, _item = store.enqueue_run(str(parent["id"]), "continue")
+        checkpoint = checkpoints.create(
+            CheckpointCreateRequestDto(runId=str(parent_run["id"]))
+        ).checkpoint
+
+        def fail_fork_run(*_args: object, **_kwargs: object) -> object:
+            raise StorageError("injected fork Run failure")
+
+        monkeypatch.setattr(store, "enqueue_run", fail_fork_run)
+        with pytest.raises(StorageError, match="injected fork Run failure"):
+            checkpoints.fork(
+                CheckpointForkRequestDto(checkpointId=checkpoint.id)
+            )
+
+        assert store.connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1
+        worktrees = manager.repository.list_worktrees()
+        assert len(worktrees) == 2
+        rolled_back = next(
+            worktree
+            for worktree in worktrees
+            if worktree.id != parent["worktree"]["worktreeId"]
+        )
+        assert rolled_back.state.value == "deleted"
+        assert not Path(rolled_back.worktree_root).exists()
+        branch = subprocess.run(
+            ["git", "show-ref", "--verify", f"refs/heads/{rolled_back.branch}"],
+            cwd=repository,
+            capture_output=True,
+            text=True,
+        )
+        assert branch.returncode != 0
     finally:
         store.close()

@@ -85,8 +85,9 @@ class GitProcess:
             ("rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}"),
             output_limit_bytes=self.output_limit_bytes,
         )
+        self._reject_truncated_result("rev-parse-ref", result)
         if result.returncode == 0:
-            return result.stdout.strip()
+            return self._single_line_result("rev-parse-ref", result)
         if result.returncode in (1, 128):
             return None
         raise GitCommandFailedError(
@@ -102,8 +103,9 @@ class GitProcess:
             ("symbolic-ref", "--quiet", "--short", "HEAD"),
             output_limit_bytes=self.output_limit_bytes,
         )
+        self._reject_truncated_result("symbolic-ref-short", result)
         if result.returncode == 0:
-            return result.stdout.strip()
+            return self._single_line_result("symbolic-ref-short", result)
         if result.returncode == 1:
             return None
         raise GitCommandFailedError(
@@ -296,7 +298,60 @@ class GitProcess:
         cwd: Path,
         args: Sequence[str],
     ) -> str:
-        return self._run(operation, cwd, args).stdout.strip()
+        return self._single_line_result(
+            operation,
+            self._run(operation, cwd, args),
+        )
+
+    def _single_line_result(
+        self,
+        operation: str,
+        result: GitCommandResult,
+    ) -> str:
+        self._reject_truncated_result(operation, result)
+        lines = result.stdout.splitlines()
+        if (
+            "\x00" in result.stdout
+            or len(lines) != 1
+            or not lines[0].strip()
+        ):
+            self.logger.error(
+                "git command output is incomplete",
+                extra={
+                    "operation": operation,
+                    "returncode": result.returncode,
+                    "stdout_truncated": result.stdout_truncated,
+                    "stderr_truncated": result.stderr_truncated,
+                },
+            )
+            raise GitCommandFailedError(
+                operation,
+                returncode=result.returncode,
+                stderr=result.stderr,
+            )
+        return lines[0].strip()
+
+    def _reject_truncated_result(
+        self,
+        operation: str,
+        result: GitCommandResult,
+    ) -> None:
+        if not result.stdout_truncated and not result.stderr_truncated:
+            return
+        self.logger.error(
+            "git command output is incomplete",
+            extra={
+                "operation": operation,
+                "returncode": result.returncode,
+                "stdout_truncated": result.stdout_truncated,
+                "stderr_truncated": result.stderr_truncated,
+            },
+        )
+        raise GitCommandFailedError(
+            operation,
+            returncode=result.returncode,
+            stderr=result.stderr,
+        )
 
     def _run(
         self,

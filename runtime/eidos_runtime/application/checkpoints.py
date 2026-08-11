@@ -47,7 +47,7 @@ class CheckpointWorktreePort(Protocol):
 
     def status(self, worktree_id: str) -> GitStatusSnapshot: ...
 
-    def delete(self, worktree_id: str) -> Worktree: ...
+    def rollback_create(self, worktree_id: str) -> Worktree: ...
 
 
 class CheckpointApplication:
@@ -276,7 +276,7 @@ class CheckpointApplication:
         self, manager: CheckpointWorktreePort, worktree: Worktree
     ) -> None:
         try:
-            manager.delete(worktree.id)
+            manager.rollback_create(worktree.id)
         except WorktreeError as error:
             self._logger.warning(
                 "checkpoint fork Worktree cleanup failed",
@@ -293,7 +293,6 @@ class CheckpointApplication:
         session_id: str,
         worktree: Worktree,
     ) -> None:
-        self._discard_unbound_worktree(manager, worktree)
         try:
             self._sessions.delete_session(session_id)
         except Exception as error:
@@ -306,6 +305,8 @@ class CheckpointApplication:
                     "error_type": type(error).__name__,
                 },
             )
+            return
+        self._discard_unbound_worktree(manager, worktree)
 
 
 def _validate(model_type: type[ResultT], value: object) -> ResultT:

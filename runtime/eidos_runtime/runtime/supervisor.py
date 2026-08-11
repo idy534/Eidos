@@ -297,7 +297,20 @@ class RunSupervisor:
     def resume_run(self, run_id: str) -> LongTaskProgress:
         repository = self.store.long_task_repository()
         current = repository.request_resume(run_id)
-        workspace = self.store.workspace_for_run(run_id)
+        frozen_workspace = self.store.workspace_for_run(run_id)
+        try:
+            workspace_stat = os.stat(
+                frozen_workspace.path,
+                follow_symlinks=False,
+            )
+            current_workspace = (
+                str(frozen_workspace.path),
+                workspace_stat.st_dev,
+                workspace_stat.st_ino,
+                workspace_stat.st_uid,
+            )
+        except OSError:
+            current_workspace = (str(frozen_workspace.path), -1, -1, -1)
         verification = ResumeVerifier.verify(
             run_id=run_id,
             expected_workspace=(
@@ -306,12 +319,7 @@ class RunSupervisor:
                 current.workspace_inode,
                 current.workspace_owner,
             ),
-            current_workspace=(
-                str(workspace.path),
-                workspace.device,
-                workspace.inode,
-                workspace.owner,
-            ),
+            current_workspace=current_workspace,
             expected_git_head=current.git_head,
             current_git_head=current.git_head,
             expected_rule_snapshot_id=current.rule_snapshot_id,

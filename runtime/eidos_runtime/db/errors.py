@@ -9,6 +9,10 @@ class WorkspaceBoundaryError(ValueError):
     pass
 
 
+class WorkspaceIdentityChangedError(RuntimeError):
+    pass
+
+
 class InvalidCursorError(ValueError):
     pass
 

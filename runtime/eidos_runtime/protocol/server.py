@@ -33,6 +33,7 @@ from eidos_runtime.application.extensions import (
 from eidos_runtime.application.models import ModelApplication
 from eidos_runtime.application.runs import RunApplication, RunStartOutcome
 from eidos_runtime.application.repository import RepositoryApplicationFactory
+from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
 from eidos_runtime.application.sessions import SessionApplication, clean_session_title
 from eidos_runtime.application.task_lifecycle import (
     LifecycleAction,
@@ -829,11 +830,13 @@ class RuntimeServer:
         task_lifecycle = TaskLifecycleApplication(
             _ServerTaskLifecycleRuntime(self.supervisor)
         )
+        session_lifecycle = SessionLifecycleCoordinator()
         return _RuntimeApplications(
             sessions=SessionApplication(
                 self.store,
                 scan_text=self._scan_text,
                 worktree_manager=self.worktree_manager,
+                lifecycle=session_lifecycle,
             ),
             runs=RunApplication(
                 store=self.store,
@@ -841,6 +844,9 @@ class RuntimeServer:
                 environment=_ServerRunEnvironment(self),
                 lifecycle=task_lifecycle,
                 scan_text=self._scan_text,
+                worktree_manager=self.worktree_manager,
+                session_repository=self.store.typed_runtime_repository(),
+                lifecycle_coordinator=session_lifecycle,
             ),
             approvals=ApprovalApplication(
                 self.store.typed_runtime_repository(),

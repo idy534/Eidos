@@ -576,6 +576,38 @@ def test_clean_delete_preserves_branch_and_dirty_delete_is_rejected(
     assert Path(dirty.worktree_root).exists()
 
 
+def test_delete_retry_converges_when_git_remove_preceded_state_persistence(
+    tmp_path: Path,
+    database: Database,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    manager = WorktreeManager(database, managed_root=tmp_path / "managed")
+    worktree = manager.create(repository)
+    real_update_state = manager.repository.update_state
+    failed_once = False
+
+    def fail_deleted_state(
+        worktree_id: str, state: WorktreeState
+    ) -> Worktree:
+        nonlocal failed_once
+        if state is WorktreeState.DELETED and not failed_once:
+            failed_once = True
+            raise StorageError("injected delete state failure")
+        return real_update_state(worktree_id, state)
+
+    monkeypatch.setattr(manager.repository, "update_state", fail_deleted_state)
+    with pytest.raises(WorktreeError) as first_error:
+        manager.delete(worktree.id)
+
+    assert first_error.value.code == "worktree_persistence_failed"
+    assert not Path(worktree.worktree_root).exists()
+    assert manager.repository.read_worktree(worktree.id).state is WorktreeState.ACTIVE
+
+    deleted = manager.delete(worktree.id)
+    assert deleted.state is WorktreeState.DELETED
+
+
 def test_deleted_worktree_is_terminal_when_the_original_path_reappears(
     tmp_path: Path, database: Database
 ) -> None:
