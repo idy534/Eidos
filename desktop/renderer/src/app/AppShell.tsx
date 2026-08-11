@@ -10,6 +10,7 @@ import { PrimaryActionButton } from "../components/PrimaryActionButton.js";
 import { ConfirmDialog } from "../components/settings/ConfirmDialog.js";
 import { CreateSessionDialog } from "../components/CreateSessionDialog.js";
 import { CreateBranchDialog } from "../components/CreateBranchDialog.js";
+import { HandoffDialog } from "../components/HandoffDialog.js";
 import { Composer } from "../components/Composer.js";
 import { GitChangesPanel } from "../components/GitChangesPanel.js";
 import type { RuntimeLifecycleState } from "./useRuntimeLifecycle.js";
@@ -86,6 +87,7 @@ export function AppShell({ runtime }: AppShellProps) {
   const [createSessionContextBusy, setCreateSessionContextBusy] = useState(false);
   const [createSessionConfirmBusy, setCreateSessionConfirmBusy] = useState(false);
   const [createBranchSessionId, setCreateBranchSessionId] = useState<string | undefined>(undefined);
+  const [handoffSessionId, setHandoffSessionId] = useState<string | undefined>(undefined);
   const [contentView, setContentView] = useState<"conversation" | "changes">("conversation");
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const workspaceRef = useRef<HTMLElement>(null);
@@ -184,7 +186,9 @@ export function AppShell({ runtime }: AppShellProps) {
     createSessionContextBusy ||
     createSessionConfirmBusy ||
     Boolean(createBranchSessionId) ||
+    Boolean(handoffSessionId) ||
     sessionState.pending.creatingBranchSessionId !== undefined ||
+    sessionState.pending.handoffSessionId !== undefined ||
     sessionState.pending.creatingSession === true;
 
   useEffect(() => {
@@ -259,6 +263,12 @@ export function AppShell({ runtime }: AppShellProps) {
     if (!createBranchSessionId) return;
     const result = await sessionActions.createSessionBranch(createBranchSessionId, branch);
     if (result) setCreateBranchSessionId(undefined);
+  }
+
+  async function confirmHandoff(target: "local" | "worktree"): Promise<void> {
+    if (!handoffSessionId) return;
+    const loaded = await sessionActions.handoffSession(handoffSessionId, target);
+    if (loaded) setHandoffSessionId(undefined);
   }
 
   // -----------------------------------------------------------------------
@@ -346,8 +356,8 @@ export function AppShell({ runtime }: AppShellProps) {
   const { snapshot } = sessionState;
   const { approvals, respondingApprovalIds, respondingKindByApprovalId, errorsByApprovalId } = approvalState;
   const sessionWorktree = snapshot?.session.worktree;
-  const sessionHasGit = snapshot?.session.project?.gitAvailable === true
-    && sessionWorktree !== undefined;
+  const sessionHasGit = snapshot?.session.project?.gitAvailable === true;
+  const handoffBusy = sessionState.pending.handoffSessionId === snapshot?.session.id;
 
   const isRenamingThisSession = Boolean(snapshot && renamingSessionId === snapshot.session.id);
 
@@ -356,6 +366,7 @@ export function AppShell({ runtime }: AppShellProps) {
     || createSessionContextBusy
     || createSessionConfirmBusy
     || Boolean(createSessionDraft)
+    || handoffBusy
     || !isStorageReady;
 
   return (
@@ -459,7 +470,7 @@ export function AppShell({ runtime }: AppShellProps) {
                         key: "delete",
                         label: "删除任务",
                         danger: true,
-                        disabled: Boolean(activeRun),
+                        disabled: Boolean(activeRun) || handoffBusy,
                         onClick: () => requestDeleteSession(snapshot.session),
                       },
                     ]}
@@ -470,15 +481,18 @@ export function AppShell({ runtime }: AppShellProps) {
                 <div className="session-header-actions">
                   <div className="session-git-summary" aria-label="当前 Git 状态">
                     <span>
-                      {sessionWorktree?.branch
-                        ?? gitReviewState.status?.branch
+                      {gitReviewState.status?.branch
+                        ?? sessionWorktree?.branch
                         ?? `Detached @ ${(gitReviewState.status?.head ?? sessionWorktree?.baseCommit ?? "").slice(0, 7)}`}
                     </span>
                     {sessionWorktree?.state === "active" && sessionWorktree.branch === null && (
                       <Button
                         variant="ghost"
                         size="small"
-                        disabled={sessionState.pending.creatingBranchSessionId === snapshot.session.id}
+                        disabled={
+                          handoffBusy
+                          || sessionState.pending.creatingBranchSessionId === snapshot.session.id
+                        }
                         onClick={() => {
                           sessionActions.setError(undefined);
                           setCreateBranchSessionId(snapshot.session.id);
@@ -493,6 +507,15 @@ export function AppShell({ runtime }: AppShellProps) {
                         <span>{gitReviewState.status.dirty ? "有改动" : "干净"}</span>
                       </>
                     )}
+                    <Button
+                      variant="secondary"
+                      size="small"
+                      disabled={Boolean(activeRun) || handoffBusy}
+                      loading={handoffBusy}
+                      onClick={() => setHandoffSessionId(snapshot.session.id)}
+                    >
+                      Hand off
+                    </Button>
                   </div>
                   <div className="workspace-view-switch" aria-label="工作区视图">
                     <button
@@ -566,7 +589,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   contextUsage={contextUsageState.usage}
                   modelConfigured={Boolean(modelState.list?.models.length)}
                   modelLoading={modelState.loading}
-                  isSubmitting={runState.isSubmitting}
+                  isSubmitting={runState.isSubmitting || handoffBusy}
                   submitKind={runState.submitKind}
                   cancelingRunId={runState.cancelingRunId}
                   onInputChange={runActions.setInput}
@@ -630,6 +653,19 @@ export function AppShell({ runtime }: AppShellProps) {
         onConfirm={(branch) => void confirmCreateBranch(branch)}
         onCancel={() => {
           setCreateBranchSessionId(undefined);
+          sessionActions.setError(undefined);
+        }}
+      />
+      <HandoffDialog
+        open={Boolean(handoffSessionId)}
+        currentMode={snapshot?.session.executionMode ?? "local"}
+        busy={handoffBusy}
+        error={sessionState.error}
+        getFallbackFocus={getDialogFallbackFocus}
+        onConfirm={(target) => void confirmHandoff(target)}
+        onCancel={() => {
+          if (handoffBusy) return;
+          setHandoffSessionId(undefined);
           sessionActions.setError(undefined);
         }}
       />

@@ -132,9 +132,9 @@ class ProjectWorktreeRepository(Repository):
                     """
                     INSERT INTO worktrees (
                         id, project_id, worktree_root, git_dir, base_ref,
-                        base_commit, branch, branch_ownership, ownership, state,
-                        created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        base_commit, branch, checkout_branch, branch_ownership,
+                        ownership, state, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         worktree.id,
@@ -144,6 +144,7 @@ class ProjectWorktreeRepository(Repository):
                         worktree.base_ref,
                         worktree.base_commit,
                         worktree.branch,
+                        worktree.checkout_branch,
                         worktree.branch_ownership.value,
                         worktree.ownership.value,
                         worktree.state.value,
@@ -165,8 +166,9 @@ class ProjectWorktreeRepository(Repository):
     def worktree_is_bound(self, worktree_id: str) -> bool:
         with self.lock:
             row = self._connection().execute(
-                "SELECT 1 FROM sessions WHERE worktree_id = ? LIMIT 1",
-                (worktree_id,),
+                "SELECT 1 FROM sessions "
+                "WHERE worktree_id = ? OR associated_worktree_id = ? LIMIT 1",
+                (worktree_id, worktree_id),
             ).fetchone()
         return row is not None
 
@@ -207,10 +209,11 @@ class ProjectWorktreeRepository(Repository):
             updated = connection.execute(
                 """
                 UPDATE worktrees
-                SET branch = ?, branch_ownership = ?, updated_at = ?
+                SET branch = ?, checkout_branch = ?, branch_ownership = ?,
+                    updated_at = ?
                 WHERE id = ? AND branch IS NULL
                 """,
-                (branch, ownership.value, now, worktree_id),
+                (branch, branch, ownership.value, now, worktree_id),
             )
             if updated.rowcount != 1:
                 row = connection.execute(
@@ -225,6 +228,24 @@ class ProjectWorktreeRepository(Repository):
                 ):
                     return existing
                 raise StorageError("worktree_branch_already_attached")
+            row = connection.execute(
+                "SELECT * FROM worktrees WHERE id = ?", (worktree_id,)
+            ).fetchone()
+        assert row is not None
+        return worktree_from_row(row)
+
+    def update_checkout_branch(
+        self, worktree_id: str, checkout_branch: str | None
+    ) -> Worktree:
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            updated = connection.execute(
+                "UPDATE worktrees SET checkout_branch = ?, updated_at = ? "
+                "WHERE id = ?",
+                (checkout_branch, now, worktree_id),
+            )
+            if updated.rowcount != 1:
+                raise ResourceNotFoundError("worktree not found")
             row = connection.execute(
                 "SELECT * FROM worktrees WHERE id = ?", (worktree_id,)
             ).fetchone()

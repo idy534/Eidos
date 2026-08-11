@@ -20,6 +20,7 @@ export const IPC = {
   SESSION_READ: "session:read",
   SESSION_CREATE: "session:create",
   SESSION_CREATE_BRANCH: "session:create-branch",
+  SESSION_HANDOFF: "session:handoff",
   PROJECT_GIT_CONTEXT: "project:git-context",
   SESSION_RENAME: "session:rename",
   SESSION_DELETE: "session:delete",

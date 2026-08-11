@@ -29,6 +29,7 @@ export interface PendingOperations {
   selectingSessionId?: string;
   renamingSessionId?: string;
   deletingSessionId?: string;
+  handoffSessionId?: string;
 }
 
 export interface SessionControllerState {
@@ -55,6 +56,10 @@ export interface SessionControllerActions {
     sessionId: string,
     branch: string,
   ) => Promise<CreateBranchResult | undefined>;
+  handoffSession: (
+    sessionId: string,
+    target: "local" | "worktree",
+  ) => Promise<SessionSnapshot | undefined>;
   renameSession: (sessionId: string, title: string) => Promise<void>;
   deleteSession: (session: Session) => Promise<{ confirmed: true } | { confirmed: false; error: string }>;
   setError: (error: string | undefined) => void;
@@ -282,6 +287,31 @@ export function useSessionController(): [SessionControllerState, SessionControll
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot]);
 
+  const handoffSession = useCallback(async (
+    sessionId: string,
+    target: "local" | "worktree",
+  ): Promise<SessionSnapshot | undefined> => {
+    setPending((prev) => ({ ...prev, handoffSessionId: sessionId }));
+    setError(undefined);
+    try {
+      await window.eidosRuntime.handoffSession(sessionId, target);
+      const loaded = await loadAuthoritativeSnapshot(sessionId);
+      setSessions((prev) => prev.map((session) => (
+        session.id === loaded.session.id ? loaded.session : session
+      )));
+      if (snapshot?.session.id === sessionId) {
+        setSnapshot(loaded);
+      }
+      return loaded;
+    } catch (cause) {
+      setError(userFacingError(cause));
+      return undefined;
+    } finally {
+      clearPending("handoffSessionId");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshot]);
+
   const deleteSession = useCallback(async (session: Session): Promise<{ confirmed: true } | { confirmed: false; error: string }> => {
     setPending((prev) => ({ ...prev, deletingSessionId: session.id }));
     setError(undefined);
@@ -386,6 +416,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     selectSession,
     createSession,
     createSessionBranch,
+    handoffSession,
     renameSession,
     deleteSession,
     setError,

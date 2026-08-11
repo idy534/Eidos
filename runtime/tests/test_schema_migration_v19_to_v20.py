@@ -7,6 +7,7 @@ import sqlite3
 from eidos_runtime.db.schema import (
     SCHEMA_SQL,
     SCHEMA_VERSION,
+    V21_SESSION_HANDOFF_SCHEMA_SQL,
     V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL,
 )
 from eidos_runtime.db.storage import DATABASE_NAME, SessionStore
@@ -20,7 +21,9 @@ def test_v19_to_v20_preserves_worktrees_and_adds_phase3b_fields(
     database = data / DATABASE_NAME
     connection = sqlite3.connect(database)
     connection.executescript(
-        SCHEMA_SQL.replace(V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL, "", 1)
+        SCHEMA_SQL
+        .replace(V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL, "", 1)
+        .replace(V21_SESSION_HANDOFF_SCHEMA_SQL, "", 1)
     )
     connection.execute(
         """
@@ -41,6 +44,14 @@ def test_v19_to_v20_preserves_worktrees_and_adds_phase3b_fields(
         )
         """,
         ("a" * 40,),
+    )
+    connection.execute(
+        """
+        INSERT INTO sessions (
+            id, workspace_root, worktree_id, execution_mode,
+            created_at, updated_at
+        ) VALUES ('session', '/repository', 'worktree', 'worktree', 4, 4)
+        """
     )
     connection.execute(
         """
@@ -65,10 +76,13 @@ def test_v19_to_v20_preserves_worktrees_and_adds_phase3b_fields(
     store.initialize()
     try:
         assert store.health() == {"state": "ready"}
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 20
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 21
         assert store.connection.execute(
             "SELECT branch_ownership FROM worktrees WHERE id = 'worktree'"
         ).fetchone()[0] == "legacy_managed"
+        assert store.connection.execute(
+            "SELECT associated_worktree_id FROM sessions WHERE id = 'session'"
+        ).fetchone()[0] == "worktree"
         lifecycle = store.connection.execute(
             "SELECT expected_head, include_local_changes, source_head, source_branch, source_dirty "
             "FROM worktree_lifecycle_operations WHERE operation_id = 'create'"

@@ -65,11 +65,21 @@ EXPECTED_TABLES = {
     "projects",
     "worktrees",
     "worktree_lifecycle_operations",
+    "session_handoff_operations",
 }
 
 EXPECTED_COLUMNS = {
     "sessions": {
-        "workspace_dev", "workspace_inode", "workspace_uid", "worktree_id"
+        "workspace_dev", "workspace_inode", "workspace_uid", "worktree_id",
+        "associated_worktree_id",
+    },
+    "worktrees": {"checkout_branch"},
+    "session_handoff_operations": {
+        "scope", "operation_id", "state", "session_id", "project_id",
+        "source_mode", "target_mode", "source_root", "target_root",
+        "source_common_dir", "target_common_dir", "associated_worktree_id",
+        "target_worktree_new", "source_head", "source_fingerprint",
+        "target_head", "target_fingerprint", "error_code",
     },
     "compact_summaries": {"summary_metadata_json"},
     "items": {"incomplete"},
@@ -250,6 +260,9 @@ class StorageSchemaTests(unittest.TestCase):
                 "sessions_worktree_id",
                 "worktree_lifecycle_operations_state",
                 "worktree_lifecycle_operations_session",
+                "sessions_associated_worktree_id",
+                "session_handoff_operations_state",
+                "session_handoff_operations_session",
             },
         )
         for table, expected in EXPECTED_COLUMNS.items():
@@ -266,6 +279,15 @@ class StorageSchemaTests(unittest.TestCase):
         self.assertEqual(len(session_worktree_fk), 1)
         self.assertEqual(tuple(session_worktree_fk[0][2:7]), (
             "worktrees", "worktree_id", "id", "NO ACTION", "RESTRICT"
+        ))
+        session_associated_fk = [
+            row
+            for row in connection.execute("PRAGMA foreign_key_list(sessions)")
+            if row[3] == "associated_worktree_id"
+        ]
+        self.assertEqual(len(session_associated_fk), 1)
+        self.assertEqual(tuple(session_associated_fk[0][2:7]), (
+            "worktrees", "associated_worktree_id", "id", "NO ACTION", "RESTRICT"
         ))
         self.assertEqual(
             connection.execute("PRAGMA user_version").fetchone()[0],

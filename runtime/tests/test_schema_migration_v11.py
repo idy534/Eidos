@@ -11,6 +11,7 @@ V17: adds durable managed Worktree lifecycle intents.
 V18: generalizes Projects to filesystem workspaces with optional Git metadata.
 V19: adds explicit Session execution mode and nullable Worktree branches.
 V20: adds Worktree branch ownership and Phase 3B durable operation fields.
+V21: adds Session associated Worktree bindings and handoff operations.
 """
 from __future__ import annotations
 
@@ -37,6 +38,7 @@ from eidos_runtime.db.schema import (  # noqa: E402
     V17_WORKTREE_LIFECYCLE_SCHEMA_SQL,
     V19_SESSION_EXECUTION_SCHEMA_SQL,
     V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL,
+    V21_SESSION_HANDOFF_SCHEMA_SQL,
     V18_PROJECT_SCHEMA_SQL,
     SCHEMA_SQL,
 )
@@ -240,6 +242,7 @@ class SchemaV11MigrationTests(unittest.TestCase):
             .replace(V17_WORKTREE_LIFECYCLE_SCHEMA_SQL, "", 1)
             .replace(V19_SESSION_EXECUTION_SCHEMA_SQL, "", 1)
             .replace(V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL, "", 1)
+            .replace(V21_SESSION_HANDOFF_SCHEMA_SQL, "", 1)
         )
         connection.execute("PRAGMA user_version = 14")
         connection.commit()
@@ -274,6 +277,7 @@ class SchemaV11MigrationTests(unittest.TestCase):
             .replace(V17_WORKTREE_LIFECYCLE_SCHEMA_SQL, "", 1)
             .replace(V19_SESSION_EXECUTION_SCHEMA_SQL, "", 1)
             .replace(V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL, "", 1)
+            .replace(V21_SESSION_HANDOFF_SCHEMA_SQL, "", 1)
         )
         connection.execute("PRAGMA user_version = 14")
         connection.commit()

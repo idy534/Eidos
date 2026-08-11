@@ -8,6 +8,7 @@ from eidos_runtime.git.native import (
     NativeBranchAttacher,
     NativeWorktreeChangeTransfer,
     NativeWorktreeCleaner,
+    NativeWorktreeCheckout,
     NativeWorktreeCreator,
 )
 from eidos_runtime.git.status import (
@@ -26,6 +27,7 @@ __all__ = [
     "NativeBranchAttacher",
     "NativeWorktreeChangeTransfer",
     "NativeWorktreeCleaner",
+    "NativeWorktreeCheckout",
     "NativeWorktreeCreator",
     "WorktreeError",
     "WorktreeManager",

@@ -27,6 +27,7 @@ from eidos_runtime.persistence.mappers.runtime import (
     step_from_row,
     tool_call_from_row,
 )
+from eidos_runtime.persistence.session_handoff import SessionHandoffRepository
 
 
 class TypedRuntimeRepository(Repository):
@@ -50,6 +51,7 @@ class TypedRuntimeRepository(Repository):
         self._sessions = SessionRepository(database)
         self._runs = RunRepository(database)
         self._execution = ExecutionRepository(database)
+        self._session_handoffs = SessionHandoffRepository(database)
 
     def create_session(
         self,
@@ -109,6 +111,27 @@ class TypedRuntimeRepository(Repository):
 
     def assert_session_deletable(self, session_id: str) -> None:
         self._sessions.assert_session_deletable(session_id)
+
+    def assert_session_idle(self, session_id: str) -> None:
+        self._sessions.assert_session_idle(session_id)
+
+    def update_execution_binding(
+        self,
+        session_id: str,
+        *,
+        execution_mode: SessionExecutionMode,
+        worktree_id: str | None,
+        associated_worktree_id: str | None,
+    ) -> CommittedMutation[Session]:
+        return self._sessions.update_execution_binding_committed(
+            session_id,
+            execution_mode=execution_mode,
+            worktree_id=worktree_id,
+            associated_worktree_id=associated_worktree_id,
+        )
+
+    def session_handoff_repository(self) -> SessionHandoffRepository:
+        return self._session_handoffs
 
     def read_run(self, run_id: str) -> Run | None:
         with self.lock:

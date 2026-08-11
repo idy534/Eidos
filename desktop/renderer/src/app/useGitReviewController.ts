@@ -58,8 +58,7 @@ export function useGitReviewController({
 
   readyRef.current = ready;
   selectedSessionIdRef.current = session?.id;
-  gitAvailableRef.current = session?.project?.gitAvailable === true
-    && session?.worktree !== undefined;
+  gitAvailableRef.current = session?.project?.gitAvailable === true;
 
   const loadStatus = useCallback((sessionId: string, generation: number): void => {
     const request = statusRequestRef.current + 1;
@@ -180,7 +179,7 @@ export function useGitReviewController({
       window.clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = undefined;
     }
-    if (!ready || session?.project?.gitAvailable !== true || !session.worktree) return;
+    if (!ready || session?.project?.gitAvailable !== true) return;
     loadStatus(session.id, generation);
     loadDiff(session.id, "head", generation);
   }, [
@@ -189,7 +188,8 @@ export function useGitReviewController({
     ready,
     session?.id,
     session?.project?.gitAvailable,
-    session?.worktree?.worktreeId,
+    session?.executionMode,
+    session?.associatedWorktreeId,
   ]);
 
   useEffect(() => () => {

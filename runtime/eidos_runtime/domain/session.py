@@ -27,6 +27,7 @@ class Session(EidosFrozenStrictModel):
     workspace_root: str = Field(min_length=1, max_length=4096)
     execution_mode: SessionExecutionMode = SessionExecutionMode.LOCAL
     worktree_id: str | None = Field(default=None, min_length=1)
+    associated_worktree_id: str | None = Field(default=None, min_length=1)
     title: str | None = None
     task_status: SessionTaskStatus
     created_at: datetime
@@ -38,6 +39,13 @@ class Session(EidosFrozenStrictModel):
             raise ValueError("local Session must not have a Worktree binding")
         if self.execution_mode is SessionExecutionMode.WORKTREE and self.worktree_id is None:
             raise ValueError("worktree Session must have a Worktree binding")
+        if (
+            self.execution_mode is SessionExecutionMode.WORKTREE
+            and self.associated_worktree_id != self.worktree_id
+        ):
+            raise ValueError(
+                "worktree Session associated Worktree must match active binding"
+            )
         return self
 
     @field_validator("title")

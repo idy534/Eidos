@@ -59,6 +59,9 @@ class Worktree(EidosFrozenStrictModel):
         pattern=r"^[0-9a-fA-F]+$",
     )
     branch: str | None = Field(default=None, min_length=1, max_length=4096)
+    checkout_branch: str | None = Field(
+        default=None, min_length=1, max_length=4096
+    )
     branch_ownership: BranchOwnership = BranchOwnership.NONE
     ownership: WorktreeOwnership
     state: WorktreeState
@@ -76,6 +79,8 @@ class Worktree(EidosFrozenStrictModel):
             if candidate.get("branch") is None
             else BranchOwnership.LEGACY_MANAGED
         )
+        if "checkout_branch" not in candidate:
+            candidate["checkout_branch"] = candidate.get("branch")
         return candidate
 
     @model_validator(mode="after")
@@ -84,6 +89,11 @@ class Worktree(EidosFrozenStrictModel):
             raise ValueError("detached Worktree cannot own a branch")
         if self.branch is not None and self.branch_ownership is BranchOwnership.NONE:
             raise ValueError("attached Worktree must declare branch ownership")
+        if self.checkout_branch is not None:
+            if self.branch is None:
+                raise ValueError("checkout branch requires a durable branch")
+            if self.checkout_branch != self.branch:
+                raise ValueError("checkout branch must match the durable branch")
         return self
 
     @field_validator("worktree_root", "git_dir")

@@ -57,6 +57,7 @@ from eidos_runtime.persistence.repository_intelligence import (
 from eidos_runtime.persistence.context_snapshots import ContextSnapshotRepository
 from eidos_runtime.persistence.verified_compaction import VerifiedCompactionRepository
 from eidos_runtime.persistence.checkpoints import CheckpointRepository
+from eidos_runtime.persistence.session_handoff import SessionHandoffRepository
 from eidos_runtime.context.plan import ContextSnapshot
 from eidos_runtime.runtime.long_task import LongTaskRepository
 from eidos_runtime.domain.long_task import LongTaskProgress
@@ -95,6 +96,7 @@ class SessionStore:
         self._verified_compaction_repository: VerifiedCompactionRepository | None = None
         self._long_task_repository: LongTaskRepository | None = None
         self._checkpoint_repository: CheckpointRepository | None = None
+        self._session_handoff_repository: SessionHandoffRepository | None = None
 
     def initialize(self) -> None:
         self._database.initialize()
@@ -148,6 +150,7 @@ class SessionStore:
         self._verified_compaction_repository = None
         self._long_task_repository = None
         self._checkpoint_repository = None
+        self._session_handoff_repository = None
         self._database.close()
 
     def typed_runtime_repository(self) -> TypedRuntimeRepository:
@@ -213,6 +216,14 @@ class SessionStore:
         if self._checkpoint_repository is None:
             self._checkpoint_repository = CheckpointRepository(self._database)
         return self._checkpoint_repository
+
+    def session_handoff_repository(self) -> SessionHandoffRepository:
+        self._repository(self._sessions)
+        if self._session_handoff_repository is None:
+            self._session_handoff_repository = SessionHandoffRepository(
+                self._database
+            )
+        return self._session_handoff_repository
 
     def health(self) -> dict[str, object]:
         return self._database.health()

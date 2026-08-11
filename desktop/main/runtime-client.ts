@@ -28,6 +28,12 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "SENSITIVE_SCAN_FAILED",
   "INVALID_SESSION_TITLE",
   "SESSION_HAS_ACTIVE_RUN",
+  "HANDOFF_NOT_SUPPORTED",
+  "HANDOFF_SOURCE_CHANGED",
+  "HANDOFF_TARGET_CHANGED",
+  "HANDOFF_LOCAL_CONFLICT",
+  "HANDOFF_GIT_CONFLICT",
+  "WORKTREE_RESTORE_REQUIRED",
   "REPOSITORY_NOT_FOUND",
   "NOT_A_GIT_REPOSITORY",
   "WORKTREE_REQUIRES_GIT",
@@ -107,6 +113,7 @@ import type {
   ProjectGitContext,
   CreateBranchResult,
   Session,
+  SessionHandoffResult,
   GitDiffScope,
   SessionGitDiff,
   SessionGitStatus,
@@ -315,6 +322,18 @@ export class RuntimeClient {
       "session/createBranch",
       { sessionId, branch, operationId },
       isCreateBranchResult,
+    );
+  }
+
+  handoffSession(
+    sessionId: string,
+    target: "local" | "worktree",
+    operationId = randomUUID(),
+  ): Promise<SessionHandoffResult> {
+    return this.validatedRequest(
+      "session/handoff",
+      { sessionId, target, operationId },
+      isSessionHandoff,
     );
   }
 
@@ -899,11 +918,13 @@ function isSession(value: unknown): value is Session {
   return (
     isRecord(value)
     && hasOnlyKeys(value, [
-      "id", "workspaceRoot", "executionMode", "project", "worktree", "title", "taskStatus", "createdAt", "updatedAt",
+      "id", "workspaceRoot", "executionMode", "associatedWorktreeId",
+      "project", "worktree", "title", "taskStatus", "createdAt", "updatedAt",
     ])
     && typeof value.id === "string"
     && typeof value.workspaceRoot === "string"
     && (value.executionMode === undefined || ["local", "worktree"].includes(String(value.executionMode)))
+    && (value.associatedWorktreeId === undefined || typeof value.associatedWorktreeId === "string")
     && (value.project === undefined || isSessionProject(value.project))
     && (value.worktree === undefined || isSessionWorktree(value.worktree))
     && (value.title === undefined || typeof value.title === "string")
@@ -911,6 +932,23 @@ function isSession(value: unknown): value is Session {
     && isNonNegativeInteger(value.createdAt)
     && isNonNegativeInteger(value.updatedAt)
   );
+}
+
+function isSessionHandoff(value: unknown): value is SessionHandoffResult {
+  if (
+    !isRecord(value)
+    || !hasOnlyKeys(value, [
+      "id", "sessionId", "worktreeId", "workspaceRoot", "executionMode",
+      "associatedWorktreeId", "project", "worktree", "title", "taskStatus",
+      "createdAt", "updatedAt",
+    ])
+    || typeof value.sessionId !== "string"
+    || (value.worktreeId !== null && typeof value.worktreeId !== "string")
+  ) return false;
+  const session = { ...value };
+  delete session.sessionId;
+  delete session.worktreeId;
+  return isSession(session);
 }
 
 function isSessionProject(value: unknown): boolean {
@@ -948,11 +986,11 @@ function isSessionGitStatus(value: unknown): value is SessionGitStatus {
       "worktreeId", "branch", "head", "baseRef", "baseCommit", "dirty",
       "stagedCount", "unstagedCount", "untrackedCount", "conflictCount", "observedAt",
     ])
-    && typeof value.worktreeId === "string"
+    && (value.worktreeId === null || typeof value.worktreeId === "string")
     && (value.branch === null || typeof value.branch === "string")
     && typeof value.head === "string"
-    && typeof value.baseRef === "string"
-    && typeof value.baseCommit === "string"
+    && (value.baseRef === null || typeof value.baseRef === "string")
+    && (value.baseCommit === null || typeof value.baseCommit === "string")
     && typeof value.dirty === "boolean"
     && isNonNegativeInteger(value.stagedCount)
     && isNonNegativeInteger(value.unstagedCount)
@@ -997,7 +1035,7 @@ function isSessionGitDiff(value: unknown): value is SessionGitDiff {
       "unifiedDiff", "truncated", "observedAt",
     ])
     && ["head", "baseline"].includes(String(value.scope))
-    && typeof value.baseCommit === "string"
+    && (value.baseCommit === null || typeof value.baseCommit === "string")
     && typeof value.head === "string"
     && typeof value.dirty === "boolean"
     && Array.isArray(value.changedFiles)
