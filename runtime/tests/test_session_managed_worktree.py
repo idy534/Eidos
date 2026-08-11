@@ -138,7 +138,7 @@ def test_managed_session_create_list_and_read_share_worktree_projection(
         expected = {
             "worktreeId": worktree.id,
             "projectId": project.id,
-            "repositoryRoot": project.repository_root,
+            "repositoryRoot": project.workspace_root,
             "worktreeRoot": worktree.worktree_root,
             "baseRef": worktree.base_ref,
             "baseCommit": worktree.base_commit,
@@ -149,7 +149,7 @@ def test_managed_session_create_list_and_read_share_worktree_projection(
         assert created["worktree"] == expected
         assert listed["worktree"] == expected
         assert snapshot["worktree"] == expected
-        assert created["workspaceRoot"] == project.repository_root
+        assert created["workspaceRoot"] == project.workspace_root
     finally:
         store.close()
 
@@ -258,10 +258,10 @@ def test_session_git_status_and_diff_are_resolved_from_the_managed_binding(
         store.close()
 
 
-def test_legacy_session_git_review_is_rejected_with_a_stable_error(
+def test_direct_session_git_review_is_rejected_with_a_stable_error(
     tmp_path: Path,
 ) -> None:
-    workspace = tmp_path / "legacy-workspace"
+    workspace = tmp_path / "direct-workspace"
     workspace.mkdir()
     store = SessionStore(tmp_path / "data")
     store.initialize()
@@ -284,8 +284,8 @@ def test_session_git_review_requests_reject_filesystem_paths() -> None:
         )
 
 
-def test_legacy_session_still_uses_workspace_root(tmp_path: Path) -> None:
-    workspace = tmp_path / "legacy-workspace"
+def test_direct_session_still_uses_workspace_root(tmp_path: Path) -> None:
+    workspace = tmp_path / "direct-workspace"
     workspace.mkdir()
     store = SessionStore(tmp_path / "data")
     store.initialize()
@@ -295,7 +295,7 @@ def test_legacy_session_still_uses_workspace_root(tmp_path: Path) -> None:
             "SELECT worktree_id FROM sessions WHERE id = ?", (session["id"],)
         ).fetchone()
         assert row["worktree_id"] is None
-        run, _ = store.create_run(session["id"], "legacy")
+        run, _ = store.create_run(session["id"], "direct")
         assert store.workspace_for_run(run["id"]).path == workspace.resolve()
     finally:
         store.close()

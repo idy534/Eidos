@@ -1,4 +1,4 @@
-"""Schema migration tests for the supported V11 → V12 → V13 → V14 → V15 → V16 → V17 window.
+"""Schema migration tests for the supported V11 → V12 → V13 → V14 → V15 → V16 → V18 window.
 
 V11: drops legacy model storage tables.
 V12: adds effective_cwd to runs; adds resolved_instructions_hash and
@@ -8,6 +8,7 @@ V14: persists structured compaction-summary metadata.
 V15: adds Runtime-owned Project and Worktree persistence.
 V16: binds Sessions to Runtime-owned Worktrees while retaining legacy NULLs.
 V17: adds durable managed Worktree lifecycle intents.
+V18: generalizes Projects to filesystem workspaces with optional Git metadata.
 """
 from __future__ import annotations
 
@@ -29,9 +30,10 @@ from eidos_runtime.db.schema import (  # noqa: E402
     V10_CONTEXT_SCHEMA_SQL,
     V10_REPOSITORY_SCHEMA_SQL,
     V11_BASE_SCHEMA_SQL,
-    V15_WORKTREE_SCHEMA_SQL,
+    V15_WORKTREE_TABLES_SCHEMA_SQL,
     V16_SESSION_WORKTREE_SCHEMA_SQL,
     V17_WORKTREE_LIFECYCLE_SCHEMA_SQL,
+    V18_PROJECT_SCHEMA_SQL,
     SCHEMA_SQL,
 )
 from eidos_runtime.db.storage import DATABASE_NAME, SessionStore  # noqa: E402
@@ -174,10 +176,10 @@ class SchemaV11MigrationTests(unittest.TestCase):
         store.close()
 
     # ------------------------------------------------------------------
-    # V11 → V12 → V13 → V14 → V15 → V16 → V17 migration chain.
+    # V11 → V12 → V13 → V14 → V15 → V16 → V17 → V18 migration chain.
     # ------------------------------------------------------------------
 
-    def test_v11_upgrades_to_v17_and_preserves_current_contract(self) -> None:
+    def test_v11_upgrades_to_v18_and_preserves_current_contract(self) -> None:
         self._create_v11(with_facts=True)
 
         store = SessionStore(self.data)
@@ -224,11 +226,12 @@ class SchemaV11MigrationTests(unittest.TestCase):
         )
         store.close()
 
-    def test_v14_upgrades_to_v17_and_passes_integrity_checks(self) -> None:
+    def test_v14_upgrades_to_v18_and_passes_integrity_checks(self) -> None:
         connection = sqlite3.connect(self.database)
         connection.executescript(
             SCHEMA_SQL
-            .replace(V15_WORKTREE_SCHEMA_SQL, "", 1)
+            .replace(V18_PROJECT_SCHEMA_SQL, "", 1)
+            .replace(V15_WORKTREE_TABLES_SCHEMA_SQL, "", 1)
             .replace(V16_SESSION_WORKTREE_SCHEMA_SQL, "", 1)
             .replace(V17_WORKTREE_LIFECYCLE_SCHEMA_SQL, "", 1)
         )
@@ -259,7 +262,8 @@ class SchemaV11MigrationTests(unittest.TestCase):
         connection = sqlite3.connect(self.database)
         connection.executescript(
             SCHEMA_SQL
-            .replace(V15_WORKTREE_SCHEMA_SQL, "", 1)
+            .replace(V18_PROJECT_SCHEMA_SQL, "", 1)
+            .replace(V15_WORKTREE_TABLES_SCHEMA_SQL, "", 1)
             .replace(V16_SESSION_WORKTREE_SCHEMA_SQL, "", 1)
             .replace(V17_WORKTREE_LIFECYCLE_SCHEMA_SQL, "", 1)
         )

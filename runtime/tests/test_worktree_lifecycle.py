@@ -62,13 +62,13 @@ def _application(tmp_path: Path) -> tuple[
     return store, manager, application
 
 
-def test_schema_v17_contains_durable_worktree_lifecycle_table(
+def test_schema_v18_contains_durable_worktree_lifecycle_table(
     tmp_path: Path,
 ) -> None:
     store = SessionStore(tmp_path / "data")
     store.initialize()
     try:
-        assert SCHEMA_VERSION == 17
+        assert SCHEMA_VERSION == 18
         table = store.connection.execute(
             """
             SELECT name FROM sqlite_master

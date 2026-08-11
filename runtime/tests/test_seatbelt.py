@@ -143,6 +143,32 @@ class SeatbeltProfileTests(unittest.TestCase):
                 },
             )
 
+    def test_direct_profile_has_no_git_paths_or_definitions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            workspace = root / "workspace"
+            sandbox_home = root / "home"
+            sandbox_tmp = root / "tmp"
+            for directory in (workspace, sandbox_home, sandbox_tmp):
+                directory.mkdir(parents=True)
+
+            profile = SeatbeltProfile.create(
+                workspace_root=workspace,
+                sandbox_home=sandbox_home,
+                sandbox_tmp=sandbox_tmp,
+                sensitive_path=workspace / ".env",
+            )
+            self.assertIsNone(profile.git_directory)
+            self.assertIsNone(profile.git_worktree_dir)
+            self.assertIsNone(profile.git_common_dir)
+            with patch(
+                "eidos_runtime.sandbox.seatbelt.is_seatbelt_ready",
+                return_value=True,
+            ):
+                command = profile.command(["/usr/bin/true"])
+            self.assertTrue(command[2].endswith("seatbelt-direct.sbpl"))
+            self.assertFalse(any(argument.startswith("-DGIT_") for argument in command))
+
     def test_unavailable_seatbelt_fails_before_process_creation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

@@ -62,7 +62,8 @@ def test_project_discovery_canonicalizes_nested_repository(tmp_path: Path, datab
     worktree = manager.create(nested, base_ref="main")
 
     project = manager.project(worktree.project_id)
-    assert project.repository_root == str(repository.resolve())
+    assert project.workspace_root == str(repository.resolve())
+    assert project.git_repository_root == str(repository.resolve())
     assert project.git_common_dir == str((repository / ".git").resolve())
 
 
@@ -112,7 +113,7 @@ def test_create_persists_frozen_base_and_keeps_worktrees_isolated(
     assert manager.validate(second.id).valid
 
     rows = database.connection().execute(
-        "SELECT COUNT(*), COUNT(DISTINCT repository_root) FROM projects"
+        "SELECT COUNT(*), COUNT(DISTINCT workspace_root) FROM projects"
     ).fetchone()
     assert tuple(rows) == (1, 1)
     assert database.connection().execute(
@@ -762,7 +763,7 @@ def test_recovery_reports_replaced_worktree_repository_as_invalid(
 
 
 def test_schema_is_current_and_has_project_worktree_tables(database: Database) -> None:
-    assert SCHEMA_VERSION == 17
+    assert SCHEMA_VERSION == 18
     tables = {
         row[0]
         for row in database.connection().execute(
@@ -770,6 +771,14 @@ def test_schema_is_current_and_has_project_worktree_tables(database: Database) -
         )
     }
     assert {"projects", "worktrees", "worktree_lifecycle_operations"} <= tables
+    project_columns = {
+        row[1] for row in database.connection().execute("PRAGMA table_info(projects)")
+    }
+    assert {
+        "workspace_root",
+        "git_repository_root",
+        "git_common_dir",
+    } <= project_columns
     session_columns = {
         row[1] for row in database.connection().execute("PRAGMA table_info(sessions)")
     }
