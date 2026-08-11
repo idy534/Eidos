@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+import time
 
-from eidos_runtime.git.process import GitProcess
+import pytest
+
+from eidos_runtime.git.backend import DulwichGitBackend
+from eidos_runtime.git.errors import GitCommandFailedError, GitCommandTimeoutError
+from eidos_runtime.git.native import HardenedGitRunner
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -41,114 +46,105 @@ def _marker_executable(tmp_path: Path, marker: Path) -> Path:
     return executable
 
 
-def test_informational_git_observation_disables_textconv_and_filters(
+def test_read_observation_and_native_worktree_create_disable_helpers(
     tmp_path: Path,
 ) -> None:
     repository = _repository(tmp_path)
-    marker = tmp_path / "textconv-ran"
-    (repository / ".gitattributes").write_text("*.txt diff=evil filter=evil\n")
+    marker = tmp_path / "helper-ran"
+    executable = _marker_executable(tmp_path, marker)
+    (repository / ".gitattributes").write_text(
+        "*.txt diff=evil filter=evil.driver\n", encoding="utf-8"
+    )
     _git(repository, "add", ".gitattributes")
-    _git(repository, "commit", "-qm", "configure filters")
-    _git(repository, "config", "filter.evil.clean", "touch should-not-run")
-    _git(repository, "config", "filter.evil.process", "touch should-not-run")
-    _git(repository, "config", "filter.evil.required", "true")
-    _git(
-        repository,
-        "config",
-        "diff.evil.textconv",
-        f"sh -c 'touch {marker}; cat \"$1\"' sh",
+    _git(repository, "commit", "-qm", "configure helpers")
+    _git(repository, "config", "core.hooksPath", ".hooks")
+    (repository / ".hooks").mkdir()
+    hook = repository / ".hooks" / "post-checkout"
+    hook.write_text(
+        "#!/bin/sh\n"
+        f"printf marker >> '{marker}'\n",
+        encoding="utf-8",
     )
+    hook.chmod(0o755)
+    _git(repository, "config", "core.fsmonitor", str(executable))
+    _git(repository, "config", "filter.evil.driver.clean", str(executable))
+    _git(repository, "config", "filter.evil.driver.process", str(executable))
+    _git(repository, "config", "filter.evil.driver.required", "true")
+    _git(repository, "config", "diff.evil.textconv", str(executable))
+    _git(repository, "config", "diff.external", str(executable))
     (repository / "README.txt").write_text("changed\n", encoding="utf-8")
+    backend = DulwichGitBackend()
 
-    process = GitProcess()
-    overrides = process._filter_config_overrides(repository)
-    assert overrides == (
-        "-c",
-        "filter.evil.clean=",
-        "-c",
-        "filter.evil.process=",
-        "-c",
-        "filter.evil.required=false",
-    )
-    result = process.diff_head(repository)
+    backend.status(repository)
+    backend.diff(repository, base_commit=backend.head(repository))
+    linked = tmp_path / "linked"
+    backend.worktree_add(repository, linked, "eidos/helper-safety", backend.head(repository))
 
-    assert result.returncode == 0
-    assert "changed" in result.stdout
     assert not marker.exists()
 
 
-def test_dotted_executable_filter_is_disabled_for_diff_head(tmp_path: Path) -> None:
+def test_dotted_and_worktree_specific_filters_are_disabled_for_native_create(
+    tmp_path: Path,
+) -> None:
     repository = _repository(tmp_path)
-    marker = tmp_path / "dotted-filter-ran"
+    marker = tmp_path / "filter-ran"
     executable = _marker_executable(tmp_path, marker)
     (repository / ".gitattributes").write_text(
-        "*.txt filter=evil.driver\n",
-        encoding="utf-8",
+        "*.txt filter=evil.driver\n", encoding="utf-8"
     )
     _git(repository, "add", ".gitattributes")
     _git(repository, "commit", "-qm", "configure dotted filter")
+    _git(repository, "config", "extensions.worktreeConfig", "true")
     _git(repository, "config", "filter.evil.driver.clean", str(executable))
-    (repository / "README.txt").write_text("changed\n", encoding="utf-8")
+    linked = tmp_path / "linked-worktree"
+    DulwichGitBackend().worktree_add(
+        repository,
+        linked,
+        "eidos/filter-safety",
+        DulwichGitBackend().head(repository),
+    )
+    _git(linked, "config", "--worktree", "filter.evil.driver.process", str(executable))
+    _git(linked, "config", "--worktree", "filter.evil.driver.clean", str(executable))
 
-    result = GitProcess().diff_head(repository)
+    second = tmp_path / "second-worktree"
+    backend = DulwichGitBackend()
+    backend.worktree_add(linked, second, "eidos/filter-safety-2", backend.head(linked))
 
-    assert result.returncode == 0
     assert not marker.exists()
 
 
-def test_worktree_specific_executable_filter_is_disabled_for_diff_head(
-    tmp_path: Path,
-) -> None:
-    repository = _repository(tmp_path)
-    marker = tmp_path / "worktree-filter-ran"
-    executable = _marker_executable(tmp_path, marker)
-    (repository / ".gitattributes").write_text(
-        "*.txt filter=worktree.evil\n",
+def test_hardened_runner_timeout_is_bounded(tmp_path: Path) -> None:
+    executable = tmp_path / "slow-git"
+    executable.write_text("#!/bin/sh\nsleep 2\n", encoding="utf-8")
+    executable.chmod(0o755)
+    runner = HardenedGitRunner(git_executable=str(executable), timeout_seconds=0.05)
+
+    started = time.monotonic()
+    with pytest.raises(GitCommandTimeoutError) as error:
+        runner.run(
+            ("rev-parse", "HEAD"),
+            cwd=tmp_path,
+            operation="runner-timeout",
+        )
+
+    assert error.value.code == "git_command_timeout"
+    assert time.monotonic() - started < 1.5
+
+
+def test_hardened_runner_bounds_failed_stderr(tmp_path: Path) -> None:
+    executable = tmp_path / "noisy-git"
+    executable.write_text(
+        "#!/bin/sh\n/usr/bin/dd if=/dev/zero bs=200000 count=1 1>&2\nexit 1\n",
         encoding="utf-8",
     )
-    _git(repository, "add", ".gitattributes")
-    _git(repository, "commit", "-qm", "configure worktree filter")
-    _git(repository, "config", "extensions.worktreeConfig", "true")
-    linked = tmp_path / "linked-worktree"
-    _git(repository, "worktree", "add", "-q", "-b", "linked", str(linked))
-    _git(
-        linked,
-        "config",
-        "--worktree",
-        "filter.worktree.evil.clean",
-        str(executable),
-    )
-    (linked / "README.txt").write_text("changed\n", encoding="utf-8")
+    executable.chmod(0o755)
+    runner = HardenedGitRunner(git_executable=str(executable), output_limit_bytes=1024)
 
-    result = GitProcess().diff_head(linked)
+    with pytest.raises(GitCommandFailedError) as error:
+        runner.run(
+            ("rev-parse", "HEAD"),
+            cwd=tmp_path,
+            operation="runner-noisy",
+        )
 
-    assert result.returncode == 0
-    assert not marker.exists()
-
-
-def test_status_disables_executable_fsmonitor(tmp_path: Path) -> None:
-    repository = _repository(tmp_path)
-    marker = tmp_path / "fsmonitor-ran"
-    executable = _marker_executable(tmp_path, marker)
-    _git(repository, "config", "core.fsmonitor", str(executable))
-
-    result = GitProcess().status_porcelain_v2(repository)
-
-    assert result.returncode == 0
-    assert not marker.exists()
-
-
-def test_git_process_environment_is_noninteractive_and_global_config_free(
-    tmp_path: Path,
-) -> None:
-    repository = _repository(tmp_path)
-    process = GitProcess()
-
-    environment = process._execute(
-        "environment-test",
-        repository,
-        ("rev-parse", "HEAD"),
-        output_limit_bytes=4096,
-    )
-
-    assert environment.returncode == 0
+    assert len(error.value.stderr.encode("utf-8")) <= 1024

@@ -9,6 +9,11 @@ import { SessionSidebar } from "./SessionSidebar.js";
 const managedSession: Session = {
   id: "session-managed",
   workspaceRoot: "/repository",
+  project: {
+    id: "project-a",
+    workspaceRoot: "/repository",
+    gitAvailable: true,
+  },
   worktree: {
     worktreeId: "worktree-a",
     projectId: "project-a",
@@ -86,5 +91,38 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
 
     expect(screen.getByText("eidos/a")).toBeInTheDocument();
     expect(screen.getByLabelText("有未提交改动")).toBeInTheDocument();
+  });
+
+  it("groups a Direct Workspace without showing Git controls", () => {
+    const directSession: Session = {
+      ...managedSession,
+      id: "session-direct",
+      project: {
+        id: "project-direct",
+        workspaceRoot: "/report",
+        gitAvailable: false,
+      },
+      workspaceRoot: "/report",
+      worktree: undefined,
+    };
+    render(
+      <SessionSidebar
+        sessions={[directSession]}
+        selectedId={directSession.id}
+        disabled={false}
+        readCompletedSessions={new Set()}
+        runtimePresentation={{ tone: "success", label: "Ready" }}
+        gitStatusBySessionId={new Map([[directSession.id, dirtyStatus]])}
+        onCreate={vi.fn()}
+        onCreateInProject={vi.fn()}
+        onSelect={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("eidos/a")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("有未提交改动")).not.toBeInTheDocument();
   });
 });

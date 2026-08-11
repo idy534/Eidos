@@ -34,7 +34,7 @@ from eidos_runtime.domain.worktree import (
     WorktreeLifecycleState,
 )
 from eidos_runtime.git.errors import WorktreeError
-from eidos_runtime.git.models import GitRepositoryDiscovery
+from eidos_runtime.git.models import GitRepositoryDiscovery, ProjectResolution
 from eidos_runtime.git.status import DiffScope, GitDiffSnapshot, GitStatusSnapshot
 from eidos_runtime.protocol.methods import (
     EventListRequestDto,
@@ -68,7 +68,11 @@ from eidos_runtime.persistence.mappers.session import (
     session_to_legacy_dict,
 )
 from eidos_runtime.persistence.worktree_lifecycle import WorktreeLifecycleRepository
-from eidos_runtime.protocol.schemas import SessionDto, SessionWorktreeDto
+from eidos_runtime.protocol.schemas import (
+    SessionDto,
+    SessionProjectDto,
+    SessionWorktreeDto,
+)
 from eidos_runtime.sandbox.sensitive import (
     SensitiveContentDenied,
     SensitiveScanError,
@@ -155,6 +159,10 @@ class SessionStorePort(Protocol):
 class ManagedWorktreePort(Protocol):
     """Application port for Session-owned Worktree provisioning."""
 
+    def resolve_project(
+        self, workspace_seed: Path | str
+    ) -> ProjectResolution: ...
+
     def discover(self, repository_seed: Path | str) -> GitRepositoryDiscovery: ...
 
     def create(self, repository_root: Path | str) -> Worktree: ...
@@ -239,7 +247,9 @@ class SessionApplication:
                 else nullcontext()
             )
             with operation_guard:
-                return self._create_managed(request)
+                resolution = self._resolve_project(request.workspace_root)
+                if resolution.git is not None:
+                    return self._create_managed(request, resolution)
         try:
             mutation = self._repository.create_session(
                 request.workspace_root,
@@ -258,16 +268,27 @@ class SessionApplication:
             self._project_session(self._projection_for_session(mutation.value.id)),
         )
 
+    def _resolve_project(self, workspace_root: str) -> ProjectResolution:
+        manager = self._worktree_manager
+        assert manager is not None
+        try:
+            return manager.resolve_project(workspace_root)
+        except WorktreeError as error:
+            raise ApplicationError(_workspace_resolution_error_code(error), str(error)) from error
+
     def _create_managed(
-        self, request: SessionCreateRequestDto
+        self,
+        request: SessionCreateRequestDto,
+        resolution: ProjectResolution | None = None,
     ) -> SessionCreateResponseDto:
         manager = self._worktree_manager
         assert manager is not None
         try:
-            seed = Path(request.workspace_root)
-            if seed.is_symlink():
-                raise WorkspaceBoundaryError("workspace root is a symlink")
-            discovery = manager.discover(seed)
+            discovery = resolution.git if resolution is not None else manager.discover(
+                Path(request.workspace_root)
+            )
+            if discovery is None:
+                raise WorktreeError("not_a_git_repository")
         except WorkspaceBoundaryError as error:
             raise ApplicationError(
                 "WORKSPACE_BOUNDARY_VIOLATION", str(error)
@@ -358,7 +379,7 @@ class SessionApplication:
             if existing_session is None:
                 try:
                     mutation = self._repository.create_session(
-                        project.repository_root,
+                        project.workspace_root,
                         worktree_id=worktree.id,
                         operation_id=None,
                         session_id=session_id,
@@ -369,7 +390,7 @@ class SessionApplication:
                     # Keep narrow compatibility with older injected repository
                     # seams used by failure tests.
                     mutation = self._repository.create_session(
-                        project.repository_root,
+                        project.workspace_root,
                         worktree_id=worktree.id,
                         operation_id=None,
                     )
@@ -707,7 +728,7 @@ class SessionApplication:
                                     operation_id=lifecycle_operation_id,
                                     state=WorktreeLifecycleState.PREPARED,
                                     project_id=project.id,
-                                    repository_root=project.repository_root,
+                                    repository_root=project.workspace_root,
                                     worktree_id=worktree_projection.worktree_id,
                                     worktree_root=worktree_projection.worktree_root,
                                     base_ref=worktree_projection.base_ref,
@@ -819,6 +840,11 @@ class SessionApplication:
     def _project_session(self, projection: SessionProjection) -> dict[str, object]:
         session = projection.session
         value = session_to_legacy_dict(session)
+        value["project"] = SessionProjectDto(
+            id=projection.project.id,
+            workspaceRoot=projection.project.workspace_root,
+            gitAvailable=projection.project.git_available,
+        )
         if projection.worktree is not None:
             worktree = projection.worktree
             value["worktree"] = SessionWorktreeDto(
@@ -885,6 +911,16 @@ def _worktree_error_code(error: WorktreeError) -> str:
         "git_command_timeout": "GIT_COMMAND_TIMEOUT",
         "worktree_persistence_failed": "WORKTREE_PERSISTENCE_FAILED",
     }.get(error.code, "WORKTREE_CREATE_FAILED")
+
+
+def _workspace_resolution_error_code(error: WorktreeError) -> str:
+    return {
+        "repository_not_found": "REPOSITORY_NOT_FOUND",
+        "workspace_not_found": "REPOSITORY_NOT_FOUND",
+        "workspace_not_directory": "REPOSITORY_NOT_FOUND",
+        "workspace_symlink": "WORKSPACE_BOUNDARY_VIOLATION",
+        "workspace_identity_unavailable": "WORKSPACE_IDENTITY_UNAVAILABLE",
+    }.get(error.code, _worktree_error_code(error))
 
 
 def _git_review_error_code(error: WorktreeError) -> str:

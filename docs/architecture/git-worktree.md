@@ -2,52 +2,70 @@
 
 本文描述当前 Runtime 的 Project、Session、Worktree、Run、Git 和 Sandbox 关系。本文以生产代码和测试为事实来源。
 
-## Project、Session 和 Run
+## Project、Thread 和 Run
 
-当前对象关系如下：
+Project 是用户选择的 filesystem workspace。Project 的基础事实是 `workspace_root`。Git 是 Project 的 optional capability，不是 Project 的类型前提。
 
 ```text
 Project
- ├── Session / Thread
- │      └── Managed Worktree
- │              └── Runs
+ ├── workspace_root
+ └── optional Git capability
+          └── optional Managed Worktree
+                    └── Thread / Session → Run
 ```
 
-`Session.workspace_root` 是 repository root compatibility field。
+Project 有两条当前执行路径：
 
-Managed Session 的 execution root 是 `worktree_root`。Legacy Session 没有 `worktree_id`，所以继续使用 `Session.workspace_root`。
+```text
+Non-Git directory
+  → Project
+  → Direct Workspace Session (worktree_id = NULL)
+  → Run in Project.workspace_root
 
-Run 的 execution identity 是冻结的 `RunResolutionSnapshot.workspace_identity`。Runtime 在 Run admission 和 resume 时重新验证 managed Worktree。Runtime 不会把 managed Run fallback 到 repository root。
+Git repository
+  → Project with Git capability
+  → Managed Worktree Session
+  → Run in Worktree.worktree_root
+```
 
-## Git authority
+Direct Session 是正式的一等执行模式。它可以使用文件、Shell、Skill、MCP、Context、Long Task、Sandbox 和 Checkpoint。它不提供 Git status、Git diff、Managed Worktree 或 Git-based Fork。
 
-- `WorktreeManager` 是 Git Worktree lifecycle authority。它负责 Project discovery、prepare、create、validate、recover、cleanup、delete、status 和 diff。
-- `GitProcess` 是 bounded fixed-command Git process seam。它负责固定 argv、超时、进程组、环境和有界输出。
-- Desktop 只使用 Session-oriented Git read API。Desktop 不创建或删除 Worktree。
-- Model 只能提出普通 ToolCall。Model 不能管理 Worktree lifecycle。
+Direct Run 和 Managed Run 都冻结 `RunResolutionSnapshot.workspace_identity`。Runtime 在 Run admission、resume 和 restart 时继续验证 canonical path、device、inode 和 owner。没有 Git 不会跳过 Workspace boundary 或 Sandbox。
 
-Runtime 只从已验证的 Git repository 创建 Project。Project 保存 canonical repository root 和 canonical `git_common_dir`。Worktree 保存 `worktree_root`、per-worktree `git_dir`、base ref、immutable base commit、Runtime branch、ownership 和 state。
+## Project resolution
+
+`session/create` 先通过 Project resolution boundary 校验用户目录、canonicalize path 和检测可选 Git capability。不存在、不是目录、违反 symlink workspace policy、权限拒绝或 filesystem identity failure 才是 resolution error。`not_a_git_repository` 表示没有 Git capability，不是 Session create failure。
+
+Project 持久化字段如下：
+
+```text
+id
+workspace_root NOT NULL UNIQUE
+git_repository_root NULL
+git_common_dir NULL
+created_at
+updated_at
+```
+
+Git metadata 字段必须同时有值或同时为空。Direct Project 以 canonical `workspace_root` 作为 identity。已有 Direct Project 后目录获得 Git capability 时，Project 可以保留原有 id 并补充 Git metadata。
+
+## Git authority and backend
+
+- `WorktreeManager` 是 Eidos 的 Project、Worktree、Session binding、Run identity、durable operation、recovery、compensation 和 Sandbox boundary authority。
+- `GitBackend` 是 Git mechanics seam。它不拥有 Session、Run、Checkpoint 或 SQLite lifecycle。
+- `DulwichGitBackend` 直接返回 Eidos-owned 的 `GitRepositoryDiscovery`、`GitStatusObservation`、`GitDiffObservation` 和 `GitWorktreeEntry`。它负责 repository discovery、HEAD/ref、status、diff、worktree list/remove/prune 和 compare-and-delete branch。
+- `NativeWorktreeCreator` 是唯一的 native Git 操作入口。它只创建 Worktree。它内部可以用一次受控 `git config` 读取 filter 名称，再调用 `git worktree add`。`HardenedGitRunner` 负责 timeout、bounded output、进程组清理、禁用 hook/fsmonitor、credential/prompt 和 pager。
+
+Dulwich 类型不会传播到 Application、Domain、Protocol、SQLite 或 Desktop。Backend 只输出 Eidos-owned typed Git models。
 
 ## Session create
 
-`session/create` 把 `workspaceRoot` 作为 repository seed path。Runtime 先解析 Project 和 base commit，再在 Git side effect 前确定以下 identity：
-
-```text
-project_id
-worktree_id
-worktree_root
-branch
-base_commit
-```
-
-Runtime 将 identity 写入 v17 `worktree_lifecycle_operations`，状态为 `prepared`。之后 Runtime 才运行 `git worktree add`。
-
-成功路径如下：
+Runtime 先解析 Project。Git Project 会在 Git side effect 前确定 `project_id`、`worktree_id`、`worktree_root`、`branch` 和 `base_commit`，然后写入 durable lifecycle intent：
 
 ```text
 prepare
   → durable session/create intent
-  → git worktree add
+  → GitBackend worktree add
   → exact Git/filesystem validation
   → Worktree persistence
   → Session persistence
@@ -55,13 +73,13 @@ prepare
   → operation result
 ```
 
-重试会继续使用 intent 中的相同 `worktree_id`、`worktree_root`、`branch` 和 `base_commit`。如果真实 Worktree 与 intent 完全一致，Runtime 可以 adopt 并继续写入缺失的 SQLite record。冲突会进入 `cleanup_required`。Runtime 不会 force adopt。
+Direct Project 不进入这条 Git lifecycle。Runtime 直接创建 `worktree_id = NULL` 的 Session，并把 Run execution root 设为 Project workspace root。
+
+Managed retry 使用 intent 中相同的 `worktree_id`、`worktree_root`、`branch` 和 `base_commit`。如果真实 Worktree 与 intent 完全一致，Runtime 可以 adopt 缺失的 SQLite record。冲突会进入 `cleanup_required`。Runtime 不 force adopt。
 
 ## Managed Checkpoint Fork
 
-Fork v1 使用 `checkpoint.gitHead` 作为新的 Worktree `base_commit`。Runtime 为同一个 durable operation 准备固定的 Worktree、Session、Run 和 checkpoint action identity。
-
-成功路径如下：
+Managed Fork v1 使用 `checkpoint.gitHead` 作为新 Worktree 的 `base_commit`。Runtime 为同一个 durable operation 准备固定的 Worktree、Session、Run 和 checkpoint action identity：
 
 ```text
 prepared
@@ -74,37 +92,29 @@ prepared
 
 相同 `checkpointId` 和 `operationId` 的 retry 会读取已有的 Worktree、Session、Run 和 action。Runtime 不会创建第二套资源。Fork v1 不恢复 checkpoint 时刻完整的未提交 working-tree patch，也不复制全部 immutable snapshot 内容。
 
+Direct Fork 使用同一个 Project 和同一个 `workspace_root` 创建新的 Direct Session、Run 和 checkpoint action。两个 Direct Thread 共享真实目录。Direct Fork 是 conversation/runtime fork，不是 filesystem snapshot；当前不提供 copy-on-write、directory snapshot 或 filesystem rewind。
+
 ## Session delete
 
-Session delete 在 Git side effect 前写入 `session/delete` durable intent。Runtime 只删除 `managed` Worktree。Runtime 会先验证 Worktree，再检查 dirty state。Dirty、冲突或无法证明 identity 的 Worktree 会被拒绝。
-
-删除路径如下：
+Managed Session delete 在 Git side effect 前写入 `session/delete` durable intent。Runtime 验证 Worktree，再检查 dirty state、冲突和 identity：
 
 ```text
 durable session/delete intent
-  → git worktree remove
+  → GitBackend worktree remove
   → Worktree state = deleted
   → Session delete
   → lifecycle intent = completed
 ```
 
-Runtime 可以在 Worktree removal 与 Session delete 之间重启后继续执行。没有对应 durable delete intent 时，Runtime 不会因为 Worktree 已经是 `deleted` 或 `missing` 就自动删除 Session。
+Runtime 可以在 Worktree removal 与 Session delete 之间重启后继续执行。Runtime 不执行 force remove、未知路径递归删除或 branch `-D`。
 
-Git branch 默认保留。Runtime 不执行 branch `-D`，也不执行未知路径的递归删除。
+Direct Session delete 不创建 Git lifecycle intent。它只删除 Eidos Session 数据。它不会删除 Project workspace root 或用户文件。
 
 ## Schema and lifecycle states
 
-当前 SQLite schema version 是 v17。v16 → v17 的 migration 只创建 durable lifecycle table。Migration 不执行 Git 或 filesystem adoption。旧 Session 和旧 Worktree 保持不变。
+当前 SQLite schema version 是 v18。v17 → v18 将旧 Git Project 的 `repository_root` 映射为 `workspace_root` 和 `git_repository_root`，保留原 Project id、Worktree FK、Session binding 和 Run。对于 `worktree_id IS NULL` 的旧 Session，migration 会按 canonical workspace root 创建确定性 Direct Project，并保留 Session 和 Run。
 
-`worktree_lifecycle_operations` 只接受三个 scope：
-
-```text
-session/create
-session/delete
-checkpoint/fork
-```
-
-它使用有限状态：`prepared`、`worktree_created`、`session_created`、`run_created`、`checkpoint_action_created`、`worktree_deleted`、`completed` 和 `cleanup_required`。它不是通用 workflow engine，也不保存 arbitrary payload executor。
+`worktree_lifecycle_operations` 从 v17 保留。它只接受 `session/create`、`session/delete` 和 `checkpoint/fork` scope。它使用有限状态：`prepared`、`worktree_created`、`session_created`、`run_created`、`checkpoint_action_created`、`worktree_deleted`、`completed` 和 `cleanup_required`。它不是通用 workflow engine，也不保存 arbitrary payload executor。
 
 ## Startup recovery
 
@@ -120,40 +130,26 @@ SQLite initialize
   → Runtime ready
 ```
 
-Recovery 对每个 Project 和每个 lifecycle operation 使用现有 Git timeout 和 bounded output。坏 Project 不会永久阻塞整个 Runtime。
+Recovery 只处理已有的 managed Worktree lifecycle operation。Direct Session 不需要 Git lifecycle recovery，但它的 Run restart verification 仍验证 Workspace identity、Sandbox boundary、rules、Context、permission 和 reconciliation facts。
 
-当 durable plan、`git worktree list`、filesystem、branch 和 HEAD 完全一致时，Runtime 可以继续或 adopt。无法证明一致时，Runtime 保留数据、目录和 branch，把 lifecycle 标记为 `cleanup_required`，并让相关 managed Session 不可用。Runtime 不执行 `git worktree remove --force`、`rm -rf unknown path` 或 `branch -D`。
-
-Recovery 日志包含 `project_id`、`worktree_id`、`session_id`、`operation_id`、`scope`、`state`、`recovery_action`、`result`、`error_code` 和 `duration`。日志不包含 API key、完整 diff 或用户源代码。
+当 durable plan、GitBackend worktree observation、filesystem、branch 和 HEAD 完全一致时，Runtime 可以继续或 adopt。无法证明一致时，Runtime 保留数据、目录和 branch，把 lifecycle 标记为 `cleanup_required`，并让相关 managed Session 不可用。
 
 ## Git observation hardening
 
-Runtime 的 status、HEAD、diff、name-only 和 untracked observation 使用 fixed argv、`shell=False`、明确 cwd、`GIT_OPTIONAL_LOCKS=0`、`GIT_TERMINAL_PROMPT=0`、`core.fsmonitor=false`、禁用 pager 和有界 timeout/output。
+GitBackend contract tests 覆盖 tracked clean、modified、staged、unstaged、untracked、deleted、conflict、Unicode filename、nested path、linked Worktree、HEAD、branch、HEAD diff 和 baseline diff。
 
-Informational diff 使用 `--no-ext-diff` 和 `--no-textconv`。Runtime 使用 Git 的 effective repository/worktree config 和 NUL-safe name-only output 读取 `filter.*.clean` 与 `filter.*.process` key，并以 fixed `-c` 参数禁用 executable filter，同时把 `required` 设为 false。Runtime-owned lifecycle command 使用 `core.hooksPath=/dev/null`。Runtime 不执行 configured hook、fsmonitor、textconv 或 executable filter。
+Runtime 不允许 configured hook、fsmonitor executable、textconv、external diff、clean filter、process filter、dotted filter driver 或 worktree-specific filter 执行。Dulwich 的低层 read-only observation 不经过这些 executable paths。Worktree create 使用 NativeWorktreeCreator，因为该写入路径需要现有 native hardening。
 
-Git observation 失败、超时、截断或解析不完整时，Runtime 不把部分输出当作事实，也不静默改变 Worktree lifecycle state。
+Observation failure、timeout 或 bounded diff truncation 不会更新 Worktree lifecycle state。Git status 和 changed paths 不经过 porcelain parser，也不会调用 `Index.commit` 或写入 object store。`deleted` 仍然是 terminal state。
 
-## Linked Worktree Sandbox
+## Sandbox
 
-Managed linked Worktree 的 `.git` 是 pointer file。真正的 per-worktree `git_dir` 和 Project `git_common_dir` 来自 `Session → Worktree → WorktreeManager.validate()` 的 verified facts。Runtime 将它们传入 Seatbelt profile。
+Managed Worktree 的 writable root 是 `Worktree.worktree_root`。Seatbelt 对 verified `git_dir` 和 Project 的 verified `git_common_dir` 只开放 read-only metadata access。原始 repository working tree 不属于该 Thread 的 execution workspace。
 
-Seatbelt 允许：
-
-- managed `worktree_root` 的普通文件读写；
-- verified `git_dir` 和 `git_common_dir` 的只读访问；
-- Git read command 所需的 metadata traversal。
-
-Seatbelt 拒绝：
-
-- `git_dir` 和 `git_common_dir` 的写入；
-- 原始 repository working tree 的读写；
-- 通过命令字符串 blacklist 规避的 Git mutation。
-
-真实 macOS native test 使用 real Git repository、real linked Worktree 和 `/usr/bin/sandbox-exec` 验证 `git status`、`git diff`、`git log`、`git rev-parse`、`git branch --show-current`、普通文件写入以及 Git metadata mutation denial。
+Direct Workspace 的 writable root 是 `Project.workspace_root`。Direct profile 不构造假的 `.git`、`git_dir` 或 `git_common_dir`。Direct Run 仍使用相同的 Workspace identity、path boundary、special-file checks、approval 和 sandbox validation。
 
 ## Desktop boundary and limits
 
-Desktop 通过 Session-oriented `session/gitStatus` 和 `session/gitDiff` 读取 Git facts。Sidebar 展示 managed branch。Dirty indicator 使用已有 Session status cache，不启动所有 Thread 的持续轮询。
+Session projection 提供 `projectId`、`workspaceRoot` 和 `gitAvailable`。Sidebar 按 Project 分组。Non-Git Project 不显示 branch、Git Changes，也不会请求 `session/gitStatus` 或 `session/gitDiff`。Git Project 保留当前 branch、dirty status、HEAD diff 和 baseline diff UI。
 
 当前仍未实现：Parallel Agent、Git staging/commit/push UI、branch merge/rebase/force delete、完整未提交 patch 的 checkpoint rewind/fork，以及 cross-worktree Repository Intelligence sharing。

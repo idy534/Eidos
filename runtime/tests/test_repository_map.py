@@ -32,3 +32,5 @@ def test_repository_map_discovers_manifests_and_conservative_commands(tmp_path: 
     assert "pyproject.toml" in repository_map.configuration_files
     assert any(command.command == "vite build" for command in repository_map.commands)
     assert all(command.source_path in repository_map.configuration_files for command in repository_map.commands)
+    assert repository_map.git_branch is None
+    assert repository_map.git_head is None

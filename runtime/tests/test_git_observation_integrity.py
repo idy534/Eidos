@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 import subprocess
 
@@ -8,10 +7,15 @@ import pytest
 
 from eidos_runtime.db.database import Database
 from eidos_runtime.domain.worktree import WorktreeState
-from eidos_runtime.git.errors import GitCommandFailedError, GitCommandTimeoutError
+from eidos_runtime.git.errors import (
+    GitCommandFailedError,
+    GitCommandTimeoutError,
+    WorktreeError,
+)
 from eidos_runtime.git.manager import WorktreeManager
-from eidos_runtime.git.process import GitCommandResult, GitProcess
-from eidos_runtime.git.status import parse_porcelain_v2_status
+from eidos_runtime.git.models import GitDiffObservation, GitStatusObservation
+from eidos_runtime.git.status import DiffScope
+from git_backend_fakes import FakeGitBackend
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -45,147 +49,13 @@ def database(tmp_path: Path):
     database.close()
 
 
-def _single_line_calls(process: GitProcess, cwd: Path) -> tuple[Callable[[], object], ...]:
-    return (
-        lambda: process.rev_parse_show_toplevel(cwd),
-        lambda: process.resolve_ref(cwd, "HEAD"),
-        lambda: process.try_resolve_ref(cwd, "HEAD"),
-        lambda: process.symbolic_ref_short(cwd),
-    )
-
-
-@pytest.mark.parametrize(
-    ("stdout_truncated", "stderr_truncated"),
-    ((True, False), (False, True)),
-)
-def test_successful_single_line_git_observations_reject_truncation(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    stdout_truncated: bool,
-    stderr_truncated: bool,
-) -> None:
-    process = GitProcess()
-
-    def execute(
-        operation: str,
-        cwd: Path,
-        args: tuple[str, ...],
-        *,
-        output_limit_bytes: int,
-    ) -> GitCommandResult:
-        del operation, cwd, args, output_limit_bytes
-        return GitCommandResult(
-            stdout="observed-value\n",
-            stderr="diagnostic" if stderr_truncated else "",
-            returncode=0,
-            stdout_truncated=stdout_truncated,
-            stderr_truncated=stderr_truncated,
-        )
-
-    monkeypatch.setattr(process, "_execute", execute)
-
-    for operation in _single_line_calls(process, tmp_path):
-        with pytest.raises(GitCommandFailedError):
-            operation()
-
-
-def test_expected_nonzero_single_line_observations_still_reject_truncation(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    process = GitProcess()
-
-    def execute(
-        operation: str,
-        cwd: Path,
-        args: tuple[str, ...],
-        *,
-        output_limit_bytes: int,
-    ) -> GitCommandResult:
-        del operation, cwd, args, output_limit_bytes
-        return GitCommandResult(
-            stdout="",
-            stderr="incomplete",
-            returncode=1,
-            stdout_truncated=False,
-            stderr_truncated=True,
-        )
-
-    monkeypatch.setattr(process, "_execute", execute)
-
-    with pytest.raises(GitCommandFailedError):
-        process.try_resolve_ref(tmp_path, "HEAD")
-    with pytest.raises(GitCommandFailedError):
-        process.symbolic_ref_short(tmp_path)
-
-
-@pytest.mark.parametrize("stdout", ("first\nsecond\n", "", "   \n"))
-def test_successful_single_line_git_observations_reject_non_single_line_output(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    stdout: str,
-) -> None:
-    process = GitProcess()
-
-    def execute(
-        operation: str,
-        cwd: Path,
-        args: tuple[str, ...],
-        *,
-        output_limit_bytes: int,
-    ) -> GitCommandResult:
-        del operation, cwd, args, output_limit_bytes
-        return GitCommandResult(
-            stdout=stdout,
-            stderr="",
-            returncode=0,
-            stdout_truncated=False,
-            stderr_truncated=False,
-        )
-
-    monkeypatch.setattr(process, "_execute", execute)
-
-    for operation in _single_line_calls(process, tmp_path):
-        with pytest.raises(GitCommandFailedError):
-            operation()
-
-
-@pytest.mark.parametrize(
-    "output",
-    (
-        "?",
-        "? ",
-        "1 M.",
-        "1 M. N... 100644 100644 100644 head index",
-        "u UU N... 100644 100644 100644 100644 one two three",
-        "x unknown",
-        "\x00",
-    ),
-)
-def test_porcelain_v2_status_rejects_malformed_and_unknown_records(output: str) -> None:
-    with pytest.raises(ValueError):
-        parse_porcelain_v2_status(output)
-
-
-def test_porcelain_v2_status_counts_complete_records() -> None:
-    output = (
-        "1 M. N... 100644 100644 100644 head index tracked file\x00"
-        "? untracked file\x00"
-        "u UU N... 100644 100644 100644 100644 one two three conflict file\x00"
-    )
-
-    assert parse_porcelain_v2_status(output) == (2, 1, 1, 1)
-
-
 @pytest.mark.parametrize(
     ("failure", "expected_code"),
     (
-        (GitCommandTimeoutError("rev-parse-show-toplevel"), "git_command_timeout"),
+        (GitCommandTimeoutError("discover"), "git_command_timeout"),
         (
             GitCommandFailedError(
-                "rev-parse-show-toplevel",
-                returncode=2,
-                stderr="temporary failure",
+                "discover", returncode=2, stderr="temporary failure"
             ),
             "git_observation_failed",
         ),
@@ -194,19 +64,18 @@ def test_porcelain_v2_status_counts_complete_records() -> None:
 def test_validate_discovery_observation_failure_keeps_active_state(
     tmp_path: Path,
     database: Database,
-    monkeypatch: pytest.MonkeyPatch,
     failure: Exception,
     expected_code: str,
 ) -> None:
     repository = _repository(tmp_path)
-    manager = WorktreeManager(database, managed_root=tmp_path / "managed")
+    backend = FakeGitBackend()
+    manager = WorktreeManager(
+        database,
+        managed_root=tmp_path / "managed",
+        git_backend=backend,
+    )
     worktree = manager.create(repository)
-
-    def fail_discovery(cwd: Path) -> str:
-        del cwd
-        raise failure
-
-    monkeypatch.setattr(manager.git, "rev_parse_show_toplevel", fail_discovery)
+    backend.failures["discover"] = failure
 
     validation = manager.validate(worktree.id)
 
@@ -217,50 +86,143 @@ def test_validate_discovery_observation_failure_keeps_active_state(
 
 
 @pytest.mark.parametrize(
-    ("method_name", "failure", "expected_code"),
+    ("operation", "failure", "expected_code"),
     (
         (
-            "symbolic_ref_short",
-            GitCommandTimeoutError("symbolic-ref-short"),
+            "current_branch",
+            GitCommandTimeoutError("current-branch"),
             "git_command_timeout",
         ),
         (
-            "symbolic_ref_short",
+            "current_branch",
             GitCommandFailedError(
-                "symbolic-ref-short", returncode=2, stderr="temporary failure"
+                "current-branch", returncode=2, stderr="temporary failure"
             ),
             "git_observation_failed",
         ),
         (
-            "resolve_ref",
+            "head",
             GitCommandFailedError(
-                "rev-parse-ref", returncode=2, stderr="temporary failure"
+                "head", returncode=2, stderr="temporary failure"
             ),
             "git_observation_failed",
         ),
     ),
 )
-def test_validate_branch_and_head_observation_failure_keeps_active_state(
+def test_validate_head_observation_failure_keeps_active_state(
     tmp_path: Path,
     database: Database,
-    monkeypatch: pytest.MonkeyPatch,
-    method_name: str,
+    operation: str,
     failure: Exception,
     expected_code: str,
 ) -> None:
     repository = _repository(tmp_path)
-    manager = WorktreeManager(database, managed_root=tmp_path / "managed")
+    backend = FakeGitBackend()
+    manager = WorktreeManager(
+        database,
+        managed_root=tmp_path / "managed",
+        git_backend=backend,
+    )
     worktree = manager.create(repository)
-
-    def fail_observation(*args: object, **kwargs: object) -> str:
-        del args, kwargs
-        raise failure
-
-    monkeypatch.setattr(manager.git, method_name, fail_observation)
+    backend.failures[operation] = failure
 
     validation = manager.validate(worktree.id)
 
     assert not validation.valid
     assert validation.code == expected_code
     assert validation.worktree.state is WorktreeState.ACTIVE
-    assert manager.repository.read_worktree(worktree.id).state is WorktreeState.ACTIVE
+
+
+def test_typed_backend_failures_do_not_mutate_worktree_lifecycle_state(
+    tmp_path: Path,
+    database: Database,
+) -> None:
+    repository = _repository(tmp_path)
+    backend = FakeGitBackend()
+    manager = WorktreeManager(
+        database,
+        managed_root=tmp_path / "managed",
+        git_backend=backend,
+    )
+    worktrees = [manager.create(repository) for _ in range(4)]
+    backend.failures["worktree_list"] = GitCommandFailedError(
+        "worktree-list", returncode=2, stderr="temporary observation failure"
+    )
+
+    operations = (
+        lambda: manager.validate(worktrees[0].id),
+        lambda: manager.list(),
+        lambda: manager.delete(worktrees[3].id),
+    )
+    for operation in operations:
+        with pytest.raises(WorktreeError) as error:
+            operation()
+        assert error.value.code == "git_observation_failed"
+    assert manager.recover().updated_worktrees == ()
+    assert all(
+        manager.repository.read_worktree(worktree.id).state is WorktreeState.ACTIVE
+        for worktree in worktrees
+    )
+
+
+def test_typed_status_failure_does_not_mutate_existing_state(
+    tmp_path: Path,
+    database: Database,
+) -> None:
+    repository = _repository(tmp_path)
+    backend = FakeGitBackend()
+    manager = WorktreeManager(
+        database,
+        managed_root=tmp_path / "managed",
+        git_backend=backend,
+    )
+    worktree = manager.create(repository)
+    manager.repository.update_state(worktree.id, WorktreeState.INVALID)
+    backend.failures["status"] = GitCommandFailedError(
+        "status", returncode=2, stderr="temporary observation failure"
+    )
+
+    with pytest.raises(WorktreeError) as error:
+        manager.status(worktree.id)
+
+    assert error.value.code == "git_command_failed"
+    assert manager.repository.read_worktree(worktree.id).state is WorktreeState.INVALID
+
+
+def test_typed_diff_failure_maps_to_stable_error(
+    tmp_path: Path,
+    database: Database,
+) -> None:
+    repository = _repository(tmp_path)
+    backend = FakeGitBackend()
+    manager = WorktreeManager(
+        database,
+        managed_root=tmp_path / "managed",
+        git_backend=backend,
+    )
+    worktree = manager.create(repository)
+    backend.failures["diff"] = GitCommandTimeoutError("diff")
+
+    with pytest.raises(WorktreeError) as error:
+        manager.diff(worktree.id, scope=DiffScope.HEAD)
+
+    assert error.value.code == "git_command_timeout"
+
+
+def test_typed_fake_backend_returns_domain_observations() -> None:
+    status = GitStatusObservation(
+        head="a" * 40,
+        branch="main",
+        staged_paths=("staged.txt",),
+        unstaged_paths=(),
+        untracked_paths=(),
+        conflict_paths=(),
+    )
+    diff = GitDiffObservation(
+        patch="patch",
+        changed_paths=("staged.txt",),
+        truncated=False,
+    )
+
+    assert status.dirty
+    assert diff.changed_paths == ("staged.txt",)

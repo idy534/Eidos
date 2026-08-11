@@ -8,6 +8,7 @@ from eidos_runtime.domain.session import (
     DeletedSession,
     Session,
     SessionPage,
+    SessionProjectProjection,
     SessionProjection,
     SessionWorktreeProjection,
     SessionTaskStatus,
@@ -100,6 +101,18 @@ def session_projection_from_row(
 ) -> SessionProjection:
     session = session_from_row(row)
     values = RowReader(row, record="session_projection")
+    try:
+        project = SessionProjectProjection(
+            id=values.text("projection_project_id"),
+            workspace_root=values.text("projection_workspace_root"),
+            git_available=values.boolean("projection_git_available"),
+        )
+    except ValidationError as error:
+        raise PersistenceCorruptionError(
+            "persistence_record_invalid",
+            record="session_projection",
+            field=_validation_field(error),
+        ) from None
     projected_worktree_id = values.optional_text("projection_worktree_id")
     worktree: SessionWorktreeProjection | None = None
     if projected_worktree_id is not None:
@@ -130,7 +143,7 @@ def session_projection_from_row(
                 field=_validation_field(error),
             ) from None
     try:
-        return SessionProjection(session=session, worktree=worktree)
+        return SessionProjection(session=session, project=project, worktree=worktree)
     except ValidationError as error:
         raise PersistenceCorruptionError(
             "persistence_record_invalid",

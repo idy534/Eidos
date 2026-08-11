@@ -68,9 +68,16 @@ class SessionWorktreeDto(ClosedModel):
     state: Literal["active", "missing", "invalid", "deleted"]
 
 
+class SessionProjectDto(ClosedModel):
+    id: StrictStr
+    workspace_root: StrictStr = Field(alias="workspaceRoot")
+    git_available: bool = Field(alias="gitAvailable")
+
+
 class SessionDto(ClosedModel):
     id: StrictStr
     workspace_root: StrictStr = Field(alias="workspaceRoot")
+    project: SessionProjectDto | None = None
     worktree: SessionWorktreeDto | None = None
     title: StrictStr | None = None
     task_status: Literal[

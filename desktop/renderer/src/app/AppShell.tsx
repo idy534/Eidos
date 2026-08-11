@@ -293,6 +293,9 @@ export function AppShell({ runtime }: AppShellProps) {
   const { composerMode, activeRun, input } = runState;
   const { snapshot } = sessionState;
   const { approvals, respondingApprovalIds, respondingKindByApprovalId, errorsByApprovalId } = approvalState;
+  const sessionWorktree = snapshot?.session.worktree;
+  const sessionHasGit = snapshot?.session.project?.gitAvailable === true
+    && sessionWorktree !== undefined;
 
   const isRenamingThisSession = Boolean(snapshot && renamingSessionId === snapshot.session.id);
 
@@ -408,10 +411,10 @@ export function AppShell({ runtime }: AppShellProps) {
                   />
                 </div>
               )}
-              {snapshot.session.worktree && (
+              {sessionHasGit && (
                 <div className="session-header-actions">
                   <div className="session-git-summary" aria-label="当前 Git 状态">
-                    <span>{gitReviewState.status?.branch ?? snapshot.session.worktree.branch}</span>
+                    <span>{gitReviewState.status?.branch ?? sessionWorktree?.branch}</span>
                     {gitReviewState.status && (
                       <>
                         <code>{gitReviewState.status.head.slice(0, 7)}</code>
@@ -439,7 +442,7 @@ export function AppShell({ runtime }: AppShellProps) {
               )}
             </header>
 
-            {contentView === "changes" && snapshot.session.worktree ? (
+            {contentView === "changes" && sessionHasGit ? (
               <GitChangesPanel
                 scope={gitReviewState.scope}
                 status={gitReviewState.status}

@@ -12,7 +12,7 @@ _SESSION_WORKSPACE_SELECT = """
     SELECT s.id, s.workspace_root, s.workspace_dev, s.workspace_inode,
            s.workspace_uid, s.worktree_id,
            w.worktree_root, w.state, w.git_dir,
-           p.repository_root, p.git_common_dir
+           p.workspace_root AS project_workspace_root, p.git_common_dir
     FROM sessions s
     LEFT JOIN worktrees w ON w.id = s.worktree_id
     LEFT JOIN projects p ON p.id = w.project_id
@@ -59,8 +59,8 @@ def _identity_from_session_row(row: sqlite3.Row) -> WorkspaceIdentity:
 
     if (
         row["worktree_root"] is None
-        or row["repository_root"] is None
-        or row["repository_root"] != row["workspace_root"]
+        or row["workspace_root"] is None
+        or row["project_workspace_root"] != row["workspace_root"]
     ):
         raise StorageError("session worktree repository mismatch")
     if row["state"] != "active":

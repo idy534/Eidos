@@ -253,11 +253,11 @@ test("projects keep creation order while tasks stay newest first", () => {
     { ...session, id: "session-1", workspaceRoot: "/old", title: "分析架构", createdAt: 1, updatedAt: 1 },
   ]);
 
-  assert.deepEqual(groups.map((group) => group.repositoryRoot), ["/new", "/old"]);
+  assert.deepEqual(groups.map((group) => group.workspaceRoot), ["/new", "/old"]);
   assert.deepEqual(groups[1]?.sessions.map((item) => item.title), ["第二期规划", "分析架构"]);
 });
 
-test("managed threads group by Project while legacy paths remain separate", () => {
+test("direct and managed threads group by explicit Project identity", () => {
   const managedWorktree = {
     worktreeId: "worktree-a",
     projectId: "project-a",
@@ -269,11 +269,18 @@ test("managed threads group by Project while legacy paths remain separate", () =
     state: "active" as const,
   };
   const groups = groupSessionsByProject([
-    { ...session, id: "managed-a", createdAt: 3, worktree: managedWorktree },
+    {
+      ...session,
+      id: "managed-a",
+      createdAt: 3,
+      project: { id: "project-a", workspaceRoot: "/repository", gitAvailable: true },
+      worktree: managedWorktree,
+    },
     {
       ...session,
       id: "managed-b",
       createdAt: 2,
+      project: { id: "project-a", workspaceRoot: "/repository", gitAvailable: true },
       worktree: {
         ...managedWorktree,
         worktreeId: "worktree-b",
@@ -281,22 +288,35 @@ test("managed threads group by Project while legacy paths remain separate", () =
         branch: "eidos/b",
       },
     },
-    { ...session, id: "legacy-same-path", workspaceRoot: "/repository", createdAt: 4 },
-    { ...session, id: "legacy-other", workspaceRoot: "/legacy", createdAt: 1 },
+    {
+      ...session,
+      id: "direct-same-path",
+      workspaceRoot: "/repository",
+      project: { id: "project-direct", workspaceRoot: "/repository", gitAvailable: false },
+      createdAt: 4,
+    },
+    {
+      ...session,
+      id: "direct-other",
+      workspaceRoot: "/legacy",
+      project: { id: "project-other", workspaceRoot: "/legacy", gitAvailable: false },
+      createdAt: 1,
+    },
   ]);
 
   assert.equal(groups.length, 3);
   assert.deepEqual(groups.map((group) => group.key), [
-    "legacy:/repository",
+    "project-direct",
     "project-a",
-    "legacy:/legacy",
+    "project-other",
   ]);
   assert.deepEqual(
     groups.find((group) => group.key === "project-a")?.sessions.map((item) => item.id),
     ["managed-a", "managed-b"],
   );
-  assert.equal(groups.find((group) => group.key === "project-a")?.managed, true);
-  assert.equal(groups.find((group) => group.key === "legacy:/repository")?.managed, false);
+  assert.equal(groups.find((group) => group.key === "project-a")?.gitAvailable, true);
+  assert.equal(groups.find((group) => group.key === "project-direct")?.gitAvailable, false);
+  assert.equal(groups.find((group) => group.key === "project-direct")?.displayName, "repository");
 });
 
 test("task statuses use compact accessible indicators", () => {

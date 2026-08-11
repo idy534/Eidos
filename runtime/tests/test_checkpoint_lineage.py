@@ -19,10 +19,8 @@ def test_checkpoint_freezes_snapshot_lineage_and_records_rewind_fork(
 ) -> None:
     data = tmp_path / "data"
     workspace = tmp_path / "workspace"
-    fork_workspace = tmp_path / "fork-workspace"
     data.mkdir(mode=0o700)
     workspace.mkdir()
-    fork_workspace.mkdir()
     store = SessionStore(data)
     store.initialize()
     try:
@@ -50,10 +48,9 @@ def test_checkpoint_freezes_snapshot_lineage_and_records_rewind_fork(
         rewound = application.rewind(
             CheckpointRewindRequestDto(checkpointId=created.checkpoint.id)
         )
-        forked = application.fork(CheckpointForkRequestDto(
-            checkpointId=created.checkpoint.id,
-            workspaceRoot=str(fork_workspace),
-        ))
+        forked = application.fork(
+            CheckpointForkRequestDto(checkpointId=created.checkpoint.id)
+        )
 
         assert created.checkpoint.rule_snapshot_id == "rule-1"
         assert created.checkpoint.repository_snapshot_id == "index-1"
@@ -78,7 +75,7 @@ def test_checkpoint_freezes_snapshot_lineage_and_records_rewind_fork(
             (forked.run.session_id,),
         ).fetchone()
         assert fork_session is not None
-        assert fork_session["workspace_root"] == str(fork_workspace.resolve())
+        assert fork_session["workspace_root"] == str(workspace.resolve())
         assert fork_session["worktree_id"] is None
         rows = store.connection.execute(
             "SELECT action, target_run_id FROM checkpoint_actions ORDER BY created_at, id"

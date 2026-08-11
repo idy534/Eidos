@@ -11,6 +11,9 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "RUNTIME_RECONFIGURING",
   "RUNTIME_SHUTDOWN_TIMEOUT",
   "PROTOCOL_VERSION_UNSUPPORTED",
+  "INVALID_PARAMS",
+  "INVALID_CURSOR",
+  "INVALID_EVENT_CURSOR",
   "RUN_ALREADY_ACTIVE",
   "RESOURCE_NOT_FOUND",
   "INVALID_STATE",
@@ -25,6 +28,19 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "SENSITIVE_SCAN_FAILED",
   "INVALID_SESSION_TITLE",
   "SESSION_HAS_ACTIVE_RUN",
+  "REPOSITORY_NOT_FOUND",
+  "NOT_A_GIT_REPOSITORY",
+  "GIT_COMMAND_TIMEOUT",
+  "WORKTREE_CREATE_FAILED",
+  "WORKTREE_PERSISTENCE_FAILED",
+  "WORKTREE_RECOVERY_REQUIRED",
+  "WORKSPACE_IDENTITY_UNAVAILABLE",
+  "CHECKPOINT_GIT_STATE_UNAVAILABLE",
+  "CHECKPOINT_FORK_WORKTREE_FAILED",
+  "DIRECT_CHECKPOINT_FORK_PATH_FORBIDDEN",
+  "MANAGED_CHECKPOINT_FORK_PATH_FORBIDDEN",
+  "ASYNC_OPERATION_CANCELED",
+  "ASYNC_OPERATION_INTERRUPTED",
   "GIT_WORKTREE_NOT_MANAGED",
   "GIT_OBSERVATION_UNAVAILABLE",
   "GIT_WORKTREE_NOT_FOUND",
@@ -837,15 +853,26 @@ function isSession(value: unknown): value is Session {
   return (
     isRecord(value)
     && hasOnlyKeys(value, [
-      "id", "workspaceRoot", "worktree", "title", "taskStatus", "createdAt", "updatedAt",
+      "id", "workspaceRoot", "project", "worktree", "title", "taskStatus", "createdAt", "updatedAt",
     ])
     && typeof value.id === "string"
     && typeof value.workspaceRoot === "string"
+    && (value.project === undefined || isSessionProject(value.project))
     && (value.worktree === undefined || isSessionWorktree(value.worktree))
     && (value.title === undefined || typeof value.title === "string")
     && ["new", "in_progress", "completed", "failed", "canceled"].includes(String(value.taskStatus))
     && isNonNegativeInteger(value.createdAt)
     && isNonNegativeInteger(value.updatedAt)
+  );
+}
+
+function isSessionProject(value: unknown): boolean {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["id", "workspaceRoot", "gitAvailable"])
+    && typeof value.id === "string"
+    && typeof value.workspaceRoot === "string"
+    && typeof value.gitAvailable === "boolean"
   );
 }
 

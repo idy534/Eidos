@@ -10,6 +10,22 @@ Renderer 是展示边界。Renderer 不能直接访问 Node 系统能力，也�
 
 远端模型只提供不可信的文本和 ToolCall 提案。Runtime 负责验证模型输出、构建 Context、执行 Tool、处理 Approval、应用 Sandbox Policy 和提交持久事实。
 
+## Workspace model
+
+Eidos 把用户选择的目录建模为 Project。Project 的基础事实是 `workspace_root`。Project 可以有 Git capability，但 Git 不是 Project 存在的前提。
+
+```text
+Project
+ ├── workspace_root
+ └── optional Git capability
+          └── optional Managed Worktree
+                    └── Thread / Session → Run
+```
+
+Non-Git Project 使用 Direct Workspace Session。Direct Session 的 `worktree_id` 是 NULL，Run 直接使用 `Project.workspace_root`。Git Project 继续默认使用 Managed Worktree，Run 使用该 Worktree root。
+
+文件读写、Shell、Skill、MCP、Context、Long Task、Sandbox 和 Checkpoint 属于 Workspace 或 Runtime 能力。它们不因为 Project 没有 Git 而失效。Git status、Git diff、Managed Worktree 和 Git-based Fork 只在 `gitAvailable` 为 true 时提供。
+
 ## 2. Process Architecture
 
 当前默认调用链如下：
@@ -168,13 +184,13 @@ Repository Intelligence 已实现为独立的 typed infrastructure。它包括�
 - generation-scoped persistence、完整代和 incomplete candidate 的区分；
 - Retrieval Snapshot、ContextPlan 和 ContextSnapshot 的 hash 与证据绑定。
 
-这些基础设施由 RepositoryApplication、ContextApplication 和 persistence repositories 提供。Managed Session 的 Repository Intelligence root 使用该 Session 的 Worktree root。Legacy Session 使用 `sessions.workspace_root`。当前默认在线 Run 仍主要使用 ContextBuilder、Workspace Tool Result 和 SQLite Context Facts。RuntimeEngine 在每次 Model Attempt 前不会强制执行完整 Inventory → Index → Map → Retrieval → ContextPlan 组装。因此，Repository Intelligence 的结构和持久化是当前实现，自动进入每次 Run 仍是部分接线能力。
+这些基础设施由 RepositoryApplication、ContextApplication 和 persistence repositories 提供。Managed Session 的 Repository Intelligence root 使用该 Session 的 Worktree root。Direct Session 使用 `Project.workspace_root`。Repository Intelligence 不要求 Git；Non-Git Project 也可以执行 inventory、文件类型识别、Tree-sitter、symbol index、search 和 retrieval。当前默认在线 Run 仍主要使用 ContextBuilder、Workspace Tool Result 和 SQLite Context Facts。RuntimeEngine 在每次 Model Attempt 前不会强制执行完整 Inventory → Index → Map → Retrieval → ContextPlan 组装。因此，Repository Intelligence 的结构和持久化是当前实现，自动进入每次 Run 仍是部分接线能力。
 
 ## 11. Persistence & Events
 
 SQLite 是业务事实唯一权威。Session、Run、Item、ToolCall、Approval、Tool Attempt、Execution Segment、Step、Model Attempt、Durable Intent、Event、Outbox、Async Operation、Extension Snapshot、Context、Repository Snapshot、Compaction 和 Checkpoint 都有持久化边界。
 
-当前 `SCHEMA_VERSION` 是 17。新数据库直接创建 v17。已有数据库的启动窗口接受 v11、v12、v13、v14、v15 和 v16，并按 v11 → v12 → v13 → v14 → v15 → v16 → v17 逐步迁移。v10 及更早版本不在当前启动迁移窗口内，未知版本 fail closed。v16 增加 `sessions.worktree_id` 和索引。v17 增加 `worktree_lifecycle_operations`，只记录 `session/create`、`session/delete` 和 `checkpoint/fork` 的有限 durable intent。旧 Session 保持 NULL，不执行 Git provisioning。
+当前 `SCHEMA_VERSION` 是 18。新数据库直接创建 v18。已有数据库按当前 migration chain 逐步迁移到 v18。v10 及更早版本不在当前启动迁移窗口内，未知版本 fail closed。v16 增加 `sessions.worktree_id` 和索引。v17 增加 `worktree_lifecycle_operations`，只记录 `session/create`、`session/delete` 和 `checkpoint/fork` 的有限 durable intent。v18 把 Project 从 Git repository 泛化为 filesystem workspace，并把 Git repository root 和 common dir 改为成对可空字段。v17 → v18 会保留已有 Project、Worktree、Session 和 Run；已有 direct Session 会得到以 canonical workspace root 确定性生成的 Project。
 
 业务状态变化与 Event/Outbox 在同一 SQLite transaction 中提交。Outbox 投递失败不会删除事实。Runtime 重启会从 SQLite、Outbox、Long Task 和 Resource 状态恢复或进入 reconciliation。
 
@@ -204,16 +220,22 @@ Runtime Git Worktree Kernel 由 `runtime/eidos_runtime/git/` 和 `runtime/eidos_
 
 ```text
 Project
- ├── Session / Thread
+ ├── workspace_root
+ ├── optional Git capability
  │      └── Managed Worktree
- │              └── Runs
+ │              └── Thread / Session → Runs
+ └── Direct Workspace Thread / Session → Runs
 ```
 
-新的 `session/create` 先把用户选择的 repository seed path 解析为 canonical repository root。Runtime 再在 Git side effect 前确定 `project`、`worktree_id`、`worktree_root`、`branch` 和 `base_commit`。Runtime 将这些事实写入 v17 durable lifecycle intent，然后执行 `git worktree add`。Session 最终保存 `worktree_id`。`sessions.workspace_root` 继续保存 repository root，作为兼容字段。Managed Run 使用 `worktree_root`。Legacy Session 继续使用 `sessions.workspace_root`。
+新的 `session/create` 先通过 Project resolution boundary 校验并 canonicalize 用户选择的目录，再检测可选 Git capability。检测到 Git 时，Runtime 在 Git side effect 前确定 `project`、`worktree_id`、`worktree_root`、`branch` 和 `base_commit`，写入 v17 durable lifecycle intent，然后创建 Managed Worktree。没有 Git 时，Runtime 直接创建 `worktree_id = NULL` 的 Direct Session，不创建 Git side effect，也不创建 Worktree lifecycle intent。Direct Run 使用 `Project.workspace_root`。
+
+`sessions.workspace_root` 保存 Project workspace root。Managed Run 使用 Worktree root。Session projection 同时提供 `projectId`、`workspaceRoot` 和 `gitAvailable`，因此 Desktop 不需要把没有 Worktree 的 Session 推断为另一个 Project。
+
+WorktreeManager 保留 Eidos 的 Project、Worktree、Session、Run、operationId、SQLite lifecycle、recovery、compensation 和 Sandbox 语义。Git mechanics 通过 typed `GitBackend` 提供。默认 backend 是 `DulwichGitBackend`。它直接返回 `GitRepositoryDiscovery`、`GitStatusObservation`、`GitDiffObservation` 和 `GitWorktreeEntry`，并使用 Dulwich 处理 discovery、ref、status、diff、worktree list/remove/prune 和 compare-and-delete branch。`NativeWorktreeCreator` 只保留 Worktree create。它内部使用受控的 `git config` filter discovery 和 `/usr/bin/git worktree add`，并通过 `HardenedGitRunner` 保留 timeout、bounded output、禁用 hook/fsmonitor/filter、credential/prompt 和进程组清理。Manager 不知道 subprocess result、porcelain 或 native adapter。
 
 Run 的执行 identity 固化在 `RunResolutionSnapshot.workspace_identity`。Runtime 会在启动和恢复 Run 时重新验证 Worktree、root、Git dir、Git common dir 和 inode/device/owner。Runtime 不会把 managed Run fallback 到 repository root。
 
-Runtime 对 machine-readable Git output 使用 NUL-safe format，并在 observation failure、timeout、truncation 或 parse incomplete 时不更新 lifecycle state。`deleted` 是 terminal state。Kernel 不修改 Run 并发语义。
+Runtime 使用 typed Git observations，并在 observation failure、timeout 或 bounded diff truncation 时不更新 lifecycle state。`deleted` 是 terminal state。Kernel 不修改 Run 并发语义。
 
 ## 14. Extension Runtime
 
@@ -237,9 +259,9 @@ Runtime 启动时会收敛未完成的 Run、ToolCall、Approval、Outbox 和资
 
 Long Task 控制事实写入 `operations` 的 `long_task/control` scope。`run/pause` 在模型、工具、Approval 和 Slot 安全点生效。`run/resume` 需要重新记录 Workspace identity、规则、Repository/Context snapshot、permission snapshot、Git 和 reconciliation 检查结果。未确认副作用不会自动重放。
 
-Checkpoint create/list 和 rewind/fork action lineage 通过 typed RPC 暴露。Checkpoint 保存规则、Repository、Context、compaction、Workspace identity、Git、permission、Model snapshot 和 reconciliation 引用。Managed Fork v1 从 `checkpoint.git_head` 创建一个新的 managed Worktree，再创建绑定的 Session、Run 和 `checkpoint_action`。它不恢复 checkpoint 时刻完整的未提交 working-tree patch，也不复制全部 immutable snapshot 内容。
+Checkpoint create/list 和 rewind/fork action lineage 通过 typed RPC 暴露。Checkpoint 保存规则、Repository、Context、compaction、Workspace identity、Git、permission、Model snapshot 和 reconciliation 引用。Managed Fork v1 从 `checkpoint.git_head` 创建一个新的 managed Worktree，再创建绑定的 Session、Run 和 `checkpoint_action`。Direct Fork 使用同一个 Project 和同一个 `workspace_root` 创建新的 Direct Session、Run 和 lineage。Direct Fork 是 conversation/runtime fork，不是 filesystem snapshot；两个 Direct Thread 会共享真实目录。当前实现不提供 copy-on-write、directory snapshot 或 filesystem rewind。
 
-Session create、Session delete 和 managed Checkpoint Fork 都使用 v17 durable lifecycle intent。Runtime 启动时先完成 SQLite 初始化，再运行 Worktree observation 和 lifecycle reconciliation，之后才暴露业务应用。Retry 使用原始 intent 中的同一 Worktree id、root、branch 和 base commit。Runtime 只在真实 Git Worktree 与 intent 完全匹配时 adopt。冲突会进入 `cleanup_required`，保留目录和 branch，并让受影响的 managed Session 不可用。Runtime 不执行 force remove、未知路径递归删除或 branch 强制删除。
+Managed Session create、Session delete 和 managed Checkpoint Fork 使用 v17 durable lifecycle intent。Direct Session create、delete 和 Direct Fork 不创建 Git lifecycle intent。Direct delete 只删除 Eidos Session 数据，不删除 `workspace_root` 或用户文件。Runtime 启动时先完成 SQLite 初始化，再运行 Worktree observation 和 lifecycle reconciliation，之后才暴露业务应用。Retry 使用原始 intent 中的同一 Worktree id、root、branch 和 base commit。Runtime 只在真实 Git Worktree 与 intent 完全匹配时 adopt。冲突会进入 `cleanup_required`，保留目录和 branch，并让受影响的 managed Session 不可用。Runtime 不执行 force remove、未知路径递归删除或 branch 强制删除。
 
 ## 17. Implementation Anchors
 

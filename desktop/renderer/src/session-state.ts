@@ -11,9 +11,9 @@ import type {
 export interface ProjectSessionGroup {
   key: string;
   projectId?: string;
-  repositoryRoot: string;
+  workspaceRoot: string;
   displayName: string;
-  managed: boolean;
+  gitAvailable: boolean;
   createdAt: number;
   sessions: Session[];
 }
@@ -61,19 +61,26 @@ export function groupSessionsByProject(sessions: Session[]): ProjectSessionGroup
     sessions: Session[];
   }>();
   for (const session of sessions) {
+    const project = session.project;
     const worktree = session.worktree;
-    const key = worktree?.projectId ?? `legacy:${session.workspaceRoot}`;
-    const repositoryRoot = worktree?.repositoryRoot ?? session.workspaceRoot;
+    // The fallback is only for old event fixtures. Runtime session/list and
+    // session/read always provide the explicit Project projection.
+    const key = project?.id ?? `workspace:${session.workspaceRoot}`;
+    const workspaceRoot = project?.workspaceRoot ?? session.workspaceRoot;
     const existing = grouped.get(key);
     if (existing) {
       existing.sessions.push(session);
     } else {
       grouped.set(key, {
         key,
-        ...(worktree ? { projectId: worktree.projectId } : {}),
-        repositoryRoot,
-        displayName: basename(repositoryRoot),
-        managed: worktree !== undefined,
+        ...(project?.id
+          ? { projectId: project.id }
+          : worktree?.projectId
+            ? { projectId: worktree.projectId }
+            : {}),
+        workspaceRoot,
+        displayName: basename(workspaceRoot),
+        gitAvailable: project?.gitAvailable ?? worktree !== undefined,
         sessions: [session],
       });
     }
@@ -84,7 +91,7 @@ export function groupSessionsByProject(sessions: Session[]): ProjectSessionGroup
     sessions: [...group.sessions].sort((left, right) => right.createdAt - left.createdAt),
   })).sort((left, right) => (
     right.createdAt - left.createdAt
-    || left.repositoryRoot.localeCompare(right.repositoryRoot)
+    || left.workspaceRoot.localeCompare(right.workspaceRoot)
   ));
 }
 
@@ -217,7 +224,16 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   SENSITIVE_SCAN_FAILED: "内容安全扫描未完成，原文未被发送或保存。",
   INVALID_SESSION_TITLE: "任务标题不能为空，请换一个标题。",
   SESSION_HAS_ACTIVE_RUN: "任务仍在执行，请先取消或等待完成后再删除。",
-  GIT_WORKTREE_NOT_MANAGED: "这个旧版任务没有独立 Worktree，无法读取 Git 变更。",
+  GIT_WORKTREE_NOT_MANAGED: "这个项目没有可用的 Managed Worktree，无法读取 Git 变更。",
+  REPOSITORY_NOT_FOUND: "所选工作空间不存在或不是目录。",
+  WORKSPACE_IDENTITY_UNAVAILABLE: "工作空间身份无法确认，操作已停止。",
+  WORKTREE_CREATE_FAILED: "Managed Worktree 创建失败，请查看 Runtime 日志。",
+  WORKTREE_PERSISTENCE_FAILED: "Managed Worktree 状态写入失败，请查看 Runtime 日志。",
+  WORKTREE_RECOVERY_REQUIRED: "Managed Worktree 需要恢复，请查看 Runtime 日志。",
+  CHECKPOINT_GIT_STATE_UNAVAILABLE: "Checkpoint 的 Git 状态不可用。",
+  CHECKPOINT_FORK_WORKTREE_FAILED: "Checkpoint Fork 的 Managed Worktree 创建失败。",
+  DIRECT_CHECKPOINT_FORK_PATH_FORBIDDEN: "Direct Workspace Fork 使用原 Project 工作空间。",
+  MANAGED_CHECKPOINT_FORK_PATH_FORBIDDEN: "Managed Worktree Fork 不接受外部工作空间路径。",
   GIT_OBSERVATION_UNAVAILABLE: "Git 状态暂时无法完整读取，请稍后重试。",
   GIT_WORKTREE_NOT_FOUND: "任务绑定的 Worktree 记录已不存在。",
   GIT_WORKTREE_MISSING: "任务绑定的 Worktree 目录已不存在。",

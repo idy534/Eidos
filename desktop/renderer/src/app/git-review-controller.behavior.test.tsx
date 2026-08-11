@@ -14,6 +14,11 @@ import { useGitReviewController } from "./useGitReviewController.js";
 const managedSession: Session = {
   id: "session-a",
   workspaceRoot: "/repository",
+  project: {
+    id: "project-a",
+    workspaceRoot: "/repository",
+    gitAvailable: true,
+  },
   worktree: {
     worktreeId: "worktree-a",
     projectId: "project-a",
@@ -180,10 +185,19 @@ describe("useGitReviewController", () => {
     expect(window.eidosRuntime.readSessionGitDiff).toHaveBeenCalledOnce();
   });
 
-  it("does not query Git for a Legacy Session", async () => {
+  it("does not query Git for a Direct Workspace Session", async () => {
     renderHook(() => useGitReviewController({
       ready: true,
-      session: { ...managedSession, id: "legacy", worktree: undefined },
+      session: {
+        ...managedSession,
+        id: "direct",
+        project: {
+          id: "project-direct",
+          workspaceRoot: "/repository",
+          gitAvailable: false,
+        },
+        worktree: undefined,
+      },
     }));
     await act(async () => { await Promise.resolve(); });
 
