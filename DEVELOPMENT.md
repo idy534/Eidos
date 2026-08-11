@@ -58,16 +58,57 @@ Runtime stdout 只承载 JSON-RPC。Runtime 日志写入启动终端的 stderr�
 
 ## 4. Test
 
-完整 Python 检查：
+开发过程中优先运行受影响测试：
+
+```bash
+pnpm test:affected
+```
+
+`test:affected` 根据当前分支相对 `main` 的变化选择已有 focused tests。无法可靠映射时回退到 Fast，而不是直接运行完整项目测试。
+
+快速收尾测试：
+
+```bash
+pnpm test:fast
+pnpm test:runtime:fast
+```
+
+Runtime Fast 排除 `integration`、`slow`、`platform` 和 `large_repository`。Fast 不启动 Electron，不构建 Runtime Bundle，不创建 DMG，也不执行原生 Seatbelt smoke。它用于开发反馈，不代表完整回归。
+
+Runtime 集成层：
+
+```bash
+pnpm test:integration
+```
+
+完整 Runtime 和完整项目回归：
+
+```bash
+pnpm test:runtime:full
+pnpm test:full
+pnpm test
+```
+
+`pnpm test` 保持为 `test:full` 的兼容入口。PR 最终验证、Runtime 核心生命周期、Persistence/Protocol、Tool Runtime、Sandbox、Git/Worktree 或全局测试配置变化时，应执行 Full。普通开发循环不要因为一个失败反复运行 Full。Full 不包含独立调度的 `large_repository` Scale 层。
+
+Repository Scale 单独运行：
+
+```bash
+pnpm test:runtime:scale
+```
+
+只有 Repository Map/Index/Retrieval 的规模行为、large-repository fixture 本身变化或明确要求规模验收时才需要运行 Scale。
+
+Python 静态检查：
 
 ```bash
 pnpm check:python
 ```
 
-完整项目测试：
+如果需要 Python 静态检查和完整 Runtime 测试的一次性入口：
 
 ```bash
-pnpm test
+pnpm check:python:full
 ```
 
 完整 Desktop 测试和构建：
@@ -77,17 +118,11 @@ pnpm test:desktop
 pnpm build
 ```
 
-当前关键行为可以先运行 focused tests：
+当前关键行为也可以直接运行 focused tests：
 
 ```bash
 uv run --locked pytest runtime/tests -k "schema or migration or instruction or context or response or loop or checkpoint or long_task or repository or mcp or telemetry"
-node --test scripts/packaging-config.test.mjs scripts/package-macos.test.mjs
-```
-
-Repository scale fixture 单独运行：
-
-```bash
-uv run --locked pytest -m large_repository runtime/tests/test_repository_large_scale.py
+pnpm test:packaging
 ```
 
 `pnpm test:electron-smoke` 会使用临时 `EIDOS_DATA_DIR` 和临时 Electron user-data 目录。该测试不需要真实 Model API Key。
@@ -120,7 +155,15 @@ pnpm test:runtime:bundled-seatbelt
 pnpm package:mac
 ```
 
-该命令要求 Apple Silicon macOS。脚本会执行 locked dependency 安装、packaging config、Python 检查、项目测试、build、native Seatbelt、Electron smoke、Runtime Bundle smoke、Electron Builder 和 packaged App smoke。脚本还会挂载最终 DMG，并验证从 DMG 复制到临时目录的 App。
+该命令要求 Apple Silicon macOS。普通本地模式会执行 locked dependency 安装、packaging config、Python 检查、完整项目测试、native Seatbelt、Electron smoke、Runtime Bundle smoke、Electron Builder 和 packaged App smoke。脚本还会挂载最终 DMG，并验证从 DMG 复制到临时目录的 App。
+
+CI 如果已经完成 Full、build、Seatbelt、Electron smoke、Runtime Bundle 和 bundled smoke，可以使用：
+
+```bash
+EIDOS_PACKAGE_SKIP_TESTS=1 pnpm package:mac
+```
+
+该模式复用已经生成并验证的 Runtime Bundle 和 Desktop build，只继续执行 Packaging/DMG 组装和 packaged/copy smoke，避免在同一个 CI job 中再次执行完整验证。Release 模式禁止使用这个变量。
 
 本地 artifact 是：
 

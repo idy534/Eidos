@@ -76,26 +76,49 @@ log "installing locked JavaScript and Python dependencies"
 pnpm install --frozen-lockfile
 uv sync --locked
 
-if [[ "${EIDOS_PACKAGE_SKIP_TESTS:-0}" == "1" ]]; then
+PACKAGE_SKIP_TESTS="${EIDOS_PACKAGE_SKIP_TESTS:-0}"
+if [[ "$PACKAGE_SKIP_TESTS" == "1" ]]; then
   log "WARNING: package validation skipped because EIDOS_PACKAGE_SKIP_TESTS=1"
 else
   log "running packaging configuration and project validation"
   pnpm test:packaging
   pnpm lint:python
   pnpm deps:python
-  pnpm test
-  pnpm build
+  pnpm test:full
   pnpm test:seatbelt-native
   pnpm test:electron-smoke
 fi
 
-log "building and testing the self-contained Runtime bundle"
-pnpm build:runtime:mac
-pnpm test:runtime:bundled
-pnpm test:runtime:bundled-seatbelt
+RUNTIME_BUNDLE_ROOT="$ROOT_DIR/build/macos-runtime"
+RUNTIME_BUNDLE_PYTHON="$RUNTIME_BUNDLE_ROOT/python/bin/python3"
+RUNTIME_BUNDLE_ENTRYPOINT="$RUNTIME_BUNDLE_ROOT/app/eidos_runtime/__main__.py"
+if [[ "$PACKAGE_SKIP_TESTS" == "1" ]] \
+  && [[ -x "$RUNTIME_BUNDLE_PYTHON" ]] \
+  && [[ -f "$RUNTIME_BUNDLE_ENTRYPOINT" ]]; then
+  log "reusing the Runtime bundle produced by prior validation"
+else
+  log "building the self-contained Runtime bundle"
+  pnpm build:runtime:mac
+  if [[ "$PACKAGE_SKIP_TESTS" != "1" ]]; then
+    log "testing the self-contained Runtime bundle"
+    pnpm test:runtime:bundled
+    pnpm test:runtime:bundled-seatbelt
+  fi
+fi
 
-log "building Electron application assets"
-pnpm build
+APP_BUILD_READY=0
+if [[ "$PACKAGE_SKIP_TESTS" == "1" ]] \
+  && [[ -f "$ROOT_DIR/dist/main/main.js" ]] \
+  && [[ -f "$ROOT_DIR/dist/main/preload.cjs" ]] \
+  && [[ -f "$ROOT_DIR/dist/renderer/index.html" ]] \
+  && [[ -f "$ROOT_DIR/dist/shared/index.js" ]]; then
+  APP_BUILD_READY=1
+  log "reusing the Electron application assets produced by prior validation"
+fi
+if [[ "$APP_BUILD_READY" != "1" ]]; then
+  log "building Electron application assets"
+  pnpm build
+fi
 
 log "generating the native app icon from the repository Eidos logo"
 bash "$ROOT_DIR/scripts/build-macos-icon.sh"

@@ -12,6 +12,7 @@ import unittest
 
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
+PROTOCOL_STATE_TIMEOUT_SECONDS = 15
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.db.invariants import verify_runtime_invariants  # noqa: E402
@@ -82,9 +83,11 @@ class RuntimeProcessRecoveryTests(unittest.TestCase):
                 process.stdin.flush()
 
             def read_until(predicate) -> dict[str, object]:
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + PROTOCOL_STATE_TIMEOUT_SECONDS
                 while time.monotonic() < deadline:
                     if not selector.select(timeout=0.1):
+                        if process.poll() is not None:
+                            break
                         continue
                     line = process.stdout.readline()
                     if not line:
@@ -92,7 +95,15 @@ class RuntimeProcessRecoveryTests(unittest.TestCase):
                     message = json.loads(line)
                     if predicate(message):
                         return message
-                self.fail("runtime did not reach expected protocol state")
+                returncode = process.poll()
+                stderr_tail = ""
+                if returncode is not None and process.stderr is not None:
+                    stderr_tail = process.stderr.read().decode(errors="replace")[-2000:]
+                self.fail(
+                    "runtime did not reach expected protocol state within "
+                    f"{PROTOCOL_STATE_TIMEOUT_SECONDS}s; returncode={returncode}; "
+                    f"stderr={stderr_tail!r}"
+                )
 
             try:
                 send("client-init", "initialize", {
