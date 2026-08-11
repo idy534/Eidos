@@ -10,6 +10,13 @@ class GitRepositoryDiscovery(EidosFrozenStrictModel):
     git_common_dir: str
 
 
+class GitRepositoryContext(EidosFrozenStrictModel):
+    git_available: bool
+    current_branch: str | None
+    head: str | None
+    branches: tuple[str, ...]
+
+
 class GitStatusObservation(EidosFrozenStrictModel):
     """Read-only Git status facts for one concrete worktree."""
 
@@ -54,6 +61,7 @@ class ProjectResolution(EidosFrozenStrictModel):
 
 __all__ = [
     "GitDiffObservation",
+    "GitRepositoryContext",
     "GitRepositoryDiscovery",
     "GitStatusObservation",
     "GitWorktreeEntry",

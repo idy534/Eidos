@@ -533,6 +533,14 @@ class RuntimeServer:
             tuple[str, type[BaseModel], type[method_dtos.MethodResultDto], Any], ...
         ] = (
             (
+                "project/gitContext",
+                method_dtos.GitContextRequestDto,
+                method_dtos.GitContextResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_context(
+                    request
+                ),
+            ),
+            (
                 "session/create",
                 method_dtos.SessionCreateRequestDto,
                 method_dtos.SessionCreateResponseDto,

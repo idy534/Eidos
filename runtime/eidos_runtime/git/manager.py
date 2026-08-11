@@ -48,9 +48,6 @@ from eidos_runtime.persistence.worktrees import ProjectWorktreeRepository
 from eidos_runtime.persistence.worktree_lifecycle import WorktreeLifecycleRepository
 
 
-MAX_BRANCH_COLLISION_ATTEMPTS = 8
-
-
 class WorktreeManager:
     """Runtime-owned Git Worktree lifecycle module.
 
@@ -90,6 +87,30 @@ class WorktreeManager:
         """Expose read-only repository discovery to application ports."""
 
         return self.discovery.discover(repository_seed)
+
+    def current_branch(self, repository_root: Path) -> str | None:
+        try:
+            return self.git.current_branch(repository_root)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_command_failed") from error
+
+    def head(self, repository_root: Path) -> str:
+        try:
+            return self.git.head(repository_root)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_command_failed") from error
+
+    def local_branches(self, repository_root: Path) -> tuple[str, ...]:
+        try:
+            return self.git.local_branches(repository_root)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_command_failed") from error
 
     def resolve_project(self, workspace_seed: Path | str) -> ProjectResolution:
         """Resolve a filesystem workspace and its optional Git capability."""
@@ -152,9 +173,7 @@ class WorktreeManager:
             raise WorktreeError("base_ref_not_found") from error
 
         self._ensure_managed_root()
-        worktree_id, branch, worktree_root = self._allocate_identity(
-            Path(discovery.repository_root)
-        )
+        worktree_id, branch, worktree_root = self._allocate_identity()
         now = _timestamp(_now_ms())
         return Worktree(
             id=worktree_id,
@@ -215,9 +234,12 @@ class WorktreeManager:
                 None,
             )
             root = Path(plan.worktree_root)
-            branch_present = self.git.branch_commit(
-                Path(project.workspace_root), plan.branch
-            ) is not None
+            branch_present = (
+                plan.branch is not None
+                and self.git.branch_commit(
+                    Path(project.workspace_root), plan.branch
+                ) is not None
+            )
             if entry is not None:
                 if (
                     entry.branch != plan.branch
@@ -258,8 +280,6 @@ class WorktreeManager:
         except GitCommandFailedError as error:
             if creation_attempted and compensate_on_failure:
                 self._compensate_create(project, candidate)
-            if _looks_like_branch_conflict(error):
-                raise WorktreeError("worktree_branch_conflict") from error
             raise WorktreeError("worktree_create_failed") from error
         except WorktreeError:
             if creation_attempted and compensate_on_failure:
@@ -297,7 +317,6 @@ class WorktreeManager:
             operation.worktree_id,
             operation.worktree_root,
             operation.base_ref,
-            operation.branch,
             operation.base_commit,
         )
         if any(value is None for value in required):
@@ -307,7 +326,6 @@ class WorktreeManager:
             and operation.worktree_id is not None
             and operation.worktree_root is not None
             and operation.base_ref is not None
-            and operation.branch is not None
             and operation.base_commit is not None
         )
         return Worktree(
@@ -820,7 +838,7 @@ class WorktreeManager:
         )
         head = validation.head
         branch = validation.observed_branch
-        if head is None or branch is None:
+        if head is None:
             raise WorktreeError("worktree_invalid")
         return GitStatusSnapshot(
             worktree_id=worktree.id,
@@ -1137,22 +1155,14 @@ class WorktreeManager:
         conflicts = len(result.conflict_paths)
         return staged, unstaged, untracked, conflicts, result.dirty
 
-    def _allocate_identity(self, repository_root: Path) -> tuple[str, str, Path]:
-        for _ in range(MAX_BRANCH_COLLISION_ATTEMPTS):
+    def _allocate_identity(self) -> tuple[str, None, Path]:
+        for _ in range(128):
             worktree_id = self._new_worktree_id()
-            branch = f"eidos/{worktree_id.removeprefix('wt_')[:12]}"
             root = self.managed_root / worktree_id
             if root.exists() or root.is_symlink():
                 continue
-            try:
-                if self.git.branch_commit(repository_root, branch) is not None:
-                    continue
-            except GitCommandTimeoutError:
-                raise WorktreeError("git_command_timeout") from None
-            except GitCommandFailedError as error:
-                raise WorktreeError("git_command_failed") from error
-            return worktree_id, branch, root
-        raise WorktreeError("worktree_branch_conflict")
+            return worktree_id, None, root
+        raise WorktreeError("worktree_path_conflict")
 
     def _new_worktree_id(self) -> str:
         value = self._id_factory()
@@ -1247,6 +1257,8 @@ class WorktreeManager:
         worktree: Worktree,
         entries: tuple[GitWorktreeEntry, ...],
     ) -> bool:
+        if worktree.branch is None:
+            return True
         if any(entry.branch == worktree.branch for entry in entries):
             self._log_compensation_recovery(
                 worktree,
@@ -1381,17 +1393,6 @@ class WorktreeManager:
         if duration is not None:
             extra["duration"] = duration
         self.logger.info("worktree lifecycle recovery", extra=extra)
-
-
-def _looks_like_branch_conflict(error: GitCommandFailedError) -> bool:
-    return any(
-        marker in error.stderr.lower()
-        for marker in (
-            "already exists",
-            "branch name",
-            "is already checked out",
-        )
-    )
 
 
 def _same_prepared_worktree(existing: Worktree, plan: Worktree) -> bool:

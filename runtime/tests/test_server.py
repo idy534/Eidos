@@ -452,7 +452,10 @@ class RuntimeProtocolTests(unittest.TestCase):
                             "jsonrpc": "2.0",
                             "id": "client-2",
                             "method": "session/create",
-                            "params": {"workspaceRoot": str(repository)},
+                            "params": {
+                                "workspaceRoot": str(repository),
+                                "executionMode": "worktree",
+                            },
                         }
                     ),
                     shutdown_message("client-3"),

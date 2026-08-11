@@ -108,6 +108,8 @@ test("preserves every workspace and lifecycle business code in the closed contra
     "INVALID_EVENT_CURSOR",
     "REPOSITORY_NOT_FOUND",
     "NOT_A_GIT_REPOSITORY",
+    "WORKTREE_REQUIRES_GIT",
+    "BASE_REF_NOT_FOUND",
     "GIT_COMMAND_TIMEOUT",
     "WORKTREE_CREATE_FAILED",
     "WORKTREE_PERSISTENCE_FAILED",
@@ -265,6 +267,12 @@ test("creates first-class Direct Workspace sessions without Git review state", a
 
   try {
     await client.initialize();
+    assert.deepEqual(await client.readProjectGitContext(workspaceRoot), {
+      gitAvailable: false,
+      currentBranch: null,
+      head: null,
+      branches: [],
+    });
     const first = await client.createSession(workspaceRoot);
     const second = await client.createSession(workspaceRoot);
     assert.equal(first.project?.workspaceRoot, await realpath(workspaceRoot));
@@ -296,15 +304,21 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
 
   try {
     await client.initialize();
-    const first = await client.createSession(repositoryRoot);
-    const second = await client.createSession(repositoryRoot);
+    const gitContext = await client.readProjectGitContext(repositoryRoot);
+    assert.equal(gitContext.gitAvailable, true);
+    assert.equal(gitContext.currentBranch, "main");
+    assert.ok(gitContext.head);
+    assert.ok(gitContext.branches.includes("main"));
+    const first = await client.createSession(repositoryRoot, { executionMode: "worktree" });
+    const second = await client.createSession(repositoryRoot, { executionMode: "worktree" });
     assert.ok(first.worktree);
     assert.ok(second.worktree);
     assert.equal(first.worktree.projectId, second.worktree.projectId);
     assert.equal(first.worktree.repositoryRoot, second.worktree.repositoryRoot);
     assert.notEqual(first.worktree.worktreeId, second.worktree.worktreeId);
     assert.notEqual(first.worktree.worktreeRoot, second.worktree.worktreeRoot);
-    assert.notEqual(first.worktree.branch, second.worktree.branch);
+    assert.equal(first.worktree.branch, null);
+    assert.equal(second.worktree.branch, null);
 
     const firstSnapshot = await client.readSession(first.id);
     const listed = await client.listSessions();
@@ -559,7 +573,7 @@ test("routes a runtime approval request and commits only after approval", async 
     });
 
     await client.initialize();
-    const session = await client.createSession(workspaceRoot);
+    const session = await client.createSession(workspaceRoot, { executionMode: "worktree" });
     const executionRoot = await managedWorktreeRoot(workspaceRoot);
     assert.notEqual(executionRoot, path.resolve(workspaceRoot));
     await client.startRun(session.id, "Create approved.txt", "deepseek-v4-flash");
@@ -617,7 +631,7 @@ test("cancel while awaiting approval ignores a late approve response", async () 
     });
 
     await client.initialize();
-    const session = await client.createSession(workspaceRoot);
+    const session = await client.createSession(workspaceRoot, { executionMode: "worktree" });
     const executionRoot = await managedWorktreeRoot(workspaceRoot);
     const run = await client.startRun(session.id, "Create approved.txt", "deepseek-v4-flash");
     await withTimeout(approvalRequested, 5_000);

@@ -13,6 +13,7 @@ from eidos_runtime.domain.run import Run
 from eidos_runtime.domain.session import (
     DeletedSession,
     Session,
+    SessionExecutionMode,
     SessionPage,
     SessionProjection,
     SessionProjectionPage,
@@ -55,12 +56,16 @@ class TypedRuntimeRepository(Repository):
         workspace_root: str,
         *,
         worktree_id: str | None = None,
+        execution_mode: SessionExecutionMode = SessionExecutionMode.LOCAL,
+        project_id: str | None = None,
         operation_id: str | None = None,
         session_id: str | None = None,
     ) -> CommittedMutation[Session]:
         return self._sessions.create_session_committed(
             workspace_root,
             worktree_id=worktree_id,
+            execution_mode=execution_mode,
+            project_id=project_id,
             operation_id=operation_id,
             session_id=session_id,
         )

@@ -130,7 +130,7 @@ def test_v17_to_v18_preserves_git_bindings_and_creates_deterministic_direct_proj
     store.initialize()
     try:
         assert store.health() == {"state": "ready"}
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 18
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 19
         git_project = store.connection.execute(
             "SELECT * FROM projects WHERE id = 'git-project'"
         ).fetchone()
@@ -144,6 +144,15 @@ def test_v17_to_v18_preserves_git_bindings_and_creates_deterministic_direct_proj
         assert store.connection.execute(
             "SELECT worktree_id FROM sessions WHERE id = 'managed-session'"
         ).fetchone()[0] == "worktree-1"
+        assert store.connection.execute(
+            "SELECT execution_mode FROM sessions WHERE id = 'managed-session'"
+        ).fetchone()[0] == "worktree"
+        assert store.connection.execute(
+            "SELECT execution_mode FROM sessions WHERE id = 'direct-session'"
+        ).fetchone()[0] == "local"
+        assert store.connection.execute(
+            "SELECT branch FROM worktrees WHERE id = 'worktree-1'"
+        ).fetchone()[0] == "eidos/main-1"
 
         direct_root = str(direct_workspace.resolve())
         direct_project = store.connection.execute(

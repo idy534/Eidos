@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 V9_SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -861,7 +861,7 @@ CREATE TABLE worktrees (
     git_dir TEXT NOT NULL,
     base_ref TEXT NOT NULL,
     base_commit TEXT NOT NULL,
-    branch TEXT NOT NULL,
+    branch TEXT,
     ownership TEXT NOT NULL CHECK (ownership IN ('managed', 'adopted')),
     state TEXT NOT NULL CHECK (
         state IN ('active', 'missing', 'invalid', 'deleted')
@@ -943,6 +943,19 @@ CREATE TABLE projects (
 
 """
 
+V19_SESSION_EXECUTION_SCHEMA_SQL = """
+ALTER TABLE sessions
+ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'local' CHECK (
+    execution_mode IN ('local', 'worktree')
+);
+
+UPDATE sessions
+SET execution_mode = CASE
+    WHEN worktree_id IS NULL THEN 'local'
+    ELSE 'worktree'
+END;
+"""
+
 SCHEMA_SQL = (
     V12_BASE_SCHEMA_SQL
     + V10_REPOSITORY_SCHEMA_SQL
@@ -953,4 +966,5 @@ SCHEMA_SQL = (
     + V15_WORKTREE_TABLES_SCHEMA_SQL
     + V16_SESSION_WORKTREE_SCHEMA_SQL
     + V17_WORKTREE_LIFECYCLE_SCHEMA_SQL
+    + V19_SESSION_EXECUTION_SCHEMA_SQL
 )

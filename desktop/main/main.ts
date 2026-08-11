@@ -188,6 +188,36 @@ function clientOrThrow(): RuntimeClient {
   return runtimeClient;
 }
 
+function validateSessionCreateOptions(value: unknown): {
+  executionMode?: "local" | "worktree";
+  baseRef?: string;
+} {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Session 创建参数无效。");
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !["executionMode", "baseRef"].includes(key))) {
+    throw new Error("Session 创建参数无效。");
+  }
+  if (
+    record.executionMode !== undefined
+    && record.executionMode !== "local"
+    && record.executionMode !== "worktree"
+  ) {
+    throw new Error("Session 创建模式无效。");
+  }
+  if (record.baseRef !== undefined && typeof record.baseRef !== "string") {
+    throw new Error("Session 起始 Ref 无效。");
+  }
+  return {
+    ...(record.executionMode !== undefined
+      ? { executionMode: record.executionMode }
+      : {}),
+    ...(record.baseRef !== undefined ? { baseRef: record.baseRef } : {}),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Window creation & command dispatch
 // ---------------------------------------------------------------------------
@@ -411,9 +441,13 @@ ipcMain.handle(IPC.EVENT_LIST, (_event, sessionId: unknown, afterEventId: unknow
   }
   return clientOrThrow().listEvents(sessionId, afterEventId);
 });
-ipcMain.handle(IPC.SESSION_CREATE, (_event, workspaceRoot: unknown) => {
+ipcMain.handle(IPC.SESSION_CREATE, (_event, workspaceRoot: unknown, options: unknown) => {
   if (typeof workspaceRoot !== "string") throw new Error("Workspace 参数无效。");
-  return clientOrThrow().createSession(workspaceRoot);
+  return clientOrThrow().createSession(workspaceRoot, validateSessionCreateOptions(options));
+});
+ipcMain.handle(IPC.PROJECT_GIT_CONTEXT, (_event, workspaceRoot: unknown) => {
+  if (typeof workspaceRoot !== "string") throw new Error("Workspace 参数无效。");
+  return clientOrThrow().readProjectGitContext(workspaceRoot);
 });
 ipcMain.handle(IPC.SESSION_RENAME, (_event, sessionId: unknown, title: unknown) => {
   if (typeof sessionId !== "string" || typeof title !== "string") {

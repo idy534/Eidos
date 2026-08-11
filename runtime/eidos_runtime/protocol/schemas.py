@@ -64,7 +64,7 @@ class SessionWorktreeDto(ClosedModel):
     worktree_root: StrictStr = Field(alias="worktreeRoot")
     base_ref: StrictStr = Field(alias="baseRef")
     base_commit: StrictStr = Field(alias="baseCommit")
-    branch: StrictStr
+    branch: StrictStr | None = None
     state: Literal["active", "missing", "invalid", "deleted"]
 
 
@@ -77,6 +77,9 @@ class SessionProjectDto(ClosedModel):
 class SessionDto(ClosedModel):
     id: StrictStr
     workspace_root: StrictStr = Field(alias="workspaceRoot")
+    execution_mode: Literal["local", "worktree"] | None = Field(
+        default=None, alias="executionMode"
+    )
     project: SessionProjectDto | None = None
     worktree: SessionWorktreeDto | None = None
     title: StrictStr | None = None

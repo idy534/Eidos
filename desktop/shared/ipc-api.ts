@@ -5,6 +5,7 @@ import type {
   SessionSnapshot,
   EventListResult,
   Session,
+  ProjectGitContext,
   DeleteSessionResult,
   GitDiffScope,
   SessionGitDiff,
@@ -48,7 +49,11 @@ export interface EidosRuntimeAPI {
   listSessions(): Promise<SessionListResult>;
   readSession(sessionId: string): Promise<SessionSnapshot>;
   listEvents(sessionId: string, afterEventId: number): Promise<EventListResult>;
-  createSession(workspaceRoot: string): Promise<Session>;
+  createSession(
+    workspaceRoot: string,
+    options?: { executionMode?: "local" | "worktree"; baseRef?: string },
+  ): Promise<Session>;
+  readProjectGitContext(workspaceRoot: string): Promise<ProjectGitContext>;
   renameSession(sessionId: string, title: string): Promise<Session>;
   deleteSession(sessionId: string): Promise<DeleteSessionResult>;
   readSessionGitStatus(sessionId: string): Promise<SessionGitStatus>;

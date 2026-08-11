@@ -17,14 +17,28 @@ class SessionTaskStatus(StrEnum):
     CANCELED = "canceled"
 
 
+class SessionExecutionMode(StrEnum):
+    LOCAL = "local"
+    WORKTREE = "worktree"
+
+
 class Session(EidosFrozenStrictModel):
     id: str = Field(min_length=1)
     workspace_root: str = Field(min_length=1, max_length=4096)
+    execution_mode: SessionExecutionMode = SessionExecutionMode.LOCAL
     worktree_id: str | None = Field(default=None, min_length=1)
     title: str | None = None
     task_status: SessionTaskStatus
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="after")
+    def validate_execution_binding(self) -> "Session":
+        if self.execution_mode is SessionExecutionMode.LOCAL and self.worktree_id is not None:
+            raise ValueError("local Session must not have a Worktree binding")
+        if self.execution_mode is SessionExecutionMode.WORKTREE and self.worktree_id is None:
+            raise ValueError("worktree Session must have a Worktree binding")
+        return self
 
     @field_validator("title")
     @classmethod
@@ -64,7 +78,7 @@ class SessionWorktreeProjection(EidosFrozenStrictModel):
         max_length=64,
         pattern=r"^[0-9a-fA-F]+$",
     )
-    branch: str = Field(min_length=1, max_length=4096)
+    branch: str | None = Field(default=None, min_length=1, max_length=4096)
     state: WorktreeState
 
 
@@ -83,13 +97,15 @@ class SessionProjection(EidosFrozenStrictModel):
     def validate_binding(self) -> "SessionProjection":
         if self.project.workspace_root != self.session.workspace_root:
             raise ValueError("Session Project projection is inconsistent")
-        if self.session.worktree_id is None:
-            if self.worktree is not None:
-                raise ValueError("direct Session must not have a Worktree projection")
+        if self.session.execution_mode is SessionExecutionMode.LOCAL:
+            if self.session.worktree_id is not None or self.worktree is not None:
+                raise ValueError("local Session must not have a Worktree binding")
             # A pre-v18 direct Session can share a workspace with a Git-capable
             # Project. It remains a direct execution mode until the user creates
             # a new managed Session; without a Worktree it has no Git review.
             return self
+        if self.session.worktree_id is None:
+            raise ValueError("worktree Session must have a Worktree binding")
         if self.worktree is None or self.worktree.worktree_id != self.session.worktree_id:
             raise ValueError("managed Session Worktree projection is inconsistent")
         if self.worktree.project_id != self.project.id:

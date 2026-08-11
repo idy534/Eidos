@@ -72,7 +72,9 @@ def _setup(
 
 def _create_session(sessions: SessionApplication, repository: Path) -> dict[str, object]:
     return sessions.create(
-        SessionCreateRequestDto(workspaceRoot=str(repository))
+        SessionCreateRequestDto(
+            workspaceRoot=str(repository), executionMode="worktree"
+        )
     ).root
 
 
@@ -200,7 +202,7 @@ def test_managed_checkpoint_fork_uses_checkpoint_head_and_replays_once(
         assert fork_projection.session.id != parent_projection.session.id
         assert fork_projection.worktree.worktree_id != parent_projection.worktree.worktree_id
         assert fork_projection.worktree.worktree_root != parent_projection.worktree.worktree_root
-        assert fork_projection.worktree.branch != parent_projection.worktree.branch
+        assert fork_projection.worktree.branch is None
         assert manager.status(fork_projection.worktree.worktree_id).head == checkpoint.git_head
         assert manager.status(parent_projection.worktree.worktree_id).head != checkpoint.git_head
 
@@ -288,12 +290,6 @@ def test_failed_checkpoint_fork_unbinds_session_before_create_rollback(
         )
         assert rolled_back.state.value == "deleted"
         assert not Path(rolled_back.worktree_root).exists()
-        branch = subprocess.run(
-            ["git", "show-ref", "--verify", f"refs/heads/{rolled_back.branch}"],
-            cwd=repository,
-            capture_output=True,
-            text=True,
-        )
-        assert branch.returncode != 0
+        assert _git(repository, "branch", "--list", "eidos/*") == ""
     finally:
         store.close()

@@ -76,6 +76,7 @@ def _create(
 ) -> dict[str, object]:
     request = SessionCreateRequestDto(
         workspaceRoot=str(repository_seed),
+        executionMode="worktree",
         operationId=operation_id,
     )
     return application.create(request).root
@@ -321,7 +322,7 @@ def test_same_operation_id_replays_without_creating_another_worktree(
         store.close()
 
 
-def test_session_persistence_failure_compensates_clean_worktree_without_force(
+def test_session_persistence_failure_compensates_clean_detached_worktree(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -345,18 +346,13 @@ def test_session_persistence_failure_compensates_clean_worktree_without_force(
         assert len(worktrees) == 1
         assert worktrees[0].state.value == "deleted"
         assert not Path(worktrees[0].worktree_root).exists()
-        branch = subprocess.run(
-            ["git", "show-ref", "--verify", f"refs/heads/{worktrees[0].branch}"],
-            cwd=repository,
-            capture_output=True,
-            text=True,
-        )
-        assert branch.returncode != 0
+        assert worktrees[0].branch is None
+        assert _git(repository, "branch", "--list", "eidos/*") == ""
     finally:
         store.close()
 
 
-def test_managed_session_clean_delete_removes_worktree_and_preserves_branch(
+def test_managed_session_clean_delete_removes_detached_worktree(
     tmp_path: Path,
 ) -> None:
     repository = _repository(tmp_path)
@@ -374,9 +370,8 @@ def test_managed_session_clean_delete_removes_worktree_and_preserves_branch(
         assert store.typed_runtime_repository().read_session(str(session["id"])) is None
         assert manager.repository.read_worktree(worktree_id).state.value == "deleted"
         assert not Path(worktree.worktree_root).exists()
-        assert _git(
-            repository, "rev-parse", f"refs/heads/{worktree.branch}"
-        ) == worktree.base_commit
+        assert worktree.branch is None
+        assert _git(repository, "branch", "--list", "eidos/*") == ""
     finally:
         store.close()
 
@@ -588,7 +583,7 @@ def test_concurrent_delete_same_session_and_operation_replays_success(
         store.close()
 
 
-def test_session_create_rollback_preserves_a_runtime_branch_that_advanced(
+def test_session_create_rollback_removes_a_detached_head_that_advanced(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -600,8 +595,11 @@ def test_session_create_rollback_preserves_a_runtime_branch_that_advanced(
         *,
         worktree_id: str | None = None,
         operation_id: str | None = None,
+        execution_mode: str | None = None,
+        project_id: str | None = None,
+        session_id: str | None = None,
     ) -> object:
-        del operation_id
+        del operation_id, execution_mode, project_id, session_id
         assert worktree_id is not None
         worktree = manager.repository.read_worktree(worktree_id)
         assert worktree is not None
@@ -624,9 +622,8 @@ def test_session_create_rollback_preserves_a_runtime_branch_that_advanced(
         worktree = worktrees[0]
         assert worktree.state.value == "deleted"
         assert not Path(worktree.worktree_root).exists()
-        assert _git(repository, "rev-parse", f"refs/heads/{worktree.branch}") != (
-            worktree.base_commit
-        )
+        assert worktree.branch is None
+        assert _git(repository, "branch", "--list", "eidos/*") == ""
     finally:
         store.close()
 

@@ -54,6 +54,8 @@ class GitBackend(Protocol):
 
     def branch_commit(self, cwd: Path, branch: str) -> str | None: ...
 
+    def local_branches(self, cwd: Path) -> tuple[str, ...]: ...
+
     def status(self, cwd: Path) -> GitStatusObservation: ...
 
     def diff(
@@ -67,7 +69,7 @@ class GitBackend(Protocol):
     def worktree_list(self, cwd: Path) -> tuple[GitWorktreeEntry, ...]: ...
 
     def worktree_add(
-        self, cwd: Path, worktree_root: Path, branch: str, base_commit: str
+        self, cwd: Path, worktree_root: Path, branch: str | None, base_commit: str
     ) -> None: ...
 
     def worktree_remove(self, cwd: Path, worktree_root: Path) -> None: ...
@@ -152,6 +154,14 @@ class DulwichGitBackend:
         except (OSError, TypeError, ValueError) as error:
             raise _git_failure("branch-commit", error) from error
         return _object_id(value)
+
+    def local_branches(self, cwd: Path) -> tuple[str, ...]:
+        repo = self._open_repository(cwd, "local-branches")
+        try:
+            refs = repo.refs.as_dict(b"refs/heads/")
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            raise _git_failure("local-branches", error) from error
+        return tuple(sorted(os.fsdecode(name) for name in refs))
 
     def status(self, cwd: Path) -> GitStatusObservation:
         repo = self._open_repository(cwd, "status")
@@ -290,7 +300,7 @@ class DulwichGitBackend:
         )
 
     def worktree_add(
-        self, cwd: Path, worktree_root: Path, branch: str, base_commit: str
+        self, cwd: Path, worktree_root: Path, branch: str | None, base_commit: str
     ) -> None:
         if self._native_worktree_creator is None:
             self._native_worktree_creator = NativeWorktreeCreator()

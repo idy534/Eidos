@@ -161,7 +161,9 @@ export function SessionSidebar({
                               <span className="session-labels">
                                 <span className="session-title">{session.title ?? "新任务"}</span>
                                 {project.gitAvailable && session.worktree && (
-                                  <span className="session-branch">{session.worktree.branch}</span>
+                                  <span className="session-branch">
+                                    {session.worktree.branch ?? "Detached HEAD"}
+                                  </span>
                                 )}
                               </span>
                               {(isLoading || (project.gitAvailable && gitStatus?.dirty) || status) && (

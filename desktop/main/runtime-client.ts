@@ -30,6 +30,8 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "SESSION_HAS_ACTIVE_RUN",
   "REPOSITORY_NOT_FOUND",
   "NOT_A_GIT_REPOSITORY",
+  "WORKTREE_REQUIRES_GIT",
+  "BASE_REF_NOT_FOUND",
   "GIT_COMMAND_TIMEOUT",
   "WORKTREE_CREATE_FAILED",
   "WORKTREE_PERSISTENCE_FAILED",
@@ -88,6 +90,7 @@ import type {
   RuntimeEvent,
   RuntimeHealth,
   RuntimeNotification,
+  ProjectGitContext,
   Session,
   GitDiffScope,
   SessionGitDiff,
@@ -272,9 +275,23 @@ export class RuntimeClient {
     );
   }
 
-  async createSession(workspaceRoot: string, operationId = randomUUID()): Promise<Session> {
+  async createSession(
+    workspaceRoot: string,
+    options: {
+      executionMode?: "local" | "worktree";
+      baseRef?: string;
+      operationId?: string;
+    } = {},
+  ): Promise<Session> {
+    const { operationId = randomUUID(), ...executionOptions } = options;
     return this.validatedRequest(
-      "session/create", { workspaceRoot, operationId }, isSession,
+      "session/create", { workspaceRoot, operationId, ...executionOptions }, isSession,
+    );
+  }
+
+  readProjectGitContext(workspaceRoot: string): Promise<ProjectGitContext> {
+    return this.validatedRequest(
+      "project/gitContext", { workspaceRoot }, isProjectGitContext,
     );
   }
 
@@ -853,10 +870,11 @@ function isSession(value: unknown): value is Session {
   return (
     isRecord(value)
     && hasOnlyKeys(value, [
-      "id", "workspaceRoot", "project", "worktree", "title", "taskStatus", "createdAt", "updatedAt",
+      "id", "workspaceRoot", "executionMode", "project", "worktree", "title", "taskStatus", "createdAt", "updatedAt",
     ])
     && typeof value.id === "string"
     && typeof value.workspaceRoot === "string"
+    && (value.executionMode === undefined || ["local", "worktree"].includes(String(value.executionMode)))
     && (value.project === undefined || isSessionProject(value.project))
     && (value.worktree === undefined || isSessionWorktree(value.worktree))
     && (value.title === undefined || typeof value.title === "string")
@@ -889,7 +907,7 @@ function isSessionWorktree(value: unknown): boolean {
     && typeof value.worktreeRoot === "string"
     && typeof value.baseRef === "string"
     && typeof value.baseCommit === "string"
-    && typeof value.branch === "string"
+    && (value.branch === null || typeof value.branch === "string")
     && ["active", "missing", "invalid", "deleted"].includes(String(value.state))
   );
 }
@@ -902,7 +920,7 @@ function isSessionGitStatus(value: unknown): value is SessionGitStatus {
       "stagedCount", "unstagedCount", "untrackedCount", "conflictCount", "observedAt",
     ])
     && typeof value.worktreeId === "string"
-    && typeof value.branch === "string"
+    && (value.branch === null || typeof value.branch === "string")
     && typeof value.head === "string"
     && typeof value.baseRef === "string"
     && typeof value.baseCommit === "string"
@@ -912,6 +930,18 @@ function isSessionGitStatus(value: unknown): value is SessionGitStatus {
     && isNonNegativeInteger(value.untrackedCount)
     && isNonNegativeInteger(value.conflictCount)
     && isNonNegativeInteger(value.observedAt)
+  );
+}
+
+function isProjectGitContext(value: unknown): value is ProjectGitContext {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["gitAvailable", "currentBranch", "head", "branches"])
+    && typeof value.gitAvailable === "boolean"
+    && (value.currentBranch === null || typeof value.currentBranch === "string")
+    && (value.head === null || typeof value.head === "string")
+    && Array.isArray(value.branches)
+    && value.branches.every((branch) => typeof branch === "string")
   );
 }
 

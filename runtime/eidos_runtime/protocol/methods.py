@@ -23,6 +23,7 @@ from eidos_runtime.protocol.schemas import (
     PluginRecordDto,
     RunDto,
     SessionDto,
+    SessionWorktreeDto,
     SkillMetadataDto,
     StepResolutionReviewDto,
 )
@@ -64,7 +65,29 @@ class _OperationRequest(_CanonicalIdRequest):
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("operation_id",)
 
 
+def _include_detached_worktree_branch(
+    value: dict[str, JsonValue], worktree: SessionWorktreeDto | None
+) -> None:
+    if worktree is None or worktree.branch is not None:
+        return
+    worktree_value = value.get("worktree")
+    if isinstance(worktree_value, dict):
+        worktree_value["branch"] = None
+
+
 class SessionCreateRequestDto(_OperationRequest):
+    workspace_root: StrictStr = Field(
+        alias="workspaceRoot", min_length=1, max_length=4096
+    )
+    execution_mode: Literal["local", "worktree"] = Field(
+        default="local", alias="executionMode"
+    )
+    base_ref: StrictStr | None = Field(
+        default=None, alias="baseRef", min_length=1, max_length=4096
+    )
+
+
+class GitContextRequestDto(MethodRequestDto):
     workspace_root: StrictStr = Field(
         alias="workspaceRoot", min_length=1, max_length=4096
     )
@@ -258,7 +281,12 @@ class CheckpointForkRequestDto(_OperationRequest):
 
 
 class _SessionResponseDto(MethodResultDto, SessionDto):
-    pass
+    def to_json_value(self) -> dict[str, JsonValue]:
+        value = super().to_json_value()
+        _include_detached_worktree_branch(value, self.worktree)
+        if self.execution_mode is not None:
+            value["executionMode"] = self.execution_mode
+        return value
 
 
 class SessionCreateResponseDto(_SessionResponseDto):
@@ -269,6 +297,15 @@ class SessionListResponseDto(MethodResultDto):
     items: list[SessionDto]
     next_cursor: StrictStr | None = Field(default=None, alias="nextCursor")
 
+    def to_json_value(self) -> dict[str, JsonValue]:
+        value = super().to_json_value()
+        for item, item_value in zip(self.items, value.get("items", []), strict=True):
+            if isinstance(item_value, dict):
+                _include_detached_worktree_branch(item_value, item.worktree)
+                if item.execution_mode is not None:
+                    item_value["executionMode"] = item.execution_mode
+        return value
+
 
 class SessionReadResponseDto(MethodResultDto):
     session: SessionDto
@@ -278,10 +315,19 @@ class SessionReadResponseDto(MethodResultDto):
     previous_item_id: StrictStr | None = Field(default=None, alias="previousItemId")
     through_event_id: StrictInt | None = Field(default=None, alias="throughEventId")
 
+    def to_json_value(self) -> dict[str, JsonValue]:
+        value = super().to_json_value()
+        session_value = value.get("session")
+        if isinstance(session_value, dict):
+            _include_detached_worktree_branch(session_value, self.session.worktree)
+            if self.session.execution_mode is not None:
+                session_value["executionMode"] = self.session.execution_mode
+        return value
+
 
 class SessionGitStatusResponseDto(MethodResultDto):
     worktree_id: StrictStr = Field(alias="worktreeId")
-    branch: StrictStr
+    branch: StrictStr | None = None
     head: StrictStr
     base_ref: StrictStr = Field(alias="baseRef")
     base_commit: StrictStr = Field(alias="baseCommit")
@@ -291,6 +337,24 @@ class SessionGitStatusResponseDto(MethodResultDto):
     untracked_count: StrictInt = Field(alias="untrackedCount", ge=0)
     conflict_count: StrictInt = Field(alias="conflictCount", ge=0)
     observed_at: StrictInt = Field(alias="observedAt", ge=0)
+
+    def to_json_value(self) -> dict[str, JsonValue]:
+        value = super().to_json_value()
+        value["branch"] = self.branch
+        return value
+
+
+class GitContextResponseDto(MethodResultDto):
+    git_available: bool = Field(alias="gitAvailable")
+    current_branch: StrictStr | None = Field(default=None, alias="currentBranch")
+    head: StrictStr | None = None
+    branches: list[StrictStr]
+
+    def to_json_value(self) -> dict[str, JsonValue]:
+        value = super().to_json_value()
+        value["currentBranch"] = self.current_branch
+        value["head"] = self.head
+        return value
 
 
 class SessionGitDiffResponseDto(MethodResultDto):

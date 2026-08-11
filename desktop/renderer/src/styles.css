@@ -1667,6 +1667,93 @@ h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
   width: min(100%, 36rem);
 }
 
+.create-session-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.create-session-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.create-session-fieldset legend,
+.create-session-ref-field > span {
+  margin-bottom: 0.55rem;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.create-session-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.create-session-mode-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  min-height: 4.4rem;
+  padding: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.create-session-mode-card.selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, white);
+}
+
+.create-session-mode-card.disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.create-session-mode-card input {
+  margin-top: 0.15rem;
+  accent-color: var(--accent);
+}
+
+.create-session-mode-card span {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.create-session-mode-card strong {
+  font-size: 0.86rem;
+}
+
+.create-session-mode-card small {
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.create-session-ref-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.create-session-ref-field select {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 560px) {
+  .create-session-mode-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .modal-header {
   padding: 1.25rem 1.35rem 0.75rem;
   border-bottom: 1px solid var(--surface-muted);
