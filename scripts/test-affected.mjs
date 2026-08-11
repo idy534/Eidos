@@ -67,7 +67,13 @@ export function selectAffectedCommands(changedFiles, options = {}) {
   addRuntimeMapping(
     (file) => file.startsWith("runtime/eidos_runtime/repo_intelligence/"),
     pytest(
-      ["runtime/tests", "-k", "repository or repo or retrieval or inventory or index or watcher"],
+      [
+        "runtime/tests",
+        "-m",
+        "not large_repository",
+        "-k",
+        "repository or repo or retrieval or inventory or index or watcher",
+      ],
       "Repository intelligence changes",
     ),
   );
