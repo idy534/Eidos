@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path
+import re
 import selectors
 import signal
 import subprocess
@@ -175,7 +176,15 @@ class GitProcess:
         return self._run(
             "diff-head",
             cwd,
-            ("diff", "--no-ext-diff", "--no-color", "--no-renames", "HEAD", "--"),
+            (
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--no-renames",
+                "HEAD",
+                "--",
+            ),
             output_limit_bytes=DEFAULT_GIT_DIFF_BYTES,
         )
 
@@ -187,6 +196,7 @@ class GitProcess:
             (
                 "diff",
                 "--no-ext-diff",
+                "--no-textconv",
                 "--no-color",
                 "--no-renames",
                 base_commit,
@@ -217,6 +227,7 @@ class GitProcess:
                 "--name-only",
                 "-z",
                 "--no-ext-diff",
+                "--no-textconv",
                 "--no-color",
                 "--no-renames",
                 *ref_args,
@@ -245,6 +256,7 @@ class GitProcess:
                 "diff",
                 "--no-index",
                 "--no-ext-diff",
+                "--no-textconv",
                 "--no-color",
                 "--no-renames",
                 "--",
@@ -390,19 +402,40 @@ class GitProcess:
         args: Sequence[str],
         *,
         output_limit_bytes: int,
+        apply_config_hardening: bool = True,
     ) -> GitCommandResult:
         if not cwd.is_absolute() or not cwd.is_dir():
             raise GitCommandFailedError(operation, returncode=None)
         if any(not isinstance(argument, str) or "\x00" in argument for argument in args):
             raise ValueError("Git argv contains an invalid argument")
-        argv = [self.git_executable, *args]
+        filter_overrides = (
+            self._filter_config_overrides(cwd)
+            if apply_config_hardening and operation != "config-filter-list"
+            else ()
+        )
+        argv = [
+            self.git_executable,
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "credential.helper=",
+            "-c",
+            "core.askPass=",
+            *filter_overrides,
+            *args,
+        ]
         environment = {
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
             "LANG": "C",
             "LC_ALL": "C",
+            "HOME": "/var/empty",
             "GIT_OPTIONAL_LOCKS": "0",
             "GIT_PAGER": "cat",
             "GIT_TERMINAL_PROMPT": "0",
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "GIT_CONFIG_SYSTEM": "/dev/null",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_ASKPASS": "/usr/bin/false",
         }
         started = time.monotonic()
         try:
@@ -459,6 +492,64 @@ class GitProcess:
             stdout_truncated=stdout_truncated,
             stderr_truncated=stderr_truncated,
         )
+
+    def _filter_config_overrides(self, cwd: Path) -> tuple[str, ...]:
+        """Disable executable clean/process filters without invoking them."""
+
+        result = self._execute(
+            "config-filter-list",
+            cwd,
+            (
+                "config",
+                "--local",
+                "--get-regexp",
+                r"^filter\.[^.]+\.(clean|process)$",
+            ),
+            output_limit_bytes=self.output_limit_bytes,
+            apply_config_hardening=False,
+        )
+        self._reject_truncated_result("config-filter-list", result)
+        if result.returncode == 1:
+            return ()
+        if result.returncode != 0:
+            raise GitCommandFailedError(
+                "config-filter-list",
+                returncode=result.returncode,
+                stderr=result.stderr,
+            )
+        names: set[str] = set()
+        for line in result.stdout.splitlines():
+            key, separator, _value = line.partition(" ")
+            if not separator:
+                raise GitCommandFailedError(
+                    "config-filter-list",
+                    returncode=result.returncode,
+                    stderr="filter config output is incomplete",
+                )
+            match = re.fullmatch(
+                r"filter\.([A-Za-z0-9][A-Za-z0-9_.-]*)\.(clean|process)",
+                key,
+            )
+            if match is None:
+                raise GitCommandFailedError(
+                    "config-filter-list",
+                    returncode=result.returncode,
+                    stderr="filter config key is invalid",
+                )
+            names.add(match.group(1))
+        overrides: list[str] = []
+        for name in sorted(names):
+            overrides.extend(
+                (
+                    "-c",
+                    f"filter.{name}.clean=",
+                    "-c",
+                    f"filter.{name}.process=",
+                    "-c",
+                    f"filter.{name}.required=false",
+                )
+            )
+        return tuple(overrides)
 
 
 def _communicate_bounded(

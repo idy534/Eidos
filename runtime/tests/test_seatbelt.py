@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import shutil
 import socketserver
+import subprocess
 import sys
 import tempfile
 import threading
@@ -113,6 +115,8 @@ class SeatbeltProfileTests(unittest.TestCase):
                 self.assertTrue(command[2].endswith("seatbelt.sbpl"))
                 self.assertIn(f"-DWORKSPACE_ROOT={workspace.resolve()}", command)
                 self.assertIn(f"-DGIT_DIR={git_directory.resolve()}", command)
+                self.assertIn(f"-DGIT_WORKTREE_DIR={git_directory.resolve()}", command)
+                self.assertIn(f"-DGIT_COMMON_DIR={git_directory.resolve()}", command)
                 self.assertIn(f"-DSENSITIVE_PATH={sensitive_path.resolve()}", command)
                 self.assertIn(f"-DSANDBOX_HOME={sandbox_home.resolve()}", command)
                 self.assertIn(f"-DSANDBOX_TMP={sandbox_tmp.resolve()}", command)
@@ -130,6 +134,12 @@ class SeatbeltProfileTests(unittest.TestCase):
                     "LC_ALL",
                     "GIT_OPTIONAL_LOCKS",
                     "PNPM_CONFIG_PM_ON_FAIL",
+                    "GIT_PAGER",
+                    "GIT_TERMINAL_PROMPT",
+                    "GIT_CONFIG_GLOBAL",
+                    "GIT_CONFIG_SYSTEM",
+                    "GIT_CONFIG_NOSYSTEM",
+                    "GIT_ASKPASS",
                 },
             )
 
@@ -286,6 +296,112 @@ class SeatbeltSmokeTests(unittest.TestCase):
             self.assertEqual(allowed.returncode, 0, allowed.stderr)
             self.assertNotEqual(denied.returncode, 0)
             self.assertEqual(pointer.read_text(encoding="utf-8"), original)
+
+    def test_real_linked_worktree_git_reads_are_allowed_but_metadata_writes_are_denied(
+        self,
+    ) -> None:
+        if not is_seatbelt_usable():
+            self.skipTest("macOS Seatbelt is unavailable")
+        git = shutil.which("git") or "/usr/bin/git"
+        with tempfile.TemporaryDirectory(prefix="eidos-linked-worktree-") as temporary:
+            root = Path(temporary)
+            repository = root / "repository"
+            worktree = root / "managed-worktree"
+            home = root / "home"
+            sandbox_tmp = root / "tmp"
+            repository.mkdir()
+            home.mkdir()
+            sandbox_tmp.mkdir()
+
+            def run_git(*args: str, cwd: Path = repository) -> str:
+                completed = subprocess.run(
+                    [git, *args],
+                    cwd=cwd,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                return completed.stdout.strip()
+
+            run_git("init", "-q", "-b", "main")
+            run_git("config", "user.email", "eidos-tests@example.com")
+            run_git("config", "user.name", "Eidos Tests")
+            (repository / "README.md").write_text("base\n", encoding="utf-8")
+            run_git("add", "README.md")
+            run_git("commit", "-qm", "initial")
+            run_git("worktree", "add", "-q", "-b", "eidos/linked", str(worktree))
+
+            def resolve_git_path(value: str, cwd: Path) -> Path:
+                path = Path(value)
+                return (path if path.is_absolute() else cwd / path).resolve()
+
+            git_dir = resolve_git_path(
+                run_git("rev-parse", "--git-dir", cwd=worktree),
+                worktree,
+            )
+            git_common_dir = resolve_git_path(
+                run_git("rev-parse", "--git-common-dir", cwd=worktree),
+                worktree,
+            )
+            profile = SeatbeltProfile.create(
+                workspace_root=worktree,
+                sandbox_home=home,
+                sandbox_tmp=sandbox_tmp,
+                sensitive_path=worktree / ".env",
+                git_worktree_dir=git_dir,
+                git_common_dir=git_common_dir,
+            )
+
+            for command in (
+                ["status", "--porcelain=v2"],
+                ["diff", "--no-ext-diff", "--no-textconv"],
+                ["log", "-1"],
+                ["rev-parse", "HEAD"],
+                ["branch", "--show-current"],
+            ):
+                result = run_sandboxed(profile, [git, *command], timeout_seconds=5)
+                self.assertEqual(result.returncode, 0, (command, result.stderr))
+
+            normal_write = worktree / "normal.txt"
+            normal = run_sandboxed(
+                profile,
+                ["/usr/bin/touch", str(normal_write)],
+            )
+            self.assertEqual(normal.returncode, 0, normal.stderr)
+            self.assertTrue(normal_write.exists())
+
+            (worktree / "change.txt").write_text("change\n", encoding="utf-8")
+            for command in (
+                ["add", "change.txt"],
+                ["commit", "-m", "test"],
+                ["branch", "eidos/blocked"],
+                ["switch", "main"],
+                ["checkout", "main"],
+                ["reset", "--hard", "HEAD"],
+            ):
+                result = run_sandboxed(profile, [git, *command], timeout_seconds=5)
+                self.assertNotEqual(result.returncode, 0, (command, result.stdout))
+
+            for path in (
+                git_dir / "direct-write",
+                git_common_dir / "direct-write",
+                repository / "original-write",
+            ):
+                result = run_sandboxed(
+                    profile,
+                    ["/usr/bin/touch", str(path)],
+                )
+                self.assertNotEqual(result.returncode, 0, str(path))
+                self.assertFalse(path.exists())
+
+            cleanup = subprocess.run(
+                [git, "worktree", "remove", "--force", str(worktree)],
+                cwd=repository,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(cleanup.returncode, 0, cleanup.stderr)
 
     def test_dynamic_profile_grants_only_approved_external_paths(self) -> None:
         with tempfile.TemporaryDirectory(

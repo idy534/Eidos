@@ -378,6 +378,8 @@ class ToolExecutor:
                 device=metadata.st_dev,
                 inode=metadata.st_ino,
                 owner=metadata.st_uid,
+                git_dir=self.workspace.git_dir,
+                git_common_dir=self.workspace.git_common_dir,
             )
         finally:
             os.close(descriptor)

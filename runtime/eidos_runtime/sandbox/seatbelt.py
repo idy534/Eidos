@@ -87,6 +87,8 @@ class SeatbeltProfile:
     sandbox_home: Path
     sandbox_tmp: Path
     git_directory: Path
+    git_worktree_dir: Path
+    git_common_dir: Path
     sensitive_path: Path
     effective_permissions: EffectivePermissionProfile | None = None
 
@@ -98,6 +100,8 @@ class SeatbeltProfile:
         sandbox_home: Path,
         sandbox_tmp: Path,
         sensitive_path: Path,
+        git_worktree_dir: Path | None = None,
+        git_common_dir: Path | None = None,
         effective_permissions: EffectivePermissionProfile | None = None,
     ) -> SeatbeltProfile:
         workspace = _existing_directory(workspace_root, "workspace root")
@@ -110,6 +114,18 @@ class SeatbeltProfile:
         ):
             raise ValueError("workspace .git must be a directory, regular file, or absent")
         git_directory = git_directory.resolve(strict=False)
+        verified_worktree_dir = _verified_git_directory(
+            git_worktree_dir or git_directory,
+            "Git Worktree metadata directory",
+            allow_file=git_worktree_dir is None,
+            require_directory=git_worktree_dir is not None,
+        )
+        verified_common_dir = _verified_git_directory(
+            git_common_dir or git_directory,
+            "Git common directory",
+            allow_file=git_common_dir is None,
+            require_directory=git_common_dir is not None,
+        )
 
         sensitive = sensitive_path.resolve()
         if sensitive != workspace and workspace not in sensitive.parents:
@@ -122,6 +138,8 @@ class SeatbeltProfile:
             sandbox_home=home,
             sandbox_tmp=temporary,
             git_directory=git_directory,
+            git_worktree_dir=verified_worktree_dir,
+            git_common_dir=verified_common_dir,
             sensitive_path=sensitive,
             effective_permissions=effective_permissions,
         )
@@ -152,6 +170,8 @@ class SeatbeltProfile:
             *profile_arguments,
             f"-DWORKSPACE_ROOT={self.workspace_root}",
             f"-DGIT_DIR={self.git_directory}",
+            f"-DGIT_WORKTREE_DIR={self.git_worktree_dir}",
+            f"-DGIT_COMMON_DIR={self.git_common_dir}",
             f"-DSENSITIVE_PATH={self.sensitive_path}",
             f"-DSANDBOX_HOME={self.sandbox_home}",
             f"-DSANDBOX_TMP={self.sandbox_tmp}",
@@ -183,6 +203,12 @@ class SeatbeltProfile:
             "LC_ALL": "en_US.UTF-8",
             "GIT_OPTIONAL_LOCKS": "0",
             "PNPM_CONFIG_PM_ON_FAIL": "ignore",
+            "GIT_PAGER": "cat",
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "GIT_CONFIG_SYSTEM": "/dev/null",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_ASKPASS": "/usr/bin/false",
         }
 
 
@@ -269,6 +295,8 @@ def secure_workspace_move(
         str(PROFILE_PATH),
         f"-DWORKSPACE_ROOT={workspace}",
         f"-DGIT_DIR={workspace / '.git'}",
+        f"-DGIT_WORKTREE_DIR={workspace / '.git'}",
+        f"-DGIT_COMMON_DIR={workspace / '.git'}",
         f"-DSENSITIVE_PATH={workspace / '.env'}",
         f"-DSANDBOX_HOME={workspace / '.eidos-sandbox-home-unavailable'}",
         f"-DSANDBOX_TMP={workspace / '.eidos-sandbox-tmp-unavailable'}",
@@ -451,6 +479,26 @@ def _existing_directory(path: Path, label: str) -> Path:
     if path.is_symlink() or not resolved.is_dir():
         raise ValueError(f"{label} must be an existing non-symlink directory")
     return resolved
+
+
+def _verified_git_directory(
+    path: Path,
+    label: str,
+    *,
+    allow_file: bool = False,
+    require_directory: bool = False,
+) -> Path:
+    if not path.is_absolute() or path.is_symlink():
+        raise ValueError(f"{label} must be an absolute non-symlink path")
+    if not path.exists():
+        if require_directory:
+            raise ValueError(f"{label} must be an existing directory")
+        return path.resolve(strict=False)
+    if path.is_dir():
+        return path.resolve()
+    if allow_file and path.is_file():
+        return path.resolve()
+    raise ValueError(f"{label} must be a directory")
 
 
 def _succeeded(profile: SeatbeltProfile, command: Sequence[str]) -> bool:
