@@ -8,7 +8,7 @@ from typing import Final
 
 from pydantic import Field, model_validator
 
-from eidos_runtime.git.backend import DulwichGitBackend
+from eidos_runtime.git.backend import DulwichGitBackend, GitBackend
 from eidos_runtime.git.errors import GitError
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 from eidos_runtime.repo_intelligence.inventory import RepositoryInventory
@@ -59,8 +59,11 @@ class RepositoryMap(EidosFrozenStrictModel):
 
 
 class RepositoryMapBuilder:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, git_backend: GitBackend | None = None) -> None:
         self.root = root.resolve(strict=True)
+        # The default backend is a lazy, read-only Dulwich reader. It does not
+        # construct the native worktree creator until a caller requests add.
+        self.git_backend = git_backend or DulwichGitBackend()
 
     def build(self, inventory: RepositoryInventory) -> RepositoryMap:
         if not inventory.complete or inventory.root != str(self.root):
@@ -130,7 +133,7 @@ class RepositoryMapBuilder:
         for record in inventory.files:
             if Path(record.path).name in {"main.py", "main.ts", "index.ts", "main.go"}:
                 entry_points.add(record.path)
-        git_branch, git_head = _git_state(self.root)
+        git_branch, git_head = _git_state(self.root, self.git_backend)
         commands.sort(key=lambda command: (command.kind, command.command, command.source_path))
         payload = {
             "schema_version": 1,
@@ -219,14 +222,13 @@ class RepositoryMapBuilder:
                 commands.append(DiscoveredCommand(command=command, kind="build", source_path=source, confidence=0.9))
 
 
-def _git_state(root: Path) -> tuple[str | None, str | None]:
-    backend = DulwichGitBackend()
+def _git_state(root: Path, backend: GitBackend) -> tuple[str | None, str | None]:
     try:
-        branch = backend.symbolic_ref_short(root)
+        branch = backend.current_branch(root)
     except (GitError, ValueError):
         branch = None
     try:
-        head = backend.resolve_ref(root, "HEAD")
+        head = backend.head(root)
     except (GitError, ValueError):
         head = None
     return branch, head

@@ -62,15 +62,22 @@ def migrate(connection: sqlite3.Connection) -> None:
     direct_roots: dict[str, tuple[int, int]] = {}
     for row in connection.execute(
         """
-        SELECT id, workspace_root, MIN(created_at) AS created_at,
-               MAX(updated_at) AS updated_at
+        SELECT id, workspace_root, created_at, updated_at
         FROM sessions
         WHERE worktree_id IS NULL
-        GROUP BY id, workspace_root
-    """
+        """
     ):
         root = _canonical_workspace_root(str(row["workspace_root"]))
-        direct_roots[root] = (int(row["created_at"]), int(row["updated_at"]))
+        created_at = int(row["created_at"])
+        updated_at = int(row["updated_at"])
+        previous = direct_roots.get(root)
+        if previous is None:
+            direct_roots[root] = (created_at, updated_at)
+        else:
+            direct_roots[root] = (
+                min(previous[0], created_at),
+                max(previous[1], updated_at),
+            )
         # V17 writes already canonicalized this field, but older direct rows
         # can contain an equivalent relative segment or symlink path. The
         # direct Project projection must use the same canonical identity.

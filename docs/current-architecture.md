@@ -231,11 +231,11 @@ Project
 
 `sessions.workspace_root` 保存 Project workspace root。Managed Run 使用 Worktree root。Session projection 同时提供 `projectId`、`workspaceRoot` 和 `gitAvailable`，因此 Desktop 不需要把没有 Worktree 的 Session 推断为另一个 Project。
 
-WorktreeManager 保留 Eidos 的 Project、Worktree、Session、Run、operationId、SQLite lifecycle、recovery、compensation 和 Sandbox 语义。Git mechanics 通过 `GitBackend` 提供。默认 backend 是 `DulwichGitBackend`。它使用 Dulwich 处理 discovery、ref、status、diff、worktree list/remove/prune 等结构化 Git 读取和生命周期操作。`NativeGitFallback` 只保留需要现有 hardening 的 `worktree add` 路径，因为 Dulwich 的相关工作树写入路径可能触发配置的 clean/process filter。这个 fallback 继续使用 bounded output、timeout、禁用 hook/fsmonitor/textconv/filter 和进程组清理。
+WorktreeManager 保留 Eidos 的 Project、Worktree、Session、Run、operationId、SQLite lifecycle、recovery、compensation 和 Sandbox 语义。Git mechanics 通过 typed `GitBackend` 提供。默认 backend 是 `DulwichGitBackend`。它直接返回 `GitRepositoryDiscovery`、`GitStatusObservation`、`GitDiffObservation` 和 `GitWorktreeEntry`，并使用 Dulwich 处理 discovery、ref、status、diff、worktree list/remove/prune 和 compare-and-delete branch。`NativeWorktreeCreator` 只保留 Worktree create。它内部使用受控的 `git config` filter discovery 和 `/usr/bin/git worktree add`，并通过 `HardenedGitRunner` 保留 timeout、bounded output、禁用 hook/fsmonitor/filter、credential/prompt 和进程组清理。Manager 不知道 subprocess result、porcelain 或 native adapter。
 
 Run 的执行 identity 固化在 `RunResolutionSnapshot.workspace_identity`。Runtime 会在启动和恢复 Run 时重新验证 Worktree、root、Git dir、Git common dir 和 inode/device/owner。Runtime 不会把 managed Run fallback 到 repository root。
 
-Runtime 对 machine-readable Git output 使用 NUL-safe format，并在 observation failure、timeout、truncation 或 parse incomplete 时不更新 lifecycle state。`deleted` 是 terminal state。Kernel 不修改 Run 并发语义。
+Runtime 使用 typed Git observations，并在 observation failure、timeout 或 bounded diff truncation 时不更新 lifecycle state。`deleted` 是 terminal state。Kernel 不修改 Run 并发语义。
 
 ## 14. Extension Runtime
 

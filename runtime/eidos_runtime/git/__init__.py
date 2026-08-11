@@ -2,9 +2,9 @@ from eidos_runtime.git.errors import GitError, WorktreeError
 from eidos_runtime.git.backend import (
     DulwichGitBackend,
     GitBackend,
-    NativeGitFallback,
 )
 from eidos_runtime.git.manager import WorktreeManager
+from eidos_runtime.git.native import NativeWorktreeCreator
 from eidos_runtime.git.status import (
     DiffScope,
     GitDiffSnapshot,
@@ -18,7 +18,7 @@ __all__ = [
     "GitDiffSnapshot",
     "GitError",
     "GitStatusSnapshot",
-    "NativeGitFallback",
+    "NativeWorktreeCreator",
     "WorktreeError",
     "WorktreeManager",
 ]

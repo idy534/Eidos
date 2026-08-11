@@ -4,8 +4,7 @@ from pathlib import Path
 import subprocess
 
 from eidos_runtime.git.backend import DulwichGitBackend
-from eidos_runtime.git.discovery import GitRepositoryDiscoveryService
-from eidos_runtime.git.status import parse_porcelain_v2_status
+from eidos_runtime.git.models import GitDiffObservation, GitStatusObservation
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -44,20 +43,21 @@ def _marker_executable(tmp_path: Path, marker: Path) -> Path:
     return executable
 
 
-def test_dulwich_backend_contract_covers_structured_discovery_status_and_diff(
+def test_dulwich_backend_contract_returns_typed_discovery_status_and_diff(
     tmp_path: Path,
 ) -> None:
     repository = _repository(tmp_path)
+    backend = DulwichGitBackend()
     nested = repository / "nested"
     nested.mkdir()
-    backend = DulwichGitBackend()
-    discovery = GitRepositoryDiscoveryService(backend).discover(nested)
-    head = _git(repository, "rev-parse", "HEAD")
+
+    discovery = backend.discover(nested)
+    head = backend.head(repository)
 
     assert discovery.repository_root == str(repository.resolve())
     assert discovery.git_common_dir == str((repository / ".git").resolve())
-    assert backend.resolve_ref(repository, "HEAD") == head
-    assert backend.symbolic_ref_short(repository) == "main"
+    assert backend.resolve_revision(repository, "HEAD") == head
+    assert backend.current_branch(repository) == "main"
 
     (repository / "tracked.txt").write_text("unstaged\n", encoding="utf-8")
     (repository / "staged.txt").write_text("staged\n", encoding="utf-8")
@@ -66,36 +66,29 @@ def test_dulwich_backend_contract_covers_structured_discovery_status_and_diff(
     unicode_path = repository / "nested" / "文件.txt"
     unicode_path.write_text("untracked\n", encoding="utf-8")
 
-    observation = backend.status_observation(repository)
+    observation = backend.status(repository)
+    diff = backend.diff(repository, base_commit=head)
+
+    assert isinstance(observation, GitStatusObservation)
     assert observation.staged_paths == ("staged.txt",)
     assert observation.unstaged_paths == ("delete.txt", "tracked.txt")
     assert observation.untracked_paths == ("nested/文件.txt",)
     assert observation.conflict_paths == ()
-    assert parse_porcelain_v2_status(
-        backend.status_porcelain_v2(repository).stdout
-    ) == (1, 2, 1, 0)
-
-    names = backend.diff_name_only(repository, scope="head").stdout.split("\0")
-    assert set(names[:-1]) == {
+    assert observation.dirty
+    assert isinstance(diff, GitDiffObservation)
+    assert set(diff.changed_paths) == {
         "delete.txt",
+        "nested/文件.txt",
         "staged.txt",
         "tracked.txt",
     }
-    assert backend.untracked_files(repository).stdout == "nested/文件.txt\0"
-    diff = backend.diff_head(repository)
-    assert "unstaged" in diff.stdout
-    assert "staged" in diff.stdout
-    assert "nested/文件.txt" not in diff.stdout
-    untracked_diff = backend.diff_untracked(repository, "nested/文件.txt")
-    assert "nested/文件.txt" in untracked_diff.stdout
+    assert "untracked" in diff.patch
 
 
-def test_dulwich_backend_contract_covers_linked_worktree_add_list_remove_and_prune(
-    tmp_path: Path,
-) -> None:
+def test_dulwich_backend_linked_worktree_lifecycle_is_typed(tmp_path: Path) -> None:
     repository = _repository(tmp_path)
     backend = DulwichGitBackend()
-    head = backend.resolve_ref(repository, "HEAD")
+    head = backend.head(repository)
     linked = tmp_path / "linked-worktree"
 
     backend.worktree_add(repository, linked, "eidos/backend-contract", head)
@@ -112,36 +105,38 @@ def test_dulwich_backend_contract_covers_linked_worktree_add_list_remove_and_pru
     assert all(entry.worktree_root != str(linked.resolve()) for entry in backend.worktree_list(repository))
 
 
-def test_dulwich_backend_contract_reports_conflicts_and_unicode_paths(
+def test_dulwich_backend_reports_conflicts_and_detached_worktrees(
     tmp_path: Path,
 ) -> None:
     repository = _repository(tmp_path)
     backend = DulwichGitBackend()
-    (repository / "conflict.txt").write_text("base\n", encoding="utf-8")
-    _git(repository, "add", "conflict.txt")
-    _git(repository, "commit", "-qm", "conflict base")
-    _git(repository, "checkout", "-qb", "feature")
-    (repository / "conflict.txt").write_text("feature\n", encoding="utf-8")
-    _git(repository, "commit", "-qam", "feature conflict")
-    _git(repository, "checkout", "-q", "main")
-    (repository / "conflict.txt").write_text("main\n", encoding="utf-8")
-    _git(repository, "commit", "-qam", "main conflict")
-    subprocess.run(
+    linked = tmp_path / "linked"
+    _git(repository, "worktree", "add", "-q", "-b", "feature", str(linked), "HEAD")
+
+    (repository / "tracked.txt").write_text("main\n", encoding="utf-8")
+    _git(repository, "commit", "-qam", "main change")
+    (linked / "tracked.txt").write_text("feature\n", encoding="utf-8")
+    _git(linked, "commit", "-qam", "feature change")
+    result = subprocess.run(
         ["git", "merge", "feature"],
         cwd=repository,
         check=False,
         capture_output=True,
         text=True,
     )
+    assert result.returncode != 0
+    assert backend.status(repository).conflict_paths == ("tracked.txt",)
+    _git(repository, "merge", "--abort")
 
-    observation = backend.status_observation(repository)
-    assert observation.conflict_paths == ("conflict.txt",)
-    assert parse_porcelain_v2_status(
-        backend.status_porcelain_v2(repository).stdout
-    ) == (1, 1, 0, 1)
+    detached = tmp_path / "detached"
+    _git(repository, "worktree", "add", "-q", "--detach", str(detached), "HEAD")
+    assert any(
+        entry.worktree_root == str(detached.resolve()) and entry.branch is None
+        for entry in backend.worktree_list(repository)
+    )
 
 
-def test_dulwich_backend_never_executes_configured_git_helpers(
+def test_dulwich_read_and_native_create_paths_do_not_execute_git_helpers(
     tmp_path: Path,
 ) -> None:
     repository = _repository(tmp_path)
@@ -171,11 +166,21 @@ def test_dulwich_backend_never_executes_configured_git_helpers(
     (repository / "README.txt").write_text("changed\n", encoding="utf-8")
     backend = DulwichGitBackend()
 
-    backend.status_observation(repository)
-    backend.diff_head(repository)
-    backend.diff_name_only(repository, scope="head")
-    head = backend.resolve_ref(repository, "HEAD")
+    backend.status(repository)
+    backend.diff(repository, base_commit=backend.head(repository))
     linked = tmp_path / "linked"
-    backend.worktree_add(repository, linked, "eidos/helper-safety", head)
+    backend.worktree_add(repository, linked, "eidos/helper-safety", backend.head(repository))
 
     assert not marker.exists()
+
+
+def test_branch_delete_is_compare_and_delete(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    backend = DulwichGitBackend()
+    head = backend.head(repository)
+    _git(repository, "branch", "eidos/to-delete", head)
+
+    assert not backend.delete_branch_if_equals(repository, "eidos/to-delete", "0" * 40)
+    assert backend.branch_commit(repository, "eidos/to-delete") == head
+    assert backend.delete_branch_if_equals(repository, "eidos/to-delete", head)
+    assert backend.branch_commit(repository, "eidos/to-delete") is None

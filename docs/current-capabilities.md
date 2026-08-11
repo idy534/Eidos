@@ -81,11 +81,11 @@
 - Runtime 对 Non-Git Project 提供 Direct Workspace Session。Git Project 继续默认使用 Managed Worktree。
 - Runtime 可以创建、打开、验证、列出、恢复、清理和删除 managed Worktree。Worktree 使用 Runtime-controlled root 和 Runtime-generated branch。
 - Runtime 可以实时查询 Worktree 的 HEAD、branch、dirty、staged、unstaged、untracked 和 conflict 状态。
-- Runtime 可以返回 HEAD diff 和基于创建时 immutable `base_commit` 的 baseline diff。两种 Diff 都包含 tracked 和 untracked files。Diff 使用 NUL-safe machine output、有界输出和 truncation metadata，不修改 Git Index。
+- Runtime 可以返回 HEAD diff 和基于创建时 immutable `base_commit` 的 baseline diff。两种 Diff 都包含 tracked 和 untracked files。Diff 使用 typed `GitDiffObservation`、有界 patch 和 truncation metadata，不修改 Git Index 或 object store。
 - SQLite v18 保存 Project、Worktree ownership、lifecycle state、`sessions.worktree_id` 和 managed lifecycle intent。Migration tests 覆盖 v17 → v18，并验证 Git Project、managed Session、direct Session、Worktree FK、Run 和 deterministic Direct Project preservation。
 - Session create、Session delete 和 managed Checkpoint Fork 支持同进程 operation serialization、durable prepare、restart reconciliation 和同 operationId retry。Retry 不会重新生成 Worktree identity。
-- `GitBackend` 把 Git mechanics 与 Eidos Worktree lifecycle 分开。默认 `DulwichGitBackend` 负责 discovery、HEAD/ref、status、diff、worktree list/remove/prune 等能力。需要保留 executable 配置 hardening 的 Worktree create 使用 `NativeGitFallback`。
-- Git observation 和 fallback 使用 bounded output、timeout、禁用 external diff、textconv、executable clean/process filter、configured hooks、credential helper、pager 和 terminal prompt。
+- `GitBackend` 把 Git mechanics 与 Eidos Worktree lifecycle 分开。默认 `DulwichGitBackend` 只返回 typed discovery、ref、status、diff 和 Worktree facts。需要保留 executable 配置 hardening 的 Worktree create 使用 `NativeWorktreeCreator`；该类通过 lazy `HardenedGitRunner` 执行受控的 native create。
+- Dulwich read/status/diff 不构造 Git CLI stdout，不解析 porcelain，不执行 external diff、textconv、clean/process filter、fsmonitor 或 hook，也不写入 Index 或 object store。Native create 保留 bounded output、timeout、禁用 configured hooks/fsmonitor、filter、credential helper、pager 和 terminal prompt。
 - Linked managed Worktree 的 `git_dir` 和 `git_common_dir` 可以在默认 Seatbelt 中只读访问。Git metadata 写入仍然被 Seatbelt 拒绝。原始 repository working tree 不在该 Workspace 的访问范围内。
 - Git lifecycle 不经过 Model Tool。Desktop 以 Session 为单位读取 branch、status 和 diff。Sidebar 不轮询所有 Thread；dirty indicator 使用已有的 Session status cache。
 

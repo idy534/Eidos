@@ -208,3 +208,69 @@ def test_v17_to_v18_failure_keeps_the_v17_database_unchanged(
         ).fetchone()[0] == 2
     finally:
         connection.close()
+
+
+def test_v17_to_v18_aggregates_direct_sessions_by_canonical_workspace(
+    tmp_path: Path,
+) -> None:
+    data = tmp_path / "data"
+    data.mkdir(mode=0o700)
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    (repository / ".git").mkdir()
+    direct_workspace = tmp_path / "direct-workspace"
+    direct_workspace.mkdir()
+    direct_alias = tmp_path / "direct-alias"
+    direct_alias.symlink_to(direct_workspace, target_is_directory=True)
+    database_path = _create_v17_database(
+        data,
+        repository=repository,
+        worktree_root=tmp_path / "managed-worktree",
+        direct_workspace_alias=direct_alias,
+    )
+
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute(
+            """
+            INSERT INTO sessions (
+                id, workspace_root, workspace_dev, workspace_inode,
+                workspace_uid, worktree_id, created_at, updated_at
+            ) VALUES (?, ?, 10, 11, 12, NULL, 21, 22)
+            """,
+            ("direct-session-real", str(direct_workspace)),
+        )
+        connection.execute(
+            """
+            INSERT INTO sessions (
+                id, workspace_root, workspace_dev, workspace_inode,
+                workspace_uid, worktree_id, created_at, updated_at
+            ) VALUES (?, ?, 10, 11, 12, NULL, 31, 42)
+            """,
+            ("direct-session-alias-2", str(direct_alias)),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    store = SessionStore(data)
+    store.initialize()
+    try:
+        direct_root = str(direct_workspace.resolve())
+        project = store.connection.execute(
+            "SELECT * FROM projects WHERE workspace_root = ?", (direct_root,)
+        ).fetchone()
+        assert project is not None
+        assert project["created_at"] == 7
+        assert project["updated_at"] == 42
+        assert store.connection.execute(
+            "SELECT COUNT(*) FROM projects WHERE workspace_root = ?", (direct_root,)
+        ).fetchone()[0] == 1
+        assert {
+            row[0]
+            for row in store.connection.execute(
+                "SELECT workspace_root FROM sessions WHERE worktree_id IS NULL"
+            )
+        } == {direct_root}
+    finally:
+        store.close()

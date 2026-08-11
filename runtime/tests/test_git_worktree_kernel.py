@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
-import time
 from datetime import UTC, datetime
 
 import pytest
@@ -16,9 +15,9 @@ from eidos_runtime.git import (
     WorktreeManager,
 )
 from eidos_runtime.git.errors import GitCommandFailedError, GitCommandTimeoutError
-from eidos_runtime.git.process import GitCommandResult, GitProcess
 from eidos_runtime.domain.worktree import Worktree, WorktreeOwnership, WorktreeState
 from eidos_runtime.persistence.worktrees import ProjectWorktreeRepository
+from git_backend_fakes import FakeGitBackend
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -128,19 +127,19 @@ def test_create_persists_frozen_base_and_keeps_worktrees_isolated(
 
 
 def test_failed_worktree_observation_does_not_mutate_lifecycle_state(
-    tmp_path: Path, database: Database, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, database: Database
 ) -> None:
     repository = _repository(tmp_path)
-    manager = WorktreeManager(database, managed_root=tmp_path / "managed")
+    backend = FakeGitBackend()
+    manager = WorktreeManager(
+        database,
+        managed_root=tmp_path / "managed",
+        git_backend=backend,
+    )
     worktrees = [manager.create(repository) for _ in range(4)]
-    real_worktree_list = manager.git.worktree_list
-
-    def fail_worktree_list(cwd: Path) -> GitCommandResult:
-        raise GitCommandFailedError(
-            "worktree-list", returncode=2, stderr="temporary observation failure"
-        )
-
-    monkeypatch.setattr(manager.git, "worktree_list", fail_worktree_list)
+    backend.failures["worktree_list"] = GitCommandFailedError(
+        "worktree-list", returncode=2, stderr="temporary observation failure"
+    )
     operations = (
         lambda: manager.validate(worktrees[0].id),
         lambda: manager.list(),
@@ -154,61 +153,10 @@ def test_failed_worktree_observation_does_not_mutate_lifecycle_state(
     report = manager.recover()
     assert report.updated_worktrees == ()
 
-    monkeypatch.setattr(manager.git, "worktree_list", real_worktree_list)
     assert all(
         manager.repository.read_worktree(worktree.id).state is WorktreeState.ACTIVE
         for worktree in worktrees
     )
-
-
-def test_truncated_worktree_observation_does_not_mutate_lifecycle_state(
-    tmp_path: Path, database: Database, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repository = _repository(tmp_path)
-    manager = WorktreeManager(database, managed_root=tmp_path / "managed")
-    worktree = manager.create(repository)
-    real_worktree_list = manager.git.worktree_list
-
-    def truncated_worktree_list(cwd: Path) -> GitCommandResult:
-        output = real_worktree_list(cwd)
-        return GitCommandResult(
-            stdout=output,
-            stderr="",
-            returncode=0,
-            stdout_truncated=True,
-            stderr_truncated=False,
-        )
-
-    monkeypatch.setattr(manager.git, "worktree_list", truncated_worktree_list)
-
-    with pytest.raises(WorktreeError) as error:
-        manager.validate(worktree.id)
-
-    assert error.value.code == "git_observation_incomplete"
-    assert manager.repository.read_worktree(worktree.id).state is WorktreeState.ACTIVE
-
-
-def test_incomplete_worktree_observation_does_not_mutate_lifecycle_state(
-    tmp_path: Path, database: Database, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repository = _repository(tmp_path)
-    manager = WorktreeManager(database, managed_root=tmp_path / "managed")
-    worktree = manager.create(repository)
-
-    def incomplete_worktree_list(cwd: Path) -> GitCommandResult:
-        return GitCommandResult(
-            stdout="worktree /incomplete\x00",
-            stderr="",
-            returncode=0,
-            stdout_truncated=False,
-            stderr_truncated=False,
-        )
-
-    monkeypatch.setattr(manager.git, "worktree_list", incomplete_worktree_list)
-
-    report = manager.recover()
-    assert report.updated_worktrees == ()
-    assert manager.repository.read_worktree(worktree.id).state is WorktreeState.ACTIVE
 
 
 def test_timed_out_worktree_observation_does_not_mutate_lifecycle_state(
@@ -218,7 +166,7 @@ def test_timed_out_worktree_observation_does_not_mutate_lifecycle_state(
     manager = WorktreeManager(database, managed_root=tmp_path / "managed")
     worktree = manager.create(repository)
 
-    def timeout_worktree_list(cwd: Path) -> GitCommandResult:
+    def timeout_worktree_list(cwd: Path) -> tuple[object, ...]:
         raise GitCommandTimeoutError("worktree-list")
 
     monkeypatch.setattr(manager.git, "worktree_list", timeout_worktree_list)
@@ -404,52 +352,18 @@ def test_branch_collision_retries_with_a_new_runtime_id(
     assert worktree.branch == "eidos/after-collis"
 
 
-def test_git_process_timeout_is_typed_and_uses_a_bounded_failure(
-    tmp_path: Path,
-) -> None:
-    executable = tmp_path / "slow-git"
-    executable.write_text("#!/bin/sh\nsleep 2\n", encoding="utf-8")
-    executable.chmod(0o755)
-    process = GitProcess(git_executable=str(executable), timeout_seconds=0.05)
-
-    started = time.monotonic()
-    with pytest.raises(GitCommandTimeoutError) as error:
-        process.rev_parse_show_toplevel(tmp_path)
-
-    assert error.value.code == "git_command_timeout"
-    assert time.monotonic() - started < 1.5
-
-
-def test_git_process_bounds_stderr_exposed_by_failed_commands(tmp_path: Path) -> None:
-    executable = tmp_path / "noisy-git"
-    executable.write_text(
-        "#!/bin/sh\n/usr/bin/dd if=/dev/zero bs=200000 count=1 1>&2\nexit 1\n",
-        encoding="utf-8",
-    )
-    executable.chmod(0o755)
-    process = GitProcess(git_executable=str(executable), output_limit_bytes=1024)
-
-    with pytest.raises(GitCommandFailedError) as error:
-        process.rev_parse_show_toplevel(tmp_path)
-
-    assert len(error.value.stderr.encode("utf-8")) <= 1024
-
-
 def test_worktree_diff_maps_git_observation_failures_to_stable_errors(
     tmp_path: Path, database: Database
 ) -> None:
     repository = _repository(tmp_path)
-
-    class FailingDiffGitProcess(GitProcess):
-        def diff_head(self, cwd: Path) -> GitCommandResult:
-            raise GitCommandTimeoutError("diff-head")
-
+    backend = FakeGitBackend()
     manager = WorktreeManager(
         database,
         managed_root=tmp_path / "managed",
-        git_process=FailingDiffGitProcess(),
+        git_backend=backend,
     )
     worktree = manager.create(repository)
+    backend.failures["diff"] = GitCommandTimeoutError("diff")
 
     with pytest.raises(WorktreeError) as error:
         manager.diff(worktree.id)
@@ -461,9 +375,7 @@ def test_worktree_add_failure_after_filesystem_creation_is_compensated(
     tmp_path: Path, database: Database
 ) -> None:
     repository = _repository(tmp_path)
-    real_git = GitProcess()
-
-    class FailingAddGitProcess(GitProcess):
+    class FailingAddGitBackend(FakeGitBackend):
         def worktree_add(
             self,
             cwd: Path,
@@ -471,13 +383,13 @@ def test_worktree_add_failure_after_filesystem_creation_is_compensated(
             branch: str,
             base_commit: str,
         ) -> None:
-            real_git.worktree_add(cwd, worktree_root, branch, base_commit)
+            self.delegate.worktree_add(cwd, worktree_root, branch, base_commit)
             raise GitCommandFailedError("worktree-add", returncode=1, stderr="after add")
 
     manager = WorktreeManager(
         database,
         managed_root=tmp_path / "managed",
-        git_process=FailingAddGitProcess(),
+        git_backend=FailingAddGitBackend(),
     )
 
     with pytest.raises(WorktreeError) as error:
@@ -635,29 +547,26 @@ def test_deleted_worktree_is_terminal_when_the_original_path_reappears(
     assert manager.repository.read_worktree(deleted.id).state is WorktreeState.DELETED
 
 
-def test_truncated_status_does_not_mutate_lifecycle_state(
-    tmp_path: Path, database: Database, monkeypatch: pytest.MonkeyPatch
+def test_status_failure_does_not_mutate_lifecycle_state(
+    tmp_path: Path, database: Database
 ) -> None:
     repository = _repository(tmp_path)
-    manager = WorktreeManager(database, managed_root=tmp_path / "managed")
+    backend = FakeGitBackend()
+    manager = WorktreeManager(
+        database,
+        managed_root=tmp_path / "managed",
+        git_backend=backend,
+    )
     worktree = manager.create(repository)
     manager.repository.update_state(worktree.id, WorktreeState.INVALID)
-
-    def truncated_status(cwd: Path) -> GitCommandResult:
-        return GitCommandResult(
-            stdout="? untrusted\x00",
-            stderr="",
-            returncode=0,
-            stdout_truncated=True,
-            stderr_truncated=False,
-        )
-
-    monkeypatch.setattr(manager.git, "status_porcelain_v2", truncated_status)
+    backend.failures["status"] = GitCommandFailedError(
+        "status", returncode=2, stderr="temporary observation failure"
+    )
 
     with pytest.raises(WorktreeError) as error:
         manager.status(worktree.id)
 
-    assert error.value.code == "git_observation_incomplete"
+    assert error.value.code == "git_command_failed"
     assert manager.repository.read_worktree(worktree.id).state is WorktreeState.INVALID
 
 

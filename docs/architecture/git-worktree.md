@@ -53,10 +53,10 @@ Git metadata 字段必须同时有值或同时为空。Direct Project 以 canoni
 
 - `WorktreeManager` 是 Eidos 的 Project、Worktree、Session binding、Run identity、durable operation、recovery、compensation 和 Sandbox boundary authority。
 - `GitBackend` 是 Git mechanics seam。它不拥有 Session、Run、Checkpoint 或 SQLite lifecycle。
-- `DulwichGitBackend` 优先处理 repository discovery、repository/common dir、HEAD/ref、status、diff、worktree list/remove/prune 等 Git mechanics。
-- `NativeGitFallback` 只处理当前需要 native hardened path 的 Worktree create。Dulwich 的相关工作树写入路径可能触发配置的 clean/process filter，因此该 fallback 保留现有 hook、fsmonitor、textconv、external diff、clean/process filter、credential、timeout、bounded output 和进程组 hardening。
+- `DulwichGitBackend` 直接返回 Eidos-owned 的 `GitRepositoryDiscovery`、`GitStatusObservation`、`GitDiffObservation` 和 `GitWorktreeEntry`。它负责 repository discovery、HEAD/ref、status、diff、worktree list/remove/prune 和 compare-and-delete branch。
+- `NativeWorktreeCreator` 是唯一的 native Git 操作入口。它只创建 Worktree。它内部可以用一次受控 `git config` 读取 filter 名称，再调用 `git worktree add`。`HardenedGitRunner` 负责 timeout、bounded output、进程组清理、禁用 hook/fsmonitor、credential/prompt 和 pager。
 
-Dulwich 类型不会传播到 Application、Domain、Protocol、SQLite 或 Desktop。Backend 输出 Eidos-owned 的 `GitRepositoryDiscovery`、`GitStatusSnapshot`、`GitDiffSnapshot` 和 `GitWorktreeEntry`。
+Dulwich 类型不会传播到 Application、Domain、Protocol、SQLite 或 Desktop。Backend 只输出 Eidos-owned typed Git models。
 
 ## Session create
 
@@ -138,9 +138,9 @@ Recovery 只处理已有的 managed Worktree lifecycle operation。Direct Sessio
 
 GitBackend contract tests 覆盖 tracked clean、modified、staged、unstaged、untracked、deleted、conflict、Unicode filename、nested path、linked Worktree、HEAD、branch、HEAD diff 和 baseline diff。
 
-Runtime 不允许 configured hook、fsmonitor executable、textconv、external diff、clean filter、process filter、dotted filter driver 或 worktree-specific filter 执行。Dulwich 的低层 read-only observation 不经过这些 executable paths。Worktree create 使用 NativeGitFallback，因为该写入路径需要现有 native hardening。
+Runtime 不允许 configured hook、fsmonitor executable、textconv、external diff、clean filter、process filter、dotted filter driver 或 worktree-specific filter 执行。Dulwich 的低层 read-only observation 不经过这些 executable paths。Worktree create 使用 NativeWorktreeCreator，因为该写入路径需要现有 native hardening。
 
-Observation timeout、truncation 或 incomplete parsing 不会更新 Worktree lifecycle state。`deleted` 仍然是 terminal state。
+Observation failure、timeout 或 bounded diff truncation 不会更新 Worktree lifecycle state。Git status 和 changed paths 不经过 porcelain parser，也不会调用 `Index.commit` 或写入 object store。`deleted` 仍然是 terminal state。
 
 ## Sandbox
 

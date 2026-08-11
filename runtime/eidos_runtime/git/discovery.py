@@ -3,15 +3,19 @@ from __future__ import annotations
 from pathlib import Path
 
 from eidos_runtime.git.backend import GitBackend
-from eidos_runtime.git.errors import GitCommandFailedError, GitCommandTimeoutError, WorktreeError
+from eidos_runtime.git.errors import (
+    GitCommandFailedError,
+    GitCommandTimeoutError,
+    WorktreeError,
+)
 from eidos_runtime.git.models import GitRepositoryDiscovery
 
 
 class GitRepositoryDiscoveryService:
     """Resolves a user-selected path into verified Git repository facts."""
 
-    def __init__(self, process: GitBackend) -> None:
-        self.process = process
+    def __init__(self, backend: GitBackend) -> None:
+        self.backend = backend
 
     def discover(self, repository_root: Path | str) -> GitRepositoryDiscovery:
         path = Path(repository_root)
@@ -22,44 +26,28 @@ class GitRepositoryDiscoveryService:
         if not canonical_input.is_dir():
             raise WorktreeError("repository_not_found")
         try:
-            root_text = self.process.rev_parse_show_toplevel(canonical_input)
-            git_dir_text = self.process.rev_parse_git_dir(canonical_input)
-            common_dir_text = self.process.rev_parse_git_common_dir(canonical_input)
+            return self.backend.discover(canonical_input)
         except GitCommandTimeoutError:
             raise WorktreeError("git_command_timeout") from None
         except GitCommandFailedError as error:
             raise WorktreeError("not_a_git_repository") from error
 
-        try:
-            resolved_root = Path(root_text).resolve(strict=True)
-            resolved_git_dir = _resolve_git_path(git_dir_text, canonical_input)
-            resolved_common_dir = _resolve_git_path(common_dir_text, canonical_input)
-        except OSError as error:
-            raise WorktreeError("not_a_git_repository") from error
-        if not resolved_root.is_dir() or not resolved_git_dir.exists() or not resolved_common_dir.exists():
-            raise WorktreeError("not_a_git_repository")
-        return GitRepositoryDiscovery(
-            repository_root=str(resolved_root),
-            git_dir=str(resolved_git_dir),
-            git_common_dir=str(resolved_common_dir),
-        )
-
     def resolve(self, repository_root: Path | str) -> GitRepositoryDiscovery | None:
         """Resolve optional Git capability without treating it as a failure."""
 
+        path = Path(repository_root)
         try:
-            return self.discover(repository_root)
-        except WorktreeError as error:
-            if error.code == "not_a_git_repository":
-                return None
-            raise
-
-
-def _resolve_git_path(value: str, cwd: Path) -> Path:
-    candidate = Path(value)
-    if not candidate.is_absolute():
-        candidate = cwd / candidate
-    return candidate.resolve(strict=True)
+            canonical_input = path.resolve(strict=True)
+        except OSError as error:
+            raise WorktreeError("repository_not_found") from error
+        if not canonical_input.is_dir():
+            raise WorktreeError("repository_not_found")
+        try:
+            return self.backend.try_discover(canonical_input)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("not_a_git_repository") from error
 
 
 __all__ = ["GitRepositoryDiscoveryService"]
