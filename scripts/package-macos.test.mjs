@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -72,4 +72,18 @@ test("release packaging rejects missing signing and notarization credentials", a
   const result = await run(["release"], environment);
   assert.notEqual(result.code, 0);
   assert.match(result.output, /Developer ID|CSC_LINK|notarization|APPLE_/i);
+});
+
+
+test("CI package reuse skips duplicate validation and Runtime bundle smoke", async () => {
+  const packageScript = await readFile(script, "utf8");
+  assert.match(packageScript, /PACKAGE_SKIP_TESTS="\$\{EIDOS_PACKAGE_SKIP_TESTS:-0\}"/);
+  assert.match(packageScript, /reusing the Runtime bundle produced by prior validation/);
+  assert.match(packageScript, /reusing the Electron application assets produced by prior validation/);
+  assert.match(packageScript, /EIDOS_PACKAGE_SKIP_TESTS=1 is not allowed for release packaging/);
+  assert.equal((packageScript.match(/^[ \t]*pnpm build[ \t]*$/gm) ?? []).length, 1);
+  assert.match(
+    packageScript,
+    /if \[\[ "\$PACKAGE_SKIP_TESTS" != "1" \]\]; then[\s\S]*pnpm test:runtime:bundled[\s\S]*pnpm test:runtime:bundled-seatbelt/,
+  );
 });
