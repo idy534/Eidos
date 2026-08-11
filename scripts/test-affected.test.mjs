@@ -40,6 +40,15 @@ test("multiple mapped Runtime domains keep all focused selections without Fast f
   );
 });
 
+test("repository intelligence changes exclude separately scheduled scale validation", () => {
+  assert.deepEqual(
+    commandLines(["runtime/eidos_runtime/repo_intelligence/index.py"]),
+    [
+      "uv run --locked pytest runtime/tests -m not large_repository -k repository or repo or retrieval or inventory or index or watcher",
+    ],
+  );
+});
+
 test("a directly changed Runtime test is selected by its current path", () => {
   assert.deepEqual(
     commandLines(["runtime/tests/test_runtime_loop.py"]),
