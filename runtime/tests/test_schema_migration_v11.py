@@ -1,4 +1,4 @@
-"""Schema migration tests for the supported V11 → V12 → V13 → V14 → V15 → V16 → V19 window.
+"""Schema migration tests for the supported V11 → V12 → V13 → V14 → V15 → V16 → V20 window.
 
 V11: drops legacy model storage tables.
 V12: adds effective_cwd to runs; adds resolved_instructions_hash and
@@ -10,6 +10,7 @@ V16: binds Sessions to Runtime-owned Worktrees while retaining legacy NULLs.
 V17: adds durable managed Worktree lifecycle intents.
 V18: generalizes Projects to filesystem workspaces with optional Git metadata.
 V19: adds explicit Session execution mode and nullable Worktree branches.
+V20: adds Worktree branch ownership and Phase 3B durable operation fields.
 """
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ from eidos_runtime.db.schema import (  # noqa: E402
     V16_SESSION_WORKTREE_SCHEMA_SQL,
     V17_WORKTREE_LIFECYCLE_SCHEMA_SQL,
     V19_SESSION_EXECUTION_SCHEMA_SQL,
+    V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL,
     V18_PROJECT_SCHEMA_SQL,
     SCHEMA_SQL,
 )
@@ -228,7 +230,7 @@ class SchemaV11MigrationTests(unittest.TestCase):
         )
         store.close()
 
-    def test_v14_upgrades_to_v19_and_passes_integrity_checks(self) -> None:
+    def test_v14_upgrades_to_v20_and_passes_integrity_checks(self) -> None:
         connection = sqlite3.connect(self.database)
         connection.executescript(
             SCHEMA_SQL
@@ -237,6 +239,7 @@ class SchemaV11MigrationTests(unittest.TestCase):
             .replace(V16_SESSION_WORKTREE_SCHEMA_SQL, "", 1)
             .replace(V17_WORKTREE_LIFECYCLE_SCHEMA_SQL, "", 1)
             .replace(V19_SESSION_EXECUTION_SCHEMA_SQL, "", 1)
+            .replace(V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL, "", 1)
         )
         connection.execute("PRAGMA user_version = 14")
         connection.commit()
@@ -270,6 +273,7 @@ class SchemaV11MigrationTests(unittest.TestCase):
             .replace(V16_SESSION_WORKTREE_SCHEMA_SQL, "", 1)
             .replace(V17_WORKTREE_LIFECYCLE_SCHEMA_SQL, "", 1)
             .replace(V19_SESSION_EXECUTION_SCHEMA_SQL, "", 1)
+            .replace(V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL, "", 1)
         )
         connection.execute("PRAGMA user_version = 14")
         connection.commit()
@@ -302,6 +306,7 @@ class SchemaV11MigrationTests(unittest.TestCase):
             .replace(V16_SESSION_WORKTREE_SCHEMA_SQL, "", 1)
             .replace(V17_WORKTREE_LIFECYCLE_SCHEMA_SQL, "", 1)
             .replace(V19_SESSION_EXECUTION_SCHEMA_SQL, "", 1)
+            .replace(V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL, "", 1)
         )
         connection.execute("PRAGMA user_version = 15")
         connection.commit()
@@ -334,7 +339,9 @@ class SchemaV11MigrationTests(unittest.TestCase):
     def test_v17_migration_failure_rolls_back_without_lifecycle_table(self) -> None:
         connection = sqlite3.connect(self.database)
         connection.executescript(
-            SCHEMA_SQL.replace(V17_WORKTREE_LIFECYCLE_SCHEMA_SQL, "", 1)
+            SCHEMA_SQL
+            .replace(V17_WORKTREE_LIFECYCLE_SCHEMA_SQL, "", 1)
+            .replace(V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL, "", 1)
         )
         connection.execute("PRAGMA user_version = 16")
         connection.commit()

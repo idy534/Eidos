@@ -191,13 +191,14 @@ function clientOrThrow(): RuntimeClient {
 function validateSessionCreateOptions(value: unknown): {
   executionMode?: "local" | "worktree";
   baseRef?: string;
+  includeLocalChanges?: boolean;
 } {
   if (value === undefined) return {};
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Session 创建参数无效。");
   }
   const record = value as Record<string, unknown>;
-  if (Object.keys(record).some((key) => !["executionMode", "baseRef"].includes(key))) {
+  if (Object.keys(record).some((key) => !["executionMode", "baseRef", "includeLocalChanges"].includes(key))) {
     throw new Error("Session 创建参数无效。");
   }
   if (
@@ -210,11 +211,17 @@ function validateSessionCreateOptions(value: unknown): {
   if (record.baseRef !== undefined && typeof record.baseRef !== "string") {
     throw new Error("Session 起始 Ref 无效。");
   }
+  if (record.includeLocalChanges !== undefined && typeof record.includeLocalChanges !== "boolean") {
+    throw new Error("Session 本地修改参数无效。");
+  }
   return {
     ...(record.executionMode !== undefined
       ? { executionMode: record.executionMode }
       : {}),
     ...(record.baseRef !== undefined ? { baseRef: record.baseRef } : {}),
+    ...(record.includeLocalChanges !== undefined
+      ? { includeLocalChanges: record.includeLocalChanges }
+      : {}),
   };
 }
 
@@ -444,6 +451,17 @@ ipcMain.handle(IPC.EVENT_LIST, (_event, sessionId: unknown, afterEventId: unknow
 ipcMain.handle(IPC.SESSION_CREATE, (_event, workspaceRoot: unknown, options: unknown) => {
   if (typeof workspaceRoot !== "string") throw new Error("Workspace 参数无效。");
   return clientOrThrow().createSession(workspaceRoot, validateSessionCreateOptions(options));
+});
+ipcMain.handle(IPC.SESSION_CREATE_BRANCH, (_event, sessionId: unknown, branch: unknown) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof branch !== "string"
+    || branch.length === 0
+    || branch.length > 4096
+  ) {
+    throw new Error("Branch 参数无效。");
+  }
+  return clientOrThrow().createSessionBranch(sessionId, branch);
 });
 ipcMain.handle(IPC.PROJECT_GIT_CONTEXT, (_event, workspaceRoot: unknown) => {
   if (typeof workspaceRoot !== "string") throw new Error("Workspace 参数无效。");

@@ -319,6 +319,8 @@ def test_project_git_context_uses_runtime_git_backend(tmp_path: Path) -> None:
             "currentBranch": "main",
             "head": _git(repository, "rev-parse", "HEAD"),
             "branches": ["feature/x", "main"],
+            "dirty": False,
+            "changedFileCount": 0,
         }
     finally:
         store.close()

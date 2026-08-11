@@ -38,6 +38,7 @@ from eidos_runtime.git.errors import WorktreeError
 from eidos_runtime.git.models import (
     GitRepositoryContext,
     GitRepositoryDiscovery,
+    GitSourceSnapshot,
     ProjectResolution,
 )
 from eidos_runtime.git.status import DiffScope, GitDiffSnapshot, GitStatusSnapshot
@@ -45,6 +46,8 @@ from eidos_runtime.protocol.methods import (
     EventListRequestDto,
     EventListResponseDto,
     MethodResultDto,
+    SessionCreateBranchRequestDto,
+    SessionCreateBranchResponseDto,
     SessionCreateRequestDto,
     SessionCreateResponseDto,
     SessionDeleteRequestDto,
@@ -176,6 +179,13 @@ class ManagedWorktreePort(Protocol):
 
     def create(self, repository_root: Path | str) -> Worktree: ...
 
+    def source_snapshot(
+        self,
+        repository_root: Path,
+        *,
+        include_local_changes: bool,
+    ) -> GitSourceSnapshot: ...
+
     def prepare_create(
         self, repository_root: Path | str, base_ref: str | None = None
     ) -> Worktree: ...
@@ -191,6 +201,9 @@ class ManagedWorktreePort(Protocol):
         plan: Worktree,
         *,
         compensate_on_failure: bool = True,
+        include_local_changes: bool = False,
+        expected_source_head: str | None = None,
+        expected_source_fingerprint: str | None = None,
     ) -> Worktree: ...
 
     def prepared_from_lifecycle(
@@ -208,6 +221,14 @@ class ManagedWorktreePort(Protocol):
     def delete(self, worktree_id: str) -> Worktree: ...
 
     def rollback_create(self, worktree_id: str) -> Worktree: ...
+
+    def prepare_branch_attachment(
+        self, worktree_id: str, branch: str
+    ) -> Worktree: ...
+
+    def attach_branch_git(self, worktree_id: str, branch: str) -> Worktree: ...
+
+    def persist_branch(self, worktree_id: str, branch: str) -> Worktree: ...
 
     @property
     def lifecycle(self) -> WorktreeLifecycleRepository: ...
@@ -300,6 +321,188 @@ class SessionApplication:
         except WorktreeError as error:
             raise ApplicationError(_workspace_resolution_error_code(error), str(error)) from error
 
+    def create_branch(
+        self, request: SessionCreateBranchRequestDto
+    ) -> SessionCreateBranchResponseDto:
+        manager = self._worktree_manager
+        if manager is None:
+            raise ApplicationError(
+                "INTERNAL_ERROR", "managed Session has no Worktree application boundary"
+            )
+        operation_request = {
+            "sessionId": request.session_id,
+            "branch": request.branch,
+        }
+        operation_guard = (
+            self._lifecycle.hold_operation(
+                "session/createBranch", request.operation_id
+            )
+            if request.operation_id is not None
+            else nullcontext()
+        )
+        with operation_guard:
+            if request.operation_id is not None:
+                try:
+                    replay = self._store.operation_result(
+                        request.operation_id,
+                        "session/createBranch",
+                        operation_request,
+                    )
+                except OperationConflictError as error:
+                    raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+                except OperationInProgressError as error:
+                    raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
+                if replay is not None:
+                    return _result(SessionCreateBranchResponseDto, replay)
+
+            session = self._repository.read_session(request.session_id)
+            if session is None:
+                raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
+            if session.execution_mode is not SessionExecutionMode.WORKTREE:
+                raise ApplicationError(
+                    "WORKTREE_REQUIRED", "Create Branch requires a Worktree Session"
+                )
+            if session.worktree_id is None:
+                raise ApplicationError(
+                    "WORKTREE_REQUIRED", "Create Branch requires a managed Worktree"
+                )
+
+            lifecycle = manager.lifecycle
+            operation_id = request.operation_id or (
+                f"worktree-attach-branch-{uuid.uuid4().hex}"
+            )
+            lifecycle_operation = lifecycle.read(
+                WorktreeLifecycleScope.ATTACH_BRANCH,
+                operation_id,
+            )
+            try:
+                if lifecycle_operation is None:
+                    prepared = manager.prepare_branch_attachment(
+                        session.worktree_id, request.branch
+                    )
+                    now = datetime.now(UTC).replace(microsecond=0)
+                    lifecycle_operation = lifecycle.prepare(
+                        WorktreeLifecycleOperation(
+                            scope=WorktreeLifecycleScope.ATTACH_BRANCH,
+                            operation_id=operation_id,
+                            state=WorktreeLifecycleState.PREPARED,
+                            project_id=prepared.project_id,
+                            repository_root=manager.project(
+                                prepared.project_id
+                            ).workspace_root,
+                            worktree_id=prepared.id,
+                            worktree_root=prepared.worktree_root,
+                            base_ref=prepared.base_ref,
+                            branch=request.branch,
+                            base_commit=prepared.base_commit,
+                            session_id=request.session_id,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
+                if (
+                    lifecycle_operation.session_id != request.session_id
+                    or lifecycle_operation.worktree_id != session.worktree_id
+                    or lifecycle_operation.branch != request.branch
+                ):
+                    raise ApplicationError(
+                        "OPERATION_ID_REUSED",
+                        "branch operation does not match the Session Worktree",
+                    )
+                if lifecycle_operation.state is WorktreeLifecycleState.CLEANUP_REQUIRED:
+                    raise ApplicationError(
+                        "WORKTREE_RECOVERY_REQUIRED",
+                        lifecycle_operation.error_code
+                        or "branch attachment recovery is required",
+                    )
+                if lifecycle_operation.state is WorktreeLifecycleState.PREPARED:
+                    manager.attach_branch_git(session.worktree_id, request.branch)
+                    lifecycle_operation = lifecycle.update_state(
+                        WorktreeLifecycleScope.ATTACH_BRANCH,
+                        operation_id,
+                        WorktreeLifecycleState.BRANCH_ATTACHED,
+                    )
+                worktree: Worktree | None = None
+                if lifecycle_operation.state is WorktreeLifecycleState.BRANCH_ATTACHED:
+                    worktree = manager.persist_branch(
+                        session.worktree_id, request.branch
+                    )
+                    lifecycle_operation = lifecycle.update_state(
+                        WorktreeLifecycleScope.ATTACH_BRANCH,
+                        operation_id,
+                        WorktreeLifecycleState.COMPLETED,
+                    )
+                if worktree is None:
+                    worktree = manager.persist_branch(
+                        session.worktree_id, request.branch
+                    )
+                head = manager.head(Path(worktree.worktree_root))
+                result = _result(
+                    SessionCreateBranchResponseDto,
+                    {
+                        "sessionId": request.session_id,
+                        "worktreeId": worktree.id,
+                        "branch": worktree.branch,
+                        "head": head,
+                    },
+                )
+                if request.operation_id is None:
+                    return result
+                try:
+                    recorded = self._store.record_operation_result(
+                        request.operation_id,
+                        "session/createBranch",
+                        operation_request,
+                        result.to_json_value(),
+                    )
+                except OperationConflictError as error:
+                    raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+                except OperationInProgressError as error:
+                    raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
+                return _result(SessionCreateBranchResponseDto, recorded)
+            except ApplicationError:
+                raise
+            except WorktreeError as error:
+                self._mark_branch_attach_cleanup(
+                    manager,
+                    lifecycle_operation,
+                    operation_id,
+                    error.code,
+                )
+                raise ApplicationError(_branch_error_code(error), str(error)) from error
+            except StorageError as error:
+                self._mark_branch_attach_cleanup(
+                    manager,
+                    lifecycle_operation,
+                    operation_id,
+                    "worktree_branch_persistence_failed",
+                )
+                raise ApplicationError("WORKTREE_RECOVERY_REQUIRED", str(error)) from error
+
+    @staticmethod
+    def _mark_branch_attach_cleanup(
+        manager: ManagedWorktreePort,
+        operation: WorktreeLifecycleOperation | None,
+        operation_id: str,
+        error_code: str,
+    ) -> None:
+        if operation is None or operation.state in {
+            WorktreeLifecycleState.COMPLETED,
+            WorktreeLifecycleState.CLEANUP_REQUIRED,
+        }:
+            return
+        try:
+            manager.lifecycle.update_state(
+                WorktreeLifecycleScope.ATTACH_BRANCH,
+                operation_id,
+                WorktreeLifecycleState.CLEANUP_REQUIRED,
+                error_code=error_code,
+            )
+        except Exception:
+            # The operation remains durable even when this final state write
+            # cannot be completed. Startup recovery will inspect it again.
+            return
+
     def _create_managed(
         self,
         request: SessionCreateRequestDto,
@@ -323,6 +526,7 @@ class SessionApplication:
         operation_request: dict[str, object] = {
             "workspaceRoot": discovery.repository_root,
             "executionMode": SessionExecutionMode.WORKTREE.value,
+            "includeLocalChanges": request.include_local_changes,
         }
         if request.base_ref is not None:
             operation_request["baseRef"] = request.base_ref
@@ -359,6 +563,15 @@ class SessionApplication:
                     discovery.repository_root,
                     base_ref=request.base_ref,
                 )
+                source_snapshot = manager.source_snapshot(
+                    Path(discovery.repository_root),
+                    include_local_changes=request.include_local_changes,
+                )
+                if (
+                    request.include_local_changes
+                    and source_snapshot.head != plan.base_commit
+                ):
+                    raise WorktreeError("local_changes_base_mismatch")
                 session_id = str(uuid.uuid4())
                 now = datetime.now(UTC).replace(microsecond=0)
                 lifecycle_operation = lifecycle.prepare(
@@ -374,6 +587,27 @@ class SessionApplication:
                         branch=plan.branch,
                         base_commit=plan.base_commit,
                         session_id=session_id,
+                        include_local_changes=request.include_local_changes,
+                        source_head=(
+                            source_snapshot.head
+                            if request.include_local_changes
+                            else None
+                        ),
+                        source_branch=(
+                            source_snapshot.branch
+                            if request.include_local_changes
+                            else None
+                        ),
+                        source_dirty=(
+                            source_snapshot.status.dirty
+                            if request.include_local_changes
+                            else None
+                        ),
+                        source_fingerprint=(
+                            source_snapshot.fingerprint
+                            if request.include_local_changes
+                            else None
+                        ),
                         created_at=now,
                         updated_at=now,
                     )
@@ -382,6 +616,11 @@ class SessionApplication:
                 raise ApplicationError(
                     "OPERATION_ID_REUSED",
                     "operation id was reused for another repository",
+                )
+            elif lifecycle_operation.include_local_changes != request.include_local_changes:
+                raise ApplicationError(
+                    "OPERATION_ID_REUSED",
+                    "operation id was reused with a different local-change policy",
                 )
             if lifecycle_operation.state is WorktreeLifecycleState.CLEANUP_REQUIRED:
                 raise ApplicationError(
@@ -392,7 +631,10 @@ class SessionApplication:
             plan = manager.prepared_from_lifecycle(lifecycle_operation)
             worktree = manager.create_prepared(
                 plan,
-                compensate_on_failure=False,
+                compensate_on_failure=True,
+                include_local_changes=lifecycle_operation.include_local_changes,
+                expected_source_head=lifecycle_operation.source_head,
+                expected_source_fingerprint=lifecycle_operation.source_fingerprint,
             )
             if lifecycle_operation.state is WorktreeLifecycleState.PREPARED:
                 lifecycle_operation = lifecycle.update_state(
@@ -469,6 +711,20 @@ class SessionApplication:
                 )
             return result
         except WorktreeError as error:
+            if (
+                error.code == "worktree_cleanup_required"
+                and lifecycle_operation is not None
+                and lifecycle_operation.state is not WorktreeLifecycleState.CLEANUP_REQUIRED
+            ):
+                try:
+                    lifecycle.update_state(
+                        WorktreeLifecycleScope.SESSION_CREATE,
+                        lifecycle_operation_id,
+                        WorktreeLifecycleState.CLEANUP_REQUIRED,
+                        error_code=error.code,
+                    )
+                except Exception:
+                    pass
             raise ApplicationError(_worktree_error_code(error), str(error)) from error
         except OperationConflictError as error:
             raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
@@ -627,6 +883,8 @@ class SessionApplication:
                     current_branch=None,
                     head=None,
                     branches=(),
+                    dirty=False,
+                    changed_file_count=0,
                 ).model_dump(mode="json"),
             )
         resolution = self._resolve_project(request.workspace_root)
@@ -638,15 +896,28 @@ class SessionApplication:
                     "currentBranch": None,
                     "head": None,
                     "branches": [],
+                    "dirty": False,
+                    "changedFileCount": 0,
                 },
             )
         repository_root = Path(resolution.git.repository_root)
         try:
+            source_status = manager.source_snapshot(
+                repository_root,
+                include_local_changes=False,
+            ).status
             context = GitRepositoryContext(
                 git_available=True,
                 current_branch=manager.current_branch(repository_root),
                 head=manager.head(repository_root),
                 branches=manager.local_branches(repository_root),
+                dirty=source_status.dirty,
+                changed_file_count=len(
+                    set(source_status.staged_paths)
+                    | set(source_status.unstaged_paths)
+                    | set(source_status.untracked_paths)
+                    | set(source_status.conflict_paths)
+                ),
             )
         except WorktreeError as error:
             raise ApplicationError(_worktree_error_code(error), str(error)) from error
@@ -657,6 +928,8 @@ class SessionApplication:
                 "currentBranch": context.current_branch,
                 "head": context.head,
                 "branches": list(context.branches),
+                "dirty": context.dirty,
+                "changedFileCount": context.changed_file_count,
             },
         )
 
@@ -1002,7 +1275,34 @@ def _worktree_error_code(error: WorktreeError) -> str:
         "git_command_timeout": "GIT_COMMAND_TIMEOUT",
         "base_ref_not_found": "BASE_REF_NOT_FOUND",
         "worktree_persistence_failed": "WORKTREE_PERSISTENCE_FAILED",
+        "local_changes_base_mismatch": "LOCAL_CHANGES_BASE_MISMATCH",
+        "worktree_source_changed": "WORKTREE_SOURCE_CHANGED",
+        "worktree_local_changes_conflict": "WORKTREE_LOCAL_CHANGES_CONFLICT",
+        "worktree_include_invalid": "WORKTREE_INCLUDE_INVALID",
+        "worktree_include_symlink_escape": "WORKTREE_INCLUDE_INVALID",
+        "worktree_include_copy_failed": "WORKTREE_INCLUDE_FAILED",
+        "worktree_include_source_invalid": "WORKTREE_INCLUDE_INVALID",
+        "worktree_include_target_invalid": "WORKTREE_INCLUDE_FAILED",
+        "worktree_cleanup_required": "WORKTREE_RECOVERY_REQUIRED",
     }.get(error.code, "WORKTREE_CREATE_FAILED")
+
+
+def _branch_error_code(error: WorktreeError) -> str:
+    return {
+        "worktree_required": "WORKTREE_REQUIRED",
+        "worktree_not_found": "WORKTREE_NOT_FOUND",
+        "worktree_invalid": "WORKTREE_INVALID",
+        "worktree_already_attached": "WORKTREE_ALREADY_ATTACHED",
+        "branch_already_exists": "BRANCH_ALREADY_EXISTS",
+        "worktree_branch_in_use": "WORKTREE_BRANCH_IN_USE",
+        "worktree_branch_invalid": "BRANCH_INVALID",
+        "worktree_state_changed": "WORKTREE_BRANCH_STATE_CHANGED",
+        "worktree_branch_state_changed": "WORKTREE_BRANCH_STATE_CHANGED",
+        "worktree_branch_attach_failed": "WORKTREE_BRANCH_CREATE_FAILED",
+        "worktree_branch_recovery_required": "WORKTREE_RECOVERY_REQUIRED",
+        "git_command_timeout": "GIT_COMMAND_TIMEOUT",
+        "git_command_failed": "WORKTREE_BRANCH_CREATE_FAILED",
+    }.get(error.code, "WORKTREE_BRANCH_CREATE_FAILED")
 
 
 def _workspace_resolution_error_code(error: WorktreeError) -> str:

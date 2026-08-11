@@ -13,7 +13,11 @@ interface CreateSessionDialogProps {
   busy?: boolean;
   error?: string | undefined;
   getFallbackFocus?: (() => HTMLElement | null) | undefined;
-  onConfirm: (executionMode: ExecutionMode, baseRef?: string) => void;
+  onConfirm: (
+    executionMode: ExecutionMode,
+    baseRef?: string,
+    includeLocalChanges?: boolean,
+  ) => void;
   onCancel: () => void;
 }
 
@@ -31,6 +35,9 @@ export function CreateSessionDialog({
     gitContext.gitAvailable ? "worktree" : "local",
   );
   const [baseRef, setBaseRef] = useState(gitContext.currentBranch ?? "HEAD");
+  const [includeLocalChanges, setIncludeLocalChanges] = useState(
+    Boolean(gitContext.dirty && gitContext.currentBranch !== null),
+  );
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
   const confirmButtonRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -39,6 +46,9 @@ export function CreateSessionDialog({
     if (!open) return;
     setExecutionMode(gitContext.gitAvailable ? "worktree" : "local");
     setBaseRef(gitContext.currentBranch ?? "HEAD");
+    setIncludeLocalChanges(
+      Boolean(gitContext.dirty && gitContext.currentBranch !== null),
+    );
   }, [open, gitContext.gitAvailable, gitContext.currentBranch]);
 
   useDialogFocusLifecycle({
@@ -123,6 +133,7 @@ export function CreateSessionDialog({
             onConfirm(
               executionMode,
               executionMode === "worktree" ? baseRef || "HEAD" : undefined,
+              executionMode === "worktree" ? includeLocalChanges : false,
             );
           }}
         >
@@ -168,10 +179,34 @@ export function CreateSessionDialog({
                 <select
                   id="create-session-base-ref"
                   value={baseRef}
-                  onChange={(event) => setBaseRef(event.target.value)}
+                  onChange={(event) => {
+                    const nextBaseRef = event.target.value;
+                    setBaseRef(nextBaseRef);
+                    setIncludeLocalChanges(
+                      Boolean(gitContext.dirty && nextBaseRef === gitContext.currentBranch),
+                    );
+                  }}
                 >
                   {startingRefs.map((ref) => <option value={ref} key={ref}>{ref}</option>)}
                 </select>
+              </label>
+            )}
+            {executionMode === "worktree" && gitContext.gitAvailable && gitContext.dirty && (
+              <label className="create-session-changes-option" htmlFor="include-local-changes">
+                <input
+                  id="include-local-changes"
+                  type="checkbox"
+                  checked={includeLocalChanges}
+                  onChange={(event) => setIncludeLocalChanges(event.target.checked)}
+                />
+                <span>
+                  <strong>Include current changes</strong>
+                  <small>
+                    {gitContext.changedFileCount > 0
+                      ? `${gitContext.changedFileCount} 个文件有未提交修改`
+                      : "复制当前工作区修改"}
+                  </small>
+                </span>
               </label>
             )}
             {error && <p className="setting-field-error" role="alert">{error}</p>}

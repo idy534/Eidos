@@ -272,6 +272,8 @@ test("creates first-class Direct Workspace sessions without Git review state", a
       currentBranch: null,
       head: null,
       branches: [],
+      dirty: false,
+      changedFileCount: 0,
     });
     const first = await client.createSession(workspaceRoot);
     const second = await client.createSession(workspaceRoot);

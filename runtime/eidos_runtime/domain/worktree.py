@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from eidos_runtime.models import EidosFrozenStrictModel
 
@@ -11,6 +11,12 @@ from eidos_runtime.models import EidosFrozenStrictModel
 class WorktreeOwnership(StrEnum):
     MANAGED = "managed"
     ADOPTED = "adopted"
+
+
+class BranchOwnership(StrEnum):
+    NONE = "none"
+    LEGACY_MANAGED = "legacy_managed"
+    USER = "user"
 
 
 class WorktreeState(StrEnum):
@@ -24,6 +30,7 @@ class WorktreeLifecycleScope(StrEnum):
     SESSION_CREATE = "session/create"
     SESSION_DELETE = "session/delete"
     CHECKPOINT_FORK = "checkpoint/fork"
+    ATTACH_BRANCH = "worktree/attach-branch"
 
 
 class WorktreeLifecycleState(StrEnum):
@@ -32,6 +39,7 @@ class WorktreeLifecycleState(StrEnum):
     SESSION_CREATED = "session_created"
     RUN_CREATED = "run_created"
     CHECKPOINT_ACTION_CREATED = "checkpoint_action_created"
+    BRANCH_ATTACHED = "branch_attached"
     WORKTREE_DELETED = "worktree_deleted"
     COMPLETED = "completed"
     CLEANUP_REQUIRED = "cleanup_required"
@@ -51,10 +59,32 @@ class Worktree(EidosFrozenStrictModel):
         pattern=r"^[0-9a-fA-F]+$",
     )
     branch: str | None = Field(default=None, min_length=1, max_length=4096)
+    branch_ownership: BranchOwnership = BranchOwnership.NONE
     ownership: WorktreeOwnership
     state: WorktreeState
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_legacy_branch_ownership(cls, value: object) -> object:
+        if not isinstance(value, dict) or "branch_ownership" in value:
+            return value
+        candidate = dict(value)
+        candidate["branch_ownership"] = (
+            BranchOwnership.NONE
+            if candidate.get("branch") is None
+            else BranchOwnership.LEGACY_MANAGED
+        )
+        return candidate
+
+    @model_validator(mode="after")
+    def validate_branch_ownership(self) -> "Worktree":
+        if self.branch is None and self.branch_ownership is not BranchOwnership.NONE:
+            raise ValueError("detached Worktree cannot own a branch")
+        if self.branch is not None and self.branch_ownership is BranchOwnership.NONE:
+            raise ValueError("attached Worktree must declare branch ownership")
+        return self
 
     @field_validator("worktree_root", "git_dir")
     @classmethod
@@ -126,6 +156,11 @@ class WorktreeLifecycleOperation(EidosFrozenStrictModel):
     session_id: str | None = None
     run_id: str | None = None
     checkpoint_id: str | None = None
+    include_local_changes: bool = False
+    source_head: str | None = None
+    source_branch: str | None = None
+    source_dirty: bool | None = None
+    source_fingerprint: str | None = None
     error_code: str | None = None
     created_at: datetime
     updated_at: datetime
@@ -137,6 +172,7 @@ class WorktreeCleanupReport(EidosFrozenStrictModel):
 
 
 __all__ = [
+    "BranchOwnership",
     "OrphanWorktreeCandidate",
     "Worktree",
     "WorktreeCleanupReport",

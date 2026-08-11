@@ -85,6 +85,18 @@ class SessionCreateRequestDto(_OperationRequest):
     base_ref: StrictStr | None = Field(
         default=None, alias="baseRef", min_length=1, max_length=4096
     )
+    include_local_changes: bool = Field(
+        default=False, alias="includeLocalChanges"
+    )
+
+
+class SessionCreateBranchRequestDto(_OperationRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    branch: StrictStr = Field(min_length=1, max_length=4096)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
 
 
 class GitContextRequestDto(MethodRequestDto):
@@ -293,6 +305,13 @@ class SessionCreateResponseDto(_SessionResponseDto):
     pass
 
 
+class SessionCreateBranchResponseDto(MethodResultDto):
+    session_id: StrictStr = Field(alias="sessionId")
+    worktree_id: StrictStr = Field(alias="worktreeId")
+    branch: StrictStr
+    head: StrictStr
+
+
 class SessionListResponseDto(MethodResultDto):
     items: list[SessionDto]
     next_cursor: StrictStr | None = Field(default=None, alias="nextCursor")
@@ -349,11 +368,15 @@ class GitContextResponseDto(MethodResultDto):
     current_branch: StrictStr | None = Field(default=None, alias="currentBranch")
     head: StrictStr | None = None
     branches: list[StrictStr]
+    dirty: bool = False
+    changed_file_count: StrictInt = Field(default=0, alias="changedFileCount", ge=0)
 
     def to_json_value(self) -> dict[str, JsonValue]:
         value = super().to_json_value()
         value["currentBranch"] = self.current_branch
         value["head"] = self.head
+        value["dirty"] = self.dirty
+        value["changedFileCount"] = self.changed_file_count
         return value
 
 

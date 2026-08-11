@@ -36,6 +36,20 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "WORKTREE_CREATE_FAILED",
   "WORKTREE_PERSISTENCE_FAILED",
   "WORKTREE_RECOVERY_REQUIRED",
+  "LOCAL_CHANGES_BASE_MISMATCH",
+  "WORKTREE_SOURCE_CHANGED",
+  "WORKTREE_LOCAL_CHANGES_CONFLICT",
+  "WORKTREE_INCLUDE_INVALID",
+  "WORKTREE_INCLUDE_FAILED",
+  "WORKTREE_REQUIRED",
+  "WORKTREE_ALREADY_ATTACHED",
+  "BRANCH_ALREADY_EXISTS",
+  "WORKTREE_BRANCH_IN_USE",
+  "BRANCH_INVALID",
+  "WORKTREE_BRANCH_CREATE_FAILED",
+  "WORKTREE_BRANCH_STATE_CHANGED",
+  "WORKTREE_NOT_FOUND",
+  "WORKTREE_INVALID",
   "WORKSPACE_IDENTITY_UNAVAILABLE",
   "CHECKPOINT_GIT_STATE_UNAVAILABLE",
   "CHECKPOINT_FORK_WORKTREE_FAILED",
@@ -91,6 +105,7 @@ import type {
   RuntimeHealth,
   RuntimeNotification,
   ProjectGitContext,
+  CreateBranchResult,
   Session,
   GitDiffScope,
   SessionGitDiff,
@@ -138,6 +153,7 @@ export type {
   RuntimeHealth,
   RuntimeNotification,
   Session,
+  CreateBranchResult,
   SessionListResult,
   SessionSnapshot,
   SkillListResult,
@@ -280,12 +296,25 @@ export class RuntimeClient {
     options: {
       executionMode?: "local" | "worktree";
       baseRef?: string;
+      includeLocalChanges?: boolean;
       operationId?: string;
     } = {},
   ): Promise<Session> {
     const { operationId = randomUUID(), ...executionOptions } = options;
     return this.validatedRequest(
       "session/create", { workspaceRoot, operationId, ...executionOptions }, isSession,
+    );
+  }
+
+  createSessionBranch(
+    sessionId: string,
+    branch: string,
+    operationId = randomUUID(),
+  ): Promise<CreateBranchResult> {
+    return this.validatedRequest(
+      "session/createBranch",
+      { sessionId, branch, operationId },
+      isCreateBranchResult,
     );
   }
 
@@ -936,12 +965,27 @@ function isSessionGitStatus(value: unknown): value is SessionGitStatus {
 function isProjectGitContext(value: unknown): value is ProjectGitContext {
   return (
     isRecord(value)
-    && hasOnlyKeys(value, ["gitAvailable", "currentBranch", "head", "branches"])
+    && hasOnlyKeys(value, [
+      "gitAvailable", "currentBranch", "head", "branches", "dirty", "changedFileCount",
+    ])
     && typeof value.gitAvailable === "boolean"
     && (value.currentBranch === null || typeof value.currentBranch === "string")
     && (value.head === null || typeof value.head === "string")
     && Array.isArray(value.branches)
     && value.branches.every((branch) => typeof branch === "string")
+    && typeof value.dirty === "boolean"
+    && isNonNegativeInteger(value.changedFileCount)
+  );
+}
+
+function isCreateBranchResult(value: unknown): value is CreateBranchResult {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["sessionId", "worktreeId", "branch", "head"])
+    && typeof value.sessionId === "string"
+    && typeof value.worktreeId === "string"
+    && typeof value.branch === "string"
+    && typeof value.head === "string"
   );
 }
 

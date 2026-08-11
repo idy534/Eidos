@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING
 from eidos_runtime.db.database import Database, Repository
 from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
 from eidos_runtime.domain.project import Project, direct_project_id
-from eidos_runtime.domain.worktree import Worktree, WorktreeState
+from eidos_runtime.domain.worktree import (
+    BranchOwnership,
+    Worktree,
+    WorktreeState,
+)
 from eidos_runtime.persistence.mappers.worktree import (
     project_from_row,
     worktree_from_row,
@@ -128,8 +132,9 @@ class ProjectWorktreeRepository(Repository):
                     """
                     INSERT INTO worktrees (
                         id, project_id, worktree_root, git_dir, base_ref,
-                        base_commit, branch, ownership, state, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        base_commit, branch, branch_ownership, ownership, state,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         worktree.id,
@@ -139,6 +144,7 @@ class ProjectWorktreeRepository(Repository):
                         worktree.base_ref,
                         worktree.base_commit,
                         worktree.branch,
+                        worktree.branch_ownership.value,
                         worktree.ownership.value,
                         worktree.state.value,
                         _millis(worktree.created_at),
@@ -184,6 +190,41 @@ class ProjectWorktreeRepository(Repository):
             )
             if updated.rowcount != 1:
                 raise ResourceNotFoundError("worktree not found")
+            row = connection.execute(
+                "SELECT * FROM worktrees WHERE id = ?", (worktree_id,)
+            ).fetchone()
+        assert row is not None
+        return worktree_from_row(row)
+
+    def update_branch(
+        self,
+        worktree_id: str,
+        branch: str,
+        ownership: BranchOwnership = BranchOwnership.USER,
+    ) -> Worktree:
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            updated = connection.execute(
+                """
+                UPDATE worktrees
+                SET branch = ?, branch_ownership = ?, updated_at = ?
+                WHERE id = ? AND branch IS NULL
+                """,
+                (branch, ownership.value, now, worktree_id),
+            )
+            if updated.rowcount != 1:
+                row = connection.execute(
+                    "SELECT * FROM worktrees WHERE id = ?", (worktree_id,)
+                ).fetchone()
+                if row is None:
+                    raise ResourceNotFoundError("worktree not found")
+                existing = worktree_from_row(row)
+                if (
+                    existing.branch == branch
+                    and existing.branch_ownership is ownership
+                ):
+                    return existing
+                raise StorageError("worktree_branch_already_attached")
             row = connection.execute(
                 "SELECT * FROM worktrees WHERE id = ?", (worktree_id,)
             ).fetchone()

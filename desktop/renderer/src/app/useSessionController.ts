@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import type { Run, Session, SessionSnapshot } from "../contracts.js";
+import type { CreateBranchResult, Run, Session, SessionSnapshot } from "../contracts.js";
 import { SnapshotReadCoordinator, taskStatusFromRun, upsertRun, userFacingError } from "../session-state.js";
 
 const READ_COMPLETIONS_KEY = "eidos.readCompletedSessionIds";
@@ -25,6 +25,7 @@ function saveReadCompletedSessions(set: Set<string>): void {
 
 export interface PendingOperations {
   creatingSession?: boolean;
+  creatingBranchSessionId?: string;
   selectingSessionId?: string;
   renamingSessionId?: string;
   deletingSessionId?: string;
@@ -44,8 +45,16 @@ export interface SessionControllerActions {
   selectSession: (session: Session) => Promise<SessionSnapshot | undefined>;
   createSession: (
     workspaceRoot?: string,
-    options?: { executionMode?: "local" | "worktree"; baseRef?: string },
+    options?: {
+      executionMode?: "local" | "worktree";
+      baseRef?: string;
+      includeLocalChanges?: boolean;
+    },
   ) => Promise<SessionSnapshot | undefined>;
+  createSessionBranch: (
+    sessionId: string,
+    branch: string,
+  ) => Promise<CreateBranchResult | undefined>;
   renameSession: (sessionId: string, title: string) => Promise<void>;
   deleteSession: (session: Session) => Promise<{ confirmed: true } | { confirmed: false; error: string }>;
   setError: (error: string | undefined) => void;
@@ -191,7 +200,11 @@ export function useSessionController(): [SessionControllerState, SessionControll
 
   const createSession = useCallback(async (
     workspaceRoot?: string,
-    options: { executionMode?: "local" | "worktree"; baseRef?: string } = {},
+    options: {
+      executionMode?: "local" | "worktree";
+      baseRef?: string;
+      includeLocalChanges?: boolean;
+    } = {},
   ): Promise<SessionSnapshot | undefined> => {
     if (creatingSessionRef.current) {
       return undefined;
@@ -243,6 +256,31 @@ export function useSessionController(): [SessionControllerState, SessionControll
       clearPending("renamingSessionId");
     }
   }, []);
+
+  const createSessionBranch = useCallback(async (
+    sessionId: string,
+    branch: string,
+  ): Promise<CreateBranchResult | undefined> => {
+    setPending((prev) => ({ ...prev, creatingBranchSessionId: sessionId }));
+    setError(undefined);
+    try {
+      const result = await window.eidosRuntime.createSessionBranch(sessionId, branch);
+      const loaded = await loadAuthoritativeSnapshot(sessionId);
+      setSessions((prev) => prev.map((session) => (
+        session.id === loaded.session.id ? loaded.session : session
+      )));
+      if (snapshot?.session.id === sessionId) {
+        setSnapshot(loaded);
+      }
+      return result;
+    } catch (cause) {
+      setError(userFacingError(cause));
+      return undefined;
+    } finally {
+      clearPending("creatingBranchSessionId");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshot]);
 
   const deleteSession = useCallback(async (session: Session): Promise<{ confirmed: true } | { confirmed: false; error: string }> => {
     setPending((prev) => ({ ...prev, deletingSessionId: session.id }));
@@ -347,6 +385,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     loadSessions,
     selectSession,
     createSession,
+    createSessionBranch,
     renameSession,
     deleteSession,
     setError,
