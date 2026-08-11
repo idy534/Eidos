@@ -109,10 +109,12 @@ export function selectAffectedCommands(changedFiles, options = {}) {
     file === "electron-builder.yml"
     || file.startsWith("scripts/package-")
     || file === "scripts/build-macos-runtime.sh"
+    || file === "scripts/test-affected.mjs"
+    || file === "scripts/test-affected.test.mjs"
     || file.endsWith("packaging-config.test.mjs")
     || file.endsWith("package-macos.test.mjs")
   ))) {
-    addUnique(commands, pnpm("test:packaging", "Packaging configuration changes"));
+    addUnique(commands, pnpm("test:packaging", "Packaging or test-infrastructure changes"));
   }
 
   return commands.length > 0 ? commands : [fallback];
