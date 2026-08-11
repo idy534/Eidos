@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import os
+from pathlib import Path
 import sqlite3
 from typing import TYPE_CHECKING
 
 from eidos_runtime.db.database import Database, Repository
 from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
-from eidos_runtime.domain.project import Project
+from eidos_runtime.domain.project import Project, direct_project_id
 from eidos_runtime.domain.worktree import Worktree, WorktreeState
 from eidos_runtime.persistence.mappers.worktree import (
     project_from_row,
@@ -23,36 +25,79 @@ class ProjectWorktreeRepository(Repository):
     def __init__(self, database: Database) -> None:
         super().__init__(database)
 
-    def get_or_create_project(self, discovery: GitRepositoryDiscovery) -> Project:
-        project_id = _project_id(discovery.git_common_dir)
+    def get_or_create_project(
+        self,
+        workspace_root: Path | str,
+        git_discovery: GitRepositoryDiscovery | None = None,
+    ) -> Project:
+        if git_discovery is None:
+            canonical_workspace = _canonical_workspace_root(workspace_root)
+            project_id = direct_project_id(canonical_workspace)
+            git_repository_root = None
+            git_common_dir = None
+        else:
+            canonical_workspace = _canonical_workspace_root(
+                git_discovery.repository_root
+            )
+            git_repository_root = canonical_workspace
+            git_common_dir = _canonical_workspace_root(git_discovery.git_common_dir)
+            project_id = _project_id(git_common_dir)
         now = _now_ms()
         candidate = Project(
             id=project_id,
-            repository_root=discovery.repository_root,
-            git_common_dir=discovery.git_common_dir,
+            workspace_root=canonical_workspace,
+            git_repository_root=git_repository_root,
+            git_common_dir=git_common_dir,
             created_at=_timestamp(now),
             updated_at=_timestamp(now),
         )
         with self.lock, self._connection() as connection:
             existing = connection.execute(
-                "SELECT * FROM projects WHERE git_common_dir = ?",
-                (candidate.git_common_dir,),
+                "SELECT * FROM projects WHERE workspace_root = ?",
+                (candidate.workspace_root,),
             ).fetchone()
+            if existing is None and candidate.git_common_dir is not None:
+                existing = connection.execute(
+                    "SELECT * FROM projects WHERE git_common_dir = ?",
+                    (candidate.git_common_dir,),
+                ).fetchone()
             if existing is not None:
                 project = project_from_row(existing)
-                if project.id != candidate.id:
+                if (
+                    candidate.git_common_dir is not None
+                    and project.has_git
+                    and project.git_common_dir != candidate.git_common_dir
+                ):
                     raise StorageError("project_repository_mismatch")
+                if candidate.has_git and not project.has_git:
+                    connection.execute(
+                        """
+                        UPDATE projects
+                        SET git_repository_root = ?, git_common_dir = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            candidate.git_repository_root,
+                            candidate.git_common_dir,
+                            now,
+                            project.id,
+                        ),
+                    )
+                    project = candidate.model_copy(update={"id": project.id})
                 return project
             try:
                 connection.execute(
                     """
                     INSERT INTO projects (
-                        id, repository_root, git_common_dir, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?)
+                        id, workspace_root, git_repository_root, git_common_dir,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
                         candidate.id,
-                        candidate.repository_root,
+                        candidate.workspace_root,
+                        candidate.git_repository_root,
                         candidate.git_common_dir,
                         now,
                         now,
@@ -150,6 +195,13 @@ def _project_id(git_common_dir: str) -> str:
     import hashlib
 
     return f"project_{hashlib.sha256(git_common_dir.encode('utf-8')).hexdigest()}"
+
+
+def _canonical_workspace_root(value: Path | str) -> str:
+    resolved = Path(os.path.realpath(value))
+    if not resolved.is_absolute():
+        raise StorageError("workspace_root_invalid")
+    return str(resolved)
 
 
 def _now_ms() -> int:

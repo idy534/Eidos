@@ -8,8 +8,8 @@ from typing import Final
 
 from pydantic import Field, model_validator
 
+from eidos_runtime.git.backend import DulwichGitBackend
 from eidos_runtime.git.errors import GitError
-from eidos_runtime.git.process import GitProcess
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 from eidos_runtime.repo_intelligence.inventory import RepositoryInventory
 
@@ -220,13 +220,13 @@ class RepositoryMapBuilder:
 
 
 def _git_state(root: Path) -> tuple[str | None, str | None]:
-    process = GitProcess(timeout_seconds=0.5)
+    backend = DulwichGitBackend()
     try:
-        branch = process.symbolic_ref_short(root)
+        branch = backend.symbolic_ref_short(root)
     except (GitError, ValueError):
         branch = None
     try:
-        head = process.resolve_ref(root, "HEAD")
+        head = backend.resolve_ref(root, "HEAD")
     except (GitError, ValueError):
         head = None
     return branch, head

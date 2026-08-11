@@ -24,12 +24,21 @@ from eidos_runtime.domain.worktree import (
     WorktreeView,
 )
 from eidos_runtime.git.discovery import GitRepositoryDiscoveryService
+from eidos_runtime.git.backend import (
+    DulwichGitBackend,
+    GitBackend,
+    NativeGitFallback,
+)
 from eidos_runtime.git.errors import (
     GitCommandFailedError,
     GitCommandTimeoutError,
     WorktreeError,
 )
-from eidos_runtime.git.models import GitRepositoryDiscovery, GitWorktreeEntry
+from eidos_runtime.git.models import (
+    GitRepositoryDiscovery,
+    GitWorktreeEntry,
+    ProjectResolution,
+)
 from eidos_runtime.git.process import (
     DEFAULT_GIT_DIFF_BYTES,
     GitCommandResult,
@@ -63,6 +72,7 @@ class WorktreeManager:
         *,
         managed_root: Path | None = None,
         git_process: GitProcess | None = None,
+        git_backend: GitBackend | None = None,
         repository: ProjectWorktreeRepository | None = None,
         id_factory: Callable[[], str] | None = None,
         logger: logging.Logger | None = None,
@@ -71,7 +81,9 @@ class WorktreeManager:
             raise WorktreeError("storage_not_ready")
         self.database = database
         self.logger = logger or logging.getLogger(__name__)
-        self.git = git_process or GitProcess(logger=self.logger)
+        self.git: GitBackend = git_backend or git_process or DulwichGitBackend(
+            native_fallback=NativeGitFallback(logger=self.logger)
+        )
         self.discovery = GitRepositoryDiscoveryService(self.git)
         self.repository = repository or ProjectWorktreeRepository(database)
         self.lifecycle = WorktreeLifecycleRepository(database)
@@ -89,6 +101,27 @@ class WorktreeManager:
 
         return self.discovery.discover(repository_seed)
 
+    def resolve_project(self, workspace_seed: Path | str) -> ProjectResolution:
+        """Resolve a filesystem workspace and its optional Git capability."""
+
+        seed = Path(workspace_seed)
+        if seed.is_symlink():
+            raise WorktreeError("workspace_symlink")
+        try:
+            workspace = seed.resolve(strict=True)
+        except OSError as error:
+            raise WorktreeError("repository_not_found") from error
+        if not workspace.is_dir():
+            raise WorktreeError("repository_not_found")
+        discovery = self.discovery.resolve(workspace)
+        if discovery is None:
+            project = self.repository.get_or_create_project(workspace)
+            return ProjectResolution(project=project, git=None)
+        project = self.repository.get_or_create_project(
+            discovery.repository_root, discovery
+        )
+        return ProjectResolution(project=project, git=discovery)
+
     def create(
         self,
         repository_root: Path | str,
@@ -105,7 +138,9 @@ class WorktreeManager:
         """Resolve all managed Worktree identity before Git changes state."""
 
         discovery = self.discovery.discover(repository_root)
-        project = self.repository.get_or_create_project(discovery)
+        project = self.repository.get_or_create_project(
+            discovery.repository_root, discovery
+        )
         if base_ref is not None:
             resolved_base_ref = base_ref
         else:
@@ -191,7 +226,7 @@ class WorktreeManager:
             )
             root = Path(plan.worktree_root)
             branch_exists = self.git.branch_exists(
-                Path(project.repository_root), plan.branch
+                Path(project.workspace_root), plan.branch
             )
             if entry is not None:
                 if (
@@ -208,7 +243,7 @@ class WorktreeManager:
                     raise WorktreeError("worktree_recovery_conflict")
                 creation_attempted = True
                 self.git.worktree_add(
-                    Path(project.repository_root),
+                    Path(project.workspace_root),
                     root,
                     plan.branch,
                     plan.base_commit,
@@ -567,7 +602,7 @@ class WorktreeManager:
                     if validation.worktree != worktree:
                         updated.append(validation.worktree)
                 for entry in entries:
-                    if entry.worktree_root == project.repository_root:
+                    if entry.worktree_root == project.workspace_root:
                         continue
                     if entry.worktree_root in known_roots:
                         continue
@@ -603,7 +638,7 @@ class WorktreeManager:
         projects = self.repository.list_projects()
         for project in projects:
             try:
-                self.git.worktree_prune(Path(project.repository_root))
+                self.git.worktree_prune(Path(project.workspace_root))
             except GitCommandTimeoutError:
                 raise WorktreeError("git_command_timeout") from None
             except GitCommandFailedError as error:
@@ -678,7 +713,7 @@ class WorktreeManager:
             raise WorktreeError("worktree_dirty")
         try:
             self.git.worktree_remove(
-                Path(project.repository_root), root
+                Path(project.workspace_root), root
             )
         except GitCommandTimeoutError:
             raise WorktreeError("git_command_timeout") from None
@@ -714,7 +749,7 @@ class WorktreeManager:
                 if self._status_counts(root)[4]:
                     raise WorktreeError("worktree_cleanup_required")
                 try:
-                    self.git.worktree_remove(Path(project.repository_root), root)
+                    self.git.worktree_remove(Path(project.workspace_root), root)
                 except GitCommandTimeoutError:
                     raise WorktreeError("git_command_timeout") from None
                 except GitCommandFailedError as error:
@@ -799,7 +834,7 @@ class WorktreeManager:
             raise WorktreeError("worktree_invalid")
         return GitStatusSnapshot(
             worktree_id=worktree.id,
-            repository_root=project.repository_root,
+            repository_root=project.workspace_root,
             worktree_root=worktree.worktree_root,
             base_ref=worktree.base_ref,
             base_commit=worktree.base_commit,
@@ -1116,11 +1151,13 @@ class WorktreeManager:
 
     def _worktree_entries(self, project: Project) -> tuple[GitWorktreeEntry, ...]:
         try:
-            result = self.git.worktree_list(Path(project.repository_root))
+            result = self.git.worktree_list(Path(project.workspace_root))
         except GitCommandTimeoutError:
             raise WorktreeError("git_command_timeout") from None
         except GitCommandFailedError as error:
             raise WorktreeError("git_observation_failed") from error
+        if isinstance(result, tuple):
+            return result
         if result.stdout_truncated or result.stderr_truncated:
             raise WorktreeError("git_observation_incomplete")
         try:
@@ -1241,7 +1278,7 @@ class WorktreeManager:
                 None,
             )
             if created_entry is not None:
-                self.git.worktree_remove(Path(project.repository_root), root)
+                self.git.worktree_remove(Path(project.workspace_root), root)
             if root.exists():
                 raise RuntimeError("created worktree root remains after remove")
             remaining_entries = self._worktree_entries(project)
@@ -1288,7 +1325,7 @@ class WorktreeManager:
                 "runtime-created branch is still used by a worktree",
             )
             return False
-        repository_root = Path(project.repository_root)
+        repository_root = Path(project.workspace_root)
         try:
             current = self.git.try_resolve_ref(
                 repository_root,

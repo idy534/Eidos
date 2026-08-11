@@ -31,6 +31,7 @@ from eidos_runtime.domain.session import (
     SessionProjection,
     SessionProjectionPage,
 )
+from eidos_runtime.domain.project import direct_project_id
 from eidos_runtime.persistence.mappers.session import (
     deleted_session_from_legacy_dict,
     deleted_session_to_legacy_dict,
@@ -73,9 +74,14 @@ SESSION_SELECT = """
                LIMIT 1
              ), 'new')
            END AS task_status,
+           COALESCE(p.id, direct_p.id) AS projection_project_id,
+           COALESCE(p.workspace_root, direct_p.workspace_root)
+               AS projection_workspace_root,
+           CASE WHEN COALESCE(
+               p.git_repository_root, direct_p.git_repository_root
+           ) IS NOT NULL THEN 1 ELSE 0 END AS projection_git_available,
            w.id AS projection_worktree_id,
-           w.project_id AS projection_project_id,
-           p.repository_root AS projection_repository_root,
+           p.workspace_root AS projection_repository_root,
            w.worktree_root AS projection_worktree_root,
            w.base_ref AS projection_base_ref,
            w.base_commit AS projection_base_commit,
@@ -84,6 +90,7 @@ SESSION_SELECT = """
     FROM sessions s
     LEFT JOIN worktrees w ON w.id = s.worktree_id
     LEFT JOIN projects p ON p.id = w.project_id
+    LEFT JOIN projects direct_p ON direct_p.workspace_root = s.workspace_root
 """
 
 class SessionRepository(Repository):
@@ -130,7 +137,7 @@ class SessionRepository(Repository):
             if worktree_id is not None:
                 worktree = connection.execute(
                     """
-                    SELECT p.repository_root
+                    SELECT p.workspace_root
                     FROM worktrees w
                     JOIN projects p ON p.id = w.project_id
                     WHERE w.id = ?
@@ -139,10 +146,25 @@ class SessionRepository(Repository):
                 ).fetchone()
                 if worktree is None:
                     raise ResourceNotFoundError("worktree not found")
-                if worktree["repository_root"] != str(workspace):
+                if worktree["workspace_root"] != str(workspace):
                     raise WorkspaceBoundaryError(
                         "session repository does not match worktree"
                     )
+            else:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO projects (
+                        id, workspace_root, git_repository_root, git_common_dir,
+                        created_at, updated_at
+                    ) VALUES (?, ?, NULL, NULL, ?, ?)
+                    """,
+                    (
+                        direct_project_id(str(workspace)),
+                        str(workspace),
+                        now,
+                        now,
+                    ),
+                )
             connection.execute(
                 """
                 INSERT INTO sessions (

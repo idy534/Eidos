@@ -18,6 +18,7 @@ from eidos_runtime.workspace.search_driver import RipgrepBinaryResolver, SearchD
 
 SANDBOX_EXECUTABLE = "/usr/bin/sandbox-exec"
 PROFILE_PATH = Path(__file__).with_name("seatbelt.sbpl")
+DIRECT_PROFILE_PATH = Path(__file__).with_name("seatbelt-direct.sbpl")
 FILE_COMMIT_HELPER = Path(__file__).with_name("file_commit_helper.py")
 
 
@@ -77,6 +78,7 @@ def is_seatbelt_ready() -> bool:
     return (
         is_seatbelt_usable()
         and PROFILE_PATH.is_file()
+        and DIRECT_PROFILE_PATH.is_file()
         and FILE_COMMIT_HELPER.is_file()
     )
 
@@ -86,9 +88,9 @@ class SeatbeltProfile:
     workspace_root: Path
     sandbox_home: Path
     sandbox_tmp: Path
-    git_directory: Path
-    git_worktree_dir: Path
-    git_common_dir: Path
+    git_directory: Path | None
+    git_worktree_dir: Path | None
+    git_common_dir: Path | None
     sensitive_path: Path
     effective_permissions: EffectivePermissionProfile | None = None
 
@@ -107,25 +109,49 @@ class SeatbeltProfile:
         workspace = _existing_directory(workspace_root, "workspace root")
         home = _existing_directory(sandbox_home, "sandbox home")
         temporary = _existing_directory(sandbox_tmp, "sandbox tmp")
-        git_directory = workspace / ".git"
-        if git_directory.is_symlink() or (
-            git_directory.exists()
-            and not (git_directory.is_dir() or git_directory.is_file())
+        if (git_worktree_dir is None) != (git_common_dir is None):
+            raise ValueError("Git worktree and common directories must be paired")
+        git_marker = workspace / ".git"
+        if git_marker.is_symlink() or (
+            git_marker.exists()
+            and not (git_marker.is_dir() or git_marker.is_file())
         ):
-            raise ValueError("workspace .git must be a directory, regular file, or absent")
-        git_directory = git_directory.resolve(strict=False)
-        verified_worktree_dir = _verified_git_directory(
-            git_worktree_dir or git_directory,
-            "Git Worktree metadata directory",
-            allow_file=git_worktree_dir is None,
-            require_directory=git_worktree_dir is not None,
-        )
-        verified_common_dir = _verified_git_directory(
-            git_common_dir or git_directory,
-            "Git common directory",
-            allow_file=git_common_dir is None,
-            require_directory=git_common_dir is not None,
-        )
+            raise ValueError(
+                "workspace .git must be a directory, regular file, or absent"
+            )
+        git_directory: Path | None = None
+        verified_worktree_dir: Path | None = None
+        verified_common_dir: Path | None = None
+        if git_worktree_dir is None and git_common_dir is None and git_marker.exists():
+            # A workspace with a real .git marker has Git capability. A
+            # pointer file is still a Git marker and must stay read-only.
+            git_directory = git_marker.resolve(strict=False)
+            verified_worktree_dir = _verified_git_directory(
+                git_marker,
+                "Git Worktree metadata directory",
+                allow_file=True,
+            )
+            verified_common_dir = _verified_git_directory(
+                git_marker,
+                "Git common directory",
+                allow_file=True,
+            )
+        if git_worktree_dir is not None and git_common_dir is not None:
+            if not git_marker.exists():
+                raise ValueError("Git workspace metadata marker is unavailable")
+            git_directory = git_marker.resolve(strict=False)
+            verified_worktree_dir = _verified_git_directory(
+                git_worktree_dir,
+                "Git Worktree metadata directory",
+                allow_file=False,
+                require_directory=True,
+            )
+            verified_common_dir = _verified_git_directory(
+                git_common_dir,
+                "Git common directory",
+                allow_file=False,
+                require_directory=True,
+            )
 
         sensitive = sensitive_path.resolve()
         if sensitive != workspace and workspace not in sensitive.parents:
@@ -149,11 +175,16 @@ class SeatbeltProfile:
             raise ValueError("sandbox command must contain string arguments")
         if not is_seatbelt_ready():
             raise SeatbeltUnavailableError("seatbelt is unavailable")
-        profile_arguments = ["-f", str(PROFILE_PATH)]
+        profile_path = (
+            PROFILE_PATH if self.git_directory is not None else DIRECT_PROFILE_PATH
+        )
+        profile_arguments = ["-f", str(profile_path)]
         additional_definitions: list[str] = []
         if self.effective_permissions is not None:
             try:
-                compiled = SeatbeltPolicyCompiler().compile(
+                compiled = SeatbeltPolicyCompiler(
+                    base_policy_path=profile_path
+                ).compile(
                     self.effective_permissions
                 )
             except ValueError as error:
@@ -165,13 +196,10 @@ class SeatbeltProfile:
                 f"-D{key}={value}"
                 for key, value in compiled.parameters.items()
             ]
-        return [
+        command = [
             SANDBOX_EXECUTABLE,
             *profile_arguments,
             f"-DWORKSPACE_ROOT={self.workspace_root}",
-            f"-DGIT_DIR={self.git_directory}",
-            f"-DGIT_WORKTREE_DIR={self.git_worktree_dir}",
-            f"-DGIT_COMMON_DIR={self.git_common_dir}",
             f"-DSENSITIVE_PATH={self.sensitive_path}",
             f"-DSANDBOX_HOME={self.sandbox_home}",
             f"-DSANDBOX_TMP={self.sandbox_tmp}",
@@ -181,6 +209,18 @@ class SeatbeltProfile:
             "--",
             *command,
         ]
+        if (
+            self.git_directory is not None
+            and self.git_worktree_dir is not None
+            and self.git_common_dir is not None
+        ):
+            insertion = command.index(f"-DSENSITIVE_PATH={self.sensitive_path}")
+            command[insertion:insertion] = [
+                f"-DGIT_DIR={self.git_directory}",
+                f"-DGIT_WORKTREE_DIR={self.git_worktree_dir}",
+                f"-DGIT_COMMON_DIR={self.git_common_dir}",
+            ]
+        return command
 
     def environment(self) -> dict[str, str]:
         path_entries = [
@@ -289,14 +329,14 @@ def secure_workspace_move(
         or not os.access(python_executable, os.X_OK)
     ):
         return "failed"
+    git_marker = workspace / ".git"
+    git_enabled = git_marker.exists() and not git_marker.is_symlink()
+    profile_path = PROFILE_PATH if git_enabled else DIRECT_PROFILE_PATH
     command = [
         SANDBOX_EXECUTABLE,
         "-f",
-        str(PROFILE_PATH),
+        str(profile_path),
         f"-DWORKSPACE_ROOT={workspace}",
-        f"-DGIT_DIR={workspace / '.git'}",
-        f"-DGIT_WORKTREE_DIR={workspace / '.git'}",
-        f"-DGIT_COMMON_DIR={workspace / '.git'}",
         f"-DSENSITIVE_PATH={workspace / '.env'}",
         f"-DSANDBOX_HOME={workspace / '.eidos-sandbox-home-unavailable'}",
         f"-DSANDBOX_TMP={workspace / '.eidos-sandbox-tmp-unavailable'}",
@@ -310,6 +350,13 @@ def secure_workspace_move(
         str(target_path),
         expected_sha256 or "new",
     ]
+    if git_enabled:
+        insertion = command.index(f"-DSENSITIVE_PATH={workspace / '.env'}")
+        command[insertion:insertion] = [
+            f"-DGIT_DIR={git_marker.resolve(strict=False)}",
+            f"-DGIT_WORKTREE_DIR={git_marker.resolve(strict=False)}",
+            f"-DGIT_COMMON_DIR={git_marker.resolve(strict=False)}",
+        ]
     try:
         completed = subprocess.run(
             command,
@@ -375,6 +422,8 @@ def run_seatbelt_self_test() -> SeatbeltSelfTestResult:
                 sandbox_home=sandbox_home,
                 sandbox_tmp=sandbox_tmp,
                 sensitive_path=sensitive,
+                git_worktree_dir=git_directory,
+                git_common_dir=git_directory,
             )
             workspace = profile.workspace_root
             sandbox_home = profile.sandbox_home

@@ -10,8 +10,17 @@ from eidos_runtime.domain.worktree import Worktree, WorktreeOwnership, WorktreeS
 def project_from_row(row: Mapping[str, object]) -> Project:
     return Project(
         id=str(row["id"]),
-        repository_root=str(row["repository_root"]),
-        git_common_dir=str(row["git_common_dir"]),
+        workspace_root=str(row["workspace_root"]),
+        git_repository_root=(
+            str(row["git_repository_root"])
+            if row["git_repository_root"] is not None
+            else None
+        ),
+        git_common_dir=(
+            str(row["git_common_dir"])
+            if row["git_common_dir"] is not None
+            else None
+        ),
         created_at=_timestamp(int(row["created_at"])),
         updated_at=_timestamp(int(row["updated_at"])),
     )

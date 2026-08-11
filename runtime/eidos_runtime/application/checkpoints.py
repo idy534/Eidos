@@ -186,12 +186,11 @@ class CheckpointApplication:
             raise ApplicationError("RESOURCE_NOT_FOUND", "parent session not found")
         operation_request: dict[str, object] = {"checkpointId": checkpoint.id}
         if parent_projection.worktree is None:
-            if request.workspace_root is None:
+            if request.workspace_root is not None:
                 raise ApplicationInvalidParamsError(
-                    "LEGACY_CHECKPOINT_FORK_WORKSPACE_REQUIRED",
-                    "legacy checkpoint fork requires workspaceRoot",
+                    "DIRECT_CHECKPOINT_FORK_PATH_FORBIDDEN",
+                    "direct checkpoint fork uses the parent Project workspace",
                 )
-            operation_request["workspaceRoot"] = request.workspace_root
         elif request.workspace_root is not None:
             raise ApplicationInvalidParamsError(
                 "MANAGED_CHECKPOINT_FORK_PATH_FORBIDDEN",
@@ -203,8 +202,11 @@ class CheckpointApplication:
             return replay
 
         if parent_projection.worktree is None:
-            assert request.workspace_root is not None
-            session = self._store.create_session(request.workspace_root)
+            # A direct fork creates a new runtime/conversation lineage while
+            # both Sessions continue to use the same real filesystem root.
+            session = self._store.create_session(
+                parent_projection.project.workspace_root
+            )
             session_id = str(session["id"])
         else:
             return self._fork_managed(
@@ -286,7 +288,7 @@ class CheckpointApplication:
         try:
             if lifecycle_operation is None:
                 plan = manager.prepare_create(
-                    parent_project.repository_root,
+                    parent_project.workspace_root,
                     base_ref=git_head,
                 )
                 token = uuid.uuid5(
@@ -303,7 +305,7 @@ class CheckpointApplication:
                         operation_id=lifecycle_operation_id,
                         state=WorktreeLifecycleState.PREPARED,
                         project_id=plan.project_id,
-                        repository_root=parent_project.repository_root,
+                        repository_root=parent_project.workspace_root,
                         worktree_id=plan.id,
                         worktree_root=plan.worktree_root,
                         base_ref=plan.base_ref,
@@ -318,7 +320,7 @@ class CheckpointApplication:
                 )
             elif (
                 lifecycle_operation.repository_root
-                != parent_project.repository_root
+                != parent_project.workspace_root
                 or lifecycle_operation.checkpoint_id != checkpoint_id
             ):
                 raise ApplicationError(
@@ -352,7 +354,7 @@ class CheckpointApplication:
             session = self._sessions.read_session(session_id)
             if session is None:
                 session_mutation = self._sessions.create_session(
-                    parent_project.repository_root,
+                    parent_project.workspace_root,
                     worktree_id=worktree.id,
                     operation_id=None,
                     session_id=session_id,

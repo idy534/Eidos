@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from eidos_runtime.git.backend import GitBackend
 from eidos_runtime.git.errors import GitCommandFailedError, GitCommandTimeoutError, WorktreeError
 from eidos_runtime.git.models import GitRepositoryDiscovery
-from eidos_runtime.git.process import GitProcess
 
 
 class GitRepositoryDiscoveryService:
     """Resolves a user-selected path into verified Git repository facts."""
 
-    def __init__(self, process: GitProcess) -> None:
+    def __init__(self, process: GitBackend) -> None:
         self.process = process
 
     def discover(self, repository_root: Path | str) -> GitRepositoryDiscovery:
@@ -43,6 +43,16 @@ class GitRepositoryDiscoveryService:
             git_dir=str(resolved_git_dir),
             git_common_dir=str(resolved_common_dir),
         )
+
+    def resolve(self, repository_root: Path | str) -> GitRepositoryDiscovery | None:
+        """Resolve optional Git capability without treating it as a failure."""
+
+        try:
+            return self.discover(repository_root)
+        except WorktreeError as error:
+            if error.code == "not_a_git_repository":
+                return None
+            raise
 
 
 def _resolve_git_path(value: str, cwd: Path) -> Path:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 V9_SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -853,6 +853,31 @@ CREATE INDEX worktrees_project_ownership
 ON worktrees(project_id, ownership, state);
 """
 
+V15_WORKTREE_TABLES_SCHEMA_SQL = """
+CREATE TABLE worktrees (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+    worktree_root TEXT NOT NULL UNIQUE,
+    git_dir TEXT NOT NULL,
+    base_ref TEXT NOT NULL,
+    base_commit TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    ownership TEXT NOT NULL CHECK (ownership IN ('managed', 'adopted')),
+    state TEXT NOT NULL CHECK (
+        state IN ('active', 'missing', 'invalid', 'deleted')
+    ),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(project_id, branch)
+);
+
+CREATE INDEX worktrees_project_state
+ON worktrees(project_id, state, updated_at DESC);
+
+CREATE INDEX worktrees_project_ownership
+ON worktrees(project_id, ownership, state);
+"""
+
 V16_SESSION_WORKTREE_SCHEMA_SQL = """
 ALTER TABLE sessions
 ADD COLUMN worktree_id TEXT REFERENCES worktrees(id) ON DELETE RESTRICT;
@@ -902,13 +927,30 @@ CREATE INDEX worktree_lifecycle_operations_session
 ON worktree_lifecycle_operations(session_id, scope);
 """
 
+V18_PROJECT_SCHEMA_SQL = """
+CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
+    workspace_root TEXT NOT NULL UNIQUE,
+    git_repository_root TEXT,
+    git_common_dir TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    CHECK (
+        (git_repository_root IS NULL AND git_common_dir IS NULL)
+        OR (git_repository_root IS NOT NULL AND git_common_dir IS NOT NULL)
+    )
+);
+
+"""
+
 SCHEMA_SQL = (
     V12_BASE_SCHEMA_SQL
     + V10_REPOSITORY_SCHEMA_SQL
     + V10_CONTEXT_SCHEMA_SQL
     + V13_RESPONSE_ACTIONS_SCHEMA_SQL
     + V14_COMPACTION_QUALITY_SCHEMA_SQL
-    + V15_WORKTREE_SCHEMA_SQL
+    + V18_PROJECT_SCHEMA_SQL
+    + V15_WORKTREE_TABLES_SCHEMA_SQL
     + V16_SESSION_WORKTREE_SCHEMA_SQL
     + V17_WORKTREE_LIFECYCLE_SCHEMA_SQL
 )

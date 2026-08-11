@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.project import Project
 from eidos_runtime.models import EidosFrozenStrictModel
 
 
@@ -16,4 +17,11 @@ class GitWorktreeEntry(EidosFrozenStrictModel):
     prunable: bool = False
 
 
-__all__ = ["GitRepositoryDiscovery", "GitWorktreeEntry"]
+class ProjectResolution(EidosFrozenStrictModel):
+    """Resolved filesystem Project plus its optional Git capability."""
+
+    project: Project
+    git: GitRepositoryDiscovery | None = None
+
+
+__all__ = ["GitRepositoryDiscovery", "GitWorktreeEntry", "ProjectResolution"]

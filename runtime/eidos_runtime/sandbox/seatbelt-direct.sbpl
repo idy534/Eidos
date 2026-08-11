@@ -1,0 +1,93 @@
+(version 1)
+
+(deny default)
+
+; Every descendant inherits the same profile.
+(allow process-exec)
+(allow process-fork)
+(allow signal (target same-sandbox))
+(allow process-info* (target same-sandbox))
+
+; Minimal platform runtime required by system command-line tools.
+(allow file-read* file-test-existence
+  (literal "/")
+  (subpath "/System")
+  (subpath "/Library/Apple")
+  (subpath "/Library/Developer")
+  (subpath "/usr/lib")
+  (subpath "/usr/share")
+  (subpath "/bin")
+  (subpath "/sbin")
+  (subpath "/usr/bin")
+  (subpath "/usr/sbin")
+  (subpath "/usr/libexec")
+  (subpath "/opt/homebrew")
+  (subpath "/usr/local")
+  (subpath "/private/etc")
+  (literal "/var/select/developer_dir")
+  (literal "/private/var/select/sh")
+  (literal "/dev/null")
+  (literal "/dev/zero")
+  (literal "/dev/random")
+  (literal "/dev/urandom")
+  (subpath "/dev/fd"))
+
+(allow file-read* file-test-existence
+  (literal (param "FILE_COMMIT_HELPER")))
+
+(allow file-read-metadata file-test-existence
+  (path-ancestors "/opt/homebrew")
+  (path-ancestors "/usr/local")
+  (path-ancestors "/var/select")
+  (path-ancestors (param "PYTHON_RUNTIME_ROOT"))
+  (path-ancestors (param "PYTHON_BASE_RUNTIME_ROOT")))
+
+(allow file-read* file-test-existence
+  (subpath (param "PYTHON_RUNTIME_ROOT"))
+  (subpath (param "PYTHON_BASE_RUNTIME_ROOT")))
+(allow file-map-executable
+  (subpath (param "PYTHON_RUNTIME_ROOT"))
+  (subpath (param "PYTHON_BASE_RUNTIME_ROOT")))
+(deny file-write*
+  (subpath (param "PYTHON_RUNTIME_ROOT"))
+  (subpath (param "PYTHON_BASE_RUNTIME_ROOT")))
+
+(allow file-map-executable
+  (subpath "/System")
+  (subpath "/Library/Apple")
+  (subpath "/Library/Developer")
+  (subpath "/opt/homebrew")
+  (subpath "/usr/local")
+  (subpath "/usr/lib"))
+
+(allow file-write-data
+  (literal "/dev/null")
+  (literal "/dev/zero")
+  (subpath "/dev/fd"))
+
+(allow sysctl-read)
+(allow mach-lookup
+  (global-name "com.apple.system.opendirectoryd.libinfo")
+  (global-name "com.apple.system.opendirectoryd.membership"))
+
+; Permit traversal to the workspace and runtime-owned directories.
+(allow file-read-metadata file-test-existence
+  (path-ancestors (param "WORKSPACE_ROOT"))
+  (path-ancestors (param "SANDBOX_HOME"))
+  (path-ancestors (param "SANDBOX_TMP")))
+
+; Workspace is readable and writable except for the sensitive carve-out.
+(allow file-read* file-test-existence
+  (require-all
+    (subpath (param "WORKSPACE_ROOT"))
+    (require-not (literal (param "SENSITIVE_PATH")))
+    (require-not (subpath (param "SENSITIVE_PATH")))))
+(allow file-write*
+  (require-all
+    (subpath (param "WORKSPACE_ROOT"))
+    (require-not (literal (param "SENSITIVE_PATH")))
+    (require-not (subpath (param "SENSITIVE_PATH")))))
+
+(allow file-read* file-test-existence file-write*
+  (subpath (param "SANDBOX_HOME"))
+  (subpath (param "SANDBOX_TMP")))
