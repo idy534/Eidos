@@ -41,8 +41,10 @@
 ## Recovery 与 Checkpoint
 
 - Runtime 可以持久化 Long Task 控制、pause/resume/cancel、restart verification 结果和 reconciliation 状态，但 Restart Verification 尚未覆盖完整的 Git diff、credential、MCP、Seatbelt、pending Approval、unfinished ToolCall、Durable Intent 和 Checkpoint 兼容性集合。
-- Checkpoint create/list 和 rewind/fork lineage 已持久化并暴露 typed RPC。Rewind 尚未重建完整逻辑 Context。Fork 尚未验证或复制全部 immutable snapshots，也没有使用本 PR 的 Worktree Kernel 创建独立 Git Worktree。
-- Runtime Git Worktree Kernel 已绑定新的 Session。当前 Session delete 还没有完整的 dirty detection、active Run race 和 Worktree cleanup 闭环。Git worktree add 成功而 Session persistence 尚未提交的 restart crash window 还没有 durable provisioning recovery。linked Worktree 的真实 Git metadata 还没有加入 Sandbox writable permission。Desktop Project UI、Checkpoint Fork binding、Git commit、branch delete、merge、rebase 和 force delete 仍未实现。
+- Checkpoint create/list 和 rewind/fork lineage 已持久化并暴露 typed RPC。Managed Checkpoint Fork v1 已创建独立的 managed Worktree、Session 和 Run。Rewind 尚未重建完整逻辑 Context。Fork 尚未复制全部 immutable snapshots，也不会恢复 checkpoint 时刻完整的未提交 working-tree patch。
+- Session create、Session delete 和 managed Checkpoint Fork 已有 v17 durable lifecycle intent、startup reconciliation 和 same-operation retry。Runtime 仍会拒绝 dirty Worktree delete，并保留无法证明安全的目录和 branch。Runtime 不提供 branch merge、rebase、force delete 或 Git staging、commit、push UI。
+- Linked Worktree 的 Git metadata read 已在真实 macOS Seatbelt 中验证。Git metadata write、原始 repository working-tree access 和不匹配的 Worktree recovery 会被拒绝。Desktop dirty indicator 只使用已有 Session status cache，不做所有 Thread 的持续轮询。
+- Parallel Agent 尚未实现。cross-worktree Repository Intelligence sharing 尚未实现。
 - Runtime 不会恢复内存中的 Model request、Process 或 ToolCall。可能有副作用的未确认执行必须先进入 reconciliation，Runtime 不会自动重放。
 
 ## Compaction 与 Context

@@ -79,8 +79,11 @@
 - Runtime 可以创建、打开、验证、列出、恢复、清理和删除 managed Worktree。Worktree 使用 Runtime-controlled root 和 Runtime-generated branch。
 - Runtime 可以实时查询 Worktree 的 HEAD、branch、dirty、staged、unstaged、untracked 和 conflict 状态。
 - Runtime 可以返回 HEAD diff 和基于创建时 immutable `base_commit` 的 baseline diff。两种 Diff 都包含 tracked 和 untracked files。Diff 使用 NUL-safe machine output、有界输出和 truncation metadata，不修改 Git Index。
-- SQLite v16 保存 Project、Worktree ownership、lifecycle state 和 `sessions.worktree_id`。Migration tests 覆盖 v14 → v16，并验证旧 Session 的 NULL binding。
-- Git lifecycle 不经过 Model Tool。Session binding 已接入 Runtime application path，Desktop Project UI 尚未接入。
+- SQLite v17 保存 Project、Worktree ownership、lifecycle state、`sessions.worktree_id` 和 managed lifecycle intent。Migration tests 覆盖 v16 → v17，并验证旧 Session 的 NULL binding、foreign key check 和 integrity check。
+- Session create、Session delete 和 managed Checkpoint Fork 支持同进程 operation serialization、durable prepare、restart reconciliation 和同 operationId retry。Retry 不会重新生成 Worktree identity。
+- Runtime Git observation 使用 bounded fixed-command Git process。Diff 禁用 external diff 和 textconv。Runtime 会禁用 executable clean/process filter、configured hooks、credential helper、pager 和 terminal prompt。
+- Linked managed Worktree 的 `git_dir` 和 `git_common_dir` 可以在默认 Seatbelt 中只读访问。Git metadata 写入仍然被 Seatbelt 拒绝。原始 repository working tree 不在该 Workspace 的访问范围内。
+- Git lifecycle 不经过 Model Tool。Desktop 以 Session 为单位读取 branch、status 和 diff。Sidebar 不轮询所有 Thread；dirty indicator 使用已有的 Session status cache。
 
 ## Tools
 
@@ -130,8 +133,8 @@
 
 ## Persistence
 
-- 当前 SQLite schema version 是 16。
-- 新数据库直接创建 v16。已有 v11、v12、v13、v14 或 v15 数据库可以逐步迁移到 v16。v10 及更早版本不在当前启动迁移窗口。
+- 当前 SQLite schema version 是 17。
+- 新数据库直接创建 v17。已有 v11、v12、v13、v14、v15 或 v16 数据库可以逐步迁移到 v17。v10 及更早版本不在当前启动迁移窗口。
 - SQLite 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context、Repository Snapshot、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。
 - 业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - SQLite 使用私有数据目录、WAL、busy timeout、完整性检查、单实例锁和 health-only 失败状态。
@@ -139,6 +142,7 @@
 ## Recovery
 
 - Runtime 重启时会从 SQLite 收敛未完成 Run、ToolCall、Approval、Outbox、Long Task 和资源状态。
+- Runtime 启动时会读取 v17 Worktree lifecycle intent，并在业务应用暴露前执行 bounded Worktree reconciliation。Session create、Session delete 和 Checkpoint Fork 可以在 restart 后使用同一 operationId retry。
 - Runtime 支持 cancel、pause、resume 和 restart verification 的 typed boundary。
 - Resume 前会检查 Workspace identity、规则、Repository/Context snapshot、permission snapshot、Git 和 side-effect reconciliation 字段。
 - Cancel、Tool timeout、Shell cleanup、MCP shutdown 和 Runtime shutdown 都有资源跟踪和有界等待。
@@ -148,7 +152,8 @@
 
 - Runtime 提供 checkpoint create/list 和 rewind/fork action lineage 的 typed RPC。
 - Checkpoint 记录 Rule Snapshot、Repository Snapshot、Context Snapshot、Compaction Summary、Workspace identity、Git、permission、Model snapshot 和 reconciliation 状态引用。
-- Checkpoint action 以 append-only lineage 保存 source Run、target Run 和 action kind。完整 rewind/fork Context 重建和 Git Worktree 隔离仍属于限制，而不是已完成闭环。
+- Managed Checkpoint Fork v1 从 `checkpoint.gitHead` 创建新的 managed Worktree，并保存 Session、Run 和 checkpoint action lineage。相同 `checkpointId` 与 `operationId` 不会创建第二套 Worktree、Session、Run 或 action。
+- Checkpoint action 以 append-only lineage 保存 source Run、target Run 和 action kind。完整 rewind/fork Context 重建、全部 immutable snapshot 复制和完整未提交 patch 恢复仍属于限制。
 
 ## Distribution
 
@@ -171,6 +176,7 @@
 
 - Runtime stdout、stderr、JSON-RPC 行大小、未知 response id、非协议 stdout 和协议错误都有边界检查。
 - GitProcess 对固定 Git argv 使用显式 cwd、shell=False、timeout、进程组终止和有界 stdout/stderr。Git diff 也有独立大小上限。
+- GitProcess 对 informational diff 使用 `--no-ext-diff` 和 `--no-textconv`。Native Seatbelt tests 使用真实 linked Worktree 验证 Git read、普通 Worktree write 和 Git metadata write denial。
 - `pnpm test` 覆盖 Runtime、contracts、Renderer state、Main 和 Renderer behavior。
 - `pnpm check:python` 覆盖 Ruff、deptry、Runtime tests 和 Python dependency audit。
 - Seatbelt native、Electron startup/shutdown、bundled Runtime、packaged App 和 packaging config 都有独立测试入口。
