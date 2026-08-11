@@ -43,8 +43,11 @@ package = false
 [tool.pytest.ini_options]
 testpaths = ["runtime/tests"]
 pythonpath = ["runtime"]
-addopts = ["-ra", "-m", "not large_repository"]
+addopts = ["-ra"]
 markers = [
+    "integration: multi-component integration tests",
+    "slow: tests with significant execution cost",
+    "platform: tests depending on macOS, process, git, filesystem or sandbox behavior",
     "large_repository: separately scheduled repository scale validation",
 ]
 
