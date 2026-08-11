@@ -133,7 +133,9 @@ def _managed_session(
     sessions: SessionApplication, repository: Path
 ) -> dict[str, object]:
     return sessions.create(
-        SessionCreateRequestDto(workspaceRoot=str(repository))
+        SessionCreateRequestDto(
+            workspaceRoot=str(repository), executionMode="worktree"
+        )
     ).root
 
 
@@ -218,7 +220,7 @@ def test_run_admission_rejects_repository_and_branch_mismatch(
             )
         branch_mismatch = _managed_session(sessions, repository)
         branch_root = Path(str(branch_mismatch["worktree"]["worktreeRoot"]))
-        _git(branch_root, "branch", "-m", "foreign/branch")
+        _git(branch_root, "switch", "-c", "foreign/branch")
         with pytest.raises(ApplicationError) as branch_error:
             _start(runs, str(branch_mismatch["id"]))
         assert branch_error.value.code == "GIT_WORKTREE_INVALID"

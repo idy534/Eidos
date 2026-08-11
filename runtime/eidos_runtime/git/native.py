@@ -183,21 +183,24 @@ class NativeWorktreeCreator:
         self,
         repository_root: Path,
         worktree_root: Path,
-        branch: str,
+        branch: str | None,
         base_commit: str,
     ) -> None:
-        _validate_branch(branch)
+        if branch is not None:
+            _validate_branch(branch)
         _validate_ref(base_commit)
         overrides = self._filter_config_overrides(repository_root)
+        add_args = (
+            ("--detach", str(worktree_root), base_commit)
+            if branch is None
+            else ("-b", branch, str(worktree_root), base_commit)
+        )
         self._runner.run(
             (
                 "worktree",
                 "add",
                 "--quiet",
-                "-b",
-                branch,
-                str(worktree_root),
-                base_commit,
+                *add_args,
             ),
             cwd=repository_root,
             operation="worktree-add",

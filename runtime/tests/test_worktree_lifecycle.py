@@ -68,7 +68,7 @@ def test_schema_v18_contains_durable_worktree_lifecycle_table(
     store = SessionStore(tmp_path / "data")
     store.initialize()
     try:
-        assert SCHEMA_VERSION == 18
+        assert SCHEMA_VERSION == 19
         table = store.connection.execute(
             """
             SELECT name FROM sqlite_master
@@ -105,6 +105,7 @@ def test_same_session_create_operation_id_has_one_worktree(
         monkeypatch.setattr(manager, "create_prepared", delayed_create)
         request = SessionCreateRequestDto(
             workspaceRoot=str(repository),
+            executionMode="worktree",
             operationId=str(uuid4()),
         )
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -134,7 +135,9 @@ def test_same_checkpoint_fork_operation_id_has_one_fork(
         worktree_manager=manager,
     )
     parent = sessions.create(
-        SessionCreateRequestDto(workspaceRoot=str(repository))
+        SessionCreateRequestDto(
+            workspaceRoot=str(repository), executionMode="worktree"
+        )
     ).root
     parent_run, _item = store.enqueue_run(str(parent["id"]), "fork")
     checkpoint = checkpoints.create(
@@ -189,6 +192,7 @@ def test_session_create_restart_recovery_reuses_prepared_identity(
     operation_id = str(uuid4())
     request = SessionCreateRequestDto(
         workspaceRoot=str(repository),
+        executionMode="worktree",
         operationId=operation_id,
     )
     try:
@@ -264,7 +268,9 @@ def test_session_delete_restart_recovery_finishes_only_durable_intent(
     repository = _repository(tmp_path)
     store, manager, application = _application(tmp_path)
     session = application.create(
-        SessionCreateRequestDto(workspaceRoot=str(repository))
+        SessionCreateRequestDto(
+            workspaceRoot=str(repository), executionMode="worktree"
+        )
     ).root
     operation_id = str(uuid4())
     request = SessionDeleteRequestDto(
@@ -337,10 +343,14 @@ def test_session_delete_rejects_operation_reuse_after_completed_lifecycle(
     repository = _repository(tmp_path)
     store, _manager, application = _application(tmp_path)
     first = application.create(
-        SessionCreateRequestDto(workspaceRoot=str(repository))
+        SessionCreateRequestDto(
+            workspaceRoot=str(repository), executionMode="worktree"
+        )
     ).root
     second = application.create(
-        SessionCreateRequestDto(workspaceRoot=str(repository))
+        SessionCreateRequestDto(
+            workspaceRoot=str(repository), executionMode="worktree"
+        )
     ).root
     operation_id = str(uuid4())
     first_request = SessionDeleteRequestDto(
@@ -402,10 +412,14 @@ def test_session_delete_rejects_operation_reuse_after_worktree_deleted(
     repository = _repository(tmp_path)
     store, _manager, application = _application(tmp_path)
     first = application.create(
-        SessionCreateRequestDto(workspaceRoot=str(repository))
+        SessionCreateRequestDto(
+            workspaceRoot=str(repository), executionMode="worktree"
+        )
     ).root
     second = application.create(
-        SessionCreateRequestDto(workspaceRoot=str(repository))
+        SessionCreateRequestDto(
+            workspaceRoot=str(repository), executionMode="worktree"
+        )
     ).root
     operation_id = str(uuid4())
     first_request = SessionDeleteRequestDto(
@@ -467,7 +481,9 @@ def test_deleted_worktree_without_delete_intent_does_not_delete_session(
     store, manager, application = _application(tmp_path)
     try:
         session = application.create(
-            SessionCreateRequestDto(workspaceRoot=str(repository))
+            SessionCreateRequestDto(
+                workspaceRoot=str(repository), executionMode="worktree"
+            )
         ).root
         worktree_id = str(session["worktree"]["worktreeId"])
         manager.delete(worktree_id)
@@ -498,7 +514,9 @@ def test_checkpoint_fork_restart_recovery_is_singleton(
         worktree_manager=manager,
     )
     parent = sessions.create(
-        SessionCreateRequestDto(workspaceRoot=str(repository))
+        SessionCreateRequestDto(
+            workspaceRoot=str(repository), executionMode="worktree"
+        )
     ).root
     parent_run, _item = store.enqueue_run(str(parent["id"]), "fork")
     checkpoint = checkpoints.create(

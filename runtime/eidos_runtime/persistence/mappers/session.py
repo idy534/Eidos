@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from eidos_runtime.domain.session import (
     DeletedSession,
     Session,
+    SessionExecutionMode,
     SessionPage,
     SessionProjectProjection,
     SessionProjection,
@@ -35,6 +36,19 @@ def session_from_row(row: RowValues | Mapping[str, object]) -> Session:
         if "worktree_id" in row.keys()
         else None
     )
+    execution_mode_value = (
+        values.optional_text("execution_mode")
+        if "execution_mode" in row.keys()
+        else ("worktree" if worktree_id is not None else "local")
+    )
+    try:
+        execution_mode = SessionExecutionMode(execution_mode_value or "local")
+    except ValueError:
+        raise PersistenceCorruptionError(
+            "persistence_value_invalid",
+            record="session",
+            field="execution_mode",
+        ) from None
     title = values.optional_text("title")
     created_at = utc_datetime_from_millis(
         values.value("created_at"),
@@ -59,6 +73,7 @@ def session_from_row(row: RowValues | Mapping[str, object]) -> Session:
         return Session(
             id=session_id,
             workspace_root=workspace_root,
+            execution_mode=execution_mode,
             worktree_id=worktree_id,
             title=title,
             task_status=task_status,
@@ -81,11 +96,28 @@ def session_from_legacy_dict(value: object) -> Session:
             record="session_operation_result",
         )
     reader = RowReader(value, record="session_operation_result")
+    worktree_value = value.get("worktree")
+    nested_worktree_id = (
+        worktree_value.get("worktreeId")
+        if isinstance(worktree_value, Mapping)
+        else None
+    )
     return session_from_row({
         "id": reader.text("id"),
         "workspace_root": reader.text("workspaceRoot"),
         "worktree_id": (
-            reader.optional_text("worktreeId") if "worktreeId" in value else None
+            reader.optional_text("worktreeId")
+            if "worktreeId" in value
+            else (
+                str(nested_worktree_id)
+                if nested_worktree_id is not None
+                else None
+            )
+        ),
+        "execution_mode": (
+            reader.optional_text("executionMode")
+            if "executionMode" in value
+            else None
         ),
         "title": (
             reader.optional_text("title") if "title" in value else None
@@ -133,7 +165,7 @@ def session_projection_from_row(
                 worktree_root=values.text("projection_worktree_root"),
                 base_ref=values.text("projection_base_ref"),
                 base_commit=values.text("projection_base_commit"),
-                branch=values.text("projection_branch"),
+                branch=values.optional_text("projection_branch"),
                 state=state,
             )
         except ValidationError as error:
@@ -171,6 +203,7 @@ def session_to_operation_dict(session: Session) -> dict[str, object]:
     value = session_to_legacy_dict(session)
     if session.worktree_id is not None:
         value["worktreeId"] = session.worktree_id
+    value["executionMode"] = session.execution_mode.value
     return value
 
 

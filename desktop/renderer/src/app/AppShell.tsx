@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Run, Session } from "../contracts.js";
+import type { ProjectGitContext, Run, Session } from "../contracts.js";
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import { EidosMark } from "../components/EidosMark.js";
@@ -8,6 +8,7 @@ import { Button } from "../components/Button.js";
 import { DropdownMenu } from "../components/DropdownMenu.js";
 import { PrimaryActionButton } from "../components/PrimaryActionButton.js";
 import { ConfirmDialog } from "../components/settings/ConfirmDialog.js";
+import { CreateSessionDialog } from "../components/CreateSessionDialog.js";
 import { Composer } from "../components/Composer.js";
 import { GitChangesPanel } from "../components/GitChangesPanel.js";
 import type { RuntimeLifecycleState } from "./useRuntimeLifecycle.js";
@@ -77,6 +78,12 @@ export function AppShell({ runtime }: AppShellProps) {
   const [sessionToDelete, setSessionToDelete] = useState<Session | undefined>(undefined);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | undefined>(undefined);
+  const [createSessionDraft, setCreateSessionDraft] = useState<{
+    workspaceRoot: string;
+    gitContext: ProjectGitContext;
+  } | undefined>(undefined);
+  const [createSessionContextBusy, setCreateSessionContextBusy] = useState(false);
+  const [createSessionConfirmBusy, setCreateSessionConfirmBusy] = useState(false);
   const [contentView, setContentView] = useState<"conversation" | "changes">("conversation");
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const workspaceRef = useRef<HTMLElement>(null);
@@ -171,6 +178,9 @@ export function AppShell({ runtime }: AppShellProps) {
   const hasBlockingModal =
     Boolean(sessionToDelete) ||
     deleteBusy ||
+    Boolean(createSessionDraft) ||
+    createSessionContextBusy ||
+    createSessionConfirmBusy ||
     sessionState.pending.creatingSession === true;
 
   useEffect(() => {
@@ -206,7 +216,37 @@ export function AppShell({ runtime }: AppShellProps) {
   }
 
   async function handleCreateSession(workspaceRoot?: string) {
-    return sessionActions.createSession(workspaceRoot);
+    setCreateSessionContextBusy(true);
+    sessionActions.setError(undefined);
+    try {
+      const workspace = workspaceRoot ?? await window.eidosRuntime.selectWorkspace();
+      if (!workspace) return;
+      const gitContext = await window.eidosRuntime.readProjectGitContext(workspace);
+      setCreateSessionDraft({ workspaceRoot: workspace, gitContext });
+    } catch (cause) {
+      sessionActions.setError(userFacingError(cause));
+    } finally {
+      setCreateSessionContextBusy(false);
+    }
+  }
+
+  async function confirmCreateSession(
+    executionMode: "local" | "worktree",
+    baseRef?: string,
+  ): Promise<void> {
+    if (!createSessionDraft) return;
+    setCreateSessionConfirmBusy(true);
+    try {
+      const created = await sessionActions.createSession(createSessionDraft.workspaceRoot, {
+        executionMode,
+        ...(executionMode === "worktree" && baseRef ? { baseRef } : {}),
+      });
+      if (created) {
+        setCreateSessionDraft(undefined);
+      }
+    } finally {
+      setCreateSessionConfirmBusy(false);
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -301,6 +341,9 @@ export function AppShell({ runtime }: AppShellProps) {
 
   const sidebarDisabled =
     sessionState.pending.creatingSession === true
+    || createSessionContextBusy
+    || createSessionConfirmBusy
+    || Boolean(createSessionDraft)
     || !isStorageReady;
 
   return (
@@ -414,7 +457,7 @@ export function AppShell({ runtime }: AppShellProps) {
               {sessionHasGit && (
                 <div className="session-header-actions">
                   <div className="session-git-summary" aria-label="当前 Git 状态">
-                    <span>{gitReviewState.status?.branch ?? sessionWorktree?.branch}</span>
+                    <span>{gitReviewState.status?.branch ?? sessionWorktree?.branch ?? "Detached HEAD"}</span>
                     {gitReviewState.status && (
                       <>
                         <code>{gitReviewState.status.head.slice(0, 7)}</code>
@@ -528,6 +571,24 @@ export function AppShell({ runtime }: AppShellProps) {
       </section>
 
       {/* Delete confirm dialog */}
+      <CreateSessionDialog
+        open={Boolean(createSessionDraft)}
+        workspaceRoot={createSessionDraft?.workspaceRoot ?? ""}
+        gitContext={createSessionDraft?.gitContext ?? {
+          gitAvailable: false,
+          currentBranch: null,
+          head: null,
+          branches: [],
+        }}
+        busy={createSessionConfirmBusy}
+        error={sessionState.error}
+        getFallbackFocus={getDialogFallbackFocus}
+        onConfirm={(executionMode, baseRef) => void confirmCreateSession(executionMode, baseRef)}
+        onCancel={() => {
+          setCreateSessionDraft(undefined);
+          sessionActions.setError(undefined);
+        }}
+      />
       <ConfirmDialog
         open={Boolean(sessionToDelete)}
         title={`删除任务"${sessionToDelete?.title ?? "新任务"}"？`}

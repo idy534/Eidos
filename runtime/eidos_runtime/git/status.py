@@ -19,7 +19,7 @@ class GitStatusSnapshot(EidosFrozenStrictModel):
     worktree_root: str
     base_ref: str
     base_commit: str
-    branch: str
+    branch: str | None
     head: str
     dirty: bool
     staged_count: int = Field(ge=0)

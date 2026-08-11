@@ -27,7 +27,7 @@ export interface SessionWorktree {
   worktreeRoot: string;
   baseRef: string;
   baseCommit: string;
-  branch: string;
+  branch: string | null;
   state: "active" | "missing" | "invalid" | "deleted";
 }
 
@@ -40,6 +40,7 @@ export interface SessionProject {
 export interface Session {
   id: string;
   workspaceRoot: string;
+  executionMode?: "local" | "worktree";
   /** Optional only while older persisted event fixtures are read. */
   project?: SessionProject;
   worktree?: SessionWorktree;
@@ -62,7 +63,7 @@ export type GitDiffScope = "head" | "baseline";
 
 export interface SessionGitStatus {
   worktreeId: string;
-  branch: string;
+  branch: string | null;
   head: string;
   baseRef: string;
   baseCommit: string;
@@ -72,6 +73,13 @@ export interface SessionGitStatus {
   untrackedCount: number;
   conflictCount: number;
   observedAt: number;
+}
+
+export interface ProjectGitContext {
+  gitAvailable: boolean;
+  currentBranch: string | null;
+  head: string | null;
+  branches: string[];
 }
 
 export interface SessionGitDiff {

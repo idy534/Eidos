@@ -13,6 +13,7 @@ from eidos_runtime.db.migrations import (
     v015_to_v016,
     v016_to_v017,
     v017_to_v018,
+    v018_to_v019,
 )
 
 
@@ -32,13 +33,17 @@ def migrate_schema(
         (v015_to_v016.FROM_VERSION, v015_to_v016.TO_VERSION): v015_to_v016,
         (v016_to_v017.FROM_VERSION, v016_to_v017.TO_VERSION): v016_to_v017,
         (v017_to_v018.FROM_VERSION, v017_to_v018.TO_VERSION): v017_to_v018,
+        (v018_to_v019.FROM_VERSION, v018_to_v019.TO_VERSION): v018_to_v019,
     }.get((current_version, target_version))
     if migration is None:
         raise StorageError("schema_revision_unsupported")
     foreign_keys_disabled = (
         current_version,
         target_version,
-    ) == (v017_to_v018.FROM_VERSION, v017_to_v018.TO_VERSION)
+    ) in {
+        (v017_to_v018.FROM_VERSION, v017_to_v018.TO_VERSION),
+        (v018_to_v019.FROM_VERSION, v018_to_v019.TO_VERSION),
+    }
     if foreign_keys_disabled:
         # SQLite cannot replace a referenced parent table while foreign-key
         # enforcement is enabled. The migration remains atomic and runs the
@@ -63,6 +68,7 @@ def migrate_schema(
         v015_to_v016.InvalidV15SchemaError,
         v016_to_v017.InvalidV16SchemaError,
         v017_to_v018.InvalidV17SchemaError,
+        v018_to_v019.InvalidV18SchemaError,
     ) as error:
         if connection.in_transaction:
             connection.rollback()

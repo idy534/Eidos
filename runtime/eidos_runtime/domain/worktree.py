@@ -50,7 +50,7 @@ class Worktree(EidosFrozenStrictModel):
         max_length=64,
         pattern=r"^[0-9a-fA-F]+$",
     )
-    branch: str = Field(min_length=1, max_length=4096)
+    branch: str | None = Field(default=None, min_length=1, max_length=4096)
     ownership: WorktreeOwnership
     state: WorktreeState
     created_at: datetime

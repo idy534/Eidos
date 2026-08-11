@@ -34,7 +34,7 @@ def worktree_from_row(row: Mapping[str, object]) -> Worktree:
         git_dir=str(row["git_dir"]),
         base_ref=str(row["base_ref"]),
         base_commit=str(row["base_commit"]),
-        branch=str(row["branch"]),
+        branch=(str(row["branch"]) if row["branch"] is not None else None),
         ownership=WorktreeOwnership(str(row["ownership"])),
         state=WorktreeState(str(row["state"])),
         created_at=_timestamp(int(row["created_at"])),

@@ -58,6 +58,7 @@ def test_workspace_for_run_reads_the_frozen_resolution_snapshot(
         session = store.typed_runtime_repository().create_session(
             str(repository.resolve()),
             worktree_id=worktree.id,
+            execution_mode="worktree",
         ).value
         run, _item = store.create_run(session.id, "inspect")
         frozen = store.read_run_resolution_snapshot(

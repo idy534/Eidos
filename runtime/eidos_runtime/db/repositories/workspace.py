@@ -10,7 +10,7 @@ from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
 
 _SESSION_WORKSPACE_SELECT = """
     SELECT s.id, s.workspace_root, s.workspace_dev, s.workspace_inode,
-           s.workspace_uid, s.worktree_id,
+           s.workspace_uid, s.worktree_id, s.execution_mode,
            w.worktree_root, w.state, w.git_dir,
            p.workspace_root AS project_workspace_root, p.git_common_dir
     FROM sessions s
@@ -44,7 +44,12 @@ def execution_workspace_for_run(
 
 
 def _identity_from_session_row(row: sqlite3.Row) -> WorkspaceIdentity:
-    if row["worktree_id"] is None:
+    execution_mode = row["execution_mode"]
+    if execution_mode is None:
+        execution_mode = "worktree" if row["worktree_id"] is not None else "local"
+    if execution_mode == "local":
+        if row["worktree_id"] is not None:
+            raise StorageError("local session has a worktree binding")
         if any(
             row[field] is None
             for field in ("workspace_dev", "workspace_inode", "workspace_uid")
@@ -57,6 +62,8 @@ def _identity_from_session_row(row: sqlite3.Row) -> WorkspaceIdentity:
             owner=row["workspace_uid"],
         )
 
+    if execution_mode != "worktree" or row["worktree_id"] is None:
+        raise StorageError("session execution binding is invalid")
     if (
         row["worktree_root"] is None
         or row["workspace_root"] is None

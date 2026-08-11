@@ -42,7 +42,10 @@ export interface SessionControllerState {
 export interface SessionControllerActions {
   loadSessions: () => Promise<void>;
   selectSession: (session: Session) => Promise<SessionSnapshot | undefined>;
-  createSession: (workspaceRoot?: string) => Promise<SessionSnapshot | undefined>;
+  createSession: (
+    workspaceRoot?: string,
+    options?: { executionMode?: "local" | "worktree"; baseRef?: string },
+  ) => Promise<SessionSnapshot | undefined>;
   renameSession: (sessionId: string, title: string) => Promise<void>;
   deleteSession: (session: Session) => Promise<{ confirmed: true } | { confirmed: false; error: string }>;
   setError: (error: string | undefined) => void;
@@ -186,7 +189,10 @@ export function useSessionController(): [SessionControllerState, SessionControll
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot]);
 
-  const createSession = useCallback(async (workspaceRoot?: string): Promise<SessionSnapshot | undefined> => {
+  const createSession = useCallback(async (
+    workspaceRoot?: string,
+    options: { executionMode?: "local" | "worktree"; baseRef?: string } = {},
+  ): Promise<SessionSnapshot | undefined> => {
     if (creatingSessionRef.current) {
       return undefined;
     }
@@ -198,7 +204,9 @@ export function useSessionController(): [SessionControllerState, SessionControll
       const workspace = workspaceRoot ?? await window.eidosRuntime.selectWorkspace();
       if (!workspace) return undefined;
 
-      const session = await window.eidosRuntime.createSession(workspace);
+      const session = Object.keys(options).length > 0
+        ? await window.eidosRuntime.createSession(workspace, options)
+        : await window.eidosRuntime.createSession(workspace);
       const token = snapshotReads.select(session.id);
       selectedSessionIdRef.current = session.id;
       setNavigationSessionId(session.id);

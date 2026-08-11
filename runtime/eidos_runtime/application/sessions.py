@@ -27,6 +27,7 @@ from eidos_runtime.db.errors import (
     WorkspaceBoundaryError,
 )
 from eidos_runtime.domain.project import Project
+from eidos_runtime.domain.session import SessionExecutionMode
 from eidos_runtime.domain.worktree import (
     Worktree,
     WorktreeLifecycleOperation,
@@ -34,7 +35,11 @@ from eidos_runtime.domain.worktree import (
     WorktreeLifecycleState,
 )
 from eidos_runtime.git.errors import WorktreeError
-from eidos_runtime.git.models import GitRepositoryDiscovery, ProjectResolution
+from eidos_runtime.git.models import (
+    GitRepositoryContext,
+    GitRepositoryDiscovery,
+    ProjectResolution,
+)
 from eidos_runtime.git.status import DiffScope, GitDiffSnapshot, GitStatusSnapshot
 from eidos_runtime.protocol.methods import (
     EventListRequestDto,
@@ -54,6 +59,8 @@ from eidos_runtime.protocol.methods import (
     SessionReadResponseDto,
     SessionRenameRequestDto,
     SessionRenameResponseDto,
+    GitContextRequestDto,
+    GitContextResponseDto,
 )
 from eidos_runtime.domain.session import (
     DeletedSession,
@@ -91,6 +98,8 @@ class TypedSessionRepositoryPort(Protocol):
         workspace_root: str,
         *,
         worktree_id: str | None = None,
+        execution_mode: SessionExecutionMode = SessionExecutionMode.LOCAL,
+        project_id: str | None = None,
         operation_id: str | None = None,
         session_id: str | None = None,
     ) -> CommittedMutation[Session]: ...
@@ -168,8 +177,14 @@ class ManagedWorktreePort(Protocol):
     def create(self, repository_root: Path | str) -> Worktree: ...
 
     def prepare_create(
-        self, repository_root: Path | str
+        self, repository_root: Path | str, base_ref: str | None = None
     ) -> Worktree: ...
+
+    def local_branches(self, repository_root: Path) -> tuple[str, ...]: ...
+
+    def head(self, repository_root: Path) -> str: ...
+
+    def current_branch(self, repository_root: Path) -> str | None: ...
 
     def create_prepared(
         self,
@@ -238,6 +253,8 @@ class SessionApplication:
         self._logger = logging.getLogger(__name__)
 
     def create(self, request: SessionCreateRequestDto) -> SessionCreateResponseDto:
+        execution_mode = SessionExecutionMode(request.execution_mode)
+        resolution: ProjectResolution | None = None
         if self._worktree_manager is not None:
             operation_guard = (
                 self._lifecycle.hold_operation(
@@ -248,11 +265,18 @@ class SessionApplication:
             )
             with operation_guard:
                 resolution = self._resolve_project(request.workspace_root)
-                if resolution.git is not None:
+                if execution_mode is SessionExecutionMode.WORKTREE:
+                    if resolution.git is None:
+                        raise ApplicationError(
+                            "WORKTREE_REQUIRES_GIT",
+                            "worktree execution requires a Git repository",
+                        )
                     return self._create_managed(request, resolution)
         try:
             mutation = self._repository.create_session(
                 request.workspace_root,
+                execution_mode=execution_mode,
+                project_id=resolution.project.id if resolution is not None else None,
                 operation_id=request.operation_id,
             )
         except WorkspaceBoundaryError as error:
@@ -296,7 +320,12 @@ class SessionApplication:
         except WorktreeError as error:
             raise ApplicationError(_worktree_error_code(error), str(error)) from error
 
-        operation_request = {"workspaceRoot": discovery.repository_root}
+        operation_request: dict[str, object] = {
+            "workspaceRoot": discovery.repository_root,
+            "executionMode": SessionExecutionMode.WORKTREE.value,
+        }
+        if request.base_ref is not None:
+            operation_request["baseRef"] = request.base_ref
         if request.operation_id is not None:
             try:
                 replay = self._store.operation_result(
@@ -326,7 +355,10 @@ class SessionApplication:
         worktree: Worktree | None = None
         try:
             if lifecycle_operation is None:
-                plan = manager.prepare_create(discovery.repository_root)
+                plan = manager.prepare_create(
+                    discovery.repository_root,
+                    base_ref=request.base_ref,
+                )
                 session_id = str(uuid.uuid4())
                 now = datetime.now(UTC).replace(microsecond=0)
                 lifecycle_operation = lifecycle.prepare(
@@ -381,11 +413,16 @@ class SessionApplication:
                     mutation = self._repository.create_session(
                         project.workspace_root,
                         worktree_id=worktree.id,
+                        execution_mode=SessionExecutionMode.WORKTREE,
+                        project_id=project.id,
                         operation_id=None,
                         session_id=session_id,
                     )
                 except TypeError as error:
-                    if "session_id" not in str(error):
+                    if not any(
+                        field in str(error)
+                        for field in ("execution_mode", "project_id", "session_id")
+                    ):
                         raise
                     # Keep narrow compatibility with older injected repository
                     # seams used by failure tests.
@@ -396,7 +433,11 @@ class SessionApplication:
                     )
                 session = mutation.value
             else:
-                if existing_session.worktree_id != worktree.id:
+                if (
+                    existing_session.worktree_id != worktree.id
+                    or existing_session.execution_mode
+                    is not SessionExecutionMode.WORKTREE
+                ):
                     raise ApplicationError(
                         "WORKTREE_RECOVERY_REQUIRED",
                         "session lifecycle binding does not match",
@@ -573,6 +614,49 @@ class SessionApplication:
                 "unifiedDiff": diff.unified_diff,
                 "truncated": diff.truncated,
                 "observedAt": _timestamp_millis(diff.observed_at),
+            },
+        )
+
+    def git_context(self, request: GitContextRequestDto) -> GitContextResponseDto:
+        manager = self._worktree_manager
+        if manager is None:
+            return _result(
+                GitContextResponseDto,
+                GitRepositoryContext(
+                    git_available=False,
+                    current_branch=None,
+                    head=None,
+                    branches=(),
+                ).model_dump(mode="json"),
+            )
+        resolution = self._resolve_project(request.workspace_root)
+        if resolution.git is None:
+            return _result(
+                GitContextResponseDto,
+                {
+                    "gitAvailable": False,
+                    "currentBranch": None,
+                    "head": None,
+                    "branches": [],
+                },
+            )
+        repository_root = Path(resolution.git.repository_root)
+        try:
+            context = GitRepositoryContext(
+                git_available=True,
+                current_branch=manager.current_branch(repository_root),
+                head=manager.head(repository_root),
+                branches=manager.local_branches(repository_root),
+            )
+        except WorktreeError as error:
+            raise ApplicationError(_worktree_error_code(error), str(error)) from error
+        return _result(
+            GitContextResponseDto,
+            {
+                "gitAvailable": context.git_available,
+                "currentBranch": context.current_branch,
+                "head": context.head,
+                "branches": list(context.branches),
             },
         )
 
@@ -840,6 +924,7 @@ class SessionApplication:
     def _project_session(self, projection: SessionProjection) -> dict[str, object]:
         session = projection.session
         value = session_to_legacy_dict(session)
+        value["executionMode"] = session.execution_mode.value
         value["project"] = SessionProjectDto(
             id=projection.project.id,
             workspaceRoot=projection.project.workspace_root,
@@ -857,7 +942,13 @@ class SessionApplication:
                 branch=worktree.branch,
                 state=worktree.state.value,
             )
-        return SessionDto.model_validate(value).to_json_value()
+        projected = SessionDto.model_validate(value).to_json_value()
+        if projection.worktree is not None and projection.worktree.branch is None:
+            worktree_value = projected.setdefault("worktree", {})
+            if isinstance(worktree_value, dict):
+                worktree_value["branch"] = None
+        projected["executionMode"] = session.execution_mode.value
+        return projected
 
     def _projection_for_session(self, session_id: str) -> SessionProjection:
         projection = self._repository.read_session_projection(session_id)
@@ -909,6 +1000,7 @@ def _worktree_error_code(error: WorktreeError) -> str:
         "repository_not_found": "REPOSITORY_NOT_FOUND",
         "not_a_git_repository": "NOT_A_GIT_REPOSITORY",
         "git_command_timeout": "GIT_COMMAND_TIMEOUT",
+        "base_ref_not_found": "BASE_REF_NOT_FOUND",
         "worktree_persistence_failed": "WORKTREE_PERSISTENCE_FAILED",
     }.get(error.code, "WORKTREE_CREATE_FAILED")
 

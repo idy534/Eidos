@@ -101,7 +101,8 @@ def test_create_persists_frozen_base_and_keeps_worktrees_isolated(
     second = manager.create(repository, base_ref="main")
 
     assert first.base_commit == _git(repository, "rev-parse", "HEAD")
-    assert first.branch.startswith("eidos/")
+    assert first.branch is None
+    assert second.branch is None
     assert first.worktree_root != second.worktree_root
     assert Path(first.worktree_root).parent == (tmp_path / "managed").resolve()
     assert first.state.value == "active"
@@ -334,22 +335,23 @@ def test_invalid_base_ref_is_typed_and_does_not_persist_worktree(
     ).fetchone()[0] == 0
 
 
-def test_branch_collision_retries_with_a_new_runtime_id(
+def test_worktree_path_collision_retries_with_a_new_runtime_id(
     tmp_path: Path, database: Database
 ) -> None:
     repository = _repository(tmp_path)
-    _git(repository, "branch", "eidos/collision123")
+    managed_root = tmp_path / "managed"
+    (managed_root / "wt_collision1234").mkdir(parents=True)
     ids = iter(("wt_collision1234", "wt_after-collision"))
     manager = WorktreeManager(
         database,
-        managed_root=tmp_path / "managed",
+        managed_root=managed_root,
         id_factory=lambda: next(ids),
     )
 
     worktree = manager.create(repository)
 
     assert worktree.id == "wt_after-collision"
-    assert worktree.branch == "eidos/after-collis"
+    assert worktree.branch is None
 
 
 def test_worktree_diff_maps_git_observation_failures_to_stable_errors(
@@ -380,7 +382,7 @@ def test_worktree_add_failure_after_filesystem_creation_is_compensated(
             self,
             cwd: Path,
             worktree_root: Path,
-            branch: str,
+            branch: str | None,
             base_commit: str,
         ) -> None:
             self.delegate.worktree_add(cwd, worktree_root, branch, base_commit)
@@ -427,7 +429,7 @@ def test_persistence_failure_after_git_add_is_compensated(
     ).fetchone()[0] == 0
     assert not list((tmp_path / "managed").glob("*"))
     branch = subprocess.run(
-        ["git", "rev-parse", "--verify", "refs/heads/eidos/failedbranch"],
+        ["git", "show-ref", "--verify", "refs/heads/eidos/failedbranch"],
         cwd=repository,
         capture_output=True,
         text=True,
@@ -435,7 +437,7 @@ def test_persistence_failure_after_git_add_is_compensated(
     assert branch.returncode != 0
 
 
-def test_create_compensation_preserves_runtime_branch_after_branch_advanced(
+def test_create_compensation_removes_detached_worktree_after_head_advanced(
     tmp_path: Path, database: Database
 ) -> None:
     repository = _repository(tmp_path)
@@ -460,10 +462,7 @@ def test_create_compensation_preserves_runtime_branch_after_branch_advanced(
 
     assert error.value.code == "worktree_persistence_failed"
     assert not list((tmp_path / "managed").glob("*"))
-    assert _git(repository, "rev-parse", "refs/heads/eidos/advbranch") != ""
-    assert _git(repository, "rev-parse", "refs/heads/eidos/advbranch") != _git(
-        repository, "rev-parse", "HEAD"
-    )
+    assert _git(repository, "branch", "--list", "eidos/*") == ""
 
 
 def test_clean_delete_preserves_branch_and_dirty_delete_is_rejected(
@@ -476,7 +475,8 @@ def test_clean_delete_preserves_branch_and_dirty_delete_is_rejected(
     deleted = manager.delete(clean.id)
     assert deleted.state.value == "deleted"
     assert not Path(clean.worktree_root).exists()
-    assert _git(repository, "rev-parse", f"refs/heads/{clean.branch}") == clean.base_commit
+    assert clean.branch is None
+    assert _git(repository, "branch", "--list", "eidos/*") == ""
 
     dirty = manager.create(repository)
     (Path(dirty.worktree_root) / "dirty.txt").write_text("dirty\n", encoding="utf-8")
@@ -531,8 +531,9 @@ def test_deleted_worktree_is_terminal_when_the_original_path_reappears(
         "worktree",
         "add",
         "-q",
+        "--detach",
         str(Path(deleted.worktree_root)),
-        deleted.branch,
+        deleted.base_commit,
     )
 
     validation = manager.validate(deleted.id)
@@ -672,7 +673,7 @@ def test_recovery_reports_replaced_worktree_repository_as_invalid(
 
 
 def test_schema_is_current_and_has_project_worktree_tables(database: Database) -> None:
-    assert SCHEMA_VERSION == 18
+    assert SCHEMA_VERSION == 19
     tables = {
         row[0]
         for row in database.connection().execute(
@@ -692,5 +693,10 @@ def test_schema_is_current_and_has_project_worktree_tables(database: Database) -
         row[1] for row in database.connection().execute("PRAGMA table_info(sessions)")
     }
     assert "worktree_id" in session_columns
+    assert "execution_mode" in session_columns
+    worktree_columns = {
+        row[1] for row in database.connection().execute("PRAGMA table_info(worktrees)")
+    }
+    assert "branch" in worktree_columns
     assert database.connection().execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     assert database.connection().execute("PRAGMA foreign_key_check").fetchall() == []

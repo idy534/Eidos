@@ -27,6 +27,7 @@ from eidos_runtime.db.mappers import (
 from eidos_runtime.domain.session import (
     DeletedSession,
     Session,
+    SessionExecutionMode,
     SessionPage,
     SessionProjection,
     SessionProjectionPage,
@@ -49,7 +50,8 @@ SESSION_CURSOR_PREFIX = "session-v2:"
 MAX_SNAPSHOT_BYTES = 768 * 1024
 
 SESSION_SELECT = """
-    SELECT s.creation_seq, s.id, s.workspace_root, s.worktree_id, s.title,
+    SELECT s.creation_seq, s.id, s.workspace_root, s.worktree_id,
+           s.execution_mode, s.title,
            s.created_at, s.updated_at,
            CASE
              WHEN EXISTS (
@@ -99,12 +101,16 @@ class SessionRepository(Repository):
         workspace_root: str,
         *,
         worktree_id: str | None = None,
+        execution_mode: SessionExecutionMode = SessionExecutionMode.LOCAL,
+        project_id: str | None = None,
         operation_id: str | None = None,
         session_id: str | None = None,
     ) -> Session:
         return self.create_session_committed(
             workspace_root,
             worktree_id=worktree_id,
+            execution_mode=execution_mode,
+            project_id=project_id,
             operation_id=operation_id,
             session_id=session_id,
         ).value
@@ -114,6 +120,8 @@ class SessionRepository(Repository):
         workspace_root: str,
         *,
         worktree_id: str | None = None,
+        execution_mode: SessionExecutionMode = SessionExecutionMode.LOCAL,
+        project_id: str | None = None,
         operation_id: str | None = None,
         session_id: str | None = None,
     ) -> CommittedMutation[Session]:
@@ -123,10 +131,19 @@ class SessionRepository(Repository):
         metadata = workspace.stat()
         session_id = session_id or str(uuid.uuid4())
         now = _now_ms()
+        try:
+            execution_mode = SessionExecutionMode(execution_mode)
+        except ValueError as error:
+            raise ValueError("invalid session execution mode") from error
+        if execution_mode is SessionExecutionMode.LOCAL and worktree_id is not None:
+            raise ValueError("local Session must not have a Worktree binding")
+        if execution_mode is SessionExecutionMode.WORKTREE and worktree_id is None:
+            raise ValueError("worktree Session must have a Worktree binding")
         session = session_from_row({
             "id": session_id,
             "workspace_root": str(workspace),
             "worktree_id": worktree_id,
+            "execution_mode": execution_mode.value,
             "title": None,
             "task_status": "new",
             "created_at": now,
@@ -137,7 +154,7 @@ class SessionRepository(Repository):
             if worktree_id is not None:
                 worktree = connection.execute(
                     """
-                    SELECT p.workspace_root
+                    SELECT p.id, p.workspace_root
                     FROM worktrees w
                     JOIN projects p ON p.id = w.project_id
                     WHERE w.id = ?
@@ -149,6 +166,21 @@ class SessionRepository(Repository):
                 if worktree["workspace_root"] != str(workspace):
                     raise WorkspaceBoundaryError(
                         "session repository does not match worktree"
+                    )
+                if project_id is not None and worktree["id"] != project_id:
+                    raise WorkspaceBoundaryError(
+                        "session project does not match worktree"
+                    )
+            elif project_id is not None:
+                project = connection.execute(
+                    "SELECT id, workspace_root FROM projects WHERE id = ?",
+                    (project_id,),
+                ).fetchone()
+                if project is None:
+                    raise ResourceNotFoundError("project not found")
+                if project["workspace_root"] != str(workspace):
+                    raise WorkspaceBoundaryError(
+                        "session workspace does not match project"
                     )
             else:
                 connection.execute(
@@ -169,8 +201,9 @@ class SessionRepository(Repository):
                 """
                 INSERT INTO sessions (
                     id, workspace_root, workspace_dev, workspace_inode,
-                    workspace_uid, worktree_id, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    workspace_uid, worktree_id, execution_mode, created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -179,6 +212,7 @@ class SessionRepository(Repository):
                     metadata.st_ino,
                     metadata.st_uid,
                     worktree_id,
+                    execution_mode.value,
                     now,
                     now,
                 ),

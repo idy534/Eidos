@@ -23,6 +23,7 @@ from eidos_runtime.db.errors import (
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.long_task import SafePoint
 from eidos_runtime.domain.project import Project
+from eidos_runtime.domain.session import SessionExecutionMode
 from eidos_runtime.domain.checkpoint import Checkpoint
 from eidos_runtime.domain.session import SessionProjection
 from eidos_runtime.domain.worktree import (
@@ -356,6 +357,8 @@ class CheckpointApplication:
                 session_mutation = self._sessions.create_session(
                     parent_project.workspace_root,
                     worktree_id=worktree.id,
+                    execution_mode=SessionExecutionMode.WORKTREE,
+                    project_id=parent_project.id,
                     operation_id=None,
                     session_id=session_id,
                 )

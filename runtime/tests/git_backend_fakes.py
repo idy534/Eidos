@@ -52,6 +52,10 @@ class FakeGitBackend:
         self._fail("branch_commit")
         return self.delegate.branch_commit(cwd, branch)
 
+    def local_branches(self, cwd: Path) -> tuple[str, ...]:
+        self._fail("local_branches")
+        return self.delegate.local_branches(cwd)
+
     def status(self, cwd: Path) -> GitStatusObservation:
         self._fail("status")
         return self.delegate.status(cwd)
@@ -75,7 +79,7 @@ class FakeGitBackend:
         return self.delegate.worktree_list(cwd)
 
     def worktree_add(
-        self, cwd: Path, worktree_root: Path, branch: str, base_commit: str
+        self, cwd: Path, worktree_root: Path, branch: str | None, base_commit: str
     ) -> None:
         self._fail("worktree_add")
         self.delegate.worktree_add(cwd, worktree_root, branch, base_commit)
