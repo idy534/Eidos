@@ -9,6 +9,7 @@ import { DropdownMenu } from "../components/DropdownMenu.js";
 import { PrimaryActionButton } from "../components/PrimaryActionButton.js";
 import { ConfirmDialog } from "../components/settings/ConfirmDialog.js";
 import { CreateSessionDialog } from "../components/CreateSessionDialog.js";
+import { CreateBranchDialog } from "../components/CreateBranchDialog.js";
 import { Composer } from "../components/Composer.js";
 import { GitChangesPanel } from "../components/GitChangesPanel.js";
 import type { RuntimeLifecycleState } from "./useRuntimeLifecycle.js";
@@ -84,6 +85,7 @@ export function AppShell({ runtime }: AppShellProps) {
   } | undefined>(undefined);
   const [createSessionContextBusy, setCreateSessionContextBusy] = useState(false);
   const [createSessionConfirmBusy, setCreateSessionConfirmBusy] = useState(false);
+  const [createBranchSessionId, setCreateBranchSessionId] = useState<string | undefined>(undefined);
   const [contentView, setContentView] = useState<"conversation" | "changes">("conversation");
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const workspaceRef = useRef<HTMLElement>(null);
@@ -181,6 +183,8 @@ export function AppShell({ runtime }: AppShellProps) {
     Boolean(createSessionDraft) ||
     createSessionContextBusy ||
     createSessionConfirmBusy ||
+    Boolean(createBranchSessionId) ||
+    sessionState.pending.creatingBranchSessionId !== undefined ||
     sessionState.pending.creatingSession === true;
 
   useEffect(() => {
@@ -233,6 +237,7 @@ export function AppShell({ runtime }: AppShellProps) {
   async function confirmCreateSession(
     executionMode: "local" | "worktree",
     baseRef?: string,
+    includeLocalChanges = false,
   ): Promise<void> {
     if (!createSessionDraft) return;
     setCreateSessionConfirmBusy(true);
@@ -240,6 +245,7 @@ export function AppShell({ runtime }: AppShellProps) {
       const created = await sessionActions.createSession(createSessionDraft.workspaceRoot, {
         executionMode,
         ...(executionMode === "worktree" && baseRef ? { baseRef } : {}),
+        ...(executionMode === "worktree" ? { includeLocalChanges } : {}),
       });
       if (created) {
         setCreateSessionDraft(undefined);
@@ -247,6 +253,12 @@ export function AppShell({ runtime }: AppShellProps) {
     } finally {
       setCreateSessionConfirmBusy(false);
     }
+  }
+
+  async function confirmCreateBranch(branch: string): Promise<void> {
+    if (!createBranchSessionId) return;
+    const result = await sessionActions.createSessionBranch(createBranchSessionId, branch);
+    if (result) setCreateBranchSessionId(undefined);
   }
 
   // -----------------------------------------------------------------------
@@ -457,7 +469,24 @@ export function AppShell({ runtime }: AppShellProps) {
               {sessionHasGit && (
                 <div className="session-header-actions">
                   <div className="session-git-summary" aria-label="当前 Git 状态">
-                    <span>{gitReviewState.status?.branch ?? sessionWorktree?.branch ?? "Detached HEAD"}</span>
+                    <span>
+                      {sessionWorktree?.branch
+                        ?? gitReviewState.status?.branch
+                        ?? `Detached @ ${(gitReviewState.status?.head ?? sessionWorktree?.baseCommit ?? "").slice(0, 7)}`}
+                    </span>
+                    {sessionWorktree?.state === "active" && sessionWorktree.branch === null && (
+                      <Button
+                        variant="ghost"
+                        size="small"
+                        disabled={sessionState.pending.creatingBranchSessionId === snapshot.session.id}
+                        onClick={() => {
+                          sessionActions.setError(undefined);
+                          setCreateBranchSessionId(snapshot.session.id);
+                        }}
+                      >
+                        Create Branch
+                      </Button>
+                    )}
                     {gitReviewState.status && (
                       <>
                         <code>{gitReviewState.status.head.slice(0, 7)}</code>
@@ -579,13 +608,28 @@ export function AppShell({ runtime }: AppShellProps) {
           currentBranch: null,
           head: null,
           branches: [],
+          dirty: false,
+          changedFileCount: 0,
         }}
         busy={createSessionConfirmBusy}
         error={sessionState.error}
         getFallbackFocus={getDialogFallbackFocus}
-        onConfirm={(executionMode, baseRef) => void confirmCreateSession(executionMode, baseRef)}
+        onConfirm={(executionMode, baseRef, includeLocalChanges) => (
+          void confirmCreateSession(executionMode, baseRef, includeLocalChanges)
+        )}
         onCancel={() => {
           setCreateSessionDraft(undefined);
+          sessionActions.setError(undefined);
+        }}
+      />
+      <CreateBranchDialog
+        open={Boolean(createBranchSessionId)}
+        busy={sessionState.pending.creatingBranchSessionId !== undefined}
+        error={sessionState.error}
+        getFallbackFocus={getDialogFallbackFocus}
+        onConfirm={(branch) => void confirmCreateBranch(branch)}
+        onCancel={() => {
+          setCreateBranchSessionId(undefined);
           sessionActions.setError(undefined);
         }}
       />

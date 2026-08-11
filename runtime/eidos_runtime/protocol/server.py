@@ -549,6 +549,14 @@ class RuntimeServer:
                 ),
             ),
             (
+                "session/createBranch",
+                method_dtos.SessionCreateBranchRequestDto,
+                method_dtos.SessionCreateBranchResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.create_branch(
+                    request
+                ),
+            ),
+            (
                 "session/list",
                 method_dtos.SessionListRequestDto,
                 method_dtos.SessionListResponseDto,

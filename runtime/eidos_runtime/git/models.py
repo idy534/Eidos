@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+import hashlib
+import json
+
+from pydantic import Field
+
 from eidos_runtime.domain.project import Project
 from eidos_runtime.models import EidosFrozenStrictModel
 
@@ -15,6 +21,8 @@ class GitRepositoryContext(EidosFrozenStrictModel):
     current_branch: str | None
     head: str | None
     branches: tuple[str, ...]
+    dirty: bool = False
+    changed_file_count: int = Field(default=0, ge=0)
 
 
 class GitStatusObservation(EidosFrozenStrictModel):
@@ -45,6 +53,50 @@ class GitDiffObservation(EidosFrozenStrictModel):
     truncated: bool
 
 
+@dataclass(frozen=True)
+class GitWorkingTreePatch:
+    """A source working-tree snapshot represented by Git patch semantics."""
+
+    full_patch: str
+    staged_patch: str
+
+
+@dataclass(frozen=True)
+class GitSourceSnapshot:
+    discovery: GitRepositoryDiscovery
+    head: str
+    branch: str | None
+    status: GitStatusObservation
+    changes: GitWorkingTreePatch | None = None
+
+    @property
+    def fingerprint(self) -> str:
+        value = {
+            "repository_root": self.discovery.repository_root,
+            "git_dir": self.discovery.git_dir,
+            "git_common_dir": self.discovery.git_common_dir,
+            "head": self.head,
+            "branch": self.branch,
+            "staged_paths": self.status.staged_paths,
+            "unstaged_paths": self.status.unstaged_paths,
+            "untracked_paths": self.status.untracked_paths,
+            "conflict_paths": self.status.conflict_paths,
+            "full_patch": (
+                self.changes.full_patch if self.changes is not None else None
+            ),
+            "staged_patch": (
+                self.changes.staged_patch if self.changes is not None else None
+            ),
+        }
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+
 class GitWorktreeEntry(EidosFrozenStrictModel):
     worktree_root: str
     head: str | None = None
@@ -65,5 +117,7 @@ __all__ = [
     "GitRepositoryDiscovery",
     "GitStatusObservation",
     "GitWorktreeEntry",
+    "GitWorkingTreePatch",
+    "GitSourceSnapshot",
     "ProjectResolution",
 ]

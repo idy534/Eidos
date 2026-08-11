@@ -4,7 +4,12 @@ from datetime import UTC, datetime
 from typing import Mapping
 
 from eidos_runtime.domain.project import Project
-from eidos_runtime.domain.worktree import Worktree, WorktreeOwnership, WorktreeState
+from eidos_runtime.domain.worktree import (
+    BranchOwnership,
+    Worktree,
+    WorktreeOwnership,
+    WorktreeState,
+)
 
 
 def project_from_row(row: Mapping[str, object]) -> Project:
@@ -35,6 +40,7 @@ def worktree_from_row(row: Mapping[str, object]) -> Worktree:
         base_ref=str(row["base_ref"]),
         base_commit=str(row["base_commit"]),
         branch=(str(row["branch"]) if row["branch"] is not None else None),
+        branch_ownership=BranchOwnership(str(row["branch_ownership"])),
         ownership=WorktreeOwnership(str(row["ownership"])),
         state=WorktreeState(str(row["state"])),
         created_at=_timestamp(int(row["created_at"])),

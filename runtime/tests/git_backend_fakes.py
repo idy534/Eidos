@@ -8,6 +8,7 @@ from eidos_runtime.git.models import (
     GitRepositoryDiscovery,
     GitStatusObservation,
     GitWorktreeEntry,
+    GitWorkingTreePatch,
 )
 
 
@@ -43,6 +44,10 @@ class FakeGitBackend:
     def current_branch(self, cwd: Path) -> str | None:
         self._fail("current_branch")
         return self.delegate.current_branch(cwd)
+
+    def is_ignored(self, cwd: Path, relative_path: str) -> bool:
+        self._fail("is_ignored")
+        return self.delegate.is_ignored(cwd, relative_path)
 
     def resolve_revision(self, cwd: Path, revision: str) -> str:
         self._fail("resolve_revision")
@@ -88,9 +93,27 @@ class FakeGitBackend:
         self._fail("worktree_remove")
         self.delegate.worktree_remove(cwd, worktree_root)
 
+    def clean_worktree_for_compensation(self, cwd: Path) -> None:
+        self._fail("clean_worktree_for_compensation")
+        self.delegate.clean_worktree_for_compensation(cwd)
+
     def worktree_prune(self, cwd: Path) -> None:
         self._fail("worktree_prune")
         self.delegate.worktree_prune(cwd)
+
+    def capture_worktree_changes(self, cwd: Path) -> GitWorkingTreePatch:
+        self._fail("capture_worktree_changes")
+        return self.delegate.capture_worktree_changes(cwd)
+
+    def apply_worktree_changes(
+        self, cwd: Path, changes: GitWorkingTreePatch
+    ) -> None:
+        self._fail("apply_worktree_changes")
+        self.delegate.apply_worktree_changes(cwd, changes)
+
+    def create_branch(self, cwd: Path, branch: str) -> None:
+        self._fail("create_branch")
+        self.delegate.create_branch(cwd, branch)
 
     def delete_branch_if_equals(
         self, cwd: Path, branch: str, expected_commit: str

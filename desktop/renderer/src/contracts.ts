@@ -13,6 +13,7 @@ export type {
   ModelCreateInput,
   ModelUpdateInput,
   Session,
+  CreateBranchResult,
   ProjectGitContext,
   SessionWorktree,
   GitDiffScope,

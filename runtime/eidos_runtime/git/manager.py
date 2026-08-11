@@ -11,6 +11,7 @@ from eidos_runtime.db.database import Database, WorkspaceIdentity
 from eidos_runtime.db.errors import ResourceNotFoundError
 from eidos_runtime.domain.project import Project
 from eidos_runtime.domain.worktree import (
+    BranchOwnership,
     OrphanWorktreeCandidate,
     Worktree,
     WorktreeCleanupReport,
@@ -35,9 +36,11 @@ from eidos_runtime.git.errors import (
 )
 from eidos_runtime.git.models import (
     GitRepositoryDiscovery,
+    GitSourceSnapshot,
     GitWorktreeEntry,
     ProjectResolution,
 )
+from eidos_runtime.git.materialization import materialize_worktree_include
 from eidos_runtime.git.status import (
     DiffScope,
     GitDiffSnapshot,
@@ -112,6 +115,37 @@ class WorktreeManager:
         except GitCommandFailedError as error:
             raise WorktreeError("git_command_failed") from error
 
+    def source_snapshot(
+        self,
+        repository_root: Path,
+        *,
+        include_local_changes: bool,
+    ) -> GitSourceSnapshot:
+        try:
+            discovery = self.discovery.discover(repository_root)
+            root = Path(discovery.repository_root)
+            head = self.git.head(root)
+            branch = self.git.current_branch(root)
+            status = self.git.status(root)
+            if include_local_changes and status.conflict_paths:
+                raise WorktreeError("worktree_local_changes_conflict")
+            changes = (
+                self.git.capture_worktree_changes(root)
+                if include_local_changes
+                else None
+            )
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_command_failed") from error
+        return GitSourceSnapshot(
+            discovery=discovery,
+            head=head,
+            branch=branch,
+            status=status,
+            changes=changes,
+        )
+
     def resolve_project(self, workspace_seed: Path | str) -> ProjectResolution:
         """Resolve a filesystem workspace and its optional Git capability."""
 
@@ -137,9 +171,14 @@ class WorktreeManager:
         self,
         repository_root: Path | str,
         base_ref: str | None = None,
+        *,
+        include_local_changes: bool = False,
     ) -> Worktree:
         plan = self.prepare_create(repository_root, base_ref=base_ref)
-        return self.create_prepared(plan)
+        return self.create_prepared(
+            plan,
+            include_local_changes=include_local_changes,
+        )
 
     def prepare_create(
         self,
@@ -194,6 +233,9 @@ class WorktreeManager:
         plan: Worktree,
         *,
         compensate_on_failure: bool = True,
+        include_local_changes: bool = False,
+        expected_source_head: str | None = None,
+        expected_source_fingerprint: str | None = None,
     ) -> Worktree:
         """Create or adopt exactly one already prepared Worktree plan.
 
@@ -224,7 +266,32 @@ class WorktreeManager:
             operation="create",
         )
         creation_attempted = False
+        source_before: GitSourceSnapshot | None = None
         try:
+            source_root = Path(project.workspace_root)
+            root = Path(plan.worktree_root)
+            if _paths_overlap(
+                source_root.resolve(strict=True), root.resolve(strict=False)
+            ):
+                raise WorktreeError("worktree_path_forbidden")
+            if include_local_changes:
+                source_before = self.source_snapshot(
+                    source_root,
+                    include_local_changes=True,
+                )
+                if (
+                    expected_source_head is not None
+                    and source_before.head != expected_source_head
+                ):
+                    raise WorktreeError("worktree_source_changed")
+                if (
+                    expected_source_fingerprint is not None
+                    and source_before.fingerprint
+                    != expected_source_fingerprint
+                ):
+                    raise WorktreeError("worktree_source_changed")
+                if source_before.head != plan.base_commit:
+                    raise WorktreeError("local_changes_base_mismatch")
             entries = self._entries_for_observation(project)
             entry = next(
                 (
@@ -233,7 +300,6 @@ class WorktreeManager:
                 ),
                 None,
             )
-            root = Path(plan.worktree_root)
             branch_present = (
                 plan.branch is not None
                 and self.git.branch_commit(
@@ -246,6 +312,7 @@ class WorktreeManager:
                     or entry.head != plan.base_commit
                 ):
                     raise WorktreeError("worktree_recovery_conflict")
+                creation_attempted = True
                 created_discovery = self.discovery.discover(root)
                 candidate = candidate.model_copy(
                     update={"git_dir": created_discovery.git_dir}
@@ -264,6 +331,13 @@ class WorktreeManager:
                 candidate = candidate.model_copy(
                     update={"git_dir": created_discovery.git_dir}
                 )
+            if source_before is not None:
+                source_after = self.source_snapshot(
+                    source_root,
+                    include_local_changes=True,
+                )
+                if not _same_source_snapshot(source_before, source_after):
+                    raise WorktreeError("worktree_source_changed")
             validation = self._validate_record(
                 candidate,
                 project,
@@ -272,22 +346,55 @@ class WorktreeManager:
             )
             if not validation.valid:
                 raise WorktreeError(validation.code or "worktree_invalid")
+            changed_paths = (
+                set(source_before.status.staged_paths)
+                | set(source_before.status.unstaged_paths)
+                | set(source_before.status.untracked_paths)
+                if source_before is not None
+                else set()
+            )
+            materialize_worktree_include(
+                source_root,
+                root,
+                is_ignored=lambda relative: self.git.is_ignored(
+                    source_root, relative
+                ),
+                exclude_paths=changed_paths,
+            )
+            if source_before is not None and source_before.changes is not None:
+                self.git.apply_worktree_changes(root, source_before.changes)
+            final_validation = self._validate_record(
+                candidate,
+                project,
+                entries=self._worktree_entries(project),
+                persist_state=False,
+            )
+            if not final_validation.valid:
+                raise WorktreeError(final_validation.code or "worktree_invalid")
             persisted = self.repository.insert_worktree(candidate)
         except GitCommandTimeoutError:
             if creation_attempted and compensate_on_failure:
-                self._compensate_create(project, candidate)
+                if not self._compensate_create(project, candidate):
+                    raise WorktreeError("worktree_cleanup_required") from None
             raise WorktreeError("git_command_timeout") from None
         except GitCommandFailedError as error:
             if creation_attempted and compensate_on_failure:
-                self._compensate_create(project, candidate)
-            raise WorktreeError("worktree_create_failed") from error
+                if not self._compensate_create(project, candidate):
+                    raise WorktreeError("worktree_cleanup_required") from error
+            raise WorktreeError(
+                "worktree_local_changes_conflict"
+                if error.operation in {"worktree-apply", "worktree-apply-staged"}
+                else "worktree_create_failed"
+            ) from error
         except WorktreeError:
             if creation_attempted and compensate_on_failure:
-                self._compensate_create(project, candidate)
+                if not self._compensate_create(project, candidate):
+                    raise WorktreeError("worktree_cleanup_required") from None
             raise
         except Exception as error:
             if creation_attempted and compensate_on_failure:
-                self._compensate_create(project, candidate)
+                if not self._compensate_create(project, candidate):
+                    raise WorktreeError("worktree_cleanup_required") from error
             self.logger.error(
                 "worktree persistence failed",
                 extra={
@@ -342,6 +449,166 @@ class WorktreeManager:
             updated_at=operation.updated_at,
         )
 
+    def prepare_branch_attachment(self, worktree_id: str, branch: str) -> Worktree:
+        worktree = self._read_worktree(worktree_id)
+        if worktree.state is not WorktreeState.ACTIVE:
+            raise WorktreeError("worktree_invalid")
+        if worktree.branch is not None:
+            raise WorktreeError("worktree_already_attached")
+        if worktree.branch_ownership is not BranchOwnership.NONE:
+            raise WorktreeError("worktree_already_attached")
+        _validate_branch_name(branch)
+        validation = self.validate(worktree_id)
+        if not validation.valid:
+            raise WorktreeError(validation.code or "worktree_invalid")
+        project = self._project_for(worktree)
+        repository_root = Path(project.workspace_root)
+        try:
+            existing_commit = self.git.branch_commit(repository_root, branch)
+            entries = self._entries_for_observation(project)
+        except ValueError as error:
+            raise WorktreeError("worktree_branch_invalid") from error
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_command_failed") from error
+        for entry in entries:
+            if entry.branch != branch:
+                continue
+            if entry.worktree_root == worktree.worktree_root:
+                raise WorktreeError("worktree_already_attached")
+            raise WorktreeError("worktree_branch_in_use")
+        if existing_commit is not None:
+            raise WorktreeError("branch_already_exists")
+        return worktree
+
+    def attach_branch_git(
+        self,
+        worktree_id: str,
+        branch: str,
+        *,
+        expected_head: str | None = None,
+    ) -> Worktree:
+        initial = self._read_worktree(worktree_id)
+        initial_root = Path(initial.worktree_root)
+        initial_branch = self.current_branch(initial_root)
+        initial_head = self.head(initial_root)
+        if expected_head is not None and initial_head != expected_head:
+            raise WorktreeError("worktree_branch_state_changed")
+        if initial_branch == branch:
+            if initial.branch is not None and initial.branch != branch:
+                raise WorktreeError("worktree_state_changed")
+            return initial.model_copy(
+                update={
+                    "branch": branch,
+                    "branch_ownership": BranchOwnership.USER,
+                }
+            )
+        worktree = self.prepare_branch_attachment(worktree_id, branch)
+        root = Path(worktree.worktree_root)
+        before_head = self.head(root)
+        before_branch = self.current_branch(root)
+        if expected_head is None:
+            expected_head = before_head
+        if before_head != expected_head:
+            raise WorktreeError("worktree_branch_state_changed")
+        if before_branch is not None and before_branch != branch:
+            raise WorktreeError("worktree_state_changed")
+        if before_branch == branch:
+            after_head = self.head(root)
+            if after_head != before_head:
+                raise WorktreeError("worktree_state_changed")
+            return worktree.model_copy(
+                update={
+                    "branch": branch,
+                    "branch_ownership": BranchOwnership.USER,
+                }
+            )
+        try:
+            self.git.create_branch(root, branch)
+        except ValueError as error:
+            raise WorktreeError("worktree_branch_invalid") from error
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            if error.operation == "worktree-branch-validate":
+                raise WorktreeError("worktree_branch_invalid") from error
+            try:
+                observed_branch = self.git.current_branch(root)
+                observed_head = self.git.head(root)
+            except (GitCommandFailedError, GitCommandTimeoutError):
+                raise WorktreeError("worktree_branch_recovery_required") from error
+            if observed_branch == branch and observed_head == expected_head:
+                return worktree.model_copy(
+                    update={
+                        "branch": branch,
+                        "branch_ownership": BranchOwnership.USER,
+                    }
+                )
+            raise WorktreeError("worktree_branch_attach_failed") from error
+        observed_branch = self.current_branch(root)
+        observed_head = self.head(root)
+        if observed_branch != branch or observed_head != expected_head:
+            raise WorktreeError("worktree_branch_recovery_required")
+        return worktree.model_copy(
+            update={
+                "branch": branch,
+                "branch_ownership": BranchOwnership.USER,
+            }
+        )
+
+    def persist_branch(
+        self,
+        worktree_id: str,
+        branch: str,
+        *,
+        expected_head: str | None = None,
+    ) -> Worktree:
+        worktree = self._read_worktree(worktree_id)
+        if worktree.state is not WorktreeState.ACTIVE:
+            raise WorktreeError("worktree_invalid")
+        _validate_branch_name(branch)
+        root = Path(worktree.worktree_root)
+        try:
+            observed_branch = self.git.current_branch(root)
+            observed_head = self.git.head(root)
+            entries = self._entries_for_observation(self._project_for(worktree))
+        except ValueError as error:
+            raise WorktreeError("worktree_branch_invalid") from error
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_command_failed") from error
+        expected_head_supplied = expected_head is not None
+        if expected_head is None:
+            expected_head = observed_head
+        if observed_branch != branch or observed_head != expected_head:
+            raise WorktreeError(
+                "worktree_branch_recovery_required"
+                if expected_head_supplied
+                else "worktree_branch_state_changed"
+            )
+        if not any(
+            entry.worktree_root == worktree.worktree_root
+            and entry.branch == branch
+            and entry.head == expected_head
+            for entry in entries
+        ):
+            raise WorktreeError(
+                "worktree_branch_recovery_required"
+                if expected_head_supplied
+                else "worktree_branch_state_changed"
+            )
+        try:
+            return self.repository.update_branch(
+                worktree.id,
+                branch,
+                BranchOwnership.USER,
+            )
+        except ResourceNotFoundError:
+            raise WorktreeError("worktree_not_found") from None
+
+
     def recover_lifecycle(self) -> tuple[WorktreeLifecycleOperation, ...]:
         """Reconcile unfinished managed Worktree intents at startup."""
 
@@ -350,6 +617,17 @@ class WorktreeManager:
             started = time.monotonic()
             action = "inspect"
             try:
+                if operation.scope is WorktreeLifecycleScope.ATTACH_BRANCH:
+                    action = "reconcile_branch_attach"
+                    operation = self._recover_branch_attachment(operation)
+                    reconciled.append(operation)
+                    self._log_recovery(
+                        operation,
+                        action=action,
+                        result="success",
+                        duration=time.monotonic() - started,
+                    )
+                    continue
                 if operation.scope in {
                     WorktreeLifecycleScope.SESSION_CREATE,
                     WorktreeLifecycleScope.CHECKPOINT_FORK,
@@ -357,7 +635,11 @@ class WorktreeManager:
                     action = "reconcile_create"
                     plan = self.prepared_from_lifecycle(operation)
                     worktree = self.create_prepared(
-                        plan, compensate_on_failure=False
+                        plan,
+                        compensate_on_failure=False,
+                        include_local_changes=operation.include_local_changes,
+                        expected_source_head=operation.source_head,
+                        expected_source_fingerprint=operation.source_fingerprint,
                     )
                     validation = self.validate(worktree.id)
                     if not validation.valid:
@@ -443,6 +725,93 @@ class WorktreeManager:
                     duration=time.monotonic() - started,
                 )
         return tuple(reconciled)
+
+    def _recover_branch_attachment(
+        self,
+        operation: WorktreeLifecycleOperation,
+    ) -> WorktreeLifecycleOperation:
+        if (
+            operation.worktree_id is None
+            or operation.branch is None
+            or operation.expected_head is None
+        ):
+            raise WorktreeError("worktree_lifecycle_invalid")
+        worktree = self._read_worktree(operation.worktree_id)
+        if worktree.state is not WorktreeState.ACTIVE:
+            raise WorktreeError("worktree_invalid")
+        _validate_branch_name(operation.branch)
+        project = self._project_for(worktree)
+        root = Path(worktree.worktree_root)
+        try:
+            actual_branch = self.git.current_branch(root)
+            actual_head = self.git.head(root)
+            entries = self._entries_for_observation(project)
+            branch_commit = self.git.branch_commit(
+                Path(project.workspace_root), operation.branch
+            )
+        except ValueError as error:
+            raise WorktreeError("worktree_branch_invalid") from error
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_command_failed") from error
+
+        if any(
+            entry.branch == operation.branch
+            and entry.worktree_root != worktree.worktree_root
+            for entry in entries
+        ):
+            raise WorktreeError("worktree_branch_in_use")
+        if actual_branch == operation.branch:
+            if actual_head != operation.expected_head:
+                raise WorktreeError("worktree_branch_recovery_required")
+        elif actual_branch is None and operation.state is WorktreeLifecycleState.PREPARED:
+            if branch_commit is not None:
+                raise WorktreeError("worktree_branch_recovery_required")
+            if actual_head != operation.expected_head:
+                raise WorktreeError("worktree_branch_recovery_required")
+            try:
+                self.git.create_branch(root, operation.branch)
+            except ValueError as error:
+                raise WorktreeError("worktree_branch_invalid") from error
+            except GitCommandTimeoutError:
+                raise WorktreeError("git_command_timeout") from None
+            except GitCommandFailedError as error:
+                raise WorktreeError("worktree_branch_recovery_required") from error
+            actual_branch = self.current_branch(root)
+            actual_head = self.head(root)
+            if (
+                actual_branch != operation.branch
+                or actual_head != operation.expected_head
+            ):
+                raise WorktreeError("worktree_branch_recovery_required")
+        else:
+            raise WorktreeError("worktree_branch_recovery_required")
+
+        if worktree.branch is None:
+            self.repository.update_branch(
+                worktree.id,
+                operation.branch,
+                BranchOwnership.USER,
+            )
+        elif (
+            worktree.branch != operation.branch
+            or worktree.branch_ownership is not BranchOwnership.USER
+        ):
+            raise WorktreeError("worktree_branch_recovery_required")
+        if operation.state is WorktreeLifecycleState.PREPARED:
+            operation = self.lifecycle.update_state(
+                operation.scope,
+                operation.operation_id,
+                WorktreeLifecycleState.BRANCH_ATTACHED,
+            )
+        if operation.state is WorktreeLifecycleState.BRANCH_ATTACHED:
+            operation = self.lifecycle.update_state(
+                operation.scope,
+                operation.operation_id,
+                WorktreeLifecycleState.COMPLETED,
+            )
+        return operation
 
     def _mark_lifecycle_worktree_unavailable(
         self, operation: WorktreeLifecycleOperation, error_code: str
@@ -1203,7 +1572,7 @@ class WorktreeManager:
         if self.database.workspace_overlaps_data(self.managed_root):
             raise WorktreeError("managed_worktree_root_overlaps_data")
 
-    def _compensate_create(self, project: Project, worktree: Worktree) -> None:
+    def _compensate_create(self, project: Project, worktree: Worktree) -> bool:
         root = Path(worktree.worktree_root)
         try:
             entries = self._worktree_entries(project)
@@ -1216,6 +1585,7 @@ class WorktreeManager:
                 None,
             )
             if created_entry is not None:
+                self.git.clean_worktree_for_compensation(root)
                 self.git.worktree_remove(Path(project.workspace_root), root)
             if root.exists():
                 raise RuntimeError("created worktree root remains after remove")
@@ -1230,7 +1600,7 @@ class WorktreeManager:
                 worktree,
                 remaining_entries,
             ):
-                return
+                return False
             self.logger.info(
                 "worktree create compensation completed",
                 extra={
@@ -1240,6 +1610,7 @@ class WorktreeManager:
                     "result": "success",
                 },
             )
+            return True
         except Exception:
             self.logger.error(
                 "worktree create compensation needs recovery",
@@ -1250,6 +1621,7 @@ class WorktreeManager:
                     "result": "recovery_needed",
                 },
             )
+            return False
 
     def _remove_created_branch_if_safe(
         self,
@@ -1257,7 +1629,10 @@ class WorktreeManager:
         worktree: Worktree,
         entries: tuple[GitWorktreeEntry, ...],
     ) -> bool:
-        if worktree.branch is None:
+        if (
+            worktree.branch is None
+            or worktree.branch_ownership is not BranchOwnership.LEGACY_MANAGED
+        ):
             return True
         if any(entry.branch == worktree.branch for entry in entries):
             self._log_compensation_recovery(
@@ -1405,9 +1780,60 @@ def _same_prepared_worktree(existing: Worktree, plan: Worktree) -> bool:
             "base_ref",
             "base_commit",
             "branch",
+            "branch_ownership",
             "ownership",
         )
     )
+
+
+def _same_source_snapshot(
+    before: GitSourceSnapshot,
+    after: GitSourceSnapshot,
+) -> bool:
+    if (
+        before.discovery.repository_root != after.discovery.repository_root
+        or before.discovery.git_dir != after.discovery.git_dir
+        or before.discovery.git_common_dir != after.discovery.git_common_dir
+        or before.head != after.head
+        or before.branch != after.branch
+        or before.status != after.status
+    ):
+        return False
+    return before.changes == after.changes
+
+
+def _paths_overlap(left: Path, right: Path) -> bool:
+    try:
+        left.relative_to(right)
+        return True
+    except ValueError:
+        pass
+    try:
+        right.relative_to(left)
+        return True
+    except ValueError:
+        return False
+
+
+def _validate_branch_name(branch: str) -> None:
+    if (
+        not branch
+        or len(branch) > 4096
+        or "\x00" in branch
+        or branch.startswith("-")
+        or branch.startswith("/")
+        or branch.endswith("/")
+        or branch.endswith(".")
+        or ".." in branch
+        or "@{" in branch
+        or any(character in "~^:?*[\\" for character in branch)
+        or any(
+            character.isspace() or ord(character) < 32 for character in branch
+        )
+        or any(part in {".", ".."} for part in branch.split("/"))
+        or any(part.endswith(".lock") for part in branch.split("/"))
+    ):
+        raise WorktreeError("worktree_branch_invalid")
 
 
 def _now_ms() -> int:

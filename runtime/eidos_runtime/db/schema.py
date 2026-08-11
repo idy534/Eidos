@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 V9_SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -927,6 +927,91 @@ CREATE INDEX worktree_lifecycle_operations_session
 ON worktree_lifecycle_operations(session_id, scope);
 """
 
+V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL = """
+ALTER TABLE worktrees
+ADD COLUMN branch_ownership TEXT NOT NULL DEFAULT 'legacy_managed' CHECK (
+    branch_ownership IN ('none', 'legacy_managed', 'user')
+);
+
+UPDATE worktrees
+SET branch_ownership = CASE
+    WHEN branch IS NULL THEN 'none'
+    ELSE 'legacy_managed'
+END;
+
+CREATE TABLE worktree_lifecycle_operations_v20 (
+    scope TEXT NOT NULL CHECK (
+        scope IN (
+            'session/create',
+            'session/delete',
+            'checkpoint/fork',
+            'worktree/attach-branch'
+        )
+    ),
+    operation_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (
+        state IN (
+            'prepared',
+            'worktree_created',
+            'session_created',
+            'run_created',
+            'checkpoint_action_created',
+            'branch_attached',
+            'worktree_deleted',
+            'completed',
+            'cleanup_required'
+        )
+    ),
+    project_id TEXT,
+    repository_root TEXT,
+    worktree_id TEXT,
+    worktree_root TEXT,
+    base_ref TEXT,
+    branch TEXT,
+    base_commit TEXT,
+    expected_head TEXT,
+    session_id TEXT,
+    run_id TEXT,
+    checkpoint_id TEXT,
+    include_local_changes INTEGER NOT NULL DEFAULT 0 CHECK (
+        include_local_changes IN (0, 1)
+    ),
+    source_head TEXT,
+    source_branch TEXT,
+    source_dirty INTEGER CHECK (source_dirty IN (0, 1)),
+    source_fingerprint TEXT,
+    error_code TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (scope, operation_id)
+);
+
+INSERT INTO worktree_lifecycle_operations_v20 (
+    scope, operation_id, state, project_id,
+    repository_root, worktree_id, worktree_root,
+    base_ref, branch, base_commit, expected_head, session_id, run_id,
+    checkpoint_id, include_local_changes, source_head,
+    source_branch, source_dirty, source_fingerprint, error_code,
+    created_at, updated_at
+)
+SELECT scope, operation_id, state, project_id,
+       repository_root, worktree_id, worktree_root,
+       base_ref, branch, base_commit, NULL, session_id, run_id,
+       checkpoint_id, 0, NULL, NULL, NULL,
+       NULL, error_code, created_at, updated_at
+FROM worktree_lifecycle_operations;
+
+DROP TABLE worktree_lifecycle_operations;
+ALTER TABLE worktree_lifecycle_operations_v20
+RENAME TO worktree_lifecycle_operations;
+
+CREATE INDEX worktree_lifecycle_operations_state
+ON worktree_lifecycle_operations(state, updated_at);
+
+CREATE INDEX worktree_lifecycle_operations_session
+ON worktree_lifecycle_operations(session_id, scope);
+"""
+
 V18_PROJECT_SCHEMA_SQL = """
 CREATE TABLE projects (
     id TEXT PRIMARY KEY,
@@ -967,4 +1052,5 @@ SCHEMA_SQL = (
     + V16_SESSION_WORKTREE_SCHEMA_SQL
     + V17_WORKTREE_LIFECYCLE_SCHEMA_SQL
     + V19_SESSION_EXECUTION_SCHEMA_SQL
+    + V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL
 )

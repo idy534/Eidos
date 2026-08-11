@@ -59,6 +59,13 @@ export interface DeleteSessionResult {
   deletedSessionId: string;
 }
 
+export interface CreateBranchResult {
+  sessionId: string;
+  worktreeId: string;
+  branch: string;
+  head: string;
+}
+
 export type GitDiffScope = "head" | "baseline";
 
 export interface SessionGitStatus {
@@ -80,6 +87,8 @@ export interface ProjectGitContext {
   currentBranch: string | null;
   head: string | null;
   branches: string[];
+  dirty: boolean;
+  changedFileCount: number;
 }
 
 export interface SessionGitDiff {

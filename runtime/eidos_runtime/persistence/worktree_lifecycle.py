@@ -13,7 +13,7 @@ from eidos_runtime.domain.worktree import (
 
 
 class WorktreeLifecycleRepository(Repository):
-    """Durable facts for the three managed Worktree lifecycle mutations.
+    """Durable facts for the managed Worktree lifecycle mutations.
 
     This repository stores a fixed set of lifecycle fields.  It is not a
     generic workflow or arbitrary payload executor.
@@ -52,9 +52,12 @@ class WorktreeLifecycleRepository(Repository):
                     INSERT INTO worktree_lifecycle_operations (
                         scope, operation_id, state, project_id,
                         repository_root, worktree_id, worktree_root,
-                        base_ref, branch, base_commit, session_id, run_id,
-                        checkpoint_id, error_code, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        base_ref, branch, base_commit, expected_head,
+                        session_id, run_id,
+                        checkpoint_id, include_local_changes, source_head,
+                        source_branch, source_dirty, source_fingerprint,
+                        error_code, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         operation.scope.value,
@@ -67,9 +70,19 @@ class WorktreeLifecycleRepository(Repository):
                         operation.base_ref,
                         operation.branch,
                         operation.base_commit,
+                        operation.expected_head,
                         operation.session_id,
                         operation.run_id,
                         operation.checkpoint_id,
+                        int(operation.include_local_changes),
+                        operation.source_head,
+                        operation.source_branch,
+                        (
+                            int(operation.source_dirty)
+                            if operation.source_dirty is not None
+                            else None
+                        ),
+                        operation.source_fingerprint,
                         operation.error_code,
                         created_at,
                         updated_at,
@@ -159,11 +172,17 @@ def _scope(value: WorktreeLifecycleScope | str) -> str:
 
 
 _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
-    "prepared": frozenset({"worktree_created", "worktree_deleted", "cleanup_required"}),
+    "prepared": frozenset({
+        "worktree_created",
+        "branch_attached",
+        "worktree_deleted",
+        "cleanup_required",
+    }),
     "worktree_created": frozenset({"session_created", "worktree_deleted", "cleanup_required"}),
     "session_created": frozenset({"run_created", "completed", "cleanup_required"}),
     "run_created": frozenset({"checkpoint_action_created", "completed", "cleanup_required"}),
     "checkpoint_action_created": frozenset({"completed", "cleanup_required"}),
+    "branch_attached": frozenset({"completed", "cleanup_required"}),
     "worktree_deleted": frozenset({
         "worktree_deleted",
         "completed",
@@ -190,9 +209,15 @@ def _same_plan(
             "base_ref",
             "branch",
             "base_commit",
+            "expected_head",
             "session_id",
             "run_id",
             "checkpoint_id",
+            "include_local_changes",
+            "source_head",
+            "source_branch",
+            "source_dirty",
+            "source_fingerprint",
         )
     )
 
@@ -211,9 +236,19 @@ def _map(row: sqlite3.Row | None) -> WorktreeLifecycleOperation | None:
         "base_ref": row["base_ref"],
         "branch": row["branch"],
         "base_commit": row["base_commit"],
+        "expected_head": row["expected_head"],
         "session_id": row["session_id"],
         "run_id": row["run_id"],
         "checkpoint_id": row["checkpoint_id"],
+        "include_local_changes": bool(row["include_local_changes"]),
+        "source_head": row["source_head"],
+        "source_branch": row["source_branch"],
+        "source_dirty": (
+            bool(row["source_dirty"])
+            if row["source_dirty"] is not None
+            else None
+        ),
+        "source_fingerprint": row["source_fingerprint"],
         "error_code": row["error_code"],
         "created_at": _timestamp(int(row["created_at"])),
         "updated_at": _timestamp(int(row["updated_at"])),

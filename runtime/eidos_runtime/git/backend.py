@@ -11,6 +11,7 @@ from typing import Protocol
 
 from dulwich.diff import iter_tree_contents, write_blob_diff
 from dulwich.errors import NotGitRepository
+from dulwich.ignore import IgnoreFilterManager
 from dulwich.index import ConflictedIndexEntry, Index, get_unstaged_changes
 from dulwich.objects import Blob
 from dulwich.objectspec import parse_commit
@@ -23,14 +24,18 @@ from dulwich.porcelain import (
 from dulwich.refs import HEADREF, Ref
 from dulwich.repo import Repo
 
-from eidos_runtime.git.errors import GitCommandFailedError
+from eidos_runtime.git.errors import GitCommandFailedError, GitCommandTimeoutError
 from eidos_runtime.git.models import (
     GitDiffObservation,
     GitRepositoryDiscovery,
     GitStatusObservation,
     GitWorktreeEntry,
+    GitWorkingTreePatch,
 )
 from eidos_runtime.git.native import (
+    NativeBranchAttacher,
+    NativeWorktreeChangeTransfer,
+    NativeWorktreeCleaner,
     NativeWorktreeCreator,
 )
 
@@ -49,6 +54,8 @@ class GitBackend(Protocol):
     def head(self, cwd: Path) -> str: ...
 
     def current_branch(self, cwd: Path) -> str | None: ...
+
+    def is_ignored(self, cwd: Path, relative_path: str) -> bool: ...
 
     def resolve_revision(self, cwd: Path, revision: str) -> str: ...
 
@@ -74,7 +81,17 @@ class GitBackend(Protocol):
 
     def worktree_remove(self, cwd: Path, worktree_root: Path) -> None: ...
 
+    def clean_worktree_for_compensation(self, cwd: Path) -> None: ...
+
     def worktree_prune(self, cwd: Path) -> None: ...
+
+    def capture_worktree_changes(self, cwd: Path) -> GitWorkingTreePatch: ...
+
+    def apply_worktree_changes(
+        self, cwd: Path, changes: GitWorkingTreePatch
+    ) -> None: ...
+
+    def create_branch(self, cwd: Path, branch: str) -> None: ...
 
     def delete_branch_if_equals(
         self, cwd: Path, branch: str, expected_commit: str
@@ -88,11 +105,17 @@ class DulwichGitBackend:
         self,
         *,
         native_worktree_creator: NativeWorktreeCreator | None = None,
+        native_change_transfer: NativeWorktreeChangeTransfer | None = None,
+        native_branch_attacher: NativeBranchAttacher | None = None,
+        native_worktree_cleaner: NativeWorktreeCleaner | None = None,
         diff_output_limit_bytes: int = DEFAULT_GIT_DIFF_BYTES,
     ) -> None:
         if diff_output_limit_bytes < 1:
             raise ValueError("Git diff output limit must be positive")
         self._native_worktree_creator = native_worktree_creator
+        self._native_change_transfer = native_change_transfer
+        self._native_branch_attacher = native_branch_attacher
+        self._native_worktree_cleaner = native_worktree_cleaner
         self._diff_output_limit_bytes = diff_output_limit_bytes
 
     def discover(self, cwd: Path) -> GitRepositoryDiscovery:
@@ -135,6 +158,17 @@ class DulwichGitBackend:
             return None
         branch = os.fsdecode(value.removeprefix(b"ref: refs/heads/").strip())
         return branch or None
+
+    def is_ignored(self, cwd: Path, relative_path: str) -> bool:
+        _validate_relative_path(relative_path)
+        repo = self._open_repository(cwd, "is-ignored")
+        try:
+            index = repo.open_index(config=repo.get_config_stack())
+            if os.fsencode(relative_path) in index:
+                return False
+            return IgnoreFilterManager.from_repo(repo).is_ignored(relative_path) is True
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            raise _git_failure("is-ignored", error) from error
 
     def resolve_revision(self, cwd: Path, revision: str) -> str:
         _validate_ref(revision)
@@ -317,6 +351,39 @@ class DulwichGitBackend:
             worktree_remove(repo, worktree_root, force=False)
         except (KeyError, OSError, TypeError, ValueError) as error:
             raise _git_failure("worktree-remove", error) from error
+
+    def clean_worktree_for_compensation(self, cwd: Path) -> None:
+        if self._native_worktree_cleaner is None:
+            self._native_worktree_cleaner = NativeWorktreeCleaner()
+        self._native_worktree_cleaner.clean(cwd)
+
+    def capture_worktree_changes(self, cwd: Path) -> GitWorkingTreePatch:
+        if self._native_change_transfer is None:
+            self._native_change_transfer = NativeWorktreeChangeTransfer()
+        try:
+            full_patch, staged_patch = self._native_change_transfer.capture(cwd)
+        except (GitCommandFailedError, GitCommandTimeoutError):
+            raise
+        return GitWorkingTreePatch(
+            full_patch=full_patch,
+            staged_patch=staged_patch,
+        )
+
+    def apply_worktree_changes(
+        self, cwd: Path, changes: GitWorkingTreePatch
+    ) -> None:
+        if self._native_change_transfer is None:
+            self._native_change_transfer = NativeWorktreeChangeTransfer()
+        self._native_change_transfer.apply(
+            cwd,
+            full_patch=changes.full_patch,
+            staged_patch=changes.staged_patch,
+        )
+
+    def create_branch(self, cwd: Path, branch: str) -> None:
+        if self._native_branch_attacher is None:
+            self._native_branch_attacher = NativeBranchAttacher()
+        self._native_branch_attacher.attach(cwd, branch)
 
     def worktree_prune(self, cwd: Path) -> None:
         repo = self._open_repository(cwd, "worktree-prune")
@@ -556,6 +623,19 @@ def _validate_branch(value: str) -> None:
     _validate_ref(value)
     if value.startswith("refs/") or value.endswith("/") or ".." in value:
         raise ValueError("Git branch is invalid")
+
+
+def _validate_relative_path(value: str) -> None:
+    path = Path(value)
+    if (
+        not isinstance(value, str)
+        or not value
+        or "\x00" in value
+        or path.is_absolute()
+        or any(part in {"", ".", ".."} for part in path.parts)
+        or any(part == ".git" for part in value.split("/"))
+    ):
+        raise ValueError("Git relative path is invalid")
 
 
 def _git_failure(operation: str, error: BaseException) -> GitCommandFailedError:
