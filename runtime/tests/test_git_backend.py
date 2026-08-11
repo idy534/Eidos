@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 import subprocess
 
 from eidos_runtime.git.backend import DulwichGitBackend
@@ -29,6 +30,30 @@ def _repository(tmp_path: Path) -> Path:
     _git(repository, "add", ".")
     _git(repository, "commit", "-qm", "initial")
     return repository
+
+
+def _repository_with_submodule(tmp_path: Path) -> tuple[Path, Path]:
+    repository = _repository(tmp_path)
+    source = tmp_path / "submodule-source"
+    source.mkdir()
+    _git(source, "init", "-q", "-b", "main")
+    _git(source, "config", "user.email", "eidos-tests@example.com")
+    _git(source, "config", "user.name", "Eidos Tests")
+    (source / "child.txt").write_text("child A\n", encoding="utf-8")
+    _git(source, "add", ".")
+    _git(source, "commit", "-qm", "submodule A")
+    _git(
+        repository,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        str(source),
+        "child",
+    )
+    _git(repository, "commit", "-qm", "add submodule")
+    return repository, repository / "child"
 
 
 def _marker_executable(tmp_path: Path, marker: Path) -> Path:
@@ -134,6 +159,92 @@ def test_dulwich_backend_reports_conflicts_and_detached_worktrees(
         entry.worktree_root == str(detached.resolve()) and entry.branch is None
         for entry in backend.worktree_list(repository)
     )
+
+
+def test_diff_treats_clean_symlink_as_unchanged(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    (repository / "target.txt").write_text("target\n", encoding="utf-8")
+    (repository / "link.txt").symlink_to("target.txt")
+    _git(repository, "add", "target.txt", "link.txt")
+    _git(repository, "commit", "-qm", "add symlink")
+
+    observation = DulwichGitBackend().diff(
+        repository,
+        base_commit=DulwichGitBackend().head(repository),
+    )
+
+    assert observation.changed_paths == ()
+    assert observation.patch == ""
+
+
+def test_diff_reports_modified_symlink_target_string(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    (repository / "a.txt").write_text("a\n", encoding="utf-8")
+    (repository / "b.txt").write_text("b\n", encoding="utf-8")
+    (repository / "link.txt").symlink_to("a.txt")
+    _git(repository, "add", "a.txt", "b.txt", "link.txt")
+    _git(repository, "commit", "-qm", "add symlink")
+    (repository / "link.txt").unlink()
+    (repository / "link.txt").symlink_to("b.txt")
+
+    observation = DulwichGitBackend().diff(
+        repository,
+        base_commit=DulwichGitBackend().head(repository),
+    )
+
+    assert observation.changed_paths == ("link.txt",)
+    assert "-a.txt" in observation.patch
+    assert "+b.txt" in observation.patch
+
+
+def test_diff_reports_deleted_symlink(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    (repository / "target.txt").write_text("target\n", encoding="utf-8")
+    (repository / "link.txt").symlink_to("target.txt")
+    _git(repository, "add", "target.txt", "link.txt")
+    _git(repository, "commit", "-qm", "add symlink")
+    (repository / "link.txt").unlink()
+
+    observation = DulwichGitBackend().diff(
+        repository,
+        base_commit=DulwichGitBackend().head(repository),
+    )
+
+    assert observation.changed_paths == ("link.txt",)
+    assert "-target.txt" in observation.patch
+
+
+def test_diff_treats_clean_submodule_gitlink_as_unchanged(tmp_path: Path) -> None:
+    repository, _submodule = _repository_with_submodule(tmp_path)
+    backend = DulwichGitBackend()
+
+    observation = backend.diff(repository, base_commit=backend.head(repository))
+
+    assert observation.changed_paths == ()
+    assert observation.patch == ""
+
+
+def test_diff_reports_advanced_submodule_head(tmp_path: Path) -> None:
+    repository, submodule = _repository_with_submodule(tmp_path)
+    backend = DulwichGitBackend()
+    (submodule / "child.txt").write_text("child B\n", encoding="utf-8")
+    _git(submodule, "commit", "-qam", "submodule B")
+
+    observation = backend.diff(repository, base_commit=backend.head(repository))
+
+    assert observation.changed_paths == ("child",)
+    assert "Subproject commit" in observation.patch
+
+
+def test_diff_reports_missing_submodule_worktree(tmp_path: Path) -> None:
+    repository, submodule = _repository_with_submodule(tmp_path)
+    backend = DulwichGitBackend()
+    shutil.rmtree(submodule)
+
+    observation = backend.diff(repository, base_commit=backend.head(repository))
+
+    assert observation.changed_paths == ("child",)
+    assert "Subproject commit" in observation.patch
 
 
 def test_dulwich_read_and_native_create_paths_do_not_execute_git_helpers(

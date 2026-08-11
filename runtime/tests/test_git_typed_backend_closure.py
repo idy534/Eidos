@@ -7,6 +7,7 @@ import subprocess
 import pytest
 
 from eidos_runtime.git.backend import DulwichGitBackend
+from eidos_runtime.git.errors import GitCommandFailedError
 from eidos_runtime.git.models import GitDiffObservation, GitStatusObservation
 
 
@@ -98,6 +99,33 @@ def test_try_discover_treats_non_git_workspace_as_missing_capability(
     workspace.mkdir()
 
     assert DulwichGitBackend().try_discover(workspace) is None
+
+
+def test_try_discover_propagates_broken_git_metadata(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    config_path = repository / ".git" / "config"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            "repositoryformatversion = 0", "repositoryformatversion = malformed"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(GitCommandFailedError) as error:
+        DulwichGitBackend().try_discover(repository)
+
+    assert error.value.operation == "discover"
+    assert error.value.returncode == 128
+
+
+def test_try_discover_rejects_missing_workspace(tmp_path: Path) -> None:
+    missing = tmp_path / "missing"
+
+    with pytest.raises(GitCommandFailedError) as error:
+        DulwichGitBackend().try_discover(missing)
+
+    assert error.value.operation == "discover"
+    assert error.value.returncode is None
 
 
 def test_linked_worktree_status_isolated_from_main_and_handles_unicode(

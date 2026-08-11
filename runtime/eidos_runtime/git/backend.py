@@ -36,6 +36,7 @@ from eidos_runtime.git.native import (
 
 
 DEFAULT_GIT_DIFF_BYTES = 512 * 1024
+_GITLINK_MODE = 0o160000
 
 
 class GitBackend(Protocol):
@@ -93,23 +94,27 @@ class DulwichGitBackend:
         self._diff_output_limit_bytes = diff_output_limit_bytes
 
     def discover(self, cwd: Path) -> GitRepositoryDiscovery:
-        repo = self._open_repository(cwd, "discover")
-        try:
-            return GitRepositoryDiscovery(
-                repository_root=str(Path(repo.path).resolve(strict=True)),
-                git_dir=str(Path(repo.controldir()).resolve(strict=True)),
-                git_common_dir=str(Path(repo.commondir()).resolve(strict=True)),
+        result = self.try_discover(cwd)
+        if result is None:
+            raise GitCommandFailedError(
+                "discover",
+                returncode=128,
+                stderr="not a git repository",
             )
-        except OSError as error:
-            raise _git_failure("discover", error) from error
+        return result
 
     def try_discover(self, cwd: Path) -> GitRepositoryDiscovery | None:
+        if not cwd.is_absolute() or not cwd.is_dir():
+            raise GitCommandFailedError("discover", returncode=None)
         try:
-            return self.discover(cwd)
-        except GitCommandFailedError as error:
-            if error.operation == "discover" and error.returncode == 128:
-                return None
-            raise
+            repo = Repo.discover(cwd)
+        except NotGitRepository:
+            return None
+        except OSError as error:
+            raise _git_failure("discover", error) from error
+        except ValueError as error:
+            raise _git_failure("discover", error) from error
+        return _discovery_from_repo(repo)
 
     def head(self, cwd: Path) -> str:
         repo = self._open_repository(cwd, "head")
@@ -229,7 +234,11 @@ class DulwichGitBackend:
             )
             target_paths = tracked_paths | untracked_paths
             target_entries = {
-                path: _read_worktree_entry(repo.path, path)
+                path: _read_worktree_entry(
+                    repo.path,
+                    path,
+                    base_entries.get(path) or index_entries.get(path),
+                )
                 for path in target_paths
             }
             changed_paths = tuple(
@@ -344,6 +353,17 @@ class _GitFileEntry:
     blob: Blob | None = None
 
 
+def _discovery_from_repo(repo: Repo) -> GitRepositoryDiscovery:
+    try:
+        return GitRepositoryDiscovery(
+            repository_root=str(Path(repo.path).resolve(strict=True)),
+            git_dir=str(Path(repo.controldir()).resolve(strict=True)),
+            git_common_dir=str(Path(repo.commondir()).resolve(strict=True)),
+        )
+    except (OSError, ValueError) as error:
+        raise _git_failure("discover", error) from error
+
+
 def _tree_entries(repo: Repo, tree_id: bytes) -> dict[bytes, _GitFileEntry]:
     return {
         entry.path: _GitFileEntry(mode=entry.mode, object_id=entry.sha)
@@ -380,20 +400,46 @@ def _changed_paths(
     )
 
 
-def _read_worktree_entry(root: str, path: bytes) -> _GitFileEntry | None:
+def _read_worktree_entry(
+    root: str,
+    path: bytes,
+    expected: _GitFileEntry | None = None,
+) -> _GitFileEntry | None:
     filesystem_path = Path(root) / os.fsdecode(path)
     try:
         file_stat = filesystem_path.lstat()
     except FileNotFoundError:
         return None
+    if expected is not None and expected.mode == _GITLINK_MODE:
+        return _read_gitlink_entry(filesystem_path, file_stat)
     if stat.S_ISLNK(file_stat.st_mode):
         blob = Blob.from_string(os.fsencode(os.readlink(filesystem_path)))
-        return _GitFileEntry(mode=stat.S_IFLNK | 0o777, object_id=blob.id, blob=blob)
+        return _GitFileEntry(mode=0o120000, object_id=blob.id, blob=blob)
     if not stat.S_ISREG(file_stat.st_mode):
         return None
     blob = Blob.from_string(filesystem_path.read_bytes())
-    mode = stat.S_IFREG | (0o755 if file_stat.st_mode & stat.S_IXUSR else 0o644)
+    mode = 0o100755 if file_stat.st_mode & stat.S_IXUSR else 0o100644
     return _GitFileEntry(mode=mode, object_id=blob.id, blob=blob)
+
+
+def _read_gitlink_entry(
+    filesystem_path: Path,
+    file_stat: os.stat_result,
+) -> _GitFileEntry | None:
+    if not stat.S_ISDIR(file_stat.st_mode):
+        return None
+    try:
+        submodule_repo = Repo.discover(filesystem_path)
+    except NotGitRepository:
+        return None
+    if Path(submodule_repo.path).resolve(strict=True) != filesystem_path.resolve(
+        strict=True
+    ):
+        return None
+    return _GitFileEntry(
+        mode=_GITLINK_MODE,
+        object_id=bytes(submodule_repo.head()),
+    )
 
 
 def _entries_differ(
@@ -426,6 +472,8 @@ def _entry_blob(repo: Repo, entry: _GitFileEntry | None) -> Blob | None:
         return None
     if entry.blob is not None:
         return entry.blob
+    if entry.mode == _GITLINK_MODE:
+        return Blob.from_string(b"Subproject commit " + entry.object_id + b"\n")
     value = repo.object_store[entry.object_id]
     if isinstance(value, Blob):
         return value
