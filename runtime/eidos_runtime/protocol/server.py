@@ -604,6 +604,14 @@ class RuntimeServer:
                 ),
             ),
             (
+                "session/handoff",
+                method_dtos.SessionHandoffRequestDto,
+                method_dtos.SessionHandoffResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.handoff(
+                    request
+                ),
+            ),
+            (
                 "event/list",
                 method_dtos.EventListRequestDto,
                 method_dtos.EventListResponseDto,
@@ -922,6 +930,7 @@ class RuntimeServer:
                 self.supervisor.bind_async_kernel(self.async_kernel)
                 self.supervisor.verify_restart_state()
                 self._applications = self._build_applications()
+                self._applications.sessions.recover_handoffs()
         except (
             StorageError,
             ModelConfigError,

@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Callable
 
 from eidos_runtime.db.database import Database, WorkspaceIdentity
-from eidos_runtime.db.errors import ResourceNotFoundError
+from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
 from eidos_runtime.domain.project import Project
 from eidos_runtime.domain.worktree import (
     BranchOwnership,
@@ -37,6 +37,7 @@ from eidos_runtime.git.errors import (
 from eidos_runtime.git.models import (
     GitRepositoryDiscovery,
     GitSourceSnapshot,
+    GitWorkingTreePatch,
     GitWorktreeEntry,
     ProjectResolution,
 )
@@ -106,6 +107,43 @@ class WorktreeManager:
             raise WorktreeError("git_command_timeout") from None
         except GitCommandFailedError as error:
             raise WorktreeError("git_command_failed") from error
+
+    def read_worktree(self, worktree_id: str) -> Worktree:
+        return self._read_worktree(worktree_id)
+
+    def capture_worktree_changes(self, root: Path) -> GitWorkingTreePatch:
+        try:
+            return self.git.capture_worktree_changes(root)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_command_failed") from error
+
+    def apply_worktree_changes(
+        self, root: Path, changes: GitWorkingTreePatch
+    ) -> None:
+        try:
+            self.git.apply_worktree_changes(root, changes)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("handoff_git_conflict") from error
+
+    def switch_repository_branch(self, root: Path, branch: str) -> None:
+        try:
+            self.git.switch_branch(root, branch)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("handoff_local_conflict") from error
+
+    def switch_repository_detached(self, root: Path, commit: str) -> None:
+        try:
+            self.git.switch_detached(root, commit)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("handoff_local_conflict") from error
 
     def local_branches(self, repository_root: Path) -> tuple[str, ...]:
         try:
@@ -222,6 +260,7 @@ class WorktreeManager:
             base_ref=resolved_base_ref,
             base_commit=base_commit,
             branch=branch,
+            checkout_branch=branch,
             ownership=WorktreeOwnership.MANAGED,
             state=WorktreeState.ACTIVE,
             created_at=now,
@@ -443,6 +482,7 @@ class WorktreeManager:
             base_ref=operation.base_ref,
             base_commit=operation.base_commit,
             branch=operation.branch,
+            checkout_branch=operation.branch,
             ownership=WorktreeOwnership.MANAGED,
             state=WorktreeState.ACTIVE,
             created_at=operation.created_at,
@@ -521,6 +561,7 @@ class WorktreeManager:
             return worktree.model_copy(
                 update={
                     "branch": branch,
+                    "checkout_branch": branch,
                     "branch_ownership": BranchOwnership.USER,
                 }
             )
@@ -542,6 +583,7 @@ class WorktreeManager:
                 return worktree.model_copy(
                     update={
                         "branch": branch,
+                        "checkout_branch": branch,
                         "branch_ownership": BranchOwnership.USER,
                     }
                 )
@@ -553,9 +595,132 @@ class WorktreeManager:
         return worktree.model_copy(
             update={
                 "branch": branch,
+                "checkout_branch": branch,
                 "branch_ownership": BranchOwnership.USER,
             }
         )
+
+    def detach_worktree_for_handoff(
+        self, worktree_id: str, *, expected_head: str
+    ) -> Worktree:
+        worktree = self._read_worktree(worktree_id)
+        if worktree.state is not WorktreeState.ACTIVE:
+            raise WorktreeError("worktree_invalid")
+        root = Path(worktree.worktree_root)
+        if self.head(root) != expected_head:
+            raise WorktreeError("handoff_source_changed")
+        try:
+            if self.current_branch(root) is not None:
+                self.git.detach_worktree(root)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("handoff_git_conflict") from error
+        if self.head(root) != expected_head or self.current_branch(root) is not None:
+            raise WorktreeError("worktree_recovery_required")
+        try:
+            return self.repository.update_checkout_branch(worktree_id, None)
+        except ResourceNotFoundError:
+            raise WorktreeError("worktree_not_found") from None
+
+    def move_worktree_to_head(
+        self,
+        worktree_id: str,
+        *,
+        expected_current_head: str,
+        target_head: str,
+    ) -> Worktree:
+        worktree = self._read_worktree(worktree_id)
+        if worktree.state is not WorktreeState.ACTIVE:
+            raise WorktreeError("worktree_invalid")
+        root = Path(worktree.worktree_root)
+        if self.head(root) != expected_current_head:
+            raise WorktreeError("handoff_target_changed")
+        status = self.source_snapshot(root, include_local_changes=False).status
+        if status.dirty:
+            raise WorktreeError("handoff_target_changed")
+        try:
+            self.git.switch_detached(root, target_head)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("handoff_git_conflict") from error
+        if self.head(root) != target_head or self.current_branch(root) is not None:
+            raise WorktreeError("worktree_recovery_required")
+        try:
+            return self.repository.update_checkout_branch(worktree_id, None)
+        except ResourceNotFoundError:
+            raise WorktreeError("worktree_not_found") from None
+
+    def clean_worktree_after_handoff(
+        self, worktree_id: str, *, expected_head: str
+    ) -> Worktree:
+        worktree = self._read_worktree(worktree_id)
+        if worktree.ownership is not WorktreeOwnership.MANAGED:
+            raise WorktreeError("worktree_not_owned")
+        root = Path(worktree.worktree_root)
+        if self.head(root) != expected_head or self.current_branch(root) is not None:
+            raise WorktreeError("worktree_recovery_required")
+        try:
+            self.git.clean_worktree_after_handoff(root)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("worktree_cleanup_required") from error
+        if self.source_snapshot(root, include_local_changes=False).status.dirty:
+            raise WorktreeError("worktree_cleanup_required")
+        return worktree
+
+    def release_user_branch_after_handoff(
+        self,
+        worktree_id: str,
+        *,
+        expected_branch: str,
+        expected_head: str,
+        target_root: Path,
+        expected_target_fingerprint: str | None = None,
+    ) -> Worktree:
+        """Release only Eidos branch metadata after Local owns the branch."""
+
+        worktree = self._read_worktree(worktree_id)
+        if worktree.state is not WorktreeState.ACTIVE:
+            raise WorktreeError("worktree_invalid")
+        root = Path(worktree.worktree_root)
+        if self.head(root) != expected_head or self.current_branch(root) is not None:
+            raise WorktreeError("worktree_recovery_required")
+        try:
+            target = self.source_snapshot(target_root, include_local_changes=True)
+        except WorktreeError as error:
+            if error.code == "worktree_local_changes_conflict":
+                raise WorktreeError("handoff_target_changed") from error
+            raise
+        if target.head != expected_head or target.branch != expected_branch:
+            raise WorktreeError("handoff_target_changed")
+        if (
+            expected_target_fingerprint is not None
+            and target.fingerprint != expected_target_fingerprint
+        ):
+            raise WorktreeError("handoff_target_changed")
+        if (
+            worktree.branch is None
+            and worktree.checkout_branch is None
+            and worktree.branch_ownership is BranchOwnership.NONE
+        ):
+            return worktree
+        if (
+            worktree.branch != expected_branch
+            or worktree.checkout_branch is not None
+            or worktree.branch_ownership is not BranchOwnership.USER
+        ):
+            raise WorktreeError("worktree_recovery_required")
+        try:
+            return self.repository.release_user_branch_metadata(
+                worktree_id, expected_branch
+            )
+        except ResourceNotFoundError:
+            raise WorktreeError("worktree_not_found") from None
+        except StorageError as error:
+            raise WorktreeError("worktree_recovery_required") from error
 
     def persist_branch(
         self,
@@ -1225,6 +1390,57 @@ class WorktreeManager:
             observed_at=utc_now(),
         )
 
+    def local_status(self, repository_root: Path) -> GitStatusSnapshot:
+        try:
+            discovery = self.discovery.discover(repository_root)
+            root = Path(discovery.repository_root)
+            observation = self.git.status(root)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_observation_failed") from error
+        return GitStatusSnapshot(
+            worktree_id=None,
+            repository_root=discovery.repository_root,
+            worktree_root=discovery.repository_root,
+            base_ref=None,
+            base_commit=None,
+            branch=observation.branch,
+            head=observation.head,
+            dirty=observation.dirty,
+            staged_count=len(observation.staged_paths),
+            unstaged_count=len(observation.unstaged_paths),
+            untracked_count=len(observation.untracked_paths),
+            conflict_count=len(observation.conflict_paths),
+            observed_at=utc_now(),
+        )
+
+    def local_diff(
+        self, repository_root: Path, *, scope: DiffScope = DiffScope.HEAD
+    ) -> GitDiffSnapshot:
+        try:
+            discovery = self.discovery.discover(repository_root)
+            root = Path(discovery.repository_root)
+            head = self.git.head(root)
+            diff_observation = self.git.diff(
+                root, base_commit=head, include_untracked=True
+            )
+            status_observation = self.git.status(root)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_observation_failed") from error
+        return GitDiffSnapshot(
+            scope=scope,
+            base_commit=head,
+            head=head,
+            dirty=status_observation.dirty,
+            changed_files=diff_observation.changed_paths,
+            unified_diff=diff_observation.patch,
+            truncated=diff_observation.truncated,
+            observed_at=utc_now(),
+        )
+
     def diff(
         self,
         worktree_id: str,
@@ -1424,7 +1640,7 @@ class WorktreeManager:
                 state=worktree.state,
                 persist_state=False,
             )
-        if branch != worktree.branch:
+        if branch != worktree.checkout_branch:
             return self._record_validation(
                 worktree,
                 valid=False,
@@ -1780,6 +1996,7 @@ def _same_prepared_worktree(existing: Worktree, plan: Worktree) -> bool:
             "base_ref",
             "base_commit",
             "branch",
+            "checkout_branch",
             "branch_ownership",
             "ownership",
         )

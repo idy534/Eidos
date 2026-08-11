@@ -365,6 +365,57 @@ class NativeWorktreeCleaner:
         )
 
 
+class NativeWorktreeHandoffCleaner:
+    """Clear transient Worktree changes while preserving ignored resources."""
+
+    def __init__(self, *, runner: HardenedGitRunner | None = None) -> None:
+        self._runner = runner or HardenedGitRunner()
+
+    def clean(self, worktree_root: Path) -> None:
+        overrides = filter_config_overrides(self._runner, worktree_root)
+        self._runner.run(
+            ("reset", "--hard", "HEAD"),
+            cwd=worktree_root,
+            operation="worktree-handoff-reset",
+            config_overrides=overrides,
+        )
+        self._runner.run(
+            ("clean", "-fd", "--"),
+            cwd=worktree_root,
+            operation="worktree-handoff-clean",
+        )
+
+
+class NativeWorktreeCheckout:
+    """Move a checkout without force, reset, branch deletion, or cleanup."""
+
+    def __init__(self, *, runner: HardenedGitRunner | None = None) -> None:
+        self._runner = runner or HardenedGitRunner()
+
+    def detach(self, worktree_root: Path) -> None:
+        self._runner.run(
+            ("switch", "--detach", "HEAD"),
+            cwd=worktree_root,
+            operation="worktree-detach",
+        )
+
+    def switch_branch(self, worktree_root: Path, branch: str) -> None:
+        _validate_branch(branch)
+        self._runner.run(
+            ("switch", "--no-guess", branch),
+            cwd=worktree_root,
+            operation="worktree-switch-branch",
+        )
+
+    def switch_detached(self, worktree_root: Path, commit: str) -> None:
+        _validate_ref(commit)
+        self._runner.run(
+            ("switch", "--detach", commit),
+            cwd=worktree_root,
+            operation="worktree-switch-detached",
+        )
+
+
 _DIFF_ARGS = (
     "diff",
     "--binary",
@@ -606,6 +657,8 @@ __all__ = [
     "NativeBranchAttacher",
     "NativeWorktreeChangeTransfer",
     "NativeWorktreeCleaner",
+    "NativeWorktreeHandoffCleaner",
+    "NativeWorktreeCheckout",
     "NativeWorktreeCreator",
     "filter_config_overrides",
 ]

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 V9_SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -1041,6 +1041,71 @@ SET execution_mode = CASE
 END;
 """
 
+V21_SESSION_HANDOFF_SCHEMA_SQL = """
+ALTER TABLE worktrees
+ADD COLUMN checkout_branch TEXT;
+
+UPDATE worktrees
+SET checkout_branch = branch
+WHERE checkout_branch IS NULL AND branch IS NOT NULL;
+
+ALTER TABLE sessions
+ADD COLUMN associated_worktree_id TEXT
+REFERENCES worktrees(id) ON DELETE RESTRICT;
+
+CREATE INDEX sessions_associated_worktree_id
+ON sessions(associated_worktree_id);
+
+CREATE TABLE session_handoff_operations (
+    scope TEXT NOT NULL CHECK (
+        scope IN ('session/handoff-local', 'session/handoff-worktree')
+    ),
+    operation_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (
+        state IN (
+            'prepared', 'source_captured', 'target_materialized',
+            'session_rebound', 'completed', 'cleanup_required'
+        )
+    ),
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+    source_mode TEXT NOT NULL CHECK (source_mode IN ('local', 'worktree')),
+    target_mode TEXT NOT NULL CHECK (target_mode IN ('local', 'worktree')),
+    source_root TEXT NOT NULL,
+    target_root TEXT NOT NULL,
+    source_common_dir TEXT NOT NULL,
+    target_common_dir TEXT NOT NULL,
+    associated_worktree_id TEXT,
+    target_worktree_new INTEGER NOT NULL CHECK (target_worktree_new IN (0, 1)),
+    target_base_ref TEXT,
+    target_base_commit TEXT,
+    source_head TEXT NOT NULL,
+    source_branch TEXT,
+    source_dirty INTEGER NOT NULL CHECK (source_dirty IN (0, 1)),
+    source_fingerprint TEXT NOT NULL,
+    target_head TEXT NOT NULL,
+    target_branch TEXT,
+    target_dirty INTEGER NOT NULL CHECK (target_dirty IN (0, 1)),
+    target_fingerprint TEXT NOT NULL,
+    target_after_head TEXT,
+    target_after_branch TEXT,
+    target_after_fingerprint TEXT,
+    source_after_head TEXT,
+    source_after_branch TEXT,
+    source_after_fingerprint TEXT,
+    error_code TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (scope, operation_id)
+);
+
+CREATE INDEX session_handoff_operations_state
+ON session_handoff_operations(state, updated_at);
+
+CREATE INDEX session_handoff_operations_session
+ON session_handoff_operations(session_id, created_at DESC);
+"""
+
 SCHEMA_SQL = (
     V12_BASE_SCHEMA_SQL
     + V10_REPOSITORY_SCHEMA_SQL
@@ -1053,4 +1118,5 @@ SCHEMA_SQL = (
     + V17_WORKTREE_LIFECYCLE_SCHEMA_SQL
     + V19_SESSION_EXECUTION_SCHEMA_SQL
     + V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL
+    + V21_SESSION_HANDOFF_SCHEMA_SQL
 )

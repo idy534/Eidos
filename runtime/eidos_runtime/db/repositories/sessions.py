@@ -51,6 +51,7 @@ MAX_SNAPSHOT_BYTES = 768 * 1024
 
 SESSION_SELECT = """
     SELECT s.creation_seq, s.id, s.workspace_root, s.worktree_id,
+           s.associated_worktree_id,
            s.execution_mode, s.title,
            s.created_at, s.updated_at,
            CASE
@@ -87,7 +88,7 @@ SESSION_SELECT = """
            w.worktree_root AS projection_worktree_root,
            w.base_ref AS projection_base_ref,
            w.base_commit AS projection_base_commit,
-           w.branch AS projection_branch,
+           w.checkout_branch AS projection_branch,
            w.state AS projection_worktree_state
     FROM sessions s
     LEFT JOIN worktrees w ON w.id = s.worktree_id
@@ -105,6 +106,7 @@ class SessionRepository(Repository):
         project_id: str | None = None,
         operation_id: str | None = None,
         session_id: str | None = None,
+        associated_worktree_id: str | None = None,
     ) -> Session:
         return self.create_session_committed(
             workspace_root,
@@ -113,6 +115,7 @@ class SessionRepository(Repository):
             project_id=project_id,
             operation_id=operation_id,
             session_id=session_id,
+            associated_worktree_id=associated_worktree_id,
         ).value
 
     def create_session_committed(
@@ -124,6 +127,7 @@ class SessionRepository(Repository):
         project_id: str | None = None,
         operation_id: str | None = None,
         session_id: str | None = None,
+        associated_worktree_id: str | None = None,
     ) -> CommittedMutation[Session]:
         workspace = _canonical_workspace(workspace_root)
         if self._workspace_overlaps_data(workspace):
@@ -137,12 +141,17 @@ class SessionRepository(Repository):
             raise ValueError("invalid session execution mode") from error
         if execution_mode is SessionExecutionMode.LOCAL and worktree_id is not None:
             raise ValueError("local Session must not have a Worktree binding")
+        if associated_worktree_id is not None:
+            raise ValueError("new Session must not have an associated Worktree")
         if execution_mode is SessionExecutionMode.WORKTREE and worktree_id is None:
             raise ValueError("worktree Session must have a Worktree binding")
+        if execution_mode is SessionExecutionMode.WORKTREE:
+            associated_worktree_id = worktree_id
         session = session_from_row({
             "id": session_id,
             "workspace_root": str(workspace),
             "worktree_id": worktree_id,
+            "associated_worktree_id": associated_worktree_id,
             "execution_mode": execution_mode.value,
             "title": None,
             "task_status": "new",
@@ -201,9 +210,9 @@ class SessionRepository(Repository):
                 """
                 INSERT INTO sessions (
                     id, workspace_root, workspace_dev, workspace_inode,
-                    workspace_uid, worktree_id, execution_mode, created_at,
-                    updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    workspace_uid, worktree_id, execution_mode,
+                    associated_worktree_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -213,6 +222,7 @@ class SessionRepository(Repository):
                     metadata.st_uid,
                     worktree_id,
                     execution_mode.value,
+                    associated_worktree_id,
                     now,
                     now,
                 ),
@@ -441,6 +451,85 @@ class SessionRepository(Repository):
         with self.lock:
             self._assert_session_deletable(self._connection(), session_id)
 
+    def assert_session_idle(self, session_id: str) -> None:
+        with self.lock:
+            self._assert_session_deletable(self._connection(), session_id)
+
+    def update_execution_binding_committed(
+        self,
+        session_id: str,
+        *,
+        execution_mode: SessionExecutionMode,
+        worktree_id: str | None,
+        associated_worktree_id: str | None,
+    ) -> CommittedMutation[Session]:
+        if execution_mode is SessionExecutionMode.LOCAL and worktree_id is not None:
+            raise ValueError("local Session must not have an active Worktree")
+        if execution_mode is SessionExecutionMode.WORKTREE and (
+            worktree_id is None or associated_worktree_id != worktree_id
+        ):
+            raise ValueError("worktree Session binding is incomplete")
+        now = _now_ms()
+
+        def write(connection: sqlite3.Connection) -> CommittedMutation[Session]:
+            self._assert_session_deletable(connection, session_id)
+            current = connection.execute(
+                "SELECT worktree_id, associated_worktree_id FROM sessions "
+                "WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            assert current is not None
+            if worktree_id is not None:
+                worktree = connection.execute(
+                    "SELECT p.workspace_root FROM worktrees w "
+                    "JOIN projects p ON p.id = w.project_id WHERE w.id = ?",
+                    (worktree_id,),
+                ).fetchone()
+                if worktree is None:
+                    raise ResourceNotFoundError("worktree not found")
+                if associated_worktree_id != worktree_id:
+                    raise ValueError("active and associated Worktree differ")
+            connection.execute(
+                "UPDATE sessions SET execution_mode = ?, worktree_id = ?, "
+                "associated_worktree_id = ?, updated_at = ? WHERE id = ?",
+                (
+                    execution_mode.value,
+                    worktree_id,
+                    associated_worktree_id,
+                    now,
+                    session_id,
+                ),
+            )
+            event = append_event(
+                connection,
+                EventType.SESSION_HANDOFF_COMPLETED,
+                now,
+                {
+                    "executionMode": execution_mode.value,
+                    "worktreeId": worktree_id,
+                    "associatedWorktreeId": associated_worktree_id,
+                },
+                session_id=session_id,
+            )
+            row = connection.execute(
+                SESSION_SELECT + " WHERE s.id = ?", (session_id,)
+            ).fetchone()
+            return CommittedMutation(session_from_row(row), (event,))
+
+        return self._write_committed(
+            write,
+            operation_id=None,
+            operation_scope="session/handoff-binding",
+            operation_request={
+                "sessionId": session_id,
+                "executionMode": execution_mode.value,
+                "worktreeId": worktree_id,
+                "associatedWorktreeId": associated_worktree_id,
+            },
+            serialize_value=session_to_operation_dict,
+            deserialize_value=session_from_legacy_dict,
+        )
+
     def delete_session_committed(
         self,
         session_id: str,
@@ -549,6 +638,19 @@ class SessionRepository(Repository):
                           rule_resolution_snapshots.id
                 )
                 """
+            )
+            # Worktree rows are durable lifecycle records and remain in the
+            # database after managed removal. Clear both Session bindings
+            # before deleting the Session so the restrictive foreign keys do
+            # not leave a deleted Session pointing at a historical Worktree.
+            connection.execute(
+                "UPDATE sessions SET worktree_id = NULL, "
+                "associated_worktree_id = NULL WHERE id = ?",
+                (session_id,),
+            )
+            connection.execute(
+                "DELETE FROM session_handoff_operations WHERE session_id = ?",
+                (session_id,),
             )
             connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             return CommittedMutation(

@@ -5,6 +5,7 @@ import type {
   SessionSnapshot,
   EventListResult,
   Session,
+  SessionHandoffResult,
   ProjectGitContext,
   CreateBranchResult,
   DeleteSessionResult,
@@ -59,6 +60,10 @@ export interface EidosRuntimeAPI {
     },
   ): Promise<Session>;
   createSessionBranch(sessionId: string, branch: string): Promise<CreateBranchResult>;
+  handoffSession(
+    sessionId: string,
+    target: "local" | "worktree",
+  ): Promise<SessionHandoffResult>;
   readProjectGitContext(workspaceRoot: string): Promise<ProjectGitContext>;
   renameSession(sessionId: string, title: string): Promise<Session>;
   deleteSession(sessionId: string): Promise<DeleteSessionResult>;

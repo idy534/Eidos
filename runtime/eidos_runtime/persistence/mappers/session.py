@@ -36,6 +36,11 @@ def session_from_row(row: RowValues | Mapping[str, object]) -> Session:
         if "worktree_id" in row.keys()
         else None
     )
+    associated_worktree_id = (
+        values.optional_text("associated_worktree_id")
+        if "associated_worktree_id" in row.keys()
+        else None
+    )
     execution_mode_value = (
         values.optional_text("execution_mode")
         if "execution_mode" in row.keys()
@@ -75,6 +80,7 @@ def session_from_row(row: RowValues | Mapping[str, object]) -> Session:
             workspace_root=workspace_root,
             execution_mode=execution_mode,
             worktree_id=worktree_id,
+            associated_worktree_id=associated_worktree_id,
             title=title,
             task_status=task_status,
             created_at=created_at,
@@ -113,6 +119,11 @@ def session_from_legacy_dict(value: object) -> Session:
                 if nested_worktree_id is not None
                 else None
             )
+        ),
+        "associated_worktree_id": (
+            reader.optional_text("associatedWorktreeId")
+            if "associatedWorktreeId" in value
+            else None
         ),
         "execution_mode": (
             reader.optional_text("executionMode")
@@ -203,6 +214,8 @@ def session_to_operation_dict(session: Session) -> dict[str, object]:
     value = session_to_legacy_dict(session)
     if session.worktree_id is not None:
         value["worktreeId"] = session.worktree_id
+    if session.associated_worktree_id is not None:
+        value["associatedWorktreeId"] = session.associated_worktree_id
     value["executionMode"] = session.execution_mode.value
     return value
 

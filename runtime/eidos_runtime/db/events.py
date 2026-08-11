@@ -37,6 +37,14 @@ class SessionTitleGenerationFailedPayload(ClosedModel):
     reason: str
 
 
+class SessionHandoffCompletedPayload(ClosedModel):
+    execution_mode: str = Field(alias="executionMode")
+    worktree_id: str | None = Field(default=None, alias="worktreeId")
+    associated_worktree_id: str | None = Field(
+        default=None, alias="associatedWorktreeId"
+    )
+
+
 class RunCreatedPayload(ClosedModel):
     run: RunDto
 
@@ -105,6 +113,7 @@ EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.SESSION_TITLE_UPDATED: SessionTitleUpdatedPayload,
     EventType.SESSION_TITLE_GENERATION_STARTED: SessionTitleGenerationStartedPayload,
     EventType.SESSION_TITLE_GENERATION_FAILED: SessionTitleGenerationFailedPayload,
+    EventType.SESSION_HANDOFF_COMPLETED: SessionHandoffCompletedPayload,
     EventType.RUN_CREATED: RunCreatedPayload,
     EventType.RUN_UPDATED: RunUpdatedPayload,
     EventType.RUN_STATUS_CHANGED: RunStatusChangedPayload,

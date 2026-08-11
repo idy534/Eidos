@@ -8,7 +8,11 @@ import pytest
 
 from eidos_runtime.git.backend import DulwichGitBackend
 from eidos_runtime.git.errors import GitCommandFailedError, GitCommandTimeoutError
-from eidos_runtime.git.native import HardenedGitRunner
+from eidos_runtime.git.native import (
+    HardenedGitRunner,
+    NativeWorktreeCleaner,
+    NativeWorktreeHandoffCleaner,
+)
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -81,6 +85,38 @@ def test_read_observation_and_native_worktree_create_disable_helpers(
     backend.worktree_add(repository, linked, "eidos/helper-safety", backend.head(repository))
 
     assert not marker.exists()
+
+
+def test_handoff_cleanup_preserves_ignored_files_but_compensation_removes_them(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    (repository / ".gitignore").write_text(
+        ".env\nnode_modules/\n", encoding="utf-8"
+    )
+    _git(repository, "add", ".gitignore")
+    _git(repository, "commit", "-qm", "ignore environment")
+    (repository / ".env").write_text("TOKEN=test\n", encoding="utf-8")
+    (repository / "node_modules").mkdir()
+    (repository / "node_modules" / "example").write_text(
+        "installed\n", encoding="utf-8"
+    )
+    (repository / "README.txt").write_text("dirty\n", encoding="utf-8")
+    (repository / "untracked.txt").write_text("remove\n", encoding="utf-8")
+
+    NativeWorktreeHandoffCleaner().clean(repository)
+
+    assert (repository / ".env").exists()
+    assert (repository / "node_modules" / "example").exists()
+    assert not (repository / "untracked.txt").exists()
+    assert (repository / "README.txt").read_text(encoding="utf-8") == "base\n"
+
+    (repository / "untracked.txt").write_text("remove\n", encoding="utf-8")
+    NativeWorktreeCleaner().clean(repository)
+
+    assert not (repository / ".env").exists()
+    assert not (repository / "node_modules").exists()
+    assert not (repository / "untracked.txt").exists()
 
 
 def test_dotted_and_worktree_specific_filters_are_disabled_for_native_create(

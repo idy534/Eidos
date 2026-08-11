@@ -74,6 +74,7 @@ class EventType(StrEnum):
     SESSION_TITLE_UPDATED = "session.title_updated"
     SESSION_TITLE_GENERATION_STARTED = "session.title_generation_started"
     SESSION_TITLE_GENERATION_FAILED = "session.title_generation_failed"
+    SESSION_HANDOFF_COMPLETED = "session.handoff_completed"
     RUN_CREATED = "run.created"
     RUN_UPDATED = "run.updated"
     RUN_STATUS_CHANGED = "run.status_changed"

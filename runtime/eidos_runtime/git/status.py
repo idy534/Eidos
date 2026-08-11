@@ -14,11 +14,11 @@ class DiffScope(StrEnum):
 
 
 class GitStatusSnapshot(EidosFrozenStrictModel):
-    worktree_id: str
+    worktree_id: str | None
     repository_root: str
     worktree_root: str
-    base_ref: str
-    base_commit: str
+    base_ref: str | None
+    base_commit: str | None
     branch: str | None
     head: str
     dirty: bool
@@ -31,7 +31,7 @@ class GitStatusSnapshot(EidosFrozenStrictModel):
 
 class GitDiffSnapshot(EidosFrozenStrictModel):
     scope: DiffScope
-    base_commit: str
+    base_commit: str | None
     head: str
     dirty: bool
     changed_files: tuple[str, ...]

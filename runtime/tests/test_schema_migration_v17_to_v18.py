@@ -130,7 +130,7 @@ def test_v17_to_v18_preserves_git_bindings_and_creates_deterministic_direct_proj
     store.initialize()
     try:
         assert store.health() == {"state": "ready"}
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 20
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 21
         git_project = store.connection.execute(
             "SELECT * FROM projects WHERE id = 'git-project'"
         ).fetchone()

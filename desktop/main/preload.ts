@@ -8,6 +8,7 @@ import type {
   SessionSnapshot,
   EventListResult,
   Session,
+  SessionHandoffResult,
   ProjectGitContext,
   CreateBranchResult,
   DeleteSessionResult,
@@ -67,6 +68,10 @@ const api: EidosRuntimeAPI = {
   ): Promise<Session> => ipcRenderer.invoke(IPC.SESSION_CREATE, workspaceRoot, options),
   createSessionBranch: (sessionId: string, branch: string): Promise<CreateBranchResult> =>
     ipcRenderer.invoke(IPC.SESSION_CREATE_BRANCH, sessionId, branch),
+  handoffSession: (
+    sessionId: string,
+    target: "local" | "worktree",
+  ): Promise<SessionHandoffResult> => ipcRenderer.invoke(IPC.SESSION_HANDOFF, sessionId, target),
   readProjectGitContext: (workspaceRoot: string): Promise<ProjectGitContext> =>
     ipcRenderer.invoke(IPC.PROJECT_GIT_CONTEXT, workspaceRoot),
   renameSession: (sessionId: string, title: string): Promise<Session> =>

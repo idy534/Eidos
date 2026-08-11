@@ -80,6 +80,9 @@ class SessionDto(ClosedModel):
     execution_mode: Literal["local", "worktree"] | None = Field(
         default=None, alias="executionMode"
     )
+    associated_worktree_id: StrictStr | None = Field(
+        default=None, alias="associatedWorktreeId"
+    )
     project: SessionProjectDto | None = None
     worktree: SessionWorktreeDto | None = None
     title: StrictStr | None = None

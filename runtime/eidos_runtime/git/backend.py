@@ -36,6 +36,8 @@ from eidos_runtime.git.native import (
     NativeBranchAttacher,
     NativeWorktreeChangeTransfer,
     NativeWorktreeCleaner,
+    NativeWorktreeHandoffCleaner,
+    NativeWorktreeCheckout,
     NativeWorktreeCreator,
 )
 
@@ -83,6 +85,8 @@ class GitBackend(Protocol):
 
     def clean_worktree_for_compensation(self, cwd: Path) -> None: ...
 
+    def clean_worktree_after_handoff(self, cwd: Path) -> None: ...
+
     def worktree_prune(self, cwd: Path) -> None: ...
 
     def capture_worktree_changes(self, cwd: Path) -> GitWorkingTreePatch: ...
@@ -97,6 +101,12 @@ class GitBackend(Protocol):
         self, cwd: Path, branch: str, expected_commit: str
     ) -> bool: ...
 
+    def detach_worktree(self, cwd: Path) -> None: ...
+
+    def switch_branch(self, cwd: Path, branch: str) -> None: ...
+
+    def switch_detached(self, cwd: Path, commit: str) -> None: ...
+
 
 class DulwichGitBackend:
     """Deep typed Git implementation backed by Dulwich read APIs."""
@@ -108,6 +118,8 @@ class DulwichGitBackend:
         native_change_transfer: NativeWorktreeChangeTransfer | None = None,
         native_branch_attacher: NativeBranchAttacher | None = None,
         native_worktree_cleaner: NativeWorktreeCleaner | None = None,
+        native_worktree_handoff_cleaner: NativeWorktreeHandoffCleaner | None = None,
+        native_worktree_checkout: NativeWorktreeCheckout | None = None,
         diff_output_limit_bytes: int = DEFAULT_GIT_DIFF_BYTES,
     ) -> None:
         if diff_output_limit_bytes < 1:
@@ -116,6 +128,8 @@ class DulwichGitBackend:
         self._native_change_transfer = native_change_transfer
         self._native_branch_attacher = native_branch_attacher
         self._native_worktree_cleaner = native_worktree_cleaner
+        self._native_worktree_handoff_cleaner = native_worktree_handoff_cleaner
+        self._native_worktree_checkout = native_worktree_checkout
         self._diff_output_limit_bytes = diff_output_limit_bytes
 
     def discover(self, cwd: Path) -> GitRepositoryDiscovery:
@@ -357,6 +371,11 @@ class DulwichGitBackend:
             self._native_worktree_cleaner = NativeWorktreeCleaner()
         self._native_worktree_cleaner.clean(cwd)
 
+    def clean_worktree_after_handoff(self, cwd: Path) -> None:
+        if self._native_worktree_handoff_cleaner is None:
+            self._native_worktree_handoff_cleaner = NativeWorktreeHandoffCleaner()
+        self._native_worktree_handoff_cleaner.clean(cwd)
+
     def capture_worktree_changes(self, cwd: Path) -> GitWorkingTreePatch:
         if self._native_change_transfer is None:
             self._native_change_transfer = NativeWorktreeChangeTransfer()
@@ -407,6 +426,24 @@ class DulwichGitBackend:
             )
         except (OSError, TypeError, ValueError) as error:
             raise _git_failure("delete-branch-if-equals", error) from error
+
+    def detach_worktree(self, cwd: Path) -> None:
+        if self._native_worktree_checkout is None:
+            self._native_worktree_checkout = NativeWorktreeCheckout()
+        try:
+            self._native_worktree_checkout.detach(cwd)
+        except (GitCommandFailedError, GitCommandTimeoutError):
+            raise
+
+    def switch_branch(self, cwd: Path, branch: str) -> None:
+        if self._native_worktree_checkout is None:
+            self._native_worktree_checkout = NativeWorktreeCheckout()
+        self._native_worktree_checkout.switch_branch(cwd, branch)
+
+    def switch_detached(self, cwd: Path, commit: str) -> None:
+        if self._native_worktree_checkout is None:
+            self._native_worktree_checkout = NativeWorktreeCheckout()
+        self._native_worktree_checkout.switch_detached(cwd, commit)
 
     def _open_repository(self, cwd: Path, operation: str) -> Repo:
         if not cwd.is_absolute() or not cwd.is_dir():

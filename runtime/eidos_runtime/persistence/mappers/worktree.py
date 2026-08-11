@@ -40,6 +40,12 @@ def worktree_from_row(row: Mapping[str, object]) -> Worktree:
         base_ref=str(row["base_ref"]),
         base_commit=str(row["base_commit"]),
         branch=(str(row["branch"]) if row["branch"] is not None else None),
+        checkout_branch=(
+            str(row["checkout_branch"])
+            if "checkout_branch" in row.keys()
+            and row["checkout_branch"] is not None
+            else None
+        ),
         branch_ownership=BranchOwnership(str(row["branch_ownership"])),
         ownership=WorktreeOwnership(str(row["ownership"])),
         state=WorktreeState(str(row["state"])),

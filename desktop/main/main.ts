@@ -463,6 +463,15 @@ ipcMain.handle(IPC.SESSION_CREATE_BRANCH, (_event, sessionId: unknown, branch: u
   }
   return clientOrThrow().createSessionBranch(sessionId, branch);
 });
+ipcMain.handle(IPC.SESSION_HANDOFF, (_event, sessionId: unknown, target: unknown) => {
+  if (
+    typeof sessionId !== "string"
+    || (target !== "local" && target !== "worktree")
+  ) {
+    throw new Error("Handoff 参数无效。");
+  }
+  return clientOrThrow().handoffSession(sessionId, target);
+});
 ipcMain.handle(IPC.PROJECT_GIT_CONTEXT, (_event, workspaceRoot: unknown) => {
   if (typeof workspaceRoot !== "string") throw new Error("Workspace 参数无效。");
   return clientOrThrow().readProjectGitContext(workspaceRoot);

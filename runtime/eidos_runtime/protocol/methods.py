@@ -139,6 +139,15 @@ class SessionDeleteRequestDto(_OperationRequest):
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("operation_id", "session_id")
 
 
+class SessionHandoffRequestDto(_OperationRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    target: Literal["local", "worktree"]
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+
 class EventListRequestDto(_CanonicalIdRequest):
     session_id: StrictStr = Field(alias="sessionId")
     after_event_id: StrictInt = Field(default=0, alias="afterEventId", ge=0)
@@ -345,11 +354,11 @@ class SessionReadResponseDto(MethodResultDto):
 
 
 class SessionGitStatusResponseDto(MethodResultDto):
-    worktree_id: StrictStr = Field(alias="worktreeId")
+    worktree_id: StrictStr | None = Field(default=None, alias="worktreeId")
     branch: StrictStr | None = None
     head: StrictStr
-    base_ref: StrictStr = Field(alias="baseRef")
-    base_commit: StrictStr = Field(alias="baseCommit")
+    base_ref: StrictStr | None = Field(default=None, alias="baseRef")
+    base_commit: StrictStr | None = Field(default=None, alias="baseCommit")
     dirty: bool
     staged_count: StrictInt = Field(alias="stagedCount", ge=0)
     unstaged_count: StrictInt = Field(alias="unstagedCount", ge=0)
@@ -359,7 +368,10 @@ class SessionGitStatusResponseDto(MethodResultDto):
 
     def to_json_value(self) -> dict[str, JsonValue]:
         value = super().to_json_value()
+        value["worktreeId"] = self.worktree_id
         value["branch"] = self.branch
+        value["baseRef"] = self.base_ref
+        value["baseCommit"] = self.base_commit
         return value
 
 
@@ -382,13 +394,18 @@ class GitContextResponseDto(MethodResultDto):
 
 class SessionGitDiffResponseDto(MethodResultDto):
     scope: Literal["head", "baseline"]
-    base_commit: StrictStr = Field(alias="baseCommit")
+    base_commit: StrictStr | None = Field(default=None, alias="baseCommit")
     head: StrictStr
     dirty: bool
     changed_files: list[StrictStr] = Field(alias="changedFiles")
     unified_diff: StrictStr = Field(alias="unifiedDiff")
     truncated: bool
     observed_at: StrictInt = Field(alias="observedAt", ge=0)
+
+    def to_json_value(self) -> dict[str, JsonValue]:
+        value = super().to_json_value()
+        value["baseCommit"] = self.base_commit
+        return value
 
 
 class SessionRenameResponseDto(_SessionResponseDto):
@@ -397,6 +414,17 @@ class SessionRenameResponseDto(_SessionResponseDto):
 
 class SessionDeleteResponseDto(MethodResultDto):
     deleted_session_id: StrictStr = Field(alias="deletedSessionId")
+
+
+class SessionHandoffResponseDto(_SessionResponseDto):
+    session_id: StrictStr = Field(alias="sessionId")
+    worktree_id: StrictStr | None = Field(default=None, alias="worktreeId")
+
+    def to_json_value(self) -> dict[str, JsonValue]:
+        value = super().to_json_value()
+        value["sessionId"] = self.session_id
+        value["worktreeId"] = self.worktree_id
+        return value
 
 
 class EventListResponseDto(MethodResultDto):

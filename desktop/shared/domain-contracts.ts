@@ -41,6 +41,7 @@ export interface Session {
   id: string;
   workspaceRoot: string;
   executionMode?: "local" | "worktree";
+  associatedWorktreeId?: string;
   /** Optional only while older persisted event fixtures are read. */
   project?: SessionProject;
   worktree?: SessionWorktree;
@@ -48,6 +49,11 @@ export interface Session {
   taskStatus: "new" | "in_progress" | "completed" | "failed" | "canceled";
   createdAt: number;
   updatedAt: number;
+}
+
+export interface SessionHandoffResult extends Session {
+  sessionId: string;
+  worktreeId: string | null;
 }
 
 export interface SessionListResult {
@@ -69,11 +75,11 @@ export interface CreateBranchResult {
 export type GitDiffScope = "head" | "baseline";
 
 export interface SessionGitStatus {
-  worktreeId: string;
+  worktreeId: string | null;
   branch: string | null;
   head: string;
-  baseRef: string;
-  baseCommit: string;
+  baseRef: string | null;
+  baseCommit: string | null;
   dirty: boolean;
   stagedCount: number;
   unstagedCount: number;
@@ -93,7 +99,7 @@ export interface ProjectGitContext {
 
 export interface SessionGitDiff {
   scope: GitDiffScope;
-  baseCommit: string;
+  baseCommit: string | null;
   head: string;
   dirty: boolean;
   changedFiles: string[];
