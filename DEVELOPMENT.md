@@ -89,7 +89,15 @@ pnpm test:full
 pnpm test
 ```
 
-`pnpm test` 保持为 `test:full` 的兼容入口。PR 最终验证、Runtime 核心生命周期、Persistence/Protocol、Tool Runtime、Sandbox、Git/Worktree 或全局测试配置变化时，应执行 Full。普通开发循环不要因为一个失败反复运行 Full。
+`pnpm test` 保持为 `test:full` 的兼容入口。PR 最终验证、Runtime 核心生命周期、Persistence/Protocol、Tool Runtime、Sandbox、Git/Worktree 或全局测试配置变化时，应执行 Full。普通开发循环不要因为一个失败反复运行 Full。Full 不包含独立调度的 `large_repository` Scale 层。
+
+Repository Scale 单独运行：
+
+```bash
+pnpm test:runtime:scale
+```
+
+只有 Repository Map/Index/Retrieval 的规模行为、large-repository fixture 本身变化或明确要求规模验收时才需要运行 Scale。
 
 Python 静态检查：
 
@@ -115,12 +123,6 @@ pnpm build
 ```bash
 uv run --locked pytest runtime/tests -k "schema or migration or instruction or context or response or loop or checkpoint or long_task or repository or mcp or telemetry"
 pnpm test:packaging
-```
-
-Repository scale fixture 单独运行：
-
-```bash
-uv run --locked pytest -m large_repository runtime/tests/test_repository_large_scale.py
 ```
 
 `pnpm test:electron-smoke` 会使用临时 `EIDOS_DATA_DIR` 和临时 Electron user-data 目录。该测试不需要真实 Model API Key。
