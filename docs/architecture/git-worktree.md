@@ -128,9 +128,9 @@ Recovery 日志包含 `project_id`、`worktree_id`、`session_id`、`operation_i
 
 ## Git observation hardening
 
-Runtime 的 status、HEAD、diff、name-only 和 untracked observation 使用 fixed argv、`shell=False`、明确 cwd、`GIT_OPTIONAL_LOCKS=0`、`GIT_TERMINAL_PROMPT=0`、禁用 pager 和有界 timeout/output。
+Runtime 的 status、HEAD、diff、name-only 和 untracked observation 使用 fixed argv、`shell=False`、明确 cwd、`GIT_OPTIONAL_LOCKS=0`、`GIT_TERMINAL_PROMPT=0`、`core.fsmonitor=false`、禁用 pager 和有界 timeout/output。
 
-Informational diff 使用 `--no-ext-diff` 和 `--no-textconv`。Runtime 读取 local `filter.*.clean` 和 `filter.*.process` 配置，并以 fixed `-c` 参数禁用 executable filter，同时把 `required` 设为 false。Runtime-owned lifecycle command 使用 `core.hooksPath=/dev/null`。Runtime 不执行 configured hook、textconv 或 executable filter。
+Informational diff 使用 `--no-ext-diff` 和 `--no-textconv`。Runtime 使用 Git 的 effective repository/worktree config 和 NUL-safe name-only output 读取 `filter.*.clean` 与 `filter.*.process` key，并以 fixed `-c` 参数禁用 executable filter，同时把 `required` 设为 false。Runtime-owned lifecycle command 使用 `core.hooksPath=/dev/null`。Runtime 不执行 configured hook、fsmonitor、textconv 或 executable filter。
 
 Git observation 失败、超时、截断或解析不完整时，Runtime 不把部分输出当作事实，也不静默改变 Worktree lifecycle state。
 

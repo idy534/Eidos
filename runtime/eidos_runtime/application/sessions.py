@@ -620,6 +620,31 @@ class SessionApplication:
                     )
                     if (
                         lifecycle_operation is not None
+                        and lifecycle_operation.session_id != request.session_id
+                    ):
+                        raise ApplicationError(
+                            "OPERATION_ID_REUSED",
+                            "session delete operation identity changed",
+                        )
+                    if (
+                        lifecycle_operation is not None
+                        and lifecycle_operation.worktree_id is not None
+                    ):
+                        lifecycle_projection = self._repository.read_session_projection(
+                            request.session_id
+                        )
+                        if (
+                            lifecycle_projection is not None
+                            and lifecycle_projection.worktree is not None
+                            and lifecycle_operation.worktree_id
+                            != lifecycle_projection.worktree.worktree_id
+                        ):
+                            raise ApplicationError(
+                                "WORKTREE_RECOVERY_REQUIRED",
+                                "session delete lifecycle Worktree identity changed",
+                            )
+                    if (
+                        lifecycle_operation is not None
                         and lifecycle_operation.state
                         is WorktreeLifecycleState.COMPLETED
                         and request.operation_id is not None

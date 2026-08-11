@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.application.checkpoints import CheckpointApplication
 from eidos_runtime.application.sessions import SessionApplication
 from eidos_runtime.db.schema import SCHEMA_VERSION
@@ -325,6 +326,136 @@ def test_session_delete_restart_recovery_finishes_only_durable_intent(
         assert restarted.connection.execute(
             "SELECT COUNT(*) FROM worktrees WHERE state = 'deleted'"
         ).fetchone()[0] == 1
+    finally:
+        restarted.close()
+
+
+def test_session_delete_rejects_operation_reuse_after_completed_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    store, _manager, application = _application(tmp_path)
+    first = application.create(
+        SessionCreateRequestDto(workspaceRoot=str(repository))
+    ).root
+    second = application.create(
+        SessionCreateRequestDto(workspaceRoot=str(repository))
+    ).root
+    operation_id = str(uuid4())
+    first_request = SessionDeleteRequestDto(
+        sessionId=str(first["id"]),
+        operationId=operation_id,
+    )
+    original_record = application._record_delete_operation
+
+    def crash_before_operation_result(*args: object, **kwargs: object) -> object:
+        raise SystemExit("crash after completed lifecycle")
+
+    monkeypatch.setattr(
+        application,
+        "_record_delete_operation",
+        crash_before_operation_result,
+    )
+    with pytest.raises(SystemExit):
+        application.delete(first_request)
+    monkeypatch.setattr(application, "_record_delete_operation", original_record)
+    store.close()
+
+    restarted = SessionStore(tmp_path / "data")
+    restarted.initialize()
+    restarted_manager = WorktreeManager(
+        restarted.database,
+        managed_root=tmp_path / "managed-worktrees",
+    )
+    restarted_manager.recover()
+    restarted_application = SessionApplication(
+        restarted,
+        scan_text=lambda value: value,
+        worktree_manager=restarted_manager,
+    )
+    try:
+        with pytest.raises(ApplicationError) as error:
+            restarted_application.delete(
+                SessionDeleteRequestDto(
+                    sessionId=str(second["id"]),
+                    operationId=operation_id,
+                )
+            )
+
+        assert error.value.code == "OPERATION_ID_REUSED"
+        assert restarted_application._repository.read_session_projection(
+            str(second["id"])
+        ) is not None
+        second_worktree = restarted_manager.open(
+            str(second["worktree"]["worktreeId"])
+        )
+        assert Path(second_worktree.worktree_root).is_dir()
+    finally:
+        restarted.close()
+
+
+def test_session_delete_rejects_operation_reuse_after_worktree_deleted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    store, _manager, application = _application(tmp_path)
+    first = application.create(
+        SessionCreateRequestDto(workspaceRoot=str(repository))
+    ).root
+    second = application.create(
+        SessionCreateRequestDto(workspaceRoot=str(repository))
+    ).root
+    operation_id = str(uuid4())
+    first_request = SessionDeleteRequestDto(
+        sessionId=str(first["id"]),
+        operationId=operation_id,
+    )
+    original_delete = application._repository.delete_session
+
+    def crash_before_session_delete(*args: object, **kwargs: object) -> object:
+        raise SystemExit("crash after worktree deleted")
+
+    monkeypatch.setattr(
+        application._repository,
+        "delete_session",
+        crash_before_session_delete,
+    )
+    with pytest.raises(SystemExit):
+        application.delete(first_request)
+    monkeypatch.setattr(application._repository, "delete_session", original_delete)
+    store.close()
+
+    restarted = SessionStore(tmp_path / "data")
+    restarted.initialize()
+    restarted_manager = WorktreeManager(
+        restarted.database,
+        managed_root=tmp_path / "managed-worktrees",
+    )
+    restarted_manager.recover()
+    restarted_application = SessionApplication(
+        restarted,
+        scan_text=lambda value: value,
+        worktree_manager=restarted_manager,
+    )
+    try:
+        with pytest.raises(ApplicationError) as error:
+            restarted_application.delete(
+                SessionDeleteRequestDto(
+                    sessionId=str(second["id"]),
+                    operationId=operation_id,
+                )
+            )
+
+        assert error.value.code == "OPERATION_ID_REUSED"
+        assert restarted_application._repository.read_session_projection(
+            str(second["id"])
+        ) is not None
+        second_worktree = restarted_manager.open(
+            str(second["worktree"]["worktreeId"])
+        )
+        assert Path(second_worktree.worktree_root).is_dir()
     finally:
         restarted.close()
 

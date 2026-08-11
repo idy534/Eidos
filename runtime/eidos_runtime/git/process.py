@@ -418,6 +418,8 @@ class GitProcess:
             "-c",
             "core.hooksPath=/dev/null",
             "-c",
+            "core.fsmonitor=false",
+            "-c",
             "credential.helper=",
             "-c",
             "core.askPass=",
@@ -501,9 +503,11 @@ class GitProcess:
             cwd,
             (
                 "config",
-                "--local",
+                "--includes",
+                "--null",
+                "--name-only",
                 "--get-regexp",
-                r"^filter\.[^.]+\.(clean|process)$",
+                r"^filter\..*\.(clean|process)$",
             ),
             output_limit_bytes=self.output_limit_bytes,
             apply_config_hardening=False,
@@ -517,10 +521,18 @@ class GitProcess:
                 returncode=result.returncode,
                 stderr=result.stderr,
             )
+        if result.stdout and not result.stdout.endswith("\x00"):
+            raise GitCommandFailedError(
+                "config-filter-list",
+                returncode=result.returncode,
+                stderr="filter config output is incomplete",
+            )
         names: set[str] = set()
-        for line in result.stdout.splitlines():
-            key, separator, _value = line.partition(" ")
-            if not separator:
+        keys = result.stdout.split("\x00")
+        if keys and keys[-1] == "":
+            keys.pop()
+        for key in keys:
+            if not key:
                 raise GitCommandFailedError(
                     "config-filter-list",
                     returncode=result.returncode,
