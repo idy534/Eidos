@@ -34,7 +34,8 @@ jobs:
       - run: pnpm lint:python
       - run: pnpm deps:python
       - run: pnpm audit:python
-      - run: pnpm test
+      - run: pnpm test:packaging
+      - run: pnpm test:full
       - run: pnpm build
       - run: pnpm test:seatbelt-native
       - run: pnpm test:electron-smoke
@@ -42,5 +43,5 @@ jobs:
       - run: pnpm test:runtime:bundled
       - run: pnpm test:runtime:bundled-seatbelt
       - name: Build and smoke-test the local packaged macOS DMG
-        run: pnpm package:mac
+        run: EIDOS_PACKAGE_SKIP_TESTS=1 pnpm package:mac
       - run: git diff --check
