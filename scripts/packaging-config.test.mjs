@@ -43,7 +43,7 @@ test("packaging commands and pinned electron-builder are declared", async () => 
 });
 
 
-test("layered test commands keep Fast, Integration, Full, and Release separate", async () => {
+test("layered test commands keep Fast, Integration, Full, Scale, and Release separate", async () => {
   const { packageJson } = await readPackagingFiles();
   assert.equal(packageJson.scripts["test"], "pnpm test:full");
   assert.equal(packageJson.scripts["test:affected"], "node scripts/test-affected.mjs");
@@ -51,10 +51,17 @@ test("layered test commands keep Fast, Integration, Full, and Release separate",
     packageJson.scripts["test:runtime:fast"],
     'uv run --locked pytest -m "not integration and not slow and not platform and not large_repository"',
   );
-  assert.equal(packageJson.scripts["test:runtime:full"], "uv run --locked pytest");
+  assert.equal(
+    packageJson.scripts["test:runtime:full"],
+    'uv run --locked pytest -m "not large_repository"',
+  );
+  assert.equal(
+    packageJson.scripts["test:runtime:scale"],
+    'uv run --locked pytest -m "large_repository"',
+  );
   assert.equal(
     packageJson.scripts["test:integration"],
-    'uv run --locked pytest -m "integration or slow or platform or large_repository"',
+    'uv run --locked pytest -m "(integration or slow or platform) and not large_repository"',
   );
   assert.equal(packageJson.scripts["test:release"], "pnpm package:mac:release");
   assert.equal(packageJson.scripts["check:python"], "pnpm check:python:static");
