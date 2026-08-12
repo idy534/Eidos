@@ -84,6 +84,18 @@ class GitBackend(Protocol):
         self, cwd: Path, remote: str, *, cancel: threading.Event
     ) -> GitRemoteObservation: ...
 
+    def merge_upstream_ff_only(self, cwd: Path) -> GitRemoteObservation: ...
+
+    def push(
+        self,
+        cwd: Path,
+        remote: str,
+        *,
+        destination_branch: str,
+        set_upstream: bool,
+        cancel: threading.Event,
+    ) -> GitRemoteObservation: ...
+
     def validate_remote_transport(self, cwd: Path, remote: str) -> None: ...
 
     def worktree_list(self, cwd: Path) -> tuple[GitWorktreeEntry, ...]: ...
@@ -300,6 +312,33 @@ class DulwichGitBackend:
         if remote not in {item.name for item in before.remotes}:
             raise GitCommandFailedError("remote-not-found", returncode=None)
         self._git_cli.fetch(cwd, remote, cancel=cancel)
+        return self.remote_status(cwd)
+
+    def merge_upstream_ff_only(self, cwd: Path) -> GitRemoteObservation:
+        self._open_repository(cwd, "pull-ff-only")
+        self._git_cli.merge_upstream_ff_only(cwd)
+        return self.remote_status(cwd)
+
+    def push(
+        self,
+        cwd: Path,
+        remote: str,
+        *,
+        destination_branch: str,
+        set_upstream: bool,
+        cancel: threading.Event,
+    ) -> GitRemoteObservation:
+        self._open_repository(cwd, "push")
+        before = self.remote_status(cwd)
+        if remote not in {item.name for item in before.remotes}:
+            raise GitCommandFailedError("remote-not-found", returncode=None)
+        self._git_cli.push(
+            cwd,
+            remote,
+            destination_branch=destination_branch,
+            set_upstream=set_upstream,
+            cancel=cancel,
+        )
         return self.remote_status(cwd)
 
     def validate_remote_transport(self, cwd: Path, remote: str) -> None:

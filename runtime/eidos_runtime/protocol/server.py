@@ -36,6 +36,8 @@ from eidos_runtime.application.repository import RepositoryApplicationFactory
 from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
 from eidos_runtime.application.sessions import (
     DeferredGitFetch,
+    DeferredGitPull,
+    DeferredGitPush,
     SessionApplication,
     clean_session_title,
 )
@@ -335,6 +337,94 @@ class _DeferredGitFetchAdapter:
             return
         except Exception:
             logger.exception("Deferred Git Fetch failed")
+            self._server.send(business_error(request_id, "INTERNAL_ERROR"))
+            return
+        self._server.send(response(request_id, result.to_json_value()))
+
+
+class _DeferredGitPullAdapter:
+    def __init__(self, server: "RuntimeServer") -> None:
+        self._server = server
+
+    def __call__(
+        self,
+        request_id: str,
+        request: method_dtos.SessionGitPullRequestDto,
+    ) -> BaseModel | DeferredMethodResult:
+        result = self._server._applications_or_error().sessions.prepare_git_pull(
+            request, request_id=request_id
+        )
+        if isinstance(result, method_dtos.SessionGitPullResponseDto):
+            return result
+        if not isinstance(result, DeferredGitPull):
+            raise ApplicationError("INTERNAL_ERROR")
+        scheduled = self._server.supervisor.start_managed_task(
+            "git-pull",
+            lambda cancel: self._complete(request_id, result, cancel),
+            operation_id=result.async_operation_id,
+        )
+        if not scheduled:
+            result.cancel_before_start()
+            raise ApplicationError("RUNTIME_DRAINING")
+        return DeferredMethodResult()
+
+    def _complete(
+        self,
+        request_id: str,
+        deferred: DeferredGitPull,
+        cancel: threading.Event,
+    ) -> None:
+        try:
+            result = deferred.run(cancel)
+        except ApplicationError as error:
+            self._server.send(business_error(request_id, error.code))
+            return
+        except Exception:
+            logger.exception("Deferred Git Pull failed")
+            self._server.send(business_error(request_id, "INTERNAL_ERROR"))
+            return
+        self._server.send(response(request_id, result.to_json_value()))
+
+
+class _DeferredGitPushAdapter:
+    def __init__(self, server: "RuntimeServer") -> None:
+        self._server = server
+
+    def __call__(
+        self,
+        request_id: str,
+        request: method_dtos.SessionGitPushRequestDto,
+    ) -> BaseModel | DeferredMethodResult:
+        result = self._server._applications_or_error().sessions.prepare_git_push(
+            request, request_id=request_id
+        )
+        if isinstance(result, method_dtos.SessionGitPushResponseDto):
+            return result
+        if not isinstance(result, DeferredGitPush):
+            raise ApplicationError("INTERNAL_ERROR")
+        scheduled = self._server.supervisor.start_managed_task(
+            "git-push",
+            lambda cancel: self._complete(request_id, result, cancel),
+            operation_id=result.async_operation_id,
+        )
+        if not scheduled:
+            result.cancel_before_start()
+            raise ApplicationError("RUNTIME_DRAINING")
+        return DeferredMethodResult()
+
+    def _complete(
+        self,
+        request_id: str,
+        deferred: DeferredGitPush,
+        cancel: threading.Event,
+    ) -> None:
+        try:
+            result = deferred.run(cancel)
+        except ApplicationError as error:
+            self._server.send(business_error(request_id, error.code))
+            return
+        except Exception:
+            logger.exception("Deferred Git Push failed")
             self._server.send(business_error(request_id, "INTERNAL_ERROR"))
             return
         self._server.send(response(request_id, result.to_json_value()))
@@ -937,6 +1027,28 @@ class RuntimeServer:
                 request_type=method_dtos.SessionGitFetchRequestDto,
                 response_type=method_dtos.SessionGitFetchResponseDto,
                 handler=_DeferredGitFetchAdapter(self),
+                allowed_when_draining=False,
+                allowed_during_reconfiguration=False,
+                error_mapper=_application_error_mapping,
+            )
+        )
+        registry.register(
+            MethodRegistration(
+                name="session/gitPull",
+                request_type=method_dtos.SessionGitPullRequestDto,
+                response_type=method_dtos.SessionGitPullResponseDto,
+                handler=_DeferredGitPullAdapter(self),
+                allowed_when_draining=False,
+                allowed_during_reconfiguration=False,
+                error_mapper=_application_error_mapping,
+            )
+        )
+        registry.register(
+            MethodRegistration(
+                name="session/gitPush",
+                request_type=method_dtos.SessionGitPushRequestDto,
+                response_type=method_dtos.SessionGitPushResponseDto,
+                handler=_DeferredGitPushAdapter(self),
                 allowed_when_draining=False,
                 allowed_during_reconfiguration=False,
                 error_mapper=_application_error_mapping,

@@ -192,6 +192,25 @@ class SessionGitFetchRequestDto(_OperationRequest):
     )
 
 
+class SessionGitPullRequestDto(_OperationRequest):
+    operation_id: StrictStr = Field(alias="operationId")
+    session_id: StrictStr = Field(alias="sessionId")
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+
+class SessionGitPushRequestDto(_OperationRequest):
+    operation_id: StrictStr = Field(alias="operationId")
+    session_id: StrictStr = Field(alias="sessionId")
+    remote: StrictStr | None = Field(default=None, min_length=1, max_length=255)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+
 def _git_relative_path(value: str) -> str:
     path = Path(value)
     if (
@@ -561,6 +580,19 @@ class SessionGitRemoteStatusResponseDto(MethodResultDto):
 class SessionGitFetchResponseDto(SessionGitRemoteStatusResponseDto):
     remote: StrictStr
     head: StrictStr
+
+
+class SessionGitPullResponseDto(SessionGitFetchResponseDto):
+    status: SessionGitStatusResponseDto
+
+    def to_json_value(self) -> dict[str, JsonValue]:
+        value = super().to_json_value()
+        value["status"] = self.status.to_json_value()
+        return value
+
+
+class SessionGitPushResponseDto(SessionGitPullResponseDto):
+    pass
 
 
 class SessionRenameResponseDto(_SessionResponseDto):

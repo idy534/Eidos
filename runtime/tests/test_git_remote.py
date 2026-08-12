@@ -21,8 +21,11 @@ from eidos_runtime.git.errors import (
 )
 from eidos_runtime.git.native import GitCli, HardenedGitRunner
 from eidos_runtime.protocol.methods import (
+    SessionCreateBranchRequestDto,
     SessionCreateRequestDto,
     SessionGitFetchRequestDto,
+    SessionGitPullRequestDto,
+    SessionGitPushRequestDto,
     SessionGitRemoteStatusRequestDto,
 )
 
@@ -444,5 +447,332 @@ def test_fetch_maps_remote_failures_without_exposing_stderr(
             prepared.run(threading.Event())
         assert mapped.value.code == code
         assert "secret URL" not in str(mapped.value)
+    finally:
+        store.close()
+
+
+def test_pull_fast_forwards_clean_branch_and_replays_result(tmp_path: Path) -> None:
+    _remote, repo_a, repo_b = _remote_fixture(tmp_path)
+    remote_head = _commit(repo_b, "remote.txt", "remote\n", "remote commit")
+    _git(repo_b, "push", "-q", "origin", "main")
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repo_a), executionMode="local"
+            )
+        ).root
+        request = SessionGitPullRequestDto(
+            operationId=str(uuid.uuid4()), sessionId=session["id"]
+        )
+
+        pulled = application.prepare_git_pull(
+            request, request_id="client-pull"
+        ).run(threading.Event()).root
+
+        assert pulled["head"] == remote_head
+        assert _git(repo_a, "rev-parse", "HEAD") == remote_head
+        assert pulled["status"]["dirty"] is False
+        assert (pulled["ahead"], pulled["behind"]) == (0, 0)
+        replay = application.prepare_git_pull(
+            request, request_id="client-pull-replay"
+        )
+        assert replay.root == pulled
+    finally:
+        store.close()
+
+
+def test_pull_rejects_dirty_and_diverged_branches(tmp_path: Path) -> None:
+    _remote, repo_a, repo_b = _remote_fixture(tmp_path)
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repo_a), executionMode="local"
+            )
+        ).root
+        (repo_a / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+        dirty_operation = str(uuid.uuid4())
+        with pytest.raises(ApplicationError) as dirty:
+            application.prepare_git_pull(
+                SessionGitPullRequestDto(
+                    operationId=dirty_operation, sessionId=session["id"]
+                ),
+                request_id="client-pull-dirty",
+            )
+        assert dirty.value.code == "GIT_WORKTREE_DIRTY"
+        connection = store.connection
+        assert connection is not None
+        assert connection.execute(
+            "SELECT COUNT(*) FROM operations WHERE id = ?", (dirty_operation,)
+        ).fetchone()[0] == 0
+
+        _git(repo_a, "restore", "--", "tracked.txt")
+        local_head = _commit(repo_a, "local.txt", "local\n", "local commit")
+        _commit(repo_b, "remote.txt", "remote\n", "remote commit")
+        _git(repo_b, "push", "-q", "origin", "main")
+        with pytest.raises(ApplicationError) as diverged:
+            application.prepare_git_pull(
+                SessionGitPullRequestDto(
+                    operationId=str(uuid.uuid4()), sessionId=session["id"]
+                ),
+                request_id="client-pull-diverged",
+            ).run(threading.Event())
+        assert diverged.value.code == "GIT_REMOTE_DIVERGED"
+        assert _git(repo_a, "rev-parse", "HEAD") == local_head
+    finally:
+        store.close()
+
+
+def test_pull_noops_when_local_is_ahead_and_preserves_managed_baseline(
+    tmp_path: Path,
+) -> None:
+    _remote, repo_a, repo_b = _remote_fixture(tmp_path)
+    store, _manager, application = _application(tmp_path)
+    try:
+        local_session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repo_a), executionMode="local"
+            )
+        ).root
+        local_head = _commit(repo_a, "ahead.txt", "ahead\n", "local ahead")
+        no_op = application.prepare_git_pull(
+            SessionGitPullRequestDto(
+                operationId=str(uuid.uuid4()), sessionId=local_session["id"]
+            ),
+            request_id="client-pull-ahead",
+        ).run(threading.Event()).root
+        assert no_op["head"] == local_head
+        assert (no_op["ahead"], no_op["behind"]) == (1, 0)
+
+        _git(repo_a, "reset", "--hard", "origin/main")
+        managed = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repo_a), executionMode="worktree"
+            )
+        ).root
+        root = Path(managed["worktree"]["worktreeRoot"])
+        baseline = managed["worktree"]["baseCommit"]
+        application.create_branch(
+            SessionCreateBranchRequestDto(
+                sessionId=managed["id"], branch="feature/pull-baseline"
+            )
+        )
+        _git(root, "branch", "--set-upstream-to=origin/main")
+        _commit(repo_b, "new.txt", "new\n", "remote ahead")
+        _git(repo_b, "push", "-q", "origin", "main")
+
+        pulled = application.prepare_git_pull(
+            SessionGitPullRequestDto(
+                operationId=str(uuid.uuid4()), sessionId=managed["id"]
+            ),
+            request_id="client-pull-managed",
+        ).run(threading.Event()).root
+        assert pulled["status"]["baseCommit"] == baseline
+        assert pulled["head"] != baseline
+    finally:
+        store.close()
+
+
+def test_pull_and_push_preflight_require_branch_upstream_and_remote(
+    tmp_path: Path,
+) -> None:
+    _remote, repo_a, _repo_b = _remote_fixture(tmp_path)
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repo_a), executionMode="local"
+            )
+        ).root
+        _git(repo_a, "branch", "--unset-upstream")
+        with pytest.raises(ApplicationError) as upstream:
+            application.prepare_git_pull(
+                SessionGitPullRequestDto(
+                    operationId=str(uuid.uuid4()), sessionId=session["id"]
+                ),
+                request_id="client-pull-no-upstream",
+            )
+        assert upstream.value.code == "GIT_UPSTREAM_NOT_FOUND"
+
+        backup = tmp_path / "backup.git"
+        backup.mkdir()
+        _git(backup, "init", "--bare", "-q")
+        _git(repo_a, "remote", "add", "backup", str(backup))
+        with pytest.raises(ApplicationError) as required:
+            application.prepare_git_push(
+                SessionGitPushRequestDto(
+                    operationId=str(uuid.uuid4()), sessionId=session["id"]
+                ),
+                request_id="client-push-ambiguous",
+            )
+        assert required.value.code == "GIT_REMOTE_REQUIRED"
+
+        _git(repo_a, "checkout", "--detach", "-q")
+        for prepare, request in (
+            (
+                application.prepare_git_pull,
+                SessionGitPullRequestDto(
+                    operationId=str(uuid.uuid4()), sessionId=session["id"]
+                ),
+            ),
+            (
+                application.prepare_git_push,
+                SessionGitPushRequestDto(
+                    operationId=str(uuid.uuid4()), sessionId=session["id"]
+                ),
+            ),
+        ):
+            with pytest.raises(ApplicationError) as detached:
+                prepare(request, request_id="client-detached")
+            assert detached.value.code == "GIT_BRANCH_REQUIRED"
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(("method", "request_type"), [
+    ("prepare_git_pull", SessionGitPullRequestDto),
+    ("prepare_git_push", SessionGitPushRequestDto),
+])
+def test_pull_and_push_reject_active_run_before_operation_reservation(
+    tmp_path: Path, method: str, request_type
+) -> None:
+    _remote, repo_a, _repo_b = _remote_fixture(tmp_path)
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repo_a), executionMode="local"
+            )
+        ).root
+        store.create_run(session["id"], "active")
+        operation_id = str(uuid.uuid4())
+        with pytest.raises(ApplicationError) as busy:
+            getattr(application, method)(
+                request_type(
+                    operationId=operation_id, sessionId=session["id"]
+                ),
+                request_id="client-busy",
+            )
+        assert busy.value.code == "GIT_WORKFLOW_BUSY"
+        connection = store.connection
+        assert connection is not None
+        assert connection.execute(
+            "SELECT COUNT(*) FROM operations WHERE id = ?", (operation_id,)
+        ).fetchone()[0] == 0
+    finally:
+        store.close()
+
+
+def test_push_updates_upstream_and_creates_missing_upstream(tmp_path: Path) -> None:
+    _remote, repo_a, _repo_b = _remote_fixture(tmp_path)
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repo_a), executionMode="local"
+            )
+        ).root
+        first_head = _commit(repo_a, "first.txt", "first\n", "first push")
+        first_request = SessionGitPushRequestDto(
+            operationId=str(uuid.uuid4()), sessionId=session["id"]
+        )
+        first = application.prepare_git_push(
+            first_request, request_id="client-push"
+        ).run(threading.Event()).root
+        assert _git(repo_a, "ls-remote", "origin", "refs/heads/main").split()[0] == first_head
+        assert (first["ahead"], first["behind"]) == (0, 0)
+        replay = application.prepare_git_push(
+            first_request, request_id="client-push-replay"
+        )
+        assert replay.root == first
+
+        _git(repo_a, "branch", "--unset-upstream")
+        second_head = _commit(repo_a, "second.txt", "second\n", "second push")
+        second = application.prepare_git_push(
+            SessionGitPushRequestDto(
+                operationId=str(uuid.uuid4()),
+                sessionId=session["id"],
+                remote="origin",
+            ),
+            request_id="client-push-set-upstream",
+        ).run(threading.Event()).root
+        assert second["head"] == second_head
+        assert second["upstream"] == {"remote": "origin", "branch": "main"}
+        assert _git(repo_a, "rev-parse", "--abbrev-ref", "@{upstream}") == "origin/main"
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ("local_ahead", "expected_code"),
+    [(False, "GIT_REMOTE_BEHIND"), (True, "GIT_REMOTE_DIVERGED")],
+)
+def test_push_rejects_remote_behind_or_diverged(
+    tmp_path: Path, local_ahead: bool, expected_code: str
+) -> None:
+    _remote, repo_a, repo_b = _remote_fixture(tmp_path)
+    if local_ahead:
+        _commit(repo_a, "local.txt", "local\n", "local commit")
+    remote_head = _commit(repo_b, "remote.txt", "remote\n", "remote commit")
+    _git(repo_b, "push", "-q", "origin", "main")
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repo_a), executionMode="local"
+            )
+        ).root
+        with pytest.raises(ApplicationError) as rejected:
+            application.prepare_git_push(
+                SessionGitPushRequestDto(
+                    operationId=str(uuid.uuid4()), sessionId=session["id"]
+                ),
+                request_id="client-push-rejected",
+            ).run(threading.Event())
+        assert rejected.value.code == expected_code
+        assert _git(repo_a, "ls-remote", "origin", "refs/heads/main").split()[0] == remote_head
+    finally:
+        store.close()
+
+
+def test_pull_and_push_keep_repository_hooks_disabled(tmp_path: Path) -> None:
+    _remote, repo_a, repo_b = _remote_fixture(tmp_path)
+    hooks = repo_a / ".git" / "eidos-test-hooks"
+    hooks.mkdir()
+    post_merge_marker = tmp_path / "post-merge-ran"
+    post_merge = hooks / "post-merge"
+    post_merge.write_text(
+        f"#!/bin/sh\ntouch '{post_merge_marker}'\n", encoding="utf-8"
+    )
+    post_merge.chmod(0o755)
+    pre_push = hooks / "pre-push"
+    pre_push.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    pre_push.chmod(0o755)
+    _git(repo_a, "config", "core.hooksPath", str(hooks))
+    _commit(repo_b, "remote.txt", "remote\n", "remote commit")
+    _git(repo_b, "push", "-q", "origin", "main")
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repo_a), executionMode="local"
+            )
+        ).root
+        application.prepare_git_pull(
+            SessionGitPullRequestDto(
+                operationId=str(uuid.uuid4()), sessionId=session["id"]
+            ),
+            request_id="client-hook-pull",
+        ).run(threading.Event())
+        assert not post_merge_marker.exists()
+
+        _commit(repo_a, "local.txt", "local\n", "local commit")
+        application.prepare_git_push(
+            SessionGitPushRequestDto(
+                operationId=str(uuid.uuid4()), sessionId=session["id"]
+            ),
+            request_id="client-hook-push",
+        ).run(threading.Event())
     finally:
         store.close()

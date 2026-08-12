@@ -127,6 +127,12 @@ export interface GitFetchResult extends GitRemoteStatus {
   head: string;
 }
 
+export interface GitPullResult extends GitFetchResult {
+  status: SessionGitStatus;
+}
+
+export type GitPushResult = GitPullResult;
+
 export interface ProjectGitContext {
   gitAvailable: boolean;
   currentBranch: string | null;

@@ -21,6 +21,8 @@ import type {
   SessionGitCommitResult,
   GitRemoteStatus,
   GitFetchResult,
+  GitPullResult,
+  GitPushResult,
   Run,
   ContextUsage,
   ModelId,
@@ -126,6 +128,17 @@ const api: EidosRuntimeAPI = {
     remote?: string,
   ): Promise<GitFetchResult> =>
     ipcRenderer.invoke(IPC.SESSION_GIT_FETCH, sessionId, operationId, remote),
+  pullSessionGit: (
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitPullResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_PULL, sessionId, operationId),
+  pushSessionGit: (
+    sessionId: string,
+    operationId: string,
+    remote?: string,
+  ): Promise<GitPushResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_PUSH, sessionId, operationId, remote),
 
   // Runs
   startRun: (sessionId: string, userInput: string, modelId: ModelId): Promise<Run> =>

@@ -181,7 +181,7 @@ class HardenedGitRunner:
         except _GitProcessCanceled:
             _terminate_process_group(process)
             _close_process_pipes(process)
-            raise GitRemoteCanceledError() from None
+            raise GitRemoteCanceledError(operation) from None
         except subprocess.TimeoutExpired:
             _terminate_process_group(process)
             _close_process_pipes(process)
@@ -377,6 +377,37 @@ class GitCli:
             ("fetch", "--", remote),
             cwd=cwd,
             operation="fetch",
+            profile=GitExecutionProfile.REMOTE,
+            cancel=cancel,
+        )
+
+    def merge_upstream_ff_only(self, cwd: Path) -> None:
+        self._runner.run(
+            ("merge", "--ff-only", "--no-edit", "@{upstream}"),
+            cwd=cwd,
+            operation="pull-ff-only",
+            profile=GitExecutionProfile.LOCAL_MUTATION,
+        )
+
+    def push(
+        self,
+        cwd: Path,
+        remote: str,
+        *,
+        destination_branch: str,
+        set_upstream: bool,
+        cancel: threading.Event,
+    ) -> None:
+        self.validate_remote_transport(cwd, remote)
+        args = (
+            ("push", "--set-upstream", remote, "HEAD")
+            if set_upstream
+            else ("push", remote, f"HEAD:{destination_branch}")
+        )
+        self._runner.run(
+            args,
+            cwd=cwd,
+            operation="push",
             profile=GitExecutionProfile.REMOTE,
             cancel=cancel,
         )

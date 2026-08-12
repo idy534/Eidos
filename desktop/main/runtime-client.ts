@@ -84,6 +84,9 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "GIT_REMOTE_TIMEOUT",
   "GIT_REMOTE_CANCELED",
   "GIT_REMOTE_FAILED",
+  "GIT_WORKTREE_DIRTY",
+  "GIT_REMOTE_BEHIND",
+  "GIT_REMOTE_DIVERGED",
   "WORKSPACE_IDENTITY_CHANGED",
   "WORKTREE_DIRTY",
   "WORKTREE_DELETE_FAILED",
@@ -138,6 +141,8 @@ import type {
   SessionGitCommitResult,
   GitRemoteStatus,
   GitFetchResult,
+  GitPullResult,
+  GitPushResult,
   SessionListResult,
   SessionSnapshot,
   SkillListResult,
@@ -480,6 +485,27 @@ export class RuntimeClient {
       "session/gitFetch",
       { operationId, sessionId, ...(remote === undefined ? {} : { remote }) },
       isGitFetchResult,
+    );
+  }
+
+  pullSessionGit(
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitPullResult> {
+    return this.validatedRequest(
+      "session/gitPull", { operationId, sessionId }, isGitPullResult,
+    );
+  }
+
+  pushSessionGit(
+    sessionId: string,
+    operationId: string,
+    remote?: string,
+  ): Promise<GitPushResult> {
+    return this.validatedRequest(
+      "session/gitPush",
+      { operationId, sessionId, ...(remote === undefined ? {} : { remote }) },
+      isGitPullResult,
     );
   }
 
@@ -1230,6 +1256,14 @@ function isGitFetchResult(value: unknown): value is GitFetchResult {
   ])) return false;
   const { remote, head, ...status } = value;
   return typeof remote === "string" && typeof head === "string" && isGitRemoteStatus(status);
+}
+
+function isGitPullResult(value: unknown): value is GitPullResult {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    "branch", "remotes", "upstream", "ahead", "behind", "remote", "head", "status",
+  ])) return false;
+  const { status, ...fetch } = value;
+  return isGitFetchResult(fetch) && isSessionGitStatus(status) && status.head === value.head;
 }
 
 function isSessionListResult(value: unknown): value is SessionListResult {

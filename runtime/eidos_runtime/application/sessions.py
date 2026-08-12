@@ -22,6 +22,8 @@ from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordina
 from eidos_runtime.application.git_workflow import (
     GitFetchPlan,
     GitMutationPlan,
+    GitPullPlan,
+    GitPushPlan,
     GitWorkflowApplication,
 )
 from eidos_runtime.db.database import CommittedMutation
@@ -73,6 +75,10 @@ from eidos_runtime.protocol.methods import (
     SessionGitCommitResponseDto,
     SessionGitFetchRequestDto,
     SessionGitFetchResponseDto,
+    SessionGitPullRequestDto,
+    SessionGitPullResponseDto,
+    SessionGitPushRequestDto,
+    SessionGitPushResponseDto,
     SessionGitRemoteStatusRequestDto,
     SessionGitRemoteStatusResponseDto,
     SessionGitStageRequestDto,
@@ -411,6 +417,36 @@ class DeferredGitFetch:
 
     def run(self, cancel: threading.Event) -> SessionGitFetchResponseDto:
         return self._application._run_git_fetch(self, cancel)
+
+    def cancel_before_start(self) -> None:
+        self._application._store.cancel_async_operation(self.async_operation_id)
+
+
+@dataclass(frozen=True)
+class DeferredGitPull:
+    async_operation_id: str
+    operation_id: str
+    request: dict[str, object]
+    plan: GitPullPlan
+    _application: "SessionApplication" = field(repr=False, compare=False)
+
+    def run(self, cancel: threading.Event) -> SessionGitPullResponseDto:
+        return self._application._run_git_pull(self, cancel)
+
+    def cancel_before_start(self) -> None:
+        self._application._store.cancel_async_operation(self.async_operation_id)
+
+
+@dataclass(frozen=True)
+class DeferredGitPush:
+    async_operation_id: str
+    operation_id: str
+    request: dict[str, object]
+    plan: GitPushPlan
+    _application: "SessionApplication" = field(repr=False, compare=False)
+
+    def run(self, cancel: threading.Event) -> SessionGitPushResponseDto:
+        return self._application._run_git_push(self, cancel)
 
     def cancel_before_start(self) -> None:
         self._application._store.cancel_async_operation(self.async_operation_id)
@@ -1251,6 +1287,164 @@ class SessionApplication:
                 deferred.async_operation_id, completed
             )
             return _result(SessionGitFetchResponseDto, completed)
+        except ApplicationError as error:
+            if error.code == "GIT_REMOTE_CANCELED":
+                self._store.cancel_async_operation(deferred.async_operation_id)
+            else:
+                self._store.fail_async_operation(
+                    deferred.async_operation_id, error.code
+                )
+            raise
+        except SessionActiveError as error:
+            self._store.fail_async_operation(
+                deferred.async_operation_id, "GIT_WORKFLOW_BUSY"
+            )
+            raise ApplicationError("GIT_WORKFLOW_BUSY") from error
+
+    def prepare_git_pull(
+        self, request: SessionGitPullRequestDto, *, request_id: str
+    ) -> SessionGitPullResponseDto | DeferredGitPull:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        scope = "session/gitPull"
+        operation_request = request.to_json_value()
+        operation_request.pop("operationId", None)
+        with self._lifecycle.hold_operation(scope, request.operation_id):
+            replay = self._git_operation_replay(
+                request.operation_id,
+                scope,
+                operation_request,
+                SessionGitPullResponseDto,
+            )
+            if replay is not None:
+                return replay
+            with self._lifecycle.hold(request.session_id):
+                plan = self._git_workflow.preflight_pull(request)
+                try:
+                    reservation = self._store.prepare_deferred_external_operation(
+                        request_id=request_id,
+                        operation_id=request.operation_id,
+                        scope=scope,
+                        request=operation_request,
+                    )
+                except OperationConflictError as error:
+                    raise ApplicationError("OPERATION_ID_REUSED") from error
+                except OperationInProgressError as error:
+                    raise ApplicationError("OPERATION_IN_PROGRESS") from error
+            if reservation.replay_result is not None:
+                return _result(
+                    SessionGitPullResponseDto, reservation.replay_result
+                )
+            if not reservation.created or reservation.operation is None:
+                raise ApplicationError("OPERATION_IN_PROGRESS")
+            return DeferredGitPull(
+                async_operation_id=reservation.operation.id,
+                operation_id=request.operation_id,
+                request=operation_request,
+                plan=plan,
+                _application=self,
+            )
+
+    def _run_git_pull(
+        self, deferred: DeferredGitPull, cancel: threading.Event
+    ) -> SessionGitPullResponseDto:
+        if cancel.is_set():
+            self._store.cancel_async_operation(deferred.async_operation_id)
+            raise ApplicationError("GIT_REMOTE_CANCELED")
+        self._store.start_async_operation(deferred.async_operation_id)
+        try:
+            with self._lifecycle.hold(deferred.plan.session.id):
+                self._repository.assert_session_deletable(deferred.plan.session.id)
+                result = self._git_workflow.pull(deferred.plan, cancel)  # type: ignore[union-attr]
+            completed = self._store.complete_operation(
+                deferred.operation_id,
+                "session/gitPull",
+                deferred.request,
+                result.to_json_value(),
+            )
+            self._store.complete_async_operation(
+                deferred.async_operation_id, completed
+            )
+            return _result(SessionGitPullResponseDto, completed)
+        except ApplicationError as error:
+            if error.code == "GIT_REMOTE_CANCELED":
+                self._store.cancel_async_operation(deferred.async_operation_id)
+            else:
+                self._store.fail_async_operation(
+                    deferred.async_operation_id, error.code
+                )
+            raise
+        except SessionActiveError as error:
+            self._store.fail_async_operation(
+                deferred.async_operation_id, "GIT_WORKFLOW_BUSY"
+            )
+            raise ApplicationError("GIT_WORKFLOW_BUSY") from error
+
+    def prepare_git_push(
+        self, request: SessionGitPushRequestDto, *, request_id: str
+    ) -> SessionGitPushResponseDto | DeferredGitPush:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        scope = "session/gitPush"
+        operation_request = request.to_json_value()
+        operation_request.pop("operationId", None)
+        with self._lifecycle.hold_operation(scope, request.operation_id):
+            replay = self._git_operation_replay(
+                request.operation_id,
+                scope,
+                operation_request,
+                SessionGitPushResponseDto,
+            )
+            if replay is not None:
+                return replay
+            with self._lifecycle.hold(request.session_id):
+                plan = self._git_workflow.preflight_push(request)
+                try:
+                    reservation = self._store.prepare_deferred_external_operation(
+                        request_id=request_id,
+                        operation_id=request.operation_id,
+                        scope=scope,
+                        request=operation_request,
+                    )
+                except OperationConflictError as error:
+                    raise ApplicationError("OPERATION_ID_REUSED") from error
+                except OperationInProgressError as error:
+                    raise ApplicationError("OPERATION_IN_PROGRESS") from error
+            if reservation.replay_result is not None:
+                return _result(
+                    SessionGitPushResponseDto, reservation.replay_result
+                )
+            if not reservation.created or reservation.operation is None:
+                raise ApplicationError("OPERATION_IN_PROGRESS")
+            return DeferredGitPush(
+                async_operation_id=reservation.operation.id,
+                operation_id=request.operation_id,
+                request=operation_request,
+                plan=plan,
+                _application=self,
+            )
+
+    def _run_git_push(
+        self, deferred: DeferredGitPush, cancel: threading.Event
+    ) -> SessionGitPushResponseDto:
+        if cancel.is_set():
+            self._store.cancel_async_operation(deferred.async_operation_id)
+            raise ApplicationError("GIT_REMOTE_CANCELED")
+        self._store.start_async_operation(deferred.async_operation_id)
+        try:
+            with self._lifecycle.hold(deferred.plan.session.id):
+                self._repository.assert_session_deletable(deferred.plan.session.id)
+                result = self._git_workflow.push(deferred.plan, cancel)  # type: ignore[union-attr]
+            completed = self._store.complete_operation(
+                deferred.operation_id,
+                "session/gitPush",
+                deferred.request,
+                result.to_json_value(),
+            )
+            self._store.complete_async_operation(
+                deferred.async_operation_id, completed
+            )
+            return _result(SessionGitPushResponseDto, completed)
         except ApplicationError as error:
             if error.code == "GIT_REMOTE_CANCELED":
                 self._store.cancel_async_operation(deferred.async_operation_id)
@@ -2459,6 +2653,8 @@ def _result(result_type: type[ResultT], value: object) -> ResultT:
 
 __all__ = [
     "DeferredGitFetch",
+    "DeferredGitPull",
+    "DeferredGitPush",
     "MAX_SESSION_TITLE_BYTES",
     "SessionApplication",
     "ManagedWorktreePort",

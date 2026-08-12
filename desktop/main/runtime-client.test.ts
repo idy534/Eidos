@@ -410,7 +410,7 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
   }
 });
 
-test("observes remotes and completes deferred Git fetch without changing HEAD", async () => {
+test("completes deferred Git fetch, pull, and push through typed contracts", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-fetch-data-"));
   const repositoryRoot = await createGitRepository("eidos-fetch-repo-");
   const remoteRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-fetch-remote-"));
@@ -456,6 +456,24 @@ test("observes remotes and completes deferred Git fetch without changing HEAD", 
     assert.equal((await execFileAsync("git", ["rev-parse", "HEAD"], {
       cwd: repositoryRoot,
     })).stdout.trim(), headBefore);
+
+    const pulled = await client.pullSessionGit(session.id, randomUUID());
+    assert.equal(pulled.behind, 0);
+    assert.equal(pulled.status.dirty, false);
+    assert.notEqual(pulled.head, headBefore);
+
+    await writeFile(path.join(repositoryRoot, "LOCAL.txt"), "local\n", "utf8");
+    await execFileAsync("git", ["add", "LOCAL.txt"], { cwd: repositoryRoot });
+    await execFileAsync("git", ["commit", "-qm", "local commit"], {
+      cwd: repositoryRoot,
+    });
+    const pushed = await client.pushSessionGit(session.id, randomUUID());
+    assert.equal(pushed.ahead, 0);
+    assert.equal(pushed.behind, 0);
+    const remoteHead = (await execFileAsync(
+      "git", ["ls-remote", "origin", "refs/heads/main"], { cwd: repositoryRoot },
+    )).stdout.trim().split(/\s+/)[0];
+    assert.equal(remoteHead, pushed.head);
   } finally {
     await client.shutdown();
     await client.waitForExit();

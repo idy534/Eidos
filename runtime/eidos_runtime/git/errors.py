@@ -66,8 +66,8 @@ class GitRemoteUnsupportedError(GitError):
 
 
 class GitRemoteCanceledError(GitError):
-    def __init__(self) -> None:
-        super().__init__("git_remote_canceled", "fetch")
+    def __init__(self, operation: str = "fetch") -> None:
+        super().__init__("git_remote_canceled", operation)
 
 
 class GitUpstreamNotFoundError(GitError):

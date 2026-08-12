@@ -32,6 +32,8 @@ export const IPC = {
   SESSION_GIT_COMMIT: "session:git-commit",
   SESSION_GIT_REMOTE_STATUS: "session:git-remote-status",
   SESSION_GIT_FETCH: "session:git-fetch",
+  SESSION_GIT_PULL: "session:git-pull",
+  SESSION_GIT_PUSH: "session:git-push",
 
   // Worktree settings
   WORKTREE_SETTINGS_READ: "worktree-settings:read",

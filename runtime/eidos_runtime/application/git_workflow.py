@@ -28,6 +28,10 @@ from eidos_runtime.protocol.methods import (
     SessionGitCommitRequestDto,
     SessionGitCommitResponseDto,
     SessionGitFetchResponseDto,
+    SessionGitPullRequestDto,
+    SessionGitPullResponseDto,
+    SessionGitPushRequestDto,
+    SessionGitPushResponseDto,
     SessionGitRemoteStatusResponseDto,
     SessionGitStageRequestDto,
     SessionGitStageResponseDto,
@@ -53,6 +57,23 @@ class GitFetchPlan:
     session: Session
     root: Path
     remote: str
+
+
+@dataclass(frozen=True)
+class GitPullPlan:
+    session: Session
+    root: Path
+    remote: str
+
+
+@dataclass(frozen=True)
+class GitPushPlan:
+    session: Session
+    root: Path
+    remote: str
+    destination_branch: str
+    set_upstream: bool
+    check_upstream: bool
 
 
 class GitWorkflowSessionRepository(Protocol):
@@ -196,6 +217,145 @@ class GitWorkflowApplication:
             }
         )
 
+    def preflight_pull(self, request: SessionGitPullRequestDto) -> GitPullPlan:
+        session, status = self._prepare_mutation(request.session_id)
+        if status.branch is None:
+            raise ApplicationError("GIT_BRANCH_REQUIRED")
+        if status.dirty:
+            raise ApplicationError("GIT_WORKTREE_DIRTY")
+        try:
+            observation = self._worktrees.git.remote_status(
+                Path(status.worktree_root)
+            )
+        except GitError as error:
+            raise _workflow_error(error) from error
+        if observation.upstream is None:
+            raise ApplicationError("GIT_UPSTREAM_NOT_FOUND")
+        remote = observation.upstream.remote
+        try:
+            self._worktrees.git.validate_remote_transport(
+                Path(status.worktree_root), remote
+            )
+        except GitError as error:
+            raise _workflow_error(error) from error
+        return GitPullPlan(
+            session=session, root=Path(status.worktree_root), remote=remote
+        )
+
+    def pull(
+        self, plan: GitPullPlan, cancel: threading.Event
+    ) -> SessionGitPullResponseDto:
+        try:
+            observation = self._worktrees.git.fetch(
+                plan.root, plan.remote, cancel=cancel
+            )
+        except GitError as error:
+            raise _workflow_error(error) from error
+        if observation.ahead is None or observation.behind is None:
+            raise ApplicationError("GIT_UPSTREAM_NOT_FOUND")
+        if observation.ahead > 0 and observation.behind > 0:
+            raise ApplicationError("GIT_REMOTE_DIVERGED")
+        if cancel.is_set():
+            raise ApplicationError("GIT_REMOTE_CANCELED")
+        current = self._status(plan.session)
+        if current.dirty:
+            raise ApplicationError("GIT_WORKTREE_DIRTY")
+        if observation.ahead == 0 and observation.behind > 0:
+            try:
+                observation = self._worktrees.git.merge_upstream_ff_only(
+                    plan.root
+                )
+            except GitError as error:
+                raise _workflow_error(error) from error
+            current = self._status(plan.session)
+        return _remote_mutation_result(
+            SessionGitPullResponseDto,
+            observation,
+            remote=plan.remote,
+            status=current,
+        )
+
+    def preflight_push(self, request: SessionGitPushRequestDto) -> GitPushPlan:
+        session, status = self._prepare_mutation(request.session_id)
+        if status.branch is None:
+            raise ApplicationError("GIT_BRANCH_REQUIRED")
+        try:
+            observation = self._worktrees.git.remote_status(
+                Path(status.worktree_root)
+            )
+        except GitError as error:
+            raise _workflow_error(error) from error
+        names = {remote.name for remote in observation.remotes}
+        if request.remote is not None:
+            if request.remote not in names:
+                raise ApplicationError("GIT_REMOTE_NOT_FOUND")
+            remote = request.remote
+        elif observation.upstream is not None:
+            remote = observation.upstream.remote
+        elif len(names) == 1:
+            remote = next(iter(names))
+        else:
+            raise ApplicationError("GIT_REMOTE_REQUIRED")
+        upstream_matches = (
+            observation.upstream is not None
+            and observation.upstream.remote == remote
+        )
+        destination = (
+            observation.upstream.branch
+            if upstream_matches and observation.upstream is not None
+            else status.branch
+        )
+        try:
+            self._worktrees.git.validate_remote_transport(
+                Path(status.worktree_root), remote
+            )
+        except GitError as error:
+            raise _workflow_error(error) from error
+        return GitPushPlan(
+            session=session,
+            root=Path(status.worktree_root),
+            remote=remote,
+            destination_branch=destination,
+            set_upstream=observation.upstream is None,
+            check_upstream=upstream_matches,
+        )
+
+    def push(
+        self, plan: GitPushPlan, cancel: threading.Event
+    ) -> SessionGitPushResponseDto:
+        try:
+            observation = self._worktrees.git.fetch(
+                plan.root, plan.remote, cancel=cancel
+            )
+        except GitError as error:
+            raise _workflow_error(error) from error
+        if plan.check_upstream:
+            if observation.ahead is None or observation.behind is None:
+                raise ApplicationError("GIT_UPSTREAM_NOT_FOUND")
+            if observation.ahead > 0 and observation.behind > 0:
+                raise ApplicationError("GIT_REMOTE_DIVERGED")
+            if observation.behind > 0:
+                raise ApplicationError("GIT_REMOTE_BEHIND")
+        if cancel.is_set():
+            raise ApplicationError("GIT_REMOTE_CANCELED")
+        try:
+            observation = self._worktrees.git.push(
+                plan.root,
+                plan.remote,
+                destination_branch=plan.destination_branch,
+                set_upstream=plan.set_upstream,
+                cancel=cancel,
+            )
+        except GitError as error:
+            raise _workflow_error(error) from error
+        current = self._status(plan.session)
+        return _remote_mutation_result(
+            SessionGitPushResponseDto,
+            observation,
+            remote=plan.remote,
+            status=current,
+        )
+
     def _read_session(self, session_id: str) -> Session:
         session = self._repository.read_session(session_id)
         if session is None:
@@ -301,6 +461,23 @@ def _remote_status_result(
     )
 
 
+def _remote_mutation_result(
+    result_type: type[ResultT],
+    observation: GitRemoteObservation,
+    *,
+    remote: str,
+    status: GitStatusSnapshot,
+) -> ResultT:
+    return result_type.model_validate(
+        {
+            **_remote_status_result(observation).to_json_value(),
+            "remote": remote,
+            "head": status.head,
+            "status": _status_result(status).to_json_value(),
+        }
+    )
+
+
 def _workflow_error(error: GitError | WorktreeError) -> ApplicationError:
     if isinstance(error, GitNothingStagedError):
         return ApplicationError("GIT_NOTHING_STAGED")
@@ -311,7 +488,7 @@ def _workflow_error(error: GitError | WorktreeError) -> ApplicationError:
     if isinstance(error, GitCommandTimeoutError):
         return ApplicationError(
             "GIT_REMOTE_TIMEOUT"
-            if error.operation == "fetch"
+            if error.operation in {"fetch", "push", "pull-ff-only"}
             else "GIT_COMMAND_TIMEOUT"
         )
     if isinstance(error, GitRemoteCanceledError):
@@ -323,7 +500,8 @@ def _workflow_error(error: GitError | WorktreeError) -> ApplicationError:
     if isinstance(error, GitCommandFailedError):
         return ApplicationError(
             "GIT_REMOTE_FAILED"
-            if error.operation.startswith("remote") or error.operation == "fetch"
+            if error.operation.startswith("remote")
+            or error.operation in {"fetch", "push", "pull-ff-only"}
             else "GIT_COMMAND_FAILED"
         )
     if isinstance(error, WorktreeError):
@@ -342,4 +520,10 @@ def _workflow_error(error: GitError | WorktreeError) -> ApplicationError:
     return ApplicationError("GIT_COMMAND_FAILED")
 
 
-__all__ = ["GitFetchPlan", "GitMutationPlan", "GitWorkflowApplication"]
+__all__ = [
+    "GitFetchPlan",
+    "GitMutationPlan",
+    "GitPullPlan",
+    "GitPushPlan",
+    "GitWorkflowApplication",
+]
