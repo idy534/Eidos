@@ -305,31 +305,35 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
+        self.assertEqual(SCHEMA_VERSION, 1)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
         store.close()
 
-    def test_schema_v21_migrates_retention_tables_and_last_used_at(self) -> None:
+    def test_existing_v22_database_is_rejected_without_mutation(self) -> None:
         database = self.data / DATABASE_NAME
-        legacy_sql = SCHEMA_SQL.split(
-            "ALTER TABLE worktrees\nADD COLUMN last_used_at", 1
-        )[0]
         connection = sqlite3.connect(database)
-        connection.executescript(legacy_sql)
-        connection.execute("PRAGMA user_version = 21")
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("PRAGMA user_version = 22")
         connection.commit()
         connection.close()
         os.chmod(database, 0o600)
 
         store = SessionStore(self.data)
         store.initialize()
-        assert store.connection is not None
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-        assert "last_used_at" in {
-            row[1] for row in store.connection.execute("PRAGMA table_info(worktrees)")
-        }
-        assert store.worktree_settings_repository().read().managed_worktree_limit == 15
+        self.assertEqual(
+            store.health(),
+            {"state": "health_only", "code": "schema_revision_unsupported"},
+        )
+        check = sqlite3.connect(database)
+        self.assertEqual(check.execute("PRAGMA user_version").fetchone()[0], 22)
+        self.assertIsNotNone(
+            check.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'worktree_snapshots'"
+            ).fetchone()
+        )
+        check.close()
         store.close()
 
     def test_existing_database_with_unsupported_version_is_not_modified(self) -> None:

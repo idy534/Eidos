@@ -95,7 +95,7 @@
 - Runtime 可以实时查询 Worktree 的 HEAD、detached/attached branch、dirty、staged、unstaged、untracked 和 conflict 状态。Detached durable identity 与 observed branch 都为 NULL 时才有效；legacy attached Worktree 仍要求 branch identity 匹配。
 - `session/createBranch` 可以在 active、valid、detached Worktree 中执行 `Create Branch Here`。Runtime 在 durable intent 中冻结当前 HEAD 为 `expected_head`，然后创建 branch 并再次验证该 HEAD。`base_commit` 仍是 Worktree 创建时的 immutable baseline，不参与 branch attach HEAD 判断。Runtime 不创建第二个 Worktree，不改变 HEAD 或 working-tree changes。成功后 Worktree 持久化 `branch_ownership = user`。User Branch handoff 到 Local 后，Runtime 只在确认 Local branch 和 HEAD 后清除 Worktree 的 `branch`、`checkout_branch` 和 `branch_ownership` metadata，不删除或修改 Git ref；该 branch 之后属于普通用户 Git 资源。Session delete 会移除仍由 Eidos 管理的 Worktree，但保留 user branch。已存在或在其他 Worktree checkout 的 branch 会拒绝。Branch attach 后 HEAD 改变会进入 recovery required，Runtime 不 force switch。
 - Runtime 可以返回 HEAD diff 和基于创建时 immutable `base_commit` 的 baseline diff。两种 Diff 都包含 tracked 和 untracked files。Diff 使用 typed `GitDiffObservation`、有界 patch 和 truncation metadata，不修改 Git Index 或 object store。
-- SQLite v22 保存 Project、Worktree ownership、branch ownership、`worktrees.last_used_at`、`runtime_settings`、`worktree_snapshots`、lifecycle state、`sessions.execution_mode`、`sessions.worktree_id`、`sessions.associated_worktree_id`、`worktrees.checkout_branch` 和 managed lifecycle intent。Migration tests 覆盖 v17 → v18 → v19 → v20 → v21 → v22，并验证旧 Local/Worktree Session、associated Worktree backfill、Worktree FK、Run、nullable branch、legacy branch ownership、retention defaults 和 deterministic Local Project preservation。
+- SQLite v1 基线保存 Project、Worktree ownership、branch ownership、`worktrees.last_used_at`、`runtime_settings`、`worktree_snapshots`、lifecycle state、`sessions.execution_mode`、`sessions.worktree_id`、`sessions.associated_worktree_id`、`worktrees.checkout_branch` 和 managed lifecycle intent。基线测试验证完整表结构、Worktree FK、Run、nullable branch、retention defaults 和 Worktree lifecycle fields。
 - Session create、Session delete、managed Checkpoint Fork、Create Branch Here 和 Session Handoff 支持同进程 operation serialization、durable prepare、restart reconciliation 和同 operationId retry。Retry 不会重新生成 Worktree identity。Branch attach recovery 和 Handoff recovery 不会 force switch、force checkout 或创建第二个 Worktree。
 - `GitBackend` 把 Git mechanics 与 Eidos Worktree lifecycle 分开。Eidos 不实现 Git working-tree 或 index semantics。Dulwich 负责 discovery、refs、branch validation、revision、ignore observation、worktree list/remove/prune、switch、reset、normal clean 和 hidden snapshot anchors。唯一的 `GitCli` authority 负责 status porcelain、diff、patch capture/apply、untracked path/new-file patch、Worktree Add 和 destructive `clean -fdx`；它不作为 Dulwich failure retry path。
 - 所有 Git CLI 调用都经过 `HardenedGitRunner`。Runner 负责 argv、stdin bytes、bounded output、timeout、process group cleanup、isolated environment、hooks/fsmonitor/credential/askpass/pager 和 external diff/textconv/filter hardening。Status、diff、capture、apply、Worktree Add 和 destructive clean 不会无意执行 configured helper。
@@ -153,8 +153,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Persistence
 
-- 当前 SQLite schema version 是 22。
-- 新数据库直接创建 v22。已有 v17/v18/v19/v20/v21 数据库可以迁移到 v22。v17 → v18 会把 Project 泛化为 filesystem workspace，保留已有 Git Project、Worktree、Session 和 Run，并为旧 Local Session 保留确定性的 Local Project。v18 → v19 会增加 `sessions.execution_mode`、回填旧 Local/Worktree 语义，并让 `worktrees.branch` 支持 NULL。v19 → v20 会增加 branch ownership、local-change lifecycle fields 和 branch attach scope。v20 → v21 会增加 `associated_worktree_id`、`checkout_branch` 和 `session_handoff_operations`，并把旧 Worktree Session 的 active binding 回填为 associated binding。v21 → v22 会增加 `last_used_at`、Worktree Settings、Snapshot metadata 和 retention/restore lifecycle fields。v10 及更早版本不在当前启动迁移窗口。
+- 当前 SQLite schema baseline 是 v1，对应 Eidos 0.3。新数据库直接创建完整当前 schema。旧 revision、未知 revision 和未来 revision 不会自动迁移。版本不匹配时，Runtime 保持数据库不变并进入 `health_only`。
 - SQLite 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context、Repository Snapshot、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。
 - 业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - SQLite 使用私有数据目录、WAL、busy timeout、完整性检查、单实例锁和 health-only 失败状态。
@@ -202,7 +201,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `pnpm test` 覆盖 Runtime、contracts、Renderer state、Main 和 Renderer behavior。
 - `pnpm check:python` 覆盖 Ruff、deptry、Runtime tests 和 Python dependency audit。
 - Seatbelt native、Electron startup/shutdown、bundled Runtime、packaged App 和 packaging config 都有独立测试入口。
-- Repository、Project Rules、Context、LoopGuard、response actions、schema migration、checkpoint、long task、MCP 和 telemetry 都有 focused test files。
+- Repository、Project Rules、Context、LoopGuard、response actions、schema baseline、checkpoint、long task、MCP 和 telemetry 都有 focused test files。
 
 ## Implementation Anchors
 

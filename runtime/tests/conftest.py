@@ -55,8 +55,6 @@ INTEGRATION_FILES = frozenset(
         "test_runtime_loop.py",
         "test_runtime_reliability_regressions.py",
         "test_sandbox_permissions.py",
-        "test_schema_migration_v11.py",
-        "test_schema_migration_v17_to_v18.py",
         "test_seatbelt.py",
         "test_seatbelt_file_commit_cache.py",
         "test_server.py",

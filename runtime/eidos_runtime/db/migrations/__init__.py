@@ -1,1 +1,0 @@
-"""Atomic SQLite schema migrations."""

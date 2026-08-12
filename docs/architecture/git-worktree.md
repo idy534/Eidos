@@ -132,7 +132,7 @@ Session 与 Worktree directory 使用不同的生命周期。Retention 可以删
 
 Runtime 只把 `ownership = managed` 且 `state = active` 的 Worktree 放入 retention candidate。Runtime 不自动处理 adopted Worktree。Runtime 默认保留最近 15 个 Worktree。`runtime_settings` 保存 `automatic_cleanup` 和 `managed_worktree_limit`，用户可以在 Settings 中关闭自动清理或把数量改为 1 到 100。关闭自动清理时，Runtime 不执行数量清理。
 
-`worktrees.last_used_at` 是 retention 的 durable recency authority。Runtime 在 Worktree 创建、Worktree Handoff 成功、Worktree Run admission、Create Branch Here 和 Restore 成功后更新它。Runtime 不在 status、diff 或 UI polling 时更新它。v21 → v22 migration 把旧 `updated_at` 回填到 `last_used_at`。
+`worktrees.last_used_at` 是 retention 的 durable recency authority。Runtime 在 Worktree 创建、Worktree Handoff 成功、Worktree Run admission、Create Branch Here 和 Restore 成功后更新它。Runtime 不在 status、diff 或 UI polling 时更新它。当前基线直接包含 `last_used_at`，新 Worktree 的 recency 由 Worktree lifecycle 写入。
 
 Retention 使用 `last_used_at DESC` 选择最近的 N 个 Worktree。Retention 从最旧的 candidate 开始处理超出部分。Runtime 在以下情况跳过 candidate：active Run、unfinished Handoff、unfinished Worktree lifecycle、`cleanup_required`、invalid validation、无法证明 Git/filesystem identity、legacy managed branch 或 Snapshot 不能完成。Runtime 记录 skipped reason。Runtime 不为了满足数量上限 force delete 不安全目录。
 
@@ -192,9 +192,9 @@ Session Delete 会先通过既有 `session/delete` durable operation 清理 Snap
 
 ## Schema and lifecycle states
 
-当前 SQLite schema version 是 v22。v17 → v18 将旧 Git Project 的 `repository_root` 映射为 `workspace_root` 和 `git_repository_root`，保留原 Project id、Worktree FK、Session binding 和 Run。v18 → v19 为 `sessions` 增加 `execution_mode`，按旧 `worktree_id` 回填 `local` 或 `worktree`，并把 `worktrees.branch` 改为可空。v19 → v20 增加 `worktrees.branch_ownership`，并为 lifecycle operation 增加 local-change snapshot 字段和 `worktree/attach-branch` scope。v20 → v21 增加 `sessions.associated_worktree_id`、`worktrees.checkout_branch` 和 Session Handoff operation。v21 → v22 增加 `worktrees.last_used_at`、`runtime_settings`、`worktree_snapshots` 和 retention/restore lifecycle 字段。旧 Worktree branch 值会映射为 `legacy_managed`，detached Worktree 映射为 `none`。对于 `worktree_id IS NULL` 的旧 Session，migration 会保留 Local 语义。
+当前 SQLite schema baseline 是 v1，对应 Eidos 0.3。基线直接创建 filesystem Project、Worktree、Session binding、execution mode、branch ownership、Session Handoff、Worktree Settings、Snapshot metadata 和 retention/restore lifecycle fields。旧 revision 不会自动升级，版本不匹配时 Runtime 会保持数据库不变并进入 `health_only`。
 
-`worktree_lifecycle_operations` 从 v17 保留。当前 scope 包括 `session/create`、`session/delete`、`checkpoint/fork`、`worktree/attach-branch`、`worktree/retention-cleanup` 和 `worktree/restore`。它使用有限状态：`prepared`、`worktree_created`、`session_created`、`run_created`、`checkpoint_action_created`、`branch_attached`、`snapshot_saved`、`state_materialized`、`worktree_rebound`、`worktree_deleted`、`completed` 和 `cleanup_required`。它不是通用 workflow engine，也不保存 arbitrary payload executor。
+`worktree_lifecycle_operations` 当前包含 `session/create`、`session/delete`、`checkpoint/fork`、`worktree/attach-branch`、`worktree/retention-cleanup` 和 `worktree/restore`。它使用有限状态：`prepared`、`worktree_created`、`session_created`、`run_created`、`checkpoint_action_created`、`branch_attached`、`snapshot_saved`、`state_materialized`、`worktree_rebound`、`worktree_deleted`、`completed` 和 `cleanup_required`。它不是通用 workflow engine，也不保存 arbitrary payload executor。
 
 ## Startup recovery
 

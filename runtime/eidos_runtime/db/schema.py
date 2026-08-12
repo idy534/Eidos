@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 1
 
-V9_SCHEMA_SQL = """
+_RAW_BASE_SCHEMA_SQL = """
 CREATE TABLE sessions (
     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
@@ -442,7 +442,7 @@ WHERE status IN ('accepted', 'running');
 
 """
 
-V10_REPOSITORY_SCHEMA_SQL = """
+REPOSITORY_SCHEMA_SQL = """
 CREATE TABLE repository_snapshots (
     creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
@@ -646,7 +646,7 @@ CREATE VIRTUAL TABLE repository_fts USING fts5(
 );
 """
 
-V10_CONTEXT_SCHEMA_SQL = """
+CONTEXT_SCHEMA_SQL = """
 CREATE TABLE repository_retrieval_snapshots (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
@@ -723,12 +723,7 @@ CREATE TABLE checkpoint_actions (
 );
 """
 
-V10_MODEL_ATTEMPT_COLUMN_SQL = """
-ALTER TABLE model_attempts ADD COLUMN context_snapshot_id TEXT
-    REFERENCES context_snapshots(id) ON DELETE RESTRICT;
-"""
-
-V10_BASE_SCHEMA_SQL = V9_SCHEMA_SQL.replace(
+_BASE_WITH_CONTEXT_SNAPSHOT_SQL = _RAW_BASE_SCHEMA_SQL.replace(
     "    retry_decision_json TEXT,",
     "    context_snapshot_id TEXT REFERENCES context_snapshots(id) ON DELETE RESTRICT,\n"
     "    retry_decision_json TEXT,",
@@ -760,17 +755,17 @@ CREATE TABLE run_model_snapshots (
 );
 
 """
-V11_BASE_SCHEMA_SQL = V10_BASE_SCHEMA_SQL.replace(
+_BASE_WITHOUT_LEGACY_MODEL_TABLES_SQL = _BASE_WITH_CONTEXT_SNAPSHOT_SQL.replace(
     _LEGACY_MODEL_TABLES_SQL, ""
 ).replace(
     "    model_profile_id TEXT,\n", ""
 )
-if V11_BASE_SCHEMA_SQL == V10_BASE_SCHEMA_SQL:
+if _BASE_WITHOUT_LEGACY_MODEL_TABLES_SQL == _BASE_WITH_CONTEXT_SNAPSHOT_SQL:
     raise RuntimeError("legacy model tables were not removed from the current schema")
 
-# V12 additions: effective_cwd on runs, resolved_instructions_hash + effective_cwd on
-# step_resolution_snapshots
-V12_BASE_SCHEMA_SQL = V11_BASE_SCHEMA_SQL.replace(
+# Current base additions: effective_cwd on runs, resolved_instructions_hash +
+# effective_cwd on step_resolution_snapshots.
+BASE_SCHEMA_SQL = _BASE_WITHOUT_LEGACY_MODEL_TABLES_SQL.replace(
     "    error_code TEXT,\n"
     "    cancel_requested_at INTEGER,",
     "    effective_cwd TEXT,\n"
@@ -792,10 +787,10 @@ V12_BASE_SCHEMA_SQL = V11_BASE_SCHEMA_SQL.replace(
     "\n"
     "CREATE TABLE steps",
 )
-if V12_BASE_SCHEMA_SQL == V11_BASE_SCHEMA_SQL:
-    raise RuntimeError("V12 schema additions are missing")
+if BASE_SCHEMA_SQL == _BASE_WITHOUT_LEGACY_MODEL_TABLES_SQL:
+    raise RuntimeError("current schema additions are missing")
 
-V13_RESPONSE_ACTIONS_SCHEMA_SQL = """
+RESPONSE_ACTIONS_SCHEMA_SQL = """
 CREATE TABLE response_feedback (
     item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
     value TEXT NOT NULL CHECK (value IN ('up', 'down')),
@@ -815,45 +810,12 @@ CREATE INDEX run_revisions_source
 ON run_revisions(source_run_id);
 """
 
-V14_COMPACTION_QUALITY_SCHEMA_SQL = """
+COMPACTION_QUALITY_SCHEMA_SQL = """
 ALTER TABLE compact_summaries
 ADD COLUMN summary_metadata_json TEXT NOT NULL DEFAULT '{}';
 """
 
-V15_WORKTREE_SCHEMA_SQL = """
-CREATE TABLE projects (
-    id TEXT PRIMARY KEY,
-    repository_root TEXT NOT NULL UNIQUE,
-    git_common_dir TEXT NOT NULL UNIQUE,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
-
-CREATE TABLE worktrees (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
-    worktree_root TEXT NOT NULL UNIQUE,
-    git_dir TEXT NOT NULL,
-    base_ref TEXT NOT NULL,
-    base_commit TEXT NOT NULL,
-    branch TEXT NOT NULL,
-    ownership TEXT NOT NULL CHECK (ownership IN ('managed', 'adopted')),
-    state TEXT NOT NULL CHECK (
-        state IN ('active', 'missing', 'invalid', 'deleted')
-    ),
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    UNIQUE(project_id, branch)
-);
-
-CREATE INDEX worktrees_project_state
-ON worktrees(project_id, state, updated_at DESC);
-
-CREATE INDEX worktrees_project_ownership
-ON worktrees(project_id, ownership, state);
-"""
-
-V15_WORKTREE_TABLES_SCHEMA_SQL = """
+WORKTREE_TABLES_SCHEMA_SQL = """
 CREATE TABLE worktrees (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
@@ -878,7 +840,7 @@ CREATE INDEX worktrees_project_ownership
 ON worktrees(project_id, ownership, state);
 """
 
-V16_SESSION_WORKTREE_SCHEMA_SQL = """
+SESSION_WORKTREE_SCHEMA_SQL = """
 ALTER TABLE sessions
 ADD COLUMN worktree_id TEXT REFERENCES worktrees(id) ON DELETE RESTRICT;
 
@@ -886,7 +848,7 @@ CREATE INDEX sessions_worktree_id
 ON sessions(worktree_id);
 """
 
-V17_WORKTREE_LIFECYCLE_SCHEMA_SQL = """
+WORKTREE_LIFECYCLE_SCHEMA_SQL = """
 CREATE TABLE worktree_lifecycle_operations (
     scope TEXT NOT NULL CHECK (
         scope IN ('session/create', 'session/delete', 'checkpoint/fork')
@@ -927,7 +889,7 @@ CREATE INDEX worktree_lifecycle_operations_session
 ON worktree_lifecycle_operations(session_id, scope);
 """
 
-V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL = """
+WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL = """
 ALTER TABLE worktrees
 ADD COLUMN branch_ownership TEXT NOT NULL DEFAULT 'legacy_managed' CHECK (
     branch_ownership IN ('none', 'legacy_managed', 'user')
@@ -939,7 +901,7 @@ SET branch_ownership = CASE
     ELSE 'legacy_managed'
 END;
 
-CREATE TABLE worktree_lifecycle_operations_v20 (
+CREATE TABLE worktree_lifecycle_operations_branch_ownership (
     scope TEXT NOT NULL CHECK (
         scope IN (
             'session/create',
@@ -986,7 +948,7 @@ CREATE TABLE worktree_lifecycle_operations_v20 (
     PRIMARY KEY (scope, operation_id)
 );
 
-INSERT INTO worktree_lifecycle_operations_v20 (
+INSERT INTO worktree_lifecycle_operations_branch_ownership (
     scope, operation_id, state, project_id,
     repository_root, worktree_id, worktree_root,
     base_ref, branch, base_commit, expected_head, session_id, run_id,
@@ -1002,7 +964,7 @@ SELECT scope, operation_id, state, project_id,
 FROM worktree_lifecycle_operations;
 
 DROP TABLE worktree_lifecycle_operations;
-ALTER TABLE worktree_lifecycle_operations_v20
+ALTER TABLE worktree_lifecycle_operations_branch_ownership
 RENAME TO worktree_lifecycle_operations;
 
 CREATE INDEX worktree_lifecycle_operations_state
@@ -1012,7 +974,7 @@ CREATE INDEX worktree_lifecycle_operations_session
 ON worktree_lifecycle_operations(session_id, scope);
 """
 
-V18_PROJECT_SCHEMA_SQL = """
+PROJECT_SCHEMA_SQL = """
 CREATE TABLE projects (
     id TEXT PRIMARY KEY,
     workspace_root TEXT NOT NULL UNIQUE,
@@ -1028,7 +990,7 @@ CREATE TABLE projects (
 
 """
 
-V19_SESSION_EXECUTION_SCHEMA_SQL = """
+SESSION_EXECUTION_SCHEMA_SQL = """
 ALTER TABLE sessions
 ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'local' CHECK (
     execution_mode IN ('local', 'worktree')
@@ -1041,7 +1003,7 @@ SET execution_mode = CASE
 END;
 """
 
-V21_SESSION_HANDOFF_SCHEMA_SQL = """
+SESSION_HANDOFF_SCHEMA_SQL = """
 ALTER TABLE worktrees
 ADD COLUMN checkout_branch TEXT;
 
@@ -1106,7 +1068,7 @@ CREATE INDEX session_handoff_operations_session
 ON session_handoff_operations(session_id, created_at DESC);
 """
 
-V22_WORKTREE_RETENTION_SCHEMA_SQL = """
+WORKTREE_RETENTION_SCHEMA_SQL = """
 ALTER TABLE worktrees
 ADD COLUMN last_used_at INTEGER NOT NULL DEFAULT 0;
 
@@ -1160,7 +1122,7 @@ CREATE TABLE worktree_snapshots (
 CREATE INDEX worktree_snapshots_latest
 ON worktree_snapshots(worktree_id, state, created_at DESC, id DESC);
 
-CREATE TABLE worktree_lifecycle_operations_v22 (
+CREATE TABLE worktree_lifecycle_operations_retention (
     scope TEXT NOT NULL CHECK (
         scope IN (
             'session/create',
@@ -1215,7 +1177,7 @@ CREATE TABLE worktree_lifecycle_operations_v22 (
     PRIMARY KEY (scope, operation_id)
 );
 
-INSERT INTO worktree_lifecycle_operations_v22 (
+INSERT INTO worktree_lifecycle_operations_retention (
     scope, operation_id, state, project_id,
     repository_root, worktree_id, worktree_root,
     base_ref, branch, base_commit, expected_head, session_id, run_id,
@@ -1232,7 +1194,7 @@ SELECT scope, operation_id, state, project_id,
 FROM worktree_lifecycle_operations;
 
 DROP TABLE worktree_lifecycle_operations;
-ALTER TABLE worktree_lifecycle_operations_v22
+ALTER TABLE worktree_lifecycle_operations_retention
 RENAME TO worktree_lifecycle_operations;
 
 CREATE INDEX worktree_lifecycle_operations_state
@@ -1243,17 +1205,17 @@ ON worktree_lifecycle_operations(session_id, scope);
 """
 
 SCHEMA_SQL = (
-    V12_BASE_SCHEMA_SQL
-    + V10_REPOSITORY_SCHEMA_SQL
-    + V10_CONTEXT_SCHEMA_SQL
-    + V13_RESPONSE_ACTIONS_SCHEMA_SQL
-    + V14_COMPACTION_QUALITY_SCHEMA_SQL
-    + V18_PROJECT_SCHEMA_SQL
-    + V15_WORKTREE_TABLES_SCHEMA_SQL
-    + V16_SESSION_WORKTREE_SCHEMA_SQL
-    + V17_WORKTREE_LIFECYCLE_SCHEMA_SQL
-    + V19_SESSION_EXECUTION_SCHEMA_SQL
-    + V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL
-    + V21_SESSION_HANDOFF_SCHEMA_SQL
-    + V22_WORKTREE_RETENTION_SCHEMA_SQL
+    BASE_SCHEMA_SQL
+    + REPOSITORY_SCHEMA_SQL
+    + CONTEXT_SCHEMA_SQL
+    + RESPONSE_ACTIONS_SCHEMA_SQL
+    + COMPACTION_QUALITY_SCHEMA_SQL
+    + PROJECT_SCHEMA_SQL
+    + WORKTREE_TABLES_SCHEMA_SQL
+    + SESSION_WORKTREE_SCHEMA_SQL
+    + WORKTREE_LIFECYCLE_SCHEMA_SQL
+    + SESSION_EXECUTION_SCHEMA_SQL
+    + WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL
+    + SESSION_HANDOFF_SCHEMA_SQL
+    + WORKTREE_RETENTION_SCHEMA_SQL
 )

@@ -18,7 +18,6 @@ from eidos_runtime.db.errors import (
     OperationInProgressError,
     StorageError,
 )
-from eidos_runtime.db.migration import migrate_schema
 from eidos_runtime.db.schema import (
     SCHEMA_SQL,
     SCHEMA_VERSION,
@@ -96,9 +95,8 @@ class Database:
             connection.row_factory = sqlite3.Row
             tables = _table_names(connection)
             revision = connection.execute("PRAGMA user_version").fetchone()[0]
-            if (
-                (tables and revision not in range(11, SCHEMA_VERSION + 1))
-                or (not tables and revision != 0)
+            if (tables and revision != SCHEMA_VERSION) or (
+                not tables and revision != 0
             ):
                 raise StorageError("schema_revision_unsupported")
 
@@ -112,16 +110,6 @@ class Database:
                     + SCHEMA_SQL
                     + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
                 )
-            elif revision < SCHEMA_VERSION:
-                # Chain migrations one step at a time until we reach the target
-                current = revision
-                while current < SCHEMA_VERSION:
-                    migrate_schema(
-                        connection,
-                        current_version=current,
-                        target_version=current + 1,
-                    )
-                    current += 1
             _verify_integrity(connection)
             self._connection = connection
             self.health_state = "ready"

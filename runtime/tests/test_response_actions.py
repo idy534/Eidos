@@ -1,18 +1,10 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
-import sqlite3
 import tempfile
 import unittest
 
-from eidos_runtime.db.schema import (
-    SCHEMA_VERSION,
-    V10_CONTEXT_SCHEMA_SQL,
-    V10_REPOSITORY_SCHEMA_SQL,
-    V12_BASE_SCHEMA_SQL,
-)
-from eidos_runtime.db.storage import DATABASE_NAME, SessionStore
+from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.persistence.response_actions import ResponseActionRepository
 
 
@@ -27,38 +19,6 @@ class ResponseActionTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
-
-    def test_v12_database_migrates_to_v13(self) -> None:
-        database = self.data / DATABASE_NAME
-        connection = sqlite3.connect(database)
-        connection.executescript(
-            V12_BASE_SCHEMA_SQL
-            + V10_REPOSITORY_SCHEMA_SQL
-            + V10_CONTEXT_SCHEMA_SQL
-        )
-        connection.execute("PRAGMA user_version = 12")
-        connection.commit()
-        connection.close()
-        os.chmod(database, 0o600)
-
-        store = SessionStore(self.data)
-        store.initialize()
-        self.assertEqual(store.health(), {"state": "ready"})
-        assert store.connection is not None
-        self.assertEqual(
-            store.connection.execute("PRAGMA user_version").fetchone()[0],
-            SCHEMA_VERSION,
-        )
-        tables = {
-            str(row[0])
-            for row in store.connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
-        }
-        self.assertIn("response_feedback", tables)
-        self.assertIn("run_revisions", tables)
-        self.assertEqual(store.connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
-        store.close()
 
     def test_feedback_is_persisted_and_can_be_cleared(self) -> None:
         store, _run_id, assistant_item_id = self._completed_run_with_response()
