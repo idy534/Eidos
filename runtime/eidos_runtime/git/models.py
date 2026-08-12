@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Literal
 import hashlib
 
 from pydantic import Field
@@ -52,31 +51,11 @@ class GitDiffObservation(EidosFrozenStrictModel):
     truncated: bool
 
 
-class GitWorktreeStateEntry(EidosFrozenStrictModel):
-    """One exact filesystem/index entry captured without a Git CLI patch."""
-
-    path: str
-    kind: Literal["file", "symlink", "gitlink"]
-    mode: int = Field(ge=0, le=0o177777)
-    content_base64: str | None = None
-    object_id: str | None = None
-
-
-class GitWorkingTreeState(EidosFrozenStrictModel):
-    """Immutable working-tree or index projection used for exact transfer."""
-
-    base_head: str
-    base_paths: tuple[str, ...]
-    entries: tuple[GitWorktreeStateEntry, ...]
-
-
 class GitWorkingTreePatch(EidosFrozenStrictModel):
-    """Durable source state plus optional Dulwich-rendered patch text."""
+    """Lossless Git patch bytes produced and consumed by the Git CLI."""
 
-    full_patch: str
-    staged_patch: str
-    full_state: GitWorkingTreeState | None = None
-    staged_state: GitWorkingTreeState | None = None
+    full_patch: bytes
+    staged_patch: bytes
 
 
 class GitSourceSnapshot(EidosFrozenStrictModel):
@@ -115,8 +94,6 @@ __all__ = [
     "GitRepositoryDiscovery",
     "GitStatusObservation",
     "GitWorktreeEntry",
-    "GitWorktreeStateEntry",
-    "GitWorkingTreeState",
     "GitWorkingTreePatch",
     "GitSourceSnapshot",
     "ProjectResolution",

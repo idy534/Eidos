@@ -183,3 +183,21 @@ def test_hardened_runner_bounds_failed_stderr(tmp_path: Path) -> None:
         )
 
     assert len(error.value.stderr.encode("utf-8")) <= 1024
+
+
+def test_hardened_runner_passes_raw_stdin_bytes_without_decode(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "raw-git"
+    executable.write_text("#!/bin/sh\ncat\n", encoding="utf-8")
+    executable.chmod(0o755)
+    runner = HardenedGitRunner(git_executable=str(executable))
+
+    result = runner.run(
+        ("apply",),
+        cwd=tmp_path,
+        operation="runner-raw-stdin",
+        stdin=b"binary\x00\xff",
+    )
+
+    assert result.stdout == b"binary\x00\xff"

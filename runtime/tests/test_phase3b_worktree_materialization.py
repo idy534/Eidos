@@ -363,7 +363,9 @@ def test_conflicted_source_worktree_is_rejected_before_capture(
         store.close()
 
 
-def test_local_changes_reject_external_untracked_symlink(tmp_path: Path) -> None:
+def test_local_changes_transfer_external_untracked_symlink_with_git_semantics(
+    tmp_path: Path,
+) -> None:
     repository = _repository(tmp_path)
     outside = tmp_path / "outside.txt"
     outside.write_text("outside\n", encoding="utf-8")
@@ -371,16 +373,17 @@ def test_local_changes_reject_external_untracked_symlink(tmp_path: Path) -> None
 
     store, manager, application = _setup(tmp_path)
     try:
-        with pytest.raises(ApplicationError) as error:
-            application.create(
-                SessionCreateRequestDto(
-                    workspaceRoot=str(repository),
-                    executionMode="worktree",
-                    includeLocalChanges=True,
-                )
+        created = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repository),
+                executionMode="worktree",
+                includeLocalChanges=True,
             )
-        assert error.value.code == "WORKTREE_CREATE_FAILED"
-        assert manager.list() == ()
+        )
+        root = Path(str(created.root["worktree"]["worktreeRoot"]))
+        assert (root / "external-link").is_symlink()
+        assert (root / "external-link").readlink() == outside
+        assert len(manager.list()) == 1
     finally:
         store.close()
 
@@ -462,28 +465,38 @@ def test_create_recovery_reapplies_durable_local_change_snapshot(
         store.close()
 
 
-def test_include_escape_is_rejected_and_created_worktree_is_compensated(
+def test_include_pattern_syntax_is_delegated_to_git_ignore_spec(
     tmp_path: Path,
 ) -> None:
     repository = _repository(tmp_path)
-    (repository / ".worktreeinclude").write_text("../outside\n", encoding="utf-8")
+    (repository / ".worktreeinclude").write_text(
+        "*\n!important.env\n/config/**\n!/config/local.example\n",
+        encoding="utf-8",
+    )
+    (repository / "ordinary.env").write_text("ordinary\n", encoding="utf-8")
+    (repository / "important.env").write_text("important\n", encoding="utf-8")
+    (repository / "config").mkdir()
+    (repository / "config" / "remote.example").write_text(
+        "remote\n", encoding="utf-8"
+    )
+    (repository / "config" / "local.example").write_text(
+        "local\n", encoding="utf-8"
+    )
 
-    store, manager, application = _setup(tmp_path)
-    try:
-        with pytest.raises(ApplicationError) as error:
-            application.create(
-                SessionCreateRequestDto(
-                    workspaceRoot=str(repository),
-                    executionMode="worktree",
-                    includeLocalChanges=False,
-                )
-            )
-        assert error.value.code == "WORKTREE_INCLUDE_INVALID"
-        assert store.connection.execute("SELECT COUNT(*) FROM worktrees").fetchone()[0] == 0
-        assert manager.list() == ()
-        assert not list((tmp_path / "managed-worktrees").glob("*"))
-    finally:
-        store.close()
+    target = tmp_path / "target"
+    target.mkdir()
+    copied = materialize_worktree_include(
+        repository, target, is_ignored=_always_ignored
+    )
+
+    assert "ordinary.env" in copied
+    assert "important.env" not in copied
+    assert "config/remote.example" in copied
+    assert "config/local.example" not in copied
+    assert (target / "ordinary.env").exists()
+    assert not (target / "important.env").exists()
+    assert (target / "config/remote.example").exists()
+    assert not (target / "config/local.example").exists()
 
 
 def test_detached_worktree_can_create_user_branch_without_changing_head_or_dirty_state(
@@ -909,18 +922,18 @@ def test_include_glob_nested_empty_binary_missing_and_internal_symlink(
 
 
 @pytest.mark.parametrize("pattern", ["../escape", "/tmp/absolute", ".git", ".git/**"])
-def test_include_rejects_unsafe_patterns(tmp_path: Path, pattern: str) -> None:
+def test_include_pattern_does_not_bypass_concrete_path_safety(
+    tmp_path: Path, pattern: str
+) -> None:
     source = tmp_path / "source"
     target = tmp_path / "target"
     source.mkdir()
     target.mkdir()
     (source / ".worktreeinclude").write_text(pattern + "\n", encoding="utf-8")
 
-    with pytest.raises(WorktreeError) as error:
-        materialize_worktree_include(
-            source, target, is_ignored=_always_ignored
-        )
-    assert getattr(error.value, "code", None) == "worktree_include_invalid"
+    assert materialize_worktree_include(
+        source, target, is_ignored=_always_ignored
+    ) == ()
 
 
 def test_include_rejects_symlink_escape(tmp_path: Path) -> None:

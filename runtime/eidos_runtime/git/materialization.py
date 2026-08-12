@@ -48,11 +48,11 @@ def materialize_worktree_include(
         except (OSError, UnicodeError) as error:
             raise WorktreeError("worktree_include_invalid") from error
         for line in lines:
-            pattern = line.strip()
-            if not pattern or pattern.startswith("#"):
+            if not line or line.startswith("#"):
                 continue
-            _validate_pattern(pattern)
-            patterns.append(pattern)
+            if "\x00" in line:
+                raise WorktreeError("worktree_include_invalid")
+            patterns.append(line)
     try:
         spec = GitIgnoreSpec.from_lines(patterns)
     except (TypeError, ValueError) as error:
@@ -103,17 +103,6 @@ def _canonical_directory(path: Path, code: str) -> Path:
     except OSError as error:
         raise WorktreeError(code) from error
     return resolved
-
-
-def _validate_pattern(pattern: str) -> None:
-    if (
-        pattern.startswith("/")
-        or pattern.startswith("!")
-        or "\x00" in pattern
-        or any(part == ".." for part in pattern.replace("\\", "/").split("/"))
-        or _contains_git_segment(pattern.replace("\\", "/"))
-    ):
-        raise WorktreeError("worktree_include_invalid")
 
 
 def _contains_git_segment(relative: str) -> bool:

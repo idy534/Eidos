@@ -1,13 +1,14 @@
-from eidos_runtime.git.errors import GitError, WorktreeError
+from eidos_runtime.git.errors import (
+    GitError,
+    GitUnsupportedOperationError,
+    WorktreeError,
+)
 from eidos_runtime.git.backend import (
     DulwichGitBackend,
     GitBackend,
 )
 from eidos_runtime.git.manager import WorktreeManager
-from eidos_runtime.git.native import (
-    GitCliFallback,
-    HardenedGitRunner,
-)
+from eidos_runtime.git.native import GitCli, HardenedGitRunner
 from eidos_runtime.git.status import (
     DiffScope,
     GitDiffSnapshot,
@@ -20,8 +21,9 @@ __all__ = [
     "GitBackend",
     "GitDiffSnapshot",
     "GitError",
+    "GitUnsupportedOperationError",
     "GitStatusSnapshot",
-    "GitCliFallback",
+    "GitCli",
     "HardenedGitRunner",
     "WorktreeError",
     "WorktreeManager",

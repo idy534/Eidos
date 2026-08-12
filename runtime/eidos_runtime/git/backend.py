@@ -1,28 +1,20 @@
 from __future__ import annotations
 
-import io
 import os
 from pathlib import Path
 import re
-from collections.abc import Iterable
 from typing import Protocol
 
 from dulwich.config import ConfigFile
-from dulwich.diff import diff_working_tree_to_tree, write_blob_diff
 from dulwich.errors import NotGitRepository
 from dulwich.ignore import IgnoreFilterManager
-from dulwich.index import ConflictedIndexEntry, get_unstaged_changes
-from dulwich.diff import iter_tree_contents
-from dulwich.objects import Blob
 from dulwich.objectspec import parse_commit
 from dulwich.porcelain import (
     CheckoutError,
     Error,
     clean,
-    get_tree_changes,
     reset,
     switch,
-    worktree_add,
     worktree_list,
     worktree_prune,
     worktree_remove,
@@ -30,7 +22,10 @@ from dulwich.porcelain import (
 from dulwich.refs import HEADREF, Ref
 from dulwich.repo import Repo
 
-from eidos_runtime.git.errors import GitCommandFailedError
+from eidos_runtime.git.errors import (
+    GitCommandFailedError,
+    GitUnsupportedOperationError,
+)
 from eidos_runtime.git.models import (
     GitDiffObservation,
     GitRepositoryDiscovery,
@@ -38,17 +33,11 @@ from eidos_runtime.git.models import (
     GitWorktreeEntry,
     GitWorkingTreePatch,
 )
-from eidos_runtime.git.native import GitCliFallback
+from eidos_runtime.git.native import DEFAULT_GIT_PATCH_BYTES, GitCli
 from eidos_runtime.git.refs import GitRefValidator
-from eidos_runtime.git.state import (
-    apply_worktree_changes as apply_structured_changes,
-    capture_worktree_changes as capture_structured_changes,
-    untracked_paths,
-)
 
 
 DEFAULT_GIT_DIFF_BYTES = 512 * 1024
-_GITLINK_MODE = 0o160000
 
 
 class GitBackend(Protocol):
@@ -133,12 +122,12 @@ class DulwichGitBackend:
     def __init__(
         self,
         *,
-        git_cli_fallback: GitCliFallback | None = None,
+        git_cli: GitCli | None = None,
         diff_output_limit_bytes: int = DEFAULT_GIT_DIFF_BYTES,
     ) -> None:
         if diff_output_limit_bytes < 1:
             raise ValueError("Git diff output limit must be positive")
-        self._git_cli_fallback = git_cli_fallback or GitCliFallback()
+        self._git_cli = git_cli or GitCli()
         self._diff_output_limit_bytes = diff_output_limit_bytes
 
     def discover(self, cwd: Path) -> GitRepositoryDiscovery:
@@ -215,33 +204,14 @@ class DulwichGitBackend:
     def status(self, cwd: Path) -> GitStatusObservation:
         repo = self._open_repository(cwd, "status")
         try:
-            index = repo.open_index(config=ConfigFile())
-            tree_changes = get_tree_changes(repo, index=index)
-            conflict_paths = _conflict_paths(index)
-            conflict_set = set(conflict_paths)
-            staged_paths = tuple(
-                sorted(
-                    {
-                        _decode_path(path)
-                        for values in tree_changes.values()
-                        for path in values
-                        if _decode_path(path) not in conflict_set
-                    }
-                )
+            staged_paths, unstaged_paths, untracked, conflict_paths = (
+                _status_from_porcelain(self._git_cli.status_porcelain(cwd))
             )
-            unstaged_paths = tuple(
-                sorted(
-                    {
-                        _decode_path(path)
-                        for path in _unstaged_paths(repo, index)
-                        if _decode_path(path) not in conflict_set
-                    }
-                )
-            )
-            untracked = untracked_paths(repo, index)
             head = _object_id(repo.head())
             branch = _current_branch(repo)
-        except _DULWICH_FAILURES as error:
+        except (GitCommandFailedError, *_DULWICH_FAILURES) as error:
+            if isinstance(error, GitCommandFailedError):
+                raise
             raise _git_failure("status", error) from error
         return GitStatusObservation(
             head=head,
@@ -262,71 +232,20 @@ class DulwichGitBackend:
         GitRefValidator.revision(base_commit)
         repo = self._open_repository(cwd, "diff")
         try:
-            base = parse_commit(repo, base_commit)
-            status = self.status(cwd)
-            changed_paths = set(
-                status.staged_paths
-                + status.unstaged_paths
-                + status.conflict_paths
+            captured = self._git_cli.diff(
+                Path(repo.path),
+                base_commit=base_commit,
+                include_untracked=include_untracked,
+                output_limit_bytes=self._diff_output_limit_bytes,
             )
-            if include_untracked:
-                changed_paths.update(status.untracked_paths)
-            head_commit = parse_commit(repo, "HEAD")
-            for change in repo.object_store.tree_changes(base.tree, head_commit.tree):
-                (old_path, new_path), _modes, _ids = change
-                if old_path is not None:
-                    changed_paths.add(_decode_path(old_path))
-                if new_path is not None:
-                    changed_paths.add(_decode_path(new_path))
-
-            output = _LimitedBytesIO(self._diff_output_limit_bytes)
-            try:
-                index = repo.open_index(config=ConfigFile())
-                gitlink_paths = {
-                    entry.path
-                    for entry in iter_tree_contents(repo.object_store, base.tree)
-                    if entry.path is not None and entry.mode == _GITLINK_MODE
-                }
-                gitlink_paths.update(
-                    os.fsencode(path)
-                    for path, value in index.iteritems()
-                    if not isinstance(value, ConflictedIndexEntry)
-                    and int(getattr(value, "mode", 0)) == _GITLINK_MODE
-                )
-                tracked_paths = {
-                    entry.path
-                    for entry in iter_tree_contents(repo.object_store, base.tree)
-                    if entry.path is not None
-                }
-                tracked_paths.update(
-                    path
-                    for path, _value in index.iteritems()
-                )
-                tracked_paths.difference_update(gitlink_paths)
-                diff_working_tree_to_tree(
-                    repo,
-                    output,
-                    bytes(base.id),
-                    paths=tuple(sorted(tracked_paths)) or (b"__eidos_no_gitlink__",),
-                    config=ConfigFile(),
-                )
-                changed_paths.update(
-                    _write_gitlink_diffs(repo, base.tree, gitlink_paths, output)
-                )
-                if include_untracked and not output.truncated:
-                    for relative in status.untracked_paths:
-                        path = _safe_worktree_path(Path(repo.path), relative)
-                        if os.fsencode(relative) in index:
-                            continue
-                        _write_untracked_diff(output, path, relative)
-            except _OutputLimitReached:
-                output.truncated = True
-        except _DULWICH_FAILURES as error:
+        except (GitCommandFailedError, *_DULWICH_FAILURES) as error:
+            if isinstance(error, GitCommandFailedError):
+                raise
             raise _git_failure("diff", error) from error
         return GitDiffObservation(
-            patch=output.getvalue().decode("utf-8", errors="replace"),
-            changed_paths=tuple(sorted(changed_paths)),
-            truncated=output.truncated,
+            patch=captured.patch.decode("utf-8", errors="replace"),
+            changed_paths=captured.changed_paths,
+            truncated=captured.truncated,
         )
 
     def worktree_list(self, cwd: Path) -> tuple[GitWorktreeEntry, ...]:
@@ -356,37 +275,9 @@ class DulwichGitBackend:
         GitRefValidator.revision(base_commit)
         if branch is not None:
             GitRefValidator.branch(branch)
-        repo = self._open_repository(cwd, "worktree-add")
-        created_branch = False
-        use_native = _has_external_filter(repo)
         try:
-            if use_native:
-                self._git_cli_fallback.worktree_add(
-                    cwd, worktree_root, branch, base_commit
-                )
-            else:
-                branch_ref = GitRefValidator.branch(branch) if branch is not None else None
-                if branch_ref is not None:
-                    if branch_ref in repo.refs:
-                        raise ValueError(f"branch already exists: {branch}")
-                    if not repo.refs.set_if_equals(
-                        branch_ref, None, base_commit.encode("ascii")
-                    ):
-                        raise ValueError(f"branch already exists: {branch}")
-                    created_branch = True
-                worktree_add(
-                    repo,
-                    worktree_root,
-                    branch=branch,
-                    commit=None if branch is not None else base_commit,
-                    detach=branch is None,
-                    force=False,
-                )
-        except GitCommandFailedError:
-            _remove_created_branch(repo, branch, base_commit, created_branch)
-            raise
+            self._git_cli.worktree_add(cwd, worktree_root, branch, base_commit)
         except _DULWICH_FAILURES as error:
-            _remove_created_branch(repo, branch, base_commit, created_branch)
             raise _git_failure("worktree-add", error) from error
 
     def worktree_remove(self, cwd: Path, worktree_root: Path) -> None:
@@ -398,11 +289,11 @@ class DulwichGitBackend:
 
     def clean_worktree_for_compensation(self, cwd: Path) -> None:
         self._reset_and_clean(cwd, operation="worktree-compensation")
-        self._git_cli_fallback.clean_destructive(cwd)
+        self._git_cli.clean_destructive(cwd)
 
     def clean_worktree_for_retention(self, cwd: Path) -> None:
         self._reset_and_clean(cwd, operation="worktree-retention")
-        self._git_cli_fallback.clean_destructive(cwd)
+        self._git_cli.clean_destructive(cwd)
 
     def clean_worktree_after_handoff(self, cwd: Path) -> None:
         repo = self._open_repository(cwd, "worktree-handoff")
@@ -420,14 +311,41 @@ class DulwichGitBackend:
             raise _git_failure(f"{operation}-reset", error) from error
 
     def capture_worktree_changes(self, cwd: Path) -> GitWorkingTreePatch:
-        repo = self._open_repository(cwd, "worktree-capture")
-        return capture_structured_changes(repo)
+        self._open_repository(cwd, "worktree-capture")
+        try:
+            status = self.status(cwd)
+            changed_paths = (
+                status.staged_paths
+                + status.unstaged_paths
+                + status.untracked_paths
+                + status.conflict_paths
+            )
+            gitlinks = self._git_cli.gitlink_paths(cwd, changed_paths)
+            if gitlinks:
+                raise GitUnsupportedOperationError(
+                    "worktree-capture",
+                    stderr="dirty submodule transfer is unsupported",
+                )
+            return GitWorkingTreePatch(
+                full_patch=self._git_cli.capture_working_tree_patch(
+                    cwd, output_limit_bytes=DEFAULT_GIT_PATCH_BYTES
+                ),
+                staged_patch=self._git_cli.capture_staged_patch(
+                    cwd, output_limit_bytes=DEFAULT_GIT_PATCH_BYTES
+                ),
+            )
+        except GitCommandFailedError:
+            raise
 
     def apply_worktree_changes(
         self, cwd: Path, changes: GitWorkingTreePatch
     ) -> None:
-        repo = self._open_repository(cwd, "worktree-apply")
-        apply_structured_changes(repo, changes)
+        self._open_repository(cwd, "worktree-apply")
+        self._git_cli.apply_working_tree_patch(
+            cwd,
+            full_patch=changes.full_patch,
+            staged_patch=changes.staged_patch,
+        )
 
     def create_branch(self, cwd: Path, branch: str) -> None:
         GitRefValidator.branch(branch)
@@ -576,148 +494,46 @@ def _current_branch(repo: Repo) -> str | None:
     return branch or None
 
 
-def _conflict_paths(index: object) -> tuple[str, ...]:
-    return tuple(
-        sorted(
-            os.fsdecode(path)
-            for path, value in index.iteritems()
-            if isinstance(value, ConflictedIndexEntry)
-        )
+def _status_from_porcelain(
+    output: bytes,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    staged: set[str] = set()
+    unstaged: set[str] = set()
+    untracked: set[str] = set()
+    conflicts: set[str] = set()
+    for record in output.split(b"\0"):
+        if not record:
+            continue
+        if len(record) < 4 or record[2:3] != b" ":
+            raise GitCommandFailedError(
+                "status",
+                returncode=None,
+                stderr="Git status output is invalid",
+            )
+        code = record[:2].decode("ascii")
+        path = os.fsdecode(record[3:])
+        if not path:
+            raise GitCommandFailedError(
+                "status",
+                returncode=None,
+                stderr="Git status path is empty",
+            )
+        if code == "??":
+            untracked.add(path)
+            continue
+        if "U" in code or code in {"AA", "DD"}:
+            conflicts.add(path)
+            continue
+        if code[0] != " ":
+            staged.add(path)
+        if code[1] != " ":
+            unstaged.add(path)
+    return (
+        tuple(sorted(staged)),
+        tuple(sorted(unstaged)),
+        tuple(sorted(untracked)),
+        tuple(sorted(conflicts)),
     )
-
-
-def _unstaged_paths(repo: Repo, index: object) -> tuple[bytes, ...]:
-    result: list[bytes] = []
-    entries = dict(index.iteritems())
-    for path in get_unstaged_changes(index, repo.path, None, False):
-        value = entries.get(path)
-        if isinstance(value, ConflictedIndexEntry):
-            result.append(path)
-            continue
-        if value is not None and int(getattr(value, "mode", 0)) == _GITLINK_MODE:
-            nested_head = _nested_worktree_head(Path(repo.path) / os.fsdecode(path))
-            if nested_head == bytes(getattr(value, "sha")):
-                continue
-        result.append(path)
-    return tuple(result)
-
-
-def _nested_worktree_head(path: Path) -> bytes | None:
-    if not path.is_dir() or path.is_symlink():
-        return None
-    try:
-        nested = Repo.discover(path)
-        if Path(nested.path).resolve(strict=True) != path.resolve(strict=True):
-            return None
-        return bytes(nested.head())
-    except (NotGitRepository, OSError, ValueError):
-        return None
-
-
-def _has_external_filter(repo: Repo) -> bool:
-    config = repo.get_config_stack()
-    for section in config.sections():
-        if len(section) < 2 or section[0].lower() != b"filter":
-            continue
-        for backend in config.backends:
-            for name, value in backend.items(section):
-                if name.lower() in {b"clean", b"process", b"smudge"} and value.strip():
-                    return True
-    return False
-
-
-def _remove_created_branch(
-    repo: Repo,
-    branch: str | None,
-    base_commit: str,
-    created_branch: bool,
-) -> None:
-    if not created_branch or branch is None:
-        return
-    try:
-        repo.refs.remove_if_equals(
-            GitRefValidator.branch(branch), base_commit.encode("ascii")
-        )
-    except (KeyError, OSError, TypeError, UnicodeEncodeError, ValueError):
-        pass
-
-
-def _write_untracked_diff(output: io.BytesIO, path: Path, relative: str) -> None:
-    value = path.lstat()
-    if value.st_mode & 0o170000 == 0o120000:
-        blob = Blob.from_string(os.fsencode(os.readlink(path)))
-        mode = 0o120000
-    elif value.st_mode & 0o170000 == 0o100000:
-        blob = Blob.from_string(path.read_bytes())
-        mode = 0o100755 if value.st_mode & 0o100 else 0o100644
-    else:
-        return
-    write_blob_diff(
-        output,
-        (None, None, None),
-        (os.fsencode(relative), mode, blob),
-    )
-
-
-def _write_gitlink_diffs(
-    repo: Repo,
-    tree_id: bytes,
-    paths: set[bytes],
-    output: io.BytesIO,
-) -> tuple[str, ...]:
-    changed: list[str] = []
-    for entry in iter_tree_contents(repo.object_store, tree_id):
-        if entry.path is None or entry.path not in paths or entry.sha is None:
-            continue
-        relative = os.fsdecode(entry.path)
-        path = _safe_worktree_path(Path(repo.path), relative)
-        current: bytes | None = None
-        if path.is_dir() and not path.is_symlink():
-            try:
-                nested = Repo.discover(path)
-                if Path(nested.path).resolve(strict=True) == path.resolve(strict=True):
-                    current = bytes(nested.head())
-            except (NotGitRepository, OSError, ValueError):
-                current = None
-        if current == entry.sha:
-            continue
-        changed.append(relative)
-        old_blob = Blob.from_string(b"Subproject commit " + entry.sha + b"\n")
-        new_blob = (
-            Blob.from_string(b"Subproject commit " + current + b"\n")
-            if current is not None
-            else None
-        )
-        write_blob_diff(
-            output,
-            (entry.path, _GITLINK_MODE, old_blob),
-            (entry.path if current is not None else None, _GITLINK_MODE if current is not None else None, new_blob),
-        )
-    return tuple(changed)
-
-
-class _OutputLimitReached(RuntimeError):
-    pass
-
-
-class _LimitedBytesIO(io.BytesIO):
-    def __init__(self, limit: int) -> None:
-        super().__init__()
-        self.limit = limit
-        self.truncated = False
-
-    def write(self, value: bytes) -> int:
-        remaining = self.limit - self.tell()
-        if len(value) > remaining:
-            if remaining > 0:
-                super().write(value[:remaining])
-            self.truncated = True
-            raise _OutputLimitReached
-        return super().write(value)
-
-    def writelines(self, lines: Iterable[bytes]) -> None:
-        for line in lines:
-            self.write(line)
 
 
 def _object_id(value: object) -> str:
@@ -763,14 +579,6 @@ def _validate_relative_path(value: str) -> None:
         or any(part == ".git" for part in value.split("/"))
     ):
         raise ValueError("Git relative path is invalid")
-
-
-def _safe_worktree_path(root: Path, relative: str) -> Path:
-    _validate_relative_path(relative)
-    result = root / relative
-    if not result.parent.resolve(strict=False).is_relative_to(root.resolve(strict=True)):
-        raise ValueError("Git relative path escapes repository")
-    return result
 
 
 def _git_failure(operation: str, error: BaseException) -> GitCommandFailedError:

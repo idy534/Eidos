@@ -102,8 +102,8 @@ class WorktreeSnapshotService:
         except (OSError, ValueError) as error:
             raise WorktreeError("worktree_snapshot_checksum_mismatch") from error
         if (
-            _sha256_text(changes.full_patch) != snapshot.full_patch_sha256
-            or _sha256_text(changes.staged_patch) != snapshot.staged_patch_sha256
+            _sha256_bytes(changes.full_patch) != snapshot.full_patch_sha256
+            or _sha256_bytes(changes.staged_patch) != snapshot.staged_patch_sha256
         ):
             raise WorktreeError("worktree_snapshot_checksum_mismatch")
 
@@ -113,8 +113,8 @@ class WorktreeSnapshotService:
         except (OSError, ValueError) as error:
             raise WorktreeError("worktree_snapshot_checksum_mismatch") from error
         if (
-            _sha256_text(changes.full_patch) != snapshot.full_patch_sha256
-            or _sha256_text(changes.staged_patch) != snapshot.staged_patch_sha256
+            _sha256_bytes(changes.full_patch) != snapshot.full_patch_sha256
+            or _sha256_bytes(changes.staged_patch) != snapshot.staged_patch_sha256
         ):
             raise WorktreeError("worktree_snapshot_checksum_mismatch")
 
@@ -253,8 +253,8 @@ def _same_snapshot(first: GitSourceSnapshot, second: GitSourceSnapshot) -> bool:
     )
 
 
-def _sha256_text(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+def _sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
 
 
 __all__ = ["WorktreeSnapshotService"]

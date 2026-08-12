@@ -11,7 +11,10 @@ import subprocess
 import time
 from collections.abc import Collection, Sequence
 
-from eidos_runtime.git.errors import GitCommandFailedError, GitCommandTimeoutError
+from eidos_runtime.git.errors import (
+    GitCommandFailedError,
+    GitCommandTimeoutError,
+)
 
 
 DEFAULT_GIT_TIMEOUT_SECONDS = 15.0
@@ -20,12 +23,19 @@ DEFAULT_GIT_PATCH_BYTES = 64 * 1024 * 1024
 
 
 @dataclass(frozen=True)
-class _NativeCommandResult:
-    stdout: str
-    stderr: str
+class GitCliResult:
+    stdout: bytes
+    stderr: bytes
     returncode: int
     stdout_truncated: bool
     stderr_truncated: bool
+
+
+@dataclass(frozen=True)
+class GitCliDiff:
+    patch: bytes
+    changed_paths: tuple[str, ...]
+    truncated: bool
 
 
 class HardenedGitRunner:
@@ -52,11 +62,13 @@ class HardenedGitRunner:
         *,
         cwd: Path,
         operation: str,
+        stdin: bytes | None = None,
         output_limit_bytes: int | None = None,
         config_overrides: Sequence[str] = (),
         apply_default_hardening: bool = True,
         allow_returncodes: Collection[int] = (),
-    ) -> _NativeCommandResult:
+        raise_on_truncation: bool = True,
+    ) -> GitCliResult:
         if not cwd.is_absolute() or not cwd.is_dir():
             raise GitCommandFailedError(operation, returncode=None)
         if any(not isinstance(argument, str) or "\x00" in argument for argument in args):
@@ -101,7 +113,7 @@ class HardenedGitRunner:
                 argv,
                 cwd=str(cwd),
                 env=environment,
-                stdin=subprocess.DEVNULL,
+                stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True,
@@ -118,7 +130,12 @@ class HardenedGitRunner:
             stdout, stderr, stdout_truncated, stderr_truncated = _communicate_bounded(
                 process,
                 timeout_seconds=self.timeout_seconds,
-                output_limit_bytes=output_limit_bytes or self.output_limit_bytes,
+                output_limit_bytes=(
+                    self.output_limit_bytes
+                    if output_limit_bytes is None
+                    else output_limit_bytes
+                ),
+                stdin=stdin,
             )
         except subprocess.TimeoutExpired:
             _terminate_process_group(process)
@@ -132,18 +149,21 @@ class HardenedGitRunner:
             )
             raise GitCommandTimeoutError(operation) from None
 
-        result = _NativeCommandResult(
-            stdout=stdout.decode("utf-8", errors="replace"),
-            stderr=stderr.decode("utf-8", errors="replace"),
+        result = GitCliResult(
+            stdout=stdout,
+            stderr=stderr,
             returncode=process.returncode,
             stdout_truncated=stdout_truncated,
             stderr_truncated=stderr_truncated,
         )
-        if result.stdout_truncated or result.stderr_truncated:
+        if (
+            raise_on_truncation
+            and (result.stdout_truncated or result.stderr_truncated)
+        ):
             raise GitCommandFailedError(
                 operation,
                 returncode=result.returncode,
-                stderr=result.stderr,
+                stderr=result.stderr.decode("utf-8", errors="replace"),
             )
         if result.returncode not in allow_returncodes and result.returncode != 0:
             self.logger.error(
@@ -156,7 +176,7 @@ class HardenedGitRunner:
             raise GitCommandFailedError(
                 operation,
                 returncode=result.returncode,
-                stderr=result.stderr,
+                stderr=result.stderr.decode("utf-8", errors="replace"),
             )
         self.logger.debug(
             "native git operation completed",
@@ -169,13 +189,12 @@ class HardenedGitRunner:
         return result
 
 
-class GitCliFallback:
-    """The two explicitly justified native Git escape hatches.
+class GitCli:
+    """Typed adapter for the small set of Git operations owned by Git itself.
 
-    Dulwich 1.2.12 cannot disable configured executable filters for its public
-    worktree-add helper, and it has no public equivalent of ``clean -fdx``.
-    The backend selects these operations before execution.  It never retries a
-    failed Dulwich operation through this class.
+    This class does not reconstruct Git state.  It passes patches and command
+    output through the hardened process boundary and leaves Git semantics to
+    ``/usr/bin/git``.
     """
 
     def __init__(self, *, runner: HardenedGitRunner | None = None) -> None:
@@ -197,7 +216,7 @@ class GitCliFallback:
         self._runner.run(
             ("worktree", "add", "--quiet", *add_args),
             cwd=repository_root,
-            operation="worktree-add-filter-safe-fallback",
+            operation="worktree-add",
             config_overrides=overrides,
         )
 
@@ -207,6 +226,284 @@ class GitCliFallback:
             cwd=worktree_root,
             operation="worktree-destructive-clean",
         )
+
+    def status_porcelain(self, cwd: Path) -> bytes:
+        result = self._runner.run(
+            (
+                "status",
+                "--porcelain=v1",
+                "--no-renames",
+                "--untracked-files=all",
+                "-z",
+                "--",
+            ),
+            cwd=cwd,
+            operation="status",
+            config_overrides=filter_config_overrides(self._runner, cwd),
+            output_limit_bytes=DEFAULT_GIT_PATCH_BYTES,
+        )
+        return result.stdout
+
+    def capture_working_tree_patch(
+        self,
+        cwd: Path,
+        *,
+        base_commit: str = "HEAD",
+        output_limit_bytes: int = DEFAULT_GIT_PATCH_BYTES,
+    ) -> bytes:
+        patch, truncated = self._capture_patch(
+            cwd,
+            base_commit=base_commit,
+            include_untracked=True,
+            output_limit_bytes=output_limit_bytes,
+            raise_on_truncation=True,
+        )
+        if truncated:
+            raise GitCommandFailedError(
+                "worktree-capture",
+                returncode=None,
+                stderr="Git patch output exceeds the size limit",
+            )
+        return patch
+
+    def capture_staged_patch(
+        self,
+        cwd: Path,
+        *,
+        base_commit: str = "HEAD",
+        output_limit_bytes: int = DEFAULT_GIT_PATCH_BYTES,
+    ) -> bytes:
+        result = self._runner.run(
+            (
+                "diff",
+                "--binary",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--cached",
+                base_commit,
+                "--",
+            ),
+            cwd=cwd,
+            operation="worktree-capture-staged",
+            config_overrides=filter_config_overrides(self._runner, cwd),
+            output_limit_bytes=output_limit_bytes,
+        )
+        return result.stdout
+
+    def diff(
+        self,
+        cwd: Path,
+        *,
+        base_commit: str,
+        include_untracked: bool,
+        output_limit_bytes: int,
+    ) -> GitCliDiff:
+        patch = self._capture_patch(
+            cwd,
+            base_commit=base_commit,
+            include_untracked=include_untracked,
+            output_limit_bytes=output_limit_bytes,
+            raise_on_truncation=False,
+        )
+        changed_paths = self._changed_paths(
+            cwd,
+            base_commit=base_commit,
+            include_untracked=include_untracked,
+            output_limit_bytes=output_limit_bytes,
+        )
+        return GitCliDiff(
+            patch=patch[0],
+            changed_paths=changed_paths,
+            truncated=patch[1],
+        )
+
+    def apply_working_tree_patch(
+        self,
+        cwd: Path,
+        *,
+        full_patch: bytes,
+        staged_patch: bytes,
+    ) -> None:
+        overrides = filter_config_overrides(self._runner, cwd)
+        if full_patch:
+            self._runner.run(
+                ("apply", "--binary", "--"),
+                cwd=cwd,
+                operation="worktree-apply",
+                stdin=full_patch,
+                config_overrides=overrides,
+            )
+        if staged_patch:
+            self._runner.run(
+                ("apply", "--binary", "--cached", "--"),
+                cwd=cwd,
+                operation="worktree-apply-staged",
+                stdin=staged_patch,
+                config_overrides=overrides,
+            )
+
+    def _capture_patch(
+        self,
+        cwd: Path,
+        *,
+        base_commit: str,
+        include_untracked: bool,
+        output_limit_bytes: int,
+        raise_on_truncation: bool,
+    ) -> tuple[bytes, bool]:
+        if output_limit_bytes < 1:
+            raise ValueError("Git patch output limit must be positive")
+        overrides = filter_config_overrides(self._runner, cwd)
+        result = self._runner.run(
+            (
+                "diff",
+                "--binary",
+                "--no-ext-diff",
+                "--no-textconv",
+                base_commit,
+                "--",
+            ),
+            cwd=cwd,
+            operation="worktree-diff",
+            config_overrides=overrides,
+            output_limit_bytes=output_limit_bytes,
+            raise_on_truncation=raise_on_truncation,
+        )
+        output = bytearray(result.stdout)
+        truncated = result.stdout_truncated
+        if include_untracked and not truncated:
+            for relative in self.untracked_paths(cwd):
+                remaining = output_limit_bytes - len(output)
+                if remaining < 1:
+                    if raise_on_truncation:
+                        raise GitCommandFailedError(
+                            "worktree-diff",
+                            returncode=None,
+                            stderr="Git patch output exceeds the size limit",
+                        )
+                    truncated = True
+                    break
+                untracked = self._untracked_patch(
+                    cwd,
+                    relative,
+                    output_limit_bytes=remaining,
+                    raise_on_truncation=raise_on_truncation,
+                    config_overrides=overrides,
+                )
+                output.extend(untracked[0])
+                if untracked[1]:
+                    truncated = True
+                    break
+        return bytes(output[:output_limit_bytes]), truncated
+
+    def untracked_paths(self, cwd: Path) -> tuple[str, ...]:
+        result = self._runner.run(
+            (
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "-z",
+                "--",
+            ),
+            cwd=cwd,
+            operation="untracked-paths",
+            output_limit_bytes=DEFAULT_GIT_PATCH_BYTES,
+        )
+        return tuple(
+            sorted(
+                os.fsdecode(path)
+                for path in result.stdout.split(b"\0")
+                if path and path != b".git"
+            )
+        )
+
+    def gitlink_paths(
+        self,
+        cwd: Path,
+        paths: Sequence[str],
+    ) -> tuple[str, ...]:
+        if not paths:
+            return ()
+        result = self._runner.run(
+            ("ls-files", "--stage", "-z", "--", *paths),
+            cwd=cwd,
+            operation="gitlink-paths",
+            output_limit_bytes=DEFAULT_GIT_PATCH_BYTES,
+        )
+        gitlinks: list[str] = []
+        for record in result.stdout.split(b"\0"):
+            if not record:
+                continue
+            try:
+                metadata, raw_path = record.split(b"\t", 1)
+                mode = metadata.split(b" ", 1)[0]
+            except ValueError as error:
+                raise GitCommandFailedError(
+                    "gitlink-paths",
+                    returncode=None,
+                    stderr="Git index output is invalid",
+                ) from error
+            if mode == b"160000":
+                gitlinks.append(os.fsdecode(raw_path))
+        return tuple(sorted(set(gitlinks)))
+
+    def _untracked_patch(
+        self,
+        cwd: Path,
+        relative: str,
+        *,
+        output_limit_bytes: int,
+        raise_on_truncation: bool,
+        config_overrides: Sequence[str],
+    ) -> tuple[bytes, bool]:
+        result = self._runner.run(
+            (
+                "diff",
+                "--no-index",
+                "--binary",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--",
+                "/dev/null",
+                relative,
+            ),
+            cwd=cwd,
+            operation="worktree-diff-untracked",
+            config_overrides=config_overrides,
+            output_limit_bytes=output_limit_bytes,
+            allow_returncodes=(1,),
+            raise_on_truncation=raise_on_truncation,
+        )
+        return result.stdout, result.stdout_truncated
+
+    def _changed_paths(
+        self,
+        cwd: Path,
+        *,
+        base_commit: str,
+        include_untracked: bool,
+        output_limit_bytes: int,
+    ) -> tuple[str, ...]:
+        result = self._runner.run(
+            (
+                "diff",
+                "--name-only",
+                "--no-renames",
+                "--no-ext-diff",
+                "--no-textconv",
+                "-z",
+                base_commit,
+                "--",
+            ),
+            cwd=cwd,
+            operation="worktree-diff-paths",
+            config_overrides=filter_config_overrides(self._runner, cwd),
+            output_limit_bytes=max(output_limit_bytes, DEFAULT_GIT_OUTPUT_BYTES),
+        )
+        paths = {os.fsdecode(path) for path in result.stdout.split(b"\0") if path}
+        if include_untracked:
+            paths.update(self.untracked_paths(cwd))
+        return tuple(sorted(paths))
 
 
 def filter_config_overrides(
@@ -231,13 +528,13 @@ def filter_config_overrides(
     )
     if result.returncode == 1:
         return ()
-    if result.stdout and not result.stdout.endswith("\x00"):
+    if result.stdout and not result.stdout.endswith(b"\x00"):
         raise GitCommandFailedError(
             "config-filter-list",
             returncode=result.returncode,
             stderr="filter config output is incomplete",
         )
-    keys = [key for key in result.stdout.split("\x00") if key]
+    keys = [os.fsdecode(key) for key in result.stdout.split(b"\x00") if key]
     names: set[str] = set()
     for key in keys:
         match = re.fullmatch(
@@ -273,6 +570,7 @@ def _communicate_bounded(
     *,
     timeout_seconds: float,
     output_limit_bytes: int,
+    stdin: bytes | None,
 ) -> tuple[bytes, bytes, bool, bool]:
     selector = selectors.DefaultSelector()
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
@@ -282,6 +580,10 @@ def _communicate_bounded(
         if stream is not None:
             os.set_blocking(stream.fileno(), False)
             selector.register(stream, selectors.EVENT_READ, name)
+    stdin_offset = 0
+    if process.stdin is not None and stdin is not None:
+        os.set_blocking(process.stdin.fileno(), False)
+        selector.register(process.stdin, selectors.EVENT_WRITE, "stdin")
     deadline = time.monotonic() + timeout_seconds
     try:
         while selector.get_map():
@@ -293,6 +595,23 @@ def _communicate_bounded(
                 raise subprocess.TimeoutExpired(process.args, timeout_seconds)
             for key, _ in ready:
                 stream = key.fileobj
+                if key.data == "stdin":
+                    if stdin_offset >= len(stdin or b""):
+                        selector.unregister(stream)
+                        stream.close()
+                        continue
+                    try:
+                        written = os.write(
+                            stream.fileno(),
+                            (stdin or b"")[stdin_offset : stdin_offset + 16 * 1024],
+                        )
+                    except BrokenPipeError:
+                        written = 0
+                    stdin_offset += written
+                    if stdin_offset >= len(stdin or b"") or written == 0:
+                        selector.unregister(stream)
+                        stream.close()
+                    continue
                 chunk = os.read(stream.fileno(), 16 * 1024)
                 if not chunk:
                     selector.unregister(stream)
@@ -341,13 +660,15 @@ def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
 
 
 def _close_process_pipes(process: subprocess.Popen[bytes]) -> None:
-    for stream in (process.stdout, process.stderr):
+    for stream in (process.stdin, process.stdout, process.stderr):
         if stream is not None:
             stream.close()
 
 
 __all__ = [
-    "GitCliFallback",
+    "GitCli",
+    "GitCliDiff",
+    "GitCliResult",
     "HardenedGitRunner",
     "filter_config_overrides",
 ]

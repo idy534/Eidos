@@ -32,6 +32,7 @@ from eidos_runtime.git.backend import (
 from eidos_runtime.git.errors import (
     GitCommandFailedError,
     GitCommandTimeoutError,
+    GitUnsupportedOperationError,
     WorktreeError,
 )
 from eidos_runtime.git.models import (
@@ -117,6 +118,8 @@ class WorktreeManager:
             return self.git.capture_worktree_changes(root)
         except GitCommandTimeoutError:
             raise WorktreeError("git_command_timeout") from None
+        except GitUnsupportedOperationError:
+            raise WorktreeError("worktree_gitlink_unsupported") from None
         except GitCommandFailedError as error:
             raise WorktreeError("git_command_failed") from error
 
@@ -127,6 +130,8 @@ class WorktreeManager:
             self.git.apply_worktree_changes(root, changes)
         except GitCommandTimeoutError:
             raise WorktreeError("git_command_timeout") from None
+        except GitUnsupportedOperationError:
+            raise WorktreeError("worktree_gitlink_unsupported") from None
         except GitCommandFailedError as error:
             raise WorktreeError("handoff_git_conflict") from error
 
@@ -291,6 +296,8 @@ class WorktreeManager:
             )
         except GitCommandTimeoutError:
             raise WorktreeError("git_command_timeout") from None
+        except GitUnsupportedOperationError:
+            raise WorktreeError("worktree_gitlink_unsupported") from None
         except GitCommandFailedError as error:
             raise WorktreeError("git_command_failed") from error
         return GitSourceSnapshot(

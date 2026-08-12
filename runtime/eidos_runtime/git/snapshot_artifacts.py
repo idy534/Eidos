@@ -13,7 +13,7 @@ from eidos_runtime.git.models import GitWorkingTreePatch
 from eidos_runtime.models import EidosFrozenStrictModel
 
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 _SHA256 = r"^[0-9a-f]{64}$"
 
 
@@ -22,9 +22,6 @@ class SnapshotArtifactManifest(EidosFrozenStrictModel):
     artifact_sha256: str = Field(min_length=64, max_length=64, pattern=_SHA256)
     full_patch_sha256: str = Field(min_length=64, max_length=64, pattern=_SHA256)
     staged_patch_sha256: str = Field(min_length=64, max_length=64, pattern=_SHA256)
-    state_sha256: str | None = Field(
-        default=None, min_length=64, max_length=64, pattern=_SHA256
-    )
 
 
 class SnapshotArtifact(EidosFrozenStrictModel):
@@ -33,13 +30,10 @@ class SnapshotArtifact(EidosFrozenStrictModel):
     full_patch_sha256: str = Field(min_length=64, max_length=64, pattern=_SHA256)
     staged_patch_sha256: str = Field(min_length=64, max_length=64, pattern=_SHA256)
     format_version: int = Field(default=FORMAT_VERSION, ge=1, le=100)
-    state_sha256: str | None = Field(
-        default=None, min_length=64, max_length=64, pattern=_SHA256
-    )
 
 
 class SnapshotArtifactStore:
-    """Crash-safe filesystem store for compressed snapshot state."""
+    """Crash-safe filesystem store for compressed Git patch artifacts."""
 
     def __init__(self, data_directory: Path) -> None:
         if not data_directory.is_absolute():
@@ -50,26 +44,16 @@ class SnapshotArtifactStore:
 
     def write(self, snapshot_id: str, changes: GitWorkingTreePatch) -> SnapshotArtifact:
         target = self._target(snapshot_id)
-        full = changes.full_patch.encode("utf-8")
-        staged = changes.staged_patch.encode("utf-8")
+        full = changes.full_patch
+        staged = changes.staged_patch
         full_compressed = gzip.compress(full, mtime=0)
         staged_compressed = gzip.compress(staged, mtime=0)
-        state = changes.model_dump_json(by_alias=True, exclude_none=False).encode(
-            "utf-8"
-        )
-        state_compressed = gzip.compress(state, mtime=0)
-        state_sha256 = _sha256(state) if _has_structured_state(changes) else None
-        artifact_sha256 = _artifact_hash(
-            full_compressed,
-            staged_compressed,
-            state_compressed if state_sha256 is not None else None,
-        )
+        artifact_sha256 = _artifact_hash(full_compressed, staged_compressed)
         artifact = SnapshotArtifact(
             path=target,
             artifact_sha256=artifact_sha256,
             full_patch_sha256=_sha256(full),
             staged_patch_sha256=_sha256(staged),
-            state_sha256=state_sha256,
         )
         if target.exists():
             existing = self._read_manifest(target)
@@ -81,14 +65,11 @@ class SnapshotArtifactStore:
         try:
             self._write_bytes(temporary / "full.patch.gz", full_compressed)
             self._write_bytes(temporary / "staged.patch.gz", staged_compressed)
-            if state_sha256 is not None:
-                self._write_bytes(temporary / "working-state.json.gz", state_compressed)
             manifest = SnapshotArtifactManifest(
                 format_version=FORMAT_VERSION,
                 artifact_sha256=artifact_sha256,
                 full_patch_sha256=artifact.full_patch_sha256,
                 staged_patch_sha256=artifact.staged_patch_sha256,
-                state_sha256=state_sha256,
             )
             self._write_bytes(
                 temporary / "manifest.json",
@@ -110,13 +91,7 @@ class SnapshotArtifactStore:
         try:
             full_compressed = (target / "full.patch.gz").read_bytes()
             staged_compressed = (target / "staged.patch.gz").read_bytes()
-            state_compressed: bytes | None = None
-            if manifest.state_sha256 is not None:
-                state_compressed = (target / "working-state.json.gz").read_bytes()
-            if (
-                _artifact_hash(full_compressed, staged_compressed, state_compressed)
-                != manifest.artifact_sha256
-            ):
+            if _artifact_hash(full_compressed, staged_compressed) != manifest.artifact_sha256:
                 raise ValueError("snapshot artifact checksum mismatch")
             full = gzip.decompress(full_compressed)
             staged = gzip.decompress(staged_compressed)
@@ -124,20 +99,7 @@ class SnapshotArtifactStore:
                 raise ValueError("snapshot full patch checksum mismatch")
             if _sha256(staged) != manifest.staged_patch_sha256:
                 raise ValueError("snapshot staged patch checksum mismatch")
-            if state_compressed is None:
-                return GitWorkingTreePatch(
-                    full_patch=full.decode("utf-8"),
-                    staged_patch=staged.decode("utf-8"),
-                )
-            state = gzip.decompress(state_compressed)
-            if _sha256(state) != manifest.state_sha256:
-                raise ValueError("snapshot state checksum mismatch")
-            parsed = GitWorkingTreePatch.model_validate_json(state)
-            if parsed.full_patch != full.decode("utf-8") or parsed.staged_patch != staged.decode(
-                "utf-8"
-            ):
-                raise ValueError("snapshot state patch mismatch")
-            return parsed
+            return GitWorkingTreePatch(full_patch=full, staged_patch=staged)
         except (OSError, UnicodeDecodeError, UnicodeError, gzip.BadGzipFile, ValidationError) as error:
             raise ValueError("snapshot artifact is unreadable") from error
 
@@ -208,22 +170,14 @@ def _artifact_from_manifest(
         full_patch_sha256=manifest.full_patch_sha256,
         staged_patch_sha256=manifest.staged_patch_sha256,
         format_version=manifest.format_version,
-        state_sha256=manifest.state_sha256,
     )
-
-
-def _has_structured_state(changes: GitWorkingTreePatch) -> bool:
-    return changes.full_state is not None or changes.staged_state is not None
 
 
 def _artifact_hash(
     full_compressed: bytes,
     staged_compressed: bytes,
-    state_compressed: bytes | None,
 ) -> str:
     value = full_compressed + b"\0" + staged_compressed
-    if state_compressed is not None:
-        value += b"\0" + state_compressed
     return _sha256(value)
 
 

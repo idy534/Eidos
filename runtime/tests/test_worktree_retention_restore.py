@@ -181,7 +181,7 @@ def test_storage_reconciliation_retains_unproven_orphan_candidates(
     head = manager.head(repository)
     orphan = service.artifacts.write(
         "orphan",
-        GitWorkingTreePatch(full_patch="", staged_patch=""),
+        GitWorkingTreePatch(full_patch=b"", staged_patch=b""),
     )
     manager.git.create_snapshot_anchor(repository, "orphan", head)
 
