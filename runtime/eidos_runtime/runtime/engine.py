@@ -9,6 +9,7 @@ from typing import Callable, Protocol
 from eidos_runtime.context.builder import ContextBuild, ContextBuilder
 from eidos_runtime.context.project_rules import ProjectRuleResolver
 from eidos_runtime.context.compactor import ContextCompactionError, ContextCompactor
+from eidos_runtime.context.repository import RunRepositoryContext
 from eidos_runtime.db.storage import (
     ContextLimitExceeded,
     InvalidRunStateError,
@@ -46,6 +47,7 @@ from eidos_runtime.runtime.sampling import (
 )
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.step_context import StepContextFactory
+from eidos_runtime.repo_intelligence.query import RepositoryTaskQueryBuilder
 from eidos_runtime.runtime.tool_runtime import ToolCallRuntime
 from eidos_runtime.runtime.tool_execution import ToolInfrastructureError
 from eidos_runtime.telemetry.tracing import (
@@ -122,7 +124,9 @@ class RuntimeEngine:
         self.repository_runtime = repository_runtime
 
     def run(self, run_id: str, cancel: threading.Event) -> None:
-        repository_snapshot: object | None = None
+        repository_context = RunRepositoryContext()
+        repository_snapshot = None
+        repository_state = None
         if self.repository_runtime is not None:
             workspace = self.store.workspace_for_run(run_id)
             repository_state = self.repository_runtime.ensure_ready(
@@ -130,13 +134,58 @@ class RuntimeEngine:
             )
             repository_snapshot = getattr(repository_state, "snapshot", None)
         run = self.store.read_run(run_id)
+        if (
+            repository_state is not None
+            and repository_snapshot is not None
+            and repository_snapshot.complete
+            and repository_snapshot.index is not None
+        ):
+            try:
+                query = RepositoryTaskQueryBuilder().build(
+                    str(run.get("userInput") or ""),
+                    inventory=repository_snapshot.inventory,
+                    index=repository_snapshot.index,
+                    facts=self.store.context_projection_facts(run_id),
+                    dirty_paths=tuple(sorted(repository_state.dirty_paths)),
+                )
+                retrieval = repository_state.application.retrieve(
+                    repository_snapshot, query, cancel=cancel
+                )
+                repository_context = RunRepositoryContext(
+                    repository_snapshot_id=(
+                        repository_snapshot.persisted_snapshot.snapshot_id
+                        if repository_snapshot.persisted_snapshot is not None
+                        else None
+                    ),
+                    inventory=repository_snapshot.inventory,
+                    index=repository_snapshot.index,
+                    repository_map=repository_snapshot.repository_map,
+                    query=query,
+                    retrieval=retrieval,
+                )
+            except Exception:
+                logger.warning(
+                    "repository_retrieval_unavailable",
+                    extra={"run_id": run_id},
+                    exc_info=logger.isEnabledFor(logging.DEBUG),
+                )
+                repository_context = RunRepositoryContext(
+                    repository_snapshot_id=(
+                        repository_snapshot.persisted_snapshot.snapshot_id
+                        if repository_snapshot.persisted_snapshot is not None
+                        else None
+                    ),
+                    inventory=repository_snapshot.inventory,
+                    index=repository_snapshot.index,
+                    repository_map=repository_snapshot.repository_map,
+                )
         with run_span(
             run_id,
             str(run["modelId"]),
             run.get("sessionId") if isinstance(run.get("sessionId"), str) else None,
         ) as span:
             try:
-                self._run(run_id, cancel, run)
+                self._run(run_id, cancel, run, repository_context)
             finally:
                 try:
                     finish_run(span, self.store.read_run(run_id).get("status"))
@@ -145,14 +194,13 @@ class RuntimeEngine:
                         "Could not read final run status for telemetry",
                         exc_info=True,
                     )
-        # Keep this immutable request-scoped generation alive for the full Run.
-        _ = repository_snapshot
 
     def _run(
         self,
         run_id: str,
         cancel: threading.Event,
         run: dict[str, object],
+        repository_context: RunRepositoryContext,
     ) -> None:
         self._emit_started(run_id, run)
         extension_snapshot = run.get("extensionSnapshot")
@@ -170,7 +218,7 @@ class RuntimeEngine:
                 mcp_sandbox=self.mcp_sandbox,
                 resource_registry=self.resources,
             ) as resources:
-                self._drive(run_context, resources, cancel)
+                self._drive(run_context, resources, cancel, repository_context)
         except RunResourceError as error:
             self._fail(run_id, str(error))
         except ContextLimitExceeded as error:
@@ -214,6 +262,7 @@ class RuntimeEngine:
         run: RunContext,
         resources: RunResources,
         cancel: threading.Event,
+        repository_context: RunRepositoryContext,
     ) -> None:
         decisions = LoopDecisionEngine()
         guard = LoopGuard.from_signatures(
@@ -283,6 +332,7 @@ class RuntimeEngine:
                 extra_context=run.model_context,
                 rule_resolution_snapshot=rule_snapshot,
                 step_policy=step_policy,
+                repository_context=repository_context,
             )
             if pending_compaction_baseline is not None:
                 if built.budget.projected_input_tokens >= pending_compaction_baseline:

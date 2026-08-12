@@ -569,6 +569,8 @@ def test_runtime_engine_captures_repository_once_for_multi_step_run(
         active = repository_runtime.activate_workspace(root)
         original_build = active.application.build
         build_count = 0
+        original_retrieve = active.application.retrieve
+        retrieval_count = 0
 
         def counted_build(**kwargs: object):
             nonlocal build_count
@@ -576,6 +578,13 @@ def test_runtime_engine_captures_repository_once_for_multi_step_run(
             return original_build(**kwargs)
 
         monkeypatch.setattr(active.application, "build", counted_build)
+
+        def counted_retrieve(*args: object, **kwargs: object):
+            nonlocal retrieval_count
+            retrieval_count += 1
+            return original_retrieve(*args, **kwargs)
+
+        monkeypatch.setattr(active.application, "retrieve", counted_retrieve)
         model = ScriptedModel([
             ModelResponse(tool_calls=(
                 ModelToolCall("list", "list_files", {}),
@@ -602,10 +611,112 @@ def test_runtime_engine_captures_repository_once_for_multi_step_run(
 
         assert len(model.contexts) == 2
         assert build_count == 1
+        assert retrieval_count == 1
         assert active.snapshot is not None
         assert active.snapshot.inventory.generation == 1
         assert active.reconciliation_required is True
         assert active.dirty_paths == frozenset({"agent-write.py"})
+    finally:
+        repository_runtime.shutdown_all()
+        store.close()
+
+
+def test_first_model_request_contains_repository_overview_and_retrieval_evidence(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "auth.py").write_text(
+        "def authenticate_user(name: str) -> bool:\n    return bool(name)\n",
+        encoding="utf-8",
+    )
+    (root / "auth_test.py").write_text(
+        "from auth import authenticate_user\n\ndef test_auth():\n"
+        "    assert authenticate_user('alice')\n",
+        encoding="utf-8",
+    )
+    (root / "pyproject.toml").write_text(
+        "[project]\nname='auth-demo'\n[tool.pytest.ini_options]\n",
+        encoding="utf-8",
+    )
+    store = SessionStore(tmp_path / "runtime-data")
+    store.initialize()
+    repository_runtime = _runtime(store.repository_intelligence_repository())
+    model = ScriptedModel([ModelResponse(text="done")])
+    try:
+        session = store.create_session(str(root))
+        run, _item = store.create_run(
+            session["id"], "修改 authenticate_user 并更新相关测试"
+        )
+
+        RuntimeEngine(
+            store,
+            model,
+            lambda _message: None,
+            repository_runtime=repository_runtime,
+        ).run(run["id"], threading.Event())
+
+        assert len(model.contexts) == 1
+        sections = {
+            item.get("sectionId"): str(item.get("content", ""))
+            for item in model.contexts[0]
+            if item.get("type") == "user"
+        }
+        assert "repository-overview" in sections
+        assert "pytest" in sections["repository-overview"]
+        repository_text = "\n".join(
+            str(item.get("content", ""))
+            for item in model.contexts[0]
+            if item.get("sectionId") == "repository-evidence"
+        )
+        assert "auth.py" in repository_text
+        assert "authenticate_user" in repository_text
+        assert "auth_test.py" in repository_text
+    finally:
+        repository_runtime.shutdown_all()
+        store.close()
+
+
+def test_retrieval_failure_does_not_block_normal_model_sampling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "main.py").write_text("value = 1\n", encoding="utf-8")
+    store = SessionStore(tmp_path / "runtime-data")
+    store.initialize()
+    repository_runtime = _runtime(store.repository_intelligence_repository())
+    model = ScriptedModel([ModelResponse(text="done")])
+    try:
+        session = store.create_session(str(root))
+        run, _item = store.create_run(session["id"], "inspect main.py")
+        active = repository_runtime.activate_workspace(root)
+        monkeypatch.setattr(
+            active.application,
+            "retrieve",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                TimeoutError("retrieval deadline")
+            ),
+        )
+
+        RuntimeEngine(
+            store,
+            model,
+            lambda _message: None,
+            repository_runtime=repository_runtime,
+        ).run(run["id"], threading.Event())
+
+        assert len(model.contexts) == 1
+        assert store.read_run(run["id"])["status"] == "succeeded"
+        assert any(
+            item.get("sectionId") == "repository-overview"
+            for item in model.contexts[0]
+        )
+        assert not any(
+            item.get("sectionId") == "repository-evidence"
+            for item in model.contexts[0]
+        )
     finally:
         repository_runtime.shutdown_all()
         store.close()

@@ -188,12 +188,14 @@ class RepositoryApplication:
         self,
         snapshot: RepositoryAnalysisSnapshot,
         query: RepositoryRetrievalQuery,
+        *,
+        cancel: threading.Event | None = None,
     ) -> RetrievalSnapshot:
         if not snapshot.complete or snapshot.index is None:
             raise ValueError("complete repository analysis is required")
         return RepositoryRetriever(
             snapshot.inventory, snapshot.index, self.repository
-        ).retrieve(query)
+        ).retrieve(query, cancel=cancel)
 
 
 class RepositoryApplicationFactory:

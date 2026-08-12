@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 from eidos_runtime.context.budget import ContextBudget, estimate_context_budget
 from eidos_runtime.context.facts import ContextFacts
+from eidos_runtime.context.repository import RunRepositoryContext
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelContextItem, ModelToolDefinition
 from eidos_runtime.model.instructions import InstructionResolver, StepPermissionPolicy
@@ -53,6 +54,7 @@ class ContextBuilder:
         extra_context: tuple[ModelContextItem, ...] = (),
         rule_resolution_snapshot: RuleResolutionSnapshot | None = None,
         step_policy: StepPermissionPolicy | None = None,
+        repository_context: RunRepositoryContext | None = None,
     ) -> ContextBuild:
         facts = self.store.context_projection_facts(run_id)
         profile = self.store.read_model_profile(run_id)
@@ -108,6 +110,8 @@ class ContextBuilder:
             retained_by_id[key].as_model_item()
             for key in sorted(retained_by_id)
         )
+        if repository_context is not None:
+            context.extend(repository_context.model_context_items())
         if facts.compact_summary is not None:
             context.append({
                 "type": "user",
