@@ -31,6 +31,8 @@ class WorktreeLifecycleScope(StrEnum):
     SESSION_DELETE = "session/delete"
     CHECKPOINT_FORK = "checkpoint/fork"
     ATTACH_BRANCH = "worktree/attach-branch"
+    RETENTION_CLEANUP = "worktree/retention-cleanup"
+    RESTORE = "worktree/restore"
 
 
 class WorktreeLifecycleState(StrEnum):
@@ -40,6 +42,9 @@ class WorktreeLifecycleState(StrEnum):
     RUN_CREATED = "run_created"
     CHECKPOINT_ACTION_CREATED = "checkpoint_action_created"
     BRANCH_ATTACHED = "branch_attached"
+    SNAPSHOT_SAVED = "snapshot_saved"
+    STATE_MATERIALIZED = "state_materialized"
+    WORKTREE_REBOUND = "worktree_rebound"
     WORKTREE_DELETED = "worktree_deleted"
     COMPLETED = "completed"
     CLEANUP_REQUIRED = "cleanup_required"
@@ -67,6 +72,7 @@ class Worktree(EidosFrozenStrictModel):
     state: WorktreeState
     created_at: datetime
     updated_at: datetime
+    last_used_at: datetime
 
     @model_validator(mode="before")
     @classmethod
@@ -81,6 +87,15 @@ class Worktree(EidosFrozenStrictModel):
         )
         if "checkout_branch" not in candidate:
             candidate["checkout_branch"] = candidate.get("branch")
+        return candidate
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_last_used_at(cls, value: object) -> object:
+        if not isinstance(value, dict) or "last_used_at" in value:
+            return value
+        candidate = dict(value)
+        candidate["last_used_at"] = candidate.get("updated_at")
         return candidate
 
     @model_validator(mode="after")
@@ -177,6 +192,9 @@ class WorktreeLifecycleOperation(EidosFrozenStrictModel):
     source_branch: str | None = None
     source_dirty: bool | None = None
     source_fingerprint: str | None = None
+    snapshot_id: str | None = None
+    snapshot_head: str | None = None
+    snapshot_fingerprint: str | None = None
     error_code: str | None = None
     created_at: datetime
     updated_at: datetime

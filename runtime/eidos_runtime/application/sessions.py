@@ -58,6 +58,8 @@ from eidos_runtime.protocol.methods import (
     SessionDeleteResponseDto,
     SessionHandoffRequestDto,
     SessionHandoffResponseDto,
+    SessionRestoreWorktreeRequestDto,
+    SessionRestoreWorktreeResponseDto,
     SessionGitDiffRequestDto,
     SessionGitDiffResponseDto,
     SessionGitStatusRequestDto,
@@ -317,6 +319,22 @@ class ManagedWorktreePort(Protocol):
         expected_target_fingerprint: str | None = None,
     ) -> Worktree: ...
 
+    def touch_last_used(self, worktree_id: str) -> Worktree: ...
+
+
+class WorktreeRetentionPort(Protocol):
+    def reconcile(self) -> object: ...
+
+    def restore_worktree(
+        self, worktree_id: str, *, operation_id: str | None = None
+    ) -> Worktree: ...
+
+    def delete_snapshots_for_worktree(self, worktree_id: str) -> None: ...
+
+    def has_ready_snapshot(self, worktree_id: str) -> bool: ...
+
+    def latest_ready_snapshot_id(self, worktree_id: str) -> str | None: ...
+
 
 def clean_session_title(value: str) -> str:
     """Apply the established title canonicalization before durable storage."""
@@ -347,6 +365,7 @@ class SessionApplication:
         scan_text: Callable[[str], str],
         worktree_manager: ManagedWorktreePort | None = None,
         lifecycle: SessionLifecycleCoordinator | None = None,
+        retention: WorktreeRetentionPort | None = None,
     ) -> None:
         self._store = store
         self._repository: TypedSessionRepositoryPort = (
@@ -354,6 +373,7 @@ class SessionApplication:
         )
         self._scan_text = scan_text
         self._worktree_manager = worktree_manager
+        self._retention = retention
         self._lifecycle = lifecycle or SessionLifecycleCoordinator()
         self._logger = logging.getLogger(__name__)
 
@@ -799,6 +819,15 @@ class SessionApplication:
                 lifecycle_operation_id,
                 WorktreeLifecycleState.COMPLETED,
             )
+            manager.touch_last_used(worktree.id)
+            if self._retention is not None:
+                try:
+                    self._retention.reconcile()
+                except Exception:
+                    self._logger.exception(
+                        "Worktree retention reconciliation after create failed",
+                        extra={"worktree_id": worktree.id},
+                    )
             result = _result(
                 SessionCreateResponseDto,
                 self._project_session(self._projection_for_session(session.id)),
@@ -1082,6 +1111,39 @@ class SessionApplication:
                 except StorageError as error:
                     self._mark_handoff_failure(operation if "operation" in locals() else None, error)
                     raise ApplicationError("WORKTREE_RECOVERY_REQUIRED", str(error)) from error
+
+    def restore_worktree(
+        self, request: SessionRestoreWorktreeRequestDto
+    ) -> SessionRestoreWorktreeResponseDto:
+        self._require_manager()
+        session = self._repository.read_session(request.session_id)
+        if session is None:
+            raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
+        worktree_id = session.associated_worktree_id
+        if worktree_id is None or self._retention is None:
+            raise ApplicationError(
+                "WORKTREE_RESTORE_REQUIRED",
+                "Session has no restorable managed Worktree snapshot",
+            )
+        try:
+            self._retention.restore_worktree(
+                worktree_id, operation_id=request.operation_id
+            )
+        except WorktreeError as error:
+            raise ApplicationError(
+                _handoff_error_code(error.code), str(error)
+            ) from error
+        try:
+            self._retention.reconcile()
+        except Exception:
+            self._logger.exception(
+                "Worktree retention reconciliation after restore failed",
+                extra={"worktree_id": worktree_id},
+            )
+        value = self._project_session(self._projection_for_session(session.id))
+        value["sessionId"] = session.id
+        value["worktreeId"] = worktree_id
+        return _result(SessionRestoreWorktreeResponseDto, value)
 
     def recover_handoffs(self) -> tuple[SessionHandoffOperation, ...]:
         """Resume durable handoffs after Runtime restart.
@@ -1392,11 +1454,23 @@ class SessionApplication:
                 raise ResourceNotFoundError("session not found")
             if session.execution_mode is not current.target_mode:
                 raise WorktreeError("handoff_recovery_required")
+            if current.target_mode is SessionExecutionMode.WORKTREE:
+                touch = getattr(manager, "touch_last_used", None)
+                if touch is not None:
+                    touch(current.associated_worktree_id)
             repository.update_state(
                 current.scope,
                 current.operation_id,
                 SessionHandoffState.COMPLETED,
             )
+            if current.target_mode is SessionExecutionMode.WORKTREE and self._retention is not None:
+                try:
+                    self._retention.reconcile()
+                except Exception:
+                    self._logger.exception(
+                        "Worktree retention reconciliation after handoff failed",
+                        extra={"worktree_id": current.associated_worktree_id},
+                    )
         return session
 
     def _materialize_worktree_target(
@@ -1795,6 +1869,78 @@ class SessionApplication:
                             branch=associated.checkout_branch,
                             state=associated.state,
                         )
+                    if (
+                        worktree_projection is not None
+                        and worktree_projection.state.value == "deleted"
+                        and self._retention is not None
+                        and self._retention.has_ready_snapshot(
+                            worktree_projection.worktree_id
+                        )
+                    ):
+                        if lifecycle_operation is None:
+                            snapshot_id = self._retention.latest_ready_snapshot_id(
+                                worktree_projection.worktree_id
+                            )
+                            if snapshot_id is None:
+                                raise ApplicationError(
+                                    "WORKTREE_RESTORE_REQUIRED",
+                                    "deleted Worktree snapshot is no longer ready",
+                                )
+                            project = manager.project(worktree_projection.project_id)
+                            lifecycle_operation_id = request.operation_id or (
+                                f"session-delete-{uuid.uuid4().hex}"
+                            )
+                            now = datetime.now(UTC).replace(microsecond=0)
+                            lifecycle_operation = manager.lifecycle.prepare(
+                                WorktreeLifecycleOperation(
+                                    scope=WorktreeLifecycleScope.SESSION_DELETE,
+                                    operation_id=lifecycle_operation_id,
+                                    state=WorktreeLifecycleState.PREPARED,
+                                    project_id=project.id,
+                                    repository_root=project.workspace_root,
+                                    worktree_id=worktree_projection.worktree_id,
+                                    worktree_root=worktree_projection.worktree_root,
+                                    base_ref=worktree_projection.base_ref,
+                                    branch=worktree_projection.branch,
+                                    base_commit=worktree_projection.base_commit,
+                                    session_id=request.session_id,
+                                    snapshot_id=snapshot_id,
+                                    created_at=now,
+                                    updated_at=now,
+                                )
+                            )
+                        if lifecycle_operation.state is WorktreeLifecycleState.CLEANUP_REQUIRED:
+                            raise ApplicationError(
+                                "WORKTREE_RECOVERY_REQUIRED",
+                                lifecycle_operation.error_code
+                                or "Session snapshot cleanup recovery is required",
+                            )
+                        self._retention.delete_snapshots_for_worktree(
+                            worktree_projection.worktree_id
+                        )
+                        if lifecycle_operation.state is WorktreeLifecycleState.PREPARED:
+                            lifecycle_operation = manager.lifecycle.update_state(
+                                WorktreeLifecycleScope.SESSION_DELETE,
+                                lifecycle_operation.operation_id,
+                                WorktreeLifecycleState.WORKTREE_DELETED,
+                            )
+                        mutation = self._repository.delete_session(
+                            request.session_id,
+                            operation_id=None,
+                        )
+                        manager.lifecycle.update_state(
+                            WorktreeLifecycleScope.SESSION_DELETE,
+                            lifecycle_operation.operation_id,
+                            WorktreeLifecycleState.COMPLETED,
+                        )
+                        result = deleted_session_to_legacy_dict(mutation.value)
+                        if request.operation_id is not None:
+                            return self._record_delete_operation(
+                                request.operation_id,
+                                operation_request,
+                                result,
+                            )
+                        return _result(SessionDeleteResponseDto, result)
                     if worktree_projection is not None:
                         if manager is None:
                             raise ApplicationError(
@@ -1933,6 +2079,16 @@ class SessionApplication:
         value["executionMode"] = session.execution_mode.value
         if session.associated_worktree_id is not None:
             value["associatedWorktreeId"] = session.associated_worktree_id
+            value["worktreeRestoreAvailable"] = bool(
+                self._retention is not None
+                and self._retention.has_ready_snapshot(
+                    session.associated_worktree_id
+                )
+                and (
+                    projection.worktree is None
+                    or projection.worktree.state.value == "deleted"
+                )
+            )
         value["project"] = SessionProjectDto(
             id=projection.project.id,
             workspaceRoot=projection.project.workspace_root,
@@ -2027,6 +2183,15 @@ def _worktree_error_code(error: WorktreeError) -> str:
         "worktree_include_source_invalid": "WORKTREE_INCLUDE_INVALID",
         "worktree_include_target_invalid": "WORKTREE_INCLUDE_FAILED",
         "worktree_cleanup_required": "WORKTREE_RECOVERY_REQUIRED",
+        "worktree_snapshot_anchor_mismatch": "WORKTREE_RESTORE_REQUIRED",
+        "worktree_snapshot_anchor_changed": "WORKTREE_RESTORE_REQUIRED",
+        "worktree_snapshot_anchor_unavailable": "WORKTREE_RESTORE_REQUIRED",
+        "worktree_snapshot_checksum_mismatch": "WORKTREE_RESTORE_REQUIRED",
+        "worktree_restore_failed": "WORKTREE_RESTORE_REQUIRED",
+        "worktree_restore_verification_failed": "WORKTREE_RESTORE_REQUIRED",
+        "worktree_snapshot_required": "WORKTREE_RESTORE_REQUIRED",
+        "worktree_restore_not_required": "WORKTREE_RESTORE_REQUIRED",
+        "worktree_snapshot_cleanup_required": "WORKTREE_RECOVERY_REQUIRED",
     }.get(error.code, "WORKTREE_CREATE_FAILED")
 
 
@@ -2070,6 +2235,8 @@ def _git_review_error_code(error: WorktreeError) -> str:
         return "GIT_WORKTREE_NOT_FOUND"
     if error.code == "worktree_missing":
         return "GIT_WORKTREE_MISSING"
+    if error.code == "worktree_snapshot_cleanup_required":
+        return "WORKTREE_RECOVERY_REQUIRED"
     if error.code in {"worktree_remove_failed", "worktree_persistence_failed"}:
         return "WORKTREE_DELETE_FAILED"
     if error.code.startswith("worktree_"):
@@ -2196,6 +2363,14 @@ def _handoff_error_code(error: str | None) -> str:
         "worktree_deleted": "WORKTREE_RESTORE_REQUIRED",
         "worktree_invalid": "WORKTREE_RECOVERY_REQUIRED",
         "worktree_cleanup_required": "WORKTREE_RECOVERY_REQUIRED",
+        "worktree_snapshot_anchor_mismatch": "WORKTREE_RESTORE_REQUIRED",
+        "worktree_snapshot_anchor_changed": "WORKTREE_RESTORE_REQUIRED",
+        "worktree_snapshot_anchor_unavailable": "WORKTREE_RESTORE_REQUIRED",
+        "worktree_snapshot_checksum_mismatch": "WORKTREE_RESTORE_REQUIRED",
+        "worktree_restore_failed": "WORKTREE_RESTORE_REQUIRED",
+        "worktree_restore_verification_failed": "WORKTREE_RESTORE_REQUIRED",
+        "worktree_snapshot_required": "WORKTREE_RESTORE_REQUIRED",
+        "worktree_restore_not_required": "WORKTREE_RESTORE_REQUIRED",
         "git_command_timeout": "HANDOFF_GIT_CONFLICT",
         "session_has_active_run": "SESSION_HAS_ACTIVE_RUN",
         "resource_not_found": "RESOURCE_NOT_FOUND",

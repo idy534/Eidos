@@ -53,8 +53,11 @@ Git metadata 字段必须同时有值或同时为空。Local Project 以 canonic
 
 - `WorktreeManager` 是 Eidos 的 Project、Worktree、Session binding、Run identity、durable operation、recovery、compensation 和 Sandbox boundary authority。
 - `GitBackend` 是 Git mechanics seam。它不拥有 Session、Run、Checkpoint 或 SQLite lifecycle。
-- `DulwichGitBackend` 直接返回 Eidos-owned 的 `GitRepositoryDiscovery`、`GitRepositoryContext`、`GitStatusObservation`、`GitDiffObservation` 和 `GitWorktreeEntry`。它负责 repository discovery、HEAD/ref、local branch、status、diff、worktree list/remove/prune 和 legacy compare-and-delete branch。
-- `NativeWorktreeCreator`、`NativeWorktreeChangeTransfer` 和 `NativeBranchAttacher` 是受控的 native Git 写入 seam。它们分别负责 Worktree checkout、Git patch/index 语义的 dirty transfer 和 detached Worktree 的新 branch attach。`NativeWorktreeCleaner` 只用于创建失败 compensation。`HardenedGitRunner` 负责 timeout、bounded output、进程组清理、禁用 hook/fsmonitor、credential/prompt 和 pager。
+- `DulwichGitBackend` 直接返回 Eidos-owned 的 `GitRepositoryDiscovery`、`GitRepositoryContext`、`GitStatusObservation`、`GitDiffObservation` 和 `GitWorktreeEntry`。它负责 repository discovery、HEAD/ref、local branch、branch validation、revision resolution、ignore observation、worktree list/remove/prune、switch、reset、normal clean 和 snapshot hidden ref。
+- Eidos 不实现 Git working-tree 或 index semantics。Git authority 按 operation 固定，不存在 per-call fallback：
+  - Dulwich：repository discovery、HEAD/ref、branch validation、revision resolution、ignore observation、worktree list/remove/prune、branch switch、reset、normal clean 和 hidden snapshot ref。
+  - `/usr/bin/git`：`status --porcelain=v1 -z`、patch capture、patch apply、untracked path discovery、untracked new-file patch、唯一的 Worktree Add 和 destructive `clean -fdx`。
+- `GitCli` 是 `/usr/bin/git` 的 typed adapter。`HardenedGitRunner` 只负责 argv、stdin bytes、bounded stdout/stderr、timeout、进程组清理、环境隔离和 Git helper hardening。它不解析或重建 Index、Working Tree、Blob 或 file mode semantics。Eidos 只投影 command output 和保存 changed-path metadata。
 
 Dulwich 类型不会传播到 Application、Domain、Protocol、SQLite 或 Desktop。Backend 只输出 Eidos-owned typed Git models。
 
@@ -68,9 +71,9 @@ Runtime 先解析 Project。Local Session 不创建 Worktree。Worktree Session 
 prepare
   → durable session/create intent
   → GitBackend resolve baseRef
-  → NativeWorktreeCreator: git worktree add --detach
+  → hardened Git CLI `worktree add --detach` or `worktree add -b`
   → materialize source .worktreeinclude
-  → optionally apply source Git working-tree patch and index state
+  → optionally apply source Git full patch and staged patch
   → exact Git/filesystem validation
   → Worktree persistence
   → Session persistence
@@ -84,11 +87,11 @@ Managed retry 使用 intent 中相同的 `worktree_id`、`worktree_root`、`bran
 
 默认创建的 Managed Worktree 是 detached HEAD。验证规则要求 persisted `branch = NULL` 时 observed branch 也为 NULL。外部 attach branch 会被视为 identity changed / recovery required。已有 branch 非 NULL 的 legacy Worktree 仍要求 observed branch 与 persisted branch 相同。
 
-当 `includeLocalChanges = true` 时，Runtime 要求 source `HEAD` 等于选择的 `baseCommit`。Runtime 在 Git side effect 前捕获 source repository identity、HEAD、branch、status 和 Git patch，并在 Worktree checkout 后重新核验这些事实。Source Workspace 不执行 stash、reset、checkout、add 或其他写入。Runtime 先读取 source root 的 `.worktreeinclude`，再用只读的 Git native patch、staged diff 和 `git diff --no-index` patch transfer tracked modified、deleted、staged、unstaged、binary 和 untracked regular files。最终 local state 覆盖 `.worktreeinclude` 的同路径内容。Base mismatch、source changed、patch conflict 和 include 安全错误都会失败并触发已有 compensation；无法证明 Worktree 已清理时，lifecycle 会进入 `cleanup_required`。
+当 `includeLocalChanges = true` 时，Runtime 要求 source `HEAD` 等于选择的 `baseCommit`。Runtime 在 Git side effect 前捕获 source repository identity、HEAD、branch、status 和 Git patch bytes，并在 Worktree checkout 后重新核验这些事实。Source Workspace 不执行 stash、reset、checkout、add、restore 或其他写入。`full_patch` 使用 `git diff --binary HEAD --`，再为 `git ls-files --others --exclude-standard -z` 返回的每个 untracked path 使用 Git `diff --no-index --binary /dev/null <path>`。`staged_patch` 使用 `git diff --binary --cached HEAD --`。Restore 和 handoff 先把 full patch 应用到 Working Tree，再把 staged patch 用 `git apply --cached` 应用到 Index。Patch bytes 不经过 replacement decode。Base mismatch、source changed、patch conflict 和 include 安全错误都会失败并触发已有 compensation；无法证明 Worktree 已清理时，lifecycle 会进入 `cleanup_required`。Dirty submodule checkout 不属于当前 transfer contract，Runtime 会返回 typed `worktree_gitlink_unsupported`，不会静默丢失 nested checkout state。
 
-`.worktreeinclude` 只位于 source repository root。Runtime 不读取 managed Worktree 内的同名文件作为 authority。Pathspec 使用项目已有的 `pathspec` Git ignore 风格语义。Runtime 拒绝绝对路径、`..`、`.git` 和指向 Project workspace 外部的 symlink。缺失匹配不报错。复制只允许普通文件和经过 target 验证的内部 symlink。
+`.worktreeinclude` 只位于 source repository root。Runtime 不读取 managed Worktree 内的同名文件作为 authority。模式使用 `pathspec.GitIgnoreSpec.from_lines()` 和 `match_file`。Runtime 只在 matched concrete path 上检查 `.git`、source/target boundary、parent symlink、special file、atomic replacement、fsync 和 file permissions。Runtime 不重新实现 `*`、`**`、absolute-looking pattern、`..`、negation 或 precedence。缺失匹配不报错。复制只允许普通文件和经过 target 验证的内部 symlink。
 
-`Worktree` 创建后仍然是 detached execution resource。`session/createBranch` 只允许 active、valid、`branch = NULL` 的 Worktree。Runtime 先写 `worktree/attach-branch` durable intent，再在同一个 Worktree cwd 执行受控 `git switch -c`，核验 HEAD 没有变化，最后把 `branch` 和 `branch_ownership = user` 写入 SQLite。已有 branch 或在其他 Worktree checkout 的 branch 都会拒绝。Branch attach 的 `prepared`、`branch_attached`、`completed` 和 `cleanup_required` 状态支持 startup recovery。用户 branch 随 Worktree 删除保留；旧 attached branch 仍按 `legacy_managed` 兼容语义处理。
+`Worktree` 创建后仍然是 detached execution resource。`session/createBranch` 只允许 active、valid、`branch = NULL` 的 Worktree。Runtime 先写 `worktree/attach-branch` durable intent，再在同一个 Worktree cwd 执行 `dulwich.porcelain.switch(target="HEAD", create=branch, force=False)`，核验 HEAD 没有变化，最后把 `branch` 和 `branch_ownership = user` 写入 SQLite。已有 branch 或在其他 Worktree checkout 的 branch 都会拒绝。Branch attach 的 `prepared`、`branch_attached`、`completed` 和 `cleanup_required` 状态支持 startup recovery。用户 branch 随 Worktree 删除保留；旧 attached branch 仍按 `legacy_managed` 兼容语义处理。
 
 ## Managed Checkpoint Fork
 
@@ -123,11 +126,75 @@ Runtime 可以在 Worktree removal 与 Session delete 之间重启后继续执�
 
 Local Session delete 不创建 Git lifecycle intent。它只删除 Eidos Session 数据。它不会删除 Project workspace root 或用户文件。
 
+## Managed Worktree retention、Snapshot 和 Restore
+
+Session 与 Worktree directory 使用不同的生命周期。Retention 可以删除 Eidos-owned 的 managed Worktree directory，但它不会删除 Session、Run、Event、Checkpoint 或 `associated_worktree_id`。Worktree row 会保留为 `state = deleted` 的历史 identity。
+
+Runtime 只把 `ownership = managed` 且 `state = active` 的 Worktree 放入 retention candidate。Runtime 不自动处理 adopted Worktree。Runtime 默认保留最近 15 个 Worktree。`runtime_settings` 保存 `automatic_cleanup` 和 `managed_worktree_limit`，用户可以在 Settings 中关闭自动清理或把数量改为 1 到 100。关闭自动清理时，Runtime 不执行数量清理。
+
+`worktrees.last_used_at` 是 retention 的 durable recency authority。Runtime 在 Worktree 创建、Worktree Handoff 成功、Worktree Run admission、Create Branch Here 和 Restore 成功后更新它。Runtime 不在 status、diff 或 UI polling 时更新它。v21 → v22 migration 把旧 `updated_at` 回填到 `last_used_at`。
+
+Retention 使用 `last_used_at DESC` 选择最近的 N 个 Worktree。Retention 从最旧的 candidate 开始处理超出部分。Runtime 在以下情况跳过 candidate：active Run、unfinished Handoff、unfinished Worktree lifecycle、`cleanup_required`、invalid validation、无法证明 Git/filesystem identity、legacy managed branch 或 Snapshot 不能完成。Runtime 记录 skipped reason。Runtime 不为了满足数量上限 force delete 不安全目录。
+
+Retention 只在 Runtime startup recovery 完成后、Managed Worktree 创建成功后和 Restore 成功后执行一次 bounded reconciliation。Retention 不启动持续 polling，也不进入 Agent Loop。
+
+`WorktreeSnapshot` 保存一次 disposable execution directory 的 durable metadata：
+
+```text
+id
+worktree_id
+session_id
+project_id
+base_ref
+base_commit
+head
+branch
+checkout_branch
+branch_ownership
+dirty paths
+source_fingerprint
+artifact_path
+artifact_sha256
+state = ready | restored | invalid
+created_at / restored_at
+```
+
+SQLite 只保存 Snapshot metadata。Snapshot artifact 位于：
+
+```text
+<EIDOS_DATA_DIR>/worktree-snapshots/<snapshot_id>/
+  full.patch.gz
+  staged.patch.gz
+  manifest.json
+```
+
+Artifact store 使用 Python 标准库 gzip、SHA-256、temporary directory、`os.replace`、file fsync 和 directory fsync。Artifact 只保存 Pydantic `GitWorkingTreePatch` 的 `full_patch` 和 `staged_patch` bytes，以及 `formatVersion`、三个 artifact checksum 和两个 patch checksum。Artifact capture 读取 changed paths 及其 Git patch，不遍历并序列化 unchanged tracked files 或整个 Index，因此大小和 capture 开销接近 O(changed files)。Ignored `node_modules`、`.venv`、`.env`、`.env.local` 和 build cache 不进入 Snapshot。Restore 会从当前 source repository 重新 materialize `.worktreeinclude` 和 ignored override，再交给 Git CLI apply patch。
+
+每个 ready Snapshot 都建立专用 Git reachability anchor：
+
+```text
+refs/eidos/worktree-snapshots/<snapshot_id> = snapshot.head
+```
+
+这个 hidden ref 不是 branch。Runtime 使用 Dulwich compare-and-set 创建 ref，并使用 compare-and-delete 删除 ref。Snapshot 只有在 artifact fsync、artifact checksum、hidden ref 和 SQLite ready row 都成功后才允许 cleanup。Detached HEAD 的 commit 因为仍被 hidden ref 引用，所以不会只依赖 SQLite 中的 `head` 字段。
+
+同一个 Worktree 只选择 `latest_ready_snapshot(worktree_id)`。新的 Snapshot ready 后，旧的 ready Snapshot 会在 compare-and-delete hidden ref 成功后清理。Restore 成功后，Runtime 将 Snapshot 标记为 `restored`，compare-and-delete hidden ref，并删除 artifact。Artifact 删除失败只会记录 deferred cleanup warning，不会回滚已验证的 Worktree。
+
+Retention cleanup 使用 `worktree/retention-cleanup` lifecycle。它按 `prepared → snapshot_saved → worktree_deleted → completed` 执行。Runtime 只在 Snapshot ready 已验证时通过 `GitBackend` 执行 managed Worktree 的 reset、normal clean、必要的 destructive ignored clean 和非 force Worktree remove。Cleanup 失败会进入 `cleanup_required`，并保留 Session 与 Snapshot。
+
+Restore 使用 `session/restoreWorktree` 和 `worktree/restore` lifecycle。Restore 固定原来的 `worktree_id` 和原来的 `managed_root/<worktree_id>`，然后验证 Project repository identity、artifact checksum、hidden ref 和 Snapshot fingerprint。Runtime 通过 `GitBackend` 在旧 root 创建 detached Worktree，不会创建第二个 Worktree，不会创建 branch，也不会把 `base_commit` 改成 Snapshot HEAD。Restore 后 `checkout_branch = NULL`，旧的 `base_commit` 仍作为 baseline diff 的基准。
+
+Restore lifecycle 使用 `prepared → worktree_created → state_materialized → worktree_rebound → completed`。Runtime 会在 restart 后继续未完成的 cleanup 或 restore。Runtime 如果不能安全清理 partial restore directory，会把 operation 标记为 `cleanup_required`，并把 Run/Handoff 错误映射为 `WORKTREE_RESTORE_REQUIRED`。Runtime 不会创建 WT2 逃避恢复错误。
+
+Runtime startup 会检查 ready Snapshot row、artifact directory 和 hidden ref。`ready row + artifact + ref` 才是 valid Snapshot。缺失 artifact 或 ref mismatch 会把 row 标记为 `invalid`。没有 SQLite ownership proof 的 snapshot artifact directory 和 hidden ref 只作为 orphan candidate 处理；Runtime 不删除陌生的其他 `refs/eidos/*`。
+
+Session Delete 会先通过既有 `session/delete` durable operation 清理 Snapshot artifact、hidden ref 和 metadata，再删除 Session。User branch ref 不属于 Snapshot cleanup，因此 Session Delete 会保留它。Checkpoint 仍然是用户/Runtime 的任务恢复点，Worktree Snapshot 只是 disposable directory 的恢复材料。
+
 ## Schema and lifecycle states
 
-当前 SQLite schema version 是 v20。v17 → v18 将旧 Git Project 的 `repository_root` 映射为 `workspace_root` 和 `git_repository_root`，保留原 Project id、Worktree FK、Session binding 和 Run。v18 → v19 为 `sessions` 增加 `execution_mode`，按旧 `worktree_id` 回填 `local` 或 `worktree`，并把 `worktrees.branch` 改为可空。v19 → v20 增加 `worktrees.branch_ownership`，并为 lifecycle operation 增加 local-change snapshot 字段和 `worktree/attach-branch` scope。旧 Worktree branch 值会映射为 `legacy_managed`，detached Worktree 映射为 `none`。对于 `worktree_id IS NULL` 的旧 Session，migration 会保留 Local 语义。
+当前 SQLite schema version 是 v22。v17 → v18 将旧 Git Project 的 `repository_root` 映射为 `workspace_root` 和 `git_repository_root`，保留原 Project id、Worktree FK、Session binding 和 Run。v18 → v19 为 `sessions` 增加 `execution_mode`，按旧 `worktree_id` 回填 `local` 或 `worktree`，并把 `worktrees.branch` 改为可空。v19 → v20 增加 `worktrees.branch_ownership`，并为 lifecycle operation 增加 local-change snapshot 字段和 `worktree/attach-branch` scope。v20 → v21 增加 `sessions.associated_worktree_id`、`worktrees.checkout_branch` 和 Session Handoff operation。v21 → v22 增加 `worktrees.last_used_at`、`runtime_settings`、`worktree_snapshots` 和 retention/restore lifecycle 字段。旧 Worktree branch 值会映射为 `legacy_managed`，detached Worktree 映射为 `none`。对于 `worktree_id IS NULL` 的旧 Session，migration 会保留 Local 语义。
 
-`worktree_lifecycle_operations` 从 v17 保留。当前 scope 包括 `session/create`、`session/delete`、`checkpoint/fork` 和 `worktree/attach-branch`。它使用有限状态：`prepared`、`worktree_created`、`session_created`、`run_created`、`checkpoint_action_created`、`branch_attached`、`worktree_deleted`、`completed` 和 `cleanup_required`。它不是通用 workflow engine，也不保存 arbitrary payload executor。
+`worktree_lifecycle_operations` 从 v17 保留。当前 scope 包括 `session/create`、`session/delete`、`checkpoint/fork`、`worktree/attach-branch`、`worktree/retention-cleanup` 和 `worktree/restore`。它使用有限状态：`prepared`、`worktree_created`、`session_created`、`run_created`、`checkpoint_action_created`、`branch_attached`、`snapshot_saved`、`state_materialized`、`worktree_rebound`、`worktree_deleted`、`completed` 和 `cleanup_required`。它不是通用 workflow engine，也不保存 arbitrary payload executor。
 
 ## Startup recovery
 
@@ -138,12 +205,13 @@ SQLite initialize
   → recover runtime facts
   → construct WorktreeManager
   → WorktreeManager.recover()
-  → lifecycle reconciliation
+  → WorktreeRetentionService.reconcile()
+  → Session Handoff reconciliation
   → construct and expose applications
   → Runtime ready
 ```
 
-Recovery 只处理已有的 managed Worktree lifecycle operation。Local Session 不需要 Git lifecycle recovery，但它的 Run restart verification 仍验证 Workspace identity、Sandbox boundary、rules、Context、permission 和 reconciliation facts。
+Recovery 先处理已有的 managed Worktree lifecycle operation，再处理 Snapshot artifact、hidden ref、retention cleanup 和 restore。Local Session 不需要 Git lifecycle recovery，但它的 Run restart verification 仍验证 Workspace identity、Sandbox boundary、rules、Context、permission 和 reconciliation facts。
 
 当 durable plan、GitBackend worktree observation、filesystem、branch 和 HEAD 完全一致时，Runtime 可以继续或 adopt。Detached Worktree 的一致条件是 branch 和 durable branch 都为 NULL，且 HEAD 与 durable base commit 相符。Branch attach recovery 只会接受实际 branch 与 durable intent branch 相同且 HEAD 未变化的情况；实际状态不一致时不会 force switch。无法证明一致时，Runtime 保留数据、目录和 branch，把 lifecycle 标记为 `cleanup_required`，并让相关 managed Session 不可用。
 
@@ -151,9 +219,9 @@ Recovery 只处理已有的 managed Worktree lifecycle operation。Local Session
 
 GitBackend contract tests 覆盖 tracked clean、modified、staged、unstaged、untracked、deleted、conflict、Unicode filename、nested path、linked Worktree、HEAD、branch、HEAD diff 和 baseline diff。
 
-Runtime 不允许 configured hook、fsmonitor executable、textconv、external diff、clean filter、process filter、dotted filter driver 或 worktree-specific filter 执行。Dulwich 的低层 read-only observation 不经过这些 executable paths。Worktree create、dirty transfer、branch attach 和 compensation 使用窄的 native hardening seam。Dirty transfer 不直接复制 changed files，而是用 Git patch、staged diff 和 `git diff --no-index` 保留 staged/unstaged 语义。Source Workspace 只做观察和 patch capture。
+Runtime 不允许 configured hook、fsmonitor executable、textconv、external diff、clean filter、process filter、smudge filter、dotted filter driver 或 worktree-specific filter 执行。所有 Git CLI operation 都经过同一个 `HardenedGitRunner`，并通过 bounded native config overrides 清空 executable filter stages。Worktree Add 永远使用 hardened Git CLI，不再根据 filter 配置选择 Dulwich 或 Native 双实现。Patch capture、status、diff、apply、Worktree Add 和 destructive clean 都使用这个同一 process adapter。Source Workspace 只做观察和 patch capture，capture 期间不修改 source HEAD、index、refs 或 files。
 
-Observation failure、timeout 或 bounded diff truncation 不会更新 Worktree lifecycle state。Git status 和 changed paths 不经过 porcelain parser，也不会调用 `Index.commit` 或写入 object store。`deleted` 仍然是 terminal state。
+Observation failure、timeout 或 bounded diff truncation 不会更新 Worktree lifecycle state。Git status 只把 hardened Git porcelain output 投影为 typed paths，不重新计算 Git status semantics，也不会调用 `Index.commit`、写入 object store 或修改 source index。`deleted` 仍然是 terminal state。
 
 ## Sandbox
 
@@ -165,4 +233,4 @@ Local Workspace 的 writable root 是 `Project.workspace_root`。Local profile �
 
 Session projection 提供 `projectId`、`workspaceRoot`、`gitAvailable` 和 `executionMode`。Desktop 创建 Thread 时显示 Local / Worktree 选择。Git Project 的 Worktree 选择器使用 Runtime `project/gitContext` 提供的 current branch、HEAD、local branches、dirty 和 changed file count。Worktree 起始 ref 等于当前 branch 且 source dirty 时，Desktop 默认勾选 `Include current changes`；Runtime 仍要求 request 显式传入 `includeLocalChanges`。Local Session 隐藏 Starting Branch；Worktree Session 显示 Starting Branch。Worktree Sidebar 在 detached 状态显示 `Detached @ <short-head>` 和 `Create Branch`，并保留 dirty status、HEAD diff 和 baseline diff UI。
 
-当前仍未实现：Parallel Agent、Git staging/commit/push UI、branch merge/rebase/force delete、完整未提交 patch 的 checkpoint rewind/fork，以及 cross-worktree Repository Intelligence sharing。
+当前仍未实现：Permanent Worktree、Pinned Chat、Archive Chat、Parallel Agent、Git staging/commit/push UI、branch merge/rebase/force delete、Pull Request UI、完整未提交 patch 的 checkpoint rewind/fork，以及 cross-worktree Repository Intelligence sharing。

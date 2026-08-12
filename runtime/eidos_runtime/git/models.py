@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
-import json
 
 from pydantic import Field
 
@@ -53,16 +51,14 @@ class GitDiffObservation(EidosFrozenStrictModel):
     truncated: bool
 
 
-@dataclass(frozen=True)
-class GitWorkingTreePatch:
-    """A source working-tree snapshot represented by Git patch semantics."""
+class GitWorkingTreePatch(EidosFrozenStrictModel):
+    """Lossless Git patch bytes produced and consumed by the Git CLI."""
 
-    full_patch: str
-    staged_patch: str
+    full_patch: bytes
+    staged_patch: bytes
 
 
-@dataclass(frozen=True)
-class GitSourceSnapshot:
+class GitSourceSnapshot(EidosFrozenStrictModel):
     discovery: GitRepositoryDiscovery
     head: str
     branch: str | None
@@ -71,28 +67,9 @@ class GitSourceSnapshot:
 
     @property
     def fingerprint(self) -> str:
-        value = {
-            "repository_root": self.discovery.repository_root,
-            "git_dir": self.discovery.git_dir,
-            "git_common_dir": self.discovery.git_common_dir,
-            "head": self.head,
-            "branch": self.branch,
-            "staged_paths": self.status.staged_paths,
-            "unstaged_paths": self.status.unstaged_paths,
-            "untracked_paths": self.status.untracked_paths,
-            "conflict_paths": self.status.conflict_paths,
-            "full_patch": (
-                self.changes.full_patch if self.changes is not None else None
-            ),
-            "staged_patch": (
-                self.changes.staged_patch if self.changes is not None else None
-            ),
-        }
-        encoded = json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
+        encoded = self.model_dump_json(
+            by_alias=False,
+            exclude_none=False,
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 

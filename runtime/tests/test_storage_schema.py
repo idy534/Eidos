@@ -66,6 +66,8 @@ EXPECTED_TABLES = {
     "worktrees",
     "worktree_lifecycle_operations",
     "session_handoff_operations",
+    "runtime_settings",
+    "worktree_snapshots",
 }
 
 EXPECTED_COLUMNS = {
@@ -73,7 +75,7 @@ EXPECTED_COLUMNS = {
         "workspace_dev", "workspace_inode", "workspace_uid", "worktree_id",
         "associated_worktree_id",
     },
-    "worktrees": {"checkout_branch"},
+    "worktrees": {"checkout_branch", "last_used_at"},
     "session_handoff_operations": {
         "scope", "operation_id", "state", "session_id", "project_id",
         "source_mode", "target_mode", "source_root", "target_root",
@@ -117,7 +119,16 @@ EXPECTED_COLUMNS = {
     "approvals": {
         "request_json", "attempt_ordinal", "approval_kind",
     },
-    "worktree_lifecycle_operations": {"expected_head"},
+    "worktree_lifecycle_operations": {
+        "expected_head", "snapshot_id", "snapshot_head", "snapshot_fingerprint"
+    },
+    "worktree_snapshots": {
+        "id", "worktree_id", "session_id", "project_id", "base_ref",
+        "base_commit", "head", "artifact_path", "artifact_sha256", "state",
+    },
+    "runtime_settings": {
+        "automatic_cleanup", "managed_worktree_limit", "updated_at"
+    },
     "model_attempts": {
         "lease_id", "wire_api", "model_id", "request_timeout",
         "retry_decision_json",
@@ -263,6 +274,7 @@ class StorageSchemaTests(unittest.TestCase):
                 "sessions_associated_worktree_id",
                 "session_handoff_operations_state",
                 "session_handoff_operations_session",
+                "worktree_snapshots_latest",
             },
         )
         for table, expected in EXPECTED_COLUMNS.items():
@@ -296,6 +308,28 @@ class StorageSchemaTests(unittest.TestCase):
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        store.close()
+
+    def test_schema_v21_migrates_retention_tables_and_last_used_at(self) -> None:
+        database = self.data / DATABASE_NAME
+        legacy_sql = SCHEMA_SQL.split(
+            "ALTER TABLE worktrees\nADD COLUMN last_used_at", 1
+        )[0]
+        connection = sqlite3.connect(database)
+        connection.executescript(legacy_sql)
+        connection.execute("PRAGMA user_version = 21")
+        connection.commit()
+        connection.close()
+        os.chmod(database, 0o600)
+
+        store = SessionStore(self.data)
+        store.initialize()
+        assert store.connection is not None
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        assert "last_used_at" in {
+            row[1] for row in store.connection.execute("PRAGMA table_info(worktrees)")
+        }
+        assert store.worktree_settings_repository().read().managed_worktree_limit == 15
         store.close()
 
     def test_existing_database_with_unsupported_version_is_not_modified(self) -> None:

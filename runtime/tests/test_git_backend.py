@@ -281,6 +281,8 @@ def test_dulwich_read_and_native_create_paths_do_not_execute_git_helpers(
     backend.diff(repository, base_commit=backend.head(repository))
     linked = tmp_path / "linked"
     backend.worktree_add(repository, linked, "eidos/helper-safety", backend.head(repository))
+    changes = backend.capture_worktree_changes(repository)
+    backend.apply_worktree_changes(linked, changes)
 
     assert not marker.exists()
 

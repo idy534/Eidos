@@ -30,6 +30,7 @@ export interface PendingOperations {
   renamingSessionId?: string;
   deletingSessionId?: string;
   handoffSessionId?: string;
+  restoringWorktreeSessionId?: string;
 }
 
 export interface SessionControllerState {
@@ -60,6 +61,7 @@ export interface SessionControllerActions {
     sessionId: string,
     target: "local" | "worktree",
   ) => Promise<SessionSnapshot | undefined>;
+  restoreWorktree: (sessionId: string) => Promise<SessionSnapshot | undefined>;
   renameSession: (sessionId: string, title: string) => Promise<void>;
   deleteSession: (session: Session) => Promise<{ confirmed: true } | { confirmed: false; error: string }>;
   setError: (error: string | undefined) => void;
@@ -312,6 +314,30 @@ export function useSessionController(): [SessionControllerState, SessionControll
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot]);
 
+  const restoreWorktree = useCallback(async (
+    sessionId: string,
+  ): Promise<SessionSnapshot | undefined> => {
+    setPending((prev) => ({ ...prev, restoringWorktreeSessionId: sessionId }));
+    setError(undefined);
+    try {
+      await window.eidosRuntime.restoreSessionWorktree(sessionId);
+      const loaded = await loadAuthoritativeSnapshot(sessionId);
+      setSessions((prev) => prev.map((session) => (
+        session.id === loaded.session.id ? loaded.session : session
+      )));
+      if (snapshot?.session.id === sessionId) {
+        setSnapshot(loaded);
+      }
+      return loaded;
+    } catch (cause) {
+      setError(userFacingError(cause));
+      return undefined;
+    } finally {
+      clearPending("restoringWorktreeSessionId");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshot]);
+
   const deleteSession = useCallback(async (session: Session): Promise<{ confirmed: true } | { confirmed: false; error: string }> => {
     setPending((prev) => ({ ...prev, deletingSessionId: session.id }));
     setError(undefined);
@@ -417,6 +443,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     createSession,
     createSessionBranch,
     handoffSession,
+    restoreWorktree,
     renameSession,
     deleteSession,
     setError,

@@ -24,6 +24,7 @@ from eidos_runtime.protocol.schemas import (
     RunDto,
     SessionDto,
     SessionWorktreeDto,
+    WorktreeSettingsDto,
     SkillMetadataDto,
     StepResolutionReviewDto,
 )
@@ -145,6 +146,25 @@ class SessionHandoffRequestDto(_OperationRequest):
     _canonical_id_fields: ClassVar[tuple[str, ...]] = (
         "operation_id",
         "session_id",
+    )
+
+
+class SessionRestoreWorktreeRequestDto(_OperationRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+
+class SettingsReadRequestDto(MethodRequestDto):
+    pass
+
+
+class SettingsUpdateRequestDto(MethodRequestDto):
+    automatic_cleanup: bool = Field(alias="automaticCleanup")
+    managed_worktree_limit: StrictInt = Field(
+        alias="managedWorktreeLimit", ge=1, le=100
     )
 
 
@@ -425,6 +445,29 @@ class SessionHandoffResponseDto(_SessionResponseDto):
         value["sessionId"] = self.session_id
         value["worktreeId"] = self.worktree_id
         return value
+
+
+class SessionRestoreWorktreeResponseDto(_SessionResponseDto):
+    session_id: StrictStr = Field(alias="sessionId")
+    worktree_id: StrictStr = Field(alias="worktreeId")
+
+    def to_json_value(self) -> dict[str, JsonValue]:
+        value = super().to_json_value()
+        value["sessionId"] = self.session_id
+        value["worktreeId"] = self.worktree_id
+        return value
+
+
+class SettingsResponseDto(MethodResultDto, WorktreeSettingsDto):
+    pass
+
+
+class SettingsReadResponseDto(SettingsResponseDto):
+    pass
+
+
+class SettingsUpdateResponseDto(SettingsResponseDto):
+    pass
 
 
 class EventListResponseDto(MethodResultDto):

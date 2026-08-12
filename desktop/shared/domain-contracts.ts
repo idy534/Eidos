@@ -42,6 +42,7 @@ export interface Session {
   workspaceRoot: string;
   executionMode?: "local" | "worktree";
   associatedWorktreeId?: string;
+  worktreeRestoreAvailable?: boolean;
   /** Optional only while older persisted event fixtures are read. */
   project?: SessionProject;
   worktree?: SessionWorktree;
@@ -54,6 +55,17 @@ export interface Session {
 export interface SessionHandoffResult extends Session {
   sessionId: string;
   worktreeId: string | null;
+}
+
+export interface SessionRestoreWorktreeResult extends Session {
+  sessionId: string;
+  worktreeId: string;
+}
+
+export interface WorktreeSettings {
+  automaticCleanup: boolean;
+  managedWorktreeLimit: number;
+  updatedAt: number;
 }
 
 export interface SessionListResult {

@@ -7,13 +7,14 @@ from pathlib import Path
 import re
 import selectors
 import signal
-import stat
 import subprocess
-import tempfile
 import time
 from collections.abc import Collection, Sequence
 
-from eidos_runtime.git.errors import GitCommandFailedError, GitCommandTimeoutError
+from eidos_runtime.git.errors import (
+    GitCommandFailedError,
+    GitCommandTimeoutError,
+)
 
 
 DEFAULT_GIT_TIMEOUT_SECONDS = 15.0
@@ -22,12 +23,19 @@ DEFAULT_GIT_PATCH_BYTES = 64 * 1024 * 1024
 
 
 @dataclass(frozen=True)
-class _NativeCommandResult:
-    stdout: str
-    stderr: str
+class GitCliResult:
+    stdout: bytes
+    stderr: bytes
     returncode: int
     stdout_truncated: bool
     stderr_truncated: bool
+
+
+@dataclass(frozen=True)
+class GitCliDiff:
+    patch: bytes
+    changed_paths: tuple[str, ...]
+    truncated: bool
 
 
 class HardenedGitRunner:
@@ -54,11 +62,13 @@ class HardenedGitRunner:
         *,
         cwd: Path,
         operation: str,
+        stdin: bytes | None = None,
         output_limit_bytes: int | None = None,
         config_overrides: Sequence[str] = (),
         apply_default_hardening: bool = True,
         allow_returncodes: Collection[int] = (),
-    ) -> _NativeCommandResult:
+        raise_on_truncation: bool = True,
+    ) -> GitCliResult:
         if not cwd.is_absolute() or not cwd.is_dir():
             raise GitCommandFailedError(operation, returncode=None)
         if any(not isinstance(argument, str) or "\x00" in argument for argument in args):
@@ -103,7 +113,7 @@ class HardenedGitRunner:
                 argv,
                 cwd=str(cwd),
                 env=environment,
-                stdin=subprocess.DEVNULL,
+                stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True,
@@ -120,7 +130,12 @@ class HardenedGitRunner:
             stdout, stderr, stdout_truncated, stderr_truncated = _communicate_bounded(
                 process,
                 timeout_seconds=self.timeout_seconds,
-                output_limit_bytes=output_limit_bytes or self.output_limit_bytes,
+                output_limit_bytes=(
+                    self.output_limit_bytes
+                    if output_limit_bytes is None
+                    else output_limit_bytes
+                ),
+                stdin=stdin,
             )
         except subprocess.TimeoutExpired:
             _terminate_process_group(process)
@@ -134,18 +149,21 @@ class HardenedGitRunner:
             )
             raise GitCommandTimeoutError(operation) from None
 
-        result = _NativeCommandResult(
-            stdout=stdout.decode("utf-8", errors="replace"),
-            stderr=stderr.decode("utf-8", errors="replace"),
+        result = GitCliResult(
+            stdout=stdout,
+            stderr=stderr,
             returncode=process.returncode,
             stdout_truncated=stdout_truncated,
             stderr_truncated=stderr_truncated,
         )
-        if result.stdout_truncated or result.stderr_truncated:
+        if (
+            raise_on_truncation
+            and (result.stdout_truncated or result.stderr_truncated)
+        ):
             raise GitCommandFailedError(
                 operation,
                 returncode=result.returncode,
-                stderr=result.stderr,
+                stderr=result.stderr.decode("utf-8", errors="replace"),
             )
         if result.returncode not in allow_returncodes and result.returncode != 0:
             self.logger.error(
@@ -158,7 +176,7 @@ class HardenedGitRunner:
             raise GitCommandFailedError(
                 operation,
                 returncode=result.returncode,
-                stderr=result.stderr,
+                stderr=result.stderr.decode("utf-8", errors="replace"),
             )
         self.logger.debug(
             "native git operation completed",
@@ -171,77 +189,215 @@ class HardenedGitRunner:
         return result
 
 
-class NativeWorktreeCreator:
-    """Create a linked worktree through the smallest native Git seam."""
+class GitCli:
+    """Typed adapter for the small set of Git operations owned by Git itself.
 
-    def __init__(
-        self,
-        *,
-        runner: HardenedGitRunner | None = None,
-    ) -> None:
+    This class does not reconstruct Git state.  It passes patches and command
+    output through the hardened process boundary and leaves Git semantics to
+    ``/usr/bin/git``.
+    """
+
+    def __init__(self, *, runner: HardenedGitRunner | None = None) -> None:
         self._runner = runner or HardenedGitRunner()
 
-    def create(
+    def worktree_add(
         self,
         repository_root: Path,
         worktree_root: Path,
         branch: str | None,
         base_commit: str,
     ) -> None:
-        if branch is not None:
-            _validate_branch(branch)
-        _validate_ref(base_commit)
-        overrides = self._filter_config_overrides(repository_root)
+        overrides = filter_config_overrides(self._runner, repository_root)
         add_args = (
             ("--detach", str(worktree_root), base_commit)
             if branch is None
             else ("-b", branch, str(worktree_root), base_commit)
         )
         self._runner.run(
-            (
-                "worktree",
-                "add",
-                "--quiet",
-                *add_args,
-            ),
+            ("worktree", "add", "--quiet", *add_args),
             cwd=repository_root,
             operation="worktree-add",
             config_overrides=overrides,
         )
 
-    def _filter_config_overrides(self, cwd: Path) -> tuple[str, ...]:
-        """Disable executable clean/process filters for worktree checkout."""
+    def clean_destructive(self, worktree_root: Path) -> None:
+        self._runner.run(
+            ("clean", "-fdx", "--"),
+            cwd=worktree_root,
+            operation="worktree-destructive-clean",
+        )
 
-        return filter_config_overrides(self._runner, cwd)
+    def status_porcelain(self, cwd: Path) -> bytes:
+        result = self._runner.run(
+            (
+                "status",
+                "--porcelain=v1",
+                "--no-renames",
+                "--untracked-files=all",
+                "-z",
+                "--",
+            ),
+            cwd=cwd,
+            operation="status",
+            config_overrides=filter_config_overrides(self._runner, cwd),
+            output_limit_bytes=DEFAULT_GIT_PATCH_BYTES,
+        )
+        return result.stdout
 
-
-class NativeWorktreeChangeTransfer:
-    """Capture and apply dirty state through Git's patch and index semantics."""
-
-    def __init__(
+    def capture_working_tree_patch(
         self,
+        cwd: Path,
         *,
-        runner: HardenedGitRunner | None = None,
-    ) -> None:
-        self._runner = runner or HardenedGitRunner()
+        base_commit: str = "HEAD",
+        output_limit_bytes: int = DEFAULT_GIT_PATCH_BYTES,
+    ) -> bytes:
+        patch, truncated = self._capture_patch(
+            cwd,
+            base_commit=base_commit,
+            include_untracked=True,
+            output_limit_bytes=output_limit_bytes,
+            raise_on_truncation=True,
+        )
+        if truncated:
+            raise GitCommandFailedError(
+                "worktree-capture",
+                returncode=None,
+                stderr="Git patch output exceeds the size limit",
+            )
+        return patch
 
-    def capture(self, repository_root: Path) -> tuple[str, str]:
-        overrides = filter_config_overrides(self._runner, repository_root)
-        staged = self._runner.run(
-            _DIFF_ARGS + ("--cached",),
-            cwd=repository_root,
+    def capture_staged_patch(
+        self,
+        cwd: Path,
+        *,
+        base_commit: str = "HEAD",
+        output_limit_bytes: int = DEFAULT_GIT_PATCH_BYTES,
+    ) -> bytes:
+        result = self._runner.run(
+            (
+                "diff",
+                "--binary",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--cached",
+                base_commit,
+                "--",
+            ),
+            cwd=cwd,
             operation="worktree-capture-staged",
-            output_limit_bytes=DEFAULT_GIT_PATCH_BYTES,
+            config_overrides=filter_config_overrides(self._runner, cwd),
+            output_limit_bytes=output_limit_bytes,
+        )
+        return result.stdout
+
+    def diff(
+        self,
+        cwd: Path,
+        *,
+        base_commit: str,
+        include_untracked: bool,
+        output_limit_bytes: int,
+    ) -> GitCliDiff:
+        patch = self._capture_patch(
+            cwd,
+            base_commit=base_commit,
+            include_untracked=include_untracked,
+            output_limit_bytes=output_limit_bytes,
+            raise_on_truncation=False,
+        )
+        changed_paths = self._changed_paths(
+            cwd,
+            base_commit=base_commit,
+            include_untracked=include_untracked,
+            output_limit_bytes=output_limit_bytes,
+        )
+        return GitCliDiff(
+            patch=patch[0],
+            changed_paths=changed_paths,
+            truncated=patch[1],
+        )
+
+    def apply_working_tree_patch(
+        self,
+        cwd: Path,
+        *,
+        full_patch: bytes,
+        staged_patch: bytes,
+    ) -> None:
+        overrides = filter_config_overrides(self._runner, cwd)
+        if full_patch:
+            self._runner.run(
+                ("apply", "--binary", "--"),
+                cwd=cwd,
+                operation="worktree-apply",
+                stdin=full_patch,
+                config_overrides=overrides,
+            )
+        if staged_patch:
+            self._runner.run(
+                ("apply", "--binary", "--cached", "--"),
+                cwd=cwd,
+                operation="worktree-apply-staged",
+                stdin=staged_patch,
+                config_overrides=overrides,
+            )
+
+    def _capture_patch(
+        self,
+        cwd: Path,
+        *,
+        base_commit: str,
+        include_untracked: bool,
+        output_limit_bytes: int,
+        raise_on_truncation: bool,
+    ) -> tuple[bytes, bool]:
+        if output_limit_bytes < 1:
+            raise ValueError("Git patch output limit must be positive")
+        overrides = filter_config_overrides(self._runner, cwd)
+        result = self._runner.run(
+            (
+                "diff",
+                "--binary",
+                "--no-ext-diff",
+                "--no-textconv",
+                base_commit,
+                "--",
+            ),
+            cwd=cwd,
+            operation="worktree-diff",
             config_overrides=overrides,
-        ).stdout
-        full = self._runner.run(
-            _DIFF_ARGS + ("HEAD", "--"),
-            cwd=repository_root,
-            operation="worktree-capture-full",
-            output_limit_bytes=DEFAULT_GIT_PATCH_BYTES,
-            config_overrides=overrides,
-        ).stdout
-        untracked_listing = self._runner.run(
+            output_limit_bytes=output_limit_bytes,
+            raise_on_truncation=raise_on_truncation,
+        )
+        output = bytearray(result.stdout)
+        truncated = result.stdout_truncated
+        if include_untracked and not truncated:
+            for relative in self.untracked_paths(cwd):
+                remaining = output_limit_bytes - len(output)
+                if remaining < 1:
+                    if raise_on_truncation:
+                        raise GitCommandFailedError(
+                            "worktree-diff",
+                            returncode=None,
+                            stderr="Git patch output exceeds the size limit",
+                        )
+                    truncated = True
+                    break
+                untracked = self._untracked_patch(
+                    cwd,
+                    relative,
+                    output_limit_bytes=remaining,
+                    raise_on_truncation=raise_on_truncation,
+                    config_overrides=overrides,
+                )
+                output.extend(untracked[0])
+                if untracked[1]:
+                    truncated = True
+                    break
+        return bytes(output[:output_limit_bytes]), truncated
+
+    def untracked_paths(self, cwd: Path) -> tuple[str, ...]:
+        result = self._runner.run(
             (
                 "ls-files",
                 "--others",
@@ -249,197 +405,112 @@ class NativeWorktreeChangeTransfer:
                 "-z",
                 "--",
             ),
-            cwd=repository_root,
-            operation="worktree-capture-untracked-list",
+            cwd=cwd,
+            operation="untracked-paths",
             output_limit_bytes=DEFAULT_GIT_PATCH_BYTES,
-            config_overrides=overrides,
-        ).stdout
-        if untracked_listing and not untracked_listing.endswith("\x00"):
-            raise GitCommandFailedError(
-                "worktree-capture-untracked-list",
-                returncode=0,
-                stderr="untracked path output is incomplete",
+        )
+        return tuple(
+            sorted(
+                os.fsdecode(path)
+                for path in result.stdout.split(b"\0")
+                if path and path != b".git"
             )
-        untracked_patches: list[str] = []
-        total_patch_bytes = len(full.encode("utf-8"))
-        for relative in (path for path in untracked_listing.split("\x00") if path):
-            _validate_untracked_path(repository_root, relative)
-            patch = self._runner.run(
-                _NO_INDEX_DIFF_ARGS + ("--", "/dev/null", relative),
-                cwd=repository_root,
-                operation="worktree-capture-untracked",
-                output_limit_bytes=DEFAULT_GIT_PATCH_BYTES,
-                config_overrides=overrides,
-                allow_returncodes=(1,),
-            ).stdout
-            total_patch_bytes += len(patch.encode("utf-8"))
-            if total_patch_bytes > DEFAULT_GIT_PATCH_BYTES:
-                raise GitCommandFailedError(
-                    "worktree-capture-untracked",
-                    returncode=1,
-                    stderr="worktree patch exceeds the size limit",
-                )
-            untracked_patches.append(patch)
-        full += "".join(untracked_patches)
-        return full, staged
+        )
 
-    def apply(
+    def gitlink_paths(
         self,
-        worktree_root: Path,
-        *,
-        full_patch: str,
-        staged_patch: str,
-    ) -> None:
-        if full_patch:
-            self._apply_patch(worktree_root, full_patch, cached=False)
-        if staged_patch:
-            self._apply_patch(worktree_root, staged_patch, cached=True)
-
-    def _apply_patch(self, worktree_root: Path, patch: str, *, cached: bool) -> None:
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=worktree_root, prefix=".eidos-patch-", delete=False
-        ) as temporary:
-            patch_path = Path(temporary.name)
-            temporary.write(patch)
-            temporary.flush()
-            os.fsync(temporary.fileno())
-        try:
-            cached_args = ("--cached",) if cached else ()
-            self._runner.run(
-                (
-                    "apply",
-                    "--binary",
-                    "--whitespace=nowarn",
-                    *cached_args,
-                    str(patch_path),
-                ),
-                cwd=worktree_root,
-                operation="worktree-apply-staged" if cached else "worktree-apply",
-                output_limit_bytes=DEFAULT_GIT_OUTPUT_BYTES,
-            )
-        finally:
+        cwd: Path,
+        paths: Sequence[str],
+    ) -> tuple[str, ...]:
+        if not paths:
+            return ()
+        result = self._runner.run(
+            ("ls-files", "--stage", "-z", "--", *paths),
+            cwd=cwd,
+            operation="gitlink-paths",
+            output_limit_bytes=DEFAULT_GIT_PATCH_BYTES,
+        )
+        gitlinks: list[str] = []
+        for record in result.stdout.split(b"\0"):
+            if not record:
+                continue
             try:
-                patch_path.unlink()
-            except OSError:
-                pass
+                metadata, raw_path = record.split(b"\t", 1)
+                mode = metadata.split(b" ", 1)[0]
+            except ValueError as error:
+                raise GitCommandFailedError(
+                    "gitlink-paths",
+                    returncode=None,
+                    stderr="Git index output is invalid",
+                ) from error
+            if mode == b"160000":
+                gitlinks.append(os.fsdecode(raw_path))
+        return tuple(sorted(set(gitlinks)))
 
-
-class NativeBranchAttacher:
-    """Attach one new branch to an already-created detached Worktree."""
-
-    def __init__(self, *, runner: HardenedGitRunner | None = None) -> None:
-        self._runner = runner or HardenedGitRunner()
-
-    def attach(self, worktree_root: Path, branch: str) -> None:
-        _validate_branch(branch)
-        self._runner.run(
-            ("check-ref-format", "--branch", branch),
-            cwd=worktree_root,
-            operation="worktree-branch-validate",
+    def _untracked_patch(
+        self,
+        cwd: Path,
+        relative: str,
+        *,
+        output_limit_bytes: int,
+        raise_on_truncation: bool,
+        config_overrides: Sequence[str],
+    ) -> tuple[bytes, bool]:
+        result = self._runner.run(
+            (
+                "diff",
+                "--no-index",
+                "--binary",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--",
+                "/dev/null",
+                relative,
+            ),
+            cwd=cwd,
+            operation="worktree-diff-untracked",
+            config_overrides=config_overrides,
+            output_limit_bytes=output_limit_bytes,
+            allow_returncodes=(1,),
+            raise_on_truncation=raise_on_truncation,
         )
-        self._runner.run(
-            ("switch", "-c", branch),
-            cwd=worktree_root,
-            operation="worktree-branch-attach",
+        return result.stdout, result.stdout_truncated
+
+    def _changed_paths(
+        self,
+        cwd: Path,
+        *,
+        base_commit: str,
+        include_untracked: bool,
+        output_limit_bytes: int,
+    ) -> tuple[str, ...]:
+        result = self._runner.run(
+            (
+                "diff",
+                "--name-only",
+                "--no-renames",
+                "--no-ext-diff",
+                "--no-textconv",
+                "-z",
+                base_commit,
+                "--",
+            ),
+            cwd=cwd,
+            operation="worktree-diff-paths",
+            config_overrides=filter_config_overrides(self._runner, cwd),
+            output_limit_bytes=max(output_limit_bytes, DEFAULT_GIT_OUTPUT_BYTES),
         )
-
-
-class NativeWorktreeCleaner:
-    """Clear a newly-created Worktree before normal non-force removal."""
-
-    def __init__(self, *, runner: HardenedGitRunner | None = None) -> None:
-        self._runner = runner or HardenedGitRunner()
-
-    def clean(self, worktree_root: Path) -> None:
-        overrides = filter_config_overrides(self._runner, worktree_root)
-        self._runner.run(
-            ("reset", "--hard", "HEAD"),
-            cwd=worktree_root,
-            operation="worktree-compensation-reset",
-            config_overrides=overrides,
-        )
-        self._runner.run(
-            ("clean", "-fdx", "--"),
-            cwd=worktree_root,
-            operation="worktree-compensation-clean",
-        )
-
-
-class NativeWorktreeHandoffCleaner:
-    """Clear transient Worktree changes while preserving ignored resources."""
-
-    def __init__(self, *, runner: HardenedGitRunner | None = None) -> None:
-        self._runner = runner or HardenedGitRunner()
-
-    def clean(self, worktree_root: Path) -> None:
-        overrides = filter_config_overrides(self._runner, worktree_root)
-        self._runner.run(
-            ("reset", "--hard", "HEAD"),
-            cwd=worktree_root,
-            operation="worktree-handoff-reset",
-            config_overrides=overrides,
-        )
-        self._runner.run(
-            ("clean", "-fd", "--"),
-            cwd=worktree_root,
-            operation="worktree-handoff-clean",
-        )
-
-
-class NativeWorktreeCheckout:
-    """Move a checkout without force, reset, branch deletion, or cleanup."""
-
-    def __init__(self, *, runner: HardenedGitRunner | None = None) -> None:
-        self._runner = runner or HardenedGitRunner()
-
-    def detach(self, worktree_root: Path) -> None:
-        self._runner.run(
-            ("switch", "--detach", "HEAD"),
-            cwd=worktree_root,
-            operation="worktree-detach",
-        )
-
-    def switch_branch(self, worktree_root: Path, branch: str) -> None:
-        _validate_branch(branch)
-        self._runner.run(
-            ("switch", "--no-guess", branch),
-            cwd=worktree_root,
-            operation="worktree-switch-branch",
-        )
-
-    def switch_detached(self, worktree_root: Path, commit: str) -> None:
-        _validate_ref(commit)
-        self._runner.run(
-            ("switch", "--detach", commit),
-            cwd=worktree_root,
-            operation="worktree-switch-detached",
-        )
-
-
-_DIFF_ARGS = (
-    "diff",
-    "--binary",
-    "--full-index",
-    "--no-renames",
-    "--no-ext-diff",
-    "--no-textconv",
-)
-
-_NO_INDEX_DIFF_ARGS = (
-    "diff",
-    "--no-index",
-    "--binary",
-    "--full-index",
-    "--no-ext-diff",
-    "--no-textconv",
-)
+        paths = {os.fsdecode(path) for path in result.stdout.split(b"\0") if path}
+        if include_untracked:
+            paths.update(self.untracked_paths(cwd))
+        return tuple(sorted(paths))
 
 
 def filter_config_overrides(
     runner: HardenedGitRunner,
     cwd: Path,
 ) -> tuple[str, ...]:
-    """Return config overrides that disable executable clean/process filters."""
+    """Return overrides that disable all configured executable filter stages."""
 
     result = runner.run(
         (
@@ -448,7 +519,7 @@ def filter_config_overrides(
             "--null",
             "--name-only",
             "--get-regexp",
-            r"^filter\..*\.(clean|process)$",
+            r"^filter\..*\.(clean|process|smudge)$",
         ),
         cwd=cwd,
         operation="config-filter-list",
@@ -457,17 +528,17 @@ def filter_config_overrides(
     )
     if result.returncode == 1:
         return ()
-    if result.stdout and not result.stdout.endswith("\x00"):
+    if result.stdout and not result.stdout.endswith(b"\x00"):
         raise GitCommandFailedError(
             "config-filter-list",
             returncode=result.returncode,
             stderr="filter config output is incomplete",
         )
-    keys = [key for key in result.stdout.split("\x00") if key]
+    keys = [os.fsdecode(key) for key in result.stdout.split(b"\x00") if key]
     names: set[str] = set()
     for key in keys:
         match = re.fullmatch(
-            r"filter\.([A-Za-z0-9][A-Za-z0-9_.-]*)\.(clean|process)",
+            r"filter\.([A-Za-z0-9][A-Za-z0-9_.-]*)\.(clean|process|smudge)",
             key,
         )
         if match is None:
@@ -486,6 +557,8 @@ def filter_config_overrides(
                 "-c",
                 f"filter.{name}.process=",
                 "-c",
+                f"filter.{name}.smudge=",
+                "-c",
                 f"filter.{name}.required=false",
             )
         )
@@ -497,6 +570,7 @@ def _communicate_bounded(
     *,
     timeout_seconds: float,
     output_limit_bytes: int,
+    stdin: bytes | None,
 ) -> tuple[bytes, bytes, bool, bool]:
     selector = selectors.DefaultSelector()
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
@@ -506,6 +580,10 @@ def _communicate_bounded(
         if stream is not None:
             os.set_blocking(stream.fileno(), False)
             selector.register(stream, selectors.EVENT_READ, name)
+    stdin_offset = 0
+    if process.stdin is not None and stdin is not None:
+        os.set_blocking(process.stdin.fileno(), False)
+        selector.register(process.stdin, selectors.EVENT_WRITE, "stdin")
     deadline = time.monotonic() + timeout_seconds
     try:
         while selector.get_map():
@@ -517,6 +595,23 @@ def _communicate_bounded(
                 raise subprocess.TimeoutExpired(process.args, timeout_seconds)
             for key, _ in ready:
                 stream = key.fileobj
+                if key.data == "stdin":
+                    if stdin_offset >= len(stdin or b""):
+                        selector.unregister(stream)
+                        stream.close()
+                        continue
+                    try:
+                        written = os.write(
+                            stream.fileno(),
+                            (stdin or b"")[stdin_offset : stdin_offset + 16 * 1024],
+                        )
+                    except BrokenPipeError:
+                        written = 0
+                    stdin_offset += written
+                    if stdin_offset >= len(stdin or b"") or written == 0:
+                        selector.unregister(stream)
+                        stream.close()
+                    continue
                 chunk = os.read(stream.fileno(), 16 * 1024)
                 if not chunk:
                     selector.unregister(stream)
@@ -565,100 +660,15 @@ def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
 
 
 def _close_process_pipes(process: subprocess.Popen[bytes]) -> None:
-    for stream in (process.stdout, process.stderr):
+    for stream in (process.stdin, process.stdout, process.stderr):
         if stream is not None:
             stream.close()
 
 
-def _validate_ref(ref: str) -> None:
-    if not ref or len(ref) > 4096 or "\x00" in ref:
-        raise ValueError("Git ref is invalid")
-
-
-def _validate_branch(branch: str) -> None:
-    _validate_ref(branch)
-    if (
-        branch.startswith("-")
-        or ".." in branch
-        or branch.endswith(".")
-        or branch.endswith("/")
-        or branch.startswith("/")
-        or "@{" in branch
-        or any(character in "~^:?*[\\" for character in branch)
-        or any(character.isspace() or ord(character) < 32 for character in branch)
-        or any(part in {".", ".."} for part in branch.split("/"))
-        or any(part.endswith(".lock") for part in branch.split("/"))
-    ):
-        raise ValueError("Git branch is invalid")
-
-
-def _validate_untracked_path(repository_root: Path, relative: str) -> Path:
-    path = Path(relative)
-    if (
-        not relative
-        or path.is_absolute()
-        or any(part in {"", ".", ".."} for part in path.parts)
-        or any(part == ".git" for part in path.parts)
-    ):
-        raise GitCommandFailedError(
-            "worktree-capture-untracked",
-            returncode=None,
-            stderr="untracked path is outside the repository",
-        )
-    try:
-        source_root = repository_root.resolve(strict=True)
-        source_path = (repository_root / path).resolve(strict=False)
-    except OSError as error:
-        raise GitCommandFailedError(
-            "worktree-capture-untracked",
-            returncode=None,
-            stderr="untracked path could not be resolved",
-        ) from error
-    try:
-        source_path.relative_to(source_root)
-    except ValueError as error:
-        raise GitCommandFailedError(
-            "worktree-capture-untracked",
-            returncode=None,
-            stderr="untracked path escapes the repository",
-        ) from error
-    actual = repository_root / path
-    try:
-        source_stat = actual.lstat()
-    except OSError as error:
-        raise GitCommandFailedError(
-            "worktree-capture-untracked",
-            returncode=None,
-            stderr="untracked path could not be observed",
-        ) from error
-    if stat.S_ISLNK(source_stat.st_mode):
-        try:
-            link_target = actual.resolve(strict=True)
-            link_relative = link_target.relative_to(source_root)
-            if any(part == ".git" for part in link_relative.parts):
-                raise ValueError("untracked symlink points to Git metadata")
-        except (OSError, ValueError) as error:
-            raise GitCommandFailedError(
-                "worktree-capture-untracked",
-                returncode=None,
-                stderr="untracked symlink escapes the repository",
-            ) from error
-    elif not stat.S_ISREG(source_stat.st_mode):
-        raise GitCommandFailedError(
-            "worktree-capture-untracked",
-            returncode=None,
-            stderr="untracked path is not a regular file or symlink",
-        )
-    return actual
-
-
 __all__ = [
+    "GitCli",
+    "GitCliDiff",
+    "GitCliResult",
     "HardenedGitRunner",
-    "NativeBranchAttacher",
-    "NativeWorktreeChangeTransfer",
-    "NativeWorktreeCleaner",
-    "NativeWorktreeHandoffCleaner",
-    "NativeWorktreeCheckout",
-    "NativeWorktreeCreator",
     "filter_config_overrides",
 ]

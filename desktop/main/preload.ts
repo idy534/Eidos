@@ -9,6 +9,8 @@ import type {
   EventListResult,
   Session,
   SessionHandoffResult,
+  SessionRestoreWorktreeResult,
+  WorktreeSettings,
   ProjectGitContext,
   CreateBranchResult,
   DeleteSessionResult,
@@ -72,6 +74,14 @@ const api: EidosRuntimeAPI = {
     sessionId: string,
     target: "local" | "worktree",
   ): Promise<SessionHandoffResult> => ipcRenderer.invoke(IPC.SESSION_HANDOFF, sessionId, target),
+  restoreSessionWorktree: (sessionId: string): Promise<SessionRestoreWorktreeResult> =>
+    ipcRenderer.invoke(IPC.SESSION_RESTORE_WORKTREE, sessionId),
+  readWorktreeSettings: (): Promise<WorktreeSettings> =>
+    ipcRenderer.invoke(IPC.WORKTREE_SETTINGS_READ),
+  updateWorktreeSettings: (input: {
+    automaticCleanup: boolean;
+    managedWorktreeLimit: number;
+  }): Promise<WorktreeSettings> => ipcRenderer.invoke(IPC.WORKTREE_SETTINGS_UPDATE, input),
   readProjectGitContext: (workspaceRoot: string): Promise<ProjectGitContext> =>
     ipcRenderer.invoke(IPC.PROJECT_GIT_CONTEXT, workspaceRoot),
   renameSession: (sessionId: string, title: string): Promise<Session> =>

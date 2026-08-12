@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Mapping
 
 from eidos_runtime.domain.project import Project
@@ -10,6 +9,7 @@ from eidos_runtime.domain.worktree import (
     WorktreeOwnership,
     WorktreeState,
 )
+from eidos_runtime.persistence.codec import utc_datetime_from_millis
 
 
 def project_from_row(row: Mapping[str, object]) -> Project:
@@ -26,8 +26,8 @@ def project_from_row(row: Mapping[str, object]) -> Project:
             if row["git_common_dir"] is not None
             else None
         ),
-        created_at=_timestamp(int(row["created_at"])),
-        updated_at=_timestamp(int(row["updated_at"])),
+        created_at=utc_datetime_from_millis(int(row["created_at"])),
+        updated_at=utc_datetime_from_millis(int(row["updated_at"])),
     )
 
 
@@ -49,13 +49,12 @@ def worktree_from_row(row: Mapping[str, object]) -> Worktree:
         branch_ownership=BranchOwnership(str(row["branch_ownership"])),
         ownership=WorktreeOwnership(str(row["ownership"])),
         state=WorktreeState(str(row["state"])),
-        created_at=_timestamp(int(row["created_at"])),
-        updated_at=_timestamp(int(row["updated_at"])),
+        created_at=utc_datetime_from_millis(int(row["created_at"])),
+        updated_at=utc_datetime_from_millis(int(row["updated_at"])),
+        last_used_at=utc_datetime_from_millis(
+            int(row["last_used_at"])
+            if "last_used_at" in row.keys() and row["last_used_at"] is not None
+            else int(row["updated_at"])
+        ),
     )
-
-
-def _timestamp(value: int) -> datetime:
-    return datetime.fromtimestamp(value / 1000, tz=UTC)
-
-
 __all__ = ["project_from_row", "worktree_from_row"]

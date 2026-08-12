@@ -77,6 +77,22 @@ def _finalization_attempt(row: sqlite3.Row) -> dict[str, object]:
 
 
 class RunRepository(Repository):
+    def has_active_run_for_worktree(self, worktree_id: str) -> bool:
+        """Read the run-admission fact for one Worktree."""
+
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT 1 FROM runs r
+                JOIN sessions s ON s.id = r.session_id
+                WHERE (s.worktree_id = ? OR s.associated_worktree_id = ?)
+                  AND r.status IN ('queued', 'running', 'waiting_approval', 'finalizing')
+                LIMIT 1
+                """,
+                (worktree_id, worktree_id),
+            ).fetchone()
+        return row is not None
+
     def create_run(
         self,
         session_id: str,

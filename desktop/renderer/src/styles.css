@@ -2274,6 +2274,23 @@ input:focus, textarea:focus {
   font-size: var(--font-size-body);
 }
 
+.worktree-restore-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.75rem 1.75rem 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  color: var(--text);
+  background: var(--surface-muted);
+}
+
+.setting-number-field input {
+  width: 5rem;
+}
+
 /* RIGHT-SIDE SESSION AREA - REMAIN MINIMALIST */
 .feed-shell { position: relative; flex: 1 1 auto; min-height: 0; }
 

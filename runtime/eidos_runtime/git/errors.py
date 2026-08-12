@@ -40,6 +40,11 @@ class GitCommandTimeoutError(GitError):
         super().__init__("git_command_timeout", operation)
 
 
+class GitUnsupportedOperationError(GitError):
+    def __init__(self, operation: str, *, stderr: str = "") -> None:
+        super().__init__("git_unsupported_operation", operation, stderr=stderr)
+
+
 class WorktreeError(RuntimeError):
     """A stable Worktree lifecycle failure without subprocess leakage."""
 
@@ -53,5 +58,6 @@ __all__ = [
     "GitCommandFailedError",
     "GitCommandTimeoutError",
     "GitError",
+    "GitUnsupportedOperationError",
     "WorktreeError",
 ]
