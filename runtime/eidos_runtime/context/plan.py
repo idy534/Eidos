@@ -10,7 +10,11 @@ from pydantic import Field, model_validator
 
 from eidos_runtime.context.budget import ContextBudget, estimate_context_budget
 from eidos_runtime.context.facts import CompactSummary
-from eidos_runtime.model.client import ModelProfileSnapshot
+from eidos_runtime.model.client import (
+    ModelContextItem,
+    ModelProfileSnapshot,
+    ModelToolDefinition,
+)
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 from eidos_runtime.repo_intelligence.index import RepositoryIndexSnapshot
 from eidos_runtime.repo_intelligence.inventory import RepositoryInventory
@@ -46,9 +50,10 @@ class ContextPlan(EidosFrozenStrictModel):
     model_profile_snapshot_hash: str = Field(min_length=64, max_length=64)
     rule_resolution_snapshot_id: str
     rule_resolution_snapshot_hash: str = Field(min_length=64, max_length=64)
-    inventory_snapshot_id: str
-    index_snapshot_id: str
-    repository_map_snapshot_id: str
+    inventory_snapshot_id: str | None
+    index_snapshot_id: str | None
+    repository_map_snapshot_id: str | None
+    retrieval_snapshot_id: str | None = None
     user_goal: str
     recent_conversation: tuple[str, ...]
     verified_compact_summary: CompactSummary | None
@@ -75,24 +80,48 @@ class ContextPlan(EidosFrozenStrictModel):
             raise ValueError("context plan hash mismatch")
         return self
 
-    def for_model_attempt(self, model_attempt_id: str) -> ContextSnapshot:
+    def for_model_attempt(
+        self,
+        model_attempt_id: str,
+        *,
+        model_context: tuple[ModelContextItem, ...] | None = None,
+        instructions: str | None = None,
+        tool_definitions: tuple[ModelToolDefinition, ...] = (),
+    ) -> ContextSnapshot:
         if not model_attempt_id:
             raise ValueError("model_attempt_id is required")
+        exact_context = model_context or tuple(
+            {"type": message.role, "content": message.content}
+            for message in self.messages
+        )
+        exact_instructions = instructions or ""
         payload = {
-            "schema_version": 1,
+            "schema_version": 2,
             "model_attempt_id": model_attempt_id,
             "plan_id": self.plan_id,
             "plan_hash": self.snapshot_hash,
-            "messages": [message.model_dump(mode="json") for message in self.messages],
-            "selected_evidence": [item.model_dump(mode="json") for item in self.selected_evidence],
+            "model_context": exact_context,
+            "instructions": exact_instructions,
+            "tool_definitions": [item.model_dump(mode="json") for item in tool_definitions],
+            "inventory_snapshot_id": self.inventory_snapshot_id,
+            "index_snapshot_id": self.index_snapshot_id,
+            "repository_map_snapshot_id": self.repository_map_snapshot_id,
+            "retrieval_snapshot_id": self.retrieval_snapshot_id,
         }
         digest = _hash(payload)
         return ContextSnapshot(
-            schema_version=1,
+            schema_version=2,
             model_attempt_id=model_attempt_id,
             plan_id=self.plan_id,
             plan_hash=self.snapshot_hash,
             plan=self,
+            model_context=exact_context,
+            instructions=exact_instructions,
+            tool_definitions=tool_definitions,
+            inventory_snapshot_id=self.inventory_snapshot_id,
+            index_snapshot_id=self.index_snapshot_id,
+            repository_map_snapshot_id=self.repository_map_snapshot_id,
+            retrieval_snapshot_id=self.retrieval_snapshot_id,
             snapshot_id=f"context_{digest}",
             snapshot_hash=digest,
             created_at_ms=int(time.time() * 1000),
@@ -100,11 +129,18 @@ class ContextPlan(EidosFrozenStrictModel):
 
 
 class ContextSnapshot(EidosFrozenStrictModel):
-    schema_version: int = 1
+    schema_version: int = 2
     model_attempt_id: str
     plan_id: str
     plan_hash: str = Field(min_length=64, max_length=64)
     plan: ContextPlan
+    model_context: tuple[ModelContextItem, ...]
+    instructions: str
+    tool_definitions: tuple[ModelToolDefinition, ...]
+    inventory_snapshot_id: str | None
+    index_snapshot_id: str | None
+    repository_map_snapshot_id: str | None
+    retrieval_snapshot_id: str | None
     snapshot_id: str
     snapshot_hash: str = Field(min_length=64, max_length=64)
     created_at_ms: JsonSafeInt
@@ -116,8 +152,13 @@ class ContextSnapshot(EidosFrozenStrictModel):
             "model_attempt_id": self.model_attempt_id,
             "plan_id": self.plan_id,
             "plan_hash": self.plan_hash,
-            "messages": [message.model_dump(mode="json") for message in self.plan.messages],
-            "selected_evidence": [item.model_dump(mode="json") for item in self.plan.selected_evidence],
+            "model_context": self.model_context,
+            "instructions": self.instructions,
+            "tool_definitions": [item.model_dump(mode="json") for item in self.tool_definitions],
+            "inventory_snapshot_id": self.inventory_snapshot_id,
+            "index_snapshot_id": self.index_snapshot_id,
+            "repository_map_snapshot_id": self.repository_map_snapshot_id,
+            "retrieval_snapshot_id": self.retrieval_snapshot_id,
         }
         digest = _hash(payload)
         if self.snapshot_hash != digest or self.snapshot_id != f"context_{digest}":
@@ -128,6 +169,85 @@ class ContextSnapshot(EidosFrozenStrictModel):
 
 
 class ContextPlanner:
+    def capture(
+        self,
+        *,
+        model_profile: ModelProfileSnapshot,
+        rule_snapshot: RuleResolutionSnapshot,
+        model_context: tuple[ModelContextItem, ...],
+        instructions: str,
+        tool_definitions: tuple[ModelToolDefinition, ...],
+        token_budget: ContextBudget,
+        inventory_snapshot_id: str | None = None,
+        index_snapshot_id: str | None = None,
+        repository_map_snapshot_id: str | None = None,
+        retrieval_snapshot_id: str | None = None,
+        selected_evidence: tuple[RepositoryEvidence, ...] = (),
+    ) -> ContextPlan:
+        """Record metadata for the canonical ContextBuilder projection."""
+        profile_hash = _hash(model_profile.model_dump(mode="json"))
+        request_projection = {
+            "model_context": model_context,
+            "instructions": instructions,
+            "tool_definitions": [
+                item.model_dump(mode="json") for item in tool_definitions
+            ],
+        }
+        payload = {
+            "schema_version": 2,
+            "model_profile_snapshot_id": f"profile_{profile_hash}",
+            "model_profile_snapshot_hash": profile_hash,
+            "rule_resolution_snapshot_id": rule_snapshot.id,
+            "rule_resolution_snapshot_hash": rule_snapshot.snapshot_hash,
+            "inventory_snapshot_id": inventory_snapshot_id,
+            "index_snapshot_id": index_snapshot_id,
+            "repository_map_snapshot_id": repository_map_snapshot_id,
+            "retrieval_snapshot_id": retrieval_snapshot_id,
+            "user_goal": "",
+            "recent_conversation": (),
+            "verified_compact_summary": None,
+            "tool_facts": (),
+            "pending_approval_facts": (),
+            "reconciliation_facts": (),
+            "current_diff": (),
+            "messages": (),
+            "selected_evidence": [item.model_dump(mode="json") for item in selected_evidence],
+            "token_budget": token_budget.model_dump(mode="json"),
+            "section_budgets": (),
+            "omissions": (),
+            "diagnostics": (
+                "canonical_request_projection:" + _hash(request_projection),
+            ),
+        }
+        digest = _hash(payload)
+        return ContextPlan(
+            schema_version=2,
+            plan_id=f"plan_{digest}",
+            model_profile_snapshot_id=f"profile_{profile_hash}",
+            model_profile_snapshot_hash=profile_hash,
+            rule_resolution_snapshot_id=rule_snapshot.id,
+            rule_resolution_snapshot_hash=rule_snapshot.snapshot_hash,
+            inventory_snapshot_id=inventory_snapshot_id,
+            index_snapshot_id=index_snapshot_id,
+            repository_map_snapshot_id=repository_map_snapshot_id,
+            retrieval_snapshot_id=retrieval_snapshot_id,
+            user_goal="",
+            recent_conversation=(),
+            verified_compact_summary=None,
+            tool_facts=(),
+            pending_approval_facts=(),
+            reconciliation_facts=(),
+            current_diff=(),
+            messages=(),
+            selected_evidence=selected_evidence,
+            token_budget=token_budget,
+            section_budgets=(),
+            omissions=(),
+            diagnostics=payload["diagnostics"],
+            created_at_ms=int(time.time() * 1000),
+            snapshot_hash=digest,
+        )
+
     def build(
         self,
         *,
@@ -208,6 +328,7 @@ class ContextPlanner:
             "inventory_snapshot_id": inventory.snapshot_id,
             "index_snapshot_id": index.snapshot_id,
             "repository_map_snapshot_id": repository_map.snapshot_id,
+            "retrieval_snapshot_id": retrieval.snapshot_id,
             "user_goal": user_goal,
             "recent_conversation": recent_conversation,
             "verified_compact_summary": compact_summary.model_dump(mode="json") if compact_summary else None,
@@ -233,6 +354,7 @@ class ContextPlanner:
             inventory_snapshot_id=inventory.snapshot_id,
             index_snapshot_id=index.snapshot_id,
             repository_map_snapshot_id=repository_map.snapshot_id,
+            retrieval_snapshot_id=retrieval.snapshot_id,
             user_goal=user_goal,
             recent_conversation=recent_conversation,
             verified_compact_summary=compact_summary,

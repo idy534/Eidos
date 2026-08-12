@@ -15,6 +15,7 @@ from eidos_runtime.db.schema import (  # noqa: E402
     PREVIOUS_SCHEMA_VERSION,
     SCHEMA_SQL,
     SCHEMA_VERSION,
+    V2_SCHEMA_SQL,
 )
 from eidos_runtime.db.storage import DATABASE_NAME, SessionStore  # noqa: E402
 from eidos_runtime.runtime.state_machine import (  # noqa: E402
@@ -310,8 +311,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 2)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 1)
+        self.assertEqual(SCHEMA_VERSION, 3)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 2)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
@@ -395,7 +396,33 @@ class StorageSchemaTests(unittest.TestCase):
         )
         check.close()
 
-    def test_invalid_v1_shape_fails_migration_without_mutation(self) -> None:
+    def test_v2_context_lineage_migrates_to_nullable_columns(self) -> None:
+        database = self.data / DATABASE_NAME
+        connection = sqlite3.connect(database)
+        connection.executescript(V2_SCHEMA_SQL)
+        connection.execute(f"PRAGMA user_version = {PREVIOUS_SCHEMA_VERSION}")
+        connection.commit()
+        connection.close()
+        os.chmod(database, 0o600)
+
+        store = SessionStore(self.data)
+        store.initialize()
+
+        self.assertEqual(store.health(), {"state": "ready"})
+        connection = store.connection
+        for column in (
+            "retrieval_snapshot_id",
+            "inventory_snapshot_id",
+            "index_snapshot_id",
+        ):
+            row = next(
+                row for row in connection.execute("PRAGMA table_info(context_plans)")
+                if row[1] == column
+            )
+            self.assertEqual(row[3], 0)
+        store.close()
+
+    def test_invalid_v2_shape_fails_migration_without_mutation(self) -> None:
         database = self.data / DATABASE_NAME
         connection = sqlite3.connect(database)
         connection.execute("CREATE TABLE legacy_marker (value TEXT)")

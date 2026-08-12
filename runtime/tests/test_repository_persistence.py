@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from eidos_runtime.application.repository import RepositoryApplication
 from eidos_runtime.db.database import Database
 from eidos_runtime.db.schema import (
-    PREVIOUS_SCHEMA_VERSION,
+    LEGACY_SCHEMA_VERSION,
     SCHEMA_SQL,
     SCHEMA_VERSION,
 )
@@ -353,7 +353,7 @@ def test_v1_generation_without_map_migrates_as_non_restorable(
             inventory.created_at_ms,
         ),
     )
-    raw.execute(f"PRAGMA user_version = {PREVIOUS_SCHEMA_VERSION}")
+    raw.execute(f"PRAGMA user_version = {LEGACY_SCHEMA_VERSION}")
     raw.commit()
     raw.close()
     database_path.chmod(0o600)

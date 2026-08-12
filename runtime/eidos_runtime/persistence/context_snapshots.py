@@ -15,30 +15,36 @@ class ContextSnapshotRepository(Repository):
         self,
         *,
         run_id: str,
-        retrieval: RetrievalSnapshot,
+        retrieval: RetrievalSnapshot | None,
         snapshot: ContextSnapshot,
     ) -> ContextSnapshot:
         plan = snapshot.plan
-        if (
-            plan.inventory_snapshot_id != retrieval.inventory_snapshot_id
+        if snapshot.plan_id != plan.plan_id:
+            raise ValueError("context persistence snapshot lineage mismatch")
+        if retrieval is None:
+            if plan.retrieval_snapshot_id is not None:
+                raise ValueError("context persistence snapshot lineage mismatch")
+        elif (
+            plan.retrieval_snapshot_id != retrieval.snapshot_id
+            or plan.inventory_snapshot_id != retrieval.inventory_snapshot_id
             or plan.index_snapshot_id != retrieval.index_snapshot_id
-            or snapshot.plan_id != plan.plan_id
         ):
             raise ValueError("context persistence snapshot lineage mismatch")
         with self.lock, self._connection() as connection:
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO repository_retrieval_snapshots (
-                    id, run_id, inventory_snapshot_id, index_snapshot_id,
-                    snapshot_hash, snapshot_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    retrieval.snapshot_id, run_id, retrieval.inventory_snapshot_id,
-                    retrieval.index_snapshot_id, retrieval.snapshot_hash,
-                    retrieval.model_dump_json(), retrieval.created_at_ms,
-                ),
-            )
+            if retrieval is not None:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO repository_retrieval_snapshots (
+                        id, run_id, inventory_snapshot_id, index_snapshot_id,
+                        snapshot_hash, snapshot_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        retrieval.snapshot_id, run_id, retrieval.inventory_snapshot_id,
+                        retrieval.index_snapshot_id, retrieval.snapshot_hash,
+                        retrieval.model_dump_json(), retrieval.created_at_ms,
+                    ),
+                )
             connection.execute(
                 """
                 INSERT OR IGNORE INTO context_plans (
@@ -49,7 +55,7 @@ class ContextSnapshotRepository(Repository):
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    plan.plan_id, run_id, retrieval.snapshot_id,
+                    plan.plan_id, run_id, plan.retrieval_snapshot_id,
                     plan.model_profile_snapshot_hash,
                     plan.rule_resolution_snapshot_id,
                     plan.inventory_snapshot_id, plan.index_snapshot_id,

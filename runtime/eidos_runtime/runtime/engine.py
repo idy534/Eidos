@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 import threading
 import time
-from typing import Callable, Protocol
+from typing import TYPE_CHECKING, Callable, Protocol
 
 from eidos_runtime.context.builder import ContextBuild, ContextBuilder
 from eidos_runtime.context.project_rules import ProjectRuleResolver
@@ -23,6 +23,7 @@ from eidos_runtime.runtime.contracts import (
     LoopAction,
     RunContext,
     RuntimeCancelled,
+    StepContext,
 )
 from eidos_runtime.runtime.decision import LoopDecisionEngine
 from eidos_runtime.runtime.events import RuntimeEvents
@@ -48,6 +49,7 @@ from eidos_runtime.runtime.sampling import (
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.step_context import StepContextFactory
 from eidos_runtime.repo_intelligence.query import RepositoryTaskQueryBuilder
+from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
 from eidos_runtime.runtime.tool_runtime import ToolCallRuntime
 from eidos_runtime.runtime.tool_execution import ToolInfrastructureError
 from eidos_runtime.telemetry.tracing import (
@@ -76,6 +78,9 @@ EMPTY_EXTENSION_SNAPSHOT = {
 }
 
 logger = logging.getLogger("eidos.runtime")
+
+if TYPE_CHECKING:
+    from eidos_runtime.application.context import ContextApplication
 
 
 class RepositoryWorkspaceRuntimePort(Protocol):
@@ -179,6 +184,20 @@ class RuntimeEngine:
                     index=repository_snapshot.index,
                     repository_map=repository_snapshot.repository_map,
                 )
+        progress_repository = self.store.long_task_repository()
+        if progress_repository.read(run_id) is not None:
+            progress_repository.record_snapshots(
+                run_id,
+                inventory_snapshot_id=(
+                    repository_context.inventory.snapshot_id
+                    if repository_context.inventory is not None else None
+                ),
+                index_snapshot_id=(
+                    repository_context.index.snapshot_id
+                    if repository_context.index is not None else None
+                ),
+                safe_point=SafePoint.AFTER_REPOSITORY_GENERATION,
+            )
         with run_span(
             run_id,
             str(run["modelId"]),
@@ -269,6 +288,11 @@ class RuntimeEngine:
             self.store.recent_progress_signatures(run.run_id)
         )
         context_builder = ContextBuilder(self.store)
+        from eidos_runtime.application.context import ContextApplication
+
+        context_application = ContextApplication(
+            snapshots=self.store.context_snapshot_repository()
+        )
         compactor = ContextCompactor(self.store)
         step_factory = StepContextFactory(self.store)
         rule_resolver = ProjectRuleResolver()
@@ -437,6 +461,12 @@ class RuntimeEngine:
                 workspace_version=built.facts.workspace_version,
                 new_user_input_ids=tuple(item_id for item_id, _content in injected),
             )
+            self._capture_model_attempt_context(
+                context_application,
+                step,
+                rule_snapshot,
+                repository_context,
+            )
 
             tools = ToolCallRuntime(
                 self.store,
@@ -536,13 +566,20 @@ class RuntimeEngine:
                         ),
                     )
                     if should_retry:
-                        self.store.start_retry_model_attempt(run.run_id)
+                        attempt_id = self.store.start_retry_model_attempt(run.run_id)
                         step = step.model_copy(update={
+                            "model_attempt_id": attempt_id,
                             "model_context": (
                                 *step.model_context,
                                 {"type": "protocol_error", "code": reason},
                             )
                         })
+                        self._capture_model_attempt_context(
+                            context_application,
+                            step,
+                            rule_snapshot,
+                            repository_context,
+                        )
                         continue
                     self.store.complete_current_step(
                         run.run_id, "failed", reason=reason
@@ -567,13 +604,20 @@ class RuntimeEngine:
                         ),
                     )
                     if should_retry:
-                        self.store.start_retry_model_attempt(run.run_id)
+                        attempt_id = self.store.start_retry_model_attempt(run.run_id)
                         step = step.model_copy(update={
+                            "model_attempt_id": attempt_id,
                             "model_context": (
                                 *step.model_context,
                                 {"type": "protocol_error", "code": "empty_response"},
                             )
                         })
+                        self._capture_model_attempt_context(
+                            context_application,
+                            step,
+                            rule_snapshot,
+                            repository_context,
+                        )
                         continue
                     reason = empty_reason or "empty_response"
                     self.store.complete_current_step(
@@ -852,6 +896,47 @@ class RuntimeEngine:
             if cancel.wait(0.05):
                 raise RuntimeCancelled
             progress = repository.read(run_id) or progress
+
+    def _capture_model_attempt_context(
+        self,
+        application: ContextApplication,
+        step: StepContext,
+        rule_snapshot: RuleResolutionSnapshot,
+        repository_context: RunRepositoryContext,
+    ) -> None:
+        if step.context_budget is None:
+            raise RuntimeError("model attempt context budget is required")
+        retrieval = repository_context.retrieval
+        snapshot = application.capture_and_persist_model_attempt(
+            run_id=step.run_id,
+            model_attempt_id=step.model_attempt_id,
+            model_profile=step.model_profile,
+            rule_snapshot=rule_snapshot,
+            model_context=step.model_context,
+            instructions=step.instructions.system_text,
+            tool_definitions=step.tool_definitions,
+            token_budget=step.context_budget,
+            inventory_snapshot_id=(
+                repository_context.inventory.snapshot_id
+                if repository_context.inventory is not None else None
+            ),
+            index_snapshot_id=(
+                repository_context.index.snapshot_id
+                if repository_context.index is not None else None
+            ),
+            repository_map_snapshot_id=(
+                repository_context.repository_map.snapshot_id
+                if repository_context.repository_map is not None else None
+            ),
+            retrieval=retrieval,
+        )
+        progress_repository = self.store.long_task_repository()
+        if progress_repository.read(step.run_id) is not None:
+            progress_repository.record_snapshots(
+                step.run_id,
+                context_plan_id=snapshot.plan_id,
+                context_snapshot_id=snapshot.snapshot_id,
+            )
 
     def _resume_after_approval(self, run_id: str, cancel: threading.Event) -> None:
         current = self.store.read_run(run_id)

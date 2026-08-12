@@ -46,6 +46,7 @@ class StepContext(_FrozenModel):
     run_id: str
     session_id: str
     step_id: str
+    model_attempt_id: str
     step_index: int
     model_id: str
     model_profile: ModelProfileSnapshot

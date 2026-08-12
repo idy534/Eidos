@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 2
-PREVIOUS_SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
+PREVIOUS_SCHEMA_VERSION = 2
+LEGACY_SCHEMA_VERSION = 1
 
 _RAW_BASE_SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -663,12 +664,12 @@ CREATE TABLE repository_retrieval_snapshots (
 CREATE TABLE context_plans (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
-    retrieval_snapshot_id TEXT NOT NULL
+    retrieval_snapshot_id TEXT
         REFERENCES repository_retrieval_snapshots(id) ON DELETE RESTRICT,
     model_profile_snapshot_hash TEXT NOT NULL,
     rule_snapshot_id TEXT NOT NULL,
-    inventory_snapshot_id TEXT NOT NULL,
-    index_snapshot_id TEXT NOT NULL,
+    inventory_snapshot_id TEXT,
+    index_snapshot_id TEXT,
     snapshot_hash TEXT NOT NULL,
     plan_json TEXT NOT NULL,
     created_at INTEGER NOT NULL
@@ -1223,7 +1224,57 @@ SCHEMA_SQL = (
     + WORKTREE_RETENTION_SCHEMA_SQL
 )
 
+# Test/upgrade fixture for the immediately previous schema. Keep this derived
+# from the current baseline so unrelated tables cannot drift between fixtures.
+V2_SCHEMA_SQL = SCHEMA_SQL.replace(
+    "    retrieval_snapshot_id TEXT\n",
+    "    retrieval_snapshot_id TEXT NOT NULL\n",
+).replace(
+    "    inventory_snapshot_id TEXT,\n"
+    "    index_snapshot_id TEXT,\n"
+    "    snapshot_hash TEXT NOT NULL,\n"
+    "    plan_json TEXT NOT NULL,",
+    "    inventory_snapshot_id TEXT NOT NULL,\n"
+    "    index_snapshot_id TEXT NOT NULL,\n"
+    "    snapshot_hash TEXT NOT NULL,\n"
+    "    plan_json TEXT NOT NULL,",
+)
+
 V1_TO_V2_MIGRATION_SQL = """
 ALTER TABLE repository_snapshots
 ADD COLUMN repository_map_json TEXT;
+"""
+
+V2_TO_V3_MIGRATION_SQL = """
+ALTER TABLE context_snapshots RENAME TO context_snapshots_v2;
+ALTER TABLE context_plans RENAME TO context_plans_v2;
+
+CREATE TABLE context_plans (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    retrieval_snapshot_id TEXT
+        REFERENCES repository_retrieval_snapshots(id) ON DELETE RESTRICT,
+    model_profile_snapshot_hash TEXT NOT NULL,
+    rule_snapshot_id TEXT NOT NULL,
+    inventory_snapshot_id TEXT,
+    index_snapshot_id TEXT,
+    snapshot_hash TEXT NOT NULL,
+    plan_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE context_snapshots (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    model_attempt_id TEXT NOT NULL UNIQUE,
+    plan_id TEXT NOT NULL REFERENCES context_plans(id) ON DELETE RESTRICT,
+    snapshot_hash TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+INSERT INTO context_plans SELECT * FROM context_plans_v2;
+INSERT INTO context_snapshots SELECT * FROM context_snapshots_v2;
+DROP TABLE context_snapshots_v2;
+DROP TABLE context_plans_v2;
 """

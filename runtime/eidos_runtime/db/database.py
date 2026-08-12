@@ -19,10 +19,12 @@ from eidos_runtime.db.errors import (
     StorageError,
 )
 from eidos_runtime.db.schema import (
+    LEGACY_SCHEMA_VERSION,
     PREVIOUS_SCHEMA_VERSION,
     SCHEMA_SQL,
     SCHEMA_VERSION,
     V1_TO_V2_MIGRATION_SQL,
+    V2_TO_V3_MIGRATION_SQL,
 )
 from eidos_runtime.runtime.fault_injection import hit_fault
 
@@ -99,7 +101,11 @@ class Database:
             revision = connection.execute("PRAGMA user_version").fetchone()[0]
             if (
                 tables
-                and revision not in {PREVIOUS_SCHEMA_VERSION, SCHEMA_VERSION}
+                and revision not in {
+                    LEGACY_SCHEMA_VERSION,
+                    PREVIOUS_SCHEMA_VERSION,
+                    SCHEMA_VERSION,
+                }
             ) or (
                 not tables and revision != 0
             ):
@@ -115,18 +121,25 @@ class Database:
                     + SCHEMA_SQL
                     + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
                 )
-            elif revision == PREVIOUS_SCHEMA_VERSION:
+            elif revision in {LEGACY_SCHEMA_VERSION, PREVIOUS_SCHEMA_VERSION}:
                 try:
+                    migrations = (
+                        (V1_TO_V2_MIGRATION_SQL if revision == LEGACY_SCHEMA_VERSION else "")
+                        + V2_TO_V3_MIGRATION_SQL
+                    )
+                    connection.execute("PRAGMA foreign_keys = OFF")
                     connection.executescript(
                         "BEGIN IMMEDIATE;\n"
-                        + V1_TO_V2_MIGRATION_SQL
+                        + migrations
                         + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
                     )
+                    connection.execute("PRAGMA foreign_keys = ON")
                 except sqlite3.Error as error:
                     try:
                         connection.execute("ROLLBACK")
                     except sqlite3.Error:
                         pass
+                    connection.execute("PRAGMA foreign_keys = ON")
                     raise StorageError("schema_migration_failed") from error
             _verify_integrity(connection)
             self._connection = connection
