@@ -22,7 +22,6 @@ from eidos_runtime.git.errors import (
     GitNothingStagedError,
     GitRemoteCanceledError,
     GitRemoteUnsupportedError,
-    GitUpstreamNotFoundError,
 )
 
 
@@ -351,7 +350,11 @@ class GitCli:
             allow_returncodes=(128,),
         )
         if upstream_commit.returncode != 0:
-            raise GitUpstreamNotFoundError()
+            return GitRemoteObservation(
+                branch=branch,
+                remotes=remotes,
+                upstream=GitUpstream(remote=remote_name, branch=upstream_branch),
+            )
         counts = self._runner.run(
             ("rev-list", "--left-right", "--count", "HEAD...@{upstream}"),
             cwd=cwd,

@@ -226,6 +226,15 @@ class SessionStorePort(Protocol):
         request: dict[str, object],
     ): ...
 
+    def prepare_deferred_external_operation(
+        self,
+        *,
+        request_id: str | None,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+    ): ...
+
     def start_async_operation(self, operation_id: str): ...
 
     def complete_async_operation(
@@ -1197,10 +1206,7 @@ class SessionApplication:
                     request.session_id, request.remote
                 )
                 try:
-                    self._store.prepare_operation(
-                        request.operation_id, scope, operation_request
-                    )
-                    operation, created = self._store.accept_async_operation(
+                    reservation = self._store.prepare_deferred_external_operation(
                         request_id=request_id,
                         operation_id=request.operation_id,
                         scope=scope,
@@ -1210,10 +1216,14 @@ class SessionApplication:
                     raise ApplicationError("OPERATION_ID_REUSED") from error
                 except OperationInProgressError as error:
                     raise ApplicationError("OPERATION_IN_PROGRESS") from error
-            if not created:
+            if reservation.replay_result is not None:
+                return _result(
+                    SessionGitFetchResponseDto, reservation.replay_result
+                )
+            if not reservation.created or reservation.operation is None:
                 raise ApplicationError("OPERATION_IN_PROGRESS")
             return DeferredGitFetch(
-                async_operation_id=operation.id,
+                async_operation_id=reservation.operation.id,
                 operation_id=request.operation_id,
                 request=operation_request,
                 plan=plan,

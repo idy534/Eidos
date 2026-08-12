@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 import subprocess
 import threading
 import uuid
@@ -184,7 +185,7 @@ def test_fetch_uses_controlled_user_url_instead_of_config(tmp_path: Path) -> Non
     assert _git(repo_a, "rev-parse", "refs/remotes/origin/main") == new_head
 
 
-def test_remote_status_distinguishes_configured_but_missing_upstream(
+def test_remote_status_preserves_configured_upstream_until_fetch_restores_ref(
     tmp_path: Path,
 ) -> None:
     _remote, repo_a, _repo_b = _remote_fixture(tmp_path)
@@ -196,11 +197,67 @@ def test_remote_status_distinguishes_configured_but_missing_upstream(
                 workspaceRoot=str(repo_a), executionMode="local"
             )
         ).root
-        with pytest.raises(ApplicationError) as missing:
-            application.git_remote_status(
-                SessionGitRemoteStatusRequestDto(sessionId=session["id"])
+        missing = application.git_remote_status(
+            SessionGitRemoteStatusRequestDto(sessionId=session["id"])
+        ).root
+        assert missing["upstream"] == {"remote": "origin", "branch": "main"}
+        assert missing["ahead"] is None
+        assert missing["behind"] is None
+
+        prepared = application.prepare_git_fetch(
+            SessionGitFetchRequestDto(
+                operationId=str(uuid.uuid4()), sessionId=session["id"]
+            ),
+            request_id="client-restore-upstream",
+        )
+        fetched = prepared.run(threading.Event()).root
+        assert _git(repo_a, "rev-parse", "refs/remotes/origin/main")
+        assert fetched["upstream"] == {"remote": "origin", "branch": "main"}
+        assert fetched["ahead"] == 0
+        assert fetched["behind"] == 0
+    finally:
+        store.close()
+
+
+def test_fetch_reservation_rolls_back_both_operation_rows_on_async_insert_failure(
+    tmp_path: Path,
+) -> None:
+    _remote, repo_a, _repo_b = _remote_fixture(tmp_path)
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repo_a), executionMode="local"
             )
-        assert missing.value.code == "GIT_UPSTREAM_NOT_FOUND"
+        ).root
+        operation_id = str(uuid.uuid4())
+        connection = store.connection
+        assert connection is not None
+        connection.execute(
+            """
+            CREATE TEMP TRIGGER fail_deferred_git_fetch_reservation
+            BEFORE INSERT ON async_operations
+            BEGIN
+                SELECT RAISE(ABORT, 'injected async reservation failure');
+            END
+            """
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            application.prepare_git_fetch(
+                SessionGitFetchRequestDto(
+                    operationId=operation_id, sessionId=session["id"]
+                ),
+                request_id="client-reservation-failure",
+            )
+
+        assert connection.execute(
+            "SELECT COUNT(*) FROM operations WHERE id = ?", (operation_id,)
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM async_operations WHERE operation_id = ?",
+            (operation_id,),
+        ).fetchone()[0] == 0
     finally:
         store.close()
 
