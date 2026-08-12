@@ -39,6 +39,8 @@ import type {
   ExtensionSnapshot,
   RuntimeNotification,
   AppShortcut,
+  WorkspaceDirectoryListing,
+  WorkspaceFilePreview,
 } from "./domain-contracts.js";
 import type {
   ItemFeedbackResult,
@@ -56,6 +58,15 @@ export interface EidosRuntimeAPI {
 
   // Workspace
   selectWorkspace(): Promise<string | null>;
+  listWorkspaceDirectory(
+    sessionId: string,
+    path: string,
+    limit?: number,
+  ): Promise<WorkspaceDirectoryListing>;
+  readWorkspaceFilePreview(
+    sessionId: string,
+    path: string,
+  ): Promise<WorkspaceFilePreview>;
 
   // Sessions
   listSessions(): Promise<SessionListResult>;

@@ -14,6 +14,8 @@ export const IPC = {
 
   // Workspace
   WORKSPACE_SELECT: "workspace:select",
+  WORKSPACE_LIST_DIRECTORY: "workspace:list-directory",
+  WORKSPACE_READ_FILE_PREVIEW: "workspace:read-file-preview",
 
   // Session
   SESSION_LIST: "session:list",

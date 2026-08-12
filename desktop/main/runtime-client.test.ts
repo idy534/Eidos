@@ -116,6 +116,13 @@ test("preserves every workspace and lifecycle business code in the closed contra
     "WORKTREE_PERSISTENCE_FAILED",
     "WORKTREE_RECOVERY_REQUIRED",
     "WORKSPACE_IDENTITY_UNAVAILABLE",
+    "WORKSPACE_BOUNDARY_VIOLATION",
+    "WORKSPACE_SENSITIVE_PATH",
+    "WORKSPACE_UNAVAILABLE",
+    "WORKSPACE_IDENTITY_CHANGED",
+    "WORKSPACE_READ_TIMEOUT",
+    "WORKSPACE_FILE_TOO_LARGE",
+    "WORKSPACE_SENSITIVE_CONTENT",
     "CHECKPOINT_GIT_STATE_UNAVAILABLE",
     "CHECKPOINT_FORK_WORKTREE_FAILED",
     "DIRECT_CHECKPOINT_FORK_PATH_FORBIDDEN",
@@ -278,6 +285,25 @@ test("creates first-class Direct Workspace sessions without Git review state", a
     });
     const first = await client.createSession(workspaceRoot);
     const second = await client.createSession(workspaceRoot);
+    await mkdir(path.join(workspaceRoot, "nested folder"));
+    await writeFile(path.join(workspaceRoot, "nested folder", "hello.ts"), "export const hello = true;\n", "utf8");
+    assert.deepEqual(await client.listWorkspaceDirectory(first.id, "."), {
+      path: ".",
+      entries: [{
+        name: "nested folder",
+        relativePath: "nested folder",
+        kind: "directory",
+      }],
+      truncated: false,
+    });
+    assert.deepEqual(await client.readWorkspaceFilePreview(first.id, "nested folder/hello.ts"), {
+      path: "nested folder/hello.ts",
+      kind: "code",
+      sizeBytes: 27,
+      truncated: false,
+      content: "export const hello = true;\n",
+      language: "typescript",
+    });
     assert.equal(first.project?.workspaceRoot, await realpath(workspaceRoot));
     assert.equal(first.project?.gitAvailable, false);
     assert.equal(first.project?.id, second.project?.id);
@@ -996,6 +1022,7 @@ test("uses the shared v1 vectors for requests, approvals, and notifications", as
     shutdown: { request: object; response: object };
     approval: { request: object; approveResponse: object };
     notifications: object[];
+    workspaceExplorer: { changedNotification: object };
   };
   const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-vector-runtime-"));
   const packageRoot = path.join(runtimeRoot, "eidos_runtime");
@@ -1015,6 +1042,7 @@ test("uses the shared v1 vectors for requests, approvals, and notifications", as
       "send(vectors['approval']['request'])",
       "receive(vectors['approval']['approveResponse'])",
       "for notification in vectors['notifications']: send(notification)",
+      "send(vectors['workspaceExplorer']['changedNotification'])",
       "receive(vectors['shutdown']['request'])",
       "send(vectors['shutdown']['response'])",
     ].join("\n"),
@@ -1053,7 +1081,10 @@ test("uses the shared v1 vectors for requests, approvals, and notifications", as
     assert.equal(await client.waitForExit(), 0);
     assert.deepEqual(
       notifications.map((notification) => notification.method),
-      ["run/started", "item/started", "item/delta", "item/completed", "run/completed"],
+      [
+        "run/started", "item/started", "item/delta", "item/completed", "run/completed",
+        "workspace/changed",
+      ],
     );
   } finally {
     await rm(runtimeRoot, { recursive: true, force: true });

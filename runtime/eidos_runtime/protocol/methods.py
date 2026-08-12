@@ -136,6 +136,19 @@ class SessionGitDiffRequestDto(_CanonicalIdRequest):
         return None if value is None else _git_relative_path(value)
 
 
+class WorkspaceListDirectoryRequestDto(_CanonicalIdRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    path: StrictStr = Field(default=".", min_length=1, max_length=4096)
+    limit: StrictInt = Field(default=500, ge=1, le=2_000)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
+
+
+class WorkspaceReadFilePreviewRequestDto(_CanonicalIdRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    path: StrictStr = Field(min_length=1, max_length=4096)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
+
+
 class _SessionGitPathsRequest(_OperationRequest):
     session_id: StrictStr = Field(alias="sessionId")
     paths: list[StrictStr] = Field(min_length=1, max_length=512)
@@ -562,6 +575,37 @@ class SessionGitDiffResponseDto(MethodResultDto):
         value = super().to_json_value()
         value["baseCommit"] = self.base_commit
         return value
+
+
+class WorkspaceDirectoryEntryDto(ClosedModel):
+    name: StrictStr
+    relative_path: StrictStr = Field(alias="relativePath")
+    kind: Literal["file", "directory"]
+    size_bytes: StrictInt | None = Field(default=None, alias="sizeBytes", ge=0)
+
+
+class WorkspaceListDirectoryResponseDto(MethodResultDto):
+    path: StrictStr
+    entries: list[WorkspaceDirectoryEntryDto]
+    truncated: bool
+
+    def to_json_value(self) -> dict[str, JsonValue]:
+        return self.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+
+class WorkspaceReadFilePreviewResponseDto(MethodResultDto):
+    path: StrictStr
+    kind: Literal["text", "markdown", "code", "unavailable"]
+    size_bytes: StrictInt = Field(alias="sizeBytes", ge=0)
+    truncated: bool
+    content: StrictStr | None = None
+    language: StrictStr | None = None
+    reason: Literal["binary", "unsupported"] | None = None
+
+    def to_json_value(self) -> dict[str, JsonValue]:
+        return self.model_dump(
+            mode="json", by_alias=True, exclude_none=True
+        )
 
 
 class SessionGitMutationResponseDto(MethodResultDto):

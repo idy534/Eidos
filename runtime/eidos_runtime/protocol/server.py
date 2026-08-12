@@ -42,6 +42,7 @@ from eidos_runtime.application.sessions import (
     clean_session_title,
 )
 from eidos_runtime.application.worktree_retention import WorktreeRetentionService
+from eidos_runtime.application.workspace import WorkspaceExplorerApplication
 from eidos_runtime.application.task_lifecycle import (
     LifecycleAction,
     LifecycleResult,
@@ -441,6 +442,7 @@ class _RuntimeApplications:
     context: ContextApplication
     checkpoints: CheckpointApplication
     task_lifecycle: TaskLifecycleApplication
+    workspace: WorkspaceExplorerApplication
 
 
 class _ServerRunEnvironment:
@@ -726,6 +728,22 @@ class RuntimeServer:
                 method_dtos.SessionGitDiffRequestDto,
                 method_dtos.SessionGitDiffResponseDto,
                 lambda _id, request: self._applications_or_error().sessions.git_diff(
+                    request
+                ),
+            ),
+            (
+                "workspace/listDirectory",
+                method_dtos.WorkspaceListDirectoryRequestDto,
+                method_dtos.WorkspaceListDirectoryResponseDto,
+                lambda _id, request: self._applications_or_error().workspace.list_directory(
+                    request
+                ),
+            ),
+            (
+                "workspace/readFilePreview",
+                method_dtos.WorkspaceReadFilePreviewRequestDto,
+                method_dtos.WorkspaceReadFilePreviewResponseDto,
+                lambda _id, request: self._applications_or_error().workspace.read_file_preview(
                     request
                 ),
             ),
@@ -1197,6 +1215,19 @@ class RuntimeServer:
                 retention=self.worktree_retention,
             ),
             task_lifecycle=task_lifecycle,
+            workspace=WorkspaceExplorerApplication(
+                self.store.typed_runtime_repository(),
+                worktree_manager=self.worktree_manager,
+                scan_text=self._scan_text,
+                on_changes=lambda session_id, changes: self.send({
+                    "jsonrpc": "2.0",
+                    "method": "workspace/changed",
+                    "params": {
+                        "sessionId": session_id,
+                        "paths": [change.path for change in changes],
+                    },
+                }),
+            ),
         )
 
     def initialize(self, request_id: str, params: object) -> None:
@@ -1297,6 +1328,7 @@ class RuntimeServer:
             return
         try:
             self.supervisor.shutdown()
+            self._close_workspace_explorer()
             self._cleanup_extensions()
             self._close_async_kernel()
             self.store.cancel_active_async_operations()
@@ -1359,6 +1391,7 @@ class RuntimeServer:
             return
         try:
             self.supervisor.shutdown()
+            self._close_workspace_explorer()
             self._cleanup_extensions()
             self._close_async_kernel()
             self.store.cancel_active_async_operations()
@@ -1375,6 +1408,10 @@ class RuntimeServer:
         self._clear_frozen_model_configs()
         self.store.close()
         self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
+
+    def _close_workspace_explorer(self) -> None:
+        if self._applications is not None:
+            self._applications.workspace.close()
 
     def _model_lease_for(self, model_id: str) -> ModelClientLease:
         if self.model is not None:

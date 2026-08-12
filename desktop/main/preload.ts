@@ -42,6 +42,8 @@ import type {
   ExtensionSnapshot,
   RuntimeNotification,
   AppShortcut,
+  WorkspaceDirectoryListing,
+  WorkspaceFilePreview,
 } from "../shared/domain-contracts.js";
 import type {
   ItemFeedbackResult,
@@ -62,6 +64,17 @@ const api: EidosRuntimeAPI = {
 
   // Workspace
   selectWorkspace: (): Promise<string | null> => ipcRenderer.invoke(IPC.WORKSPACE_SELECT),
+  listWorkspaceDirectory: (
+    sessionId: string,
+    path: string,
+    limit?: number,
+  ): Promise<WorkspaceDirectoryListing> =>
+    ipcRenderer.invoke(IPC.WORKSPACE_LIST_DIRECTORY, sessionId, path, limit),
+  readWorkspaceFilePreview: (
+    sessionId: string,
+    path: string,
+  ): Promise<WorkspaceFilePreview> =>
+    ipcRenderer.invoke(IPC.WORKSPACE_READ_FILE_PREVIEW, sessionId, path),
 
   // Sessions
   listSessions: (): Promise<SessionListResult> => ipcRenderer.invoke(IPC.SESSION_LIST),

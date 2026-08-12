@@ -26,6 +26,7 @@
 ## Workspace 与工具
 
 - 内置文件工具只处理当前 Workspace 内受支持的普通 UTF-8 文件。当前没有通用二进制编辑、内嵌 Terminal、浏览器自动化或 Artifact 发布工具。
+- Workspace Explorer 当前只预览有界 UTF-8 text/code 和 Markdown。二进制、图片、PDF、Office、archive 和 database 文件不做内嵌预览。Explorer 不提供编辑、搜索、拖放、重命名或删除。
 - Non-Git Project 已经支持 Local Execution Session。Non-Git Project 不支持 Git status、Git diff、Managed Worktree 或 Git-based Fork。Local Checkpoint Fork 共享真实 workspace，不提供 directory snapshot、copy-on-write 或 filesystem rewind。
 - Git Project 可以创建 Local 或 Worktree Execution Session，也可以在同一个 Session 中执行 Local ↔ Managed Worktree Handoff。Managed Worktree 默认是 detached HEAD。Runtime 已提供 structured status、file-scoped diff、stage、unstage、commit、fetch、fast-forward-only pull、push、merge、rebase 和对应 continue/abort typed API。Desktop 只接通了这些 Git workflow contract，尚未提供完整操作 UI。Stash、Diff Review UI 重构、inline comments 和 Real Checkpoint 尚未实现。
 - Git diff 对已记录的 submodule 只观察 Gitlink HEAD 和 submodule workspace 缺失。submodule 内部的 nested working-tree dirtiness 尚未向父 repository diff 暴露。

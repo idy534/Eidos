@@ -79,6 +79,8 @@
 
 - `list_files` 和 `search_text` 可以在 Workspace 内执行有界文件发现和文本搜索。
 - Workspace discovery 使用根目录 `.gitignore` 与 `.eidosignore`，并把发现规则和安全权限分开处理。
+- Desktop 提供按 Session execution root 浏览的 Workspace Explorer。文件树通过 `workspace/listDirectory` 延迟读取一层目录，并使用 `react-arborist` 虚拟化。UTF-8 text/code 和 Markdown 使用有界 `workspace/readFilePreview`。Markdown 复用现有 Renderer，代码由 Shiki 高亮。二进制、PDF、Office、archive 和 database 文件返回 typed unavailable preview。
+- Workspace Explorer 与 Agent 文件工具共用 `WorkspaceReader` 的路径边界。外部文件变化复用 `RepositoryWatchController`，只刷新已加载的受影响目录。
 - `search_text` 使用随 Runtime 管理、manifest 校验和 SHA256 校验的 macOS arm64 Ripgrep 资源。
 - Repository Intelligence 基础设施已经实现 Inventory、Repository generation、Tree-sitter Index、symbols/imports/references/chunks、Repository Map、SQLite FTS5、RapidFuzz retrieval、Retrieval Snapshot 和 ContextPlan。
 - Repository Intelligence 的不完整 generation 不会替换上一个完整 generation。Watcher 只提供失效信号，不改变活动 Snapshot。

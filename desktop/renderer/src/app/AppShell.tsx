@@ -13,6 +13,7 @@ import { CreateBranchDialog } from "../components/CreateBranchDialog.js";
 import { HandoffDialog } from "../components/HandoffDialog.js";
 import { Composer } from "../components/Composer.js";
 import { GitChangesPanel } from "../components/GitChangesPanel.js";
+import { WorkspaceExplorer } from "../components/WorkspaceExplorer.js";
 import type { RuntimeLifecycleState } from "./useRuntimeLifecycle.js";
 import { useSessionController } from "./useSessionController.js";
 import { useRunController } from "./useRunController.js";
@@ -88,7 +89,7 @@ export function AppShell({ runtime }: AppShellProps) {
   const [createSessionConfirmBusy, setCreateSessionConfirmBusy] = useState(false);
   const [createBranchSessionId, setCreateBranchSessionId] = useState<string | undefined>(undefined);
   const [handoffSessionId, setHandoffSessionId] = useState<string | undefined>(undefined);
-  const [contentView, setContentView] = useState<"conversation" | "changes">("conversation");
+  const [contentView, setContentView] = useState<"conversation" | "files" | "changes">("conversation");
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const workspaceRef = useRef<HTMLElement>(null);
   const modelSessionInitializedRef = useRef<string | undefined>(undefined);
@@ -495,8 +496,8 @@ export function AppShell({ runtime }: AppShellProps) {
                   />
                 </div>
               )}
-              {sessionHasGit && (
-                <div className="session-header-actions">
+              <div className="session-header-actions">
+                {sessionHasGit && (
                   <div className="session-git-summary" aria-label="当前 Git 状态">
                     <span>
                       {gitReviewState.status?.branch
@@ -535,14 +536,23 @@ export function AppShell({ runtime }: AppShellProps) {
                       Hand off
                     </Button>
                   </div>
-                  <div className="workspace-view-switch" aria-label="工作区视图">
-                    <button
-                      type="button"
-                      aria-pressed={contentView === "conversation"}
-                      onClick={() => setContentView("conversation")}
-                    >
-                      对话
-                    </button>
+                )}
+                <div className="workspace-view-switch" aria-label="工作区视图">
+                  <button
+                    type="button"
+                    aria-pressed={contentView === "conversation"}
+                    onClick={() => setContentView("conversation")}
+                  >
+                    对话
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={contentView === "files"}
+                    onClick={() => setContentView("files")}
+                  >
+                    Files
+                  </button>
+                  {sessionHasGit && (
                     <button
                       type="button"
                       aria-pressed={contentView === "changes"}
@@ -550,12 +560,14 @@ export function AppShell({ runtime }: AppShellProps) {
                     >
                       Changes
                     </button>
-                  </div>
+                  )}
                 </div>
-              )}
+              </div>
             </header>
 
-            {contentView === "changes" && sessionHasGit ? (
+            {contentView === "files" ? (
+              <WorkspaceExplorer sessionId={snapshot.session.id} />
+            ) : contentView === "changes" && sessionHasGit ? (
               <GitChangesPanel
                 scope={gitReviewState.scope}
                 status={gitReviewState.status}

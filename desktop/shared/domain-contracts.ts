@@ -160,6 +160,29 @@ export interface SessionGitDiff {
   observedAt: number;
 }
 
+export interface WorkspaceDirectoryEntry {
+  name: string;
+  relativePath: string;
+  kind: "file" | "directory";
+  sizeBytes?: number;
+}
+
+export interface WorkspaceDirectoryListing {
+  path: string;
+  entries: WorkspaceDirectoryEntry[];
+  truncated: boolean;
+}
+
+export interface WorkspaceFilePreview {
+  path: string;
+  kind: "text" | "markdown" | "code" | "unavailable";
+  sizeBytes: number;
+  truncated: boolean;
+  content?: string;
+  language?: string;
+  reason?: "binary" | "unsupported";
+}
+
 export interface Run {
   id: string;
   sessionId: string;
@@ -483,6 +506,7 @@ export interface ExtensionSnapshot {
 }
 
 export type RuntimeNotification =
+  | { method: "workspace/changed"; params: { sessionId: string; paths: string[] } }
   | { method: "session/titleUpdated"; params: { sessionId: string; title: string } }
   | { method: "run/started"; params: { sessionId: string; run: Run } }
   | { method: "run/updated"; params: { sessionId: string; run: Run } }

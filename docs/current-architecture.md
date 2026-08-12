@@ -27,6 +27,8 @@ Non-Git Project 只能创建 Local Execution Session。Git Project 可以创建 
 
 文件读写、Shell、Skill、MCP、Context、Long Task、Sandbox 和 Checkpoint 属于 Workspace 或 Runtime 能力。它们不因为 Project 没有 Git 而失效。Git status 和 Git diff 在 Git Project 的当前 execution root 上提供。Managed Worktree 和 Git-based Fork 仍然只在 Git Project 中提供。
 
+Desktop Workspace Explorer 也只读取当前 Session execution root。`WorkspaceExplorerApplication` 先解析 Local root 或验证 Managed Worktree identity，再调用共享 `WorkspaceReader`。`WorkspaceReader` 与 Agent 文件工具共用 fd-relative、`O_NOFOLLOW`、敏感路径、hard discovery directory 和 root ignore 规则。`workspace/listDirectory` 只返回一层子项。`workspace/readFilePreview` 只返回有界 UTF-8 预览。Renderer 不直接读取 filesystem。
+
 ## 2. Process Architecture
 
 当前默认调用链如下：
@@ -186,6 +188,8 @@ Repository Intelligence 已实现为独立的 typed infrastructure。它包括�
 - Retrieval Snapshot、ContextPlan 和 ContextSnapshot 的 hash 与证据绑定。
 
 这些基础设施由 RepositoryApplication、ContextApplication 和 persistence repositories 提供。Worktree Session 的 Repository Intelligence root 使用该 Session 的 Worktree root。Local Session 使用 `Project.workspace_root`。Repository Intelligence 不要求 Git；Non-Git Project 也可以执行 inventory、文件类型识别、Tree-sitter、symbol index、search 和 retrieval。当前默认在线 Run 仍主要使用 ContextBuilder、Workspace Tool Result 和 SQLite Context Facts。RuntimeEngine 在每次 Model Attempt 前不会强制执行完整 Inventory → Index → Map → Retrieval → ContextPlan 组装。因此，Repository Intelligence 的结构和持久化是当前实现，自动进入每次 Run 仍是部分接线能力。
+
+Workspace Explorer 复用 `RepositoryWatchController`。Watcher 事件只产生 `workspace/changed` 缓存失效通知。Renderer 根据相对路径刷新已加载的父目录。Watcher 不提供路径安全事实，也不修改 Run snapshot。
 
 ## 11. Persistence & Events
 

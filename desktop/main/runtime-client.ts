@@ -57,6 +57,13 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "WORKTREE_NOT_FOUND",
   "WORKTREE_INVALID",
   "WORKSPACE_IDENTITY_UNAVAILABLE",
+  "WORKSPACE_BOUNDARY_VIOLATION",
+  "WORKSPACE_SENSITIVE_PATH",
+  "WORKSPACE_UNAVAILABLE",
+  "WORKSPACE_IDENTITY_CHANGED",
+  "WORKSPACE_READ_TIMEOUT",
+  "WORKSPACE_FILE_TOO_LARGE",
+  "WORKSPACE_SENSITIVE_CONTENT",
   "CHECKPOINT_GIT_STATE_UNAVAILABLE",
   "CHECKPOINT_FORK_WORKTREE_FAILED",
   "DIRECT_CHECKPOINT_FORK_PATH_FORBIDDEN",
@@ -157,6 +164,8 @@ import type {
   ToolCall,
   ToolProvenance,
   ExtensionSnapshot as ExtensionSnapshotResult,
+  WorkspaceDirectoryListing,
+  WorkspaceFilePreview,
 } from "../shared/index.js";
 
 export interface InitializeResult {
@@ -412,6 +421,29 @@ export class RuntimeClient {
       "session/read",
       { sessionId, ...options },
       isSessionSnapshot,
+    );
+  }
+
+  listWorkspaceDirectory(
+    sessionId: string,
+    path: string,
+    limit = 500,
+  ): Promise<WorkspaceDirectoryListing> {
+    return this.validatedRequest(
+      "workspace/listDirectory",
+      { sessionId, path, limit },
+      isWorkspaceDirectoryListing,
+    );
+  }
+
+  readWorkspaceFilePreview(
+    sessionId: string,
+    path: string,
+  ): Promise<WorkspaceFilePreview> {
+    return this.validatedRequest(
+      "workspace/readFilePreview",
+      { sessionId, path },
+      isWorkspaceFilePreview,
     );
   }
 
@@ -927,6 +959,13 @@ function isNotification(value: unknown): value is RuntimeNotification {
     return false;
   }
   const params = value.params;
+  if (value.method === "workspace/changed") {
+    return (
+      hasOnlyKeys(params, ["sessionId", "paths"])
+      && typeof params.sessionId === "string"
+      && isStringArray(params.paths)
+    );
+  }
   if (value.method === "session/titleUpdated") {
     return (
       hasOnlyKeys(params, ["sessionId", "title"])
@@ -1218,6 +1257,40 @@ function isSessionGitStatus(value: unknown): value is SessionGitStatus {
     && isStringArray(value.untrackedFiles)
     && isStringArray(value.conflictFiles)
     && isNonNegativeInteger(value.observedAt)
+  );
+}
+
+function isWorkspaceDirectoryListing(value: unknown): value is WorkspaceDirectoryListing {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["path", "entries", "truncated"])
+    && typeof value.path === "string"
+    && typeof value.truncated === "boolean"
+    && Array.isArray(value.entries)
+    && value.entries.every((entry) => (
+      isRecord(entry)
+      && hasOnlyKeys(entry, ["name", "relativePath", "kind", "sizeBytes"])
+      && typeof entry.name === "string"
+      && typeof entry.relativePath === "string"
+      && ["file", "directory"].includes(String(entry.kind))
+      && (entry.sizeBytes === undefined || isNonNegativeInteger(entry.sizeBytes))
+    ))
+  );
+}
+
+function isWorkspaceFilePreview(value: unknown): value is WorkspaceFilePreview {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "path", "kind", "sizeBytes", "truncated", "content", "language", "reason",
+    ])
+    && typeof value.path === "string"
+    && ["text", "markdown", "code", "unavailable"].includes(String(value.kind))
+    && isNonNegativeInteger(value.sizeBytes)
+    && typeof value.truncated === "boolean"
+    && (value.content === undefined || typeof value.content === "string")
+    && (value.language === undefined || typeof value.language === "string")
+    && (value.reason === undefined || ["binary", "unsupported"].includes(String(value.reason)))
   );
 }
 

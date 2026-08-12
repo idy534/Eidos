@@ -517,6 +517,35 @@ ipcMain.handle(IPC.SESSION_GIT_STATUS, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
   return clientOrThrow().readSessionGitStatus(sessionId);
 });
+ipcMain.handle(IPC.WORKSPACE_LIST_DIRECTORY, (
+  _event,
+  sessionId: unknown,
+  relativePath: unknown,
+  limit: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof relativePath !== "string"
+    || (limit !== undefined && (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 2_000))
+  ) {
+    throw new Error("Workspace 目录参数无效。");
+  }
+  return clientOrThrow().listWorkspaceDirectory(
+    sessionId,
+    relativePath,
+    limit === undefined ? undefined : Number(limit),
+  );
+});
+ipcMain.handle(IPC.WORKSPACE_READ_FILE_PREVIEW, (
+  _event,
+  sessionId: unknown,
+  relativePath: unknown,
+) => {
+  if (typeof sessionId !== "string" || typeof relativePath !== "string") {
+    throw new Error("Workspace 文件参数无效。");
+  }
+  return clientOrThrow().readWorkspaceFilePreview(sessionId, relativePath);
+});
 ipcMain.handle(IPC.SESSION_GIT_DIFF, (
   _event,
   sessionId: unknown,
