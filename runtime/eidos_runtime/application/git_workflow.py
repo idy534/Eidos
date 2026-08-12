@@ -16,6 +16,7 @@ from eidos_runtime.git.errors import (
     GitConflictError,
     GitIdentityUnavailableError,
     GitMergeConflictError,
+    GitRebaseConflictError,
     GitNothingStagedError,
     GitRemoteCanceledError,
     GitRemoteUnsupportedError,
@@ -38,6 +39,12 @@ from eidos_runtime.protocol.methods import (
     SessionGitPushRequestDto,
     SessionGitPushResponseDto,
     SessionGitRemoteStatusResponseDto,
+    SessionGitRebaseAbortRequestDto,
+    SessionGitRebaseAbortResponseDto,
+    SessionGitRebaseContinueRequestDto,
+    SessionGitRebaseContinueResponseDto,
+    SessionGitRebaseRequestDto,
+    SessionGitRebaseResponseDto,
     SessionGitStageRequestDto,
     SessionGitStageResponseDto,
     SessionGitStatusResponseDto,
@@ -83,6 +90,13 @@ class GitPushPlan:
 
 @dataclass(frozen=True)
 class GitMergePlan:
+    session: Session
+    root: Path
+    target_commit: str | None = None
+
+
+@dataclass(frozen=True)
+class GitRebasePlan:
     session: Session
     root: Path
     target_commit: str | None = None
@@ -205,10 +219,10 @@ class GitWorkflowApplication:
         try:
             self._worktrees.git.merge(plan.root, plan.target_commit)
         except GitMergeConflictError:
-            return self._merge_result(plan.session)
+            return self._operation_result(plan.session)
         except GitError as error:
             raise _workflow_error(error) from error
-        return self._merge_result(plan.session)
+        return self._operation_result(plan.session)
 
     def preflight_merge_abort(
         self, request: SessionGitMergeAbortRequestDto
@@ -230,11 +244,110 @@ class GitWorkflowApplication:
             self._worktrees.git.merge_abort(plan.root)
         except GitError as error:
             raise _workflow_error(error) from error
-        return self._merge_result(
+        return self._operation_result(
             plan.session, result_type=SessionGitMergeAbortResponseDto
         )
 
-    def _merge_result(
+    def preflight_rebase(
+        self, request: SessionGitRebaseRequestDto
+    ) -> GitRebasePlan:
+        session, status = self._prepare_mutation(request.session_id)
+        root = Path(status.worktree_root)
+        if status.branch is None:
+            raise ApplicationError("GIT_BRANCH_REQUIRED")
+        try:
+            state = self._worktrees.git.operation_state(root)
+        except GitError as error:
+            raise _workflow_error(error) from error
+        if state is not GitOperationState.NONE:
+            raise ApplicationError("GIT_OPERATION_IN_PROGRESS")
+        if status.dirty:
+            raise ApplicationError("GIT_WORKTREE_DIRTY")
+        try:
+            if request.target in self._worktrees.git.local_branches(root):
+                target_commit = self._worktrees.git.branch_commit(
+                    root, request.target
+                )
+                if target_commit is None:
+                    raise ApplicationError("GIT_REBASE_TARGET_INVALID")
+            else:
+                target_commit = self._worktrees.git.resolve_revision(
+                    root, request.target
+                )
+        except GitError as error:
+            raise ApplicationError("GIT_REBASE_TARGET_INVALID") from error
+        return GitRebasePlan(
+            session=session, root=root, target_commit=target_commit
+        )
+
+    def rebase(self, plan: GitRebasePlan) -> SessionGitRebaseResponseDto:
+        if plan.target_commit is None:
+            raise AssertionError("rebase plan requires a target")
+        try:
+            self._worktrees.git.rebase(plan.root, plan.target_commit)
+        except GitRebaseConflictError:
+            return self._operation_result(
+                plan.session, result_type=SessionGitRebaseResponseDto
+            )
+        except GitError as error:
+            raise _workflow_error(error) from error
+        return self._operation_result(
+            plan.session, result_type=SessionGitRebaseResponseDto
+        )
+
+    def preflight_rebase_continue(
+        self, request: SessionGitRebaseContinueRequestDto
+    ) -> GitRebasePlan:
+        session, status = self._prepare_mutation(request.session_id)
+        root = Path(status.worktree_root)
+        try:
+            state = self._worktrees.git.operation_state(root)
+        except GitError as error:
+            raise _workflow_error(error) from error
+        if state is not GitOperationState.REBASE:
+            raise ApplicationError("GIT_REBASE_NOT_IN_PROGRESS")
+        return GitRebasePlan(session=session, root=root)
+
+    def rebase_continue(
+        self, plan: GitRebasePlan
+    ) -> SessionGitRebaseContinueResponseDto:
+        try:
+            self._worktrees.git.rebase_continue(plan.root)
+        except GitRebaseConflictError:
+            return self._operation_result(
+                plan.session, result_type=SessionGitRebaseContinueResponseDto
+            )
+        except GitError as error:
+            raise _workflow_error(error) from error
+        return self._operation_result(
+            plan.session, result_type=SessionGitRebaseContinueResponseDto
+        )
+
+    def preflight_rebase_abort(
+        self, request: SessionGitRebaseAbortRequestDto
+    ) -> GitRebasePlan:
+        session, status = self._prepare_mutation(request.session_id)
+        root = Path(status.worktree_root)
+        try:
+            state = self._worktrees.git.operation_state(root)
+        except GitError as error:
+            raise _workflow_error(error) from error
+        if state is not GitOperationState.REBASE:
+            raise ApplicationError("GIT_REBASE_NOT_IN_PROGRESS")
+        return GitRebasePlan(session=session, root=root)
+
+    def rebase_abort(
+        self, plan: GitRebasePlan
+    ) -> SessionGitRebaseAbortResponseDto:
+        try:
+            self._worktrees.git.rebase_abort(plan.root)
+        except GitError as error:
+            raise _workflow_error(error) from error
+        return self._operation_result(
+            plan.session, result_type=SessionGitRebaseAbortResponseDto
+        )
+
+    def _operation_result(
         self,
         session: Session,
         *,
@@ -624,6 +737,7 @@ __all__ = [
     "GitFetchPlan",
     "GitMutationPlan",
     "GitMergePlan",
+    "GitRebasePlan",
     "GitPullPlan",
     "GitPushPlan",
     "GitWorkflowApplication",

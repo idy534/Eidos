@@ -33,6 +33,9 @@ void test("IPC channel object provides central authoritative channels", () => {
   assert.equal(IPC.SESSION_GIT_DIFF, "session:git-diff");
   assert.equal(IPC.SESSION_GIT_MERGE, "session:git-merge");
   assert.equal(IPC.SESSION_GIT_MERGE_ABORT, "session:git-merge-abort");
+  assert.equal(IPC.SESSION_GIT_REBASE, "session:git-rebase");
+  assert.equal(IPC.SESSION_GIT_REBASE_CONTINUE, "session:git-rebase-continue");
+  assert.equal(IPC.SESSION_GIT_REBASE_ABORT, "session:git-rebase-abort");
   assert.equal(IPC.RESPONSE_ACTION_STATE, "response-action:state");
   assert.equal(IPC.ITEM_SET_FEEDBACK, "item:set-feedback");
   assert.equal(IPC.MODEL_PRESETS, "model:presets");

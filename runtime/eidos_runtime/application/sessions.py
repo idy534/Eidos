@@ -25,6 +25,7 @@ from eidos_runtime.application.git_workflow import (
     GitMutationPlan,
     GitPullPlan,
     GitPushPlan,
+    GitRebasePlan,
     GitWorkflowApplication,
 )
 from eidos_runtime.db.database import CommittedMutation
@@ -86,6 +87,12 @@ from eidos_runtime.protocol.methods import (
     SessionGitPushResponseDto,
     SessionGitRemoteStatusRequestDto,
     SessionGitRemoteStatusResponseDto,
+    SessionGitRebaseAbortRequestDto,
+    SessionGitRebaseAbortResponseDto,
+    SessionGitRebaseContinueRequestDto,
+    SessionGitRebaseContinueResponseDto,
+    SessionGitRebaseRequestDto,
+    SessionGitRebaseResponseDto,
     SessionGitStageRequestDto,
     SessionGitStageResponseDto,
     SessionGitStatusRequestDto,
@@ -134,7 +141,7 @@ from eidos_runtime.sandbox.sensitive import (
 
 MAX_SESSION_TITLE_BYTES = 120
 ResultT = TypeVar("ResultT", bound=MethodResultDto)
-GitPlanT = TypeVar("GitPlanT", GitMutationPlan, GitMergePlan)
+GitPlanT = TypeVar("GitPlanT", GitMutationPlan, GitMergePlan, GitRebasePlan)
 
 
 class TypedSessionRepositoryPort(Protocol):
@@ -1245,6 +1252,45 @@ class SessionApplication:
             execute=self._git_workflow.merge_abort,
         )
 
+    def git_rebase(
+        self, request: SessionGitRebaseRequestDto
+    ) -> SessionGitRebaseResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitRebase",
+            result_type=SessionGitRebaseResponseDto,
+            preflight=lambda: self._git_workflow.preflight_rebase(request),
+            execute=self._git_workflow.rebase,
+        )
+
+    def git_rebase_continue(
+        self, request: SessionGitRebaseContinueRequestDto
+    ) -> SessionGitRebaseContinueResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitRebaseContinue",
+            result_type=SessionGitRebaseContinueResponseDto,
+            preflight=lambda: self._git_workflow.preflight_rebase_continue(request),
+            execute=self._git_workflow.rebase_continue,
+        )
+
+    def git_rebase_abort(
+        self, request: SessionGitRebaseAbortRequestDto
+    ) -> SessionGitRebaseAbortResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitRebaseAbort",
+            result_type=SessionGitRebaseAbortResponseDto,
+            preflight=lambda: self._git_workflow.preflight_rebase_abort(request),
+            execute=self._git_workflow.rebase_abort,
+        )
+
     def git_remote_status(
         self, request: SessionGitRemoteStatusRequestDto
     ) -> SessionGitRemoteStatusResponseDto:
@@ -1499,6 +1545,9 @@ class SessionApplication:
             | SessionGitCommitRequestDto
             | SessionGitMergeRequestDto
             | SessionGitMergeAbortRequestDto
+            | SessionGitRebaseRequestDto
+            | SessionGitRebaseContinueRequestDto
+            | SessionGitRebaseAbortRequestDto
         ),
         *,
         scope: str,

@@ -20,6 +20,7 @@ from eidos_runtime.git.errors import (
     GitConflictError,
     GitIdentityUnavailableError,
     GitMergeConflictError,
+    GitRebaseConflictError,
     GitNothingStagedError,
     GitRemoteCanceledError,
     GitRemoteUnsupportedError,
@@ -37,6 +38,11 @@ class GitExecutionProfile(StrEnum):
     OBSERVE = "observe"
     LOCAL_MUTATION = "local_mutation"
     REMOTE = "remote"
+
+
+class GitEditorPolicy(StrEnum):
+    DISABLED = "disabled"
+    PRESERVE_COMMIT_MESSAGE = "preserve_commit_message"
 
 
 @dataclass(frozen=True)
@@ -91,6 +97,7 @@ class HardenedGitRunner:
         profile: GitExecutionProfile = GitExecutionProfile.OBSERVE,
         timeout_seconds: float | None = None,
         cancel: threading.Event | None = None,
+        editor_policy: GitEditorPolicy = GitEditorPolicy.DISABLED,
     ) -> GitCliResult:
         if not cwd.is_absolute() or not cwd.is_dir():
             raise GitCommandFailedError(operation, returncode=None)
@@ -127,6 +134,12 @@ class HardenedGitRunner:
             "GIT_CONFIG_SYSTEM": "/dev/null",
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_ASKPASS": "/usr/bin/false",
+            "GIT_EDITOR": (
+                "/usr/bin/true"
+                if editor_policy is GitEditorPolicy.PRESERVE_COMMIT_MESSAGE
+                else "/usr/bin/false"
+            ),
+            "GIT_SEQUENCE_EDITOR": "/usr/bin/false",
             "GIT_LITERAL_PATHSPECS": "1",
         }
         if read_user_global_config or profile in {
@@ -419,16 +432,7 @@ class GitCli:
         target_is_ancestor = self._is_ancestor(cwd, target, "HEAD")
         head_is_ancestor = self._is_ancestor(cwd, "HEAD", target)
         if not target_is_ancestor and not head_is_ancestor:
-            name = self._commit_identity_value(cwd, "user.name")
-            email = self._commit_identity_value(cwd, "user.email")
-            if name is None or email is None:
-                raise GitIdentityUnavailableError("merge")
-            overrides = (
-                "-c",
-                f"user.name={name}",
-                "-c",
-                f"user.email={email}",
-            )
+            overrides = self._identity_overrides(cwd, "merge")
         result = self._runner.run(
             ("merge", "--no-edit", target),
             cwd=cwd,
@@ -454,6 +458,62 @@ class GitCli:
             operation="merge-abort",
             profile=GitExecutionProfile.LOCAL_MUTATION,
         )
+
+    def rebase(self, cwd: Path, target: str) -> None:
+        overrides: tuple[str, ...] = ()
+        if not self._is_ancestor(cwd, target, "HEAD") and not self._is_ancestor(
+            cwd, "HEAD", target
+        ):
+            overrides = self._identity_overrides(cwd, "rebase")
+        result = self._runner.run(
+            ("rebase", target),
+            cwd=cwd,
+            operation="rebase",
+            config_overrides=overrides,
+            profile=GitExecutionProfile.LOCAL_MUTATION,
+            allow_returncodes=(1,),
+        )
+        self._raise_rebase_failure(cwd, result, "rebase")
+
+    def rebase_continue(self, cwd: Path) -> None:
+        result = self._runner.run(
+            ("rebase", "--continue"),
+            cwd=cwd,
+            operation="rebase-continue",
+            config_overrides=self._identity_overrides(cwd, "rebase-continue"),
+            profile=GitExecutionProfile.LOCAL_MUTATION,
+            editor_policy=GitEditorPolicy.PRESERVE_COMMIT_MESSAGE,
+            allow_returncodes=(1,),
+        )
+        self._raise_rebase_failure(cwd, result, "rebase-continue")
+
+    def rebase_abort(self, cwd: Path) -> None:
+        self._runner.run(
+            ("rebase", "--abort"),
+            cwd=cwd,
+            operation="rebase-abort",
+            profile=GitExecutionProfile.LOCAL_MUTATION,
+        )
+
+    def _raise_rebase_failure(
+        self, cwd: Path, result: GitCliResult, operation: str
+    ) -> None:
+        if result.returncode == 0:
+            return
+        if self.operation_state(cwd) is GitOperationState.REBASE:
+            raise GitRebaseConflictError(operation)
+        raise GitCommandFailedError(
+            operation,
+            returncode=result.returncode,
+            stderr=result.stderr.decode("utf-8", errors="replace"),
+        )
+
+    def _identity_overrides(self, cwd: Path, operation: str) -> tuple[str, ...]:
+        name = self._commit_identity_value(cwd, "user.name")
+        email = self._commit_identity_value(cwd, "user.email")
+        if name is None or email is None:
+            raise GitIdentityUnavailableError(operation)
+        return ("-c", f"user.name={name}", "-c", f"user.email={email}")
 
     def _is_ancestor(self, cwd: Path, ancestor: str, descendant: str) -> bool:
         result = self._runner.run(
@@ -1105,6 +1165,7 @@ __all__ = [
     "GitCliDiff",
     "GitCliResult",
     "GitExecutionProfile",
+    "GitEditorPolicy",
     "HardenedGitRunner",
     "filter_config_overrides",
 ]

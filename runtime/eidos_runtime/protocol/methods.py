@@ -237,6 +237,18 @@ class SessionGitMergeAbortRequestDto(_OperationRequest):
     )
 
 
+class SessionGitRebaseRequestDto(SessionGitMergeRequestDto):
+    pass
+
+
+class SessionGitRebaseContinueRequestDto(SessionGitMergeAbortRequestDto):
+    pass
+
+
+class SessionGitRebaseAbortRequestDto(SessionGitMergeAbortRequestDto):
+    pass
+
+
 def _git_relative_path(value: str) -> str:
     path = Path(value)
     if (
@@ -629,6 +641,18 @@ class SessionGitMergeResponseDto(SessionGitMutationResponseDto):
 
 
 class SessionGitMergeAbortResponseDto(SessionGitMergeResponseDto):
+    pass
+
+
+class SessionGitRebaseResponseDto(SessionGitMergeResponseDto):
+    pass
+
+
+class SessionGitRebaseContinueResponseDto(SessionGitRebaseResponseDto):
+    pass
+
+
+class SessionGitRebaseAbortResponseDto(SessionGitRebaseResponseDto):
     pass
 
 

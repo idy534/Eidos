@@ -93,6 +93,12 @@ class GitBackend(Protocol):
 
     def merge_abort(self, cwd: Path) -> None: ...
 
+    def rebase(self, cwd: Path, target: str) -> None: ...
+
+    def rebase_continue(self, cwd: Path) -> None: ...
+
+    def rebase_abort(self, cwd: Path) -> None: ...
+
     def push(
         self,
         cwd: Path,
@@ -338,6 +344,19 @@ class DulwichGitBackend:
     def merge_abort(self, cwd: Path) -> None:
         self._open_repository(cwd, "merge-abort")
         self._git_cli.merge_abort(cwd)
+
+    def rebase(self, cwd: Path, target: str) -> None:
+        GitRefValidator.revision(target)
+        self._open_repository(cwd, "rebase")
+        self._git_cli.rebase(cwd, target)
+
+    def rebase_continue(self, cwd: Path) -> None:
+        self._open_repository(cwd, "rebase-continue")
+        self._git_cli.rebase_continue(cwd)
+
+    def rebase_abort(self, cwd: Path) -> None:
+        self._open_repository(cwd, "rebase-abort")
+        self._git_cli.rebase_abort(cwd)
 
     def push(
         self,

@@ -138,6 +138,8 @@ export interface GitMergeResult extends SessionGitMutationResult {
   conflictFiles: string[];
 }
 
+export type GitRebaseResult = GitMergeResult;
+
 export interface ProjectGitContext {
   gitAvailable: boolean;
   currentBranch: string | null;

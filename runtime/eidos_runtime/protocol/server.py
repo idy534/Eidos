@@ -770,6 +770,30 @@ class RuntimeServer:
                 ),
             ),
             (
+                "session/gitRebase",
+                method_dtos.SessionGitRebaseRequestDto,
+                method_dtos.SessionGitRebaseResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_rebase(
+                    request
+                ),
+            ),
+            (
+                "session/gitRebaseContinue",
+                method_dtos.SessionGitRebaseContinueRequestDto,
+                method_dtos.SessionGitRebaseContinueResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_rebase_continue(
+                    request
+                ),
+            ),
+            (
+                "session/gitRebaseAbort",
+                method_dtos.SessionGitRebaseAbortRequestDto,
+                method_dtos.SessionGitRebaseAbortResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_rebase_abort(
+                    request
+                ),
+            ),
+            (
                 "session/gitRemoteStatus",
                 method_dtos.SessionGitRemoteStatusRequestDto,
                 method_dtos.SessionGitRemoteStatusResponseDto,

@@ -81,6 +81,8 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "GIT_OPERATION_IN_PROGRESS",
   "GIT_MERGE_NOT_IN_PROGRESS",
   "GIT_MERGE_TARGET_INVALID",
+  "GIT_REBASE_NOT_IN_PROGRESS",
+  "GIT_REBASE_TARGET_INVALID",
   "GIT_REMOTE_NOT_FOUND",
   "GIT_UPSTREAM_NOT_FOUND",
   "GIT_REMOTE_UNSUPPORTED",
@@ -147,6 +149,7 @@ import type {
   GitPullResult,
   GitPushResult,
   GitMergeResult,
+  GitRebaseResult,
   SessionListResult,
   SessionSnapshot,
   SkillListResult,
@@ -531,6 +534,40 @@ export class RuntimeClient {
   ): Promise<GitMergeResult> {
     return this.validatedRequest(
       "session/gitMergeAbort",
+      { operationId, sessionId },
+      isGitMergeResult,
+    );
+  }
+
+  rebaseSessionGit(
+    sessionId: string,
+    target: string,
+    operationId: string,
+  ): Promise<GitRebaseResult> {
+    return this.validatedRequest(
+      "session/gitRebase",
+      { operationId, sessionId, target },
+      isGitMergeResult,
+    );
+  }
+
+  continueSessionGitRebase(
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitRebaseResult> {
+    return this.validatedRequest(
+      "session/gitRebaseContinue",
+      { operationId, sessionId },
+      isGitMergeResult,
+    );
+  }
+
+  abortSessionGitRebase(
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitRebaseResult> {
+    return this.validatedRequest(
+      "session/gitRebaseAbort",
       { operationId, sessionId },
       isGitMergeResult,
     );

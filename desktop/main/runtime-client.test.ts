@@ -410,7 +410,7 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
   }
 });
 
-test("completes Git fetch, pull, push, and merge through typed contracts", async () => {
+test("completes Git fetch, pull, push, merge, and rebase through typed contracts", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-fetch-data-"));
   const repositoryRoot = await createGitRepository("eidos-fetch-repo-");
   const remoteRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-fetch-remote-"));
@@ -488,6 +488,31 @@ test("completes Git fetch, pull, push, and merge through typed contracts", async
     assert.equal(merged.operationState, "none");
     assert.deepEqual(merged.conflictFiles, []);
     assert.equal(merged.head, (await execFileAsync("git", ["rev-parse", "HEAD"], {
+      cwd: repositoryRoot,
+    })).stdout.trim());
+
+    await execFileAsync("git", ["switch", "-qc", "rebase-feature"], {
+      cwd: repositoryRoot,
+    });
+    await writeFile(path.join(repositoryRoot, "REBASE.txt"), "feature\n", "utf8");
+    await execFileAsync("git", ["add", "REBASE.txt"], { cwd: repositoryRoot });
+    await execFileAsync("git", ["commit", "-qm", "rebase feature"], {
+      cwd: repositoryRoot,
+    });
+    await execFileAsync("git", ["switch", "-q", "main"], { cwd: repositoryRoot });
+    await writeFile(path.join(repositoryRoot, "BASE.txt"), "base\n", "utf8");
+    await execFileAsync("git", ["add", "BASE.txt"], { cwd: repositoryRoot });
+    await execFileAsync("git", ["commit", "-qm", "rebase base"], {
+      cwd: repositoryRoot,
+    });
+    await execFileAsync("git", ["switch", "-q", "rebase-feature"], {
+      cwd: repositoryRoot,
+    });
+
+    const rebased = await client.rebaseSessionGit(session.id, "main", randomUUID());
+    assert.equal(rebased.operationState, "none");
+    assert.equal(rebased.branch, "rebase-feature");
+    assert.equal(rebased.head, (await execFileAsync("git", ["rev-parse", "HEAD"], {
       cwd: repositoryRoot,
     })).stdout.trim());
   } finally {

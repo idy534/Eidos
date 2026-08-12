@@ -21,6 +21,7 @@ import type {
   GitPullResult,
   GitPushResult,
   GitMergeResult,
+  GitRebaseResult,
   Run,
   ContextUsage,
   ModelId,
@@ -124,6 +125,19 @@ export interface EidosRuntimeAPI {
     sessionId: string,
     operationId: string,
   ): Promise<GitMergeResult>;
+  rebaseSessionGit(
+    sessionId: string,
+    target: string,
+    operationId: string,
+  ): Promise<GitRebaseResult>;
+  continueSessionGitRebase(
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitRebaseResult>;
+  abortSessionGitRebase(
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitRebaseResult>;
 
   // Runs
   startRun(sessionId: string, userInput: string, modelId: ModelId): Promise<Run>;

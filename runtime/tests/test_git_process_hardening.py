@@ -13,6 +13,7 @@ import pytest
 from eidos_runtime.git.backend import DulwichGitBackend
 from eidos_runtime.git.errors import GitCommandFailedError, GitCommandTimeoutError
 from eidos_runtime.git.native import (
+    GitEditorPolicy,
     GitExecutionProfile,
     HardenedGitRunner,
 )
@@ -207,6 +208,29 @@ def test_hardened_runner_passes_raw_stdin_bytes_without_decode(
     )
 
     assert result.stdout == b"binary\x00\xff"
+
+
+def test_hardened_runner_disables_editors_and_only_allows_message_preservation(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "inspect-editor"
+    executable.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$GIT_EDITOR\" \"$GIT_SEQUENCE_EDITOR\"\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    runner = HardenedGitRunner(git_executable=str(executable))
+
+    disabled = runner.run(("status",), cwd=tmp_path, operation="editor-disabled")
+    preserve = runner.run(
+        ("rebase", "--continue"),
+        cwd=tmp_path,
+        operation="editor-preserve",
+        editor_policy=GitEditorPolicy.PRESERVE_COMMIT_MESSAGE,
+    )
+
+    assert disabled.stdout.splitlines() == [b"/usr/bin/false", b"/usr/bin/false"]
+    assert preserve.stdout.splitlines() == [b"/usr/bin/true", b"/usr/bin/false"]
 
 
 def test_remote_profile_allows_only_controlled_credentials_and_ssh_agent(

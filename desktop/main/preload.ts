@@ -24,6 +24,7 @@ import type {
   GitPullResult,
   GitPushResult,
   GitMergeResult,
+  GitRebaseResult,
   Run,
   ContextUsage,
   ModelId,
@@ -151,6 +152,22 @@ const api: EidosRuntimeAPI = {
     operationId: string,
   ): Promise<GitMergeResult> =>
     ipcRenderer.invoke(IPC.SESSION_GIT_MERGE_ABORT, sessionId, operationId),
+  rebaseSessionGit: (
+    sessionId: string,
+    target: string,
+    operationId: string,
+  ): Promise<GitRebaseResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_REBASE, sessionId, target, operationId),
+  continueSessionGitRebase: (
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitRebaseResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_REBASE_CONTINUE, sessionId, operationId),
+  abortSessionGitRebase: (
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitRebaseResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_REBASE_ABORT, sessionId, operationId),
 
   // Runs
   startRun: (sessionId: string, userInput: string, modelId: ModelId): Promise<Run> =>

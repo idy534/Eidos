@@ -651,6 +651,41 @@ ipcMain.handle(IPC.SESSION_GIT_MERGE_ABORT, (
   }
   return clientOrThrow().abortSessionGitMerge(sessionId, operationId);
 });
+ipcMain.handle(IPC.SESSION_GIT_REBASE, (
+  _event,
+  sessionId: unknown,
+  target: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof target !== "string"
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Git Rebase 参数无效。");
+  }
+  return clientOrThrow().rebaseSessionGit(sessionId, target, operationId);
+});
+ipcMain.handle(IPC.SESSION_GIT_REBASE_CONTINUE, (
+  _event,
+  sessionId: unknown,
+  operationId: unknown,
+) => {
+  if (typeof sessionId !== "string" || typeof operationId !== "string") {
+    throw new Error("Git Rebase Continue 参数无效。");
+  }
+  return clientOrThrow().continueSessionGitRebase(sessionId, operationId);
+});
+ipcMain.handle(IPC.SESSION_GIT_REBASE_ABORT, (
+  _event,
+  sessionId: unknown,
+  operationId: unknown,
+) => {
+  if (typeof sessionId !== "string" || typeof operationId !== "string") {
+    throw new Error("Git Rebase Abort 参数无效。");
+  }
+  return clientOrThrow().abortSessionGitRebase(sessionId, operationId);
+});
 
 ipcMain.handle(IPC.RUN_START, (_event, sessionId: unknown, userInput: unknown, modelId: unknown) => {
   if (

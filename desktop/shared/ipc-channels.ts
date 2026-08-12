@@ -36,6 +36,9 @@ export const IPC = {
   SESSION_GIT_PUSH: "session:git-push",
   SESSION_GIT_MERGE: "session:git-merge",
   SESSION_GIT_MERGE_ABORT: "session:git-merge-abort",
+  SESSION_GIT_REBASE: "session:git-rebase",
+  SESSION_GIT_REBASE_CONTINUE: "session:git-rebase-continue",
+  SESSION_GIT_REBASE_ABORT: "session:git-rebase-abort",
 
   // Worktree settings
   WORKTREE_SETTINGS_READ: "worktree-settings:read",

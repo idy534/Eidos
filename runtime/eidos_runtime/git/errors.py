@@ -65,6 +65,11 @@ class GitMergeConflictError(GitError):
         super().__init__("git_merge_conflict", "merge")
 
 
+class GitRebaseConflictError(GitError):
+    def __init__(self, operation: str = "rebase") -> None:
+        super().__init__("git_rebase_conflict", operation)
+
+
 class GitRemoteUnsupportedError(GitError):
     def __init__(self) -> None:
         super().__init__("git_remote_unsupported", "fetch")
@@ -96,6 +101,7 @@ __all__ = [
     "GitError",
     "GitIdentityUnavailableError",
     "GitMergeConflictError",
+    "GitRebaseConflictError",
     "GitNothingStagedError",
     "GitRemoteCanceledError",
     "GitRemoteUnsupportedError",
