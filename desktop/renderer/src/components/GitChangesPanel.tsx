@@ -16,6 +16,7 @@ import type {
 } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
 import { Button } from "./Button.js";
+import { GitWorkflowControls } from "./GitWorkflowControls.js";
 
 
 type ReviewGroup = "staged" | "changes" | "untracked" | "conflicts";
@@ -33,6 +34,7 @@ interface FileGroup {
 
 interface GitChangesPanelProps {
   sessionId: string;
+  workspaceRoot: string;
   scope: GitDiffScope;
   status: SessionGitStatus | undefined;
   loading: boolean;
@@ -61,6 +63,8 @@ interface GitChangesPanelProps {
   ) => Promise<string>;
   onSendReviewFeedback?: (feedback: string) => Promise<void>;
   reviewFeedbackDisabled?: boolean;
+  workflowDisabled?: boolean;
+  onCreateBranch?: (() => void) | undefined;
 }
 
 const defaultReadDiff: NonNullable<GitChangesPanelProps["readDiff"]> = (id, scope, path) => (
@@ -109,6 +113,7 @@ function sameSelection(left: FileSelection | undefined, right: FileSelection): b
 
 export function GitChangesPanel({
   sessionId,
+  workspaceRoot,
   scope,
   status,
   loading,
@@ -125,6 +130,8 @@ export function GitChangesPanel({
   deleteComment = defaultDeleteComment,
   onSendReviewFeedback,
   reviewFeedbackDisabled = false,
+  workflowDisabled = false,
+  onCreateBranch,
 }: GitChangesPanelProps) {
   const groups = useMemo<readonly FileGroup[]>(() => [
     { id: "staged", label: "Staged", paths: status?.stagedFiles ?? [] },
@@ -266,6 +273,16 @@ export function GitChangesPanel({
 
   return (
     <section className="git-changes-panel" aria-label="Git Changes">
+      {status && (
+        <GitWorkflowControls
+          sessionId={sessionId}
+          workspaceRoot={workspaceRoot}
+          status={status}
+          disabled={workflowDisabled}
+          onRefresh={onRefresh}
+          onCreateBranch={onCreateBranch}
+        />
+      )}
       <header className="git-changes-toolbar">
         <div className="git-scope-tabs" role="tablist" aria-label="Diff 范围">
           <button

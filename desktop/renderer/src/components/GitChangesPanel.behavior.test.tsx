@@ -65,6 +65,7 @@ function renderPanel(overrides: Partial<Parameters<typeof GitChangesPanel>[0]> =
   const result = render(
     <GitChangesPanel
       sessionId="session-a"
+      workspaceRoot="/workspace"
       scope="head"
       status={status}
       loading={false}

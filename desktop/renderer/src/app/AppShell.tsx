@@ -515,22 +515,6 @@ export function AppShell({ runtime }: AppShellProps) {
                         ?? sessionWorktree?.branch
                         ?? `Detached @ ${(gitReviewState.status?.head ?? sessionWorktree?.baseCommit ?? "").slice(0, 7)}`}
                     </span>
-                    {sessionWorktree?.state === "active" && sessionWorktree.branch === null && (
-                      <Button
-                        variant="ghost"
-                        size="small"
-                        disabled={
-                          handoffBusy
-                          || sessionState.pending.creatingBranchSessionId === snapshot.session.id
-                        }
-                        onClick={() => {
-                          sessionActions.setError(undefined);
-                          setCreateBranchSessionId(snapshot.session.id);
-                        }}
-                      >
-                        Create Branch
-                      </Button>
-                    )}
                     {gitReviewState.status && (
                       <>
                         <code>{gitReviewState.status.head.slice(0, 7)}</code>
@@ -581,6 +565,7 @@ export function AppShell({ runtime }: AppShellProps) {
             ) : contentView === "changes" && sessionHasGit ? (
               <GitChangesPanel
                 sessionId={snapshot.session.id}
+                workspaceRoot={snapshot.session.project?.workspaceRoot ?? snapshot.session.workspaceRoot}
                 scope={gitReviewState.scope}
                 status={gitReviewState.status}
                 loading={gitReviewState.loadingStatus}
@@ -589,6 +574,20 @@ export function AppShell({ runtime }: AppShellProps) {
                 onRefresh={gitReviewActions.refresh}
                 onSendReviewFeedback={handleReviewFeedback}
                 reviewFeedbackDisabled={Boolean(activeRun) || runState.isSubmitting}
+                workflowDisabled={
+                  Boolean(activeRun)
+                  || runState.isSubmitting
+                  || handoffBusy
+                  || sessionState.pending.creatingBranchSessionId === snapshot.session.id
+                }
+                onCreateBranch={
+                  sessionWorktree?.state === "active" && sessionWorktree.branch === null
+                    ? () => {
+                        sessionActions.setError(undefined);
+                        setCreateBranchSessionId(snapshot.session.id);
+                      }
+                    : undefined
+                }
               />
             ) : (
               <>
