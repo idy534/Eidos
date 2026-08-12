@@ -85,6 +85,15 @@ class TypedRuntimeRepository(Repository):
     def read_session(self, session_id: str) -> Session | None:
         return self._sessions.read_session(session_id)
 
+    def session_for_worktree(self, worktree_id: str) -> Session | None:
+        return self._sessions.find_for_worktree(worktree_id)
+
+    def has_active_run_for_worktree(self, worktree_id: str) -> bool:
+        return self._runs.has_active_run_for_worktree(worktree_id)
+
+    def has_unfinished_handoff_for_worktree(self, worktree_id: str) -> bool:
+        return self._session_handoffs.has_unfinished_for_worktree(worktree_id)
+
     def read_session_projection(self, session_id: str) -> SessionProjection | None:
         return self._sessions.read_session_projection(session_id)
 

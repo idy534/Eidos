@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-import json
 import sqlite3
 
 from eidos_runtime.db.database import Repository
@@ -11,6 +9,13 @@ from eidos_runtime.domain.worktree_snapshot import (
     WorktreeSnapshotState,
 )
 from eidos_runtime.domain.worktree import BranchOwnership
+from eidos_runtime.persistence.codec import (
+    decode_string_tuple,
+    encode_string_tuple,
+    now_utc_millis,
+    utc_datetime_from_millis,
+    utc_datetime_to_millis,
+)
 
 
 class WorktreeSnapshotRepository(Repository):
@@ -89,7 +94,7 @@ class WorktreeSnapshotRepository(Repository):
         return tuple(value for row in rows if (value := _map(row)) is not None)
 
     def mark_restored(self, snapshot_id: str) -> WorktreeSnapshot:
-        now = _now_ms()
+        now = now_utc_millis()
         with self.lock, self._connection() as connection:
             updated = connection.execute(
                 """
@@ -112,7 +117,7 @@ class WorktreeSnapshotRepository(Repository):
         return snapshot
 
     def mark_invalid(self, snapshot_id: str) -> WorktreeSnapshot:
-        now = _now_ms()
+        now = now_utc_millis()
         with self.lock, self._connection() as connection:
             updated = connection.execute(
                 "UPDATE worktree_snapshots SET state = 'invalid', updated_at = ? "
@@ -152,10 +157,10 @@ def _values(snapshot: WorktreeSnapshot) -> tuple[object, ...]:
         snapshot.checkout_branch,
         snapshot.branch_ownership.value,
         int(snapshot.dirty),
-        json.dumps(list(snapshot.staged_paths), separators=(",", ":")),
-        json.dumps(list(snapshot.unstaged_paths), separators=(",", ":")),
-        json.dumps(list(snapshot.untracked_paths), separators=(",", ":")),
-        json.dumps(list(snapshot.conflict_paths), separators=(",", ":")),
+        encode_string_tuple(snapshot.staged_paths),
+        encode_string_tuple(snapshot.unstaged_paths),
+        encode_string_tuple(snapshot.untracked_paths),
+        encode_string_tuple(snapshot.conflict_paths),
         snapshot.source_fingerprint,
         snapshot.artifact_path,
         snapshot.artifact_sha256,
@@ -163,9 +168,11 @@ def _values(snapshot: WorktreeSnapshot) -> tuple[object, ...]:
         snapshot.staged_patch_sha256,
         snapshot.format_version,
         snapshot.state.value,
-        _millis(snapshot.created_at),
-        _millis(snapshot.restored_at) if snapshot.restored_at is not None else None,
-        _millis(snapshot.updated_at),
+        utc_datetime_to_millis(snapshot.created_at),
+        utc_datetime_to_millis(snapshot.restored_at)
+        if snapshot.restored_at is not None
+        else None,
+        utc_datetime_to_millis(snapshot.updated_at),
     )
 
 
@@ -185,10 +192,10 @@ def _map(row: sqlite3.Row | None) -> WorktreeSnapshot | None:
             "checkout_branch": row["checkout_branch"],
             "branch_ownership": BranchOwnership(row["branch_ownership"]),
             "dirty": bool(row["dirty"]),
-            "staged_paths": tuple(json.loads(row["staged_paths_json"])),
-            "unstaged_paths": tuple(json.loads(row["unstaged_paths_json"])),
-            "untracked_paths": tuple(json.loads(row["untracked_paths_json"])),
-            "conflict_paths": tuple(json.loads(row["conflict_paths_json"])),
+            "staged_paths": decode_string_tuple(row["staged_paths_json"]),
+            "unstaged_paths": decode_string_tuple(row["unstaged_paths_json"]),
+            "untracked_paths": decode_string_tuple(row["untracked_paths_json"]),
+            "conflict_paths": decode_string_tuple(row["conflict_paths_json"]),
             "source_fingerprint": row["source_fingerprint"],
             "artifact_path": row["artifact_path"],
             "artifact_sha256": row["artifact_sha256"],
@@ -196,27 +203,15 @@ def _map(row: sqlite3.Row | None) -> WorktreeSnapshot | None:
             "staged_patch_sha256": row["staged_patch_sha256"],
             "format_version": int(row["format_version"]),
             "state": WorktreeSnapshotState(row["state"]),
-            "created_at": _timestamp(int(row["created_at"])),
+            "created_at": utc_datetime_from_millis(int(row["created_at"])),
             "restored_at": (
-                _timestamp(int(row["restored_at"]))
+                utc_datetime_from_millis(int(row["restored_at"]))
                 if row["restored_at"] is not None
                 else None
             ),
-            "updated_at": _timestamp(int(row["updated_at"])),
+            "updated_at": utc_datetime_from_millis(int(row["updated_at"])),
         }
     )
-
-
-def _now_ms() -> int:
-    return int(datetime.now(UTC).timestamp() * 1000)
-
-
-def _timestamp(value: int) -> datetime:
-    return datetime.fromtimestamp(value / 1000, tz=UTC)
-
-
-def _millis(value: datetime) -> int:
-    return int(value.timestamp() * 1000)
 
 
 __all__ = ["WorktreeSnapshotRepository"]

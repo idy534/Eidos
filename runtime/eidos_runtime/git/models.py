@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from typing import Literal
 import hashlib
-import json
 
 from pydantic import Field
 
@@ -53,16 +52,34 @@ class GitDiffObservation(EidosFrozenStrictModel):
     truncated: bool
 
 
-@dataclass(frozen=True)
-class GitWorkingTreePatch:
-    """A source working-tree snapshot represented by Git patch semantics."""
+class GitWorktreeStateEntry(EidosFrozenStrictModel):
+    """One exact filesystem/index entry captured without a Git CLI patch."""
+
+    path: str
+    kind: Literal["file", "symlink", "gitlink"]
+    mode: int = Field(ge=0, le=0o177777)
+    content_base64: str | None = None
+    object_id: str | None = None
+
+
+class GitWorkingTreeState(EidosFrozenStrictModel):
+    """Immutable working-tree or index projection used for exact transfer."""
+
+    base_head: str
+    base_paths: tuple[str, ...]
+    entries: tuple[GitWorktreeStateEntry, ...]
+
+
+class GitWorkingTreePatch(EidosFrozenStrictModel):
+    """Durable source state plus optional Dulwich-rendered patch text."""
 
     full_patch: str
     staged_patch: str
+    full_state: GitWorkingTreeState | None = None
+    staged_state: GitWorkingTreeState | None = None
 
 
-@dataclass(frozen=True)
-class GitSourceSnapshot:
+class GitSourceSnapshot(EidosFrozenStrictModel):
     discovery: GitRepositoryDiscovery
     head: str
     branch: str | None
@@ -71,28 +88,9 @@ class GitSourceSnapshot:
 
     @property
     def fingerprint(self) -> str:
-        value = {
-            "repository_root": self.discovery.repository_root,
-            "git_dir": self.discovery.git_dir,
-            "git_common_dir": self.discovery.git_common_dir,
-            "head": self.head,
-            "branch": self.branch,
-            "staged_paths": self.status.staged_paths,
-            "unstaged_paths": self.status.unstaged_paths,
-            "untracked_paths": self.status.untracked_paths,
-            "conflict_paths": self.status.conflict_paths,
-            "full_patch": (
-                self.changes.full_patch if self.changes is not None else None
-            ),
-            "staged_patch": (
-                self.changes.staged_patch if self.changes is not None else None
-            ),
-        }
-        encoded = json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
+        encoded = self.model_dump_json(
+            by_alias=False,
+            exclude_none=False,
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
@@ -117,6 +115,8 @@ __all__ = [
     "GitRepositoryDiscovery",
     "GitStatusObservation",
     "GitWorktreeEntry",
+    "GitWorktreeStateEntry",
+    "GitWorkingTreeState",
     "GitWorkingTreePatch",
     "GitSourceSnapshot",
     "ProjectResolution",

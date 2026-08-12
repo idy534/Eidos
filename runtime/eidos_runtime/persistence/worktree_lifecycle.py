@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import sqlite3
 
 from eidos_runtime.db.database import Repository
@@ -9,6 +8,11 @@ from eidos_runtime.domain.worktree import (
     WorktreeLifecycleOperation,
     WorktreeLifecycleScope,
     WorktreeLifecycleState,
+)
+from eidos_runtime.persistence.codec import (
+    now_utc_millis,
+    utc_datetime_from_millis,
+    utc_datetime_to_millis,
 )
 
 
@@ -43,8 +47,8 @@ class WorktreeLifecycleRepository(Repository):
             if not _same_plan(existing, operation):
                 raise StorageError("worktree_lifecycle_conflict")
             return existing
-        created_at = _millis(operation.created_at)
-        updated_at = _millis(operation.updated_at)
+        created_at = utc_datetime_to_millis(operation.created_at)
+        updated_at = utc_datetime_to_millis(operation.updated_at)
         with self.lock, self._connection() as connection:
             try:
                 connection.execute(
@@ -104,7 +108,7 @@ class WorktreeLifecycleRepository(Repository):
         *,
         error_code: str | None = None,
     ) -> WorktreeLifecycleOperation:
-        now = _now_ms()
+        now = now_utc_millis()
         with self.lock, self._connection() as connection:
             current = connection.execute(
                 """
@@ -181,7 +185,7 @@ class WorktreeLifecycleRepository(Repository):
                 (
                     snapshot_head,
                     snapshot_fingerprint,
-                    _now_ms(),
+                    now_utc_millis(),
                     _scope(scope),
                     operation_id,
                 ),
@@ -355,21 +359,9 @@ def _map(row: sqlite3.Row | None) -> WorktreeLifecycleOperation | None:
         "snapshot_head": row["snapshot_head"],
         "snapshot_fingerprint": row["snapshot_fingerprint"],
         "error_code": row["error_code"],
-        "created_at": _timestamp(int(row["created_at"])),
-        "updated_at": _timestamp(int(row["updated_at"])),
+        "created_at": utc_datetime_from_millis(int(row["created_at"])),
+        "updated_at": utc_datetime_from_millis(int(row["updated_at"])),
     })
-
-
-def _now_ms() -> int:
-    return int(datetime.now(UTC).timestamp() * 1000)
-
-
-def _timestamp(value: int) -> datetime:
-    return datetime.fromtimestamp(value / 1000, tz=UTC)
-
-
-def _millis(value: datetime) -> int:
-    return int(value.timestamp() * 1000)
 
 
 __all__ = ["WorktreeLifecycleRepository"]

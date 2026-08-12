@@ -301,6 +301,18 @@ class SessionRepository(Repository):
             ).fetchone()
         return session_from_row(row) if row is not None else None
 
+    def find_for_worktree(self, worktree_id: str) -> Session | None:
+        """Return the oldest Session bound to or associated with a Worktree."""
+
+        with self.lock:
+            row = self._connection().execute(
+                SESSION_SELECT
+                + " WHERE s.worktree_id = ? OR s.associated_worktree_id = ?"
+                + " ORDER BY s.created_at ASC LIMIT 1",
+                (worktree_id, worktree_id),
+            ).fetchone()
+        return session_from_row(row) if row is not None else None
+
     def read_session_projection(self, session_id: str) -> SessionProjection | None:
         with self.lock:
             row = self._connection().execute(

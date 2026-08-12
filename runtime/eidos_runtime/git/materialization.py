@@ -7,8 +7,7 @@ import stat
 import tempfile
 from collections.abc import Callable, Collection
 
-from pathspec import PathSpec
-from pathspec.patterns.gitwildmatch import GitIgnoreSpecPattern
+from pathspec import GitIgnoreSpec
 
 from eidos_runtime.git.errors import WorktreeError
 
@@ -55,7 +54,7 @@ def materialize_worktree_include(
             _validate_pattern(pattern)
             patterns.append(pattern)
     try:
-        spec = PathSpec.from_lines(GitIgnoreSpecPattern, patterns)
+        spec = GitIgnoreSpec.from_lines(patterns)
     except (TypeError, ValueError) as error:
         raise WorktreeError("worktree_include_invalid") from error
 

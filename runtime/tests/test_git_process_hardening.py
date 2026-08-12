@@ -10,8 +10,6 @@ from eidos_runtime.git.backend import DulwichGitBackend
 from eidos_runtime.git.errors import GitCommandFailedError, GitCommandTimeoutError
 from eidos_runtime.git.native import (
     HardenedGitRunner,
-    NativeWorktreeCleaner,
-    NativeWorktreeHandoffCleaner,
 )
 
 
@@ -104,7 +102,8 @@ def test_handoff_cleanup_preserves_ignored_files_but_compensation_removes_them(
     (repository / "README.txt").write_text("dirty\n", encoding="utf-8")
     (repository / "untracked.txt").write_text("remove\n", encoding="utf-8")
 
-    NativeWorktreeHandoffCleaner().clean(repository)
+    backend = DulwichGitBackend()
+    backend.clean_worktree_after_handoff(repository)
 
     assert (repository / ".env").exists()
     assert (repository / "node_modules" / "example").exists()
@@ -112,7 +111,7 @@ def test_handoff_cleanup_preserves_ignored_files_but_compensation_removes_them(
     assert (repository / "README.txt").read_text(encoding="utf-8") == "base\n"
 
     (repository / "untracked.txt").write_text("remove\n", encoding="utf-8")
-    NativeWorktreeCleaner().clean(repository)
+    backend.clean_worktree_for_compensation(repository)
 
     assert not (repository / ".env").exists()
     assert not (repository / "node_modules").exists()

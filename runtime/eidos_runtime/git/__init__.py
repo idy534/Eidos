@@ -5,13 +5,8 @@ from eidos_runtime.git.backend import (
 )
 from eidos_runtime.git.manager import WorktreeManager
 from eidos_runtime.git.native import (
-    NativeBranchAttacher,
-    NativeWorktreeChangeTransfer,
-    NativeWorktreeCleaner,
-    NativeWorktreeHandoffCleaner,
-    NativeWorktreeRetentionCleaner,
-    NativeWorktreeCheckout,
-    NativeWorktreeCreator,
+    GitCliFallback,
+    HardenedGitRunner,
 )
 from eidos_runtime.git.status import (
     DiffScope,
@@ -26,13 +21,8 @@ __all__ = [
     "GitDiffSnapshot",
     "GitError",
     "GitStatusSnapshot",
-    "NativeBranchAttacher",
-    "NativeWorktreeChangeTransfer",
-    "NativeWorktreeCleaner",
-    "NativeWorktreeHandoffCleaner",
-    "NativeWorktreeRetentionCleaner",
-    "NativeWorktreeCheckout",
-    "NativeWorktreeCreator",
+    "GitCliFallback",
+    "HardenedGitRunner",
     "WorktreeError",
     "WorktreeManager",
 ]

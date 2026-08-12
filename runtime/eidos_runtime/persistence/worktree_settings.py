@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from eidos_runtime.db.database import Repository
 from eidos_runtime.db.errors import StorageError
 from eidos_runtime.domain.worktree_settings import WorktreeSettings
+from eidos_runtime.persistence.codec import (
+    now_utc_millis,
+    utc_datetime_from_millis,
+)
 
 
 class WorktreeSettingsRepository(Repository):
@@ -21,7 +23,7 @@ class WorktreeSettingsRepository(Repository):
             {
                 "automaticCleanup": bool(row["automatic_cleanup"]),
                 "managedWorktreeLimit": int(row["managed_worktree_limit"]),
-                "updatedAt": _timestamp(int(row["updated_at"])),
+                "updatedAt": utc_datetime_from_millis(int(row["updated_at"])),
             }
         )
 
@@ -33,7 +35,7 @@ class WorktreeSettingsRepository(Repository):
     ) -> WorktreeSettings:
         if not 1 <= managed_worktree_limit <= 100:
             raise ValueError("managed Worktree limit must be between 1 and 100")
-        now = _now_ms()
+        now = now_utc_millis()
         with self.lock, self._connection() as connection:
             updated = connection.execute(
                 """
@@ -46,14 +48,4 @@ class WorktreeSettingsRepository(Repository):
             if updated.rowcount != 1:
                 raise StorageError("worktree_settings_missing")
         return self.read()
-
-
-def _now_ms() -> int:
-    return int(datetime.now(UTC).timestamp() * 1000)
-
-
-def _timestamp(value: int) -> datetime:
-    return datetime.fromtimestamp(value / 1000, tz=UTC)
-
-
 __all__ = ["WorktreeSettingsRepository"]

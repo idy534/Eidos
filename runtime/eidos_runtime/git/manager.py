@@ -42,6 +42,7 @@ from eidos_runtime.git.models import (
     ProjectResolution,
 )
 from eidos_runtime.git.materialization import materialize_worktree_include
+from eidos_runtime.git.refs import GitRefValidator
 from eidos_runtime.git.status import (
     DiffScope,
     GitDiffSnapshot,
@@ -613,7 +614,7 @@ class WorktreeManager:
             raise WorktreeError("worktree_already_attached")
         if worktree.branch_ownership is not BranchOwnership.NONE:
             raise WorktreeError("worktree_already_attached")
-        _validate_branch_name(branch)
+        _require_user_branch(branch)
         validation = self.validate(worktree_id)
         if not validation.valid:
             raise WorktreeError(validation.code or "worktree_invalid")
@@ -848,7 +849,7 @@ class WorktreeManager:
         worktree = self._read_worktree(worktree_id)
         if worktree.state is not WorktreeState.ACTIVE:
             raise WorktreeError("worktree_invalid")
-        _validate_branch_name(branch)
+        _require_user_branch(branch)
         root = Path(worktree.worktree_root)
         try:
             observed_branch = self.git.current_branch(root)
@@ -1027,7 +1028,7 @@ class WorktreeManager:
         worktree = self._read_worktree(operation.worktree_id)
         if worktree.state is not WorktreeState.ACTIVE:
             raise WorktreeError("worktree_invalid")
-        _validate_branch_name(operation.branch)
+        _require_user_branch(operation.branch)
         project = self._project_for(worktree)
         root = Path(worktree.worktree_root)
         try:
@@ -2163,25 +2164,13 @@ def _paths_overlap(left: Path, right: Path) -> bool:
         return False
 
 
-def _validate_branch_name(branch: str) -> None:
-    if (
-        not branch
-        or len(branch) > 4096
-        or "\x00" in branch
-        or branch.startswith("-")
-        or branch.startswith("/")
-        or branch.endswith("/")
-        or branch.endswith(".")
-        or ".." in branch
-        or "@{" in branch
-        or any(character in "~^:?*[\\" for character in branch)
-        or any(
-            character.isspace() or ord(character) < 32 for character in branch
-        )
-        or any(part in {".", ".."} for part in branch.split("/"))
-        or any(part.endswith(".lock") for part in branch.split("/"))
-    ):
-        raise WorktreeError("worktree_branch_invalid")
+def _require_user_branch(branch: str) -> None:
+    """Map Dulwich's complete branch grammar to Eidos' error taxonomy."""
+
+    try:
+        GitRefValidator.branch(branch)
+    except ValueError as error:
+        raise WorktreeError("worktree_branch_invalid") from error
 
 
 def _now_ms() -> int:

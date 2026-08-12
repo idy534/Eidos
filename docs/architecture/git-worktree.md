@@ -53,8 +53,8 @@ Git metadata 字段必须同时有值或同时为空。Local Project 以 canonic
 
 - `WorktreeManager` 是 Eidos 的 Project、Worktree、Session binding、Run identity、durable operation、recovery、compensation 和 Sandbox boundary authority。
 - `GitBackend` 是 Git mechanics seam。它不拥有 Session、Run、Checkpoint 或 SQLite lifecycle。
-- `DulwichGitBackend` 直接返回 Eidos-owned 的 `GitRepositoryDiscovery`、`GitRepositoryContext`、`GitStatusObservation`、`GitDiffObservation` 和 `GitWorktreeEntry`。它负责 repository discovery、HEAD/ref、local branch、status、diff、worktree list/remove/prune、snapshot hidden ref 和 legacy compare-and-delete branch。
-- `NativeWorktreeCreator`、`NativeWorktreeChangeTransfer`、`NativeBranchAttacher` 和 `NativeWorktreeRetentionCleaner` 是受控的 native Git 写入 seam。它们分别负责 Worktree checkout、Git patch/index 语义的 dirty transfer、detached Worktree 的新 branch attach 和 Snapshot 已落盘后的 `reset --hard`、`clean -fdx`。`NativeWorktreeCleaner` 只用于创建失败 compensation。`HardenedGitRunner` 负责 timeout、bounded output、进程组清理、禁用 hook/fsmonitor、credential/prompt 和 pager。
+- `DulwichGitBackend` 直接返回 Eidos-owned 的 `GitRepositoryDiscovery`、`GitRepositoryContext`、`GitStatusObservation`、`GitDiffObservation` 和 `GitWorktreeEntry`。它负责 repository discovery、HEAD/ref、local branch、status、diff、worktree add/list/remove/prune、switch、patch apply、snapshot hidden ref 和 legacy compare-and-delete branch。
+- Dulwich 是唯一的 Git semantic implementation。`GitRefValidator` 只把用户 branch name 转换为 `refs/heads/*`，并调用 Dulwich 的 `local_branch_name`、`is_local_branch` 和 `check_ref_format`。`GitWorkingTreeState` 使用 Dulwich Index/Object primitives 保存 binary、symlink、mode、deleted、untracked 和 staged/index 状态。`GitCliFallback` 只保留两个窄操作：Dulwich 1.2.12 无法在公开 `worktree_add` API 中关闭 executable filter 时使用安全 Worktree Add；Dulwich 没有 `clean -fdx` 的公开参数时使用 destructive clean。`HardenedGitRunner` 只承载这两个 fallback 的 timeout、bounded output、进程组清理和 hook/fsmonitor、credential/prompt、pager hardening。
 
 Dulwich 类型不会传播到 Application、Domain、Protocol、SQLite 或 Desktop。Backend 只输出 Eidos-owned typed Git models。
 
@@ -68,7 +68,7 @@ Runtime 先解析 Project。Local Session 不创建 Worktree。Worktree Session 
 prepare
   → durable session/create intent
   → GitBackend resolve baseRef
-  → NativeWorktreeCreator: git worktree add --detach
+  → Dulwich porcelain.worktree_add(detach=True, force=False)
   → materialize source .worktreeinclude
   → optionally apply source Git working-tree patch and index state
   → exact Git/filesystem validation
@@ -84,11 +84,11 @@ Managed retry 使用 intent 中相同的 `worktree_id`、`worktree_root`、`bran
 
 默认创建的 Managed Worktree 是 detached HEAD。验证规则要求 persisted `branch = NULL` 时 observed branch 也为 NULL。外部 attach branch 会被视为 identity changed / recovery required。已有 branch 非 NULL 的 legacy Worktree 仍要求 observed branch 与 persisted branch 相同。
 
-当 `includeLocalChanges = true` 时，Runtime 要求 source `HEAD` 等于选择的 `baseCommit`。Runtime 在 Git side effect 前捕获 source repository identity、HEAD、branch、status 和 Git patch，并在 Worktree checkout 后重新核验这些事实。Source Workspace 不执行 stash、reset、checkout、add 或其他写入。Runtime 先读取 source root 的 `.worktreeinclude`，再用只读的 Git native patch、staged diff 和 `git diff --no-index` patch transfer tracked modified、deleted、staged、unstaged、binary 和 untracked regular files。最终 local state 覆盖 `.worktreeinclude` 的同路径内容。Base mismatch、source changed、patch conflict 和 include 安全错误都会失败并触发已有 compensation；无法证明 Worktree 已清理时，lifecycle 会进入 `cleanup_required`。
+当 `includeLocalChanges = true` 时，Runtime 要求 source `HEAD` 等于选择的 `baseCommit`。Runtime 在 Git side effect 前捕获 source repository identity、HEAD、branch、status 和 Dulwich working state，并在 Worktree checkout 后重新核验这些事实。Source Workspace 不执行 stash、reset、checkout、add 或其他写入。Runtime 先读取 source root 的 `.worktreeinclude`，再用 Dulwich diff APIs 生成展示 patch，并用 Dulwich Index/Object primitives transfer tracked modified、deleted、staged、unstaged、binary、symlink、mode 和 untracked state。最终 local state 覆盖 `.worktreeinclude` 的同路径内容。Base mismatch、source changed、patch conflict 和 include 安全错误都会失败并触发已有 compensation；无法证明 Worktree 已清理时，lifecycle 会进入 `cleanup_required`。
 
-`.worktreeinclude` 只位于 source repository root。Runtime 不读取 managed Worktree 内的同名文件作为 authority。Pathspec 使用项目已有的 `pathspec` Git ignore 风格语义。Runtime 拒绝绝对路径、`..`、`.git` 和指向 Project workspace 外部的 symlink。缺失匹配不报错。复制只允许普通文件和经过 target 验证的内部 symlink。
+`.worktreeinclude` 只位于 source repository root。Runtime 不读取 managed Worktree 内的同名文件作为 authority。模式使用 `pathspec.GitIgnoreSpec.from_lines()` 和 `match_file`。Runtime 只保留 Eidos 的绝对路径、`..`、`.git` 和 symlink boundary checks。Runtime 不重新实现 `*`、`**`、negation 或 precedence。缺失匹配不报错。复制只允许普通文件和经过 target 验证的内部 symlink。
 
-`Worktree` 创建后仍然是 detached execution resource。`session/createBranch` 只允许 active、valid、`branch = NULL` 的 Worktree。Runtime 先写 `worktree/attach-branch` durable intent，再在同一个 Worktree cwd 执行受控 `git switch -c`，核验 HEAD 没有变化，最后把 `branch` 和 `branch_ownership = user` 写入 SQLite。已有 branch 或在其他 Worktree checkout 的 branch 都会拒绝。Branch attach 的 `prepared`、`branch_attached`、`completed` 和 `cleanup_required` 状态支持 startup recovery。用户 branch 随 Worktree 删除保留；旧 attached branch 仍按 `legacy_managed` 兼容语义处理。
+`Worktree` 创建后仍然是 detached execution resource。`session/createBranch` 只允许 active、valid、`branch = NULL` 的 Worktree。Runtime 先写 `worktree/attach-branch` durable intent，再在同一个 Worktree cwd 执行 `dulwich.porcelain.switch(target="HEAD", create=branch, force=False)`，核验 HEAD 没有变化，最后把 `branch` 和 `branch_ownership = user` 写入 SQLite。已有 branch 或在其他 Worktree checkout 的 branch 都会拒绝。Branch attach 的 `prepared`、`branch_attached`、`completed` 和 `cleanup_required` 状态支持 startup recovery。用户 branch 随 Worktree 删除保留；旧 attached branch 仍按 `legacy_managed` 兼容语义处理。
 
 ## Managed Checkpoint Fork
 
@@ -162,10 +162,11 @@ SQLite 只保存 Snapshot metadata。Snapshot artifact 位于：
 <EIDOS_DATA_DIR>/worktree-snapshots/<snapshot_id>/
   full.patch.gz
   staged.patch.gz
+  working-state.json.gz
   manifest.json
 ```
 
-Artifact store 使用 Python 标准库 gzip、SHA-256、temporary directory、`os.replace`、file fsync 和 directory fsync。Artifact 复用 Phase 3B 的 `GitWorkingTreePatch`、`capture_worktree_changes` 和 `apply_worktree_changes` 语义。Artifact 保存 tracked modified、tracked deleted、staged、unstaged、untracked 和 binary changes。Ignored `node_modules`、`.venv`、`.env`、`.env.local` 和 build cache 不进入 Snapshot。Restore 会从当前 source repository 重新 materialize `.worktreeinclude` 和 ignored override，再应用 full patch 和 staged patch。
+Artifact store 使用 Python 标准库 gzip、SHA-256、temporary directory、`os.replace`、file fsync 和 directory fsync。Artifact 复用 Phase 3B 的 `GitWorkingTreePatch`、`capture_worktree_changes` 和 `apply_worktree_changes` 语义。Artifact 保存 tracked modified、tracked deleted、staged、unstaged、untracked、binary、symlink 和 mode changes。`working-state.json.gz` 使用 Pydantic `GitWorkingTreeState` 保存需要精确恢复的 Index 与 working-tree state。Ignored `node_modules`、`.venv`、`.env`、`.env.local` 和 build cache 不进入 Snapshot。Restore 会从当前 source repository 重新 materialize `.worktreeinclude` 和 ignored override，再应用 structured state；旧 artifact 仍可读取 full patch 和 staged patch。
 
 每个 ready Snapshot 都建立专用 Git reachability anchor：
 
@@ -177,9 +178,9 @@ refs/eidos/worktree-snapshots/<snapshot_id> = snapshot.head
 
 同一个 Worktree 只选择 `latest_ready_snapshot(worktree_id)`。新的 Snapshot ready 后，旧的 ready Snapshot 会在 compare-and-delete hidden ref 成功后清理。Restore 成功后，Runtime 将 Snapshot 标记为 `restored`，compare-and-delete hidden ref，并删除 artifact。Artifact 删除失败只会记录 deferred cleanup warning，不会回滚已验证的 Worktree。
 
-Retention cleanup 使用 `worktree/retention-cleanup` lifecycle。它按 `prepared → snapshot_saved → worktree_deleted → completed` 执行。Runtime 只在 Snapshot ready 已验证时执行 managed Worktree 的 `reset --hard`、`clean -fdx` 和非 force `git worktree remove`。Cleanup 失败会进入 `cleanup_required`，并保留 Session 与 Snapshot。
+Retention cleanup 使用 `worktree/retention-cleanup` lifecycle。它按 `prepared → snapshot_saved → worktree_deleted → completed` 执行。Runtime 只在 Snapshot ready 已验证时通过 `GitBackend` 执行 managed Worktree 的 reset、normal clean、必要的 destructive ignored clean 和非 force Worktree remove。Cleanup 失败会进入 `cleanup_required`，并保留 Session 与 Snapshot。
 
-Restore 使用 `session/restoreWorktree` 和 `worktree/restore` lifecycle。Restore 固定原来的 `worktree_id` 和原来的 `managed_root/<worktree_id>`，然后验证 Project repository identity、artifact checksum、hidden ref 和 Snapshot fingerprint。Runtime 使用 `git worktree add --detach <old-root> <snapshot.head>`，不会创建新 Worktree，不会创建 branch，也不会把 `base_commit` 改成 Snapshot HEAD。Restore 后 `checkout_branch = NULL`，旧的 `base_commit` 仍作为 baseline diff 的基准。
+Restore 使用 `session/restoreWorktree` 和 `worktree/restore` lifecycle。Restore 固定原来的 `worktree_id` 和原来的 `managed_root/<worktree_id>`，然后验证 Project repository identity、artifact checksum、hidden ref 和 Snapshot fingerprint。Runtime 通过 `GitBackend` 在旧 root 创建 detached Worktree，不会创建第二个 Worktree，不会创建 branch，也不会把 `base_commit` 改成 Snapshot HEAD。Restore 后 `checkout_branch = NULL`，旧的 `base_commit` 仍作为 baseline diff 的基准。
 
 Restore lifecycle 使用 `prepared → worktree_created → state_materialized → worktree_rebound → completed`。Runtime 会在 restart 后继续未完成的 cleanup 或 restore。Runtime 如果不能安全清理 partial restore directory，会把 operation 标记为 `cleanup_required`，并把 Run/Handoff 错误映射为 `WORKTREE_RESTORE_REQUIRED`。Runtime 不会创建 WT2 逃避恢复错误。
 
@@ -216,7 +217,7 @@ Recovery 先处理已有的 managed Worktree lifecycle operation，再处理 Sna
 
 GitBackend contract tests 覆盖 tracked clean、modified、staged、unstaged、untracked、deleted、conflict、Unicode filename、nested path、linked Worktree、HEAD、branch、HEAD diff 和 baseline diff。
 
-Runtime 不允许 configured hook、fsmonitor executable、textconv、external diff、clean filter、process filter、dotted filter driver 或 worktree-specific filter 执行。Dulwich 的低层 read-only observation 不经过这些 executable paths。Worktree create、dirty transfer、branch attach 和 compensation 使用窄的 native hardening seam。Dirty transfer 不直接复制 changed files，而是用 Git patch、staged diff 和 `git diff --no-index` 保留 staged/unstaged 语义。Source Workspace 只做观察和 patch capture。
+Runtime 不允许 configured hook、fsmonitor executable、textconv、external diff、clean filter、process filter、smudge filter、dotted filter driver 或 worktree-specific filter 执行。Dulwich 的 status/diff 使用空配置对象，避免执行 external filter。Dulwich `worktree_add` 在没有 executable filter 时直接使用；发现 filter command 时，Runtime 预先选择唯一的 `GitCliFallback.worktree_add`，并通过 bounded native config overrides 清空 clean/process/smudge。Dirty transfer 使用 Dulwich structured state 和 `dulwich.porcelain.apply_patch` 的兼容文本路径，不使用 `git diff --no-index` 或 `git apply`。Source Workspace 只做观察和 patch capture。
 
 Observation failure、timeout 或 bounded diff truncation 不会更新 Worktree lifecycle state。Git status 和 changed paths 不经过 porcelain parser，也不会调用 `Index.commit` 或写入 object store。`deleted` 仍然是 terminal state。
 

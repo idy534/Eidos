@@ -1,31 +1,45 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import gzip
 import hashlib
-import json
 import os
 from pathlib import Path
 import shutil
 import tempfile
 
+from pydantic import Field, ValidationError
+
 from eidos_runtime.git.models import GitWorkingTreePatch
+from eidos_runtime.models import EidosFrozenStrictModel
 
 
 FORMAT_VERSION = 1
+_SHA256 = r"^[0-9a-f]{64}$"
 
 
-@dataclass(frozen=True)
-class SnapshotArtifact:
+class SnapshotArtifactManifest(EidosFrozenStrictModel):
+    format_version: int = Field(default=FORMAT_VERSION, ge=1, le=100)
+    artifact_sha256: str = Field(min_length=64, max_length=64, pattern=_SHA256)
+    full_patch_sha256: str = Field(min_length=64, max_length=64, pattern=_SHA256)
+    staged_patch_sha256: str = Field(min_length=64, max_length=64, pattern=_SHA256)
+    state_sha256: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=_SHA256
+    )
+
+
+class SnapshotArtifact(EidosFrozenStrictModel):
     path: Path
-    artifact_sha256: str
-    full_patch_sha256: str
-    staged_patch_sha256: str
-    format_version: int = FORMAT_VERSION
+    artifact_sha256: str = Field(min_length=64, max_length=64, pattern=_SHA256)
+    full_patch_sha256: str = Field(min_length=64, max_length=64, pattern=_SHA256)
+    staged_patch_sha256: str = Field(min_length=64, max_length=64, pattern=_SHA256)
+    format_version: int = Field(default=FORMAT_VERSION, ge=1, le=100)
+    state_sha256: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=_SHA256
+    )
 
 
 class SnapshotArtifactStore:
-    """Crash-safe filesystem store for compressed Git patch artifacts."""
+    """Crash-safe filesystem store for compressed snapshot state."""
 
     def __init__(self, data_directory: Path) -> None:
         if not data_directory.is_absolute():
@@ -40,12 +54,22 @@ class SnapshotArtifactStore:
         staged = changes.staged_patch.encode("utf-8")
         full_compressed = gzip.compress(full, mtime=0)
         staged_compressed = gzip.compress(staged, mtime=0)
-        artifact_sha256 = _sha256(full_compressed + b"\0" + staged_compressed)
+        state = changes.model_dump_json(by_alias=True, exclude_none=False).encode(
+            "utf-8"
+        )
+        state_compressed = gzip.compress(state, mtime=0)
+        state_sha256 = _sha256(state) if _has_structured_state(changes) else None
+        artifact_sha256 = _artifact_hash(
+            full_compressed,
+            staged_compressed,
+            state_compressed if state_sha256 is not None else None,
+        )
         artifact = SnapshotArtifact(
             path=target,
             artifact_sha256=artifact_sha256,
             full_patch_sha256=_sha256(full),
             staged_patch_sha256=_sha256(staged),
+            state_sha256=state_sha256,
         )
         if target.exists():
             existing = self._read_manifest(target)
@@ -57,15 +81,18 @@ class SnapshotArtifactStore:
         try:
             self._write_bytes(temporary / "full.patch.gz", full_compressed)
             self._write_bytes(temporary / "staged.patch.gz", staged_compressed)
-            manifest = {
-                "formatVersion": FORMAT_VERSION,
-                "artifactSha256": artifact_sha256,
-                "fullPatchSha256": artifact.full_patch_sha256,
-                "stagedPatchSha256": artifact.staged_patch_sha256,
-            }
+            if state_sha256 is not None:
+                self._write_bytes(temporary / "working-state.json.gz", state_compressed)
+            manifest = SnapshotArtifactManifest(
+                format_version=FORMAT_VERSION,
+                artifact_sha256=artifact_sha256,
+                full_patch_sha256=artifact.full_patch_sha256,
+                staged_patch_sha256=artifact.staged_patch_sha256,
+                state_sha256=state_sha256,
+            )
             self._write_bytes(
                 temporary / "manifest.json",
-                json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode(
+                manifest.model_dump_json(by_alias=True, exclude_none=True).encode(
                     "utf-8"
                 ),
             )
@@ -83,7 +110,13 @@ class SnapshotArtifactStore:
         try:
             full_compressed = (target / "full.patch.gz").read_bytes()
             staged_compressed = (target / "staged.patch.gz").read_bytes()
-            if _sha256(full_compressed + b"\0" + staged_compressed) != manifest.artifact_sha256:
+            state_compressed: bytes | None = None
+            if manifest.state_sha256 is not None:
+                state_compressed = (target / "working-state.json.gz").read_bytes()
+            if (
+                _artifact_hash(full_compressed, staged_compressed, state_compressed)
+                != manifest.artifact_sha256
+            ):
                 raise ValueError("snapshot artifact checksum mismatch")
             full = gzip.decompress(full_compressed)
             staged = gzip.decompress(staged_compressed)
@@ -91,11 +124,21 @@ class SnapshotArtifactStore:
                 raise ValueError("snapshot full patch checksum mismatch")
             if _sha256(staged) != manifest.staged_patch_sha256:
                 raise ValueError("snapshot staged patch checksum mismatch")
-            return GitWorkingTreePatch(
-                full_patch=full.decode("utf-8"),
-                staged_patch=staged.decode("utf-8"),
-            )
-        except (OSError, UnicodeDecodeError, gzip.BadGzipFile, json.JSONDecodeError) as error:
+            if state_compressed is None:
+                return GitWorkingTreePatch(
+                    full_patch=full.decode("utf-8"),
+                    staged_patch=staged.decode("utf-8"),
+                )
+            state = gzip.decompress(state_compressed)
+            if _sha256(state) != manifest.state_sha256:
+                raise ValueError("snapshot state checksum mismatch")
+            parsed = GitWorkingTreePatch.model_validate_json(state)
+            if parsed.full_patch != full.decode("utf-8") or parsed.staged_patch != staged.decode(
+                "utf-8"
+            ):
+                raise ValueError("snapshot state patch mismatch")
+            return parsed
+        except (OSError, UnicodeDecodeError, UnicodeError, gzip.BadGzipFile, ValidationError) as error:
             raise ValueError("snapshot artifact is unreadable") from error
 
     def verify(self, artifact_path: str | Path, artifact_sha256: str) -> SnapshotArtifact:
@@ -104,7 +147,7 @@ class SnapshotArtifactStore:
         if manifest.artifact_sha256 != artifact_sha256:
             raise ValueError("snapshot artifact checksum mismatch")
         self.read(target)
-        return manifest
+        return _artifact_from_manifest(target, manifest)
 
     def delete(self, artifact_path: str | Path) -> None:
         target = self._validate_target(Path(artifact_path))
@@ -123,9 +166,10 @@ class SnapshotArtifactStore:
         )
 
     def _target(self, snapshot_id: str) -> Path:
-        if (
-            not snapshot_id
-            or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for character in snapshot_id)
+        if not snapshot_id or any(
+            character
+            not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+            for character in snapshot_id
         ):
             raise ValueError("snapshot id is unsafe")
         return self._validate_target(self.root / snapshot_id)
@@ -147,16 +191,40 @@ class SnapshotArtifactStore:
 
     def _read_manifest(self, target: Path) -> SnapshotArtifact:
         try:
-            value = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
-            return SnapshotArtifact(
-                path=target,
-                artifact_sha256=str(value["artifactSha256"]),
-                full_patch_sha256=str(value["fullPatchSha256"]),
-                staged_patch_sha256=str(value["stagedPatchSha256"]),
-                format_version=int(value["formatVersion"]),
+            manifest = SnapshotArtifactManifest.model_validate_json(
+                (target / "manifest.json").read_bytes()
             )
-        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        except (OSError, UnicodeDecodeError, ValidationError, ValueError) as error:
             raise ValueError("snapshot artifact manifest is invalid") from error
+        return _artifact_from_manifest(target, manifest)
+
+
+def _artifact_from_manifest(
+    path: Path, manifest: SnapshotArtifactManifest
+) -> SnapshotArtifact:
+    return SnapshotArtifact(
+        path=path,
+        artifact_sha256=manifest.artifact_sha256,
+        full_patch_sha256=manifest.full_patch_sha256,
+        staged_patch_sha256=manifest.staged_patch_sha256,
+        format_version=manifest.format_version,
+        state_sha256=manifest.state_sha256,
+    )
+
+
+def _has_structured_state(changes: GitWorkingTreePatch) -> bool:
+    return changes.full_state is not None or changes.staged_state is not None
+
+
+def _artifact_hash(
+    full_compressed: bytes,
+    staged_compressed: bytes,
+    state_compressed: bytes | None,
+) -> str:
+    value = full_compressed + b"\0" + staged_compressed
+    if state_compressed is not None:
+        value += b"\0" + state_compressed
+    return _sha256(value)
 
 
 def _sha256(value: bytes) -> str:
@@ -171,4 +239,9 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-__all__ = ["FORMAT_VERSION", "SnapshotArtifact", "SnapshotArtifactStore"]
+__all__ = [
+    "FORMAT_VERSION",
+    "SnapshotArtifact",
+    "SnapshotArtifactManifest",
+    "SnapshotArtifactStore",
+]

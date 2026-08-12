@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import os
 from pathlib import Path
 import sqlite3
@@ -17,6 +16,11 @@ from eidos_runtime.domain.worktree import (
 from eidos_runtime.persistence.mappers.worktree import (
     project_from_row,
     worktree_from_row,
+)
+from eidos_runtime.persistence.codec import (
+    now_utc_millis,
+    utc_datetime_from_millis,
+    utc_datetime_to_millis,
 )
 
 if TYPE_CHECKING:
@@ -46,14 +50,14 @@ class ProjectWorktreeRepository(Repository):
             git_repository_root = canonical_workspace
             git_common_dir = _canonical_workspace_root(git_discovery.git_common_dir)
             project_id = _project_id(git_common_dir)
-        now = _now_ms()
+        now = now_utc_millis()
         candidate = Project(
             id=project_id,
             workspace_root=canonical_workspace,
             git_repository_root=git_repository_root,
             git_common_dir=git_common_dir,
-            created_at=_timestamp(now),
-            updated_at=_timestamp(now),
+            created_at=utc_datetime_from_millis(now),
+            updated_at=utc_datetime_from_millis(now),
         )
         with self.lock, self._connection() as connection:
             existing = connection.execute(
@@ -149,9 +153,9 @@ class ProjectWorktreeRepository(Repository):
                         worktree.branch_ownership.value,
                         worktree.ownership.value,
                         worktree.state.value,
-                        _millis(worktree.created_at),
-                        _millis(worktree.updated_at),
-                        _millis(worktree.last_used_at),
+                        utc_datetime_to_millis(worktree.created_at),
+                        utc_datetime_to_millis(worktree.updated_at),
+                        utc_datetime_to_millis(worktree.last_used_at),
                     ),
                 )
             except sqlite3.IntegrityError as error:
@@ -186,7 +190,7 @@ class ProjectWorktreeRepository(Repository):
         return tuple(worktree_from_row(row) for row in rows)
 
     def update_state(self, worktree_id: str, state: WorktreeState) -> Worktree:
-        now = _now_ms()
+        now = now_utc_millis()
         with self.lock, self._connection() as connection:
             updated = connection.execute(
                 "UPDATE worktrees SET state = ?, updated_at = ? WHERE id = ?",
@@ -201,7 +205,7 @@ class ProjectWorktreeRepository(Repository):
         return worktree_from_row(row)
 
     def touch_last_used(self, worktree_id: str, *, at_ms: int | None = None) -> Worktree:
-        now = _now_ms() if at_ms is None else at_ms
+        now = now_utc_millis() if at_ms is None else at_ms
         with self.lock, self._connection() as connection:
             updated = connection.execute(
                 "UPDATE worktrees SET last_used_at = ?, updated_at = ? WHERE id = ?",
@@ -222,7 +226,7 @@ class ProjectWorktreeRepository(Repository):
         git_dir: str,
         checkout_branch: str | None = None,
     ) -> Worktree:
-        now = _now_ms()
+        now = now_utc_millis()
         with self.lock, self._connection() as connection:
             updated = connection.execute(
                 """
@@ -255,7 +259,7 @@ class ProjectWorktreeRepository(Repository):
         branch: str,
         ownership: BranchOwnership = BranchOwnership.USER,
     ) -> Worktree:
-        now = _now_ms()
+        now = now_utc_millis()
         with self.lock, self._connection() as connection:
             updated = connection.execute(
                 """
@@ -288,7 +292,7 @@ class ProjectWorktreeRepository(Repository):
     def update_checkout_branch(
         self, worktree_id: str, checkout_branch: str | None
     ) -> Worktree:
-        now = _now_ms()
+        now = now_utc_millis()
         with self.lock, self._connection() as connection:
             updated = connection.execute(
                 "UPDATE worktrees SET checkout_branch = ?, updated_at = ? "
@@ -306,7 +310,7 @@ class ProjectWorktreeRepository(Repository):
     def release_user_branch_metadata(
         self, worktree_id: str, expected_branch: str
     ) -> Worktree:
-        now = _now_ms()
+        now = now_utc_millis()
         with self.lock, self._connection() as connection:
             row = connection.execute(
                 "SELECT * FROM worktrees WHERE id = ?", (worktree_id,)
@@ -356,18 +360,5 @@ def _canonical_workspace_root(value: Path | str) -> str:
     if not resolved.is_absolute():
         raise StorageError("workspace_root_invalid")
     return str(resolved)
-
-
-def _now_ms() -> int:
-    return int(datetime.now(UTC).timestamp() * 1000)
-
-
-def _timestamp(value: int) -> datetime:
-    return datetime.fromtimestamp(value / 1000, tz=UTC)
-
-
-def _millis(value: datetime) -> int:
-    return int(value.timestamp() * 1000)
-
 
 __all__ = ["ProjectWorktreeRepository"]
