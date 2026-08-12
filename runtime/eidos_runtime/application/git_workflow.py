@@ -15,6 +15,7 @@ from eidos_runtime.git.errors import (
     GitCommandTimeoutError,
     GitConflictError,
     GitIdentityUnavailableError,
+    GitMergeConflictError,
     GitNothingStagedError,
     GitRemoteCanceledError,
     GitRemoteUnsupportedError,
@@ -22,12 +23,16 @@ from eidos_runtime.git.errors import (
     WorktreeError,
 )
 from eidos_runtime.git.status import GitStatusSnapshot
-from eidos_runtime.git.models import GitRemoteObservation
+from eidos_runtime.git.models import GitOperationState, GitRemoteObservation
 from eidos_runtime.protocol.methods import (
     MethodResultDto,
     SessionGitCommitRequestDto,
     SessionGitCommitResponseDto,
     SessionGitFetchResponseDto,
+    SessionGitMergeAbortRequestDto,
+    SessionGitMergeAbortResponseDto,
+    SessionGitMergeRequestDto,
+    SessionGitMergeResponseDto,
     SessionGitPullRequestDto,
     SessionGitPullResponseDto,
     SessionGitPushRequestDto,
@@ -74,6 +79,13 @@ class GitPushPlan:
     destination_branch: str
     set_upstream: bool
     check_upstream: bool
+
+
+@dataclass(frozen=True)
+class GitMergePlan:
+    session: Session
+    root: Path
+    target_commit: str | None = None
 
 
 class GitWorkflowSessionRepository(Protocol):
@@ -155,6 +167,94 @@ class GitWorkflowApplication:
             SessionGitCommitResponseDto,
             after,
             commit=after.head,
+        )
+
+    def preflight_merge(self, request: SessionGitMergeRequestDto) -> GitMergePlan:
+        session, status = self._prepare_mutation(request.session_id)
+        root = Path(status.worktree_root)
+        if status.branch is None:
+            raise ApplicationError("GIT_BRANCH_REQUIRED")
+        try:
+            state = self._worktrees.git.operation_state(root)
+        except GitError as error:
+            raise _workflow_error(error) from error
+        if state is not GitOperationState.NONE:
+            raise ApplicationError("GIT_OPERATION_IN_PROGRESS")
+        if status.dirty:
+            raise ApplicationError("GIT_WORKTREE_DIRTY")
+        try:
+            if request.target in self._worktrees.git.local_branches(root):
+                target_commit = self._worktrees.git.branch_commit(
+                    root, request.target
+                )
+                if target_commit is None:
+                    raise ApplicationError("GIT_MERGE_TARGET_INVALID")
+            else:
+                target_commit = self._worktrees.git.resolve_revision(
+                    root, request.target
+                )
+        except GitError as error:
+            raise ApplicationError("GIT_MERGE_TARGET_INVALID") from error
+        return GitMergePlan(
+            session=session, root=root, target_commit=target_commit
+        )
+
+    def merge(self, plan: GitMergePlan) -> SessionGitMergeResponseDto:
+        if plan.target_commit is None:
+            raise AssertionError("merge plan requires a target")
+        try:
+            self._worktrees.git.merge(plan.root, plan.target_commit)
+        except GitMergeConflictError:
+            return self._merge_result(plan.session)
+        except GitError as error:
+            raise _workflow_error(error) from error
+        return self._merge_result(plan.session)
+
+    def preflight_merge_abort(
+        self, request: SessionGitMergeAbortRequestDto
+    ) -> GitMergePlan:
+        session, status = self._prepare_mutation(request.session_id)
+        root = Path(status.worktree_root)
+        try:
+            state = self._worktrees.git.operation_state(root)
+        except GitError as error:
+            raise _workflow_error(error) from error
+        if state is not GitOperationState.MERGE:
+            raise ApplicationError("GIT_MERGE_NOT_IN_PROGRESS")
+        return GitMergePlan(session=session, root=root)
+
+    def merge_abort(
+        self, plan: GitMergePlan
+    ) -> SessionGitMergeAbortResponseDto:
+        try:
+            self._worktrees.git.merge_abort(plan.root)
+        except GitError as error:
+            raise _workflow_error(error) from error
+        return self._merge_result(
+            plan.session, result_type=SessionGitMergeAbortResponseDto
+        )
+
+    def _merge_result(
+        self,
+        session: Session,
+        *,
+        result_type: type[SessionGitMergeResponseDto] = SessionGitMergeResponseDto,
+    ) -> SessionGitMergeResponseDto:
+        after = self._status(session)
+        try:
+            state = self._worktrees.git.operation_state(
+                Path(after.worktree_root)
+            )
+        except GitError as error:
+            raise _workflow_error(error) from error
+        return result_type.model_validate(
+            {
+                "head": after.head,
+                "branch": after.branch,
+                "status": _status_result(after).to_json_value(),
+                "operationState": state.value,
+                "conflictFiles": list(after.conflict_files),
+            }
         )
 
     def remote_status(self, session_id: str) -> SessionGitRemoteStatusResponseDto:
@@ -523,6 +623,7 @@ def _workflow_error(error: GitError | WorktreeError) -> ApplicationError:
 __all__ = [
     "GitFetchPlan",
     "GitMutationPlan",
+    "GitMergePlan",
     "GitPullPlan",
     "GitPushPlan",
     "GitWorkflowApplication",

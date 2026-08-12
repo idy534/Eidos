@@ -754,6 +754,22 @@ class RuntimeServer:
                 ),
             ),
             (
+                "session/gitMerge",
+                method_dtos.SessionGitMergeRequestDto,
+                method_dtos.SessionGitMergeResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_merge(
+                    request
+                ),
+            ),
+            (
+                "session/gitMergeAbort",
+                method_dtos.SessionGitMergeAbortRequestDto,
+                method_dtos.SessionGitMergeAbortResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_merge_abort(
+                    request
+                ),
+            ),
+            (
                 "session/gitRemoteStatus",
                 method_dtos.SessionGitRemoteStatusRequestDto,
                 method_dtos.SessionGitRemoteStatusResponseDto,

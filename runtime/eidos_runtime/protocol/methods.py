@@ -211,6 +211,32 @@ class SessionGitPushRequestDto(_OperationRequest):
     )
 
 
+class SessionGitMergeRequestDto(_OperationRequest):
+    operation_id: StrictStr = Field(alias="operationId")
+    session_id: StrictStr = Field(alias="sessionId")
+    target: StrictStr = Field(min_length=1, max_length=1024)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+    @field_validator("target")
+    @classmethod
+    def _validate_target(cls, value: str) -> str:
+        if "\x00" in value or value.startswith("-"):
+            raise ValueError("Git merge target is invalid")
+        return value
+
+
+class SessionGitMergeAbortRequestDto(_OperationRequest):
+    operation_id: StrictStr = Field(alias="operationId")
+    session_id: StrictStr = Field(alias="sessionId")
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+
 def _git_relative_path(value: str) -> str:
     path = Path(value)
     if (
@@ -592,6 +618,17 @@ class SessionGitPullResponseDto(SessionGitFetchResponseDto):
 
 
 class SessionGitPushResponseDto(SessionGitPullResponseDto):
+    pass
+
+
+class SessionGitMergeResponseDto(SessionGitMutationResponseDto):
+    operation_state: Literal["none", "merge", "rebase"] = Field(
+        alias="operationState"
+    )
+    conflict_files: list[StrictStr] = Field(alias="conflictFiles")
+
+
+class SessionGitMergeAbortResponseDto(SessionGitMergeResponseDto):
     pass
 
 

@@ -21,6 +21,7 @@ from eidos_runtime.application.errors import (
 from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
 from eidos_runtime.application.git_workflow import (
     GitFetchPlan,
+    GitMergePlan,
     GitMutationPlan,
     GitPullPlan,
     GitPushPlan,
@@ -75,6 +76,10 @@ from eidos_runtime.protocol.methods import (
     SessionGitCommitResponseDto,
     SessionGitFetchRequestDto,
     SessionGitFetchResponseDto,
+    SessionGitMergeAbortRequestDto,
+    SessionGitMergeAbortResponseDto,
+    SessionGitMergeRequestDto,
+    SessionGitMergeResponseDto,
     SessionGitPullRequestDto,
     SessionGitPullResponseDto,
     SessionGitPushRequestDto,
@@ -129,6 +134,7 @@ from eidos_runtime.sandbox.sensitive import (
 
 MAX_SESSION_TITLE_BYTES = 120
 ResultT = TypeVar("ResultT", bound=MethodResultDto)
+GitPlanT = TypeVar("GitPlanT", GitMutationPlan, GitMergePlan)
 
 
 class TypedSessionRepositoryPort(Protocol):
@@ -1213,6 +1219,32 @@ class SessionApplication:
             execute=self._git_workflow.commit,
         )
 
+    def git_merge(
+        self, request: SessionGitMergeRequestDto
+    ) -> SessionGitMergeResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitMerge",
+            result_type=SessionGitMergeResponseDto,
+            preflight=lambda: self._git_workflow.preflight_merge(request),
+            execute=self._git_workflow.merge,
+        )
+
+    def git_merge_abort(
+        self, request: SessionGitMergeAbortRequestDto
+    ) -> SessionGitMergeAbortResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitMergeAbort",
+            result_type=SessionGitMergeAbortResponseDto,
+            preflight=lambda: self._git_workflow.preflight_merge_abort(request),
+            execute=self._git_workflow.merge_abort,
+        )
+
     def git_remote_status(
         self, request: SessionGitRemoteStatusRequestDto
     ) -> SessionGitRemoteStatusResponseDto:
@@ -1465,12 +1497,14 @@ class SessionApplication:
             SessionGitStageRequestDto
             | SessionGitUnstageRequestDto
             | SessionGitCommitRequestDto
+            | SessionGitMergeRequestDto
+            | SessionGitMergeAbortRequestDto
         ),
         *,
         scope: str,
         result_type: type[ResultT],
-        preflight: Callable[[], GitMutationPlan],
-        execute: Callable[[GitMutationPlan], ResultT],
+        preflight: Callable[[], GitPlanT],
+        execute: Callable[[GitPlanT], ResultT],
     ) -> ResultT:
         operation_request = request.to_json_value()
         operation_request.pop("operationId", None)

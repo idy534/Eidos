@@ -133,6 +133,11 @@ export interface GitPullResult extends GitFetchResult {
 
 export type GitPushResult = GitPullResult;
 
+export interface GitMergeResult extends SessionGitMutationResult {
+  operationState: "none" | "merge" | "rebase";
+  conflictFiles: string[];
+}
+
 export interface ProjectGitContext {
   gitAvailable: boolean;
   currentBranch: string | null;

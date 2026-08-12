@@ -51,13 +51,18 @@ class GitNothingStagedError(GitError):
 
 
 class GitIdentityUnavailableError(GitError):
-    def __init__(self) -> None:
-        super().__init__("git_identity_unavailable", "commit")
+    def __init__(self, operation: str = "commit") -> None:
+        super().__init__("git_identity_unavailable", operation)
 
 
 class GitConflictError(GitError):
     def __init__(self) -> None:
         super().__init__("git_conflict", "commit")
+
+
+class GitMergeConflictError(GitError):
+    def __init__(self) -> None:
+        super().__init__("git_merge_conflict", "merge")
 
 
 class GitRemoteUnsupportedError(GitError):
@@ -90,6 +95,7 @@ __all__ = [
     "GitConflictError",
     "GitError",
     "GitIdentityUnavailableError",
+    "GitMergeConflictError",
     "GitNothingStagedError",
     "GitRemoteCanceledError",
     "GitRemoteUnsupportedError",

@@ -78,6 +78,9 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "GIT_CONFLICT",
   "GIT_COMMAND_FAILED",
   "GIT_REMOTE_REQUIRED",
+  "GIT_OPERATION_IN_PROGRESS",
+  "GIT_MERGE_NOT_IN_PROGRESS",
+  "GIT_MERGE_TARGET_INVALID",
   "GIT_REMOTE_NOT_FOUND",
   "GIT_UPSTREAM_NOT_FOUND",
   "GIT_REMOTE_UNSUPPORTED",
@@ -143,6 +146,7 @@ import type {
   GitFetchResult,
   GitPullResult,
   GitPushResult,
+  GitMergeResult,
   SessionListResult,
   SessionSnapshot,
   SkillListResult,
@@ -506,6 +510,29 @@ export class RuntimeClient {
       "session/gitPush",
       { operationId, sessionId, ...(remote === undefined ? {} : { remote }) },
       isGitPullResult,
+    );
+  }
+
+  mergeSessionGit(
+    sessionId: string,
+    target: string,
+    operationId: string,
+  ): Promise<GitMergeResult> {
+    return this.validatedRequest(
+      "session/gitMerge",
+      { operationId, sessionId, target },
+      isGitMergeResult,
+    );
+  }
+
+  abortSessionGitMerge(
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitMergeResult> {
+    return this.validatedRequest(
+      "session/gitMergeAbort",
+      { operationId, sessionId },
+      isGitMergeResult,
     );
   }
 
@@ -1264,6 +1291,19 @@ function isGitPullResult(value: unknown): value is GitPullResult {
   ])) return false;
   const { status, ...fetch } = value;
   return isGitFetchResult(fetch) && isSessionGitStatus(status) && status.head === value.head;
+}
+
+function isGitMergeResult(value: unknown): value is GitMergeResult {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    "head", "branch", "status", "operationState", "conflictFiles",
+  ])) return false;
+  const { operationState, conflictFiles, ...mutation } = value;
+  return (
+    isSessionGitMutationResult(mutation)
+    && ["none", "merge", "rebase"].includes(String(operationState))
+    && Array.isArray(conflictFiles)
+    && conflictFiles.every((path) => typeof path === "string")
+  );
 }
 
 function isSessionListResult(value: unknown): value is SessionListResult {

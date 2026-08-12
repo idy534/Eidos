@@ -626,6 +626,31 @@ ipcMain.handle(IPC.SESSION_GIT_PUSH, (
     sessionId, operationId, remote as string | undefined,
   );
 });
+ipcMain.handle(IPC.SESSION_GIT_MERGE, (
+  _event,
+  sessionId: unknown,
+  target: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof target !== "string"
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Git Merge 参数无效。");
+  }
+  return clientOrThrow().mergeSessionGit(sessionId, target, operationId);
+});
+ipcMain.handle(IPC.SESSION_GIT_MERGE_ABORT, (
+  _event,
+  sessionId: unknown,
+  operationId: unknown,
+) => {
+  if (typeof sessionId !== "string" || typeof operationId !== "string") {
+    throw new Error("Git Merge Abort 参数无效。");
+  }
+  return clientOrThrow().abortSessionGitMerge(sessionId, operationId);
+});
 
 ipcMain.handle(IPC.RUN_START, (_event, sessionId: unknown, userInput: unknown, modelId: unknown) => {
   if (

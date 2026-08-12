@@ -410,7 +410,7 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
   }
 });
 
-test("completes deferred Git fetch, pull, and push through typed contracts", async () => {
+test("completes Git fetch, pull, push, and merge through typed contracts", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-fetch-data-"));
   const repositoryRoot = await createGitRepository("eidos-fetch-repo-");
   const remoteRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-fetch-remote-"));
@@ -474,6 +474,22 @@ test("completes deferred Git fetch, pull, and push through typed contracts", asy
       "git", ["ls-remote", "origin", "refs/heads/main"], { cwd: repositoryRoot },
     )).stdout.trim().split(/\s+/)[0];
     assert.equal(remoteHead, pushed.head);
+
+    await execFileAsync("git", ["switch", "-qc", "topic"], { cwd: repositoryRoot });
+    await writeFile(path.join(repositoryRoot, "TOPIC.txt"), "topic\n", "utf8");
+    await execFileAsync("git", ["add", "TOPIC.txt"], { cwd: repositoryRoot });
+    await execFileAsync("git", ["commit", "-qm", "topic"], { cwd: repositoryRoot });
+    await execFileAsync("git", ["switch", "-q", "main"], { cwd: repositoryRoot });
+    await writeFile(path.join(repositoryRoot, "MAIN.txt"), "main\n", "utf8");
+    await execFileAsync("git", ["add", "MAIN.txt"], { cwd: repositoryRoot });
+    await execFileAsync("git", ["commit", "-qm", "main"], { cwd: repositoryRoot });
+
+    const merged = await client.mergeSessionGit(session.id, "topic", randomUUID());
+    assert.equal(merged.operationState, "none");
+    assert.deepEqual(merged.conflictFiles, []);
+    assert.equal(merged.head, (await execFileAsync("git", ["rev-parse", "HEAD"], {
+      cwd: repositoryRoot,
+    })).stdout.trim());
   } finally {
     await client.shutdown();
     await client.waitForExit();

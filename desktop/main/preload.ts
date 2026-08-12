@@ -23,6 +23,7 @@ import type {
   GitFetchResult,
   GitPullResult,
   GitPushResult,
+  GitMergeResult,
   Run,
   ContextUsage,
   ModelId,
@@ -139,6 +140,17 @@ const api: EidosRuntimeAPI = {
     remote?: string,
   ): Promise<GitPushResult> =>
     ipcRenderer.invoke(IPC.SESSION_GIT_PUSH, sessionId, operationId, remote),
+  mergeSessionGit: (
+    sessionId: string,
+    target: string,
+    operationId: string,
+  ): Promise<GitMergeResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_MERGE, sessionId, target, operationId),
+  abortSessionGitMerge: (
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitMergeResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_MERGE_ABORT, sessionId, operationId),
 
   // Runs
   startRun: (sessionId: string, userInput: string, modelId: ModelId): Promise<Run> =>

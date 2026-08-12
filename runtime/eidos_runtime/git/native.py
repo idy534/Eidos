@@ -19,10 +19,12 @@ from eidos_runtime.git.errors import (
     GitCommandTimeoutError,
     GitConflictError,
     GitIdentityUnavailableError,
+    GitMergeConflictError,
     GitNothingStagedError,
     GitRemoteCanceledError,
     GitRemoteUnsupportedError,
 )
+from eidos_runtime.git.models import GitOperationState
 
 
 DEFAULT_GIT_TIMEOUT_SECONDS = 15.0
@@ -388,6 +390,79 @@ class GitCli:
             operation="pull-ff-only",
             profile=GitExecutionProfile.LOCAL_MUTATION,
         )
+
+    def operation_state(self, cwd: Path) -> GitOperationState:
+        merge_head = self._runner.run(
+            ("rev-parse", "--verify", "--quiet", "MERGE_HEAD"),
+            cwd=cwd,
+            operation="operation-state",
+            allow_returncodes=(1,),
+        )
+        if merge_head.returncode == 0:
+            return GitOperationState.MERGE
+        for name in ("rebase-merge", "rebase-apply"):
+            result = self._runner.run(
+                ("rev-parse", "--git-path", name),
+                cwd=cwd,
+                operation="operation-state",
+            )
+            value = _single_line(result.stdout, "operation-state")
+            path = Path(value)
+            if not path.is_absolute():
+                path = cwd / path
+            if path.exists():
+                return GitOperationState.REBASE
+        return GitOperationState.NONE
+
+    def merge(self, cwd: Path, target: str) -> None:
+        overrides: tuple[str, ...] = ()
+        target_is_ancestor = self._is_ancestor(cwd, target, "HEAD")
+        head_is_ancestor = self._is_ancestor(cwd, "HEAD", target)
+        if not target_is_ancestor and not head_is_ancestor:
+            name = self._commit_identity_value(cwd, "user.name")
+            email = self._commit_identity_value(cwd, "user.email")
+            if name is None or email is None:
+                raise GitIdentityUnavailableError("merge")
+            overrides = (
+                "-c",
+                f"user.name={name}",
+                "-c",
+                f"user.email={email}",
+            )
+        result = self._runner.run(
+            ("merge", "--no-edit", target),
+            cwd=cwd,
+            operation="merge",
+            config_overrides=overrides,
+            profile=GitExecutionProfile.LOCAL_MUTATION,
+            allow_returncodes=(1,),
+        )
+        if result.returncode == 0:
+            return
+        if self.operation_state(cwd) is GitOperationState.MERGE:
+            raise GitMergeConflictError()
+        raise GitCommandFailedError(
+            "merge", returncode=result.returncode, stderr=result.stderr.decode(
+                "utf-8", errors="replace"
+            )
+        )
+
+    def merge_abort(self, cwd: Path) -> None:
+        self._runner.run(
+            ("merge", "--abort"),
+            cwd=cwd,
+            operation="merge-abort",
+            profile=GitExecutionProfile.LOCAL_MUTATION,
+        )
+
+    def _is_ancestor(self, cwd: Path, ancestor: str, descendant: str) -> bool:
+        result = self._runner.run(
+            ("merge-base", "--is-ancestor", ancestor, descendant),
+            cwd=cwd,
+            operation="merge-graph",
+            allow_returncodes=(1,),
+        )
+        return result.returncode == 0
 
     def push(
         self,

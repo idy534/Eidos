@@ -31,6 +31,7 @@ from eidos_runtime.git.models import (
     GitDiffObservation,
     GitRepositoryDiscovery,
     GitRemoteObservation,
+    GitOperationState,
     GitStatusObservation,
     GitWorktreeEntry,
     GitWorkingTreePatch,
@@ -85,6 +86,12 @@ class GitBackend(Protocol):
     ) -> GitRemoteObservation: ...
 
     def merge_upstream_ff_only(self, cwd: Path) -> GitRemoteObservation: ...
+
+    def operation_state(self, cwd: Path) -> GitOperationState: ...
+
+    def merge(self, cwd: Path, target: str) -> None: ...
+
+    def merge_abort(self, cwd: Path) -> None: ...
 
     def push(
         self,
@@ -318,6 +325,19 @@ class DulwichGitBackend:
         self._open_repository(cwd, "pull-ff-only")
         self._git_cli.merge_upstream_ff_only(cwd)
         return self.remote_status(cwd)
+
+    def operation_state(self, cwd: Path) -> GitOperationState:
+        self._open_repository(cwd, "operation-state")
+        return self._git_cli.operation_state(cwd)
+
+    def merge(self, cwd: Path, target: str) -> None:
+        GitRefValidator.revision(target)
+        self._open_repository(cwd, "merge")
+        self._git_cli.merge(cwd, target)
+
+    def merge_abort(self, cwd: Path) -> None:
+        self._open_repository(cwd, "merge-abort")
+        self._git_cli.merge_abort(cwd)
 
     def push(
         self,

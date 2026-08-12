@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from enum import StrEnum
 
 from pydantic import Field
 
@@ -68,6 +69,12 @@ class GitRemoteObservation(EidosFrozenStrictModel):
     behind: int | None = Field(default=None, ge=0)
 
 
+class GitOperationState(StrEnum):
+    NONE = "none"
+    MERGE = "merge"
+    REBASE = "rebase"
+
+
 class GitWorkingTreePatch(EidosFrozenStrictModel):
     """Lossless Git patch bytes produced and consumed by the Git CLI."""
 
@@ -112,6 +119,7 @@ __all__ = [
     "GitStatusObservation",
     "GitRemote",
     "GitRemoteObservation",
+    "GitOperationState",
     "GitUpstream",
     "GitWorktreeEntry",
     "GitWorkingTreePatch",
