@@ -165,13 +165,22 @@ def test_managed_detached_commit_is_rejected_then_attached_commit_succeeds(
                 sessionId=session["id"], paths=["tracked.txt"]
             )
         )
+        detached_operation = str(uuid.uuid4())
         with pytest.raises(ApplicationError) as detached:
             application.git_commit(
                 SessionGitCommitRequestDto(
-                    sessionId=session["id"], message="must attach first"
+                    operationId=detached_operation,
+                    sessionId=session["id"],
+                    message="must attach first",
                 )
             )
         assert detached.value.code == "GIT_BRANCH_REQUIRED"
+        connection = store.connection
+        assert connection is not None
+        assert connection.execute(
+            "SELECT COUNT(*) FROM operations WHERE id = ?",
+            (detached_operation,),
+        ).fetchone()[0] == 0
 
         attached = _create_session(application, repository, execution_mode="worktree")
         attached_root = Path(attached["worktree"]["worktreeRoot"])
@@ -245,13 +254,21 @@ def test_git_mutations_reject_active_run_invalid_paths_and_empty_selection(
         session = _create_session(application, repository, execution_mode="local")
         (repository / "tracked.txt").write_text("changed\n", encoding="utf-8")
         store.create_run(session["id"], "active")
+        operation_id = str(uuid.uuid4())
         with pytest.raises(ApplicationError) as busy:
             application.git_stage(
                 SessionGitStageRequestDto(
-                    sessionId=session["id"], paths=["tracked.txt"]
+                    operationId=operation_id,
+                    sessionId=session["id"],
+                    paths=["tracked.txt"],
                 )
             )
         assert busy.value.code == "GIT_WORKFLOW_BUSY"
+        connection = store.connection
+        assert connection is not None
+        assert connection.execute(
+            "SELECT COUNT(*) FROM operations WHERE id = ?", (operation_id,)
+        ).fetchone()[0] == 0
     finally:
         store.close()
 

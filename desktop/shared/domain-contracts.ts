@@ -114,6 +114,19 @@ export interface SessionGitCommitResult extends SessionGitMutationResult {
   commit: string;
 }
 
+export interface GitRemoteStatus {
+  branch: string | null;
+  remotes: Array<{ name: string }>;
+  upstream: { remote: string; branch: string } | null;
+  ahead: number | null;
+  behind: number | null;
+}
+
+export interface GitFetchResult extends GitRemoteStatus {
+  remote: string;
+  head: string;
+}
+
 export interface ProjectGitContext {
   gitAvailable: boolean;
   currentBranch: string | null;

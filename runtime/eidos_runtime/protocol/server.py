@@ -34,7 +34,11 @@ from eidos_runtime.application.models import ModelApplication
 from eidos_runtime.application.runs import RunApplication, RunStartOutcome
 from eidos_runtime.application.repository import RepositoryApplicationFactory
 from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
-from eidos_runtime.application.sessions import SessionApplication, clean_session_title
+from eidos_runtime.application.sessions import (
+    DeferredGitFetch,
+    SessionApplication,
+    clean_session_title,
+)
 from eidos_runtime.application.worktree_retention import WorktreeRetentionService
 from eidos_runtime.application.task_lifecycle import (
     LifecycleAction,
@@ -288,6 +292,52 @@ class _DeferredPluginImportAdapter:
             self._server.send(business_error(request_id, result.code))
             return
         self._server.send(business_error(request_id, "INTERNAL_ERROR"))
+
+
+class _DeferredGitFetchAdapter:
+    """Schedules Remote Git without blocking the JSON-RPC input loop."""
+
+    def __init__(self, server: "RuntimeServer") -> None:
+        self._server = server
+
+    def __call__(
+        self,
+        request_id: str,
+        request: method_dtos.SessionGitFetchRequestDto,
+    ) -> BaseModel | DeferredMethodResult:
+        result = self._server._applications_or_error().sessions.prepare_git_fetch(
+            request, request_id=request_id
+        )
+        if isinstance(result, method_dtos.SessionGitFetchResponseDto):
+            return result
+        if not isinstance(result, DeferredGitFetch):
+            raise ApplicationError("INTERNAL_ERROR")
+        scheduled = self._server.supervisor.start_managed_task(
+            "git-fetch",
+            lambda cancel: self._complete(request_id, result, cancel),
+            operation_id=result.async_operation_id,
+        )
+        if not scheduled:
+            result.cancel_before_start()
+            raise ApplicationError("RUNTIME_DRAINING")
+        return DeferredMethodResult()
+
+    def _complete(
+        self,
+        request_id: str,
+        deferred: DeferredGitFetch,
+        cancel: threading.Event,
+    ) -> None:
+        try:
+            result = deferred.run(cancel)
+        except ApplicationError as error:
+            self._server.send(business_error(request_id, error.code))
+            return
+        except Exception:
+            logger.exception("Deferred Git Fetch failed")
+            self._server.send(business_error(request_id, "INTERNAL_ERROR"))
+            return
+        self._server.send(response(request_id, result.to_json_value()))
 
 
 @dataclass(frozen=True)
@@ -614,6 +664,15 @@ class RuntimeServer:
                 ),
             ),
             (
+                "session/gitRemoteStatus",
+                method_dtos.SessionGitRemoteStatusRequestDto,
+                method_dtos.SessionGitRemoteStatusResponseDto,
+                lambda _id,
+                request: self._applications_or_error().sessions.git_remote_status(
+                    request
+                ),
+            ),
+            (
                 "session/rename",
                 method_dtos.SessionRenameRequestDto,
                 method_dtos.SessionRenameResponseDto,
@@ -872,6 +931,17 @@ class RuntimeServer:
                     error_mapper=_application_error_mapping,
                 )
             )
+        registry.register(
+            MethodRegistration(
+                name="session/gitFetch",
+                request_type=method_dtos.SessionGitFetchRequestDto,
+                response_type=method_dtos.SessionGitFetchResponseDto,
+                handler=_DeferredGitFetchAdapter(self),
+                allowed_when_draining=False,
+                allowed_during_reconfiguration=False,
+                error_mapper=_application_error_mapping,
+            )
+        )
         registry.register(
             MethodRegistration(
                 name="plugin/import",

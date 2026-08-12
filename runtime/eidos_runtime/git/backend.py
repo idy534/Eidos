@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import re
+import threading
 from typing import Protocol
 
 from dulwich.config import ConfigFile
@@ -29,6 +30,7 @@ from eidos_runtime.git.errors import (
 from eidos_runtime.git.models import (
     GitDiffObservation,
     GitRepositoryDiscovery,
+    GitRemoteObservation,
     GitStatusObservation,
     GitWorktreeEntry,
     GitWorkingTreePatch,
@@ -75,6 +77,14 @@ class GitBackend(Protocol):
     def unstage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation: ...
 
     def commit(self, cwd: Path, message: str) -> str: ...
+
+    def remote_status(self, cwd: Path) -> GitRemoteObservation: ...
+
+    def fetch(
+        self, cwd: Path, remote: str, *, cancel: threading.Event
+    ) -> GitRemoteObservation: ...
+
+    def validate_remote_transport(self, cwd: Path, remote: str) -> None: ...
 
     def worktree_list(self, cwd: Path) -> tuple[GitWorktreeEntry, ...]: ...
 
@@ -277,6 +287,24 @@ class DulwichGitBackend:
         self._open_repository(cwd, "commit")
         self._git_cli.commit(cwd, message)
         return self.head(cwd)
+
+    def remote_status(self, cwd: Path) -> GitRemoteObservation:
+        self._open_repository(cwd, "remote-status")
+        return self._git_cli.remote_status(cwd)
+
+    def fetch(
+        self, cwd: Path, remote: str, *, cancel: threading.Event
+    ) -> GitRemoteObservation:
+        self._open_repository(cwd, "fetch")
+        before = self.remote_status(cwd)
+        if remote not in {item.name for item in before.remotes}:
+            raise GitCommandFailedError("remote-not-found", returncode=None)
+        self._git_cli.fetch(cwd, remote, cancel=cancel)
+        return self.remote_status(cwd)
+
+    def validate_remote_transport(self, cwd: Path, remote: str) -> None:
+        self._open_repository(cwd, "remote-transport")
+        self._git_cli.validate_remote_transport(cwd, remote)
 
     def worktree_list(self, cwd: Path) -> tuple[GitWorktreeEntry, ...]:
         repo = self._open_repository(cwd, "worktree-list")

@@ -60,6 +60,21 @@ class GitConflictError(GitError):
         super().__init__("git_conflict", "commit")
 
 
+class GitRemoteUnsupportedError(GitError):
+    def __init__(self) -> None:
+        super().__init__("git_remote_unsupported", "fetch")
+
+
+class GitRemoteCanceledError(GitError):
+    def __init__(self) -> None:
+        super().__init__("git_remote_canceled", "fetch")
+
+
+class GitUpstreamNotFoundError(GitError):
+    def __init__(self) -> None:
+        super().__init__("git_upstream_not_found", "remote-upstream")
+
+
 class WorktreeError(RuntimeError):
     """A stable Worktree lifecycle failure without subprocess leakage."""
 
@@ -76,6 +91,9 @@ __all__ = [
     "GitError",
     "GitIdentityUnavailableError",
     "GitNothingStagedError",
+    "GitRemoteCanceledError",
+    "GitRemoteUnsupportedError",
+    "GitUpstreamNotFoundError",
     "GitUnsupportedOperationError",
     "WorktreeError",
 ]

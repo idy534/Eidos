@@ -51,6 +51,23 @@ class GitDiffObservation(EidosFrozenStrictModel):
     truncated: bool
 
 
+class GitRemote(EidosFrozenStrictModel):
+    name: str
+
+
+class GitUpstream(EidosFrozenStrictModel):
+    remote: str
+    branch: str
+
+
+class GitRemoteObservation(EidosFrozenStrictModel):
+    branch: str | None
+    remotes: tuple[GitRemote, ...]
+    upstream: GitUpstream | None = None
+    ahead: int | None = Field(default=None, ge=0)
+    behind: int | None = Field(default=None, ge=0)
+
+
 class GitWorkingTreePatch(EidosFrozenStrictModel):
     """Lossless Git patch bytes produced and consumed by the Git CLI."""
 
@@ -93,6 +110,9 @@ __all__ = [
     "GitRepositoryContext",
     "GitRepositoryDiscovery",
     "GitStatusObservation",
+    "GitRemote",
+    "GitRemoteObservation",
+    "GitUpstream",
     "GitWorktreeEntry",
     "GitWorkingTreePatch",
     "GitSourceSnapshot",

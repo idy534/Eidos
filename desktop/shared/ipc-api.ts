@@ -16,6 +16,8 @@ import type {
   SessionGitStatus,
   SessionGitMutationResult,
   SessionGitCommitResult,
+  GitRemoteStatus,
+  GitFetchResult,
   Run,
   ContextUsage,
   ModelId,
@@ -98,6 +100,12 @@ export interface EidosRuntimeAPI {
     message: string,
     operationId: string,
   ): Promise<SessionGitCommitResult>;
+  readSessionGitRemoteStatus(sessionId: string): Promise<GitRemoteStatus>;
+  fetchSessionGit(
+    sessionId: string,
+    operationId: string,
+    remote?: string,
+  ): Promise<GitFetchResult>;
 
   // Runs
   startRun(sessionId: string, userInput: string, modelId: ModelId): Promise<Run>;

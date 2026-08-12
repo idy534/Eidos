@@ -177,6 +177,21 @@ class SessionGitCommitRequestDto(_OperationRequest):
         return value
 
 
+class SessionGitRemoteStatusRequestDto(_CanonicalIdRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
+
+
+class SessionGitFetchRequestDto(_OperationRequest):
+    operation_id: StrictStr = Field(alias="operationId")
+    session_id: StrictStr = Field(alias="sessionId")
+    remote: StrictStr | None = Field(default=None, min_length=1, max_length=255)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+
 def _git_relative_path(value: str) -> str:
     path = Path(value)
     if (
@@ -514,6 +529,38 @@ class SessionGitUnstageResponseDto(SessionGitMutationResponseDto):
 
 class SessionGitCommitResponseDto(SessionGitMutationResponseDto):
     commit: StrictStr
+
+
+class GitRemoteDto(ClosedModel):
+    name: StrictStr
+
+
+class GitUpstreamDto(ClosedModel):
+    remote: StrictStr
+    branch: StrictStr
+
+
+class SessionGitRemoteStatusResponseDto(MethodResultDto):
+    branch: StrictStr | None = None
+    remotes: list[GitRemoteDto]
+    upstream: GitUpstreamDto | None = None
+    ahead: StrictInt | None = Field(default=None, ge=0)
+    behind: StrictInt | None = Field(default=None, ge=0)
+
+    def to_json_value(self) -> dict[str, JsonValue]:
+        value = super().to_json_value()
+        value["branch"] = self.branch
+        value["upstream"] = (
+            self.upstream.to_json_value() if self.upstream is not None else None
+        )
+        value["ahead"] = self.ahead
+        value["behind"] = self.behind
+        return value
+
+
+class SessionGitFetchResponseDto(SessionGitRemoteStatusResponseDto):
+    remote: StrictStr
+    head: StrictStr
 
 
 class SessionRenameResponseDto(_SessionResponseDto):

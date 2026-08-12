@@ -8,7 +8,7 @@ from eidos_runtime.git.backend import (
     GitBackend,
 )
 from eidos_runtime.git.manager import WorktreeManager
-from eidos_runtime.git.native import GitCli, HardenedGitRunner
+from eidos_runtime.git.native import GitCli, GitExecutionProfile, HardenedGitRunner
 from eidos_runtime.git.status import (
     DiffScope,
     GitDiffSnapshot,
@@ -21,6 +21,7 @@ __all__ = [
     "GitBackend",
     "GitDiffSnapshot",
     "GitError",
+    "GitExecutionProfile",
     "GitUnsupportedOperationError",
     "GitStatusSnapshot",
     "GitCli",

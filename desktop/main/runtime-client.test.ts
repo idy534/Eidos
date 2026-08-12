@@ -410,6 +410,63 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
   }
 });
 
+test("observes remotes and completes deferred Git fetch without changing HEAD", async () => {
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-fetch-data-"));
+  const repositoryRoot = await createGitRepository("eidos-fetch-repo-");
+  const remoteRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-fetch-remote-"));
+  const peerParent = await mkdtemp(path.join(os.tmpdir(), "eidos-fetch-peer-"));
+  const peerRoot = path.join(peerParent, "peer");
+  await execFileAsync("git", ["init", "--bare", "-q"], { cwd: remoteRoot });
+  await execFileAsync("git", ["remote", "add", "origin", remoteRoot], {
+    cwd: repositoryRoot,
+  });
+  await execFileAsync("git", ["push", "-qu", "origin", "main"], {
+    cwd: repositoryRoot,
+  });
+  await execFileAsync("git", ["clone", "-q", remoteRoot, peerRoot]);
+  await execFileAsync("git", ["config", "user.name", "Eidos Tests"], { cwd: peerRoot });
+  await execFileAsync("git", ["config", "user.email", "eidos-tests@example.com"], {
+    cwd: peerRoot,
+  });
+  await writeFile(path.join(peerRoot, "REMOTE.txt"), "remote\n", "utf8");
+  await execFileAsync("git", ["add", "REMOTE.txt"], { cwd: peerRoot });
+  await execFileAsync("git", ["commit", "-qm", "remote commit"], { cwd: peerRoot });
+  await execFileAsync("git", ["push", "-q", "origin", "main"], { cwd: peerRoot });
+  const client = new RuntimeClient({
+    pythonExecutable,
+    runtimeRoot: path.join(projectRoot, "runtime"),
+    dataDirectory,
+  });
+
+  try {
+    await client.initialize();
+    const session = await client.createSession(repositoryRoot, { executionMode: "local" });
+    const before = await client.readSessionGitRemoteStatus(session.id);
+    const headBefore = (await execFileAsync("git", ["rev-parse", "HEAD"], {
+      cwd: repositoryRoot,
+    })).stdout.trim();
+    assert.equal(before.upstream?.remote, "origin");
+    assert.equal(before.behind, 0);
+
+    const fetched = await client.fetchSessionGit(session.id, randomUUID());
+
+    assert.equal(fetched.remote, "origin");
+    assert.equal(fetched.head, headBefore);
+    assert.equal(fetched.behind, 1);
+    assert.equal((await execFileAsync("git", ["rev-parse", "HEAD"], {
+      cwd: repositoryRoot,
+    })).stdout.trim(), headBefore);
+  } finally {
+    await client.shutdown();
+    await client.waitForExit();
+    await rm(dataDirectory, { recursive: true, force: true });
+    await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
+    await rm(repositoryRoot, { recursive: true, force: true });
+    await rm(remoteRoot, { recursive: true, force: true });
+    await rm(peerParent, { recursive: true, force: true });
+  }
+});
+
 test("imports and manages closed Plugin Skill and MCP records", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
   const pluginRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-plugin-"));

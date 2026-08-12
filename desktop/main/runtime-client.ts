@@ -77,6 +77,13 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "GIT_IDENTITY_UNAVAILABLE",
   "GIT_CONFLICT",
   "GIT_COMMAND_FAILED",
+  "GIT_REMOTE_REQUIRED",
+  "GIT_REMOTE_NOT_FOUND",
+  "GIT_UPSTREAM_NOT_FOUND",
+  "GIT_REMOTE_UNSUPPORTED",
+  "GIT_REMOTE_TIMEOUT",
+  "GIT_REMOTE_CANCELED",
+  "GIT_REMOTE_FAILED",
   "WORKSPACE_IDENTITY_CHANGED",
   "WORKTREE_DIRTY",
   "WORKTREE_DELETE_FAILED",
@@ -129,6 +136,8 @@ import type {
   SessionGitStatus,
   SessionGitMutationResult,
   SessionGitCommitResult,
+  GitRemoteStatus,
+  GitFetchResult,
   SessionListResult,
   SessionSnapshot,
   SkillListResult,
@@ -453,6 +462,24 @@ export class RuntimeClient {
   ): Promise<SessionGitCommitResult> {
     return this.validatedRequest(
       "session/gitCommit", { operationId, sessionId, message }, isSessionGitCommitResult,
+    );
+  }
+
+  readSessionGitRemoteStatus(sessionId: string): Promise<GitRemoteStatus> {
+    return this.validatedRequest(
+      "session/gitRemoteStatus", { sessionId }, isGitRemoteStatus,
+    );
+  }
+
+  fetchSessionGit(
+    sessionId: string,
+    operationId: string,
+    remote?: string,
+  ): Promise<GitFetchResult> {
+    return this.validatedRequest(
+      "session/gitFetch",
+      { operationId, sessionId, ...(remote === undefined ? {} : { remote }) },
+      isGitFetchResult,
     );
   }
 
@@ -1170,6 +1197,39 @@ function isSessionGitCommitResult(value: unknown): value is SessionGitCommitResu
     && typeof value.commit === "string"
     && value.commit === value.head
   );
+}
+
+function isGitRemoteStatus(value: unknown): value is GitRemoteStatus {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["branch", "remotes", "upstream", "ahead", "behind"])
+    && (value.branch === null || typeof value.branch === "string")
+    && Array.isArray(value.remotes)
+    && value.remotes.every((remote) => (
+      isRecord(remote)
+      && hasOnlyKeys(remote, ["name"])
+      && typeof remote.name === "string"
+    ))
+    && (
+      value.upstream === null
+      || (
+        isRecord(value.upstream)
+        && hasOnlyKeys(value.upstream, ["remote", "branch"])
+        && typeof value.upstream.remote === "string"
+        && typeof value.upstream.branch === "string"
+      )
+    )
+    && (value.ahead === null || isNonNegativeInteger(value.ahead))
+    && (value.behind === null || isNonNegativeInteger(value.behind))
+  );
+}
+
+function isGitFetchResult(value: unknown): value is GitFetchResult {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    "branch", "remotes", "upstream", "ahead", "behind", "remote", "head",
+  ])) return false;
+  const { remote, head, ...status } = value;
+  return typeof remote === "string" && typeof head === "string" && isGitRemoteStatus(status);
 }
 
 function isSessionListResult(value: unknown): value is SessionListResult {

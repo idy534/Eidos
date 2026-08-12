@@ -578,6 +578,27 @@ ipcMain.handle(IPC.SESSION_GIT_COMMIT, (
   }
   return clientOrThrow().commitSessionGit(sessionId, message, operationId);
 });
+ipcMain.handle(IPC.SESSION_GIT_REMOTE_STATUS, (_event, sessionId: unknown) => {
+  if (typeof sessionId !== "string") throw new Error("Git Remote 参数无效。");
+  return clientOrThrow().readSessionGitRemoteStatus(sessionId);
+});
+ipcMain.handle(IPC.SESSION_GIT_FETCH, (
+  _event,
+  sessionId: unknown,
+  operationId: unknown,
+  remote: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof operationId !== "string"
+    || (remote !== undefined && typeof remote !== "string")
+  ) {
+    throw new Error("Git Fetch 参数无效。");
+  }
+  return clientOrThrow().fetchSessionGit(
+    sessionId, operationId, remote as string | undefined,
+  );
+});
 
 ipcMain.handle(IPC.RUN_START, (_event, sessionId: unknown, userInput: unknown, modelId: unknown) => {
   if (
