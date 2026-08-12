@@ -8,6 +8,7 @@ from eidos_runtime.db.errors import SessionActiveError
 from eidos_runtime.domain.session import Session
 from eidos_runtime.git.backend import GitBackend
 from eidos_runtime.git.errors import (
+    GitError,
     GitCommandFailedError,
     GitCommandTimeoutError,
     GitConflictError,
@@ -61,7 +62,7 @@ class GitWorkflowApplication:
         paths = _validated_paths(Path(before.worktree_root), request.paths)
         try:
             self._worktrees.git.stage(Path(before.worktree_root), paths)
-        except Exception as error:
+        except GitError as error:
             raise _workflow_error(error) from error
         after = self._status(session)
         return _mutation_result(SessionGitStageResponseDto, after)
@@ -73,7 +74,7 @@ class GitWorkflowApplication:
         paths = _validated_paths(Path(before.worktree_root), request.paths)
         try:
             self._worktrees.git.unstage(Path(before.worktree_root), paths)
-        except Exception as error:
+        except GitError as error:
             raise _workflow_error(error) from error
         after = self._status(session)
         return _mutation_result(SessionGitUnstageResponseDto, after)
@@ -88,7 +89,7 @@ class GitWorkflowApplication:
             )
         try:
             self._worktrees.git.commit(Path(before.worktree_root), request.message)
-        except Exception as error:
+        except GitError as error:
             raise _workflow_error(error) from error
         after = self._status(session)
         return _mutation_result(
@@ -180,9 +181,7 @@ def _mutation_result(
     return result_type.model_validate(value)
 
 
-def _workflow_error(error: Exception) -> ApplicationError:
-    if isinstance(error, ApplicationError):
-        return error
+def _workflow_error(error: GitError | WorktreeError) -> ApplicationError:
     if isinstance(error, GitNothingStagedError):
         return ApplicationError("GIT_NOTHING_STAGED")
     if isinstance(error, GitIdentityUnavailableError):

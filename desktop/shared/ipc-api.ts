@@ -83,9 +83,21 @@ export interface EidosRuntimeAPI {
     scope: GitDiffScope,
     path?: string,
   ): Promise<SessionGitDiff>;
-  stageSessionGit(sessionId: string, paths: string[]): Promise<SessionGitMutationResult>;
-  unstageSessionGit(sessionId: string, paths: string[]): Promise<SessionGitMutationResult>;
-  commitSessionGit(sessionId: string, message: string): Promise<SessionGitCommitResult>;
+  stageSessionGit(
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ): Promise<SessionGitMutationResult>;
+  unstageSessionGit(
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ): Promise<SessionGitMutationResult>;
+  commitSessionGit(
+    sessionId: string,
+    message: string,
+    operationId: string,
+  ): Promise<SessionGitCommitResult>;
 
   // Runs
   startRun(sessionId: string, userInput: string, modelId: ModelId): Promise<Run>;

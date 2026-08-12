@@ -426,21 +426,33 @@ export class RuntimeClient {
     );
   }
 
-  stageSessionGit(sessionId: string, paths: string[]): Promise<SessionGitMutationResult> {
+  stageSessionGit(
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ): Promise<SessionGitMutationResult> {
     return this.validatedRequest(
-      "session/gitStage", { sessionId, paths }, isSessionGitMutationResult,
+      "session/gitStage", { operationId, sessionId, paths }, isSessionGitMutationResult,
     );
   }
 
-  unstageSessionGit(sessionId: string, paths: string[]): Promise<SessionGitMutationResult> {
+  unstageSessionGit(
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ): Promise<SessionGitMutationResult> {
     return this.validatedRequest(
-      "session/gitUnstage", { sessionId, paths }, isSessionGitMutationResult,
+      "session/gitUnstage", { operationId, sessionId, paths }, isSessionGitMutationResult,
     );
   }
 
-  commitSessionGit(sessionId: string, message: string): Promise<SessionGitCommitResult> {
+  commitSessionGit(
+    sessionId: string,
+    message: string,
+    operationId: string,
+  ): Promise<SessionGitCommitResult> {
     return this.validatedRequest(
-      "session/gitCommit", { sessionId, message }, isSessionGitCommitResult,
+      "session/gitCommit", { operationId, sessionId, message }, isSessionGitCommitResult,
     );
   }
 

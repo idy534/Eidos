@@ -136,10 +136,13 @@ class SessionGitDiffRequestDto(_CanonicalIdRequest):
         return None if value is None else _git_relative_path(value)
 
 
-class _SessionGitPathsRequest(_CanonicalIdRequest):
+class _SessionGitPathsRequest(_OperationRequest):
     session_id: StrictStr = Field(alias="sessionId")
     paths: list[StrictStr] = Field(min_length=1, max_length=512)
-    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
 
     @field_validator("paths")
     @classmethod
@@ -158,10 +161,13 @@ class SessionGitUnstageRequestDto(_SessionGitPathsRequest):
     pass
 
 
-class SessionGitCommitRequestDto(_CanonicalIdRequest):
+class SessionGitCommitRequestDto(_OperationRequest):
     session_id: StrictStr = Field(alias="sessionId")
     message: StrictStr = Field(min_length=1, max_length=65536)
-    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
 
     @field_validator("message")
     @classmethod

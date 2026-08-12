@@ -219,6 +219,71 @@ class Database:
             raise OperationInProgressError("operation is still in progress")
         return json.loads(row["result_json"])
 
+    def prepare_operation(
+        self, operation_id: str, scope: str, request: dict[str, object]
+    ) -> object | None:
+        """Durably reserve an external side-effect operation before execution."""
+
+        request_hash = canonical_hash(request)
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM operations WHERE id = ? AND scope = ?",
+                (operation_id, scope),
+            ).fetchone()
+            if row is not None:
+                if row["request_hash"] != request_hash:
+                    raise OperationConflictError("operation id was reused")
+                if row["status"] != "completed" or row["result_json"] is None:
+                    raise OperationInProgressError("operation is still in progress")
+                return json.loads(row["result_json"])
+            connection.execute(
+                """
+                INSERT INTO operations (id, scope, request_hash, status, created_at)
+                VALUES (?, ?, ?, 'in_progress', ?)
+                """,
+                (operation_id, scope, request_hash, now_ms()),
+            )
+        return None
+
+    def complete_operation(
+        self,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+        result: dict[str, object],
+    ) -> dict[str, object]:
+        """Complete a prepared external operation in a second short transaction."""
+
+        request_hash = canonical_hash(request)
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM operations WHERE id = ? AND scope = ?",
+                (operation_id, scope),
+            ).fetchone()
+            if row is None:
+                raise StorageError("external operation was not prepared")
+            if row["request_hash"] != request_hash:
+                raise OperationConflictError("operation id was reused")
+            if row["status"] == "completed" and row["result_json"] is not None:
+                replay = json.loads(row["result_json"])
+                if not isinstance(replay, dict):
+                    raise StorageError("external operation result is invalid")
+                return replay
+            encoded = json.dumps(
+                result, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            )
+            updated = connection.execute(
+                """
+                UPDATE operations
+                SET status = 'completed', result_json = ?, completed_at = ?
+                WHERE id = ? AND scope = ? AND status = 'in_progress'
+                """,
+                (encoded, now_ms(), operation_id, scope),
+            )
+            if updated.rowcount != 1:
+                raise OperationInProgressError("operation could not be completed")
+        return result
+
     def workspace_overlaps_data(self, workspace: Path) -> bool:
         if self.data_directory is None:
             raise StorageError("storage is not initialized")

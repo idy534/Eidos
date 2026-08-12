@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -319,15 +320,37 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
     const fileDiff = await client.readSessionGitDiff(local.id, "head", "WORKFLOW.txt");
     assert.deepEqual(fileDiff.changedFiles, ["WORKFLOW.txt"]);
     assert.match(fileDiff.unifiedDiff, /workflow/);
-    const staged = await client.stageSessionGit(local.id, ["WORKFLOW.txt"]);
+    const stageOperationId = "77777777-7777-4777-8777-777777777777";
+    const staged = await client.stageSessionGit(
+      local.id,
+      ["WORKFLOW.txt"],
+      stageOperationId,
+    );
     assert.deepEqual(staged.status.stagedFiles, ["WORKFLOW.txt"]);
-    const unstaged = await client.unstageSessionGit(local.id, ["WORKFLOW.txt"]);
+    assert.deepEqual(
+      await client.stageSessionGit(local.id, ["WORKFLOW.txt"], stageOperationId),
+      staged,
+    );
+    const unstaged = await client.unstageSessionGit(
+      local.id,
+      ["WORKFLOW.txt"],
+      "88888888-8888-4888-8888-888888888888",
+    );
     assert.deepEqual(unstaged.status.untrackedFiles, ["WORKFLOW.txt"]);
-    await client.stageSessionGit(local.id, ["WORKFLOW.txt"]);
-    const committed = await client.commitSessionGit(local.id, "local workflow");
+    await client.stageSessionGit(local.id, ["WORKFLOW.txt"], randomUUID());
+    const commitOperationId = "99999999-9999-4999-8999-999999999999";
+    const committed = await client.commitSessionGit(
+      local.id,
+      "local workflow",
+      commitOperationId,
+    );
     assert.equal(committed.commit, committed.head);
+    assert.deepEqual(
+      await client.commitSessionGit(local.id, "local workflow", commitOperationId),
+      committed,
+    );
     await assert.rejects(
-      client.commitSessionGit(local.id, "nothing staged"),
+      client.commitSessionGit(local.id, "nothing staged", randomUUID()),
       (error: unknown) => (
         error instanceof RuntimeRequestError
         && error.businessCode === "GIT_NOTHING_STAGED"

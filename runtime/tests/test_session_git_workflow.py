@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+import uuid
 
 import pytest
 from pydantic import ValidationError
@@ -260,6 +261,12 @@ def test_git_mutations_reject_active_run_invalid_paths_and_empty_selection(
         SessionGitStageRequestDto(sessionId=session["id"], paths=["../outside"])
     with pytest.raises(ValidationError):
         SessionGitUnstageRequestDto(sessionId=session["id"], paths=["/outside"])
+    with pytest.raises(ValidationError):
+        SessionGitStageRequestDto(
+            operationId="not-a-canonical-operation-id",
+            sessionId=session["id"],
+            paths=["tracked.txt"],
+        )
 
 
 def test_git_workflow_errors_are_stable(tmp_path: Path) -> None:
@@ -327,5 +334,122 @@ def test_commit_identity_conflict_and_timeout_map_to_stable_codes(
             )
         assert timed_out.value.code == "GIT_COMMAND_TIMEOUT"
         manager.git.stage = original_stage  # type: ignore[method-assign]
+    finally:
+        store.close()
+
+
+def test_git_mutation_operation_ids_replay_without_reexecuting_git(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = _create_session(application, repository, execution_mode="local")
+        session_id = str(session["id"])
+        (repository / "tracked.txt").write_text("stage once\n", encoding="utf-8")
+        stage_operation = str(uuid.uuid4())
+        stage_request = SessionGitStageRequestDto(
+            operationId=stage_operation,
+            sessionId=session_id,
+            paths=["tracked.txt"],
+        )
+        first_stage = application.git_stage(stage_request).root
+        _git(repository, "restore", "--staged", "--", "tracked.txt")
+
+        assert application.git_stage(stage_request).root == first_stage
+        assert "tracked.txt" not in _git(repository, "diff", "--cached", "--name-only")
+
+        _git(repository, "add", "--", "tracked.txt")
+        unstage_operation = str(uuid.uuid4())
+        unstage_request = SessionGitUnstageRequestDto(
+            operationId=unstage_operation,
+            sessionId=session_id,
+            paths=["tracked.txt"],
+        )
+        first_unstage = application.git_unstage(unstage_request).root
+        _git(repository, "add", "--", "tracked.txt")
+
+        assert application.git_unstage(unstage_request).root == first_unstage
+        assert _git(repository, "diff", "--cached", "--name-only") == "tracked.txt"
+
+        commit_operation = str(uuid.uuid4())
+        commit_request = SessionGitCommitRequestDto(
+            operationId=commit_operation,
+            sessionId=session_id,
+            message="commit once",
+        )
+        first_commit = application.git_commit(commit_request).root
+        first_head = _git(repository, "rev-parse", "HEAD")
+        (repository / "tracked.txt").write_text("still staged\n", encoding="utf-8")
+        _git(repository, "add", "--", "tracked.txt")
+
+        assert application.git_commit(commit_request).root == first_commit
+        assert _git(repository, "rev-parse", "HEAD") == first_head
+        assert _git(repository, "diff", "--cached", "--name-only") == "tracked.txt"
+
+        with pytest.raises(ApplicationError) as reused:
+            application.git_commit(
+                SessionGitCommitRequestDto(
+                    operationId=commit_operation,
+                    sessionId=session_id,
+                    message="different request",
+                )
+            )
+        assert reused.value.code == "OPERATION_ID_REUSED"
+    finally:
+        store.close()
+
+
+def test_prepared_git_commit_is_not_reexecuted_when_result_is_uncertain(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = _create_session(application, repository, execution_mode="local")
+        session_id = str(session["id"])
+        (repository / "tracked.txt").write_text("prepared\n", encoding="utf-8")
+        _git(repository, "add", "--", "tracked.txt")
+        original_head = _git(repository, "rev-parse", "HEAD")
+        operation_id = str(uuid.uuid4())
+        request = {"sessionId": session_id, "message": "uncertain commit"}
+        store.prepare_operation(
+            operation_id,
+            "session/gitCommit",
+            request,
+        )
+
+        with pytest.raises(ApplicationError) as in_progress:
+            application.git_commit(
+                SessionGitCommitRequestDto(
+                    operationId=operation_id,
+                    sessionId=session_id,
+                    message="uncertain commit",
+                )
+            )
+
+        assert in_progress.value.code == "OPERATION_IN_PROGRESS"
+        assert _git(repository, "rev-parse", "HEAD") == original_head
+        assert _git(repository, "diff", "--cached", "--name-only") == "tracked.txt"
+    finally:
+        store.close()
+
+
+def test_git_workflow_does_not_hide_programming_errors(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    store, manager, application = _application(tmp_path)
+    try:
+        session = _create_session(application, repository, execution_mode="local")
+
+        def programming_error(_cwd: Path, _paths: tuple[str, ...]) -> object:
+            raise TypeError("programming bug")
+
+        manager.git.stage = programming_error  # type: ignore[method-assign]
+        with pytest.raises(TypeError, match="programming bug"):
+            application.git_stage(
+                SessionGitStageRequestDto(
+                    sessionId=session["id"], paths=["tracked.txt"]
+                )
+            )
     finally:
         store.close()

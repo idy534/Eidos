@@ -532,23 +532,51 @@ ipcMain.handle(IPC.SESSION_GIT_DIFF, (
   }
   return clientOrThrow().readSessionGitDiff(sessionId, scope, path as string | undefined);
 });
-ipcMain.handle(IPC.SESSION_GIT_STAGE, (_event, sessionId: unknown, paths: unknown) => {
-  if (typeof sessionId !== "string" || !isNonEmptyStringArray(paths)) {
+ipcMain.handle(IPC.SESSION_GIT_STAGE, (
+  _event,
+  sessionId: unknown,
+  paths: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || !isNonEmptyStringArray(paths)
+    || typeof operationId !== "string"
+  ) {
     throw new Error("Git Stage 参数无效。");
   }
-  return clientOrThrow().stageSessionGit(sessionId, paths);
+  return clientOrThrow().stageSessionGit(sessionId, paths, operationId);
 });
-ipcMain.handle(IPC.SESSION_GIT_UNSTAGE, (_event, sessionId: unknown, paths: unknown) => {
-  if (typeof sessionId !== "string" || !isNonEmptyStringArray(paths)) {
+ipcMain.handle(IPC.SESSION_GIT_UNSTAGE, (
+  _event,
+  sessionId: unknown,
+  paths: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || !isNonEmptyStringArray(paths)
+    || typeof operationId !== "string"
+  ) {
     throw new Error("Git Unstage 参数无效。");
   }
-  return clientOrThrow().unstageSessionGit(sessionId, paths);
+  return clientOrThrow().unstageSessionGit(sessionId, paths, operationId);
 });
-ipcMain.handle(IPC.SESSION_GIT_COMMIT, (_event, sessionId: unknown, message: unknown) => {
-  if (typeof sessionId !== "string" || typeof message !== "string" || !message.trim()) {
+ipcMain.handle(IPC.SESSION_GIT_COMMIT, (
+  _event,
+  sessionId: unknown,
+  message: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof message !== "string"
+    || !message.trim()
+    || typeof operationId !== "string"
+  ) {
     throw new Error("Git Commit 参数无效。");
   }
-  return clientOrThrow().commitSessionGit(sessionId, message);
+  return clientOrThrow().commitSessionGit(sessionId, message, operationId);
 });
 
 ipcMain.handle(IPC.RUN_START, (_event, sessionId: unknown, userInput: unknown, modelId: unknown) => {

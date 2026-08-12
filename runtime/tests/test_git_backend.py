@@ -212,6 +212,81 @@ def test_stage_and_unstage_support_multiple_paths_and_spaces(tmp_path: Path) -> 
     )
 
 
+def test_stage_unstage_and_diff_treat_api_paths_as_literal_filenames(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    backend = DulwichGitBackend()
+    paths = (":x", "*.txt", "[a].txt", ":(glob)*")
+    for relative in paths:
+        (repository / relative).write_text("base\n", encoding="utf-8")
+    _git(repository, "add", "--all")
+    _git(repository, "commit", "-qm", "add literal path fixtures")
+    head = backend.head(repository)
+    for relative in paths:
+        (repository / relative).write_text(f"changed {relative}\n", encoding="utf-8")
+
+    for relative in paths:
+        backend.stage(repository, (relative,))
+        assert backend.status(repository).staged_paths == (relative,)
+        _git(repository, "restore", "--staged", "--", ".")
+
+        _git(repository, "add", "--all")
+        backend.unstage(repository, (relative,))
+        status = backend.status(repository)
+        assert relative in status.unstaged_paths
+        assert relative not in status.staged_paths
+        assert set(status.staged_paths) == set(paths) - {relative}
+        _git(repository, "restore", "--staged", "--", ".")
+
+        diff = backend.diff(repository, base_commit=head, path=relative)
+        assert diff.changed_paths == (relative,)
+        assert f"changed {relative}" in diff.patch
+
+
+def test_stage_preserves_native_repository_clean_filter_semantics(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    (repository / ".gitattributes").write_text(
+        "native-filtered.txt filter=demo\n"
+        "eidos-filtered.txt filter=demo\n",
+        encoding="utf-8",
+    )
+    _git(repository, "config", "filter.demo.clean", "sed s/foo/bar/g")
+    _git(repository, "add", ".gitattributes")
+    _git(repository, "commit", "-qm", "configure clean filter")
+    (repository / "native-filtered.txt").write_text("foo\n", encoding="utf-8")
+    (repository / "eidos-filtered.txt").write_text("foo\n", encoding="utf-8")
+
+    _git(repository, "add", "--", "native-filtered.txt")
+    DulwichGitBackend().stage(repository, ("eidos-filtered.txt",))
+
+    assert _git(repository, "show", ":native-filtered.txt") == "bar"
+    assert _git(repository, "show", ":eidos-filtered.txt") == "bar"
+
+
+def test_stage_reads_controlled_global_clean_filter_configuration(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    user_home = tmp_path / "filter-home"
+    user_home.mkdir()
+    (user_home / ".gitconfig").write_text(
+        "[filter \"demo\"]\n\tclean = sed s/foo/bar/g\n",
+        encoding="utf-8",
+    )
+    (repository / ".gitattributes").write_text(
+        "global-filtered.txt filter=demo\n", encoding="utf-8"
+    )
+    _git(repository, "add", ".gitattributes")
+    _git(repository, "commit", "-qm", "configure global clean filter")
+    (repository / "global-filtered.txt").write_text("foo\n", encoding="utf-8")
+    backend = DulwichGitBackend(
+        git_cli=GitCli(runner=HardenedGitRunner(user_home=user_home))
+    )
+
+    backend.stage(repository, ("global-filtered.txt",))
+
+    assert _git(repository, "show", ":global-filtered.txt") == "bar"
+
+
 def test_native_unstage_supports_an_unborn_head(tmp_path: Path) -> None:
     repository = tmp_path / "unborn"
     repository.mkdir()

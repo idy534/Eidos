@@ -112,6 +112,7 @@ class HardenedGitRunner:
             "GIT_CONFIG_SYSTEM": "/dev/null",
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_ASKPASS": "/usr/bin/false",
+            "GIT_LITERAL_PATHSPECS": "1",
         }
         if read_user_global_config:
             environment["HOME"] = str(self.user_home)
@@ -258,7 +259,7 @@ class GitCli:
             ("add", "--all", "--", *paths),
             cwd=cwd,
             operation="stage",
-            config_overrides=filter_config_overrides(self._runner, cwd),
+            read_user_global_config=True,
         )
 
     def unstage(self, cwd: Path, paths: Sequence[str]) -> None:

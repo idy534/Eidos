@@ -195,6 +195,18 @@ class SessionStorePort(Protocol):
         self, operation_id: str, scope: str, request: dict[str, object]
     ) -> object | None: ...
 
+    def prepare_operation(
+        self, operation_id: str, scope: str, request: dict[str, object]
+    ) -> object | None: ...
+
+    def complete_operation(
+        self,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+        result: dict[str, object],
+    ) -> dict[str, object]: ...
+
     def record_operation_result(
         self,
         operation_id: str,
@@ -1074,8 +1086,12 @@ class SessionApplication:
             raise ApplicationError(
                 "INTERNAL_ERROR", "Session Git workflow boundary is unavailable"
             )
-        with self._lifecycle.hold(request.session_id):
-            return self._git_workflow.stage(request)
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitStage",
+            result_type=SessionGitStageResponseDto,
+            execute=lambda: self._git_workflow.stage(request),
+        )
 
     def git_unstage(
         self, request: SessionGitUnstageRequestDto
@@ -1084,8 +1100,12 @@ class SessionApplication:
             raise ApplicationError(
                 "INTERNAL_ERROR", "Session Git workflow boundary is unavailable"
             )
-        with self._lifecycle.hold(request.session_id):
-            return self._git_workflow.unstage(request)
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitUnstage",
+            result_type=SessionGitUnstageResponseDto,
+            execute=lambda: self._git_workflow.unstage(request),
+        )
 
     def git_commit(
         self, request: SessionGitCommitRequestDto
@@ -1094,8 +1114,62 @@ class SessionApplication:
             raise ApplicationError(
                 "INTERNAL_ERROR", "Session Git workflow boundary is unavailable"
             )
-        with self._lifecycle.hold(request.session_id):
-            return self._git_workflow.commit(request)
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitCommit",
+            result_type=SessionGitCommitResponseDto,
+            execute=lambda: self._git_workflow.commit(request),
+        )
+
+    def _execute_git_mutation(
+        self,
+        request: (
+            SessionGitStageRequestDto
+            | SessionGitUnstageRequestDto
+            | SessionGitCommitRequestDto
+        ),
+        *,
+        scope: str,
+        result_type: type[ResultT],
+        execute: Callable[[], ResultT],
+    ) -> ResultT:
+        operation_request = request.to_json_value()
+        operation_request.pop("operationId", None)
+        operation_guard = (
+            self._lifecycle.hold_operation(scope, request.operation_id)
+            if request.operation_id is not None
+            else nullcontext()
+        )
+        with operation_guard:
+            if request.operation_id is not None:
+                try:
+                    replay = self._store.prepare_operation(
+                        request.operation_id,
+                        scope,
+                        operation_request,
+                    )
+                except OperationConflictError as error:
+                    raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+                except OperationInProgressError as error:
+                    raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
+                if replay is not None:
+                    return _result(result_type, replay)
+            with self._lifecycle.hold(request.session_id):
+                result = execute()
+            if request.operation_id is None:
+                return result
+            try:
+                completed = self._store.complete_operation(
+                    request.operation_id,
+                    scope,
+                    operation_request,
+                    result.to_json_value(),
+                )
+            except OperationConflictError as error:
+                raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+            except OperationInProgressError as error:
+                raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
+            return _result(result_type, completed)
 
     def handoff(
         self, request: SessionHandoffRequestDto

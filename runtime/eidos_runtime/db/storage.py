@@ -1183,6 +1183,22 @@ class SessionStore:
     ) -> object | None:
         return self._database.operation_result(operation_id, scope, request)
 
+    def prepare_operation(
+        self, operation_id: str, scope: str, request: dict[str, object]
+    ) -> object | None:
+        return self._database.prepare_operation(operation_id, scope, request)
+
+    def complete_operation(
+        self,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+        result: dict[str, object],
+    ) -> dict[str, object]:
+        return self._database.complete_operation(
+            operation_id, scope, request, result
+        )
+
     def record_operation_result(
         self,
         operation_id: str,

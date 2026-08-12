@@ -10,6 +10,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.db.events import IncompatibleEventError  # noqa: E402
+from eidos_runtime.db.errors import OperationInProgressError  # noqa: E402
 from eidos_runtime.db.storage import (  # noqa: E402
     OperationConflictError,
     SessionActiveError,
@@ -49,6 +50,34 @@ class EventAndOperationTests(unittest.TestCase):
         other.mkdir()
         with self.assertRaises(OperationConflictError):
             self.store.create_session(str(other), operation_id=operation_id)
+
+    def test_external_operation_uses_durable_prepare_and_complete_steps(self) -> None:
+        operation_id = "33333333-3333-4333-8333-333333333333"
+        scope = "session/gitCommit"
+        request = {"sessionId": "session", "message": "commit once"}
+
+        self.assertIsNone(
+            self.store.prepare_operation(operation_id, scope, request)
+        )
+        connection = self.store.connection
+        assert connection is not None
+        row = connection.execute(
+            "SELECT status, result_json FROM operations WHERE id = ? AND scope = ?",
+            (operation_id, scope),
+        ).fetchone()
+        self.assertEqual((row["status"], row["result_json"]), ("in_progress", None))
+        with self.assertRaises(OperationInProgressError):
+            self.store.prepare_operation(operation_id, scope, request)
+
+        result = {"head": "a" * 40}
+        self.assertEqual(
+            self.store.complete_operation(operation_id, scope, request, result),
+            result,
+        )
+        self.assertEqual(
+            self.store.prepare_operation(operation_id, scope, request),
+            result,
+        )
 
     def test_cancel_operation_replay_does_not_duplicate_event(self) -> None:
         session = self.store.create_session(str(self.workspace))
