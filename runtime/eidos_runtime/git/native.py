@@ -14,6 +14,9 @@ from collections.abc import Collection, Sequence
 from eidos_runtime.git.errors import (
     GitCommandFailedError,
     GitCommandTimeoutError,
+    GitConflictError,
+    GitIdentityUnavailableError,
+    GitNothingStagedError,
 )
 
 
@@ -48,6 +51,7 @@ class HardenedGitRunner:
         timeout_seconds: float = DEFAULT_GIT_TIMEOUT_SECONDS,
         output_limit_bytes: int = DEFAULT_GIT_OUTPUT_BYTES,
         logger: logging.Logger | None = None,
+        user_home: Path | None = None,
     ) -> None:
         if not git_executable or timeout_seconds <= 0 or output_limit_bytes < 1:
             raise ValueError("Git runner configuration is invalid")
@@ -55,6 +59,7 @@ class HardenedGitRunner:
         self.timeout_seconds = timeout_seconds
         self.output_limit_bytes = output_limit_bytes
         self.logger = logger or logging.getLogger(__name__)
+        self.user_home = (user_home or Path.home()).resolve(strict=False)
 
     def run(
         self,
@@ -68,6 +73,7 @@ class HardenedGitRunner:
         apply_default_hardening: bool = True,
         allow_returncodes: Collection[int] = (),
         raise_on_truncation: bool = True,
+        read_user_global_config: bool = False,
     ) -> GitCliResult:
         if not cwd.is_absolute() or not cwd.is_dir():
             raise GitCommandFailedError(operation, returncode=None)
@@ -107,6 +113,9 @@ class HardenedGitRunner:
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_ASKPASS": "/usr/bin/false",
         }
+        if read_user_global_config:
+            environment["HOME"] = str(self.user_home)
+            environment.pop("GIT_CONFIG_GLOBAL")
         started = time.monotonic()
         try:
             process = subprocess.Popen(
@@ -244,6 +253,102 @@ class GitCli:
         )
         return result.stdout
 
+    def stage(self, cwd: Path, paths: Sequence[str]) -> None:
+        self._runner.run(
+            ("add", "--all", "--", *paths),
+            cwd=cwd,
+            operation="stage",
+            config_overrides=filter_config_overrides(self._runner, cwd),
+        )
+
+    def unstage(self, cwd: Path, paths: Sequence[str]) -> None:
+        head = self._runner.run(
+            ("rev-parse", "--verify", "HEAD"),
+            cwd=cwd,
+            operation="unstage-head",
+            allow_returncodes=(128,),
+        )
+        if head.returncode == 0:
+            self._runner.run(
+                ("restore", "--staged", "--", *paths),
+                cwd=cwd,
+                operation="unstage",
+                config_overrides=filter_config_overrides(self._runner, cwd),
+            )
+            return
+        self._runner.run(
+            ("rm", "--cached", "-r", "--ignore-unmatch", "--", *paths),
+            cwd=cwd,
+            operation="unstage",
+            config_overrides=filter_config_overrides(self._runner, cwd),
+        )
+
+    def commit(self, cwd: Path, message: str) -> None:
+        conflicts = self._runner.run(
+            ("diff", "--cached", "--quiet", "--diff-filter=U", "--"),
+            cwd=cwd,
+            operation="commit-conflict-check",
+            allow_returncodes=(1,),
+        )
+        if conflicts.returncode == 1:
+            raise GitConflictError()
+        staged = self._runner.run(
+            ("diff", "--cached", "--quiet", "--exit-code", "--"),
+            cwd=cwd,
+            operation="commit-staged-check",
+            allow_returncodes=(1,),
+        )
+        if staged.returncode == 0:
+            raise GitNothingStagedError()
+        name = self._commit_identity_value(cwd, "user.name")
+        email = self._commit_identity_value(cwd, "user.email")
+        if name is None or email is None:
+            raise GitIdentityUnavailableError()
+        overrides = (
+            "-c",
+            f"user.name={name}",
+            "-c",
+            f"user.email={email}",
+            *filter_config_overrides(self._runner, cwd),
+        )
+        self._runner.run(
+            ("commit", "--quiet", "--message", message),
+            cwd=cwd,
+            operation="commit",
+            config_overrides=overrides,
+        )
+
+    def _commit_identity_value(self, cwd: Path, key: str) -> str | None:
+        local = self._config_value(cwd, key, global_scope=False)
+        return local if local is not None else self._config_value(
+            cwd, key, global_scope=True
+        )
+
+    def _config_value(
+        self, cwd: Path, key: str, *, global_scope: bool
+    ) -> str | None:
+        result = self._runner.run(
+            (
+                "config",
+                *(("--global",) if global_scope else ()),
+                "--no-includes",
+                "--null",
+                "--get",
+                key,
+            ),
+            cwd=cwd,
+            operation="commit-identity",
+            apply_default_hardening=False,
+            allow_returncodes=(1,),
+            read_user_global_config=global_scope,
+        )
+        if result.returncode == 1:
+            return None
+        if not result.stdout.endswith(b"\0") or result.stdout.count(b"\0") != 1:
+            raise GitCommandFailedError("commit-identity", returncode=None)
+        value = result.stdout[:-1].decode("utf-8", errors="strict")
+        return value if value.strip() else None
+
     def capture_working_tree_patch(
         self,
         cwd: Path,
@@ -297,6 +402,7 @@ class GitCli:
         base_commit: str,
         include_untracked: bool,
         output_limit_bytes: int,
+        path: str | None = None,
     ) -> GitCliDiff:
         patch = self._capture_patch(
             cwd,
@@ -304,12 +410,14 @@ class GitCli:
             include_untracked=include_untracked,
             output_limit_bytes=output_limit_bytes,
             raise_on_truncation=False,
+            path=path,
         )
         changed_paths = self._changed_paths(
             cwd,
             base_commit=base_commit,
             include_untracked=include_untracked,
             output_limit_bytes=output_limit_bytes,
+            path=path,
         )
         return GitCliDiff(
             patch=patch[0],
@@ -350,6 +458,7 @@ class GitCli:
         include_untracked: bool,
         output_limit_bytes: int,
         raise_on_truncation: bool,
+        path: str | None = None,
     ) -> tuple[bytes, bool]:
         if output_limit_bytes < 1:
             raise ValueError("Git patch output limit must be positive")
@@ -362,6 +471,7 @@ class GitCli:
                 "--no-textconv",
                 base_commit,
                 "--",
+                *((path,) if path is not None else ()),
             ),
             cwd=cwd,
             operation="worktree-diff",
@@ -373,6 +483,8 @@ class GitCli:
         truncated = result.stdout_truncated
         if include_untracked and not truncated:
             for relative in self.untracked_paths(cwd):
+                if path is not None and relative != path:
+                    continue
                 remaining = output_limit_bytes - len(output)
                 if remaining < 1:
                     if raise_on_truncation:
@@ -483,6 +595,7 @@ class GitCli:
         base_commit: str,
         include_untracked: bool,
         output_limit_bytes: int,
+        path: str | None = None,
     ) -> tuple[str, ...]:
         result = self._runner.run(
             (
@@ -494,6 +607,7 @@ class GitCli:
                 "-z",
                 base_commit,
                 "--",
+                *((path,) if path is not None else ()),
             ),
             cwd=cwd,
             operation="worktree-diff-paths",
@@ -502,7 +616,11 @@ class GitCli:
         )
         paths = {os.fsdecode(path) for path in result.stdout.split(b"\0") if path}
         if include_untracked:
-            paths.update(self.untracked_paths(cwd))
+            paths.update(
+                relative
+                for relative in self.untracked_paths(cwd)
+                if path is None or relative == path
+            )
         return tuple(sorted(paths))
 
 

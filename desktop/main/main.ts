@@ -188,6 +188,14 @@ function clientOrThrow(): RuntimeClient {
   return runtimeClient;
 }
 
+function isNonEmptyStringArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value)
+    && value.length > 0
+    && value.every((item) => typeof item === "string" && item.length > 0)
+  );
+}
+
 function validateSessionCreateOptions(value: unknown): {
   executionMode?: "local" | "worktree";
   baseRef?: string;
@@ -509,11 +517,38 @@ ipcMain.handle(IPC.SESSION_GIT_STATUS, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
   return clientOrThrow().readSessionGitStatus(sessionId);
 });
-ipcMain.handle(IPC.SESSION_GIT_DIFF, (_event, sessionId: unknown, scope: unknown) => {
-  if (typeof sessionId !== "string" || (scope !== "head" && scope !== "baseline")) {
+ipcMain.handle(IPC.SESSION_GIT_DIFF, (
+  _event,
+  sessionId: unknown,
+  scope: unknown,
+  path: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || (scope !== "head" && scope !== "baseline")
+    || (path !== undefined && typeof path !== "string")
+  ) {
     throw new Error("Git Diff 参数无效。");
   }
-  return clientOrThrow().readSessionGitDiff(sessionId, scope);
+  return clientOrThrow().readSessionGitDiff(sessionId, scope, path as string | undefined);
+});
+ipcMain.handle(IPC.SESSION_GIT_STAGE, (_event, sessionId: unknown, paths: unknown) => {
+  if (typeof sessionId !== "string" || !isNonEmptyStringArray(paths)) {
+    throw new Error("Git Stage 参数无效。");
+  }
+  return clientOrThrow().stageSessionGit(sessionId, paths);
+});
+ipcMain.handle(IPC.SESSION_GIT_UNSTAGE, (_event, sessionId: unknown, paths: unknown) => {
+  if (typeof sessionId !== "string" || !isNonEmptyStringArray(paths)) {
+    throw new Error("Git Unstage 参数无效。");
+  }
+  return clientOrThrow().unstageSessionGit(sessionId, paths);
+});
+ipcMain.handle(IPC.SESSION_GIT_COMMIT, (_event, sessionId: unknown, message: unknown) => {
+  if (typeof sessionId !== "string" || typeof message !== "string" || !message.trim()) {
+    throw new Error("Git Commit 参数无效。");
+  }
+  return clientOrThrow().commitSessionGit(sessionId, message);
 });
 
 ipcMain.handle(IPC.RUN_START, (_event, sessionId: unknown, userInput: unknown, modelId: unknown) => {

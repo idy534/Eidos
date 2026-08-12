@@ -69,6 +69,14 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "GIT_WORKTREE_MISSING",
   "GIT_WORKTREE_INVALID",
   "GIT_REVIEW_FAILED",
+  "GIT_NOT_REPOSITORY",
+  "GIT_BRANCH_REQUIRED",
+  "GIT_WORKFLOW_BUSY",
+  "GIT_INVALID_PATH",
+  "GIT_NOTHING_STAGED",
+  "GIT_IDENTITY_UNAVAILABLE",
+  "GIT_CONFLICT",
+  "GIT_COMMAND_FAILED",
   "WORKSPACE_IDENTITY_CHANGED",
   "WORKTREE_DIRTY",
   "WORKTREE_DELETE_FAILED",
@@ -119,6 +127,8 @@ import type {
   GitDiffScope,
   SessionGitDiff,
   SessionGitStatus,
+  SessionGitMutationResult,
+  SessionGitCommitResult,
   SessionListResult,
   SessionSnapshot,
   SkillListResult,
@@ -406,9 +416,31 @@ export class RuntimeClient {
     );
   }
 
-  readSessionGitDiff(sessionId: string, scope: GitDiffScope): Promise<SessionGitDiff> {
+  readSessionGitDiff(
+    sessionId: string,
+    scope: GitDiffScope,
+    path?: string,
+  ): Promise<SessionGitDiff> {
     return this.validatedRequest(
-      "session/gitDiff", { sessionId, scope }, isSessionGitDiff,
+      "session/gitDiff", { sessionId, scope, ...(path === undefined ? {} : { path }) }, isSessionGitDiff,
+    );
+  }
+
+  stageSessionGit(sessionId: string, paths: string[]): Promise<SessionGitMutationResult> {
+    return this.validatedRequest(
+      "session/gitStage", { sessionId, paths }, isSessionGitMutationResult,
+    );
+  }
+
+  unstageSessionGit(sessionId: string, paths: string[]): Promise<SessionGitMutationResult> {
+    return this.validatedRequest(
+      "session/gitUnstage", { sessionId, paths }, isSessionGitMutationResult,
+    );
+  }
+
+  commitSessionGit(sessionId: string, message: string): Promise<SessionGitCommitResult> {
+    return this.validatedRequest(
+      "session/gitCommit", { sessionId, message }, isSessionGitCommitResult,
     );
   }
 
@@ -1040,6 +1072,7 @@ function isSessionGitStatus(value: unknown): value is SessionGitStatus {
     && hasOnlyKeys(value, [
       "worktreeId", "branch", "head", "baseRef", "baseCommit", "dirty",
       "stagedCount", "unstagedCount", "untrackedCount", "conflictCount", "observedAt",
+      "stagedFiles", "unstagedFiles", "untrackedFiles", "conflictFiles",
     ])
     && (value.worktreeId === null || typeof value.worktreeId === "string")
     && (value.branch === null || typeof value.branch === "string")
@@ -1051,6 +1084,10 @@ function isSessionGitStatus(value: unknown): value is SessionGitStatus {
     && isNonNegativeInteger(value.unstagedCount)
     && isNonNegativeInteger(value.untrackedCount)
     && isNonNegativeInteger(value.conflictCount)
+    && isStringArray(value.stagedFiles)
+    && isStringArray(value.unstagedFiles)
+    && isStringArray(value.untrackedFiles)
+    && isStringArray(value.conflictFiles)
     && isNonNegativeInteger(value.observedAt)
   );
 }
@@ -1098,6 +1135,28 @@ function isSessionGitDiff(value: unknown): value is SessionGitDiff {
     && typeof value.unifiedDiff === "string"
     && typeof value.truncated === "boolean"
     && isNonNegativeInteger(value.observedAt)
+  );
+}
+
+function isSessionGitMutationResult(value: unknown): value is SessionGitMutationResult {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["head", "branch", "status"])
+    && typeof value.head === "string"
+    && (value.branch === null || typeof value.branch === "string")
+    && isSessionGitStatus(value.status)
+  );
+}
+
+function isSessionGitCommitResult(value: unknown): value is SessionGitCommitResult {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["head", "branch", "status", "commit"])
+    && typeof value.head === "string"
+    && (value.branch === null || typeof value.branch === "string")
+    && isSessionGitStatus(value.status)
+    && typeof value.commit === "string"
+    && value.commit === value.head
   );
 }
 
@@ -1585,6 +1644,10 @@ function isSha256(value: unknown): value is string {
 
 function isNonNegativeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 function isPositiveInteger(value: unknown): value is number {

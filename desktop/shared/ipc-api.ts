@@ -14,6 +14,8 @@ import type {
   GitDiffScope,
   SessionGitDiff,
   SessionGitStatus,
+  SessionGitMutationResult,
+  SessionGitCommitResult,
   Run,
   ContextUsage,
   ModelId,
@@ -76,7 +78,14 @@ export interface EidosRuntimeAPI {
   renameSession(sessionId: string, title: string): Promise<Session>;
   deleteSession(sessionId: string): Promise<DeleteSessionResult>;
   readSessionGitStatus(sessionId: string): Promise<SessionGitStatus>;
-  readSessionGitDiff(sessionId: string, scope: GitDiffScope): Promise<SessionGitDiff>;
+  readSessionGitDiff(
+    sessionId: string,
+    scope: GitDiffScope,
+    path?: string,
+  ): Promise<SessionGitDiff>;
+  stageSessionGit(sessionId: string, paths: string[]): Promise<SessionGitMutationResult>;
+  unstageSessionGit(sessionId: string, paths: string[]): Promise<SessionGitMutationResult>;
+  commitSessionGit(sessionId: string, message: string): Promise<SessionGitCommitResult>;
 
   // Runs
   startRun(sessionId: string, userInput: string, modelId: ModelId): Promise<Run>;

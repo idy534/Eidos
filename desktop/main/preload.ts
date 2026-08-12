@@ -17,6 +17,8 @@ import type {
   GitDiffScope,
   SessionGitDiff,
   SessionGitStatus,
+  SessionGitMutationResult,
+  SessionGitCommitResult,
   Run,
   ContextUsage,
   ModelId,
@@ -90,8 +92,18 @@ const api: EidosRuntimeAPI = {
     ipcRenderer.invoke(IPC.SESSION_DELETE, sessionId),
   readSessionGitStatus: (sessionId: string): Promise<SessionGitStatus> =>
     ipcRenderer.invoke(IPC.SESSION_GIT_STATUS, sessionId),
-  readSessionGitDiff: (sessionId: string, scope: GitDiffScope): Promise<SessionGitDiff> =>
-    ipcRenderer.invoke(IPC.SESSION_GIT_DIFF, sessionId, scope),
+  readSessionGitDiff: (
+    sessionId: string,
+    scope: GitDiffScope,
+    path?: string,
+  ): Promise<SessionGitDiff> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_DIFF, sessionId, scope, path),
+  stageSessionGit: (sessionId: string, paths: string[]): Promise<SessionGitMutationResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_STAGE, sessionId, paths),
+  unstageSessionGit: (sessionId: string, paths: string[]): Promise<SessionGitMutationResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_UNSTAGE, sessionId, paths),
+  commitSessionGit: (sessionId: string, message: string): Promise<SessionGitCommitResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_COMMIT, sessionId, message),
 
   // Runs
   startRun: (sessionId: string, userInput: string, modelId: ModelId): Promise<Run> =>

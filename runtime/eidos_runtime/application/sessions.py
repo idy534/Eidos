@@ -17,6 +17,7 @@ from eidos_runtime.application.errors import (
     ApplicationInvalidParamsError,
 )
 from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
+from eidos_runtime.application.git_workflow import GitWorkflowApplication
 from eidos_runtime.db.database import CommittedMutation
 from eidos_runtime.db.errors import (
     InvalidCursorError,
@@ -62,8 +63,14 @@ from eidos_runtime.protocol.methods import (
     SessionRestoreWorktreeResponseDto,
     SessionGitDiffRequestDto,
     SessionGitDiffResponseDto,
+    SessionGitCommitRequestDto,
+    SessionGitCommitResponseDto,
+    SessionGitStageRequestDto,
+    SessionGitStageResponseDto,
     SessionGitStatusRequestDto,
     SessionGitStatusResponseDto,
+    SessionGitUnstageRequestDto,
+    SessionGitUnstageResponseDto,
     SessionListRequestDto,
     SessionListResponseDto,
     SessionReadRequestDto,
@@ -247,11 +254,19 @@ class ManagedWorktreePort(Protocol):
     def local_status(self, repository_root: Path) -> GitStatusSnapshot: ...
 
     def diff(
-        self, worktree_id: str, *, scope: DiffScope = DiffScope.HEAD
+        self,
+        worktree_id: str,
+        *,
+        scope: DiffScope = DiffScope.HEAD,
+        path: str | None = None,
     ) -> GitDiffSnapshot: ...
 
     def local_diff(
-        self, repository_root: Path, *, scope: DiffScope = DiffScope.HEAD
+        self,
+        repository_root: Path,
+        *,
+        scope: DiffScope = DiffScope.HEAD,
+        path: str | None = None,
     ) -> GitDiffSnapshot: ...
 
     def delete(self, worktree_id: str) -> Worktree: ...
@@ -373,6 +388,11 @@ class SessionApplication:
         )
         self._scan_text = scan_text
         self._worktree_manager = worktree_manager
+        self._git_workflow = (
+            GitWorkflowApplication(self._repository, worktree_manager)
+            if worktree_manager is not None
+            else None
+        )
         self._retention = retention
         self._lifecycle = lifecycle or SessionLifecycleCoordinator()
         self._logger = logging.getLogger(__name__)
@@ -993,6 +1013,10 @@ class SessionApplication:
                 "unstagedCount": status.unstaged_count,
                 "untrackedCount": status.untracked_count,
                 "conflictCount": status.conflict_count,
+                "stagedFiles": list(status.staged_files),
+                "unstagedFiles": list(status.unstaged_files),
+                "untrackedFiles": list(status.untracked_files),
+                "conflictFiles": list(status.conflict_files),
                 "observedAt": _timestamp_millis(status.observed_at),
             },
         )
@@ -1015,12 +1039,18 @@ class SessionApplication:
         try:
             scope = DiffScope(request.scope)
             if session.worktree_id is not None:
-                diff = manager.diff(session.worktree_id, scope=scope)
+                diff = manager.diff(
+                    session.worktree_id, scope=scope, path=request.path
+                )
             else:
                 resolution = manager.resolve_project(session.workspace_root)
                 if resolution.git is None:
                     raise WorktreeError("not_a_git_repository")
-                diff = manager.local_diff(Path(resolution.git.repository_root), scope=scope)
+                diff = manager.local_diff(
+                    Path(resolution.git.repository_root),
+                    scope=scope,
+                    path=request.path,
+                )
         except WorktreeError as error:
             raise ApplicationError(_git_review_error_code(error), str(error)) from error
         return _result(
@@ -1036,6 +1066,36 @@ class SessionApplication:
                 "observedAt": _timestamp_millis(diff.observed_at),
             },
         )
+
+    def git_stage(
+        self, request: SessionGitStageRequestDto
+    ) -> SessionGitStageResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError(
+                "INTERNAL_ERROR", "Session Git workflow boundary is unavailable"
+            )
+        with self._lifecycle.hold(request.session_id):
+            return self._git_workflow.stage(request)
+
+    def git_unstage(
+        self, request: SessionGitUnstageRequestDto
+    ) -> SessionGitUnstageResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError(
+                "INTERNAL_ERROR", "Session Git workflow boundary is unavailable"
+            )
+        with self._lifecycle.hold(request.session_id):
+            return self._git_workflow.unstage(request)
+
+    def git_commit(
+        self, request: SessionGitCommitRequestDto
+    ) -> SessionGitCommitResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError(
+                "INTERNAL_ERROR", "Session Git workflow boundary is unavailable"
+            )
+        with self._lifecycle.hold(request.session_id):
+            return self._git_workflow.commit(request)
 
     def handoff(
         self, request: SessionHandoffRequestDto
@@ -2224,6 +2284,8 @@ def _workspace_resolution_error_code(error: WorktreeError) -> str:
 
 
 def _git_review_error_code(error: WorktreeError) -> str:
+    if error.code == "not_a_git_repository":
+        return "GIT_NOT_REPOSITORY"
     if error.code in {
         "git_command_failed",
         "git_command_timeout",

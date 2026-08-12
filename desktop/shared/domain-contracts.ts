@@ -97,7 +97,21 @@ export interface SessionGitStatus {
   unstagedCount: number;
   untrackedCount: number;
   conflictCount: number;
+  stagedFiles: string[];
+  unstagedFiles: string[];
+  untrackedFiles: string[];
+  conflictFiles: string[];
   observedAt: number;
+}
+
+export interface SessionGitMutationResult {
+  head: string;
+  branch: string | null;
+  status: SessionGitStatus;
+}
+
+export interface SessionGitCommitResult extends SessionGitMutationResult {
+  commit: string;
 }
 
 export interface ProjectGitContext {

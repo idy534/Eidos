@@ -45,6 +45,21 @@ class GitUnsupportedOperationError(GitError):
         super().__init__("git_unsupported_operation", operation, stderr=stderr)
 
 
+class GitNothingStagedError(GitError):
+    def __init__(self) -> None:
+        super().__init__("git_nothing_staged", "commit")
+
+
+class GitIdentityUnavailableError(GitError):
+    def __init__(self) -> None:
+        super().__init__("git_identity_unavailable", "commit")
+
+
+class GitConflictError(GitError):
+    def __init__(self) -> None:
+        super().__init__("git_conflict", "commit")
+
+
 class WorktreeError(RuntimeError):
     """A stable Worktree lifecycle failure without subprocess leakage."""
 
@@ -57,7 +72,10 @@ class WorktreeError(RuntimeError):
 __all__ = [
     "GitCommandFailedError",
     "GitCommandTimeoutError",
+    "GitConflictError",
     "GitError",
+    "GitIdentityUnavailableError",
+    "GitNothingStagedError",
     "GitUnsupportedOperationError",
     "WorktreeError",
 ]

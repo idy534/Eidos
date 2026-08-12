@@ -41,6 +41,10 @@ const dirtyStatus: SessionGitStatus = {
   unstagedCount: 1,
   untrackedCount: 0,
   conflictCount: 0,
+  stagedFiles: [],
+  unstagedFiles: ["README.md"],
+  untrackedFiles: [],
+  conflictFiles: [],
   observedAt: 1,
 };
 

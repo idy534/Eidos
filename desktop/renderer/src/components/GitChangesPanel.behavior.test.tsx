@@ -16,6 +16,10 @@ const status: SessionGitStatus = {
   unstagedCount: 1,
   untrackedCount: 0,
   conflictCount: 0,
+  stagedFiles: ["README.md"],
+  unstagedFiles: ["src/index.ts"],
+  untrackedFiles: [],
+  conflictFiles: [],
   observedAt: 1,
 };
 

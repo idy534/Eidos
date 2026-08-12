@@ -67,7 +67,14 @@ class GitBackend(Protocol):
         *,
         base_commit: str,
         include_untracked: bool = True,
+        path: str | None = None,
     ) -> GitDiffObservation: ...
+
+    def stage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation: ...
+
+    def unstage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation: ...
+
+    def commit(self, cwd: Path, message: str) -> str: ...
 
     def worktree_list(self, cwd: Path) -> tuple[GitWorktreeEntry, ...]: ...
 
@@ -228,8 +235,11 @@ class DulwichGitBackend:
         *,
         base_commit: str,
         include_untracked: bool = True,
+        path: str | None = None,
     ) -> GitDiffObservation:
         GitRefValidator.revision(base_commit)
+        if path is not None:
+            _validate_relative_path(path)
         repo = self._open_repository(cwd, "diff")
         try:
             captured = self._git_cli.diff(
@@ -237,6 +247,7 @@ class DulwichGitBackend:
                 base_commit=base_commit,
                 include_untracked=include_untracked,
                 output_limit_bytes=self._diff_output_limit_bytes,
+                path=path,
             )
         except (GitCommandFailedError, *_DULWICH_FAILURES) as error:
             if isinstance(error, GitCommandFailedError):
@@ -247,6 +258,25 @@ class DulwichGitBackend:
             changed_paths=captured.changed_paths,
             truncated=captured.truncated,
         )
+
+    def stage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation:
+        for path in paths:
+            _validate_relative_path(path)
+        self._open_repository(cwd, "stage")
+        self._git_cli.stage(cwd, paths)
+        return self.status(cwd)
+
+    def unstage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation:
+        for path in paths:
+            _validate_relative_path(path)
+        self._open_repository(cwd, "unstage")
+        self._git_cli.unstage(cwd, paths)
+        return self.status(cwd)
+
+    def commit(self, cwd: Path, message: str) -> str:
+        self._open_repository(cwd, "commit")
+        self._git_cli.commit(cwd, message)
+        return self.head(cwd)
 
     def worktree_list(self, cwd: Path) -> tuple[GitWorktreeEntry, ...]:
         repo = self._open_repository(cwd, "worktree-list")

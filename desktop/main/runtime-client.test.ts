@@ -311,6 +311,28 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
     assert.equal(gitContext.currentBranch, "main");
     assert.ok(gitContext.head);
     assert.ok(gitContext.branches.includes("main"));
+    const local = await client.createSession(repositoryRoot, { executionMode: "local" });
+    await writeFile(path.join(repositoryRoot, "WORKFLOW.txt"), "workflow\n", "utf8");
+    const localStatus = await client.readSessionGitStatus(local.id);
+    assert.deepEqual(localStatus.untrackedFiles, ["WORKFLOW.txt"]);
+    assert.equal(localStatus.untrackedCount, 1);
+    const fileDiff = await client.readSessionGitDiff(local.id, "head", "WORKFLOW.txt");
+    assert.deepEqual(fileDiff.changedFiles, ["WORKFLOW.txt"]);
+    assert.match(fileDiff.unifiedDiff, /workflow/);
+    const staged = await client.stageSessionGit(local.id, ["WORKFLOW.txt"]);
+    assert.deepEqual(staged.status.stagedFiles, ["WORKFLOW.txt"]);
+    const unstaged = await client.unstageSessionGit(local.id, ["WORKFLOW.txt"]);
+    assert.deepEqual(unstaged.status.untrackedFiles, ["WORKFLOW.txt"]);
+    await client.stageSessionGit(local.id, ["WORKFLOW.txt"]);
+    const committed = await client.commitSessionGit(local.id, "local workflow");
+    assert.equal(committed.commit, committed.head);
+    await assert.rejects(
+      client.commitSessionGit(local.id, "nothing staged"),
+      (error: unknown) => (
+        error instanceof RuntimeRequestError
+        && error.businessCode === "GIT_NOTHING_STAGED"
+      ),
+    );
     const first = await client.createSession(repositoryRoot, { executionMode: "worktree" });
     const second = await client.createSession(repositoryRoot, { executionMode: "worktree" });
     assert.ok(first.worktree);
@@ -327,7 +349,11 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
     assert.deepEqual(firstSnapshot.session.worktree, first.worktree);
     assert.deepEqual(
       new Map(listed.items.map((session) => [session.id, session.worktree])),
-      new Map([[first.id, first.worktree], [second.id, second.worktree]]),
+      new Map([
+        [local.id, undefined],
+        [first.id, first.worktree],
+        [second.id, second.worktree],
+      ]),
     );
 
     await writeFile(path.join(first.worktree.worktreeRoot, "README.md"), "# Committed in A\n", "utf8");

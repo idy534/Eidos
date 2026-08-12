@@ -90,6 +90,56 @@
       }
     }
   },
+  "gitWorkflow": {
+    "stageRequest": {
+      "jsonrpc": "2.0",
+      "id": "client-git-stage",
+      "method": "session/gitStage",
+      "params": {
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "paths": ["README.md"]
+      }
+    },
+    "unstageRequest": {
+      "jsonrpc": "2.0",
+      "id": "client-git-unstage",
+      "method": "session/gitUnstage",
+      "params": {
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "paths": ["README.md"]
+      }
+    },
+    "commitRequest": {
+      "jsonrpc": "2.0",
+      "id": "client-git-commit",
+      "method": "session/gitCommit",
+      "params": {
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "message": "Update README"
+      }
+    },
+    "mutationResult": {
+      "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "branch": "main",
+      "status": {
+        "worktreeId": null,
+        "branch": "main",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "baseRef": null,
+        "baseCommit": null,
+        "dirty": false,
+        "stagedCount": 0,
+        "unstagedCount": 0,
+        "untrackedCount": 0,
+        "conflictCount": 0,
+        "stagedFiles": [],
+        "unstagedFiles": [],
+        "untrackedFiles": [],
+        "conflictFiles": [],
+        "observedAt": 1
+      }
+    }
+  },
   "notifications": [
     {
       "jsonrpc": "2.0",

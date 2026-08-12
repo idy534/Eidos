@@ -27,7 +27,7 @@
 
 - 内置文件工具只处理当前 Workspace 内受支持的普通 UTF-8 文件。当前没有通用二进制编辑、内嵌 Terminal、浏览器自动化或 Artifact 发布工具。
 - Non-Git Project 已经支持 Local Execution Session。Non-Git Project 不支持 Git status、Git diff、Managed Worktree 或 Git-based Fork。Local Checkpoint Fork 共享真实 workspace，不提供 directory snapshot、copy-on-write 或 filesystem rewind。
-- Git Project 可以创建 Local 或 Worktree Execution Session，也可以在同一个 Session 中执行 Local ↔ Managed Worktree Handoff。Managed Worktree 默认是 detached HEAD。Phase 3B 支持只复制 ignored local files 的 `.worktreeinclude`、ignored rule override 自动 materialization、显式的 local changes transfer 和 `Create Branch Here`。Phase 3D 支持按数量的 managed Worktree retention、durable Git patch Snapshot、detached HEAD hidden ref、safe cleanup 和同 Worktree identity Restore。Git staging、commit、push、pull、merge 和 rebase UI 尚未实现。
+- Git Project 可以创建 Local 或 Worktree Execution Session，也可以在同一个 Session 中执行 Local ↔ Managed Worktree Handoff。Managed Worktree 默认是 detached HEAD。Runtime 已提供 structured status、file-scoped diff、stage、unstage 和 commit typed API。Desktop 尚未提供这些 Git mutation 的操作 UI。Fetch、pull、push、merge、rebase、stash、Diff Review UI 重构、inline comments 和 Real Checkpoint 尚未实现。
 - Git diff 对已记录的 submodule 只观察 Gitlink HEAD 和 submodule workspace 缺失。submodule 内部的 nested working-tree dirtiness 尚未向父 repository diff 暴露。
 - Workspace discovery 只读取 Workspace root 的 `.gitignore` 和 `.eidosignore`。当前不支持 nested `.gitignore`。
 - Ignore 规则只影响普通 `list_files`/`search_text` 发现结果。Ignore 规则不是权限，也不会缩小 Shell security scan 或副作用 evidence 范围。

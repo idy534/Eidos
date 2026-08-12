@@ -1506,9 +1506,12 @@ class WorktreeManager:
         )
         if not validation.valid:
             raise WorktreeError(validation.code or "worktree_invalid")
-        staged, unstaged, untracked, conflicts, dirty = self._status_counts(
-            Path(worktree.worktree_root)
-        )
+        try:
+            observation = self.git.status(Path(worktree.worktree_root))
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_command_failed") from error
         head = validation.head
         branch = validation.observed_branch
         if head is None:
@@ -1521,11 +1524,15 @@ class WorktreeManager:
             base_commit=worktree.base_commit,
             branch=branch,
             head=head,
-            dirty=dirty,
-            staged_count=staged,
-            unstaged_count=unstaged,
-            untracked_count=untracked,
-            conflict_count=conflicts,
+            dirty=observation.dirty,
+            staged_count=len(observation.staged_paths),
+            unstaged_count=len(observation.unstaged_paths),
+            untracked_count=len(observation.untracked_paths),
+            conflict_count=len(observation.conflict_paths),
+            staged_files=observation.staged_paths,
+            unstaged_files=observation.unstaged_paths,
+            untracked_files=observation.untracked_paths,
+            conflict_files=observation.conflict_paths,
             observed_at=utc_now(),
         )
 
@@ -1551,18 +1558,29 @@ class WorktreeManager:
             unstaged_count=len(observation.unstaged_paths),
             untracked_count=len(observation.untracked_paths),
             conflict_count=len(observation.conflict_paths),
+            staged_files=observation.staged_paths,
+            unstaged_files=observation.unstaged_paths,
+            untracked_files=observation.untracked_paths,
+            conflict_files=observation.conflict_paths,
             observed_at=utc_now(),
         )
 
     def local_diff(
-        self, repository_root: Path, *, scope: DiffScope = DiffScope.HEAD
+        self,
+        repository_root: Path,
+        *,
+        scope: DiffScope = DiffScope.HEAD,
+        path: str | None = None,
     ) -> GitDiffSnapshot:
         try:
             discovery = self.discovery.discover(repository_root)
             root = Path(discovery.repository_root)
             head = self.git.head(root)
             diff_observation = self.git.diff(
-                root, base_commit=head, include_untracked=True
+                root,
+                base_commit=head,
+                include_untracked=True,
+                path=path,
             )
             status_observation = self.git.status(root)
         except GitCommandTimeoutError:
@@ -1585,6 +1603,7 @@ class WorktreeManager:
         worktree_id: str,
         *,
         scope: DiffScope = DiffScope.HEAD,
+        path: str | None = None,
     ) -> GitDiffSnapshot:
         worktree = self._read_worktree(worktree_id)
         project = self._project_for(worktree)
@@ -1608,6 +1627,7 @@ class WorktreeManager:
                 root,
                 base_commit=base_commit,
                 include_untracked=True,
+                path=path,
             )
             status_observation = self.git.status(root)
         except GitCommandTimeoutError:

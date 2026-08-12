@@ -590,6 +590,30 @@ class RuntimeServer:
                 ),
             ),
             (
+                "session/gitStage",
+                method_dtos.SessionGitStageRequestDto,
+                method_dtos.SessionGitStageResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_stage(
+                    request
+                ),
+            ),
+            (
+                "session/gitUnstage",
+                method_dtos.SessionGitUnstageRequestDto,
+                method_dtos.SessionGitUnstageResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_unstage(
+                    request
+                ),
+            ),
+            (
+                "session/gitCommit",
+                method_dtos.SessionGitCommitRequestDto,
+                method_dtos.SessionGitCommitResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_commit(
+                    request
+                ),
+            ),
+            (
                 "session/rename",
                 method_dtos.SessionRenameRequestDto,
                 method_dtos.SessionRenameResponseDto,

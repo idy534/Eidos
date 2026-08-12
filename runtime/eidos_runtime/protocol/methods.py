@@ -9,6 +9,7 @@ records; each public method nevertheless owns a distinct validation type.
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from typing import ClassVar, Literal
 
 from pydantic import Field, JsonValue, StrictInt, StrictStr
@@ -126,7 +127,60 @@ class SessionGitStatusRequestDto(_CanonicalIdRequest):
 class SessionGitDiffRequestDto(_CanonicalIdRequest):
     session_id: StrictStr = Field(alias="sessionId")
     scope: Literal["head", "baseline"] = "head"
+    path: StrictStr | None = Field(default=None, min_length=1, max_length=4096)
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
+
+    @field_validator("path")
+    @classmethod
+    def _validate_path(cls, value: str | None) -> str | None:
+        return None if value is None else _git_relative_path(value)
+
+
+class _SessionGitPathsRequest(_CanonicalIdRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    paths: list[StrictStr] = Field(min_length=1, max_length=512)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
+
+    @field_validator("paths")
+    @classmethod
+    def _validate_paths(cls, values: list[str]) -> list[str]:
+        normalized = [_git_relative_path(value) for value in values]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("Git paths must be unique")
+        return normalized
+
+
+class SessionGitStageRequestDto(_SessionGitPathsRequest):
+    pass
+
+
+class SessionGitUnstageRequestDto(_SessionGitPathsRequest):
+    pass
+
+
+class SessionGitCommitRequestDto(_CanonicalIdRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    message: StrictStr = Field(min_length=1, max_length=65536)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
+
+    @field_validator("message")
+    @classmethod
+    def _validate_message(cls, value: str) -> str:
+        if not value.strip() or "\x00" in value:
+            raise ValueError("Git commit message is invalid")
+        return value
+
+
+def _git_relative_path(value: str) -> str:
+    path = Path(value)
+    if (
+        not value
+        or "\x00" in value
+        or path.is_absolute()
+        or any(part in {"", ".", "..", ".git"} for part in path.parts)
+    ):
+        raise ValueError("Git path must be workspace-relative")
+    return value
 
 
 class SessionRenameRequestDto(_OperationRequest):
@@ -384,6 +438,10 @@ class SessionGitStatusResponseDto(MethodResultDto):
     unstaged_count: StrictInt = Field(alias="unstagedCount", ge=0)
     untracked_count: StrictInt = Field(alias="untrackedCount", ge=0)
     conflict_count: StrictInt = Field(alias="conflictCount", ge=0)
+    staged_files: list[StrictStr] = Field(alias="stagedFiles")
+    unstaged_files: list[StrictStr] = Field(alias="unstagedFiles")
+    untracked_files: list[StrictStr] = Field(alias="untrackedFiles")
+    conflict_files: list[StrictStr] = Field(alias="conflictFiles")
     observed_at: StrictInt = Field(alias="observedAt", ge=0)
 
     def to_json_value(self) -> dict[str, JsonValue]:
@@ -426,6 +484,30 @@ class SessionGitDiffResponseDto(MethodResultDto):
         value = super().to_json_value()
         value["baseCommit"] = self.base_commit
         return value
+
+
+class SessionGitMutationResponseDto(MethodResultDto):
+    head: StrictStr
+    branch: StrictStr | None = None
+    status: SessionGitStatusResponseDto
+
+    def to_json_value(self) -> dict[str, JsonValue]:
+        value = super().to_json_value()
+        value["branch"] = self.branch
+        value["status"] = self.status.to_json_value()
+        return value
+
+
+class SessionGitStageResponseDto(SessionGitMutationResponseDto):
+    pass
+
+
+class SessionGitUnstageResponseDto(SessionGitMutationResponseDto):
+    pass
+
+
+class SessionGitCommitResponseDto(SessionGitMutationResponseDto):
+    commit: StrictStr
 
 
 class SessionRenameResponseDto(_SessionResponseDto):
