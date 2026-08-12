@@ -37,6 +37,14 @@ def test_verified_compaction_persists_with_outbox_and_failure_keeps_previous(
     )
 
     assert repository.latest(run["id"]) == verified
+    assert store.latest_compact_summary(run["id"]) == summary
+    assert store.compaction_count(run["id"]) == 1
+    assert store.pending_outbox_count() == before_outbox + 1
+    duplicate = repository.verify_and_persist(
+        run_id=run["id"], summary=summary, input_range=(1, 1)
+    )
+    assert duplicate.summary_hash == verified.summary_hash
+    assert store.compaction_count(run["id"]) == 1
     assert store.pending_outbox_count() == before_outbox + 1
     invented = summary.model_copy(update={"workspace_changes": ("invented.py",)})
     with pytest.raises(CompactionVerificationError, match="workspace change"):
@@ -44,5 +52,7 @@ def test_verified_compaction_persists_with_outbox_and_failure_keeps_previous(
             run_id=run["id"], summary=invented, input_range=(1, 1)
         )
     assert repository.latest(run["id"]) == verified
+    assert store.latest_compact_summary(run["id"]) == summary
+    assert store.compaction_count(run["id"]) == 1
     assert store.pending_outbox_count() == before_outbox + 1
     store.close()

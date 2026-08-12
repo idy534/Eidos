@@ -961,7 +961,7 @@ class ContextPersistenceTests(unittest.TestCase):
         current, _ = self.store.create_run(self.session["id"], "current")
 
         with patch(
-            "eidos_runtime.db.repositories.context.append_event",
+            "eidos_runtime.persistence.verified_compaction.append_event",
             side_effect=ValueError("fixture event failure"),
         ):
             with self.assertRaises(ValueError):

@@ -1164,11 +1164,6 @@ class SessionStore:
     def compaction_count(self, run_id: str) -> int:
         return self._repository(self._context).compaction_count(run_id)
 
-    def commit_compaction(
-        self, run_id: str, phase: str, summary: CompactSummary
-    ) -> CommittedMutation[CompactSummary]:
-        return self._repository(self._context).commit_compaction(run_id, phase, summary)
-
     def enqueue_input(self, run_id: str, content: str) -> str:
         return self._repository(self._execution).enqueue_input(run_id, content)
 

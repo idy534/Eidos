@@ -128,7 +128,7 @@ CLAUDE.md
 
 Context Budget 优先使用最近 Provider Usage 的 active input tokens。Provider Usage 不可用时，Runtime 使用标记为 `estimated` 的有界估算。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发 deterministic bounded compaction 或一次安全恢复。没有新的可压缩历史或 Context 投影没有进展时，Run 以 `context_still_over_budget` 停止。
 
-当前默认 compactor 把目标、约束、已完成动作、Workspace 变化、重要事实、失败尝试、未解决问题、决定、待处理 Approval 和下一步写入有界摘要。原始历史仍保存在 SQLite。ContextPlan、ContextSnapshot 和 Verified Compaction 也有 typed persistence boundary，但 Repository/Context 组合还不是每次默认 Run 的强制在线前置步骤。
+当前默认 compactor 先生成确定性的有界候选摘要。候选摘要不会直接成为模型事实。Runtime 会从 SQLite 重载 Item、Tool Result、Workspace change、Approval 和 reconciliation 事实，再执行 `ContextCompactionVerifier`。只有验证通过的 `VerifiedCompactSummary` 才会在同一个事务中写入权威 `compact_summaries`、增加计数并产生一条 `context.compacted` Event。原始历史仍保存在 SQLite。验证失败会保留上一份 verified summary。
 
 ## 7. Model Gateway
 
@@ -199,13 +199,15 @@ RepositoryMap 的 manifest 读取使用 Inventory 中的 device、inode、size�
 
 v1 mapless generation 仍然不能恢复为 active Snapshot。Persistence 会单独读取 Inventory 和 Index 的 generation watermark。首次 v2 build 会从 watermark 的下一代开始。Runtime 不会把 legacy row 当成 authoritative generation，也不会直接修改 builder 的私有 counter。
 
-当前默认在线 Run 仍主要使用 ContextBuilder、Workspace Tool Result 和 SQLite Context Facts。RuntimeEngine 会准备并固定 Repository Generation，但不会自动执行 Retrieval Query，也不会把 Repository Snapshot、ContextPlan 或 ContextSnapshot 注入模型请求。因此，Repository Generation readiness 已经在线，但 Repository Retrieval 与模型 Context 的组合仍未接线。
+`RuntimeEngine.run()` 会在 Repository Generation ready 后构造一次有界 `RepositoryRetrievalQuery`。Query 只使用当前用户目标、Inventory/Index 中可以确认的 path 和 symbol、已有 read/search Tool Result、dirty path 和最近 committed change。Runtime 对该 Run 只执行一次 Retrieval，并固定同一个 `RunRepositoryContext`。Watcher 在 Run 中只会让 Workspace 变脏，不会改变这个 view。
+
+`ContextBuilder` 是默认在线 Run 的唯一模型输入投影器。它把 Project Rules、Skills、SQLite history、verified compact summary、Repository overview 和 Retrieval evidence 放入一个结构化 `ModelContextItem` 序列。每个 ModelAttempt 在 Sampling 前持久化完整的 `ContextSnapshot`。Snapshot 原样保存 model context、resolved instructions、tool definitions、Model/Rule metadata 和可空 Repository lineage。Sampling 只读取已绑定的 Snapshot。Provider transport retry 复用同一个 Snapshot。协议修复会建立新的 ModelAttempt 和新的 Snapshot。
 
 ## 11. Persistence & Events
 
 SQLite 是业务事实唯一权威。Session、Run、Item、ToolCall、Approval、Tool Attempt、Execution Segment、Step、Model Attempt、Durable Intent、Event、Outbox、Async Operation、Extension Snapshot、Context、Repository Snapshot、Compaction 和 Checkpoint 都有持久化边界。
 
-当前 `SCHEMA_VERSION` 是 2。新数据库直接创建完整的当前 schema。Runtime 只支持从 v1 到 v2 的单步事务迁移。这个迁移为 Repository Generation 增加 nullable `repository_map_json`。旧 generation 不会回填 Map。其他旧 revision、未知 revision 和未来 revision 仍然 fail closed。当前 schema 已包含 Project、Worktree、Session、Run、Worktree lifecycle、Session Handoff、Worktree Settings、Snapshot metadata 和 retention/restore fields。
+当前 `SCHEMA_VERSION` 是 3。新数据库直接创建完整 schema。Runtime 会在一个事务中执行 v2→v3，也会按 v1→v2→v3 顺序升级。v1→v2 为 Repository Generation 增加 nullable `repository_map_json`。v2→v3 把 `context_plans` 的 Retrieval、Inventory 和 Index lineage 改为 nullable，所以没有 Repository Snapshot 的普通 ModelAttempt 也可以保存精确 ContextSnapshot。迁移失败会回滚。未知 revision 和未来 revision fail closed。
 
 业务状态变化与 Event/Outbox 在同一 SQLite transaction 中提交。Outbox 投递失败不会删除事实。Runtime 重启会从 SQLite、Outbox、Long Task 和 Resource 状态恢复或进入 reconciliation。
 

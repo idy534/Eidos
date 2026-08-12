@@ -57,6 +57,8 @@ class ContextCompactionVerifier:
         if len(input_range) != 2 or input_range[0] < 0 or input_range[1] < input_range[0]:
             raise CompactionVerificationError("compaction input range is invalid")
         available_item_ids = {item.item_id for item in facts.items}
+        if facts.compact_summary is not None:
+            available_item_ids.update(facts.compact_summary.source_item_ids)
         if not set(summary.source_item_ids) <= available_item_ids:
             raise CompactionVerificationError("unknown source item")
         if facts.available_event_ids and not set(source_event_ids) <= set(

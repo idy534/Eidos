@@ -672,6 +672,17 @@ def test_first_model_request_contains_repository_overview_and_retrieval_evidence
         assert "auth.py" in repository_text
         assert "authenticate_user" in repository_text
         assert "auth_test.py" in repository_text
+        attempts = store.read_model_attempts(run["id"])
+        assert len(attempts) == 1
+        frozen = store.context_snapshot_repository().read_for_model_attempt(
+            str(attempts[0]["id"])
+        )
+        assert frozen is not None
+        assert frozen.model_context == model.contexts[0]
+        assert frozen.inventory_snapshot_id is not None
+        assert frozen.index_snapshot_id is not None
+        assert frozen.repository_map_snapshot_id is not None
+        assert frozen.retrieval_snapshot_id is not None
     finally:
         repository_runtime.shutdown_all()
         store.close()
