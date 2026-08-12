@@ -140,6 +140,7 @@ class ContextCompactor:
                 run_id=run_id,
                 summary=proposal,
                 input_range=(0, max(ordinals, default=0)),
+                source_tool_call_ids=facts.available_tool_call_ids,
                 pending_approval_facts=proposal.pending_approvals,
                 reconciliation_facts=(
                     ("workspace reconciliation required",)

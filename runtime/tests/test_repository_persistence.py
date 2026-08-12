@@ -10,8 +10,8 @@ from eidos_runtime.application.repository import RepositoryApplication
 from eidos_runtime.db.database import Database
 from eidos_runtime.db.schema import (
     LEGACY_SCHEMA_VERSION,
-    SCHEMA_SQL,
     SCHEMA_VERSION,
+    V2_SCHEMA_SQL,
 )
 from eidos_runtime.persistence.repository_intelligence import (
     RepositoryFtsDocument,
@@ -320,7 +320,7 @@ def test_v1_generation_without_map_migrates_as_non_restorable(
     data = tmp_path / "data"
     data.mkdir(mode=0o700)
     database_path = data / "eidos.db"
-    v1_schema = SCHEMA_SQL.replace(
+    v1_schema = V2_SCHEMA_SQL.replace(
         "    repository_map_json TEXT,\n", ""
     ).replace(
         "\n         AND repository_map_json IS NOT NULL", ""

@@ -35,15 +35,23 @@ class ContextSnapshotRepository(Repository):
                 connection.execute(
                     """
                     INSERT OR IGNORE INTO repository_retrieval_snapshots (
-                        id, run_id, inventory_snapshot_id, index_snapshot_id,
+                        id, inventory_snapshot_id, index_snapshot_id,
                         snapshot_hash, snapshot_json, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        retrieval.snapshot_id, run_id, retrieval.inventory_snapshot_id,
+                        retrieval.snapshot_id, retrieval.inventory_snapshot_id,
                         retrieval.index_snapshot_id, retrieval.snapshot_hash,
                         retrieval.model_dump_json(), retrieval.created_at_ms,
                     ),
+                )
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO run_repository_retrievals (
+                        run_id, retrieval_snapshot_id, created_at
+                    ) VALUES (?, ?, ?)
+                    """,
+                    (run_id, retrieval.snapshot_id, snapshot.created_at_ms),
                 )
             connection.execute(
                 """

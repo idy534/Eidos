@@ -44,6 +44,14 @@ class RepositoryAnalysisSnapshot(EidosFrozenStrictModel):
     persisted_snapshot: RepositoryIntelligenceSnapshot | None = None
 
 
+class RepositoryRunCapture(EidosFrozenStrictModel):
+    """One atomic Workspace view frozen for a Run."""
+
+    snapshot: RepositoryAnalysisSnapshot | None
+    dirty_paths: tuple[str, ...]
+    invalidation_epoch: int
+
+
 logger = logging.getLogger("eidos.runtime.repository")
 
 
@@ -278,6 +286,14 @@ class ActiveRepositoryState:
     def invalidation_epoch(self) -> int:
         with self._lock:
             return self._invalidation_epoch
+
+    def capture_for_run(self) -> RepositoryRunCapture:
+        with self._lock:
+            return RepositoryRunCapture(
+                snapshot=self._snapshot,
+                dirty_paths=tuple(sorted(self._dirty_paths, key=str.encode)),
+                invalidation_epoch=self._invalidation_epoch,
+            )
 
     @property
     def closed(self) -> bool:

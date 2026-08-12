@@ -733,6 +733,70 @@ def test_retrieval_failure_does_not_block_normal_model_sampling(
         store.close()
 
 
+def test_run_repository_capture_excludes_invalidation_after_capture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "main.py").write_text("value = 1\n", encoding="utf-8")
+    store = SessionStore(tmp_path / "runtime-data")
+    store.initialize()
+    repository_runtime = _runtime(store.repository_intelligence_repository())
+    queries: list[object] = []
+    try:
+        session = store.create_session(str(root))
+        run, _item = store.create_run(session["id"], "inspect workspace")
+        active = repository_runtime.activate_workspace(root)
+        original_retrieve = active.application.retrieve
+
+        def record_retrieve(snapshot, query, **kwargs):
+            queries.append(query)
+            return original_retrieve(snapshot, query, **kwargs)
+
+        monkeypatch.setattr(active.application, "retrieve", record_retrieve)
+        original_read_run = store.read_run
+        invalidated = False
+
+        def read_run_after_capture(run_id: str):
+            nonlocal invalidated
+            if not invalidated:
+                invalidated = True
+                _BlockingWatchController.instances[0].emit(
+                    RepositoryChange(path="main.py", change="modified")
+                )
+            return original_read_run(run_id)
+
+        monkeypatch.setattr(store, "read_run", read_run_after_capture)
+        RuntimeEngine(
+            store,
+            ScriptedModel([ModelResponse(text="done")]),
+            lambda _message: None,
+            repository_runtime=repository_runtime,
+        ).run(run["id"], threading.Event())
+
+        assert queries
+        assert "main.py" not in queries[0].recently_modified_paths
+        assert active.dirty_paths == frozenset({"main.py"})
+        assert active.reconciliation_required is True
+        assert active.snapshot is not None
+        current_generation = active.snapshot.inventory.generation
+
+        next_run, _item = store.create_run(session["id"], "inspect workspace again")
+        RuntimeEngine(
+            store,
+            ScriptedModel([ModelResponse(text="done")]),
+            lambda _message: None,
+            repository_runtime=repository_runtime,
+        ).run(next_run["id"], threading.Event())
+        assert active.snapshot is not None
+        assert active.snapshot.inventory.generation == current_generation + 1
+        assert active.reconciliation_required is False
+    finally:
+        repository_runtime.shutdown_all()
+        store.close()
+
+
 def test_repeated_session_reopen_reuses_one_active_state_and_watcher(
     tmp_path: Path,
 ) -> None:

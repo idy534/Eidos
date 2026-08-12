@@ -82,12 +82,13 @@
 - `search_text` 使用随 Runtime 管理、manifest 校验和 SHA256 校验的 macOS arm64 Ripgrep 资源。
 - Repository Intelligence 基础设施已经实现 Inventory、Repository generation、Tree-sitter Index、symbols/imports/references/chunks、Repository Map、SQLite FTS5、RapidFuzz retrieval、Retrieval Snapshot 和 ContextPlan。
 - Repository Intelligence 的不完整 generation 不会替换上一个完整 generation。完整 generation 原子保存相互绑定的 Inventory、Index 和 RepositoryMap。Workspace 激活会 fast restore 三者，不会读取当前 manifest、Git branch 或 Git HEAD，也不会重新运行 builder。
-- `RepositoryWorkspaceRuntime` 为每个 Workspace identity 保存一个 active immutable Snapshot、recovery status、dirty paths、invalidation epoch 和 watcher。`ensure_ready()` 会在 Run 第一次模型执行前完成首次 generation build 或一次 reconciliation。Clean Run 不 scan。同一个 Run 的模型 Step 复用一次捕获的 generation。Watcher 只提供失效信号，不改变当前 Snapshot，也不在 Run 内自动 build 新 generation。
+- `RepositoryWorkspaceRuntime` 为每个 Workspace identity 保存一个 active immutable Snapshot、recovery status、dirty paths、invalidation epoch 和 watcher。`ensure_ready()` 会在 Run 第一次模型执行前完成首次 generation build 或一次 reconciliation。Run 会在一个锁内一次捕获 Snapshot、dirty paths 和 epoch。Clean Run 不 scan。同一个 Run 的模型 Step 复用该 capture。Watcher 只提供失效信号，不改变当前 capture，也不在 Run 内自动 build 新 generation。
 - Repository Generation 发布会验证 Inventory-bound manifest 内容，并在 commit 前用 Dulwich 再次验证 Git branch 和 HEAD。并发 readiness 只允许一个 build。build 期间的新 watcher event 会保留 dirty 和 reconciliation required。
 - v1 mapless generation 通过独立 generation watermark 推进新 builder counter。首个 v2 complete generation 使用更高 generation，不会把 legacy row 当成可恢复 Snapshot。
 - Existing Session read 的 Repository prewarm 是 best-effort。缺失 Local root 和 `MISSING`、`INVALID`、`DELETED` Worktree 不会阻止 Desktop 读取 Session snapshot。Run admission 仍执行权威 Workspace 校验。
 - Session create、existing Session read 和完成 binding 变更的 handoff 会激活真实 execution workspace。Run admission 和 RuntimeEngine start 提供 authoritative fallback。Runtime shutdown 会停止 watcher。Cold start 会保留 reconciliation requirement，因为旧 Inventory 不能排除停机期间新增路径。
 - Runtime 在每个 Run 固定 Repository Generation 后自动构造一次 grounded Retrieval Query，并执行一次 Retrieval。ContextBuilder 会把 Repository overview 和有界 evidence 加入规范模型 payload。同 Run 的后续 Model Step 复用这份 Retrieval view。
+- Retrieval Snapshot 使用 content-addressed ID。多个 Run 可以共享同一个 immutable artifact。`run_repository_retrievals` 单独保存 Run usage lineage。Verified Compaction 通过该 lineage 解析 evidence IDs。
 
 ## Runtime Git Worktree Kernel
 
@@ -158,7 +159,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Persistence
 
-- 当前 SQLite schema 是 v3。新数据库直接创建完整当前 schema。Runtime 支持 v2→v3 和事务内的 v1→v2→v3 顺序迁移。其他旧 revision、未知 revision 和未来 revision 不会自动迁移。版本不匹配时，Runtime 保持数据库不变并进入 `health_only`。
+- 当前 SQLite schema 是 v3。新数据库直接创建完整当前 schema。Runtime 支持 v2→v3 和事务内的 v1→v2→v3 顺序迁移。Context 表重建会保留 ModelAttempt binding，并核验最终 FK 和 `foreign_key_check`。其他旧 revision、未知 revision 和未来 revision 不会自动迁移。版本不匹配时，Runtime 保持数据库不变并进入 `health_only`。
 - SQLite 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context、Repository Snapshot、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。
 - 业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - SQLite 使用私有数据目录、WAL、busy timeout、完整性检查、单实例锁和 health-only 失败状态。

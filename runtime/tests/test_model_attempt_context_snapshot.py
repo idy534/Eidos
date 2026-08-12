@@ -4,6 +4,7 @@ from pathlib import Path
 import threading
 
 from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.context.budget import estimate_context_budget
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
 from eidos_runtime.runtime.engine import RuntimeEngine
 
@@ -97,6 +98,33 @@ def test_protocol_repair_creates_a_new_exact_context_snapshot(tmp_path: Path) ->
         assert first.snapshot_id != second.snapshot_id
         assert second.model_context[-1]["type"] == "protocol_error"
         assert second.model_context == model.contexts[1]
+        profile = store.read_model_profile(run_id)
+        expected_budget = estimate_context_budget(
+            {
+                "instructions": second.instructions,
+                "messages": second.model_context,
+                "tools": [
+                    tool.model_dump(mode="json")
+                    for tool in second.tool_definitions
+                ],
+            },
+            context_window_tokens=profile.context_window_tokens,
+            request_max_output_tokens=profile.max_output_tokens,
+            message_count=len(second.model_context),
+            tool_call_count=sum(
+                item.get("type") == "tool_call"
+                for item in second.model_context
+            ),
+            tool_result_count=sum(
+                item.get("type") == "tool_result"
+                for item in second.model_context
+            ),
+        )
+        assert second.plan.token_budget == expected_budget
+        assert (
+            second.plan.token_budget.estimated_input_tokens
+            > first.plan.token_budget.estimated_input_tokens
+        )
     finally:
         store.close()
 

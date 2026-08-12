@@ -7,16 +7,27 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+import threading
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.db.schema import (  # noqa: E402
+    LEGACY_SCHEMA_VERSION,
     PREVIOUS_SCHEMA_VERSION,
     SCHEMA_SQL,
     SCHEMA_VERSION,
     V2_SCHEMA_SQL,
 )
+from eidos_runtime.context.budget import estimate_context_budget  # noqa: E402
+from eidos_runtime.context.plan import ContextPlanner  # noqa: E402
+from eidos_runtime.model.client import (  # noqa: E402
+    ModelProfileSnapshot,
+    ModelResponse,
+    ScriptedModel,
+)
+from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
+from eidos_runtime.runtime.resolution import RuleResolutionSnapshot  # noqa: E402
 from eidos_runtime.db.storage import DATABASE_NAME, SessionStore  # noqa: E402
 from eidos_runtime.runtime.state_machine import (  # noqa: E402
     RunStatus,
@@ -60,6 +71,7 @@ EXPECTED_TABLES = {
     "repository_diagnostics",
     "repository_fts",
     "repository_retrieval_snapshots",
+    "run_repository_retrievals",
     "context_plans",
     "context_snapshots",
     "verified_compact_summaries",
@@ -146,6 +158,139 @@ EXPECTED_COLUMNS = {
         "status", "result_code",
     },
 }
+
+
+def _seed_context_lineage(
+    connection: sqlite3.Connection,
+    workspace: str,
+) -> tuple[str, str, str]:
+    profile = ModelProfileSnapshot(
+        provider_id="provider", model_id="model", context_window_tokens=4096,
+        max_output_tokens=512, request_timeout_seconds=30.0,
+        supports_tools=True, supports_json_schema_output=True,
+        supports_reasoning=False,
+    )
+    rules = RuleResolutionSnapshot.create(
+        workspace_root=workspace, cwd=workspace, budget_bytes=1024,
+        used_bytes=0, rules=(), shadowed=(), warnings=(),
+    )
+    context = ({"type": "user", "content": "legacy exact request"},)
+    budget = estimate_context_budget(
+        {"instructions": "", "messages": context, "tools": []},
+        context_window_tokens=4096, request_max_output_tokens=512,
+        message_count=1, tool_call_count=0, tool_result_count=0,
+    )
+    plan = ContextPlanner().capture(
+        model_profile=profile,
+        rule_snapshot=rules,
+        model_context=context,
+        instructions="",
+        tool_definitions=(),
+        token_budget=budget,
+        inventory_snapshot_id="inventory-v2",
+        index_snapshot_id="index-v2",
+        repository_map_snapshot_id="map-v2",
+        retrieval_snapshot_id="retrieval-v2",
+    )
+    snapshot = plan.for_model_attempt(
+        "attempt-v2", model_context=context, instructions="", tool_definitions=()
+    )
+    connection.execute(
+        "INSERT INTO sessions (id, workspace_root, created_at, updated_at) "
+        "VALUES ('session-v2', ?, 1, 1)",
+        (workspace,),
+    )
+    connection.execute(
+        """
+        INSERT INTO runs (
+            id, session_id, user_input, model_profile_json, status,
+            created_at, updated_at, completed_at
+        ) VALUES ('run-v2', 'session-v2', 'legacy', '{}', 'succeeded', 1, 1, 1)
+        """
+    )
+    connection.execute(
+        "INSERT INTO run_resolution_snapshots "
+        "(id, run_id, snapshot_hash, snapshot_json, created_at) "
+        "VALUES ('run-resolution-v2', 'run-v2', 'hash', '{}', 1)"
+    )
+    connection.execute(
+        "INSERT INTO rule_resolution_snapshots "
+        "(id, snapshot_hash, snapshot_json, created_at) "
+        "VALUES ('rule-v2', 'rule-hash-v2', '{}', 1)"
+    )
+    connection.execute(
+        "INSERT INTO step_resolution_snapshots "
+        "(id, run_snapshot_id, rule_snapshot_id, snapshot_hash, snapshot_json, created_at) "
+        "VALUES ('step-resolution-v2', 'run-resolution-v2', 'rule-v2', 'hash', '{}', 1)"
+    )
+    connection.execute(
+        "INSERT INTO execution_segments "
+        "(id, run_id, ordinal, status, created_at, completed_at) "
+        "VALUES ('segment-v2', 'run-v2', 1, 'completed', 1, 1)"
+    )
+    connection.execute(
+        "INSERT INTO steps "
+        "(id, run_id, segment_id, ordinal, status, resolution_snapshot_id, created_at, completed_at) "
+        "VALUES ('step-v2', 'run-v2', 'segment-v2', 1, 'completed', 'step-resolution-v2', 1, 1)"
+    )
+    connection.execute(
+        """
+        INSERT INTO repository_retrieval_snapshots (
+            id, run_id, inventory_snapshot_id, index_snapshot_id,
+            snapshot_hash, snapshot_json, created_at
+        ) VALUES ('retrieval-v2', 'run-v2', 'inventory-v2', 'index-v2',
+                  'retrieval-hash-v2', '{}', 1)
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO context_plans (
+            id, run_id, retrieval_snapshot_id, model_profile_snapshot_hash,
+            rule_snapshot_id, inventory_snapshot_id, index_snapshot_id,
+            snapshot_hash, plan_json, created_at
+        ) VALUES (?, 'run-v2', 'retrieval-v2', ?, ?, 'inventory-v2',
+                  'index-v2', ?, ?, 1)
+        """,
+        (
+            plan.plan_id, plan.model_profile_snapshot_hash,
+            plan.rule_resolution_snapshot_id, plan.snapshot_hash,
+            plan.model_dump_json(),
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO context_snapshots (
+            id, run_id, model_attempt_id, plan_id,
+            snapshot_hash, snapshot_json, created_at
+        ) VALUES (?, 'run-v2', 'attempt-v2', ?, ?, ?, 1)
+        """,
+        (
+            snapshot.snapshot_id, plan.plan_id,
+            snapshot.snapshot_hash, snapshot.model_dump_json(),
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO model_attempts (
+            id, step_id, ordinal, status, context_snapshot_id,
+            had_progress, started_at, completed_at
+        ) VALUES ('attempt-v2', 'step-v2', 1, 'completed', ?, 0, 1, 1)
+        """,
+        (snapshot.snapshot_id,),
+    )
+    return snapshot.snapshot_id, snapshot.model_dump_json(), plan.model_dump_json()
+
+
+def _assert_context_foreign_keys(connection: sqlite3.Connection) -> None:
+    context_fk = [
+        row for row in connection.execute("PRAGMA foreign_key_list(model_attempts)")
+        if row[3] == "context_snapshot_id"
+    ]
+    assert len(context_fk) == 1
+    assert tuple(context_fk[0][2:5]) == (
+        "context_snapshots", "context_snapshot_id", "id"
+    )
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
 class StorageSchemaTests(unittest.TestCase):
@@ -289,6 +434,26 @@ class StorageSchemaTests(unittest.TestCase):
                 for row in connection.execute(f"PRAGMA table_info({table})")
             }
             self.assertTrue(expected <= columns, (table, expected - columns))
+        retrieval_columns = {
+            row[1] for row in connection.execute(
+                "PRAGMA table_info(repository_retrieval_snapshots)"
+            )
+        }
+        self.assertNotIn("run_id", retrieval_columns)
+        retrieval_binding_fks = {
+            (row[2], row[3], row[4])
+            for row in connection.execute(
+                "PRAGMA foreign_key_list(run_repository_retrievals)"
+            )
+        }
+        self.assertEqual(retrieval_binding_fks, {
+            ("runs", "run_id", "id"),
+            (
+                "repository_retrieval_snapshots",
+                "retrieval_snapshot_id",
+                "id",
+            ),
+        })
         session_worktree_fk = [
             row
             for row in connection.execute("PRAGMA foreign_key_list(sessions)")
@@ -396,10 +561,15 @@ class StorageSchemaTests(unittest.TestCase):
         )
         check.close()
 
-    def test_v2_context_lineage_migrates_to_nullable_columns(self) -> None:
+    def test_v2_context_lineage_and_model_attempt_binding_survive_migration(
+        self,
+    ) -> None:
         database = self.data / DATABASE_NAME
         connection = sqlite3.connect(database)
         connection.executescript(V2_SCHEMA_SQL)
+        snapshot_id, snapshot_json, plan_json = _seed_context_lineage(
+            connection, str(self.data.parent / "workspace")
+        )
         connection.execute(f"PRAGMA user_version = {PREVIOUS_SCHEMA_VERSION}")
         connection.commit()
         connection.close()
@@ -410,6 +580,7 @@ class StorageSchemaTests(unittest.TestCase):
 
         self.assertEqual(store.health(), {"state": "ready"})
         connection = store.connection
+        assert connection is not None
         for column in (
             "retrieval_snapshot_id",
             "inventory_snapshot_id",
@@ -420,6 +591,86 @@ class StorageSchemaTests(unittest.TestCase):
                 if row[1] == column
             )
             self.assertEqual(row[3], 0)
+        _assert_context_foreign_keys(connection)
+        self.assertEqual(
+            connection.execute(
+                "SELECT context_snapshot_id FROM model_attempts WHERE id = 'attempt-v2'"
+            ).fetchone()[0],
+            snapshot_id,
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT snapshot_json FROM context_snapshots WHERE id = ?",
+                (snapshot_id,),
+            ).fetchone()[0],
+            snapshot_json,
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT plan_json FROM context_plans LIMIT 1"
+            ).fetchone()[0],
+            plan_json,
+        )
+        self.assertIsNotNone(
+            store.context_snapshot_repository().read_for_model_attempt("attempt-v2")
+        )
+        self.assertEqual(
+            [tuple(row) for row in connection.execute(
+                "SELECT run_id, retrieval_snapshot_id "
+                "FROM run_repository_retrievals"
+            ).fetchall()],
+            [("run-v2", "retrieval-v2")],
+        )
+
+        next_workspace = self.data.parent / "workspace-next"
+        next_workspace.mkdir()
+        session = store.create_session(str(next_workspace))
+        run, _item = store.create_run(session["id"], "continue after migration")
+        RuntimeEngine(
+            store,
+            ScriptedModel([ModelResponse(text="done")]),
+            lambda _message: None,
+        ).run(run["id"], threading.Event())
+        attempts = store.read_model_attempts(run["id"])
+        self.assertEqual(len(attempts), 1)
+        self.assertIsNotNone(attempts[0]["contextSnapshotId"])
+        _assert_context_foreign_keys(connection)
+        store.close()
+
+    def test_v1_to_v2_to_v3_preserves_final_context_foreign_keys(self) -> None:
+        database = self.data / DATABASE_NAME
+        v1_schema = V2_SCHEMA_SQL.replace(
+            "    repository_map_json TEXT,\n", ""
+        ).replace(
+            "         AND repository_map_json IS NOT NULL", ""
+        )
+        connection = sqlite3.connect(database)
+        connection.executescript(v1_schema)
+        snapshot_id, _snapshot_json, _plan_json = _seed_context_lineage(
+            connection, str(self.data.parent / "workspace")
+        )
+        connection.execute(f"PRAGMA user_version = {LEGACY_SCHEMA_VERSION}")
+        connection.commit()
+        connection.close()
+        os.chmod(database, 0o600)
+
+        store = SessionStore(self.data)
+        store.initialize()
+
+        self.assertEqual(store.health(), {"state": "ready"})
+        connection = store.connection
+        assert connection is not None
+        self.assertEqual(
+            connection.execute("PRAGMA user_version").fetchone()[0],
+            SCHEMA_VERSION,
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT context_snapshot_id FROM model_attempts WHERE id = 'attempt-v2'"
+            ).fetchone()[0],
+            snapshot_id,
+        )
+        _assert_context_foreign_keys(connection)
         store.close()
 
     def test_invalid_v2_shape_fails_migration_without_mutation(self) -> None:

@@ -128,7 +128,7 @@ CLAUDE.md
 
 Context Budget 优先使用最近 Provider Usage 的 active input tokens。Provider Usage 不可用时，Runtime 使用标记为 `estimated` 的有界估算。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发 deterministic bounded compaction 或一次安全恢复。没有新的可压缩历史或 Context 投影没有进展时，Run 以 `context_still_over_budget` 停止。
 
-当前默认 compactor 先生成确定性的有界候选摘要。候选摘要不会直接成为模型事实。Runtime 会从 SQLite 重载 Item、Tool Result、Workspace change、Approval 和 reconciliation 事实，再执行 `ContextCompactionVerifier`。只有验证通过的 `VerifiedCompactSummary` 才会在同一个事务中写入权威 `compact_summaries`、增加计数并产生一条 `context.compacted` Event。原始历史仍保存在 SQLite。验证失败会保留上一份 verified summary。
+当前默认 compactor 先生成确定性的有界候选摘要。候选摘要不会直接成为模型事实。Runtime 会从 SQLite 重载 Item、Tool Result、Workspace change、Approval 和 reconciliation 事实，再执行 `ContextCompactionVerifier`。Tool provenance 由候选摘要的 source Item IDs 解析到真实 ToolCall IDs，所以 pre-turn compaction 可以准确引用以前 Run 的 Tool facts，也不会附加无关 ToolCall。只有验证通过的 `VerifiedCompactSummary` 才会在同一个事务中写入权威 `compact_summaries`、增加计数并产生一条 `context.compacted` Event。原始历史仍保存在 SQLite。验证失败会保留上一份 verified summary。
 
 ## 7. Model Gateway
 
@@ -199,7 +199,9 @@ RepositoryMap 的 manifest 读取使用 Inventory 中的 device、inode、size�
 
 v1 mapless generation 仍然不能恢复为 active Snapshot。Persistence 会单独读取 Inventory 和 Index 的 generation watermark。首次 v2 build 会从 watermark 的下一代开始。Runtime 不会把 legacy row 当成 authoritative generation，也不会直接修改 builder 的私有 counter。
 
-`RuntimeEngine.run()` 会在 Repository Generation ready 后构造一次有界 `RepositoryRetrievalQuery`。Query 只使用当前用户目标、Inventory/Index 中可以确认的 path 和 symbol、已有 read/search Tool Result、dirty path 和最近 committed change。Runtime 对该 Run 只执行一次 Retrieval，并固定同一个 `RunRepositoryContext`。Watcher 在 Run 中只会让 Workspace 变脏，不会改变这个 view。
+`RuntimeEngine.run()` 会在 Repository Generation ready 后，在 `ActiveRepositoryState` 的同一个锁内捕获 Snapshot、dirty paths 和 invalidation epoch。Runtime 使用这个 immutable capture 构造一次有界 `RepositoryRetrievalQuery`。Query 只使用当前用户目标、Inventory/Index 中可以确认的 path 和 symbol、已有 read/search Tool Result、capture 中的 dirty path 和最近 committed change。Runtime 对该 Run 只执行一次 Retrieval，并固定同一个 `RunRepositoryContext`。capture 后的 Watcher event 只会让 active Workspace 变脏，并由下一 Run reconciliation 观察。
+
+`RetrievalSnapshot` 是 immutable content-addressed artifact。SQLite 只保存一份 Retrieval JSON。`run_repository_retrievals` 保存 Run 对 artifact 的使用关系。ContextPlan 继续保存 attempt lineage，但 artifact identity 不承担 Run ownership。两个 Run 可以共享同一个 Retrieval Snapshot ID，并分别解析自己的 evidence lineage。
 
 `ContextBuilder` 是默认在线 Run 的唯一模型输入投影器。它把 Project Rules、Skills、SQLite history、verified compact summary、Repository overview 和 Retrieval evidence 放入一个结构化 `ModelContextItem` 序列。每个 ModelAttempt 在 Sampling 前持久化完整的 `ContextSnapshot`。Snapshot 原样保存 model context、resolved instructions、tool definitions、Model/Rule metadata 和可空 Repository lineage。Sampling 只读取已绑定的 Snapshot。Provider transport retry 复用同一个 Snapshot。协议修复会建立新的 ModelAttempt 和新的 Snapshot。
 
@@ -207,7 +209,7 @@ v1 mapless generation 仍然不能恢复为 active Snapshot。Persistence 会单
 
 SQLite 是业务事实唯一权威。Session、Run、Item、ToolCall、Approval、Tool Attempt、Execution Segment、Step、Model Attempt、Durable Intent、Event、Outbox、Async Operation、Extension Snapshot、Context、Repository Snapshot、Compaction 和 Checkpoint 都有持久化边界。
 
-当前 `SCHEMA_VERSION` 是 3。新数据库直接创建完整 schema。Runtime 会在一个事务中执行 v2→v3，也会按 v1→v2→v3 顺序升级。v1→v2 为 Repository Generation 增加 nullable `repository_map_json`。v2→v3 把 `context_plans` 的 Retrieval、Inventory 和 Index lineage 改为 nullable，所以没有 Repository Snapshot 的普通 ModelAttempt 也可以保存精确 ContextSnapshot。迁移失败会回滚。未知 revision 和未来 revision fail closed。
+当前 `SCHEMA_VERSION` 是 3。新数据库直接创建完整 schema。Runtime 会在一个事务中执行 v2→v3，也会按 v1→v2→v3 顺序升级。v1→v2 为 Repository Generation 增加 nullable `repository_map_json`。v2→v3 先创建新表并复制数据，再删除旧 Context 表并把新表改为最终名称。迁移不会先 rename 旧表。`model_attempts.context_snapshot_id` 最终仍引用 `context_snapshots(id)`，已有 binding 和 JSON 保持不变，`foreign_key_check` 必须为空。v2→v3 同时把 ContextPlan Repository lineage 改为 nullable，并拆分 Retrieval artifact 与 Run binding。迁移失败会回滚。未知 revision 和未来 revision fail closed。
 
 业务状态变化与 Event/Outbox 在同一 SQLite transaction 中提交。Outbox 投递失败不会删除事实。Runtime 重启会从 SQLite、Outbox、Long Task 和 Resource 状态恢复或进入 reconciliation。
 

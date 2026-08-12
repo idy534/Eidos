@@ -31,6 +31,9 @@ def test_compaction_verification_keeps_source_provenance_and_critical_facts() ->
             status="completed", content="read the source", ordinal=1,
         ),),
         reconciliation_required=True,
+        available_event_ids=(1,),
+        available_tool_call_ids=("tool-1",),
+        available_evidence_ids=("evidence-1",),
     )
     verified = ContextCompactionVerifier().verify(
         _summary(),
@@ -57,6 +60,24 @@ def test_compaction_verification_rejects_unknown_source_items() -> None:
     with pytest.raises(CompactionVerificationError, match="source item"):
         ContextCompactionVerifier().verify(
             _summary(), facts, input_range=(1, 2)
+        )
+
+
+def test_compaction_verification_rejects_invented_tool_provenance() -> None:
+    facts = ContextFacts(
+        run_id="run-1",
+        session_id="session-1",
+        items=(ContextItemFact(
+            item_id="item-1", run_id="run-1", kind="assistant_message",
+            status="completed", ordinal=1,
+        ),),
+    )
+    with pytest.raises(CompactionVerificationError, match="source tool call"):
+        ContextCompactionVerifier().verify(
+            _summary(),
+            facts,
+            source_tool_call_ids=("invented-tool",),
+            input_range=(1, 1),
         )
 
 

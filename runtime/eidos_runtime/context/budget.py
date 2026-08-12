@@ -6,7 +6,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from eidos_runtime.model.client import ModelUsage
+from eidos_runtime.model.client import (
+    ModelContextItem,
+    ModelToolDefinition,
+    ModelUsage,
+)
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 
 
@@ -108,6 +112,42 @@ def estimate_context_budget(
     )
 
 
+def estimate_model_request_budget(
+    model_context: tuple[ModelContextItem, ...],
+    *,
+    instructions: str,
+    tool_definitions: tuple[ModelToolDefinition, ...],
+    context_window_tokens: int,
+    request_max_output_tokens: int,
+    provider_usage: ModelUsage | None = None,
+    provider_calibration_estimate: int | None = None,
+    usage_updated_at: int = 0,
+) -> ContextBudget:
+    """Estimate the exact structured request used by ContextBuilder/Sampling."""
+
+    return estimate_context_budget(
+        {
+            "instructions": instructions,
+            "messages": model_context,
+            "tools": [
+                tool.model_dump(mode="json") for tool in tool_definitions
+            ],
+        },
+        context_window_tokens=context_window_tokens,
+        request_max_output_tokens=request_max_output_tokens,
+        message_count=len(model_context),
+        tool_call_count=sum(
+            item.get("type") == "tool_call" for item in model_context
+        ),
+        tool_result_count=sum(
+            item.get("type") == "tool_result" for item in model_context
+        ),
+        provider_usage=provider_usage,
+        provider_calibration_estimate=provider_calibration_estimate,
+        usage_updated_at=usage_updated_at,
+    )
+
+
 def _estimate_serialized_tokens(value: str) -> int:
     """Use a bounded character heuristic only when the provider is unavailable.
 
@@ -124,4 +164,5 @@ __all__ = [
     "ContextBudget",
     "ContextUsageSnapshot",
     "estimate_context_budget",
+    "estimate_model_request_budget",
 ]

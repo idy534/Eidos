@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from eidos_runtime.context.facts import CompactSummary, ContextFacts, ContextItemFact
 from eidos_runtime.context.verified_compaction import (
+    CompactionVerificationError,
     ContextCompactionVerifier,
     VerifiedCompactSummary,
 )
@@ -41,12 +42,19 @@ class VerifiedCompactionRepository(Repository):
         facts = self.load_facts(
             run_id, required_item_ids=summary.source_item_ids
         )
+        derived_tool_call_ids = facts.available_tool_call_ids
+        if source_tool_call_ids and set(source_tool_call_ids) != set(
+            derived_tool_call_ids
+        ):
+            raise CompactionVerificationError(
+                "source tool call provenance does not match source items"
+            )
         verified = ContextCompactionVerifier().verify(
             summary,
             facts,
             input_range=input_range,
             source_event_ids=source_event_ids,
-            source_tool_call_ids=source_tool_call_ids,
+            source_tool_call_ids=derived_tool_call_ids,
             source_evidence_ids=source_evidence_ids,
             pending_approval_facts=pending_approval_facts,
             reconciliation_facts=reconciliation_facts,
@@ -172,15 +180,17 @@ class VerifiedCompactionRepository(Repository):
             ).fetchone()
             if run is None:
                 raise ValueError("run not found")
-            source_ids = {
-                item.item_id for item in candidate.items
-            }
-            source_ids.update(required_item_ids)
-            if candidate.compact_summary is not None:
+            source_ids = (
+                set(required_item_ids)
+                if required_item_ids
+                else {item.item_id for item in candidate.items}
+            )
+            if not required_item_ids and candidate.compact_summary is not None:
                 source_ids.update(candidate.compact_summary.source_item_ids)
             rows = connection.execute(
                 """
-                SELECT items.*, tool_calls.provider_call_id, tool_calls.tool_name,
+                SELECT items.*, tool_calls.id AS tool_call_id,
+                       tool_calls.provider_call_id, tool_calls.tool_name,
                        tool_calls.arguments_json, tool_calls.result_json,
                        tool_calls.model_result_json
                 FROM items LEFT JOIN tool_calls ON tool_calls.item_id = items.id
@@ -195,15 +205,15 @@ class VerifiedCompactionRepository(Repository):
             event_ids = tuple(int(row[0]) for row in connection.execute(
                 "SELECT id FROM events WHERE run_id = ?", (run_id,)
             ).fetchall())
-            tool_ids = tuple(str(row[0]) for row in connection.execute(
-                """
-                SELECT tool_calls.id FROM tool_calls JOIN items
-                  ON items.id = tool_calls.item_id WHERE items.run_id = ?
-                """,
-                (run_id,),
-            ).fetchall())
             retrieval_rows = connection.execute(
-                "SELECT snapshot_json FROM repository_retrieval_snapshots WHERE run_id = ?",
+                """
+                SELECT repository_retrieval_snapshots.snapshot_json
+                FROM run_repository_retrievals
+                JOIN repository_retrieval_snapshots
+                  ON repository_retrieval_snapshots.id =
+                     run_repository_retrievals.retrieval_snapshot_id
+                WHERE run_repository_retrievals.run_id = ?
+                """,
                 (run_id,),
             ).fetchall()
         evidence_ids: list[str] = []
@@ -219,6 +229,11 @@ class VerifiedCompactionRepository(Repository):
                 for result in retrieval.results for evidence in result.evidence
             )
         selected_rows = [row for row in rows if str(row["id"]) in source_ids]
+        tool_ids = tuple(
+            str(row["tool_call_id"])
+            for row in selected_rows
+            if row["tool_call_id"] is not None
+        )
         changes = _workspace_changes(selected_rows)
         return candidate.model_copy(update={
             "items": tuple(ContextItemFact(

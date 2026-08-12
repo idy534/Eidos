@@ -6,7 +6,10 @@ import time
 
 from pydantic import BaseModel, ConfigDict
 
-from eidos_runtime.context.budget import ContextBudget, estimate_context_budget
+from eidos_runtime.context.budget import (
+    ContextBudget,
+    estimate_model_request_budget,
+)
 from eidos_runtime.context.facts import ContextFacts
 from eidos_runtime.context.repository import RunRepositoryContext
 from eidos_runtime.db.storage import SessionStore
@@ -182,15 +185,6 @@ class ContextBuilder:
                     sort_keys=True,
                 ),
             })
-        tool_calls = sum(item.get("type") == "tool_call" for item in context)
-        tool_results = sum(item.get("type") == "tool_result" for item in context)
-
-        # system_text only includes system/developer layers; user layers are in context
-        payload = {
-            "instructions": instructions.system_text,
-            "messages": context,
-            "tools": [tool.model_dump(mode="json") for tool in tool_definitions],
-        }
         provider_usage = self.store.latest_model_usage(run_id)
         if provider_usage is None:
             self._last_provider_usage = None
@@ -199,13 +193,12 @@ class ContextBuilder:
             if self._last_estimated_input_tokens is not None:
                 self._provider_calibration_estimate = self._last_estimated_input_tokens
             self._last_provider_usage = provider_usage
-        budget = estimate_context_budget(
-            payload,
+        budget = estimate_model_request_budget(
+            tuple(context),
+            instructions=instructions.system_text,
+            tool_definitions=tool_definitions,
             context_window_tokens=profile.context_window_tokens,
             request_max_output_tokens=profile.max_output_tokens,
-            message_count=len(context),
-            tool_call_count=tool_calls,
-            tool_result_count=tool_results,
             provider_usage=provider_usage,
             provider_calibration_estimate=(
                 self._provider_calibration_estimate

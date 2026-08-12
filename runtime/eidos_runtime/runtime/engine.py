@@ -7,6 +7,7 @@ import time
 from typing import TYPE_CHECKING, Callable, Protocol
 
 from eidos_runtime.context.builder import ContextBuild, ContextBuilder
+from eidos_runtime.context.budget import estimate_model_request_budget
 from eidos_runtime.context.project_rules import ProjectRuleResolver
 from eidos_runtime.context.compactor import ContextCompactionError, ContextCompactor
 from eidos_runtime.context.repository import RunRepositoryContext
@@ -132,12 +133,15 @@ class RuntimeEngine:
         repository_context = RunRepositoryContext()
         repository_snapshot = None
         repository_state = None
+        repository_capture = None
         if self.repository_runtime is not None:
             workspace = self.store.workspace_for_run(run_id)
             repository_state = self.repository_runtime.ensure_ready(
                 workspace.path, cancel=cancel
             )
-            repository_snapshot = getattr(repository_state, "snapshot", None)
+            capture_for_run = getattr(repository_state, "capture_for_run")
+            repository_capture = capture_for_run()
+            repository_snapshot = repository_capture.snapshot
         run = self.store.read_run(run_id)
         if (
             repository_state is not None
@@ -151,7 +155,7 @@ class RuntimeEngine:
                     inventory=repository_snapshot.inventory,
                     index=repository_snapshot.index,
                     facts=self.store.context_projection_facts(run_id),
-                    dirty_paths=tuple(sorted(repository_state.dirty_paths)),
+                    dirty_paths=repository_capture.dirty_paths,
                 )
                 retrieval = repository_state.application.retrieve(
                     repository_snapshot, query, cancel=cancel
@@ -567,13 +571,9 @@ class RuntimeEngine:
                     )
                     if should_retry:
                         attempt_id = self.store.start_retry_model_attempt(run.run_id)
-                        step = step.model_copy(update={
-                            "model_attempt_id": attempt_id,
-                            "model_context": (
-                                *step.model_context,
-                                {"type": "protocol_error", "code": reason},
-                            )
-                        })
+                        step = _protocol_repair_step(
+                            step, attempt_id=attempt_id, code=reason
+                        )
                         self._capture_model_attempt_context(
                             context_application,
                             step,
@@ -605,13 +605,9 @@ class RuntimeEngine:
                     )
                     if should_retry:
                         attempt_id = self.store.start_retry_model_attempt(run.run_id)
-                        step = step.model_copy(update={
-                            "model_attempt_id": attempt_id,
-                            "model_context": (
-                                *step.model_context,
-                                {"type": "protocol_error", "code": "empty_response"},
-                            )
-                        })
+                        step = _protocol_repair_step(
+                            step, attempt_id=attempt_id, code="empty_response"
+                        )
                         self._capture_model_attempt_context(
                             context_application,
                             step,
@@ -993,6 +989,30 @@ def _context_state(built: ContextBuild) -> tuple[object, ...]:
         built.facts.candidate_overflow,
         tuple(item.item_id for item in built.facts.items),
     )
+
+
+def _protocol_repair_step(
+    step: StepContext,
+    *,
+    attempt_id: str,
+    code: str,
+) -> StepContext:
+    model_context = (
+        *step.model_context,
+        {"type": "protocol_error", "code": code},
+    )
+    budget = estimate_model_request_budget(
+        model_context,
+        instructions=step.instructions.system_text,
+        tool_definitions=step.tool_definitions,
+        context_window_tokens=step.model_profile.context_window_tokens,
+        request_max_output_tokens=step.model_profile.max_output_tokens,
+    )
+    return step.model_copy(update={
+        "model_attempt_id": attempt_id,
+        "model_context": model_context,
+        "context_budget": budget,
+    })
 
 
 def _projection_state(built: ContextBuild) -> tuple[object, ...]:
