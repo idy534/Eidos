@@ -143,6 +143,14 @@ class WorktreeSnapshotRepository(Repository):
             if deleted.rowcount != 1:
                 raise ResourceNotFoundError("snapshot not found")
 
+    def referenced_by_checkpoint(self, snapshot_id: str) -> bool:
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT 1 FROM checkpoints WHERE git_snapshot_id = ? LIMIT 1",
+                (snapshot_id,),
+            ).fetchone()
+        return row is not None
+
 
 def _values(snapshot: WorktreeSnapshot) -> tuple[object, ...]:
     return (

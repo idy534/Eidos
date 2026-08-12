@@ -704,6 +704,7 @@ CREATE TABLE checkpoints (
     compact_summary_id TEXT REFERENCES verified_compact_summaries(id) ON DELETE RESTRICT,
     workspace_identity_hash TEXT NOT NULL,
     git_head TEXT,
+    git_snapshot_id TEXT REFERENCES worktree_snapshots(id) ON DELETE RESTRICT,
     permission_snapshot_hash TEXT,
     model_profile_snapshot_hash TEXT NOT NULL,
     reconciliation_required INTEGER NOT NULL CHECK (reconciliation_required IN (0, 1)),
@@ -1148,6 +1149,7 @@ CREATE TABLE worktree_lifecycle_operations_retention (
             'session/create',
             'session/delete',
             'checkpoint/fork',
+            'checkpoint/rewind',
             'worktree/attach-branch',
             'worktree/retention-cleanup',
             'worktree/restore'

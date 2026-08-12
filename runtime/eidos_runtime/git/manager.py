@@ -251,6 +251,34 @@ class WorktreeManager:
         except GitCommandFailedError as error:
             raise WorktreeError("worktree_cleanup_required") from error
 
+    def restore_snapshot_state(
+        self,
+        worktree_id: str,
+        *,
+        head: str,
+        changes: GitWorkingTreePatch,
+        expected_fingerprint: str | None,
+    ) -> Worktree:
+        """Restore exact Git state in one active managed Worktree."""
+
+        worktree = self.open(worktree_id)
+        if worktree.ownership is not WorktreeOwnership.MANAGED:
+            raise WorktreeError("worktree_ownership_invalid")
+        root = Path(worktree.worktree_root)
+        try:
+            self.git.restore_snapshot_state(root, head, changes)
+            current = self.source_snapshot(root, include_local_changes=True)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("worktree_restore_failed") from error
+        if current.head != head or (
+            expected_fingerprint is not None
+            and current.fingerprint != expected_fingerprint
+        ):
+            raise WorktreeError("worktree_restore_verification_failed")
+        return worktree
+
     def switch_repository_branch(self, root: Path, branch: str) -> None:
         try:
             self.git.switch_branch(root, branch)

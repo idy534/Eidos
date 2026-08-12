@@ -90,6 +90,7 @@ EXPECTED_COLUMNS = {
         "session_id", "path", "scope", "side", "line", "body",
         "base_head", "diff_hash", "status", "created_at", "updated_at",
     },
+    "checkpoints": {"git_snapshot_id"},
     "runs": {
         "extension_snapshot_json",
         "activated_tools_json",

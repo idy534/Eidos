@@ -33,7 +33,13 @@ class WorktreeSnapshotService:
         self.session_for_worktree = session_for_worktree
         self.logger = logger
 
-    def save(self, worktree: Worktree, snapshot_id: str) -> WorktreeSnapshot:
+    def save(
+        self,
+        worktree: Worktree,
+        snapshot_id: str,
+        *,
+        replace_older: bool = True,
+    ) -> WorktreeSnapshot:
         root = Path(worktree.worktree_root)
         source = self.manager.source_snapshot(root, include_local_changes=True)
         source_after = self.manager.source_snapshot(root, include_local_changes=True)
@@ -78,8 +84,10 @@ class WorktreeSnapshotService:
             updated_at=now,
         )
         saved = self.snapshots.insert(snapshot)
-        for older in self.snapshots.list_for_worktree(worktree.id):
+        for older in self.snapshots.list_for_worktree(worktree.id) if replace_older else ():
             if older.id == saved.id or older.state.value != "ready":
+                continue
+            if self.snapshots.referenced_by_checkpoint(older.id):
                 continue
             try:
                 self.delete_anchor_if_expected(older)
@@ -155,6 +163,8 @@ class WorktreeSnapshotService:
 
     def delete_for_worktree(self, worktree_id: str) -> None:
         for snapshot in self.snapshots.list_for_worktree(worktree_id):
+            if self.snapshots.referenced_by_checkpoint(snapshot.id):
+                continue
             self.delete_anchor_if_expected(snapshot)
             try:
                 self.artifacts.delete(snapshot.artifact_path)

@@ -127,6 +127,10 @@ class GitBackend(Protocol):
 
     def clean_worktree_after_handoff(self, cwd: Path) -> None: ...
 
+    def restore_snapshot_state(
+        self, cwd: Path, head: str, changes: GitWorkingTreePatch
+    ) -> None: ...
+
     def worktree_prune(self, cwd: Path) -> None: ...
 
     def snapshot_anchor(self, cwd: Path, snapshot_id: str) -> str | None: ...
@@ -448,6 +452,18 @@ class DulwichGitBackend:
             clean(repo, target_dir=cwd)
         except _DULWICH_FAILURES as error:
             raise _git_failure("worktree-handoff", error) from error
+
+    def restore_snapshot_state(
+        self, cwd: Path, head: str, changes: GitWorkingTreePatch
+    ) -> None:
+        self._open_repository(cwd, "worktree-snapshot-restore")
+        self._git_cli.reset_hard(cwd, head)
+        self._git_cli.clean_destructive(cwd)
+        self._git_cli.apply_working_tree_patch(
+            cwd,
+            full_patch=changes.full_patch,
+            staged_patch=changes.staged_patch,
+        )
 
     def _reset_and_clean(self, cwd: Path, *, operation: str) -> None:
         repo = self._open_repository(cwd, operation)

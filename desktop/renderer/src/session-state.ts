@@ -244,6 +244,8 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   WORKTREE_BRANCH_STATE_CHANGED: "Worktree 的分支状态发生变化，请恢复后重试。",
   CHECKPOINT_GIT_STATE_UNAVAILABLE: "Checkpoint 的 Git 状态不可用。",
   CHECKPOINT_FORK_WORKTREE_FAILED: "Checkpoint Fork 的 Managed Worktree 创建失败。",
+  CHECKPOINT_REWIND_FAILED: "Checkpoint Rewind 无法恢复 Git 工作区状态。",
+  CHECKPOINT_WORKFLOW_BUSY: "当前任务仍在运行。请等待或取消 Run 后再恢复 Checkpoint。",
   DIRECT_CHECKPOINT_FORK_PATH_FORBIDDEN: "Direct Workspace Fork 使用原 Project 工作空间。",
   MANAGED_CHECKPOINT_FORK_PATH_FORBIDDEN: "Managed Worktree Fork 不接受外部工作空间路径。",
   GIT_OBSERVATION_UNAVAILABLE: "Git 状态暂时无法完整读取，请稍后重试。",

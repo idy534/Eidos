@@ -982,6 +982,7 @@ class CheckpointDto(ClosedModel):
     compact_summary_id: StrictStr | None = Field(default=None, alias="compactSummaryId")
     workspace_identity_hash: StrictStr = Field(alias="workspaceIdentityHash")
     git_head: StrictStr | None = Field(default=None, alias="gitHead")
+    git_snapshot_id: StrictStr | None = Field(default=None, alias="gitSnapshotId")
     permission_snapshot_hash: StrictStr | None = Field(default=None, alias="permissionSnapshotHash")
     model_profile_snapshot_hash: StrictStr = Field(alias="modelProfileSnapshotHash")
     reconciliation_required: bool = Field(alias="reconciliationRequired")

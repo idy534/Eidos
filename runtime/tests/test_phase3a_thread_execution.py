@@ -8,6 +8,7 @@ import pytest
 from eidos_runtime.application.checkpoints import CheckpointApplication
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.application.sessions import SessionApplication
+from eidos_runtime.application.worktree_retention import WorktreeRetentionService
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.git import WorktreeManager
 from eidos_runtime.protocol.methods import (
@@ -259,6 +260,7 @@ def test_checkpoint_managed_fork_is_detached_at_checkpoint_head(tmp_path: Path) 
         store,
         store.checkpoint_repository(),
         worktree_manager=manager,
+        retention=WorktreeRetentionService(store.database, manager),
     )
     try:
         parent = _create(application=sessions, workspace=repository, execution_mode="worktree")

@@ -15,6 +15,7 @@ class Checkpoint(EidosFrozenStrictModel):
     compact_summary_id: str | None = None
     workspace_identity_hash: str = Field(min_length=1)
     git_head: str | None = None
+    git_snapshot_id: str | None = None
     permission_snapshot_hash: str | None = None
     model_profile_snapshot_hash: str = Field(min_length=1)
     reconciliation_required: bool

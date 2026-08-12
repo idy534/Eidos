@@ -287,6 +287,13 @@ class GitCli:
             operation="worktree-destructive-clean",
         )
 
+    def reset_hard(self, worktree_root: Path, head: str) -> None:
+        self._runner.run(
+            ("reset", "--hard", head),
+            cwd=worktree_root,
+            operation="worktree-snapshot-reset",
+        )
+
     def status_porcelain(self, cwd: Path) -> bytes:
         result = self._runner.run(
             (
