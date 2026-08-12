@@ -6,6 +6,8 @@ import type {
   EventListResult,
   Session,
   SessionHandoffResult,
+  SessionRestoreWorktreeResult,
+  WorktreeSettings,
   ProjectGitContext,
   CreateBranchResult,
   DeleteSessionResult,
@@ -64,6 +66,12 @@ export interface EidosRuntimeAPI {
     sessionId: string,
     target: "local" | "worktree",
   ): Promise<SessionHandoffResult>;
+  restoreSessionWorktree(sessionId: string): Promise<SessionRestoreWorktreeResult>;
+  readWorktreeSettings(): Promise<WorktreeSettings>;
+  updateWorktreeSettings(input: {
+    automaticCleanup: boolean;
+    managedWorktreeLimit: number;
+  }): Promise<WorktreeSettings>;
   readProjectGitContext(workspaceRoot: string): Promise<ProjectGitContext>;
   renameSession(sessionId: string, title: string): Promise<Session>;
   deleteSession(sessionId: string): Promise<DeleteSessionResult>;

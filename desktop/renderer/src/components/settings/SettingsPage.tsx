@@ -13,6 +13,7 @@ import { PluginSettings } from "./PluginSettings.js";
 import { SkillSettings } from "./SkillSettings.js";
 import { McpSettings } from "./McpSettings.js";
 import { RuntimeSettings } from "./RuntimeSettings.js";
+import { WorktreeSettings } from "./WorktreeSettings.js";
 import { Button } from "../Button.js";
 
 interface SettingsPageProps {
@@ -91,6 +92,7 @@ export function SettingsPage({
       count: mcpServers.length,
       badgeTone: mcpHasError ? "danger" : undefined,
     },
+    { id: "worktrees", label: "Worktrees" },
     { id: "runtime", label: "Runtime" },
   ];
 
@@ -168,6 +170,8 @@ export function SettingsPage({
             {activeCategory === "runtime" && (
               <RuntimeSettings runtime={runtime} />
             )}
+
+            {activeCategory === "worktrees" && <WorktreeSettings />}
           </section>
         </div>
       </main>

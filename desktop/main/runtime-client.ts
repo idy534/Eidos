@@ -114,6 +114,8 @@ import type {
   CreateBranchResult,
   Session,
   SessionHandoffResult,
+  SessionRestoreWorktreeResult,
+  WorktreeSettings,
   GitDiffScope,
   SessionGitDiff,
   SessionGitStatus,
@@ -335,6 +337,28 @@ export class RuntimeClient {
       { sessionId, target, operationId },
       isSessionHandoff,
     );
+  }
+
+  restoreSessionWorktree(
+    sessionId: string,
+    operationId = randomUUID(),
+  ): Promise<SessionRestoreWorktreeResult> {
+    return this.validatedRequest(
+      "session/restoreWorktree",
+      { sessionId, operationId },
+      isSessionRestoreWorktree,
+    );
+  }
+
+  readWorktreeSettings(): Promise<WorktreeSettings> {
+    return this.validatedRequest("settings/read", {}, isWorktreeSettings);
+  }
+
+  updateWorktreeSettings(input: {
+    automaticCleanup: boolean;
+    managedWorktreeLimit: number;
+  }): Promise<WorktreeSettings> {
+    return this.validatedRequest("settings/update", input, isWorktreeSettings);
   }
 
   readProjectGitContext(workspaceRoot: string): Promise<ProjectGitContext> {
@@ -919,12 +943,14 @@ function isSession(value: unknown): value is Session {
     isRecord(value)
     && hasOnlyKeys(value, [
       "id", "workspaceRoot", "executionMode", "associatedWorktreeId",
-      "project", "worktree", "title", "taskStatus", "createdAt", "updatedAt",
+      "worktreeRestoreAvailable", "project", "worktree", "title", "taskStatus",
+      "createdAt", "updatedAt",
     ])
     && typeof value.id === "string"
     && typeof value.workspaceRoot === "string"
     && (value.executionMode === undefined || ["local", "worktree"].includes(String(value.executionMode)))
     && (value.associatedWorktreeId === undefined || typeof value.associatedWorktreeId === "string")
+    && (value.worktreeRestoreAvailable === undefined || typeof value.worktreeRestoreAvailable === "boolean")
     && (value.project === undefined || isSessionProject(value.project))
     && (value.worktree === undefined || isSessionWorktree(value.worktree))
     && (value.title === undefined || typeof value.title === "string")
@@ -940,7 +966,7 @@ function isSessionHandoff(value: unknown): value is SessionHandoffResult {
     || !hasOnlyKeys(value, [
       "id", "sessionId", "worktreeId", "workspaceRoot", "executionMode",
       "associatedWorktreeId", "project", "worktree", "title", "taskStatus",
-      "createdAt", "updatedAt",
+      "worktreeRestoreAvailable", "createdAt", "updatedAt",
     ])
     || typeof value.sessionId !== "string"
     || (value.worktreeId !== null && typeof value.worktreeId !== "string")
@@ -949,6 +975,35 @@ function isSessionHandoff(value: unknown): value is SessionHandoffResult {
   delete session.sessionId;
   delete session.worktreeId;
   return isSession(session);
+}
+
+function isSessionRestoreWorktree(value: unknown): value is SessionRestoreWorktreeResult {
+  if (
+    !isRecord(value)
+    || !hasOnlyKeys(value, [
+      "id", "sessionId", "worktreeId", "workspaceRoot", "executionMode",
+      "associatedWorktreeId", "worktreeRestoreAvailable", "project", "worktree",
+      "title", "taskStatus", "createdAt", "updatedAt",
+    ])
+    || typeof value.sessionId !== "string"
+    || typeof value.worktreeId !== "string"
+  ) return false;
+  const session = { ...value };
+  delete session.sessionId;
+  delete session.worktreeId;
+  return isSession(session);
+}
+
+function isWorktreeSettings(value: unknown): value is WorktreeSettings {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["automaticCleanup", "managedWorktreeLimit", "updatedAt"])
+    && typeof value.automaticCleanup === "boolean"
+    && Number.isInteger(value.managedWorktreeLimit)
+    && Number(value.managedWorktreeLimit) >= 1
+    && Number(value.managedWorktreeLimit) <= 100
+    && isNonNegativeInteger(value.updatedAt)
+  );
 }
 
 function isSessionProject(value: unknown): boolean {

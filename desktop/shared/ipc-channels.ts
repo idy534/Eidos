@@ -21,11 +21,16 @@ export const IPC = {
   SESSION_CREATE: "session:create",
   SESSION_CREATE_BRANCH: "session:create-branch",
   SESSION_HANDOFF: "session:handoff",
+  SESSION_RESTORE_WORKTREE: "session:restore-worktree",
   PROJECT_GIT_CONTEXT: "project:git-context",
   SESSION_RENAME: "session:rename",
   SESSION_DELETE: "session:delete",
   SESSION_GIT_STATUS: "session:git-status",
   SESSION_GIT_DIFF: "session:git-diff",
+
+  // Worktree settings
+  WORKTREE_SETTINGS_READ: "worktree-settings:read",
+  WORKTREE_SETTINGS_UPDATE: "worktree-settings:update",
 
   // Events
   EVENT_LIST: "event:list",

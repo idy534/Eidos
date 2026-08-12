@@ -110,6 +110,8 @@ class RunSessionRepositoryPort(Protocol):
 class RunWorktreePort(Protocol):
     def execution_identity(self, worktree_id: str) -> WorkspaceIdentity: ...
 
+    def touch_last_used(self, worktree_id: str) -> object: ...
+
 
 class RunRuntimePort(Protocol):
     """Runtime lifecycle operations owned by RunSupervisor.
@@ -398,7 +400,11 @@ class RunApplication:
             raise ResourceNotFoundError("session not found")
         if projection.worktree is None:
             return None
-        return manager.execution_identity(projection.worktree.worktree_id)
+        identity = manager.execution_identity(projection.worktree.worktree_id)
+        touch = getattr(manager, "touch_last_used", None)
+        if touch is not None:
+            touch(projection.worktree.worktree_id)
+        return identity
 
     def cancel(self, request: RunCancelRequestDto) -> RunCancelResponseDto:
         store, _runtime = self._cancel_dependencies()
@@ -603,6 +609,10 @@ def _run_worktree_error_code(error: WorktreeError) -> str:
         return "GIT_OBSERVATION_UNAVAILABLE"
     if error.code in {"worktree_not_found", "worktree_missing"}:
         return "GIT_WORKTREE_MISSING"
+    if error.code == "worktree_restore_required":
+        return "WORKTREE_RESTORE_REQUIRED"
+    if error.code == "worktree_recovery_required":
+        return "WORKTREE_RECOVERY_REQUIRED"
     return "GIT_WORKTREE_INVALID"
 
 

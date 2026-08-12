@@ -78,6 +78,8 @@ class CheckpointWorktreePort(Protocol):
 
     def rollback_create(self, worktree_id: str) -> Worktree: ...
 
+    def touch_last_used(self, worktree_id: str) -> Worktree: ...
+
     @property
     def lifecycle(self) -> WorktreeLifecycleRepository: ...
 
@@ -90,11 +92,13 @@ class CheckpointApplication:
         *,
         worktree_manager: CheckpointWorktreePort | None = None,
         lifecycle: SessionLifecycleCoordinator | None = None,
+        retention: "CheckpointRetentionPort | None" = None,
     ) -> None:
         self._store = store
         self._repository = repository
         self._sessions = store.typed_runtime_repository()
         self._worktree_manager = worktree_manager
+        self._retention = retention
         self._lifecycle = lifecycle or SessionLifecycleCoordinator()
         self._logger = logging.getLogger(__name__)
 
@@ -421,6 +425,15 @@ class CheckpointApplication:
                 lifecycle_operation_id,
                 WorktreeLifecycleState.COMPLETED,
             )
+            manager.touch_last_used(worktree.id)
+            if self._retention is not None:
+                try:
+                    self._retention.reconcile()
+                except Exception:
+                    self._logger.exception(
+                        "Worktree retention reconciliation after checkpoint fork failed",
+                        extra={"worktree_id": worktree.id},
+                    )
             result = _validate(CheckpointForkResponseDto, {
                 "checkpoint": checkpoint.model_dump(by_alias=True),
                 "parentRunId": checkpoint.run_id,
@@ -448,7 +461,6 @@ class CheckpointApplication:
             raise ApplicationError(
                 "CHECKPOINT_FORK_WORKTREE_FAILED", str(error)
             ) from error
-
     def _fork_replay(
         self,
         operation_id: str | None,
@@ -528,6 +540,10 @@ class CheckpointApplication:
             )
             return
         self._discard_unbound_worktree(manager, worktree)
+
+
+class CheckpointRetentionPort(Protocol):
+    def reconcile(self) -> object: ...
 
 
 def _validate(model_type: type[ResultT], value: object) -> ResultT:

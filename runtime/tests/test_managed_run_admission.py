@@ -10,6 +10,7 @@ from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.application.runs import RunApplication
 from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
 from eidos_runtime.application.sessions import SessionApplication
+from eidos_runtime.application.worktree_retention import WorktreeRetentionService
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.worktree import WorktreeState
 from eidos_runtime.git import WorktreeManager
@@ -164,6 +165,45 @@ def test_run_admission_rejects_a_missing_managed_worktree(tmp_path: Path) -> Non
         assert store.connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
         worktree_id = str(session["worktree"]["worktreeId"])
         assert manager.repository.read_worktree(worktree_id).state is WorktreeState.MISSING
+    finally:
+        store.close()
+
+
+def test_run_admission_requires_restore_after_retention_cleanup(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    store, manager, sessions, runs, _lifecycle = _setup(tmp_path)
+    try:
+        session = _managed_session(sessions, repository)
+        worktree_id = str(session["worktree"]["worktreeId"])
+        WorktreeRetentionService(store.database, manager).cleanup_worktree(
+            worktree_id, reason="retention"
+        )
+
+        with pytest.raises(ApplicationError) as error:
+            _start(runs, str(session["id"]))
+
+        assert error.value.code == "WORKTREE_RESTORE_REQUIRED"
+        assert store.connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
+    finally:
+        store.close()
+
+
+def test_run_admission_rejects_a_worktree_with_unfinished_retention_cleanup(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    store, manager, sessions, runs, _lifecycle = _setup(tmp_path)
+    try:
+        session = _managed_session(sessions, repository)
+        worktree_id = str(session["worktree"]["worktreeId"])
+        retention = WorktreeRetentionService(store.database, manager)
+        retention._find_or_prepare_cleanup(manager.read_worktree(worktree_id))
+
+        with pytest.raises(ApplicationError) as error:
+            _start(runs, str(session["id"]))
+
+        assert error.value.code == "WORKTREE_RECOVERY_REQUIRED"
+        assert store.connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
     finally:
         store.close()
 

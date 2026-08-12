@@ -472,6 +472,25 @@ ipcMain.handle(IPC.SESSION_HANDOFF, (_event, sessionId: unknown, target: unknown
   }
   return clientOrThrow().handoffSession(sessionId, target);
 });
+ipcMain.handle(IPC.SESSION_RESTORE_WORKTREE, (_event, sessionId: unknown) => {
+  if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
+  return clientOrThrow().restoreSessionWorktree(sessionId);
+});
+ipcMain.handle(IPC.WORKTREE_SETTINGS_READ, () => clientOrThrow().readWorktreeSettings());
+ipcMain.handle(IPC.WORKTREE_SETTINGS_UPDATE, (_event, input: unknown) => {
+  if (
+    !input
+    || typeof input !== "object"
+    || typeof (input as { automaticCleanup?: unknown }).automaticCleanup !== "boolean"
+    || !Number.isInteger((input as { managedWorktreeLimit?: unknown }).managedWorktreeLimit)
+    || Number((input as { managedWorktreeLimit: number }).managedWorktreeLimit) < 1
+    || Number((input as { managedWorktreeLimit: number }).managedWorktreeLimit) > 100
+  ) {
+    throw new Error("Worktree 设置参数无效。");
+  }
+  const settings = input as { automaticCleanup: boolean; managedWorktreeLimit: number };
+  return clientOrThrow().updateWorktreeSettings(settings);
+});
 ipcMain.handle(IPC.PROJECT_GIT_CONTEXT, (_event, workspaceRoot: unknown) => {
   if (typeof workspaceRoot !== "string") throw new Error("Workspace 参数无效。");
   return clientOrThrow().readProjectGitContext(workspaceRoot);

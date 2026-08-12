@@ -83,6 +83,9 @@ class SessionDto(ClosedModel):
     associated_worktree_id: StrictStr | None = Field(
         default=None, alias="associatedWorktreeId"
     )
+    worktree_restore_available: bool = Field(
+        default=False, alias="worktreeRestoreAvailable"
+    )
     project: SessionProjectDto | None = None
     worktree: SessionWorktreeDto | None = None
     title: StrictStr | None = None
@@ -90,6 +93,12 @@ class SessionDto(ClosedModel):
         "new", "in_progress", "completed", "failed", "canceled"
     ] = Field(alias="taskStatus")
     created_at: StrictInt = Field(alias="createdAt")
+    updated_at: StrictInt = Field(alias="updatedAt")
+
+
+class WorktreeSettingsDto(ClosedModel):
+    automatic_cleanup: bool = Field(alias="automaticCleanup")
+    managed_worktree_limit: StrictInt = Field(alias="managedWorktreeLimit", ge=1, le=100)
     updated_at: StrictInt = Field(alias="updatedAt")
 
 

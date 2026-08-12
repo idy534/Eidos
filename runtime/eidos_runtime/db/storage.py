@@ -58,6 +58,8 @@ from eidos_runtime.persistence.context_snapshots import ContextSnapshotRepositor
 from eidos_runtime.persistence.verified_compaction import VerifiedCompactionRepository
 from eidos_runtime.persistence.checkpoints import CheckpointRepository
 from eidos_runtime.persistence.session_handoff import SessionHandoffRepository
+from eidos_runtime.persistence.worktree_snapshots import WorktreeSnapshotRepository
+from eidos_runtime.persistence.worktree_settings import WorktreeSettingsRepository
 from eidos_runtime.context.plan import ContextSnapshot
 from eidos_runtime.runtime.long_task import LongTaskRepository
 from eidos_runtime.domain.long_task import LongTaskProgress
@@ -97,6 +99,8 @@ class SessionStore:
         self._long_task_repository: LongTaskRepository | None = None
         self._checkpoint_repository: CheckpointRepository | None = None
         self._session_handoff_repository: SessionHandoffRepository | None = None
+        self._worktree_snapshot_repository: WorktreeSnapshotRepository | None = None
+        self._worktree_settings_repository: WorktreeSettingsRepository | None = None
 
     def initialize(self) -> None:
         self._database.initialize()
@@ -151,6 +155,8 @@ class SessionStore:
         self._long_task_repository = None
         self._checkpoint_repository = None
         self._session_handoff_repository = None
+        self._worktree_snapshot_repository = None
+        self._worktree_settings_repository = None
         self._database.close()
 
     def typed_runtime_repository(self) -> TypedRuntimeRepository:
@@ -224,6 +230,22 @@ class SessionStore:
                 self._database
             )
         return self._session_handoff_repository
+
+    def worktree_snapshot_repository(self) -> WorktreeSnapshotRepository:
+        self._repository(self._sessions)
+        if self._worktree_snapshot_repository is None:
+            self._worktree_snapshot_repository = WorktreeSnapshotRepository(
+                self._database
+            )
+        return self._worktree_snapshot_repository
+
+    def worktree_settings_repository(self) -> WorktreeSettingsRepository:
+        self._repository(self._sessions)
+        if self._worktree_settings_repository is None:
+            self._worktree_settings_repository = WorktreeSettingsRepository(
+                self._database
+            )
+        return self._worktree_settings_repository
 
     def health(self) -> dict[str, object]:
         return self._database.health()

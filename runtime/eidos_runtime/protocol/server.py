@@ -35,6 +35,7 @@ from eidos_runtime.application.runs import RunApplication, RunStartOutcome
 from eidos_runtime.application.repository import RepositoryApplicationFactory
 from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
 from eidos_runtime.application.sessions import SessionApplication, clean_session_title
+from eidos_runtime.application.worktree_retention import WorktreeRetentionService
 from eidos_runtime.application.task_lifecycle import (
     LifecycleAction,
     LifecycleResult,
@@ -418,6 +419,7 @@ class RuntimeServer:
         self.sensitive: SensitiveScanner | None = None
         self.plugins: PluginCatalog | None = None
         self.worktree_manager: WorktreeManager | None = None
+        self.worktree_retention: WorktreeRetentionService | None = None
         self._applications: _RuntimeApplications | None = None
         self.supervisor = RunSupervisor(
             self.store,
@@ -610,6 +612,26 @@ class RuntimeServer:
                 lambda _id, request: self._applications_or_error().sessions.handoff(
                     request
                 ),
+            ),
+            (
+                "session/restoreWorktree",
+                method_dtos.SessionRestoreWorktreeRequestDto,
+                method_dtos.SessionRestoreWorktreeResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.restore_worktree(
+                    request
+                ),
+            ),
+            (
+                "settings/read",
+                method_dtos.SettingsReadRequestDto,
+                method_dtos.SettingsReadResponseDto,
+                lambda _id, _request: self._worktree_settings_response(),
+            ),
+            (
+                "settings/update",
+                method_dtos.SettingsUpdateRequestDto,
+                method_dtos.SettingsUpdateResponseDto,
+                lambda _id, request: self._worktree_settings_update(request),
             ),
             (
                 "event/list",
@@ -839,6 +861,38 @@ class RuntimeServer:
         )
         return registry
 
+    def _worktree_settings_response(self) -> method_dtos.SettingsReadResponseDto:
+        if self.worktree_retention is None:
+            raise ApplicationError("INTERNAL_ERROR", "Worktree settings unavailable")
+        settings = self.worktree_retention.settings.read()
+        return method_dtos.SettingsReadResponseDto.model_validate(
+            {
+                "automaticCleanup": settings.automatic_cleanup,
+                "managedWorktreeLimit": settings.managed_worktree_limit,
+                "updatedAt": int(settings.updated_at.timestamp() * 1000),
+            }
+        )
+
+    def _worktree_settings_update(
+        self, request: method_dtos.SettingsUpdateRequestDto
+    ) -> method_dtos.SettingsUpdateResponseDto:
+        if self.worktree_retention is None:
+            raise ApplicationError("INTERNAL_ERROR", "Worktree settings unavailable")
+        try:
+            settings = self.worktree_retention.settings.update(
+                automatic_cleanup=request.automatic_cleanup,
+                managed_worktree_limit=request.managed_worktree_limit,
+            )
+        except ValueError as error:
+            raise ApplicationInvalidParamsError("INVALID_PARAMS", str(error)) from error
+        return method_dtos.SettingsUpdateResponseDto.model_validate(
+            {
+                "automaticCleanup": settings.automatic_cleanup,
+                "managedWorktreeLimit": settings.managed_worktree_limit,
+                "updatedAt": int(settings.updated_at.timestamp() * 1000),
+            }
+        )
+
     def _applications_or_error(self) -> _RuntimeApplications:
         """Return initialized use cases, retaining no second state authority."""
 
@@ -861,6 +915,7 @@ class RuntimeServer:
                 scan_text=self._scan_text,
                 worktree_manager=self.worktree_manager,
                 lifecycle=session_lifecycle,
+                retention=self.worktree_retention,
             ),
             runs=RunApplication(
                 store=self.store,
@@ -893,6 +948,7 @@ class RuntimeServer:
                 self.store.checkpoint_repository(),
                 worktree_manager=self.worktree_manager,
                 lifecycle=session_lifecycle,
+                retention=self.worktree_retention,
             ),
             task_lifecycle=task_lifecycle,
         )
@@ -913,6 +969,13 @@ class RuntimeServer:
             if self.store.health_state == "ready":
                 self.worktree_manager = WorktreeManager(self.store.database)
                 self.worktree_manager.recover()
+                self.worktree_retention = WorktreeRetentionService(
+                    self.store.database, self.worktree_manager
+                )
+                try:
+                    self.worktree_retention.reconcile()
+                except Exception:
+                    logger.exception("Worktree retention recovery is incomplete")
                 self.sensitive = SensitiveScanner()
                 assert self.store.data_directory is not None
                 deploy_system_skills(self.store.data_directory)

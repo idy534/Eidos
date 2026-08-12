@@ -8,6 +8,7 @@ from eidos_runtime.db.schema import (
     SCHEMA_SQL,
     SCHEMA_VERSION,
     V21_SESSION_HANDOFF_SCHEMA_SQL,
+    V22_WORKTREE_RETENTION_SCHEMA_SQL,
     V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL,
 )
 from eidos_runtime.db.storage import DATABASE_NAME, SessionStore
@@ -24,6 +25,7 @@ def test_v19_to_v20_preserves_worktrees_and_adds_phase3b_fields(
         SCHEMA_SQL
         .replace(V20_WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL, "", 1)
         .replace(V21_SESSION_HANDOFF_SCHEMA_SQL, "", 1)
+        .replace(V22_WORKTREE_RETENTION_SCHEMA_SQL, "", 1)
     )
     connection.execute(
         """
@@ -76,7 +78,7 @@ def test_v19_to_v20_preserves_worktrees_and_adds_phase3b_fields(
     store.initialize()
     try:
         assert store.health() == {"state": "ready"}
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 21
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 22
         assert store.connection.execute(
             "SELECT branch_ownership FROM worktrees WHERE id = 'worktree'"
         ).fetchone()[0] == "legacy_managed"

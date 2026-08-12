@@ -129,6 +129,122 @@ class WorktreeManager:
         except GitCommandFailedError as error:
             raise WorktreeError("handoff_git_conflict") from error
 
+    def touch_last_used(self, worktree_id: str) -> Worktree:
+        try:
+            return self.repository.touch_last_used(worktree_id)
+        except ResourceNotFoundError:
+            raise WorktreeError("worktree_not_found") from None
+
+    def clean_for_retention(self, worktree_id: str) -> Worktree:
+        """Remove one already-snapshotted Eidos-owned managed Worktree."""
+
+        worktree = self._read_worktree(worktree_id)
+        if worktree.ownership is not WorktreeOwnership.MANAGED:
+            raise WorktreeError("worktree_ownership_invalid")
+        if worktree.state is WorktreeState.DELETED:
+            return worktree
+        if worktree.state is not WorktreeState.ACTIVE:
+            raise WorktreeError("worktree_invalid")
+        project = self._project_for(worktree)
+        root = Path(worktree.worktree_root)
+        validation = self.validate(worktree_id)
+        if not validation.valid:
+            raise WorktreeError(validation.code or "worktree_invalid")
+        try:
+            self.git.clean_worktree_for_retention(root)
+            self.git.worktree_remove(Path(project.workspace_root), root)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("worktree_cleanup_required") from error
+        try:
+            return self.repository.update_state(worktree_id, WorktreeState.DELETED)
+        except ResourceNotFoundError:
+            raise WorktreeError("worktree_not_found") from None
+
+    def restore_worktree(
+        self,
+        worktree_id: str,
+        *,
+        head: str,
+        changes: GitWorkingTreePatch,
+        expected_fingerprint: str,
+    ) -> Worktree:
+        """Recreate a deleted managed Worktree at the durable identity root."""
+
+        worktree = self._read_worktree(worktree_id)
+        if worktree.ownership is not WorktreeOwnership.MANAGED:
+            raise WorktreeError("worktree_ownership_invalid")
+        if worktree.state is WorktreeState.INVALID:
+            raise WorktreeError("worktree_recovery_required")
+        project = self._project_for(worktree)
+        root = Path(worktree.worktree_root)
+        source_root = Path(project.workspace_root)
+        if _paths_overlap(source_root.resolve(strict=True), root.resolve(strict=False)):
+            raise WorktreeError("worktree_path_forbidden")
+        try:
+            entries = self._entries_for_observation(project)
+            entry = next(
+                (item for item in entries if item.worktree_root == str(root.resolve(strict=False))),
+                None,
+            )
+            if entry is not None and entry.head != head:
+                raise WorktreeError("worktree_recovery_conflict")
+            if entry is None:
+                if root.exists() or root.is_symlink():
+                    raise WorktreeError("worktree_cleanup_required")
+                self.git.worktree_add(source_root, root, None, head)
+            discovery = self.discovery.discover(root)
+            current = self.source_snapshot(root, include_local_changes=True)
+            if current.fingerprint != expected_fingerprint and current.status.dirty:
+                raise WorktreeError("worktree_recovery_conflict")
+            materialize_worktree_include(
+                source_root,
+                root,
+                is_ignored=lambda relative: self.git.is_ignored(
+                    source_root, relative
+                ),
+            )
+            if current.fingerprint != expected_fingerprint:
+                self.git.apply_worktree_changes(root, changes)
+                current = self.source_snapshot(root, include_local_changes=True)
+            if current.fingerprint != expected_fingerprint:
+                raise WorktreeError("worktree_restore_verification_failed")
+        except WorktreeError:
+            raise
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("worktree_restore_failed") from error
+        try:
+            return self.repository.rebind_restored(
+                worktree_id,
+                git_dir=discovery.git_dir,
+                checkout_branch=None,
+            )
+        except ResourceNotFoundError:
+            raise WorktreeError("worktree_not_found") from None
+
+    def cleanup_partial_restore(self, worktree_id: str, expected_head: str) -> None:
+        """Best-effort cleanup for a newly-created restore directory."""
+
+        worktree = self._read_worktree(worktree_id)
+        if worktree.state is WorktreeState.ACTIVE:
+            return
+        project = self._project_for(worktree)
+        root = Path(worktree.worktree_root)
+        if not root.exists() or root.is_symlink():
+            return
+        try:
+            if self.git.head(root) != expected_head:
+                raise WorktreeError("worktree_cleanup_required")
+            self.git.clean_worktree_for_retention(root)
+            self.git.worktree_remove(Path(project.workspace_root), root)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("worktree_cleanup_required") from error
+
     def switch_repository_branch(self, root: Path, branch: str) -> None:
         try:
             self.git.switch_branch(root, branch)
@@ -782,6 +898,13 @@ class WorktreeManager:
             started = time.monotonic()
             action = "inspect"
             try:
+                if operation.scope in {
+                    WorktreeLifecycleScope.RETENTION_CLEANUP,
+                    WorktreeLifecycleScope.RESTORE,
+                }:
+                    # Phase 3D owns these scopes in the retention service. The
+                    # base manager must not reinterpret them as normal deletes.
+                    continue
                 if operation.scope is WorktreeLifecycleScope.ATTACH_BRANCH:
                     action = "reconcile_branch_attach"
                     operation = self._recover_branch_attachment(operation)
@@ -1031,6 +1154,14 @@ class WorktreeManager:
         """Validate a managed Worktree and capture one stable path identity."""
 
         worktree = self._read_worktree(worktree_id)
+        if self.lifecycle.has_cleanup_required(worktree_id):
+            raise WorktreeError("worktree_recovery_required")
+        if self.lifecycle.has_unfinished_for_worktree(worktree_id):
+            raise WorktreeError("worktree_recovery_required")
+        if worktree.state is WorktreeState.DELETED:
+            raise WorktreeError("worktree_restore_required")
+        if worktree.state is WorktreeState.INVALID:
+            raise WorktreeError("worktree_recovery_required")
         root = Path(worktree.worktree_root)
         validation = self.validate(worktree_id)
         if not validation.valid or validation.head is None:

@@ -37,6 +37,7 @@ from eidos_runtime.git.native import (
     NativeWorktreeChangeTransfer,
     NativeWorktreeCleaner,
     NativeWorktreeHandoffCleaner,
+    NativeWorktreeRetentionCleaner,
     NativeWorktreeCheckout,
     NativeWorktreeCreator,
 )
@@ -85,9 +86,23 @@ class GitBackend(Protocol):
 
     def clean_worktree_for_compensation(self, cwd: Path) -> None: ...
 
+    def clean_worktree_for_retention(self, cwd: Path) -> None: ...
+
     def clean_worktree_after_handoff(self, cwd: Path) -> None: ...
 
     def worktree_prune(self, cwd: Path) -> None: ...
+
+    def snapshot_anchor(self, cwd: Path, snapshot_id: str) -> str | None: ...
+
+    def create_snapshot_anchor(
+        self, cwd: Path, snapshot_id: str, head: str
+    ) -> None: ...
+
+    def delete_snapshot_anchor_if_equals(
+        self, cwd: Path, snapshot_id: str, expected_head: str
+    ) -> bool: ...
+
+    def list_snapshot_anchors(self, cwd: Path) -> tuple[tuple[str, str], ...]: ...
 
     def capture_worktree_changes(self, cwd: Path) -> GitWorkingTreePatch: ...
 
@@ -119,6 +134,7 @@ class DulwichGitBackend:
         native_branch_attacher: NativeBranchAttacher | None = None,
         native_worktree_cleaner: NativeWorktreeCleaner | None = None,
         native_worktree_handoff_cleaner: NativeWorktreeHandoffCleaner | None = None,
+        native_worktree_retention_cleaner: NativeWorktreeRetentionCleaner | None = None,
         native_worktree_checkout: NativeWorktreeCheckout | None = None,
         diff_output_limit_bytes: int = DEFAULT_GIT_DIFF_BYTES,
     ) -> None:
@@ -129,6 +145,7 @@ class DulwichGitBackend:
         self._native_branch_attacher = native_branch_attacher
         self._native_worktree_cleaner = native_worktree_cleaner
         self._native_worktree_handoff_cleaner = native_worktree_handoff_cleaner
+        self._native_worktree_retention_cleaner = native_worktree_retention_cleaner
         self._native_worktree_checkout = native_worktree_checkout
         self._diff_output_limit_bytes = diff_output_limit_bytes
 
@@ -371,6 +388,11 @@ class DulwichGitBackend:
             self._native_worktree_cleaner = NativeWorktreeCleaner()
         self._native_worktree_cleaner.clean(cwd)
 
+    def clean_worktree_for_retention(self, cwd: Path) -> None:
+        if self._native_worktree_retention_cleaner is None:
+            self._native_worktree_retention_cleaner = NativeWorktreeRetentionCleaner()
+        self._native_worktree_retention_cleaner.clean(cwd)
+
     def clean_worktree_after_handoff(self, cwd: Path) -> None:
         if self._native_worktree_handoff_cleaner is None:
             self._native_worktree_handoff_cleaner = NativeWorktreeHandoffCleaner()
@@ -410,6 +432,59 @@ class DulwichGitBackend:
             worktree_prune(repo)
         except (KeyError, OSError, TypeError, ValueError) as error:
             raise _git_failure("worktree-prune", error) from error
+
+    def snapshot_anchor(self, cwd: Path, snapshot_id: str) -> str | None:
+        ref = _snapshot_ref(snapshot_id)
+        repo = self._open_repository(cwd, "snapshot-anchor-read")
+        try:
+            value = repo.refs.read_ref(ref)
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            raise _git_failure("snapshot-anchor-read", error) from error
+        return _optional_object_id(value)
+
+    def create_snapshot_anchor(self, cwd: Path, snapshot_id: str, head: str) -> None:
+        _validate_ref(head)
+        ref = _snapshot_ref(snapshot_id)
+        repo = self._open_repository(cwd, "snapshot-anchor-create")
+        try:
+            if not repo.refs.set_if_equals(ref, None, head.encode("ascii")):
+                current = repo.refs.read_ref(ref)
+                if current != head.encode("ascii"):
+                    raise GitCommandFailedError(
+                        "snapshot-anchor-create", returncode=None
+                    )
+        except GitCommandFailedError:
+            raise
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            raise _git_failure("snapshot-anchor-create", error) from error
+
+    def delete_snapshot_anchor_if_equals(
+        self, cwd: Path, snapshot_id: str, expected_head: str
+    ) -> bool:
+        _validate_ref(expected_head)
+        ref = _snapshot_ref(snapshot_id)
+        repo = self._open_repository(cwd, "snapshot-anchor-delete")
+        try:
+            return bool(
+                repo.refs.remove_if_equals(ref, expected_head.encode("ascii"))
+            )
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            raise _git_failure("snapshot-anchor-delete", error) from error
+
+    def list_snapshot_anchors(self, cwd: Path) -> tuple[tuple[str, str], ...]:
+        repo = self._open_repository(cwd, "snapshot-anchor-list")
+        prefix = b"refs/eidos/worktree-snapshots/"
+        try:
+            refs = repo.refs.as_dict(prefix)
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            raise _git_failure("snapshot-anchor-list", error) from error
+        anchors: list[tuple[str, str]] = []
+        for name, value in refs.items():
+            snapshot_id = os.fsdecode(name)
+            if not snapshot_id or "/" in snapshot_id:
+                continue
+            anchors.append((snapshot_id, _object_id(value)))
+        return tuple(sorted(anchors))
 
     def delete_branch_if_equals(
         self, cwd: Path, branch: str, expected_commit: str
@@ -660,6 +735,20 @@ def _validate_branch(value: str) -> None:
     _validate_ref(value)
     if value.startswith("refs/") or value.endswith("/") or ".." in value:
         raise ValueError("Git branch is invalid")
+
+
+def _snapshot_ref(snapshot_id: str) -> Ref:
+    if (
+        not snapshot_id
+        or len(snapshot_id) > 256
+        or any(
+            character
+            not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+            for character in snapshot_id
+        )
+    ):
+        raise ValueError("invalid snapshot id")
+    return Ref(f"refs/eidos/worktree-snapshots/{snapshot_id}".encode("utf-8"))
 
 
 def _validate_relative_path(value: str) -> None:

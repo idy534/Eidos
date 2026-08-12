@@ -51,6 +51,11 @@ def worktree_from_row(row: Mapping[str, object]) -> Worktree:
         state=WorktreeState(str(row["state"])),
         created_at=_timestamp(int(row["created_at"])),
         updated_at=_timestamp(int(row["updated_at"])),
+        last_used_at=_timestamp(
+            int(row["last_used_at"])
+            if "last_used_at" in row.keys() and row["last_used_at"] is not None
+            else int(row["updated_at"])
+        ),
     )
 
 

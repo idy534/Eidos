@@ -358,6 +358,9 @@ export function AppShell({ runtime }: AppShellProps) {
   const sessionWorktree = snapshot?.session.worktree;
   const sessionHasGit = snapshot?.session.project?.gitAvailable === true;
   const handoffBusy = sessionState.pending.handoffSessionId === snapshot?.session.id;
+  const restoreBusy = sessionState.pending.restoringWorktreeSessionId === snapshot?.session.id;
+  const worktreeRestoreRequired = snapshot?.session.executionMode === "worktree"
+    && snapshot.session.worktreeRestoreAvailable === true;
 
   const isRenamingThisSession = Boolean(snapshot && renamingSessionId === snapshot.session.id);
 
@@ -398,6 +401,21 @@ export function AppShell({ runtime }: AppShellProps) {
 
         {/* Domain error banner */}
         {topError && <p className="error-banner" role="alert">{topError}</p>}
+
+        {snapshot?.session.worktreeRestoreAvailable === true && (
+          <div className="worktree-restore-banner" role="status">
+            <span>Worktree 已清理以释放磁盘空间</span>
+            <Button
+              variant="secondary"
+              size="small"
+              disabled={restoreBusy}
+              loading={restoreBusy}
+              onClick={() => void sessionActions.restoreWorktree(snapshot.session.id)}
+            >
+              Restore Worktree
+            </Button>
+          </div>
+        )}
 
         {settingsOpen ? (
           <SettingsPage
@@ -581,7 +599,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
                 <Composer
                   ref={composerRef}
-                  composerMode={composerMode}
+                  composerMode={worktreeRestoreRequired ? "read_only" : composerMode}
                   activeRun={activeRun}
                   input={input}
                   modelList={modelState.list}
@@ -589,7 +607,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   contextUsage={contextUsageState.usage}
                   modelConfigured={Boolean(modelState.list?.models.length)}
                   modelLoading={modelState.loading}
-                  isSubmitting={runState.isSubmitting || handoffBusy}
+                  isSubmitting={runState.isSubmitting || handoffBusy || restoreBusy}
                   submitKind={runState.submitKind}
                   cancelingRunId={runState.cancelingRunId}
                   onInputChange={runActions.setInput}

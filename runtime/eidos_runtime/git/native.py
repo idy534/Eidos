@@ -365,6 +365,27 @@ class NativeWorktreeCleaner:
         )
 
 
+class NativeWorktreeRetentionCleaner:
+    """Clear an Eidos-owned Worktree after its snapshot is durable."""
+
+    def __init__(self, *, runner: HardenedGitRunner | None = None) -> None:
+        self._runner = runner or HardenedGitRunner()
+
+    def clean(self, worktree_root: Path) -> None:
+        overrides = filter_config_overrides(self._runner, worktree_root)
+        self._runner.run(
+            ("reset", "--hard", "HEAD"),
+            cwd=worktree_root,
+            operation="worktree-retention-reset",
+            config_overrides=overrides,
+        )
+        self._runner.run(
+            ("clean", "-fdx", "--"),
+            cwd=worktree_root,
+            operation="worktree-retention-clean",
+        )
+
+
 class NativeWorktreeHandoffCleaner:
     """Clear transient Worktree changes while preserving ignored resources."""
 

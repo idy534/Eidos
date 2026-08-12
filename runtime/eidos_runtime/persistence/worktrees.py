@@ -134,7 +134,8 @@ class ProjectWorktreeRepository(Repository):
                         id, project_id, worktree_root, git_dir, base_ref,
                         base_commit, branch, checkout_branch, branch_ownership,
                         ownership, state, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        , last_used_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         worktree.id,
@@ -150,6 +151,7 @@ class ProjectWorktreeRepository(Repository):
                         worktree.state.value,
                         _millis(worktree.created_at),
                         _millis(worktree.updated_at),
+                        _millis(worktree.last_used_at),
                     ),
                 )
             except sqlite3.IntegrityError as error:
@@ -198,6 +200,55 @@ class ProjectWorktreeRepository(Repository):
         assert row is not None
         return worktree_from_row(row)
 
+    def touch_last_used(self, worktree_id: str, *, at_ms: int | None = None) -> Worktree:
+        now = _now_ms() if at_ms is None else at_ms
+        with self.lock, self._connection() as connection:
+            updated = connection.execute(
+                "UPDATE worktrees SET last_used_at = ?, updated_at = ? WHERE id = ?",
+                (now, now, worktree_id),
+            )
+            if updated.rowcount != 1:
+                raise ResourceNotFoundError("worktree not found")
+            row = connection.execute(
+                "SELECT * FROM worktrees WHERE id = ?", (worktree_id,)
+            ).fetchone()
+        assert row is not None
+        return worktree_from_row(row)
+
+    def rebind_restored(
+        self,
+        worktree_id: str,
+        *,
+        git_dir: str,
+        checkout_branch: str | None = None,
+    ) -> Worktree:
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            updated = connection.execute(
+                """
+                UPDATE worktrees
+                SET git_dir = ?, checkout_branch = ?, branch = NULL,
+                    branch_ownership = ?, state = ?, last_used_at = ?, updated_at = ?
+                WHERE id = ? AND ownership = 'managed'
+                """,
+                (
+                    git_dir,
+                    checkout_branch,
+                    BranchOwnership.NONE.value,
+                    WorktreeState.ACTIVE.value,
+                    now,
+                    now,
+                    worktree_id,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ResourceNotFoundError("worktree not found")
+            row = connection.execute(
+                "SELECT * FROM worktrees WHERE id = ?", (worktree_id,)
+            ).fetchone()
+        assert row is not None
+        return worktree_from_row(row)
+
     def update_branch(
         self,
         worktree_id: str,
@@ -210,10 +261,10 @@ class ProjectWorktreeRepository(Repository):
                 """
                 UPDATE worktrees
                 SET branch = ?, checkout_branch = ?, branch_ownership = ?,
-                    updated_at = ?
+                    last_used_at = ?, updated_at = ?
                 WHERE id = ? AND branch IS NULL
                 """,
-                (branch, branch, ownership.value, now, worktree_id),
+                (branch, branch, ownership.value, now, now, worktree_id),
             )
             if updated.rowcount != 1:
                 row = connection.execute(

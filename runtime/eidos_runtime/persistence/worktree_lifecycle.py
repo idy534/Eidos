@@ -56,8 +56,9 @@ class WorktreeLifecycleRepository(Repository):
                         session_id, run_id,
                         checkpoint_id, include_local_changes, source_head,
                         source_branch, source_dirty, source_fingerprint,
+                        snapshot_id, snapshot_head, snapshot_fingerprint,
                         error_code, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         operation.scope.value,
@@ -83,6 +84,9 @@ class WorktreeLifecycleRepository(Repository):
                             else None
                         ),
                         operation.source_fingerprint,
+                        operation.snapshot_id,
+                        operation.snapshot_head,
+                        operation.snapshot_fingerprint,
                         operation.error_code,
                         created_at,
                         updated_at,
@@ -138,6 +142,57 @@ class WorktreeLifecycleRepository(Repository):
             raise ResourceNotFoundError("worktree lifecycle operation not found")
         return operation
 
+    def update_snapshot_facts(
+        self,
+        scope: WorktreeLifecycleScope | str,
+        operation_id: str,
+        *,
+        snapshot_id: str,
+        snapshot_head: str,
+        snapshot_fingerprint: str,
+    ) -> WorktreeLifecycleOperation:
+        """Persist the immutable Snapshot facts after artifact capture."""
+
+        with self.lock, self._connection() as connection:
+            current = connection.execute(
+                """
+                SELECT snapshot_id, snapshot_head, snapshot_fingerprint
+                FROM worktree_lifecycle_operations
+                WHERE scope = ? AND operation_id = ?
+                """,
+                (_scope(scope), operation_id),
+            ).fetchone()
+            if current is None:
+                raise ResourceNotFoundError("worktree lifecycle operation not found")
+            if current["snapshot_id"] != snapshot_id:
+                raise StorageError("worktree_lifecycle_conflict")
+            if (
+                current["snapshot_head"] not in (None, snapshot_head)
+                or current["snapshot_fingerprint"]
+                not in (None, snapshot_fingerprint)
+            ):
+                raise StorageError("worktree_lifecycle_conflict")
+            updated = connection.execute(
+                """
+                UPDATE worktree_lifecycle_operations
+                SET snapshot_head = ?, snapshot_fingerprint = ?, updated_at = ?
+                WHERE scope = ? AND operation_id = ?
+                """,
+                (
+                    snapshot_head,
+                    snapshot_fingerprint,
+                    _now_ms(),
+                    _scope(scope),
+                    operation_id,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ResourceNotFoundError("worktree lifecycle operation not found")
+        operation = self.read(scope, operation_id)
+        if operation is None:
+            raise ResourceNotFoundError("worktree lifecycle operation not found")
+        return operation
+
     def list_unfinished(self) -> tuple[WorktreeLifecycleOperation, ...]:
         with self.lock:
             rows = self._connection().execute(
@@ -148,6 +203,31 @@ class WorktreeLifecycleRepository(Repository):
                 """
             ).fetchall()
         return tuple(value for row in rows if (value := _map(row)) is not None)
+
+    def has_cleanup_required(self, worktree_id: str) -> bool:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT 1 FROM worktree_lifecycle_operations
+                WHERE worktree_id = ? AND state = 'cleanup_required'
+                LIMIT 1
+                """,
+                (worktree_id,),
+            ).fetchone()
+        return row is not None
+
+    def has_unfinished_for_worktree(self, worktree_id: str) -> bool:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT 1 FROM worktree_lifecycle_operations
+                WHERE worktree_id = ?
+                  AND state NOT IN ('completed', 'cleanup_required')
+                LIMIT 1
+                """,
+                (worktree_id,),
+            ).fetchone()
+        return row is not None
 
     def find_delete_for_session(
         self, session_id: str
@@ -175,14 +255,33 @@ _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     "prepared": frozenset({
         "worktree_created",
         "branch_attached",
+        "snapshot_saved",
+        "state_materialized",
         "worktree_deleted",
         "cleanup_required",
     }),
-    "worktree_created": frozenset({"session_created", "worktree_deleted", "cleanup_required"}),
+    "worktree_created": frozenset({
+        "session_created",
+        "state_materialized",
+        "worktree_deleted",
+        "cleanup_required",
+    }),
     "session_created": frozenset({"run_created", "completed", "cleanup_required"}),
     "run_created": frozenset({"checkpoint_action_created", "completed", "cleanup_required"}),
     "checkpoint_action_created": frozenset({"completed", "cleanup_required"}),
     "branch_attached": frozenset({"completed", "cleanup_required"}),
+    "snapshot_saved": frozenset({
+        "state_materialized",
+        "worktree_deleted",
+        "completed",
+        "cleanup_required",
+    }),
+    "state_materialized": frozenset({
+        "worktree_rebound",
+        "completed",
+        "cleanup_required",
+    }),
+    "worktree_rebound": frozenset({"completed", "cleanup_required"}),
     "worktree_deleted": frozenset({
         "worktree_deleted",
         "completed",
@@ -218,6 +317,9 @@ def _same_plan(
             "source_branch",
             "source_dirty",
             "source_fingerprint",
+            "snapshot_id",
+            "snapshot_head",
+            "snapshot_fingerprint",
         )
     )
 
@@ -249,6 +351,9 @@ def _map(row: sqlite3.Row | None) -> WorktreeLifecycleOperation | None:
             else None
         ),
         "source_fingerprint": row["source_fingerprint"],
+        "snapshot_id": row["snapshot_id"],
+        "snapshot_head": row["snapshot_head"],
+        "snapshot_fingerprint": row["snapshot_fingerprint"],
         "error_code": row["error_code"],
         "created_at": _timestamp(int(row["created_at"])),
         "updated_at": _timestamp(int(row["updated_at"])),
