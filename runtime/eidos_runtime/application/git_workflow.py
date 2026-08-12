@@ -118,6 +118,8 @@ class GitWorkflowWorktreePort(Protocol):
 
     def local_status(self, repository_root: Path) -> GitStatusSnapshot: ...
 
+    def operation_status(self, worktree_id: str) -> GitStatusSnapshot: ...
+
 
 class GitWorkflowApplication:
     """Own Session policy while native Git owns Index and commit semantics."""
@@ -263,7 +265,7 @@ class GitWorkflowApplication:
     def preflight_merge_abort(
         self, request: SessionGitMergeAbortRequestDto
     ) -> GitMergePlan:
-        session, status = self._prepare_mutation(request.session_id)
+        session, status = self._prepare_operation_mutation(request.session_id)
         root = Path(status.worktree_root)
         try:
             state = self._worktrees.git.operation_state(root)
@@ -334,7 +336,7 @@ class GitWorkflowApplication:
     def preflight_rebase_continue(
         self, request: SessionGitRebaseContinueRequestDto
     ) -> GitRebasePlan:
-        session, status = self._prepare_mutation(request.session_id)
+        session, status = self._prepare_operation_mutation(request.session_id)
         root = Path(status.worktree_root)
         try:
             state = self._worktrees.git.operation_state(root)
@@ -362,7 +364,7 @@ class GitWorkflowApplication:
     def preflight_rebase_abort(
         self, request: SessionGitRebaseAbortRequestDto
     ) -> GitRebasePlan:
-        session, status = self._prepare_mutation(request.session_id)
+        session, status = self._prepare_operation_mutation(request.session_id)
         root = Path(status.worktree_root)
         try:
             state = self._worktrees.git.operation_state(root)
@@ -389,7 +391,14 @@ class GitWorkflowApplication:
         *,
         result_type: type[SessionGitMergeResponseDto] = SessionGitMergeResponseDto,
     ) -> SessionGitMergeResponseDto:
-        after = self._status(session)
+        try:
+            after = (
+                self._worktrees.operation_status(session.worktree_id)
+                if session.worktree_id is not None
+                else self._status(session)
+            )
+        except WorktreeError as error:
+            raise _workflow_error(error) from error
         try:
             state = self._worktrees.git.operation_state(
                 Path(after.worktree_root)
@@ -619,6 +628,23 @@ class GitWorkflowApplication:
             raise ApplicationError(
                 "GIT_WORKFLOW_BUSY", "session has an active Run"
             ) from error
+        return session, self._status(session)
+
+    def _prepare_operation_mutation(
+        self, session_id: str
+    ) -> tuple[Session, GitStatusSnapshot]:
+        session = self._read_session(session_id)
+        try:
+            self._repository.assert_session_deletable(session_id)
+        except SessionActiveError as error:
+            raise ApplicationError(
+                "GIT_WORKFLOW_BUSY", "session has an active Run"
+            ) from error
+        try:
+            if session.worktree_id is not None:
+                return session, self._worktrees.operation_status(session.worktree_id)
+        except WorktreeError as error:
+            raise _workflow_error(error) from error
         return session, self._status(session)
 
     def _status(self, session: Session) -> GitStatusSnapshot:

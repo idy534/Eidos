@@ -187,9 +187,11 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 - Runtime 提供 checkpoint create/list 和 rewind/fork action lineage 的 typed RPC。
 - Checkpoint 记录 Rule Snapshot、Repository Snapshot、Context Snapshot、Compaction Summary、Workspace identity、Git、permission、Model snapshot 和 reconciliation 状态引用。
-- Managed Checkpoint Fork v1 从 `checkpoint.gitHead` 创建新的 detached managed Worktree，并保存 `branch = NULL` 的 Worktree Session、Run 和 checkpoint action lineage。相同 `checkpointId` 与 `operationId` 不会创建第二套 Worktree、Session、Run 或 action。
-- Local Checkpoint Fork 使用相同 Project、相同 workspace root 和 `worktreeId = NULL` 创建新的 Local Session、Run 和 lineage。两个 Local Thread 共享真实目录。该 Fork 不表示 filesystem snapshot。
-- Checkpoint action 以 append-only lineage 保存 source Run、target Run 和 action kind。完整 rewind/fork Context 重建、全部 immutable snapshot 复制和完整未提交 patch 恢复仍属于限制。
+- Managed 和 Local Git Checkpoint 复用现有 Git snapshot artifact，保存 HEAD、staged、unstaged 和 untracked 状态。Artifact 使用 checksum 和 hidden ref 验证。
+- Managed Checkpoint Fork 创建新的 detached managed Worktree，并恢复完整 Checkpoint Git 状态。相同 `checkpointId` 与 `operationId` 不会创建第二套 Worktree、Session、Run 或 action。
+- Local Checkpoint Fork 使用相同 Project、相同 workspace root 和 `worktreeId = NULL` 创建新的 Local Session、Run 和 lineage。两个 Local Thread 共享真实目录，因此 Fork 不复制 filesystem。
+- Managed 和 Local Rewind 会恢复原 checkout 的完整 Checkpoint Git 状态。Local Rewind 只允许用户显式调用。Checkpoint action 以 append-only lineage 保存 source Run、target Run 和 action kind。
+- Rewind 尚未重建完整逻辑 Context。Fork 仍不会复制全部非 Git immutable snapshot。Non-Git Local Workspace 不支持 filesystem rewind。
 
 ## Distribution
 

@@ -1605,6 +1605,53 @@ class WorktreeManager:
             observed_at=utc_now(),
         )
 
+    def operation_status(self, worktree_id: str) -> GitStatusSnapshot:
+        """Observe a verified Worktree during a native merge or rebase."""
+
+        worktree = self._read_worktree(worktree_id)
+        project = self._project_for(worktree)
+        root = Path(worktree.worktree_root)
+        try:
+            operation = self.git.operation_state(root)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_command_failed") from error
+        validation = self._validate_record(
+            worktree,
+            project,
+            entries=self._entries_for_observation(project),
+            persist_state=False,
+            allow_transient_detached=operation is GitOperationState.REBASE,
+        )
+        if not validation.valid or validation.head is None:
+            raise WorktreeError(validation.code or "worktree_invalid")
+        try:
+            observation = self.git.status(root)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_command_failed") from error
+        return GitStatusSnapshot(
+            worktree_id=worktree.id,
+            repository_root=project.workspace_root,
+            worktree_root=worktree.worktree_root,
+            base_ref=worktree.base_ref,
+            base_commit=worktree.base_commit,
+            branch=validation.observed_branch,
+            head=validation.head,
+            dirty=observation.dirty,
+            staged_count=len(observation.staged_paths),
+            unstaged_count=len(observation.unstaged_paths),
+            untracked_count=len(observation.untracked_paths),
+            conflict_count=len(observation.conflict_paths),
+            staged_files=observation.staged_paths,
+            unstaged_files=observation.unstaged_paths,
+            untracked_files=observation.untracked_paths,
+            conflict_files=observation.conflict_paths,
+            observed_at=utc_now(),
+        )
+
     def local_status(self, repository_root: Path) -> GitStatusSnapshot:
         try:
             discovery = self.discovery.discover(repository_root)
@@ -1740,6 +1787,7 @@ class WorktreeManager:
         *,
         entries: tuple[GitWorktreeEntry, ...],
         persist_state: bool,
+        allow_transient_detached: bool = False,
     ) -> WorktreeValidation:
         root = Path(worktree.worktree_root)
         entry = next(
@@ -1868,7 +1916,9 @@ class WorktreeManager:
                 state=worktree.state,
                 persist_state=False,
             )
-        if branch != worktree.checkout_branch:
+        if branch != worktree.checkout_branch and not (
+            allow_transient_detached and branch is None
+        ):
             return self._record_validation(
                 worktree,
                 valid=False,
