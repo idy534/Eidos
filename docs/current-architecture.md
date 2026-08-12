@@ -185,7 +185,15 @@ Repository Intelligence 已实现为独立的 typed infrastructure。它包括�
 - generation-scoped persistence、完整代和 incomplete candidate 的区分；
 - Retrieval Snapshot、ContextPlan 和 ContextSnapshot 的 hash 与证据绑定。
 
-这些基础设施由 RepositoryApplication、ContextApplication 和 persistence repositories 提供。Worktree Session 的 Repository Intelligence root 使用该 Session 的 Worktree root。Local Session 使用 `Project.workspace_root`。Repository Intelligence 不要求 Git；Non-Git Project 也可以执行 inventory、文件类型识别、Tree-sitter、symbol index、search 和 retrieval。当前默认在线 Run 仍主要使用 ContextBuilder、Workspace Tool Result 和 SQLite Context Facts。RuntimeEngine 在每次 Model Attempt 前不会强制执行完整 Inventory → Index → Map → Retrieval → ContextPlan 组装。因此，Repository Intelligence 的结构和持久化是当前实现，自动进入每次 Run 仍是部分接线能力。
+这些基础设施由 RepositoryApplication、ContextApplication 和 persistence repositories 提供。Worktree Session 的 Repository Intelligence root 使用该 Session 的 Worktree root。Local Session 使用 `Project.workspace_root`。Repository Intelligence 不要求 Git；Non-Git Project 也可以执行 inventory、文件类型识别、Tree-sitter、symbol index、search 和 retrieval。
+
+`RepositoryWorkspaceRuntime` 是进程级的 Workspace 生命周期边界。Session create 会预热这个边界。Run admission 和 RuntimeEngine start 会再次确保 execution workspace 已激活。相同 Workspace identity 的多个 Session、Run 和模型 Step 会复用同一个 active state 和 watcher。Runtime shutdown 会停止全部 watcher。
+
+Workspace 激活只读取 SQLite 中的 latest complete generation。Runtime 会从 persisted inventory 和 index 恢复 immutable `RepositoryAnalysisSnapshot`。Runtime 只会用现有 `RepositoryMapBuilder` 重建廉价 map projection。激活路径不会调用 Inventory build 或 Index build。没有 complete generation 时，active snapshot 保持为空。
+
+Watcher 只会合并 dirty path、增加 invalidation epoch，并把 recovery status 标记为 reconciliation required。Watcher 不会替换 active snapshot，也不会生成新 generation。停机期间可能出现旧 inventory 不知道的新文件，所以 cold start 不会发布绝对 clean 结论。显式 reconciliation 和首次 generation build 仍由后续阶段决定。
+
+当前默认在线 Run 仍主要使用 ContextBuilder、Workspace Tool Result 和 SQLite Context Facts。RuntimeEngine 不会自动执行 Retrieval Query，也不会把 Repository Snapshot、ContextPlan 或 ContextSnapshot 注入模型请求。因此，Repository Generation 生命周期已经在线，但 Repository Retrieval 与模型 Context 的组合仍未接线。
 
 ## 11. Persistence & Events
 

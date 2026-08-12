@@ -45,6 +45,7 @@ def test_runtime_application_container_composes_all_phase_ef_boundaries(tmp_path
     assert applications.models is not None
     assert applications.extensions is not None
     assert applications.repository_factory is not None
+    assert applications.repository_runtime is server.repository_runtime
     assert applications.context is not None
     assert applications.checkpoints is not None
     assert applications.task_lifecycle is not None
@@ -58,3 +59,17 @@ def test_runtime_application_container_composes_all_phase_ef_boundaries(tmp_path
         "checkpoint/fork",
     } <= registered
     server.close()
+
+
+def test_runtime_server_close_stops_repository_watchers(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    server = RuntimeServer(StringIO(), data_directory=tmp_path / "data")
+    server.store.initialize()
+    active = server.repository_runtime.activate_workspace(workspace)
+
+    server.close()
+
+    assert active.closed is True
+    assert active.watcher_thread is not None
+    assert active.watcher_thread.is_alive() is False

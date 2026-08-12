@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from threading import Lock
 import time
 from typing import Protocol, TypeVar
@@ -92,6 +93,10 @@ class RunStorePort(Protocol):
 
     def read_run(self, run_id: str) -> dict[str, object]: ...
 
+    def workspace_for_run(self, run_id: str) -> WorkspaceIdentity: ...
+
+    def workspace_for_session(self, session_id: str) -> WorkspaceIdentity: ...
+
     def read_model_profile(self, run_id: str) -> ModelProfileSnapshot: ...
 
     def latest_model_usage(self, run_id: str) -> ModelUsage | None: ...
@@ -101,6 +106,10 @@ class RunStorePort(Protocol):
     def interrupt_run(self, run_id: str) -> dict[str, object]: ...
 
     def long_task_progress(self, run_id: str) -> LongTaskProgress | None: ...
+
+
+class RepositoryWorkspaceRuntimePort(Protocol):
+    def activate_workspace(self, root: Path) -> object: ...
 
 
 class RunSessionRepositoryPort(Protocol):
@@ -231,6 +240,7 @@ class RunApplication:
         worktree_manager: RunWorktreePort | None = None,
         session_repository: RunSessionRepositoryPort | None = None,
         lifecycle_coordinator: SessionLifecycleCoordinator | None = None,
+        repository_runtime: RepositoryWorkspaceRuntimePort | None = None,
     ) -> None:
         self._typed_repository = (
             TypedRuntimeRepository(database) if database is not None else None
@@ -248,6 +258,7 @@ class RunApplication:
         self._scan_text = scan_text
         self._worktree_manager = worktree_manager
         self._session_repository = session_repository
+        self._repository_runtime = repository_runtime
         self._session_lifecycle = (
             lifecycle_coordinator or SessionLifecycleCoordinator()
         )
@@ -319,6 +330,13 @@ class RunApplication:
                 expected_workspace_identity = self._admit_session_workspace(
                     request.session_id
                 )
+                workspace = store.workspace_for_session(request.session_id)
+                if expected_workspace_identity is None:
+                    expected_workspace_identity = workspace
+                elif expected_workspace_identity != workspace:
+                    raise WorkspaceIdentityChangedError("workspace_identity_changed")
+                if self._repository_runtime is not None:
+                    self._repository_runtime.activate_workspace(workspace.path)
                 needs_title = "title" not in current_session
                 created, _user_item = store.enqueue_run(
                     request.session_id,

@@ -31,6 +31,7 @@ from eidos_runtime.db.transitions import (
     transition_run,
     transition_segments,
 )
+from eidos_runtime.db.repositories.workspace import execution_workspace_for_session
 from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.model.instructions import InstructionResolver
 from eidos_runtime.runtime.contracts import ProgressSignature
@@ -131,6 +132,10 @@ class ExecutionRepository(Repository):
                 else None
             ),
         )
+
+    def workspace_for_session(self, session_id: str) -> WorkspaceIdentity:
+        with self.lock:
+            return execution_workspace_for_session(self._connection(), session_id)
 
     def increment_model_step(
         self,

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 import threading
 import time
-from typing import Callable
+from typing import Callable, Protocol
 
 from eidos_runtime.context.builder import ContextBuild, ContextBuilder
 from eidos_runtime.context.project_rules import ProjectRuleResolver
@@ -75,6 +76,10 @@ EMPTY_EXTENSION_SNAPSHOT = {
 logger = logging.getLogger("eidos.runtime")
 
 
+class RepositoryWorkspaceRuntimePort(Protocol):
+    def activate_workspace(self, root: Path) -> object: ...
+
+
 class RuntimeEngine:
     def __init__(
         self,
@@ -94,6 +99,7 @@ class RuntimeEngine:
         async_kernel: RuntimeAsyncKernel | None = None,
         resource_registry: ResourceRegistry | None = None,
         events: RuntimeEvents | None = None,
+        repository_runtime: RepositoryWorkspaceRuntimePort | None = None,
     ) -> None:
         self.store = store
         self.model = model
@@ -109,8 +115,12 @@ class RuntimeEngine:
         self.resources = resource_registry or ResourceRegistry()
         self.state_machine = RuntimePhaseTracker()
         self.active_started: float | None = None
+        self.repository_runtime = repository_runtime
 
     def run(self, run_id: str, cancel: threading.Event) -> None:
+        if self.repository_runtime is not None:
+            workspace = self.store.workspace_for_run(run_id)
+            self.repository_runtime.activate_workspace(workspace.path)
         run = self.store.read_run(run_id)
         with run_span(
             run_id,

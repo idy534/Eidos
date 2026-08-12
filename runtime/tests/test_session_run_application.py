@@ -211,6 +211,15 @@ class _LegacyModel:
     profile_snapshot = None
 
 
+class _RepositoryRuntimePort:
+    def __init__(self) -> None:
+        self.activated: list[Path] = []
+
+    def activate_workspace(self, root: Path) -> object:
+        self.activated.append(root.resolve())
+        return object()
+
+
 def _run_application(store: SessionStore, runtime: _RuntimePort) -> RunApplication:
     return RunApplication(
         store=store,
@@ -218,6 +227,64 @@ def _run_application(store: SessionStore, runtime: _RuntimePort) -> RunApplicati
         environment=_RunStartEnvironment(),
         scan_text=lambda value: value,
     )
+
+
+def test_session_create_prewarms_repository_runtime_for_execution_workspace(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = _store(tmp_path)
+    repository_runtime = _RepositoryRuntimePort()
+    try:
+        application = SessionApplication(
+            store,
+            scan_text=lambda value: value,
+            repository_runtime=repository_runtime,
+        )
+
+        application.create(SessionCreateRequestDto(workspaceRoot=str(workspace)))
+        application.create(SessionCreateRequestDto(workspaceRoot=str(workspace)))
+
+        assert repository_runtime.activated == [
+            workspace.resolve(),
+            workspace.resolve(),
+        ]
+    finally:
+        store.close()
+
+
+def test_run_admission_ensures_repository_runtime_before_worker_start(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = _store(tmp_path)
+    try:
+        session = store.create_session(str(workspace))
+        runtime = _RuntimePort(store)
+        repository_runtime = _RepositoryRuntimePort()
+        application = RunApplication(
+            store=store,
+            runtime=runtime,
+            environment=_RunStartEnvironment(),
+            scan_text=lambda value: value,
+            repository_runtime=repository_runtime,
+        )
+
+        outcome = application.start(
+            RunStartRequestDto(
+                sessionId=session["id"],
+                userInput="inspect the workspace",
+                modelId="deepseek-v4-flash",
+            )
+        )
+
+        assert repository_runtime.activated == [workspace.resolve()]
+        assert len(runtime.prepared) == 1
+        outcome.mark_response_delivered()
+    finally:
+        store.close()
 
 
 def test_run_application_start_defers_worker_release_until_response_delivery(

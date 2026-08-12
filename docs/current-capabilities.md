@@ -81,8 +81,10 @@
 - Workspace discovery 使用根目录 `.gitignore` 与 `.eidosignore`，并把发现规则和安全权限分开处理。
 - `search_text` 使用随 Runtime 管理、manifest 校验和 SHA256 校验的 macOS arm64 Ripgrep 资源。
 - Repository Intelligence 基础设施已经实现 Inventory、Repository generation、Tree-sitter Index、symbols/imports/references/chunks、Repository Map、SQLite FTS5、RapidFuzz retrieval、Retrieval Snapshot 和 ContextPlan。
-- Repository Intelligence 的不完整 generation 不会替换上一个完整 generation。Watcher 只提供失效信号，不改变活动 Snapshot。
-- RepositoryApplication、ContextApplication 和相关 persistence repositories 已提供 typed composition boundary。它们还没有全部成为 RuntimeEngine 默认 online Run 的强制路径。
+- Repository Intelligence 的不完整 generation 不会替换上一个完整 generation。Workspace 激活会 fast restore latest complete generation，并复用 persisted Inventory 和 Index。这个路径不会重新扫描仓库。Repository Map 可以从 restored Inventory 重建。
+- `RepositoryWorkspaceRuntime` 为每个 Workspace identity 保存一个 active immutable Snapshot、recovery status、dirty paths、invalidation epoch 和 watcher。多个 Session、Run 和模型 Step 会复用同一个 state。Watcher 只提供失效信号，不改变活动 Snapshot，也不自动 build 新 generation。
+- Session create 会预热 Repository runtime。Run admission 和 RuntimeEngine start 提供 authoritative fallback。Runtime shutdown 会停止 watcher。Cold start 会保留 reconciliation requirement，因为旧 Inventory 不能排除停机期间新增路径。
+- RepositoryApplication、ContextApplication 和相关 persistence repositories 已提供 typed composition boundary。自动 Retrieval Query、ContextPlan 和 ContextSnapshot 模型注入还没有进入默认 online Run。
 
 ## Runtime Git Worktree Kernel
 

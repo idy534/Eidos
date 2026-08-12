@@ -198,6 +198,11 @@ class SessionStorePort(Protocol):
 
     def session_handoff_repository(self) -> SessionHandoffRepository: ...
 
+
+class RepositoryWorkspaceRuntimePort(Protocol):
+    def activate_workspace(self, root: Path) -> object: ...
+
+
 class ManagedWorktreePort(Protocol):
     """Application port for Session-owned Worktree provisioning."""
 
@@ -366,6 +371,7 @@ class SessionApplication:
         worktree_manager: ManagedWorktreePort | None = None,
         lifecycle: SessionLifecycleCoordinator | None = None,
         retention: WorktreeRetentionPort | None = None,
+        repository_runtime: RepositoryWorkspaceRuntimePort | None = None,
     ) -> None:
         self._store = store
         self._repository: TypedSessionRepositoryPort = (
@@ -374,6 +380,7 @@ class SessionApplication:
         self._scan_text = scan_text
         self._worktree_manager = worktree_manager
         self._retention = retention
+        self._repository_runtime = repository_runtime
         self._lifecycle = lifecycle or SessionLifecycleCoordinator()
         self._logger = logging.getLogger(__name__)
 
@@ -396,7 +403,9 @@ class SessionApplication:
                             "WORKTREE_REQUIRES_GIT",
                             "worktree execution requires a Git repository",
                         )
-                    return self._create_managed(request, resolution)
+                    return self._activate_created_session(
+                        self._create_managed(request, resolution)
+                    )
         try:
             mutation = self._repository.create_session(
                 request.workspace_root,
@@ -412,10 +421,24 @@ class SessionApplication:
             raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
         except OperationInProgressError as error:
             raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
-        return _result(
+        return self._activate_created_session(_result(
             SessionCreateResponseDto,
             self._project_session(self._projection_for_session(mutation.value.id)),
+        ))
+
+    def _activate_created_session(
+        self, result: SessionCreateResponseDto
+    ) -> SessionCreateResponseDto:
+        runtime = self._repository_runtime
+        if runtime is None:
+            return result
+        root = (
+            Path(result.worktree.worktree_root)
+            if result.worktree is not None
+            else Path(result.workspace_root)
         )
+        runtime.activate_workspace(root)
+        return result
 
     def _resolve_project(self, workspace_root: str) -> ProjectResolution:
         manager = self._worktree_manager

@@ -613,6 +613,9 @@ class SessionStore:
     def workspace_for_run(self, run_id: str) -> WorkspaceIdentity:
         return self._repository(self._execution).workspace_for_run(run_id)
 
+    def workspace_for_session(self, session_id: str) -> WorkspaceIdentity:
+        return self._repository(self._execution).workspace_for_session(session_id)
+
     def increment_model_step(
         self,
         run_id: str,
