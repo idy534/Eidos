@@ -4,8 +4,14 @@ from pathlib import Path
 import sqlite3
 
 import pytest
+from pydantic import ValidationError
 
 from eidos_runtime.db.database import Database
+from eidos_runtime.db.schema import (
+    PREVIOUS_SCHEMA_VERSION,
+    SCHEMA_SQL,
+    SCHEMA_VERSION,
+)
 from eidos_runtime.persistence.repository_intelligence import (
     RepositoryFtsDocument,
     RepositoryIntelligenceRepository,
@@ -20,6 +26,7 @@ from eidos_runtime.repo_intelligence.inventory import (
     RepositoryInventory,
     RepositoryInventoryBuilder,
 )
+from eidos_runtime.repo_intelligence.map import RepositoryMap, RepositoryMapBuilder
 
 
 def _database(tmp_path: Path) -> Database:
@@ -37,12 +44,13 @@ def _workspace_identity(root: Path) -> RepositoryWorkspaceIdentity:
 
 def _complete_generation(
     root: Path,
-) -> tuple[RepositoryInventory, RepositoryIndexSnapshot]:
+) -> tuple[RepositoryInventory, RepositoryIndexSnapshot, RepositoryMap]:
     inventory = RepositoryInventoryBuilder(root).build()
     assert inventory.complete is True
     index = RepositoryIndexer(root).build(inventory)
     assert index.complete is True
-    return inventory, index
+    repository_map = RepositoryMapBuilder(root).build(inventory)
+    return inventory, index, repository_map
 
 
 def _workspace_with_python_source(tmp_path: Path) -> Path:
@@ -61,13 +69,14 @@ def test_repository_intelligence_complete_generation_roundtrips_across_database_
 ) -> None:
     root = _workspace_with_python_source(tmp_path)
     workspace_identity = _workspace_identity(root)
-    inventory, index = _complete_generation(root)
+    inventory, index, repository_map = _complete_generation(root)
     database = _database(tmp_path)
     try:
         repository = RepositoryIntelligenceRepository(database)
         committed = repository.commit_complete(
             inventory,
             index,
+            repository_map,
             workspace_identity,
         )
 
@@ -76,6 +85,7 @@ def test_repository_intelligence_complete_generation_roundtrips_across_database_
         assert committed.workspace_identity == workspace_identity
         assert committed.inventory == inventory
         assert committed.index == index
+        assert committed.repository_map == repository_map
         assert committed.inventory_generation == inventory.generation
         assert committed.index_generation == index.index_generation
         first_fts_documents = repository.list_fts_documents(index.snapshot_id)
@@ -120,6 +130,7 @@ def test_repository_intelligence_complete_generation_roundtrips_across_database_
         assert restored.workspace_identity == workspace_identity
         assert restored.inventory == inventory
         assert restored.index == index
+        assert restored.repository_map == repository_map
         assert repository.list_fts_documents(index.snapshot_id) == first_fts_documents
     finally:
         reopened.close()
@@ -130,13 +141,14 @@ def test_incomplete_repository_candidate_never_displaces_last_complete_generatio
 ) -> None:
     root = _workspace_with_python_source(tmp_path)
     workspace_identity = _workspace_identity(root)
-    inventory, index = _complete_generation(root)
+    inventory, index, repository_map = _complete_generation(root)
     database = _database(tmp_path)
     try:
         repository = RepositoryIntelligenceRepository(database)
         committed = repository.commit_complete(
             inventory,
             index,
+            repository_map,
             workspace_identity,
         )
         authoritative_documents = repository.list_fts_documents(index.snapshot_id)
@@ -165,12 +177,43 @@ def test_incomplete_repository_candidate_never_displaces_last_complete_generatio
         database.close()
 
 
+def test_complete_repository_snapshot_requires_generation_bound_map(
+    tmp_path: Path,
+) -> None:
+    root = _workspace_with_python_source(tmp_path)
+    identity = _workspace_identity(root)
+    inventory, index, repository_map = _complete_generation(root)
+    database = _database(tmp_path)
+    try:
+        committed = RepositoryIntelligenceRepository(database).commit_complete(
+            inventory, index, repository_map, identity
+        )
+        without_map = committed.model_dump()
+        without_map["repository_map"] = None
+
+        with pytest.raises(
+            ValidationError,
+            match="complete repository generation requires index and map",
+        ):
+            RepositoryIntelligenceSnapshot.model_validate(without_map)
+
+        mismatched = repository_map.model_copy(
+            update={"inventory_snapshot_id": "inventory_other"}
+        )
+        with pytest.raises(ValueError, match="generations do not match"):
+            RepositoryIntelligenceRepository(database).commit_complete(
+                inventory, index, mismatched, identity
+            )
+    finally:
+        database.close()
+
+
 def test_failed_write_after_fts_population_rolls_back_repository_generation_and_all_derived_facts(
     tmp_path: Path,
 ) -> None:
     root = _workspace_with_python_source(tmp_path)
     workspace_identity = _workspace_identity(root)
-    inventory, index = _complete_generation(root)
+    inventory, index, repository_map = _complete_generation(root)
     database = _database(tmp_path)
     try:
         connection = database.connection()
@@ -190,7 +233,9 @@ def test_failed_write_after_fts_population_rolls_back_repository_generation_and_
             sqlite3.IntegrityError,
             match="repository_chunk_injected_failure",
         ):
-            repository.commit_complete(inventory, index, workspace_identity)
+            repository.commit_complete(
+                inventory, index, repository_map, workspace_identity
+            )
 
         assert repository.read_latest_complete(
             inventory.repository_id,
@@ -215,3 +260,122 @@ def test_failed_write_after_fts_population_rolls_back_repository_generation_and_
             ).fetchone()[0] == 0
     finally:
         database.close()
+
+
+def test_repository_map_persistence_failure_keeps_previous_complete_generation(
+    tmp_path: Path,
+) -> None:
+    root = _workspace_with_python_source(tmp_path)
+    identity = _workspace_identity(root)
+    inventory, index, repository_map = _complete_generation(root)
+    database = _database(tmp_path)
+    try:
+        repository = RepositoryIntelligenceRepository(database)
+        previous = repository.commit_complete(
+            inventory, index, repository_map, identity
+        )
+        (root / "src" / "service.py").write_text(
+            "def replacement() -> str:\n    return 'new'\n",
+            encoding="utf-8",
+        )
+        next_inventory, next_index, next_map = _complete_generation(root)
+        connection = database.connection()
+        connection.execute(
+            """
+            CREATE TRIGGER repository_map_insert_failure
+            BEFORE INSERT ON repository_snapshots
+            WHEN NEW.repository_map_json IS NOT NULL
+            BEGIN
+                SELECT RAISE(ABORT, 'repository_map_injected_failure');
+            END
+            """
+        )
+        connection.commit()
+
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match="repository_map_injected_failure",
+        ):
+            repository.commit_complete(
+                next_inventory, next_index, next_map, identity
+            )
+
+        assert repository.read_latest_complete(
+            inventory.repository_id, identity
+        ) == previous
+        assert connection.execute(
+            "SELECT COUNT(*) FROM repository_snapshots"
+        ).fetchone()[0] == 1
+    finally:
+        database.close()
+
+
+def test_v1_generation_without_map_migrates_as_non_restorable(
+    tmp_path: Path,
+) -> None:
+    root = _workspace_with_python_source(tmp_path)
+    identity = _workspace_identity(root)
+    inventory, index, _repository_map = _complete_generation(root)
+    data = tmp_path / "data"
+    data.mkdir(mode=0o700)
+    database_path = data / "eidos.db"
+    v1_schema = SCHEMA_SQL.replace(
+        "    repository_map_json TEXT,\n", ""
+    ).replace(
+        "\n         AND repository_map_json IS NOT NULL", ""
+    )
+    raw = sqlite3.connect(database_path)
+    raw.executescript(v1_schema)
+    raw.execute(
+        """
+        INSERT INTO repository_snapshots (
+            id, repository_id, workspace_root, workspace_dev, workspace_inode,
+            workspace_uid, inventory_generation, index_generation,
+            inventory_snapshot_id, inventory_snapshot_hash, index_snapshot_id,
+            index_snapshot_hash, grammar_versions_json, status, complete,
+            created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', 'complete', 1, ?)
+        """,
+        (
+            "legacy-complete-without-map",
+            inventory.repository_id,
+            identity.root,
+            identity.device,
+            identity.inode,
+            identity.owner,
+            inventory.generation,
+            index.index_generation,
+            inventory.snapshot_id,
+            inventory.snapshot_hash,
+            index.snapshot_id,
+            index.snapshot_hash,
+            inventory.created_at_ms,
+        ),
+    )
+    raw.execute(f"PRAGMA user_version = {PREVIOUS_SCHEMA_VERSION}")
+    raw.commit()
+    raw.close()
+    database_path.chmod(0o600)
+
+    migrated = Database(data)
+    migrated.initialize()
+    try:
+        assert migrated.health_state == "ready"
+        connection = migrated.connection()
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        row = connection.execute(
+            "SELECT complete, repository_map_json FROM repository_snapshots "
+            "WHERE id = ?",
+            ("legacy-complete-without-map",),
+        ).fetchone()
+        assert tuple(row) == (1, None)
+
+        repository = RepositoryIntelligenceRepository(migrated)
+        assert repository.read_latest_complete(
+            inventory.repository_id, identity
+        ) is None
+        status = repository.read_status(identity)
+        assert status.complete is False
+        assert status.reconciliation_required is True
+    finally:
+        migrated.close()

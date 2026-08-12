@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+PREVIOUS_SCHEMA_VERSION = 1
 
 _RAW_BASE_SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -457,6 +458,7 @@ CREATE TABLE repository_snapshots (
     inventory_snapshot_hash TEXT NOT NULL,
     index_snapshot_id TEXT,
     index_snapshot_hash TEXT,
+    repository_map_json TEXT,
     grammar_versions_json TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('complete', 'incomplete')),
     complete INTEGER NOT NULL CHECK (complete IN (0, 1)),
@@ -465,7 +467,8 @@ CREATE TABLE repository_snapshots (
         (complete = 1 AND status = 'complete'
          AND index_generation IS NOT NULL
          AND index_snapshot_id IS NOT NULL
-         AND index_snapshot_hash IS NOT NULL)
+         AND index_snapshot_hash IS NOT NULL
+         AND repository_map_json IS NOT NULL)
         OR (complete = 0 AND status = 'incomplete')
     )
 );
@@ -1219,3 +1222,8 @@ SCHEMA_SQL = (
     + SESSION_HANDOFF_SCHEMA_SQL
     + WORKTREE_RETENTION_SCHEMA_SQL
 )
+
+V1_TO_V2_MIGRATION_SQL = """
+ALTER TABLE repository_snapshots
+ADD COLUMN repository_map_json TEXT;
+"""

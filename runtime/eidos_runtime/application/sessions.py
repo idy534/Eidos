@@ -966,6 +966,7 @@ class SessionApplication:
         projection = self._repository.read_session_projection(request.session_id)
         if projection is None:
             raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
+        self._activate_projection(projection)
         try:
             snapshot = self._store.read_session_snapshot(
                 request.session_id,
@@ -1217,7 +1218,9 @@ class SessionApplication:
         return tuple(recovered)
 
     def _handoff_response(self, session_id: str) -> SessionHandoffResponseDto:
-        value = self._project_session(self._projection_for_session(session_id))
+        projection = self._projection_for_session(session_id)
+        self._activate_projection(projection)
+        value = self._project_session(projection)
         value["sessionId"] = session_id
         worktree = value.get("worktree")
         value["worktreeId"] = (
@@ -1226,6 +1229,17 @@ class SessionApplication:
             else None
         )
         return _result(SessionHandoffResponseDto, value)
+
+    def _activate_projection(self, projection: SessionProjection) -> None:
+        runtime = self._repository_runtime
+        if runtime is None:
+            return
+        root = (
+            Path(projection.worktree.worktree_root)
+            if projection.worktree is not None
+            else Path(projection.session.workspace_root)
+        )
+        runtime.activate_workspace(root)
 
     def _build_handoff_plan(
         self,
@@ -1494,6 +1508,9 @@ class SessionApplication:
                         "Worktree retention reconciliation after handoff failed",
                         extra={"worktree_id": current.associated_worktree_id},
                     )
+            self._activate_projection(
+                self._projection_for_session(current.session_id)
+            )
         return session
 
     def _materialize_worktree_target(

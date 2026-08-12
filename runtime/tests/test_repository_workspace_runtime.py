@@ -11,9 +11,11 @@ from eidos_runtime.application.repository import (
     RepositoryApplicationFactory,
     RepositoryWorkspaceRuntime,
 )
+from eidos_runtime.application.sessions import SessionApplication
 from eidos_runtime.db.database import Database
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelResponse, ScriptedModel
+from eidos_runtime.protocol.methods import SessionReadRequestDto
 from eidos_runtime.persistence.repository_intelligence import (
     RepositoryIntelligenceRepository,
 )
@@ -323,6 +325,34 @@ def test_runtime_engine_ensures_workspace_active_before_model_execution(
         ).run(run["id"], threading.Event())
 
         assert repository_runtime.get_active(root) is not None
+        assert len(_BlockingWatchController.instances) == 1
+    finally:
+        repository_runtime.shutdown_all()
+        store.close()
+
+
+def test_repeated_session_reopen_reuses_one_active_state_and_watcher(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    store = SessionStore(tmp_path / "runtime-data")
+    store.initialize()
+    repository_runtime = _runtime(store.repository_intelligence_repository())
+    try:
+        session = store.create_session(str(root))
+        application = SessionApplication(
+            store,
+            scan_text=lambda value: value,
+            repository_runtime=repository_runtime,
+        )
+
+        application.read_snapshot(SessionReadRequestDto(sessionId=session["id"]))
+        first = repository_runtime.get_active(root)
+        application.read_snapshot(SessionReadRequestDto(sessionId=session["id"]))
+
+        assert first is not None
+        assert repository_runtime.get_active(root) is first
         assert len(_BlockingWatchController.instances) == 1
     finally:
         repository_runtime.shutdown_all()

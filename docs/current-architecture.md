@@ -187,9 +187,9 @@ Repository Intelligence 已实现为独立的 typed infrastructure。它包括�
 
 这些基础设施由 RepositoryApplication、ContextApplication 和 persistence repositories 提供。Worktree Session 的 Repository Intelligence root 使用该 Session 的 Worktree root。Local Session 使用 `Project.workspace_root`。Repository Intelligence 不要求 Git；Non-Git Project 也可以执行 inventory、文件类型识别、Tree-sitter、symbol index、search 和 retrieval。
 
-`RepositoryWorkspaceRuntime` 是进程级的 Workspace 生命周期边界。Session create 会预热这个边界。Run admission 和 RuntimeEngine start 会再次确保 execution workspace 已激活。相同 Workspace identity 的多个 Session、Run 和模型 Step 会复用同一个 active state 和 watcher。Runtime shutdown 会停止全部 watcher。
+`RepositoryWorkspaceRuntime` 是进程级的 Workspace 生命周期边界。Session create 和 existing Session read 会预热这个边界。完成 execution binding 变更的 Session handoff 也会激活新 root。Run admission 和 RuntimeEngine start 会再次确保 execution workspace 已激活。相同 Workspace identity 的多个 Session、Run 和模型 Step 会复用同一个 active state 和 watcher。Runtime shutdown 会停止全部 watcher。
 
-Workspace 激活只读取 SQLite 中的 latest complete generation。Runtime 会从 persisted inventory 和 index 恢复 immutable `RepositoryAnalysisSnapshot`。Runtime 只会用现有 `RepositoryMapBuilder` 重建廉价 map projection。激活路径不会调用 Inventory build 或 Index build。没有 complete generation 时，active snapshot 保持为空。
+Workspace 激活只读取 SQLite 中的 latest complete generation。一个完整 generation 同时包含相互绑定的 persisted Inventory、Index 和 RepositoryMap。Runtime 会直接从这三个持久事实恢复 immutable `RepositoryAnalysisSnapshot`。激活路径不会调用 Inventory、Index 或 RepositoryMap builder。没有 complete generation 时，active snapshot 保持为空。
 
 Watcher 只会合并 dirty path、增加 invalidation epoch，并把 recovery status 标记为 reconciliation required。Watcher 不会替换 active snapshot，也不会生成新 generation。停机期间可能出现旧 inventory 不知道的新文件，所以 cold start 不会发布绝对 clean 结论。显式 reconciliation 和首次 generation build 仍由后续阶段决定。
 
@@ -199,7 +199,7 @@ Watcher 只会合并 dirty path、增加 invalidation epoch，并把 recovery st
 
 SQLite 是业务事实唯一权威。Session、Run、Item、ToolCall、Approval、Tool Attempt、Execution Segment、Step、Model Attempt、Durable Intent、Event、Outbox、Async Operation、Extension Snapshot、Context、Repository Snapshot、Compaction 和 Checkpoint 都有持久化边界。
 
-当前 `SCHEMA_VERSION` 是 1，对应 Eidos 0.3 的 SQLite 基线。新数据库直接创建完整的当前 schema。已有数据库只有 `PRAGMA user_version = 1` 才会打开。旧 revision、未知 revision 和未来 revision 都 fail closed。Runtime 不执行历史 migration，也不修改不兼容数据库。当前 schema 已包含 Project、Worktree、Session、Run、Worktree lifecycle、Session Handoff、Worktree Settings、Snapshot metadata 和 retention/restore fields。
+当前 `SCHEMA_VERSION` 是 2。新数据库直接创建完整的当前 schema。Runtime 只支持从 v1 到 v2 的单步事务迁移。这个迁移为 Repository Generation 增加 nullable `repository_map_json`。旧 generation 不会回填 Map。其他旧 revision、未知 revision 和未来 revision 仍然 fail closed。当前 schema 已包含 Project、Worktree、Session、Run、Worktree lifecycle、Session Handoff、Worktree Settings、Snapshot metadata 和 retention/restore fields。
 
 业务状态变化与 Event/Outbox 在同一 SQLite transaction 中提交。Outbox 投递失败不会删除事实。Runtime 重启会从 SQLite、Outbox、Long Task 和 Resource 状态恢复或进入 reconciliation。
 

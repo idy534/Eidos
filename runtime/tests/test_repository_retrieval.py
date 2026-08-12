@@ -6,6 +6,7 @@ import pytest
 
 from eidos_runtime.repo_intelligence.index import RepositoryIndexer
 from eidos_runtime.repo_intelligence.inventory import RepositoryInventoryBuilder
+from eidos_runtime.repo_intelligence.map import RepositoryMapBuilder
 from eidos_runtime.repo_intelligence.retrieval import (
     RepositoryRetrievalQuery,
     RepositoryRetriever,
@@ -36,8 +37,12 @@ def test_hybrid_retrieval_is_deterministic_explainable_and_exact_symbols_rank_fi
     database = Database(tmp_path / "data")
     database.initialize()
     repository = RepositoryIntelligenceRepository(database)
+    repository_map = RepositoryMapBuilder(root).build(inventory)
     repository.commit_complete(
-        inventory, index, RepositoryWorkspaceIdentity.from_root(root)
+        inventory,
+        index,
+        repository_map,
+        RepositoryWorkspaceIdentity.from_root(root),
     )
     retriever = RepositoryRetriever(inventory, index, repository)
     query = RepositoryRetrievalQuery(
@@ -91,8 +96,12 @@ def test_retrieval_rejects_mixed_or_incomplete_snapshots(tmp_path: Path) -> None
     database = Database(tmp_path / "data")
     database.initialize()
     repository = RepositoryIntelligenceRepository(database)
+    repository_map = RepositoryMapBuilder(root).build(inventory)
     repository.commit_complete(
-        inventory, index, RepositoryWorkspaceIdentity.from_root(root)
+        inventory,
+        index,
+        repository_map,
+        RepositoryWorkspaceIdentity.from_root(root),
     )
     with pytest.raises(ValueError, match="generation"):
         RepositoryRetriever(changed_inventory, index, repository)

@@ -254,6 +254,37 @@ def test_session_create_prewarms_repository_runtime_for_execution_workspace(
         store.close()
 
 
+def test_session_read_snapshot_activates_existing_execution_workspace(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = _store(tmp_path)
+    repository_runtime = _RepositoryRuntimePort()
+    try:
+        session = store.create_session(str(workspace))
+        application = SessionApplication(
+            store,
+            scan_text=lambda value: value,
+            repository_runtime=repository_runtime,
+        )
+
+        first = application.read_snapshot(
+            SessionReadRequestDto(sessionId=session["id"])
+        )
+        second = application.read_snapshot(
+            SessionReadRequestDto(sessionId=session["id"])
+        )
+
+        assert first.root == second.root
+        assert repository_runtime.activated == [
+            workspace.resolve(),
+            workspace.resolve(),
+        ]
+    finally:
+        store.close()
+
+
 def test_run_admission_ensures_repository_runtime_before_worker_start(
     tmp_path: Path,
 ) -> None:

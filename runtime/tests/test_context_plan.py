@@ -47,7 +47,10 @@ def test_context_plan_freezes_all_snapshots_and_reserves_output_budget(tmp_path:
     database.initialize()
     repository = RepositoryIntelligenceRepository(database)
     repository.commit_complete(
-        inventory, index, RepositoryWorkspaceIdentity.from_root(root)
+        inventory,
+        index,
+        repository_map,
+        RepositoryWorkspaceIdentity.from_root(root),
     )
     retrieval = RepositoryRetriever(inventory, index, repository).retrieve(
         RepositoryRetrievalQuery(text="main", mentioned_symbols=("main",))
@@ -136,7 +139,10 @@ def test_context_plan_rejects_stale_evidence_before_model_attempt(tmp_path: Path
     database.initialize()
     repository = RepositoryIntelligenceRepository(database)
     repository.commit_complete(
-        inventory, index, RepositoryWorkspaceIdentity.from_root(root)
+        inventory,
+        index,
+        repository_map,
+        RepositoryWorkspaceIdentity.from_root(root),
     )
     retrieval = RepositoryRetriever(inventory, index, repository).retrieve(
         RepositoryRetrievalQuery(text="main", mentioned_symbols=("main",))

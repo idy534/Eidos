@@ -19,8 +19,10 @@ from eidos_runtime.db.errors import (
     StorageError,
 )
 from eidos_runtime.db.schema import (
+    PREVIOUS_SCHEMA_VERSION,
     SCHEMA_SQL,
     SCHEMA_VERSION,
+    V1_TO_V2_MIGRATION_SQL,
 )
 from eidos_runtime.runtime.fault_injection import hit_fault
 
@@ -95,7 +97,10 @@ class Database:
             connection.row_factory = sqlite3.Row
             tables = _table_names(connection)
             revision = connection.execute("PRAGMA user_version").fetchone()[0]
-            if (tables and revision != SCHEMA_VERSION) or (
+            if (
+                tables
+                and revision not in {PREVIOUS_SCHEMA_VERSION, SCHEMA_VERSION}
+            ) or (
                 not tables and revision != 0
             ):
                 raise StorageError("schema_revision_unsupported")
@@ -110,6 +115,19 @@ class Database:
                     + SCHEMA_SQL
                     + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
                 )
+            elif revision == PREVIOUS_SCHEMA_VERSION:
+                try:
+                    connection.executescript(
+                        "BEGIN IMMEDIATE;\n"
+                        + V1_TO_V2_MIGRATION_SQL
+                        + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
+                    )
+                except sqlite3.Error as error:
+                    try:
+                        connection.execute("ROLLBACK")
+                    except sqlite3.Error:
+                        pass
+                    raise StorageError("schema_migration_failed") from error
             _verify_integrity(connection)
             self._connection = connection
             self.health_state = "ready"

@@ -38,6 +38,7 @@
 
 - Inventory、Repository generations、Tree-sitter Index、symbols/imports/references/chunks、Repository Map、SQLite FTS5、Retrieval Snapshot、ContextPlan 和 ContextSnapshot 已经有 typed infrastructure、persistence 和 focused tests。
 - Repository Generation 生命周期已经进入 Runtime。Workspace 激活会恢复 latest complete generation，并启动一个只负责 invalidation 的 watcher。Session、Run 和模型 Step 会复用 active generation。Watcher 不会自动 rebuild。
+- v1 数据库中的旧 generation 没有 persisted RepositoryMap。v2 migration 不会用当前文件系统回填旧 Map，所以这些旧 generation 不属于 fully-restorable generation，并保持 reconciliation required。
 - Cold start 只能检查旧 Inventory 中已知文件的 metadata。旧 Inventory 不能证明停机期间没有新增文件，所以 active state 会保持 reconciliation required。当前阶段没有实现自动 reconciliation 或首次 generation build 策略。
 - 当前默认 online Run 仍主要从 SQLite Item、Tool Result、Rule Snapshot、Skill 和显式 Context Fact 构建模型输入。RuntimeEngine 不会自动运行 Repository Retrieval → ContextPlan → ContextSnapshot，也不会把这些结果注入模型请求。
 - 因此，当前不能把 Repository Intelligence 描述成“没有实现”，也不能把它描述成“模型已经自动使用 Repository Retrieval”。正确状态是 generation lifecycle active、retrieval context not yet wired、not yet product-complete。

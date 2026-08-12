@@ -104,15 +104,18 @@ class RepositoryApplication:
             cancel=cancel,
             previous=restored.index if restored is not None else None,
         )
+        repository_map = self.map_builder.build(inventory) if index.complete else None
         persisted = (
-            self.repository.commit_complete(inventory, index, workspace_identity)
-            if index.complete
+            self.repository.commit_complete(
+                inventory,
+                index,
+                repository_map,
+                workspace_identity,
+            )
+            if repository_map is not None
             else self.repository.record_incomplete(
                 inventory, index, workspace_identity
             )
-        )
-        repository_map = (
-            self.map_builder.build(inventory) if index.complete else None
         )
         return RepositoryAnalysisSnapshot(
             inventory=inventory,
@@ -154,12 +157,17 @@ class RepositoryApplication:
         restored = self.restore_latest_complete()
         if restored is None:
             return None
-        repository_map = self.map_builder.build(restored.inventory)
+        if restored.repository_map is None:
+            return None
         return RepositoryAnalysisSnapshot(
             inventory=restored.inventory,
             index=restored.index,
-            repository_map=repository_map,
-            complete=restored.complete and restored.index is not None,
+            repository_map=restored.repository_map,
+            complete=(
+                restored.complete
+                and restored.index is not None
+                and restored.repository_map is not None
+            ),
             persisted_snapshot=restored,
         )
 
