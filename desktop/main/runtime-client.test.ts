@@ -124,6 +124,9 @@ test("preserves every workspace and lifecycle business code in the closed contra
     "WORKSPACE_FILE_TOO_LARGE",
     "WORKSPACE_SENSITIVE_CONTENT",
     "GIT_DISCARD_REQUIRES_UNSTAGED",
+    "REVIEW_DIFF_CHANGED",
+    "REVIEW_COMMENT_ID_REUSED",
+    "REVIEW_COMMENT_NOT_FOUND",
     "CHECKPOINT_GIT_STATE_UNAVAILABLE",
     "CHECKPOINT_FORK_WORKTREE_FAILED",
     "DIRECT_CHECKPOINT_FORK_PATH_FORBIDDEN",
@@ -347,6 +350,21 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
     const fileDiff = await client.readSessionGitDiff(local.id, "head", "WORKFLOW.txt");
     assert.deepEqual(fileDiff.changedFiles, ["WORKFLOW.txt"]);
     assert.match(fileDiff.unifiedDiff, /workflow/);
+    const reviewComment = await client.createReviewComment(local.id, {
+      commentId: randomUUID(),
+      path: "WORKFLOW.txt",
+      scope: "head",
+      side: "new",
+      line: 1,
+      body: "Add a focused test.",
+      baseHead: fileDiff.head,
+      diffHash: fileDiff.diffHash,
+    }, randomUUID());
+    assert.equal(reviewComment.status, "active");
+    assert.deepEqual(
+      await client.listReviewComments(local.id, "WORKFLOW.txt", "head"),
+      [reviewComment],
+    );
     const discarded = await client.discardSessionGit(
       local.id,
       "WORKFLOW.txt",
@@ -354,6 +372,14 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
     );
     assert.deepEqual(discarded.status.untrackedFiles, []);
     await assert.rejects(readFile(path.join(repositoryRoot, "WORKFLOW.txt"), "utf8"));
+    assert.equal(
+      (await client.listReviewComments(local.id, "WORKFLOW.txt", "head"))[0]?.status,
+      "stale",
+    );
+    assert.equal(
+      await client.deleteReviewComment(local.id, reviewComment.id, randomUUID()),
+      reviewComment.id,
+    );
     await writeFile(path.join(repositoryRoot, "WORKFLOW.txt"), "workflow\n", "utf8");
     const stageOperationId = "77777777-7777-4777-8777-777777777777";
     const staged = await client.stageSessionGit(

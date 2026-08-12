@@ -195,7 +195,7 @@ Workspace Explorer 复用 `RepositoryWatchController`。Watcher 事件只产生 
 
 SQLite 是业务事实唯一权威。Session、Run、Item、ToolCall、Approval、Tool Attempt、Execution Segment、Step、Model Attempt、Durable Intent、Event、Outbox、Async Operation、Extension Snapshot、Context、Repository Snapshot、Compaction 和 Checkpoint 都有持久化边界。
 
-当前 `SCHEMA_VERSION` 是 1，对应 Eidos 0.3 的 SQLite 基线。新数据库直接创建完整的当前 schema。已有数据库只有 `PRAGMA user_version = 1` 才会打开。旧 revision、未知 revision 和未来 revision 都 fail closed。Runtime 不执行历史 migration，也不修改不兼容数据库。当前 schema 已包含 Project、Worktree、Session、Run、Worktree lifecycle、Session Handoff、Worktree Settings、Snapshot metadata 和 retention/restore fields。
+当前 `SCHEMA_VERSION` 是 1，对应 Eidos 0.3 的 SQLite 基线。新数据库直接创建完整的当前 schema。已有数据库只有 `PRAGMA user_version = 1` 才会打开。旧 revision、未知 revision 和未来 revision 都 fail closed。Runtime 不执行历史 migration，也不修改不兼容数据库。当前 schema 已包含 Project、Worktree、Session、Run、Worktree lifecycle、Session Handoff、Worktree Settings、Snapshot metadata、retention/restore fields 和 inline `review_comments`。
 
 业务状态变化与 Event/Outbox 在同一 SQLite transaction 中提交。Outbox 投递失败不会删除事实。Runtime 重启会从 SQLite、Outbox、Long Task 和 Resource 状态恢复或进入 reconciliation。
 
@@ -283,6 +283,10 @@ Local Git mutation、Fetch、Pull 和 Push 都先完成无副作用 preflight，
 `session/gitMerge` 先检查 idle Session、attached branch、clean Workspace，以及没有已有 merge 或 rebase。Eidos 通过 Dulwich 把 local branch 或显式 revision 解析成固定 commit id。Native Git 执行 `git merge --no-edit <commit>`。成功后 Runtime 重新观察 HEAD、status 和 operation state。冲突不是通用失败。Runtime 返回 `operationState=merge` 和 structured `conflictFiles`，并把该结果写入 operationId replay。`session/gitMergeAbort` 只执行 native `git merge --abort`。Merge commit 使用与 commit 相同的受控 identity。Hooks 继续禁用。Session 的 `base_commit` 不会改变。
 
 `session/gitRebase` 使用与 Merge 相同的 preflight 和 target resolution 边界。Native Git 执行 `git rebase <resolved-commit>`。冲突结果返回 `operationState=rebase` 和 structured `conflictFiles`，并写入 operationId replay。修复文件并 Stage 后，`session/gitRebaseContinue` 执行 `git rebase --continue`。Runner 把 `GIT_EDITOR` 设为无副作用的成功程序，所以 Git 保留原 commit message，并且不会打开 editor。`GIT_SEQUENCE_EDITOR` 始终禁用。`session/gitRebaseAbort` 只执行 native `git rebase --abort`。Git repository 中的 rebase metadata 是唯一 operation state 权威。Eidos 不持久化第二份 merge/rebase 状态。Session 的 `base_commit` 不会改变。
+
+Inline Review Comment 是 Eidos 产品语义，不进入 `GitBackend`。SQLite `review_comments` 是 Comment 的唯一事实来源。记录保存 Session、path、Diff scope、old/new side、line、body、观察到的 HEAD、Diff hash、active/stale 状态和时间。`review/createComment` 会先按 operationId 回放已完成结果，再重新请求 file-scoped native Git Diff，并核对 HEAD、changed file 和 SHA-256 Diff hash。`review/listComments` 会再次观察对应 Diff。只有 HEAD 和 Diff hash 都相同时，Comment 才保持 active。其他情况一律标成 stale。Runtime 不做模糊重定位。
+
+Renderer 使用 `react-diff-view` 的 gutter event 和 widget extension 展示 Comment。Renderer 不修改第三方 Diff renderer。`review/createComment` 和 `review/deleteComment` 使用现有 `operations` 表提供 operationId replay。Comment 创建和删除不会启动 Run。显式 Send Review Feedback 只收集 active Comment，把它们格式化为普通用户输入，再调用现有 `run/start` 链路。
 
 Run 的执行 identity 固化在 `RunResolutionSnapshot.workspace_identity`。Runtime 会在启动和恢复 Run 时重新验证 Worktree、root、Git dir、Git common dir 和 inode/device/owner。Runtime 不会把 managed Run fallback 到 repository root。
 

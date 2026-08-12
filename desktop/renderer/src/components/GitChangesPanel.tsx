@@ -1,10 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
-import { Diff, Hunk, parseDiff } from "react-diff-view";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  Diff,
+  Hunk,
+  getChangeKey,
+  parseDiff,
+  type ChangeData,
+} from "react-diff-view";
 
 import type {
   GitDiffScope,
   SessionGitDiff,
   SessionGitStatus,
+  ReviewComment,
+  ReviewCommentCreateInput,
 } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
 import { Button } from "./Button.js";
@@ -36,6 +44,23 @@ interface GitChangesPanelProps {
   unstage?: (sessionId: string, paths: string[], operationId: string) => Promise<unknown>;
   discard?: (sessionId: string, path: string, operationId: string) => Promise<unknown>;
   openInEditor?: (sessionId: string, path: string) => Promise<void>;
+  listComments?: (
+    sessionId: string,
+    path?: string,
+    scope?: GitDiffScope,
+  ) => Promise<ReviewComment[]>;
+  createComment?: (
+    sessionId: string,
+    input: ReviewCommentCreateInput,
+    operationId: string,
+  ) => Promise<ReviewComment>;
+  deleteComment?: (
+    sessionId: string,
+    commentId: string,
+    operationId: string,
+  ) => Promise<string>;
+  onSendReviewFeedback?: (feedback: string) => Promise<void>;
+  reviewFeedbackDisabled?: boolean;
 }
 
 const defaultReadDiff: NonNullable<GitChangesPanelProps["readDiff"]> = (id, scope, path) => (
@@ -53,6 +78,30 @@ const defaultDiscard: NonNullable<GitChangesPanelProps["discard"]> = (id, path, 
 const defaultOpenInEditor: NonNullable<GitChangesPanelProps["openInEditor"]> = (id, path) => (
   window.eidosRuntime.openWorkspacePathInEditor(id, path)
 );
+const defaultListComments: NonNullable<GitChangesPanelProps["listComments"]> = (
+  id, path, scope,
+) => window.eidosRuntime.listReviewComments(id, path, scope);
+const defaultCreateComment: NonNullable<GitChangesPanelProps["createComment"]> = (
+  id, input, operationId,
+) => window.eidosRuntime.createReviewComment(id, input, operationId);
+const defaultDeleteComment: NonNullable<GitChangesPanelProps["deleteComment"]> = (
+  id, commentId, operationId,
+) => window.eidosRuntime.deleteReviewComment(id, commentId, operationId);
+
+interface CommentAnchor {
+  side: "old" | "new";
+  line: number;
+}
+
+export function formatReviewFeedback(comments: readonly ReviewComment[]): string {
+  const active = comments.filter((comment) => comment.status === "active");
+  return [
+    "Please address the following review feedback:",
+    ...active.map((comment) => (
+      `- ${comment.path} (${comment.side} line ${comment.line}): ${comment.body}`
+    )),
+  ].join("\n");
+}
 
 function sameSelection(left: FileSelection | undefined, right: FileSelection): boolean {
   return left?.group === right.group && left.path === right.path;
@@ -71,6 +120,11 @@ export function GitChangesPanel({
   unstage = defaultUnstage,
   discard = defaultDiscard,
   openInEditor = defaultOpenInEditor,
+  listComments = defaultListComments,
+  createComment = defaultCreateComment,
+  deleteComment = defaultDeleteComment,
+  onSendReviewFeedback,
+  reviewFeedbackDisabled = false,
 }: GitChangesPanelProps) {
   const groups = useMemo<readonly FileGroup[]>(() => [
     { id: "staged", label: "Staged", paths: status?.stagedFiles ?? [] },
@@ -87,6 +141,10 @@ export function GitChangesPanel({
   const [diffLoading, setDiffLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [localError, setLocalError] = useState<string | undefined>(undefined);
+  const [comments, setComments] = useState<ReviewComment[]>([]);
+  const [draftAnchor, setDraftAnchor] = useState<CommentAnchor | undefined>();
+  const [draftBody, setDraftBody] = useState("");
+  const [commentLoading, setCommentLoading] = useState(false);
 
   useEffect(() => {
     setSelection((current) => (
@@ -112,6 +170,20 @@ export function GitChangesPanel({
     return () => { current = false; };
   }, [readDiff, scope, selection, sessionId]);
 
+  useEffect(() => {
+    let current = true;
+    setComments([]);
+    setDraftAnchor(undefined);
+    setDraftBody("");
+    if (!selection) return () => { current = false; };
+    void listComments(sessionId, selection.path, scope).then((nextComments) => {
+      if (current) setComments(nextComments);
+    }).catch((cause: unknown) => {
+      if (current) setLocalError(userFacingError(cause));
+    });
+    return () => { current = false; };
+  }, [listComments, scope, selection, sessionId]);
+
   const parsedFiles = useMemo(() => {
     if (!fileDiff?.unifiedDiff) return [];
     try {
@@ -136,6 +208,61 @@ export function GitChangesPanel({
 
   const operationId = (): string => crypto.randomUUID();
   const selectedPath = selection?.path;
+  const staleComments = comments.filter((comment) => comment.status === "stale");
+
+  const submitComment = async (): Promise<void> => {
+    if (!selection || !fileDiff || !draftAnchor || !draftBody.trim()) return;
+    setCommentLoading(true);
+    setLocalError(undefined);
+    try {
+      const comment = await createComment(sessionId, {
+        commentId: crypto.randomUUID(),
+        path: selection.path,
+        scope,
+        side: draftAnchor.side,
+        line: draftAnchor.line,
+        body: draftBody.trim(),
+        baseHead: fileDiff.head,
+        diffHash: fileDiff.diffHash,
+      }, operationId());
+      setComments((current) => [...current, comment]);
+      setDraftAnchor(undefined);
+      setDraftBody("");
+    } catch (cause: unknown) {
+      setLocalError(userFacingError(cause));
+    } finally {
+      setCommentLoading(false);
+    }
+  };
+
+  const removeComment = async (commentId: string): Promise<void> => {
+    setCommentLoading(true);
+    setLocalError(undefined);
+    try {
+      await deleteComment(sessionId, commentId, operationId());
+      setComments((current) => current.filter((comment) => comment.id !== commentId));
+    } catch (cause: unknown) {
+      setLocalError(userFacingError(cause));
+    } finally {
+      setCommentLoading(false);
+    }
+  };
+
+  const sendReviewFeedback = async (): Promise<void> => {
+    if (!onSendReviewFeedback) return;
+    setCommentLoading(true);
+    setLocalError(undefined);
+    try {
+      const allComments = await listComments(sessionId);
+      const active = allComments.filter((comment) => comment.status === "active");
+      if (!active.length) return;
+      await onSendReviewFeedback(formatReviewFeedback(active));
+    } catch (cause: unknown) {
+      setLocalError(userFacingError(cause));
+    } finally {
+      setCommentLoading(false);
+    }
+  };
 
   return (
     <section className="git-changes-panel" aria-label="Git Changes">
@@ -169,6 +296,16 @@ export function GitChangesPanel({
         >
           刷新
         </Button>
+        {onSendReviewFeedback && (
+          <Button
+            variant="secondary"
+            size="small"
+            disabled={commentLoading || reviewFeedbackDisabled}
+            onClick={() => void sendReviewFeedback()}
+          >
+            Send Review Feedback
+          </Button>
+        )}
       </header>
 
       {status && (
@@ -274,10 +411,69 @@ export function GitChangesPanel({
               <p className="git-diff-truncated" role="status">Diff 已截断</p>
             )}
             {parsedFiles.map((file) => (
-              <Diff key={`${file.oldPath}:${file.newPath}`} viewType="unified" diffType={file.type} hunks={file.hunks}>
+              <Diff
+                key={`${file.oldPath}:${file.newPath}`}
+                viewType="unified"
+                diffType={file.type}
+                hunks={file.hunks}
+                gutterEvents={{
+                  onClick: ({ change, side }) => {
+                    const anchor = change && commentAnchor(change, side);
+                    if (anchor) setDraftAnchor(anchor);
+                  },
+                }}
+                widgets={commentWidgets(
+                  file.hunks.flatMap((hunk) => hunk.changes),
+                  comments,
+                  draftAnchor,
+                  <div className="review-comment-draft">
+                    <textarea
+                      aria-label="Review comment"
+                      value={draftBody}
+                      onChange={(event) => setDraftBody(event.target.value)}
+                      placeholder="Add review feedback…"
+                      maxLength={16_384}
+                    />
+                    <div>
+                      <Button
+                        size="small"
+                        variant="primary"
+                        loading={commentLoading}
+                        disabled={!draftBody.trim()}
+                        onClick={() => void submitComment()}
+                      >
+                        Add Comment
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="ghost"
+                        onClick={() => {
+                          setDraftAnchor(undefined);
+                          setDraftBody("");
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>,
+                  (commentId) => void removeComment(commentId),
+                )}
+              >
                 {(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
               </Diff>
             ))}
+            {staleComments.length > 0 && (
+              <aside className="review-stale-comments" aria-label="Stale review comments">
+                <strong>Outdated comments</strong>
+                {staleComments.map((comment) => (
+                  <div key={comment.id}>
+                    <span>{comment.side} line {comment.line}</span>
+                    <p>{comment.body}</p>
+                    <button type="button" onClick={() => void removeComment(comment.id)}>Delete</button>
+                  </div>
+                ))}
+              </aside>
+            )}
             {!parsedFiles.length && (
               <p className="git-diff-empty">
                 {diffLoading ? "正在读取 Diff…" : selectedPath ? "该文件没有可显示的文本 Diff" : "请选择文件"}
@@ -288,4 +484,46 @@ export function GitChangesPanel({
       </div>
     </section>
   );
+}
+
+function commentAnchor(change: ChangeData, side?: "old" | "new"): CommentAnchor | undefined {
+  if (change.type === "insert") return { side: "new", line: change.lineNumber };
+  if (change.type === "delete") return { side: "old", line: change.lineNumber };
+  if (side === "old") return { side, line: change.oldLineNumber };
+  return { side: "new", line: change.newLineNumber };
+}
+
+function commentWidgets(
+  changes: readonly ChangeData[],
+  comments: readonly ReviewComment[],
+  draftAnchor: CommentAnchor | undefined,
+  draft: ReactNode,
+  onDelete: (commentId: string) => void,
+): Record<string, ReactNode> {
+  const widgets: Record<string, ReactNode> = {};
+  for (const change of changes) {
+    const anchors = change.type === "normal"
+      ? [commentAnchor(change, "old"), commentAnchor(change, "new")]
+      : [commentAnchor(change)];
+    const anchored = comments.filter((comment) => (
+      comment.status === "active"
+      && anchors.some((anchor) => anchor?.side === comment.side && anchor?.line === comment.line)
+    ));
+    const hasDraft = draftAnchor && anchors.some((anchor) => (
+      anchor?.side === draftAnchor.side && anchor.line === draftAnchor.line
+    ));
+    if (!anchored.length && !hasDraft) continue;
+    widgets[getChangeKey(change)] = (
+      <div className="review-comment-widget">
+        {anchored.map((comment) => (
+          <div className="review-comment" key={comment.id}>
+            <p>{comment.body}</p>
+            <button type="button" onClick={() => onDelete(comment.id)}>Delete</button>
+          </div>
+        ))}
+        {hasDraft ? draft : null}
+      </div>
+    );
+  }
+  return widgets;
 }

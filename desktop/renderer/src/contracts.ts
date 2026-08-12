@@ -19,6 +19,8 @@ export type {
   GitDiffScope,
   SessionGitStatus,
   SessionGitDiff,
+  ReviewComment,
+  ReviewCommentCreateInput,
   SessionListResult,
   SessionSnapshot,
   StepResolutionReview,

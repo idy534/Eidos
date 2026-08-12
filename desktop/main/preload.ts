@@ -20,6 +20,8 @@ import type {
   SessionGitMutationResult,
   SessionGitCommitResult,
   SessionGitDiscardResult,
+  ReviewComment,
+  ReviewCommentCreateInput,
   GitRemoteStatus,
   GitFetchResult,
   GitPullResult,
@@ -144,6 +146,24 @@ const api: EidosRuntimeAPI = {
     operationId: string,
   ): Promise<SessionGitDiscardResult> =>
     ipcRenderer.invoke(IPC.SESSION_GIT_DISCARD, sessionId, path, operationId),
+  listReviewComments: (
+    sessionId: string,
+    path?: string,
+    scope?: GitDiffScope,
+  ): Promise<ReviewComment[]> =>
+    ipcRenderer.invoke(IPC.REVIEW_LIST_COMMENTS, sessionId, path, scope),
+  createReviewComment: (
+    sessionId: string,
+    input: ReviewCommentCreateInput,
+    operationId: string,
+  ): Promise<ReviewComment> =>
+    ipcRenderer.invoke(IPC.REVIEW_CREATE_COMMENT, sessionId, input, operationId),
+  deleteReviewComment: (
+    sessionId: string,
+    commentId: string,
+    operationId: string,
+  ): Promise<string> =>
+    ipcRenderer.invoke(IPC.REVIEW_DELETE_COMMENT, sessionId, commentId, operationId),
   readSessionGitRemoteStatus: (sessionId: string): Promise<GitRemoteStatus> =>
     ipcRenderer.invoke(IPC.SESSION_GIT_REMOTE_STATUS, sessionId),
   fetchSessionGit: (

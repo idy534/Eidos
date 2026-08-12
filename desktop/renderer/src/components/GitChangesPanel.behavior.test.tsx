@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { SessionGitDiff, SessionGitStatus } from "../contracts.js";
+import type { ReviewComment, SessionGitDiff, SessionGitStatus } from "../contracts.js";
 import { GitChangesPanel } from "./GitChangesPanel.js";
 
 
@@ -39,6 +39,7 @@ function fileDiff(path: string): SessionGitDiff {
       "+new",
       "",
     ].join("\n"),
+    diffHash: "d".repeat(64),
     truncated: false,
     observedAt: 1,
   };
@@ -50,6 +51,16 @@ function renderPanel(overrides: Partial<Parameters<typeof GitChangesPanel>[0]> =
   const unstage = vi.fn().mockResolvedValue(undefined);
   const discard = vi.fn().mockResolvedValue(undefined);
   const openInEditor = vi.fn().mockResolvedValue(undefined);
+  const listComments = vi.fn().mockResolvedValue([]);
+  const createComment = vi.fn().mockImplementation((sessionId, input) => Promise.resolve({
+    id: input.commentId,
+    sessionId,
+    ...input,
+    status: "active",
+    createdAt: 1,
+    updatedAt: 1,
+  } satisfies ReviewComment));
+  const deleteComment = vi.fn().mockResolvedValue("comment-a");
   const onRefresh = vi.fn();
   const result = render(
     <GitChangesPanel
@@ -65,10 +76,16 @@ function renderPanel(overrides: Partial<Parameters<typeof GitChangesPanel>[0]> =
       unstage={unstage}
       discard={discard}
       openInEditor={openInEditor}
+      listComments={listComments}
+      createComment={createComment}
+      deleteComment={deleteComment}
       {...overrides}
     />,
   );
-  return { result, readDiff, stage, unstage, discard, openInEditor, onRefresh };
+  return {
+    result, readDiff, stage, unstage, discard, openInEditor, onRefresh,
+    listComments, createComment, deleteComment,
+  };
 }
 
 describe("GitChangesPanel", () => {
@@ -125,5 +142,66 @@ describe("GitChangesPanel", () => {
     expect(screen.queryByRole("button", { name: "Unstage" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Discard" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open in Editor" })).toBeEnabled();
+  });
+
+  it("creates an inline comment from a Diff gutter and renders it as a widget", async () => {
+    const { result, createComment } = renderPanel();
+    await screen.findByText("new");
+    const gutters = result.container.querySelectorAll(".diff-gutter");
+    fireEvent.click(gutters[gutters.length - 1]!);
+    fireEvent.change(screen.getByRole("textbox", { name: "Review comment" }), {
+      target: { value: "Please add a test." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add Comment" }));
+
+    await waitFor(() => expect(createComment).toHaveBeenCalledWith(
+      "session-a",
+      expect.objectContaining({
+        path: "README.md",
+        scope: "head",
+        side: "new",
+        line: 1,
+        body: "Please add a test.",
+        baseHead: "b".repeat(40),
+        diffHash: "d".repeat(64),
+      }),
+      expect.any(String),
+    ));
+    expect(await screen.findByText("Please add a test.")).toBeInTheDocument();
+  });
+
+  it("sends only active comments through normal review feedback", async () => {
+    const active: ReviewComment = {
+      id: "comment-active",
+      sessionId: "session-a",
+      path: "README.md",
+      scope: "head",
+      side: "new",
+      line: 1,
+      body: "Add coverage.",
+      baseHead: "b".repeat(40),
+      diffHash: "d".repeat(64),
+      status: "active",
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const stale: ReviewComment = {
+      ...active,
+      id: "comment-stale",
+      body: "Old feedback.",
+      status: "stale",
+    };
+    const listComments = vi.fn().mockResolvedValue([active, stale]);
+    const onSendReviewFeedback = vi.fn().mockResolvedValue(undefined);
+    renderPanel({ listComments, onSendReviewFeedback });
+
+    expect(await screen.findByText("Add coverage.")).toBeInTheDocument();
+    expect(await screen.findByText("Old feedback.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send Review Feedback" }));
+
+    await waitFor(() => expect(onSendReviewFeedback).toHaveBeenCalledWith(
+      "Please address the following review feedback:\n"
+      + "- README.md (new line 1): Add coverage.",
+    ));
   });
 });

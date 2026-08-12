@@ -52,6 +52,7 @@ def test_runtime_application_container_composes_all_phase_ef_boundaries(tmp_path
     assert applications.checkpoints is not None
     assert applications.task_lifecycle is not None
     assert applications.workspace is not None
+    assert applications.review is not None
 
     registered = {registration.name for registration in server.method_registry}
     assert {
@@ -66,5 +67,6 @@ def test_runtime_application_container_composes_all_phase_ef_boundaries(tmp_path
         "checkpoint/create", "checkpoint/list", "checkpoint/rewind",
         "checkpoint/fork",
         "workspace/listDirectory", "workspace/readFilePreview",
+        "review/listComments", "review/createComment", "review/deleteComment",
     } <= registered
     server.close()

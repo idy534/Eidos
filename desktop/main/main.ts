@@ -19,6 +19,7 @@ import type {
   ModelCreateInput,
   ModelUpdateInput,
   ResponseFeedbackValue,
+  ReviewCommentCreateInput,
 } from "../shared/index.js";
 import { IPC, MAX_APPROVAL_FEEDBACK_BYTES } from "../shared/index.js";
 
@@ -194,6 +195,25 @@ function isNonEmptyStringArray(value: unknown): value is string[] {
     Array.isArray(value)
     && value.length > 0
     && value.every((item) => typeof item === "string" && item.length > 0)
+  );
+}
+
+function isReviewCommentCreateInput(value: unknown): value is ReviewCommentCreateInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).every((key) => [
+      "commentId", "path", "scope", "side", "line", "body", "baseHead", "diffHash",
+    ].includes(key))
+    && typeof record.commentId === "string"
+    && typeof record.path === "string"
+    && (record.scope === "head" || record.scope === "baseline")
+    && (record.side === "old" || record.side === "new")
+    && Number.isInteger(record.line)
+    && Number(record.line) > 0
+    && typeof record.body === "string"
+    && typeof record.baseHead === "string"
+    && typeof record.diffHash === "string"
   );
 }
 
@@ -639,6 +659,56 @@ ipcMain.handle(IPC.SESSION_GIT_DISCARD, (
     throw new Error("Git Discard 参数无效。");
   }
   return clientOrThrow().discardSessionGit(sessionId, relativePath, operationId);
+});
+ipcMain.handle(IPC.REVIEW_LIST_COMMENTS, (
+  _event,
+  sessionId: unknown,
+  relativePath: unknown,
+  scope: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || (relativePath !== undefined && typeof relativePath !== "string")
+    || (scope !== undefined && scope !== "head" && scope !== "baseline")
+    || ((relativePath === undefined) !== (scope === undefined))
+  ) {
+    throw new Error("Review Comment 参数无效。");
+  }
+  return clientOrThrow().listReviewComments(
+    sessionId,
+    relativePath as string | undefined,
+    scope as "head" | "baseline" | undefined,
+  );
+});
+ipcMain.handle(IPC.REVIEW_CREATE_COMMENT, (
+  _event,
+  sessionId: unknown,
+  input: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || !isReviewCommentCreateInput(input)
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Review Comment 参数无效。");
+  }
+  return clientOrThrow().createReviewComment(sessionId, input, operationId);
+});
+ipcMain.handle(IPC.REVIEW_DELETE_COMMENT, (
+  _event,
+  sessionId: unknown,
+  commentId: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof commentId !== "string"
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Review Comment 参数无效。");
+  }
+  return clientOrThrow().deleteReviewComment(sessionId, commentId, operationId);
 });
 ipcMain.handle(IPC.SESSION_GIT_REMOTE_STATUS, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Git Remote 参数无效。");

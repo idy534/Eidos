@@ -62,6 +62,7 @@ EXPECTED_TABLES = {
     "checkpoint_actions",
     "response_feedback",
     "run_revisions",
+    "review_comments",
     "projects",
     "worktrees",
     "worktree_lifecycle_operations",
@@ -85,6 +86,10 @@ EXPECTED_COLUMNS = {
     },
     "compact_summaries": {"summary_metadata_json"},
     "items": {"incomplete"},
+    "review_comments": {
+        "session_id", "path", "scope", "side", "line", "body",
+        "base_head", "diff_hash", "status", "created_at", "updated_at",
+    },
     "runs": {
         "extension_snapshot_json",
         "activated_tools_json",
@@ -266,6 +271,7 @@ class StorageSchemaTests(unittest.TestCase):
                 "repository_diagnostics_generation",
                 "checkpoints_run_boundary",
                 "run_revisions_source",
+                "review_comments_session_path",
                 "worktrees_project_state",
                 "worktrees_project_ownership",
                 "sessions_worktree_id",

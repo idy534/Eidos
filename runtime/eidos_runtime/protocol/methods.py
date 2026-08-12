@@ -583,6 +583,7 @@ class SessionGitDiffResponseDto(MethodResultDto):
     dirty: bool
     changed_files: list[StrictStr] = Field(alias="changedFiles")
     unified_diff: StrictStr = Field(alias="unifiedDiff")
+    diff_hash: StrictStr = Field(alias="diffHash", min_length=64, max_length=64)
     truncated: bool
     observed_at: StrictInt = Field(alias="observedAt", ge=0)
 

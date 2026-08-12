@@ -158,8 +158,35 @@ export interface SessionGitDiff {
   dirty: boolean;
   changedFiles: string[];
   unifiedDiff: string;
+  diffHash: string;
   truncated: boolean;
   observedAt: number;
+}
+
+export interface ReviewComment {
+  id: string;
+  sessionId: string;
+  path: string;
+  scope: GitDiffScope;
+  side: "old" | "new";
+  line: number;
+  body: string;
+  baseHead: string;
+  diffHash: string;
+  status: "active" | "stale";
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ReviewCommentCreateInput {
+  commentId: string;
+  path: string;
+  scope: GitDiffScope;
+  side: "old" | "new";
+  line: number;
+  body: string;
+  baseHead: string;
+  diffHash: string;
 }
 
 export interface WorkspaceDirectoryEntry {

@@ -82,6 +82,7 @@
 - Desktop 提供按 Session execution root 浏览的 Workspace Explorer。文件树通过 `workspace/listDirectory` 延迟读取一层目录，并使用 `react-arborist` 虚拟化。UTF-8 text/code 和 Markdown 使用有界 `workspace/readFilePreview`。Markdown 复用现有 Renderer，代码由 Shiki 高亮。二进制、PDF、Office、archive 和 database 文件返回 typed unavailable preview。
 - Workspace Explorer 与 Agent 文件工具共用 `WorkspaceReader` 的路径边界。外部文件变化复用 `RepositoryWatchController`，只刷新已加载的受影响目录。
 - Desktop Changes 视图直接使用 `session/gitStatus` 的 Staged、Changes、Untracked 和 Conflicts 文件列表。Renderer 只为当前选中文件请求 `session/gitDiff(path)`，并用 `react-diff-view` 显示 native Git patch。Accept 和 Unstage 分别调用 `session/gitStage` 和 `session/gitUnstage`。Open in Editor 只把相对路径交给 Main，Main 会按当前 Session execution root 重新验证真实路径。
+- Changes 视图支持在 Diff gutter 上创建行级 Review Comment。Comment 绑定 Session、path、scope、old/new side、line、观察到的 HEAD 和 Diff hash。Diff 变化后，Runtime 会把无法精确证明仍有效的 Comment 标成 stale。用户点击 Send Review Feedback 后，Desktop 只把 active Comment 格式化成普通用户输入，并复用现有 Run 启动链路。创建 Comment 本身不会启动 Agent。
 - `search_text` 使用随 Runtime 管理、manifest 校验和 SHA256 校验的 macOS arm64 Ripgrep 资源。
 - Repository Intelligence 基础设施已经实现 Inventory、Repository generation、Tree-sitter Index、symbols/imports/references/chunks、Repository Map、SQLite FTS5、RapidFuzz retrieval、Retrieval Snapshot 和 ContextPlan。
 - Repository Intelligence 的不完整 generation 不会替换上一个完整 generation。Watcher 只提供失效信号，不改变活动 Snapshot。

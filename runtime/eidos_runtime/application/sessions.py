@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-import hashlib
 import logging
 from pathlib import Path
 import unicodedata
@@ -1178,6 +1178,9 @@ class SessionApplication:
                 "dirty": diff.dirty,
                 "changedFiles": list(diff.changed_files),
                 "unifiedDiff": diff.unified_diff,
+                "diffHash": hashlib.sha256(
+                    diff.unified_diff.encode("utf-8")
+                ).hexdigest(),
                 "truncated": diff.truncated,
                 "observedAt": _timestamp_millis(diff.observed_at),
             },

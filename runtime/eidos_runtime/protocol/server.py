@@ -33,6 +33,7 @@ from eidos_runtime.application.extensions import (
 from eidos_runtime.application.models import ModelApplication
 from eidos_runtime.application.runs import RunApplication, RunStartOutcome
 from eidos_runtime.application.repository import RepositoryApplicationFactory
+from eidos_runtime.application.review import ReviewApplication
 from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
 from eidos_runtime.application.sessions import (
     DeferredGitFetch,
@@ -65,7 +66,9 @@ from eidos_runtime.model.pydantic_ai_client import (
 from eidos_runtime.model_gateway.gateway import ModelGateway
 from eidos_runtime.domain.long_task import LongTaskProgress
 from eidos_runtime.git.manager import WorktreeManager
+from eidos_runtime.persistence.review_comments import ReviewCommentRepository
 from eidos_runtime.protocol import methods as method_dtos
+from eidos_runtime.protocol import review as review_dtos
 from eidos_runtime.protocol.registry import (
     DeferredMethodResult,
     MethodApplicationError,
@@ -443,6 +446,7 @@ class _RuntimeApplications:
     checkpoints: CheckpointApplication
     task_lifecycle: TaskLifecycleApplication
     workspace: WorkspaceExplorerApplication
+    review: ReviewApplication
 
 
 class _ServerRunEnvironment:
@@ -744,6 +748,30 @@ class RuntimeServer:
                 method_dtos.WorkspaceReadFilePreviewRequestDto,
                 method_dtos.WorkspaceReadFilePreviewResponseDto,
                 lambda _id, request: self._applications_or_error().workspace.read_file_preview(
+                    request
+                ),
+            ),
+            (
+                "review/listComments",
+                review_dtos.ReviewCommentListRequestDto,
+                review_dtos.ReviewCommentListResponseDto,
+                lambda _id, request: self._applications_or_error().review.list_comments(
+                    request
+                ),
+            ),
+            (
+                "review/createComment",
+                review_dtos.ReviewCommentCreateRequestDto,
+                review_dtos.ReviewCommentCreateResponseDto,
+                lambda _id, request: self._applications_or_error().review.create_comment(
+                    request
+                ),
+            ),
+            (
+                "review/deleteComment",
+                review_dtos.ReviewCommentDeleteRequestDto,
+                review_dtos.ReviewCommentDeleteResponseDto,
+                lambda _id, request: self._applications_or_error().review.delete_comment(
                     request
                 ),
             ),
@@ -1181,14 +1209,15 @@ class RuntimeServer:
             _ServerTaskLifecycleRuntime(self.supervisor)
         )
         session_lifecycle = SessionLifecycleCoordinator()
+        sessions = SessionApplication(
+            self.store,
+            scan_text=self._scan_text,
+            worktree_manager=self.worktree_manager,
+            lifecycle=session_lifecycle,
+            retention=self.worktree_retention,
+        )
         return _RuntimeApplications(
-            sessions=SessionApplication(
-                self.store,
-                scan_text=self._scan_text,
-                worktree_manager=self.worktree_manager,
-                lifecycle=session_lifecycle,
-                retention=self.worktree_retention,
-            ),
+            sessions=sessions,
             runs=RunApplication(
                 store=self.store,
                 runtime=self.supervisor,
@@ -1235,6 +1264,11 @@ class RuntimeServer:
                         "paths": [change.path for change in changes],
                     },
                 }),
+            ),
+            review=ReviewApplication(
+                ReviewCommentRepository(self.store.database),
+                git=sessions,
+                scan_text=self._scan_text,
             ),
         )
 

@@ -17,6 +17,8 @@ import type {
   SessionGitMutationResult,
   SessionGitCommitResult,
   SessionGitDiscardResult,
+  ReviewComment,
+  ReviewCommentCreateInput,
   GitRemoteStatus,
   GitFetchResult,
   GitPullResult,
@@ -122,6 +124,21 @@ export interface EidosRuntimeAPI {
     path: string,
     operationId: string,
   ): Promise<SessionGitDiscardResult>;
+  listReviewComments(
+    sessionId: string,
+    path?: string,
+    scope?: GitDiffScope,
+  ): Promise<ReviewComment[]>;
+  createReviewComment(
+    sessionId: string,
+    input: ReviewCommentCreateInput,
+    operationId: string,
+  ): Promise<ReviewComment>;
+  deleteReviewComment(
+    sessionId: string,
+    commentId: string,
+    operationId: string,
+  ): Promise<string>;
   readSessionGitRemoteStatus(sessionId: string): Promise<GitRemoteStatus>;
   fetchSessionGit(
     sessionId: string,

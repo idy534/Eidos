@@ -100,6 +100,9 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "GIT_WORKTREE_DIRTY",
   "GIT_REMOTE_BEHIND",
   "GIT_REMOTE_DIVERGED",
+  "REVIEW_DIFF_CHANGED",
+  "REVIEW_COMMENT_ID_REUSED",
+  "REVIEW_COMMENT_NOT_FOUND",
   "WORKSPACE_IDENTITY_CHANGED",
   "WORKTREE_DIRTY",
   "WORKTREE_DELETE_FAILED",
@@ -153,6 +156,8 @@ import type {
   SessionGitMutationResult,
   SessionGitCommitResult,
   SessionGitDiscardResult,
+  ReviewComment,
+  ReviewCommentCreateInput,
   GitRemoteStatus,
   GitFetchResult,
   GitPullResult,
@@ -519,6 +524,55 @@ export class RuntimeClient {
     return this.validatedRequest(
       "session/gitDiscard", { operationId, sessionId, path }, isSessionGitMutationResult,
     );
+  }
+
+  listReviewComments(
+    sessionId: string,
+    path?: string,
+    scope?: GitDiffScope,
+  ): Promise<ReviewComment[]> {
+    return this.validatedRequest(
+      "review/listComments",
+      { sessionId, ...(path === undefined ? {} : { path, scope }) },
+      (value): value is { comments: ReviewComment[] } => (
+        isRecord(value)
+        && hasOnlyKeys(value, ["comments"])
+        && Array.isArray(value.comments)
+        && value.comments.every(isReviewComment)
+      ),
+    ).then((result) => result.comments);
+  }
+
+  createReviewComment(
+    sessionId: string,
+    input: ReviewCommentCreateInput,
+    operationId: string,
+  ): Promise<ReviewComment> {
+    return this.validatedRequest(
+      "review/createComment",
+      { operationId, sessionId, ...input },
+      (value): value is { comment: ReviewComment } => (
+        isRecord(value)
+        && hasOnlyKeys(value, ["comment"])
+        && isReviewComment(value.comment)
+      ),
+    ).then((result) => result.comment);
+  }
+
+  deleteReviewComment(
+    sessionId: string,
+    commentId: string,
+    operationId: string,
+  ): Promise<string> {
+    return this.validatedRequest(
+      "review/deleteComment",
+      { operationId, sessionId, commentId },
+      (value): value is { commentId: string } => (
+        isRecord(value)
+        && hasOnlyKeys(value, ["commentId"])
+        && typeof value.commentId === "string"
+      ),
+    ).then((result) => result.commentId);
   }
 
   readSessionGitRemoteStatus(sessionId: string): Promise<GitRemoteStatus> {
@@ -1338,7 +1392,7 @@ function isSessionGitDiff(value: unknown): value is SessionGitDiff {
     isRecord(value)
     && hasOnlyKeys(value, [
       "scope", "baseCommit", "head", "dirty", "changedFiles",
-      "unifiedDiff", "truncated", "observedAt",
+      "unifiedDiff", "diffHash", "truncated", "observedAt",
     ])
     && ["head", "baseline"].includes(String(value.scope))
     && (value.baseCommit === null || typeof value.baseCommit === "string")
@@ -1347,8 +1401,32 @@ function isSessionGitDiff(value: unknown): value is SessionGitDiff {
     && Array.isArray(value.changedFiles)
     && value.changedFiles.every((path) => typeof path === "string")
     && typeof value.unifiedDiff === "string"
+    && typeof value.diffHash === "string"
     && typeof value.truncated === "boolean"
     && isNonNegativeInteger(value.observedAt)
+  );
+}
+
+function isReviewComment(value: unknown): value is ReviewComment {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "id", "sessionId", "path", "scope", "side", "line", "body",
+      "baseHead", "diffHash", "status", "createdAt", "updatedAt",
+    ])
+    && typeof value.id === "string"
+    && typeof value.sessionId === "string"
+    && typeof value.path === "string"
+    && ["head", "baseline"].includes(String(value.scope))
+    && ["old", "new"].includes(String(value.side))
+    && isNonNegativeInteger(value.line)
+    && value.line > 0
+    && typeof value.body === "string"
+    && typeof value.baseHead === "string"
+    && typeof value.diffHash === "string"
+    && ["active", "stale"].includes(String(value.status))
+    && isNonNegativeInteger(value.createdAt)
+    && isNonNegativeInteger(value.updatedAt)
   );
 }
 

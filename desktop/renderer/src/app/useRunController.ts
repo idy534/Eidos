@@ -32,6 +32,7 @@ export interface RunControllerActions {
     snapshot: SessionSnapshot;
     selectedModelId: ModelId;
     isStorageReady: boolean;
+    inputOverride?: string;
     onRunProjected?: (sessionId: string, run: Run) => void;
   }) => Promise<void>;
   reviseRun: (params: {
@@ -109,15 +110,17 @@ export function useRunController(
     snapshot: currentSnapshot,
     selectedModelId,
     isStorageReady: storageReady,
+    inputOverride,
     onRunProjected,
   }: {
     snapshot: SessionSnapshot;
     selectedModelId: ModelId;
     isStorageReady: boolean;
+    inputOverride?: string;
     onRunProjected?: (sessionId: string, run: Run) => void;
   }): Promise<void> => {
     const sessionId = currentSnapshot.session.id;
-    const sessionInput = inputs[sessionId] ?? "";
+    const sessionInput = inputOverride ?? inputs[sessionId] ?? "";
 
     if (submissionLockRef.current) {
       if (submissionLockRef.current.sessionId !== sessionId) {
@@ -159,11 +162,13 @@ export function useRunController(
 
       if (returnedRun.sessionId === sessionId) {
         onRunProjected?.(sessionId, returnedRun);
-        setInputs((prev) => {
-          const next = { ...prev };
-          delete next[sessionId];
-          return next;
-        });
+        if (inputOverride === undefined) {
+          setInputs((prev) => {
+            const next = { ...prev };
+            delete next[sessionId];
+            return next;
+          });
+        }
       }
     } catch (cause) {
       if (submissionLockRef.current?.token === operation.token) {

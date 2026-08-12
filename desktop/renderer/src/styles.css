@@ -1040,6 +1040,75 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   font-size: var(--font-size-code);
 }
 
+.review-comment-widget {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.45rem 0.75rem 0.65rem;
+  font-family: var(--font-ui);
+}
+
+.review-comment,
+.review-comment-draft,
+.review-stale-comments > div {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.75rem;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(32, 36, 31, 0.05);
+}
+
+.review-comment p,
+.review-stale-comments p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.review-comment button,
+.review-stale-comments button {
+  margin-top: 0.4rem;
+  border: 0;
+  padding: 0;
+  color: var(--danger);
+  background: transparent;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.review-comment-draft textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 4.5rem;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.65rem;
+  color: var(--text);
+  background: var(--surface-raised);
+  font: inherit;
+}
+
+.review-comment-draft > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.review-stale-comments {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1rem;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.review-stale-comments > div {
+  border-style: dashed;
+}
+
 .git-diff-view pre {
   width: 100%;
   height: 100%;

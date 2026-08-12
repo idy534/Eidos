@@ -334,6 +334,17 @@ export function AppShell({ runtime }: AppShellProps) {
     });
   }
 
+  async function handleReviewFeedback(feedback: string): Promise<void> {
+    if (!sessionState.snapshot || !modelState.selectedModelId) return;
+    await runActions.submitInput({
+      snapshot: sessionState.snapshot,
+      selectedModelId: modelState.selectedModelId,
+      isStorageReady,
+      inputOverride: feedback,
+      onRunProjected: sessionActions.projectRun,
+    });
+  }
+
   async function reviseLatestRun(run: Run, userInput?: string): Promise<void> {
     const snapshot = sessionState.snapshot;
     if (!snapshot || run.sessionId !== snapshot.session.id) return;
@@ -576,6 +587,8 @@ export function AppShell({ runtime }: AppShellProps) {
                 error={gitReviewState.error}
                 onScopeChange={gitReviewActions.selectScope}
                 onRefresh={gitReviewActions.refresh}
+                onSendReviewFeedback={handleReviewFeedback}
+                reviewFeedbackDisabled={Boolean(activeRun) || runState.isSubmitting}
               />
             ) : (
               <>
