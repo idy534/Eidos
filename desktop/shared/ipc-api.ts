@@ -16,6 +16,7 @@ import type {
   SessionGitStatus,
   SessionGitMutationResult,
   SessionGitCommitResult,
+  SessionGitDiscardResult,
   GitRemoteStatus,
   GitFetchResult,
   GitPullResult,
@@ -67,6 +68,7 @@ export interface EidosRuntimeAPI {
     sessionId: string,
     path: string,
   ): Promise<WorkspaceFilePreview>;
+  openWorkspacePathInEditor(sessionId: string, path: string): Promise<void>;
 
   // Sessions
   listSessions(): Promise<SessionListResult>;
@@ -115,6 +117,11 @@ export interface EidosRuntimeAPI {
     message: string,
     operationId: string,
   ): Promise<SessionGitCommitResult>;
+  discardSessionGit(
+    sessionId: string,
+    path: string,
+    operationId: string,
+  ): Promise<SessionGitDiscardResult>;
   readSessionGitRemoteStatus(sessionId: string): Promise<GitRemoteStatus>;
   fetchSessionGit(
     sessionId: string,

@@ -18,6 +18,7 @@ from eidos_runtime.protocol.methods import (
     SessionCreateRequestDto,
     SessionGitCommitRequestDto,
     SessionGitDiffRequestDto,
+    SessionGitDiscardRequestDto,
     SessionGitStageRequestDto,
     SessionGitStatusRequestDto,
     SessionGitUnstageRequestDto,
@@ -151,6 +152,94 @@ def test_local_stage_unstage_and_commit_return_refreshed_status(tmp_path: Path) 
         store.close()
 
 
+def test_discard_restores_tracked_or_cleans_exact_untracked_file(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = _create_session(application, repository, execution_mode="local")
+        (repository / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        special = repository / "*.txt"
+        special.write_text("untracked\n", encoding="utf-8")
+        other = repository / "other-untracked.txt"
+        other.write_text("keep\n", encoding="utf-8")
+
+        tracked = application.git_discard(
+            SessionGitDiscardRequestDto(
+                sessionId=session["id"],
+                path="tracked.txt",
+                operationId=str(uuid.uuid4()),
+            )
+        ).root
+        discard_operation_id = str(uuid.uuid4())
+        discard_request = SessionGitDiscardRequestDto(
+            sessionId=session["id"],
+            path="*.txt",
+            operationId=discard_operation_id,
+        )
+        untracked = application.git_discard(discard_request).root
+        replayed = application.git_discard(discard_request).root
+
+        assert (repository / "tracked.txt").read_text(encoding="utf-8") == "base\n"
+        assert special.exists() is False
+        assert other.read_text(encoding="utf-8") == "keep\n"
+        assert untracked["status"]["untrackedFiles"] == ["other-untracked.txt"]
+        assert replayed == untracked
+        assert tracked["head"] == untracked["head"]
+    finally:
+        store.close()
+
+
+def test_discard_rejects_staged_only_path(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = _create_session(application, repository, execution_mode="local")
+        (repository / "tracked.txt").write_text("staged\n", encoding="utf-8")
+        _git(repository, "add", "tracked.txt")
+
+        with pytest.raises(ApplicationError, match="GIT_DISCARD_REQUIRES_UNSTAGED"):
+            application.git_discard(
+                SessionGitDiscardRequestDto(
+                    sessionId=session["id"],
+                    path="tracked.txt",
+                    operationId=str(uuid.uuid4()),
+                )
+            )
+    finally:
+        store.close()
+
+
+def test_discard_rejects_unresolved_conflict(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    _git(repository, "switch", "-c", "side")
+    (repository / "tracked.txt").write_text("side\n", encoding="utf-8")
+    _git(repository, "commit", "-am", "side")
+    _git(repository, "switch", "main")
+    (repository / "tracked.txt").write_text("main\n", encoding="utf-8")
+    _git(repository, "commit", "-am", "main")
+    subprocess.run(
+        ["git", "merge", "side"],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = _create_session(application, repository, execution_mode="local")
+        with pytest.raises(ApplicationError) as conflict:
+            application.git_discard(
+                SessionGitDiscardRequestDto(
+                    sessionId=session["id"],
+                    path="tracked.txt",
+                    operationId=str(uuid.uuid4()),
+                )
+            )
+        assert conflict.value.code == "GIT_CONFLICT"
+    finally:
+        store.close()
+
+
 def test_managed_detached_commit_is_rejected_then_attached_commit_succeeds(
     tmp_path: Path,
 ) -> None:
@@ -278,6 +367,14 @@ def test_git_mutations_reject_active_run_invalid_paths_and_empty_selection(
         SessionGitStageRequestDto(sessionId=session["id"], paths=["../outside"])
     with pytest.raises(ValidationError):
         SessionGitUnstageRequestDto(sessionId=session["id"], paths=["/outside"])
+    with pytest.raises(ValidationError):
+        SessionGitDiscardRequestDto(
+            operationId=str(uuid.uuid4()),
+            sessionId=session["id"],
+            path="../outside",
+        )
+    with pytest.raises(ValidationError):
+        SessionGitDiscardRequestDto(sessionId=session["id"], path="tracked.txt")
     with pytest.raises(ValidationError):
         SessionGitStageRequestDto(
             operationId="not-a-canonical-operation-id",

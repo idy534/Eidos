@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell as electronShell } from "electron";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -9,6 +9,7 @@ import { redactLogLine, sanitizeLogValue } from "./log-redaction.js";
 import { dispatchAppCommand as dispatchCommand, ensureAppWindow as ensureWindow } from "./app-command-dispatch.js";
 import { QuitFlowController, type ActiveRunProjection, type QuitFlowDependencies } from "./quit-flow.js";
 import { shutdownRuntime } from "./runtime-shutdown.js";
+import { resolveWorkspaceFileForOpen } from "./workspace-open.js";
 import type {
   ApprovalDecision,
   ApprovalRequest,
@@ -546,6 +547,23 @@ ipcMain.handle(IPC.WORKSPACE_READ_FILE_PREVIEW, (
   }
   return clientOrThrow().readWorkspaceFilePreview(sessionId, relativePath);
 });
+ipcMain.handle(IPC.WORKSPACE_OPEN_IN_EDITOR, async (
+  _event,
+  sessionId: unknown,
+  relativePath: unknown,
+) => {
+  if (typeof sessionId !== "string" || typeof relativePath !== "string") {
+    throw new Error("Workspace 文件参数无效。");
+  }
+  const snapshot = await clientOrThrow().readSession(sessionId);
+  const root = snapshot.session.executionMode === "worktree"
+    ? snapshot.session.worktree?.worktreeRoot
+    : snapshot.session.workspaceRoot;
+  if (!root) throw new Error("Workspace 当前不可用。");
+  const canonicalTarget = await resolveWorkspaceFileForOpen(root, relativePath);
+  const failure = await electronShell.openPath(canonicalTarget);
+  if (failure) throw new Error("无法在编辑器中打开文件。");
+});
 ipcMain.handle(IPC.SESSION_GIT_DIFF, (
   _event,
   sessionId: unknown,
@@ -606,6 +624,21 @@ ipcMain.handle(IPC.SESSION_GIT_COMMIT, (
     throw new Error("Git Commit 参数无效。");
   }
   return clientOrThrow().commitSessionGit(sessionId, message, operationId);
+});
+ipcMain.handle(IPC.SESSION_GIT_DISCARD, (
+  _event,
+  sessionId: unknown,
+  relativePath: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof relativePath !== "string"
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Git Discard 参数无效。");
+  }
+  return clientOrThrow().discardSessionGit(sessionId, relativePath, operationId);
 });
 ipcMain.handle(IPC.SESSION_GIT_REMOTE_STATUS, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Git Remote 参数无效。");

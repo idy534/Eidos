@@ -80,6 +80,7 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "GIT_BRANCH_REQUIRED",
   "GIT_WORKFLOW_BUSY",
   "GIT_INVALID_PATH",
+  "GIT_DISCARD_REQUIRES_UNSTAGED",
   "GIT_NOTHING_STAGED",
   "GIT_IDENTITY_UNAVAILABLE",
   "GIT_CONFLICT",
@@ -151,6 +152,7 @@ import type {
   SessionGitStatus,
   SessionGitMutationResult,
   SessionGitCommitResult,
+  SessionGitDiscardResult,
   GitRemoteStatus,
   GitFetchResult,
   GitPullResult,
@@ -506,6 +508,16 @@ export class RuntimeClient {
   ): Promise<SessionGitCommitResult> {
     return this.validatedRequest(
       "session/gitCommit", { operationId, sessionId, message }, isSessionGitCommitResult,
+    );
+  }
+
+  discardSessionGit(
+    sessionId: string,
+    path: string,
+    operationId: string,
+  ): Promise<SessionGitDiscardResult> {
+    return this.validatedRequest(
+      "session/gitDiscard", { operationId, sessionId, path }, isSessionGitMutationResult,
     );
   }
 

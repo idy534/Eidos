@@ -75,6 +75,8 @@ from eidos_runtime.protocol.methods import (
     SessionGitDiffResponseDto,
     SessionGitCommitRequestDto,
     SessionGitCommitResponseDto,
+    SessionGitDiscardRequestDto,
+    SessionGitDiscardResponseDto,
     SessionGitFetchRequestDto,
     SessionGitFetchResponseDto,
     SessionGitMergeAbortRequestDto,
@@ -1226,6 +1228,19 @@ class SessionApplication:
             execute=self._git_workflow.commit,
         )
 
+    def git_discard(
+        self, request: SessionGitDiscardRequestDto
+    ) -> SessionGitDiscardResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitDiscard",
+            result_type=SessionGitDiscardResponseDto,
+            preflight=lambda: self._git_workflow.preflight_discard(request),
+            execute=self._git_workflow.discard,
+        )
+
     def git_merge(
         self, request: SessionGitMergeRequestDto
     ) -> SessionGitMergeResponseDto:
@@ -1543,6 +1558,7 @@ class SessionApplication:
             SessionGitStageRequestDto
             | SessionGitUnstageRequestDto
             | SessionGitCommitRequestDto
+            | SessionGitDiscardRequestDto
             | SessionGitMergeRequestDto
             | SessionGitMergeAbortRequestDto
             | SessionGitRebaseRequestDto

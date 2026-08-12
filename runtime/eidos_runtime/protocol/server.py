@@ -772,6 +772,14 @@ class RuntimeServer:
                 ),
             ),
             (
+                "session/gitDiscard",
+                method_dtos.SessionGitDiscardRequestDto,
+                method_dtos.SessionGitDiscardResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_discard(
+                    request
+                ),
+            ),
+            (
                 "session/gitMerge",
                 method_dtos.SessionGitMergeRequestDto,
                 method_dtos.SessionGitMergeResponseDto,

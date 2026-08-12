@@ -19,6 +19,7 @@ import type {
   SessionGitStatus,
   SessionGitMutationResult,
   SessionGitCommitResult,
+  SessionGitDiscardResult,
   GitRemoteStatus,
   GitFetchResult,
   GitPullResult,
@@ -75,6 +76,8 @@ const api: EidosRuntimeAPI = {
     path: string,
   ): Promise<WorkspaceFilePreview> =>
     ipcRenderer.invoke(IPC.WORKSPACE_READ_FILE_PREVIEW, sessionId, path),
+  openWorkspacePathInEditor: (sessionId: string, path: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.WORKSPACE_OPEN_IN_EDITOR, sessionId, path),
 
   // Sessions
   listSessions: (): Promise<SessionListResult> => ipcRenderer.invoke(IPC.SESSION_LIST),
@@ -135,6 +138,12 @@ const api: EidosRuntimeAPI = {
     operationId: string,
   ): Promise<SessionGitCommitResult> =>
     ipcRenderer.invoke(IPC.SESSION_GIT_COMMIT, sessionId, message, operationId),
+  discardSessionGit: (
+    sessionId: string,
+    path: string,
+    operationId: string,
+  ): Promise<SessionGitDiscardResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_DISCARD, sessionId, path, operationId),
   readSessionGitRemoteStatus: (sessionId: string): Promise<GitRemoteStatus> =>
     ipcRenderer.invoke(IPC.SESSION_GIT_REMOTE_STATUS, sessionId),
   fetchSessionGit: (

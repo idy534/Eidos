@@ -29,6 +29,8 @@ from eidos_runtime.protocol.methods import (
     MethodResultDto,
     SessionGitCommitRequestDto,
     SessionGitCommitResponseDto,
+    SessionGitDiscardRequestDto,
+    SessionGitDiscardResponseDto,
     SessionGitFetchResponseDto,
     SessionGitMergeAbortRequestDto,
     SessionGitMergeAbortResponseDto,
@@ -62,6 +64,7 @@ class GitMutationPlan:
     before: GitStatusSnapshot
     paths: tuple[str, ...] = ()
     message: str | None = None
+    discard_untracked: bool = False
 
 
 @dataclass(frozen=True)
@@ -154,6 +157,39 @@ class GitWorkflowApplication:
             raise _workflow_error(error) from error
         after = self._status(plan.session)
         return _mutation_result(SessionGitUnstageResponseDto, after)
+
+    def preflight_discard(
+        self, request: SessionGitDiscardRequestDto
+    ) -> GitMutationPlan:
+        session, before = self._prepare_mutation(request.session_id)
+        path = _validated_paths(Path(before.worktree_root), [request.path])[0]
+        if path in before.conflict_files:
+            raise ApplicationError("GIT_CONFLICT")
+        if path in before.unstaged_files:
+            return GitMutationPlan(session=session, before=before, paths=(path,))
+        if path in before.untracked_files:
+            return GitMutationPlan(
+                session=session,
+                before=before,
+                paths=(path,),
+                discard_untracked=True,
+            )
+        if path in before.staged_files:
+            raise ApplicationError("GIT_DISCARD_REQUIRES_UNSTAGED")
+        raise ApplicationError("GIT_INVALID_PATH")
+
+    def discard(self, plan: GitMutationPlan) -> SessionGitDiscardResponseDto:
+        if len(plan.paths) != 1:
+            raise AssertionError("discard plan requires one path")
+        try:
+            self._worktrees.git.discard(
+                Path(plan.before.worktree_root),
+                plan.paths[0],
+                untracked=plan.discard_untracked,
+            )
+        except GitError as error:
+            raise _workflow_error(error) from error
+        return _mutation_result(SessionGitDiscardResponseDto, self._status(plan.session))
 
     def preflight_commit(
         self, request: SessionGitCommitRequestDto

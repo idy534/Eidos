@@ -123,6 +123,7 @@ test("preserves every workspace and lifecycle business code in the closed contra
     "WORKSPACE_READ_TIMEOUT",
     "WORKSPACE_FILE_TOO_LARGE",
     "WORKSPACE_SENSITIVE_CONTENT",
+    "GIT_DISCARD_REQUIRES_UNSTAGED",
     "CHECKPOINT_GIT_STATE_UNAVAILABLE",
     "CHECKPOINT_FORK_WORKTREE_FAILED",
     "DIRECT_CHECKPOINT_FORK_PATH_FORBIDDEN",
@@ -346,6 +347,14 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
     const fileDiff = await client.readSessionGitDiff(local.id, "head", "WORKFLOW.txt");
     assert.deepEqual(fileDiff.changedFiles, ["WORKFLOW.txt"]);
     assert.match(fileDiff.unifiedDiff, /workflow/);
+    const discarded = await client.discardSessionGit(
+      local.id,
+      "WORKFLOW.txt",
+      "14141414-1414-4414-8414-141414141414",
+    );
+    assert.deepEqual(discarded.status.untrackedFiles, []);
+    await assert.rejects(readFile(path.join(repositoryRoot, "WORKFLOW.txt"), "utf8"));
+    await writeFile(path.join(repositoryRoot, "WORKFLOW.txt"), "workflow\n", "utf8");
     const stageOperationId = "77777777-7777-4777-8777-777777777777";
     const staged = await client.stageSessionGit(
       local.id,

@@ -174,6 +174,21 @@ class SessionGitUnstageRequestDto(_SessionGitPathsRequest):
     pass
 
 
+class SessionGitDiscardRequestDto(_OperationRequest):
+    operation_id: StrictStr = Field(alias="operationId")
+    session_id: StrictStr = Field(alias="sessionId")
+    path: StrictStr = Field(min_length=1, max_length=4096)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+    @field_validator("path")
+    @classmethod
+    def _validate_path(cls, value: str) -> str:
+        return _git_relative_path(value)
+
+
 class SessionGitCommitRequestDto(_OperationRequest):
     session_id: StrictStr = Field(alias="sessionId")
     message: StrictStr = Field(min_length=1, max_length=65536)
@@ -625,6 +640,10 @@ class SessionGitStageResponseDto(SessionGitMutationResponseDto):
 
 
 class SessionGitUnstageResponseDto(SessionGitMutationResponseDto):
+    pass
+
+
+class SessionGitDiscardResponseDto(SessionGitMutationResponseDto):
     pass
 
 

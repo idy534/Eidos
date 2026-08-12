@@ -77,6 +77,8 @@ class GitBackend(Protocol):
 
     def unstage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation: ...
 
+    def discard(self, cwd: Path, path: str, *, untracked: bool) -> GitStatusObservation: ...
+
     def commit(self, cwd: Path, message: str) -> str: ...
 
     def remote_status(self, cwd: Path) -> GitRemoteObservation: ...
@@ -306,6 +308,14 @@ class DulwichGitBackend:
             _validate_relative_path(path)
         self._open_repository(cwd, "unstage")
         self._git_cli.unstage(cwd, paths)
+        return self.status(cwd)
+
+    def discard(
+        self, cwd: Path, path: str, *, untracked: bool
+    ) -> GitStatusObservation:
+        _validate_relative_path(path)
+        self._open_repository(cwd, "discard")
+        self._git_cli.discard(cwd, path, untracked=untracked)
         return self.status(cwd)
 
     def commit(self, cwd: Path, message: str) -> str:

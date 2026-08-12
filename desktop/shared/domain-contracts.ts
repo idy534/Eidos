@@ -114,6 +114,8 @@ export interface SessionGitCommitResult extends SessionGitMutationResult {
   commit: string;
 }
 
+export type SessionGitDiscardResult = SessionGitMutationResult;
+
 export interface GitRemoteStatus {
   branch: string | null;
   remotes: Array<{ name: string }>;

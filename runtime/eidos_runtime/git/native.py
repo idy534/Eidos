@@ -589,6 +589,22 @@ class GitCli:
             config_overrides=filter_config_overrides(self._runner, cwd),
         )
 
+    def discard(self, cwd: Path, path: str, *, untracked: bool) -> None:
+        if untracked:
+            self._runner.run(
+                ("clean", "-f", "--", path),
+                cwd=cwd,
+                operation="discard-untracked",
+                profile=GitExecutionProfile.LOCAL_MUTATION,
+            )
+            return
+        self._runner.run(
+            ("restore", "--worktree", "--", path),
+            cwd=cwd,
+            operation="discard-tracked",
+            profile=GitExecutionProfile.LOCAL_MUTATION,
+        )
+
     def commit(self, cwd: Path, message: str) -> None:
         conflicts = self._runner.run(
             ("diff", "--cached", "--quiet", "--diff-filter=U", "--"),

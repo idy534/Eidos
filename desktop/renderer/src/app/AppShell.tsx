@@ -569,10 +569,10 @@ export function AppShell({ runtime }: AppShellProps) {
               <WorkspaceExplorer sessionId={snapshot.session.id} />
             ) : contentView === "changes" && sessionHasGit ? (
               <GitChangesPanel
+                sessionId={snapshot.session.id}
                 scope={gitReviewState.scope}
                 status={gitReviewState.status}
-                diff={gitReviewState.diff}
-                loading={gitReviewState.loadingStatus || gitReviewState.loadingDiff}
+                loading={gitReviewState.loadingStatus}
                 error={gitReviewState.error}
                 onScopeChange={gitReviewActions.selectScope}
                 onRefresh={gitReviewActions.refresh}

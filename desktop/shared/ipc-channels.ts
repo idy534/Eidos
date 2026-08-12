@@ -16,6 +16,7 @@ export const IPC = {
   WORKSPACE_SELECT: "workspace:select",
   WORKSPACE_LIST_DIRECTORY: "workspace:list-directory",
   WORKSPACE_READ_FILE_PREVIEW: "workspace:read-file-preview",
+  WORKSPACE_OPEN_IN_EDITOR: "workspace:open-in-editor",
 
   // Session
   SESSION_LIST: "session:list",
@@ -32,6 +33,7 @@ export const IPC = {
   SESSION_GIT_STAGE: "session:git-stage",
   SESSION_GIT_UNSTAGE: "session:git-unstage",
   SESSION_GIT_COMMIT: "session:git-commit",
+  SESSION_GIT_DISCARD: "session:git-discard",
   SESSION_GIT_REMOTE_STATUS: "session:git-remote-status",
   SESSION_GIT_FETCH: "session:git-fetch",
   SESSION_GIT_PULL: "session:git-pull",
