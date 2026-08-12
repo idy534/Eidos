@@ -82,7 +82,10 @@
 - `search_text` 使用随 Runtime 管理、manifest 校验和 SHA256 校验的 macOS arm64 Ripgrep 资源。
 - Repository Intelligence 基础设施已经实现 Inventory、Repository generation、Tree-sitter Index、symbols/imports/references/chunks、Repository Map、SQLite FTS5、RapidFuzz retrieval、Retrieval Snapshot 和 ContextPlan。
 - Repository Intelligence 的不完整 generation 不会替换上一个完整 generation。完整 generation 原子保存相互绑定的 Inventory、Index 和 RepositoryMap。Workspace 激活会 fast restore 三者，不会读取当前 manifest、Git branch 或 Git HEAD，也不会重新运行 builder。
-- `RepositoryWorkspaceRuntime` 为每个 Workspace identity 保存一个 active immutable Snapshot、recovery status、dirty paths、invalidation epoch 和 watcher。多个 Session、Run 和模型 Step 会复用同一个 state。Watcher 只提供失效信号，不改变活动 Snapshot，也不自动 build 新 generation。
+- `RepositoryWorkspaceRuntime` 为每个 Workspace identity 保存一个 active immutable Snapshot、recovery status、dirty paths、invalidation epoch 和 watcher。`ensure_ready()` 会在 Run 第一次模型执行前完成首次 generation build 或一次 reconciliation。Clean Run 不 scan。同一个 Run 的模型 Step 复用一次捕获的 generation。Watcher 只提供失效信号，不改变当前 Snapshot，也不在 Run 内自动 build 新 generation。
+- Repository Generation 发布会验证 Inventory-bound manifest 内容，并在 commit 前用 Dulwich 再次验证 Git branch 和 HEAD。并发 readiness 只允许一个 build。build 期间的新 watcher event 会保留 dirty 和 reconciliation required。
+- v1 mapless generation 通过独立 generation watermark 推进新 builder counter。首个 v2 complete generation 使用更高 generation，不会把 legacy row 当成可恢复 Snapshot。
+- Existing Session read 的 Repository prewarm 是 best-effort。缺失 Local root 和 `MISSING`、`INVALID`、`DELETED` Worktree 不会阻止 Desktop 读取 Session snapshot。Run admission 仍执行权威 Workspace 校验。
 - Session create、existing Session read 和完成 binding 变更的 handoff 会激活真实 execution workspace。Run admission 和 RuntimeEngine start 提供 authoritative fallback。Runtime shutdown 会停止 watcher。Cold start 会保留 reconciliation requirement，因为旧 Inventory 不能排除停机期间新增路径。
 - RepositoryApplication、ContextApplication 和相关 persistence repositories 已提供 typed composition boundary。自动 Retrieval Query、ContextPlan 和 ContextSnapshot 模型注入还没有进入默认 online Run。
 

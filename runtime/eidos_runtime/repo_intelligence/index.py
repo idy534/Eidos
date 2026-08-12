@@ -174,6 +174,13 @@ class RepositoryIndexer:
             self._generation = snapshot.index_generation
             self._last_complete = snapshot
 
+    def restore_generation_floor(self, generation: int) -> None:
+        """Advance the counter without accepting a mapless legacy generation."""
+
+        if generation < 0:
+            raise ValueError("index generation floor must be non-negative")
+        self._generation = max(self._generation, generation)
+
     def build(
         self,
         inventory: RepositoryInventory,

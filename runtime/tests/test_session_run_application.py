@@ -285,6 +285,32 @@ def test_session_read_snapshot_activates_existing_execution_workspace(
         store.close()
 
 
+def test_session_read_snapshot_skips_missing_local_repository_prewarm(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = _store(tmp_path)
+    repository_runtime = _RepositoryRuntimePort()
+    try:
+        session = store.create_session(str(workspace))
+        workspace.rmdir()
+        application = SessionApplication(
+            store,
+            scan_text=lambda value: value,
+            repository_runtime=repository_runtime,
+        )
+
+        snapshot = application.read_snapshot(
+            SessionReadRequestDto(sessionId=session["id"])
+        )
+
+        assert snapshot.root["session"]["id"] == session["id"]
+        assert repository_runtime.activated == []
+    finally:
+        store.close()
+
+
 def test_run_admission_ensures_repository_runtime_before_worker_start(
     tmp_path: Path,
 ) -> None:

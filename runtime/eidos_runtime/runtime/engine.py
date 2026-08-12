@@ -79,6 +79,10 @@ logger = logging.getLogger("eidos.runtime")
 class RepositoryWorkspaceRuntimePort(Protocol):
     def activate_workspace(self, root: Path) -> object: ...
 
+    def ensure_ready(
+        self, root: Path, *, cancel: threading.Event | None = None
+    ) -> object: ...
+
 
 class RuntimeEngine:
     def __init__(
@@ -118,9 +122,13 @@ class RuntimeEngine:
         self.repository_runtime = repository_runtime
 
     def run(self, run_id: str, cancel: threading.Event) -> None:
+        repository_snapshot: object | None = None
         if self.repository_runtime is not None:
             workspace = self.store.workspace_for_run(run_id)
-            self.repository_runtime.activate_workspace(workspace.path)
+            repository_state = self.repository_runtime.ensure_ready(
+                workspace.path, cancel=cancel
+            )
+            repository_snapshot = getattr(repository_state, "snapshot", None)
         run = self.store.read_run(run_id)
         with run_span(
             run_id,
@@ -137,6 +145,8 @@ class RuntimeEngine:
                         "Could not read final run status for telemetry",
                         exc_info=True,
                     )
+        # Keep this immutable request-scoped generation alive for the full Run.
+        _ = repository_snapshot
 
     def _run(
         self,

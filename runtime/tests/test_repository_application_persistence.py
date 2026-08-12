@@ -13,6 +13,7 @@ from eidos_runtime.db.database import Database
 from eidos_runtime.persistence.repository_intelligence import (
     RepositoryIntelligenceRepository,
 )
+from eidos_runtime.repo_intelligence.inventory import RepositoryInventory
 
 
 def _git(root: Path, *args: str) -> str:
@@ -154,6 +155,102 @@ def test_repository_application_restore_preserves_persisted_git_head(
         assert restored.repository_map is not None
         assert restored.repository_map.git_head == generation_head
         assert restored.repository_map.git_branch == generation_branch
+    finally:
+        database.close()
+
+
+def test_manifest_change_after_inventory_does_not_replace_complete_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    manifest = root / "package.json"
+    manifest.write_text('{"scripts":{"test":"vitest run"}}', encoding="utf-8")
+    database = Database(tmp_path / "data")
+    database.initialize()
+    try:
+        repository = RepositoryIntelligenceRepository(database)
+        application = RepositoryApplication(root, repository=repository)
+        previous = application.build().persisted_snapshot
+        original_inventory_build = application.inventory_builder.build
+
+        def build_then_change(**kwargs: object):
+            inventory = original_inventory_build(**kwargs)
+            manifest.write_text('{"scripts":{"test":"jest"}}', encoding="utf-8")
+            return inventory
+
+        monkeypatch.setattr(application.inventory_builder, "build", build_then_change)
+        with pytest.raises(OSError, match="changed after inventory"):
+            application.build()
+
+        assert application.restore_latest_complete() == previous
+    finally:
+        database.close()
+
+
+def test_git_change_before_commit_does_not_replace_complete_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "main.py").write_text("value = 1\n", encoding="utf-8")
+    database = Database(tmp_path / "data")
+    database.initialize()
+    try:
+        repository = RepositoryIntelligenceRepository(database)
+        application = RepositoryApplication(root, repository=repository)
+        previous = application.build().persisted_snapshot
+
+        def changed_git_state(_repository_map: object) -> None:
+            raise OSError("git state changed before repository generation commit")
+
+        monkeypatch.setattr(
+            application.map_builder, "verify_git_state", changed_git_state
+        )
+        with pytest.raises(OSError, match="git state changed"):
+            application.build()
+
+        assert application.restore_latest_complete() == previous
+    finally:
+        database.close()
+
+
+def test_real_git_head_change_between_map_build_and_commit_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    _git(root, "init", "-q")
+    _git(root, "config", "user.email", "test@example.com")
+    _git(root, "config", "user.name", "Test")
+    source = root / "main.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    _git(root, "add", "main.py")
+    _git(root, "commit", "-qm", "generation n")
+    database = Database(tmp_path / "data")
+    database.initialize()
+    try:
+        repository = RepositoryIntelligenceRepository(database)
+        application = RepositoryApplication(root, repository=repository)
+        previous = application.build().persisted_snapshot
+        original_map_build = application.map_builder.build
+
+        def build_then_advance_head(inventory: RepositoryInventory):
+            repository_map = original_map_build(inventory)
+            source.write_text("value = 2\n", encoding="utf-8")
+            _git(root, "add", "main.py")
+            _git(root, "commit", "-qm", "head changed during build")
+            return repository_map
+
+        monkeypatch.setattr(application.map_builder, "build", build_then_advance_head)
+
+        with pytest.raises(OSError, match="git state changed"):
+            application.build()
+
+        assert application.restore_latest_complete() == previous
     finally:
         database.close()
 

@@ -181,6 +181,13 @@ class RepositoryIndexStatus(EidosFrozenStrictModel):
     reconciliation_required: bool
 
 
+class RepositoryGenerationWatermark(EidosFrozenStrictModel):
+    """Highest persisted counters, including non-restorable legacy rows."""
+
+    max_inventory_generation: int = Field(default=0, ge=0)
+    max_index_generation: int = Field(default=0, ge=0)
+
+
 class RepositoryIntelligenceRepository(Repository):
     """Persists complete generations and keeps incomplete candidates non-authoritative."""
 
@@ -271,6 +278,29 @@ class RepositoryIntelligenceRepository(Repository):
                 if row is not None
                 else None
             )
+
+    def read_generation_watermark(
+        self, workspace_identity: RepositoryWorkspaceIdentity
+    ) -> RepositoryGenerationWatermark:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT COALESCE(MAX(inventory_generation), 0),
+                       COALESCE(MAX(index_generation), 0)
+                FROM repository_snapshots
+                WHERE repository_id = ?
+                  AND workspace_root = ?
+                  AND workspace_dev = ?
+                  AND workspace_inode = ?
+                  AND workspace_uid = ?
+                """,
+                _identity_parameters(workspace_identity),
+            ).fetchone()
+        assert row is not None
+        return RepositoryGenerationWatermark(
+            max_inventory_generation=int(row[0]),
+            max_index_generation=int(row[1]),
+        )
 
     def read_status(
         self, workspace_identity: RepositoryWorkspaceIdentity
@@ -1402,6 +1432,7 @@ def _canonical_json(value: object) -> str:
 
 __all__ = [
     "RepositoryFtsDocument",
+    "RepositoryGenerationWatermark",
     "RepositoryGrammarVersion",
     "RepositoryIndexStatus",
     "RepositoryIntelligenceRepository",

@@ -6,6 +6,7 @@ import sqlite3
 import pytest
 from pydantic import ValidationError
 
+from eidos_runtime.application.repository import RepositoryApplication
 from eidos_runtime.db.database import Database
 from eidos_runtime.db.schema import (
     PREVIOUS_SCHEMA_VERSION,
@@ -371,11 +372,21 @@ def test_v1_generation_without_map_migrates_as_non_restorable(
         assert tuple(row) == (1, None)
 
         repository = RepositoryIntelligenceRepository(migrated)
+        watermark = repository.read_generation_watermark(identity)
+        assert watermark.max_inventory_generation == inventory.generation
+        assert watermark.max_index_generation == index.index_generation
         assert repository.read_latest_complete(
             inventory.repository_id, identity
         ) is None
         status = repository.read_status(identity)
         assert status.complete is False
         assert status.reconciliation_required is True
+
+        rebuilt = RepositoryApplication(root, repository=repository).build()
+        assert rebuilt.complete is True
+        assert rebuilt.inventory.generation == inventory.generation + 1
+        assert rebuilt.index is not None
+        assert rebuilt.index.index_generation == index.index_generation + 1
+        assert rebuilt.repository_map is not None
     finally:
         migrated.close()

@@ -187,13 +187,19 @@ Repository Intelligence 已实现为独立的 typed infrastructure。它包括�
 
 这些基础设施由 RepositoryApplication、ContextApplication 和 persistence repositories 提供。Worktree Session 的 Repository Intelligence root 使用该 Session 的 Worktree root。Local Session 使用 `Project.workspace_root`。Repository Intelligence 不要求 Git；Non-Git Project 也可以执行 inventory、文件类型识别、Tree-sitter、symbol index、search 和 retrieval。
 
-`RepositoryWorkspaceRuntime` 是进程级的 Workspace 生命周期边界。Session create 和 existing Session read 会预热这个边界。完成 execution binding 变更的 Session handoff 也会激活新 root。Run admission 和 RuntimeEngine start 会再次确保 execution workspace 已激活。相同 Workspace identity 的多个 Session、Run 和模型 Step 会复用同一个 active state 和 watcher。Runtime shutdown 会停止全部 watcher。
+`RepositoryWorkspaceRuntime` 是进程级的 Workspace 生命周期边界。Session create 和 existing Session read 会快速预热这个边界。Session read 的预热是 best-effort。Local root 不存在时会跳过。Worktree 只有在 state 为 `ACTIVE` 且 execution root 可用时才会预热。`MISSING`、`INVALID` 和 `DELETED` 不会阻止 Session snapshot 返回。完成 execution binding 变更的 Session handoff 也会激活新 root。Run admission 仍然负责权威 Workspace 校验。Runtime shutdown 会停止全部 watcher。
 
 Workspace 激活只读取 SQLite 中的 latest complete generation。一个完整 generation 同时包含相互绑定的 persisted Inventory、Index 和 RepositoryMap。Runtime 会直接从这三个持久事实恢复 immutable `RepositoryAnalysisSnapshot`。激活路径不会调用 Inventory、Index 或 RepositoryMap builder。没有 complete generation 时，active snapshot 保持为空。
 
-Watcher 只会合并 dirty path、增加 invalidation epoch，并把 recovery status 标记为 reconciliation required。Watcher 不会替换 active snapshot，也不会生成新 generation。停机期间可能出现旧 inventory 不知道的新文件，所以 cold start 不会发布绝对 clean 结论。显式 reconciliation 和首次 generation build 仍由后续阶段决定。
+`RuntimeEngine.run()` 在第一次模型执行前调用 `ensure_ready()`。空 Snapshot 会触发首次 bounded Inventory build。Cold start 或 watcher 失效会触发一次 reconciliation。Reconciliation 复用完整 Inventory scan 和 Index 的 previous-generation reuse。Clean active generation 会直接复用，不会 scan。RuntimeEngine 随后捕获 immutable `RepositoryAnalysisSnapshot`。同一个 Run 的所有 Model Step 都复用这个 view。
 
-当前默认在线 Run 仍主要使用 ContextBuilder、Workspace Tool Result 和 SQLite Context Facts。RuntimeEngine 不会自动执行 Retrieval Query，也不会把 Repository Snapshot、ContextPlan 或 ContextSnapshot 注入模型请求。因此，Repository Generation 生命周期已经在线，但 Repository Retrieval 与模型 Context 的组合仍未接线。
+Watcher 只会合并 dirty path、增加 invalidation epoch，并把 recovery status 标记为 reconciliation required。Watcher 不会替换 active snapshot，也不会生成新 generation。如果 build 期间出现 watcher event，Runtime 可以保存已内部验证的 complete generation 作为新 baseline，但 active state 仍保持 dirty 和 reconciliation required。下一个 Run 才会再次 reconcile。并发 `ensure_ready()` 由每个 active state 的 Condition 串行化。同一 Workspace 同一时刻只有一个 Repository build。
+
+RepositoryMap 的 manifest 读取使用 Inventory 中的 device、inode、size、mtime 和 content hash 进行 verified read。Map 捕获 Git branch 和 HEAD 后，Application 会在 SQLite commit 前用 Dulwich 再读一次。Manifest 或 Git state 在关键窗口改变时，candidate 不会成为 authoritative complete generation。完整 generation 的 Snapshot、recovery status 和 dirty bookkeeping 在一个锁保护范围内发布。
+
+v1 mapless generation 仍然不能恢复为 active Snapshot。Persistence 会单独读取 Inventory 和 Index 的 generation watermark。首次 v2 build 会从 watermark 的下一代开始。Runtime 不会把 legacy row 当成 authoritative generation，也不会直接修改 builder 的私有 counter。
+
+当前默认在线 Run 仍主要使用 ContextBuilder、Workspace Tool Result 和 SQLite Context Facts。RuntimeEngine 会准备并固定 Repository Generation，但不会自动执行 Retrieval Query，也不会把 Repository Snapshot、ContextPlan 或 ContextSnapshot 注入模型请求。因此，Repository Generation readiness 已经在线，但 Repository Retrieval 与模型 Context 的组合仍未接线。
 
 ## 11. Persistence & Events
 

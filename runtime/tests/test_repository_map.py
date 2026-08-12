@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from eidos_runtime.repo_intelligence.inventory import RepositoryInventoryBuilder
 from eidos_runtime.repo_intelligence.map import RepositoryMapBuilder
 
@@ -34,3 +36,15 @@ def test_repository_map_discovers_manifests_and_conservative_commands(tmp_path: 
     assert all(command.source_path in repository_map.configuration_files for command in repository_map.commands)
     assert repository_map.git_branch is None
     assert repository_map.git_head is None
+
+
+def test_repository_map_rejects_manifest_changed_after_inventory(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    manifest = root / "package.json"
+    manifest.write_text('{"scripts":{"test":"vitest run"}}', encoding="utf-8")
+    inventory = RepositoryInventoryBuilder(root).build()
+    manifest.write_text('{"scripts":{"test":"jest"}}', encoding="utf-8")
+
+    with pytest.raises(OSError, match="changed after inventory"):
+        RepositoryMapBuilder(root).build(inventory)

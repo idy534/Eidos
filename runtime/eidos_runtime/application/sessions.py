@@ -966,7 +966,7 @@ class SessionApplication:
         projection = self._repository.read_session_projection(request.session_id)
         if projection is None:
             raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
-        self._activate_projection(projection)
+        self._activate_projection(projection, best_effort=True)
         try:
             snapshot = self._store.read_session_snapshot(
                 request.session_id,
@@ -1230,16 +1230,33 @@ class SessionApplication:
         )
         return _result(SessionHandoffResponseDto, value)
 
-    def _activate_projection(self, projection: SessionProjection) -> None:
+    def _activate_projection(
+        self, projection: SessionProjection, *, best_effort: bool = False
+    ) -> None:
         runtime = self._repository_runtime
         if runtime is None:
+            return
+        if (
+            projection.worktree is not None
+            and projection.worktree.state is not WorktreeState.ACTIVE
+        ):
             return
         root = (
             Path(projection.worktree.worktree_root)
             if projection.worktree is not None
             else Path(projection.session.workspace_root)
         )
-        runtime.activate_workspace(root)
+        if best_effort and not root.is_dir():
+            return
+        try:
+            runtime.activate_workspace(root)
+        except (OSError, ValueError):
+            if not best_effort:
+                raise
+            self._logger.info(
+                "repository_session_prewarm_skipped",
+                extra={"session_id": projection.session.id},
+            )
 
     def _build_handoff_plan(
         self,

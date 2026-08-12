@@ -155,6 +155,41 @@ def test_managed_session_create_list_and_read_share_worktree_projection(
         store.close()
 
 
+@pytest.mark.parametrize(
+    "state", [WorktreeState.MISSING, WorktreeState.INVALID, WorktreeState.DELETED]
+)
+def test_inactive_worktree_session_read_skips_repository_prewarm(
+    tmp_path: Path,
+    state: WorktreeState,
+) -> None:
+    repository = _repository(tmp_path)
+    store, manager, application = _application(tmp_path)
+
+    class RejectingRepositoryRuntime:
+        def activate_workspace(self, _root: Path) -> object:
+            pytest.fail("inactive Worktree must not prewarm Repository Runtime")
+
+    try:
+        created = _create(application, repository)
+        session = store.typed_runtime_repository().read_session(str(created["id"]))
+        assert session is not None and session.worktree_id is not None
+        manager.repository.update_state(session.worktree_id, state)
+        reopened = SessionApplication(
+            store,
+            scan_text=lambda value: value,
+            worktree_manager=manager,
+            repository_runtime=RejectingRepositoryRuntime(),
+        )
+
+        snapshot = reopened.read_snapshot(
+            SessionReadRequestDto(sessionId=str(created["id"]))
+        )
+
+        assert snapshot.root["session"]["worktree"]["state"] == state.value
+    finally:
+        store.close()
+
+
 def test_two_managed_sessions_isolate_files_and_execution_tools(tmp_path: Path) -> None:
     repository = _repository(tmp_path)
     store, manager, application = _application(tmp_path)

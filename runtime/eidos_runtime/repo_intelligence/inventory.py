@@ -150,6 +150,13 @@ class RepositoryInventoryBuilder:
             self._generation = snapshot.generation
             self._last_snapshot = snapshot
 
+    def restore_generation_floor(self, generation: int) -> None:
+        """Advance the counter without treating a legacy row as restorable."""
+
+        if generation < 0:
+            raise ValueError("inventory generation floor must be non-negative")
+        self._generation = max(self._generation, generation)
+
     def build(
         self,
         *,

@@ -80,9 +80,16 @@ class RepositoryApplication:
         workspace_identity = RepositoryWorkspaceIdentity.from_root(
             self.inventory_builder.root
         )
+        if workspace_identity != self.workspace_identity:
+            raise OSError("repository workspace identity changed before build")
         restored = self.repository.read_latest_complete(
             workspace_identity.repository_id, workspace_identity
         )
+        watermark = self.repository.read_generation_watermark(workspace_identity)
+        self.inventory_builder.restore_generation_floor(
+            watermark.max_inventory_generation
+        )
+        self.indexer.restore_generation_floor(watermark.max_index_generation)
         if restored is not None:
             self.inventory_builder.restore_generation(restored.inventory)
             if restored.index is not None:
@@ -105,6 +112,12 @@ class RepositoryApplication:
             previous=restored.index if restored is not None else None,
         )
         repository_map = self.map_builder.build(inventory) if index.complete else None
+        if repository_map is not None:
+            self.map_builder.verify_git_state(repository_map)
+            if RepositoryWorkspaceIdentity.from_root(
+                self.inventory_builder.root
+            ) != workspace_identity:
+                raise OSError("repository workspace identity changed before commit")
         persisted = (
             self.repository.commit_complete(
                 inventory,
@@ -235,6 +248,9 @@ class ActiveRepositoryState:
         self._closing = False
         self._closed = False
         self._lock = threading.RLock()
+        self._readiness = threading.Condition(self._lock)
+        self._build_in_progress = False
+        self._readiness_attempt = 0
 
     @property
     def snapshot(self) -> RepositoryAnalysisSnapshot | None:
@@ -291,6 +307,67 @@ class ActiveRepositoryState:
                 "invalidation_epoch": epoch,
             },
         )
+
+    def begin_generation_build(
+        self, cancel: threading.Event | None
+    ) -> int | None:
+        """Claim one build or wait for the in-flight attempt to finish."""
+
+        with self._readiness:
+            if self._closing or self._closed or (cancel is not None and cancel.is_set()):
+                return None
+            if self._snapshot is not None and not self._recovery_status.reconciliation_required:
+                return None
+            if self._build_in_progress:
+                observed_attempt = self._readiness_attempt
+                while (
+                    self._build_in_progress
+                    and self._readiness_attempt == observed_attempt
+                    and not self._closing
+                    and not self._closed
+                    and not (cancel is not None and cancel.is_set())
+                ):
+                    self._readiness.wait(timeout=0.05)
+                return None
+            self._build_in_progress = True
+            return self._invalidation_epoch
+
+    def finish_generation_build(self) -> None:
+        with self._readiness:
+            self._build_in_progress = False
+            self._readiness_attempt += 1
+            self._readiness.notify_all()
+
+    def publish_generation(
+        self,
+        snapshot: RepositoryAnalysisSnapshot,
+        *,
+        start_invalidation_epoch: int,
+    ) -> bool:
+        """Atomically publish a complete candidate and its recovery status."""
+
+        persisted = snapshot.persisted_snapshot
+        if not snapshot.complete or persisted is None or not persisted.complete:
+            raise ValueError("only a persisted complete generation can be published")
+        if persisted.workspace_identity != self.workspace_identity:
+            raise ValueError("repository generation workspace identity changed")
+        with self._lock:
+            if self._closing or self._closed:
+                return False
+            changed_during_build = self._invalidation_epoch != start_invalidation_epoch
+            self._snapshot = snapshot
+            self._recovery_status = RepositoryIndexStatus(
+                repository_id=self.workspace_identity.repository_id,
+                workspace_identity=self.workspace_identity,
+                snapshot_id=persisted.snapshot_id,
+                inventory_generation=persisted.inventory_generation,
+                index_generation=persisted.index_generation,
+                complete=True,
+                reconciliation_required=changed_during_build,
+            )
+            if not changed_during_build:
+                self._dirty_paths.clear()
+            return not changed_during_build
 
     def close(self, *, timeout: float) -> None:
         with self._lock:
@@ -396,6 +473,92 @@ class RepositoryWorkspaceRuntime:
                 },
             )
         return active
+
+    def ensure_ready(
+        self,
+        root: Path,
+        *,
+        cancel: threading.Event | None = None,
+    ) -> ActiveRepositoryState:
+        active = self.activate_workspace(root)
+        if cancel is not None and cancel.is_set():
+            return active
+        if active.snapshot is not None and not active.reconciliation_required:
+            return active
+        reason = "first_generation" if active.snapshot is None else "reconciliation"
+        start_epoch = active.begin_generation_build(cancel)
+        if start_epoch is None:
+            return active
+        repository_id = active.workspace_identity.repository_id
+        if reason == "reconciliation":
+            logger.info(
+                "repository_generation_reconciliation_started",
+                extra={
+                    "repository_id": repository_id,
+                    "generation": active.recovery_status.inventory_generation,
+                    "dirty_path_count": len(active.dirty_paths),
+                    "invalidation_epoch": start_epoch,
+                    "reason": reason,
+                },
+            )
+        logger.info(
+            "repository_generation_build_started",
+            extra={
+                "repository_id": repository_id,
+                "generation": active.recovery_status.inventory_generation,
+                "dirty_path_count": len(active.dirty_paths),
+                "invalidation_epoch": start_epoch,
+                "reason": reason,
+            },
+        )
+        try:
+            candidate = active.application.build(cancel=cancel)
+            if not candidate.complete:
+                logger.info(
+                    "repository_generation_build_incomplete",
+                    extra={
+                        "repository_id": repository_id,
+                        "generation": candidate.inventory.generation,
+                        "dirty_path_count": len(active.dirty_paths),
+                        "invalidation_epoch": active.invalidation_epoch,
+                        "reason": reason,
+                    },
+                )
+                return active
+            clean = active.publish_generation(
+                candidate, start_invalidation_epoch=start_epoch
+            )
+            event = (
+                "repository_generation_ready"
+                if clean
+                else "repository_generation_reconciliation_deferred"
+            )
+            logger.info(
+                event,
+                extra={
+                    "repository_id": repository_id,
+                    "generation": candidate.inventory.generation,
+                    "dirty_path_count": len(active.dirty_paths),
+                    "invalidation_epoch": active.invalidation_epoch,
+                    "reason": reason,
+                },
+            )
+            return active
+        except Exception as error:
+            logger.warning(
+                "repository_generation_build_incomplete",
+                extra={
+                    "repository_id": repository_id,
+                    "generation": active.recovery_status.inventory_generation,
+                    "dirty_path_count": len(active.dirty_paths),
+                    "invalidation_epoch": active.invalidation_epoch,
+                    "reason": type(error).__name__,
+                },
+                exc_info=logger.isEnabledFor(logging.DEBUG),
+            )
+            return active
+        finally:
+            active.finish_generation_build()
 
     def get_active(self, root: Path) -> ActiveRepositoryState | None:
         canonical = str(root.resolve(strict=False))
