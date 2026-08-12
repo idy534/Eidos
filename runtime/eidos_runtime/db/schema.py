@@ -1112,7 +1112,8 @@ INSERT INTO runtime_settings (
 
 CREATE TABLE worktree_snapshots (
     id TEXT PRIMARY KEY,
-    worktree_id TEXT NOT NULL REFERENCES worktrees(id) ON DELETE RESTRICT,
+    worktree_id TEXT REFERENCES worktrees(id) ON DELETE RESTRICT,
+    workspace_root TEXT NOT NULL,
     session_id TEXT REFERENCES sessions(id) ON DELETE RESTRICT,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
     base_ref TEXT NOT NULL,

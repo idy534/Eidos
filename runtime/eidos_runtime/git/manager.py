@@ -36,6 +36,7 @@ from eidos_runtime.git.errors import (
     WorktreeError,
 )
 from eidos_runtime.git.models import (
+    GitOperationState,
     GitRepositoryDiscovery,
     GitSourceSnapshot,
     GitWorkingTreePatch,
@@ -278,6 +279,46 @@ class WorktreeManager:
         ):
             raise WorktreeError("worktree_restore_verification_failed")
         return worktree
+
+    def local_operation_state(self, repository_root: Path) -> GitOperationState:
+        try:
+            discovery = self.discovery.discover(repository_root)
+            return self.git.operation_state(Path(discovery.repository_root))
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_command_failed") from error
+
+    def restore_local_snapshot_state(
+        self,
+        repository_root: Path,
+        *,
+        expected_common_dir: Path,
+        head: str,
+        changes: GitWorkingTreePatch,
+        expected_fingerprint: str,
+    ) -> None:
+        """Restore one validated user checkout without managing its lifecycle."""
+
+        before = self.source_snapshot(repository_root, include_local_changes=False)
+        if Path(before.discovery.git_common_dir).resolve() != expected_common_dir.resolve():
+            raise WorktreeError("workspace_identity_changed")
+        try:
+            self.git.restore_snapshot_state(repository_root, head, changes)
+            current = self.source_snapshot(
+                repository_root, include_local_changes=True
+            )
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("worktree_restore_failed") from error
+        if (
+            Path(current.discovery.git_common_dir).resolve()
+            != expected_common_dir.resolve()
+            or current.head != head
+            or current.fingerprint != expected_fingerprint
+        ):
+            raise WorktreeError("worktree_restore_verification_failed")
 
     def switch_repository_branch(self, root: Path, branch: str) -> None:
         try:

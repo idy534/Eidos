@@ -129,7 +129,7 @@ EXPECTED_COLUMNS = {
         "expected_head", "snapshot_id", "snapshot_head", "snapshot_fingerprint"
     },
     "worktree_snapshots": {
-        "id", "worktree_id", "session_id", "project_id", "base_ref",
+        "id", "worktree_id", "workspace_root", "session_id", "project_id", "base_ref",
         "base_commit", "head", "artifact_path", "artifact_sha256", "state",
     },
     "runtime_settings": {

@@ -27,14 +27,14 @@ class WorktreeSnapshotRepository(Repository):
                 connection.execute(
                     """
                     INSERT INTO worktree_snapshots (
-                        id, worktree_id, session_id, project_id, base_ref,
+                        id, worktree_id, workspace_root, session_id, project_id, base_ref,
                         base_commit, head, branch, checkout_branch,
                         branch_ownership, dirty, staged_paths_json,
                         unstaged_paths_json, untracked_paths_json,
                         conflict_paths_json, source_fingerprint, artifact_path,
                         artifact_sha256, full_patch_sha256, staged_patch_sha256,
                         format_version, state, created_at, restored_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                               ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     _values(snapshot),
@@ -156,6 +156,7 @@ def _values(snapshot: WorktreeSnapshot) -> tuple[object, ...]:
     return (
         snapshot.id,
         snapshot.worktree_id,
+        snapshot.workspace_root,
         snapshot.session_id,
         snapshot.project_id,
         snapshot.base_ref,
@@ -191,6 +192,7 @@ def _map(row: sqlite3.Row | None) -> WorktreeSnapshot | None:
         {
             "id": row["id"],
             "worktree_id": row["worktree_id"],
+            "workspace_root": row["workspace_root"],
             "session_id": row["session_id"],
             "project_id": row["project_id"],
             "base_ref": row["base_ref"],

@@ -189,6 +189,15 @@ class CheckpointRepository(Repository):
                 (action_id,),
             ).fetchone() is not None
 
+    def mark_reconciliation_required(self, checkpoint_id: str) -> None:
+        with self.lock, self._connection() as connection:
+            updated = connection.execute(
+                "UPDATE checkpoints SET reconciliation_required = 1 WHERE id = ?",
+                (checkpoint_id,),
+            )
+            if updated.rowcount != 1:
+                raise ResourceNotFoundError("checkpoint not found")
+
     def workspace_is_compatible(self, checkpoint: Checkpoint) -> bool:
         with self.lock:
             try:

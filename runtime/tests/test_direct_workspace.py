@@ -1,15 +1,28 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 import threading
+from uuid import uuid4
+
+import pytest
 
 from eidos_runtime.application.checkpoints import CheckpointApplication
+from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.application.sessions import SessionApplication
+from eidos_runtime.application.worktree_retention import WorktreeRetentionService
+from eidos_runtime.domain.worktree import (
+    WorktreeLifecycleOperation,
+    WorktreeLifecycleScope,
+    WorktreeLifecycleState,
+)
+from eidos_runtime.git.errors import WorktreeError
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.git import WorktreeManager
 from eidos_runtime.protocol.methods import (
     CheckpointCreateRequestDto,
     CheckpointForkRequestDto,
+    CheckpointRewindRequestDto,
     SessionCreateRequestDto,
     SessionDeleteRequestDto,
     SessionListRequestDto,
@@ -63,6 +76,24 @@ def _setup(tmp_path: Path) -> tuple[SessionStore, WorktreeManager, SessionApplic
         scan_text=lambda value: value,
         worktree_manager=manager,
     )
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _git_repository(tmp_path: Path) -> Path:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _git(repository, "init", "-q", "-b", "main")
+    _git(repository, "config", "user.name", "Eidos Tests")
+    _git(repository, "config", "user.email", "eidos-tests@example.com")
+    (repository / "README.md").write_text("base\n", encoding="utf-8")
+    _git(repository, "add", "README.md")
+    _git(repository, "commit", "-qm", "initial")
+    return repository
 
 
 def test_direct_threads_share_project_identity_and_survive_restart(
@@ -207,6 +238,314 @@ def test_direct_checkpoint_and_fork_share_workspace_without_git_state(
         assert store.connection.execute(
             "SELECT COUNT(*) FROM checkpoint_actions WHERE checkpoint_id = ?",
             (checkpoint.id,),
+        ).fetchone()[0] == 1
+    finally:
+        store.close()
+
+
+def test_local_git_checkpoint_rewind_restores_exact_workspace_state(
+    tmp_path: Path,
+) -> None:
+    repository = _git_repository(tmp_path)
+    store, manager, application = _setup(tmp_path)
+    checkpoints = CheckpointApplication(
+        store,
+        store.checkpoint_repository(),
+        worktree_manager=manager,
+        retention=WorktreeRetentionService(store.database, manager),
+    )
+    try:
+        session = application.create(
+            SessionCreateRequestDto(workspaceRoot=str(repository))
+        ).root
+        (repository / "README.md").write_text("staged\n", encoding="utf-8")
+        _git(repository, "add", "README.md")
+        (repository / "README.md").write_text(
+            "staged\nunstaged\n", encoding="utf-8"
+        )
+        (repository / "untracked.txt").write_text("checkpoint\n", encoding="utf-8")
+        run, _item = store.enqueue_run(str(session["id"]), "checkpoint")
+        checkpoint = checkpoints.create(CheckpointCreateRequestDto(
+            runId=str(run["id"]), operationId=str(uuid4()),
+        )).checkpoint
+        assert checkpoint.git_snapshot_id is not None
+        store.connection.execute(
+            "UPDATE runs SET status = 'succeeded' WHERE id = ?", (run["id"],)
+        )
+
+        (repository / "README.md").write_text("later\n", encoding="utf-8")
+        _git(repository, "add", "README.md")
+        _git(repository, "commit", "-qm", "later")
+        (repository / "untracked.txt").unlink()
+        (repository / "later.txt").write_text("later\n", encoding="utf-8")
+        request = CheckpointRewindRequestDto(
+            checkpointId=checkpoint.id, operationId=str(uuid4()),
+        )
+
+        first = checkpoints.rewind(request)
+        replay = checkpoints.rewind(request)
+
+        assert replay == first
+        assert _git(repository, "rev-parse", "HEAD") == checkpoint.git_head
+        assert _git(repository, "show", ":README.md") == "staged"
+        assert (repository / "README.md").read_text(encoding="utf-8") == (
+            "staged\nunstaged\n"
+        )
+        assert (repository / "untracked.txt").read_text(encoding="utf-8") == (
+            "checkpoint\n"
+        )
+        assert not (repository / "later.txt").exists()
+        assert store.connection.execute(
+            "SELECT COUNT(*) FROM checkpoint_actions WHERE action = 'rewind'"
+        ).fetchone()[0] == 1
+    finally:
+        store.close()
+
+
+def test_local_git_checkpoint_rewind_rejects_active_run_before_prepare(
+    tmp_path: Path,
+) -> None:
+    repository = _git_repository(tmp_path)
+    store, manager, application = _setup(tmp_path)
+    checkpoints = CheckpointApplication(
+        store,
+        store.checkpoint_repository(),
+        worktree_manager=manager,
+        retention=WorktreeRetentionService(store.database, manager),
+    )
+    try:
+        session = application.create(
+            SessionCreateRequestDto(workspaceRoot=str(repository))
+        ).root
+        run, _item = store.enqueue_run(str(session["id"]), "checkpoint")
+        checkpoint = checkpoints.create(CheckpointCreateRequestDto(
+            runId=str(run["id"]), operationId=str(uuid4()),
+        )).checkpoint
+        store.connection.execute(
+            "UPDATE runs SET status = 'succeeded' WHERE id = ?", (run["id"],)
+        )
+        sibling = application.create(
+            SessionCreateRequestDto(workspaceRoot=str(repository))
+        ).root
+        store.enqueue_run(str(sibling["id"]), "active sibling")
+
+        with pytest.raises(ApplicationError) as busy:
+            checkpoints.rewind(CheckpointRewindRequestDto(
+                checkpointId=checkpoint.id, operationId=str(uuid4()),
+            ))
+
+        assert busy.value.code == "CHECKPOINT_WORKFLOW_BUSY"
+        assert store.connection.execute(
+            "SELECT COUNT(*) FROM worktree_lifecycle_operations "
+            "WHERE scope = 'checkpoint/rewind'"
+        ).fetchone()[0] == 0
+    finally:
+        store.close()
+
+
+def test_local_git_checkpoint_rewind_rejects_replaced_workspace_identity(
+    tmp_path: Path,
+) -> None:
+    repository = _git_repository(tmp_path)
+    store, manager, application = _setup(tmp_path)
+    checkpoints = CheckpointApplication(
+        store,
+        store.checkpoint_repository(),
+        worktree_manager=manager,
+        retention=WorktreeRetentionService(store.database, manager),
+    )
+    try:
+        session = application.create(
+            SessionCreateRequestDto(workspaceRoot=str(repository))
+        ).root
+        run, _item = store.enqueue_run(str(session["id"]), "checkpoint")
+        checkpoint = checkpoints.create(CheckpointCreateRequestDto(
+            runId=str(run["id"]), operationId=str(uuid4()),
+        )).checkpoint
+        store.connection.execute(
+            "UPDATE runs SET status = 'succeeded' WHERE id = ?", (run["id"],)
+        )
+        moved = repository.with_name("repository-moved")
+        repository.rename(moved)
+        repository.mkdir()
+
+        with pytest.raises(ApplicationError) as invalid:
+            checkpoints.rewind(CheckpointRewindRequestDto(
+                checkpointId=checkpoint.id, operationId=str(uuid4()),
+            ))
+
+        assert invalid.value.code == "CHECKPOINT_GIT_STATE_UNAVAILABLE"
+        assert store.connection.execute(
+            "SELECT COUNT(*) FROM worktree_lifecycle_operations "
+            "WHERE scope = 'checkpoint/rewind'"
+        ).fetchone()[0] == 0
+    finally:
+        store.close()
+
+
+def test_local_git_checkpoint_rewind_rejects_unfinished_merge_before_prepare(
+    tmp_path: Path,
+) -> None:
+    repository = _git_repository(tmp_path)
+    store, manager, application = _setup(tmp_path)
+    checkpoints = CheckpointApplication(
+        store,
+        store.checkpoint_repository(),
+        worktree_manager=manager,
+        retention=WorktreeRetentionService(store.database, manager),
+    )
+    try:
+        session = application.create(
+            SessionCreateRequestDto(workspaceRoot=str(repository))
+        ).root
+        run, _item = store.enqueue_run(str(session["id"]), "checkpoint")
+        checkpoint = checkpoints.create(CheckpointCreateRequestDto(
+            runId=str(run["id"]), operationId=str(uuid4()),
+        )).checkpoint
+        store.connection.execute(
+            "UPDATE runs SET status = 'succeeded' WHERE id = ?", (run["id"],)
+        )
+        _git(repository, "switch", "-qc", "side")
+        (repository / "README.md").write_text("side\n", encoding="utf-8")
+        _git(repository, "commit", "-qam", "side")
+        _git(repository, "switch", "-q", "main")
+        (repository / "README.md").write_text("main\n", encoding="utf-8")
+        _git(repository, "commit", "-qam", "main")
+        conflict = subprocess.run(
+            ["git", "merge", "side"],
+            cwd=repository,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert conflict.returncode != 0
+
+        with pytest.raises(ApplicationError) as in_progress:
+            checkpoints.rewind(CheckpointRewindRequestDto(
+                checkpointId=checkpoint.id, operationId=str(uuid4()),
+            ))
+
+        assert in_progress.value.code == "GIT_OPERATION_IN_PROGRESS"
+        assert manager.local_operation_state(repository).value == "merge"
+        assert store.connection.execute(
+            "SELECT COUNT(*) FROM worktree_lifecycle_operations "
+            "WHERE scope = 'checkpoint/rewind'"
+        ).fetchone()[0] == 0
+    finally:
+        store.close()
+
+
+def test_local_git_checkpoint_rewind_failure_requires_reconciliation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _git_repository(tmp_path)
+    store, manager, application = _setup(tmp_path)
+    checkpoints = CheckpointApplication(
+        store,
+        store.checkpoint_repository(),
+        worktree_manager=manager,
+        retention=WorktreeRetentionService(store.database, manager),
+    )
+    try:
+        session = application.create(
+            SessionCreateRequestDto(workspaceRoot=str(repository))
+        ).root
+        run, _item = store.enqueue_run(str(session["id"]), "checkpoint")
+        checkpoint = checkpoints.create(CheckpointCreateRequestDto(
+            runId=str(run["id"]), operationId=str(uuid4()),
+        )).checkpoint
+        store.connection.execute(
+            "UPDATE runs SET status = 'succeeded' WHERE id = ?", (run["id"],)
+        )
+
+        def fail_restore(*_args: object, **_kwargs: object) -> None:
+            raise WorktreeError("worktree_restore_failed")
+
+        monkeypatch.setattr(manager, "restore_local_snapshot_state", fail_restore)
+        with pytest.raises(ApplicationError) as failed:
+            checkpoints.rewind(CheckpointRewindRequestDto(
+                checkpointId=checkpoint.id, operationId=str(uuid4()),
+            ))
+
+        assert failed.value.code == "CHECKPOINT_REWIND_FAILED"
+        stored = store.checkpoint_repository().read(checkpoint.id)
+        assert stored is not None and stored.reconciliation_required
+        lifecycle = store.connection.execute(
+            "SELECT state FROM worktree_lifecycle_operations "
+            "WHERE scope = 'checkpoint/rewind'"
+        ).fetchone()
+        assert lifecycle is not None and lifecycle["state"] == "cleanup_required"
+    finally:
+        store.close()
+
+
+def test_local_git_checkpoint_rewind_resumes_after_runtime_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _git_repository(tmp_path)
+    store, manager, application = _setup(tmp_path)
+    checkpoints = CheckpointApplication(
+        store,
+        store.checkpoint_repository(),
+        worktree_manager=manager,
+        retention=WorktreeRetentionService(store.database, manager),
+    )
+    try:
+        session = application.create(
+            SessionCreateRequestDto(workspaceRoot=str(repository))
+        ).root
+        (repository / "README.md").write_text("checkpoint\n", encoding="utf-8")
+        run, _item = store.enqueue_run(str(session["id"]), "checkpoint")
+        checkpoint = checkpoints.create(CheckpointCreateRequestDto(
+            runId=str(run["id"]), operationId=str(uuid4()),
+        )).checkpoint
+        store.connection.execute(
+            "UPDATE runs SET status = 'succeeded' WHERE id = ?", (run["id"],)
+        )
+        (repository / "README.md").write_text("later\n", encoding="utf-8")
+        operation_id = str(uuid4())
+        request = CheckpointRewindRequestDto(
+            checkpointId=checkpoint.id, operationId=operation_id,
+        )
+        original_update = manager.lifecycle.update_state
+        interrupted = False
+
+        def interrupt_after_git(
+            scope: WorktreeLifecycleScope | str,
+            candidate_operation_id: str,
+            state: WorktreeLifecycleState,
+            **kwargs: object,
+        ) -> WorktreeLifecycleOperation:
+            nonlocal interrupted
+            if not interrupted and state is WorktreeLifecycleState.STATE_MATERIALIZED:
+                interrupted = True
+                raise KeyboardInterrupt("simulated runtime stop")
+            return original_update(scope, candidate_operation_id, state, **kwargs)
+
+        monkeypatch.setattr(manager.lifecycle, "update_state", interrupt_after_git)
+        with pytest.raises(KeyboardInterrupt, match="simulated runtime stop"):
+            checkpoints.rewind(request)
+        monkeypatch.setattr(manager.lifecycle, "update_state", original_update)
+        restarted = CheckpointApplication(
+            store,
+            store.checkpoint_repository(),
+            worktree_manager=manager,
+            retention=WorktreeRetentionService(store.database, manager),
+        )
+
+        result = restarted.rewind(request)
+        replay = restarted.rewind(request)
+
+        assert replay == result
+        assert (repository / "README.md").read_text(encoding="utf-8") == (
+            "checkpoint\n"
+        )
+        lifecycle = manager.lifecycle.read("checkpoint/rewind", operation_id)
+        assert lifecycle is not None and lifecycle.state.value == "completed"
+        assert store.connection.execute(
+            "SELECT COUNT(*) FROM checkpoint_actions WHERE action = 'rewind'"
         ).fetchone()[0] == 1
     finally:
         store.close()

@@ -34,7 +34,11 @@ from eidos_runtime.domain.worktree import (
 )
 from eidos_runtime.domain.worktree_snapshot import WorktreeSnapshot
 from eidos_runtime.git.errors import WorktreeError
-from eidos_runtime.git.models import GitSourceSnapshot, GitWorkingTreePatch
+from eidos_runtime.git.models import (
+    GitOperationState,
+    GitSourceSnapshot,
+    GitWorkingTreePatch,
+)
 from eidos_runtime.git.status import GitStatusSnapshot
 from eidos_runtime.persistence.checkpoints import CheckpointRepository
 from eidos_runtime.persistence.worktree_lifecycle import WorktreeLifecycleRepository
@@ -93,6 +97,18 @@ class CheckpointWorktreePort(Protocol):
     def source_snapshot(
         self, repository_root: Path, *, include_local_changes: bool
     ) -> GitSourceSnapshot: ...
+
+    def local_operation_state(self, repository_root: Path) -> GitOperationState: ...
+
+    def restore_local_snapshot_state(
+        self,
+        repository_root: Path,
+        *,
+        expected_common_dir: Path,
+        head: str,
+        changes: GitWorkingTreePatch,
+        expected_fingerprint: str,
+    ) -> None: ...
 
     def rollback_create(self, worktree_id: str) -> Worktree: ...
 
@@ -169,6 +185,27 @@ class CheckpointApplication:
                     raise ApplicationError(
                         "CHECKPOINT_GIT_STATE_UNAVAILABLE", str(error)
                     ) from error
+            elif projection.project.git_available:
+                try:
+                    manager = self._manager_or_error()
+                    project = manager.project(projection.project.id)
+                    identity = self._store.workspace_for_run(request.run_id)
+                    snapshot_id = f"git-{checkpoint_id}"
+                    snapshot = self.snapshot_service.snapshots.read(snapshot_id)
+                    if snapshot is None:
+                        snapshot = self.snapshot_service.save_local(
+                            project,
+                            workspace_root=identity.path,
+                            session_id=projection.session.id,
+                            snapshot_id=snapshot_id,
+                        )
+                    self.snapshot_service.verify(snapshot)
+                    git_head = snapshot.head
+                    git_snapshot_id = snapshot.id
+                except (OSError, ValueError, StorageError, WorktreeError) as error:
+                    raise ApplicationError(
+                        "CHECKPOINT_GIT_STATE_UNAVAILABLE", str(error)
+                    ) from error
             checkpoint = self._repository.create(
                 request.run_id,
                 checkpoint_id=checkpoint_id,
@@ -215,6 +252,19 @@ class CheckpointApplication:
         projection = self._sessions.read_session_projection(str(run["sessionId"]))
         if projection is None:
             raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
+        snapshot = (
+            self._ready_checkpoint_snapshot(checkpoint)
+            if checkpoint.git_snapshot_id is not None
+            else None
+        )
+        if snapshot is not None and snapshot.worktree_id is None:
+            return self._rewind_local(
+                request,
+                checkpoint=checkpoint,
+                projection=projection,
+                snapshot=snapshot,
+                operation_request=operation_request,
+            )
         if projection.worktree is not None:
             return self._rewind_managed(
                 request,
@@ -225,6 +275,124 @@ class CheckpointApplication:
         self._repository.record_action(
             checkpoint_id=checkpoint.id, action="rewind", target_run_id=checkpoint.run_id
         )
+        result = self._rewind_result(checkpoint)
+        return self._record_rewind_operation(
+            request.operation_id, operation_request, result
+        )
+
+    def _rewind_local(
+        self,
+        request: CheckpointRewindRequestDto,
+        *,
+        checkpoint: Checkpoint,
+        projection: SessionProjection,
+        snapshot: WorktreeSnapshot,
+        operation_request: dict[str, object],
+    ) -> CheckpointRewindResponseDto:
+        manager = self._manager_or_error()
+        project = manager.project(projection.project.id)
+        if project.git_common_dir is None or project.git_repository_root is None:
+            raise ApplicationError("CHECKPOINT_GIT_STATE_UNAVAILABLE")
+        if self._sessions.has_active_run_for_workspace(project.workspace_root):
+            raise ApplicationError("CHECKPOINT_WORKFLOW_BUSY")
+        workspace_root = Path(snapshot.workspace_root)
+        if workspace_root != Path(projection.session.workspace_root):
+            raise ApplicationError("CHECKPOINT_GIT_STATE_UNAVAILABLE")
+        root = Path(project.git_repository_root)
+        try:
+            source = manager.source_snapshot(root, include_local_changes=False)
+            if source.discovery.git_common_dir != project.git_common_dir:
+                raise ApplicationError("CHECKPOINT_GIT_STATE_UNAVAILABLE")
+            if manager.local_operation_state(root) is not GitOperationState.NONE:
+                raise ApplicationError("GIT_OPERATION_IN_PROGRESS")
+        except WorktreeError as error:
+            raise ApplicationError(
+                "CHECKPOINT_GIT_STATE_UNAVAILABLE", str(error)
+            ) from error
+
+        operation_id = request.operation_id or f"checkpoint-rewind-{uuid.uuid4().hex}"
+        lifecycle = manager.lifecycle
+        operation = lifecycle.read(WorktreeLifecycleScope.CHECKPOINT_REWIND, operation_id)
+        if operation is None:
+            now = datetime.now(UTC).replace(microsecond=0)
+            operation = lifecycle.prepare(WorktreeLifecycleOperation(
+                scope=WorktreeLifecycleScope.CHECKPOINT_REWIND,
+                operation_id=operation_id,
+                state=WorktreeLifecycleState.PREPARED,
+                project_id=project.id,
+                repository_root=project.git_repository_root,
+                worktree_id=None,
+                worktree_root=str(workspace_root),
+                base_ref=snapshot.base_ref,
+                base_commit=snapshot.base_commit,
+                branch=snapshot.branch,
+                session_id=projection.session.id,
+                run_id=checkpoint.run_id,
+                checkpoint_id=checkpoint.id,
+                snapshot_id=snapshot.id,
+                snapshot_head=snapshot.head,
+                snapshot_fingerprint=snapshot.source_fingerprint,
+                created_at=now,
+                updated_at=now,
+            ))
+        elif (
+            operation.checkpoint_id != checkpoint.id
+            or operation.snapshot_id != snapshot.id
+            or operation.repository_root != str(root)
+            or operation.worktree_root != str(workspace_root)
+        ):
+            raise ApplicationError("OPERATION_ID_REUSED")
+        if operation.state is WorktreeLifecycleState.CLEANUP_REQUIRED:
+            raise ApplicationError("WORKTREE_RECOVERY_REQUIRED")
+        try:
+            if operation.state is WorktreeLifecycleState.PREPARED:
+                manager.restore_local_snapshot_state(
+                    root,
+                    expected_common_dir=Path(project.git_common_dir),
+                    head=snapshot.head,
+                    changes=self.snapshot_service.read_changes(snapshot),
+                    expected_fingerprint=snapshot.source_fingerprint,
+                )
+                operation = lifecycle.update_state(
+                    operation.scope,
+                    operation.operation_id,
+                    WorktreeLifecycleState.STATE_MATERIALIZED,
+                )
+            action_id = "checkpoint-rewind-action-" + uuid.uuid5(
+                uuid.NAMESPACE_URL, f"eidos:checkpoint-rewind:{operation_id}"
+            ).hex
+            if not self._repository.action_exists(action_id):
+                self._repository.record_action(
+                    checkpoint_id=checkpoint.id,
+                    action="rewind",
+                    target_run_id=checkpoint.run_id,
+                    action_id=action_id,
+                )
+            if operation.state is WorktreeLifecycleState.STATE_MATERIALIZED:
+                operation = lifecycle.update_state(
+                    operation.scope,
+                    operation.operation_id,
+                    WorktreeLifecycleState.COMPLETED,
+                )
+        except Exception as error:
+            self._repository.mark_reconciliation_required(checkpoint.id)
+            try:
+                lifecycle.update_state(
+                    operation.scope,
+                    operation.operation_id,
+                    WorktreeLifecycleState.CLEANUP_REQUIRED,
+                    error_code=(
+                        error.code if isinstance(error, WorktreeError)
+                        else "checkpoint_rewind_failed"
+                    ),
+                )
+            except Exception:
+                self._logger.exception(
+                    "local checkpoint rewind failure state could not be saved"
+                )
+            if isinstance(error, WorktreeError):
+                raise ApplicationError("CHECKPOINT_REWIND_FAILED") from error
+            raise
         result = self._rewind_result(checkpoint)
         return self._record_rewind_operation(
             request.operation_id, operation_request, result

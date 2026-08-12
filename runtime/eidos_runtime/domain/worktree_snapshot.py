@@ -16,10 +16,11 @@ class WorktreeSnapshotState(StrEnum):
 
 
 class WorktreeSnapshot(EidosFrozenStrictModel):
-    """Durable metadata for one disposable managed Worktree snapshot."""
+    """Durable metadata for one Git workspace snapshot."""
 
     id: str = Field(min_length=1, max_length=256)
-    worktree_id: str = Field(min_length=1)
+    worktree_id: str | None = Field(default=None, min_length=1)
+    workspace_root: str = Field(min_length=1, max_length=4096)
     session_id: str | None = Field(default=None, min_length=1)
     project_id: str = Field(min_length=1)
     base_ref: str = Field(min_length=1, max_length=4096)
