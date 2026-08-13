@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import tomllib
 from typing import Final
@@ -11,7 +12,11 @@ from pydantic import Field, model_validator
 from eidos_runtime.git.backend import DulwichGitBackend, GitBackend
 from eidos_runtime.git.errors import GitError
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
-from eidos_runtime.repo_intelligence.inventory import RepositoryInventory
+from eidos_runtime.repo_intelligence.inventory import (
+    FileRecord,
+    RepositoryInventory,
+    read_verified_file,
+)
 
 
 MAX_MANIFEST_BYTES: Final = 256 * 1024
@@ -68,7 +73,8 @@ class RepositoryMapBuilder:
     def build(self, inventory: RepositoryInventory) -> RepositoryMap:
         if not inventory.complete or inventory.root != str(self.root):
             raise ValueError("complete matching inventory is required")
-        file_paths = {record.path for record in inventory.files}
+        records = {record.path: record for record in inventory.files}
+        file_paths = set(records)
         languages = tuple(sorted({
             record.language for record in inventory.files if record.language is not None
         }))
@@ -107,13 +113,10 @@ class RepositoryMapBuilder:
         entry_points: set[str] = set()
         commands: list[DiscoveredCommand] = []
         for path in configuration_files:
-            full_path = self.root / path
-            try:
-                raw = full_path.read_bytes()
-                if len(raw) > MAX_MANIFEST_BYTES:
-                    continue
-            except OSError:
+            record = records[path]
+            if record.size_bytes > MAX_MANIFEST_BYTES:
                 continue
+            raw = self._read_inventory_file(record)
             if path == "pyproject.toml":
                 self._read_pyproject(raw, build_systems, test_frameworks, commands, path)
             elif path == "package.json":
@@ -177,6 +180,40 @@ class RepositoryMapBuilder:
             snapshot_id=f"map_{digest}",
             snapshot_hash=digest,
         )
+
+    def verify_git_state(self, repository_map: RepositoryMap) -> None:
+        if _git_state(self.root, self.git_backend) != (
+            repository_map.git_branch,
+            repository_map.git_head,
+        ):
+            raise OSError("git state changed before repository generation commit")
+
+    def _read_inventory_file(self, record: FileRecord) -> bytes:
+        if record.device is None or record.inode is None:
+            raise OSError("manifest identity is incomplete")
+        root_fd = os.open(
+            self.root,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            current = os.stat(record.path, dir_fd=root_fd, follow_symlinks=False)
+            if (
+                current.st_dev != record.device
+                or current.st_ino != record.inode
+                or current.st_size != record.size_bytes
+                or current.st_mtime_ns != record.mtime_ns
+            ):
+                raise OSError("manifest changed after inventory")
+            content = read_verified_file(
+                root_fd, record.path, current, MAX_MANIFEST_BYTES
+            )
+        finally:
+            os.close(root_fd)
+        if record.content_hash is None:
+            raise OSError("manifest content hash is unavailable")
+        if hashlib.sha256(content).hexdigest() != record.content_hash:
+            raise OSError("manifest content changed after inventory")
+        return content
 
     def _top_level_directories(self, inventory: RepositoryInventory) -> tuple[str, ...]:
         return tuple(sorted({

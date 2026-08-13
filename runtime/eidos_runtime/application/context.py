@@ -7,9 +7,8 @@ from eidos_runtime.context.verified_compaction import (
     VerifiedCompactSummary,
 )
 from eidos_runtime.model.client import ModelProfileSnapshot
-from eidos_runtime.repo_intelligence.index import RepositoryIndexSnapshot
-from eidos_runtime.repo_intelligence.inventory import RepositoryInventory
-from eidos_runtime.repo_intelligence.map import RepositoryMap
+from eidos_runtime.model.client import ModelContextItem, ModelToolDefinition
+from eidos_runtime.context.budget import ContextBudget
 from eidos_runtime.repo_intelligence.retrieval import RetrievalSnapshot
 from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
 from eidos_runtime.persistence.context_snapshots import ContextSnapshotRepository
@@ -31,39 +30,6 @@ class ContextApplication:
         self.compaction_verifier = compaction_verifier or ContextCompactionVerifier()
         self.snapshots = snapshots
         self.verified_compactions = verified_compactions
-
-    def plan(
-        self,
-        *,
-        model_profile: ModelProfileSnapshot,
-        rule_snapshot: RuleResolutionSnapshot,
-        inventory: RepositoryInventory,
-        index: RepositoryIndexSnapshot,
-        repository_map: RepositoryMap,
-        retrieval: RetrievalSnapshot,
-        user_goal: str,
-        recent_conversation: tuple[str, ...] = (),
-        compact_summary: CompactSummary | None = None,
-        tool_facts: tuple[str, ...] = (),
-        pending_approval_facts: tuple[str, ...] = (),
-        reconciliation_facts: tuple[str, ...] = (),
-        current_diff: tuple[str, ...] = (),
-    ) -> ContextPlan:
-        return self.planner.build(
-            model_profile=model_profile,
-            rule_snapshot=rule_snapshot,
-            inventory=inventory,
-            index=index,
-            repository_map=repository_map,
-            retrieval=retrieval,
-            user_goal=user_goal,
-            recent_conversation=recent_conversation,
-            compact_summary=compact_summary,
-            tool_facts=tool_facts,
-            pending_approval_facts=pending_approval_facts,
-            reconciliation_facts=reconciliation_facts,
-            current_diff=current_diff,
-        )
 
     def verify_compaction(
         self,
@@ -118,16 +84,67 @@ class ContextApplication:
         *,
         run_id: str,
         model_attempt_id: str,
-        retrieval: RetrievalSnapshot,
+        retrieval: RetrievalSnapshot | None,
         plan: ContextPlan,
+        model_context: tuple[ModelContextItem, ...] | None = None,
+        instructions: str | None = None,
+        tool_definitions: tuple[ModelToolDefinition, ...] = (),
     ) -> ContextSnapshot:
         if self.snapshots is None:
             raise RuntimeError("context snapshot persistence is not configured")
-        snapshot = plan.for_model_attempt(model_attempt_id)
+        snapshot = plan.for_model_attempt(
+            model_attempt_id,
+            model_context=model_context,
+            instructions=instructions,
+            tool_definitions=tool_definitions,
+        )
         self.snapshots.persist(
             run_id=run_id, retrieval=retrieval, snapshot=snapshot
         )
         return self.snapshots.bind_running_attempt(run_id, snapshot)
+
+    def capture_and_persist_model_attempt(
+        self,
+        *,
+        run_id: str,
+        model_attempt_id: str,
+        model_profile: ModelProfileSnapshot,
+        rule_snapshot: RuleResolutionSnapshot,
+        model_context: tuple[ModelContextItem, ...],
+        instructions: str,
+        tool_definitions: tuple[ModelToolDefinition, ...],
+        token_budget: ContextBudget,
+        inventory_snapshot_id: str | None = None,
+        index_snapshot_id: str | None = None,
+        repository_map_snapshot_id: str | None = None,
+        retrieval: RetrievalSnapshot | None = None,
+    ) -> ContextSnapshot:
+        plan = self.planner.capture(
+            model_profile=model_profile,
+            rule_snapshot=rule_snapshot,
+            model_context=model_context,
+            instructions=instructions,
+            tool_definitions=tool_definitions,
+            token_budget=token_budget,
+            inventory_snapshot_id=inventory_snapshot_id,
+            index_snapshot_id=index_snapshot_id,
+            repository_map_snapshot_id=repository_map_snapshot_id,
+            retrieval_snapshot_id=(retrieval.snapshot_id if retrieval else None),
+            selected_evidence=tuple(
+                evidence
+                for result in retrieval.results
+                for evidence in result.evidence
+            ) if retrieval else (),
+        )
+        return self.persist_for_model_attempt(
+            run_id=run_id,
+            model_attempt_id=model_attempt_id,
+            retrieval=retrieval,
+            plan=plan,
+            model_context=model_context,
+            instructions=instructions,
+            tool_definitions=tool_definitions,
+        )
 
 
 __all__ = ["ContextApplication"]

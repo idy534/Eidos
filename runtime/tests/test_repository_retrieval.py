@@ -6,6 +6,7 @@ import pytest
 
 from eidos_runtime.repo_intelligence.index import RepositoryIndexer
 from eidos_runtime.repo_intelligence.inventory import RepositoryInventoryBuilder
+from eidos_runtime.repo_intelligence.map import RepositoryMapBuilder
 from eidos_runtime.repo_intelligence.retrieval import (
     RepositoryRetrievalQuery,
     RepositoryRetriever,
@@ -36,8 +37,12 @@ def test_hybrid_retrieval_is_deterministic_explainable_and_exact_symbols_rank_fi
     database = Database(tmp_path / "data")
     database.initialize()
     repository = RepositoryIntelligenceRepository(database)
+    repository_map = RepositoryMapBuilder(root).build(inventory)
     repository.commit_complete(
-        inventory, index, RepositoryWorkspaceIdentity.from_root(root)
+        inventory,
+        index,
+        repository_map,
+        RepositoryWorkspaceIdentity.from_root(root),
     )
     retriever = RepositoryRetriever(inventory, index, repository)
     query = RepositoryRetrievalQuery(
@@ -91,9 +96,47 @@ def test_retrieval_rejects_mixed_or_incomplete_snapshots(tmp_path: Path) -> None
     database = Database(tmp_path / "data")
     database.initialize()
     repository = RepositoryIntelligenceRepository(database)
+    repository_map = RepositoryMapBuilder(root).build(inventory)
     repository.commit_complete(
-        inventory, index, RepositoryWorkspaceIdentity.from_root(root)
+        inventory,
+        index,
+        repository_map,
+        RepositoryWorkspaceIdentity.from_root(root),
     )
     with pytest.raises(ValueError, match="generation"):
         RepositoryRetriever(changed_inventory, index, repository)
+    database.close()
+
+
+def test_retrieval_does_not_materialize_the_full_fts_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "main.py").write_text(
+        "def target_symbol():\n    return 1\n", encoding="utf-8"
+    )
+    inventory = RepositoryInventoryBuilder(root).build()
+    index = RepositoryIndexer(root).build(inventory)
+    database = Database(tmp_path / "data")
+    database.initialize()
+    repository = RepositoryIntelligenceRepository(database)
+    repository.commit_complete(
+        inventory,
+        index,
+        RepositoryMapBuilder(root).build(inventory),
+        RepositoryWorkspaceIdentity.from_root(root),
+    )
+
+    def fail_full_materialization(_snapshot_id: str) -> tuple[object, ...]:
+        raise AssertionError("retrieval must use bounded indexed candidates")
+
+    monkeypatch.setattr(repository, "list_fts_documents", fail_full_materialization)
+    retriever = RepositoryRetriever(inventory, index, repository)
+
+    result = retriever.retrieve(RepositoryRetrievalQuery(
+        text="target_symbol", mentioned_symbols=("target_symbol",)
+    ))
+
+    assert result.results[0].path == "main.py"
     database.close()

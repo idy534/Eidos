@@ -43,6 +43,7 @@ from eidos_runtime.repo_intelligence.inventory import (
     RepositoryInventory,
     VerificationState,
 )
+from eidos_runtime.repo_intelligence.map import RepositoryMap
 
 
 ModelT = TypeVar("ModelT", bound=EidosFrozenStrictModel)
@@ -111,7 +112,7 @@ class RepositoryFtsMatch(EidosFrozenStrictModel):
 
 
 class RepositoryIntelligenceSnapshot(EidosFrozenStrictModel):
-    """One normalized, immutable Inventory/Index generation."""
+    """One normalized, immutable Inventory/Index/Map generation."""
 
     snapshot_id: str = Field(min_length=1)
     repository_id: str = Field(min_length=1)
@@ -128,6 +129,7 @@ class RepositoryIntelligenceSnapshot(EidosFrozenStrictModel):
     created_at_ms: JsonSafeInt
     inventory: RepositoryInventory
     index: RepositoryIndexSnapshot | None = None
+    repository_map: RepositoryMap | None = None
 
     @model_validator(mode="after")
     def verify_generation(self) -> "RepositoryIntelligenceSnapshot":
@@ -141,8 +143,14 @@ class RepositoryIntelligenceSnapshot(EidosFrozenStrictModel):
         ):
             raise ValueError("inventory does not match repository generation")
         if self.complete:
-            if self.status is not RepositorySnapshotStatus.COMPLETE or self.index is None:
-                raise ValueError("complete repository generation requires index")
+            if (
+                self.status is not RepositorySnapshotStatus.COMPLETE
+                or self.index is None
+                or self.repository_map is None
+            ):
+                raise ValueError(
+                    "complete repository generation requires index and map"
+                )
             if (
                 self.index_generation != self.index.index_generation
                 or self.index_snapshot_id != self.index.snapshot_id
@@ -150,6 +158,12 @@ class RepositoryIntelligenceSnapshot(EidosFrozenStrictModel):
                 or self.index.inventory_snapshot_id != self.inventory_snapshot_id
             ):
                 raise ValueError("index does not match repository generation")
+            if (
+                self.repository_map.repository_id != self.repository_id
+                or self.repository_map.inventory_snapshot_id
+                != self.inventory_snapshot_id
+            ):
+                raise ValueError("map does not match repository generation")
         elif self.status is not RepositorySnapshotStatus.INCOMPLETE:
             raise ValueError("incomplete repository generation has invalid status")
         return self
@@ -167,6 +181,13 @@ class RepositoryIndexStatus(EidosFrozenStrictModel):
     reconciliation_required: bool
 
 
+class RepositoryGenerationWatermark(EidosFrozenStrictModel):
+    """Highest persisted counters, including non-restorable legacy rows."""
+
+    max_inventory_generation: int = Field(default=0, ge=0)
+    max_index_generation: int = Field(default=0, ge=0)
+
+
 class RepositoryIntelligenceRepository(Repository):
     """Persists complete generations and keeps incomplete candidates non-authoritative."""
 
@@ -177,14 +198,18 @@ class RepositoryIntelligenceRepository(Repository):
         self,
         inventory: RepositoryInventory,
         index: RepositoryIndexSnapshot,
+        repository_map: RepositoryMap,
         workspace_identity: RepositoryWorkspaceIdentity,
     ) -> RepositoryIntelligenceSnapshot:
         if not inventory.complete or not index.complete:
             raise ValueError("complete inventory and index are required")
-        _validate_matching_generation(inventory, index, workspace_identity)
+        _validate_matching_generation(
+            inventory, index, repository_map, workspace_identity
+        )
         snapshot = _snapshot_from_parts(
             inventory,
             index,
+            repository_map,
             workspace_identity,
             complete=True,
         )
@@ -210,6 +235,7 @@ class RepositoryIntelligenceRepository(Repository):
         snapshot = _snapshot_from_parts(
             inventory,
             index,
+            None,
             workspace_identity,
             complete=False,
         )
@@ -235,6 +261,7 @@ class RepositoryIntelligenceRepository(Repository):
                   AND workspace_inode = ?
                   AND workspace_uid = ?
                   AND complete = 1
+                  AND repository_map_json IS NOT NULL
                 ORDER BY creation_seq DESC
                 LIMIT 1
                 """,
@@ -252,6 +279,29 @@ class RepositoryIntelligenceRepository(Repository):
                 else None
             )
 
+    def read_generation_watermark(
+        self, workspace_identity: RepositoryWorkspaceIdentity
+    ) -> RepositoryGenerationWatermark:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT COALESCE(MAX(inventory_generation), 0),
+                       COALESCE(MAX(index_generation), 0)
+                FROM repository_snapshots
+                WHERE repository_id = ?
+                  AND workspace_root = ?
+                  AND workspace_dev = ?
+                  AND workspace_inode = ?
+                  AND workspace_uid = ?
+                """,
+                _identity_parameters(workspace_identity),
+            ).fetchone()
+        assert row is not None
+        return RepositoryGenerationWatermark(
+            max_inventory_generation=int(row[0]),
+            max_index_generation=int(row[1]),
+        )
+
     def read_status(
         self, workspace_identity: RepositoryWorkspaceIdentity
     ) -> RepositoryIndexStatus:
@@ -266,6 +316,7 @@ class RepositoryIntelligenceRepository(Repository):
                   AND workspace_inode = ?
                   AND workspace_uid = ?
                   AND complete = 1
+                  AND repository_map_json IS NOT NULL
                 ORDER BY creation_seq DESC LIMIT 1
                 """,
                 _identity_parameters(workspace_identity),
@@ -329,6 +380,8 @@ class RepositoryIntelligenceRepository(Repository):
         cancel: threading.Event | None = None,
         limit: int = 500,
     ) -> tuple[RepositoryFtsMatch, ...]:
+        if limit < 1:
+            return ()
         tokens = [token for token in text.replace("/", " ").split() if token]
         if not tokens:
             return ()
@@ -363,92 +416,155 @@ class RepositoryIntelligenceRepository(Repository):
         ) for row in rows)
 
     def exact_symbol_lookup(
-        self, index_snapshot_id: str, symbol: str
+        self, index_snapshot_id: str, symbol: str, *, limit: int = 32,
+        deadline_ms: int | None = None,
+        cancel: threading.Event | None = None,
     ) -> tuple[RepositoryFtsDocument, ...]:
         return self._query_documents(
             "index_snapshot_id = ? AND kind = 'symbol' AND symbol = ?",
-            (index_snapshot_id, symbol),
+            (index_snapshot_id, symbol), limit=limit,
+            deadline_ms=deadline_ms, cancel=cancel,
         )
 
     def definition_lookup(
-        self, index_snapshot_id: str, symbol: str
+        self, index_snapshot_id: str, symbol: str, *, limit: int = 32,
+        deadline_ms: int | None = None,
+        cancel: threading.Event | None = None,
     ) -> tuple[RepositoryFtsDocument, ...]:
-        return self.exact_symbol_lookup(index_snapshot_id, symbol)
+        return self.exact_symbol_lookup(
+            index_snapshot_id, symbol, limit=limit,
+            deadline_ms=deadline_ms, cancel=cancel,
+        )
 
     def path_lookup(
-        self, index_snapshot_id: str, path: str
+        self, index_snapshot_id: str, path: str, *, limit: int = 32,
+        deadline_ms: int | None = None,
+        cancel: threading.Event | None = None,
     ) -> tuple[RepositoryFtsDocument, ...]:
         return self._query_documents(
-            "index_snapshot_id = ? AND path = ?", (index_snapshot_id, path)
+            "index_snapshot_id = ? AND path = ?", (index_snapshot_id, path),
+            limit=limit, deadline_ms=deadline_ms, cancel=cancel,
         )
 
     def import_relationship_lookup(
-        self, index_snapshot_id: str, name: str
+        self, index_snapshot_id: str, name: str, *, limit: int = 64,
+        deadline_ms: int | None = None,
+        cancel: threading.Event | None = None,
     ) -> tuple[RepositoryFtsDocument, ...]:
         return self._relationship_documents(
-            index_snapshot_id, "repository_imports", "imported_name", name
+            index_snapshot_id, "repository_imports", "imported_name", name,
+            limit=limit, deadline_ms=deadline_ms, cancel=cancel,
         )
 
     def reference_relationship_lookup(
-        self, index_snapshot_id: str, name: str
+        self, index_snapshot_id: str, name: str, *, limit: int = 64,
+        deadline_ms: int | None = None,
+        cancel: threading.Event | None = None,
     ) -> tuple[RepositoryFtsDocument, ...]:
         return self._relationship_documents(
-            index_snapshot_id, "repository_references", "name", name
+            index_snapshot_id, "repository_references", "name", name,
+            limit=limit, deadline_ms=deadline_ms, cancel=cancel,
         )
 
     def test_source_relationship_lookup(
-        self, index_snapshot_id: str, path: str
+        self, index_snapshot_id: str, path: str, *, limit: int = 64,
+        deadline_ms: int | None = None,
+        cancel: threading.Event | None = None,
     ) -> tuple[RepositoryFtsDocument, ...]:
         stem = Path(path).stem.removeprefix("test_").removesuffix("_test")
-        with self.lock:
-            rows = self._connection().execute(
-                """
-                SELECT index_snapshot_id, record_id, path, kind, symbol, body,
-                       start_line, end_line, file_hash
-                FROM repository_fts
-                WHERE index_snapshot_id = ? AND path != ?
-                  AND (path LIKE ? OR path LIKE ?)
-                ORDER BY path COLLATE BINARY, record_id COLLATE BINARY
-                """,
-                (index_snapshot_id, path, f"%/{stem}_test.%", f"%/test_{stem}.%"),
-            ).fetchall()
+        rows = self._bounded_query(
+            """
+            SELECT index_snapshot_id, record_id, path, kind, symbol, body,
+                   start_line, end_line, file_hash
+            FROM repository_fts
+            WHERE index_snapshot_id = ? AND path != ?
+              AND (
+                path LIKE ? OR path LIKE ? OR path LIKE ? OR path LIKE ?
+              )
+            ORDER BY path COLLATE BINARY, record_id COLLATE BINARY
+            LIMIT ?
+            """,
+            (
+                index_snapshot_id, path,
+                f"%/{stem}_test.%", f"%/test_{stem}.%",
+                f"{stem}_test.%", f"test_{stem}.%", limit,
+            ),
+            limit=limit, deadline_ms=deadline_ms, cancel=cancel,
+        )
         return tuple(_fts_document_from_row(row) for row in rows)
 
     def _query_documents(
-        self, where: str, parameters: tuple[object, ...]
+        self, where: str, parameters: tuple[object, ...], *, limit: int = 128,
+        deadline_ms: int | None = None,
+        cancel: threading.Event | None = None,
     ) -> tuple[RepositoryFtsDocument, ...]:
-        with self.lock:
-            rows = self._connection().execute(
-                "SELECT index_snapshot_id, record_id, path, kind, symbol, body, "
-                "start_line, end_line, file_hash FROM repository_fts WHERE "
-                + where
-                + " ORDER BY path COLLATE BINARY, record_id COLLATE BINARY",
-                parameters,
-            ).fetchall()
+        rows = self._bounded_query(
+            "SELECT index_snapshot_id, record_id, path, kind, symbol, body, "
+            "start_line, end_line, file_hash FROM repository_fts WHERE "
+            + where
+            + " ORDER BY path COLLATE BINARY, record_id COLLATE BINARY LIMIT ?",
+            (*parameters, limit), limit=limit,
+            deadline_ms=deadline_ms, cancel=cancel,
+        )
         return tuple(_fts_document_from_row(row) for row in rows)
 
     def _relationship_documents(
-        self, index_snapshot_id: str, table: str, column: str, value: str
+        self, index_snapshot_id: str, table: str, column: str, value: str, *,
+        limit: int = 128, deadline_ms: int | None = None,
+        cancel: threading.Event | None = None,
     ) -> tuple[RepositoryFtsDocument, ...]:
         if table not in {"repository_imports", "repository_references"}:
             raise ValueError("unsupported relationship table")
         if column not in {"imported_name", "name"}:
             raise ValueError("unsupported relationship column")
-        with self.lock:
-            rows = self._connection().execute(
-                f"""
-                SELECT f.index_snapshot_id, f.record_id, f.path, f.kind,
-                       f.symbol, f.body, f.start_line, f.end_line, f.file_hash
-                FROM repository_fts AS f
-                JOIN {table} AS relationship ON relationship.path = f.path
-                WHERE f.index_snapshot_id = ?
-                  AND relationship.repository_index_generation_id = ?
-                  AND relationship.{column} LIKE ?
-                ORDER BY f.path COLLATE BINARY, f.record_id COLLATE BINARY
-                """,
-                (index_snapshot_id, index_snapshot_id, f"%{value}%"),
-            ).fetchall()
+        rows = self._bounded_query(
+            f"""
+            SELECT f.index_snapshot_id, f.record_id, f.path, f.kind,
+                   f.symbol, f.body, f.start_line, f.end_line, f.file_hash
+            FROM repository_fts AS f
+            JOIN {table} AS relationship ON relationship.path = f.path
+            WHERE f.index_snapshot_id = ?
+              AND relationship.repository_index_generation_id = ?
+              AND relationship.{column} LIKE ?
+            ORDER BY f.path COLLATE BINARY, f.record_id COLLATE BINARY
+            LIMIT ?
+            """,
+            (index_snapshot_id, index_snapshot_id, f"%{value}%", limit),
+            limit=limit, deadline_ms=deadline_ms, cancel=cancel,
+        )
         return tuple(_fts_document_from_row(row) for row in rows)
+
+    def _bounded_query(
+        self, sql: str, parameters: tuple[object, ...], *, limit: int,
+        deadline_ms: int | None, cancel: threading.Event | None,
+    ) -> list[sqlite3.Row]:
+        if limit < 1 or (deadline_ms is not None and deadline_ms <= 0):
+            return []
+        cancel = cancel or threading.Event()
+        deadline = (
+            time.monotonic() + deadline_ms / 1000
+            if deadline_ms is not None else None
+        )
+        with self.lock:
+            connection = self._connection()
+
+            def interrupted() -> int:
+                return int(
+                    cancel.is_set()
+                    or (deadline is not None and time.monotonic() >= deadline)
+                )
+
+            connection.set_progress_handler(interrupted, 1_000)
+            try:
+                return connection.execute(sql, parameters).fetchall()
+            except sqlite3.OperationalError:
+                if cancel.is_set() or (
+                    deadline is not None and time.monotonic() >= deadline
+                ):
+                    return []
+                raise
+            finally:
+                connection.set_progress_handler(None, 0)
 
     def _persist_snapshot(
         self,
@@ -467,9 +583,9 @@ class RepositoryIntelligenceRepository(Repository):
                 id, repository_id, workspace_root, workspace_dev, workspace_inode,
                 workspace_uid, inventory_generation, index_generation,
                 inventory_snapshot_id, inventory_snapshot_hash, index_snapshot_id,
-                index_snapshot_hash, grammar_versions_json, status, complete,
-                created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                index_snapshot_hash, repository_map_json, grammar_versions_json,
+                status, complete, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 snapshot.snapshot_id,
@@ -484,6 +600,11 @@ class RepositoryIntelligenceRepository(Repository):
                 snapshot.inventory_snapshot_hash,
                 snapshot.index_snapshot_id,
                 snapshot.index_snapshot_hash,
+                (
+                    snapshot.repository_map.model_dump_json()
+                    if snapshot.repository_map is not None
+                    else None
+                ),
                 _canonical_json([
                     version.model_dump(mode="json")
                     for version in snapshot.grammar_versions
@@ -510,6 +631,7 @@ class RepositoryIntelligenceRepository(Repository):
 def _validate_matching_generation(
     inventory: RepositoryInventory,
     index: RepositoryIndexSnapshot,
+    repository_map: RepositoryMap,
     workspace_identity: RepositoryWorkspaceIdentity,
 ) -> None:
     if (
@@ -517,6 +639,8 @@ def _validate_matching_generation(
         or inventory.repository_id != index.repository_id
         or inventory.snapshot_id != index.inventory_snapshot_id
         or inventory.generation != index.inventory_generation
+        or repository_map.repository_id != inventory.repository_id
+        or repository_map.inventory_snapshot_id != inventory.snapshot_id
     ):
         raise ValueError("repository generations do not match workspace identity")
 
@@ -524,6 +648,7 @@ def _validate_matching_generation(
 def _snapshot_from_parts(
     inventory: RepositoryInventory,
     index: RepositoryIndexSnapshot | None,
+    repository_map: RepositoryMap | None,
     workspace_identity: RepositoryWorkspaceIdentity,
     *,
     complete: bool,
@@ -536,6 +661,12 @@ def _snapshot_from_parts(
         "inventory_snapshot_hash": inventory.snapshot_hash,
         "index_snapshot_id": index.snapshot_id if index is not None else None,
         "index_snapshot_hash": index.snapshot_hash if index is not None else None,
+        "repository_map_snapshot_id": (
+            repository_map.snapshot_id if repository_map is not None else None
+        ),
+        "repository_map_snapshot_hash": (
+            repository_map.snapshot_hash if repository_map is not None else None
+        ),
         "grammar_versions": [item.model_dump(mode="json") for item in grammar_versions],
         "complete": complete,
     }
@@ -559,6 +690,7 @@ def _snapshot_from_parts(
         created_at_ms=inventory.created_at_ms,
         inventory=inventory,
         index=index,
+        repository_map=repository_map,
     )
 
 
@@ -931,6 +1063,20 @@ def _snapshot_from_row(
     header = _header_from_row(row)
     inventory = _inventory_from_rows(connection, header)
     index = _index_from_rows(connection, header)
+    repository_map: RepositoryMap | None = None
+    if header.repository_map_json is not None:
+        try:
+            repository_map = RepositoryMap.model_validate_json(
+                header.repository_map_json
+            )
+        except ValidationError as error:
+            location = error.errors(include_url=False)[0].get("loc", ())
+            field = str(location[0]) if location else None
+            raise PersistenceCorruptionError(
+                "persistence_record_invalid",
+                record="repository_map",
+                field=field,
+            ) from None
     return _build_model("repository_snapshot", RepositoryIntelligenceSnapshot, {
         "snapshot_id": header.snapshot_id,
         "repository_id": header.repository_id,
@@ -947,6 +1093,7 @@ def _snapshot_from_row(
         "created_at_ms": header.created_at_ms,
         "inventory": inventory,
         "index": index,
+        "repository_map": repository_map,
     })
 
 
@@ -960,6 +1107,7 @@ class _SnapshotHeader(EidosFrozenStrictModel):
     inventory_snapshot_hash: str
     index_snapshot_id: str | None
     index_snapshot_hash: str | None
+    repository_map_json: str | None
     grammar_versions: tuple[RepositoryGrammarVersion, ...]
     status: RepositorySnapshotStatus
     complete: bool
@@ -994,6 +1142,7 @@ def _header_from_row(row: RowValues) -> _SnapshotHeader:
         "inventory_snapshot_hash": values.text("inventory_snapshot_hash"),
         "index_snapshot_id": values.optional_text("index_snapshot_id"),
         "index_snapshot_hash": values.optional_text("index_snapshot_hash"),
+        "repository_map_json": values.optional_json_text("repository_map_json"),
         "grammar_versions": grammar_versions,
         "status": status,
         "complete": values.boolean("complete"),
@@ -1348,6 +1497,7 @@ def _canonical_json(value: object) -> str:
 
 __all__ = [
     "RepositoryFtsDocument",
+    "RepositoryGenerationWatermark",
     "RepositoryGrammarVersion",
     "RepositoryIndexStatus",
     "RepositoryIntelligenceRepository",

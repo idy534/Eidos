@@ -288,6 +288,11 @@ class SessionStorePort(Protocol):
 
     def session_handoff_repository(self) -> SessionHandoffRepository: ...
 
+
+class RepositoryWorkspaceRuntimePort(Protocol):
+    def activate_workspace(self, root: Path) -> object: ...
+
+
 class ManagedWorktreePort(Protocol):
     """Application port for Session-owned Worktree provisioning."""
 
@@ -509,6 +514,7 @@ class SessionApplication:
         worktree_manager: ManagedWorktreePort | None = None,
         lifecycle: SessionLifecycleCoordinator | None = None,
         retention: WorktreeRetentionPort | None = None,
+        repository_runtime: RepositoryWorkspaceRuntimePort | None = None,
     ) -> None:
         self._store = store
         self._repository: TypedSessionRepositoryPort = (
@@ -522,6 +528,7 @@ class SessionApplication:
             else None
         )
         self._retention = retention
+        self._repository_runtime = repository_runtime
         self._lifecycle = lifecycle or SessionLifecycleCoordinator()
         self._logger = logging.getLogger(__name__)
 
@@ -544,7 +551,9 @@ class SessionApplication:
                             "WORKTREE_REQUIRES_GIT",
                             "worktree execution requires a Git repository",
                         )
-                    return self._create_managed(request, resolution)
+                    return self._activate_created_session(
+                        self._create_managed(request, resolution)
+                    )
         try:
             mutation = self._repository.create_session(
                 request.workspace_root,
@@ -560,10 +569,24 @@ class SessionApplication:
             raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
         except OperationInProgressError as error:
             raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
-        return _result(
+        return self._activate_created_session(_result(
             SessionCreateResponseDto,
             self._project_session(self._projection_for_session(mutation.value.id)),
+        ))
+
+    def _activate_created_session(
+        self, result: SessionCreateResponseDto
+    ) -> SessionCreateResponseDto:
+        runtime = self._repository_runtime
+        if runtime is None:
+            return result
+        root = (
+            Path(result.worktree.worktree_root)
+            if result.worktree is not None
+            else Path(result.workspace_root)
         )
+        runtime.activate_workspace(root)
+        return result
 
     def _resolve_project(self, workspace_root: str) -> ProjectResolution:
         manager = self._worktree_manager
@@ -1091,6 +1114,7 @@ class SessionApplication:
         projection = self._repository.read_session_projection(request.session_id)
         if projection is None:
             raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
+        self._activate_projection(projection, best_effort=True)
         try:
             snapshot = self._store.read_session_snapshot(
                 request.session_id,
@@ -1832,7 +1856,9 @@ class SessionApplication:
         return tuple(recovered)
 
     def _handoff_response(self, session_id: str) -> SessionHandoffResponseDto:
-        value = self._project_session(self._projection_for_session(session_id))
+        projection = self._projection_for_session(session_id)
+        self._activate_projection(projection)
+        value = self._project_session(projection)
         value["sessionId"] = session_id
         worktree = value.get("worktree")
         value["worktreeId"] = (
@@ -1841,6 +1867,34 @@ class SessionApplication:
             else None
         )
         return _result(SessionHandoffResponseDto, value)
+
+    def _activate_projection(
+        self, projection: SessionProjection, *, best_effort: bool = False
+    ) -> None:
+        runtime = self._repository_runtime
+        if runtime is None:
+            return
+        if (
+            projection.worktree is not None
+            and projection.worktree.state is not WorktreeState.ACTIVE
+        ):
+            return
+        root = (
+            Path(projection.worktree.worktree_root)
+            if projection.worktree is not None
+            else Path(projection.session.workspace_root)
+        )
+        if best_effort and not root.is_dir():
+            return
+        try:
+            runtime.activate_workspace(root)
+        except (OSError, ValueError):
+            if not best_effort:
+                raise
+            self._logger.info(
+                "repository_session_prewarm_skipped",
+                extra={"session_id": projection.session.id},
+            )
 
     def _build_handoff_plan(
         self,
@@ -2109,6 +2163,9 @@ class SessionApplication:
                         "Worktree retention reconciliation after handoff failed",
                         extra={"worktree_id": current.associated_worktree_id},
                     )
+            self._activate_projection(
+                self._projection_for_session(current.session_id)
+            )
         return session
 
     def _materialize_worktree_target(

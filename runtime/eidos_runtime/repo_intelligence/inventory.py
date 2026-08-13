@@ -15,10 +15,13 @@ from pydantic import Field, model_validator
 
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
-from eidos_runtime.workspace.discovery_policy import is_discovery_path_allowed
 from eidos_runtime.workspace.discovery_scope import (
     DiscoveryScopeError,
     WorkspaceDiscoveryScope,
+)
+from eidos_runtime.workspace.search_driver import (
+    RipgrepFileEnumerator,
+    SearchDriverError,
 )
 
 
@@ -150,6 +153,13 @@ class RepositoryInventoryBuilder:
             self._generation = snapshot.generation
             self._last_snapshot = snapshot
 
+    def restore_generation_floor(self, generation: int) -> None:
+        """Advance the counter without treating a legacy row as restorable."""
+
+        if generation < 0:
+            raise ValueError("inventory generation floor must be non-negative")
+        self._generation = max(self._generation, generation)
+
     def build(
         self,
         *,
@@ -161,7 +171,6 @@ class RepositoryInventoryBuilder:
         files: list[FileRecord] = []
         directories: list[DirectoryRecord] = []
         diagnostics: list[InventoryDiagnostic] = []
-        entries_seen = 0
         complete = True
         try:
             root_fd = os.open(self.root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
@@ -172,106 +181,94 @@ class RepositoryInventoryBuilder:
                 scope = WorkspaceDiscoveryScope.load(root_fd)
             except DiscoveryScopeError as error:
                 raise InventoryError(error.code) from error
-            pending: list[tuple[Path, str, bool]] = [(self.root, "", False)]
-            while pending:
+            try:
+                paths, truncated = RipgrepFileEnumerator().enumerate(
+                    self.root,
+                    deadline=deadline,
+                    max_entries=self.max_entries + 1,
+                    cancel=cancel,
+                )
+            except SearchDriverError as error:
+                if error.code == "search_backend_canceled":
+                    raise InventoryCanceled("inventory_canceled") from None
+                complete = False
+                paths = ()
+                truncated = False
+                diagnostics.append(InventoryDiagnostic(
+                    code="INVENTORY_SCAN_FAILED",
+                    path="",
+                    message=error.code,
+                    recoverable=True,
+                ))
+            if truncated:
+                complete = False
+                diagnostics.append(InventoryDiagnostic(
+                    code="INVENTORY_ENTRY_LIMIT",
+                    path="",
+                    message="inventory entry limit reached",
+                    recoverable=True,
+                ))
+            root_metadata = os.fstat(root_fd)
+            directories.append(DirectoryRecord(
+                path="",
+                device=root_metadata.st_dev,
+                inode=root_metadata.st_ino,
+                ignored=False,
+                generation=self._generation + 1,
+            ))
+            directory_paths = {""}
+            for relative in paths[:self.max_entries]:
                 if cancel.is_set():
                     raise InventoryCanceled("inventory_canceled")
                 if time.monotonic() >= deadline:
                     complete = False
                     diagnostics.append(InventoryDiagnostic(
                         code="INVENTORY_DEADLINE",
-                        path="",
+                        path=relative,
                         message="inventory scan deadline reached",
                         recoverable=True,
                     ))
                     break
-                directory, relative_parent, inherited_ignored = pending.pop()
-                directory_metadata = directory.stat()
-                directories.append(DirectoryRecord(
-                    path=relative_parent,
-                    device=directory_metadata.st_dev,
-                    inode=directory_metadata.st_ino,
-                    ignored=inherited_ignored,
-                    generation=self._generation + 1,
-                ))
+                if scope.is_ignored(relative, is_directory=False):
+                    continue
                 try:
-                    children = sorted(
-                        os.scandir(directory),
-                        key=lambda entry: os.fsencode(entry.name),
-                    )
+                    metadata = os.stat(relative, dir_fd=root_fd, follow_symlinks=False)
                 except OSError as error:
                     complete = False
                     diagnostics.append(InventoryDiagnostic(
-                        code="DIRECTORY_READ_FAILED",
-                        path=relative_parent,
+                        code="ENTRY_VERIFY_FAILED",
+                        path=relative,
                         message=type(error).__name__,
                         recoverable=True,
                     ))
                     continue
-                for child in children:
-                    if cancel.is_set():
-                        raise InventoryCanceled("inventory_canceled")
-                    if time.monotonic() >= deadline:
-                        complete = False
-                        diagnostics.append(InventoryDiagnostic(
-                            code="INVENTORY_DEADLINE",
-                            path=relative_parent,
-                            message="inventory scan deadline reached",
-                            recoverable=True,
-                        ))
-                        break
-                    relative = (
-                        f"{relative_parent}/{child.name}"
-                        if relative_parent
-                        else child.name
-                    )
-                    if not is_discovery_path_allowed(relative):
+                if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+                    diagnostics.append(InventoryDiagnostic(
+                        code="SPECIAL_FILE_EXCLUDED",
+                        path=relative,
+                        message="special files are excluded",
+                        recoverable=True,
+                    ))
+                    continue
+                files.append(self._file_record(
+                    root_fd, relative, metadata, generation=self._generation + 1
+                ))
+                for parent in _parent_paths(relative):
+                    if parent in directory_paths:
                         continue
                     try:
-                        ignored = inherited_ignored or scope.is_ignored(
-                            relative,
-                            is_directory=child.is_dir(follow_symlinks=False),
-                        )
-                        metadata = child.stat(follow_symlinks=False)
-                    except (OSError, DiscoveryScopeError) as error:
+                        directory_metadata = _stat_directory(root_fd, parent)
+                    except OSError:
                         complete = False
-                        diagnostics.append(InventoryDiagnostic(
-                            code="ENTRY_VERIFY_FAILED",
-                            path=relative,
-                            message=type(error).__name__,
-                            recoverable=True,
-                        ))
                         continue
-                    entries_seen += 1
-                    if entries_seen > self.max_entries:
-                        complete = False
-                        diagnostics.append(InventoryDiagnostic(
-                            code="INVENTORY_ENTRY_LIMIT",
-                            path=relative,
-                            message="inventory entry limit reached",
-                            recoverable=True,
-                        ))
-                        break
-                    if stat.S_ISDIR(metadata.st_mode):
-                        if not ignored:
-                            pending.append((Path(child.path), relative, False))
-                        continue
-                    if not stat.S_ISREG(metadata.st_mode):
-                        diagnostics.append(InventoryDiagnostic(
-                            code="SPECIAL_FILE_EXCLUDED",
-                            path=relative,
-                            message="special files are excluded",
-                            recoverable=True,
-                        ))
-                        continue
-                    if ignored:
-                        continue
-                    record = self._file_record(
-                        root_fd, relative, metadata, generation=self._generation + 1
-                    )
-                    files.append(record)
-                if entries_seen > self.max_entries or not complete:
-                    break
+                    directory_paths.add(parent)
+                    directories.append(DirectoryRecord(
+                        path=parent,
+                        device=directory_metadata.st_dev,
+                        inode=directory_metadata.st_ino,
+                        ignored=False,
+                        generation=self._generation + 1,
+                    ))
         finally:
             os.close(root_fd)
         if cancel.is_set():
@@ -423,6 +420,34 @@ def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
         metadata.st_mtime_ns,
         getattr(metadata, "st_ctime_ns", 0),
     )
+
+
+def _parent_paths(relative: str) -> tuple[str, ...]:
+    parts = Path(relative).parts[:-1]
+    return tuple("/".join(parts[:index]) for index in range(1, len(parts) + 1))
+
+
+def _stat_directory(root_fd: int, relative: str) -> os.stat_result:
+    descriptor = os.dup(root_fd)
+    opened: list[int] = [descriptor]
+    try:
+        for part in Path(relative).parts:
+            next_descriptor = os.open(
+                part,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=descriptor,
+            )
+            descriptor = next_descriptor
+            opened.append(descriptor)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise OSError("directory identity is not a directory")
+        return metadata
+    finally:
+        for descriptor in reversed(opened):
+            os.close(descriptor)
 
 
 def _repository_id(root: Path) -> str:

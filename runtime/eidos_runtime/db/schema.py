@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
+PREVIOUS_SCHEMA_VERSION = 2
+LEGACY_SCHEMA_VERSION = 1
 
 _RAW_BASE_SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -457,6 +459,7 @@ CREATE TABLE repository_snapshots (
     inventory_snapshot_hash TEXT NOT NULL,
     index_snapshot_id TEXT,
     index_snapshot_hash TEXT,
+    repository_map_json TEXT,
     grammar_versions_json TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('complete', 'incomplete')),
     complete INTEGER NOT NULL CHECK (complete IN (0, 1)),
@@ -465,7 +468,8 @@ CREATE TABLE repository_snapshots (
         (complete = 1 AND status = 'complete'
          AND index_generation IS NOT NULL
          AND index_snapshot_id IS NOT NULL
-         AND index_snapshot_hash IS NOT NULL)
+         AND index_snapshot_hash IS NOT NULL
+         AND repository_map_json IS NOT NULL)
         OR (complete = 0 AND status = 'incomplete')
     )
 );
@@ -649,7 +653,6 @@ CREATE VIRTUAL TABLE repository_fts USING fts5(
 CONTEXT_SCHEMA_SQL = """
 CREATE TABLE repository_retrieval_snapshots (
     id TEXT PRIMARY KEY,
-    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
     inventory_snapshot_id TEXT NOT NULL,
     index_snapshot_id TEXT NOT NULL,
     snapshot_hash TEXT NOT NULL,
@@ -657,15 +660,23 @@ CREATE TABLE repository_retrieval_snapshots (
     created_at INTEGER NOT NULL
 );
 
-CREATE TABLE context_plans (
-    id TEXT PRIMARY KEY,
+CREATE TABLE run_repository_retrievals (
     run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
     retrieval_snapshot_id TEXT NOT NULL
         REFERENCES repository_retrieval_snapshots(id) ON DELETE RESTRICT,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (run_id, retrieval_snapshot_id)
+);
+
+CREATE TABLE context_plans (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    retrieval_snapshot_id TEXT
+        REFERENCES repository_retrieval_snapshots(id) ON DELETE RESTRICT,
     model_profile_snapshot_hash TEXT NOT NULL,
     rule_snapshot_id TEXT NOT NULL,
-    inventory_snapshot_id TEXT NOT NULL,
-    index_snapshot_id TEXT NOT NULL,
+    inventory_snapshot_id TEXT,
+    index_snapshot_id TEXT,
     snapshot_hash TEXT NOT NULL,
     plan_json TEXT NOT NULL,
     created_at INTEGER NOT NULL
@@ -1243,3 +1254,109 @@ SCHEMA_SQL = (
     + SESSION_HANDOFF_SCHEMA_SQL
     + WORKTREE_RETENTION_SCHEMA_SQL
 )
+
+# Test/upgrade fixture for the immediately previous schema. Keep this derived
+# from the current baseline so unrelated tables cannot drift between fixtures.
+V2_SCHEMA_SQL = SCHEMA_SQL.replace(
+    "CREATE TABLE repository_retrieval_snapshots (\n"
+    "    id TEXT PRIMARY KEY,\n",
+    "CREATE TABLE repository_retrieval_snapshots (\n"
+    "    id TEXT PRIMARY KEY,\n"
+    "    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,\n",
+).replace(
+    "CREATE TABLE run_repository_retrievals (\n"
+    "    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,\n"
+    "    retrieval_snapshot_id TEXT NOT NULL\n"
+    "        REFERENCES repository_retrieval_snapshots(id) ON DELETE RESTRICT,\n"
+    "    created_at INTEGER NOT NULL,\n"
+    "    PRIMARY KEY (run_id, retrieval_snapshot_id)\n"
+    ");\n\n",
+    "",
+).replace(
+    "    retrieval_snapshot_id TEXT\n",
+    "    retrieval_snapshot_id TEXT NOT NULL\n",
+).replace(
+    "    inventory_snapshot_id TEXT,\n"
+    "    index_snapshot_id TEXT,\n"
+    "    snapshot_hash TEXT NOT NULL,\n"
+    "    plan_json TEXT NOT NULL,",
+    "    inventory_snapshot_id TEXT NOT NULL,\n"
+    "    index_snapshot_id TEXT NOT NULL,\n"
+    "    snapshot_hash TEXT NOT NULL,\n"
+    "    plan_json TEXT NOT NULL,",
+)
+
+V1_TO_V2_MIGRATION_SQL = """
+ALTER TABLE repository_snapshots
+ADD COLUMN repository_map_json TEXT;
+"""
+
+V2_TO_V3_MIGRATION_SQL = """
+CREATE TABLE repository_retrieval_snapshots_v3 (
+    id TEXT PRIMARY KEY,
+    inventory_snapshot_id TEXT NOT NULL,
+    index_snapshot_id TEXT NOT NULL,
+    snapshot_hash TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+INSERT INTO repository_retrieval_snapshots_v3 (
+    id, inventory_snapshot_id, index_snapshot_id,
+    snapshot_hash, snapshot_json, created_at
+)
+SELECT id, inventory_snapshot_id, index_snapshot_id,
+       snapshot_hash, snapshot_json, created_at
+FROM repository_retrieval_snapshots;
+
+CREATE TABLE context_plans_v3 (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    retrieval_snapshot_id TEXT
+        REFERENCES repository_retrieval_snapshots(id) ON DELETE RESTRICT,
+    model_profile_snapshot_hash TEXT NOT NULL,
+    rule_snapshot_id TEXT NOT NULL,
+    inventory_snapshot_id TEXT,
+    index_snapshot_id TEXT,
+    snapshot_hash TEXT NOT NULL,
+    plan_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE context_snapshots_v3 (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    model_attempt_id TEXT NOT NULL UNIQUE,
+    plan_id TEXT NOT NULL REFERENCES context_plans(id) ON DELETE RESTRICT,
+    snapshot_hash TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+INSERT INTO context_plans_v3 SELECT * FROM context_plans;
+INSERT INTO context_snapshots_v3 SELECT * FROM context_snapshots;
+
+DROP TABLE context_snapshots;
+DROP TABLE context_plans;
+DROP TABLE repository_retrieval_snapshots;
+
+ALTER TABLE repository_retrieval_snapshots_v3
+RENAME TO repository_retrieval_snapshots;
+ALTER TABLE context_plans_v3 RENAME TO context_plans;
+ALTER TABLE context_snapshots_v3 RENAME TO context_snapshots;
+
+CREATE TABLE run_repository_retrievals (
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    retrieval_snapshot_id TEXT NOT NULL
+        REFERENCES repository_retrieval_snapshots(id) ON DELETE RESTRICT,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (run_id, retrieval_snapshot_id)
+);
+
+INSERT INTO run_repository_retrievals (
+    run_id, retrieval_snapshot_id, created_at
+)
+SELECT DISTINCT run_id, retrieval_snapshot_id, created_at
+FROM context_plans
+WHERE retrieval_snapshot_id IS NOT NULL;
+"""

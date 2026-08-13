@@ -74,6 +74,7 @@ class StepContextFactory:
             run_id=run.run_id,
             session_id=run.session_id,
             step_id=str(fact["stepId"]),
+            model_attempt_id=str(fact["modelAttemptId"]),
             step_index=step_index,
             model_id=run.model_id,
             model_profile=run.model_profile,

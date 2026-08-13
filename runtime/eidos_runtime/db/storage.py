@@ -631,6 +631,9 @@ class SessionStore:
     def workspace_for_run(self, run_id: str) -> WorkspaceIdentity:
         return self._repository(self._execution).workspace_for_run(run_id)
 
+    def workspace_for_session(self, session_id: str) -> WorkspaceIdentity:
+        return self._repository(self._execution).workspace_for_session(session_id)
+
     def increment_model_step(
         self,
         run_id: str,
@@ -731,7 +734,7 @@ class SessionStore:
             retry_decision=retry_decision,
         )
 
-    def start_retry_model_attempt(self, run_id: str) -> None:
+    def start_retry_model_attempt(self, run_id: str) -> str:
         return self._repository(self._execution).start_retry_model_attempt(run_id)
 
     def read_model_attempts(self, run_id: str) -> list[dict[str, object]]:
@@ -1178,11 +1181,6 @@ class SessionStore:
 
     def compaction_count(self, run_id: str) -> int:
         return self._repository(self._context).compaction_count(run_id)
-
-    def commit_compaction(
-        self, run_id: str, phase: str, summary: CompactSummary
-    ) -> CommittedMutation[CompactSummary]:
-        return self._repository(self._context).commit_compaction(run_id, phase, summary)
 
     def enqueue_input(self, run_id: str, content: str) -> str:
         return self._repository(self._execution).enqueue_input(run_id, content)

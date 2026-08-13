@@ -38,6 +38,7 @@ MAX_RG_PREVIEW_CHARACTERS = 300
 _PROCESS_POLL_SECONDS = 0.05
 _TERMINATION_GRACE_SECONDS = 0.25
 _MANIFEST_MAX_BYTES = 64 * 1024
+_READ_FD = os.read
 _RESOURCE_ROOT = (
     Path(__file__).resolve().parents[1] / "resources" / "bin" / "ripgrep"
 )
@@ -179,6 +180,186 @@ class RipgrepBinaryResolver:
         return path
 
 
+class RipgrepFileEnumerator:
+    """Bounded repository file membership from the pinned ripgrep binary."""
+
+    def __init__(self, resolver: RipgrepBinaryResolver | None = None) -> None:
+        self._resolver = resolver or RipgrepBinaryResolver()
+
+    def enumerate(
+        self,
+        workspace_path: Path,
+        *,
+        deadline: float,
+        max_entries: int,
+        cancel: threading.Event,
+        path: str = ".",
+    ) -> tuple[tuple[str, ...], bool]:
+        if max_entries < 1:
+            return (), False
+        binary = self._resolver.resolve()
+        ignore_files = self.ignore_files(
+            workspace_path, deadline=deadline, cancel=cancel
+        )
+        argv = _build_discovery_argv(binary, workspace_path, ignore_files, path=path)
+        try:
+            process = subprocess.Popen(
+                argv,
+                cwd=workspace_path,
+                env={"LC_ALL": "C", "LANG": "C"},
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+                close_fds=True,
+                shell=False,
+            )
+        except OSError:
+            raise SearchDriverError("search_backend_unavailable") from None
+        selector = selectors.DefaultSelector()
+        assert process.stdout is not None and process.stderr is not None
+        selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+        selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+        buffer = bytearray()
+        paths: list[str] = []
+        stdout_bytes = 0
+        stderr_bytes = 0
+        truncated = False
+        try:
+            while selector.get_map() or process.poll() is None:
+                if cancel.is_set():
+                    raise SearchDriverError("search_backend_canceled")
+                if time.monotonic() >= deadline:
+                    raise SearchDriverError("search_backend_timeout")
+                ready = selector.select(timeout=_PROCESS_POLL_SECONDS)
+                for key, _mask in ready:
+                    chunk = _READ_FD(key.fileobj.fileno(), 64 * 1024)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    if key.data == "stderr":
+                        stderr_bytes += len(chunk)
+                        if stderr_bytes > MAX_RG_STDERR_BYTES:
+                            raise SearchDriverError("search_backend_failed")
+                        continue
+                    stdout_bytes += len(chunk)
+                    if stdout_bytes > MAX_RG_STDOUT_BYTES:
+                        raise SearchDriverError("search_backend_protocol_error")
+                    buffer.extend(chunk)
+                    while b"\0" in buffer:
+                        encoded, _, remainder = buffer.partition(b"\0")
+                        buffer = bytearray(remainder)
+                        if not encoded:
+                            continue
+                        try:
+                            path = encoded.decode("utf-8", errors="strict")
+                        except UnicodeDecodeError:
+                            raise SearchDriverError(
+                                "search_backend_protocol_error"
+                            ) from None
+                        path = path.removeprefix("./")
+                        if is_discovery_path_allowed(path):
+                            paths.append(path)
+                            if len(paths) >= max_entries:
+                                truncated = True
+                                break
+                    if truncated:
+                        break
+                if truncated:
+                    _terminate_and_reap(process)
+                    break
+                if process.poll() is not None and not selector.get_map():
+                    break
+            if buffer:
+                try:
+                    path = buffer.decode("utf-8", errors="strict")
+                except UnicodeDecodeError:
+                    raise SearchDriverError("search_backend_protocol_error") from None
+                path = path.removeprefix("./")
+                if is_discovery_path_allowed(path):
+                    paths.append(path)
+            if not truncated:
+                returncode = process.wait(timeout=1)
+                if returncode not in {0, 1}:
+                    raise SearchDriverError("search_backend_failed")
+            return tuple(sorted(paths[:max_entries], key=os.fsencode)), truncated
+        except (OSError, subprocess.TimeoutExpired):
+            raise SearchDriverError("search_backend_failed") from None
+        except SearchDriverError:
+            _terminate_and_reap(process)
+            raise
+        finally:
+            selector.close()
+            if process.poll() is None:
+                _terminate_and_reap(process)
+            process.stdout.close()
+            process.stderr.close()
+
+    def ignore_files(
+        self,
+        workspace_path: Path,
+        *,
+        deadline: float,
+        cancel: threading.Event,
+    ) -> tuple[Path, ...]:
+        """Find nested VCS ignore files using ripgrep itself."""
+        binary = self._resolver.resolve()
+        argv = [
+            str(binary), "--files", "--null", "--hidden", "--no-follow",
+            "--no-config", "--no-ignore", "--sort", "path",
+            "--glob", "**/.gitignore", "--", ".",
+        ]
+        try:
+            process = subprocess.Popen(
+                argv,
+                cwd=workspace_path,
+                env={"LC_ALL": "C", "LANG": "C"},
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+                close_fds=True,
+                shell=False,
+            )
+        except OSError:
+            raise SearchDriverError("search_backend_unavailable") from None
+        assert process.stdout is not None and process.stderr is not None
+        ignore_deadline = min(deadline, time.monotonic() + 0.1)
+        try:
+            while True:
+                if cancel.is_set():
+                    raise SearchDriverError("search_backend_canceled")
+                if time.monotonic() >= ignore_deadline:
+                    _terminate_and_reap(process)
+                    return _ignore_files(workspace_path)
+                try:
+                    output, error = process.communicate(timeout=_PROCESS_POLL_SECONDS)
+                except subprocess.TimeoutExpired:
+                    continue
+                if len(output) > MAX_RG_STDOUT_BYTES or len(error) > MAX_RG_STDERR_BYTES:
+                    raise SearchDriverError("search_backend_protocol_error")
+                if process.returncode not in {0, 1}:
+                    raise SearchDriverError("search_backend_failed")
+                paths = tuple(
+                    path.removeprefix("./")
+                    for path in output.decode("utf-8", errors="strict").split("\0")
+                    if path and is_discovery_path_allowed(path.removeprefix("./"))
+                )
+                return _ignore_files(workspace_path) + tuple(
+                    workspace_path / path for path in paths
+                )
+        except UnicodeDecodeError:
+            raise SearchDriverError("search_backend_protocol_error") from None
+        except SearchDriverError:
+            _terminate_and_reap(process)
+            raise
+        finally:
+            if process.poll() is None:
+                _terminate_and_reap(process)
+            process.stdout.close()
+            process.stderr.close()
+
+
 class RipgrepSearchDriver:
     def __init__(self, resolver: RipgrepBinaryResolver | None = None) -> None:
         self._resolver = resolver or RipgrepBinaryResolver()
@@ -189,12 +370,19 @@ class RipgrepSearchDriver:
         cancel: threading.Event,
     ) -> WorkspaceSearchResult:
         binary = self._resolver.resolve()
+        ignore_files = RipgrepFileEnumerator(self._resolver).ignore_files(
+            request.workspace_path,
+            deadline=request.deadline,
+            cancel=cancel,
+        )
         argv = _build_argv(
             binary,
-            request.query,
+            workspace_path=request.workspace_path,
+            query=request.query,
             path=request.path,
             regex=request.regex,
             include_globs=request.include_globs,
+            ignore_files=ignore_files,
         )
         try:
             process = subprocess.Popen(
@@ -438,11 +626,14 @@ def _sha256_file(path: Path) -> str:
 
 def _build_argv(
     binary: Path,
-    query: str,
     *,
+    workspace_path: Path,
+    query: str,
     path: str = ".",
     regex: bool = False,
     include_globs: tuple[str, ...] = (),
+    ignore_files: tuple[Path, ...] | None = None,
+    disable_vcs_ignore: bool | None = None,
 ) -> list[str]:
     _validate_search_path(path)
     for glob in include_globs:
@@ -458,15 +649,10 @@ def _build_argv(
         "256K",
         "--encoding",
         "utf-8",
-        "--no-config",
-        "--no-ignore",
-        "--no-ignore-dot",
-        "--no-ignore-files",
-        "--no-ignore-global",
-        "--no-ignore-parent",
-        "--no-ignore-vcs",
-        "--hidden",
-        "--no-follow",
+        *_discovery_options(
+            disable_vcs_ignore if disable_vcs_ignore is not None
+            else _needs_scope_fallback(workspace_path)
+        ),
         "--sort",
         "path",
     ]
@@ -474,17 +660,102 @@ def _build_argv(
         argv.insert(2, "--fixed-strings")
     for glob in include_globs:
         argv.extend(("--glob", glob))
-    for directory in sorted(HARD_DISCOVERY_DIRECTORIES | SENSITIVE_DIRECTORIES):
-        argv.extend(("--glob", f"!**/{directory}/**"))
-    for name in sorted(SENSITIVE_NAMES | {".env"}):
-        argv.extend(("--glob", f"!**/{name}"))
-    for suffix in sorted(SENSITIVE_SUFFIXES):
-        argv.extend(("--glob", f"!**/*{suffix}"))
-    for keyword in sorted(SENSITIVE_KEYWORDS):
-        argv.extend(("--glob", f"!**/*{keyword}*"))
-    argv.extend(("--glob", "!**/.eidos-*"))
+    argv.extend(_hard_discovery_globs())
+    effective_ignore_files = ignore_files or _ignore_files(workspace_path)
+    if _needs_scope_fallback(workspace_path):
+        effective_ignore_files = tuple(
+            path for path in effective_ignore_files if path.name == ".eidosignore"
+        )
+    for ignore_file in effective_ignore_files:
+        argv.extend(("--ignore-file", str(ignore_file)))
     argv.extend(("--", query, path))
     return argv
+
+
+def _build_discovery_argv(
+    binary: Path,
+    workspace_path: Path,
+    ignore_files: tuple[Path, ...] | None = None,
+    disable_vcs_ignore: bool | None = None,
+    path: str = ".",
+) -> list[str]:
+    argv = [
+        str(binary), "--files", "--null",
+        *_discovery_options(
+            disable_vcs_ignore if disable_vcs_ignore is not None
+            else _needs_scope_fallback(workspace_path)
+        ),
+        "--sort", "path",
+    ]
+    argv.extend(_hard_discovery_globs())
+    effective_ignore_files = ignore_files or _ignore_files(workspace_path)
+    if _needs_scope_fallback(workspace_path):
+        effective_ignore_files = tuple(
+            path for path in effective_ignore_files if path.name == ".eidosignore"
+        )
+    for ignore_file in effective_ignore_files:
+        argv.extend(("--ignore-file", str(ignore_file)))
+    argv.extend(("--", path))
+    return argv
+
+
+def _discovery_options(disable_vcs_ignore: bool = False) -> tuple[str, ...]:
+    options = [
+        "--no-config",
+        "--no-ignore-dot",
+        "--no-ignore-global",
+        "--no-ignore-parent",
+        "--hidden",
+        "--no-follow",
+    ]
+    if disable_vcs_ignore:
+        options.append("--no-ignore-vcs")
+    return tuple(options)
+
+
+def _hard_discovery_globs() -> tuple[str, ...]:
+    globs: list[str] = []
+    for directory in sorted(HARD_DISCOVERY_DIRECTORIES | SENSITIVE_DIRECTORIES):
+        globs.extend(("--glob", f"!**/{directory}/**"))
+    for name in sorted(SENSITIVE_NAMES | {".env"}):
+        globs.extend(("--glob", f"!**/{name}"))
+    for suffix in sorted(SENSITIVE_SUFFIXES):
+        globs.extend(("--glob", f"!**/*{suffix}"))
+    for keyword in sorted(SENSITIVE_KEYWORDS):
+        globs.extend(("--glob", f"!**/*{keyword}*"))
+    globs.extend(("--glob", "!**/.eidos-*"))
+    return tuple(globs)
+
+
+def _ignore_files(workspace_path: Path) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    for name in (".gitignore", ".eidosignore"):
+        path = workspace_path / name
+        try:
+            metadata = path.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            raise SearchDriverError("search_backend_invalid") from None
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_RG_JSON_LINE_BYTES:
+            raise SearchDriverError("search_backend_invalid")
+        paths.append(path)
+    return tuple(paths)
+
+
+def _needs_scope_fallback(workspace_path: Path) -> bool:
+    path = workspace_path / ".eidosignore"
+    try:
+        metadata = path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_RG_JSON_LINE_BYTES:
+        return False
+    try:
+        content = path.read_bytes()
+    except OSError:
+        return False
+    return any(line.lstrip().startswith(b"!") for line in content.splitlines())
 
 
 def _validate_search_path(path: str) -> None:

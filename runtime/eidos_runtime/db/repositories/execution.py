@@ -31,6 +31,7 @@ from eidos_runtime.db.transitions import (
     transition_run,
     transition_segments,
 )
+from eidos_runtime.db.repositories.workspace import execution_workspace_for_session
 from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.model.instructions import InstructionResolver
 from eidos_runtime.runtime.contracts import ProgressSignature
@@ -131,6 +132,10 @@ class ExecutionRepository(Repository):
                 else None
             ),
         )
+
+    def workspace_for_session(self, session_id: str) -> WorkspaceIdentity:
+        with self.lock:
+            return execution_workspace_for_session(self._connection(), session_id)
 
     def increment_model_step(
         self,
@@ -392,10 +397,13 @@ class ExecutionRepository(Repository):
         with self.lock:
             row = self._connection().execute(
                 """
-                SELECT id, observed_reconciliation_epoch
+                SELECT steps.id, steps.observed_reconciliation_epoch,
+                       model_attempts.id AS model_attempt_id
                 FROM steps
-                WHERE run_id = ? AND status = 'running'
-                ORDER BY creation_seq DESC LIMIT 1
+                JOIN model_attempts ON model_attempts.step_id = steps.id
+                WHERE steps.run_id = ? AND steps.status = 'running'
+                  AND model_attempts.status = 'running'
+                ORDER BY steps.creation_seq DESC LIMIT 1
                 """,
                 (run_id,),
             ).fetchone()
@@ -403,6 +411,7 @@ class ExecutionRepository(Repository):
             raise ResourceNotFoundError("current step not found")
         return {
             "stepId": row["id"],
+            "modelAttemptId": row["model_attempt_id"],
             "reconciliationEpoch": row["observed_reconciliation_epoch"],
         }
 
@@ -629,7 +638,7 @@ class ExecutionRepository(Repository):
             )
         return changed.rowcount == 1
 
-    def start_retry_model_attempt(self, run_id: str) -> None:
+    def start_retry_model_attempt(self, run_id: str) -> str:
         """Create the next Attempt immediately before its provider request."""
         now = _now_ms()
         with self.lock, self._connection() as connection:
@@ -661,6 +670,7 @@ class ExecutionRepository(Repository):
                 """,
                 (step["id"],),
             ).fetchone()
+            attempt_id = str(uuid.uuid4())
             connection.execute(
                 """
                 INSERT INTO model_attempts (
@@ -669,13 +679,14 @@ class ExecutionRepository(Repository):
                 ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?)
                 """,
                 (
-                    str(uuid.uuid4()),
+                    attempt_id,
                     step["id"],
                     int(last["ordinal"]) + 1,
                     *_attempt_metadata(connection, run_id),
                     now,
                 ),
             )
+        return attempt_id
 
     def read_model_attempts(self, run_id: str) -> list[dict[str, object]]:
         with self.lock:

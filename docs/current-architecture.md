@@ -130,7 +130,7 @@ CLAUDE.md
 
 Context Budget 优先使用最近 Provider Usage 的 active input tokens。Provider Usage 不可用时，Runtime 使用标记为 `estimated` 的有界估算。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发 deterministic bounded compaction 或一次安全恢复。没有新的可压缩历史或 Context 投影没有进展时，Run 以 `context_still_over_budget` 停止。
 
-当前默认 compactor 把目标、约束、已完成动作、Workspace 变化、重要事实、失败尝试、未解决问题、决定、待处理 Approval 和下一步写入有界摘要。原始历史仍保存在 SQLite。ContextPlan、ContextSnapshot 和 Verified Compaction 也有 typed persistence boundary，但 Repository/Context 组合还不是每次默认 Run 的强制在线前置步骤。
+当前默认 compactor 先生成确定性的有界候选摘要。候选摘要不会直接成为模型事实。Runtime 会从 SQLite 重载 Item、Tool Result、Workspace change、Approval 和 reconciliation 事实，再执行 `ContextCompactionVerifier`。Tool provenance 由候选摘要的 source Item IDs 解析到真实 ToolCall IDs，所以 pre-turn compaction 可以准确引用以前 Run 的 Tool facts，也不会附加无关 ToolCall。只有验证通过的 `VerifiedCompactSummary` 才会在同一个事务中写入权威 `compact_summaries`、增加计数并产生一条 `context.compacted` Event。原始历史仍保存在 SQLite。验证失败会保留上一份 verified summary。
 
 ## 7. Model Gateway
 
@@ -181,13 +181,31 @@ Repository Intelligence 已实现为独立的 typed infrastructure。它包括�
 
 - 有界、可取消的 Repository Inventory；
 - content hash、encoding、generated/vendor、git status 和 generation；
-- Python、TypeScript、TSX、JavaScript 和 Go 的 Tree-sitter Index；
+- Python、TypeScript、TSX、JavaScript 和 Go 的 Tree-sitter Query 驱动 Index；
 - symbols、imports、references、code chunks 和 parse diagnostics；
 - Repository Map、SQLite FTS5 文档和 RapidFuzz/FTS 混合 Retrieval；
 - generation-scoped persistence、完整代和 incomplete candidate 的区分；
 - Retrieval Snapshot、ContextPlan 和 ContextSnapshot 的 hash 与证据绑定。
 
-这些基础设施由 RepositoryApplication、ContextApplication 和 persistence repositories 提供。Worktree Session 的 Repository Intelligence root 使用该 Session 的 Worktree root。Local Session 使用 `Project.workspace_root`。Repository Intelligence 不要求 Git；Non-Git Project 也可以执行 inventory、文件类型识别、Tree-sitter、symbol index、search 和 retrieval。当前默认在线 Run 仍主要使用 ContextBuilder、Workspace Tool Result 和 SQLite Context Facts。RuntimeEngine 在每次 Model Attempt 前不会强制执行完整 Inventory → Index → Map → Retrieval → ContextPlan 组装。因此，Repository Intelligence 的结构和持久化是当前实现，自动进入每次 Run 仍是部分接线能力。
+这些基础设施由 RepositoryApplication、ContextApplication 和 persistence repositories 提供。Worktree Session 的 Repository Intelligence root 使用该 Session 的 Worktree root。Local Session 使用 `Project.workspace_root`。Repository Intelligence 不要求 Git；Non-Git Project 也可以执行 inventory、文件类型识别、Tree-sitter、symbol index、search 和 retrieval。
+
+`RepositoryWorkspaceRuntime` 是进程级的 Workspace 生命周期边界。Session create 和 existing Session read 会快速预热这个边界。Session read 的预热是 best-effort。Local root 不存在时会跳过。Worktree 只有在 state 为 `ACTIVE` 且 execution root 可用时才会预热。`MISSING`、`INVALID` 和 `DELETED` 不会阻止 Session snapshot 返回。完成 execution binding 变更的 Session handoff 也会激活新 root。Run admission 仍然负责权威 Workspace 校验。Runtime shutdown 会停止全部 watcher。
+
+Workspace 激活只读取 SQLite 中的 latest complete generation。一个完整 generation 同时包含相互绑定的 persisted Inventory、Index 和 RepositoryMap。Runtime 会直接从这三个持久事实恢复 immutable `RepositoryAnalysisSnapshot`。激活路径不会调用 Inventory、Index 或 RepositoryMap builder。没有 complete generation 时，active snapshot 保持为空。
+
+`RuntimeEngine.run()` 在第一次模型执行前调用 `ensure_ready()`。空 Snapshot 会触发首次 bounded Inventory build。Cold start 或 watcher 失效会触发一次 reconciliation。Reconciliation 复用完整 Inventory scan 和 Index 的 previous-generation reuse。Clean active generation 会直接复用，不会 scan。RuntimeEngine 随后捕获 immutable `RepositoryAnalysisSnapshot`。同一个 Run 的所有 Model Step 都复用这个 view。
+
+Watcher 只会合并 dirty path、增加 invalidation epoch，并把 recovery status 标记为 reconciliation required。Watcher 不会替换 active snapshot，也不会生成新 generation。如果 build 期间出现 watcher event，Runtime 可以保存已内部验证的 complete generation 作为新 baseline，但 active state 仍保持 dirty 和 reconciliation required。下一个 Run 才会再次 reconcile。并发 `ensure_ready()` 由每个 active state 的 Condition 串行化。同一 Workspace 同一时刻只有一个 Repository build。
+
+RepositoryMap 的 manifest 读取使用 Inventory 中的 device、inode、size、mtime 和 content hash 进行 verified read。Map 捕获 Git branch 和 HEAD 后，Application 会在 SQLite commit 前用 Dulwich 再读一次。Manifest 或 Git state 在关键窗口改变时，candidate 不会成为 authoritative complete generation。完整 generation 的 Snapshot、recovery status 和 dirty bookkeeping 在一个锁保护范围内发布。
+
+v1 mapless generation 仍然不能恢复为 active Snapshot。Persistence 会单独读取 Inventory 和 Index 的 generation watermark。首次 v2 build 会从 watermark 的下一代开始。Runtime 不会把 legacy row 当成 authoritative generation，也不会直接修改 builder 的私有 counter。
+
+`RuntimeEngine.run()` 会在 Repository Generation ready 后，在 `ActiveRepositoryState` 的同一个锁内捕获 Snapshot、dirty paths 和 invalidation epoch。Runtime 使用这个 immutable capture 构造一次有界 `RepositoryRetrievalQuery`。Query 只使用当前用户目标、Inventory/Index 中可以确认的 path 和 symbol、已有 read/search Tool Result、capture 中的 dirty path 和最近 committed change。Runtime 对该 Run 只执行一次 Retrieval，并固定同一个 `RunRepositoryContext`。capture 后的 Watcher event 只会让 active Workspace 变脏，并由下一 Run reconciliation 观察。
+
+`RetrievalSnapshot` 是 immutable content-addressed artifact。SQLite 只保存一份 Retrieval JSON。`run_repository_retrievals` 保存 Run 对 artifact 的使用关系。ContextPlan 继续保存 attempt lineage，但 artifact identity 不承担 Run ownership。两个 Run 可以共享同一个 Retrieval Snapshot ID，并分别解析自己的 evidence lineage。
+
+`ContextBuilder` 是默认在线 Run 的唯一模型输入投影器。它把 Project Rules、Skills、SQLite history、verified compact summary、Repository overview 和 Retrieval evidence 放入一个结构化 `ModelContextItem` 序列。每个 ModelAttempt 在 Sampling 前持久化完整的 `ContextSnapshot`。Snapshot 原样保存 model context、resolved instructions、tool definitions、Model/Rule metadata 和可空 Repository lineage。Sampling 只读取已绑定的 Snapshot。Provider transport retry 复用同一个 Snapshot。协议修复会建立新的 ModelAttempt 和新的 Snapshot。
 
 Workspace Explorer 复用 `RepositoryWatchController`。Watcher 事件只产生 `workspace/changed` 缓存失效通知。Renderer 根据相对路径刷新已加载的父目录。Watcher 不提供路径安全事实，也不修改 Run snapshot。
 
@@ -195,7 +213,7 @@ Workspace Explorer 复用 `RepositoryWatchController`。Watcher 事件只产生 
 
 SQLite 是业务事实唯一权威。Session、Run、Item、ToolCall、Approval、Tool Attempt、Execution Segment、Step、Model Attempt、Durable Intent、Event、Outbox、Async Operation、Extension Snapshot、Context、Repository Snapshot、Compaction 和 Checkpoint 都有持久化边界。
 
-当前 `SCHEMA_VERSION` 是 1，对应 Eidos 0.3 的 SQLite 基线。新数据库直接创建完整的当前 schema。已有数据库只有 `PRAGMA user_version = 1` 才会打开。旧 revision、未知 revision 和未来 revision 都 fail closed。Runtime 不执行历史 migration，也不修改不兼容数据库。当前 schema 已包含 Project、Worktree、Session、Run、Worktree lifecycle、Session Handoff、Worktree Settings、Snapshot metadata、retention/restore fields 和 inline `review_comments`。
+当前 `SCHEMA_VERSION` 是 3。新数据库直接创建完整 schema。Runtime 会在一个事务中执行 v2→v3，也会按 v1→v2→v3 顺序升级。v1→v2 为 Repository Generation 增加 nullable `repository_map_json`。v2→v3 先创建新表并复制数据，再删除旧 Context 表并把新表改为最终名称。迁移不会先 rename 旧表。`model_attempts.context_snapshot_id` 最终仍引用 `context_snapshots(id)`，已有 binding 和 JSON 保持不变，`foreign_key_check` 必须为空。v2→v3 同时把 ContextPlan Repository lineage 改为 nullable，并拆分 Retrieval artifact 与 Run binding。迁移失败会回滚。未知 revision 和未来 revision fail closed。当前 schema 也包含 Project、Worktree、Session Handoff、retention/restore fields、Workspace Explorer 和 inline `review_comments`。
 
 业务状态变化与 Event/Outbox 在同一 SQLite transaction 中提交。Outbox 投递失败不会删除事实。Runtime 重启会从 SQLite、Outbox、Long Task 和 Resource 状态恢复或进入 reconciliation。
 

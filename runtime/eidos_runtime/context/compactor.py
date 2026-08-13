@@ -5,6 +5,7 @@ import re
 from collections.abc import Iterable
 
 from eidos_runtime.context.facts import CompactSummary, ContextFacts, ContextItemFact
+from eidos_runtime.context.verified_compaction import CompactionVerificationError
 from eidos_runtime.db.storage import SessionStore
 
 
@@ -41,7 +42,8 @@ class ContextCompactor:
     def compact(self, run_id: str, phase: str) -> CompactSummary:
         if phase not in {"pre_turn", "mid_turn"}:
             raise ValueError("invalid compaction phase")
-        facts = self.store.compaction_candidate_facts(run_id)
+        repository = self.store.verified_compaction_repository()
+        facts = repository.load_facts(run_id)
         existing = facts.compact_summary
         eligible = tuple(
             item for item in facts.items
@@ -64,11 +66,6 @@ class ContextCompactor:
         )
         failed_tools = tuple(
             text for text, item in tool_records if _tool_outcome(item) != "success"
-        )
-        changed_tools = tuple(
-            f"workspace change: {text}"
-            for text, item in tool_records
-            if _tool_changes_workspace(item)
         )
         uncertain_tools = tuple(
             text for text, item in tool_records if _tool_has_uncertain_side_effects(item)
@@ -97,7 +94,10 @@ class ContextCompactor:
                 (*user_constraints, *users[1:]),
             ),
             completed_actions=_merge(existing.completed_actions if existing else (), assistants),
-            workspace_changes=_merge(existing.workspace_changes if existing else (), changed_tools),
+            workspace_changes=_merge(
+                existing.workspace_changes if existing else (),
+                facts.committed_workspace_changes,
+            ),
             important_facts=_merge(
                 existing.important_facts if existing else (),
                 (workspace_state, *successful_tools),
@@ -120,7 +120,7 @@ class ContextCompactor:
             ),
             pending_approvals=_merge(
                 existing.pending_approvals if existing else (),
-                (f"pending approval: {value}" for value in facts.pending_approval_ids),
+                facts.pending_approval_ids,
             ),
             uncertain_side_effects=_merge(
                 existing.uncertain_side_effects if existing else (),
@@ -130,9 +130,29 @@ class ContextCompactor:
                 )),
             ),
         )
-        return self.store.commit_compaction(
-            run_id, phase, _fit_summary(summary)
-        ).value
+        proposal = _fit_summary(summary)
+        ordinals = tuple(
+            item.ordinal for item in facts.items
+            if item.item_id in proposal.source_item_ids
+        )
+        try:
+            verified = repository.verify_and_persist(
+                run_id=run_id,
+                summary=proposal,
+                input_range=(0, max(ordinals, default=0)),
+                source_tool_call_ids=facts.available_tool_call_ids,
+                pending_approval_facts=proposal.pending_approvals,
+                reconciliation_facts=(
+                    ("workspace reconciliation required",)
+                    if facts.reconciliation_required else ()
+                ),
+                phase=phase,
+            )
+        except CompactionVerificationError as error:
+            raise ContextCompactionError(
+                "compaction proposal was not verified"
+            ) from error
+        return verified.summary
 
 
 def _tool_outcome(item: ContextItemFact) -> object:

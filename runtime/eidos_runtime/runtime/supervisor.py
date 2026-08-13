@@ -28,7 +28,10 @@ from eidos_runtime.runtime.async_kernel import (
     RuntimeAsyncTask,
 )
 from eidos_runtime.runtime.contracts import RuntimeCancelled
-from eidos_runtime.runtime.engine import RuntimeEngine
+from eidos_runtime.runtime.engine import (
+    RepositoryWorkspaceRuntimePort,
+    RuntimeEngine,
+)
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
@@ -131,6 +134,7 @@ class RunSupervisor:
         cancel_timeout: float = 6.0,
         shutdown_timeout: float = 6.0,
         resource_registry: ResourceRegistry | None = None,
+        repository_runtime: RepositoryWorkspaceRuntimePort | None = None,
     ) -> None:
         self.store = store
         self.model_for = model_for
@@ -155,6 +159,7 @@ class RunSupervisor:
         self.events = RuntimeEvents(notify, store=store)
         self._async_kernel: RuntimeAsyncKernel | None = None
         self._async_kernel_frozen = False
+        self.repository_runtime = repository_runtime
 
     def bind_async_kernel(self, kernel: RuntimeAsyncKernel) -> None:
         """Bind the process-owned kernel before the first Run is dispatched."""
@@ -836,6 +841,7 @@ class RunSupervisor:
             }
             if self.engine_factory is RuntimeEngine:
                 engine_kwargs["async_kernel"] = self._async_kernel
+                engine_kwargs["repository_runtime"] = self.repository_runtime
             engine = self.engine_factory(
                 self.store,
                 lease.client,

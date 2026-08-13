@@ -40,9 +40,13 @@
 ## Repository Intelligence
 
 - Inventory、Repository generations、Tree-sitter Index、symbols/imports/references/chunks、Repository Map、SQLite FTS5、Retrieval Snapshot、ContextPlan 和 ContextSnapshot 已经有 typed infrastructure、persistence 和 focused tests。
-- 这些基础设施还没有全部进入 RuntimeEngine 的默认 online Run path。默认 Model Attempt 前不会强制执行完整的 Inventory → Index → Map → Retrieval → ContextPlan → ContextSnapshot 组装。
-- 因此，当前不能把 Repository Intelligence 描述成“没有实现”，也不能把它描述成“每次 Run 都自动使用”。正确状态是 implemented infrastructure、partially wired、not yet product-complete。
-- Watcher 只提供缓存失效信号。Watcher 事件不是 Workspace 安全事实，也不会静默修改当前 Run 的 immutable snapshot。
+- Repository Generation readiness 已经进入 Runtime。Workspace 激活只 fast restore 和启动 watcher。`RuntimeEngine.run()` 会在第一个 Model Step 前执行一次 `ensure_ready()`。首次 build、cold-start reconciliation 和 watcher-invalidated 的下一个 Run 会执行 bounded Inventory scan。Clean Run 和同 Run 后续 Model Step 不会重复 scan。
+- v1 数据库中的旧 generation 没有 persisted RepositoryMap。v2 migration 不会用当前文件系统回填旧 Map，所以这些旧 generation 不属于 fully-restorable generation。Runtime 只读取它们的 generation watermark。首次新 build 会生成更高的 complete generation。
+- Cold start 仍然不能只凭旧 Inventory 证明仓库 clean，所以第一个 Run 会 reconcile。当前实现使用一次 bounded full Inventory scan。它没有 partial directory index、filesystem journal、Base Index + Worktree Overlay 或增量 Map 算法。
+- Repository build 是增强能力。Canceled、incomplete、manifest verification failure 或 Git state change 不会替换旧 active generation。没有旧 complete generation 时，Snapshot 仍可为空，Agent 继续依赖 Workspace tools。
+- 当前默认 online Run 已经自动执行一次 grounded Repository Retrieval，并通过 ContextBuilder 注入 Repository overview 和 evidence。每个 ModelAttempt 也会绑定精确 ContextSnapshot。
+- 当前 Retrieval Query 只使用可以从用户目标、Inventory、Index、已有 Tool Result、dirty path 和 committed change 直接确认的信号。它没有 embedding、Vector Search、复杂 query rewrite、Base Index + Worktree Overlay，也没有 cross-worktree sharing。
+- Watcher 事件不是 Workspace 安全事实。Watcher 不会静默修改当前 Run 的 immutable snapshot。
 
 ## Recovery 与 Checkpoint
 
@@ -55,8 +59,8 @@
 
 ## Compaction 与 Context
 
-- 默认 ContextCompactor 是 deterministic bounded extraction。当前没有 model-assisted compaction。
-- ContextCompactionVerifier、VerifiedCompaction persistence、ContextPlan 和 ContextSnapshot 已经存在，但兼容的默认 ContextCompactor 尚未自动切换到完整 verified compaction write path。
+- 默认 ContextCompactor 使用 deterministic bounded extraction 生成候选摘要。当前没有 model-assisted proposal。
+- 候选摘要必须通过 SQLite 事实验证，才能原子写入 verified record 和权威摘要。Tool provenance 从 summary 的 source Item IDs 对应到真实 ToolCall IDs，并支持 pre-turn 跨 Run 历史。当前 deterministic compactor 不吸收 Event 内容或 Retrieval evidence 正文，所以不会虚假附加这些 provenance。验证失败时，Runtime 保留上一份 verified summary。原始历史不会被删除。
 - Context Usage Desktop 只展示当前选中 Model 对应 Run 的有效 Context Usage。同一 Session、同一 Model 启动或切换到新 Run 时，如果新 Run 尚未产生 Usage，Renderer 会保留上一份可用 Usage，直到新快照到达；切换 Session/Model 或本来没有历史 Usage 时才显示无数据状态。
 - Provider 明确 `context_exceeded` 后，如果没有新的可压缩历史或 Context projection 没有进展，Runtime 会以 `context_still_over_budget` 停止。
 

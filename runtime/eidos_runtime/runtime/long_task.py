@@ -117,6 +117,32 @@ class LongTaskRepository(Repository):
             return current
         return self._update(current, safe_point=safe_point)
 
+    def record_snapshots(
+        self,
+        run_id: str,
+        *,
+        inventory_snapshot_id: str | None = None,
+        index_snapshot_id: str | None = None,
+        context_plan_id: str | None = None,
+        context_snapshot_id: str | None = None,
+        safe_point: SafePoint | None = None,
+    ) -> LongTaskProgress:
+        current = self._require(run_id)
+        if current.status in _TERMINAL:
+            return current
+        changes: dict[str, object] = {}
+        for name, value in (
+            ("inventory_snapshot_id", inventory_snapshot_id),
+            ("index_snapshot_id", index_snapshot_id),
+            ("context_plan_id", context_plan_id),
+            ("context_snapshot_id", context_snapshot_id),
+        ):
+            if value is not None:
+                changes[name] = value
+        if safe_point is not None:
+            changes["safe_point"] = safe_point
+        return self._update(current, **changes)
+
     def request_pause(self, run_id: str) -> LongTaskProgress:
         current = self._require(run_id)
         if current.status not in {LongTaskStatus.RUNNING}:

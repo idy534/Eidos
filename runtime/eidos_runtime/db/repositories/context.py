@@ -2,19 +2,15 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import uuid
 
 from eidos_runtime.context.facts import CompactSummary, ContextFacts, ContextItemFact
-from eidos_runtime.db.database import CommittedMutation, Repository, now_ms as _now_ms
+from eidos_runtime.db.database import Repository
 from eidos_runtime.db.errors import (
     ContextLimitExceeded,
-    InvalidRunStateError,
     ResourceNotFoundError,
 )
-from eidos_runtime.db.events import append_event
-from eidos_runtime.db.mappers import _compact_summary_from_row, _json_tuple
+from eidos_runtime.db.mappers import _compact_summary_from_row
 from eidos_runtime.runtime.contracts import ProgressSignature
-from eidos_runtime.runtime.state_machine import EventType
 
 # The soft limits bound unprotected history selected in one projection. Recent
 # facts are protected from compaction and may exceed the soft limit when the
@@ -51,7 +47,15 @@ class ContextRepository(Repository):
             summary_row = connection.execute(
                 """
                 SELECT * FROM compact_summaries
-                WHERE run_id = ? ORDER BY creation_seq DESC LIMIT 1
+                WHERE run_id = ?
+                  AND EXISTS (
+                    SELECT 1 FROM verified_compact_summaries
+                    WHERE verified_compact_summaries.id = json_extract(
+                        compact_summaries.summary_metadata_json,
+                        '$.verified_summary_id'
+                    )
+                  )
+                ORDER BY creation_seq DESC LIMIT 1
                 """,
                 (run_id,),
             ).fetchone()
@@ -367,7 +371,15 @@ class ContextRepository(Repository):
             row = self._connection().execute(
                 """
                 SELECT * FROM compact_summaries
-                WHERE run_id = ? ORDER BY creation_seq DESC LIMIT 1
+                WHERE run_id = ?
+                  AND EXISTS (
+                    SELECT 1 FROM verified_compact_summaries
+                    WHERE verified_compact_summaries.id = json_extract(
+                        compact_summaries.summary_metadata_json,
+                        '$.verified_summary_id'
+                    )
+                  )
+                ORDER BY creation_seq DESC LIMIT 1
                 """,
                 (run_id,),
             ).fetchone()
@@ -381,73 +393,3 @@ class ContextRepository(Repository):
         if row is None:
             raise ResourceNotFoundError("run not found")
         return int(row[0])
-
-    def commit_compaction(
-        self, run_id: str, phase: str, summary: CompactSummary
-    ) -> CommittedMutation[CompactSummary]:
-        if phase not in {"pre_turn", "mid_turn"}:
-            raise ValueError("invalid compaction phase")
-        summary_id = str(uuid.uuid4())
-        now = _now_ms()
-        with self.lock, self._connection() as connection:
-            run = connection.execute(
-                "SELECT session_id, compaction_count FROM runs WHERE id = ? AND status = 'running'",
-                (run_id,),
-            ).fetchone()
-            if run is None:
-                raise InvalidRunStateError("run is not active")
-            connection.execute(
-                """
-                INSERT INTO compact_summaries (
-                    id, session_id, run_id, task_goal, constraints_json,
-                    completed_actions_json, workspace_changes_json,
-                    important_facts_json, unresolved_problems_json,
-                    next_actions_json, source_item_ids_json,
-                    summary_metadata_json, phase, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    summary_id, run["session_id"], run_id, summary.task_goal,
-                    _json_tuple(summary.constraints),
-                    _json_tuple(summary.completed_actions),
-                    _json_tuple(summary.workspace_changes),
-                    _json_tuple(summary.important_facts),
-                    _json_tuple(summary.unresolved_problems),
-                    _json_tuple(summary.next_actions),
-                    _json_tuple(summary.source_item_ids),
-                    json.dumps(
-                        {
-                            "important_decisions": summary.important_decisions,
-                            "failed_attempts": summary.failed_attempts,
-                            "pending_approvals": summary.pending_approvals,
-                            "uncertain_side_effects": summary.uncertain_side_effects,
-                        },
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                        sort_keys=True,
-                    ),
-                    phase, now,
-                ),
-            )
-            updated = connection.execute(
-                """
-                UPDATE runs SET compaction_count = compaction_count + 1, updated_at = ?
-                WHERE id = ? AND status = 'running'
-                """,
-                (now, run_id),
-            )
-            if updated.rowcount != 1:
-                raise InvalidRunStateError("compaction could not commit")
-            event = append_event(
-                connection,
-                EventType.CONTEXT_COMPACTED,
-                now,
-                {
-                    "summaryId": summary_id,
-                    "sourceItemCount": len(summary.source_item_ids),
-                    "phase": phase,
-                },
-                session_id=run["session_id"],
-                run_id=run_id,
-            )
-        return CommittedMutation(summary, (event,))

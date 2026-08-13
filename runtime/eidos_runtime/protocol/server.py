@@ -32,7 +32,11 @@ from eidos_runtime.application.extensions import (
 )
 from eidos_runtime.application.models import ModelApplication
 from eidos_runtime.application.runs import RunApplication, RunStartOutcome
-from eidos_runtime.application.repository import RepositoryApplicationFactory
+from eidos_runtime.application.repository import (
+    RepositoryApplicationFactory,
+    RepositoryWatcherShutdownError,
+    RepositoryWorkspaceRuntime,
+)
 from eidos_runtime.application.review import ReviewApplication
 from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
 from eidos_runtime.application.sessions import (
@@ -442,6 +446,7 @@ class _RuntimeApplications:
     models: ModelApplication
     extensions: ExtensionApplication
     repository_factory: RepositoryApplicationFactory
+    repository_runtime: RepositoryWorkspaceRuntime
     context: ContextApplication
     checkpoints: CheckpointApplication
     task_lifecycle: TaskLifecycleApplication
@@ -567,6 +572,12 @@ class RuntimeServer:
         self.worktree_manager: WorktreeManager | None = None
         self.worktree_retention: WorktreeRetentionService | None = None
         self._applications: _RuntimeApplications | None = None
+        self.repository_factory = RepositoryApplicationFactory(
+            self.store.repository_intelligence_repository
+        )
+        self.repository_runtime = RepositoryWorkspaceRuntime(
+            self.repository_factory
+        )
         self.supervisor = RunSupervisor(
             self.store,
             self._model_lease_for_run,
@@ -576,6 +587,7 @@ class RuntimeServer:
             lambda: self.shell_available,
             lambda: self.sensitive,
             self._cleanup_extensions,
+            repository_runtime=self.repository_runtime,
         )
         self.method_registry = self._build_method_registry()
 
@@ -1215,6 +1227,7 @@ class RuntimeServer:
             worktree_manager=self.worktree_manager,
             lifecycle=session_lifecycle,
             retention=self.worktree_retention,
+            repository_runtime=self.repository_runtime,
         )
         return _RuntimeApplications(
             sessions=sessions,
@@ -1227,6 +1240,7 @@ class RuntimeServer:
                 worktree_manager=self.worktree_manager,
                 session_repository=self.store.typed_runtime_repository(),
                 lifecycle_coordinator=session_lifecycle,
+                repository_runtime=self.repository_runtime,
             ),
             approvals=ApprovalApplication(
                 self.store.typed_runtime_repository(),
@@ -1237,9 +1251,8 @@ class RuntimeServer:
                 store=self.store,
                 plugins=lambda: self.plugins,
             ),
-            repository_factory=RepositoryApplicationFactory(
-                self.store.repository_intelligence_repository
-            ),
+            repository_factory=self.repository_factory,
+            repository_runtime=self.repository_runtime,
             context=ContextApplication(
                 snapshots=self.store.context_snapshot_repository(),
                 verified_compactions=self.store.verified_compaction_repository(),
@@ -1364,12 +1377,14 @@ class RuntimeServer:
             self.send(protocol_error(request_id, -32602, "Invalid params"))
             return
         if not self.initialized:
+            self.repository_runtime.shutdown_all()
             self.send(response(request_id, {}))
             self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
             self.shutting_down = True
             return
         try:
             self.supervisor.shutdown()
+            self.repository_runtime.shutdown_all()
             self._close_workspace_explorer()
             self._cleanup_extensions()
             self._close_async_kernel()
@@ -1380,6 +1395,7 @@ class RuntimeServer:
             self.supervisor.resources.ensure_empty()
         except (
             RuntimeShutdownTimeout,
+            RepositoryWatcherShutdownError,
             AsyncKernelCloseError,
             ResourceRegistryError,
         ):
@@ -1426,6 +1442,7 @@ class RuntimeServer:
         if self.supervisor.lifecycle is RuntimeLifecycle.CLOSED:
             return
         if not self.initialized or self.store.health_state != "ready":
+            self.repository_runtime.shutdown_all()
             self._close_async_kernel()
             self._clear_frozen_model_configs()
             self.store.close()
@@ -1433,6 +1450,7 @@ class RuntimeServer:
             return
         try:
             self.supervisor.shutdown()
+            self.repository_runtime.shutdown_all()
             self._close_workspace_explorer()
             self._cleanup_extensions()
             self._close_async_kernel()
@@ -1443,6 +1461,7 @@ class RuntimeServer:
             self.supervisor.resources.ensure_empty()
         except (
             RuntimeShutdownTimeout,
+            RepositoryWatcherShutdownError,
             AsyncKernelCloseError,
             ResourceRegistryError,
         ):

@@ -6,6 +6,7 @@ import os
 
 import pytest
 
+import eidos_runtime.repo_intelligence.inventory as inventory_module
 from eidos_runtime.repo_intelligence.inventory import (
     InventoryCanceled,
     RepositoryInventoryBuilder,
@@ -65,18 +66,24 @@ def test_inventory_replaced_file_race_does_not_publish_stale_verified_content(
     target.write_bytes(b"a" * 200_000)
     replacement = root / "replacement.py"
     replacement.write_bytes(b"b" * 200_000)
-    original_read = os.read
+    original_read_verified = inventory_module.read_verified_file
     replaced = False
 
-    def replacing_read(descriptor: int, size: int) -> bytes:
+    def replacing_read_verified(
+        root_fd: int,
+        relative: str,
+        expected: os.stat_result,
+        max_bytes: int,
+    ) -> bytes:
         nonlocal replaced
-        data = original_read(descriptor, size)
         if not replaced:
             replaced = True
             replacement.replace(target)
-        return data
+        return original_read_verified(root_fd, relative, expected, max_bytes)
 
-    monkeypatch.setattr(os, "read", replacing_read)
+    monkeypatch.setattr(
+        inventory_module, "read_verified_file", replacing_read_verified
+    )
     inventory = RepositoryInventoryBuilder(root).build()
     record = next(item for item in inventory.files if item.path == "main.py")
 
@@ -98,3 +105,27 @@ def test_regular_ci_inventory_fixture_is_bounded_and_complete(tmp_path: Path) ->
 
     assert inventory.complete is True
     assert len(inventory.files) == 1_000
+
+
+def test_inventory_uses_nested_gitignore_and_eidos_hard_policy(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    (root / "src").mkdir(parents=True)
+    (root / ".gitignore").write_text("ignored/\n", encoding="utf-8")
+    (root / ".eidosignore").write_text("*.snapshot\n", encoding="utf-8")
+    (root / "src" / ".gitignore").write_text("generated.py\n", encoding="utf-8")
+    (root / "src" / "main.py").write_text("main\n", encoding="utf-8")
+    (root / "src" / "generated.py").write_text("generated\n", encoding="utf-8")
+    (root / "ignored").mkdir()
+    (root / "ignored" / "ignored.py").write_text("ignored\n", encoding="utf-8")
+    (root / "result.snapshot").write_text("snapshot\n", encoding="utf-8")
+
+    inventory = RepositoryInventoryBuilder(root).build()
+
+    assert [record.path for record in inventory.files] == [
+        ".eidosignore",
+        ".gitignore",
+        "src/.gitignore",
+        "src/main.py",
+    ]

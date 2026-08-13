@@ -50,6 +50,7 @@ INTEGRATION_FILES = frozenset(
         "test_repository_application_persistence.py",
         "test_repository_persistence.py",
         "test_repository_watcher.py",
+        "test_repository_workspace_runtime.py",
         "test_response_actions.py",
         "test_runtime_distribution.py",
         "test_runtime_loop.py",

@@ -38,6 +38,7 @@ from eidos_runtime.workspace.discovery_policy import (
 )
 from eidos_runtime.workspace.search_driver import (
     MAX_RG_PREVIEW_CHARACTERS,
+    RipgrepFileEnumerator,
     RipgrepSearchDriver,
     SearchDriverError,
     WorkspaceSearchDriver,
@@ -732,36 +733,40 @@ class ToolExecutor:
         assert isinstance(path_value, str)
         assert isinstance(max_depth, int) and not isinstance(max_depth, bool)
         assert isinstance(max_entries, int) and not isinstance(max_entries, bool)
-        paths: list[str] = []
-        truncated = False
-        def visit(directory: str, depth: int) -> None:
-            nonlocal truncated
-            if truncated:
-                return
-            remaining = max_entries - len(paths)
-            if remaining <= 0:
+        scope = WorkspaceDiscoveryScope.load(self.root_fd)
+        deadline = time.monotonic() + TOOL_DEADLINE_SECONDS
+        base = "" if path_value == "." else path_value.rstrip("/")
+        base_depth = len(Path(base).parts) if base else 0
+        discovered, truncated = RipgrepFileEnumerator().enumerate(
+            self.workspace.path,
+            deadline=deadline,
+            max_entries=max_entries + 1,
+            cancel=cancel,
+            path=path_value,
+        )
+        entries: set[str] = set()
+        for relative in discovered:
+            _check_budget(cancel, deadline)
+            try:
+                metadata = _stat_relative_path(self.root_fd, relative)
+            except OSError:
+                continue
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+                continue
+            parts = Path(relative).parts
+            relative_depth = len(parts) - base_depth
+            if relative_depth < 1 or scope.is_ignored(relative, is_directory=False):
+                continue
+            for depth in range(1, min(relative_depth - 1, max_depth) + 1):
+                directory = "/".join(parts[: base_depth + depth])
+                if not scope.is_ignored(directory, is_directory=True):
+                    entries.add(directory + "/")
+            if relative_depth <= max_depth:
+                entries.add(relative)
+            if len(entries) >= max_entries:
                 truncated = True
-                return
-            listing = self.reader.list_directory(
-                directory,
-                limit=min(remaining, 2_000),
-                cancel=cancel,
-                include_ignored_directories=True,
-            )
-            truncated = truncated or listing.truncated
-            for entry in listing.entries:
-                if len(paths) >= max_entries:
-                    truncated = True
-                    return
-                if entry.kind == "directory":
-                    if not entry.ignored:
-                        paths.append(f"{entry.relative_path}/")
-                    if depth < max_depth:
-                        visit(entry.relative_path, depth + 1)
-                else:
-                    paths.append(entry.relative_path)
-
-        visit(path_value, 1)
+                break
+        paths = sorted(entries, key=os.fsencode)[:max_entries]
         return _success(
             "list_files",
             "Listed files",
@@ -1133,6 +1138,33 @@ def _read_regular_file(
     ) or len(content) != before.st_size:
         raise WorkspacePathError("workspace_changed")
     return content, after
+
+
+def _stat_relative_path(root_fd: int, relative: str) -> os.stat_result:
+    parts = Path(relative).parts
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        raise OSError("invalid relative path")
+    opened: list[int] = []
+    parent_fd = root_fd
+    try:
+        for part in parts[:-1]:
+            descriptor = os.open(
+                part,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=parent_fd,
+            )
+            opened.append(descriptor)
+            parent_fd = descriptor
+        descriptor = os.open(
+            parts[-1], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd
+        )
+        opened.append(descriptor)
+        return os.fstat(descriptor)
+    finally:
+        for descriptor in reversed(opened):
+            os.close(descriptor)
 
 
 def _validate_relative_path(value: str) -> tuple[str, ...]:

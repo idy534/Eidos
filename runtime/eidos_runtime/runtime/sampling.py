@@ -95,18 +95,14 @@ class SamplingRuntime:
         provisional_text: list[str] = []
         try:
             frozen = self.store.read_running_context_snapshot(step.run_id)
-            model_context = (
-                tuple({"role": message.role, "content": message.content}
-                      for message in frozen.plan.messages)
-                if frozen is not None
-                else step.model_context
-            )
+            if frozen is None or frozen.model_attempt_id != step.model_attempt_id:
+                raise RuntimeError("running model attempt context snapshot is required")
             result = self.runner.run(
-                model_context,
+                frozen.model_context,
                 cancel,
                 provisional_text.append,
-                instructions=step.instructions.system_text,
-                tool_definitions=step.tool_definitions,
+                instructions=frozen.instructions,
+                tool_definitions=frozen.tool_definitions,
             )
         except ModelStreamInterrupted as interrupted:
             had_progress = bool(provisional_text or interrupted.text)
