@@ -11,7 +11,7 @@ from importlib.metadata import version
 from typing import Final, TypeVar
 
 from pydantic import Field, model_validator
-from tree_sitter import Language, Parser
+from tree_sitter import Language, Node, Parser, Query, QueryCursor
 from tree_sitter_go import language as go_language
 from tree_sitter_javascript import language as javascript_language
 from tree_sitter_python import language as python_language
@@ -46,6 +46,15 @@ class SymbolKind(StrEnum):
     VARIABLE = "variable"
     TYPE = "type"
     UNKNOWN = "unknown"
+
+
+_DEFINITION_KINDS: Final = {
+    "definition.function": SymbolKind.FUNCTION,
+    "definition.class": SymbolKind.CLASS,
+    "definition.method": SymbolKind.METHOD,
+    "definition.variable": SymbolKind.VARIABLE,
+    "definition.type": SymbolKind.TYPE,
+}
 
 
 class IndexGeneration(EidosFrozenStrictModel):
@@ -356,8 +365,7 @@ class RepositoryIndexer:
     def _parse_file(self, record: FileRecord, content: bytes, inventory_generation: int, index_generation: int, cancel: threading.Event):
         language = record.language
         assert language is not None
-        parser = Parser(Language(_LANGUAGE_FACTORIES[language]()))
-        tree = parser.parse(content)
+        tree = _parser_for(language).parse(content)
         parsed_file = ParsedFile(
             path=record.path,
             file_content_hash=record.content_hash or "",
@@ -368,76 +376,110 @@ class RepositoryIndexer:
             byte_length=len(content),
             has_errors=tree.root_node.has_error,
         )
-        symbols: list[Symbol] = []
-        imports: list[Import] = []
-        references: list[Reference] = []
-        chunks: list[CodeChunk] = []
+        definitions: dict[tuple[int, int], tuple[Node, Node | None, SymbolKind]] = {}
+        definition_names: set[tuple[int, int]] = set()
+        imports_by_range: dict[tuple[int, int], Node] = {}
+        references_by_range: dict[tuple[int, int], Node] = {}
         diagnostics: list[ParseDiagnostic] = []
-        definitions: set[tuple[int, int]] = set()
-        nodes = list(_walk(tree.root_node))
-        for node in nodes:
+        for _, captures in QueryCursor(_query_for(language)).matches(tree.root_node):
             if cancel.is_set():
                 raise IndexCanceled("index_canceled")
-            if node.type == "ERROR" and len(diagnostics) < MAX_DIAGNOSTICS:
-                diagnostics.append(ParseDiagnostic(
-                    path=record.path,
-                    code="TREE_SITTER_ERROR",
-                    message="syntax error",
-                    start_line=node.start_point[0],
-                    inventory_generation=inventory_generation,
-                    index_generation=index_generation,
-                ))
-            name_node = _definition_name_node(node, language)
-            if name_node is not None:
-                name = _node_text(name_node, content)
-                kind = _symbol_kind(node.type)
-                symbol_id = _stable_id("symbol", record.path, name, kind.value, node.start_byte)
-                definitions.add((name_node.start_byte, name_node.end_byte))
-                symbols.append(Symbol(
-                    id=symbol_id,
-                    path=record.path,
-                    name=name,
-                    kind=kind,
-                    scope=_scope_for(node, content),
-                    start_line=node.start_point[0],
-                    start_column=node.start_point[1],
-                    end_line=node.end_point[0],
-                    end_column=node.end_point[1],
-                    file_content_hash=record.content_hash or "",
-                    inventory_generation=inventory_generation,
-                    index_generation=index_generation,
-                ))
-            if node.type in {
-                "import_statement",
-                "import_from_statement",
-                "import_declaration",
-                "import_clause",
-            }:
-                imports.append(Import(
-                    id=_stable_id("import", record.path, node.start_byte),
-                    path=record.path,
-                    imported_name=_node_text(node, content)[:512],
-                    source=_import_source(node, content),
-                    start_line=node.start_point[0],
-                    file_content_hash=record.content_hash or "",
-                    inventory_generation=inventory_generation,
-                    index_generation=index_generation,
-                ))
-            if (
-                node.type == "identifier"
-                and (node.start_byte, node.end_byte) not in definitions
-                and len(references) < MAX_REFERENCES_PER_FILE
-            ):
-                references.append(Reference(
-                    id=_stable_id("reference", record.path, node.start_byte),
-                    path=record.path,
-                    name=_node_text(node, content),
-                    start_line=node.start_point[0],
-                    start_column=node.start_point[1],
-                    file_content_hash=record.content_hash or "",
-                    inventory_generation=inventory_generation,
-                    index_generation=index_generation,
-                ))
+            for capture_name, nodes in captures.items():
+                if capture_name in _DEFINITION_KINDS:
+                    name_nodes = captures.get(
+                        f"name.{capture_name.partition('.')[2]}", ()
+                    )
+                    name_node = name_nodes[0] if name_nodes else None
+                    for node in nodes:
+                        definitions.setdefault(
+                            (node.start_byte, node.end_byte),
+                            (node, name_node, _DEFINITION_KINDS[capture_name]),
+                        )
+                        if name_node is not None:
+                            definition_names.add(
+                                (name_node.start_byte, name_node.end_byte)
+                            )
+                elif capture_name == "import":
+                    for node in nodes:
+                        imports_by_range.setdefault(
+                            (node.start_byte, node.end_byte), node
+                        )
+                elif capture_name.startswith("reference."):
+                    for node in nodes:
+                        if len(references_by_range) >= MAX_REFERENCES_PER_FILE:
+                            break
+                        references_by_range.setdefault(
+                            (node.start_byte, node.end_byte), node
+                        )
+                elif capture_name == "error":
+                    for node in nodes:
+                        if len(diagnostics) >= MAX_DIAGNOSTICS:
+                            break
+                        diagnostics.append(ParseDiagnostic(
+                            path=record.path,
+                            code="TREE_SITTER_ERROR",
+                            message="syntax error",
+                            start_line=node.start_point[0],
+                            inventory_generation=inventory_generation,
+                            index_generation=index_generation,
+                        ))
+
+        symbols: list[Symbol] = []
+        for node, name_node, kind in sorted(
+            definitions.values(),
+            key=lambda item: (item[0].start_byte, item[0].end_byte),
+        ):
+            if name_node is None:
+                continue
+            name = _node_text(name_node, content)
+            symbols.append(Symbol(
+                id=_stable_id("symbol", record.path, name, kind.value, node.start_byte),
+                path=record.path,
+                name=name,
+                kind=kind,
+                scope=_scope_for(node, content),
+                start_line=node.start_point[0],
+                start_column=node.start_point[1],
+                end_line=node.end_point[0],
+                end_column=node.end_point[1],
+                file_content_hash=record.content_hash or "",
+                inventory_generation=inventory_generation,
+                index_generation=index_generation,
+            ))
+
+        imports: list[Import] = []
+        for node in sorted(
+            imports_by_range.values(), key=lambda item: (item.start_byte, item.end_byte)
+        ):
+            imports.append(Import(
+                id=_stable_id("import", record.path, node.start_byte),
+                path=record.path,
+                imported_name=_node_text(node, content)[:512],
+                source=_import_source(node, content),
+                start_line=node.start_point[0],
+                file_content_hash=record.content_hash or "",
+                inventory_generation=inventory_generation,
+                index_generation=index_generation,
+            ))
+
+        references: list[Reference] = []
+        for node in sorted(
+            references_by_range.values(),
+            key=lambda item: (item.start_byte, item.end_byte),
+        ):
+            if (node.start_byte, node.end_byte) in definition_names:
+                continue
+            references.append(Reference(
+                id=_stable_id("reference", record.path, node.start_byte),
+                path=record.path,
+                name=_node_text(node, content),
+                start_line=node.start_point[0],
+                start_column=node.start_point[1],
+                file_content_hash=record.content_hash or "",
+                inventory_generation=inventory_generation,
+                index_generation=index_generation,
+            ))
+
         if parsed_file.has_errors and not diagnostics:
             diagnostics.append(ParseDiagnostic(
                 path=record.path,
@@ -447,66 +489,33 @@ class RepositoryIndexer:
                 inventory_generation=inventory_generation,
                 index_generation=index_generation,
             ))
-        for node in nodes:
-            if node.parent is not None and node.parent.type != "module":
+
+        chunks: list[CodeChunk] = []
+        for node, _, kind in sorted(
+            definitions.values(),
+            key=lambda item: (item[0].start_byte, item[0].end_byte),
+        ):
+            if kind is SymbolKind.VARIABLE:
                 continue
-            if node.type in {"function_definition", "class_definition", "function_declaration", "class_declaration", "method_declaration", "type_declaration"}:
-                if len(chunks) >= MAX_CHUNKS_PER_FILE:
-                    break
-                chunks.append(CodeChunk(
-                    id=_stable_id("chunk", record.path, node.start_byte, node.end_byte),
-                    path=record.path,
-                    start_line=node.start_point[0],
-                    end_line=node.end_point[0],
-                    byte_start=node.start_byte,
-                    byte_end=node.end_byte,
-                    text=_node_text(node, content)[:64 * 1024],
-                    file_content_hash=record.content_hash or "",
-                    inventory_generation=inventory_generation,
-                    index_generation=index_generation,
-                ))
+            if len(chunks) >= MAX_CHUNKS_PER_FILE:
+                break
+            chunks.append(CodeChunk(
+                id=_stable_id("chunk", record.path, node.start_byte, node.end_byte),
+                path=record.path,
+                start_line=node.start_point[0],
+                end_line=node.end_point[0],
+                byte_start=node.start_byte,
+                byte_end=node.end_byte,
+                text=_node_text(node, content)[:64 * 1024],
+                file_content_hash=record.content_hash or "",
+                inventory_generation=inventory_generation,
+                index_generation=index_generation,
+            ))
         return parsed_file, symbols, imports, references, chunks, diagnostics
-
-
-def _walk(node):
-    yield node
-    for child in node.children:
-        yield from _walk(child)
 
 
 def _node_text(node, content: bytes) -> str:
     return content[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
-
-
-def _definition_name_node(node, language: str):
-    definition_types = {
-        "function_definition", "class_definition", "function_declaration",
-        "class_declaration", "method_definition", "method_declaration",
-        "type_declaration", "variable_declarator",
-    }
-    if node.type not in definition_types:
-        return None
-    field = node.child_by_field_name("name")
-    if field is not None:
-        return field
-    for child in node.children:
-        if child.type in {"identifier", "type_identifier"}:
-            return child
-    return None
-
-
-def _symbol_kind(node_type: str) -> SymbolKind:
-    if "class" in node_type:
-        return SymbolKind.CLASS
-    if "function" in node_type:
-        return SymbolKind.FUNCTION
-    if "method" in node_type:
-        return SymbolKind.METHOD
-    if "type" in node_type:
-        return SymbolKind.TYPE
-    if "variable" in node_type:
-        return SymbolKind.VARIABLE
-    return SymbolKind.UNKNOWN
 
 
 def _scope_for(node, content: bytes) -> str:
@@ -577,6 +586,42 @@ _LANGUAGE_FACTORIES = {
     "javascript": javascript_language,
     "go": go_language,
 }
+
+_LANGUAGE_CACHE: dict[str, Language] = {}
+_PARSER_CACHE: dict[str, Parser] = {}
+_QUERY_CACHE: dict[str, Query] = {}
+
+
+def _language_for(language: str) -> Language:
+    cached = _LANGUAGE_CACHE.get(language)
+    if cached is None:
+        try:
+            cached = Language(_LANGUAGE_FACTORIES[language]())
+        except KeyError as error:
+            raise IndexError(f"unsupported language: {language}") from error
+        _LANGUAGE_CACHE[language] = cached
+    return cached
+
+
+def _parser_for(language: str) -> Parser:
+    cached = _PARSER_CACHE.get(language)
+    if cached is None:
+        cached = Parser(_language_for(language))
+        _PARSER_CACHE[language] = cached
+    return cached
+
+
+def _query_for(language: str) -> Query:
+    cached = _QUERY_CACHE.get(language)
+    if cached is None:
+        query_path = Path(__file__).with_name("queries") / f"{language}.scm"
+        try:
+            query_source = query_path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise IndexError(f"missing query for language: {language}") from error
+        cached = Query(_language_for(language), query_source)
+        _QUERY_CACHE[language] = cached
+    return cached
 
 
 __all__ = [

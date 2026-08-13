@@ -179,7 +179,7 @@ Repository Intelligence 已实现为独立的 typed infrastructure。它包括�
 
 - 有界、可取消的 Repository Inventory；
 - content hash、encoding、generated/vendor、git status 和 generation；
-- Python、TypeScript、TSX、JavaScript 和 Go 的 Tree-sitter Index；
+- Python、TypeScript、TSX、JavaScript 和 Go 的 Tree-sitter Query 驱动 Index；
 - symbols、imports、references、code chunks 和 parse diagnostics；
 - Repository Map、SQLite FTS5 文档和 RapidFuzz/FTS 混合 Retrieval；
 - generation-scoped persistence、完整代和 incomplete candidate 的区分；
