@@ -31,7 +31,6 @@ from eidos_runtime.workspace.discovery_scope import (
     WorkspaceDiscoveryScope,
 )
 from eidos_runtime.workspace.discovery_policy import (
-    HARD_DISCOVERY_DIRECTORIES,
     SENSITIVE_NAMES,
     SENSITIVE_SUFFIXES,
     is_sensitive_directory as _is_sensitive_directory,
@@ -39,6 +38,7 @@ from eidos_runtime.workspace.discovery_policy import (
 )
 from eidos_runtime.workspace.search_driver import (
     MAX_RG_PREVIEW_CHARACTERS,
+    RipgrepFileEnumerator,
     RipgrepSearchDriver,
     SearchDriverError,
     WorkspaceSearchDriver,
@@ -737,68 +737,39 @@ class ToolExecutor:
         assert isinstance(path_value, str)
         assert isinstance(max_depth, int) and not isinstance(max_depth, bool)
         assert isinstance(max_entries, int) and not isinstance(max_entries, bool)
-        paths: list[str] = []
-        truncated = False
         deadline = time.monotonic() + TOOL_DEADLINE_SECONDS
-
-        directory_fd = os.dup(self.root_fd)
-        prefix = ""
-        if path_value != ".":
-            parts = _validate_relative_path(path_value)
+        base = "" if path_value == "." else path_value.rstrip("/")
+        base_depth = len(Path(base).parts) if base else 0
+        discovered, truncated = RipgrepFileEnumerator().enumerate(
+            self.workspace.path,
+            deadline=deadline,
+            max_entries=max_entries + 1,
+            cancel=cancel,
+            path=path_value,
+        )
+        entries: set[str] = set()
+        for relative in discovered:
+            _check_budget(cancel, deadline)
             try:
-                for part in parts:
-                    next_fd = self._open_directory(directory_fd, part)
-                    os.close(directory_fd)
-                    directory_fd = next_fd
-            except Exception:
-                os.close(directory_fd)
-                raise
-            prefix = f"{path_value}/"
-
-        def visit(directory_fd: int, prefix: str, depth: int) -> None:
-            nonlocal truncated
-            if truncated:
-                return
-            names, directory_truncated = self._bounded_names(
-                directory_fd,
-                max_entries + 1,
-                cancel,
-                deadline,
-            )
-            truncated = truncated or directory_truncated
-            for name in names:
-                _check_budget(cancel, deadline)
-                if len(paths) >= max_entries:
-                    truncated = True
-                    return
-                if _is_sensitive_name(name):
-                    continue
-                try:
-                    metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-                except OSError:
-                    continue
-                relative = f"{prefix}{name}"
-                if stat.S_ISLNK(metadata.st_mode):
-                    continue
-                if stat.S_ISDIR(metadata.st_mode):
-                    if name in HARD_DISCOVERY_DIRECTORIES or _is_sensitive_directory(name):
-                        continue
-                    if not scope.is_ignored(relative, is_directory=True):
-                        paths.append(f"{relative}/")
-                    if depth < max_depth:
-                        child_fd = self._open_directory(directory_fd, name)
-                        try:
-                            visit(child_fd, f"{relative}/", depth + 1)
-                        finally:
-                            os.close(child_fd)
-                elif stat.S_ISREG(metadata.st_mode):
-                    if not scope.is_ignored(relative, is_directory=False):
-                        paths.append(relative)
-
-        try:
-            visit(directory_fd, prefix, 1)
-        finally:
-            os.close(directory_fd)
+                metadata = _stat_relative_path(self.root_fd, relative)
+            except OSError:
+                continue
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+                continue
+            parts = Path(relative).parts
+            relative_depth = len(parts) - base_depth
+            if relative_depth < 1 or scope.is_ignored(relative, is_directory=False):
+                continue
+            for depth in range(1, min(relative_depth - 1, max_depth) + 1):
+                directory = "/".join(parts[: base_depth + depth])
+                if not scope.is_ignored(directory, is_directory=True):
+                    entries.add(directory + "/")
+            if relative_depth <= max_depth:
+                entries.add(relative)
+            if len(entries) >= max_entries:
+                truncated = True
+                break
+        paths = sorted(entries, key=os.fsencode)[:max_entries]
         return _success(
             "list_files",
             "Listed files",
@@ -1170,6 +1141,33 @@ def _read_regular_file(
     ) or len(content) != before.st_size:
         raise WorkspacePathError("workspace_changed")
     return content, after
+
+
+def _stat_relative_path(root_fd: int, relative: str) -> os.stat_result:
+    parts = Path(relative).parts
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        raise OSError("invalid relative path")
+    opened: list[int] = []
+    parent_fd = root_fd
+    try:
+        for part in parts[:-1]:
+            descriptor = os.open(
+                part,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=parent_fd,
+            )
+            opened.append(descriptor)
+            parent_fd = descriptor
+        descriptor = os.open(
+            parts[-1], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd
+        )
+        opened.append(descriptor)
+        return os.fstat(descriptor)
+    finally:
+        for descriptor in reversed(opened):
+            os.close(descriptor)
 
 
 def _validate_relative_path(value: str) -> tuple[str, ...]:

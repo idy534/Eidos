@@ -490,7 +490,7 @@ def test_driver_uses_fixed_argv_no_shell_path_or_user_config(
     assert "--no-config" in argv
     assert "--no-ignore-parent" in argv
     assert "--no-ignore-global" in argv
-    assert "--no-ignore-vcs" in argv
+    assert "--no-ignore-vcs" not in argv
     assert "--no-ignore-dot" in argv
     assert argv[-3:] == ["--", "foo*bar", "."]
     assert kwargs["shell"] is False
