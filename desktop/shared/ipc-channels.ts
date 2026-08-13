@@ -14,6 +14,9 @@ export const IPC = {
 
   // Workspace
   WORKSPACE_SELECT: "workspace:select",
+  WORKSPACE_LIST_DIRECTORY: "workspace:list-directory",
+  WORKSPACE_READ_FILE_PREVIEW: "workspace:read-file-preview",
+  WORKSPACE_OPEN_IN_EDITOR: "workspace:open-in-editor",
 
   // Session
   SESSION_LIST: "session:list",
@@ -27,6 +30,22 @@ export const IPC = {
   SESSION_DELETE: "session:delete",
   SESSION_GIT_STATUS: "session:git-status",
   SESSION_GIT_DIFF: "session:git-diff",
+  SESSION_GIT_STAGE: "session:git-stage",
+  SESSION_GIT_UNSTAGE: "session:git-unstage",
+  SESSION_GIT_COMMIT: "session:git-commit",
+  SESSION_GIT_DISCARD: "session:git-discard",
+  REVIEW_LIST_COMMENTS: "review:list-comments",
+  REVIEW_CREATE_COMMENT: "review:create-comment",
+  REVIEW_DELETE_COMMENT: "review:delete-comment",
+  SESSION_GIT_REMOTE_STATUS: "session:git-remote-status",
+  SESSION_GIT_FETCH: "session:git-fetch",
+  SESSION_GIT_PULL: "session:git-pull",
+  SESSION_GIT_PUSH: "session:git-push",
+  SESSION_GIT_MERGE: "session:git-merge",
+  SESSION_GIT_MERGE_ABORT: "session:git-merge-abort",
+  SESSION_GIT_REBASE: "session:git-rebase",
+  SESSION_GIT_REBASE_CONTINUE: "session:git-rebase-continue",
+  SESSION_GIT_REBASE_ABORT: "session:git-rebase-abort",
 
   // Worktree settings
   WORKTREE_SETTINGS_READ: "worktree-settings:read",

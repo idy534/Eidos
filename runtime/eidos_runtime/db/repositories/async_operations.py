@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import json
 import uuid
 
 from pydantic import BaseModel, ConfigDict
 
-from eidos_runtime.db.database import Repository, now_ms as _now_ms
+from eidos_runtime.db.database import (
+    Repository,
+    canonical_hash,
+    now_ms as _now_ms,
+)
 from eidos_runtime.db.errors import (
     InvalidRunStateError,
     OperationConflictError,
+    OperationFailedError,
+    OperationInProgressError,
 )
 
 
@@ -38,7 +45,97 @@ class AsyncOperation(BaseModel):
         }
 
 
+@dataclass(frozen=True)
+class DeferredExternalOperationReservation:
+    replay_result: dict[str, object] | None
+    operation: AsyncOperation | None
+    created: bool
+
+
 class AsyncOperationRepository(Repository):
+    def prepare_external(
+        self,
+        *,
+        request_id: str | None,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+    ) -> DeferredExternalOperationReservation:
+        """Atomically reserve replay authority and managed-task lifecycle."""
+
+        request_hash = canonical_hash(request)
+        with self.lock, self._connection() as connection:
+            existing = connection.execute(
+                "SELECT * FROM operations WHERE id = ? AND scope = ?",
+                (operation_id, scope),
+            ).fetchone()
+            if existing is not None:
+                if existing["request_hash"] != request_hash:
+                    raise OperationConflictError("operation id was reused")
+                if existing["status"] == "failed":
+                    result = json.loads(existing["result_json"] or "null")
+                    if (
+                        isinstance(result, dict)
+                        and result.get("outcome") == "failed"
+                        and isinstance(result.get("errorCode"), str)
+                        and isinstance(result.get("sideEffectsMayExist"), bool)
+                    ):
+                        raise OperationFailedError(
+                            result["errorCode"],
+                            side_effects_may_exist=result["sideEffectsMayExist"],
+                        )
+                    raise InvalidRunStateError(
+                        "failed external operation result is invalid"
+                    )
+                if (
+                    existing["status"] != "completed"
+                    or existing["result_json"] is None
+                ):
+                    raise OperationInProgressError(
+                        "operation is still in progress"
+                    )
+                result = json.loads(existing["result_json"])
+                if not isinstance(result, dict):
+                    raise InvalidRunStateError(
+                        "external operation result is invalid"
+                    )
+                return DeferredExternalOperationReservation(result, None, False)
+
+            created_at = _now_ms()
+            operation = AsyncOperation(
+                id=str(uuid.uuid4()),
+                request_id=request_id,
+                operation_id=operation_id,
+                scope=scope,
+                request_hash=request_hash,
+                status="accepted",
+                created_at=created_at,
+            )
+            connection.execute(
+                """
+                INSERT INTO operations (id, scope, request_hash, status, created_at)
+                VALUES (?, ?, ?, 'in_progress', ?)
+                """,
+                (operation_id, scope, request_hash, created_at),
+            )
+            connection.execute(
+                """
+                INSERT INTO async_operations (
+                    id, request_id, operation_id, scope, request_hash,
+                    status, created_at
+                ) VALUES (?, ?, ?, ?, ?, 'accepted', ?)
+                """,
+                (
+                    operation.id,
+                    operation.request_id,
+                    operation.operation_id,
+                    operation.scope,
+                    operation.request_hash,
+                    operation.created_at,
+                ),
+            )
+        return DeferredExternalOperationReservation(None, operation, True)
+
     def accept(
         self,
         *,

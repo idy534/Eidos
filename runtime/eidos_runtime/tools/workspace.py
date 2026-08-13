@@ -31,7 +31,6 @@ from eidos_runtime.workspace.discovery_scope import (
     WorkspaceDiscoveryScope,
 )
 from eidos_runtime.workspace.discovery_policy import (
-    HARD_DISCOVERY_DIRECTORIES,
     SENSITIVE_NAMES,
     SENSITIVE_SUFFIXES,
     is_sensitive_directory as _is_sensitive_directory,
@@ -48,6 +47,7 @@ from eidos_runtime.workspace.unified_diff import (
     PatchApplyError,
     apply_strict_single_file_patch,
 )
+from eidos_runtime.workspace.reader import WorkspacePathError, WorkspaceReader
 from eidos_runtime.tools.registry import (
     ToolProvenance,
     ToolRegistry,
@@ -112,12 +112,6 @@ DARWIN_REPLACE_SAFE_XATTRS = frozenset({b"com.apple.provenance"})
 
 class ToolCancelled(RuntimeError):
     pass
-
-
-class WorkspacePathError(ValueError):
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
-        self.code = code
 
 
 @dataclass(frozen=True)
@@ -308,6 +302,7 @@ class ToolExecutor:
 
         self.workspace = identity
         self.root_fd = root_fd
+        self.reader = WorkspaceReader(identity)
         self.workspace_index = WorkspaceIndex(identity)
         self.search_driver = search_driver or RipgrepSearchDriver()
         self.registry = builtin_tool_registry(self)
@@ -319,6 +314,7 @@ class ToolExecutor:
         self.close()
 
     def close(self) -> None:
+        self.reader.close()
         if self.root_fd >= 0:
             os.close(self.root_fd)
             self.root_fd = -1
@@ -730,7 +726,6 @@ class ToolExecutor:
     def _list_files(
         self, arguments: dict[str, object], cancel: threading.Event
     ) -> dict[str, object]:
-        scope = WorkspaceDiscoveryScope.load(self.root_fd)
         path_value = arguments["path"]
         max_depth = arguments["maxDepth"]
         max_entries = arguments["maxEntries"]
@@ -739,66 +734,34 @@ class ToolExecutor:
         assert isinstance(max_entries, int) and not isinstance(max_entries, bool)
         paths: list[str] = []
         truncated = False
-        deadline = time.monotonic() + TOOL_DEADLINE_SECONDS
-
-        directory_fd = os.dup(self.root_fd)
-        prefix = ""
-        if path_value != ".":
-            parts = _validate_relative_path(path_value)
-            try:
-                for part in parts:
-                    next_fd = self._open_directory(directory_fd, part)
-                    os.close(directory_fd)
-                    directory_fd = next_fd
-            except Exception:
-                os.close(directory_fd)
-                raise
-            prefix = f"{path_value}/"
-
-        def visit(directory_fd: int, prefix: str, depth: int) -> None:
+        def visit(directory: str, depth: int) -> None:
             nonlocal truncated
             if truncated:
                 return
-            names, directory_truncated = self._bounded_names(
-                directory_fd,
-                max_entries + 1,
-                cancel,
-                deadline,
+            remaining = max_entries - len(paths)
+            if remaining <= 0:
+                truncated = True
+                return
+            listing = self.reader.list_directory(
+                directory,
+                limit=min(remaining, 2_000),
+                cancel=cancel,
+                include_ignored_directories=True,
             )
-            truncated = truncated or directory_truncated
-            for name in names:
-                _check_budget(cancel, deadline)
+            truncated = truncated or listing.truncated
+            for entry in listing.entries:
                 if len(paths) >= max_entries:
                     truncated = True
                     return
-                if _is_sensitive_name(name):
-                    continue
-                try:
-                    metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-                except OSError:
-                    continue
-                relative = f"{prefix}{name}"
-                if stat.S_ISLNK(metadata.st_mode):
-                    continue
-                if stat.S_ISDIR(metadata.st_mode):
-                    if name in HARD_DISCOVERY_DIRECTORIES or _is_sensitive_directory(name):
-                        continue
-                    if not scope.is_ignored(relative, is_directory=True):
-                        paths.append(f"{relative}/")
+                if entry.kind == "directory":
+                    if not entry.ignored:
+                        paths.append(f"{entry.relative_path}/")
                     if depth < max_depth:
-                        child_fd = self._open_directory(directory_fd, name)
-                        try:
-                            visit(child_fd, f"{relative}/", depth + 1)
-                        finally:
-                            os.close(child_fd)
-                elif stat.S_ISREG(metadata.st_mode):
-                    if not scope.is_ignored(relative, is_directory=False):
-                        paths.append(relative)
+                        visit(entry.relative_path, depth + 1)
+                else:
+                    paths.append(entry.relative_path)
 
-        try:
-            visit(directory_fd, prefix, 1)
-        finally:
-            os.close(directory_fd)
+        visit(path_value, 1)
         return _success(
             "list_files",
             "Listed files",
@@ -810,8 +773,8 @@ class ToolExecutor:
     ) -> dict[str, object]:
         path_value = arguments["path"]
         assert isinstance(path_value, str)
-        content_bytes, metadata, normalized_path = self._read_stable_path(
-            path_value, cancel, MAX_READ_FILE_BYTES
+        content_bytes, metadata, normalized_path, _truncated = self.reader.read_file_bytes(
+            path_value, cancel=cancel, limit=MAX_READ_FILE_BYTES
         )
         try:
             content = content_bytes.decode("utf-8", errors="strict")

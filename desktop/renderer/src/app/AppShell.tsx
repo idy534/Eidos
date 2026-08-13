@@ -13,6 +13,7 @@ import { CreateBranchDialog } from "../components/CreateBranchDialog.js";
 import { HandoffDialog } from "../components/HandoffDialog.js";
 import { Composer } from "../components/Composer.js";
 import { GitChangesPanel } from "../components/GitChangesPanel.js";
+import { WorkspaceExplorer } from "../components/WorkspaceExplorer.js";
 import type { RuntimeLifecycleState } from "./useRuntimeLifecycle.js";
 import { useSessionController } from "./useSessionController.js";
 import { useRunController } from "./useRunController.js";
@@ -88,7 +89,7 @@ export function AppShell({ runtime }: AppShellProps) {
   const [createSessionConfirmBusy, setCreateSessionConfirmBusy] = useState(false);
   const [createBranchSessionId, setCreateBranchSessionId] = useState<string | undefined>(undefined);
   const [handoffSessionId, setHandoffSessionId] = useState<string | undefined>(undefined);
-  const [contentView, setContentView] = useState<"conversation" | "changes">("conversation");
+  const [contentView, setContentView] = useState<"conversation" | "files" | "changes">("conversation");
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const workspaceRef = useRef<HTMLElement>(null);
   const modelSessionInitializedRef = useRef<string | undefined>(undefined);
@@ -333,6 +334,17 @@ export function AppShell({ runtime }: AppShellProps) {
     });
   }
 
+  async function handleReviewFeedback(feedback: string): Promise<void> {
+    if (!sessionState.snapshot || !modelState.selectedModelId) return;
+    await runActions.submitInput({
+      snapshot: sessionState.snapshot,
+      selectedModelId: modelState.selectedModelId,
+      isStorageReady,
+      inputOverride: feedback,
+      onRunProjected: sessionActions.projectRun,
+    });
+  }
+
   async function reviseLatestRun(run: Run, userInput?: string): Promise<void> {
     const snapshot = sessionState.snapshot;
     if (!snapshot || run.sessionId !== snapshot.session.id) return;
@@ -495,30 +507,14 @@ export function AppShell({ runtime }: AppShellProps) {
                   />
                 </div>
               )}
-              {sessionHasGit && (
-                <div className="session-header-actions">
+              <div className="session-header-actions">
+                {sessionHasGit && (
                   <div className="session-git-summary" aria-label="当前 Git 状态">
                     <span>
                       {gitReviewState.status?.branch
                         ?? sessionWorktree?.branch
                         ?? `Detached @ ${(gitReviewState.status?.head ?? sessionWorktree?.baseCommit ?? "").slice(0, 7)}`}
                     </span>
-                    {sessionWorktree?.state === "active" && sessionWorktree.branch === null && (
-                      <Button
-                        variant="ghost"
-                        size="small"
-                        disabled={
-                          handoffBusy
-                          || sessionState.pending.creatingBranchSessionId === snapshot.session.id
-                        }
-                        onClick={() => {
-                          sessionActions.setError(undefined);
-                          setCreateBranchSessionId(snapshot.session.id);
-                        }}
-                      >
-                        Create Branch
-                      </Button>
-                    )}
                     {gitReviewState.status && (
                       <>
                         <code>{gitReviewState.status.head.slice(0, 7)}</code>
@@ -535,14 +531,23 @@ export function AppShell({ runtime }: AppShellProps) {
                       Hand off
                     </Button>
                   </div>
-                  <div className="workspace-view-switch" aria-label="工作区视图">
-                    <button
-                      type="button"
-                      aria-pressed={contentView === "conversation"}
-                      onClick={() => setContentView("conversation")}
-                    >
-                      对话
-                    </button>
+                )}
+                <div className="workspace-view-switch" aria-label="工作区视图">
+                  <button
+                    type="button"
+                    aria-pressed={contentView === "conversation"}
+                    onClick={() => setContentView("conversation")}
+                  >
+                    对话
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={contentView === "files"}
+                    onClick={() => setContentView("files")}
+                  >
+                    Files
+                  </button>
+                  {sessionHasGit && (
                     <button
                       type="button"
                       aria-pressed={contentView === "changes"}
@@ -550,20 +555,39 @@ export function AppShell({ runtime }: AppShellProps) {
                     >
                       Changes
                     </button>
-                  </div>
+                  )}
                 </div>
-              )}
+              </div>
             </header>
 
-            {contentView === "changes" && sessionHasGit ? (
+            {contentView === "files" ? (
+              <WorkspaceExplorer sessionId={snapshot.session.id} />
+            ) : contentView === "changes" && sessionHasGit ? (
               <GitChangesPanel
+                sessionId={snapshot.session.id}
+                workspaceRoot={snapshot.session.project?.workspaceRoot ?? snapshot.session.workspaceRoot}
                 scope={gitReviewState.scope}
                 status={gitReviewState.status}
-                diff={gitReviewState.diff}
-                loading={gitReviewState.loadingStatus || gitReviewState.loadingDiff}
+                loading={gitReviewState.loadingStatus}
                 error={gitReviewState.error}
                 onScopeChange={gitReviewActions.selectScope}
                 onRefresh={gitReviewActions.refresh}
+                onSendReviewFeedback={handleReviewFeedback}
+                reviewFeedbackDisabled={Boolean(activeRun) || runState.isSubmitting}
+                workflowDisabled={
+                  Boolean(activeRun)
+                  || runState.isSubmitting
+                  || handoffBusy
+                  || sessionState.pending.creatingBranchSessionId === snapshot.session.id
+                }
+                onCreateBranch={
+                  sessionWorktree?.state === "active" && sessionWorktree.branch === null
+                    ? () => {
+                        sessionActions.setError(undefined);
+                        setCreateBranchSessionId(snapshot.session.id);
+                      }
+                    : undefined
+                }
               />
             ) : (
               <>

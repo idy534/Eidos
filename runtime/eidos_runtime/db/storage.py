@@ -39,7 +39,10 @@ from eidos_runtime.db.repositories import (
     SessionRepository,
 )
 from eidos_runtime.db.repositories.context import RECENT_CONTEXT_STEPS
-from eidos_runtime.db.repositories.async_operations import AsyncOperation
+from eidos_runtime.db.repositories.async_operations import (
+    AsyncOperation,
+    DeferredExternalOperationReservation,
+)
 from eidos_runtime.db.repositories.sessions import DEFAULT_LIST_LIMIT
 from eidos_runtime.db.schema import SCHEMA_VERSION
 from eidos_runtime.domain.session import Session
@@ -320,6 +323,21 @@ class SessionStore:
         request: dict[str, object],
     ) -> tuple[AsyncOperation, bool]:
         return self._repository(self._async_operations).accept(
+            request_id=request_id,
+            operation_id=operation_id,
+            scope=scope,
+            request=request,
+        )
+
+    def prepare_deferred_external_operation(
+        self,
+        *,
+        request_id: str | None,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+    ) -> DeferredExternalOperationReservation:
+        return self._repository(self._async_operations).prepare_external(
             request_id=request_id,
             operation_id=operation_id,
             scope=scope,
@@ -1182,6 +1200,39 @@ class SessionStore:
         self, operation_id: str, scope: str, request: dict[str, object]
     ) -> object | None:
         return self._database.operation_result(operation_id, scope, request)
+
+    def prepare_operation(
+        self, operation_id: str, scope: str, request: dict[str, object]
+    ) -> object | None:
+        return self._database.prepare_operation(operation_id, scope, request)
+
+    def complete_operation(
+        self,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+        result: dict[str, object],
+    ) -> dict[str, object]:
+        return self._database.complete_operation(
+            operation_id, scope, request, result
+        )
+
+    def fail_operation(
+        self,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+        *,
+        error_code: str,
+        side_effects_may_exist: bool,
+    ) -> None:
+        self._database.fail_operation(
+            operation_id,
+            scope,
+            request,
+            error_code=error_code,
+            side_effects_may_exist=side_effects_may_exist,
+        )
 
     def record_operation_result(
         self,

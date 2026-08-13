@@ -35,7 +35,12 @@ def _repository(tmp_path: Path) -> Path:
 
 
 def _metadata_snapshot(repository: Path) -> dict[str, object]:
-    git_dir = Path(_git(repository, "rev-parse", "--git-dir")).resolve()
+    raw_git_dir = Path(_git(repository, "rev-parse", "--git-dir"))
+    git_dir = (
+        raw_git_dir
+        if raw_git_dir.is_absolute()
+        else repository / raw_git_dir
+    ).resolve()
     ref_files = tuple(
         sorted(
             (

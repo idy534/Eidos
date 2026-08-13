@@ -130,6 +130,27 @@ describe("useRunController real behavior", () => {
   });
 
   describe("Start behavior", () => {
+    it("submits review feedback through startRun without replacing the composer draft", async () => {
+      const startRunSpy = vi.fn().mockResolvedValue(mockRunA);
+      setupMockRuntime({ startRun: startRunSpy });
+      const { result } = renderHook(() => useRunController(mockSnapshotA, true));
+      act(() => result.current[1].setInput("Keep this draft"));
+
+      await act(async () => {
+        await result.current[1].submitInput({
+          snapshot: mockSnapshotA,
+          selectedModelId: "deepseek-v4-flash",
+          isStorageReady: true,
+          inputOverride: "Please address review feedback",
+        });
+      });
+
+      expect(startRunSpy).toHaveBeenCalledWith(
+        "session-A", "Please address review feedback", "deepseek-v4-flash",
+      );
+      expect(result.current[0].input).toBe("Keep this draft");
+    });
+
     it("Empty input or read-only storage does not call IPC", async () => {
       const startRunSpy = vi.fn();
       setupMockRuntime({ startRun: startRunSpy });

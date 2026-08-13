@@ -18,7 +18,14 @@ class CheckpointRepository(Repository):
     def __init__(self, database: Database) -> None:
         super().__init__(database)
 
-    def create(self, run_id: str, *, git_head: str | None = None) -> Checkpoint:
+    def create(
+        self,
+        run_id: str,
+        *,
+        checkpoint_id: str | None = None,
+        git_head: str | None = None,
+        git_snapshot_id: str | None = None,
+    ) -> Checkpoint:
         now = int(time.time() * 1000)
         with self.lock, self._connection() as connection:
             run = connection.execute(
@@ -69,7 +76,7 @@ class CheckpointRepository(Repository):
                 owner=resolution.workspace_identity.owner,
             )
             checkpoint = Checkpoint(
-                id=str(uuid.uuid4()),
+                id=checkpoint_id or str(uuid.uuid4()),
                 run_id=run_id,
                 item_ordinal=int(ordinal),
                 rule_snapshot_id=(
@@ -87,6 +94,7 @@ class CheckpointRepository(Repository):
                     if git_head is not None
                     else task_progress.git_head if task_progress is not None else None
                 ),
+                git_snapshot_id=git_snapshot_id,
                 permission_snapshot_hash=(
                     task_progress.permission_snapshot_hash
                     if task_progress is not None else None
@@ -100,16 +108,17 @@ class CheckpointRepository(Repository):
                 INSERT INTO checkpoints (
                     id, run_id, item_ordinal, rule_snapshot_id,
                     repository_snapshot_id, context_snapshot_id,
-                    compact_summary_id, workspace_identity_hash, git_head,
+                    compact_summary_id, workspace_identity_hash, git_head, git_snapshot_id,
                     permission_snapshot_hash, model_profile_snapshot_hash,
                     reconciliation_required, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     checkpoint.id, checkpoint.run_id, checkpoint.item_ordinal,
                     checkpoint.rule_snapshot_id, checkpoint.repository_snapshot_id,
                     checkpoint.context_snapshot_id, checkpoint.compact_summary_id,
                     checkpoint.workspace_identity_hash, checkpoint.git_head,
+                    checkpoint.git_snapshot_id,
                     checkpoint.permission_snapshot_hash,
                     checkpoint.model_profile_snapshot_hash,
                     int(checkpoint.reconciliation_required), checkpoint.created_at,
@@ -180,6 +189,15 @@ class CheckpointRepository(Repository):
                 (action_id,),
             ).fetchone() is not None
 
+    def mark_reconciliation_required(self, checkpoint_id: str) -> None:
+        with self.lock, self._connection() as connection:
+            updated = connection.execute(
+                "UPDATE checkpoints SET reconciliation_required = 1 WHERE id = ?",
+                (checkpoint_id,),
+            )
+            if updated.rowcount != 1:
+                raise ResourceNotFoundError("checkpoint not found")
+
     def workspace_is_compatible(self, checkpoint: Checkpoint) -> bool:
         with self.lock:
             try:
@@ -221,6 +239,7 @@ def _map_checkpoint(row: object) -> Checkpoint | None:
             "compactSummaryId": row["compact_summary_id"],
             "workspaceIdentityHash": row["workspace_identity_hash"],
             "gitHead": row["git_head"],
+            "gitSnapshotId": row["git_snapshot_id"],
             "permissionSnapshotHash": row["permission_snapshot_hash"],
             "modelProfileSnapshotHash": row["model_profile_snapshot_hash"],
             "reconciliationRequired": bool(row["reconciliation_required"]),

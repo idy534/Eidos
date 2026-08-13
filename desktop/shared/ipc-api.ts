@@ -14,6 +14,17 @@ import type {
   GitDiffScope,
   SessionGitDiff,
   SessionGitStatus,
+  SessionGitMutationResult,
+  SessionGitCommitResult,
+  SessionGitDiscardResult,
+  ReviewComment,
+  ReviewCommentCreateInput,
+  GitRemoteStatus,
+  GitFetchResult,
+  GitPullResult,
+  GitPushResult,
+  GitMergeResult,
+  GitRebaseResult,
   Run,
   ContextUsage,
   ModelId,
@@ -31,6 +42,8 @@ import type {
   ExtensionSnapshot,
   RuntimeNotification,
   AppShortcut,
+  WorkspaceDirectoryListing,
+  WorkspaceFilePreview,
 } from "./domain-contracts.js";
 import type {
   ItemFeedbackResult,
@@ -48,6 +61,16 @@ export interface EidosRuntimeAPI {
 
   // Workspace
   selectWorkspace(): Promise<string | null>;
+  listWorkspaceDirectory(
+    sessionId: string,
+    path: string,
+    limit?: number,
+  ): Promise<WorkspaceDirectoryListing>;
+  readWorkspaceFilePreview(
+    sessionId: string,
+    path: string,
+  ): Promise<WorkspaceFilePreview>;
+  openWorkspacePathInEditor(sessionId: string, path: string): Promise<void>;
 
   // Sessions
   listSessions(): Promise<SessionListResult>;
@@ -76,7 +99,80 @@ export interface EidosRuntimeAPI {
   renameSession(sessionId: string, title: string): Promise<Session>;
   deleteSession(sessionId: string): Promise<DeleteSessionResult>;
   readSessionGitStatus(sessionId: string): Promise<SessionGitStatus>;
-  readSessionGitDiff(sessionId: string, scope: GitDiffScope): Promise<SessionGitDiff>;
+  readSessionGitDiff(
+    sessionId: string,
+    scope: GitDiffScope,
+    path?: string,
+  ): Promise<SessionGitDiff>;
+  stageSessionGit(
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ): Promise<SessionGitMutationResult>;
+  unstageSessionGit(
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ): Promise<SessionGitMutationResult>;
+  commitSessionGit(
+    sessionId: string,
+    message: string,
+    operationId: string,
+  ): Promise<SessionGitCommitResult>;
+  discardSessionGit(
+    sessionId: string,
+    path: string,
+    operationId: string,
+  ): Promise<SessionGitDiscardResult>;
+  listReviewComments(
+    sessionId: string,
+    path?: string,
+    scope?: GitDiffScope,
+  ): Promise<ReviewComment[]>;
+  createReviewComment(
+    sessionId: string,
+    input: ReviewCommentCreateInput,
+    operationId: string,
+  ): Promise<ReviewComment>;
+  deleteReviewComment(
+    sessionId: string,
+    commentId: string,
+    operationId: string,
+  ): Promise<string>;
+  readSessionGitRemoteStatus(sessionId: string): Promise<GitRemoteStatus>;
+  fetchSessionGit(
+    sessionId: string,
+    operationId: string,
+    remote?: string,
+  ): Promise<GitFetchResult>;
+  pullSessionGit(sessionId: string, operationId: string): Promise<GitPullResult>;
+  pushSessionGit(
+    sessionId: string,
+    operationId: string,
+    remote?: string,
+  ): Promise<GitPushResult>;
+  mergeSessionGit(
+    sessionId: string,
+    target: string,
+    operationId: string,
+  ): Promise<GitMergeResult>;
+  abortSessionGitMerge(
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitMergeResult>;
+  rebaseSessionGit(
+    sessionId: string,
+    target: string,
+    operationId: string,
+  ): Promise<GitRebaseResult>;
+  continueSessionGitRebase(
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitRebaseResult>;
+  abortSessionGitRebase(
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitRebaseResult>;
 
   // Runs
   startRun(sessionId: string, userInput: string, modelId: ModelId): Promise<Run>;

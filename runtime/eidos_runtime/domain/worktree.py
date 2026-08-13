@@ -30,6 +30,7 @@ class WorktreeLifecycleScope(StrEnum):
     SESSION_CREATE = "session/create"
     SESSION_DELETE = "session/delete"
     CHECKPOINT_FORK = "checkpoint/fork"
+    CHECKPOINT_REWIND = "checkpoint/rewind"
     ATTACH_BRANCH = "worktree/attach-branch"
     RETENTION_CLEANUP = "worktree/retention-cleanup"
     RESTORE = "worktree/restore"

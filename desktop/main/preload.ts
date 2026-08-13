@@ -17,6 +17,17 @@ import type {
   GitDiffScope,
   SessionGitDiff,
   SessionGitStatus,
+  SessionGitMutationResult,
+  SessionGitCommitResult,
+  SessionGitDiscardResult,
+  ReviewComment,
+  ReviewCommentCreateInput,
+  GitRemoteStatus,
+  GitFetchResult,
+  GitPullResult,
+  GitPushResult,
+  GitMergeResult,
+  GitRebaseResult,
   Run,
   ContextUsage,
   ModelId,
@@ -34,6 +45,8 @@ import type {
   ExtensionSnapshot,
   RuntimeNotification,
   AppShortcut,
+  WorkspaceDirectoryListing,
+  WorkspaceFilePreview,
 } from "../shared/domain-contracts.js";
 import type {
   ItemFeedbackResult,
@@ -54,6 +67,19 @@ const api: EidosRuntimeAPI = {
 
   // Workspace
   selectWorkspace: (): Promise<string | null> => ipcRenderer.invoke(IPC.WORKSPACE_SELECT),
+  listWorkspaceDirectory: (
+    sessionId: string,
+    path: string,
+    limit?: number,
+  ): Promise<WorkspaceDirectoryListing> =>
+    ipcRenderer.invoke(IPC.WORKSPACE_LIST_DIRECTORY, sessionId, path, limit),
+  readWorkspaceFilePreview: (
+    sessionId: string,
+    path: string,
+  ): Promise<WorkspaceFilePreview> =>
+    ipcRenderer.invoke(IPC.WORKSPACE_READ_FILE_PREVIEW, sessionId, path),
+  openWorkspacePathInEditor: (sessionId: string, path: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.WORKSPACE_OPEN_IN_EDITOR, sessionId, path),
 
   // Sessions
   listSessions: (): Promise<SessionListResult> => ipcRenderer.invoke(IPC.SESSION_LIST),
@@ -90,8 +116,100 @@ const api: EidosRuntimeAPI = {
     ipcRenderer.invoke(IPC.SESSION_DELETE, sessionId),
   readSessionGitStatus: (sessionId: string): Promise<SessionGitStatus> =>
     ipcRenderer.invoke(IPC.SESSION_GIT_STATUS, sessionId),
-  readSessionGitDiff: (sessionId: string, scope: GitDiffScope): Promise<SessionGitDiff> =>
-    ipcRenderer.invoke(IPC.SESSION_GIT_DIFF, sessionId, scope),
+  readSessionGitDiff: (
+    sessionId: string,
+    scope: GitDiffScope,
+    path?: string,
+  ): Promise<SessionGitDiff> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_DIFF, sessionId, scope, path),
+  stageSessionGit: (
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ): Promise<SessionGitMutationResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_STAGE, sessionId, paths, operationId),
+  unstageSessionGit: (
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ): Promise<SessionGitMutationResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_UNSTAGE, sessionId, paths, operationId),
+  commitSessionGit: (
+    sessionId: string,
+    message: string,
+    operationId: string,
+  ): Promise<SessionGitCommitResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_COMMIT, sessionId, message, operationId),
+  discardSessionGit: (
+    sessionId: string,
+    path: string,
+    operationId: string,
+  ): Promise<SessionGitDiscardResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_DISCARD, sessionId, path, operationId),
+  listReviewComments: (
+    sessionId: string,
+    path?: string,
+    scope?: GitDiffScope,
+  ): Promise<ReviewComment[]> =>
+    ipcRenderer.invoke(IPC.REVIEW_LIST_COMMENTS, sessionId, path, scope),
+  createReviewComment: (
+    sessionId: string,
+    input: ReviewCommentCreateInput,
+    operationId: string,
+  ): Promise<ReviewComment> =>
+    ipcRenderer.invoke(IPC.REVIEW_CREATE_COMMENT, sessionId, input, operationId),
+  deleteReviewComment: (
+    sessionId: string,
+    commentId: string,
+    operationId: string,
+  ): Promise<string> =>
+    ipcRenderer.invoke(IPC.REVIEW_DELETE_COMMENT, sessionId, commentId, operationId),
+  readSessionGitRemoteStatus: (sessionId: string): Promise<GitRemoteStatus> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_REMOTE_STATUS, sessionId),
+  fetchSessionGit: (
+    sessionId: string,
+    operationId: string,
+    remote?: string,
+  ): Promise<GitFetchResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_FETCH, sessionId, operationId, remote),
+  pullSessionGit: (
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitPullResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_PULL, sessionId, operationId),
+  pushSessionGit: (
+    sessionId: string,
+    operationId: string,
+    remote?: string,
+  ): Promise<GitPushResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_PUSH, sessionId, operationId, remote),
+  mergeSessionGit: (
+    sessionId: string,
+    target: string,
+    operationId: string,
+  ): Promise<GitMergeResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_MERGE, sessionId, target, operationId),
+  abortSessionGitMerge: (
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitMergeResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_MERGE_ABORT, sessionId, operationId),
+  rebaseSessionGit: (
+    sessionId: string,
+    target: string,
+    operationId: string,
+  ): Promise<GitRebaseResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_REBASE, sessionId, target, operationId),
+  continueSessionGitRebase: (
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitRebaseResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_REBASE_CONTINUE, sessionId, operationId),
+  abortSessionGitRebase: (
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitRebaseResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_REBASE_ABORT, sessionId, operationId),
 
   // Runs
   startRun: (sessionId: string, userInput: string, modelId: ModelId): Promise<Run> =>

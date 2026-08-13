@@ -33,9 +33,17 @@ from eidos_runtime.application.extensions import (
 from eidos_runtime.application.models import ModelApplication
 from eidos_runtime.application.runs import RunApplication, RunStartOutcome
 from eidos_runtime.application.repository import RepositoryApplicationFactory
+from eidos_runtime.application.review import ReviewApplication
 from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
-from eidos_runtime.application.sessions import SessionApplication, clean_session_title
+from eidos_runtime.application.sessions import (
+    DeferredGitFetch,
+    DeferredGitPull,
+    DeferredGitPush,
+    SessionApplication,
+    clean_session_title,
+)
 from eidos_runtime.application.worktree_retention import WorktreeRetentionService
+from eidos_runtime.application.workspace import WorkspaceExplorerApplication
 from eidos_runtime.application.task_lifecycle import (
     LifecycleAction,
     LifecycleResult,
@@ -58,7 +66,9 @@ from eidos_runtime.model.pydantic_ai_client import (
 from eidos_runtime.model_gateway.gateway import ModelGateway
 from eidos_runtime.domain.long_task import LongTaskProgress
 from eidos_runtime.git.manager import WorktreeManager
+from eidos_runtime.persistence.review_comments import ReviewCommentRepository
 from eidos_runtime.protocol import methods as method_dtos
+from eidos_runtime.protocol import review as review_dtos
 from eidos_runtime.protocol.registry import (
     DeferredMethodResult,
     MethodApplicationError,
@@ -290,6 +300,140 @@ class _DeferredPluginImportAdapter:
         self._server.send(business_error(request_id, "INTERNAL_ERROR"))
 
 
+class _DeferredGitFetchAdapter:
+    """Schedules Remote Git without blocking the JSON-RPC input loop."""
+
+    def __init__(self, server: "RuntimeServer") -> None:
+        self._server = server
+
+    def __call__(
+        self,
+        request_id: str,
+        request: method_dtos.SessionGitFetchRequestDto,
+    ) -> BaseModel | DeferredMethodResult:
+        result = self._server._applications_or_error().sessions.prepare_git_fetch(
+            request, request_id=request_id
+        )
+        if isinstance(result, method_dtos.SessionGitFetchResponseDto):
+            return result
+        if not isinstance(result, DeferredGitFetch):
+            raise ApplicationError("INTERNAL_ERROR")
+        scheduled = self._server.supervisor.start_managed_task(
+            "git-fetch",
+            lambda cancel: self._complete(request_id, result, cancel),
+            operation_id=result.async_operation_id,
+        )
+        if not scheduled:
+            result.cancel_before_start()
+            raise ApplicationError("RUNTIME_DRAINING")
+        return DeferredMethodResult()
+
+    def _complete(
+        self,
+        request_id: str,
+        deferred: DeferredGitFetch,
+        cancel: threading.Event,
+    ) -> None:
+        try:
+            result = deferred.run(cancel)
+        except ApplicationError as error:
+            self._server.send(business_error(request_id, error.code))
+            return
+        except Exception:
+            logger.exception("Deferred Git Fetch failed")
+            self._server.send(business_error(request_id, "INTERNAL_ERROR"))
+            return
+        self._server.send(response(request_id, result.to_json_value()))
+
+
+class _DeferredGitPullAdapter:
+    def __init__(self, server: "RuntimeServer") -> None:
+        self._server = server
+
+    def __call__(
+        self,
+        request_id: str,
+        request: method_dtos.SessionGitPullRequestDto,
+    ) -> BaseModel | DeferredMethodResult:
+        result = self._server._applications_or_error().sessions.prepare_git_pull(
+            request, request_id=request_id
+        )
+        if isinstance(result, method_dtos.SessionGitPullResponseDto):
+            return result
+        if not isinstance(result, DeferredGitPull):
+            raise ApplicationError("INTERNAL_ERROR")
+        scheduled = self._server.supervisor.start_managed_task(
+            "git-pull",
+            lambda cancel: self._complete(request_id, result, cancel),
+            operation_id=result.async_operation_id,
+        )
+        if not scheduled:
+            result.cancel_before_start()
+            raise ApplicationError("RUNTIME_DRAINING")
+        return DeferredMethodResult()
+
+    def _complete(
+        self,
+        request_id: str,
+        deferred: DeferredGitPull,
+        cancel: threading.Event,
+    ) -> None:
+        try:
+            result = deferred.run(cancel)
+        except ApplicationError as error:
+            self._server.send(business_error(request_id, error.code))
+            return
+        except Exception:
+            logger.exception("Deferred Git Pull failed")
+            self._server.send(business_error(request_id, "INTERNAL_ERROR"))
+            return
+        self._server.send(response(request_id, result.to_json_value()))
+
+
+class _DeferredGitPushAdapter:
+    def __init__(self, server: "RuntimeServer") -> None:
+        self._server = server
+
+    def __call__(
+        self,
+        request_id: str,
+        request: method_dtos.SessionGitPushRequestDto,
+    ) -> BaseModel | DeferredMethodResult:
+        result = self._server._applications_or_error().sessions.prepare_git_push(
+            request, request_id=request_id
+        )
+        if isinstance(result, method_dtos.SessionGitPushResponseDto):
+            return result
+        if not isinstance(result, DeferredGitPush):
+            raise ApplicationError("INTERNAL_ERROR")
+        scheduled = self._server.supervisor.start_managed_task(
+            "git-push",
+            lambda cancel: self._complete(request_id, result, cancel),
+            operation_id=result.async_operation_id,
+        )
+        if not scheduled:
+            result.cancel_before_start()
+            raise ApplicationError("RUNTIME_DRAINING")
+        return DeferredMethodResult()
+
+    def _complete(
+        self,
+        request_id: str,
+        deferred: DeferredGitPush,
+        cancel: threading.Event,
+    ) -> None:
+        try:
+            result = deferred.run(cancel)
+        except ApplicationError as error:
+            self._server.send(business_error(request_id, error.code))
+            return
+        except Exception:
+            logger.exception("Deferred Git Push failed")
+            self._server.send(business_error(request_id, "INTERNAL_ERROR"))
+            return
+        self._server.send(response(request_id, result.to_json_value()))
+
+
 @dataclass(frozen=True)
 class _RuntimeApplications:
     sessions: SessionApplication
@@ -301,6 +445,8 @@ class _RuntimeApplications:
     context: ContextApplication
     checkpoints: CheckpointApplication
     task_lifecycle: TaskLifecycleApplication
+    workspace: WorkspaceExplorerApplication
+    review: ReviewApplication
 
 
 class _ServerRunEnvironment:
@@ -590,6 +736,127 @@ class RuntimeServer:
                 ),
             ),
             (
+                "workspace/listDirectory",
+                method_dtos.WorkspaceListDirectoryRequestDto,
+                method_dtos.WorkspaceListDirectoryResponseDto,
+                lambda _id, request: self._applications_or_error().workspace.list_directory(
+                    request
+                ),
+            ),
+            (
+                "workspace/readFilePreview",
+                method_dtos.WorkspaceReadFilePreviewRequestDto,
+                method_dtos.WorkspaceReadFilePreviewResponseDto,
+                lambda _id, request: self._applications_or_error().workspace.read_file_preview(
+                    request
+                ),
+            ),
+            (
+                "review/listComments",
+                review_dtos.ReviewCommentListRequestDto,
+                review_dtos.ReviewCommentListResponseDto,
+                lambda _id, request: self._applications_or_error().review.list_comments(
+                    request
+                ),
+            ),
+            (
+                "review/createComment",
+                review_dtos.ReviewCommentCreateRequestDto,
+                review_dtos.ReviewCommentCreateResponseDto,
+                lambda _id, request: self._applications_or_error().review.create_comment(
+                    request
+                ),
+            ),
+            (
+                "review/deleteComment",
+                review_dtos.ReviewCommentDeleteRequestDto,
+                review_dtos.ReviewCommentDeleteResponseDto,
+                lambda _id, request: self._applications_or_error().review.delete_comment(
+                    request
+                ),
+            ),
+            (
+                "session/gitStage",
+                method_dtos.SessionGitStageRequestDto,
+                method_dtos.SessionGitStageResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_stage(
+                    request
+                ),
+            ),
+            (
+                "session/gitUnstage",
+                method_dtos.SessionGitUnstageRequestDto,
+                method_dtos.SessionGitUnstageResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_unstage(
+                    request
+                ),
+            ),
+            (
+                "session/gitCommit",
+                method_dtos.SessionGitCommitRequestDto,
+                method_dtos.SessionGitCommitResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_commit(
+                    request
+                ),
+            ),
+            (
+                "session/gitDiscard",
+                method_dtos.SessionGitDiscardRequestDto,
+                method_dtos.SessionGitDiscardResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_discard(
+                    request
+                ),
+            ),
+            (
+                "session/gitMerge",
+                method_dtos.SessionGitMergeRequestDto,
+                method_dtos.SessionGitMergeResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_merge(
+                    request
+                ),
+            ),
+            (
+                "session/gitMergeAbort",
+                method_dtos.SessionGitMergeAbortRequestDto,
+                method_dtos.SessionGitMergeAbortResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_merge_abort(
+                    request
+                ),
+            ),
+            (
+                "session/gitRebase",
+                method_dtos.SessionGitRebaseRequestDto,
+                method_dtos.SessionGitRebaseResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_rebase(
+                    request
+                ),
+            ),
+            (
+                "session/gitRebaseContinue",
+                method_dtos.SessionGitRebaseContinueRequestDto,
+                method_dtos.SessionGitRebaseContinueResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_rebase_continue(
+                    request
+                ),
+            ),
+            (
+                "session/gitRebaseAbort",
+                method_dtos.SessionGitRebaseAbortRequestDto,
+                method_dtos.SessionGitRebaseAbortResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_rebase_abort(
+                    request
+                ),
+            ),
+            (
+                "session/gitRemoteStatus",
+                method_dtos.SessionGitRemoteStatusRequestDto,
+                method_dtos.SessionGitRemoteStatusResponseDto,
+                lambda _id,
+                request: self._applications_or_error().sessions.git_remote_status(
+                    request
+                ),
+            ),
+            (
                 "session/rename",
                 method_dtos.SessionRenameRequestDto,
                 method_dtos.SessionRenameResponseDto,
@@ -850,6 +1117,39 @@ class RuntimeServer:
             )
         registry.register(
             MethodRegistration(
+                name="session/gitFetch",
+                request_type=method_dtos.SessionGitFetchRequestDto,
+                response_type=method_dtos.SessionGitFetchResponseDto,
+                handler=_DeferredGitFetchAdapter(self),
+                allowed_when_draining=False,
+                allowed_during_reconfiguration=False,
+                error_mapper=_application_error_mapping,
+            )
+        )
+        registry.register(
+            MethodRegistration(
+                name="session/gitPull",
+                request_type=method_dtos.SessionGitPullRequestDto,
+                response_type=method_dtos.SessionGitPullResponseDto,
+                handler=_DeferredGitPullAdapter(self),
+                allowed_when_draining=False,
+                allowed_during_reconfiguration=False,
+                error_mapper=_application_error_mapping,
+            )
+        )
+        registry.register(
+            MethodRegistration(
+                name="session/gitPush",
+                request_type=method_dtos.SessionGitPushRequestDto,
+                response_type=method_dtos.SessionGitPushResponseDto,
+                handler=_DeferredGitPushAdapter(self),
+                allowed_when_draining=False,
+                allowed_during_reconfiguration=False,
+                error_mapper=_application_error_mapping,
+            )
+        )
+        registry.register(
+            MethodRegistration(
                 name="plugin/import",
                 request_type=method_dtos.PluginImportRequestDto,
                 response_type=method_dtos.PluginImportResponseDto,
@@ -909,14 +1209,15 @@ class RuntimeServer:
             _ServerTaskLifecycleRuntime(self.supervisor)
         )
         session_lifecycle = SessionLifecycleCoordinator()
+        sessions = SessionApplication(
+            self.store,
+            scan_text=self._scan_text,
+            worktree_manager=self.worktree_manager,
+            lifecycle=session_lifecycle,
+            retention=self.worktree_retention,
+        )
         return _RuntimeApplications(
-            sessions=SessionApplication(
-                self.store,
-                scan_text=self._scan_text,
-                worktree_manager=self.worktree_manager,
-                lifecycle=session_lifecycle,
-                retention=self.worktree_retention,
-            ),
+            sessions=sessions,
             runs=RunApplication(
                 store=self.store,
                 runtime=self.supervisor,
@@ -951,6 +1252,24 @@ class RuntimeServer:
                 retention=self.worktree_retention,
             ),
             task_lifecycle=task_lifecycle,
+            workspace=WorkspaceExplorerApplication(
+                self.store.typed_runtime_repository(),
+                worktree_manager=self.worktree_manager,
+                scan_text=self._scan_text,
+                on_changes=lambda session_id, changes: self.send({
+                    "jsonrpc": "2.0",
+                    "method": "workspace/changed",
+                    "params": {
+                        "sessionId": session_id,
+                        "paths": [change.path for change in changes],
+                    },
+                }),
+            ),
+            review=ReviewApplication(
+                ReviewCommentRepository(self.store.database),
+                git=sessions,
+                scan_text=self._scan_text,
+            ),
         )
 
     def initialize(self, request_id: str, params: object) -> None:
@@ -1051,6 +1370,7 @@ class RuntimeServer:
             return
         try:
             self.supervisor.shutdown()
+            self._close_workspace_explorer()
             self._cleanup_extensions()
             self._close_async_kernel()
             self.store.cancel_active_async_operations()
@@ -1113,6 +1433,7 @@ class RuntimeServer:
             return
         try:
             self.supervisor.shutdown()
+            self._close_workspace_explorer()
             self._cleanup_extensions()
             self._close_async_kernel()
             self.store.cancel_active_async_operations()
@@ -1129,6 +1450,10 @@ class RuntimeServer:
         self._clear_frozen_model_configs()
         self.store.close()
         self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
+
+    def _close_workspace_explorer(self) -> None:
+        if self._applications is not None:
+            self._applications.workspace.close()
 
     def _model_lease_for(self, model_id: str) -> ModelClientLease:
         if self.model is not None:

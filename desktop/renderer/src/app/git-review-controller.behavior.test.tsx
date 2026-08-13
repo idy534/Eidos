@@ -5,7 +5,6 @@ import type {
   EidosRuntimeAPI,
   RuntimeNotification,
   Session,
-  SessionGitDiff,
   SessionGitStatus,
 } from "../contracts.js";
 import { useGitReviewController } from "./useGitReviewController.js";
@@ -45,21 +44,12 @@ const gitStatus: SessionGitStatus = {
   unstagedCount: 1,
   untrackedCount: 0,
   conflictCount: 0,
+  stagedFiles: [],
+  unstagedFiles: ["README.md"],
+  untrackedFiles: [],
+  conflictFiles: [],
   observedAt: 1,
 };
-
-function gitDiff(scope: "head" | "baseline"): SessionGitDiff {
-  return {
-    scope,
-    baseCommit: "a".repeat(40),
-    head: "b".repeat(40),
-    dirty: true,
-    changedFiles: ["README.md"],
-    unifiedDiff: "diff --git a/README.md b/README.md\n",
-    truncated: false,
-    observedAt: 1,
-  };
-}
 
 const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
 
@@ -68,9 +58,7 @@ describe("useGitReviewController", () => {
     vi.useRealTimers();
     const api: Partial<EidosRuntimeAPI> = {
       readSessionGitStatus: vi.fn().mockResolvedValue(gitStatus),
-      readSessionGitDiff: vi.fn().mockImplementation((_sessionId, scope) => (
-        Promise.resolve(gitDiff(scope))
-      )),
+      readSessionGitDiff: vi.fn(),
     };
     (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
   });
@@ -82,36 +70,32 @@ describe("useGitReviewController", () => {
     else delete (window as Partial<Window>).eidosRuntime;
   });
 
-  it("loads status and the default HEAD Diff for a selected managed Thread", async () => {
+  it("loads structured status without requesting a repository-wide Diff", async () => {
     const { result } = renderHook(() => useGitReviewController({
       ready: true,
       session: managedSession,
     }));
 
-    await waitFor(() => expect(result.current[0].diff?.scope).toBe("head"));
+    await waitFor(() => expect(result.current[0].status?.dirty).toBe(true));
 
     expect(window.eidosRuntime.readSessionGitStatus).toHaveBeenCalledWith("session-a");
-    expect(window.eidosRuntime.readSessionGitDiff).toHaveBeenCalledWith("session-a", "head");
-    expect(result.current[0].status?.dirty).toBe(true);
+    expect(window.eidosRuntime.readSessionGitDiff).not.toHaveBeenCalled();
   });
 
-  it("switches to Baseline Diff without needlessly reloading status", async () => {
+  it("switches scope without requesting an unscoped Diff", async () => {
     const { result } = renderHook(() => useGitReviewController({
       ready: true,
       session: managedSession,
     }));
-    await waitFor(() => expect(result.current[0].diff).toBeDefined());
+    await waitFor(() => expect(result.current[0].status).toBeDefined());
     vi.mocked(window.eidosRuntime.readSessionGitStatus).mockClear();
     vi.mocked(window.eidosRuntime.readSessionGitDiff).mockClear();
 
     act(() => result.current[1].selectScope("baseline"));
-    await waitFor(() => expect(result.current[0].diff?.scope).toBe("baseline"));
 
+    expect(result.current[0].scope).toBe("baseline");
     expect(window.eidosRuntime.readSessionGitStatus).not.toHaveBeenCalled();
-    expect(window.eidosRuntime.readSessionGitDiff).toHaveBeenCalledOnce();
-    expect(window.eidosRuntime.readSessionGitDiff).toHaveBeenCalledWith(
-      "session-a", "baseline",
-    );
+    expect(window.eidosRuntime.readSessionGitDiff).not.toHaveBeenCalled();
   });
 
   it("debounces durable completion refreshes and ignores content deltas", async () => {
@@ -182,7 +166,7 @@ describe("useGitReviewController", () => {
     await act(async () => { await Promise.resolve(); });
 
     expect(window.eidosRuntime.readSessionGitStatus).toHaveBeenCalledOnce();
-    expect(window.eidosRuntime.readSessionGitDiff).toHaveBeenCalledOnce();
+    expect(window.eidosRuntime.readSessionGitDiff).not.toHaveBeenCalled();
   });
 
   it("does not query Git for a Direct Workspace Session", async () => {
@@ -210,10 +194,6 @@ describe("useGitReviewController", () => {
     vi.mocked(window.eidosRuntime.readSessionGitStatus)
       .mockImplementationOnce(() => new Promise((resolve) => { resolveFirstStatus = resolve; }))
       .mockResolvedValueOnce({ ...gitStatus, worktreeId: "worktree-b", branch: "eidos/b" });
-    vi.mocked(window.eidosRuntime.readSessionGitDiff)
-      .mockImplementationOnce(() => new Promise(() => undefined))
-      .mockResolvedValueOnce({ ...gitDiff("head"), head: "c".repeat(40) });
-
     const { result, rerender } = renderHook(
       ({ session }: { session: Session }) => useGitReviewController({ ready: true, session }),
       { initialProps: { session: managedSession } },

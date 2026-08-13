@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from contextlib import nullcontext
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-import hashlib
 import logging
 from pathlib import Path
 import unicodedata
 import uuid
+import threading
 from typing import Protocol, TypeVar
 
 from pydantic import ValidationError
@@ -17,10 +19,21 @@ from eidos_runtime.application.errors import (
     ApplicationInvalidParamsError,
 )
 from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
+from eidos_runtime.application.git_workflow import (
+    GitFetchPlan,
+    GitMergePlan,
+    GitMutationPlan,
+    GitPullPlan,
+    GitPushPlan,
+    GitRebasePlan,
+    GitWorkflowApplication,
+)
 from eidos_runtime.db.database import CommittedMutation
 from eidos_runtime.db.errors import (
     InvalidCursorError,
+    InvalidRunStateError,
     OperationConflictError,
+    OperationFailedError,
     OperationInProgressError,
     ResourceNotFoundError,
     SessionActiveError,
@@ -62,8 +75,34 @@ from eidos_runtime.protocol.methods import (
     SessionRestoreWorktreeResponseDto,
     SessionGitDiffRequestDto,
     SessionGitDiffResponseDto,
+    SessionGitCommitRequestDto,
+    SessionGitCommitResponseDto,
+    SessionGitDiscardRequestDto,
+    SessionGitDiscardResponseDto,
+    SessionGitFetchRequestDto,
+    SessionGitFetchResponseDto,
+    SessionGitMergeAbortRequestDto,
+    SessionGitMergeAbortResponseDto,
+    SessionGitMergeRequestDto,
+    SessionGitMergeResponseDto,
+    SessionGitPullRequestDto,
+    SessionGitPullResponseDto,
+    SessionGitPushRequestDto,
+    SessionGitPushResponseDto,
+    SessionGitRemoteStatusRequestDto,
+    SessionGitRemoteStatusResponseDto,
+    SessionGitRebaseAbortRequestDto,
+    SessionGitRebaseAbortResponseDto,
+    SessionGitRebaseContinueRequestDto,
+    SessionGitRebaseContinueResponseDto,
+    SessionGitRebaseRequestDto,
+    SessionGitRebaseResponseDto,
+    SessionGitStageRequestDto,
+    SessionGitStageResponseDto,
     SessionGitStatusRequestDto,
     SessionGitStatusResponseDto,
+    SessionGitUnstageRequestDto,
+    SessionGitUnstageResponseDto,
     SessionListRequestDto,
     SessionListResponseDto,
     SessionReadRequestDto,
@@ -106,6 +145,7 @@ from eidos_runtime.sandbox.sensitive import (
 
 MAX_SESSION_TITLE_BYTES = 120
 ResultT = TypeVar("ResultT", bound=MethodResultDto)
+GitPlanT = TypeVar("GitPlanT", GitMutationPlan, GitMergePlan, GitRebasePlan)
 
 
 class TypedSessionRepositoryPort(Protocol):
@@ -188,6 +228,56 @@ class SessionStorePort(Protocol):
         self, operation_id: str, scope: str, request: dict[str, object]
     ) -> object | None: ...
 
+    def prepare_operation(
+        self, operation_id: str, scope: str, request: dict[str, object]
+    ) -> object | None: ...
+
+    def complete_operation(
+        self,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+        result: dict[str, object],
+    ) -> dict[str, object]: ...
+
+    def fail_operation(
+        self,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+        *,
+        error_code: str,
+        side_effects_may_exist: bool,
+    ) -> None: ...
+
+    def accept_async_operation(
+        self,
+        *,
+        request_id: str | None,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+    ): ...
+
+    def prepare_deferred_external_operation(
+        self,
+        *,
+        request_id: str | None,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+    ): ...
+
+    def start_async_operation(self, operation_id: str): ...
+
+    def complete_async_operation(
+        self, operation_id: str, result: dict[str, object]
+    ): ...
+
+    def fail_async_operation(self, operation_id: str, error_code: str): ...
+
+    def cancel_async_operation(self, operation_id: str): ...
+
     def record_operation_result(
         self,
         operation_id: str,
@@ -247,11 +337,19 @@ class ManagedWorktreePort(Protocol):
     def local_status(self, repository_root: Path) -> GitStatusSnapshot: ...
 
     def diff(
-        self, worktree_id: str, *, scope: DiffScope = DiffScope.HEAD
+        self,
+        worktree_id: str,
+        *,
+        scope: DiffScope = DiffScope.HEAD,
+        path: str | None = None,
     ) -> GitDiffSnapshot: ...
 
     def local_diff(
-        self, repository_root: Path, *, scope: DiffScope = DiffScope.HEAD
+        self,
+        repository_root: Path,
+        *,
+        scope: DiffScope = DiffScope.HEAD,
+        path: str | None = None,
     ) -> GitDiffSnapshot: ...
 
     def delete(self, worktree_id: str) -> Worktree: ...
@@ -336,6 +434,51 @@ class WorktreeRetentionPort(Protocol):
     def latest_ready_snapshot_id(self, worktree_id: str) -> str | None: ...
 
 
+@dataclass(frozen=True)
+class DeferredGitFetch:
+    async_operation_id: str
+    operation_id: str
+    request: dict[str, object]
+    plan: GitFetchPlan
+    _application: "SessionApplication" = field(repr=False, compare=False)
+
+    def run(self, cancel: threading.Event) -> SessionGitFetchResponseDto:
+        return self._application._run_git_fetch(self, cancel)
+
+    def cancel_before_start(self) -> None:
+        self._application._cancel_git_external_before_start(self)
+
+
+@dataclass(frozen=True)
+class DeferredGitPull:
+    async_operation_id: str
+    operation_id: str
+    request: dict[str, object]
+    plan: GitPullPlan
+    _application: "SessionApplication" = field(repr=False, compare=False)
+
+    def run(self, cancel: threading.Event) -> SessionGitPullResponseDto:
+        return self._application._run_git_pull(self, cancel)
+
+    def cancel_before_start(self) -> None:
+        self._application._cancel_git_external_before_start(self)
+
+
+@dataclass(frozen=True)
+class DeferredGitPush:
+    async_operation_id: str
+    operation_id: str
+    request: dict[str, object]
+    plan: GitPushPlan
+    _application: "SessionApplication" = field(repr=False, compare=False)
+
+    def run(self, cancel: threading.Event) -> SessionGitPushResponseDto:
+        return self._application._run_git_push(self, cancel)
+
+    def cancel_before_start(self) -> None:
+        self._application._cancel_git_external_before_start(self)
+
+
 def clean_session_title(value: str) -> str:
     """Apply the established title canonicalization before durable storage."""
 
@@ -373,6 +516,11 @@ class SessionApplication:
         )
         self._scan_text = scan_text
         self._worktree_manager = worktree_manager
+        self._git_workflow = (
+            GitWorkflowApplication(self._repository, worktree_manager)
+            if worktree_manager is not None
+            else None
+        )
         self._retention = retention
         self._lifecycle = lifecycle or SessionLifecycleCoordinator()
         self._logger = logging.getLogger(__name__)
@@ -993,6 +1141,10 @@ class SessionApplication:
                 "unstagedCount": status.unstaged_count,
                 "untrackedCount": status.untracked_count,
                 "conflictCount": status.conflict_count,
+                "stagedFiles": list(status.staged_files),
+                "unstagedFiles": list(status.unstaged_files),
+                "untrackedFiles": list(status.untracked_files),
+                "conflictFiles": list(status.conflict_files),
                 "observedAt": _timestamp_millis(status.observed_at),
             },
         )
@@ -1015,12 +1167,18 @@ class SessionApplication:
         try:
             scope = DiffScope(request.scope)
             if session.worktree_id is not None:
-                diff = manager.diff(session.worktree_id, scope=scope)
+                diff = manager.diff(
+                    session.worktree_id, scope=scope, path=request.path
+                )
             else:
                 resolution = manager.resolve_project(session.workspace_root)
                 if resolution.git is None:
                     raise WorktreeError("not_a_git_repository")
-                diff = manager.local_diff(Path(resolution.git.repository_root), scope=scope)
+                diff = manager.local_diff(
+                    Path(resolution.git.repository_root),
+                    scope=scope,
+                    path=request.path,
+                )
         except WorktreeError as error:
             raise ApplicationError(_git_review_error_code(error), str(error)) from error
         return _result(
@@ -1032,10 +1190,490 @@ class SessionApplication:
                 "dirty": diff.dirty,
                 "changedFiles": list(diff.changed_files),
                 "unifiedDiff": diff.unified_diff,
+                "diffHash": hashlib.sha256(
+                    diff.unified_diff.encode("utf-8")
+                ).hexdigest(),
                 "truncated": diff.truncated,
                 "observedAt": _timestamp_millis(diff.observed_at),
             },
         )
+
+    def git_stage(
+        self, request: SessionGitStageRequestDto
+    ) -> SessionGitStageResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError(
+                "INTERNAL_ERROR", "Session Git workflow boundary is unavailable"
+            )
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitStage",
+            result_type=SessionGitStageResponseDto,
+            preflight=lambda: self._git_workflow.preflight_stage(request),
+            execute=self._git_workflow.stage,
+        )
+
+    def git_unstage(
+        self, request: SessionGitUnstageRequestDto
+    ) -> SessionGitUnstageResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError(
+                "INTERNAL_ERROR", "Session Git workflow boundary is unavailable"
+            )
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitUnstage",
+            result_type=SessionGitUnstageResponseDto,
+            preflight=lambda: self._git_workflow.preflight_unstage(request),
+            execute=self._git_workflow.unstage,
+        )
+
+    def git_commit(
+        self, request: SessionGitCommitRequestDto
+    ) -> SessionGitCommitResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError(
+                "INTERNAL_ERROR", "Session Git workflow boundary is unavailable"
+            )
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitCommit",
+            result_type=SessionGitCommitResponseDto,
+            preflight=lambda: self._git_workflow.preflight_commit(request),
+            execute=self._git_workflow.commit,
+        )
+
+    def git_discard(
+        self, request: SessionGitDiscardRequestDto
+    ) -> SessionGitDiscardResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitDiscard",
+            result_type=SessionGitDiscardResponseDto,
+            preflight=lambda: self._git_workflow.preflight_discard(request),
+            execute=self._git_workflow.discard,
+        )
+
+    def git_merge(
+        self, request: SessionGitMergeRequestDto
+    ) -> SessionGitMergeResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitMerge",
+            result_type=SessionGitMergeResponseDto,
+            preflight=lambda: self._git_workflow.preflight_merge(request),
+            execute=self._git_workflow.merge,
+        )
+
+    def git_merge_abort(
+        self, request: SessionGitMergeAbortRequestDto
+    ) -> SessionGitMergeAbortResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitMergeAbort",
+            result_type=SessionGitMergeAbortResponseDto,
+            preflight=lambda: self._git_workflow.preflight_merge_abort(request),
+            execute=self._git_workflow.merge_abort,
+        )
+
+    def git_rebase(
+        self, request: SessionGitRebaseRequestDto
+    ) -> SessionGitRebaseResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitRebase",
+            result_type=SessionGitRebaseResponseDto,
+            preflight=lambda: self._git_workflow.preflight_rebase(request),
+            execute=self._git_workflow.rebase,
+        )
+
+    def git_rebase_continue(
+        self, request: SessionGitRebaseContinueRequestDto
+    ) -> SessionGitRebaseContinueResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitRebaseContinue",
+            result_type=SessionGitRebaseContinueResponseDto,
+            preflight=lambda: self._git_workflow.preflight_rebase_continue(request),
+            execute=self._git_workflow.rebase_continue,
+        )
+
+    def git_rebase_abort(
+        self, request: SessionGitRebaseAbortRequestDto
+    ) -> SessionGitRebaseAbortResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        return self._execute_git_mutation(
+            request,
+            scope="session/gitRebaseAbort",
+            result_type=SessionGitRebaseAbortResponseDto,
+            preflight=lambda: self._git_workflow.preflight_rebase_abort(request),
+            execute=self._git_workflow.rebase_abort,
+        )
+
+    def git_remote_status(
+        self, request: SessionGitRemoteStatusRequestDto
+    ) -> SessionGitRemoteStatusResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        return self._git_workflow.remote_status(request.session_id)
+
+    def prepare_git_fetch(
+        self, request: SessionGitFetchRequestDto, *, request_id: str
+    ) -> SessionGitFetchResponseDto | DeferredGitFetch:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        scope = "session/gitFetch"
+        operation_request = request.to_json_value()
+        operation_request.pop("operationId", None)
+        with self._lifecycle.hold_operation(scope, request.operation_id):
+            replay = self._git_operation_replay(
+                request.operation_id,
+                scope,
+                operation_request,
+                SessionGitFetchResponseDto,
+            )
+            if replay is not None:
+                return replay
+            with self._lifecycle.hold(request.session_id):
+                plan = self._git_workflow.preflight_fetch(
+                    request.session_id, request.remote
+                )
+                try:
+                    reservation = self._store.prepare_deferred_external_operation(
+                        request_id=request_id,
+                        operation_id=request.operation_id,
+                        scope=scope,
+                        request=operation_request,
+                    )
+                except OperationConflictError as error:
+                    raise ApplicationError("OPERATION_ID_REUSED") from error
+                except OperationInProgressError as error:
+                    raise ApplicationError("OPERATION_IN_PROGRESS") from error
+            if reservation.replay_result is not None:
+                return _result(
+                    SessionGitFetchResponseDto, reservation.replay_result
+                )
+            if not reservation.created or reservation.operation is None:
+                raise ApplicationError("OPERATION_IN_PROGRESS")
+            return DeferredGitFetch(
+                async_operation_id=reservation.operation.id,
+                operation_id=request.operation_id,
+                request=operation_request,
+                plan=plan,
+                _application=self,
+            )
+
+    def _run_git_fetch(
+        self, deferred: DeferredGitFetch, cancel: threading.Event
+    ) -> SessionGitFetchResponseDto:
+        if cancel.is_set():
+            error = ApplicationError("GIT_REMOTE_CANCELED")
+            self._finalize_git_external_failure(deferred, error)
+            raise error
+        self._store.start_async_operation(deferred.async_operation_id)
+        try:
+            with self._lifecycle.hold(deferred.plan.session.id):
+                self._repository.assert_session_deletable(deferred.plan.session.id)
+                result = self._git_workflow.fetch(deferred.plan, cancel)  # type: ignore[union-attr]
+            completed = self._store.complete_operation(
+                deferred.operation_id,
+                "session/gitFetch",
+                deferred.request,
+                result.to_json_value(),
+            )
+            self._store.complete_async_operation(
+                deferred.async_operation_id, completed
+            )
+            return _result(SessionGitFetchResponseDto, completed)
+        except ApplicationError as error:
+            self._finalize_git_external_failure(deferred, error)
+            raise
+        except SessionActiveError as error:
+            failure = ApplicationError("GIT_WORKFLOW_BUSY")
+            self._finalize_git_external_failure(deferred, failure)
+            raise failure from error
+
+    def prepare_git_pull(
+        self, request: SessionGitPullRequestDto, *, request_id: str
+    ) -> SessionGitPullResponseDto | DeferredGitPull:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        scope = "session/gitPull"
+        operation_request = request.to_json_value()
+        operation_request.pop("operationId", None)
+        with self._lifecycle.hold_operation(scope, request.operation_id):
+            replay = self._git_operation_replay(
+                request.operation_id,
+                scope,
+                operation_request,
+                SessionGitPullResponseDto,
+            )
+            if replay is not None:
+                return replay
+            with self._lifecycle.hold(request.session_id):
+                plan = self._git_workflow.preflight_pull(request)
+                try:
+                    reservation = self._store.prepare_deferred_external_operation(
+                        request_id=request_id,
+                        operation_id=request.operation_id,
+                        scope=scope,
+                        request=operation_request,
+                    )
+                except OperationConflictError as error:
+                    raise ApplicationError("OPERATION_ID_REUSED") from error
+                except OperationInProgressError as error:
+                    raise ApplicationError("OPERATION_IN_PROGRESS") from error
+            if reservation.replay_result is not None:
+                return _result(
+                    SessionGitPullResponseDto, reservation.replay_result
+                )
+            if not reservation.created or reservation.operation is None:
+                raise ApplicationError("OPERATION_IN_PROGRESS")
+            return DeferredGitPull(
+                async_operation_id=reservation.operation.id,
+                operation_id=request.operation_id,
+                request=operation_request,
+                plan=plan,
+                _application=self,
+            )
+
+    def _run_git_pull(
+        self, deferred: DeferredGitPull, cancel: threading.Event
+    ) -> SessionGitPullResponseDto:
+        if cancel.is_set():
+            error = ApplicationError("GIT_REMOTE_CANCELED")
+            self._finalize_git_external_failure(deferred, error)
+            raise error
+        self._store.start_async_operation(deferred.async_operation_id)
+        try:
+            with self._lifecycle.hold(deferred.plan.session.id):
+                self._repository.assert_session_deletable(deferred.plan.session.id)
+                result = self._git_workflow.pull(deferred.plan, cancel)  # type: ignore[union-attr]
+            completed = self._store.complete_operation(
+                deferred.operation_id,
+                "session/gitPull",
+                deferred.request,
+                result.to_json_value(),
+            )
+            self._store.complete_async_operation(
+                deferred.async_operation_id, completed
+            )
+            return _result(SessionGitPullResponseDto, completed)
+        except ApplicationError as error:
+            self._finalize_git_external_failure(deferred, error)
+            raise
+        except SessionActiveError as error:
+            failure = ApplicationError("GIT_WORKFLOW_BUSY")
+            self._finalize_git_external_failure(deferred, failure)
+            raise failure from error
+
+    def prepare_git_push(
+        self, request: SessionGitPushRequestDto, *, request_id: str
+    ) -> SessionGitPushResponseDto | DeferredGitPush:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        scope = "session/gitPush"
+        operation_request = request.to_json_value()
+        operation_request.pop("operationId", None)
+        with self._lifecycle.hold_operation(scope, request.operation_id):
+            replay = self._git_operation_replay(
+                request.operation_id,
+                scope,
+                operation_request,
+                SessionGitPushResponseDto,
+            )
+            if replay is not None:
+                return replay
+            with self._lifecycle.hold(request.session_id):
+                plan = self._git_workflow.preflight_push(request)
+                try:
+                    reservation = self._store.prepare_deferred_external_operation(
+                        request_id=request_id,
+                        operation_id=request.operation_id,
+                        scope=scope,
+                        request=operation_request,
+                    )
+                except OperationConflictError as error:
+                    raise ApplicationError("OPERATION_ID_REUSED") from error
+                except OperationInProgressError as error:
+                    raise ApplicationError("OPERATION_IN_PROGRESS") from error
+            if reservation.replay_result is not None:
+                return _result(
+                    SessionGitPushResponseDto, reservation.replay_result
+                )
+            if not reservation.created or reservation.operation is None:
+                raise ApplicationError("OPERATION_IN_PROGRESS")
+            return DeferredGitPush(
+                async_operation_id=reservation.operation.id,
+                operation_id=request.operation_id,
+                request=operation_request,
+                plan=plan,
+                _application=self,
+            )
+
+    def _run_git_push(
+        self, deferred: DeferredGitPush, cancel: threading.Event
+    ) -> SessionGitPushResponseDto:
+        if cancel.is_set():
+            error = ApplicationError("GIT_REMOTE_CANCELED")
+            self._finalize_git_external_failure(deferred, error)
+            raise error
+        self._store.start_async_operation(deferred.async_operation_id)
+        try:
+            with self._lifecycle.hold(deferred.plan.session.id):
+                self._repository.assert_session_deletable(deferred.plan.session.id)
+                result = self._git_workflow.push(deferred.plan, cancel)  # type: ignore[union-attr]
+            completed = self._store.complete_operation(
+                deferred.operation_id,
+                "session/gitPush",
+                deferred.request,
+                result.to_json_value(),
+            )
+            self._store.complete_async_operation(
+                deferred.async_operation_id, completed
+            )
+            return _result(SessionGitPushResponseDto, completed)
+        except ApplicationError as error:
+            self._finalize_git_external_failure(deferred, error)
+            raise
+        except SessionActiveError as error:
+            failure = ApplicationError("GIT_WORKFLOW_BUSY")
+            self._finalize_git_external_failure(deferred, failure)
+            raise failure from error
+
+    def _cancel_git_external_before_start(
+        self,
+        deferred: DeferredGitFetch | DeferredGitPull | DeferredGitPush,
+    ) -> None:
+        error = ApplicationError("GIT_REMOTE_CANCELED")
+        self._finalize_git_external_failure(deferred, error)
+
+    def _finalize_git_external_failure(
+        self,
+        deferred: DeferredGitFetch | DeferredGitPull | DeferredGitPush,
+        error: ApplicationError,
+    ) -> bool:
+        try:
+            self._store.fail_operation(
+                deferred.operation_id,
+                (
+                    "session/gitFetch"
+                    if isinstance(deferred, DeferredGitFetch)
+                    else "session/gitPull"
+                    if isinstance(deferred, DeferredGitPull)
+                    else "session/gitPush"
+                ),
+                deferred.request,
+                error_code=error.code,
+                side_effects_may_exist=(
+                    error.code == "GIT_REMOTE_OUTCOME_UNCERTAIN"
+                ),
+            )
+        except OperationFailedError:
+            pass
+        except (OperationConflictError, OperationInProgressError, StorageError):
+            return False
+        try:
+            if error.code == "GIT_REMOTE_CANCELED":
+                self._store.cancel_async_operation(deferred.async_operation_id)
+            else:
+                self._store.fail_async_operation(
+                    deferred.async_operation_id, error.code
+                )
+        except (InvalidRunStateError, StorageError):
+            pass
+        return True
+
+    def _execute_git_mutation(
+        self,
+        request: (
+            SessionGitStageRequestDto
+            | SessionGitUnstageRequestDto
+            | SessionGitCommitRequestDto
+            | SessionGitDiscardRequestDto
+            | SessionGitMergeRequestDto
+            | SessionGitMergeAbortRequestDto
+            | SessionGitRebaseRequestDto
+            | SessionGitRebaseContinueRequestDto
+            | SessionGitRebaseAbortRequestDto
+        ),
+        *,
+        scope: str,
+        result_type: type[ResultT],
+        preflight: Callable[[], GitPlanT],
+        execute: Callable[[GitPlanT], ResultT],
+    ) -> ResultT:
+        operation_request = request.to_json_value()
+        operation_request.pop("operationId", None)
+        operation_guard = (
+            self._lifecycle.hold_operation(scope, request.operation_id)
+            if request.operation_id is not None
+            else nullcontext()
+        )
+        with operation_guard:
+            if request.operation_id is not None:
+                replay = self._git_operation_replay(
+                    request.operation_id,
+                    scope,
+                    operation_request,
+                    result_type,
+                )
+                if replay is not None:
+                    return replay
+            with self._lifecycle.hold(request.session_id):
+                plan = preflight()
+                if request.operation_id is not None:
+                    try:
+                        self._store.prepare_operation(
+                            request.operation_id, scope, operation_request
+                        )
+                    except OperationConflictError as error:
+                        raise ApplicationError("OPERATION_ID_REUSED") from error
+                    except OperationInProgressError as error:
+                        raise ApplicationError("OPERATION_IN_PROGRESS") from error
+                result = execute(plan)
+            if request.operation_id is None:
+                return result
+            try:
+                completed = self._store.complete_operation(
+                    request.operation_id,
+                    scope,
+                    operation_request,
+                    result.to_json_value(),
+                )
+            except OperationConflictError as error:
+                raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+            except OperationInProgressError as error:
+                raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
+            return _result(result_type, completed)
+
+    def _git_operation_replay(
+        self,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+        result_type: type[ResultT],
+    ) -> ResultT | None:
+        try:
+            replay = self._store.operation_result(operation_id, scope, request)
+        except OperationConflictError as error:
+            raise ApplicationError("OPERATION_ID_REUSED") from error
+        except OperationFailedError as error:
+            raise ApplicationError(error.code) from error
+        except OperationInProgressError as error:
+            raise ApplicationError("OPERATION_IN_PROGRESS") from error
+        return _result(result_type, replay) if replay is not None else None
 
     def handoff(
         self, request: SessionHandoffRequestDto
@@ -2158,6 +2796,9 @@ def _result(result_type: type[ResultT], value: object) -> ResultT:
 
 
 __all__ = [
+    "DeferredGitFetch",
+    "DeferredGitPull",
+    "DeferredGitPush",
     "MAX_SESSION_TITLE_BYTES",
     "SessionApplication",
     "ManagedWorktreePort",
@@ -2224,6 +2865,8 @@ def _workspace_resolution_error_code(error: WorktreeError) -> str:
 
 
 def _git_review_error_code(error: WorktreeError) -> str:
+    if error.code == "not_a_git_repository":
+        return "GIT_NOT_REPOSITORY"
     if error.code in {
         "git_command_failed",
         "git_command_timeout",

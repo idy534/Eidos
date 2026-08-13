@@ -16,10 +16,9 @@ ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel)
 class DeferredMethodResult:
     """A typed method result whose managed operation sends its response later.
 
-    Plugin import is the only current use: acceptance and durable operation
-    creation are synchronous, but filesystem import remains under the
-    Runtime-managed task.  The later task still validates its declared
-    response DTO before protocol serialization.
+    Acceptance and durable operation creation are synchronous. Slow filesystem
+    or network work runs in a Runtime-managed task. The later task still
+    validates its declared response DTO before protocol serialization.
     """
 
 

@@ -45,6 +45,46 @@ class GitUnsupportedOperationError(GitError):
         super().__init__("git_unsupported_operation", operation, stderr=stderr)
 
 
+class GitNothingStagedError(GitError):
+    def __init__(self) -> None:
+        super().__init__("git_nothing_staged", "commit")
+
+
+class GitIdentityUnavailableError(GitError):
+    def __init__(self, operation: str = "commit") -> None:
+        super().__init__("git_identity_unavailable", operation)
+
+
+class GitConflictError(GitError):
+    def __init__(self) -> None:
+        super().__init__("git_conflict", "commit")
+
+
+class GitMergeConflictError(GitError):
+    def __init__(self) -> None:
+        super().__init__("git_merge_conflict", "merge")
+
+
+class GitRebaseConflictError(GitError):
+    def __init__(self, operation: str = "rebase") -> None:
+        super().__init__("git_rebase_conflict", operation)
+
+
+class GitRemoteUnsupportedError(GitError):
+    def __init__(self) -> None:
+        super().__init__("git_remote_unsupported", "fetch")
+
+
+class GitRemoteCanceledError(GitError):
+    def __init__(self, operation: str = "fetch") -> None:
+        super().__init__("git_remote_canceled", operation)
+
+
+class GitUpstreamNotFoundError(GitError):
+    def __init__(self) -> None:
+        super().__init__("git_upstream_not_found", "remote-upstream")
+
+
 class WorktreeError(RuntimeError):
     """A stable Worktree lifecycle failure without subprocess leakage."""
 
@@ -57,7 +97,15 @@ class WorktreeError(RuntimeError):
 __all__ = [
     "GitCommandFailedError",
     "GitCommandTimeoutError",
+    "GitConflictError",
     "GitError",
+    "GitIdentityUnavailableError",
+    "GitMergeConflictError",
+    "GitRebaseConflictError",
+    "GitNothingStagedError",
+    "GitRemoteCanceledError",
+    "GitRemoteUnsupportedError",
+    "GitUpstreamNotFoundError",
     "GitUnsupportedOperationError",
     "WorktreeError",
 ]

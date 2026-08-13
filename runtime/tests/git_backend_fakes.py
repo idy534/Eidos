@@ -71,13 +71,27 @@ class FakeGitBackend:
         *,
         base_commit: str,
         include_untracked: bool = True,
+        path: str | None = None,
     ) -> GitDiffObservation:
         self._fail("diff")
         return self.delegate.diff(
             cwd,
             base_commit=base_commit,
             include_untracked=include_untracked,
+            path=path,
         )
+
+    def stage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation:
+        self._fail("stage")
+        return self.delegate.stage(cwd, paths)
+
+    def unstage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation:
+        self._fail("unstage")
+        return self.delegate.unstage(cwd, paths)
+
+    def commit(self, cwd: Path, message: str) -> str:
+        self._fail("commit")
+        return self.delegate.commit(cwd, message)
 
     def worktree_list(self, cwd: Path) -> tuple[GitWorktreeEntry, ...]:
         self._fail("worktree_list")

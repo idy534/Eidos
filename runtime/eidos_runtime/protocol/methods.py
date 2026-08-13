@@ -9,6 +9,7 @@ records; each public method nevertheless owns a distinct validation type.
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from typing import ClassVar, Literal
 
 from pydantic import Field, JsonValue, StrictInt, StrictStr
@@ -126,7 +127,166 @@ class SessionGitStatusRequestDto(_CanonicalIdRequest):
 class SessionGitDiffRequestDto(_CanonicalIdRequest):
     session_id: StrictStr = Field(alias="sessionId")
     scope: Literal["head", "baseline"] = "head"
+    path: StrictStr | None = Field(default=None, min_length=1, max_length=4096)
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
+
+    @field_validator("path")
+    @classmethod
+    def _validate_path(cls, value: str | None) -> str | None:
+        return None if value is None else _git_relative_path(value)
+
+
+class WorkspaceListDirectoryRequestDto(_CanonicalIdRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    path: StrictStr = Field(default=".", min_length=1, max_length=4096)
+    limit: StrictInt = Field(default=500, ge=1, le=2_000)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
+
+
+class WorkspaceReadFilePreviewRequestDto(_CanonicalIdRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    path: StrictStr = Field(min_length=1, max_length=4096)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
+
+
+class _SessionGitPathsRequest(_OperationRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    paths: list[StrictStr] = Field(min_length=1, max_length=512)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+    @field_validator("paths")
+    @classmethod
+    def _validate_paths(cls, values: list[str]) -> list[str]:
+        normalized = [_git_relative_path(value) for value in values]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("Git paths must be unique")
+        return normalized
+
+
+class SessionGitStageRequestDto(_SessionGitPathsRequest):
+    pass
+
+
+class SessionGitUnstageRequestDto(_SessionGitPathsRequest):
+    pass
+
+
+class SessionGitDiscardRequestDto(_OperationRequest):
+    operation_id: StrictStr = Field(alias="operationId")
+    session_id: StrictStr = Field(alias="sessionId")
+    path: StrictStr = Field(min_length=1, max_length=4096)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+    @field_validator("path")
+    @classmethod
+    def _validate_path(cls, value: str) -> str:
+        return _git_relative_path(value)
+
+
+class SessionGitCommitRequestDto(_OperationRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    message: StrictStr = Field(min_length=1, max_length=65536)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+    @field_validator("message")
+    @classmethod
+    def _validate_message(cls, value: str) -> str:
+        if not value.strip() or "\x00" in value:
+            raise ValueError("Git commit message is invalid")
+        return value
+
+
+class SessionGitRemoteStatusRequestDto(_CanonicalIdRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
+
+
+class SessionGitFetchRequestDto(_OperationRequest):
+    operation_id: StrictStr = Field(alias="operationId")
+    session_id: StrictStr = Field(alias="sessionId")
+    remote: StrictStr | None = Field(default=None, min_length=1, max_length=255)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+
+class SessionGitPullRequestDto(_OperationRequest):
+    operation_id: StrictStr = Field(alias="operationId")
+    session_id: StrictStr = Field(alias="sessionId")
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+
+class SessionGitPushRequestDto(_OperationRequest):
+    operation_id: StrictStr = Field(alias="operationId")
+    session_id: StrictStr = Field(alias="sessionId")
+    remote: StrictStr | None = Field(default=None, min_length=1, max_length=255)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+
+class SessionGitMergeRequestDto(_OperationRequest):
+    operation_id: StrictStr = Field(alias="operationId")
+    session_id: StrictStr = Field(alias="sessionId")
+    target: StrictStr = Field(min_length=1, max_length=1024)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+    @field_validator("target")
+    @classmethod
+    def _validate_target(cls, value: str) -> str:
+        if "\x00" in value or value.startswith("-"):
+            raise ValueError("Git merge target is invalid")
+        return value
+
+
+class SessionGitMergeAbortRequestDto(_OperationRequest):
+    operation_id: StrictStr = Field(alias="operationId")
+    session_id: StrictStr = Field(alias="sessionId")
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+
+class SessionGitRebaseRequestDto(SessionGitMergeRequestDto):
+    pass
+
+
+class SessionGitRebaseContinueRequestDto(SessionGitMergeAbortRequestDto):
+    pass
+
+
+class SessionGitRebaseAbortRequestDto(SessionGitMergeAbortRequestDto):
+    pass
+
+
+def _git_relative_path(value: str) -> str:
+    path = Path(value)
+    if (
+        not value
+        or "\x00" in value
+        or path.is_absolute()
+        or any(part in {"", ".", "..", ".git"} for part in path.parts)
+    ):
+        raise ValueError("Git path must be workspace-relative")
+    return value
 
 
 class SessionRenameRequestDto(_OperationRequest):
@@ -384,6 +544,10 @@ class SessionGitStatusResponseDto(MethodResultDto):
     unstaged_count: StrictInt = Field(alias="unstagedCount", ge=0)
     untracked_count: StrictInt = Field(alias="untrackedCount", ge=0)
     conflict_count: StrictInt = Field(alias="conflictCount", ge=0)
+    staged_files: list[StrictStr] = Field(alias="stagedFiles")
+    unstaged_files: list[StrictStr] = Field(alias="unstagedFiles")
+    untracked_files: list[StrictStr] = Field(alias="untrackedFiles")
+    conflict_files: list[StrictStr] = Field(alias="conflictFiles")
     observed_at: StrictInt = Field(alias="observedAt", ge=0)
 
     def to_json_value(self) -> dict[str, JsonValue]:
@@ -419,6 +583,7 @@ class SessionGitDiffResponseDto(MethodResultDto):
     dirty: bool
     changed_files: list[StrictStr] = Field(alias="changedFiles")
     unified_diff: StrictStr = Field(alias="unifiedDiff")
+    diff_hash: StrictStr = Field(alias="diffHash", min_length=64, max_length=64)
     truncated: bool
     observed_at: StrictInt = Field(alias="observedAt", ge=0)
 
@@ -426,6 +591,133 @@ class SessionGitDiffResponseDto(MethodResultDto):
         value = super().to_json_value()
         value["baseCommit"] = self.base_commit
         return value
+
+
+class WorkspaceDirectoryEntryDto(ClosedModel):
+    name: StrictStr
+    relative_path: StrictStr = Field(alias="relativePath")
+    kind: Literal["file", "directory"]
+    size_bytes: StrictInt | None = Field(default=None, alias="sizeBytes", ge=0)
+
+
+class WorkspaceListDirectoryResponseDto(MethodResultDto):
+    path: StrictStr
+    entries: list[WorkspaceDirectoryEntryDto]
+    truncated: bool
+
+    def to_json_value(self) -> dict[str, JsonValue]:
+        return self.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+
+class WorkspaceReadFilePreviewResponseDto(MethodResultDto):
+    path: StrictStr
+    kind: Literal["text", "markdown", "code", "unavailable"]
+    size_bytes: StrictInt = Field(alias="sizeBytes", ge=0)
+    truncated: bool
+    content: StrictStr | None = None
+    language: StrictStr | None = None
+    reason: Literal["binary", "unsupported"] | None = None
+
+    def to_json_value(self) -> dict[str, JsonValue]:
+        return self.model_dump(
+            mode="json", by_alias=True, exclude_none=True
+        )
+
+
+class SessionGitMutationResponseDto(MethodResultDto):
+    head: StrictStr
+    branch: StrictStr | None = None
+    status: SessionGitStatusResponseDto
+
+    def to_json_value(self) -> dict[str, JsonValue]:
+        value = super().to_json_value()
+        value["branch"] = self.branch
+        value["status"] = self.status.to_json_value()
+        return value
+
+
+class SessionGitStageResponseDto(SessionGitMutationResponseDto):
+    pass
+
+
+class SessionGitUnstageResponseDto(SessionGitMutationResponseDto):
+    pass
+
+
+class SessionGitDiscardResponseDto(SessionGitMutationResponseDto):
+    pass
+
+
+class SessionGitCommitResponseDto(SessionGitMutationResponseDto):
+    commit: StrictStr
+
+
+class GitRemoteDto(ClosedModel):
+    name: StrictStr
+
+
+class GitUpstreamDto(ClosedModel):
+    remote: StrictStr
+    branch: StrictStr
+
+
+class SessionGitRemoteStatusResponseDto(MethodResultDto):
+    branch: StrictStr | None = None
+    remotes: list[GitRemoteDto]
+    upstream: GitUpstreamDto | None = None
+    ahead: StrictInt | None = Field(default=None, ge=0)
+    behind: StrictInt | None = Field(default=None, ge=0)
+
+    def to_json_value(self) -> dict[str, JsonValue]:
+        value = super().to_json_value()
+        value["branch"] = self.branch
+        value["upstream"] = (
+            self.upstream.to_json_value() if self.upstream is not None else None
+        )
+        value["ahead"] = self.ahead
+        value["behind"] = self.behind
+        return value
+
+
+class SessionGitFetchResponseDto(SessionGitRemoteStatusResponseDto):
+    remote: StrictStr
+    head: StrictStr
+
+
+class SessionGitPullResponseDto(SessionGitFetchResponseDto):
+    status: SessionGitStatusResponseDto
+
+    def to_json_value(self) -> dict[str, JsonValue]:
+        value = super().to_json_value()
+        value["status"] = self.status.to_json_value()
+        return value
+
+
+class SessionGitPushResponseDto(SessionGitPullResponseDto):
+    pass
+
+
+class SessionGitMergeResponseDto(SessionGitMutationResponseDto):
+    operation_state: Literal["none", "merge", "rebase"] = Field(
+        alias="operationState"
+    )
+    conflict_files: list[StrictStr] = Field(alias="conflictFiles")
+
+
+class SessionGitMergeAbortResponseDto(SessionGitMergeResponseDto):
+    pass
+
+
+class SessionGitRebaseResponseDto(SessionGitMergeResponseDto):
+    pass
+
+
+class SessionGitRebaseContinueResponseDto(SessionGitRebaseResponseDto):
+    pass
+
+
+class SessionGitRebaseAbortResponseDto(SessionGitRebaseResponseDto):
+    pass
 
 
 class SessionRenameResponseDto(_SessionResponseDto):
@@ -690,6 +982,7 @@ class CheckpointDto(ClosedModel):
     compact_summary_id: StrictStr | None = Field(default=None, alias="compactSummaryId")
     workspace_identity_hash: StrictStr = Field(alias="workspaceIdentityHash")
     git_head: StrictStr | None = Field(default=None, alias="gitHead")
+    git_snapshot_id: StrictStr | None = Field(default=None, alias="gitSnapshotId")
     permission_snapshot_hash: StrictStr | None = Field(default=None, alias="permissionSnapshotHash")
     model_profile_snapshot_hash: StrictStr = Field(alias="modelProfileSnapshotHash")
     reconciliation_required: bool = Field(alias="reconciliationRequired")

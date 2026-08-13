@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES2023",
     "useDefineForClassFields": true,
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": ["ES2023", "ESNext.Disposable", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "allowImportingTsExtensions": true,
@@ -11,6 +11,7 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
+    "skipLibCheck": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "types": ["vite/client"]
