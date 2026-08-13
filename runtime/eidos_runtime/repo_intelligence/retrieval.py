@@ -8,7 +8,7 @@ import time
 from typing import Final
 
 from pydantic import Field, model_validator
-from rapidfuzz.fuzz import ratio
+from rapidfuzz import fuzz, process
 
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 from eidos_runtime.repo_intelligence.index import (
@@ -16,12 +16,18 @@ from eidos_runtime.repo_intelligence.index import (
 )
 from eidos_runtime.repo_intelligence.inventory import RepositoryInventory
 from eidos_runtime.persistence.repository_intelligence import (
+    RepositoryFtsDocument,
     RepositoryIntelligenceRepository,
 )
 
 
 RANKING_VERSION: Final = 1
 MAX_QUERY_BYTES: Final = 16 * 1024
+MAX_FTS_CANDIDATES: Final = 64
+MAX_EXACT_CANDIDATES: Final = 32
+MAX_RELATION_CANDIDATES: Final = 64
+MAX_FUZZY_CANDIDATES: Final = 32
+MAX_TOTAL_CANDIDATES: Final = 256
 
 
 class RepositoryRetrievalQuery(EidosFrozenStrictModel):
@@ -123,6 +129,12 @@ class _Document:
     end_line: int
 
 
+@dataclass
+class _Candidate:
+    document: _Document
+    signals: dict[str, float]
+
+
 class RepositoryRetriever:
     def __init__(
         self,
@@ -141,18 +153,9 @@ class RepositoryRetriever:
         self.inventory = inventory
         self.index = index
         self.repository = repository
-        self._documents = {
-            item.record_id: _Document(
-                record_id=item.record_id,
-                path=item.path,
-                kind=item.kind,
-                text=item.symbol or item.body,
-                file_hash=item.file_hash,
-                start_line=item.start_line,
-                end_line=item.end_line,
-            )
-            for item in repository.list_fts_documents(index.snapshot_id)
-        }
+        self._file_by_path = {item.path: item for item in inventory.files}
+        self._paths = tuple(sorted(self._file_by_path, key=str.encode))
+        self._symbol_names = tuple(sorted({item.name for item in index.symbols}))
 
     def retrieve(
         self,
@@ -163,28 +166,168 @@ class RepositoryRetriever:
         if len(query.text.encode("utf-8")) > MAX_QUERY_BYTES:
             raise ValueError("retrieval query is too large")
         deadline = time.monotonic() + query.deadline_ms / 1000
-        fts_scores = self._fts_scores(query, cancel=cancel)
-        candidates: list[RepositoryRetrievalCandidate] = []
-        for document in self._documents.values():
-            if time.monotonic() >= deadline:
+        cancel = cancel or threading.Event()
+        candidates: dict[str, _Candidate] = {}
+
+        def add(
+            document: RepositoryFtsDocument,
+            signal: str,
+            value: float = 1.0,
+        ) -> None:
+            if len(candidates) >= MAX_TOTAL_CANDIDATES and document.record_id not in candidates:
+                return
+            candidate = candidates.setdefault(
+                document.record_id,
+                _Candidate(_document(document), {}),
+            )
+            candidate.signals[signal] = max(candidate.signals.get(signal, 0.0), value)
+
+        def remaining_ms() -> int:
+            return max(0, int((deadline - time.monotonic()) * 1000))
+
+        def active() -> bool:
+            return not cancel.is_set() and remaining_ms() > 0
+
+        def add_paths(paths: tuple[str, ...], signal: str) -> None:
+            for path in paths[:MAX_EXACT_CANDIDATES]:
+                if not active():
+                    return
+                for document in self.repository.path_lookup(
+                    self.index.snapshot_id,
+                    path,
+                    limit=MAX_EXACT_CANDIDATES,
+                    deadline_ms=remaining_ms(),
+                    cancel=cancel,
+                ):
+                    add(document, signal)
+
+        for symbol in query.mentioned_symbols[:MAX_EXACT_CANDIDATES]:
+            if not active():
                 break
-            breakdown = self._score(document, query, fts_scores)
+            for document in self.repository.definition_lookup(
+                self.index.snapshot_id,
+                symbol,
+                limit=MAX_EXACT_CANDIDATES,
+                deadline_ms=remaining_ms(),
+                cancel=cancel,
+            ):
+                add(document, "exact_symbol")
+                add(document, "definition_match")
+
+        add_paths(query.mentioned_paths, "exact_path")
+        add_paths(query.current_diff_paths, "current_diff")
+        add_paths(query.recently_modified_paths, "recently_modified")
+        add_paths(query.previous_read_paths, "previous_read")
+        add_paths(query.recent_tool_result_paths, "recent_tool_result")
+        add_paths(query.rule_paths, "path_rule")
+
+        for symbol in query.mentioned_symbols[:MAX_EXACT_CANDIDATES]:
+            if not active():
+                break
+            for document in self.repository.import_relationship_lookup(
+                self.index.snapshot_id,
+                symbol,
+                limit=MAX_RELATION_CANDIDATES,
+                deadline_ms=remaining_ms(),
+                cancel=cancel,
+            ):
+                add(document, "import_relationship")
+            if not active():
+                break
+            for document in self.repository.reference_relationship_lookup(
+                self.index.snapshot_id,
+                symbol,
+                limit=MAX_RELATION_CANDIDATES,
+                deadline_ms=remaining_ms(),
+                cancel=cancel,
+            ):
+                add(document, "reference_relationship")
+
+        for path in query.mentioned_paths[:MAX_EXACT_CANDIDATES]:
+            if not active():
+                break
+            for document in self.repository.test_source_relationship_lookup(
+                self.index.snapshot_id,
+                path,
+                limit=MAX_RELATION_CANDIDATES,
+                deadline_ms=remaining_ms(),
+                cancel=cancel,
+            ):
+                add(document, "test_source")
+
+        if active():
+            for match in self.repository.query_fts_bm25(
+                self.index.snapshot_id,
+                query.text,
+                deadline_ms=remaining_ms(),
+                cancel=cancel,
+                limit=MAX_FTS_CANDIDATES,
+            ):
+                add(match.document, "fts_bm25", 1.0 / (1.0 + abs(match.bm25)))
+
+        if active():
+            for selected_path, score, _ in process.extract(
+                query.text,
+                self._paths,
+                scorer=fuzz.WRatio,
+                score_cutoff=70,
+                limit=MAX_FUZZY_CANDIDATES,
+            ):
+                if not active():
+                    break
+                for document in self.repository.path_lookup(
+                    self.index.snapshot_id,
+                    selected_path,
+                    limit=MAX_EXACT_CANDIDATES,
+                    deadline_ms=remaining_ms(),
+                    cancel=cancel,
+                ):
+                    add(document, "fuzzy_path", float(score) / 100 * 2)
+
+        if active():
+            for selected_symbol, score, _ in process.extract(
+                query.text,
+                self._symbol_names,
+                scorer=fuzz.WRatio,
+                score_cutoff=70,
+                limit=MAX_FUZZY_CANDIDATES,
+            ):
+                if not active():
+                    break
+                for document in self.repository.exact_symbol_lookup(
+                    self.index.snapshot_id,
+                    selected_symbol,
+                    limit=MAX_EXACT_CANDIDATES,
+                    deadline_ms=remaining_ms(),
+                    cancel=cancel,
+                ):
+                    add(document, "fuzzy_symbol", float(score) / 100 * 3)
+
+        mentioned_languages = {
+            self._file_by_path[path].language
+            for path in query.mentioned_paths
+            if path in self._file_by_path
+            and self._file_by_path[path].language is not None
+        }
+        ranked: list[RepositoryRetrievalCandidate] = []
+        for candidate in candidates.values():
+            breakdown = self._score(candidate, query, mentioned_languages)
             if breakdown.total <= 0:
                 continue
             reasons = _reasons(breakdown)
-            candidates.append(RepositoryRetrievalCandidate(
-                record_id=document.record_id,
-                path=document.path,
+            ranked.append(RepositoryRetrievalCandidate(
+                record_id=candidate.document.record_id,
+                path=candidate.document.path,
                 score=breakdown.total,
                 score_breakdown=breakdown,
                 reasons=reasons,
                 evidence=(),
             ))
-        candidates.sort(key=lambda item: (-item.score, item.path.encode()))
+        ranked.sort(key=lambda item: (-item.score, item.path.encode(), item.record_id.encode()))
         selected: list[RepositoryRetrievalCandidate] = []
         used_bytes = 0
-        for candidate in candidates[:query.max_results]:
-            document = self._documents[candidate.record_id]
+        for candidate in ranked[:query.max_results]:
+            document = candidates[candidate.record_id].document
             evidence = RepositoryEvidence(
                 id=document.record_id,
                 kind=document.kind,
@@ -227,64 +370,35 @@ class RepositoryRetriever:
             snapshot_hash=digest,
         )
 
-    def _fts_scores(
-        self,
-        query: RepositoryRetrievalQuery,
-        *,
-        cancel: threading.Event | None,
-    ) -> dict[str, float]:
-        rows = self.repository.query_fts_bm25(
-            self.index.snapshot_id,
-            query.text,
-            deadline_ms=query.deadline_ms,
-            cancel=cancel,
-        )
-        return {
-            row.document.record_id: 1.0 / (1.0 + abs(row.bm25))
-            for row in rows
-        }
-
     def _score(
         self,
-        document: _Document,
+        candidate: _Candidate,
         query: RepositoryRetrievalQuery,
-        fts_scores: dict[str, float],
+        mentioned_languages: set[str | None],
     ) -> RetrievalScoreBreakdown:
+        document = candidate.document
+        signals = candidate.signals
         exact_symbol = 8.0 if (
-            document.kind == "symbol" and document.text in query.mentioned_symbols
+            signals.get("exact_symbol", 0.0) > 0
         ) else 0.0
-        exact_path = 7.0 if document.path in query.mentioned_paths else 0.0
-        fuzzy_path = max((_fuzzy(document.path, value, 2) for value in query.mentioned_paths), default=0.0)
-        fuzzy_symbol = max((_fuzzy(document.text, value, 3) for value in query.mentioned_symbols), default=0.0)
-        current_diff = 6.0 if document.path in query.current_diff_paths else 0.0
-        recently_modified = 4.0 if document.path in query.recently_modified_paths else 0.0
-        previous_read = 3.0 if document.path in query.previous_read_paths else 0.0
-        recent_tool_result = 3.0 if document.path in query.recent_tool_result_paths else 0.0
-        path_rule = 2.0 if document.path in query.rule_paths else 0.0
-        fts = fts_scores.get(document.record_id, 0.0)
-        definition = 3.0 if exact_symbol else 0.0
-        import_relationship = 2.0 if any(
-            item.path == document.path
-            and any(name in item.imported_name for name in query.mentioned_symbols)
-            for item in self.index.imports
-        ) else 0.0
-        reference_relationship = 1.5 if any(
-            item.path == document.path and item.name in query.mentioned_symbols
-            for item in self.index.references
-        ) else 0.0
-        file_record = next(
-            (item for item in self.inventory.files if item.path == document.path), None
-        )
-        mentioned_languages = {
-            item.language for item in self.inventory.files
-            if item.path in query.mentioned_paths and item.language is not None
-        }
+        exact_path = 7.0 if signals.get("exact_path", 0.0) else 0.0
+        fuzzy_path = signals.get("fuzzy_path", 0.0)
+        fuzzy_symbol = signals.get("fuzzy_symbol", 0.0)
+        current_diff = 6.0 if signals.get("current_diff", 0.0) else 0.0
+        recently_modified = 4.0 if signals.get("recently_modified", 0.0) else 0.0
+        previous_read = 3.0 if signals.get("previous_read", 0.0) else 0.0
+        recent_tool_result = 3.0 if signals.get("recent_tool_result", 0.0) else 0.0
+        path_rule = 2.0 if signals.get("path_rule", 0.0) else 0.0
+        fts = signals.get("fts_bm25", 0.0)
+        definition = 3.0 if signals.get("definition_match", 0.0) else 0.0
+        import_relationship = 2.0 if signals.get("import_relationship", 0.0) else 0.0
+        reference_relationship = 1.5 if signals.get("reference_relationship", 0.0) else 0.0
+        file_record = self._file_by_path.get(document.path)
         language_affinity = 1.0 if (
-            file_record is not None and file_record.language in mentioned_languages
+            file_record is not None
+            and file_record.language in mentioned_languages
         ) else 0.0
-        test_source = 1.5 if _related_test_path(
-            document.path, query.mentioned_paths
-        ) else 0.0
+        test_source = 1.5 if signals.get("test_source", 0.0) else 0.0
         generated_penalty = -2.0 if file_record is not None and file_record.generated else 0.0
         vendor_penalty = -3.0 if file_record is not None and file_record.vendor else 0.0
         return RetrievalScoreBreakdown(
@@ -342,6 +456,18 @@ def _hash(value: object) -> str:
     ).encode("utf-8")).hexdigest()
 
 
+def _document(item: RepositoryFtsDocument) -> _Document:
+    return _Document(
+        record_id=item.record_id,
+        path=item.path,
+        kind=item.kind,
+        text=item.symbol or item.body,
+        file_hash=item.file_hash,
+        start_line=item.start_line,
+        end_line=item.end_line,
+    )
+
+
 def _utf8_prefix(value: str, byte_limit: int) -> str:
     prefix = value.encode("utf-8")[:byte_limit]
     while True:
@@ -349,20 +475,6 @@ def _utf8_prefix(value: str, byte_limit: int) -> str:
             return prefix.decode("utf-8")
         except UnicodeDecodeError as error:
             prefix = prefix[:error.start]
-
-
-def _fuzzy(left: str, right: str, weight: float) -> float:
-    similarity = ratio(left, right)
-    return similarity / 100 * weight if similarity >= 70 else 0.0
-
-
-def _related_test_path(path: str, selected_sources: tuple[str, ...]) -> bool:
-    name = path.rsplit("/", 1)[-1]
-    is_test = name.startswith("test_") or "_test." in name
-    if not is_test:
-        return False
-    normalized = name.removeprefix("test_").replace("_test.", ".")
-    return any(source.rsplit("/", 1)[-1] == normalized for source in selected_sources)
 
 
 __all__ = [

@@ -380,6 +380,8 @@ class RepositoryIntelligenceRepository(Repository):
         cancel: threading.Event | None = None,
         limit: int = 500,
     ) -> tuple[RepositoryFtsMatch, ...]:
+        if limit < 1:
+            return ()
         tokens = [token for token in text.replace("/", " ").split() if token]
         if not tokens:
             return ()
@@ -414,92 +416,155 @@ class RepositoryIntelligenceRepository(Repository):
         ) for row in rows)
 
     def exact_symbol_lookup(
-        self, index_snapshot_id: str, symbol: str
+        self, index_snapshot_id: str, symbol: str, *, limit: int = 32,
+        deadline_ms: int | None = None,
+        cancel: threading.Event | None = None,
     ) -> tuple[RepositoryFtsDocument, ...]:
         return self._query_documents(
             "index_snapshot_id = ? AND kind = 'symbol' AND symbol = ?",
-            (index_snapshot_id, symbol),
+            (index_snapshot_id, symbol), limit=limit,
+            deadline_ms=deadline_ms, cancel=cancel,
         )
 
     def definition_lookup(
-        self, index_snapshot_id: str, symbol: str
+        self, index_snapshot_id: str, symbol: str, *, limit: int = 32,
+        deadline_ms: int | None = None,
+        cancel: threading.Event | None = None,
     ) -> tuple[RepositoryFtsDocument, ...]:
-        return self.exact_symbol_lookup(index_snapshot_id, symbol)
+        return self.exact_symbol_lookup(
+            index_snapshot_id, symbol, limit=limit,
+            deadline_ms=deadline_ms, cancel=cancel,
+        )
 
     def path_lookup(
-        self, index_snapshot_id: str, path: str
+        self, index_snapshot_id: str, path: str, *, limit: int = 32,
+        deadline_ms: int | None = None,
+        cancel: threading.Event | None = None,
     ) -> tuple[RepositoryFtsDocument, ...]:
         return self._query_documents(
-            "index_snapshot_id = ? AND path = ?", (index_snapshot_id, path)
+            "index_snapshot_id = ? AND path = ?", (index_snapshot_id, path),
+            limit=limit, deadline_ms=deadline_ms, cancel=cancel,
         )
 
     def import_relationship_lookup(
-        self, index_snapshot_id: str, name: str
+        self, index_snapshot_id: str, name: str, *, limit: int = 64,
+        deadline_ms: int | None = None,
+        cancel: threading.Event | None = None,
     ) -> tuple[RepositoryFtsDocument, ...]:
         return self._relationship_documents(
-            index_snapshot_id, "repository_imports", "imported_name", name
+            index_snapshot_id, "repository_imports", "imported_name", name,
+            limit=limit, deadline_ms=deadline_ms, cancel=cancel,
         )
 
     def reference_relationship_lookup(
-        self, index_snapshot_id: str, name: str
+        self, index_snapshot_id: str, name: str, *, limit: int = 64,
+        deadline_ms: int | None = None,
+        cancel: threading.Event | None = None,
     ) -> tuple[RepositoryFtsDocument, ...]:
         return self._relationship_documents(
-            index_snapshot_id, "repository_references", "name", name
+            index_snapshot_id, "repository_references", "name", name,
+            limit=limit, deadline_ms=deadline_ms, cancel=cancel,
         )
 
     def test_source_relationship_lookup(
-        self, index_snapshot_id: str, path: str
+        self, index_snapshot_id: str, path: str, *, limit: int = 64,
+        deadline_ms: int | None = None,
+        cancel: threading.Event | None = None,
     ) -> tuple[RepositoryFtsDocument, ...]:
         stem = Path(path).stem.removeprefix("test_").removesuffix("_test")
-        with self.lock:
-            rows = self._connection().execute(
-                """
-                SELECT index_snapshot_id, record_id, path, kind, symbol, body,
-                       start_line, end_line, file_hash
-                FROM repository_fts
-                WHERE index_snapshot_id = ? AND path != ?
-                  AND (path LIKE ? OR path LIKE ?)
-                ORDER BY path COLLATE BINARY, record_id COLLATE BINARY
-                """,
-                (index_snapshot_id, path, f"%/{stem}_test.%", f"%/test_{stem}.%"),
-            ).fetchall()
+        rows = self._bounded_query(
+            """
+            SELECT index_snapshot_id, record_id, path, kind, symbol, body,
+                   start_line, end_line, file_hash
+            FROM repository_fts
+            WHERE index_snapshot_id = ? AND path != ?
+              AND (
+                path LIKE ? OR path LIKE ? OR path LIKE ? OR path LIKE ?
+              )
+            ORDER BY path COLLATE BINARY, record_id COLLATE BINARY
+            LIMIT ?
+            """,
+            (
+                index_snapshot_id, path,
+                f"%/{stem}_test.%", f"%/test_{stem}.%",
+                f"{stem}_test.%", f"test_{stem}.%", limit,
+            ),
+            limit=limit, deadline_ms=deadline_ms, cancel=cancel,
+        )
         return tuple(_fts_document_from_row(row) for row in rows)
 
     def _query_documents(
-        self, where: str, parameters: tuple[object, ...]
+        self, where: str, parameters: tuple[object, ...], *, limit: int = 128,
+        deadline_ms: int | None = None,
+        cancel: threading.Event | None = None,
     ) -> tuple[RepositoryFtsDocument, ...]:
-        with self.lock:
-            rows = self._connection().execute(
-                "SELECT index_snapshot_id, record_id, path, kind, symbol, body, "
-                "start_line, end_line, file_hash FROM repository_fts WHERE "
-                + where
-                + " ORDER BY path COLLATE BINARY, record_id COLLATE BINARY",
-                parameters,
-            ).fetchall()
+        rows = self._bounded_query(
+            "SELECT index_snapshot_id, record_id, path, kind, symbol, body, "
+            "start_line, end_line, file_hash FROM repository_fts WHERE "
+            + where
+            + " ORDER BY path COLLATE BINARY, record_id COLLATE BINARY LIMIT ?",
+            (*parameters, limit), limit=limit,
+            deadline_ms=deadline_ms, cancel=cancel,
+        )
         return tuple(_fts_document_from_row(row) for row in rows)
 
     def _relationship_documents(
-        self, index_snapshot_id: str, table: str, column: str, value: str
+        self, index_snapshot_id: str, table: str, column: str, value: str, *,
+        limit: int = 128, deadline_ms: int | None = None,
+        cancel: threading.Event | None = None,
     ) -> tuple[RepositoryFtsDocument, ...]:
         if table not in {"repository_imports", "repository_references"}:
             raise ValueError("unsupported relationship table")
         if column not in {"imported_name", "name"}:
             raise ValueError("unsupported relationship column")
-        with self.lock:
-            rows = self._connection().execute(
-                f"""
-                SELECT f.index_snapshot_id, f.record_id, f.path, f.kind,
-                       f.symbol, f.body, f.start_line, f.end_line, f.file_hash
-                FROM repository_fts AS f
-                JOIN {table} AS relationship ON relationship.path = f.path
-                WHERE f.index_snapshot_id = ?
-                  AND relationship.repository_index_generation_id = ?
-                  AND relationship.{column} LIKE ?
-                ORDER BY f.path COLLATE BINARY, f.record_id COLLATE BINARY
-                """,
-                (index_snapshot_id, index_snapshot_id, f"%{value}%"),
-            ).fetchall()
+        rows = self._bounded_query(
+            f"""
+            SELECT f.index_snapshot_id, f.record_id, f.path, f.kind,
+                   f.symbol, f.body, f.start_line, f.end_line, f.file_hash
+            FROM repository_fts AS f
+            JOIN {table} AS relationship ON relationship.path = f.path
+            WHERE f.index_snapshot_id = ?
+              AND relationship.repository_index_generation_id = ?
+              AND relationship.{column} LIKE ?
+            ORDER BY f.path COLLATE BINARY, f.record_id COLLATE BINARY
+            LIMIT ?
+            """,
+            (index_snapshot_id, index_snapshot_id, f"%{value}%", limit),
+            limit=limit, deadline_ms=deadline_ms, cancel=cancel,
+        )
         return tuple(_fts_document_from_row(row) for row in rows)
+
+    def _bounded_query(
+        self, sql: str, parameters: tuple[object, ...], *, limit: int,
+        deadline_ms: int | None, cancel: threading.Event | None,
+    ) -> list[sqlite3.Row]:
+        if limit < 1 or (deadline_ms is not None and deadline_ms <= 0):
+            return []
+        cancel = cancel or threading.Event()
+        deadline = (
+            time.monotonic() + deadline_ms / 1000
+            if deadline_ms is not None else None
+        )
+        with self.lock:
+            connection = self._connection()
+
+            def interrupted() -> int:
+                return int(
+                    cancel.is_set()
+                    or (deadline is not None and time.monotonic() >= deadline)
+                )
+
+            connection.set_progress_handler(interrupted, 1_000)
+            try:
+                return connection.execute(sql, parameters).fetchall()
+            except sqlite3.OperationalError:
+                if cancel.is_set() or (
+                    deadline is not None and time.monotonic() >= deadline
+                ):
+                    return []
+                raise
+            finally:
+                connection.set_progress_handler(None, 0)
 
     def _persist_snapshot(
         self,
