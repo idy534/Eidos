@@ -15,6 +15,7 @@ from eidos_runtime.db.database import (
 from eidos_runtime.db.errors import (
     InvalidRunStateError,
     OperationConflictError,
+    OperationFailedError,
     OperationInProgressError,
 )
 
@@ -71,6 +72,21 @@ class AsyncOperationRepository(Repository):
             if existing is not None:
                 if existing["request_hash"] != request_hash:
                     raise OperationConflictError("operation id was reused")
+                if existing["status"] == "failed":
+                    result = json.loads(existing["result_json"] or "null")
+                    if (
+                        isinstance(result, dict)
+                        and result.get("outcome") == "failed"
+                        and isinstance(result.get("errorCode"), str)
+                        and isinstance(result.get("sideEffectsMayExist"), bool)
+                    ):
+                        raise OperationFailedError(
+                            result["errorCode"],
+                            side_effects_may_exist=result["sideEffectsMayExist"],
+                        )
+                    raise InvalidRunStateError(
+                        "failed external operation result is invalid"
+                    )
                 if (
                     existing["status"] != "completed"
                     or existing["result_json"] is None

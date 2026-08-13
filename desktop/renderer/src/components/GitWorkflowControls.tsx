@@ -10,7 +10,7 @@ import type {
   SessionGitCommitResult,
   SessionGitStatus,
 } from "../contracts.js";
-import { userFacingError } from "../session-state.js";
+import { runtimeBusinessCode, userFacingError } from "../session-state.js";
 import { Button } from "./Button.js";
 
 
@@ -150,6 +150,14 @@ export function GitWorkflowControls({
       onRefresh();
       await loadObservations();
     } catch (cause: unknown) {
+      const code = runtimeBusinessCode(cause);
+      if (
+        code !== undefined
+        && code !== "OPERATION_IN_PROGRESS"
+        && code !== "INTERNAL_ERROR"
+      ) {
+        operationIdsRef.current.delete(requestKey);
+      }
       setError(userFacingError(cause));
     } finally {
       setBusy(undefined);
@@ -158,8 +166,9 @@ export function GitWorkflowControls({
 
   const runRemote = <Result extends GitRemoteStatus>(
     name: string,
+    requestKey: string,
     action: (operationId: string) => Promise<Result>,
-  ): Promise<void> => run(name, name, action, (result) => setRemote(result));
+  ): Promise<void> => run(name, requestKey, action, (result) => setRemote(result));
 
   const runOperation = (
     name: string,
@@ -198,7 +207,7 @@ export function GitWorkflowControls({
           event.preventDefault();
           const commitMessage = message.trim();
           if (!commitMessage) return;
-          void run("commit", `commit:${commitMessage}`, (operationId) => commit(
+          void run("commit", `commit:${commitMessage}:${status.head}`, (operationId) => commit(
             sessionId, commitMessage, operationId,
           ), () => setMessage(""));
         }}
@@ -223,13 +232,22 @@ export function GitWorkflowControls({
 
       <div className="git-remote-actions">
         <Button size="small" disabled={controlsDisabled} loading={busy === "fetch"}
-          onClick={() => void runRemote("fetch", (id) => fetch(sessionId, id))}>Fetch</Button>
+          onClick={() => void runRemote(
+            "fetch", `fetch:${remote?.upstream?.remote ?? ""}:${status.head}`,
+            (id) => fetch(sessionId, id),
+          )}>Fetch</Button>
         <Button size="small" disabled={controlsDisabled || status.branch === null}
           loading={busy === "pull"}
-          onClick={() => void runRemote("pull", (id) => pull(sessionId, id))}>Pull</Button>
+          onClick={() => void runRemote(
+            "pull", `pull:${remote?.upstream?.remote ?? ""}:${remote?.upstream?.branch ?? ""}:${status.head}`,
+            (id) => pull(sessionId, id),
+          )}>Pull</Button>
         <Button size="small" disabled={controlsDisabled || status.branch === null}
           loading={busy === "push"}
-          onClick={() => void runRemote("push", (id) => push(sessionId, id))}>Push</Button>
+          onClick={() => void runRemote(
+            "push", `push:${status.branch ?? ""}:${remote?.upstream?.remote ?? ""}:${remote?.upstream?.branch ?? ""}:${status.head}`,
+            (id) => push(sessionId, id),
+          )}>Push</Button>
       </div>
 
       <details className="git-advanced-controls">
@@ -246,14 +264,14 @@ export function GitWorkflowControls({
           <Button size="small" disabled={controlsDisabled || !target || status.branch === null}
             loading={busy === "merge"}
             onClick={() => void runOperation(
-              "merge", `merge:${target}`, (id) => merge(sessionId, target, id),
+              "merge", `merge:${target}:${status.head}`, (id) => merge(sessionId, target, id),
             )}>
             Merge
           </Button>
           <Button size="small" disabled={controlsDisabled || !target || status.branch === null}
             loading={busy === "rebase"}
             onClick={() => void runOperation(
-              "rebase", `rebase:${target}`, (id) => rebase(sessionId, target, id),
+              "rebase", `rebase:${target}:${status.head}`, (id) => rebase(sessionId, target, id),
             )}>
             Rebase
           </Button>

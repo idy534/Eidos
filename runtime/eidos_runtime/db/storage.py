@@ -1217,6 +1217,23 @@ class SessionStore:
             operation_id, scope, request, result
         )
 
+    def fail_operation(
+        self,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+        *,
+        error_code: str,
+        side_effects_may_exist: bool,
+    ) -> None:
+        self._database.fail_operation(
+            operation_id,
+            scope,
+            request,
+            error_code=error_code,
+            side_effects_may_exist=side_effects_may_exist,
+        )
+
     def record_operation_result(
         self,
         operation_id: str,

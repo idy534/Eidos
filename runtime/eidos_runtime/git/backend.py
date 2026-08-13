@@ -111,6 +111,10 @@ class GitBackend(Protocol):
         cancel: threading.Event,
     ) -> GitRemoteObservation: ...
 
+    def remote_branch_head(
+        self, cwd: Path, remote: str, branch: str
+    ) -> str | None: ...
+
     def validate_remote_transport(self, cwd: Path, remote: str) -> None: ...
 
     def worktree_list(self, cwd: Path) -> tuple[GitWorktreeEntry, ...]: ...
@@ -393,6 +397,12 @@ class DulwichGitBackend:
             cancel=cancel,
         )
         return self.remote_status(cwd)
+
+    def remote_branch_head(
+        self, cwd: Path, remote: str, branch: str
+    ) -> str | None:
+        self._open_repository(cwd, "remote-branch-head")
+        return self._git_cli.remote_branch_head(cwd, remote, branch)
 
     def validate_remote_transport(self, cwd: Path, remote: str) -> None:
         self._open_repository(cwd, "remote-transport")

@@ -27,6 +27,7 @@ from eidos_runtime.protocol.review import (
     ReviewCommentListRequestDto,
     ReviewCommentListResponseDto,
 )
+from eidos_runtime.workspace.unified_diff import validate_diff_anchor
 
 
 class ReviewGitPort(Protocol):
@@ -102,6 +103,13 @@ class ReviewApplication:
                 or request.path not in diff.changed_files
             ):
                 raise ApplicationError("REVIEW_DIFF_CHANGED")
+            if not validate_diff_anchor(
+                diff.unified_diff,
+                path=request.path,
+                side=request.side,
+                line=request.line,
+            ):
+                raise ApplicationError("REVIEW_ANCHOR_INVALID")
             comment = self._repository.create(
                 comment_id=request.comment_id,
                 session_id=request.session_id,

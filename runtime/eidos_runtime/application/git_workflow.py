@@ -79,6 +79,7 @@ class GitPullPlan:
     session: Session
     root: Path
     remote: str
+    before_head: str
 
 
 @dataclass(frozen=True)
@@ -497,7 +498,10 @@ class GitWorkflowApplication:
         except GitError as error:
             raise _workflow_error(error) from error
         return GitPullPlan(
-            session=session, root=Path(status.worktree_root), remote=remote
+            session=session,
+            root=Path(status.worktree_root),
+            remote=remote,
+            before_head=status.head,
         )
 
     def pull(
@@ -524,7 +528,7 @@ class GitWorkflowApplication:
                     plan.root
                 )
             except GitError as error:
-                raise _workflow_error(error) from error
+                return self._reconcile_pull_failure(plan, observation, error)
             current = self._status(plan.session)
         return _remote_mutation_result(
             SessionGitPullResponseDto,
@@ -532,6 +536,42 @@ class GitWorkflowApplication:
             remote=plan.remote,
             status=current,
         )
+
+    def _reconcile_pull_failure(
+        self,
+        plan: GitPullPlan,
+        observation: GitRemoteObservation,
+        error: GitError,
+    ) -> SessionGitPullResponseDto:
+        try:
+            current = self._status(plan.session)
+            state = self._worktrees.git.operation_state(plan.root)
+            upstream_head = self._worktrees.git.resolve_revision(
+                plan.root, "@{upstream}"
+            )
+        except (ApplicationError, GitError) as reconcile_error:
+            raise ApplicationError("GIT_REMOTE_OUTCOME_UNCERTAIN") from reconcile_error
+        if (
+            current.head != plan.before_head
+            and current.head == upstream_head
+            and state is GitOperationState.NONE
+            and not current.dirty
+        ):
+            try:
+                final_observation = self._worktrees.git.remote_status(plan.root)
+            except GitError as reconcile_error:
+                raise ApplicationError(
+                    "GIT_REMOTE_OUTCOME_UNCERTAIN"
+                ) from reconcile_error
+            return _remote_mutation_result(
+                SessionGitPullResponseDto,
+                final_observation,
+                remote=plan.remote,
+                status=current,
+            )
+        if current.head == plan.before_head:
+            raise _workflow_error(error) from error
+        raise ApplicationError("GIT_REMOTE_OUTCOME_UNCERTAIN") from error
 
     def preflight_push(self, request: SessionGitPushRequestDto) -> GitPushPlan:
         session, status = self._prepare_mutation(request.session_id)
@@ -597,12 +637,27 @@ class GitWorkflowApplication:
         if cancel.is_set():
             raise ApplicationError("GIT_REMOTE_CANCELED")
         try:
+            source_head = self._worktrees.git.head(plan.root)
+            remote_before = self._worktrees.git.remote_branch_head(
+                plan.root, plan.remote, plan.destination_branch
+            )
+        except GitError as error:
+            raise _workflow_error(error) from error
+        try:
             observation = self._worktrees.git.push(
                 plan.root,
                 plan.remote,
                 destination_branch=plan.destination_branch,
                 set_upstream=plan.set_upstream,
                 cancel=cancel,
+            )
+        except (GitCommandFailedError, GitCommandTimeoutError, GitRemoteCanceledError) as error:
+            return self._reconcile_push_failure(
+                plan,
+                observation,
+                source_head,
+                remote_before,
+                error,
             )
         except GitError as error:
             raise _workflow_error(error) from error
@@ -613,6 +668,38 @@ class GitWorkflowApplication:
             remote=plan.remote,
             status=current,
         )
+
+    def _reconcile_push_failure(
+        self,
+        plan: GitPushPlan,
+        observation: GitRemoteObservation,
+        source_head: str,
+        remote_before: str | None,
+        error: GitError,
+    ) -> SessionGitPushResponseDto:
+        try:
+            remote_after = self._worktrees.git.remote_branch_head(
+                plan.root, plan.remote, plan.destination_branch
+            )
+        except GitError as reconcile_error:
+            raise ApplicationError("GIT_REMOTE_OUTCOME_UNCERTAIN") from reconcile_error
+        if remote_after == source_head:
+            try:
+                current = self._status(plan.session)
+                final_observation = self._worktrees.git.remote_status(plan.root)
+            except (ApplicationError, GitError) as reconcile_error:
+                raise ApplicationError(
+                    "GIT_REMOTE_OUTCOME_UNCERTAIN"
+                ) from reconcile_error
+            return _remote_mutation_result(
+                SessionGitPushResponseDto,
+                final_observation,
+                remote=plan.remote,
+                status=current,
+            )
+        if remote_after == remote_before:
+            raise _workflow_error(error) from error
+        raise ApplicationError("GIT_REMOTE_OUTCOME_UNCERTAIN") from error
 
     def _read_session(self, session_id: str) -> Session:
         session = self._repository.read_session(session_id)
@@ -763,7 +850,8 @@ def _workflow_error(error: GitError | WorktreeError) -> ApplicationError:
     if isinstance(error, GitCommandTimeoutError):
         return ApplicationError(
             "GIT_REMOTE_TIMEOUT"
-            if error.operation in {"fetch", "push", "pull-ff-only"}
+            if error.operation
+            in {"fetch", "push", "pull-ff-only", "remote-branch-head"}
             else "GIT_COMMAND_TIMEOUT"
         )
     if isinstance(error, GitRemoteCanceledError):

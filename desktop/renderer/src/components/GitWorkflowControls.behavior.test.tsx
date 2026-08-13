@@ -123,9 +123,9 @@ describe("GitWorkflowControls", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("session-a", expect.any(String)));
   });
 
-  it("reuses operationId when the user retries the same failed action", async () => {
+  it("creates a new operationId after a terminal Git failure", async () => {
     const fetch = vi.fn()
-      .mockRejectedValueOnce(new Error("transport interrupted"))
+      .mockRejectedValueOnce(new Error("EIDOS_RUNTIME_ERROR:GIT_REMOTE_FAILED"))
       .mockResolvedValueOnce({ ...remote, remote: "origin", head: status.head });
     renderControls({ fetch });
 
@@ -134,7 +134,35 @@ describe("GitWorkflowControls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Fetch" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
 
+    expect(fetch.mock.calls[1]![1]).not.toBe(fetch.mock.calls[0]![1]);
+  });
+
+  it("keeps operationId while the operation is still in progress", async () => {
+    const fetch = vi.fn()
+      .mockRejectedValueOnce(new Error("EIDOS_RUNTIME_ERROR:OPERATION_IN_PROGRESS"))
+      .mockRejectedValueOnce(new Error("EIDOS_RUNTIME_ERROR:OPERATION_IN_PROGRESS"));
+    renderControls({ fetch });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Fetch" }));
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Fetch" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+
     expect(fetch.mock.calls[1]![1]).toBe(fetch.mock.calls[0]![1]);
+  });
+
+  it("creates a new operationId after an uncertain outcome", async () => {
+    const fetch = vi.fn()
+      .mockRejectedValueOnce(new Error("EIDOS_RUNTIME_ERROR:GIT_REMOTE_OUTCOME_UNCERTAIN"))
+      .mockResolvedValueOnce({ ...remote, remote: "origin", head: status.head });
+    renderControls({ fetch });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Fetch" }));
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Fetch" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+
+    expect(fetch.mock.calls[1]![1]).not.toBe(fetch.mock.calls[0]![1]);
   });
 
   it("uses observed branches as merge and rebase targets", async () => {

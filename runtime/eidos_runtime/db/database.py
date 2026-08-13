@@ -15,6 +15,7 @@ from typing import Callable, Generic, Iterator, TypeVar
 
 from eidos_runtime.db.errors import (
     OperationConflictError,
+    OperationFailedError,
     OperationInProgressError,
     StorageError,
 )
@@ -215,6 +216,8 @@ class Database:
             return None
         if row["request_hash"] != request_hash:
             raise OperationConflictError("operation id was reused")
+        if row["status"] == "failed":
+            _raise_operation_failed(row)
         if row["status"] != "completed" or row["result_json"] is None:
             raise OperationInProgressError("operation is still in progress")
         return json.loads(row["result_json"])
@@ -233,6 +236,8 @@ class Database:
             if row is not None:
                 if row["request_hash"] != request_hash:
                     raise OperationConflictError("operation id was reused")
+                if row["status"] == "failed":
+                    _raise_operation_failed(row)
                 if row["status"] != "completed" or row["result_json"] is None:
                     raise OperationInProgressError("operation is still in progress")
                 return json.loads(row["result_json"])
@@ -264,6 +269,8 @@ class Database:
                 raise StorageError("external operation was not prepared")
             if row["request_hash"] != request_hash:
                 raise OperationConflictError("operation id was reused")
+            if row["status"] == "failed":
+                _raise_operation_failed(row)
             if row["status"] == "completed" and row["result_json"] is not None:
                 replay = json.loads(row["result_json"])
                 if not isinstance(replay, dict):
@@ -283,6 +290,52 @@ class Database:
             if updated.rowcount != 1:
                 raise OperationInProgressError("operation could not be completed")
         return result
+
+    def fail_operation(
+        self,
+        operation_id: str,
+        scope: str,
+        request: dict[str, object],
+        *,
+        error_code: str,
+        side_effects_may_exist: bool,
+    ) -> None:
+        """Finalize a prepared external operation as a terminal failure."""
+
+        request_hash = canonical_hash(request)
+        encoded = json.dumps(
+            {
+                "outcome": "failed",
+                "errorCode": error_code,
+                "sideEffectsMayExist": side_effects_may_exist,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM operations WHERE id = ? AND scope = ?",
+                (operation_id, scope),
+            ).fetchone()
+            if row is None:
+                raise StorageError("external operation was not prepared")
+            if row["request_hash"] != request_hash:
+                raise OperationConflictError("operation id was reused")
+            if row["status"] == "failed":
+                _raise_operation_failed(row)
+            if row["status"] == "completed":
+                return
+            updated = connection.execute(
+                """
+                UPDATE operations
+                SET status = 'failed', result_json = ?, completed_at = ?
+                WHERE id = ? AND scope = ? AND status = 'in_progress'
+                """,
+                (encoded, now_ms(), operation_id, scope),
+            )
+            if updated.rowcount != 1:
+                raise OperationInProgressError("operation could not be failed")
 
     def workspace_overlaps_data(self, workspace: Path) -> bool:
         if self.data_directory is None:
@@ -371,6 +424,8 @@ def execute_idempotent(
     if existing is not None:
         if existing["request_hash"] != request_hash:
             raise OperationConflictError("operation id was reused")
+        if existing["status"] == "failed":
+            _raise_operation_failed(existing)
         if existing["status"] != "completed" or existing["result_json"] is None:
             raise OperationInProgressError("operation is still in progress")
         return json.loads(existing["result_json"])
@@ -427,6 +482,8 @@ def execute_idempotent_committed(
     if existing is not None:
         if existing["request_hash"] != request_hash:
             raise OperationConflictError("operation id was reused")
+        if existing["status"] == "failed":
+            _raise_operation_failed(existing)
         if existing["status"] != "completed" or existing["result_json"] is None:
             raise OperationInProgressError("operation is still in progress")
         value = deserialize_value(json.loads(existing["result_json"]))
@@ -467,6 +524,27 @@ def canonical_hash(value: object) -> str:
         value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _raise_operation_failed(row: sqlite3.Row) -> None:
+    result_json = row["result_json"]
+    if result_json is None:
+        raise StorageError("failed operation result is unavailable")
+    try:
+        envelope = json.loads(result_json)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise StorageError("failed operation result is invalid") from error
+    if (
+        not isinstance(envelope, dict)
+        or envelope.get("outcome") != "failed"
+        or not isinstance(envelope.get("errorCode"), str)
+        or not isinstance(envelope.get("sideEffectsMayExist"), bool)
+    ):
+        raise StorageError("failed operation result is invalid")
+    raise OperationFailedError(
+        envelope["errorCode"],
+        side_effects_may_exist=envelope["sideEffectsMayExist"],
+    )
 
 
 def now_ms() -> int:

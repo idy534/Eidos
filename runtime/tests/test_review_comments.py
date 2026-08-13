@@ -153,6 +153,45 @@ def test_comment_rejects_changed_diff_and_delete_is_idempotent(tmp_path: Path) -
         store.close()
 
 
+def test_comment_rejects_invalid_diff_anchor_without_persisting(
+    tmp_path: Path,
+) -> None:
+    repository, store, sessions, review, session_id = _fixture(tmp_path)
+    try:
+        (repository / "tracked.txt").write_text("base\nadded\n", encoding="utf-8")
+        head, diff_hash = _diff_facts(sessions, session_id)
+        invalid_line = ReviewCommentCreateRequestDto(
+            operationId=str(uuid.uuid4()),
+            commentId=str(uuid.uuid4()),
+            sessionId=session_id,
+            path="tracked.txt",
+            scope="head",
+            side="new",
+            line=999999,
+            body="This line does not exist.",
+            baseHead=head,
+            diffHash=diff_hash,
+        )
+        with pytest.raises(ApplicationError) as error:
+            review.create_comment(invalid_line)
+        assert error.value.code == "REVIEW_ANCHOR_INVALID"
+        assert review.list_comments(
+            ReviewCommentListRequestDto(sessionId=session_id)
+        ).root["comments"] == []
+
+        wrong_side = invalid_line.model_copy(update={
+            "operationId": str(uuid.uuid4()),
+            "commentId": str(uuid.uuid4()),
+            "line": 2,
+            "side": "old",
+        })
+        with pytest.raises(ApplicationError) as error:
+            review.create_comment(wrong_side)
+        assert error.value.code == "REVIEW_ANCHOR_INVALID"
+    finally:
+        store.close()
+
+
 def test_comment_operation_id_reuse_with_different_request_is_rejected(
     tmp_path: Path,
 ) -> None:

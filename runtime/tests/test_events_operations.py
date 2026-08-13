@@ -10,7 +10,10 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.db.events import IncompatibleEventError  # noqa: E402
-from eidos_runtime.db.errors import OperationInProgressError  # noqa: E402
+from eidos_runtime.db.errors import (  # noqa: E402
+    OperationFailedError,
+    OperationInProgressError,
+)
 from eidos_runtime.db.storage import (  # noqa: E402
     OperationConflictError,
     SessionActiveError,
@@ -78,6 +81,36 @@ class EventAndOperationTests(unittest.TestCase):
             self.store.prepare_operation(operation_id, scope, request),
             result,
         )
+
+    def test_external_operation_failure_is_terminal_and_replayable(self) -> None:
+        operation_id = "44444444-4444-4444-8444-444444444444"
+        scope = "session/gitFetch"
+        request = {"sessionId": "session"}
+
+        self.assertIsNone(
+            self.store.prepare_operation(operation_id, scope, request)
+        )
+        self.store.fail_operation(
+            operation_id,
+            scope,
+            request,
+            error_code="GIT_REMOTE_FAILED",
+            side_effects_may_exist=False,
+        )
+        with self.assertRaises(OperationFailedError) as replay:
+            self.store.operation_result(operation_id, scope, request)
+        self.assertEqual(replay.exception.code, "GIT_REMOTE_FAILED")
+        with self.assertRaises(OperationFailedError):
+            self.store.prepare_operation(operation_id, scope, request)
+
+        with self.assertRaises(OperationConflictError):
+            self.store.fail_operation(
+                operation_id,
+                scope,
+                {"sessionId": "other"},
+                error_code="GIT_REMOTE_FAILED",
+                side_effects_may_exist=False,
+            )
 
     def test_cancel_operation_replay_does_not_duplicate_event(self) -> None:
         session = self.store.create_session(str(self.workspace))

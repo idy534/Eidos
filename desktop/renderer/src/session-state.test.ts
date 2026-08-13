@@ -234,6 +234,14 @@ test("closed runtime business errors map to safe user-facing guidance", () => {
     "任务仍有未提交或冲突的变更，不能删除。",
   );
   assert.equal(
+    userFacingError(new Error("EIDOS_RUNTIME_ERROR:REVIEW_ANCHOR_INVALID")),
+    "Review Comment 的行位置已无效，请重新选择 Diff 行。",
+  );
+  assert.equal(
+    userFacingError(new Error("EIDOS_RUNTIME_ERROR:GIT_REMOTE_OUTCOME_UNCERTAIN")),
+    "上一次 Git 操作可能已产生外部变更。请先刷新并检查 Git/远端状态；再次执行将作为新的 Git 操作。",
+  );
+  assert.equal(
     userFacingError(new Error("provider secret details")),
     "操作失败，请查看 Runtime 日志。",
   );

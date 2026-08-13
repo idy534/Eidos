@@ -451,6 +451,170 @@ def test_fetch_maps_remote_failures_without_exposing_stderr(
         store.close()
 
 
+def test_failed_fetch_is_terminal_and_new_operation_retries(
+    tmp_path: Path,
+) -> None:
+    _remote, repo_a, _repo_b = _remote_fixture(tmp_path)
+    store, manager, application = _application(tmp_path)
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repo_a), executionMode="local"
+            )
+        ).root
+        operation_id = str(uuid.uuid4())
+        request = SessionGitFetchRequestDto(
+            operationId=operation_id, sessionId=session["id"]
+        )
+        native_fetch = manager.git.fetch
+        calls = 0
+        head_before = _git(repo_a, "rev-parse", "HEAD")
+        index_before = _git(repo_a, "write-tree")
+        worktree_before = (repo_a / "tracked.txt").read_text(encoding="utf-8")
+
+        def flaky_fetch(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise GitCommandFailedError(
+                    "fetch", returncode=1, stderr="secret URL"
+                )
+            return native_fetch(*args, **kwargs)
+
+        manager.git.fetch = flaky_fetch  # type: ignore[method-assign]
+        first = application.prepare_git_fetch(request, request_id="client-a")
+        with pytest.raises(ApplicationError) as failed:
+            first.run(threading.Event())
+        assert failed.value.code == "GIT_REMOTE_FAILED"
+        assert _git(repo_a, "rev-parse", "HEAD") == head_before
+        assert _git(repo_a, "write-tree") == index_before
+        assert (repo_a / "tracked.txt").read_text(encoding="utf-8") == worktree_before
+
+        connection = store.connection
+        assert connection is not None
+        rows = connection.execute(
+            """
+            SELECT o.status, a.status
+            FROM operations AS o
+            JOIN async_operations AS a ON a.operation_id = o.id
+            WHERE o.id = ?
+            """,
+            (operation_id,),
+        ).fetchone()
+        assert tuple(rows) == ("failed", "failed")
+
+        with pytest.raises(ApplicationError) as replayed:
+            application.prepare_git_fetch(request, request_id="client-replay")
+        assert replayed.value.code == "GIT_REMOTE_FAILED"
+        assert calls == 1
+
+        retry = application.prepare_git_fetch(
+            SessionGitFetchRequestDto(
+                operationId=str(uuid.uuid4()), sessionId=session["id"]
+            ),
+            request_id="client-retry",
+        )
+        retry.run(threading.Event())
+        assert calls == 2
+    finally:
+        store.close()
+
+
+def test_push_reconciles_lost_response_from_remote_ref(tmp_path: Path) -> None:
+    _remote, repo_a, _repo_b = _remote_fixture(tmp_path)
+    local_head = _commit(repo_a, "local.txt", "local\n", "local commit")
+    store, manager, application = _application(tmp_path)
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repo_a), executionMode="local"
+            )
+        ).root
+        operation_id = str(uuid.uuid4())
+        prepared = application.prepare_git_push(
+            SessionGitPushRequestDto(
+                operationId=operation_id, sessionId=session["id"]
+            ),
+            request_id="client-lost-response",
+        )
+        native_push = manager.git._git_cli.push
+        calls = 0
+
+        def push_then_lose_response(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            native_push(*args, **kwargs)
+            raise GitCommandTimeoutError("push")
+
+        manager.git.push = push_then_lose_response  # type: ignore[method-assign]
+        result = prepared.run(threading.Event()).root
+
+        assert result["head"] == local_head
+        assert _git(Path(_remote), "rev-parse", "refs/heads/main") == local_head
+        assert calls == 1
+        assert application.prepare_git_push(
+            SessionGitPushRequestDto(
+                operationId=operation_id, sessionId=session["id"]
+            ),
+            request_id="client-replay",
+        ).root == result
+        assert calls == 1
+    finally:
+        store.close()
+
+
+def test_push_lost_outcome_is_uncertain_and_persists_side_effect_flag(
+    tmp_path: Path,
+) -> None:
+    _remote, repo_a, _repo_b = _remote_fixture(tmp_path)
+    _commit(repo_a, "local.txt", "local\n", "local commit")
+    store, manager, application = _application(tmp_path)
+    try:
+        session = application.create(
+            SessionCreateRequestDto(
+                workspaceRoot=str(repo_a), executionMode="local"
+            )
+        ).root
+        operation_id = str(uuid.uuid4())
+        prepared = application.prepare_git_push(
+            SessionGitPushRequestDto(
+                operationId=operation_id, sessionId=session["id"]
+            ),
+            request_id="client-uncertain-push",
+        )
+        remote_before = _git(repo_a, "rev-parse", "refs/remotes/origin/main")
+        remote_observations = 0
+
+        def remote_branch_head(*_args, **_kwargs):
+            nonlocal remote_observations
+            remote_observations += 1
+            if remote_observations == 1:
+                return remote_before
+            raise GitCommandFailedError(
+                "remote-branch-head", returncode=1, stderr="secret URL"
+            )
+
+        def failed_push(*_args, **_kwargs):
+            raise GitCommandTimeoutError("push")
+
+        manager.git.remote_branch_head = remote_branch_head  # type: ignore[method-assign]
+        manager.git.push = failed_push  # type: ignore[method-assign]
+        with pytest.raises(ApplicationError) as uncertain:
+            prepared.run(threading.Event())
+        assert uncertain.value.code == "GIT_REMOTE_OUTCOME_UNCERTAIN"
+
+        connection = store.connection
+        assert connection is not None
+        row = connection.execute(
+            "SELECT status, result_json FROM operations WHERE id = ?",
+            (operation_id,),
+        ).fetchone()
+        assert row["status"] == "failed"
+        assert '"sideEffectsMayExist":true' in row["result_json"]
+    finally:
+        store.close()
+
+
 def test_pull_fast_forwards_clean_branch_and_replays_result(tmp_path: Path) -> None:
     _remote, repo_a, repo_b = _remote_fixture(tmp_path)
     remote_head = _commit(repo_b, "remote.txt", "remote\n", "remote commit")

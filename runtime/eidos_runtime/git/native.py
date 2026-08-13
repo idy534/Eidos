@@ -26,6 +26,7 @@ from eidos_runtime.git.errors import (
     GitRemoteUnsupportedError,
 )
 from eidos_runtime.git.models import GitOperationState
+from eidos_runtime.git.refs import GitRefValidator
 
 
 DEFAULT_GIT_TIMEOUT_SECONDS = 15.0
@@ -553,6 +554,29 @@ class GitCli:
             profile=GitExecutionProfile.REMOTE,
             cancel=cancel,
         )
+
+    def remote_branch_head(
+        self, cwd: Path, remote: str, branch: str
+    ) -> str | None:
+        self.validate_remote_transport(cwd, remote)
+        GitRefValidator.branch(branch)
+        result = self._runner.run(
+            ("ls-remote", "--heads", remote, f"refs/heads/{branch}"),
+            cwd=cwd,
+            operation="remote-branch-head",
+            profile=GitExecutionProfile.REMOTE,
+        )
+        lines = _strict_lines(result.stdout, "remote-branch-head")
+        if not lines:
+            return None
+        if len(lines) != 1:
+            raise GitCommandFailedError("remote-branch-head", returncode=None)
+        fields = lines[0].split("\t")
+        if len(fields) != 2 or fields[1] != f"refs/heads/{branch}":
+            raise GitCommandFailedError("remote-branch-head", returncode=None)
+        if not re.fullmatch(r"[0-9a-fA-F]{40,64}", fields[0]):
+            raise GitCommandFailedError("remote-branch-head", returncode=None)
+        return fields[0].lower()
 
     def validate_remote_transport(self, cwd: Path, remote: str) -> None:
         if not _valid_remote_name(remote):
