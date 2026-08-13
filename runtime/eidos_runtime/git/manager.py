@@ -36,6 +36,7 @@ from eidos_runtime.git.errors import (
     WorktreeError,
 )
 from eidos_runtime.git.models import (
+    GitOperationState,
     GitRepositoryDiscovery,
     GitSourceSnapshot,
     GitWorkingTreePatch,
@@ -250,6 +251,74 @@ class WorktreeManager:
             raise WorktreeError("git_command_timeout") from None
         except GitCommandFailedError as error:
             raise WorktreeError("worktree_cleanup_required") from error
+
+    def restore_snapshot_state(
+        self,
+        worktree_id: str,
+        *,
+        head: str,
+        changes: GitWorkingTreePatch,
+        expected_fingerprint: str | None,
+    ) -> Worktree:
+        """Restore exact Git state in one active managed Worktree."""
+
+        worktree = self.open(worktree_id)
+        if worktree.ownership is not WorktreeOwnership.MANAGED:
+            raise WorktreeError("worktree_ownership_invalid")
+        root = Path(worktree.worktree_root)
+        try:
+            self.git.restore_snapshot_state(root, head, changes)
+            current = self.source_snapshot(root, include_local_changes=True)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("worktree_restore_failed") from error
+        if current.head != head or (
+            expected_fingerprint is not None
+            and current.fingerprint != expected_fingerprint
+        ):
+            raise WorktreeError("worktree_restore_verification_failed")
+        return worktree
+
+    def local_operation_state(self, repository_root: Path) -> GitOperationState:
+        try:
+            discovery = self.discovery.discover(repository_root)
+            return self.git.operation_state(Path(discovery.repository_root))
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_command_failed") from error
+
+    def restore_local_snapshot_state(
+        self,
+        repository_root: Path,
+        *,
+        expected_common_dir: Path,
+        head: str,
+        changes: GitWorkingTreePatch,
+        expected_fingerprint: str,
+    ) -> None:
+        """Restore one validated user checkout without managing its lifecycle."""
+
+        before = self.source_snapshot(repository_root, include_local_changes=False)
+        if Path(before.discovery.git_common_dir).resolve() != expected_common_dir.resolve():
+            raise WorktreeError("workspace_identity_changed")
+        try:
+            self.git.restore_snapshot_state(repository_root, head, changes)
+            current = self.source_snapshot(
+                repository_root, include_local_changes=True
+            )
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("worktree_restore_failed") from error
+        if (
+            Path(current.discovery.git_common_dir).resolve()
+            != expected_common_dir.resolve()
+            or current.head != head
+            or current.fingerprint != expected_fingerprint
+        ):
+            raise WorktreeError("worktree_restore_verification_failed")
 
     def switch_repository_branch(self, root: Path, branch: str) -> None:
         try:
@@ -1506,9 +1575,12 @@ class WorktreeManager:
         )
         if not validation.valid:
             raise WorktreeError(validation.code or "worktree_invalid")
-        staged, unstaged, untracked, conflicts, dirty = self._status_counts(
-            Path(worktree.worktree_root)
-        )
+        try:
+            observation = self.git.status(Path(worktree.worktree_root))
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_command_failed") from error
         head = validation.head
         branch = validation.observed_branch
         if head is None:
@@ -1521,11 +1593,62 @@ class WorktreeManager:
             base_commit=worktree.base_commit,
             branch=branch,
             head=head,
-            dirty=dirty,
-            staged_count=staged,
-            unstaged_count=unstaged,
-            untracked_count=untracked,
-            conflict_count=conflicts,
+            dirty=observation.dirty,
+            staged_count=len(observation.staged_paths),
+            unstaged_count=len(observation.unstaged_paths),
+            untracked_count=len(observation.untracked_paths),
+            conflict_count=len(observation.conflict_paths),
+            staged_files=observation.staged_paths,
+            unstaged_files=observation.unstaged_paths,
+            untracked_files=observation.untracked_paths,
+            conflict_files=observation.conflict_paths,
+            observed_at=utc_now(),
+        )
+
+    def operation_status(self, worktree_id: str) -> GitStatusSnapshot:
+        """Observe a verified Worktree during a native merge or rebase."""
+
+        worktree = self._read_worktree(worktree_id)
+        project = self._project_for(worktree)
+        root = Path(worktree.worktree_root)
+        try:
+            operation = self.git.operation_state(root)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_command_failed") from error
+        validation = self._validate_record(
+            worktree,
+            project,
+            entries=self._entries_for_observation(project),
+            persist_state=False,
+            allow_transient_detached=operation is GitOperationState.REBASE,
+        )
+        if not validation.valid or validation.head is None:
+            raise WorktreeError(validation.code or "worktree_invalid")
+        try:
+            observation = self.git.status(root)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except GitCommandFailedError as error:
+            raise WorktreeError("git_command_failed") from error
+        return GitStatusSnapshot(
+            worktree_id=worktree.id,
+            repository_root=project.workspace_root,
+            worktree_root=worktree.worktree_root,
+            base_ref=worktree.base_ref,
+            base_commit=worktree.base_commit,
+            branch=validation.observed_branch,
+            head=validation.head,
+            dirty=observation.dirty,
+            staged_count=len(observation.staged_paths),
+            unstaged_count=len(observation.unstaged_paths),
+            untracked_count=len(observation.untracked_paths),
+            conflict_count=len(observation.conflict_paths),
+            staged_files=observation.staged_paths,
+            unstaged_files=observation.unstaged_paths,
+            untracked_files=observation.untracked_paths,
+            conflict_files=observation.conflict_paths,
             observed_at=utc_now(),
         )
 
@@ -1551,18 +1674,29 @@ class WorktreeManager:
             unstaged_count=len(observation.unstaged_paths),
             untracked_count=len(observation.untracked_paths),
             conflict_count=len(observation.conflict_paths),
+            staged_files=observation.staged_paths,
+            unstaged_files=observation.unstaged_paths,
+            untracked_files=observation.untracked_paths,
+            conflict_files=observation.conflict_paths,
             observed_at=utc_now(),
         )
 
     def local_diff(
-        self, repository_root: Path, *, scope: DiffScope = DiffScope.HEAD
+        self,
+        repository_root: Path,
+        *,
+        scope: DiffScope = DiffScope.HEAD,
+        path: str | None = None,
     ) -> GitDiffSnapshot:
         try:
             discovery = self.discovery.discover(repository_root)
             root = Path(discovery.repository_root)
             head = self.git.head(root)
             diff_observation = self.git.diff(
-                root, base_commit=head, include_untracked=True
+                root,
+                base_commit=head,
+                include_untracked=True,
+                path=path,
             )
             status_observation = self.git.status(root)
         except GitCommandTimeoutError:
@@ -1585,6 +1719,7 @@ class WorktreeManager:
         worktree_id: str,
         *,
         scope: DiffScope = DiffScope.HEAD,
+        path: str | None = None,
     ) -> GitDiffSnapshot:
         worktree = self._read_worktree(worktree_id)
         project = self._project_for(worktree)
@@ -1608,6 +1743,7 @@ class WorktreeManager:
                 root,
                 base_commit=base_commit,
                 include_untracked=True,
+                path=path,
             )
             status_observation = self.git.status(root)
         except GitCommandTimeoutError:
@@ -1651,6 +1787,7 @@ class WorktreeManager:
         *,
         entries: tuple[GitWorktreeEntry, ...],
         persist_state: bool,
+        allow_transient_detached: bool = False,
     ) -> WorktreeValidation:
         root = Path(worktree.worktree_root)
         entry = next(
@@ -1779,7 +1916,9 @@ class WorktreeManager:
                 state=worktree.state,
                 persist_state=False,
             )
-        if branch != worktree.checkout_branch:
+        if branch != worktree.checkout_branch and not (
+            allow_transient_detached and branch is None
+        ):
             return self._record_validation(
                 worktree,
                 valid=False,

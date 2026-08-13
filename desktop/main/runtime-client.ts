@@ -57,8 +57,17 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "WORKTREE_NOT_FOUND",
   "WORKTREE_INVALID",
   "WORKSPACE_IDENTITY_UNAVAILABLE",
+  "WORKSPACE_BOUNDARY_VIOLATION",
+  "WORKSPACE_SENSITIVE_PATH",
+  "WORKSPACE_UNAVAILABLE",
+  "WORKSPACE_IDENTITY_CHANGED",
+  "WORKSPACE_READ_TIMEOUT",
+  "WORKSPACE_FILE_TOO_LARGE",
+  "WORKSPACE_SENSITIVE_CONTENT",
   "CHECKPOINT_GIT_STATE_UNAVAILABLE",
   "CHECKPOINT_FORK_WORKTREE_FAILED",
+  "CHECKPOINT_REWIND_FAILED",
+  "CHECKPOINT_WORKFLOW_BUSY",
   "DIRECT_CHECKPOINT_FORK_PATH_FORBIDDEN",
   "MANAGED_CHECKPOINT_FORK_PATH_FORBIDDEN",
   "ASYNC_OPERATION_CANCELED",
@@ -69,6 +78,35 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "GIT_WORKTREE_MISSING",
   "GIT_WORKTREE_INVALID",
   "GIT_REVIEW_FAILED",
+  "GIT_NOT_REPOSITORY",
+  "GIT_BRANCH_REQUIRED",
+  "GIT_WORKFLOW_BUSY",
+  "GIT_INVALID_PATH",
+  "GIT_DISCARD_REQUIRES_UNSTAGED",
+  "GIT_NOTHING_STAGED",
+  "GIT_IDENTITY_UNAVAILABLE",
+  "GIT_CONFLICT",
+  "GIT_COMMAND_FAILED",
+  "GIT_REMOTE_REQUIRED",
+  "GIT_OPERATION_IN_PROGRESS",
+  "GIT_MERGE_NOT_IN_PROGRESS",
+  "GIT_MERGE_TARGET_INVALID",
+  "GIT_REBASE_NOT_IN_PROGRESS",
+  "GIT_REBASE_TARGET_INVALID",
+  "GIT_REMOTE_NOT_FOUND",
+  "GIT_UPSTREAM_NOT_FOUND",
+  "GIT_REMOTE_UNSUPPORTED",
+  "GIT_REMOTE_TIMEOUT",
+  "GIT_REMOTE_CANCELED",
+  "GIT_REMOTE_FAILED",
+  "GIT_REMOTE_OUTCOME_UNCERTAIN",
+  "GIT_WORKTREE_DIRTY",
+  "GIT_REMOTE_BEHIND",
+  "GIT_REMOTE_DIVERGED",
+  "REVIEW_DIFF_CHANGED",
+  "REVIEW_ANCHOR_INVALID",
+  "REVIEW_COMMENT_ID_REUSED",
+  "REVIEW_COMMENT_NOT_FOUND",
   "WORKSPACE_IDENTITY_CHANGED",
   "WORKTREE_DIRTY",
   "WORKTREE_DELETE_FAILED",
@@ -119,6 +157,17 @@ import type {
   GitDiffScope,
   SessionGitDiff,
   SessionGitStatus,
+  SessionGitMutationResult,
+  SessionGitCommitResult,
+  SessionGitDiscardResult,
+  ReviewComment,
+  ReviewCommentCreateInput,
+  GitRemoteStatus,
+  GitFetchResult,
+  GitPullResult,
+  GitPushResult,
+  GitMergeResult,
+  GitRebaseResult,
   SessionListResult,
   SessionSnapshot,
   SkillListResult,
@@ -126,6 +175,8 @@ import type {
   ToolCall,
   ToolProvenance,
   ExtensionSnapshot as ExtensionSnapshotResult,
+  WorkspaceDirectoryListing,
+  WorkspaceFilePreview,
 } from "../shared/index.js";
 
 export interface InitializeResult {
@@ -384,6 +435,29 @@ export class RuntimeClient {
     );
   }
 
+  listWorkspaceDirectory(
+    sessionId: string,
+    path: string,
+    limit = 500,
+  ): Promise<WorkspaceDirectoryListing> {
+    return this.validatedRequest(
+      "workspace/listDirectory",
+      { sessionId, path, limit },
+      isWorkspaceDirectoryListing,
+    );
+  }
+
+  readWorkspaceFilePreview(
+    sessionId: string,
+    path: string,
+  ): Promise<WorkspaceFilePreview> {
+    return this.validatedRequest(
+      "workspace/readFilePreview",
+      { sessionId, path },
+      isWorkspaceFilePreview,
+    );
+  }
+
   renameSession(
     sessionId: string, title: string, operationId = randomUUID(),
   ): Promise<Session> {
@@ -406,9 +480,198 @@ export class RuntimeClient {
     );
   }
 
-  readSessionGitDiff(sessionId: string, scope: GitDiffScope): Promise<SessionGitDiff> {
+  readSessionGitDiff(
+    sessionId: string,
+    scope: GitDiffScope,
+    path?: string,
+  ): Promise<SessionGitDiff> {
     return this.validatedRequest(
-      "session/gitDiff", { sessionId, scope }, isSessionGitDiff,
+      "session/gitDiff", { sessionId, scope, ...(path === undefined ? {} : { path }) }, isSessionGitDiff,
+    );
+  }
+
+  stageSessionGit(
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ): Promise<SessionGitMutationResult> {
+    return this.validatedRequest(
+      "session/gitStage", { operationId, sessionId, paths }, isSessionGitMutationResult,
+    );
+  }
+
+  unstageSessionGit(
+    sessionId: string,
+    paths: string[],
+    operationId: string,
+  ): Promise<SessionGitMutationResult> {
+    return this.validatedRequest(
+      "session/gitUnstage", { operationId, sessionId, paths }, isSessionGitMutationResult,
+    );
+  }
+
+  commitSessionGit(
+    sessionId: string,
+    message: string,
+    operationId: string,
+  ): Promise<SessionGitCommitResult> {
+    return this.validatedRequest(
+      "session/gitCommit", { operationId, sessionId, message }, isSessionGitCommitResult,
+    );
+  }
+
+  discardSessionGit(
+    sessionId: string,
+    path: string,
+    operationId: string,
+  ): Promise<SessionGitDiscardResult> {
+    return this.validatedRequest(
+      "session/gitDiscard", { operationId, sessionId, path }, isSessionGitMutationResult,
+    );
+  }
+
+  listReviewComments(
+    sessionId: string,
+    path?: string,
+    scope?: GitDiffScope,
+  ): Promise<ReviewComment[]> {
+    return this.validatedRequest(
+      "review/listComments",
+      { sessionId, ...(path === undefined ? {} : { path, scope }) },
+      (value): value is { comments: ReviewComment[] } => (
+        isRecord(value)
+        && hasOnlyKeys(value, ["comments"])
+        && Array.isArray(value.comments)
+        && value.comments.every(isReviewComment)
+      ),
+    ).then((result) => result.comments);
+  }
+
+  createReviewComment(
+    sessionId: string,
+    input: ReviewCommentCreateInput,
+    operationId: string,
+  ): Promise<ReviewComment> {
+    return this.validatedRequest(
+      "review/createComment",
+      { operationId, sessionId, ...input },
+      (value): value is { comment: ReviewComment } => (
+        isRecord(value)
+        && hasOnlyKeys(value, ["comment"])
+        && isReviewComment(value.comment)
+      ),
+    ).then((result) => result.comment);
+  }
+
+  deleteReviewComment(
+    sessionId: string,
+    commentId: string,
+    operationId: string,
+  ): Promise<string> {
+    return this.validatedRequest(
+      "review/deleteComment",
+      { operationId, sessionId, commentId },
+      (value): value is { commentId: string } => (
+        isRecord(value)
+        && hasOnlyKeys(value, ["commentId"])
+        && typeof value.commentId === "string"
+      ),
+    ).then((result) => result.commentId);
+  }
+
+  readSessionGitRemoteStatus(sessionId: string): Promise<GitRemoteStatus> {
+    return this.validatedRequest(
+      "session/gitRemoteStatus", { sessionId }, isGitRemoteStatus,
+    );
+  }
+
+  fetchSessionGit(
+    sessionId: string,
+    operationId: string,
+    remote?: string,
+  ): Promise<GitFetchResult> {
+    return this.validatedRequest(
+      "session/gitFetch",
+      { operationId, sessionId, ...(remote === undefined ? {} : { remote }) },
+      isGitFetchResult,
+    );
+  }
+
+  pullSessionGit(
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitPullResult> {
+    return this.validatedRequest(
+      "session/gitPull", { operationId, sessionId }, isGitPullResult,
+    );
+  }
+
+  pushSessionGit(
+    sessionId: string,
+    operationId: string,
+    remote?: string,
+  ): Promise<GitPushResult> {
+    return this.validatedRequest(
+      "session/gitPush",
+      { operationId, sessionId, ...(remote === undefined ? {} : { remote }) },
+      isGitPullResult,
+    );
+  }
+
+  mergeSessionGit(
+    sessionId: string,
+    target: string,
+    operationId: string,
+  ): Promise<GitMergeResult> {
+    return this.validatedRequest(
+      "session/gitMerge",
+      { operationId, sessionId, target },
+      isGitMergeResult,
+    );
+  }
+
+  abortSessionGitMerge(
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitMergeResult> {
+    return this.validatedRequest(
+      "session/gitMergeAbort",
+      { operationId, sessionId },
+      isGitMergeResult,
+    );
+  }
+
+  rebaseSessionGit(
+    sessionId: string,
+    target: string,
+    operationId: string,
+  ): Promise<GitRebaseResult> {
+    return this.validatedRequest(
+      "session/gitRebase",
+      { operationId, sessionId, target },
+      isGitMergeResult,
+    );
+  }
+
+  continueSessionGitRebase(
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitRebaseResult> {
+    return this.validatedRequest(
+      "session/gitRebaseContinue",
+      { operationId, sessionId },
+      isGitMergeResult,
+    );
+  }
+
+  abortSessionGitRebase(
+    sessionId: string,
+    operationId: string,
+  ): Promise<GitRebaseResult> {
+    return this.validatedRequest(
+      "session/gitRebaseAbort",
+      { operationId, sessionId },
+      isGitMergeResult,
     );
   }
 
@@ -766,6 +1029,13 @@ function isNotification(value: unknown): value is RuntimeNotification {
     return false;
   }
   const params = value.params;
+  if (value.method === "workspace/changed") {
+    return (
+      hasOnlyKeys(params, ["sessionId", "paths"])
+      && typeof params.sessionId === "string"
+      && isStringArray(params.paths)
+    );
+  }
   if (value.method === "session/titleUpdated") {
     return (
       hasOnlyKeys(params, ["sessionId", "title"])
@@ -1040,6 +1310,7 @@ function isSessionGitStatus(value: unknown): value is SessionGitStatus {
     && hasOnlyKeys(value, [
       "worktreeId", "branch", "head", "baseRef", "baseCommit", "dirty",
       "stagedCount", "unstagedCount", "untrackedCount", "conflictCount", "observedAt",
+      "stagedFiles", "unstagedFiles", "untrackedFiles", "conflictFiles",
     ])
     && (value.worktreeId === null || typeof value.worktreeId === "string")
     && (value.branch === null || typeof value.branch === "string")
@@ -1051,7 +1322,45 @@ function isSessionGitStatus(value: unknown): value is SessionGitStatus {
     && isNonNegativeInteger(value.unstagedCount)
     && isNonNegativeInteger(value.untrackedCount)
     && isNonNegativeInteger(value.conflictCount)
+    && isStringArray(value.stagedFiles)
+    && isStringArray(value.unstagedFiles)
+    && isStringArray(value.untrackedFiles)
+    && isStringArray(value.conflictFiles)
     && isNonNegativeInteger(value.observedAt)
+  );
+}
+
+function isWorkspaceDirectoryListing(value: unknown): value is WorkspaceDirectoryListing {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["path", "entries", "truncated"])
+    && typeof value.path === "string"
+    && typeof value.truncated === "boolean"
+    && Array.isArray(value.entries)
+    && value.entries.every((entry) => (
+      isRecord(entry)
+      && hasOnlyKeys(entry, ["name", "relativePath", "kind", "sizeBytes"])
+      && typeof entry.name === "string"
+      && typeof entry.relativePath === "string"
+      && ["file", "directory"].includes(String(entry.kind))
+      && (entry.sizeBytes === undefined || isNonNegativeInteger(entry.sizeBytes))
+    ))
+  );
+}
+
+function isWorkspaceFilePreview(value: unknown): value is WorkspaceFilePreview {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "path", "kind", "sizeBytes", "truncated", "content", "language", "reason",
+    ])
+    && typeof value.path === "string"
+    && ["text", "markdown", "code", "unavailable"].includes(String(value.kind))
+    && isNonNegativeInteger(value.sizeBytes)
+    && typeof value.truncated === "boolean"
+    && (value.content === undefined || typeof value.content === "string")
+    && (value.language === undefined || typeof value.language === "string")
+    && (value.reason === undefined || ["binary", "unsupported"].includes(String(value.reason)))
   );
 }
 
@@ -1087,7 +1396,7 @@ function isSessionGitDiff(value: unknown): value is SessionGitDiff {
     isRecord(value)
     && hasOnlyKeys(value, [
       "scope", "baseCommit", "head", "dirty", "changedFiles",
-      "unifiedDiff", "truncated", "observedAt",
+      "unifiedDiff", "diffHash", "truncated", "observedAt",
     ])
     && ["head", "baseline"].includes(String(value.scope))
     && (value.baseCommit === null || typeof value.baseCommit === "string")
@@ -1096,8 +1405,108 @@ function isSessionGitDiff(value: unknown): value is SessionGitDiff {
     && Array.isArray(value.changedFiles)
     && value.changedFiles.every((path) => typeof path === "string")
     && typeof value.unifiedDiff === "string"
+    && typeof value.diffHash === "string"
     && typeof value.truncated === "boolean"
     && isNonNegativeInteger(value.observedAt)
+  );
+}
+
+function isReviewComment(value: unknown): value is ReviewComment {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, [
+      "id", "sessionId", "path", "scope", "side", "line", "body",
+      "baseHead", "diffHash", "status", "createdAt", "updatedAt",
+    ])
+    && typeof value.id === "string"
+    && typeof value.sessionId === "string"
+    && typeof value.path === "string"
+    && ["head", "baseline"].includes(String(value.scope))
+    && ["old", "new"].includes(String(value.side))
+    && isNonNegativeInteger(value.line)
+    && value.line > 0
+    && typeof value.body === "string"
+    && typeof value.baseHead === "string"
+    && typeof value.diffHash === "string"
+    && ["active", "stale"].includes(String(value.status))
+    && isNonNegativeInteger(value.createdAt)
+    && isNonNegativeInteger(value.updatedAt)
+  );
+}
+
+function isSessionGitMutationResult(value: unknown): value is SessionGitMutationResult {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["head", "branch", "status"])
+    && typeof value.head === "string"
+    && (value.branch === null || typeof value.branch === "string")
+    && isSessionGitStatus(value.status)
+  );
+}
+
+function isSessionGitCommitResult(value: unknown): value is SessionGitCommitResult {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["head", "branch", "status", "commit"])
+    && typeof value.head === "string"
+    && (value.branch === null || typeof value.branch === "string")
+    && isSessionGitStatus(value.status)
+    && typeof value.commit === "string"
+    && value.commit === value.head
+  );
+}
+
+function isGitRemoteStatus(value: unknown): value is GitRemoteStatus {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["branch", "remotes", "upstream", "ahead", "behind"])
+    && (value.branch === null || typeof value.branch === "string")
+    && Array.isArray(value.remotes)
+    && value.remotes.every((remote) => (
+      isRecord(remote)
+      && hasOnlyKeys(remote, ["name"])
+      && typeof remote.name === "string"
+    ))
+    && (
+      value.upstream === null
+      || (
+        isRecord(value.upstream)
+        && hasOnlyKeys(value.upstream, ["remote", "branch"])
+        && typeof value.upstream.remote === "string"
+        && typeof value.upstream.branch === "string"
+      )
+    )
+    && (value.ahead === null || isNonNegativeInteger(value.ahead))
+    && (value.behind === null || isNonNegativeInteger(value.behind))
+  );
+}
+
+function isGitFetchResult(value: unknown): value is GitFetchResult {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    "branch", "remotes", "upstream", "ahead", "behind", "remote", "head",
+  ])) return false;
+  const { remote, head, ...status } = value;
+  return typeof remote === "string" && typeof head === "string" && isGitRemoteStatus(status);
+}
+
+function isGitPullResult(value: unknown): value is GitPullResult {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    "branch", "remotes", "upstream", "ahead", "behind", "remote", "head", "status",
+  ])) return false;
+  const { status, ...fetch } = value;
+  return isGitFetchResult(fetch) && isSessionGitStatus(status) && status.head === value.head;
+}
+
+function isGitMergeResult(value: unknown): value is GitMergeResult {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    "head", "branch", "status", "operationState", "conflictFiles",
+  ])) return false;
+  const { operationState, conflictFiles, ...mutation } = value;
+  return (
+    isSessionGitMutationResult(mutation)
+    && ["none", "merge", "rebase"].includes(String(operationState))
+    && Array.isArray(conflictFiles)
+    && conflictFiles.every((path) => typeof path === "string")
   );
 }
 
@@ -1585,6 +1994,10 @@ function isSha256(value: unknown): value is string {
 
 function isNonNegativeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 function isPositiveInteger(value: unknown): value is number {

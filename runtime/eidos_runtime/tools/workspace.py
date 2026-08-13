@@ -48,6 +48,7 @@ from eidos_runtime.workspace.unified_diff import (
     PatchApplyError,
     apply_strict_single_file_patch,
 )
+from eidos_runtime.workspace.reader import WorkspacePathError, WorkspaceReader
 from eidos_runtime.tools.registry import (
     ToolProvenance,
     ToolRegistry,
@@ -112,12 +113,6 @@ DARWIN_REPLACE_SAFE_XATTRS = frozenset({b"com.apple.provenance"})
 
 class ToolCancelled(RuntimeError):
     pass
-
-
-class WorkspacePathError(ValueError):
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
-        self.code = code
 
 
 @dataclass(frozen=True)
@@ -308,6 +303,7 @@ class ToolExecutor:
 
         self.workspace = identity
         self.root_fd = root_fd
+        self.reader = WorkspaceReader(identity)
         self.workspace_index = WorkspaceIndex(identity)
         self.search_driver = search_driver or RipgrepSearchDriver()
         self.registry = builtin_tool_registry(self)
@@ -319,6 +315,7 @@ class ToolExecutor:
         self.close()
 
     def close(self) -> None:
+        self.reader.close()
         if self.root_fd >= 0:
             os.close(self.root_fd)
             self.root_fd = -1
@@ -730,13 +727,13 @@ class ToolExecutor:
     def _list_files(
         self, arguments: dict[str, object], cancel: threading.Event
     ) -> dict[str, object]:
-        scope = WorkspaceDiscoveryScope.load(self.root_fd)
         path_value = arguments["path"]
         max_depth = arguments["maxDepth"]
         max_entries = arguments["maxEntries"]
         assert isinstance(path_value, str)
         assert isinstance(max_depth, int) and not isinstance(max_depth, bool)
         assert isinstance(max_entries, int) and not isinstance(max_entries, bool)
+        scope = WorkspaceDiscoveryScope.load(self.root_fd)
         deadline = time.monotonic() + TOOL_DEADLINE_SECONDS
         base = "" if path_value == "." else path_value.rstrip("/")
         base_depth = len(Path(base).parts) if base else 0
@@ -781,8 +778,8 @@ class ToolExecutor:
     ) -> dict[str, object]:
         path_value = arguments["path"]
         assert isinstance(path_value, str)
-        content_bytes, metadata, normalized_path = self._read_stable_path(
-            path_value, cancel, MAX_READ_FILE_BYTES
+        content_bytes, metadata, normalized_path, _truncated = self.reader.read_file_bytes(
+            path_value, cancel=cancel, limit=MAX_READ_FILE_BYTES
         )
         try:
             content = content_bytes.decode("utf-8", errors="strict")

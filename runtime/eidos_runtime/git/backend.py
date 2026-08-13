@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import re
+import threading
 from typing import Protocol
 
 from dulwich.config import ConfigFile
@@ -29,6 +30,8 @@ from eidos_runtime.git.errors import (
 from eidos_runtime.git.models import (
     GitDiffObservation,
     GitRepositoryDiscovery,
+    GitRemoteObservation,
+    GitOperationState,
     GitStatusObservation,
     GitWorktreeEntry,
     GitWorkingTreePatch,
@@ -67,7 +70,52 @@ class GitBackend(Protocol):
         *,
         base_commit: str,
         include_untracked: bool = True,
+        path: str | None = None,
     ) -> GitDiffObservation: ...
+
+    def stage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation: ...
+
+    def unstage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation: ...
+
+    def discard(self, cwd: Path, path: str, *, untracked: bool) -> GitStatusObservation: ...
+
+    def commit(self, cwd: Path, message: str) -> str: ...
+
+    def remote_status(self, cwd: Path) -> GitRemoteObservation: ...
+
+    def fetch(
+        self, cwd: Path, remote: str, *, cancel: threading.Event
+    ) -> GitRemoteObservation: ...
+
+    def merge_upstream_ff_only(self, cwd: Path) -> GitRemoteObservation: ...
+
+    def operation_state(self, cwd: Path) -> GitOperationState: ...
+
+    def merge(self, cwd: Path, target: str) -> None: ...
+
+    def merge_abort(self, cwd: Path) -> None: ...
+
+    def rebase(self, cwd: Path, target: str) -> None: ...
+
+    def rebase_continue(self, cwd: Path) -> None: ...
+
+    def rebase_abort(self, cwd: Path) -> None: ...
+
+    def push(
+        self,
+        cwd: Path,
+        remote: str,
+        *,
+        destination_branch: str,
+        set_upstream: bool,
+        cancel: threading.Event,
+    ) -> GitRemoteObservation: ...
+
+    def remote_branch_head(
+        self, cwd: Path, remote: str, branch: str
+    ) -> str | None: ...
+
+    def validate_remote_transport(self, cwd: Path, remote: str) -> None: ...
 
     def worktree_list(self, cwd: Path) -> tuple[GitWorktreeEntry, ...]: ...
 
@@ -82,6 +130,10 @@ class GitBackend(Protocol):
     def clean_worktree_for_retention(self, cwd: Path) -> None: ...
 
     def clean_worktree_after_handoff(self, cwd: Path) -> None: ...
+
+    def restore_snapshot_state(
+        self, cwd: Path, head: str, changes: GitWorkingTreePatch
+    ) -> None: ...
 
     def worktree_prune(self, cwd: Path) -> None: ...
 
@@ -228,8 +280,11 @@ class DulwichGitBackend:
         *,
         base_commit: str,
         include_untracked: bool = True,
+        path: str | None = None,
     ) -> GitDiffObservation:
         GitRefValidator.revision(base_commit)
+        if path is not None:
+            _validate_relative_path(path)
         repo = self._open_repository(cwd, "diff")
         try:
             captured = self._git_cli.diff(
@@ -237,6 +292,7 @@ class DulwichGitBackend:
                 base_commit=base_commit,
                 include_untracked=include_untracked,
                 output_limit_bytes=self._diff_output_limit_bytes,
+                path=path,
             )
         except (GitCommandFailedError, *_DULWICH_FAILURES) as error:
             if isinstance(error, GitCommandFailedError):
@@ -247,6 +303,110 @@ class DulwichGitBackend:
             changed_paths=captured.changed_paths,
             truncated=captured.truncated,
         )
+
+    def stage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation:
+        for path in paths:
+            _validate_relative_path(path)
+        self._open_repository(cwd, "stage")
+        self._git_cli.stage(cwd, paths)
+        return self.status(cwd)
+
+    def unstage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation:
+        for path in paths:
+            _validate_relative_path(path)
+        self._open_repository(cwd, "unstage")
+        self._git_cli.unstage(cwd, paths)
+        return self.status(cwd)
+
+    def discard(
+        self, cwd: Path, path: str, *, untracked: bool
+    ) -> GitStatusObservation:
+        _validate_relative_path(path)
+        self._open_repository(cwd, "discard")
+        self._git_cli.discard(cwd, path, untracked=untracked)
+        return self.status(cwd)
+
+    def commit(self, cwd: Path, message: str) -> str:
+        self._open_repository(cwd, "commit")
+        self._git_cli.commit(cwd, message)
+        return self.head(cwd)
+
+    def remote_status(self, cwd: Path) -> GitRemoteObservation:
+        self._open_repository(cwd, "remote-status")
+        return self._git_cli.remote_status(cwd)
+
+    def fetch(
+        self, cwd: Path, remote: str, *, cancel: threading.Event
+    ) -> GitRemoteObservation:
+        self._open_repository(cwd, "fetch")
+        before = self.remote_status(cwd)
+        if remote not in {item.name for item in before.remotes}:
+            raise GitCommandFailedError("remote-not-found", returncode=None)
+        self._git_cli.fetch(cwd, remote, cancel=cancel)
+        return self.remote_status(cwd)
+
+    def merge_upstream_ff_only(self, cwd: Path) -> GitRemoteObservation:
+        self._open_repository(cwd, "pull-ff-only")
+        self._git_cli.merge_upstream_ff_only(cwd)
+        return self.remote_status(cwd)
+
+    def operation_state(self, cwd: Path) -> GitOperationState:
+        self._open_repository(cwd, "operation-state")
+        return self._git_cli.operation_state(cwd)
+
+    def merge(self, cwd: Path, target: str) -> None:
+        GitRefValidator.revision(target)
+        self._open_repository(cwd, "merge")
+        self._git_cli.merge(cwd, target)
+
+    def merge_abort(self, cwd: Path) -> None:
+        self._open_repository(cwd, "merge-abort")
+        self._git_cli.merge_abort(cwd)
+
+    def rebase(self, cwd: Path, target: str) -> None:
+        GitRefValidator.revision(target)
+        self._open_repository(cwd, "rebase")
+        self._git_cli.rebase(cwd, target)
+
+    def rebase_continue(self, cwd: Path) -> None:
+        self._open_repository(cwd, "rebase-continue")
+        self._git_cli.rebase_continue(cwd)
+
+    def rebase_abort(self, cwd: Path) -> None:
+        self._open_repository(cwd, "rebase-abort")
+        self._git_cli.rebase_abort(cwd)
+
+    def push(
+        self,
+        cwd: Path,
+        remote: str,
+        *,
+        destination_branch: str,
+        set_upstream: bool,
+        cancel: threading.Event,
+    ) -> GitRemoteObservation:
+        self._open_repository(cwd, "push")
+        before = self.remote_status(cwd)
+        if remote not in {item.name for item in before.remotes}:
+            raise GitCommandFailedError("remote-not-found", returncode=None)
+        self._git_cli.push(
+            cwd,
+            remote,
+            destination_branch=destination_branch,
+            set_upstream=set_upstream,
+            cancel=cancel,
+        )
+        return self.remote_status(cwd)
+
+    def remote_branch_head(
+        self, cwd: Path, remote: str, branch: str
+    ) -> str | None:
+        self._open_repository(cwd, "remote-branch-head")
+        return self._git_cli.remote_branch_head(cwd, remote, branch)
+
+    def validate_remote_transport(self, cwd: Path, remote: str) -> None:
+        self._open_repository(cwd, "remote-transport")
+        self._git_cli.validate_remote_transport(cwd, remote)
 
     def worktree_list(self, cwd: Path) -> tuple[GitWorktreeEntry, ...]:
         repo = self._open_repository(cwd, "worktree-list")
@@ -302,6 +462,18 @@ class DulwichGitBackend:
             clean(repo, target_dir=cwd)
         except _DULWICH_FAILURES as error:
             raise _git_failure("worktree-handoff", error) from error
+
+    def restore_snapshot_state(
+        self, cwd: Path, head: str, changes: GitWorkingTreePatch
+    ) -> None:
+        self._open_repository(cwd, "worktree-snapshot-restore")
+        self._git_cli.reset_hard(cwd, head)
+        self._git_cli.clean_destructive(cwd)
+        self._git_cli.apply_working_tree_patch(
+            cwd,
+            full_patch=changes.full_patch,
+            staged_patch=changes.staged_patch,
+        )
 
     def _reset_and_clean(self, cwd: Path, *, operation: str) -> None:
         repo = self._open_repository(cwd, operation)

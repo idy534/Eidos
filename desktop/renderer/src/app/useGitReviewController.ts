@@ -4,7 +4,6 @@ import type {
   GitDiffScope,
   RuntimeNotification,
   Session,
-  SessionGitDiff,
   SessionGitStatus,
 } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
@@ -16,9 +15,7 @@ export interface GitReviewState {
   scope: GitDiffScope;
   status: SessionGitStatus | undefined;
   statusBySessionId: ReadonlyMap<string, SessionGitStatus>;
-  diff: SessionGitDiff | undefined;
   loadingStatus: boolean;
-  loadingDiff: boolean;
   error: string | undefined;
 }
 
@@ -42,14 +39,11 @@ export function useGitReviewController({
   const [statusBySessionId, setStatusBySessionId] = useState<ReadonlyMap<string, SessionGitStatus>>(
     () => new Map(),
   );
-  const [diff, setDiff] = useState<SessionGitDiff | undefined>(undefined);
   const [loadingStatus, setLoadingStatus] = useState(false);
-  const [loadingDiff, setLoadingDiff] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
 
   const generationRef = useRef(0);
   const statusRequestRef = useRef(0);
-  const diffRequestRef = useRef(0);
   const selectedSessionIdRef = useRef<string | undefined>(undefined);
   const gitAvailableRef = useRef(false);
   const readyRef = useRef(ready);
@@ -92,56 +86,17 @@ export function useGitReviewController({
     });
   }, []);
 
-  const loadDiff = useCallback((
-    sessionId: string,
-    nextScope: GitDiffScope,
-    generation: number,
-  ): void => {
-    const request = diffRequestRef.current + 1;
-    diffRequestRef.current = request;
-    setLoadingDiff(true);
-    setError(undefined);
-    void window.eidosRuntime.readSessionGitDiff(sessionId, nextScope).then((nextDiff) => {
-      if (
-        generationRef.current !== generation
-        || diffRequestRef.current !== request
-        || selectedSessionIdRef.current !== sessionId
-        || scopeRef.current !== nextScope
-      ) return;
-      setDiff(nextDiff);
-    }).catch((cause: unknown) => {
-      if (
-        generationRef.current === generation
-        && diffRequestRef.current === request
-        && selectedSessionIdRef.current === sessionId
-        && scopeRef.current === nextScope
-      ) setError(userFacingError(cause));
-    }).finally(() => {
-      if (
-        generationRef.current === generation
-        && diffRequestRef.current === request
-        && selectedSessionIdRef.current === sessionId
-        && scopeRef.current === nextScope
-      ) setLoadingDiff(false);
-    });
-  }, []);
-
   const refresh = useCallback((): void => {
     const sessionId = selectedSessionIdRef.current;
     if (!readyRef.current || !gitAvailableRef.current || !sessionId) return;
     const generation = generationRef.current;
     loadStatus(sessionId, generation);
-    loadDiff(sessionId, scopeRef.current, generation);
-  }, [loadDiff, loadStatus]);
+  }, [loadStatus]);
 
   const selectScope = useCallback((nextScope: GitDiffScope): void => {
     scopeRef.current = nextScope;
     setScope(nextScope);
-    setDiff(undefined);
-    const sessionId = selectedSessionIdRef.current;
-    if (!readyRef.current || !gitAvailableRef.current || !sessionId) return;
-    loadDiff(sessionId, nextScope, generationRef.current);
-  }, [loadDiff]);
+  }, []);
 
   const handleNotification = useCallback((notification: RuntimeNotification): void => {
     const sessionId = selectedSessionIdRef.current;
@@ -171,9 +126,7 @@ export function useGitReviewController({
     scopeRef.current = "head";
     setScope("head");
     setStatus(undefined);
-    setDiff(undefined);
     setLoadingStatus(false);
-    setLoadingDiff(false);
     setError(undefined);
     if (refreshTimerRef.current !== undefined) {
       window.clearTimeout(refreshTimerRef.current);
@@ -181,9 +134,7 @@ export function useGitReviewController({
     }
     if (!ready || session?.project?.gitAvailable !== true) return;
     loadStatus(session.id, generation);
-    loadDiff(session.id, "head", generation);
   }, [
-    loadDiff,
     loadStatus,
     ready,
     session?.id,
@@ -203,9 +154,7 @@ export function useGitReviewController({
     scope,
     status,
     statusBySessionId,
-    diff,
     loadingStatus,
-    loadingDiff,
     error,
   }, {
     selectScope,

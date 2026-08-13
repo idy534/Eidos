@@ -91,6 +91,9 @@ class TypedRuntimeRepository(Repository):
     def has_active_run_for_worktree(self, worktree_id: str) -> bool:
         return self._runs.has_active_run_for_worktree(worktree_id)
 
+    def has_active_run_for_workspace(self, workspace_root: str) -> bool:
+        return self._runs.has_active_run_for_workspace(workspace_root)
+
     def has_unfinished_handoff_for_worktree(self, worktree_id: str) -> bool:
         return self._session_handoffs.has_unfinished_for_worktree(worktree_id)
 

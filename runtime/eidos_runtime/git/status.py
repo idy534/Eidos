@@ -26,6 +26,10 @@ class GitStatusSnapshot(EidosFrozenStrictModel):
     unstaged_count: int = Field(ge=0)
     untracked_count: int = Field(ge=0)
     conflict_count: int = Field(ge=0)
+    staged_files: tuple[str, ...]
+    unstaged_files: tuple[str, ...]
+    untracked_files: tuple[str, ...]
+    conflict_files: tuple[str, ...]
     observed_at: datetime
 
 

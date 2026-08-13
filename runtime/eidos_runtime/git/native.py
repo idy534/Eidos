@@ -1,25 +1,49 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 import logging
 import os
 from pathlib import Path
 import re
 import selectors
 import signal
+import stat
 import subprocess
+import threading
 import time
 from collections.abc import Collection, Sequence
 
 from eidos_runtime.git.errors import (
     GitCommandFailedError,
     GitCommandTimeoutError,
+    GitConflictError,
+    GitIdentityUnavailableError,
+    GitMergeConflictError,
+    GitRebaseConflictError,
+    GitNothingStagedError,
+    GitRemoteCanceledError,
+    GitRemoteUnsupportedError,
 )
+from eidos_runtime.git.models import GitOperationState
+from eidos_runtime.git.refs import GitRefValidator
 
 
 DEFAULT_GIT_TIMEOUT_SECONDS = 15.0
 DEFAULT_GIT_OUTPUT_BYTES = 128 * 1024
 DEFAULT_GIT_PATCH_BYTES = 64 * 1024 * 1024
+DEFAULT_GIT_REMOTE_TIMEOUT_SECONDS = 120.0
+
+
+class GitExecutionProfile(StrEnum):
+    OBSERVE = "observe"
+    LOCAL_MUTATION = "local_mutation"
+    REMOTE = "remote"
+
+
+class GitEditorPolicy(StrEnum):
+    DISABLED = "disabled"
+    PRESERVE_COMMIT_MESSAGE = "preserve_commit_message"
 
 
 @dataclass(frozen=True)
@@ -48,6 +72,7 @@ class HardenedGitRunner:
         timeout_seconds: float = DEFAULT_GIT_TIMEOUT_SECONDS,
         output_limit_bytes: int = DEFAULT_GIT_OUTPUT_BYTES,
         logger: logging.Logger | None = None,
+        user_home: Path | None = None,
     ) -> None:
         if not git_executable or timeout_seconds <= 0 or output_limit_bytes < 1:
             raise ValueError("Git runner configuration is invalid")
@@ -55,6 +80,7 @@ class HardenedGitRunner:
         self.timeout_seconds = timeout_seconds
         self.output_limit_bytes = output_limit_bytes
         self.logger = logger or logging.getLogger(__name__)
+        self.user_home = (user_home or Path.home()).resolve(strict=False)
 
     def run(
         self,
@@ -68,6 +94,11 @@ class HardenedGitRunner:
         apply_default_hardening: bool = True,
         allow_returncodes: Collection[int] = (),
         raise_on_truncation: bool = True,
+        read_user_global_config: bool = False,
+        profile: GitExecutionProfile = GitExecutionProfile.OBSERVE,
+        timeout_seconds: float | None = None,
+        cancel: threading.Event | None = None,
+        editor_policy: GitEditorPolicy = GitEditorPolicy.DISABLED,
     ) -> GitCliResult:
         if not cwd.is_absolute() or not cwd.is_dir():
             raise GitCommandFailedError(operation, returncode=None)
@@ -86,12 +117,10 @@ class HardenedGitRunner:
                     "core.hooksPath=/dev/null",
                     "-c",
                     "core.fsmonitor=false",
-                    "-c",
-                    "credential.helper=",
-                    "-c",
-                    "core.askPass=",
                 )
             )
+            if profile is not GitExecutionProfile.REMOTE:
+                argv.extend(("-c", "credential.helper=", "-c", "core.askPass="))
         argv.extend(config_overrides)
         argv.extend(args)
         environment = {
@@ -106,7 +135,34 @@ class HardenedGitRunner:
             "GIT_CONFIG_SYSTEM": "/dev/null",
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_ASKPASS": "/usr/bin/false",
+            "GIT_EDITOR": (
+                "/usr/bin/true"
+                if editor_policy is GitEditorPolicy.PRESERVE_COMMIT_MESSAGE
+                else "/usr/bin/false"
+            ),
+            "GIT_SEQUENCE_EDITOR": "/usr/bin/false",
+            "GIT_LITERAL_PATHSPECS": "1",
         }
+        if read_user_global_config or profile in {
+            GitExecutionProfile.LOCAL_MUTATION,
+            GitExecutionProfile.REMOTE,
+        }:
+            environment["HOME"] = str(self.user_home)
+            environment.pop("GIT_CONFIG_GLOBAL")
+        if profile is GitExecutionProfile.REMOTE:
+            environment["GIT_SSH_COMMAND"] = "/usr/bin/ssh -o BatchMode=yes"
+            ssh_auth_sock = _validated_ssh_auth_sock(os.environ.get("SSH_AUTH_SOCK"))
+            if ssh_auth_sock is not None:
+                environment["SSH_AUTH_SOCK"] = ssh_auth_sock
+        command_timeout = (
+            DEFAULT_GIT_REMOTE_TIMEOUT_SECONDS
+            if timeout_seconds is None and profile is GitExecutionProfile.REMOTE
+            else self.timeout_seconds
+            if timeout_seconds is None
+            else timeout_seconds
+        )
+        if command_timeout <= 0:
+            raise ValueError("Git command timeout must be positive")
         started = time.monotonic()
         try:
             process = subprocess.Popen(
@@ -129,14 +185,19 @@ class HardenedGitRunner:
         try:
             stdout, stderr, stdout_truncated, stderr_truncated = _communicate_bounded(
                 process,
-                timeout_seconds=self.timeout_seconds,
+                timeout_seconds=command_timeout,
                 output_limit_bytes=(
                     self.output_limit_bytes
                     if output_limit_bytes is None
                     else output_limit_bytes
                 ),
                 stdin=stdin,
+                cancel=cancel,
             )
+        except _GitProcessCanceled:
+            _terminate_process_group(process)
+            _close_process_pipes(process)
+            raise GitRemoteCanceledError(operation) from None
         except subprocess.TimeoutExpired:
             _terminate_process_group(process)
             _close_process_pipes(process)
@@ -227,6 +288,13 @@ class GitCli:
             operation="worktree-destructive-clean",
         )
 
+    def reset_hard(self, worktree_root: Path, head: str) -> None:
+        self._runner.run(
+            ("reset", "--hard", head),
+            cwd=worktree_root,
+            operation="worktree-snapshot-reset",
+        )
+
     def status_porcelain(self, cwd: Path) -> bytes:
         result = self._runner.run(
             (
@@ -243,6 +311,396 @@ class GitCli:
             output_limit_bytes=DEFAULT_GIT_PATCH_BYTES,
         )
         return result.stdout
+
+    def stage(self, cwd: Path, paths: Sequence[str]) -> None:
+        self._runner.run(
+            ("add", "--all", "--", *paths),
+            cwd=cwd,
+            operation="stage",
+            profile=GitExecutionProfile.LOCAL_MUTATION,
+        )
+
+    def remote_status(self, cwd: Path):
+        from eidos_runtime.git.models import GitRemote, GitRemoteObservation, GitUpstream
+
+        remotes_result = self._runner.run(
+            ("remote",), cwd=cwd, operation="remote-list"
+        )
+        remotes = tuple(
+            GitRemote(name=name)
+            for name in sorted(
+                line for line in _strict_lines(remotes_result.stdout, "remote-list") if line
+            )
+        )
+        if any(not _valid_remote_name(remote.name) for remote in remotes):
+            raise GitCommandFailedError("remote-list", returncode=None)
+        branch_result = self._runner.run(
+            ("symbolic-ref", "--quiet", "--short", "HEAD"),
+            cwd=cwd,
+            operation="remote-branch",
+            allow_returncodes=(1,),
+        )
+        branch = (
+            _single_line(branch_result.stdout, "remote-branch")
+            if branch_result.returncode == 0
+            else None
+        )
+        if branch is None:
+            return GitRemoteObservation(branch=None, remotes=remotes)
+        upstream_result = self._runner.run(
+            (
+                "for-each-ref",
+                "--format=%(upstream:remotename)%00%(upstream:remoteref)",
+                "--count=1",
+                f"refs/heads/{branch}",
+            ),
+            cwd=cwd,
+            operation="remote-upstream",
+        )
+        pair = _optional_nul_pair(upstream_result.stdout, "remote-upstream")
+        if pair is None or not pair[0] or not pair[1]:
+            return GitRemoteObservation(branch=branch, remotes=remotes)
+        remote_name, upstream_ref = pair
+        if remote_name not in {remote.name for remote in remotes}:
+            raise GitCommandFailedError("remote-upstream", returncode=None)
+        upstream_branch = upstream_ref.removeprefix("refs/heads/")
+        if upstream_branch == upstream_ref or not upstream_branch:
+            raise GitCommandFailedError("remote-upstream", returncode=None)
+        upstream_commit = self._runner.run(
+            ("rev-parse", "--verify", "@{upstream}"),
+            cwd=cwd,
+            operation="remote-upstream",
+            allow_returncodes=(128,),
+        )
+        if upstream_commit.returncode != 0:
+            return GitRemoteObservation(
+                branch=branch,
+                remotes=remotes,
+                upstream=GitUpstream(remote=remote_name, branch=upstream_branch),
+            )
+        counts = self._runner.run(
+            ("rev-list", "--left-right", "--count", "HEAD...@{upstream}"),
+            cwd=cwd,
+            operation="remote-ahead-behind",
+        )
+        fields = _single_line(counts.stdout, "remote-ahead-behind").split()
+        if len(fields) != 2 or not all(field.isdecimal() for field in fields):
+            raise GitCommandFailedError("remote-ahead-behind", returncode=None)
+        return GitRemoteObservation(
+            branch=branch,
+            remotes=remotes,
+            upstream=GitUpstream(remote=remote_name, branch=upstream_branch),
+            ahead=int(fields[0]),
+            behind=int(fields[1]),
+        )
+
+    def fetch(self, cwd: Path, remote: str, *, cancel: threading.Event) -> None:
+        self.validate_remote_transport(cwd, remote)
+        self._runner.run(
+            ("fetch", "--", remote),
+            cwd=cwd,
+            operation="fetch",
+            profile=GitExecutionProfile.REMOTE,
+            cancel=cancel,
+        )
+
+    def merge_upstream_ff_only(self, cwd: Path) -> None:
+        self._runner.run(
+            ("merge", "--ff-only", "--no-edit", "@{upstream}"),
+            cwd=cwd,
+            operation="pull-ff-only",
+            profile=GitExecutionProfile.LOCAL_MUTATION,
+        )
+
+    def operation_state(self, cwd: Path) -> GitOperationState:
+        merge_head = self._runner.run(
+            ("rev-parse", "--verify", "--quiet", "MERGE_HEAD"),
+            cwd=cwd,
+            operation="operation-state",
+            allow_returncodes=(1,),
+        )
+        if merge_head.returncode == 0:
+            return GitOperationState.MERGE
+        for name in ("rebase-merge", "rebase-apply"):
+            result = self._runner.run(
+                ("rev-parse", "--git-path", name),
+                cwd=cwd,
+                operation="operation-state",
+            )
+            value = _single_line(result.stdout, "operation-state")
+            path = Path(value)
+            if not path.is_absolute():
+                path = cwd / path
+            if path.exists():
+                return GitOperationState.REBASE
+        return GitOperationState.NONE
+
+    def merge(self, cwd: Path, target: str) -> None:
+        overrides: tuple[str, ...] = ()
+        target_is_ancestor = self._is_ancestor(cwd, target, "HEAD")
+        head_is_ancestor = self._is_ancestor(cwd, "HEAD", target)
+        if not target_is_ancestor and not head_is_ancestor:
+            overrides = self._identity_overrides(cwd, "merge")
+        result = self._runner.run(
+            ("merge", "--no-edit", target),
+            cwd=cwd,
+            operation="merge",
+            config_overrides=overrides,
+            profile=GitExecutionProfile.LOCAL_MUTATION,
+            allow_returncodes=(1,),
+        )
+        if result.returncode == 0:
+            return
+        if self.operation_state(cwd) is GitOperationState.MERGE:
+            raise GitMergeConflictError()
+        raise GitCommandFailedError(
+            "merge", returncode=result.returncode, stderr=result.stderr.decode(
+                "utf-8", errors="replace"
+            )
+        )
+
+    def merge_abort(self, cwd: Path) -> None:
+        self._runner.run(
+            ("merge", "--abort"),
+            cwd=cwd,
+            operation="merge-abort",
+            profile=GitExecutionProfile.LOCAL_MUTATION,
+        )
+
+    def rebase(self, cwd: Path, target: str) -> None:
+        overrides: tuple[str, ...] = ()
+        if not self._is_ancestor(cwd, target, "HEAD") and not self._is_ancestor(
+            cwd, "HEAD", target
+        ):
+            overrides = self._identity_overrides(cwd, "rebase")
+        result = self._runner.run(
+            ("rebase", target),
+            cwd=cwd,
+            operation="rebase",
+            config_overrides=overrides,
+            profile=GitExecutionProfile.LOCAL_MUTATION,
+            allow_returncodes=(1,),
+        )
+        self._raise_rebase_failure(cwd, result, "rebase")
+
+    def rebase_continue(self, cwd: Path) -> None:
+        result = self._runner.run(
+            ("rebase", "--continue"),
+            cwd=cwd,
+            operation="rebase-continue",
+            config_overrides=self._identity_overrides(cwd, "rebase-continue"),
+            profile=GitExecutionProfile.LOCAL_MUTATION,
+            editor_policy=GitEditorPolicy.PRESERVE_COMMIT_MESSAGE,
+            allow_returncodes=(1,),
+        )
+        self._raise_rebase_failure(cwd, result, "rebase-continue")
+
+    def rebase_abort(self, cwd: Path) -> None:
+        self._runner.run(
+            ("rebase", "--abort"),
+            cwd=cwd,
+            operation="rebase-abort",
+            profile=GitExecutionProfile.LOCAL_MUTATION,
+        )
+
+    def _raise_rebase_failure(
+        self, cwd: Path, result: GitCliResult, operation: str
+    ) -> None:
+        if result.returncode == 0:
+            return
+        if self.operation_state(cwd) is GitOperationState.REBASE:
+            raise GitRebaseConflictError(operation)
+        raise GitCommandFailedError(
+            operation,
+            returncode=result.returncode,
+            stderr=result.stderr.decode("utf-8", errors="replace"),
+        )
+
+    def _identity_overrides(self, cwd: Path, operation: str) -> tuple[str, ...]:
+        name = self._commit_identity_value(cwd, "user.name")
+        email = self._commit_identity_value(cwd, "user.email")
+        if name is None or email is None:
+            raise GitIdentityUnavailableError(operation)
+        return ("-c", f"user.name={name}", "-c", f"user.email={email}")
+
+    def _is_ancestor(self, cwd: Path, ancestor: str, descendant: str) -> bool:
+        result = self._runner.run(
+            ("merge-base", "--is-ancestor", ancestor, descendant),
+            cwd=cwd,
+            operation="merge-graph",
+            allow_returncodes=(1,),
+        )
+        return result.returncode == 0
+
+    def push(
+        self,
+        cwd: Path,
+        remote: str,
+        *,
+        destination_branch: str,
+        set_upstream: bool,
+        cancel: threading.Event,
+    ) -> None:
+        self.validate_remote_transport(cwd, remote)
+        args = (
+            ("push", "--set-upstream", remote, "HEAD")
+            if set_upstream
+            else ("push", remote, f"HEAD:{destination_branch}")
+        )
+        self._runner.run(
+            args,
+            cwd=cwd,
+            operation="push",
+            profile=GitExecutionProfile.REMOTE,
+            cancel=cancel,
+        )
+
+    def remote_branch_head(
+        self, cwd: Path, remote: str, branch: str
+    ) -> str | None:
+        self.validate_remote_transport(cwd, remote)
+        GitRefValidator.branch(branch)
+        result = self._runner.run(
+            ("ls-remote", "--heads", remote, f"refs/heads/{branch}"),
+            cwd=cwd,
+            operation="remote-branch-head",
+            profile=GitExecutionProfile.REMOTE,
+        )
+        lines = _strict_lines(result.stdout, "remote-branch-head")
+        if not lines:
+            return None
+        if len(lines) != 1:
+            raise GitCommandFailedError("remote-branch-head", returncode=None)
+        fields = lines[0].split("\t")
+        if len(fields) != 2 or fields[1] != f"refs/heads/{branch}":
+            raise GitCommandFailedError("remote-branch-head", returncode=None)
+        if not re.fullmatch(r"[0-9a-fA-F]{40,64}", fields[0]):
+            raise GitCommandFailedError("remote-branch-head", returncode=None)
+        return fields[0].lower()
+
+    def validate_remote_transport(self, cwd: Path, remote: str) -> None:
+        if not _valid_remote_name(remote):
+            raise GitRemoteUnsupportedError()
+        custom_transport = self._runner.run(
+            ("config", "--get", f"remote.{remote}.vcs"),
+            cwd=cwd,
+            operation="remote-transport",
+            profile=GitExecutionProfile.REMOTE,
+            allow_returncodes=(1,),
+        )
+        if custom_transport.returncode == 0:
+            raise GitRemoteUnsupportedError()
+        resolved_url = self._runner.run(
+            ("remote", "get-url", remote),
+            cwd=cwd,
+            operation="remote-url",
+            profile=GitExecutionProfile.REMOTE,
+        )
+        _validate_remote_transport(_single_line(resolved_url.stdout, "remote-url"))
+
+    def unstage(self, cwd: Path, paths: Sequence[str]) -> None:
+        head = self._runner.run(
+            ("rev-parse", "--verify", "HEAD"),
+            cwd=cwd,
+            operation="unstage-head",
+            allow_returncodes=(128,),
+        )
+        if head.returncode == 0:
+            self._runner.run(
+                ("restore", "--staged", "--", *paths),
+                cwd=cwd,
+                operation="unstage",
+                config_overrides=filter_config_overrides(self._runner, cwd),
+            )
+            return
+        self._runner.run(
+            ("rm", "--cached", "-r", "--ignore-unmatch", "--", *paths),
+            cwd=cwd,
+            operation="unstage",
+            config_overrides=filter_config_overrides(self._runner, cwd),
+        )
+
+    def discard(self, cwd: Path, path: str, *, untracked: bool) -> None:
+        if untracked:
+            self._runner.run(
+                ("clean", "-f", "--", path),
+                cwd=cwd,
+                operation="discard-untracked",
+                profile=GitExecutionProfile.LOCAL_MUTATION,
+            )
+            return
+        self._runner.run(
+            ("restore", "--worktree", "--", path),
+            cwd=cwd,
+            operation="discard-tracked",
+            profile=GitExecutionProfile.LOCAL_MUTATION,
+        )
+
+    def commit(self, cwd: Path, message: str) -> None:
+        conflicts = self._runner.run(
+            ("diff", "--cached", "--quiet", "--diff-filter=U", "--"),
+            cwd=cwd,
+            operation="commit-conflict-check",
+            allow_returncodes=(1,),
+        )
+        if conflicts.returncode == 1:
+            raise GitConflictError()
+        staged = self._runner.run(
+            ("diff", "--cached", "--quiet", "--exit-code", "--"),
+            cwd=cwd,
+            operation="commit-staged-check",
+            allow_returncodes=(1,),
+        )
+        if staged.returncode == 0:
+            raise GitNothingStagedError()
+        name = self._commit_identity_value(cwd, "user.name")
+        email = self._commit_identity_value(cwd, "user.email")
+        if name is None or email is None:
+            raise GitIdentityUnavailableError()
+        overrides = (
+            "-c",
+            f"user.name={name}",
+            "-c",
+            f"user.email={email}",
+            *filter_config_overrides(self._runner, cwd),
+        )
+        self._runner.run(
+            ("commit", "--quiet", "--message", message),
+            cwd=cwd,
+            operation="commit",
+            config_overrides=overrides,
+        )
+
+    def _commit_identity_value(self, cwd: Path, key: str) -> str | None:
+        local = self._config_value(cwd, key, global_scope=False)
+        return local if local is not None else self._config_value(
+            cwd, key, global_scope=True
+        )
+
+    def _config_value(
+        self, cwd: Path, key: str, *, global_scope: bool
+    ) -> str | None:
+        result = self._runner.run(
+            (
+                "config",
+                *(("--global",) if global_scope else ()),
+                "--no-includes",
+                "--null",
+                "--get",
+                key,
+            ),
+            cwd=cwd,
+            operation="commit-identity",
+            apply_default_hardening=False,
+            allow_returncodes=(1,),
+            read_user_global_config=global_scope,
+        )
+        if result.returncode == 1:
+            return None
+        if not result.stdout.endswith(b"\0") or result.stdout.count(b"\0") != 1:
+            raise GitCommandFailedError("commit-identity", returncode=None)
+        value = result.stdout[:-1].decode("utf-8", errors="strict")
+        return value if value.strip() else None
 
     def capture_working_tree_patch(
         self,
@@ -297,6 +755,7 @@ class GitCli:
         base_commit: str,
         include_untracked: bool,
         output_limit_bytes: int,
+        path: str | None = None,
     ) -> GitCliDiff:
         patch = self._capture_patch(
             cwd,
@@ -304,12 +763,14 @@ class GitCli:
             include_untracked=include_untracked,
             output_limit_bytes=output_limit_bytes,
             raise_on_truncation=False,
+            path=path,
         )
         changed_paths = self._changed_paths(
             cwd,
             base_commit=base_commit,
             include_untracked=include_untracked,
             output_limit_bytes=output_limit_bytes,
+            path=path,
         )
         return GitCliDiff(
             patch=patch[0],
@@ -350,6 +811,7 @@ class GitCli:
         include_untracked: bool,
         output_limit_bytes: int,
         raise_on_truncation: bool,
+        path: str | None = None,
     ) -> tuple[bytes, bool]:
         if output_limit_bytes < 1:
             raise ValueError("Git patch output limit must be positive")
@@ -362,6 +824,7 @@ class GitCli:
                 "--no-textconv",
                 base_commit,
                 "--",
+                *((path,) if path is not None else ()),
             ),
             cwd=cwd,
             operation="worktree-diff",
@@ -373,6 +836,8 @@ class GitCli:
         truncated = result.stdout_truncated
         if include_untracked and not truncated:
             for relative in self.untracked_paths(cwd):
+                if path is not None and relative != path:
+                    continue
                 remaining = output_limit_bytes - len(output)
                 if remaining < 1:
                     if raise_on_truncation:
@@ -483,6 +948,7 @@ class GitCli:
         base_commit: str,
         include_untracked: bool,
         output_limit_bytes: int,
+        path: str | None = None,
     ) -> tuple[str, ...]:
         result = self._runner.run(
             (
@@ -494,6 +960,7 @@ class GitCli:
                 "-z",
                 base_commit,
                 "--",
+                *((path,) if path is not None else ()),
             ),
             cwd=cwd,
             operation="worktree-diff-paths",
@@ -502,7 +969,11 @@ class GitCli:
         )
         paths = {os.fsdecode(path) for path in result.stdout.split(b"\0") if path}
         if include_untracked:
-            paths.update(self.untracked_paths(cwd))
+            paths.update(
+                relative
+                for relative in self.untracked_paths(cwd)
+                if path is None or relative == path
+            )
         return tuple(sorted(paths))
 
 
@@ -571,6 +1042,7 @@ def _communicate_bounded(
     timeout_seconds: float,
     output_limit_bytes: int,
     stdin: bytes | None,
+    cancel: threading.Event | None,
 ) -> tuple[bytes, bytes, bool, bool]:
     selector = selectors.DefaultSelector()
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
@@ -587,11 +1059,15 @@ def _communicate_bounded(
     deadline = time.monotonic() + timeout_seconds
     try:
         while selector.get_map():
+            if cancel is not None and cancel.is_set():
+                raise _GitProcessCanceled
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise subprocess.TimeoutExpired(process.args, timeout_seconds)
-            ready = selector.select(remaining)
+            ready = selector.select(min(remaining, 0.05) if cancel is not None else remaining)
             if not ready:
+                if cancel is not None:
+                    continue
                 raise subprocess.TimeoutExpired(process.args, timeout_seconds)
             for key, _ in ready:
                 stream = key.fileobj
@@ -638,6 +1114,72 @@ def _communicate_bounded(
     )
 
 
+class _GitProcessCanceled(Exception):
+    pass
+
+
+def _validated_ssh_auth_sock(value: str | None) -> str | None:
+    if not value or "\x00" in value:
+        return None
+    try:
+        metadata = os.stat(value, follow_symlinks=False)
+    except OSError:
+        return None
+    if not stat.S_ISSOCK(metadata.st_mode) or metadata.st_uid != os.getuid():
+        return None
+    return value
+
+
+def _strict_lines(output: bytes, operation: str) -> tuple[str, ...]:
+    try:
+        text = output.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise GitCommandFailedError(operation, returncode=None) from error
+    if text and not text.endswith("\n"):
+        raise GitCommandFailedError(operation, returncode=None)
+    return tuple(text.splitlines())
+
+
+def _single_line(output: bytes, operation: str) -> str:
+    lines = _strict_lines(output, operation)
+    if len(lines) != 1 or not lines[0]:
+        raise GitCommandFailedError(operation, returncode=None)
+    return lines[0]
+
+
+def _optional_nul_pair(output: bytes, operation: str) -> tuple[str, str] | None:
+    if not output:
+        return None
+    if not output.endswith(b"\n") or output.count(b"\n") != 1:
+        raise GitCommandFailedError(operation, returncode=None)
+    value = output[:-1]
+    if value.count(b"\x00") != 1:
+        raise GitCommandFailedError(operation, returncode=None)
+    try:
+        left, right = value.decode("utf-8", errors="strict").split("\x00")
+    except UnicodeDecodeError as error:
+        raise GitCommandFailedError(operation, returncode=None) from error
+    return left, right
+
+
+def _valid_remote_name(value: str) -> bool:
+    return bool(value) and not value.startswith("-") and not any(
+        character.isspace() or ord(character) < 32 for character in value
+    )
+
+
+def _validate_remote_transport(url: str) -> None:
+    if url.startswith(("https://", "ssh://", "file://")):
+        return
+    if "://" in url or "::" in url:
+        raise GitRemoteUnsupportedError()
+    if re.fullmatch(r"(?:[^/@:\s]+@)?[^/:\s]+:.+", url):
+        return
+    if url and not url.startswith("-"):
+        return
+    raise GitRemoteUnsupportedError()
+
+
 def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
     try:
         os.killpg(process.pid, signal.SIGTERM)
@@ -669,6 +1211,8 @@ __all__ = [
     "GitCli",
     "GitCliDiff",
     "GitCliResult",
+    "GitExecutionProfile",
+    "GitEditorPolicy",
     "HardenedGitRunner",
     "filter_config_overrides",
 ]

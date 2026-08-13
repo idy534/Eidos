@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell as electronShell } from "electron";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -9,6 +9,7 @@ import { redactLogLine, sanitizeLogValue } from "./log-redaction.js";
 import { dispatchAppCommand as dispatchCommand, ensureAppWindow as ensureWindow } from "./app-command-dispatch.js";
 import { QuitFlowController, type ActiveRunProjection, type QuitFlowDependencies } from "./quit-flow.js";
 import { shutdownRuntime } from "./runtime-shutdown.js";
+import { resolveWorkspaceFileForOpen } from "./workspace-open.js";
 import type {
   ApprovalDecision,
   ApprovalRequest,
@@ -18,6 +19,7 @@ import type {
   ModelCreateInput,
   ModelUpdateInput,
   ResponseFeedbackValue,
+  ReviewCommentCreateInput,
 } from "../shared/index.js";
 import { IPC, MAX_APPROVAL_FEEDBACK_BYTES } from "../shared/index.js";
 
@@ -186,6 +188,33 @@ function clientOrThrow(): RuntimeClient {
     throw new Error("Runtime 尚未就绪。");
   }
   return runtimeClient;
+}
+
+function isNonEmptyStringArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value)
+    && value.length > 0
+    && value.every((item) => typeof item === "string" && item.length > 0)
+  );
+}
+
+function isReviewCommentCreateInput(value: unknown): value is ReviewCommentCreateInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).every((key) => [
+      "commentId", "path", "scope", "side", "line", "body", "baseHead", "diffHash",
+    ].includes(key))
+    && typeof record.commentId === "string"
+    && typeof record.path === "string"
+    && (record.scope === "head" || record.scope === "baseline")
+    && (record.side === "old" || record.side === "new")
+    && Number.isInteger(record.line)
+    && Number(record.line) > 0
+    && typeof record.body === "string"
+    && typeof record.baseHead === "string"
+    && typeof record.diffHash === "string"
+  );
 }
 
 function validateSessionCreateOptions(value: unknown): {
@@ -509,11 +538,285 @@ ipcMain.handle(IPC.SESSION_GIT_STATUS, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
   return clientOrThrow().readSessionGitStatus(sessionId);
 });
-ipcMain.handle(IPC.SESSION_GIT_DIFF, (_event, sessionId: unknown, scope: unknown) => {
-  if (typeof sessionId !== "string" || (scope !== "head" && scope !== "baseline")) {
+ipcMain.handle(IPC.WORKSPACE_LIST_DIRECTORY, (
+  _event,
+  sessionId: unknown,
+  relativePath: unknown,
+  limit: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof relativePath !== "string"
+    || (limit !== undefined && (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 2_000))
+  ) {
+    throw new Error("Workspace 目录参数无效。");
+  }
+  return clientOrThrow().listWorkspaceDirectory(
+    sessionId,
+    relativePath,
+    limit === undefined ? undefined : Number(limit),
+  );
+});
+ipcMain.handle(IPC.WORKSPACE_READ_FILE_PREVIEW, (
+  _event,
+  sessionId: unknown,
+  relativePath: unknown,
+) => {
+  if (typeof sessionId !== "string" || typeof relativePath !== "string") {
+    throw new Error("Workspace 文件参数无效。");
+  }
+  return clientOrThrow().readWorkspaceFilePreview(sessionId, relativePath);
+});
+ipcMain.handle(IPC.WORKSPACE_OPEN_IN_EDITOR, async (
+  _event,
+  sessionId: unknown,
+  relativePath: unknown,
+) => {
+  if (typeof sessionId !== "string" || typeof relativePath !== "string") {
+    throw new Error("Workspace 文件参数无效。");
+  }
+  const snapshot = await clientOrThrow().readSession(sessionId);
+  const root = snapshot.session.executionMode === "worktree"
+    ? snapshot.session.worktree?.worktreeRoot
+    : snapshot.session.workspaceRoot;
+  if (!root) throw new Error("Workspace 当前不可用。");
+  const canonicalTarget = await resolveWorkspaceFileForOpen(root, relativePath);
+  const failure = await electronShell.openPath(canonicalTarget);
+  if (failure) throw new Error("无法在编辑器中打开文件。");
+});
+ipcMain.handle(IPC.SESSION_GIT_DIFF, (
+  _event,
+  sessionId: unknown,
+  scope: unknown,
+  path: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || (scope !== "head" && scope !== "baseline")
+    || (path !== undefined && typeof path !== "string")
+  ) {
     throw new Error("Git Diff 参数无效。");
   }
-  return clientOrThrow().readSessionGitDiff(sessionId, scope);
+  return clientOrThrow().readSessionGitDiff(sessionId, scope, path as string | undefined);
+});
+ipcMain.handle(IPC.SESSION_GIT_STAGE, (
+  _event,
+  sessionId: unknown,
+  paths: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || !isNonEmptyStringArray(paths)
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Git Stage 参数无效。");
+  }
+  return clientOrThrow().stageSessionGit(sessionId, paths, operationId);
+});
+ipcMain.handle(IPC.SESSION_GIT_UNSTAGE, (
+  _event,
+  sessionId: unknown,
+  paths: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || !isNonEmptyStringArray(paths)
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Git Unstage 参数无效。");
+  }
+  return clientOrThrow().unstageSessionGit(sessionId, paths, operationId);
+});
+ipcMain.handle(IPC.SESSION_GIT_COMMIT, (
+  _event,
+  sessionId: unknown,
+  message: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof message !== "string"
+    || !message.trim()
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Git Commit 参数无效。");
+  }
+  return clientOrThrow().commitSessionGit(sessionId, message, operationId);
+});
+ipcMain.handle(IPC.SESSION_GIT_DISCARD, (
+  _event,
+  sessionId: unknown,
+  relativePath: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof relativePath !== "string"
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Git Discard 参数无效。");
+  }
+  return clientOrThrow().discardSessionGit(sessionId, relativePath, operationId);
+});
+ipcMain.handle(IPC.REVIEW_LIST_COMMENTS, (
+  _event,
+  sessionId: unknown,
+  relativePath: unknown,
+  scope: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || (relativePath !== undefined && typeof relativePath !== "string")
+    || (scope !== undefined && scope !== "head" && scope !== "baseline")
+    || ((relativePath === undefined) !== (scope === undefined))
+  ) {
+    throw new Error("Review Comment 参数无效。");
+  }
+  return clientOrThrow().listReviewComments(
+    sessionId,
+    relativePath as string | undefined,
+    scope as "head" | "baseline" | undefined,
+  );
+});
+ipcMain.handle(IPC.REVIEW_CREATE_COMMENT, (
+  _event,
+  sessionId: unknown,
+  input: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || !isReviewCommentCreateInput(input)
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Review Comment 参数无效。");
+  }
+  return clientOrThrow().createReviewComment(sessionId, input, operationId);
+});
+ipcMain.handle(IPC.REVIEW_DELETE_COMMENT, (
+  _event,
+  sessionId: unknown,
+  commentId: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof commentId !== "string"
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Review Comment 参数无效。");
+  }
+  return clientOrThrow().deleteReviewComment(sessionId, commentId, operationId);
+});
+ipcMain.handle(IPC.SESSION_GIT_REMOTE_STATUS, (_event, sessionId: unknown) => {
+  if (typeof sessionId !== "string") throw new Error("Git Remote 参数无效。");
+  return clientOrThrow().readSessionGitRemoteStatus(sessionId);
+});
+ipcMain.handle(IPC.SESSION_GIT_FETCH, (
+  _event,
+  sessionId: unknown,
+  operationId: unknown,
+  remote: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof operationId !== "string"
+    || (remote !== undefined && typeof remote !== "string")
+  ) {
+    throw new Error("Git Fetch 参数无效。");
+  }
+  return clientOrThrow().fetchSessionGit(
+    sessionId, operationId, remote as string | undefined,
+  );
+});
+ipcMain.handle(IPC.SESSION_GIT_PULL, (
+  _event,
+  sessionId: unknown,
+  operationId: unknown,
+) => {
+  if (typeof sessionId !== "string" || typeof operationId !== "string") {
+    throw new Error("Git Pull 参数无效。");
+  }
+  return clientOrThrow().pullSessionGit(sessionId, operationId);
+});
+ipcMain.handle(IPC.SESSION_GIT_PUSH, (
+  _event,
+  sessionId: unknown,
+  operationId: unknown,
+  remote: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof operationId !== "string"
+    || (remote !== undefined && typeof remote !== "string")
+  ) {
+    throw new Error("Git Push 参数无效。");
+  }
+  return clientOrThrow().pushSessionGit(
+    sessionId, operationId, remote as string | undefined,
+  );
+});
+ipcMain.handle(IPC.SESSION_GIT_MERGE, (
+  _event,
+  sessionId: unknown,
+  target: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof target !== "string"
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Git Merge 参数无效。");
+  }
+  return clientOrThrow().mergeSessionGit(sessionId, target, operationId);
+});
+ipcMain.handle(IPC.SESSION_GIT_MERGE_ABORT, (
+  _event,
+  sessionId: unknown,
+  operationId: unknown,
+) => {
+  if (typeof sessionId !== "string" || typeof operationId !== "string") {
+    throw new Error("Git Merge Abort 参数无效。");
+  }
+  return clientOrThrow().abortSessionGitMerge(sessionId, operationId);
+});
+ipcMain.handle(IPC.SESSION_GIT_REBASE, (
+  _event,
+  sessionId: unknown,
+  target: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof target !== "string"
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Git Rebase 参数无效。");
+  }
+  return clientOrThrow().rebaseSessionGit(sessionId, target, operationId);
+});
+ipcMain.handle(IPC.SESSION_GIT_REBASE_CONTINUE, (
+  _event,
+  sessionId: unknown,
+  operationId: unknown,
+) => {
+  if (typeof sessionId !== "string" || typeof operationId !== "string") {
+    throw new Error("Git Rebase Continue 参数无效。");
+  }
+  return clientOrThrow().continueSessionGitRebase(sessionId, operationId);
+});
+ipcMain.handle(IPC.SESSION_GIT_REBASE_ABORT, (
+  _event,
+  sessionId: unknown,
+  operationId: unknown,
+) => {
+  if (typeof sessionId !== "string" || typeof operationId !== "string") {
+    throw new Error("Git Rebase Abort 参数无效。");
+  }
+  return clientOrThrow().abortSessionGitRebase(sessionId, operationId);
 });
 
 ipcMain.handle(IPC.RUN_START, (_event, sessionId: unknown, userInput: unknown, modelId: unknown) => {

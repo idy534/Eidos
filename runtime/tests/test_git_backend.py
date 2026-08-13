@@ -4,8 +4,16 @@ from pathlib import Path
 import shutil
 import subprocess
 
+import pytest
+
 from eidos_runtime.git.backend import DulwichGitBackend
+from eidos_runtime.git.errors import (
+    GitConflictError,
+    GitIdentityUnavailableError,
+    GitNothingStagedError,
+)
 from eidos_runtime.git.models import GitDiffObservation, GitStatusObservation
+from eidos_runtime.git.native import GitCli, HardenedGitRunner
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -108,6 +116,281 @@ def test_dulwich_backend_contract_returns_typed_discovery_status_and_diff(
         "tracked.txt",
     }
     assert "untracked" in diff.patch
+
+
+def test_status_exposes_staged_unstaged_untracked_deleted_and_conflict_paths(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    backend = DulwichGitBackend()
+    (repository / "tracked.txt").write_text("staged\n", encoding="utf-8")
+    _git(repository, "add", "tracked.txt")
+    (repository / "tracked.txt").write_text("unstaged too\n", encoding="utf-8")
+    (repository / "delete.txt").unlink()
+    (repository / "untracked.txt").write_text("new\n", encoding="utf-8")
+
+    status = backend.status(repository)
+
+    assert status.staged_paths == ("tracked.txt",)
+    assert status.unstaged_paths == ("delete.txt", "tracked.txt")
+    assert status.untracked_paths == ("untracked.txt",)
+
+    _git(repository, "restore", "--staged", "tracked.txt")
+    _git(repository, "restore", "tracked.txt", "delete.txt")
+    _git(repository, "checkout", "-qb", "conflict")
+    (repository / "tracked.txt").write_text("conflict branch\n", encoding="utf-8")
+    _git(repository, "commit", "-qam", "conflict branch")
+    _git(repository, "checkout", "-q", "main")
+    (repository / "tracked.txt").write_text("main branch\n", encoding="utf-8")
+    _git(repository, "commit", "-qam", "main branch")
+    merge = subprocess.run(
+        ["git", "merge", "conflict"],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert merge.returncode != 0
+    assert backend.status(repository).conflict_paths == ("tracked.txt",)
+
+
+def test_diff_can_be_scoped_to_one_tracked_or_untracked_path(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    backend = DulwichGitBackend()
+    head = backend.head(repository)
+    (repository / "tracked.txt").write_text("tracked change\n", encoding="utf-8")
+    (repository / "delete.txt").write_text("other change\n", encoding="utf-8")
+    (repository / "new file.txt").write_text("untracked change\n", encoding="utf-8")
+
+    tracked = backend.diff(repository, base_commit=head, path="tracked.txt")
+    untracked = backend.diff(repository, base_commit=head, path="new file.txt")
+
+    assert tracked.changed_paths == ("tracked.txt",)
+    assert "tracked change" in tracked.patch
+    assert "other change" not in tracked.patch
+    assert untracked.changed_paths == ("new file.txt",)
+    assert "untracked change" in untracked.patch
+    assert "a/tracked.txt" not in untracked.patch
+
+
+def test_stage_and_unstage_use_path_scoped_native_git_semantics(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    backend = DulwichGitBackend()
+    (repository / "tracked.txt").write_text("modified\n", encoding="utf-8")
+    (repository / "new file.txt").write_text("new\n", encoding="utf-8")
+    (repository / "delete.txt").unlink()
+
+    backend.stage(repository, ("tracked.txt", "new file.txt", "delete.txt"))
+    staged = backend.status(repository)
+    assert staged.staged_paths == ("delete.txt", "new file.txt", "tracked.txt")
+    assert staged.unstaged_paths == ()
+    assert staged.untracked_paths == ()
+
+    backend.unstage(repository, ("tracked.txt", "new file.txt"))
+    unstaged = backend.status(repository)
+    assert unstaged.staged_paths == ("delete.txt",)
+    assert unstaged.unstaged_paths == ("tracked.txt",)
+    assert unstaged.untracked_paths == ("new file.txt",)
+
+
+def test_stage_and_unstage_support_multiple_paths_and_spaces(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    backend = DulwichGitBackend()
+    for relative in ("one.txt", "path with spaces.txt"):
+        (repository / relative).write_text(relative, encoding="utf-8")
+
+    backend.stage(repository, ("one.txt", "path with spaces.txt"))
+    assert backend.status(repository).staged_paths == (
+        "one.txt",
+        "path with spaces.txt",
+    )
+
+    backend.unstage(repository, ("one.txt", "path with spaces.txt"))
+    assert backend.status(repository).untracked_paths == (
+        "one.txt",
+        "path with spaces.txt",
+    )
+
+
+def test_stage_unstage_and_diff_treat_api_paths_as_literal_filenames(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    backend = DulwichGitBackend()
+    paths = (":x", "*.txt", "[a].txt", ":(glob)*")
+    for relative in paths:
+        (repository / relative).write_text("base\n", encoding="utf-8")
+    _git(repository, "add", "--all")
+    _git(repository, "commit", "-qm", "add literal path fixtures")
+    head = backend.head(repository)
+    for relative in paths:
+        (repository / relative).write_text(f"changed {relative}\n", encoding="utf-8")
+
+    for relative in paths:
+        backend.stage(repository, (relative,))
+        assert backend.status(repository).staged_paths == (relative,)
+        _git(repository, "restore", "--staged", "--", ".")
+
+        _git(repository, "add", "--all")
+        backend.unstage(repository, (relative,))
+        status = backend.status(repository)
+        assert relative in status.unstaged_paths
+        assert relative not in status.staged_paths
+        assert set(status.staged_paths) == set(paths) - {relative}
+        _git(repository, "restore", "--staged", "--", ".")
+
+        diff = backend.diff(repository, base_commit=head, path=relative)
+        assert diff.changed_paths == (relative,)
+        assert f"changed {relative}" in diff.patch
+
+
+def test_stage_preserves_native_repository_clean_filter_semantics(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    (repository / ".gitattributes").write_text(
+        "native-filtered.txt filter=demo\n"
+        "eidos-filtered.txt filter=demo\n",
+        encoding="utf-8",
+    )
+    _git(repository, "config", "filter.demo.clean", "sed s/foo/bar/g")
+    _git(repository, "add", ".gitattributes")
+    _git(repository, "commit", "-qm", "configure clean filter")
+    (repository / "native-filtered.txt").write_text("foo\n", encoding="utf-8")
+    (repository / "eidos-filtered.txt").write_text("foo\n", encoding="utf-8")
+
+    _git(repository, "add", "--", "native-filtered.txt")
+    DulwichGitBackend().stage(repository, ("eidos-filtered.txt",))
+
+    assert _git(repository, "show", ":native-filtered.txt") == "bar"
+    assert _git(repository, "show", ":eidos-filtered.txt") == "bar"
+
+
+def test_stage_reads_controlled_global_clean_filter_configuration(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    user_home = tmp_path / "filter-home"
+    user_home.mkdir()
+    (user_home / ".gitconfig").write_text(
+        "[filter \"demo\"]\n\tclean = sed s/foo/bar/g\n",
+        encoding="utf-8",
+    )
+    (repository / ".gitattributes").write_text(
+        "global-filtered.txt filter=demo\n", encoding="utf-8"
+    )
+    _git(repository, "add", ".gitattributes")
+    _git(repository, "commit", "-qm", "configure global clean filter")
+    (repository / "global-filtered.txt").write_text("foo\n", encoding="utf-8")
+    backend = DulwichGitBackend(
+        git_cli=GitCli(runner=HardenedGitRunner(user_home=user_home))
+    )
+
+    backend.stage(repository, ("global-filtered.txt",))
+
+    assert _git(repository, "show", ":global-filtered.txt") == "bar"
+
+
+def test_native_unstage_supports_an_unborn_head(tmp_path: Path) -> None:
+    repository = tmp_path / "unborn"
+    repository.mkdir()
+    _git(repository, "init", "-q", "-b", "main")
+    (repository / "new.txt").write_text("new\n", encoding="utf-8")
+    cli = GitCli()
+    cli.stage(repository, ("new.txt",))
+
+    cli.unstage(repository, ("new.txt",))
+
+    assert _git(repository, "ls-files", "--", "new.txt") == ""
+
+
+def test_commit_only_commits_staged_changes_and_reobserves_head(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    backend = DulwichGitBackend()
+    original_head = backend.head(repository)
+    (repository / "tracked.txt").write_text("staged\n", encoding="utf-8")
+    backend.stage(repository, ("tracked.txt",))
+    (repository / "delete.txt").write_text("unstaged\n", encoding="utf-8")
+
+    commit = backend.commit(repository, "commit staged file")
+
+    status = backend.status(repository)
+    assert commit != original_head
+    assert commit == backend.head(repository)
+    assert status.staged_paths == ()
+    assert status.unstaged_paths == ("delete.txt",)
+    assert _git(repository, "show", "HEAD:tracked.txt") == "staged"
+    assert _git(repository, "show", "HEAD:delete.txt") == "delete"
+
+
+def test_commit_reports_nothing_staged_and_unresolved_conflict(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    backend = DulwichGitBackend()
+    with pytest.raises(GitNothingStagedError):
+        backend.commit(repository, "empty")
+
+    _git(repository, "checkout", "-qb", "conflict")
+    (repository / "tracked.txt").write_text("conflict branch\n", encoding="utf-8")
+    _git(repository, "commit", "-qam", "conflict branch")
+    _git(repository, "checkout", "-q", "main")
+    (repository / "tracked.txt").write_text("main branch\n", encoding="utf-8")
+    _git(repository, "commit", "-qam", "main branch")
+    subprocess.run(
+        ["git", "merge", "conflict"],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+    )
+
+    with pytest.raises(GitConflictError):
+        backend.commit(repository, "conflicted")
+
+
+def test_commit_uses_controlled_global_identity_without_global_hooks(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    _git(repository, "config", "--unset", "user.name")
+    _git(repository, "config", "--unset", "user.email")
+    user_home = tmp_path / "home"
+    user_home.mkdir()
+    marker = tmp_path / "hook-ran"
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    hook = hooks / "pre-commit"
+    hook.write_text(f"#!/bin/sh\ntouch '{marker}'\n", encoding="utf-8")
+    hook.chmod(0o755)
+    (user_home / ".gitconfig").write_text(
+        "[user]\n\tname = Global Eidos User\n\temail = global@example.com\n"
+        f"[core]\n\thooksPath = {hooks}\n",
+        encoding="utf-8",
+    )
+    backend = DulwichGitBackend(
+        git_cli=GitCli(runner=HardenedGitRunner(user_home=user_home))
+    )
+    (repository / "tracked.txt").write_text("global identity\n", encoding="utf-8")
+    backend.stage(repository, ("tracked.txt",))
+
+    backend.commit(repository, "controlled identity")
+
+    assert _git(repository, "show", "-s", "--format=%an <%ae>") == (
+        "Global Eidos User <global@example.com>"
+    )
+    assert not marker.exists()
+
+
+def test_commit_rejects_when_repository_and_global_identity_are_unavailable(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    _git(repository, "config", "--unset", "user.name")
+    _git(repository, "config", "--unset", "user.email")
+    empty_home = tmp_path / "empty-home"
+    empty_home.mkdir()
+    backend = DulwichGitBackend(
+        git_cli=GitCli(runner=HardenedGitRunner(user_home=empty_home))
+    )
+    (repository / "tracked.txt").write_text("identity missing\n", encoding="utf-8")
+    backend.stage(repository, ("tracked.txt",))
+
+    with pytest.raises(GitIdentityUnavailableError):
+        backend.commit(repository, "missing identity")
 
 
 def test_dulwich_backend_linked_worktree_lifecycle_is_typed(tmp_path: Path) -> None:

@@ -244,6 +244,8 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   WORKTREE_BRANCH_STATE_CHANGED: "Worktree 的分支状态发生变化，请恢复后重试。",
   CHECKPOINT_GIT_STATE_UNAVAILABLE: "Checkpoint 的 Git 状态不可用。",
   CHECKPOINT_FORK_WORKTREE_FAILED: "Checkpoint Fork 的 Managed Worktree 创建失败。",
+  CHECKPOINT_REWIND_FAILED: "Checkpoint Rewind 无法恢复 Git 工作区状态。",
+  CHECKPOINT_WORKFLOW_BUSY: "当前任务仍在运行。请等待或取消 Run 后再恢复 Checkpoint。",
   DIRECT_CHECKPOINT_FORK_PATH_FORBIDDEN: "Direct Workspace Fork 使用原 Project 工作空间。",
   MANAGED_CHECKPOINT_FORK_PATH_FORBIDDEN: "Managed Worktree Fork 不接受外部工作空间路径。",
   GIT_OBSERVATION_UNAVAILABLE: "Git 状态暂时无法完整读取，请稍后重试。",
@@ -251,6 +253,31 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   GIT_WORKTREE_MISSING: "任务绑定的 Worktree 目录已不存在。",
   GIT_WORKTREE_INVALID: "任务绑定的 Worktree 已失效，请停止在其中执行任务。",
   GIT_REVIEW_FAILED: "Git 变更读取失败，请查看 Runtime 日志。",
+  GIT_BRANCH_REQUIRED: "请先把当前 Worktree 绑定到分支，再执行该 Git 操作。",
+  GIT_WORKFLOW_BUSY: "当前任务仍在运行。请等待或取消 Run 后再执行 Git 操作。",
+  GIT_NOTHING_STAGED: "当前没有已 Stage 的改动可以提交。",
+  GIT_IDENTITY_UNAVAILABLE: "Git commit identity 不可用。请配置 user.name 和 user.email。",
+  GIT_CONFLICT: "Git Index 仍有未解决冲突。请先处理冲突。",
+  GIT_REMOTE_REQUIRED: "当前仓库有多个 Remote。请先配置当前分支的 upstream。",
+  GIT_REMOTE_NOT_FOUND: "所选 Git Remote 已不存在。请刷新后重试。",
+  GIT_UPSTREAM_NOT_FOUND: "当前分支没有可用的 upstream。",
+  GIT_REMOTE_UNSUPPORTED: "当前 Remote transport 不受 Eidos 支持。",
+  GIT_REMOTE_TIMEOUT: "Remote Git 操作超时。请检查网络后重试。",
+  GIT_REMOTE_CANCELED: "Remote Git 操作已取消。",
+  GIT_REMOTE_FAILED: "Remote Git 操作失败。请检查系统 Git 凭据和 Runtime 日志。",
+  GIT_REMOTE_OUTCOME_UNCERTAIN: "上一次 Git 操作可能已产生外部变更。请先刷新并检查 Git/远端状态；再次执行将作为新的 Git 操作。",
+  GIT_WORKTREE_DIRTY: "当前 Workspace 有未提交改动。该操作要求干净工作区。",
+  GIT_REMOTE_BEHIND: "本地分支落后于 Remote。请先 Pull。",
+  GIT_REMOTE_DIVERGED: "本地分支与 Remote 已分叉。Eidos 不会自动合并或 Rebase。",
+  GIT_OPERATION_IN_PROGRESS: "该 Git 操作仍在进行。请刷新状态后继续。",
+  GIT_MERGE_NOT_IN_PROGRESS: "当前没有进行中的 Merge。",
+  GIT_MERGE_TARGET_INVALID: "Merge target 无效。请刷新 branch 列表。",
+  GIT_REBASE_NOT_IN_PROGRESS: "当前没有进行中的 Rebase。",
+  GIT_REBASE_TARGET_INVALID: "Rebase target 无效。请刷新 branch 列表。",
+  REVIEW_DIFF_CHANGED: "文件 Diff 已变化。请刷新后重新添加 Review Comment。",
+  REVIEW_ANCHOR_INVALID: "Review Comment 的行位置已无效，请重新选择 Diff 行。",
+  REVIEW_COMMENT_ID_REUSED: "Review Comment 标识已被使用。请重试。",
+  REVIEW_COMMENT_NOT_FOUND: "Review Comment 已不存在。请刷新后重试。",
   WORKSPACE_IDENTITY_CHANGED: "任务目录的身份已经变化，Run 未启动。请刷新后重试。",
   WORKTREE_DIRTY: "任务仍有未提交或冲突的变更，不能删除。",
   WORKTREE_DELETE_FAILED: "任务的 Worktree 删除失败，请查看 Runtime 日志后重试。",
@@ -274,15 +301,17 @@ const STOP_REASON_MESSAGES: Record<string, string> = {
   repeated_sensitive_tool_input: "连续工具输入被安全策略拒绝，任务已停止",
 };
 
-export function userFacingError(cause: unknown): string {
+export function runtimeBusinessCode(cause: unknown): string | undefined {
   const message = cause instanceof Error ? cause.message : "";
   const match = message.match(/EIDOS_RUNTIME_ERROR:([A-Z_]+)/);
-  const code = match?.[1];
-  if (code) {
-    return RUNTIME_ERROR_MESSAGES[code] ?? "Runtime 遇到内部错误，请查看诊断日志。";
-  }
-  if (message === "这个审批已经失效。") {
-    return message;
+  return match?.[1];
+}
+
+export function userFacingError(cause: unknown): string {
+  const code = runtimeBusinessCode(cause);
+  if (code) return RUNTIME_ERROR_MESSAGES[code] ?? "Runtime 遇到内部错误，请查看诊断日志。";
+  if (cause instanceof Error && cause.message === "这个审批已经失效。") {
+    return cause.message;
   }
   return "操作失败，请查看 Runtime 日志。";
 }

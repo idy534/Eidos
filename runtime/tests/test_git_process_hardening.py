@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
+import socket
 import subprocess
+import threading
 import time
+import uuid
 
 import pytest
 
 from eidos_runtime.git.backend import DulwichGitBackend
 from eidos_runtime.git.errors import GitCommandFailedError, GitCommandTimeoutError
 from eidos_runtime.git.native import (
+    GitEditorPolicy,
+    GitExecutionProfile,
     HardenedGitRunner,
 )
+from eidos_runtime.git.errors import GitRemoteCanceledError
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -201,3 +208,149 @@ def test_hardened_runner_passes_raw_stdin_bytes_without_decode(
     )
 
     assert result.stdout == b"binary\x00\xff"
+
+
+def test_hardened_runner_disables_editors_and_only_allows_message_preservation(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "inspect-editor"
+    executable.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$GIT_EDITOR\" \"$GIT_SEQUENCE_EDITOR\"\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    runner = HardenedGitRunner(git_executable=str(executable))
+
+    disabled = runner.run(("status",), cwd=tmp_path, operation="editor-disabled")
+    preserve = runner.run(
+        ("rebase", "--continue"),
+        cwd=tmp_path,
+        operation="editor-preserve",
+        editor_policy=GitEditorPolicy.PRESERVE_COMMIT_MESSAGE,
+    )
+
+    assert disabled.stdout.splitlines() == [b"/usr/bin/false", b"/usr/bin/false"]
+    assert preserve.stdout.splitlines() == [b"/usr/bin/true", b"/usr/bin/false"]
+
+
+def test_remote_profile_allows_only_controlled_credentials_and_ssh_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = tmp_path / "inspect-env"
+    executable.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' \"$HOME\" \"$GIT_CONFIG_GLOBAL\" \"$GIT_TERMINAL_PROMPT\" "
+        "\"$GIT_SSH_COMMAND\" \"$SSH_AUTH_SOCK\" \"$UNRELATED_SECRET\"\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    user_home = tmp_path / "home"
+    user_home.mkdir()
+    agent = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    agent_path = Path("/tmp") / f"eidos-agent-{uuid.uuid4().hex[:12]}.sock"
+    agent.bind(str(agent_path))
+    monkeypatch.setenv("SSH_AUTH_SOCK", str(agent_path))
+    monkeypatch.setenv("UNRELATED_SECRET", "must-not-leak")
+    runner = HardenedGitRunner(
+        git_executable=str(executable), user_home=user_home
+    )
+    try:
+        output = runner.run(
+            ("fetch", "origin"),
+            cwd=tmp_path,
+            operation="fetch",
+            profile=GitExecutionProfile.REMOTE,
+        ).stdout.decode().splitlines()
+    finally:
+        agent.close()
+        agent_path.unlink(missing_ok=True)
+
+    assert output == [
+        str(user_home),
+        "",
+        "0",
+        "/usr/bin/ssh -o BatchMode=yes",
+        str(agent_path),
+        "",
+    ]
+
+
+def test_remote_profile_uses_user_credential_helper_but_observe_does_not(
+    tmp_path: Path,
+) -> None:
+    helper = tmp_path / "credential-helper"
+    marker = tmp_path / "helper-ran"
+    helper.write_text(
+        "#!/bin/sh\n"
+        f"touch '{marker}'\n"
+        "cat >/dev/null\n"
+        "printf 'username=eidos\\npassword=secret\\n\\n'\n",
+        encoding="utf-8",
+    )
+    helper.chmod(0o755)
+    user_home = tmp_path / "credential-home"
+    user_home.mkdir()
+    (user_home / ".gitconfig").write_text(
+        f"[credential]\n\thelper = {helper}\n", encoding="utf-8"
+    )
+    runner = HardenedGitRunner(user_home=user_home)
+
+    remote = runner.run(
+        ("credential", "fill"),
+        cwd=tmp_path,
+        operation="credential-test",
+        stdin=b"protocol=https\nhost=example.com\n\n",
+        profile=GitExecutionProfile.REMOTE,
+    )
+    assert b"username=eidos" in remote.stdout
+    assert marker.exists()
+
+    for profile in (
+        GitExecutionProfile.OBSERVE,
+        GitExecutionProfile.LOCAL_MUTATION,
+    ):
+        marker.unlink(missing_ok=True)
+        with pytest.raises(GitCommandFailedError):
+            runner.run(
+                ("credential", "fill"),
+                cwd=tmp_path,
+                operation="credential-test",
+                stdin=b"protocol=https\nhost=example.com\n\n",
+                profile=profile,
+            )
+        assert not marker.exists()
+
+
+def test_remote_process_cancel_terminates_the_process_group(tmp_path: Path) -> None:
+    marker = tmp_path / "started"
+    child_pid = tmp_path / "child.pid"
+    executable = tmp_path / "blocking-git"
+    executable.write_text(
+        f"#!/bin/sh\ntouch '{marker}'\nsleep 30 &\necho $! > '{child_pid}'\nwait\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    cancel = threading.Event()
+    runner = HardenedGitRunner(
+        git_executable=str(executable), timeout_seconds=120
+    )
+
+    timer = threading.Timer(0.1, cancel.set)
+    timer.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(GitRemoteCanceledError):
+            runner.run(
+                ("fetch", "origin"),
+                cwd=tmp_path,
+                operation="fetch",
+                profile=GitExecutionProfile.REMOTE,
+                cancel=cancel,
+            )
+    finally:
+        timer.cancel()
+
+    assert time.monotonic() - started < 2
+    if child_pid.exists():
+        with pytest.raises(ProcessLookupError):
+            os.kill(int(child_pid.read_text(encoding="utf-8")), 0)

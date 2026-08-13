@@ -45,3 +45,10 @@ class OperationConflictError(RuntimeError):
 
 class OperationInProgressError(RuntimeError):
     pass
+
+
+class OperationFailedError(RuntimeError):
+    def __init__(self, code: str, *, side_effects_may_exist: bool) -> None:
+        self.code = code
+        self.side_effects_may_exist = side_effects_may_exist
+        super().__init__(code)

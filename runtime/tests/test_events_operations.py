@@ -10,6 +10,10 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.db.events import IncompatibleEventError  # noqa: E402
+from eidos_runtime.db.errors import (  # noqa: E402
+    OperationFailedError,
+    OperationInProgressError,
+)
 from eidos_runtime.db.storage import (  # noqa: E402
     OperationConflictError,
     SessionActiveError,
@@ -49,6 +53,64 @@ class EventAndOperationTests(unittest.TestCase):
         other.mkdir()
         with self.assertRaises(OperationConflictError):
             self.store.create_session(str(other), operation_id=operation_id)
+
+    def test_external_operation_uses_durable_prepare_and_complete_steps(self) -> None:
+        operation_id = "33333333-3333-4333-8333-333333333333"
+        scope = "session/gitCommit"
+        request = {"sessionId": "session", "message": "commit once"}
+
+        self.assertIsNone(
+            self.store.prepare_operation(operation_id, scope, request)
+        )
+        connection = self.store.connection
+        assert connection is not None
+        row = connection.execute(
+            "SELECT status, result_json FROM operations WHERE id = ? AND scope = ?",
+            (operation_id, scope),
+        ).fetchone()
+        self.assertEqual((row["status"], row["result_json"]), ("in_progress", None))
+        with self.assertRaises(OperationInProgressError):
+            self.store.prepare_operation(operation_id, scope, request)
+
+        result = {"head": "a" * 40}
+        self.assertEqual(
+            self.store.complete_operation(operation_id, scope, request, result),
+            result,
+        )
+        self.assertEqual(
+            self.store.prepare_operation(operation_id, scope, request),
+            result,
+        )
+
+    def test_external_operation_failure_is_terminal_and_replayable(self) -> None:
+        operation_id = "44444444-4444-4444-8444-444444444444"
+        scope = "session/gitFetch"
+        request = {"sessionId": "session"}
+
+        self.assertIsNone(
+            self.store.prepare_operation(operation_id, scope, request)
+        )
+        self.store.fail_operation(
+            operation_id,
+            scope,
+            request,
+            error_code="GIT_REMOTE_FAILED",
+            side_effects_may_exist=False,
+        )
+        with self.assertRaises(OperationFailedError) as replay:
+            self.store.operation_result(operation_id, scope, request)
+        self.assertEqual(replay.exception.code, "GIT_REMOTE_FAILED")
+        with self.assertRaises(OperationFailedError):
+            self.store.prepare_operation(operation_id, scope, request)
+
+        with self.assertRaises(OperationConflictError):
+            self.store.fail_operation(
+                operation_id,
+                scope,
+                {"sessionId": "other"},
+                error_code="GIT_REMOTE_FAILED",
+                side_effects_may_exist=False,
+            )
 
     def test_cancel_operation_replay_does_not_duplicate_event(self) -> None:
         session = self.store.create_session(str(self.workspace))

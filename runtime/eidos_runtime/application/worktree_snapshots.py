@@ -6,7 +6,8 @@ import logging
 from pathlib import Path
 from collections.abc import Callable
 
-from eidos_runtime.domain.worktree import Worktree
+from eidos_runtime.domain.project import Project
+from eidos_runtime.domain.worktree import BranchOwnership, Worktree
 from eidos_runtime.domain.worktree_snapshot import WorktreeSnapshot
 from eidos_runtime.git.errors import WorktreeError
 from eidos_runtime.git.manager import WorktreeManager
@@ -33,7 +34,13 @@ class WorktreeSnapshotService:
         self.session_for_worktree = session_for_worktree
         self.logger = logger
 
-    def save(self, worktree: Worktree, snapshot_id: str) -> WorktreeSnapshot:
+    def save(
+        self,
+        worktree: Worktree,
+        snapshot_id: str,
+        *,
+        replace_older: bool = True,
+    ) -> WorktreeSnapshot:
         root = Path(worktree.worktree_root)
         source = self.manager.source_snapshot(root, include_local_changes=True)
         source_after = self.manager.source_snapshot(root, include_local_changes=True)
@@ -55,6 +62,7 @@ class WorktreeSnapshotService:
         snapshot = WorktreeSnapshot(
             id=snapshot_id,
             worktree_id=worktree.id,
+            workspace_root=str(root.resolve()),
             session_id=self.session_for_worktree(worktree.id),
             project_id=worktree.project_id,
             base_ref=worktree.base_ref,
@@ -78,8 +86,10 @@ class WorktreeSnapshotService:
             updated_at=now,
         )
         saved = self.snapshots.insert(snapshot)
-        for older in self.snapshots.list_for_worktree(worktree.id):
+        for older in self.snapshots.list_for_worktree(worktree.id) if replace_older else ():
             if older.id == saved.id or older.state.value != "ready":
+                continue
+            if self.snapshots.referenced_by_checkpoint(older.id):
                 continue
             try:
                 self.delete_anchor_if_expected(older)
@@ -91,6 +101,66 @@ class WorktreeSnapshotService:
                     extra={"snapshot_id": older.id, "worktree_id": worktree.id},
                 )
         return saved
+
+    def save_local(
+        self,
+        project: Project,
+        *,
+        workspace_root: Path,
+        session_id: str,
+        snapshot_id: str,
+    ) -> WorktreeSnapshot:
+        source = self.manager.source_snapshot(
+            workspace_root, include_local_changes=True
+        )
+        source_after = self.manager.source_snapshot(
+            workspace_root, include_local_changes=True
+        )
+        if not _same_snapshot(source, source_after):
+            raise WorktreeError("worktree_source_changed")
+        if source.changes is None:
+            raise WorktreeError("worktree_snapshot_required")
+        if (
+            project.git_common_dir is None
+            or source.discovery.git_common_dir != project.git_common_dir
+        ):
+            raise WorktreeError("workspace_identity_changed")
+        artifact = self.artifacts.write(snapshot_id, source.changes)
+        self.manager.git.create_snapshot_anchor(
+            Path(project.workspace_root), snapshot_id, source.head
+        )
+        now = _now()
+        snapshot = WorktreeSnapshot(
+            id=snapshot_id,
+            worktree_id=None,
+            workspace_root=str(workspace_root.resolve()),
+            session_id=session_id,
+            project_id=project.id,
+            base_ref=source.head,
+            base_commit=source.head,
+            head=source.head,
+            branch=source.branch,
+            checkout_branch=source.branch,
+            branch_ownership=(
+                BranchOwnership.USER
+                if source.branch is not None
+                else BranchOwnership.NONE
+            ),
+            dirty=source.status.dirty,
+            staged_paths=source.status.staged_paths,
+            unstaged_paths=source.status.unstaged_paths,
+            untracked_paths=source.status.untracked_paths,
+            conflict_paths=source.status.conflict_paths,
+            source_fingerprint=source.fingerprint,
+            artifact_path=str(artifact.path),
+            artifact_sha256=artifact.artifact_sha256,
+            full_patch_sha256=artifact.full_patch_sha256,
+            staged_patch_sha256=artifact.staged_patch_sha256,
+            format_version=artifact.format_version,
+            created_at=now,
+            updated_at=now,
+        )
+        return self.snapshots.insert(snapshot)
 
     def verify(self, snapshot: WorktreeSnapshot) -> None:
         actual = self.read_anchor(snapshot)
@@ -155,6 +225,8 @@ class WorktreeSnapshotService:
 
     def delete_for_worktree(self, worktree_id: str) -> None:
         for snapshot in self.snapshots.list_for_worktree(worktree_id):
+            if self.snapshots.referenced_by_checkpoint(snapshot.id):
+                continue
             self.delete_anchor_if_expected(snapshot)
             try:
                 self.artifacts.delete(snapshot.artifact_path)

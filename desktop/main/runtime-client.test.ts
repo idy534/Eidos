@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -111,12 +112,27 @@ test("preserves every workspace and lifecycle business code in the closed contra
     "WORKTREE_REQUIRES_GIT",
     "BASE_REF_NOT_FOUND",
     "GIT_COMMAND_TIMEOUT",
+    "GIT_REMOTE_OUTCOME_UNCERTAIN",
     "WORKTREE_CREATE_FAILED",
     "WORKTREE_PERSISTENCE_FAILED",
     "WORKTREE_RECOVERY_REQUIRED",
     "WORKSPACE_IDENTITY_UNAVAILABLE",
+    "WORKSPACE_BOUNDARY_VIOLATION",
+    "WORKSPACE_SENSITIVE_PATH",
+    "WORKSPACE_UNAVAILABLE",
+    "WORKSPACE_IDENTITY_CHANGED",
+    "WORKSPACE_READ_TIMEOUT",
+    "WORKSPACE_FILE_TOO_LARGE",
+    "WORKSPACE_SENSITIVE_CONTENT",
+    "GIT_DISCARD_REQUIRES_UNSTAGED",
+    "REVIEW_DIFF_CHANGED",
+    "REVIEW_ANCHOR_INVALID",
+    "REVIEW_COMMENT_ID_REUSED",
+    "REVIEW_COMMENT_NOT_FOUND",
     "CHECKPOINT_GIT_STATE_UNAVAILABLE",
     "CHECKPOINT_FORK_WORKTREE_FAILED",
+    "CHECKPOINT_REWIND_FAILED",
+    "CHECKPOINT_WORKFLOW_BUSY",
     "DIRECT_CHECKPOINT_FORK_PATH_FORBIDDEN",
     "MANAGED_CHECKPOINT_FORK_PATH_FORBIDDEN",
     "ASYNC_OPERATION_CANCELED",
@@ -277,6 +293,25 @@ test("creates first-class Direct Workspace sessions without Git review state", a
     });
     const first = await client.createSession(workspaceRoot);
     const second = await client.createSession(workspaceRoot);
+    await mkdir(path.join(workspaceRoot, "nested folder"));
+    await writeFile(path.join(workspaceRoot, "nested folder", "hello.ts"), "export const hello = true;\n", "utf8");
+    assert.deepEqual(await client.listWorkspaceDirectory(first.id, "."), {
+      path: ".",
+      entries: [{
+        name: "nested folder",
+        relativePath: "nested folder",
+        kind: "directory",
+      }],
+      truncated: false,
+    });
+    assert.deepEqual(await client.readWorkspaceFilePreview(first.id, "nested folder/hello.ts"), {
+      path: "nested folder/hello.ts",
+      kind: "code",
+      sizeBytes: 27,
+      truncated: false,
+      content: "export const hello = true;\n",
+      language: "typescript",
+    });
     assert.equal(first.project?.workspaceRoot, await realpath(workspaceRoot));
     assert.equal(first.project?.gitAvailable, false);
     assert.equal(first.project?.id, second.project?.id);
@@ -311,6 +346,81 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
     assert.equal(gitContext.currentBranch, "main");
     assert.ok(gitContext.head);
     assert.ok(gitContext.branches.includes("main"));
+    const local = await client.createSession(repositoryRoot, { executionMode: "local" });
+    await writeFile(path.join(repositoryRoot, "WORKFLOW.txt"), "workflow\n", "utf8");
+    const localStatus = await client.readSessionGitStatus(local.id);
+    assert.deepEqual(localStatus.untrackedFiles, ["WORKFLOW.txt"]);
+    assert.equal(localStatus.untrackedCount, 1);
+    const fileDiff = await client.readSessionGitDiff(local.id, "head", "WORKFLOW.txt");
+    assert.deepEqual(fileDiff.changedFiles, ["WORKFLOW.txt"]);
+    assert.match(fileDiff.unifiedDiff, /workflow/);
+    const reviewComment = await client.createReviewComment(local.id, {
+      commentId: randomUUID(),
+      path: "WORKFLOW.txt",
+      scope: "head",
+      side: "new",
+      line: 1,
+      body: "Add a focused test.",
+      baseHead: fileDiff.head,
+      diffHash: fileDiff.diffHash,
+    }, randomUUID());
+    assert.equal(reviewComment.status, "active");
+    assert.deepEqual(
+      await client.listReviewComments(local.id, "WORKFLOW.txt", "head"),
+      [reviewComment],
+    );
+    const discarded = await client.discardSessionGit(
+      local.id,
+      "WORKFLOW.txt",
+      "14141414-1414-4414-8414-141414141414",
+    );
+    assert.deepEqual(discarded.status.untrackedFiles, []);
+    await assert.rejects(readFile(path.join(repositoryRoot, "WORKFLOW.txt"), "utf8"));
+    assert.equal(
+      (await client.listReviewComments(local.id, "WORKFLOW.txt", "head"))[0]?.status,
+      "stale",
+    );
+    assert.equal(
+      await client.deleteReviewComment(local.id, reviewComment.id, randomUUID()),
+      reviewComment.id,
+    );
+    await writeFile(path.join(repositoryRoot, "WORKFLOW.txt"), "workflow\n", "utf8");
+    const stageOperationId = "77777777-7777-4777-8777-777777777777";
+    const staged = await client.stageSessionGit(
+      local.id,
+      ["WORKFLOW.txt"],
+      stageOperationId,
+    );
+    assert.deepEqual(staged.status.stagedFiles, ["WORKFLOW.txt"]);
+    assert.deepEqual(
+      await client.stageSessionGit(local.id, ["WORKFLOW.txt"], stageOperationId),
+      staged,
+    );
+    const unstaged = await client.unstageSessionGit(
+      local.id,
+      ["WORKFLOW.txt"],
+      "88888888-8888-4888-8888-888888888888",
+    );
+    assert.deepEqual(unstaged.status.untrackedFiles, ["WORKFLOW.txt"]);
+    await client.stageSessionGit(local.id, ["WORKFLOW.txt"], randomUUID());
+    const commitOperationId = "99999999-9999-4999-8999-999999999999";
+    const committed = await client.commitSessionGit(
+      local.id,
+      "local workflow",
+      commitOperationId,
+    );
+    assert.equal(committed.commit, committed.head);
+    assert.deepEqual(
+      await client.commitSessionGit(local.id, "local workflow", commitOperationId),
+      committed,
+    );
+    await assert.rejects(
+      client.commitSessionGit(local.id, "nothing staged", randomUUID()),
+      (error: unknown) => (
+        error instanceof RuntimeRequestError
+        && error.businessCode === "GIT_NOTHING_STAGED"
+      ),
+    );
     const first = await client.createSession(repositoryRoot, { executionMode: "worktree" });
     const second = await client.createSession(repositoryRoot, { executionMode: "worktree" });
     assert.ok(first.worktree);
@@ -327,7 +437,11 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
     assert.deepEqual(firstSnapshot.session.worktree, first.worktree);
     assert.deepEqual(
       new Map(listed.items.map((session) => [session.id, session.worktree])),
-      new Map([[first.id, first.worktree], [second.id, second.worktree]]),
+      new Map([
+        [local.id, undefined],
+        [first.id, first.worktree],
+        [second.id, second.worktree],
+      ]),
     );
 
     await writeFile(path.join(first.worktree.worktreeRoot, "README.md"), "# Committed in A\n", "utf8");
@@ -358,6 +472,122 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("completes Git fetch, pull, push, merge, and rebase through typed contracts", async () => {
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-fetch-data-"));
+  const repositoryRoot = await createGitRepository("eidos-fetch-repo-");
+  const remoteRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-fetch-remote-"));
+  const peerParent = await mkdtemp(path.join(os.tmpdir(), "eidos-fetch-peer-"));
+  const peerRoot = path.join(peerParent, "peer");
+  await execFileAsync("git", ["init", "--bare", "-q"], { cwd: remoteRoot });
+  await execFileAsync("git", ["remote", "add", "origin", remoteRoot], {
+    cwd: repositoryRoot,
+  });
+  await execFileAsync("git", ["push", "-qu", "origin", "main"], {
+    cwd: repositoryRoot,
+  });
+  await execFileAsync("git", ["clone", "-q", remoteRoot, peerRoot]);
+  await execFileAsync("git", ["config", "user.name", "Eidos Tests"], { cwd: peerRoot });
+  await execFileAsync("git", ["config", "user.email", "eidos-tests@example.com"], {
+    cwd: peerRoot,
+  });
+  await writeFile(path.join(peerRoot, "REMOTE.txt"), "remote\n", "utf8");
+  await execFileAsync("git", ["add", "REMOTE.txt"], { cwd: peerRoot });
+  await execFileAsync("git", ["commit", "-qm", "remote commit"], { cwd: peerRoot });
+  await execFileAsync("git", ["push", "-q", "origin", "main"], { cwd: peerRoot });
+  const client = new RuntimeClient({
+    pythonExecutable,
+    runtimeRoot: path.join(projectRoot, "runtime"),
+    dataDirectory,
+  });
+
+  try {
+    await client.initialize();
+    const session = await client.createSession(repositoryRoot, { executionMode: "local" });
+    const before = await client.readSessionGitRemoteStatus(session.id);
+    const headBefore = (await execFileAsync("git", ["rev-parse", "HEAD"], {
+      cwd: repositoryRoot,
+    })).stdout.trim();
+    assert.equal(before.upstream?.remote, "origin");
+    assert.equal(before.behind, 0);
+
+    const fetched = await client.fetchSessionGit(session.id, randomUUID());
+
+    assert.equal(fetched.remote, "origin");
+    assert.equal(fetched.head, headBefore);
+    assert.equal(fetched.behind, 1);
+    assert.equal((await execFileAsync("git", ["rev-parse", "HEAD"], {
+      cwd: repositoryRoot,
+    })).stdout.trim(), headBefore);
+
+    const pulled = await client.pullSessionGit(session.id, randomUUID());
+    assert.equal(pulled.behind, 0);
+    assert.equal(pulled.status.dirty, false);
+    assert.notEqual(pulled.head, headBefore);
+
+    await writeFile(path.join(repositoryRoot, "LOCAL.txt"), "local\n", "utf8");
+    await execFileAsync("git", ["add", "LOCAL.txt"], { cwd: repositoryRoot });
+    await execFileAsync("git", ["commit", "-qm", "local commit"], {
+      cwd: repositoryRoot,
+    });
+    const pushed = await client.pushSessionGit(session.id, randomUUID());
+    assert.equal(pushed.ahead, 0);
+    assert.equal(pushed.behind, 0);
+    const remoteHead = (await execFileAsync(
+      "git", ["ls-remote", "origin", "refs/heads/main"], { cwd: repositoryRoot },
+    )).stdout.trim().split(/\s+/)[0];
+    assert.equal(remoteHead, pushed.head);
+
+    await execFileAsync("git", ["switch", "-qc", "topic"], { cwd: repositoryRoot });
+    await writeFile(path.join(repositoryRoot, "TOPIC.txt"), "topic\n", "utf8");
+    await execFileAsync("git", ["add", "TOPIC.txt"], { cwd: repositoryRoot });
+    await execFileAsync("git", ["commit", "-qm", "topic"], { cwd: repositoryRoot });
+    await execFileAsync("git", ["switch", "-q", "main"], { cwd: repositoryRoot });
+    await writeFile(path.join(repositoryRoot, "MAIN.txt"), "main\n", "utf8");
+    await execFileAsync("git", ["add", "MAIN.txt"], { cwd: repositoryRoot });
+    await execFileAsync("git", ["commit", "-qm", "main"], { cwd: repositoryRoot });
+
+    const merged = await client.mergeSessionGit(session.id, "topic", randomUUID());
+    assert.equal(merged.operationState, "none");
+    assert.deepEqual(merged.conflictFiles, []);
+    assert.equal(merged.head, (await execFileAsync("git", ["rev-parse", "HEAD"], {
+      cwd: repositoryRoot,
+    })).stdout.trim());
+
+    await execFileAsync("git", ["switch", "-qc", "rebase-feature"], {
+      cwd: repositoryRoot,
+    });
+    await writeFile(path.join(repositoryRoot, "REBASE.txt"), "feature\n", "utf8");
+    await execFileAsync("git", ["add", "REBASE.txt"], { cwd: repositoryRoot });
+    await execFileAsync("git", ["commit", "-qm", "rebase feature"], {
+      cwd: repositoryRoot,
+    });
+    await execFileAsync("git", ["switch", "-q", "main"], { cwd: repositoryRoot });
+    await writeFile(path.join(repositoryRoot, "BASE.txt"), "base\n", "utf8");
+    await execFileAsync("git", ["add", "BASE.txt"], { cwd: repositoryRoot });
+    await execFileAsync("git", ["commit", "-qm", "rebase base"], {
+      cwd: repositoryRoot,
+    });
+    await execFileAsync("git", ["switch", "-q", "rebase-feature"], {
+      cwd: repositoryRoot,
+    });
+
+    const rebased = await client.rebaseSessionGit(session.id, "main", randomUUID());
+    assert.equal(rebased.operationState, "none");
+    assert.equal(rebased.branch, "rebase-feature");
+    assert.equal(rebased.head, (await execFileAsync("git", ["rev-parse", "HEAD"], {
+      cwd: repositoryRoot,
+    })).stdout.trim());
+  } finally {
+    await client.shutdown();
+    await client.waitForExit();
+    await rm(dataDirectory, { recursive: true, force: true });
+    await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
+    await rm(repositoryRoot, { recursive: true, force: true });
+    await rm(remoteRoot, { recursive: true, force: true });
+    await rm(peerParent, { recursive: true, force: true });
   }
 });
 
@@ -831,6 +1061,7 @@ test("uses the shared v1 vectors for requests, approvals, and notifications", as
     shutdown: { request: object; response: object };
     approval: { request: object; approveResponse: object };
     notifications: object[];
+    workspaceExplorer: { changedNotification: object };
   };
   const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-vector-runtime-"));
   const packageRoot = path.join(runtimeRoot, "eidos_runtime");
@@ -850,6 +1081,7 @@ test("uses the shared v1 vectors for requests, approvals, and notifications", as
       "send(vectors['approval']['request'])",
       "receive(vectors['approval']['approveResponse'])",
       "for notification in vectors['notifications']: send(notification)",
+      "send(vectors['workspaceExplorer']['changedNotification'])",
       "receive(vectors['shutdown']['request'])",
       "send(vectors['shutdown']['response'])",
     ].join("\n"),
@@ -888,7 +1120,10 @@ test("uses the shared v1 vectors for requests, approvals, and notifications", as
     assert.equal(await client.waitForExit(), 0);
     assert.deepEqual(
       notifications.map((notification) => notification.method),
-      ["run/started", "item/started", "item/delta", "item/completed", "run/completed"],
+      [
+        "run/started", "item/started", "item/delta", "item/completed", "run/completed",
+        "workspace/changed",
+      ],
     );
   } finally {
     await rm(runtimeRoot, { recursive: true, force: true });

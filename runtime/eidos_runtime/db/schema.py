@@ -715,6 +715,7 @@ CREATE TABLE checkpoints (
     compact_summary_id TEXT REFERENCES verified_compact_summaries(id) ON DELETE RESTRICT,
     workspace_identity_hash TEXT NOT NULL,
     git_head TEXT,
+    git_snapshot_id TEXT REFERENCES worktree_snapshots(id) ON DELETE RESTRICT,
     permission_snapshot_hash TEXT,
     model_profile_snapshot_hash TEXT NOT NULL,
     reconciliation_required INTEGER NOT NULL CHECK (reconciliation_required IN (0, 1)),
@@ -819,6 +820,26 @@ CREATE TABLE run_revisions (
 
 CREATE INDEX run_revisions_source
 ON run_revisions(source_run_id);
+"""
+
+REVIEW_COMMENTS_SCHEMA_SQL = """
+CREATE TABLE review_comments (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK (scope IN ('head', 'baseline')),
+    side TEXT NOT NULL CHECK (side IN ('old', 'new')),
+    line INTEGER NOT NULL CHECK (line > 0),
+    body TEXT NOT NULL,
+    base_head TEXT NOT NULL,
+    diff_hash TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('active', 'stale')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX review_comments_session_path
+ON review_comments(session_id, path, scope, status, created_at);
 """
 
 COMPACTION_QUALITY_SCHEMA_SQL = """
@@ -1102,7 +1123,8 @@ INSERT INTO runtime_settings (
 
 CREATE TABLE worktree_snapshots (
     id TEXT PRIMARY KEY,
-    worktree_id TEXT NOT NULL REFERENCES worktrees(id) ON DELETE RESTRICT,
+    worktree_id TEXT REFERENCES worktrees(id) ON DELETE RESTRICT,
+    workspace_root TEXT NOT NULL,
     session_id TEXT REFERENCES sessions(id) ON DELETE RESTRICT,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
     base_ref TEXT NOT NULL,
@@ -1139,6 +1161,7 @@ CREATE TABLE worktree_lifecycle_operations_retention (
             'session/create',
             'session/delete',
             'checkpoint/fork',
+            'checkpoint/rewind',
             'worktree/attach-branch',
             'worktree/retention-cleanup',
             'worktree/restore'
@@ -1220,6 +1243,7 @@ SCHEMA_SQL = (
     + REPOSITORY_SCHEMA_SQL
     + CONTEXT_SCHEMA_SQL
     + RESPONSE_ACTIONS_SCHEMA_SQL
+    + REVIEW_COMMENTS_SCHEMA_SQL
     + COMPACTION_QUALITY_SCHEMA_SQL
     + PROJECT_SCHEMA_SQL
     + WORKTREE_TABLES_SCHEMA_SQL

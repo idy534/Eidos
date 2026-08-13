@@ -97,8 +97,50 @@ export interface SessionGitStatus {
   unstagedCount: number;
   untrackedCount: number;
   conflictCount: number;
+  stagedFiles: string[];
+  unstagedFiles: string[];
+  untrackedFiles: string[];
+  conflictFiles: string[];
   observedAt: number;
 }
+
+export interface SessionGitMutationResult {
+  head: string;
+  branch: string | null;
+  status: SessionGitStatus;
+}
+
+export interface SessionGitCommitResult extends SessionGitMutationResult {
+  commit: string;
+}
+
+export type SessionGitDiscardResult = SessionGitMutationResult;
+
+export interface GitRemoteStatus {
+  branch: string | null;
+  remotes: Array<{ name: string }>;
+  upstream: { remote: string; branch: string } | null;
+  ahead: number | null;
+  behind: number | null;
+}
+
+export interface GitFetchResult extends GitRemoteStatus {
+  remote: string;
+  head: string;
+}
+
+export interface GitPullResult extends GitFetchResult {
+  status: SessionGitStatus;
+}
+
+export type GitPushResult = GitPullResult;
+
+export interface GitMergeResult extends SessionGitMutationResult {
+  operationState: "none" | "merge" | "rebase";
+  conflictFiles: string[];
+}
+
+export type GitRebaseResult = GitMergeResult;
 
 export interface ProjectGitContext {
   gitAvailable: boolean;
@@ -116,8 +158,58 @@ export interface SessionGitDiff {
   dirty: boolean;
   changedFiles: string[];
   unifiedDiff: string;
+  diffHash: string;
   truncated: boolean;
   observedAt: number;
+}
+
+export interface ReviewComment {
+  id: string;
+  sessionId: string;
+  path: string;
+  scope: GitDiffScope;
+  side: "old" | "new";
+  line: number;
+  body: string;
+  baseHead: string;
+  diffHash: string;
+  status: "active" | "stale";
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ReviewCommentCreateInput {
+  commentId: string;
+  path: string;
+  scope: GitDiffScope;
+  side: "old" | "new";
+  line: number;
+  body: string;
+  baseHead: string;
+  diffHash: string;
+}
+
+export interface WorkspaceDirectoryEntry {
+  name: string;
+  relativePath: string;
+  kind: "file" | "directory";
+  sizeBytes?: number;
+}
+
+export interface WorkspaceDirectoryListing {
+  path: string;
+  entries: WorkspaceDirectoryEntry[];
+  truncated: boolean;
+}
+
+export interface WorkspaceFilePreview {
+  path: string;
+  kind: "text" | "markdown" | "code" | "unavailable";
+  sizeBytes: number;
+  truncated: boolean;
+  content?: string;
+  language?: string;
+  reason?: "binary" | "unsupported";
 }
 
 export interface Run {
@@ -443,6 +535,7 @@ export interface ExtensionSnapshot {
 }
 
 export type RuntimeNotification =
+  | { method: "workspace/changed"; params: { sessionId: string; paths: string[] } }
   | { method: "session/titleUpdated"; params: { sessionId: string; title: string } }
   | { method: "run/started"; params: { sessionId: string; run: Run } }
   | { method: "run/updated"; params: { sessionId: string; run: Run } }

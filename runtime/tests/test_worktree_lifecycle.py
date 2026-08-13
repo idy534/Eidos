@@ -11,6 +11,7 @@ import pytest
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.application.checkpoints import CheckpointApplication
 from eidos_runtime.application.sessions import SessionApplication
+from eidos_runtime.application.worktree_retention import WorktreeRetentionService
 from eidos_runtime.db.schema import SCHEMA_VERSION
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.git import WorktreeManager
@@ -133,6 +134,7 @@ def test_same_checkpoint_fork_operation_id_has_one_fork(
         store,
         store.checkpoint_repository(),
         worktree_manager=manager,
+        retention=WorktreeRetentionService(store.database, manager),
     )
     parent = sessions.create(
         SessionCreateRequestDto(
@@ -512,6 +514,7 @@ def test_checkpoint_fork_restart_recovery_is_singleton(
         store,
         store.checkpoint_repository(),
         worktree_manager=manager,
+        retention=WorktreeRetentionService(store.database, manager),
     )
     parent = sessions.create(
         SessionCreateRequestDto(
@@ -595,6 +598,7 @@ def test_checkpoint_fork_restart_recovery_is_singleton(
         restarted,
         restarted.checkpoint_repository(),
         worktree_manager=restarted_manager,
+        retention=WorktreeRetentionService(restarted.database, restarted_manager),
     )
     try:
         result = restarted_checkpoints.fork(request)
