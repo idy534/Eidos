@@ -107,6 +107,7 @@ class SessionRepository(Repository):
         operation_id: str | None = None,
         session_id: str | None = None,
         associated_worktree_id: str | None = None,
+        projectless: bool = False,
     ) -> Session:
         return self.create_session_committed(
             workspace_root,
@@ -116,6 +117,7 @@ class SessionRepository(Repository):
             operation_id=operation_id,
             session_id=session_id,
             associated_worktree_id=associated_worktree_id,
+            projectless=projectless,
         ).value
 
     def create_session_committed(
@@ -128,6 +130,7 @@ class SessionRepository(Repository):
         operation_id: str | None = None,
         session_id: str | None = None,
         associated_worktree_id: str | None = None,
+        projectless: bool = False,
     ) -> CommittedMutation[Session]:
         workspace = _canonical_workspace(workspace_root)
         if self._workspace_overlaps_data(workspace):
@@ -141,6 +144,12 @@ class SessionRepository(Repository):
             raise ValueError("invalid session execution mode") from error
         if execution_mode is SessionExecutionMode.LOCAL and worktree_id is not None:
             raise ValueError("local Session must not have a Worktree binding")
+        if projectless and (
+            execution_mode is not SessionExecutionMode.LOCAL
+            or worktree_id is not None
+            or project_id is not None
+        ):
+            raise ValueError("projectless Session must use local execution without a binding")
         if associated_worktree_id is not None:
             raise ValueError("new Session must not have an associated Worktree")
         if execution_mode is SessionExecutionMode.WORKTREE and worktree_id is None:
@@ -191,7 +200,7 @@ class SessionRepository(Repository):
                     raise WorkspaceBoundaryError(
                         "session workspace does not match project"
                     )
-            else:
+            elif not projectless:
                 connection.execute(
                     """
                     INSERT OR IGNORE INTO projects (
@@ -240,7 +249,10 @@ class SessionRepository(Repository):
             write,
             operation_id=operation_id,
             operation_scope="session/create",
-            operation_request={"workspaceRoot": str(workspace)},
+            operation_request={
+                "workspaceRoot": str(workspace),
+                "projectless": projectless,
+            },
             serialize_value=session_to_operation_dict,
             deserialize_value=session_from_legacy_dict,
         )
@@ -320,6 +332,39 @@ class SessionRepository(Repository):
                 (session_id,),
             ).fetchone()
         return session_projection_from_row(row) if row is not None else None
+
+    def session_is_projectless(self, session_id: str) -> bool:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT 1
+                FROM sessions s
+                WHERE s.id = ?
+                  AND s.worktree_id IS NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM projects p WHERE p.workspace_root = s.workspace_root
+                  )
+                """,
+                (session_id,),
+            ).fetchone()
+        return row is not None
+
+    def run_is_projectless(self, run_id: str) -> bool:
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT 1
+                FROM runs r
+                JOIN sessions s ON s.id = r.session_id
+                WHERE r.id = ?
+                  AND s.worktree_id IS NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM projects p WHERE p.workspace_root = s.workspace_root
+                  )
+                """,
+                (run_id,),
+            ).fetchone()
+        return row is not None
 
     def session_model_id(self, session_id: str) -> str | None:
         with self.lock:
@@ -572,6 +617,43 @@ class SessionRepository(Repository):
             )
             connection.execute(
                 f"DELETE FROM finalization_attempts WHERE run_id IN ({run_ids})",
+                (session_id,),
+            )
+            connection.execute(
+                f"""
+                DELETE FROM checkpoint_actions
+                WHERE source_run_id IN ({run_ids})
+                   OR target_run_id IN ({run_ids})
+                   OR checkpoint_id IN (
+                       SELECT id FROM checkpoints WHERE run_id IN ({run_ids})
+                   )
+                """,
+                (session_id, session_id, session_id),
+            )
+            connection.execute(
+                f"DELETE FROM checkpoints WHERE run_id IN ({run_ids})",
+                (session_id,),
+            )
+            connection.execute(
+                f"DELETE FROM run_repository_retrievals WHERE run_id IN ({run_ids})",
+                (session_id,),
+            )
+            connection.execute(
+                f"UPDATE model_attempts SET context_snapshot_id = NULL WHERE step_id IN ("
+                f"SELECT steps.id FROM steps WHERE steps.run_id IN ({run_ids})"
+                f")",
+                (session_id,),
+            )
+            connection.execute(
+                f"DELETE FROM context_snapshots WHERE run_id IN ({run_ids})",
+                (session_id,),
+            )
+            connection.execute(
+                f"DELETE FROM context_plans WHERE run_id IN ({run_ids})",
+                (session_id,),
+            )
+            connection.execute(
+                f"DELETE FROM verified_compact_summaries WHERE run_id IN ({run_ids})",
                 (session_id,),
             )
             connection.execute(

@@ -634,6 +634,12 @@ class SessionStore:
     def workspace_for_session(self, session_id: str) -> WorkspaceIdentity:
         return self._repository(self._execution).workspace_for_session(session_id)
 
+    def session_is_projectless(self, session_id: str) -> bool:
+        return self._repository(self._sessions).session_is_projectless(session_id)
+
+    def run_is_projectless(self, run_id: str) -> bool:
+        return self._repository(self._sessions).run_is_projectless(run_id)
+
     def increment_model_step(
         self,
         run_id: str,

@@ -60,13 +60,10 @@ describe("useSessionController real Hook behavior", () => {
     return api;
   }
 
-  it("1 & 2. Two synchronous createSession() calls open one Workspace Picker and call IPC once", async () => {
-    let resolvePicker!: (val: string | null) => void;
-    const pickerSpy = vi.fn().mockImplementation(() => new Promise<string | null>((r) => { resolvePicker = r; }));
+  it("1 & 2. Two synchronous projectless createSession() calls call IPC once", async () => {
     const createSpy = vi.fn().mockResolvedValue(mockSession1);
 
     setupMockRuntime({
-      selectWorkspace: pickerSpy,
       createSession: createSpy,
     });
 
@@ -76,25 +73,21 @@ describe("useSessionController real Hook behavior", () => {
     let p2: Promise<SessionSnapshot | undefined>;
 
     act(() => {
-      p1 = result.current[1].createSession();
-      p2 = result.current[1].createSession();
+      p1 = result.current[1].createSession(null);
+      p2 = result.current[1].createSession(null);
     });
 
-    expect(pickerSpy).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      resolvePicker("/workspace/new");
-      await Promise.all([p1, p2]);
-    });
+    await act(async () => { await Promise.all([p1, p2]); });
 
     expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(createSpy).toHaveBeenCalledWith(null);
     expect(await p2!).toBeUndefined(); // Second synchronous call returns undefined
   });
 
-  it("3. Pending becomes true before the Picker Promise settles", async () => {
-    let resolvePicker!: (val: string | null) => void;
+  it("3. Pending becomes true before projectless Session creation settles", async () => {
+    let resolveCreate!: (value: Session) => void;
     setupMockRuntime({
-      selectWorkspace: () => new Promise((r) => { resolvePicker = r; }),
+      createSession: () => new Promise((resolve) => { resolveCreate = resolve; }),
     });
 
     const { result } = renderHook(() => useSessionController());
@@ -102,39 +95,40 @@ describe("useSessionController real Hook behavior", () => {
 
     let p: Promise<SessionSnapshot | undefined>;
     act(() => {
-      p = result.current[1].createSession();
+      p = result.current[1].createSession(null);
     });
 
     expect(result.current[0].pending.creatingSession).toBe(true);
 
     await act(async () => {
-      resolvePicker("/workspace/new");
+      resolveCreate(mockSession1);
       await p;
     });
 
     expect(result.current[0].pending.creatingSession).toBeUndefined();
   });
 
-  it("4. Picker cancellation releases the lock and pending state", async () => {
-    setupMockRuntime({ selectWorkspace: vi.fn().mockResolvedValue(null) });
+  it("4. Projectless Session creation releases the lock and pending state", async () => {
+    const createSpy = vi.fn().mockResolvedValue(mockSession1);
+    setupMockRuntime({ createSession: createSpy });
 
     const { result } = renderHook(() => useSessionController());
 
     await act(async () => {
-      const snap = await result.current[1].createSession();
-      expect(snap).toBeUndefined();
+      await result.current[1].createSession(null);
     });
 
+    expect(createSpy).toHaveBeenCalledWith(null);
     expect(result.current[0].pending.creatingSession).toBeUndefined();
   });
 
-  it("5. Picker failure releases the lock", async () => {
-    setupMockRuntime({ selectWorkspace: vi.fn().mockRejectedValue(new Error("Picker dialog error")) });
+  it("5. Projectless Session failure releases the lock", async () => {
+    setupMockRuntime({ createSession: vi.fn().mockRejectedValue(new Error("Session creation error")) });
 
     const { result } = renderHook(() => useSessionController());
 
     await act(async () => {
-      const snap = await result.current[1].createSession();
+      const snap = await result.current[1].createSession(null);
       expect(snap).toBeUndefined();
     });
 

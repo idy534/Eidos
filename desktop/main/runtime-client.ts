@@ -352,7 +352,7 @@ export class RuntimeClient {
   }
 
   async createSession(
-    workspaceRoot: string,
+    workspaceRoot: string | null,
     options: {
       executionMode?: "local" | "worktree";
       baseRef?: string;
@@ -1213,11 +1213,12 @@ function isSession(value: unknown): value is Session {
     isRecord(value)
     && hasOnlyKeys(value, [
       "id", "workspaceRoot", "executionMode", "associatedWorktreeId",
-      "worktreeRestoreAvailable", "project", "worktree", "title", "taskStatus",
+      "worktreeRestoreAvailable", "projectless", "project", "worktree", "title", "taskStatus",
       "createdAt", "updatedAt",
     ])
     && typeof value.id === "string"
     && typeof value.workspaceRoot === "string"
+    && (value.projectless === undefined || typeof value.projectless === "boolean")
     && (value.executionMode === undefined || ["local", "worktree"].includes(String(value.executionMode)))
     && (value.associatedWorktreeId === undefined || typeof value.associatedWorktreeId === "string")
     && (value.worktreeRestoreAvailable === undefined || typeof value.worktreeRestoreAvailable === "boolean")
@@ -1235,7 +1236,7 @@ function isSessionHandoff(value: unknown): value is SessionHandoffResult {
     !isRecord(value)
     || !hasOnlyKeys(value, [
       "id", "sessionId", "worktreeId", "workspaceRoot", "executionMode",
-      "associatedWorktreeId", "project", "worktree", "title", "taskStatus",
+      "associatedWorktreeId", "projectless", "project", "worktree", "title", "taskStatus",
       "worktreeRestoreAvailable", "createdAt", "updatedAt",
     ])
     || typeof value.sessionId !== "string"
@@ -1252,7 +1253,7 @@ function isSessionRestoreWorktree(value: unknown): value is SessionRestoreWorktr
     !isRecord(value)
     || !hasOnlyKeys(value, [
       "id", "sessionId", "worktreeId", "workspaceRoot", "executionMode",
-      "associatedWorktreeId", "worktreeRestoreAvailable", "project", "worktree",
+      "associatedWorktreeId", "worktreeRestoreAvailable", "projectless", "project", "worktree",
       "title", "taskStatus", "createdAt", "updatedAt",
     ])
     || typeof value.sessionId !== "string"

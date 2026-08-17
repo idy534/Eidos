@@ -43,6 +43,8 @@ export interface Session {
   executionMode?: "local" | "worktree";
   associatedWorktreeId?: string;
   worktreeRestoreAvailable?: boolean;
+  /** True when the conversation is not associated with a user project. */
+  projectless?: boolean;
   /** Optional only while older persisted event fixtures are read. */
   project?: SessionProject;
   worktree?: SessionWorktree;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ProjectGitContext, Run, Session } from "../contracts.js";
+import type { Run, Session } from "../contracts.js";
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import { EidosMark } from "../components/EidosMark.js";
@@ -8,7 +8,6 @@ import { Button } from "../components/Button.js";
 import { DropdownMenu } from "../components/DropdownMenu.js";
 import { PrimaryActionButton } from "../components/PrimaryActionButton.js";
 import { ConfirmDialog } from "../components/settings/ConfirmDialog.js";
-import { CreateSessionDialog } from "../components/CreateSessionDialog.js";
 import { CreateBranchDialog } from "../components/CreateBranchDialog.js";
 import { HandoffDialog } from "../components/HandoffDialog.js";
 import { Composer } from "../components/Composer.js";
@@ -81,12 +80,6 @@ export function AppShell({ runtime }: AppShellProps) {
   const [sessionToDelete, setSessionToDelete] = useState<Session | undefined>(undefined);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | undefined>(undefined);
-  const [createSessionDraft, setCreateSessionDraft] = useState<{
-    workspaceRoot: string;
-    gitContext: ProjectGitContext;
-  } | undefined>(undefined);
-  const [createSessionContextBusy, setCreateSessionContextBusy] = useState(false);
-  const [createSessionConfirmBusy, setCreateSessionConfirmBusy] = useState(false);
   const [createBranchSessionId, setCreateBranchSessionId] = useState<string | undefined>(undefined);
   const [handoffSessionId, setHandoffSessionId] = useState<string | undefined>(undefined);
   const [contentView, setContentView] = useState<"conversation" | "files" | "changes">("conversation");
@@ -183,9 +176,6 @@ export function AppShell({ runtime }: AppShellProps) {
   const hasBlockingModal =
     Boolean(sessionToDelete) ||
     deleteBusy ||
-    Boolean(createSessionDraft) ||
-    createSessionContextBusy ||
-    createSessionConfirmBusy ||
     Boolean(createBranchSessionId) ||
     Boolean(handoffSessionId) ||
     sessionState.pending.creatingBranchSessionId !== undefined ||
@@ -195,11 +185,11 @@ export function AppShell({ runtime }: AppShellProps) {
   useEffect(() => {
     const unsubNewTask = window.eidosRuntime.onShortcut(IPC.APP_NEW_TASK, () => {
       if (hasBlockingModal || settingsOpen) return;
-      void handleCreateSession();
+      void handleCreateSession(null);
     });
     const unsubOpenWorkspace = window.eidosRuntime.onShortcut(IPC.APP_OPEN_WORKSPACE, () => {
       if (hasBlockingModal || settingsOpen) return;
-      void handleCreateSession();
+      void handleSelectProject();
     });
     return () => {
       unsubNewTask();
@@ -224,39 +214,18 @@ export function AppShell({ runtime }: AppShellProps) {
     return sessionActions.selectSession(session);
   }
 
-  async function handleCreateSession(workspaceRoot?: string) {
-    setCreateSessionContextBusy(true);
+  async function handleCreateSession(workspaceRoot: string | null) {
     sessionActions.setError(undefined);
-    try {
-      const workspace = workspaceRoot ?? await window.eidosRuntime.selectWorkspace();
-      if (!workspace) return;
-      const gitContext = await window.eidosRuntime.readProjectGitContext(workspace);
-      setCreateSessionDraft({ workspaceRoot: workspace, gitContext });
-    } catch (cause) {
-      sessionActions.setError(userFacingError(cause));
-    } finally {
-      setCreateSessionContextBusy(false);
-    }
+    await sessionActions.createSession(workspaceRoot, { executionMode: "local" });
   }
 
-  async function confirmCreateSession(
-    executionMode: "local" | "worktree",
-    baseRef?: string,
-    includeLocalChanges = false,
-  ): Promise<void> {
-    if (!createSessionDraft) return;
-    setCreateSessionConfirmBusy(true);
+  async function handleSelectProject(): Promise<void> {
+    sessionActions.setError(undefined);
     try {
-      const created = await sessionActions.createSession(createSessionDraft.workspaceRoot, {
-        executionMode,
-        ...(executionMode === "worktree" && baseRef ? { baseRef } : {}),
-        ...(executionMode === "worktree" ? { includeLocalChanges } : {}),
-      });
-      if (created) {
-        setCreateSessionDraft(undefined);
-      }
-    } finally {
-      setCreateSessionConfirmBusy(false);
+      const workspace = await window.eidosRuntime.selectWorkspace();
+      if (workspace) await handleCreateSession(workspace);
+    } catch (cause) {
+      sessionActions.setError(userFacingError(cause));
     }
   }
 
@@ -272,6 +241,11 @@ export function AppShell({ runtime }: AppShellProps) {
     if (loaded) setHandoffSessionId(undefined);
   }
 
+  function requestExecutionModeChange(target: "local" | "worktree"): void {
+    if (!snapshot || snapshot.session.executionMode === target) return;
+    setHandoffSessionId(snapshot.session.id);
+  }
+
   // -----------------------------------------------------------------------
   // Rename flow
   // -----------------------------------------------------------------------
@@ -283,7 +257,7 @@ export function AppShell({ runtime }: AppShellProps) {
     if (!targetSnapshot || targetSnapshot.session.id !== session.id) {
       return;
     }
-    setTitleDraft(targetSnapshot.session.title ?? "新任务");
+    setTitleDraft(targetSnapshot.session.title ?? "新会话");
     setRenameError(undefined);
     setRenamingSessionId(session.id);
   }
@@ -368,9 +342,11 @@ export function AppShell({ runtime }: AppShellProps) {
   const { snapshot } = sessionState;
   const { approvals, respondingApprovalIds, respondingKindByApprovalId, errorsByApprovalId } = approvalState;
   const sessionWorktree = snapshot?.session.worktree;
+  const sessionHasProject = Boolean(snapshot && snapshot.session.projectless !== true && snapshot.session.project);
   const sessionHasGit = snapshot?.session.project?.gitAvailable === true;
-  const handoffBusy = sessionState.pending.handoffSessionId === snapshot?.session.id;
-  const restoreBusy = sessionState.pending.restoringWorktreeSessionId === snapshot?.session.id;
+  const sessionBranch = gitReviewState.status?.branch ?? sessionWorktree?.branch ?? null;
+  const handoffBusy = Boolean(snapshot && sessionState.pending.handoffSessionId === snapshot.session.id);
+  const restoreBusy = Boolean(snapshot && sessionState.pending.restoringWorktreeSessionId === snapshot.session.id);
   const worktreeRestoreRequired = snapshot?.session.executionMode === "worktree"
     && snapshot.session.worktreeRestoreAvailable === true;
 
@@ -378,9 +354,6 @@ export function AppShell({ runtime }: AppShellProps) {
 
   const sidebarDisabled =
     sessionState.pending.creatingSession === true
-    || createSessionContextBusy
-    || createSessionConfirmBusy
-    || Boolean(createSessionDraft)
     || handoffBusy
     || !isStorageReady;
 
@@ -394,7 +367,7 @@ export function AppShell({ runtime }: AppShellProps) {
         runtimePresentation={runtimePresentation}
         isSelectingSessionId={sessionState.pending.selectingSessionId}
         gitStatusBySessionId={gitReviewState.statusBySessionId}
-        onCreate={() => void handleCreateSession()}
+        onCreate={() => void handleCreateSession(null)}
         onCreateInProject={(root) => void handleCreateSession(root)}
         onSelect={(session) => void handleSelectSession(session)}
         onRename={(session) => void beginRename(session)}
@@ -486,7 +459,7 @@ export function AppShell({ runtime }: AppShellProps) {
                 </form>
               ) : (
                 <div className="session-title-group">
-                  <h1>{snapshot.session.title ?? "新任务"}</h1>
+                  <h1>{snapshot.session.title ?? "新会话"}</h1>
                   <DropdownMenu
                     trigger="•••"
                     label="任务菜单"
@@ -540,13 +513,15 @@ export function AppShell({ runtime }: AppShellProps) {
                   >
                     对话
                   </button>
-                  <button
-                    type="button"
-                    aria-pressed={contentView === "files"}
-                    onClick={() => setContentView("files")}
-                  >
-                    Files
-                  </button>
+                  {sessionHasProject && (
+                    <button
+                      type="button"
+                      aria-pressed={contentView === "files"}
+                      onClick={() => setContentView("files")}
+                    >
+                      Files
+                    </button>
+                  )}
                   {sessionHasGit && (
                     <button
                       type="button"
@@ -560,7 +535,7 @@ export function AppShell({ runtime }: AppShellProps) {
               </div>
             </header>
 
-            {contentView === "files" ? (
+            {contentView === "files" && sessionHasProject ? (
               <WorkspaceExplorer sessionId={snapshot.session.id} />
             ) : contentView === "changes" && sessionHasGit ? (
               <GitChangesPanel
@@ -639,6 +614,14 @@ export function AppShell({ runtime }: AppShellProps) {
                   onCancel={() => activeRun && snapshot && void runActions.cancelRun({ runId: activeRun.id, sessionId: snapshot.session.id })}
                   onModelChange={(id) => modelActions.selectModel(id)}
                   onOpenModelSettings={() => setSettingsOpen(true)}
+                  showSessionContext={snapshot.session.taskStatus === "new"}
+                  project={snapshot.session.project ?? null}
+                  projectless={snapshot.session.projectless === true}
+                  executionMode={snapshot.session.executionMode}
+                  branch={sessionBranch}
+                  onSelectProject={() => void handleSelectProject()}
+                  onLeaveProject={() => void handleCreateSession(null)}
+                  onExecutionModeChange={sessionHasGit ? requestExecutionModeChange : undefined}
                 />
               </>
             )}
@@ -653,40 +636,25 @@ export function AppShell({ runtime }: AppShellProps) {
             <div className="empty-actions">
               <PrimaryActionButton
                 size="large"
+                label="开始对话"
+                subtitle="不选择项目也可以开始"
+                showArrow={true}
+                disabled={sessionState.pending.creatingSession || !isStorageReady}
+                onClick={() => void handleCreateSession(null)}
+              />
+              <PrimaryActionButton
+                size="large"
                 label="选择工作空间目录"
                 subtitle="打开一个本地项目开始使用 Eidos"
                 showArrow={true}
                 disabled={sessionState.pending.creatingSession || !isStorageReady}
-                onClick={() => void handleCreateSession()}
+                onClick={() => void handleSelectProject()}
               />
             </div>
           </div>
         )}
       </section>
 
-      {/* Delete confirm dialog */}
-      <CreateSessionDialog
-        open={Boolean(createSessionDraft)}
-        workspaceRoot={createSessionDraft?.workspaceRoot ?? ""}
-        gitContext={createSessionDraft?.gitContext ?? {
-          gitAvailable: false,
-          currentBranch: null,
-          head: null,
-          branches: [],
-          dirty: false,
-          changedFileCount: 0,
-        }}
-        busy={createSessionConfirmBusy}
-        error={sessionState.error}
-        getFallbackFocus={getDialogFallbackFocus}
-        onConfirm={(executionMode, baseRef, includeLocalChanges) => (
-          void confirmCreateSession(executionMode, baseRef, includeLocalChanges)
-        )}
-        onCancel={() => {
-          setCreateSessionDraft(undefined);
-          sessionActions.setError(undefined);
-        }}
-      />
       <CreateBranchDialog
         open={Boolean(createBranchSessionId)}
         busy={sessionState.pending.creatingBranchSessionId !== undefined}
@@ -713,7 +681,7 @@ export function AppShell({ runtime }: AppShellProps) {
       />
       <ConfirmDialog
         open={Boolean(sessionToDelete)}
-        title={`删除任务"${sessionToDelete?.title ?? "新任务"}"？`}
+        title={`删除任务"${sessionToDelete?.title ?? "新会话"}"？`}
         description="项目文件不会被删除。删除后无法撤销。"
         confirmLabel="删除"
         cancelLabel="取消"

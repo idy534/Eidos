@@ -119,6 +119,8 @@ class WorkspaceExplorerApplication:
         projection = self._sessions.read_session_projection(session_id)
         if projection is None:
             raise ApplicationError("RESOURCE_NOT_FOUND")
+        if projection.project is None:
+            raise ApplicationError("PROJECT_REQUIRED")
         if projection.session.execution_mode is SessionExecutionMode.WORKTREE:
             if projection.worktree is None:
                 raise ApplicationError("WORKTREE_INVALID")

@@ -148,6 +148,11 @@ class CheckpointApplication:
             projection = self._sessions.read_session_projection(str(run["sessionId"]))
             if projection is None:
                 raise ResourceNotFoundError("session not found")
+            if projection.project is None:
+                raise ApplicationError(
+                    "PROJECT_REQUIRED",
+                    "checkpoint operations require a project",
+                )
             git_head: str | None = None
             git_snapshot_id: str | None = None
             checkpoint_id = (
@@ -252,6 +257,11 @@ class CheckpointApplication:
         projection = self._sessions.read_session_projection(str(run["sessionId"]))
         if projection is None:
             raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
+        if projection.project is None:
+            raise ApplicationError(
+                "PROJECT_REQUIRED",
+                "checkpoint operations require a project",
+            )
         snapshot = (
             self._ready_checkpoint_snapshot(checkpoint)
             if checkpoint.git_snapshot_id is not None
@@ -528,6 +538,11 @@ class CheckpointApplication:
         )
         if parent_projection is None:
             raise ApplicationError("RESOURCE_NOT_FOUND", "parent session not found")
+        if parent_projection.project is None:
+            raise ApplicationError(
+                "PROJECT_REQUIRED",
+                "checkpoint operations require a project",
+            )
         operation_request: dict[str, object] = {"checkpointId": checkpoint.id}
         if parent_projection.worktree is None:
             if request.workspace_root is not None:

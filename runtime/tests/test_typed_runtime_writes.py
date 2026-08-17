@@ -53,6 +53,25 @@ def test_typed_runtime_repository_exposes_committed_session_writes_without_chang
         store.close()
 
 
+def test_typed_session_repository_can_persist_a_session_without_a_project(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "chat-workspace"
+    workspace.mkdir()
+    store = _store(tmp_path)
+    try:
+        repository = store.typed_runtime_repository()
+        created = repository.create_session(str(workspace), projectless=True)
+        projection = repository.read_session_projection(created.value.id)
+
+        assert projection is not None
+        assert projection.project is None
+        assert projection.worktree is None
+        assert created.value.execution_mode.value == "local"
+    finally:
+        store.close()
+
+
 def test_typed_session_write_replay_does_not_reemit_already_committed_outbox_event(
     tmp_path: Path,
 ) -> None:

@@ -97,6 +97,8 @@ class RunStorePort(Protocol):
 
     def workspace_for_session(self, session_id: str) -> WorkspaceIdentity: ...
 
+    def session_is_projectless(self, session_id: str) -> bool: ...
+
     def read_model_profile(self, run_id: str) -> ModelProfileSnapshot: ...
 
     def latest_model_usage(self, run_id: str) -> ModelUsage | None: ...
@@ -335,7 +337,9 @@ class RunApplication:
                     expected_workspace_identity = workspace
                 elif expected_workspace_identity != workspace:
                     raise WorkspaceIdentityChangedError("workspace_identity_changed")
-                if self._repository_runtime is not None:
+                if self._repository_runtime is not None and not store.session_is_projectless(
+                    request.session_id
+                ):
                     self._repository_runtime.activate_workspace(workspace.path)
                 needs_title = "title" not in current_session
                 created, _user_item = store.enqueue_run(

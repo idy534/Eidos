@@ -134,7 +134,10 @@ class RuntimeEngine:
         repository_snapshot = None
         repository_state = None
         repository_capture = None
-        if self.repository_runtime is not None:
+        if (
+            self.repository_runtime is not None
+            and not self.store.run_is_projectless(run_id)
+        ):
             workspace = self.store.workspace_for_run(run_id)
             repository_state = self.repository_runtime.ensure_ready(
                 workspace.path, cancel=cancel
@@ -300,6 +303,7 @@ class RuntimeEngine:
         compactor = ContextCompactor(self.store)
         step_factory = StepContextFactory(self.store)
         rule_resolver = ProjectRuleResolver()
+        projectless = self.store.session_is_projectless(run.session_id)
         sampling = SamplingRuntime(self.store, self.model, self.events, self.sensitive)
         provider_recovery_states: set[tuple[object, ...]] = set()
         estimated_pressure_states: set[tuple[object, ...]] = set()
@@ -342,9 +346,18 @@ class RuntimeEngine:
             effective_cwd = self.store.effective_cwd_for_run(
                 run.run_id, workspace_root=workspace.path
             )
-            rule_snapshot = rule_resolver.resolve(
-                workspace.path,
-                effective_cwd,
+            rule_snapshot = (
+                RuleResolutionSnapshot.create(
+                    workspace_root=str(workspace.path),
+                    cwd=str(effective_cwd),
+                    budget_bytes=0,
+                    used_bytes=0,
+                    rules=(),
+                    shadowed=(),
+                    warnings=(),
+                )
+                if projectless
+                else rule_resolver.resolve(workspace.path, effective_cwd)
             )
             step_policy = _build_step_policy(
                 run.resolution_snapshot.permission_profile_json,
@@ -360,7 +373,8 @@ class RuntimeEngine:
                 extra_context=run.model_context,
                 rule_resolution_snapshot=rule_snapshot,
                 step_policy=step_policy,
-                repository_context=repository_context,
+                repository_context=None if projectless else repository_context,
+                projectless=projectless,
             )
             if pending_compaction_baseline is not None:
                 if built.budget.projected_input_tokens >= pending_compaction_baseline:

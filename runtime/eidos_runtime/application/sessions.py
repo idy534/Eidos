@@ -160,6 +160,7 @@ class TypedSessionRepositoryPort(Protocol):
         project_id: str | None = None,
         operation_id: str | None = None,
         session_id: str | None = None,
+        projectless: bool = False,
     ) -> CommittedMutation[Session]: ...
 
     def list_sessions(
@@ -211,6 +212,9 @@ class SessionStorePort(Protocol):
     """
 
     def typed_runtime_repository(self) -> TypedSessionRepositoryPort: ...
+
+    @property
+    def data_directory(self) -> Path | None: ...
 
     def read_session_snapshot(
         self,
@@ -534,6 +538,36 @@ class SessionApplication:
 
     def create(self, request: SessionCreateRequestDto) -> SessionCreateResponseDto:
         execution_mode = SessionExecutionMode(request.execution_mode)
+        if request.workspace_root is None:
+            if execution_mode is not SessionExecutionMode.LOCAL:
+                raise ApplicationError(
+                    "PROJECTLESS_REQUIRES_LOCAL",
+                    "projectless conversations require local execution",
+                )
+            workspace_root, session_id = self._create_projectless_workspace(
+                request.operation_id
+            )
+            try:
+                mutation = self._repository.create_session(
+                    workspace_root,
+                    execution_mode=execution_mode,
+                    operation_id=request.operation_id,
+                    session_id=session_id,
+                    projectless=True,
+                )
+            except WorkspaceBoundaryError as error:
+                raise ApplicationError(
+                    "WORKSPACE_BOUNDARY_VIOLATION", str(error)
+                ) from error
+            except OperationConflictError as error:
+                raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
+            except OperationInProgressError as error:
+                raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
+            return self._activate_created_session(_result(
+                SessionCreateResponseDto,
+                self._project_session(self._projection_for_session(mutation.value.id)),
+            ))
+
         resolution: ProjectResolution | None = None
         if self._worktree_manager is not None:
             operation_guard = (
@@ -574,11 +608,32 @@ class SessionApplication:
             self._project_session(self._projection_for_session(mutation.value.id)),
         ))
 
+    def _create_projectless_workspace(self, operation_id: str | None) -> tuple[str, str]:
+        data_directory = self._store.data_directory
+        if data_directory is None:
+            raise ApplicationError("STORAGE_NOT_READY", "runtime storage is not ready")
+        session_id = str(
+            uuid.uuid5(uuid.NAMESPACE_URL, f"eidos-projectless:{operation_id}")
+            if operation_id is not None
+            else uuid.uuid4()
+        )
+        root = data_directory.parent / f".{data_directory.name}-projectless" / session_id
+        try:
+            root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            root.parent.chmod(0o700)
+            root.mkdir(mode=0o700, exist_ok=True)
+            root.chmod(0o700)
+        except OSError as error:
+            raise ApplicationError(
+                "SESSION_PERSISTENCE_FAILED", "could not create private conversation storage"
+            ) from error
+        return str(root), session_id
+
     def _activate_created_session(
         self, result: SessionCreateResponseDto
     ) -> SessionCreateResponseDto:
         runtime = self._repository_runtime
-        if runtime is None:
+        if runtime is None or result.project is None:
             return result
         root = (
             Path(result.worktree.worktree_root)
@@ -1872,7 +1927,7 @@ class SessionApplication:
         self, projection: SessionProjection, *, best_effort: bool = False
     ) -> None:
         runtime = self._repository_runtime
-        if runtime is None:
+        if runtime is None or projection.project is None:
             return
         if (
             projection.worktree is not None
@@ -2784,11 +2839,14 @@ class SessionApplication:
                     or projection.worktree.state.value == "deleted"
                 )
             )
-        value["project"] = SessionProjectDto(
-            id=projection.project.id,
-            workspaceRoot=projection.project.workspace_root,
-            gitAvailable=projection.project.git_available,
-        )
+        if projection.project is None:
+            value["projectless"] = True
+        else:
+            value["project"] = SessionProjectDto(
+                id=projection.project.id,
+                workspaceRoot=projection.project.workspace_root,
+                gitAvailable=projection.project.git_available,
+            )
         if projection.worktree is not None:
             worktree = projection.worktree
             value["worktree"] = SessionWorktreeDto(

@@ -478,7 +478,9 @@ ipcMain.handle(IPC.EVENT_LIST, (_event, sessionId: unknown, afterEventId: unknow
   return clientOrThrow().listEvents(sessionId, afterEventId);
 });
 ipcMain.handle(IPC.SESSION_CREATE, (_event, workspaceRoot: unknown, options: unknown) => {
-  if (typeof workspaceRoot !== "string") throw new Error("Workspace 参数无效。");
+  if (workspaceRoot !== null && typeof workspaceRoot !== "string") {
+    throw new Error("Workspace 参数无效。");
+  }
   return clientOrThrow().createSession(workspaceRoot, validateSessionCreateOptions(options));
 });
 ipcMain.handle(IPC.SESSION_CREATE_BRANCH, (_event, sessionId: unknown, branch: unknown) => {

@@ -93,6 +93,47 @@ describe("Composer DOM interaction & state behavior", () => {
     expect(screen.getByText("上下文 --")).toBeInTheDocument();
   });
 
+  it("renders project context above the input and defaults execution mode to Local", () => {
+    const onExecutionModeChange = vi.fn();
+    const onLeaveProject = vi.fn();
+    render(
+      <Composer
+        {...defaultProps}
+        project={{ id: "project-a", workspaceRoot: "/workspace/star-hub", gitAvailable: true }}
+        executionMode={undefined}
+        branch="dev-830-xl"
+        onExecutionModeChange={onExecutionModeChange}
+        onLeaveProject={onLeaveProject}
+      />,
+    );
+
+    expect(screen.getByText("star-hub")).toBeInTheDocument();
+    expect(screen.getByText("dev-830-xl")).toBeInTheDocument();
+    expect(screen.getByLabelText("执行方式")).toHaveValue("local");
+    const leaveProjectButton = screen.getByRole("button", { name: "不在项目中工作" });
+    expect(leaveProjectButton).toHaveClass("composer-context-project-action");
+    expect(leaveProjectButton.querySelector(".composer-context-project-close")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("执行方式"), { target: { value: "worktree" } });
+    expect(onExecutionModeChange).toHaveBeenCalledWith("worktree");
+    fireEvent.click(leaveProjectButton);
+    expect(onLeaveProject).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers project selection for a new projectless conversation", () => {
+    const onSelectProject = vi.fn();
+    render(
+      <Composer
+        {...defaultProps}
+        project={null}
+        onSelectProject={onSelectProject}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "选择项目" }));
+    expect(onSelectProject).toHaveBeenCalledTimes(1);
+  });
+
   it("empty local model configuration disables submit and guides to settings", () => {
     const onOpenModelSettings = vi.fn();
     render(

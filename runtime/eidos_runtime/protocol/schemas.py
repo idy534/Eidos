@@ -86,6 +86,7 @@ class SessionDto(ClosedModel):
     worktree_restore_available: bool = Field(
         default=False, alias="worktreeRestoreAvailable"
     )
+    projectless: bool = Field(default=False, alias="projectless")
     project: SessionProjectDto | None = None
     worktree: SessionWorktreeDto | None = None
     title: StrictStr | None = None

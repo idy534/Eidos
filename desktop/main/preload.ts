@@ -87,7 +87,7 @@ const api: EidosRuntimeAPI = {
   listEvents: (sessionId: string, afterEventId: number): Promise<EventListResult> =>
     ipcRenderer.invoke(IPC.EVENT_LIST, sessionId, afterEventId),
   createSession: (
-    workspaceRoot: string,
+    workspaceRoot: string | null,
     options?: {
       executionMode?: "local" | "worktree";
       baseRef?: string;

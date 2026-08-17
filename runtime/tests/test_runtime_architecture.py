@@ -173,6 +173,48 @@ class RuntimeArchitectureTests(unittest.TestCase):
             close_tool_executor.assert_called_once()
             close_mcp.assert_called_once()
 
+    def test_projectless_run_exposes_no_workspace_tools(self) -> None:
+        from eidos_runtime.runtime.run_resources import RunResources
+
+        with self.runtime() as (store, _session, _workspace):
+            chat_root = Path(store.data_directory).parent / "chat-root"
+            chat_root.mkdir()
+            chat = store.typed_runtime_repository().create_session(
+                str(chat_root), projectless=True
+            ).value
+            run, _ = store.create_run(chat.id, "chat")
+
+            with RunResources(store, run["id"], run["extensionSnapshot"]) as resources:
+                self.assertIsNotNone(resources.registry)
+                self.assertEqual(resources.registry.entries, ())
+                self.assertIsNone(resources.tool_executor)
+                self.assertIsNone(resources.mcp)
+
+    def test_projectless_engine_skips_repository_runtime(self) -> None:
+        from eidos_runtime.runtime.engine import RuntimeEngine
+
+        class RejectingRepositoryRuntime:
+            def ensure_ready(self, *_args, **_kwargs):
+                raise AssertionError("projectless runs must not build a repository index")
+
+        with self.runtime() as (store, _session, _workspace):
+            chat_root = Path(store.data_directory).parent / "chat-root"
+            chat_root.mkdir()
+            chat = store.typed_runtime_repository().create_session(
+                str(chat_root), projectless=True
+            ).value
+            run, _ = store.create_run(chat.id, "chat")
+            model = ScriptedModel([ModelResponse(text="done")])
+
+            RuntimeEngine(
+                store,
+                model,
+                lambda _message: None,
+                repository_runtime=RejectingRepositoryRuntime(),
+            ).run(run["id"], threading.Event())
+
+            self.assertEqual(model.tool_definitions_history[0], ())
+
     def test_non_retryable_sampling_error_creates_only_one_attempt(self) -> None:
         from eidos_runtime.model.client import ModelRequestError, ModelRequestFailure
         from eidos_runtime.runtime.engine import RuntimeEngine

@@ -98,11 +98,15 @@ class SessionProjectProjection(EidosFrozenStrictModel):
 
 class SessionProjection(EidosFrozenStrictModel):
     session: Session
-    project: SessionProjectProjection
+    project: SessionProjectProjection | None = None
     worktree: SessionWorktreeProjection | None = None
 
     @model_validator(mode="after")
     def validate_binding(self) -> "SessionProjection":
+        if self.project is None:
+            if self.session.execution_mode is SessionExecutionMode.WORKTREE or self.worktree is not None:
+                raise ValueError("projectless Session must not have a Worktree binding")
+            return self
         if self.project.workspace_root != self.session.workspace_root:
             raise ValueError("Session Project projection is inconsistent")
         if self.session.execution_mode is SessionExecutionMode.LOCAL:

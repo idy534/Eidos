@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
-import type { ContextUsage, ModelId, Run } from "../contracts.js";
+import type { ContextUsage, ModelId, Run, Session } from "../contracts.js";
 import type { ComposerMode } from "../session-state.js";
 import { formatContextUsage } from "../context-usage.js";
 import { Button } from "./Button.js";
@@ -22,6 +22,14 @@ export interface ComposerProps {
   onCancel: () => void;
   onModelChange: (id: ModelId) => void;
   onOpenModelSettings: () => void;
+  showSessionContext?: boolean;
+  project?: Session["project"] | null;
+  projectless?: boolean;
+  executionMode?: "local" | "worktree" | undefined;
+  branch?: string | null | undefined;
+  onSelectProject?: (() => void) | undefined;
+  onLeaveProject?: (() => void) | undefined;
+  onExecutionModeChange?: ((mode: "local" | "worktree") => void) | undefined;
 }
 
 export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function Composer({
@@ -41,6 +49,14 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   onCancel,
   onModelChange,
   onOpenModelSettings,
+  showSessionContext = true,
+  project,
+  projectless = false,
+  executionMode,
+  branch,
+  onSelectProject,
+  onLeaveProject,
+  onExecutionModeChange,
 }, forwardedRef) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   useImperativeHandle(forwardedRef, () => textareaRef.current as HTMLTextAreaElement);
@@ -115,11 +131,73 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
     || !selectedModelId
     || !input.trim();
 
+  const hasProjectContext = showSessionContext && (project !== undefined || projectless);
+  const projectName = project ? basename(project.workspaceRoot) : undefined;
+
   return (
     <form
       className="composer"
       onSubmit={(e) => { e.preventDefault(); onSubmit(); }}
     >
+      {hasProjectContext && (
+        <div className="composer-context" aria-label="会话上下文">
+          {project ? (
+            <>
+              <span className="composer-context-project" title={project.workspaceRoot}>
+                {onLeaveProject ? (
+                  <button
+                    type="button"
+                    className="composer-context-project-action"
+                    aria-label="不在项目中工作"
+                    title="不在项目中工作"
+                    disabled={isSubmitting || Boolean(activeRun)}
+                    onClick={() => onLeaveProject()}
+                  >
+                    <FolderIcon />
+                    <span className="composer-context-project-close" aria-hidden="true">×</span>
+                  </button>
+                ) : (
+                  <FolderIcon />
+                )}
+                <span>{projectName}</span>
+              </span>
+              <label className="composer-context-mode">
+                <span className="sr-only">执行方式</span>
+                <select
+                  aria-label="执行方式"
+                  value={executionMode ?? "local"}
+                  disabled={isSubmitting || composerMode !== "idle" || !onExecutionModeChange}
+                  onChange={(event) => onExecutionModeChange?.(event.target.value as "local" | "worktree")}
+                >
+                  <option value="local">Local</option>
+                  <option value="worktree">Worktree</option>
+                </select>
+              </label>
+              <span className="composer-context-branch" title={branch ?? undefined}>
+                <BranchIcon />
+                <span>{branch ?? "未选择分支"}</span>
+              </span>
+            </>
+          ) : (
+            onSelectProject ? (
+              <button
+                type="button"
+                className="composer-context-project composer-context-project--empty"
+                onClick={() => onSelectProject()}
+                disabled={isSubmitting || Boolean(activeRun)}
+              >
+                <FolderIcon />
+                <span>选择项目</span>
+              </button>
+            ) : (
+              <span className="composer-context-project composer-context-project--empty">
+                <FolderIcon />
+                <span>无项目</span>
+              </span>
+            )
+          )}
+        </div>
+      )}
       <label className="sr-only" htmlFor="task-input">告诉 Eidos 要做什么</label>
       <textarea
         ref={textareaRef}
@@ -203,6 +281,29 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
     </form>
   );
 });
+
+function basename(path: string): string {
+  return path.split("/").filter(Boolean).at(-1) ?? path;
+}
+
+function FolderIcon() {
+  return (
+    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" aria-hidden="true">
+      <path d="M2.5 5C2.5 3.9 3.4 3 4.5 3h3.1c.5 0 1 .2 1.3.6L10 5h5.5C16.9 5 18 6.1 18 7.5v7C18 15.9 16.9 17 15.5 17h-11C3.1 17 2 15.9 2 14.5v-9c0-.3.2-.5.5-.5Z" fill="currentColor" fillOpacity=".12" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function BranchIcon() {
+  return (
+    <svg viewBox="0 0 20 20" width="20" height="20" fill="none" aria-hidden="true">
+      <circle cx="6" cy="4" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="6" cy="16" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="15" cy="5" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M6 6v6M8 14c3.7 0 7-1.6 7-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 export function UpArrowIcon() {
   return (

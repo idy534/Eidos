@@ -46,7 +46,7 @@ export interface SessionControllerActions {
   loadSessions: () => Promise<void>;
   selectSession: (session: Session) => Promise<SessionSnapshot | undefined>;
   createSession: (
-    workspaceRoot?: string,
+    workspaceRoot?: string | null,
     options?: {
       executionMode?: "local" | "worktree";
       baseRef?: string;
@@ -206,7 +206,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
   }, [snapshot]);
 
   const createSession = useCallback(async (
-    workspaceRoot?: string,
+    workspaceRoot?: string | null,
     options: {
       executionMode?: "local" | "worktree";
       baseRef?: string;
@@ -221,12 +221,9 @@ export function useSessionController(): [SessionControllerState, SessionControll
     setError(undefined);
 
     try {
-      const workspace = workspaceRoot ?? await window.eidosRuntime.selectWorkspace();
-      if (!workspace) return undefined;
-
       const session = Object.keys(options).length > 0
-        ? await window.eidosRuntime.createSession(workspace, options)
-        : await window.eidosRuntime.createSession(workspace);
+        ? await window.eidosRuntime.createSession(workspaceRoot ?? null, options)
+        : await window.eidosRuntime.createSession(workspaceRoot ?? null);
       const token = snapshotReads.select(session.id);
       selectedSessionIdRef.current = session.id;
       setNavigationSessionId(session.id);

@@ -39,8 +39,12 @@ export function SessionSidebar({
   runtimePresentation, isSelectingSessionId, gitStatusBySessionId = new Map(),
   onCreate, onCreateInProject, onSelect, onRename, onDelete, onOpenSettings,
 }: Props) {
-  const projects = groupSessionsByProject(sessions);
+  const visibleSessions = sessions.filter(
+    (session) => session.taskStatus !== "new" || Boolean(session.title?.trim()),
+  );
+  const projects = groupSessionsByProject(visibleSessions);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
+  const [recentExpanded, setRecentExpanded] = useState(true);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | undefined>(undefined);
 
   useEffect(() => {
@@ -68,53 +72,65 @@ export function SessionSidebar({
       </div>
       <PrimaryActionButton
         size="compact"
-        label="新建任务"
+        label="新建会话"
         shortcut="⌘N"
         disabled={disabled}
         onClick={onCreate}
       />
-      <nav aria-label="工作空间与任务">
-        <p className="nav-label">项目与任务</p>
-        {sessions.length === 0 ? (
+      <nav aria-label="项目与最近">
+        <p className="nav-label">项目</p>
+        {visibleSessions.length === 0 ? (
           <p className="nav-empty">还没有任务，点击上方按键创建</p>
         ) : (
           <ul className="workspace-list">
             {projects.map((project) => (
               <li key={project.key}>
-                <section className="workspace-group" aria-label={project.displayName}>
+                <section className={`workspace-group${project.projectless ? " workspace-group--recent" : ""}`} aria-label={project.displayName}>
                   <div className="workspace-title-row" title={project.workspaceRoot}>
-                    <button
-                      className="workspace-toggle"
-                      aria-expanded={!collapsedProjects.has(project.key)}
-                      onClick={() => setCollapsedProjects((current) => {
-                        const next = new Set(current);
-                        if (next.has(project.key)) {
-                          next.delete(project.key);
-                        } else {
-                          next.add(project.key);
-                        }
-                        return next;
-                      })}
-                    >
-                      <ChevronIcon open={!collapsedProjects.has(project.key)} />
-                      <FolderIcon open={!collapsedProjects.has(project.key)} />
-                      <span className="workspace-name">{project.displayName}</span>
-                    </button>
-                    <button
-                      className="workspace-add"
-                      aria-label={`在 ${project.displayName} 中新建任务`}
-                      disabled={disabled}
-                      onClick={() => {
-                        setCollapsedProjects((current) => {
+                    {project.projectless ? (
+                      <button
+                        className="workspace-toggle workspace-toggle--recent"
+                        aria-expanded={recentExpanded}
+                        onClick={() => setRecentExpanded((current) => !current)}
+                      >
+                        <span className="workspace-name">{project.displayName}</span>
+                        <ChevronIcon open={recentExpanded} />
+                      </button>
+                    ) : (
+                      <button
+                        className="workspace-toggle"
+                        aria-expanded={!collapsedProjects.has(project.key)}
+                        onClick={() => setCollapsedProjects((current) => {
                           const next = new Set(current);
-                          next.delete(project.key);
+                          if (next.has(project.key)) {
+                            next.delete(project.key);
+                          } else {
+                            next.add(project.key);
+                          }
                           return next;
-                        });
-                        onCreateInProject(project.workspaceRoot);
-                      }}
-                    >＋</button>
+                        })}
+                      >
+                        <FolderIcon open={!collapsedProjects.has(project.key)} />
+                        <span className="workspace-name">{project.displayName}</span>
+                      </button>
+                    )}
+                    {!project.projectless && (
+                      <button
+                        className="workspace-add"
+                        aria-label={`在 ${project.displayName} 中新建会话`}
+                        disabled={disabled}
+                        onClick={() => {
+                          setCollapsedProjects((current) => {
+                            const next = new Set(current);
+                            next.delete(project.key);
+                            return next;
+                          });
+                          onCreateInProject(project.workspaceRoot);
+                        }}
+                      >＋</button>
+                    )}
                   </div>
-                  {!collapsedProjects.has(project.key) && (
+                  {(project.projectless ? recentExpanded : !collapsedProjects.has(project.key)) && (
                     <ul className="session-list">
                       {project.sessions.map((session) => {
                         const status = taskStatusPresentation(

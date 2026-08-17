@@ -11,6 +11,7 @@ import type {
 export interface ProjectSessionGroup {
   key: string;
   projectId?: string;
+  projectless: boolean;
   workspaceRoot: string;
   displayName: string;
   gitAvailable: boolean;
@@ -63,10 +64,11 @@ export function groupSessionsByProject(sessions: Session[]): ProjectSessionGroup
   for (const session of sessions) {
     const project = session.project;
     const worktree = session.worktree;
+    const projectless = session.projectless === true;
     // The fallback is only for old event fixtures. Runtime session/list and
     // session/read always provide the explicit Project projection.
-    const key = project?.id ?? `workspace:${session.workspaceRoot}`;
-    const workspaceRoot = project?.workspaceRoot ?? session.workspaceRoot;
+    const key = projectless ? "projectless" : project?.id ?? `workspace:${session.workspaceRoot}`;
+    const workspaceRoot = project?.workspaceRoot ?? (projectless ? "" : session.workspaceRoot);
     const existing = grouped.get(key);
     if (existing) {
       existing.sessions.push(session);
@@ -78,9 +80,10 @@ export function groupSessionsByProject(sessions: Session[]): ProjectSessionGroup
           : worktree?.projectId
             ? { projectId: worktree.projectId }
             : {}),
+        projectless,
         workspaceRoot,
-        displayName: basename(workspaceRoot),
-        gitAvailable: project?.gitAvailable ?? worktree !== undefined,
+        displayName: projectless ? "最近" : basename(workspaceRoot),
+        gitAvailable: projectless ? false : project?.gitAvailable ?? worktree !== undefined,
         sessions: [session],
       });
     }
@@ -91,7 +94,7 @@ export function groupSessionsByProject(sessions: Session[]): ProjectSessionGroup
     sessions: [...group.sessions].sort((left, right) => right.createdAt - left.createdAt),
   })).sort((left, right) => (
     right.createdAt - left.createdAt
-    || left.workspaceRoot.localeCompare(right.workspaceRoot)
+    || left.displayName.localeCompare(right.displayName)
   ));
 }
 

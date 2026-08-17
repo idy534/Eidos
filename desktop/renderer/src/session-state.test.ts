@@ -327,6 +327,18 @@ test("direct and managed threads group by explicit Project identity", () => {
   assert.equal(groups.find((group) => group.key === "project-direct")?.displayName, "repository");
 });
 
+test("projectless sessions share the recent group", () => {
+  const groups = groupSessionsByProject([
+    { ...session, id: "chat-a", projectless: true, workspaceRoot: "/private/chat/a", createdAt: 3 },
+    { ...session, id: "chat-b", projectless: true, workspaceRoot: "/private/chat/b", createdAt: 2 },
+  ]);
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0]?.key, "projectless");
+  assert.equal(groups[0]?.displayName, "最近");
+  assert.equal(groups[0]?.projectId, undefined);
+});
+
 test("task statuses use compact accessible indicators", () => {
   assert.deepEqual(taskStatusPresentation("completed"), {
     label: "未读完成",

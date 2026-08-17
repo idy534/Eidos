@@ -77,7 +77,7 @@ export interface EidosRuntimeAPI {
   readSession(sessionId: string): Promise<SessionSnapshot>;
   listEvents(sessionId: string, afterEventId: number): Promise<EventListResult>;
   createSession(
-    workspaceRoot: string,
+    workspaceRoot: string | null,
     options?: {
       executionMode?: "local" | "worktree";
       baseRef?: string;
