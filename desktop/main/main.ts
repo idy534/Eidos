@@ -601,6 +601,38 @@ ipcMain.handle(IPC.SESSION_GIT_DIFF, (
   }
   return clientOrThrow().readSessionGitDiff(sessionId, scope, path as string | undefined);
 });
+ipcMain.handle(IPC.SESSION_GIT_SWITCH_BRANCH, (
+  _event,
+  sessionId: unknown,
+  branch: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof branch !== "string"
+    || !branch.trim()
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Git Switch Branch 参数无效。");
+  }
+  return clientOrThrow().switchSessionGitBranch(sessionId, branch, operationId);
+});
+ipcMain.handle(IPC.SESSION_GIT_CREATE_BRANCH, (
+  _event,
+  sessionId: unknown,
+  branch: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof branch !== "string"
+    || !branch.trim()
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Git Create Branch 参数无效。");
+  }
+  return clientOrThrow().createSessionGitBranch(sessionId, branch, operationId);
+});
 ipcMain.handle(IPC.SESSION_GIT_STAGE, (
   _event,
   sessionId: unknown,

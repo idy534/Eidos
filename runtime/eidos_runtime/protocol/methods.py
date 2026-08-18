@@ -101,6 +101,24 @@ class SessionCreateBranchRequestDto(_OperationRequest):
     )
 
 
+class _SessionGitBranchRequest(_OperationRequest):
+    operation_id: StrictStr = Field(alias="operationId")
+    session_id: StrictStr = Field(alias="sessionId")
+    branch: StrictStr = Field(min_length=1, max_length=4096)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+
+class SessionGitSwitchBranchRequestDto(_SessionGitBranchRequest):
+    pass
+
+
+class SessionGitCreateBranchRequestDto(_SessionGitBranchRequest):
+    pass
+
+
 class GitContextRequestDto(MethodRequestDto):
     workspace_root: StrictStr = Field(
         alias="workspaceRoot", min_length=1, max_length=4096
@@ -650,6 +668,14 @@ class SessionGitDiscardResponseDto(SessionGitMutationResponseDto):
 
 class SessionGitCommitResponseDto(SessionGitMutationResponseDto):
     commit: StrictStr
+
+
+class SessionGitSwitchBranchResponseDto(SessionGitMutationResponseDto):
+    pass
+
+
+class SessionGitCreateBranchResponseDto(SessionGitMutationResponseDto):
+    pass
 
 
 class GitRemoteDto(ClosedModel):

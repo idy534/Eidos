@@ -59,6 +59,7 @@ def test_runtime_application_container_composes_all_phase_ef_boundaries(tmp_path
     assert {
         "session/gitStatus", "session/gitDiff", "session/gitStage",
         "session/gitUnstage", "session/gitCommit", "session/gitDiscard",
+        "session/gitSwitchBranch", "session/gitCreateBranch",
         "session/gitRemoteStatus",
         "session/gitFetch", "session/gitPull", "session/gitPush",
         "session/gitMerge", "session/gitMergeAbort",

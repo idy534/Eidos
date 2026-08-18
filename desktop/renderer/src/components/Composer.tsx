@@ -27,6 +27,9 @@ export interface ComposerProps {
   projectless?: boolean;
   executionMode?: "local" | "worktree" | undefined;
   branch?: string | null | undefined;
+  branches?: string[] | undefined;
+  onBranchChange?: ((branch: string) => void) | undefined;
+  branchChanging?: boolean;
   onSelectProject?: (() => void) | undefined;
   onLeaveProject?: (() => void) | undefined;
   onExecutionModeChange?: ((mode: "local" | "worktree") => void) | undefined;
@@ -54,6 +57,9 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   projectless = false,
   executionMode,
   branch,
+  branches,
+  onBranchChange,
+  branchChanging = false,
   onSelectProject,
   onLeaveProject,
   onExecutionModeChange,
@@ -175,10 +181,26 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
                       <option value="worktree">Worktree</option>
                     </select>
                   </label>
-                  <span className="composer-context-branch" title={branch ?? undefined}>
-                    <BranchIcon />
-                    <span>{branch ?? "未选择分支"}</span>
-                  </span>
+                  {onBranchChange && branches && branches.length > 0 ? (
+                    <label className="composer-context-branch">
+                      <BranchIcon />
+                      <span className="sr-only">本地分支</span>
+                      <select
+                        aria-label="本地分支"
+                        value={branch ?? ""}
+                        disabled={isSubmitting || Boolean(activeRun) || branchChanging || !isIdle}
+                        onChange={(event) => onBranchChange(event.target.value)}
+                      >
+                        {branch === null && <option value="">Detached HEAD</option>}
+                        {branches.map((name) => <option key={name} value={name}>{name}</option>)}
+                      </select>
+                    </label>
+                  ) : (
+                    <span className="composer-context-branch" title={branch ?? undefined}>
+                      <BranchIcon />
+                      <span>{branch ?? "未选择分支"}</span>
+                    </span>
+                  )}
                 </>
               )}
             </>

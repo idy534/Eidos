@@ -113,6 +113,10 @@ test("preserves every workspace and lifecycle business code in the closed contra
     "BASE_REF_NOT_FOUND",
     "GIT_COMMAND_TIMEOUT",
     "GIT_REMOTE_OUTCOME_UNCERTAIN",
+    "LOCAL_REQUIRED",
+    "GIT_BRANCH_NOT_FOUND",
+    "GIT_BRANCH_SWITCH_FAILED",
+    "GIT_BRANCH_CREATE_FAILED",
     "WORKTREE_CREATE_FAILED",
     "WORKTREE_PERSISTENCE_FAILED",
     "WORKTREE_RECOVERY_REQUIRED",
@@ -414,6 +418,26 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
       await client.commitSessionGit(local.id, "local workflow", commitOperationId),
       committed,
     );
+    await execFileAsync("git", ["branch", "text/aaa-0818"], { cwd: repositoryRoot });
+    const switchOperationId = randomUUID();
+    const switched = await client.switchSessionGitBranch(
+      local.id,
+      "text/aaa-0818",
+      switchOperationId,
+    );
+    assert.equal(switched.branch, "text/aaa-0818");
+    assert.deepEqual(
+      await client.switchSessionGitBranch(local.id, "text/aaa-0818", switchOperationId),
+      switched,
+    );
+    const createOperationId = randomUUID();
+    const createdBranch = await client.createSessionGitBranch(
+      local.id,
+      "feature/from-text",
+      createOperationId,
+    );
+    assert.equal(createdBranch.branch, "feature/from-text");
+    assert.equal(createdBranch.head, switched.head);
     await assert.rejects(
       client.commitSessionGit(local.id, "nothing staged", randomUUID()),
       (error: unknown) => (

@@ -20,6 +20,7 @@ from eidos_runtime.application.errors import (
 )
 from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
 from eidos_runtime.application.git_workflow import (
+    GitBranchPlan,
     GitFetchPlan,
     GitMergePlan,
     GitMutationPlan,
@@ -59,6 +60,7 @@ from eidos_runtime.git.models import (
     ProjectResolution,
 )
 from eidos_runtime.git.status import DiffScope, GitDiffSnapshot, GitStatusSnapshot
+from eidos_runtime.repo_intelligence.watcher import RepositoryChange
 from eidos_runtime.protocol.methods import (
     EventListRequestDto,
     EventListResponseDto,
@@ -77,6 +79,8 @@ from eidos_runtime.protocol.methods import (
     SessionGitDiffResponseDto,
     SessionGitCommitRequestDto,
     SessionGitCommitResponseDto,
+    SessionGitCreateBranchRequestDto,
+    SessionGitCreateBranchResponseDto,
     SessionGitDiscardRequestDto,
     SessionGitDiscardResponseDto,
     SessionGitFetchRequestDto,
@@ -99,8 +103,11 @@ from eidos_runtime.protocol.methods import (
     SessionGitRebaseResponseDto,
     SessionGitStageRequestDto,
     SessionGitStageResponseDto,
+    SessionGitMutationResponseDto,
     SessionGitStatusRequestDto,
     SessionGitStatusResponseDto,
+    SessionGitSwitchBranchRequestDto,
+    SessionGitSwitchBranchResponseDto,
     SessionGitUnstageRequestDto,
     SessionGitUnstageResponseDto,
     SessionListRequestDto,
@@ -145,7 +152,10 @@ from eidos_runtime.sandbox.sensitive import (
 
 MAX_SESSION_TITLE_BYTES = 120
 ResultT = TypeVar("ResultT", bound=MethodResultDto)
-GitPlanT = TypeVar("GitPlanT", GitMutationPlan, GitMergePlan, GitRebasePlan)
+BranchResultT = TypeVar("BranchResultT", bound=SessionGitMutationResponseDto)
+GitPlanT = TypeVar(
+    "GitPlanT", GitMutationPlan, GitBranchPlan, GitMergePlan, GitRebasePlan
+)
 
 
 class TypedSessionRepositoryPort(Protocol):
@@ -188,6 +198,8 @@ class TypedSessionRepositoryPort(Protocol):
     ) -> CommittedMutation[DeletedSession]: ...
 
     def assert_session_deletable(self, session_id: str) -> None: ...
+
+    def has_active_run_for_workspace(self, workspace_root: str) -> bool: ...
 
     def assert_session_idle(self, session_id: str) -> None: ...
 
@@ -295,6 +307,8 @@ class SessionStorePort(Protocol):
 
 class RepositoryWorkspaceRuntimePort(Protocol):
     def activate_workspace(self, root: Path) -> object: ...
+
+    def invalidate(self, root: Path, changes: tuple[RepositoryChange, ...]) -> None: ...
 
 
 class ManagedWorktreePort(Protocol):
@@ -1322,6 +1336,32 @@ class SessionApplication:
             execute=self._git_workflow.commit,
         )
 
+    def git_switch_branch(
+        self, request: SessionGitSwitchBranchRequestDto
+    ) -> SessionGitSwitchBranchResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        return self._execute_local_branch_mutation(
+            request,
+            scope="session/gitSwitchBranch",
+            result_type=SessionGitSwitchBranchResponseDto,
+            preflight=lambda: self._git_workflow.preflight_switch_branch(request),
+            execute=self._git_workflow.switch_branch,
+        )
+
+    def git_create_branch(
+        self, request: SessionGitCreateBranchRequestDto
+    ) -> SessionGitCreateBranchResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        return self._execute_local_branch_mutation(
+            request,
+            scope="session/gitCreateBranch",
+            result_type=SessionGitCreateBranchResponseDto,
+            preflight=lambda: self._git_workflow.preflight_create_branch(request),
+            execute=self._git_workflow.create_branch,
+        )
+
     def git_discard(
         self, request: SessionGitDiscardRequestDto
     ) -> SessionGitDiscardResponseDto:
@@ -1686,12 +1726,15 @@ class SessionApplication:
             | SessionGitRebaseRequestDto
             | SessionGitRebaseContinueRequestDto
             | SessionGitRebaseAbortRequestDto
+            | SessionGitSwitchBranchRequestDto
+            | SessionGitCreateBranchRequestDto
         ),
         *,
         scope: str,
         result_type: type[ResultT],
         preflight: Callable[[], GitPlanT],
         execute: Callable[[GitPlanT], ResultT],
+        after_execute: Callable[[GitPlanT], None] | None = None,
     ) -> ResultT:
         operation_request = request.to_json_value()
         operation_request.pop("operationId", None)
@@ -1722,6 +1765,8 @@ class SessionApplication:
                     except OperationInProgressError as error:
                         raise ApplicationError("OPERATION_IN_PROGRESS") from error
                 result = execute(plan)
+                if after_execute is not None:
+                    after_execute(plan)
             if request.operation_id is None:
                 return result
             try:
@@ -1736,6 +1781,43 @@ class SessionApplication:
             except OperationInProgressError as error:
                 raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
             return _result(result_type, completed)
+
+    def _execute_local_branch_mutation(
+        self,
+        request: SessionGitSwitchBranchRequestDto | SessionGitCreateBranchRequestDto,
+        *,
+        scope: str,
+        preflight: Callable[[], GitBranchPlan],
+        result_type: type[BranchResultT],
+        execute: Callable[[GitBranchPlan], BranchResultT],
+    ) -> BranchResultT:
+        session = self._repository.read_session(request.session_id)
+        if session is None:
+            raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
+        workspace_lock = (
+            self._lifecycle.hold_workspace(session.workspace_root)
+            if session.worktree_id is None
+            else nullcontext()
+        )
+        with workspace_lock:
+            return self._execute_git_mutation(
+                request,
+                scope=scope,
+                result_type=result_type,
+                preflight=preflight,
+                execute=execute,
+                after_execute=lambda plan: self._invalidate_repository_workspace(
+                    plan.root
+                ),
+            )
+
+    def _invalidate_repository_workspace(self, root: Path) -> None:
+        if self._repository_runtime is None:
+            return
+        self._repository_runtime.invalidate(
+            root,
+            (RepositoryChange(path=".git/HEAD", change="modified"),),
+        )
 
     def _git_operation_replay(
         self,

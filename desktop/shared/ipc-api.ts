@@ -104,6 +104,16 @@ export interface EidosRuntimeAPI {
     scope: GitDiffScope,
     path?: string,
   ): Promise<SessionGitDiff>;
+  switchSessionGitBranch(
+    sessionId: string,
+    branch: string,
+    operationId: string,
+  ): Promise<SessionGitMutationResult>;
+  createSessionGitBranch(
+    sessionId: string,
+    branch: string,
+    operationId: string,
+  ): Promise<SessionGitMutationResult>;
   stageSessionGit(
     sessionId: string,
     paths: string[],

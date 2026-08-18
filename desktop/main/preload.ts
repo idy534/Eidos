@@ -122,6 +122,18 @@ const api: EidosRuntimeAPI = {
     path?: string,
   ): Promise<SessionGitDiff> =>
     ipcRenderer.invoke(IPC.SESSION_GIT_DIFF, sessionId, scope, path),
+  switchSessionGitBranch: (
+    sessionId: string,
+    branch: string,
+    operationId: string,
+  ): Promise<SessionGitMutationResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_SWITCH_BRANCH, sessionId, branch, operationId),
+  createSessionGitBranch: (
+    sessionId: string,
+    branch: string,
+    operationId: string,
+  ): Promise<SessionGitMutationResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_CREATE_BRANCH, sessionId, branch, operationId),
   stageSessionGit: (
     sessionId: string,
     paths: string[],

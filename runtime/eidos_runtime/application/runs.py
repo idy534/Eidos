@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
@@ -325,33 +326,51 @@ class RunApplication:
                 )
 
         try:
-            with self._session_lifecycle.hold(request.session_id):
-                current_session = store.read_session(request.session_id)
-                if current_session is None:
+            if self._session_repository is not None:
+                projection = self._session_repository.read_session_projection(
+                    request.session_id
+                )
+                if projection is None:
                     raise ResourceNotFoundError("session not found")
-                expected_workspace_identity = self._admit_session_workspace(
-                    request.session_id
+                workspace_lock = (
+                    self._session_lifecycle.hold_workspace(
+                        projection.session.workspace_root
+                    )
+                    if projection.worktree is None
+                    else nullcontext()
                 )
-                workspace = store.workspace_for_session(request.session_id)
-                if expected_workspace_identity is None:
-                    expected_workspace_identity = workspace
-                elif expected_workspace_identity != workspace:
-                    raise WorkspaceIdentityChangedError("workspace_identity_changed")
-                if self._repository_runtime is not None and not store.session_is_projectless(
-                    request.session_id
-                ):
-                    self._repository_runtime.activate_workspace(workspace.path)
-                needs_title = "title" not in current_session
-                created, _user_item = store.enqueue_run(
-                    request.session_id,
-                    user_input,
-                    operation_id=request.operation_id,
-                    session_title=None,
-                    model_id=model_id,
-                    model_profile=model_profile,
-                    extension_snapshot=extension_snapshot,
-                    expected_workspace_identity=expected_workspace_identity,
+            else:
+                workspace_lock = self._session_lifecycle.hold_workspace(
+                    store.workspace_for_session(request.session_id).path
                 )
+            with workspace_lock:
+                with self._session_lifecycle.hold(request.session_id):
+                    current_session = store.read_session(request.session_id)
+                    if current_session is None:
+                        raise ResourceNotFoundError("session not found")
+                    expected_workspace_identity = self._admit_session_workspace(
+                        request.session_id
+                    )
+                    workspace = store.workspace_for_session(request.session_id)
+                    if expected_workspace_identity is None:
+                        expected_workspace_identity = workspace
+                    elif expected_workspace_identity != workspace:
+                        raise WorkspaceIdentityChangedError("workspace_identity_changed")
+                    if self._repository_runtime is not None and not store.session_is_projectless(
+                        request.session_id
+                    ):
+                        self._repository_runtime.activate_workspace(workspace.path)
+                    needs_title = "title" not in current_session
+                    created, _user_item = store.enqueue_run(
+                        request.session_id,
+                        user_input,
+                        operation_id=request.operation_id,
+                        session_title=None,
+                        model_id=model_id,
+                        model_profile=model_profile,
+                        extension_snapshot=extension_snapshot,
+                        expected_workspace_identity=expected_workspace_identity,
+                    )
         except ResourceNotFoundError as error:
             raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
         except WorktreeError as error:

@@ -30,6 +30,8 @@ interface AppShellProps {
   runtime: RuntimeLifecycleState;
 }
 
+type CreateBranchMode = "local" | "worktree";
+
 /**
  * AppShell wires together domain controllers and renders the main layout.
  *
@@ -81,6 +83,7 @@ export function AppShell({ runtime }: AppShellProps) {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | undefined>(undefined);
   const [createBranchSessionId, setCreateBranchSessionId] = useState<string | undefined>(undefined);
+  const [createBranchMode, setCreateBranchMode] = useState<CreateBranchMode>("worktree");
   const [handoffSessionId, setHandoffSessionId] = useState<string | undefined>(undefined);
   const [contentView, setContentView] = useState<"conversation" | "files" | "changes">("conversation");
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -178,6 +181,7 @@ export function AppShell({ runtime }: AppShellProps) {
     deleteBusy ||
     Boolean(createBranchSessionId) ||
     Boolean(handoffSessionId) ||
+    sessionState.pending.branchSessionId !== undefined ||
     sessionState.pending.creatingBranchSessionId !== undefined ||
     sessionState.pending.handoffSessionId !== undefined ||
     sessionState.pending.creatingSession === true;
@@ -231,8 +235,27 @@ export function AppShell({ runtime }: AppShellProps) {
 
   async function confirmCreateBranch(branch: string): Promise<void> {
     if (!createBranchSessionId) return;
-    const result = await sessionActions.createSessionBranch(createBranchSessionId, branch);
-    if (result) setCreateBranchSessionId(undefined);
+    const result = createBranchMode === "local"
+      ? await sessionActions.createLocalBranch(createBranchSessionId, branch)
+      : await sessionActions.createSessionBranch(createBranchSessionId, branch);
+    if (result) {
+      setCreateBranchSessionId(undefined);
+      setCreateBranchMode("worktree");
+      gitReviewActions.refresh();
+    }
+  }
+
+  function openCreateBranch(sessionId: string, mode: CreateBranchMode): void {
+    sessionActions.setError(undefined);
+    setCreateBranchMode(mode);
+    setCreateBranchSessionId(sessionId);
+  }
+
+  async function switchLocalBranch(branch: string): Promise<void> {
+    const sessionId = sessionState.snapshot?.session.id;
+    if (!sessionId || !branch || branch === sessionBranch) return;
+    const result = await sessionActions.switchLocalBranch(sessionId, branch);
+    if (result) gitReviewActions.refresh();
   }
 
   async function confirmHandoff(target: "local" | "worktree"): Promise<void> {
@@ -342,6 +365,8 @@ export function AppShell({ runtime }: AppShellProps) {
   const { snapshot } = sessionState;
   const { approvals, respondingApprovalIds, respondingKindByApprovalId, errorsByApprovalId } = approvalState;
   const sessionWorktree = snapshot?.session.worktree;
+  const sessionIsLocal = snapshot?.session.executionMode === "local"
+    || (snapshot?.session.executionMode === undefined && sessionWorktree === undefined);
   const sessionHasProject = Boolean(snapshot && snapshot.session.projectless !== true && snapshot.session.project);
   const sessionHasGit = snapshot?.session.project?.gitAvailable === true;
   const sessionBranch = gitReviewState.status?.branch ?? sessionWorktree?.branch ?? null;
@@ -553,14 +578,12 @@ export function AppShell({ runtime }: AppShellProps) {
                   Boolean(activeRun)
                   || runState.isSubmitting
                   || handoffBusy
+                  || sessionState.pending.branchSessionId === snapshot.session.id
                   || sessionState.pending.creatingBranchSessionId === snapshot.session.id
                 }
                 onCreateBranch={
-                  sessionWorktree?.state === "active" && sessionWorktree.branch === null
-                    ? () => {
-                        sessionActions.setError(undefined);
-                        setCreateBranchSessionId(snapshot.session.id);
-                      }
+                  sessionIsLocal || (sessionWorktree?.state === "active" && sessionWorktree.branch === null)
+                    ? () => openCreateBranch(snapshot.session.id, sessionIsLocal ? "local" : "worktree")
                     : undefined
                 }
               />
@@ -619,6 +642,9 @@ export function AppShell({ runtime }: AppShellProps) {
                   projectless={snapshot.session.projectless === true}
                   executionMode={snapshot.session.executionMode}
                   branch={sessionBranch}
+                  branches={sessionIsLocal ? gitReviewState.projectContext?.branches : undefined}
+                  onBranchChange={sessionIsLocal ? (branch) => void switchLocalBranch(branch) : undefined}
+                  branchChanging={sessionState.pending.branchSessionId === snapshot.session.id}
                   onSelectProject={() => void handleSelectProject()}
                   onLeaveProject={() => void handleCreateSession(null)}
                   onExecutionModeChange={sessionHasGit ? requestExecutionModeChange : undefined}
@@ -657,12 +683,14 @@ export function AppShell({ runtime }: AppShellProps) {
 
       <CreateBranchDialog
         open={Boolean(createBranchSessionId)}
+        mode={createBranchMode}
         busy={sessionState.pending.creatingBranchSessionId !== undefined}
         error={sessionState.error}
         getFallbackFocus={getDialogFallbackFocus}
         onConfirm={(branch) => void confirmCreateBranch(branch)}
         onCancel={() => {
           setCreateBranchSessionId(undefined);
+          setCreateBranchMode("worktree");
           sessionActions.setError(undefined);
         }}
       />

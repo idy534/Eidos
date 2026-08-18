@@ -717,6 +717,22 @@ class RuntimeServer:
                 ),
             ),
             (
+                "session/gitSwitchBranch",
+                method_dtos.SessionGitSwitchBranchRequestDto,
+                method_dtos.SessionGitSwitchBranchResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_switch_branch(
+                    request
+                ),
+            ),
+            (
+                "session/gitCreateBranch",
+                method_dtos.SessionGitCreateBranchRequestDto,
+                method_dtos.SessionGitCreateBranchResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_create_branch(
+                    request
+                ),
+            ),
+            (
                 "session/list",
                 method_dtos.SessionListRequestDto,
                 method_dtos.SessionListResponseDto,

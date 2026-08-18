@@ -1,5 +1,11 @@
 import { useCallback, useRef, useState } from "react";
-import type { CreateBranchResult, Run, Session, SessionSnapshot } from "../contracts.js";
+import type {
+  CreateBranchResult,
+  Run,
+  Session,
+  SessionGitMutationResult,
+  SessionSnapshot,
+} from "../contracts.js";
 import { SnapshotReadCoordinator, taskStatusFromRun, upsertRun, userFacingError } from "../session-state.js";
 
 const READ_COMPLETIONS_KEY = "eidos.readCompletedSessionIds";
@@ -26,6 +32,7 @@ function saveReadCompletedSessions(set: Set<string>): void {
 export interface PendingOperations {
   creatingSession?: boolean;
   creatingBranchSessionId?: string;
+  branchSessionId?: string;
   selectingSessionId?: string;
   renamingSessionId?: string;
   deletingSessionId?: string;
@@ -57,6 +64,14 @@ export interface SessionControllerActions {
     sessionId: string,
     branch: string,
   ) => Promise<CreateBranchResult | undefined>;
+  switchLocalBranch: (
+    sessionId: string,
+    branch: string,
+  ) => Promise<SessionGitMutationResult | undefined>;
+  createLocalBranch: (
+    sessionId: string,
+    branch: string,
+  ) => Promise<SessionGitMutationResult | undefined>;
   handoffSession: (
     sessionId: string,
     target: "local" | "worktree",
@@ -286,6 +301,42 @@ export function useSessionController(): [SessionControllerState, SessionControll
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot]);
 
+  const switchLocalBranch = useCallback(async (
+    sessionId: string,
+    branch: string,
+  ): Promise<SessionGitMutationResult | undefined> => {
+    setPending((prev) => ({ ...prev, branchSessionId: sessionId }));
+    setError(undefined);
+    try {
+      return await window.eidosRuntime.switchSessionGitBranch(
+        sessionId, branch, crypto.randomUUID(),
+      );
+    } catch (cause) {
+      setError(userFacingError(cause));
+      return undefined;
+    } finally {
+      clearPending("branchSessionId");
+    }
+  }, []);
+
+  const createLocalBranch = useCallback(async (
+    sessionId: string,
+    branch: string,
+  ): Promise<SessionGitMutationResult | undefined> => {
+    setPending((prev) => ({ ...prev, creatingBranchSessionId: sessionId }));
+    setError(undefined);
+    try {
+      return await window.eidosRuntime.createSessionGitBranch(
+        sessionId, branch, crypto.randomUUID(),
+      );
+    } catch (cause) {
+      setError(userFacingError(cause));
+      return undefined;
+    } finally {
+      clearPending("creatingBranchSessionId");
+    }
+  }, []);
+
   const handoffSession = useCallback(async (
     sessionId: string,
     target: "local" | "worktree",
@@ -439,6 +490,8 @@ export function useSessionController(): [SessionControllerState, SessionControll
     selectSession,
     createSession,
     createSessionBranch,
+    switchLocalBranch,
+    createLocalBranch,
     handoffSession,
     restoreWorktree,
     renameSession,

@@ -30,6 +30,8 @@ export const IPC = {
   SESSION_DELETE: "session:delete",
   SESSION_GIT_STATUS: "session:git-status",
   SESSION_GIT_DIFF: "session:git-diff",
+  SESSION_GIT_SWITCH_BRANCH: "session:git-switch-branch",
+  SESSION_GIT_CREATE_BRANCH: "session:git-create-branch",
   SESSION_GIT_STAGE: "session:git-stage",
   SESSION_GIT_UNSTAGE: "session:git-unstage",
   SESSION_GIT_COMMIT: "session:git-commit",

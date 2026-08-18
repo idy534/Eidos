@@ -54,6 +54,10 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "BRANCH_INVALID",
   "WORKTREE_BRANCH_CREATE_FAILED",
   "WORKTREE_BRANCH_STATE_CHANGED",
+  "LOCAL_REQUIRED",
+  "GIT_BRANCH_NOT_FOUND",
+  "GIT_BRANCH_SWITCH_FAILED",
+  "GIT_BRANCH_CREATE_FAILED",
   "WORKTREE_NOT_FOUND",
   "WORKTREE_INVALID",
   "WORKSPACE_IDENTITY_UNAVAILABLE",
@@ -487,6 +491,26 @@ export class RuntimeClient {
   ): Promise<SessionGitDiff> {
     return this.validatedRequest(
       "session/gitDiff", { sessionId, scope, ...(path === undefined ? {} : { path }) }, isSessionGitDiff,
+    );
+  }
+
+  switchSessionGitBranch(
+    sessionId: string,
+    branch: string,
+    operationId: string,
+  ): Promise<SessionGitMutationResult> {
+    return this.validatedRequest(
+      "session/gitSwitchBranch", { operationId, sessionId, branch }, isSessionGitMutationResult,
+    );
+  }
+
+  createSessionGitBranch(
+    sessionId: string,
+    branch: string,
+    operationId: string,
+  ): Promise<SessionGitMutationResult> {
+    return this.validatedRequest(
+      "session/gitCreateBranch", { operationId, sessionId, branch }, isSessionGitMutationResult,
     );
   }
 

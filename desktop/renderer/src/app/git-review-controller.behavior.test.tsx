@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
   EidosRuntimeAPI,
+  ProjectGitContext,
   RuntimeNotification,
   Session,
   SessionGitStatus,
@@ -59,6 +60,14 @@ describe("useGitReviewController", () => {
     const api: Partial<EidosRuntimeAPI> = {
       readSessionGitStatus: vi.fn().mockResolvedValue(gitStatus),
       readSessionGitDiff: vi.fn(),
+      readProjectGitContext: vi.fn().mockResolvedValue({
+        gitAvailable: true,
+        currentBranch: "main",
+        head: "b".repeat(40),
+        branches: ["main", "dev-830-xl"],
+        dirty: false,
+        changedFileCount: 0,
+      } satisfies ProjectGitContext),
     };
     (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
   });
@@ -187,6 +196,23 @@ describe("useGitReviewController", () => {
 
     expect(window.eidosRuntime.readSessionGitStatus).not.toHaveBeenCalled();
     expect(window.eidosRuntime.readSessionGitDiff).not.toHaveBeenCalled();
+  });
+
+  it("loads local project branches for branch controls", async () => {
+    const { result } = renderHook(() => useGitReviewController({
+      ready: true,
+      session: {
+        ...managedSession,
+        id: "local",
+        executionMode: "local",
+        worktree: undefined,
+      },
+    }));
+
+    await waitFor(() => expect(result.current[0].projectContext?.branches).toEqual([
+      "main", "dev-830-xl",
+    ]));
+    expect(window.eidosRuntime.readProjectGitContext).toHaveBeenCalledWith("/repository");
   });
 
   it("does not let a late response from the previous Session replace the selection", async () => {

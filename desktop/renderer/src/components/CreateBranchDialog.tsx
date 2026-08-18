@@ -5,6 +5,7 @@ import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
 
 interface CreateBranchDialogProps {
   open: boolean;
+  mode?: "local" | "worktree";
   busy?: boolean;
   error?: string | undefined;
   getFallbackFocus?: (() => HTMLElement | null) | undefined;
@@ -14,6 +15,7 @@ interface CreateBranchDialogProps {
 
 export function CreateBranchDialog({
   open,
+  mode = "worktree",
   busy = false,
   error,
   getFallbackFocus,
@@ -89,7 +91,7 @@ export function CreateBranchDialog({
         <div className="modal-header">
           <h3 id="create-branch-dialog-title">Create Branch</h3>
           <p className="modal-subtitle" id="create-branch-dialog-description">
-            在当前 detached Worktree 上创建分支。
+            {mode === "local" ? "基于当前本地分支创建并切换到新分支。" : "在当前 detached Worktree 上创建分支。"}
           </p>
         </div>
         <form

@@ -95,6 +95,7 @@ describe("Composer DOM interaction & state behavior", () => {
 
   it("renders project context above the input and defaults execution mode to Local", () => {
     const onExecutionModeChange = vi.fn();
+    const onBranchChange = vi.fn();
     const onLeaveProject = vi.fn();
     render(
       <Composer
@@ -102,13 +103,15 @@ describe("Composer DOM interaction & state behavior", () => {
         project={{ id: "project-a", workspaceRoot: "/workspace/star-hub", gitAvailable: true }}
         executionMode={undefined}
         branch="dev-830-xl"
+        branches={["main", "dev-830-xl"]}
+        onBranchChange={onBranchChange}
         onExecutionModeChange={onExecutionModeChange}
         onLeaveProject={onLeaveProject}
       />,
     );
 
     expect(screen.getByText("star-hub")).toBeInTheDocument();
-    expect(screen.getByText("dev-830-xl")).toBeInTheDocument();
+    expect(screen.getByLabelText("本地分支")).toHaveValue("dev-830-xl");
     expect(screen.getByLabelText("执行方式")).toHaveValue("local");
     const leaveProjectButton = screen.getByRole("button", { name: "不在项目中工作" });
     expect(leaveProjectButton).toHaveClass("composer-context-project-action");
@@ -116,6 +119,8 @@ describe("Composer DOM interaction & state behavior", () => {
 
     fireEvent.change(screen.getByLabelText("执行方式"), { target: { value: "worktree" } });
     expect(onExecutionModeChange).toHaveBeenCalledWith("worktree");
+    fireEvent.change(screen.getByLabelText("本地分支"), { target: { value: "main" } });
+    expect(onBranchChange).toHaveBeenCalledWith("main");
     fireEvent.click(leaveProjectButton);
     expect(onLeaveProject).toHaveBeenCalledTimes(1);
   });

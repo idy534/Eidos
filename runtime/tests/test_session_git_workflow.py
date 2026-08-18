@@ -13,14 +13,17 @@ from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.git import DulwichGitBackend, WorktreeManager
 from eidos_runtime.git.errors import GitCommandTimeoutError
 from eidos_runtime.git.native import GitCli, HardenedGitRunner
+from eidos_runtime.repo_intelligence.watcher import RepositoryChange
 from eidos_runtime.protocol.methods import (
     SessionCreateBranchRequestDto,
     SessionCreateRequestDto,
     SessionGitCommitRequestDto,
+    SessionGitCreateBranchRequestDto,
     SessionGitDiffRequestDto,
     SessionGitDiscardRequestDto,
     SessionGitStageRequestDto,
     SessionGitStatusRequestDto,
+    SessionGitSwitchBranchRequestDto,
     SessionGitUnstageRequestDto,
 )
 
@@ -51,6 +54,8 @@ def _repository(tmp_path: Path) -> Path:
 
 def _application(
     tmp_path: Path,
+    *,
+    repository_runtime: object | None = None,
 ) -> tuple[SessionStore, WorktreeManager, SessionApplication]:
     store = SessionStore(tmp_path / "data")
     store.initialize()
@@ -65,8 +70,20 @@ def _application(
             store,
             scan_text=lambda value: value,
             worktree_manager=manager,
+            repository_runtime=repository_runtime,
         ),
     )
+
+
+class _RepositoryRuntime:
+    def __init__(self) -> None:
+        self.invalidations: list[tuple[Path, tuple[RepositoryChange, ...]]] = []
+
+    def activate_workspace(self, _root: Path) -> object:
+        return object()
+
+    def invalidate(self, root: Path, changes: tuple[RepositoryChange, ...]) -> None:
+        self.invalidations.append((root, changes))
 
 
 def _create_session(
@@ -148,6 +165,101 @@ def test_local_stage_unstage_and_commit_return_refreshed_status(tmp_path: Path) 
         assert committed["commit"] == committed["head"]
         assert committed["status"]["stagedFiles"] == []
         assert committed["status"]["untrackedFiles"] == ["new file.txt"]
+    finally:
+        store.close()
+
+
+def test_local_branch_switch_and_create_from_current_branch(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    _git(repository, "switch", "-c", "text/aaa-0818")
+    _git(repository, "switch", "main")
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = _create_session(application, repository, execution_mode="local")
+
+        switched = application.git_switch_branch(
+            SessionGitSwitchBranchRequestDto(
+                operationId=str(uuid.uuid4()),
+                sessionId=session["id"],
+                branch="text/aaa-0818",
+            )
+        ).root
+        assert switched["branch"] == "text/aaa-0818"
+        assert _git(repository, "branch", "--show-current") == "text/aaa-0818"
+
+        created = application.git_create_branch(
+            SessionGitCreateBranchRequestDto(
+                operationId=str(uuid.uuid4()),
+                sessionId=session["id"],
+                branch="feature/from-text",
+            )
+        ).root
+        assert created["branch"] == "feature/from-text"
+        assert created["head"] == switched["head"]
+        assert _git(repository, "branch", "--show-current") == "feature/from-text"
+    finally:
+        store.close()
+
+
+def test_local_branch_mutations_guard_workspace_and_invalidate_repository_runtime(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    _git(repository, "switch", "-c", "text/aaa-0818")
+    _git(repository, "switch", "main")
+    repository_runtime = _RepositoryRuntime()
+    store, _manager, application = _application(
+        tmp_path, repository_runtime=repository_runtime
+    )
+    try:
+        session = _create_session(application, repository, execution_mode="local")
+        switch_request = SessionGitSwitchBranchRequestDto(
+            operationId=str(uuid.uuid4()),
+            sessionId=session["id"],
+            branch="text/aaa-0818",
+        )
+        switched = application.git_switch_branch(switch_request).root
+        assert application.git_switch_branch(switch_request).root == switched
+        assert len(repository_runtime.invalidations) == 1
+        invalidated_root, changes = repository_runtime.invalidations[0]
+        assert invalidated_root == repository.resolve()
+        assert changes[0].path == ".git/HEAD"
+
+        (repository / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+        with pytest.raises(ApplicationError) as dirty:
+            application.git_switch_branch(
+                SessionGitSwitchBranchRequestDto(
+                    operationId=str(uuid.uuid4()),
+                    sessionId=session["id"],
+                    branch="main",
+                )
+            )
+        assert dirty.value.code == "GIT_WORKTREE_DIRTY"
+        _git(repository, "restore", "--worktree", "tracked.txt")
+
+        with pytest.raises(ApplicationError) as duplicate:
+            application.git_create_branch(
+                SessionGitCreateBranchRequestDto(
+                    operationId=str(uuid.uuid4()),
+                    sessionId=session["id"],
+                    branch="main",
+                )
+            )
+        assert duplicate.value.code == "BRANCH_ALREADY_EXISTS"
+
+        other_session = _create_session(
+            application, repository, execution_mode="local"
+        )
+        store.create_run(other_session["id"], "active")
+        with pytest.raises(ApplicationError) as busy:
+            application.git_switch_branch(
+                SessionGitSwitchBranchRequestDto(
+                    operationId=str(uuid.uuid4()),
+                    sessionId=session["id"],
+                    branch="main",
+                )
+            )
+        assert busy.value.code == "GIT_WORKFLOW_BUSY"
     finally:
         store.close()
 
