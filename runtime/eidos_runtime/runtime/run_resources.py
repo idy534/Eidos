@@ -57,10 +57,6 @@ class RunResources:
 
     def __enter__(self) -> "RunResources":
         try:
-            if self.store.run_is_projectless(self.run_id):
-                self.registry = ToolRegistry(())
-                self.dispatcher = ToolDispatcher(self.registry)
-                return self
             workspace = self.store.workspace_for_run(self.run_id)
             self.tool_executor = ToolExecutor(workspace)
             self.skills = SkillCatalog(PluginCatalog(self.store))
@@ -95,8 +91,6 @@ class RunResources:
             raise
 
     def refresh(self, new_inputs: tuple[str, ...] = ()) -> None:
-        if self.store.run_is_projectless(self.run_id):
-            return
         if self.mcp is None:
             raise RuntimeError("run resources are not started")
         try:

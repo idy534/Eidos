@@ -309,13 +309,9 @@ def create_run_resolution_snapshot(
     model_value = model_profile.model_dump(mode="json")
     model_hash = canonical_sha256(model_value)
     model_id = f"model_{model_hash}"
-    base_permissions = (
-        BasePermissionProfile(workspaceRoots=(), entries=())
-        if projectless
-        else base_permission_profile_for_workspace(
-            Path(workspace_identity.path),
-            data_directory,
-        )
+    base_permissions = base_permission_profile_for_workspace(
+        Path(workspace_identity.path),
+        data_directory,
     )
     permission_json = canonical_json(
         base_permissions.model_dump(mode="json", by_alias=True)

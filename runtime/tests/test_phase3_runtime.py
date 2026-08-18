@@ -533,6 +533,98 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             self.assertIn("Use the checklist", result["data"]["content"])
             store.close()
 
+    def test_projectless_run_uses_enabled_plugin_skill_and_mcp(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-p3-projectless-resources-") as directory:
+            root = Path(directory)
+            data = root / "data"
+            chat_root = data / ".data-projectless" / "chat-root"
+            source = root / "plugin"
+            data.mkdir(mode=0o700)
+            chat_root.mkdir(parents=True)
+            source.mkdir()
+            (source / "skills" / "review").mkdir(parents=True)
+            (source / "skills" / "review" / "SKILL.md").write_text(
+                "---\nname: review\ndescription: Review files.\n---\n"
+                "Use the projectless checklist.\n",
+                encoding="utf-8",
+            )
+            (source / "server.py").write_bytes(
+                (Path(__file__).parent / "fixtures" / "mcp_fixture.py").read_bytes()
+            )
+            (source / "plugin.json").write_text(json.dumps({
+                "schemaVersion": 1,
+                "id": "demo",
+                "name": "Demo",
+                "version": "1.0.0",
+                "description": "Fixture",
+                "skills": [{"root": "skills/review"}],
+                "mcpServers": [{
+                    "id": "fixture",
+                    "executable": sys.executable,
+                    "argv": ["server.py"],
+                    "envNames": [],
+                    "permissionProfile": "workspace_read",
+                    "startupTimeoutSeconds": 5,
+                    "toolTimeoutSeconds": 2,
+                    "enabled": True,
+                }],
+            }), encoding="utf-8")
+            store = SessionStore(data)
+            store.initialize()
+            plugins = PluginCatalog(store)
+            plugins.import_directory(source)
+            plugins.set_enabled("demo", True)
+            plugins.set_mcp_enabled("demo", "fixture", True)
+            session = store.typed_runtime_repository().create_session(
+                str(chat_root), projectless=True
+            ).value
+            run, _ = store.create_run(
+                session.id,
+                "Use @demo:review and call echo",
+                extension_snapshot=SkillCatalog(plugins).extension_snapshot(),
+            )
+            model = ScriptedModel([
+                ModelResponse(tool_calls=(ModelToolCall(
+                    "search", "tool_search", {"query": "echo"}
+                ),)),
+                ModelResponse(tool_calls=(ModelToolCall(
+                    "echo", "mcp__fixture__echo", {"message": "hello"}
+                ),)),
+                ModelResponse(text="done"),
+            ])
+            resources = ResourceRegistry()
+            kernel = RuntimeAsyncKernel(resource_registry=resources)
+            kernel.start()
+            try:
+                RuntimeEngine(
+                    store, model, lambda _message: None,
+                    request_approval=lambda _params, _cancel: (
+                        ApprovalDecision("approve")
+                    ),
+                    async_kernel=kernel,
+                    mcp_sandbox=False,
+                    resource_registry=resources,
+                ).run(run["id"], threading.Event())
+            finally:
+                kernel.close()
+
+            self.assertEqual(store.read_run(run["id"])["status"], "succeeded")
+            self.assertEqual(
+                Path(store.workspace_for_run(run["id"]).path), chat_root.resolve()
+            )
+            self.assertIn(
+                "Use the projectless checklist.",
+                json.dumps(model.contexts[0]),
+            )
+            self.assertIn(
+                "mcp__fixture__echo",
+                {value.name for value in model.tool_definitions_history[1]},
+            )
+            self.assertIn(
+                "mcp__fixture__echo", store.activated_tools(run["id"])
+            )
+            store.close()
+
     def test_each_model_step_persists_its_tools_and_tool_call_provenance(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-p3-runtime-") as directory:
             root = Path(directory)

@@ -173,7 +173,7 @@ class RuntimeArchitectureTests(unittest.TestCase):
             close_tool_executor.assert_called_once()
             close_mcp.assert_called_once()
 
-    def test_projectless_run_exposes_no_workspace_tools(self) -> None:
+    def test_projectless_run_uses_system_workspace_and_runtime_resources(self) -> None:
         from eidos_runtime.runtime.run_resources import RunResources
 
         with self.runtime() as (store, _session, _workspace):
@@ -190,9 +190,25 @@ class RuntimeArchitectureTests(unittest.TestCase):
 
             with RunResources(store, run["id"], run["extensionSnapshot"]) as resources:
                 self.assertIsNotNone(resources.registry)
-                self.assertEqual(resources.registry.entries, ())
-                self.assertIsNone(resources.tool_executor)
-                self.assertIsNone(resources.mcp)
+                names = {entry.spec.name for entry in resources.registry.entries}
+                self.assertIn("read_file", names)
+                self.assertIn("skill_read", names)
+                self.assertIsNotNone(resources.tool_executor)
+                self.assertIsNotNone(resources.skills)
+                self.assertIsNotNone(resources.mcp)
+                self.assertEqual(
+                    Path(store.workspace_for_run(run["id"]).path),
+                    chat_root,
+                )
+                permission_profile = json.loads(
+                    store.read_run_resolution_snapshot(
+                        run["id"]
+                    ).permission_profile_json
+                )
+                self.assertEqual(
+                    permission_profile["workspaceRoots"],
+                    [str(chat_root.resolve())],
+                )
 
     def test_projectless_engine_skips_repository_runtime(self) -> None:
         from eidos_runtime.runtime.engine import RuntimeEngine
@@ -221,7 +237,11 @@ class RuntimeArchitectureTests(unittest.TestCase):
                 repository_runtime=RejectingRepositoryRuntime(),
             ).run(run["id"], threading.Event())
 
-            self.assertEqual(model.tool_definitions_history[0], ())
+            names = {
+                value.name for value in model.tool_definitions_history[0]
+            }
+            self.assertIn("read_file", names)
+            self.assertIn("skill_read", names)
 
     def test_non_retryable_sampling_error_creates_only_one_attempt(self) -> None:
         from eidos_runtime.model.client import ModelRequestError, ModelRequestFailure
