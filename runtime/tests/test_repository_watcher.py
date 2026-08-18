@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import eidos_runtime.repo_intelligence.watcher as watcher_module
 from eidos_runtime.repo_intelligence.watcher import (
     RepositoryChange,
     RepositoryWatchController,
@@ -8,6 +9,8 @@ from eidos_runtime.repo_intelligence.watcher import (
 from pathlib import Path
 import threading
 import time
+
+from watchfiles import Change
 
 
 def test_watcher_events_are_only_coalesced_invalidation_signals() -> None:
@@ -36,6 +39,31 @@ def test_absolute_watch_event_is_normalized_against_frozen_root(tmp_path: Path) 
     )
 
     assert result == (RepositoryChange(path="src/main.py", change="modified"),)
+
+
+def test_watcher_filters_paths_ignored_by_workspace_discovery_scope(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".eidosignore").write_text("generated/\n*.log\n", encoding="utf-8")
+    stop = threading.Event()
+    batches: list[tuple[RepositoryChange, ...]] = []
+
+    def fake_watch(*_args, **_kwargs):
+        yield {
+            (Change.modified, str(root / "generated" / "output.py")),
+            (Change.modified, str(root / "src.py")),
+        }
+
+    monkeypatch.setattr(watcher_module, "watch", fake_watch)
+
+    RepositoryWatchController(root).run(stop, batches.append)
+
+    assert batches == [
+        (RepositoryChange(path="src.py", change="modified"),),
+    ]
 
 
 def test_real_watcher_reports_relative_add_modify_rename_delete_and_stops(

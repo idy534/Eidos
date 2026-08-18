@@ -161,22 +161,26 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
                 )}
                 <span>{projectName}</span>
               </span>
-              <label className="composer-context-mode">
-                <span className="sr-only">执行方式</span>
-                <select
-                  aria-label="执行方式"
-                  value={executionMode ?? "local"}
-                  disabled={isSubmitting || composerMode !== "idle" || !onExecutionModeChange}
-                  onChange={(event) => onExecutionModeChange?.(event.target.value as "local" | "worktree")}
-                >
-                  <option value="local">Local</option>
-                  <option value="worktree">Worktree</option>
-                </select>
-              </label>
-              <span className="composer-context-branch" title={branch ?? undefined}>
-                <BranchIcon />
-                <span>{branch ?? "未选择分支"}</span>
-              </span>
+              {project.gitAvailable && (
+                <>
+                  <label className="composer-context-mode">
+                    <span className="sr-only">执行方式</span>
+                    <select
+                      aria-label="执行方式"
+                      value={executionMode ?? "local"}
+                      disabled={isSubmitting || composerMode !== "idle" || !onExecutionModeChange}
+                      onChange={(event) => onExecutionModeChange?.(event.target.value as "local" | "worktree")}
+                    >
+                      <option value="local">Local</option>
+                      <option value="worktree">Worktree</option>
+                    </select>
+                  </label>
+                  <span className="composer-context-branch" title={branch ?? undefined}>
+                    <BranchIcon />
+                    <span>{branch ?? "未选择分支"}</span>
+                  </span>
+                </>
+              )}
             </>
           ) : (
             onSelectProject ? (

@@ -191,7 +191,9 @@ Repository Intelligence 已实现为独立的 typed infrastructure。它包括�
 
 `RepositoryWorkspaceRuntime` 是进程级的 Workspace 生命周期边界。Session create 和 existing Session read 会快速预热这个边界。Session read 的预热是 best-effort。Local root 不存在时会跳过。Worktree 只有在 state 为 `ACTIVE` 且 execution root 可用时才会预热。`MISSING`、`INVALID` 和 `DELETED` 不会阻止 Session snapshot 返回。完成 execution binding 变更的 Session handoff 也会激活新 root。Run admission 仍然负责权威 Workspace 校验。Runtime shutdown 会停止全部 watcher。
 
-Workspace 激活只读取 SQLite 中的 latest complete generation。一个完整 generation 同时包含相互绑定的 persisted Inventory、Index 和 RepositoryMap。Runtime 会直接从这三个持久事实恢复 immutable `RepositoryAnalysisSnapshot`。激活路径不会调用 Inventory、Index 或 RepositoryMap builder。没有 complete generation 时，active snapshot 保持为空。
+Workspace 激活只读取 SQLite 中的 latest complete generation metadata 和 recovery status。一个完整 generation 同时包含相互绑定的 persisted Inventory、Index 和 RepositoryMap。激活路径不会加载这三个持久事实，也不会调用 Inventory、Index 或 RepositoryMap builder。没有 complete generation 时，active snapshot 保持为空。`ensure_ready()` 会在 Run worker 中恢复 immutable `RepositoryAnalysisSnapshot`。
+
+激活不会在请求路径中逐文件校验已持久化 Inventory 的 metadata。文件 metadata 校验只在显式 recovery 或 reconciliation 阶段执行。
 
 `RuntimeEngine.run()` 在第一次模型执行前调用 `ensure_ready()`。空 Snapshot 会触发首次 bounded Inventory build。Cold start 或 watcher 失效会触发一次 reconciliation。Reconciliation 复用完整 Inventory scan 和 Index 的 previous-generation reuse。Clean active generation 会直接复用，不会 scan。RuntimeEngine 随后捕获 immutable `RepositoryAnalysisSnapshot`。同一个 Run 的所有 Model Step 都复用这个 view。
 
@@ -237,7 +239,7 @@ Run Span 记录 Run、Session、Model 和终态。Model Attempt Span 记录 Prov
 
 ## 13. Runtime Git Worktree Kernel
 
-Runtime Git Worktree Kernel 由 `runtime/eidos_runtime/git/` 和 `runtime/eidos_runtime/persistence/worktrees.py` 提供。`WorktreeManager` 管理 Project discovery、managed Worktree create/open/validate/list/recover/cleanup/delete、实时 Git status 和 HEAD/baseline diff。`GitWorkflowApplication` 是窄的 Session use-case boundary。它解析当前 execution root，检查 Worktree 和 active Run，再把 stage、unstage 和 commit 交给 `GitBackend`。
+Runtime Git Worktree Kernel 由 `runtime/eidos_runtime/git/` 和 `runtime/eidos_runtime/persistence/worktrees.py` 提供。`WorktreeManager` 管理 Project discovery、managed Worktree create/open/validate/list/recover/cleanup/delete、实时 Git status 和 HEAD/baseline diff。默认 Managed Worktree 根目录是 `~/.eidos/.eidos-worktrees/<worktree_id>`。`GitWorkflowApplication` 是窄的 Session use-case boundary。它解析当前 execution root，检查 Worktree 和 active Run，再把 stage、unstage 和 commit 交给 `GitBackend`。
 
 当前对象关系是：
 
@@ -252,7 +254,7 @@ Project
 ```
 
 新的 `session/create` 接收 `workspaceRoot`、`executionMode`、可选的 `baseRef` 和显式的 `includeLocalChanges`。Runtime 先通过 Project resolution boundary 校验并 canonicalize 用户选择的目录，再检测可选 Git capability。`executionMode = local` 时，Runtime 创建 `worktree_id = NULL` 的 Local Session，不创建 Git side effect，也不创建 Worktree lifecycle intent。`executionMode = worktree` 时，Runtime 要求 Git capability，通过 `GitBackend` 将 `baseRef` 解析为 immutable `base_commit`，确定 `project_id`、`worktree_id`、`worktree_root` 和 `branch = NULL`，写入 durable lifecycle intent，然后通过唯一的 hardened Git CLI `worktree add --detach` 创建 Worktree。Runtime 只复制 ignored 且命中 source `.worktreeinclude` 的文件、自动复制 ignored 的 `EIDOS.override.md` 和 `AGENTS.override.md`，以及可选的 Git patch bytes。没有 Git 时，Worktree 请求返回 typed `WORKTREE_REQUIRES_GIT`。没有显式 `baseRef` 时，Runtime 使用当前 branch；repository 处于 detached HEAD 时使用 `HEAD`。Local Run 使用 `Project.workspace_root`，Worktree Run 使用 Worktree root。
-`workspaceRoot` 省略或为 null 时，Runtime 创建 projectless Session。该 Session 使用 Runtime 数据目录旁的私有锚点目录作为内部执行 identity，但不会创建 Project、Worktree 或 Repository workspace。它固定为 Local execution，Run resolution 使用空的 workspace permission profile，RunResources 不创建 Workspace、Shell、MCP 或其他工具，ContextBuilder 也不注入 workspace-environment。
+`workspaceRoot` 省略或为 null 时，Runtime 创建 projectless Session。该 Session 使用 Runtime 数据目录内的私有锚点目录作为内部执行 identity。默认路径是 `~/.eidos/.eidos-projectless/<session_id>`。自定义 `EIDOS_DATA_DIR` 时，锚点目录仍位于该数据目录内。该 Session 不会创建 Project、Worktree 或 Repository workspace。它固定为 Local execution，Run resolution 使用空的 workspace permission profile，RunResources 不创建 Workspace、Shell、MCP 或其他工具，ContextBuilder 也不注入 workspace-environment。
 
 ### Local ↔ Managed Worktree Handoff
 

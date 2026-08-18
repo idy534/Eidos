@@ -28,7 +28,7 @@ from eidos_runtime.application.git_workflow import (
     GitRebasePlan,
     GitWorkflowApplication,
 )
-from eidos_runtime.db.database import CommittedMutation
+from eidos_runtime.db.database import CommittedMutation, projectless_root_for
 from eidos_runtime.db.errors import (
     InvalidCursorError,
     InvalidRunStateError,
@@ -617,7 +617,7 @@ class SessionApplication:
             if operation_id is not None
             else uuid.uuid4()
         )
-        root = data_directory.parent / f".{data_directory.name}-projectless" / session_id
+        root = projectless_root_for(data_directory) / session_id
         try:
             root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             root.parent.chmod(0o700)

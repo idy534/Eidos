@@ -194,6 +194,8 @@ Release 模式拒绝 `EIDOS_PACKAGE_SKIP_TESTS=1`。本地模式只有在维护�
 
 `EIDOS_DATA_DIR` 可以把 SQLite、Runtime lock、reserve file、Extension 数据和其他 Runtime-owned 数据放到独立目录。目录应当是明确的私有临时目录，不要把 Workspace 根目录作为数据目录。
 
+Runtime 创建的 projectless 私有锚点和默认 Managed Worktree 根目录也位于 `EIDOS_DATA_DIR` 内。默认路径分别是 `~/.eidos/.eidos-projectless/<session_id>` 和 `~/.eidos/.eidos-worktrees/<worktree_id>`。
+
 ModelConfigStore 默认使用 `~/.eidos/models.json`。显式数据目录由 Runtime 传给 ModelConfigStore 时，模型配置会跟随该 Runtime-owned 数据位置。模型配置文件保持 owner-only 权限。
 
 API Key 会经过本地模型配置写入链路：Renderer typed IPC → Electron Main → `model/create` / `model/update` JSON-RPC request → Runtime。Runtime 最终把 Key 写入受保护的 `models.json`。Key 不应进入模型列表/读取响应、SQLite、Event/Execution Feed 或正常日志。

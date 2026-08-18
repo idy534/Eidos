@@ -177,8 +177,12 @@ class RuntimeArchitectureTests(unittest.TestCase):
         from eidos_runtime.runtime.run_resources import RunResources
 
         with self.runtime() as (store, _session, _workspace):
-            chat_root = Path(store.data_directory).parent / "chat-root"
-            chat_root.mkdir()
+            chat_root = (
+                Path(store.data_directory)
+                / f".{Path(store.data_directory).name}-projectless"
+                / "chat-root"
+            )
+            chat_root.mkdir(parents=True)
             chat = store.typed_runtime_repository().create_session(
                 str(chat_root), projectless=True
             ).value
@@ -198,8 +202,12 @@ class RuntimeArchitectureTests(unittest.TestCase):
                 raise AssertionError("projectless runs must not build a repository index")
 
         with self.runtime() as (store, _session, _workspace):
-            chat_root = Path(store.data_directory).parent / "chat-root"
-            chat_root.mkdir()
+            chat_root = (
+                Path(store.data_directory)
+                / f".{Path(store.data_directory).name}-projectless"
+                / "chat-root"
+            )
+            chat_root.mkdir(parents=True)
             chat = store.typed_runtime_repository().create_session(
                 str(chat_root), projectless=True
             ).value

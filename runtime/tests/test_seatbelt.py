@@ -519,6 +519,44 @@ class SeatbeltSmokeTests(unittest.TestCase):
             self.assertEqual(protected.read_text(), "original")
             self.assertFalse((git / "config").exists())
 
+    def test_managed_workspace_inside_data_keeps_data_state_denied(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-managed-data-") as temporary:
+            root = Path(temporary)
+            data = root / "data"
+            workspace = data / ".eidos-worktrees" / "wt_1"
+            home = root / "home"
+            sandbox_tmp = root / "tmp"
+            workspace.mkdir(parents=True)
+            home.mkdir()
+            sandbox_tmp.mkdir()
+            state = data / "eidos.db"
+            state.write_text("protected", encoding="utf-8")
+            target = workspace / "created.txt"
+            permissions = materialize_effective_profile(
+                BasePermissionProfile.for_workspace(
+                    workspace_root=workspace,
+                    protected_paths=(data,),
+                )
+            )
+            profile = SeatbeltProfile.create(
+                workspace_root=workspace,
+                sandbox_home=home,
+                sandbox_tmp=sandbox_tmp,
+                sensitive_path=workspace / ".env",
+                effective_permissions=permissions,
+            )
+
+            write = run_sandboxed(
+                profile,
+                ["/bin/sh", "-c", "printf created > \"$1\"", "sh", str(target)],
+            )
+            denied = run_sandboxed(profile, ["/bin/cat", str(state)])
+
+            self.assertEqual(write.returncode, 0, write.stderr)
+            self.assertEqual(target.read_text(encoding="utf-8"), "created")
+            self.assertNotEqual(denied.returncode, 0)
+            self.assertEqual(state.read_text(encoding="utf-8"), "protected")
+
     def test_dynamic_network_grant_reaches_only_when_enabled(self) -> None:
         class Handler(socketserver.BaseRequestHandler):
             def handle(self) -> None:

@@ -147,15 +147,10 @@ class RepositoryApplication:
         )
 
     def initialize_recovery(self) -> RepositoryIndexStatus:
-        """Read one complete persisted generation without blocking startup.
+        """Verify persisted inventory metadata and report recovery state."""
 
-        The later watcher/reconciliation stage owns discovery of new paths. This
-        basis only compares every previously verified record to its current
-        metadata and reports whether a bounded reconciliation is needed.
-        """
-
-        identity = RepositoryWorkspaceIdentity.from_root(self.inventory_builder.root)
-        status = self.repository.read_status(identity)
+        status = self.read_recovery_status()
+        identity = status.workspace_identity
         restored = self.repository.read_latest_complete(
             identity.repository_id, identity
         )
@@ -167,6 +162,12 @@ class RepositoryApplication:
                 or _inventory_metadata_changed(self.inventory_builder.root, restored.inventory)
             ),
         })
+
+    def read_recovery_status(self) -> RepositoryIndexStatus:
+        """Read persisted recovery state without scanning workspace files."""
+
+        identity = RepositoryWorkspaceIdentity.from_root(self.inventory_builder.root)
+        return self.repository.read_status(identity)
 
     def restore_latest_complete(self) -> RepositoryIntelligenceSnapshot | None:
         identity = RepositoryWorkspaceIdentity.from_root(self.inventory_builder.root)
@@ -294,6 +295,15 @@ class ActiveRepositoryState:
                 dirty_paths=tuple(sorted(self._dirty_paths, key=str.encode)),
                 invalidation_epoch=self._invalidation_epoch,
             )
+
+    def restore_snapshot(self, snapshot: RepositoryAnalysisSnapshot) -> None:
+        if not snapshot.complete or snapshot.persisted_snapshot is None:
+            raise ValueError("only a persisted complete generation can be restored")
+        if snapshot.persisted_snapshot.workspace_identity != self.workspace_identity:
+            raise ValueError("repository generation workspace identity changed")
+        with self._lock:
+            if not self._closing and not self._closed and self._snapshot is None:
+                self._snapshot = snapshot
 
     @property
     def closed(self) -> bool:
@@ -435,8 +445,7 @@ class RepositoryWorkspaceRuntime:
                 current.close(timeout=self._watcher_shutdown_timeout)
 
             application = self.application_factory.for_workspace(Path(identity.root))
-            snapshot = application.restore_analysis_snapshot()
-            recovery_status = application.initialize_recovery()
+            recovery_status = application.read_recovery_status()
             # Persisted inventory can detect changed or deleted known files, but it
             # cannot prove that no new path appeared while the Runtime was offline.
             # Activation therefore never publishes a false cold-start clean state.
@@ -449,7 +458,7 @@ class RepositoryWorkspaceRuntime:
             active = ActiveRepositoryState(
                 workspace_identity=identity,
                 application=application,
-                snapshot=snapshot,
+                snapshot=None,
                 recovery_status=recovery_status,
                 watcher=watcher,
                 watcher_stop=stop,
@@ -472,15 +481,6 @@ class RepositoryWorkspaceRuntime:
                 "generation": recovery_status.inventory_generation,
             },
         )
-        if snapshot is not None:
-            logger.info(
-                "repository_generation_restored",
-                extra={
-                    "workspace_root": identity.root,
-                    "repository_id": identity.repository_id,
-                    "generation": snapshot.inventory.generation,
-                },
-            )
         if recovery_status.reconciliation_required:
             logger.info(
                 "repository_reconciliation_required",
@@ -503,14 +503,38 @@ class RepositoryWorkspaceRuntime:
             return active
         if active.snapshot is not None and not active.reconciliation_required:
             return active
-        reason = "first_generation" if active.snapshot is None else "reconciliation"
         start_epoch = active.begin_generation_build(cancel)
         if start_epoch is None:
             return active
         repository_id = active.workspace_identity.repository_id
-        if reason == "reconciliation":
+        reason = "first_generation"
+        try:
+            if active.snapshot is None:
+                restored = active.application.restore_analysis_snapshot()
+                if restored is not None:
+                    active.restore_snapshot(restored)
+                    logger.info(
+                        "repository_generation_restored",
+                        extra={
+                            "workspace_root": active.workspace_identity.root,
+                            "repository_id": repository_id,
+                            "generation": restored.inventory.generation,
+                        },
+                    )
+            reason = "first_generation" if active.snapshot is None else "reconciliation"
+            if reason == "reconciliation":
+                logger.info(
+                    "repository_generation_reconciliation_started",
+                    extra={
+                        "repository_id": repository_id,
+                        "generation": active.recovery_status.inventory_generation,
+                        "dirty_path_count": len(active.dirty_paths),
+                        "invalidation_epoch": start_epoch,
+                        "reason": reason,
+                    },
+                )
             logger.info(
-                "repository_generation_reconciliation_started",
+                "repository_generation_build_started",
                 extra={
                     "repository_id": repository_id,
                     "generation": active.recovery_status.inventory_generation,
@@ -519,17 +543,6 @@ class RepositoryWorkspaceRuntime:
                     "reason": reason,
                 },
             )
-        logger.info(
-            "repository_generation_build_started",
-            extra={
-                "repository_id": repository_id,
-                "generation": active.recovery_status.inventory_generation,
-                "dirty_path_count": len(active.dirty_paths),
-                "invalidation_epoch": start_epoch,
-                "reason": reason,
-            },
-        )
-        try:
             candidate = active.application.build(cancel=cancel)
             if not candidate.complete:
                 logger.info(

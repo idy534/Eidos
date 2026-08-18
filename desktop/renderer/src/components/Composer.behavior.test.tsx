@@ -120,6 +120,24 @@ describe("Composer DOM interaction & state behavior", () => {
     expect(onLeaveProject).toHaveBeenCalledTimes(1);
   });
 
+  it("hides execution mode and branch for a non-Git project", () => {
+    render(
+      <Composer
+        {...defaultProps}
+        project={{ id: "project-a", workspaceRoot: "/workspace/plain", gitAvailable: false }}
+        executionMode="local"
+        branch="main"
+        onExecutionModeChange={vi.fn()}
+        onLeaveProject={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("plain")).toBeInTheDocument();
+    expect(screen.queryByLabelText("执行方式")).not.toBeInTheDocument();
+    expect(screen.queryByText("main")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "不在项目中工作" })).toBeInTheDocument();
+  });
+
   it("offers project selection for a new projectless conversation", () => {
     const onSelectProject = vi.fn();
     render(

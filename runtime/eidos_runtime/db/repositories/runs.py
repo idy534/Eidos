@@ -9,6 +9,7 @@ from eidos_runtime.db.database import (
     CommittedMutation,
     Repository,
     WorkspaceIdentity,
+    projectless_root_for,
     now_ms as _now_ms,
 )
 from eidos_runtime.db.errors import (
@@ -161,7 +162,16 @@ class RunRepository(Repository):
             ).fetchone()
             if session is None:
                 raise ResourceNotFoundError("session not found")
-            if self._workspace_overlaps_data(Path(session["workspace_root"])):
+            allowed_roots = (
+                (projectless_root_for(self.database.data_directory),)
+                if session["projectless"]
+                and self.database.data_directory is not None
+                else ()
+            )
+            if self._workspace_overlaps_data(
+                Path(session["workspace_root"]),
+                allowed_roots=allowed_roots,
+            ):
                 raise WorkspaceBoundaryError("workspace overlaps runtime data")
             execution_workspace = execution_workspace_for_session(
                 connection, session_id

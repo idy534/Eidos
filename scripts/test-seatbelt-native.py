@@ -16,6 +16,7 @@ TESTS = (
     "test_seatbelt.SeatbeltSmokeTests.test_git_worktree_pointer_is_supported_but_not_writable",
     "test_seatbelt.SeatbeltSmokeTests.test_dynamic_profile_grants_only_approved_external_paths",
     "test_seatbelt.SeatbeltSmokeTests.test_dynamic_profile_keeps_runtime_write_and_git_denies",
+    "test_seatbelt.SeatbeltSmokeTests.test_managed_workspace_inside_data_keeps_data_state_denied",
     "test_seatbelt.SeatbeltSmokeTests.test_dynamic_network_grant_reaches_only_when_enabled",
     "test_shell.ShellProcessGroupTests",
 )

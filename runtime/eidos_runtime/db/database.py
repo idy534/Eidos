@@ -38,6 +38,18 @@ RESERVE_BYTES = 1024 * 1024
 T = TypeVar("T")
 
 
+def projectless_root_for(data_directory: Path) -> Path:
+    return data_directory / f".{data_directory.name}-projectless"
+
+
+def managed_worktree_root_for(data_directory: Path) -> Path:
+    return data_directory / (
+        ".eidos-worktrees"
+        if data_directory.name == ".eidos"
+        else f"{data_directory.name}-worktrees"
+    )
+
+
 @dataclass(frozen=True)
 class CommittedMutation(Generic[T]):
     value: T
@@ -368,10 +380,20 @@ class Database:
             if updated.rowcount != 1:
                 raise OperationInProgressError("operation could not be failed")
 
-    def workspace_overlaps_data(self, workspace: Path) -> bool:
+    def workspace_overlaps_data(
+        self,
+        workspace: Path,
+        *,
+        allowed_roots: tuple[Path, ...] = (),
+    ) -> bool:
         if self.data_directory is None:
             raise StorageError("storage is not initialized")
         workspace = workspace.resolve(strict=False)
+        if any(
+            workspace == root or root in workspace.parents
+            for root in (path.resolve(strict=False) for path in allowed_roots)
+        ):
+            return False
         return (
             workspace == self.data_directory
             or workspace in self.data_directory.parents
@@ -432,8 +454,16 @@ class Repository:
         ).fetchone()
         return row["next_ordinal"]
 
-    def _workspace_overlaps_data(self, workspace: Path) -> bool:
-        return self.database.workspace_overlaps_data(workspace)
+    def _workspace_overlaps_data(
+        self,
+        workspace: Path,
+        *,
+        allowed_roots: tuple[Path, ...] = (),
+    ) -> bool:
+        return self.database.workspace_overlaps_data(
+            workspace,
+            allowed_roots=allowed_roots,
+        )
 
 
 def execute_idempotent(

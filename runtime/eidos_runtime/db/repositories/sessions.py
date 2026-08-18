@@ -9,6 +9,7 @@ import uuid
 from eidos_runtime.db.database import (
     CommittedMutation,
     Repository,
+    projectless_root_for,
     now_ms as _now_ms,
 )
 from eidos_runtime.db.errors import (
@@ -133,7 +134,16 @@ class SessionRepository(Repository):
         projectless: bool = False,
     ) -> CommittedMutation[Session]:
         workspace = _canonical_workspace(workspace_root)
-        if self._workspace_overlaps_data(workspace):
+        allowed_roots: tuple[Path, ...] = ()
+        if projectless and self.database.data_directory is not None:
+            projectless_root = projectless_root_for(self.database.data_directory)
+            if projectless_root.resolve(strict=False) not in workspace.parents:
+                raise WorkspaceBoundaryError("workspace overlaps runtime data")
+            allowed_roots = (projectless_root,)
+        if self._workspace_overlaps_data(
+            workspace,
+            allowed_roots=allowed_roots,
+        ):
             raise WorkspaceBoundaryError("workspace overlaps runtime data")
         metadata = workspace.stat()
         session_id = session_id or str(uuid.uuid4())
