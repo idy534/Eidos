@@ -99,7 +99,7 @@ class WorktreeManager:
 
         return self.discovery.discover(repository_seed)
 
-    def create_project(self, workspace_root: str, name: str) -> Project:
+    def create_project(self, workspace_root: str, name: str | None) -> Project:
         """Validate a workspace and persist its explicit Project metadata."""
 
         return self.resolve_project(workspace_root, project_name=name).project

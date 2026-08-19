@@ -8,7 +8,7 @@ interface CreateProjectDialogProps {
   sourceFolder?: string | undefined;
   busy?: boolean;
   error?: string | undefined;
-  onCreate: (name: string, sourceFolder: string) => void;
+  onCreate: (name: string | undefined, sourceFolder: string) => void;
   onSelectFolder: () => void;
   onCancel: () => void;
   getFallbackFocus?: (() => HTMLElement | null) | undefined;
@@ -25,12 +25,10 @@ export function CreateProjectDialog({
   getFallbackFocus,
 }: CreateProjectDialogProps) {
   const [name, setName] = useState("");
-  const nameRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useDialogFocusLifecycle({
     open,
-    initialFocusRef: nameRef,
     getFallbackFocus,
   });
 
@@ -70,7 +68,7 @@ export function CreateProjectDialog({
   if (!open) return null;
 
   const trimmedName = name.trim();
-  const canCreate = Boolean(trimmedName && sourceFolder?.trim() && !busy);
+  const canCreate = Boolean(sourceFolder?.trim() && !busy);
 
   return (
     <div className="modal-backdrop" onClick={busy ? undefined : onCancel}>
@@ -89,11 +87,10 @@ export function CreateProjectDialog({
         <div className="create-project-dialog-body">
           <label className="create-project-name-field">
             <FolderIcon />
-            <span className="sr-only">项目名称</span>
+            <span className="sr-only">项目名称（可选）</span>
             <input
-              ref={nameRef}
-              aria-label="项目名称"
-              placeholder="项目名称"
+              aria-label="项目名称（可选）"
+              placeholder="项目名称（可选）"
               value={name}
               maxLength={120}
               disabled={busy}
@@ -110,14 +107,19 @@ export function CreateProjectDialog({
               onClick={onSelectFolder}
             >
               <FolderPlusIcon />
-              <span>{sourceFolder || "添加 Codex 可读写的文件夹"}</span>
+              <span>{sourceFolder || "添加 Eidos 可读写的文件夹"}</span>
             </button>
           </div>
           {error && <p className="setting-field-error" role="alert">{error}</p>}
         </div>
         <div className="create-project-dialog-footer">
           <Button variant="ghost" disabled={busy} onClick={onCancel}>取消</Button>
-          <Button variant="primary" loading={busy} disabled={!canCreate} onClick={() => onCreate(trimmedName, sourceFolder!.trim())}>
+          <Button
+            variant="primary"
+            loading={busy}
+            disabled={!canCreate}
+            onClick={() => onCreate(trimmedName || undefined, sourceFolder!.trim())}
+          >
             创建项目
           </Button>
         </div>

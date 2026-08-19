@@ -131,16 +131,17 @@ class ProjectListRequestDto(MethodRequestDto):
 
 
 class ProjectCreateRequestDto(_OperationRequest):
-    name: StrictStr = Field(min_length=1, max_length=120)
+    name: StrictStr | None = Field(default=None, max_length=120)
     workspace_root: StrictStr = Field(
         alias="workspaceRoot", min_length=1, max_length=4096
     )
 
-    @model_validator(mode="after")
-    def _validate_name(self) -> "ProjectCreateRequestDto":
-        if not self.name.strip():
-            raise ValueError("project name must not be blank")
-        return self
+    @field_validator("name")
+    @classmethod
+    def _normalize_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
 
 
 class ProjectDeleteRequestDto(_OperationRequest):

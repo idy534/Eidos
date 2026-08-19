@@ -267,7 +267,7 @@ export function AppShell({ runtime }: AppShellProps) {
     }
   }
 
-  async function handleCreateProject(name: string, workspaceRoot: string): Promise<void> {
+  async function handleCreateProject(name: string | undefined, workspaceRoot: string): Promise<void> {
     setCreateProjectBusy(true);
     setCreateProjectError(undefined);
     const project = await sessionActions.createProject(name, workspaceRoot);
@@ -793,6 +793,7 @@ export function AppShell({ runtime }: AppShellProps) {
         open={projectPickerOpen}
         projects={sessionState.projects}
         selectedProjectId={currentSnapshot?.session.project?.id}
+        anchorRef={composerRef}
         getFallbackFocus={getDialogFallbackFocus}
         onSelect={handleSelectProjectFromPicker}
         onCreate={handleOpenCreateProject}

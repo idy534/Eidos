@@ -3,7 +3,7 @@ import type { RefObject } from "react";
 
 interface DialogFocusLifecycleOptions {
   open: boolean;
-  initialFocusRef: RefObject<HTMLElement | null>;
+  initialFocusRef?: RefObject<HTMLElement | null> | undefined;
   getFallbackFocus?: (() => HTMLElement | null) | undefined;
 }
 
@@ -29,11 +29,13 @@ export function useDialogFocusLifecycle({
       triggerRef.current = active instanceof HTMLElement && active.isConnected
         ? active
         : null;
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = null;
-        const target = initialFocusRef.current;
-        if (target?.isConnected) target.focus();
-      });
+      if (initialFocusRef) {
+        rafRef.current = requestAnimationFrame(() => {
+          rafRef.current = null;
+          const target = initialFocusRef.current;
+          if (target?.isConnected) target.focus();
+        });
+      }
     } else if (wasOpen && !open) {
       const target = triggerRef.current?.isConnected
         ? triggerRef.current

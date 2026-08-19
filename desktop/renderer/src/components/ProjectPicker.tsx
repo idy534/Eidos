@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useState, type CSSProperties, type RefObject } from "react";
 
 import type { Project } from "../contracts.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
@@ -7,6 +7,7 @@ interface ProjectPickerProps {
   open: boolean;
   projects: Project[];
   selectedProjectId?: string | undefined;
+  anchorRef?: RefObject<HTMLElement | null> | undefined;
   onSelect: (project: Project) => void;
   onCreate: () => void;
   onClose: () => void;
@@ -17,19 +18,47 @@ export function ProjectPicker({
   open,
   projects,
   selectedProjectId,
+  anchorRef,
   onSelect,
   onCreate,
   onClose,
   getFallbackFocus,
 }: ProjectPickerProps) {
   const [query, setQuery] = useState("");
-  const searchRef = useRef<HTMLInputElement>(null);
+  const [anchorPosition, setAnchorPosition] = useState<{ left: number; bottom: number } | undefined>(undefined);
 
   useDialogFocusLifecycle({
     open,
-    initialFocusRef: searchRef,
     getFallbackFocus,
   });
+
+  useLayoutEffect(() => {
+    if (!open || !anchorRef?.current) {
+      setAnchorPosition(undefined);
+      return;
+    }
+
+    const updatePosition = () => {
+      const anchor = anchorRef.current?.closest<HTMLElement>(".composer") ?? anchorRef.current;
+      if (!anchor) return;
+      const rect = anchor.getBoundingClientRect();
+      const pickerWidth = 18 * 16;
+      const viewportPadding = 12;
+      const maxLeft = Math.max(viewportPadding, window.innerWidth - pickerWidth - viewportPadding);
+      setAnchorPosition({
+        left: Math.min(Math.max(rect.left, viewportPadding), maxLeft),
+        bottom: Math.max(viewportPadding, window.innerHeight - rect.top),
+      });
+    };
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [anchorRef, open]);
 
   useEffect(() => {
     if (open) setQuery("");
@@ -56,9 +85,19 @@ export function ProjectPicker({
       || label.toLocaleLowerCase().includes(normalizedQuery)
       || project.workspaceRoot.toLocaleLowerCase().includes(normalizedQuery);
   });
+  const pickerStyle = anchorPosition
+    ? {
+        "--project-picker-left": `${anchorPosition.left}px`,
+        "--project-picker-bottom": `${anchorPosition.bottom}px`,
+      } as CSSProperties
+    : undefined;
 
   return (
-    <div className="project-picker-layer" onClick={onClose}>
+    <div
+      className={`project-picker-layer${anchorPosition ? " project-picker-layer--anchored" : ""}`}
+      style={pickerStyle}
+      onClick={onClose}
+    >
       <div
         className="project-picker-popover"
         role="dialog"
@@ -70,7 +109,6 @@ export function ProjectPicker({
         <div className="project-picker-search-row">
           <SearchIcon />
           <input
-            ref={searchRef}
             type="search"
             aria-label="搜索项目"
             placeholder="搜索项目"

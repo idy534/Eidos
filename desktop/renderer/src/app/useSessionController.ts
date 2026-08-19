@@ -55,7 +55,7 @@ export interface SessionControllerState {
 export interface SessionControllerActions {
   loadProjects: () => Promise<void>;
   loadSessions: () => Promise<void>;
-  createProject: (name: string, workspaceRoot: string) => Promise<Project | undefined>;
+  createProject: (name: string | undefined, workspaceRoot: string) => Promise<Project | undefined>;
   startDraft: (project?: Project | null) => void;
   updateDraftExecutionMode: (mode: "local" | "worktree") => void;
   materializeDraft: () => Promise<SessionSnapshot | undefined>;
@@ -178,7 +178,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
   }, []);
 
   const createProject = useCallback(async (
-    name: string,
+    name: string | undefined,
     workspaceRoot: string,
   ): Promise<Project | undefined> => {
     setError(undefined);

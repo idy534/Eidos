@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 
 import { CreateProjectDialog } from "./CreateProjectDialog.js";
 
 describe("CreateProjectDialog", () => {
-  it("creates a project only after a name and source folder are supplied", async () => {
+  it("creates a project with only a source folder when the name is omitted", async () => {
     const user = userEvent.setup();
     const onCreate = vi.fn();
     const onSelectFolder = vi.fn();
@@ -20,13 +21,30 @@ describe("CreateProjectDialog", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "创建项目" })).toBeDisabled();
-    await user.type(screen.getByRole("textbox", { name: "项目名称" }), "Eidos");
     expect(screen.getByRole("button", { name: "创建项目" })).toBeEnabled();
 
     await user.click(screen.getByRole("button", { name: "创建项目" }));
-    expect(onCreate).toHaveBeenCalledWith("Eidos", "/work/eidos");
+    expect(onCreate).toHaveBeenCalledWith(undefined, "/work/eidos");
     expect(onSelectFolder).not.toHaveBeenCalled();
+  });
+
+  it("passes a supplied project name", async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn();
+
+    render(
+      <CreateProjectDialog
+        open
+        sourceFolder="/work/eidos"
+        onCreate={onCreate}
+        onSelectFolder={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await user.type(screen.getByRole("textbox", { name: "项目名称（可选）" }), "Eidos");
+    await user.click(screen.getByRole("button", { name: "创建项目" }));
+    expect(onCreate).toHaveBeenCalledWith("Eidos", "/work/eidos");
   });
 
   it("lets the user choose the source folder", () => {
@@ -40,7 +58,35 @@ describe("CreateProjectDialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "添加 Codex 可读写的文件夹" }));
+    fireEvent.click(screen.getByRole("button", { name: "添加 Eidos 可读写的文件夹" }));
     expect(onSelectFolder).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not focus the project name when opened", async () => {
+    const requestFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
+    const user = userEvent.setup();
+
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>创建项目</button>
+          <CreateProjectDialog
+            open={open}
+            onCreate={vi.fn()}
+            onSelectFolder={vi.fn()}
+            onCancel={() => setOpen(false)}
+          />
+        </>
+      );
+    }
+
+    render(<Harness />);
+    const trigger = screen.getByRole("button", { name: "创建项目" });
+    await user.click(trigger);
+
+    expect(trigger).toHaveFocus();
+    expect(requestFrame).not.toHaveBeenCalled();
+    requestFrame.mockRestore();
   });
 });

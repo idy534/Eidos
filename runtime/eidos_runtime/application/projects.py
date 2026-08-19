@@ -35,7 +35,7 @@ class ProjectApplication:
         repository: ProjectWorktreeRepository,
         *,
         lifecycle: SessionLifecycleCoordinator | None = None,
-        create_project: Callable[[str, str], Project] | None = None,
+        create_project: Callable[[str, str | None], Project] | None = None,
         cleanup_empty_sessions: Callable[[str], None] | None = None,
     ) -> None:
         self._repository = repository
@@ -44,7 +44,7 @@ class ProjectApplication:
         self._cleanup_empty_sessions = cleanup_empty_sessions
 
     def create(self, request: ProjectCreateRequestDto) -> ProjectCreateResponseDto:
-        name = request.name.strip()
+        name = request.name.strip() if request.name else None
         try:
             project = (
                 self._create_project(request.workspace_root, name)

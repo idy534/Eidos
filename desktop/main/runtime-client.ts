@@ -433,7 +433,7 @@ export class RuntimeClient {
   }
 
   createProject(
-    name: string,
+    name: string | undefined,
     workspaceRoot: string,
     operationId = randomUUID(),
   ): Promise<Project> {

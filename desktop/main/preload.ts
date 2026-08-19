@@ -85,7 +85,7 @@ const api: EidosRuntimeAPI = {
     ipcRenderer.invoke(IPC.WORKSPACE_OPEN_IN_EDITOR, sessionId, path),
 
   // Sessions
-  createProject: (name: string, workspaceRoot: string): Promise<Project> =>
+  createProject: (name: string | undefined, workspaceRoot: string): Promise<Project> =>
     ipcRenderer.invoke(IPC.PROJECT_CREATE, name, workspaceRoot),
   listProjects: (): Promise<ProjectListResult> => ipcRenderer.invoke(IPC.PROJECT_LIST),
   deleteProject: (projectId: string): Promise<DeleteProjectResult> =>

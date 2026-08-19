@@ -198,3 +198,27 @@ def test_project_create_persists_named_project_without_creating_session(
         assert projects["result"]["items"] == [project]
     finally:
         server.close()
+
+
+def test_project_create_uses_workspace_name_when_name_is_omitted(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "folder-name"
+    workspace.mkdir()
+    server, output = _server(tmp_path)
+
+    try:
+        created = _request(
+            server,
+            output,
+            "client-create-project-without-name",
+            "project/create",
+            {
+                "workspaceRoot": str(workspace),
+                "operationId": str(uuid4()),
+            },
+        )
+
+        assert created["result"]["name"] == "folder-name"
+    finally:
+        server.close()

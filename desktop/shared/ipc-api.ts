@@ -76,7 +76,7 @@ export interface EidosRuntimeAPI {
   openWorkspacePathInEditor(sessionId: string, path: string): Promise<void>;
 
   // Sessions
-  createProject(name: string, workspaceRoot: string): Promise<Project>;
+  createProject(name: string | undefined, workspaceRoot: string): Promise<Project>;
   listProjects(): Promise<ProjectListResult>;
   deleteProject(projectId: string): Promise<DeleteProjectResult>;
   listSessions(): Promise<SessionListResult>;

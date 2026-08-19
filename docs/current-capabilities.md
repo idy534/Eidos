@@ -9,7 +9,7 @@
 - Main 可以启动、健康检查、通知和关闭 Python Runtime。
 - Desktop 可以选择 Workspace，读取 Runtime 提供的 Git context，并在 Session Composer 中选择 Local 或 Worktree execution。Git Worktree execution 可以选择 starting branch。Source dirty 且 starting branch 是 current branch 时，Desktop 默认勾选 `Include current changes`，但 Runtime 只接受显式的 `includeLocalChanges`。Non-Git Workspace 只启用 Local，Composer 不显示 execution mode 和 branch。Desktop 也可以创建不绑定 Project 的会话；这类会话默认使用 Local。
 - Desktop 可以列出、读取、重命名和删除 Session。Session 删除不会删除所属 Project。
-- Desktop 可以通过 `project/create` 显式创建并保存 Project 名称和 Workspace。项目选择器支持搜索、选择和“新建项目”。Desktop 可以列出已创建的 Project。用户可以手动删除没有正式 Session 的 Project。Project 删除只删除 Eidos 的 Project、Worktree 元数据，不删除 Workspace 文件或 Git 仓库。
+- Desktop 可以通过 `project/create` 显式创建并保存 Project 名称和 Workspace。名称可以省略，Runtime 会使用 Workspace 文件夹名。项目选择器支持搜索、选择和“新建项目”。Desktop 可以列出已创建的 Project。用户可以手动删除没有正式 Session 的 Project。Project 删除只删除 Eidos 的 Project、Worktree 元数据，不删除 Workspace 文件或 Git 仓库。
 - 点击“新建会话”或项目下的新增按钮时，Desktop 只创建本地草稿，不写入 Session。用户第一次提交输入时，Desktop 才调用 `session/create`，然后调用 `run/start` 创建正式 Session、Run 和任务标题。Run 启动失败时，Desktop 会删除本次物化的空 Session。没有标题且没有 Run 的历史 Session 会在删除所属 Project 前清理。
 - 新建 Session 时，用户通过侧边栏、首页入口或项目选择器选择 Project 或无 Project。草稿状态的 Composer 输入框上方显示 Project/无 Project 上下文、execution mode 和 branch，并允许选择或移除 Project。非 Git 项目只显示 Project。用户第一次提交后，Composer 隐藏整条上下文栏，不再允许调整 Project 或 execution mode。Projectless Session 不显示 Files，也不支持查看文件树。
 - Desktop 可以在同一个 Session 中把执行工作区从 Local hand off 到 Managed Worktree，或 hand off 回 Local。Handoff 期间会禁用 Composer、Create Branch、Delete 和 Session 导航；完成后只刷新当前 Session 的 execution binding 和 Git review。
