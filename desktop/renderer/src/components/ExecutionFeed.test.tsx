@@ -4,7 +4,12 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { Item, Run } from "../contracts.js";
-import { ExecutionFeed, isFeedAtBottom, formatItemTime } from "./ExecutionFeed.js";
+import {
+  ExecutionFeed,
+  feedScrollBehavior,
+  formatItemTime,
+  isFeedAtBottom,
+} from "./ExecutionFeed.js";
 
 
 const run: Run = {
@@ -33,6 +38,11 @@ function item(overrides: Partial<Item> & Pick<Item, "id" | "ordinal" | "kind">):
 test("keeps auto-scroll only while the feed is at the bottom", () => {
   assert.equal(isFeedAtBottom({ scrollHeight: 1000, scrollTop: 398, clientHeight: 600 }), true);
   assert.equal(isFeedAtBottom({ scrollHeight: 1000, scrollTop: 350, clientHeight: 600 }), false);
+});
+
+test("uses instant feed scrolling when reduced motion is requested", () => {
+  assert.equal(feedScrollBehavior(true), "auto");
+  assert.equal(feedScrollBehavior(false), "smooth");
 });
 
 test("provides an accessible jump to the latest content control", () => {

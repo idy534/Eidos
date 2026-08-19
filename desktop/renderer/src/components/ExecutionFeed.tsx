@@ -190,7 +190,17 @@ export function ExecutionFeed({
         type="button"
         aria-label="滚动到最新内容"
         hidden={atBottom}
-        onClick={() => feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" })}
+        onClick={() => {
+          const feed = feedRef.current;
+          if (!feed) return;
+          const prefersReducedMotion = typeof window !== "undefined"
+            && typeof window.matchMedia === "function"
+            && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+          feed.scrollTo({
+            top: feed.scrollHeight,
+            behavior: feedScrollBehavior(prefersReducedMotion),
+          });
+        }}
       >
         <span aria-hidden="true">↓</span>
       </button>
@@ -202,6 +212,10 @@ export function isFeedAtBottom(
   feed: Pick<HTMLElement, "scrollHeight" | "scrollTop" | "clientHeight">,
 ): boolean {
   return feed.scrollHeight - feed.scrollTop - feed.clientHeight <= 2;
+}
+
+export function feedScrollBehavior(prefersReducedMotion: boolean): "auto" | "smooth" {
+  return prefersReducedMotion ? "auto" : "smooth";
 }
 
 function RunSegment({
