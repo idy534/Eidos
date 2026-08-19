@@ -7,7 +7,7 @@ from typing import Protocol, TypeVar
 
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.db.errors import SessionActiveError
-from eidos_runtime.domain.session import Session
+from eidos_runtime.domain.session import Session, SessionExecutionMode
 from eidos_runtime.git.backend import GitBackend
 from eidos_runtime.git.errors import (
     GitError,
@@ -25,10 +25,13 @@ from eidos_runtime.git.errors import (
 )
 from eidos_runtime.git.status import GitStatusSnapshot
 from eidos_runtime.git.models import GitOperationState, GitRemoteObservation
+from eidos_runtime.git.refs import GitRefValidator
 from eidos_runtime.protocol.methods import (
     MethodResultDto,
     SessionGitCommitRequestDto,
     SessionGitCommitResponseDto,
+    SessionGitCreateBranchRequestDto,
+    SessionGitCreateBranchResponseDto,
     SessionGitDiscardRequestDto,
     SessionGitDiscardResponseDto,
     SessionGitFetchResponseDto,
@@ -50,6 +53,8 @@ from eidos_runtime.protocol.methods import (
     SessionGitStageRequestDto,
     SessionGitStageResponseDto,
     SessionGitStatusResponseDto,
+    SessionGitSwitchBranchRequestDto,
+    SessionGitSwitchBranchResponseDto,
     SessionGitUnstageRequestDto,
     SessionGitUnstageResponseDto,
 )
@@ -106,10 +111,21 @@ class GitRebasePlan:
     target_commit: str | None = None
 
 
+@dataclass(frozen=True)
+class GitBranchPlan:
+    session: Session
+    root: Path
+    before: GitStatusSnapshot
+    branch: str
+    create: bool
+
+
 class GitWorkflowSessionRepository(Protocol):
     def read_session(self, session_id: str) -> Session | None: ...
 
     def assert_session_deletable(self, session_id: str) -> None: ...
+
+    def has_active_run_for_workspace(self, workspace_root: str) -> bool: ...
 
 
 class GitWorkflowWorktreePort(Protocol):
@@ -221,6 +237,76 @@ class GitWorkflowApplication:
             after,
             commit=after.head,
         )
+
+    def preflight_switch_branch(
+        self, request: SessionGitSwitchBranchRequestDto
+    ) -> GitBranchPlan:
+        session, before = self._prepare_local_branch(request.session_id)
+        try:
+            GitRefValidator.branch(request.branch)
+            branches = self._worktrees.git.local_branches(Path(before.worktree_root))
+        except ValueError as error:
+            raise ApplicationError("BRANCH_INVALID") from error
+        except GitError as error:
+            raise _workflow_error(error) from error
+        if request.branch not in branches:
+            raise ApplicationError("GIT_BRANCH_NOT_FOUND")
+        return GitBranchPlan(
+            session=session,
+            root=Path(before.worktree_root),
+            before=before,
+            branch=request.branch,
+            create=False,
+        )
+
+    def switch_branch(self, plan: GitBranchPlan) -> SessionGitSwitchBranchResponseDto:
+        if plan.create:
+            raise AssertionError("switch branch plan must not create a branch")
+        try:
+            self._worktrees.git.switch_branch(plan.root, plan.branch)
+        except ValueError as error:
+            raise ApplicationError("BRANCH_INVALID") from error
+        except GitError as error:
+            raise _workflow_error(error) from error
+        after = self._status(plan.session)
+        if after.branch != plan.branch:
+            raise ApplicationError("GIT_BRANCH_SWITCH_FAILED")
+        return _mutation_result(SessionGitSwitchBranchResponseDto, after)
+
+    def preflight_create_branch(
+        self, request: SessionGitCreateBranchRequestDto
+    ) -> GitBranchPlan:
+        session, before = self._prepare_local_branch(request.session_id)
+        try:
+            GitRefValidator.branch(request.branch)
+            branches = self._worktrees.git.local_branches(Path(before.worktree_root))
+        except ValueError as error:
+            raise ApplicationError("BRANCH_INVALID") from error
+        except GitError as error:
+            raise _workflow_error(error) from error
+        if request.branch in branches:
+            raise ApplicationError("BRANCH_ALREADY_EXISTS")
+        return GitBranchPlan(
+            session=session,
+            root=Path(before.worktree_root),
+            before=before,
+            branch=request.branch,
+            create=True,
+        )
+
+    def create_branch(self, plan: GitBranchPlan) -> SessionGitCreateBranchResponseDto:
+        if not plan.create:
+            raise AssertionError("create branch plan must create a branch")
+        try:
+            self._worktrees.git.create_branch(plan.root, plan.branch)
+        except ValueError as error:
+            raise ApplicationError("BRANCH_INVALID") from error
+        except GitError as error:
+            raise _workflow_error(error) from error
+        after = self._status(plan.session)
+        if after.branch != plan.branch or after.head != plan.before.head:
+            raise ApplicationError("GIT_BRANCH_CREATE_FAILED")
+        return _mutation_result(SessionGitCreateBranchResponseDto, after)
 
     def preflight_merge(self, request: SessionGitMergeRequestDto) -> GitMergePlan:
         session, status = self._prepare_mutation(request.session_id)
@@ -717,6 +803,26 @@ class GitWorkflowApplication:
             ) from error
         return session, self._status(session)
 
+    def _prepare_local_branch(
+        self, session_id: str
+    ) -> tuple[Session, GitStatusSnapshot]:
+        session, status = self._prepare_mutation(session_id)
+        if session.execution_mode is not SessionExecutionMode.LOCAL:
+            raise ApplicationError(
+                "LOCAL_REQUIRED", "Local branch operations require a Local Session"
+            )
+        if self._repository.has_active_run_for_workspace(session.workspace_root):
+            raise ApplicationError("GIT_WORKFLOW_BUSY")
+        try:
+            state = self._worktrees.git.operation_state(Path(status.worktree_root))
+        except GitError as error:
+            raise _workflow_error(error) from error
+        if state is not GitOperationState.NONE:
+            raise ApplicationError("GIT_OPERATION_IN_PROGRESS")
+        if status.dirty:
+            raise ApplicationError("GIT_WORKTREE_DIRTY")
+        return session, status
+
     def _prepare_operation_mutation(
         self, session_id: str
     ) -> tuple[Session, GitStatusSnapshot]:
@@ -861,6 +967,10 @@ def _workflow_error(error: GitError | WorktreeError) -> ApplicationError:
     if isinstance(error, GitUpstreamNotFoundError):
         return ApplicationError("GIT_UPSTREAM_NOT_FOUND")
     if isinstance(error, GitCommandFailedError):
+        if error.operation == "worktree-switch-branch":
+            return ApplicationError("GIT_BRANCH_SWITCH_FAILED")
+        if error.operation == "worktree-branch-create":
+            return ApplicationError("GIT_BRANCH_CREATE_FAILED")
         return ApplicationError(
             "GIT_REMOTE_FAILED"
             if error.operation.startswith("remote")
@@ -884,6 +994,7 @@ def _workflow_error(error: GitError | WorktreeError) -> ApplicationError:
 
 
 __all__ = [
+    "GitBranchPlan",
     "GitFetchPlan",
     "GitMutationPlan",
     "GitMergePlan",

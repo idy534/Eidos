@@ -173,6 +173,76 @@ class RuntimeArchitectureTests(unittest.TestCase):
             close_tool_executor.assert_called_once()
             close_mcp.assert_called_once()
 
+    def test_projectless_run_uses_system_workspace_and_runtime_resources(self) -> None:
+        from eidos_runtime.runtime.run_resources import RunResources
+
+        with self.runtime() as (store, _session, _workspace):
+            chat_root = (
+                Path(store.data_directory)
+                / f".{Path(store.data_directory).name}-projectless"
+                / "chat-root"
+            )
+            chat_root.mkdir(parents=True)
+            chat = store.typed_runtime_repository().create_session(
+                str(chat_root), projectless=True
+            ).value
+            run, _ = store.create_run(chat.id, "chat")
+
+            with RunResources(store, run["id"], run["extensionSnapshot"]) as resources:
+                self.assertIsNotNone(resources.registry)
+                names = {entry.spec.name for entry in resources.registry.entries}
+                self.assertIn("read_file", names)
+                self.assertIn("skill_read", names)
+                self.assertIsNotNone(resources.tool_executor)
+                self.assertIsNotNone(resources.skills)
+                self.assertIsNotNone(resources.mcp)
+                self.assertEqual(
+                    Path(store.workspace_for_run(run["id"]).path),
+                    chat_root,
+                )
+                permission_profile = json.loads(
+                    store.read_run_resolution_snapshot(
+                        run["id"]
+                    ).permission_profile_json
+                )
+                self.assertEqual(
+                    permission_profile["workspaceRoots"],
+                    [str(chat_root.resolve())],
+                )
+
+    def test_projectless_engine_skips_repository_runtime(self) -> None:
+        from eidos_runtime.runtime.engine import RuntimeEngine
+
+        class RejectingRepositoryRuntime:
+            def ensure_ready(self, *_args, **_kwargs):
+                raise AssertionError("projectless runs must not build a repository index")
+
+        with self.runtime() as (store, _session, _workspace):
+            chat_root = (
+                Path(store.data_directory)
+                / f".{Path(store.data_directory).name}-projectless"
+                / "chat-root"
+            )
+            chat_root.mkdir(parents=True)
+            chat = store.typed_runtime_repository().create_session(
+                str(chat_root), projectless=True
+            ).value
+            run, _ = store.create_run(chat.id, "chat")
+            model = ScriptedModel([ModelResponse(text="done")])
+
+            RuntimeEngine(
+                store,
+                model,
+                lambda _message: None,
+                repository_runtime=RejectingRepositoryRuntime(),
+            ).run(run["id"], threading.Event())
+
+            names = {
+                value.name for value in model.tool_definitions_history[0]
+            }
+            self.assertIn("read_file", names)
+            self.assertIn("skill_read", names)
+
     def test_non_retryable_sampling_error_creates_only_one_attempt(self) -> None:
         from eidos_runtime.model.client import ModelRequestError, ModelRequestFailure
         from eidos_runtime.runtime.engine import RuntimeEngine

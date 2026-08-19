@@ -43,6 +43,7 @@ def test_runtime_application_container_composes_all_phase_ef_boundaries(tmp_path
     applications = server._build_applications()
 
     assert applications.sessions is not None
+    assert applications.projects is not None
     assert applications.runs is not None
     assert applications.approvals is not None
     assert applications.models is not None
@@ -57,8 +58,10 @@ def test_runtime_application_container_composes_all_phase_ef_boundaries(tmp_path
 
     registered = {registration.name for registration in server.method_registry}
     assert {
+        "project/list", "project/delete",
         "session/gitStatus", "session/gitDiff", "session/gitStage",
         "session/gitUnstage", "session/gitCommit", "session/gitDiscard",
+        "session/gitSwitchBranch", "session/gitCreateBranch",
         "session/gitRemoteStatus",
         "session/gitFetch", "session/gitPull", "session/gitPush",
         "session/gitMerge", "session/gitMergeAbort",

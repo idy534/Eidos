@@ -466,6 +466,26 @@ ipcMain.handle(IPC.WORKSPACE_SELECT, async () => {
   return result.canceled ? null : result.filePaths[0] ?? null;
 });
 
+ipcMain.handle(IPC.PROJECT_LIST, () => clientOrThrow().listProjects());
+ipcMain.handle(IPC.PROJECT_CREATE, (_event, name: unknown, workspaceRoot: unknown) => {
+  if (
+    (name !== undefined && (typeof name !== "string" || name.length > 120))
+    || typeof workspaceRoot !== "string"
+    || workspaceRoot.trim().length === 0
+  ) {
+    throw new Error("Project 参数无效。");
+  }
+  return clientOrThrow().createProject(
+    typeof name === "string" ? name.trim() || undefined : undefined,
+    workspaceRoot,
+  );
+});
+ipcMain.handle(IPC.PROJECT_DELETE, (_event, projectId: unknown) => {
+  if (typeof projectId !== "string" || projectId.length === 0 || projectId.length > 256) {
+    throw new Error("Project 参数无效。");
+  }
+  return clientOrThrow().deleteProject(projectId);
+});
 ipcMain.handle(IPC.SESSION_LIST, () => clientOrThrow().listSessions());
 ipcMain.handle(IPC.SESSION_READ, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
@@ -478,7 +498,9 @@ ipcMain.handle(IPC.EVENT_LIST, (_event, sessionId: unknown, afterEventId: unknow
   return clientOrThrow().listEvents(sessionId, afterEventId);
 });
 ipcMain.handle(IPC.SESSION_CREATE, (_event, workspaceRoot: unknown, options: unknown) => {
-  if (typeof workspaceRoot !== "string") throw new Error("Workspace 参数无效。");
+  if (workspaceRoot !== null && typeof workspaceRoot !== "string") {
+    throw new Error("Workspace 参数无效。");
+  }
   return clientOrThrow().createSession(workspaceRoot, validateSessionCreateOptions(options));
 });
 ipcMain.handle(IPC.SESSION_CREATE_BRANCH, (_event, sessionId: unknown, branch: unknown) => {
@@ -598,6 +620,38 @@ ipcMain.handle(IPC.SESSION_GIT_DIFF, (
     throw new Error("Git Diff 参数无效。");
   }
   return clientOrThrow().readSessionGitDiff(sessionId, scope, path as string | undefined);
+});
+ipcMain.handle(IPC.SESSION_GIT_SWITCH_BRANCH, (
+  _event,
+  sessionId: unknown,
+  branch: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof branch !== "string"
+    || !branch.trim()
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Git Switch Branch 参数无效。");
+  }
+  return clientOrThrow().switchSessionGitBranch(sessionId, branch, operationId);
+});
+ipcMain.handle(IPC.SESSION_GIT_CREATE_BRANCH, (
+  _event,
+  sessionId: unknown,
+  branch: unknown,
+  operationId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof branch !== "string"
+    || !branch.trim()
+    || typeof operationId !== "string"
+  ) {
+    throw new Error("Git Create Branch 参数无效。");
+  }
+  return clientOrThrow().createSessionGitBranch(sessionId, branch, operationId);
 });
 ipcMain.handle(IPC.SESSION_GIT_STAGE, (
   _event,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Mapping
 
-from eidos_runtime.domain.project import Project
+from eidos_runtime.domain.project import Project, default_project_name
 from eidos_runtime.domain.worktree import (
     BranchOwnership,
     Worktree,
@@ -15,6 +15,11 @@ from eidos_runtime.persistence.codec import utc_datetime_from_millis
 def project_from_row(row: Mapping[str, object]) -> Project:
     return Project(
         id=str(row["id"]),
+        name=(
+            str(row["name"])
+            if "name" in row.keys() and row["name"]
+            else default_project_name(str(row["workspace_root"]))
+        ),
         workspace_root=str(row["workspace_root"]),
         git_repository_root=(
             str(row["git_repository_root"])

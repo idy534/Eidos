@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   GitDiffScope,
+  ProjectGitContext,
   RuntimeNotification,
   Session,
   SessionGitStatus,
@@ -14,6 +15,7 @@ const COMPLETION_REFRESH_DELAY_MS = 120;
 export interface GitReviewState {
   scope: GitDiffScope;
   status: SessionGitStatus | undefined;
+  projectContext: ProjectGitContext | undefined;
   statusBySessionId: ReadonlyMap<string, SessionGitStatus>;
   loadingStatus: boolean;
   error: string | undefined;
@@ -36,6 +38,7 @@ export function useGitReviewController({
 }: GitReviewControllerOptions): readonly [GitReviewState, GitReviewActions] {
   const [scope, setScope] = useState<GitDiffScope>("head");
   const [status, setStatus] = useState<SessionGitStatus | undefined>(undefined);
+  const [projectContext, setProjectContext] = useState<ProjectGitContext | undefined>(undefined);
   const [statusBySessionId, setStatusBySessionId] = useState<ReadonlyMap<string, SessionGitStatus>>(
     () => new Map(),
   );
@@ -44,6 +47,7 @@ export function useGitReviewController({
 
   const generationRef = useRef(0);
   const statusRequestRef = useRef(0);
+  const contextRequestRef = useRef(0);
   const selectedSessionIdRef = useRef<string | undefined>(undefined);
   const gitAvailableRef = useRef(false);
   const readyRef = useRef(ready);
@@ -86,12 +90,45 @@ export function useGitReviewController({
     });
   }, []);
 
+  const loadProjectContext = useCallback((
+    sessionId: string,
+    generation: number,
+    workspaceRoot: string,
+  ): void => {
+    const request = contextRequestRef.current + 1;
+    contextRequestRef.current = request;
+    void window.eidosRuntime.readProjectGitContext(workspaceRoot).then((context) => {
+      if (
+        generationRef.current === generation
+        && contextRequestRef.current === request
+        && selectedSessionIdRef.current === sessionId
+      ) setProjectContext(context);
+    }).catch((cause: unknown) => {
+      if (
+        generationRef.current === generation
+        && contextRequestRef.current === request
+        && selectedSessionIdRef.current === sessionId
+      ) setError(userFacingError(cause));
+    });
+  }, []);
+
   const refresh = useCallback((): void => {
     const sessionId = selectedSessionIdRef.current;
     if (!readyRef.current || !gitAvailableRef.current || !sessionId) return;
     const generation = generationRef.current;
     loadStatus(sessionId, generation);
-  }, [loadStatus]);
+    const localSession = session?.executionMode === "local"
+      || (session?.executionMode === undefined && session?.worktree === undefined);
+    if (localSession && session?.project?.workspaceRoot) {
+      loadProjectContext(sessionId, generation, session.project.workspaceRoot);
+    }
+  }, [
+    loadProjectContext,
+    loadStatus,
+    session?.executionMode,
+    session?.project?.workspaceRoot,
+    session?.worktree?.worktreeId,
+  ]);
 
   const selectScope = useCallback((nextScope: GitDiffScope): void => {
     scopeRef.current = nextScope;
@@ -126,6 +163,7 @@ export function useGitReviewController({
     scopeRef.current = "head";
     setScope("head");
     setStatus(undefined);
+    setProjectContext(undefined);
     setLoadingStatus(false);
     setError(undefined);
     if (refreshTimerRef.current !== undefined) {
@@ -134,13 +172,20 @@ export function useGitReviewController({
     }
     if (!ready || session?.project?.gitAvailable !== true) return;
     loadStatus(session.id, generation);
+    const localSession = session.executionMode === "local"
+      || (session.executionMode === undefined && session.worktree === undefined);
+    if (localSession && session.project.workspaceRoot) {
+      loadProjectContext(session.id, generation, session.project.workspaceRoot);
+    }
   }, [
+    loadProjectContext,
     loadStatus,
     ready,
     session?.id,
     session?.project?.gitAvailable,
     session?.executionMode,
     session?.associatedWorktreeId,
+    session?.worktree?.worktreeId,
   ]);
 
   useEffect(() => () => {
@@ -153,6 +198,7 @@ export function useGitReviewController({
   return [{
     scope,
     status,
+    projectContext,
     statusBySessionId,
     loadingStatus,
     error,

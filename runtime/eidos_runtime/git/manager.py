@@ -7,7 +7,11 @@ import time
 import uuid
 from collections.abc import Callable
 
-from eidos_runtime.db.database import Database, WorkspaceIdentity
+from eidos_runtime.db.database import (
+    Database,
+    WorkspaceIdentity,
+    managed_worktree_root_for,
+)
 from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
 from eidos_runtime.domain.project import Project
 from eidos_runtime.domain.worktree import (
@@ -94,6 +98,11 @@ class WorktreeManager:
         """Expose read-only repository discovery to application ports."""
 
         return self.discovery.discover(repository_seed)
+
+    def create_project(self, workspace_root: str, name: str | None) -> Project:
+        """Validate a workspace and persist its explicit Project metadata."""
+
+        return self.resolve_project(workspace_root, project_name=name).project
 
     def current_branch(self, repository_root: Path) -> str | None:
         try:
@@ -377,7 +386,12 @@ class WorktreeManager:
             changes=changes,
         )
 
-    def resolve_project(self, workspace_seed: Path | str) -> ProjectResolution:
+    def resolve_project(
+        self,
+        workspace_seed: Path | str,
+        *,
+        project_name: str | None = None,
+    ) -> ProjectResolution:
         """Resolve a filesystem workspace and its optional Git capability."""
 
         seed = Path(workspace_seed)
@@ -391,10 +405,12 @@ class WorktreeManager:
             raise WorktreeError("repository_not_found")
         discovery = self.discovery.resolve(workspace)
         if discovery is None:
-            project = self.repository.get_or_create_project(workspace)
+            project = self.repository.get_or_create_project(
+                workspace, name=project_name
+            )
             return ProjectResolution(project=project, git=None)
         project = self.repository.get_or_create_project(
-            discovery.repository_root, discovery
+            discovery.repository_root, discovery, name=project_name
         )
         return ProjectResolution(project=project, git=discovery)
 
@@ -2042,17 +2058,19 @@ class WorktreeManager:
         return value
 
     def _resolve_managed_root(self, value: Path | None) -> Path:
+        data = self.database.data_directory or (Path.home() / ".eidos")
+        default_root = managed_worktree_root_for(data)
         if value is None:
-            data = self.database.data_directory or (Path.home() / ".eidos")
-            value = data.parent / (
-                ".eidos-worktrees" if data.name == ".eidos" else f"{data.name}-worktrees"
-            )
+            value = default_root
         if not value.is_absolute():
             raise WorktreeError("managed_worktree_root_invalid")
         if value.exists() and (value.is_symlink() or not value.is_dir()):
             raise WorktreeError("managed_worktree_root_invalid")
         resolved = value.resolve(strict=False)
-        if self.database.workspace_overlaps_data(resolved):
+        if self.database.workspace_overlaps_data(
+            resolved,
+            allowed_roots=(default_root,),
+        ):
             raise WorktreeError("managed_worktree_root_overlaps_data")
         return resolved
 
@@ -2063,7 +2081,11 @@ class WorktreeManager:
             raise WorktreeError("worktree_create_failed") from error
         if self.managed_root.is_symlink() or not self.managed_root.is_dir():
             raise WorktreeError("managed_worktree_root_invalid")
-        if self.database.workspace_overlaps_data(self.managed_root):
+        data = self.database.data_directory or (Path.home() / ".eidos")
+        if self.database.workspace_overlaps_data(
+            self.managed_root,
+            allowed_roots=(managed_worktree_root_for(data),),
+        ):
             raise WorktreeError("managed_worktree_root_overlaps_data")
 
     def _compensate_create(self, project: Project, worktree: Worktree) -> bool:

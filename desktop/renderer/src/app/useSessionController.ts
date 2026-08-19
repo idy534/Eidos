@@ -1,5 +1,12 @@
 import { useCallback, useRef, useState } from "react";
-import type { CreateBranchResult, Run, Session, SessionSnapshot } from "../contracts.js";
+import type {
+  CreateBranchResult,
+  Project,
+  Run,
+  Session,
+  SessionGitMutationResult,
+  SessionSnapshot,
+} from "../contracts.js";
 import { SnapshotReadCoordinator, taskStatusFromRun, upsertRun, userFacingError } from "../session-state.js";
 
 const READ_COMPLETIONS_KEY = "eidos.readCompletedSessionIds";
@@ -26,6 +33,7 @@ function saveReadCompletedSessions(set: Set<string>): void {
 export interface PendingOperations {
   creatingSession?: boolean;
   creatingBranchSessionId?: string;
+  branchSessionId?: string;
   selectingSessionId?: string;
   renamingSessionId?: string;
   deletingSessionId?: string;
@@ -35,7 +43,9 @@ export interface PendingOperations {
 
 export interface SessionControllerState {
   sessions: Session[];
+  projects: Project[];
   snapshot: SessionSnapshot | undefined;
+  draft: SessionSnapshot | undefined;
   navigationSessionId: string | undefined;
   readCompletedSessions: ReadonlySet<string>;
   pending: PendingOperations;
@@ -43,10 +53,17 @@ export interface SessionControllerState {
 }
 
 export interface SessionControllerActions {
+  loadProjects: () => Promise<void>;
   loadSessions: () => Promise<void>;
+  createProject: (name: string | undefined, workspaceRoot: string) => Promise<Project | undefined>;
+  startDraft: (project?: Project | null) => void;
+  updateDraftExecutionMode: (mode: "local" | "worktree") => void;
+  materializeDraft: () => Promise<SessionSnapshot | undefined>;
+  discardDraft: () => void;
+  rollbackMaterializedSession: (session: Session, draft: SessionSnapshot) => Promise<boolean>;
   selectSession: (session: Session) => Promise<SessionSnapshot | undefined>;
   createSession: (
-    workspaceRoot?: string,
+    workspaceRoot?: string | null,
     options?: {
       executionMode?: "local" | "worktree";
       baseRef?: string;
@@ -57,6 +74,14 @@ export interface SessionControllerActions {
     sessionId: string,
     branch: string,
   ) => Promise<CreateBranchResult | undefined>;
+  switchLocalBranch: (
+    sessionId: string,
+    branch: string,
+  ) => Promise<SessionGitMutationResult | undefined>;
+  createLocalBranch: (
+    sessionId: string,
+    branch: string,
+  ) => Promise<SessionGitMutationResult | undefined>;
   handoffSession: (
     sessionId: string,
     target: "local" | "worktree",
@@ -64,6 +89,7 @@ export interface SessionControllerActions {
   restoreWorktree: (sessionId: string) => Promise<SessionSnapshot | undefined>;
   renameSession: (sessionId: string, title: string) => Promise<void>;
   deleteSession: (session: Session) => Promise<{ confirmed: true } | { confirmed: false; error: string }>;
+  deleteProject: (project: Project) => Promise<{ confirmed: true } | { confirmed: false; error: string }>;
   setError: (error: string | undefined) => void;
   projectRun: (sessionId: string, run: Run) => void;
   /** Called when a session title notification arrives — updates sessions title and open snapshot */
@@ -84,7 +110,9 @@ interface SessionSelectionOperation {
 
 export function useSessionController(): [SessionControllerState, SessionControllerActions] {
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [snapshot, setSnapshot] = useState<SessionSnapshot | undefined>(undefined);
+  const [draft, setDraft] = useState<SessionSnapshot | undefined>(undefined);
   const [navigationSessionId, setNavigationSessionId] = useState<string | undefined>(undefined);
   const [readCompletedSessions, setReadCompletedSessions] = useState<Set<string>>(loadReadCompletedSessions);
   const [pending, setPending] = useState<PendingOperations>({});
@@ -139,7 +167,66 @@ export function useSessionController(): [SessionControllerState, SessionControll
     }
   }, []);
 
+  const loadProjects = useCallback(async (): Promise<void> => {
+    setError(undefined);
+    try {
+      const result = await window.eidosRuntime.listProjects();
+      setProjects(result.items);
+    } catch (cause) {
+      setError(userFacingError(cause));
+    }
+  }, []);
+
+  const createProject = useCallback(async (
+    name: string | undefined,
+    workspaceRoot: string,
+  ): Promise<Project | undefined> => {
+    setError(undefined);
+    try {
+      const project = await window.eidosRuntime.createProject(name, workspaceRoot);
+      setProjects((prev) => [project, ...prev.filter((item) => item.id !== project.id)]);
+      return project;
+    } catch (cause) {
+      setError(userFacingError(cause));
+      return undefined;
+    }
+  }, []);
+
+  const startDraft = useCallback((project?: Project | null): void => {
+    const session: Session = {
+      id: `draft-${crypto.randomUUID()}`,
+      workspaceRoot: project?.workspaceRoot ?? "",
+      ...(project
+        ? {
+            project: {
+              id: project.id,
+              ...(project.name ? { name: project.name } : {}),
+              workspaceRoot: project.workspaceRoot,
+              gitAvailable: project.gitAvailable,
+            },
+          }
+        : { projectless: true }),
+      executionMode: "local",
+      taskStatus: "new",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    setError(undefined);
+    setDraft({ session, runs: [], items: [], stepResolutions: [] });
+    setSnapshot(undefined);
+    setNavigationSessionId(undefined);
+    selectedSessionIdRef.current = undefined;
+    snapshotReads.select("");
+  }, [snapshotReads]);
+
+  const updateDraftExecutionMode = useCallback((mode: "local" | "worktree"): void => {
+    setDraft((prev) => prev
+      ? { ...prev, session: { ...prev.session, executionMode: mode, updatedAt: Date.now() } }
+      : prev);
+  }, []);
+
   const selectSession = useCallback(async (session: Session): Promise<SessionSnapshot | undefined> => {
+    setDraft(undefined);
     setNavigationSessionId(session.id);
 
     if (activeSelectionRef.current?.sessionId === session.id) {
@@ -206,7 +293,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
   }, [snapshot]);
 
   const createSession = useCallback(async (
-    workspaceRoot?: string,
+    workspaceRoot?: string | null,
     options: {
       executionMode?: "local" | "worktree";
       baseRef?: string;
@@ -221,16 +308,32 @@ export function useSessionController(): [SessionControllerState, SessionControll
     setError(undefined);
 
     try {
-      const workspace = workspaceRoot ?? await window.eidosRuntime.selectWorkspace();
-      if (!workspace) return undefined;
-
       const session = Object.keys(options).length > 0
-        ? await window.eidosRuntime.createSession(workspace, options)
-        : await window.eidosRuntime.createSession(workspace);
+        ? await window.eidosRuntime.createSession(workspaceRoot ?? null, options)
+        : await window.eidosRuntime.createSession(workspaceRoot ?? null);
       const token = snapshotReads.select(session.id);
       selectedSessionIdRef.current = session.id;
       setNavigationSessionId(session.id);
       setSessions((prev) => [session, ...prev]);
+      const project = session.project;
+      if (project && session.projectless !== true) {
+        setProjects((prev) => {
+          const existing = prev.find((item) => item.id === project.id);
+          const next: Project = {
+            ...project,
+            ...(project.name
+              ? { name: project.name }
+              : existing?.name
+                ? { name: existing.name }
+                : {}),
+            createdAt: existing?.createdAt ?? session.createdAt,
+            updatedAt: existing?.updatedAt ?? session.updatedAt,
+          };
+          return existing
+            ? prev.map((project) => project.id === next.id ? next : project)
+            : [...prev, next];
+        });
+      }
       const loaded = await loadAuthoritativeSnapshot(session.id);
       const accepted = snapshotReads.accept(token, loaded);
       if (accepted) {
@@ -247,6 +350,38 @@ export function useSessionController(): [SessionControllerState, SessionControll
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const materializeDraft = useCallback(async (): Promise<SessionSnapshot | undefined> => {
+    const currentDraft = draft;
+    if (!currentDraft) return undefined;
+    const projectRoot = currentDraft.session.project?.workspaceRoot ?? null;
+    return createSession(projectRoot, {
+      executionMode: currentDraft.session.executionMode ?? "local",
+    });
+  }, [createSession, draft]);
+
+  const discardDraft = useCallback((): void => {
+    setDraft(undefined);
+  }, []);
+
+  const rollbackMaterializedSession = useCallback(async (
+    session: Session,
+    draftSnapshot: SessionSnapshot,
+  ): Promise<boolean> => {
+    try {
+      const deleted = await window.eidosRuntime.deleteSession(session.id);
+      setSessions((prev) => prev.filter((item) => item.id !== deleted.deletedSessionId));
+      setSnapshot((prev) => prev?.session.id === deleted.deletedSessionId ? undefined : prev);
+      setDraft(draftSnapshot);
+      setNavigationSessionId(undefined);
+      selectedSessionIdRef.current = undefined;
+      snapshotReads.select("");
+      return true;
+    } catch (cause) {
+      setError(userFacingError(cause));
+      return false;
+    }
+  }, [snapshotReads]);
 
   const renameSession = useCallback(async (sessionId: string, title: string): Promise<void> => {
     setPending((prev) => ({ ...prev, renamingSessionId: sessionId }));
@@ -288,6 +423,42 @@ export function useSessionController(): [SessionControllerState, SessionControll
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot]);
+
+  const switchLocalBranch = useCallback(async (
+    sessionId: string,
+    branch: string,
+  ): Promise<SessionGitMutationResult | undefined> => {
+    setPending((prev) => ({ ...prev, branchSessionId: sessionId }));
+    setError(undefined);
+    try {
+      return await window.eidosRuntime.switchSessionGitBranch(
+        sessionId, branch, crypto.randomUUID(),
+      );
+    } catch (cause) {
+      setError(userFacingError(cause));
+      return undefined;
+    } finally {
+      clearPending("branchSessionId");
+    }
+  }, []);
+
+  const createLocalBranch = useCallback(async (
+    sessionId: string,
+    branch: string,
+  ): Promise<SessionGitMutationResult | undefined> => {
+    setPending((prev) => ({ ...prev, creatingBranchSessionId: sessionId }));
+    setError(undefined);
+    try {
+      return await window.eidosRuntime.createSessionGitBranch(
+        sessionId, branch, crypto.randomUUID(),
+      );
+    } catch (cause) {
+      setError(userFacingError(cause));
+      return undefined;
+    } finally {
+      clearPending("creatingBranchSessionId");
+    }
+  }, []);
 
   const handoffSession = useCallback(async (
     sessionId: string,
@@ -370,6 +541,19 @@ export function useSessionController(): [SessionControllerState, SessionControll
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions, snapshot, selectSession]);
 
+  const deleteProject = useCallback(async (project: Project): Promise<{ confirmed: true } | { confirmed: false; error: string }> => {
+    setError(undefined);
+    try {
+      const deleted = await window.eidosRuntime.deleteProject(project.id);
+      setProjects((prev) => prev.filter((item) => item.id !== deleted.deletedProjectId));
+      return { confirmed: true };
+    } catch (cause) {
+      const errMsg = userFacingError(cause);
+      setError(errMsg);
+      return { confirmed: false, error: errMsg };
+    }
+  }, []);
+
   const projectRun = useCallback((sessionId: string, run: Run): void => {
     const taskStatus = taskStatusFromRun(run);
     setSessions((prev) => prev.map((s) => s.id === sessionId
@@ -430,7 +614,9 @@ export function useSessionController(): [SessionControllerState, SessionControll
 
   const state: SessionControllerState = {
     sessions,
+    projects,
     snapshot,
+    draft,
     navigationSessionId,
     readCompletedSessions,
     pending,
@@ -438,14 +624,24 @@ export function useSessionController(): [SessionControllerState, SessionControll
   };
 
   const actions: SessionControllerActions = {
+    loadProjects,
     loadSessions,
+    createProject,
+    startDraft,
+    updateDraftExecutionMode,
+    materializeDraft,
+    discardDraft,
+    rollbackMaterializedSession,
     selectSession,
     createSession,
     createSessionBranch,
+    switchLocalBranch,
+    createLocalBranch,
     handoffSession,
     restoreWorktree,
     renameSession,
     deleteSession,
+    deleteProject,
     setError,
     projectRun,
     handleTitleNotification,

@@ -58,6 +58,7 @@ class ContextBuilder:
         rule_resolution_snapshot: RuleResolutionSnapshot | None = None,
         step_policy: StepPermissionPolicy | None = None,
         repository_context: RunRepositoryContext | None = None,
+        projectless: bool = False,
     ) -> ContextBuild:
         facts = self.store.context_projection_facts(run_id)
         profile = self.store.read_model_profile(run_id)
@@ -69,8 +70,6 @@ class ContextBuilder:
         source_ids = set(
             facts.compact_summary.source_item_ids if facts.compact_summary else ()
         )
-        workspace = self.store.workspace_for_run(run_id)
-
         # --- User-context layers (Project Rules, Skills) ---
         # These are injected as user messages BEFORE workspace-environment so that
         # the current user request (which comes later in history) has higher priority.
@@ -82,25 +81,24 @@ class ContextBuilder:
                 "content": layer.content,
             })
 
-        # --- Workspace environment context ---
-        workspace_env: ModelContextItem = {
-            "type": "user",
-            "sectionId": "workspace-environment",
-            "version": str(facts.workspace_version),
-            "content": "Workspace/environment context: " + json.dumps(
-                {
-                    "workspace": str(workspace.path),
-                    "workspaceVersion": facts.workspace_version,
-                    "platform": platform.system(),
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ),
-        }
-
-        # Order: [user-context layers] [workspace-env] [retained] [summary] [history] [extra]
-        context: list[ModelContextItem] = [*user_context_messages, workspace_env]
+        context: list[ModelContextItem] = [*user_context_messages]
+        if not projectless:
+            workspace = self.store.workspace_for_run(run_id)
+            context.append({
+                "type": "user",
+                "sectionId": "workspace-environment",
+                "version": str(facts.workspace_version),
+                "content": "Workspace/environment context: " + json.dumps(
+                    {
+                        "workspace": str(workspace.path),
+                        "workspaceVersion": facts.workspace_version,
+                        "platform": platform.system(),
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            })
 
         if any(section.role != "user" for section in retained_context):
             raise ValueError(

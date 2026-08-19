@@ -33,8 +33,16 @@ export interface SessionWorktree {
 
 export interface SessionProject {
   id: string;
+  name?: string;
   workspaceRoot: string;
   gitAvailable: boolean;
+}
+
+export interface Project extends SessionProject {
+  /** Explicit display name chosen when the Project is created. */
+  name?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface Session {
@@ -43,6 +51,8 @@ export interface Session {
   executionMode?: "local" | "worktree";
   associatedWorktreeId?: string;
   worktreeRestoreAvailable?: boolean;
+  /** True when the conversation is not associated with a user project. */
+  projectless?: boolean;
   /** Optional only while older persisted event fixtures are read. */
   project?: SessionProject;
   worktree?: SessionWorktree;
@@ -75,6 +85,14 @@ export interface SessionListResult {
 
 export interface DeleteSessionResult {
   deletedSessionId: string;
+}
+
+export interface ProjectListResult {
+  items: Project[];
+}
+
+export interface DeleteProjectResult {
+  deletedProjectId: string;
 }
 
 export interface CreateBranchResult {

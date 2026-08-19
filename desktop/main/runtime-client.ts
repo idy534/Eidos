@@ -28,6 +28,9 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "SENSITIVE_SCAN_FAILED",
   "INVALID_SESSION_TITLE",
   "SESSION_HAS_ACTIVE_RUN",
+  "PROJECT_HAS_SESSIONS",
+  "PROJECT_WORKTREE_RECOVERY_REQUIRED",
+  "PROJECT_PERSISTENCE_FAILED",
   "HANDOFF_NOT_SUPPORTED",
   "HANDOFF_SOURCE_CHANGED",
   "HANDOFF_TARGET_CHANGED",
@@ -54,6 +57,10 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "BRANCH_INVALID",
   "WORKTREE_BRANCH_CREATE_FAILED",
   "WORKTREE_BRANCH_STATE_CHANGED",
+  "LOCAL_REQUIRED",
+  "GIT_BRANCH_NOT_FOUND",
+  "GIT_BRANCH_SWITCH_FAILED",
+  "GIT_BRANCH_CREATE_FAILED",
   "WORKTREE_NOT_FOUND",
   "WORKTREE_INVALID",
   "WORKSPACE_IDENTITY_UNAVAILABLE",
@@ -149,6 +156,9 @@ import type {
   RuntimeHealth,
   RuntimeNotification,
   ProjectGitContext,
+  Project,
+  ProjectListResult,
+  DeleteProjectResult,
   CreateBranchResult,
   Session,
   SessionHandoffResult,
@@ -352,7 +362,7 @@ export class RuntimeClient {
   }
 
   async createSession(
-    workspaceRoot: string,
+    workspaceRoot: string | null,
     options: {
       executionMode?: "local" | "worktree";
       baseRef?: string;
@@ -415,6 +425,31 @@ export class RuntimeClient {
   readProjectGitContext(workspaceRoot: string): Promise<ProjectGitContext> {
     return this.validatedRequest(
       "project/gitContext", { workspaceRoot }, isProjectGitContext,
+    );
+  }
+
+  listProjects(): Promise<ProjectListResult> {
+    return this.validatedRequest("project/list", {}, isProjectListResult);
+  }
+
+  createProject(
+    name: string | undefined,
+    workspaceRoot: string,
+    operationId = randomUUID(),
+  ): Promise<Project> {
+    return this.validatedRequest(
+      "project/create",
+      { name, workspaceRoot, operationId },
+      isProject,
+    );
+  }
+
+  deleteProject(
+    projectId: string,
+    operationId = randomUUID(),
+  ): Promise<DeleteProjectResult> {
+    return this.validatedRequest(
+      "project/delete", { projectId, operationId }, isDeletedProjectResult,
     );
   }
 
@@ -487,6 +522,26 @@ export class RuntimeClient {
   ): Promise<SessionGitDiff> {
     return this.validatedRequest(
       "session/gitDiff", { sessionId, scope, ...(path === undefined ? {} : { path }) }, isSessionGitDiff,
+    );
+  }
+
+  switchSessionGitBranch(
+    sessionId: string,
+    branch: string,
+    operationId: string,
+  ): Promise<SessionGitMutationResult> {
+    return this.validatedRequest(
+      "session/gitSwitchBranch", { operationId, sessionId, branch }, isSessionGitMutationResult,
+    );
+  }
+
+  createSessionGitBranch(
+    sessionId: string,
+    branch: string,
+    operationId: string,
+  ): Promise<SessionGitMutationResult> {
+    return this.validatedRequest(
+      "session/gitCreateBranch", { operationId, sessionId, branch }, isSessionGitMutationResult,
     );
   }
 
@@ -1213,11 +1268,12 @@ function isSession(value: unknown): value is Session {
     isRecord(value)
     && hasOnlyKeys(value, [
       "id", "workspaceRoot", "executionMode", "associatedWorktreeId",
-      "worktreeRestoreAvailable", "project", "worktree", "title", "taskStatus",
+      "worktreeRestoreAvailable", "projectless", "project", "worktree", "title", "taskStatus",
       "createdAt", "updatedAt",
     ])
     && typeof value.id === "string"
     && typeof value.workspaceRoot === "string"
+    && (value.projectless === undefined || typeof value.projectless === "boolean")
     && (value.executionMode === undefined || ["local", "worktree"].includes(String(value.executionMode)))
     && (value.associatedWorktreeId === undefined || typeof value.associatedWorktreeId === "string")
     && (value.worktreeRestoreAvailable === undefined || typeof value.worktreeRestoreAvailable === "boolean")
@@ -1235,7 +1291,7 @@ function isSessionHandoff(value: unknown): value is SessionHandoffResult {
     !isRecord(value)
     || !hasOnlyKeys(value, [
       "id", "sessionId", "worktreeId", "workspaceRoot", "executionMode",
-      "associatedWorktreeId", "project", "worktree", "title", "taskStatus",
+      "associatedWorktreeId", "projectless", "project", "worktree", "title", "taskStatus",
       "worktreeRestoreAvailable", "createdAt", "updatedAt",
     ])
     || typeof value.sessionId !== "string"
@@ -1252,7 +1308,7 @@ function isSessionRestoreWorktree(value: unknown): value is SessionRestoreWorktr
     !isRecord(value)
     || !hasOnlyKeys(value, [
       "id", "sessionId", "worktreeId", "workspaceRoot", "executionMode",
-      "associatedWorktreeId", "worktreeRestoreAvailable", "project", "worktree",
+      "associatedWorktreeId", "worktreeRestoreAvailable", "projectless", "project", "worktree",
       "title", "taskStatus", "createdAt", "updatedAt",
     ])
     || typeof value.sessionId !== "string"
@@ -1279,10 +1335,33 @@ function isWorktreeSettings(value: unknown): value is WorktreeSettings {
 function isSessionProject(value: unknown): boolean {
   return (
     isRecord(value)
-    && hasOnlyKeys(value, ["id", "workspaceRoot", "gitAvailable"])
+    && hasOnlyKeys(value, ["id", "name", "workspaceRoot", "gitAvailable"])
     && typeof value.id === "string"
+    && (value.name === undefined || typeof value.name === "string")
     && typeof value.workspaceRoot === "string"
     && typeof value.gitAvailable === "boolean"
+  );
+}
+
+function isProject(value: unknown): value is ProjectListResult["items"][number] {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["id", "name", "workspaceRoot", "gitAvailable", "createdAt", "updatedAt"])
+    && typeof value.id === "string"
+    && (value.name === undefined || typeof value.name === "string")
+    && typeof value.workspaceRoot === "string"
+    && typeof value.gitAvailable === "boolean"
+    && isNonNegativeInteger(value.createdAt)
+    && isNonNegativeInteger(value.updatedAt)
+  );
+}
+
+function isProjectListResult(value: unknown): value is ProjectListResult {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["items"])
+    && Array.isArray(value.items)
+    && value.items.every(isProject)
   );
 }
 
@@ -1737,6 +1816,14 @@ function isDeletedSessionResult(value: unknown): value is { deletedSessionId: st
     isRecord(value)
     && hasOnlyKeys(value, ["deletedSessionId"])
     && typeof value.deletedSessionId === "string"
+  );
+}
+
+function isDeletedProjectResult(value: unknown): value is DeleteProjectResult {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["deletedProjectId"])
+    && typeof value.deletedProjectId === "string"
   );
 }
 

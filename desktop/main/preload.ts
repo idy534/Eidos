@@ -10,6 +10,9 @@ import type {
   Session,
   SessionHandoffResult,
   SessionRestoreWorktreeResult,
+  Project,
+  ProjectListResult,
+  DeleteProjectResult,
   WorktreeSettings,
   ProjectGitContext,
   CreateBranchResult,
@@ -82,12 +85,17 @@ const api: EidosRuntimeAPI = {
     ipcRenderer.invoke(IPC.WORKSPACE_OPEN_IN_EDITOR, sessionId, path),
 
   // Sessions
+  createProject: (name: string | undefined, workspaceRoot: string): Promise<Project> =>
+    ipcRenderer.invoke(IPC.PROJECT_CREATE, name, workspaceRoot),
+  listProjects: (): Promise<ProjectListResult> => ipcRenderer.invoke(IPC.PROJECT_LIST),
+  deleteProject: (projectId: string): Promise<DeleteProjectResult> =>
+    ipcRenderer.invoke(IPC.PROJECT_DELETE, projectId),
   listSessions: (): Promise<SessionListResult> => ipcRenderer.invoke(IPC.SESSION_LIST),
   readSession: (sessionId: string): Promise<SessionSnapshot> => ipcRenderer.invoke(IPC.SESSION_READ, sessionId),
   listEvents: (sessionId: string, afterEventId: number): Promise<EventListResult> =>
     ipcRenderer.invoke(IPC.EVENT_LIST, sessionId, afterEventId),
   createSession: (
-    workspaceRoot: string,
+    workspaceRoot: string | null,
     options?: {
       executionMode?: "local" | "worktree";
       baseRef?: string;
@@ -122,6 +130,18 @@ const api: EidosRuntimeAPI = {
     path?: string,
   ): Promise<SessionGitDiff> =>
     ipcRenderer.invoke(IPC.SESSION_GIT_DIFF, sessionId, scope, path),
+  switchSessionGitBranch: (
+    sessionId: string,
+    branch: string,
+    operationId: string,
+  ): Promise<SessionGitMutationResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_SWITCH_BRANCH, sessionId, branch, operationId),
+  createSessionGitBranch: (
+    sessionId: string,
+    branch: string,
+    operationId: string,
+  ): Promise<SessionGitMutationResult> =>
+    ipcRenderer.invoke(IPC.SESSION_GIT_CREATE_BRANCH, sessionId, branch, operationId),
   stageSessionGit: (
     sessionId: string,
     paths: string[],

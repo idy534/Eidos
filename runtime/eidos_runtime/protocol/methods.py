@@ -22,6 +22,7 @@ from eidos_runtime.protocol.schemas import (
     ItemDto,
     McpServerRecordDto,
     PluginRecordDto,
+    ProjectDto,
     RunDto,
     SessionDto,
     SessionWorktreeDto,
@@ -78,8 +79,8 @@ def _include_detached_worktree_branch(
 
 
 class SessionCreateRequestDto(_OperationRequest):
-    workspace_root: StrictStr = Field(
-        alias="workspaceRoot", min_length=1, max_length=4096
+    workspace_root: StrictStr | None = Field(
+        default=None, alias="workspaceRoot", min_length=1, max_length=4096
     )
     execution_mode: Literal["local", "worktree"] = Field(
         default="local", alias="executionMode"
@@ -101,10 +102,50 @@ class SessionCreateBranchRequestDto(_OperationRequest):
     )
 
 
+class _SessionGitBranchRequest(_OperationRequest):
+    operation_id: StrictStr = Field(alias="operationId")
+    session_id: StrictStr = Field(alias="sessionId")
+    branch: StrictStr = Field(min_length=1, max_length=4096)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
+        "operation_id",
+        "session_id",
+    )
+
+
+class SessionGitSwitchBranchRequestDto(_SessionGitBranchRequest):
+    pass
+
+
+class SessionGitCreateBranchRequestDto(_SessionGitBranchRequest):
+    pass
+
+
 class GitContextRequestDto(MethodRequestDto):
     workspace_root: StrictStr = Field(
         alias="workspaceRoot", min_length=1, max_length=4096
     )
+
+
+class ProjectListRequestDto(MethodRequestDto):
+    pass
+
+
+class ProjectCreateRequestDto(_OperationRequest):
+    name: StrictStr | None = Field(default=None, max_length=120)
+    workspace_root: StrictStr = Field(
+        alias="workspaceRoot", min_length=1, max_length=4096
+    )
+
+    @field_validator("name")
+    @classmethod
+    def _normalize_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class ProjectDeleteRequestDto(_OperationRequest):
+    project_id: StrictStr = Field(alias="projectId", min_length=1, max_length=256)
 
 
 class SessionListRequestDto(MethodRequestDto):
@@ -515,6 +556,18 @@ class SessionListResponseDto(MethodResultDto):
         return value
 
 
+class ProjectListResponseDto(MethodResultDto):
+    items: list[ProjectDto]
+
+
+class ProjectCreateResponseDto(MethodResultDto, ProjectDto):
+    pass
+
+
+class ProjectDeleteResponseDto(MethodResultDto):
+    deleted_project_id: StrictStr = Field(alias="deletedProjectId")
+
+
 class SessionReadResponseDto(MethodResultDto):
     session: SessionDto
     runs: list[RunDto]
@@ -650,6 +703,14 @@ class SessionGitDiscardResponseDto(SessionGitMutationResponseDto):
 
 class SessionGitCommitResponseDto(SessionGitMutationResponseDto):
     commit: StrictStr
+
+
+class SessionGitSwitchBranchResponseDto(SessionGitMutationResponseDto):
+    pass
+
+
+class SessionGitCreateBranchResponseDto(SessionGitMutationResponseDto):
+    pass
 
 
 class GitRemoteDto(ClosedModel):

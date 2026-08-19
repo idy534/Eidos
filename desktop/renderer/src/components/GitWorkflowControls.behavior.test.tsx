@@ -99,6 +99,25 @@ describe("GitWorkflowControls", () => {
     expect(screen.getByText("feature/review")).toBeInTheDocument();
   });
 
+  it("switches a Local branch through the typed callback", async () => {
+    const switchBranch = vi.fn().mockResolvedValue({
+      head: status.head,
+      branch: "main",
+      status: { ...status, worktreeId: null, branch: "main" },
+    });
+    renderControls({
+      status: { ...status, worktreeId: null, branch: "feature/review" },
+      switchBranch,
+    });
+
+    const selector = await screen.findByRole("combobox", { name: "当前本地分支" });
+    fireEvent.change(selector, { target: { value: "main" } });
+
+    await waitFor(() => expect(switchBranch).toHaveBeenCalledWith(
+      "session-a", "main", expect.any(String),
+    ));
+  });
+
   it("commits only the already staged changes", async () => {
     const { commit, onRefresh } = renderControls();
     fireEvent.change(screen.getByRole("textbox", { name: "Commit message" }), {
@@ -241,6 +260,17 @@ describe("GitWorkflowControls", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Create Branch Here" }));
     expect(onCreateBranch).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "Commit" })).toBeDisabled();
+  });
+
+  it("offers branch creation for a clean Local session", async () => {
+    const onCreateBranch = vi.fn();
+    renderControls({
+      status: { ...status, worktreeId: null, branch: "main", dirty: false },
+      onCreateBranch,
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Create Branch" }));
+    expect(onCreateBranch).toHaveBeenCalledTimes(1);
   });
 
   it("disables conflicting actions while an Agent Run is active", async () => {

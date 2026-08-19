@@ -47,6 +47,7 @@ describe("useSessionController real Hook behavior", () => {
 
   function setupMockRuntime(overrides: Partial<EidosRuntimeAPI> = {}) {
     const api: Partial<EidosRuntimeAPI> = {
+      listProjects: vi.fn().mockResolvedValue({ items: [] }),
       listSessions: vi.fn().mockResolvedValue({ items: [mockSession1, mockSession2] }),
       readSession: vi.fn().mockImplementation((id: string) => Promise.resolve(id === "session-1" ? mockSnapshot1 : mockSnapshot2)),
       listEvents: vi.fn().mockResolvedValue({ items: [], throughEventId: 0, hasMore: false }),
@@ -54,19 +55,17 @@ describe("useSessionController real Hook behavior", () => {
       createSession: vi.fn().mockResolvedValue(mockSession1),
       renameSession: vi.fn().mockImplementation((id, title) => Promise.resolve({ ...mockSession1, id, title })),
       deleteSession: vi.fn().mockResolvedValue({ deletedSessionId: "session-1" }),
+      deleteProject: vi.fn().mockResolvedValue({ deletedProjectId: "project-1" }),
       ...overrides,
     };
     (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
     return api;
   }
 
-  it("1 & 2. Two synchronous createSession() calls open one Workspace Picker and call IPC once", async () => {
-    let resolvePicker!: (val: string | null) => void;
-    const pickerSpy = vi.fn().mockImplementation(() => new Promise<string | null>((r) => { resolvePicker = r; }));
+  it("1 & 2. Two synchronous projectless createSession() calls call IPC once", async () => {
     const createSpy = vi.fn().mockResolvedValue(mockSession1);
 
     setupMockRuntime({
-      selectWorkspace: pickerSpy,
       createSession: createSpy,
     });
 
@@ -76,25 +75,21 @@ describe("useSessionController real Hook behavior", () => {
     let p2: Promise<SessionSnapshot | undefined>;
 
     act(() => {
-      p1 = result.current[1].createSession();
-      p2 = result.current[1].createSession();
+      p1 = result.current[1].createSession(null);
+      p2 = result.current[1].createSession(null);
     });
 
-    expect(pickerSpy).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      resolvePicker("/workspace/new");
-      await Promise.all([p1, p2]);
-    });
+    await act(async () => { await Promise.all([p1, p2]); });
 
     expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(createSpy).toHaveBeenCalledWith(null);
     expect(await p2!).toBeUndefined(); // Second synchronous call returns undefined
   });
 
-  it("3. Pending becomes true before the Picker Promise settles", async () => {
-    let resolvePicker!: (val: string | null) => void;
+  it("3. Pending becomes true before projectless Session creation settles", async () => {
+    let resolveCreate!: (value: Session) => void;
     setupMockRuntime({
-      selectWorkspace: () => new Promise((r) => { resolvePicker = r; }),
+      createSession: () => new Promise((resolve) => { resolveCreate = resolve; }),
     });
 
     const { result } = renderHook(() => useSessionController());
@@ -102,39 +97,40 @@ describe("useSessionController real Hook behavior", () => {
 
     let p: Promise<SessionSnapshot | undefined>;
     act(() => {
-      p = result.current[1].createSession();
+      p = result.current[1].createSession(null);
     });
 
     expect(result.current[0].pending.creatingSession).toBe(true);
 
     await act(async () => {
-      resolvePicker("/workspace/new");
+      resolveCreate(mockSession1);
       await p;
     });
 
     expect(result.current[0].pending.creatingSession).toBeUndefined();
   });
 
-  it("4. Picker cancellation releases the lock and pending state", async () => {
-    setupMockRuntime({ selectWorkspace: vi.fn().mockResolvedValue(null) });
+  it("4. Projectless Session creation releases the lock and pending state", async () => {
+    const createSpy = vi.fn().mockResolvedValue(mockSession1);
+    setupMockRuntime({ createSession: createSpy });
 
     const { result } = renderHook(() => useSessionController());
 
     await act(async () => {
-      const snap = await result.current[1].createSession();
-      expect(snap).toBeUndefined();
+      await result.current[1].createSession(null);
     });
 
+    expect(createSpy).toHaveBeenCalledWith(null);
     expect(result.current[0].pending.creatingSession).toBeUndefined();
   });
 
-  it("5. Picker failure releases the lock", async () => {
-    setupMockRuntime({ selectWorkspace: vi.fn().mockRejectedValue(new Error("Picker dialog error")) });
+  it("5. Projectless Session failure releases the lock", async () => {
+    setupMockRuntime({ createSession: vi.fn().mockRejectedValue(new Error("Session creation error")) });
 
     const { result } = renderHook(() => useSessionController());
 
     await act(async () => {
-      const snap = await result.current[1].createSession();
+      const snap = await result.current[1].createSession(null);
       expect(snap).toBeUndefined();
     });
 
@@ -417,5 +413,51 @@ describe("useSessionController real Hook behavior", () => {
 
     expect(pA_retry).toEqual(mockSnapshot1);
     expect(result.current[0].snapshot).toEqual(mockSnapshot1);
+  });
+
+  it("keeps a new Session local until the first Run materializes it", async () => {
+    const project = {
+      id: "project-eidos",
+      name: "Eidos",
+      workspaceRoot: "/workspace/eidos",
+      gitAvailable: true,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const createSession = vi.fn().mockResolvedValue(mockSession1);
+    setupMockRuntime({ createSession });
+
+    const { result } = renderHook(() => useSessionController());
+    act(() => result.current[1].startDraft(project));
+
+    expect(createSession).not.toHaveBeenCalled();
+    expect(result.current[0].sessions).toEqual([]);
+    expect(result.current[0].draft?.session.project?.id).toBe(project.id);
+
+    await act(async () => {
+      await result.current[1].materializeDraft();
+    });
+
+    expect(createSession).toHaveBeenCalledWith(project.workspaceRoot, { executionMode: "local" });
+    expect(result.current[0].snapshot).toEqual(mockSnapshot1);
+    expect(result.current[0].draft).toBeDefined();
+  });
+
+  it("restores the draft when a materialized Session has no Run", async () => {
+    const deleteSession = vi.fn().mockResolvedValue({ deletedSessionId: mockSession1.id });
+    setupMockRuntime({ deleteSession });
+
+    const { result } = renderHook(() => useSessionController());
+    act(() => result.current[1].startDraft());
+    const draft = result.current[0].draft!;
+
+    await act(async () => {
+      await result.current[1].rollbackMaterializedSession(mockSession1, draft);
+    });
+
+    expect(deleteSession).toHaveBeenCalledWith(mockSession1.id);
+    expect(result.current[0].snapshot).toBeUndefined();
+    expect(result.current[0].draft).toBe(draft);
+    expect(result.current[0].sessions).toEqual([]);
   });
 });

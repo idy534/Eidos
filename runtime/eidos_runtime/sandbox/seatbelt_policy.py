@@ -39,12 +39,30 @@ class SeatbeltPolicyCompiler:
             parameters[key] = entry.resolved_path
             sections.append(_metadata_rule(key))
             sections.append(_allow_rule(entry, key))
+        workspace_exceptions: dict[str, str] = {}
+        for index, workspace_root in enumerate(profile.workspace_roots):
+            workspace = Path(workspace_root).resolve(strict=False)
+            for entry in (
+                *profile.permanent_denies,
+                *profile.hard_confidentiality_denies,
+            ):
+                protected = Path(entry.resolved_path)
+                if protected != workspace and protected in workspace.parents:
+                    key = f"WORKSPACE_ROOT_{index}"
+                    parameters[key] = str(workspace)
+                    workspace_exceptions[entry.resolved_path] = key
         for index, entry in enumerate(
             (*profile.permanent_denies, *profile.hard_confidentiality_denies)
         ):
             key = f"PERMANENT_DENY_{index}"
             parameters[key] = entry.resolved_path
-            sections.append(_deny_rule(entry, key))
+            sections.append(
+                _deny_rule(
+                    entry,
+                    key,
+                    exception_key=workspace_exceptions.get(entry.resolved_path),
+                )
+            )
         for index, path in enumerate(profile.protected_write_paths):
             key = f"PROTECTED_WRITE_{index}"
             parameters[key] = path
@@ -104,9 +122,17 @@ def _allow_rule(
 
 
 def _deny_rule(
-    entry: MaterializedFileSystemPermissionEntry, key: str
+    entry: MaterializedFileSystemPermissionEntry,
+    key: str,
+    *,
+    exception_key: str | None = None,
 ) -> str:
     path_filter = _filter(entry, key)
+    if exception_key is not None:
+        path_filter = (
+            f'(require-all {path_filter} '
+            f'(require-not (subpath (param "{exception_key}"))))'
+        )
     return (
         f"(deny file-read* file-write* file-map-executable "
         f"file-test-existence {path_filter})"

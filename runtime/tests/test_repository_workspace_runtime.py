@@ -69,7 +69,7 @@ def _runtime(
     )
 
 
-def test_activate_restores_persisted_generation_without_inventory_or_index_build(
+def test_activate_defers_persisted_generation_restore_until_readiness(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -83,6 +83,11 @@ def test_activate_restores_persisted_generation_without_inventory_or_index_build
         runtime = _runtime(repository)
         application = runtime.application_factory.for_workspace(root)
         monkeypatch.setattr(
+            application,
+            "restore_analysis_snapshot",
+            lambda: pytest.fail("activation must not restore the full snapshot"),
+        )
+        monkeypatch.setattr(
             application.inventory_builder,
             "build",
             lambda **_kwargs: pytest.fail("activation must not build inventory"),
@@ -92,15 +97,57 @@ def test_activate_restores_persisted_generation_without_inventory_or_index_build
             "build",
             lambda *_args, **_kwargs: pytest.fail("activation must not build index"),
         )
+        monkeypatch.setattr(
+            application,
+            "initialize_recovery",
+            lambda: pytest.fail("activation must not scan persisted inventory"),
+        )
 
         active = runtime.activate_workspace(root)
 
-        assert active.snapshot is not None
-        assert active.snapshot.inventory.generation == built.inventory.generation
-        assert active.snapshot.index is not None
-        assert active.snapshot.index.index_generation == built.index.index_generation
-        assert active.snapshot.persisted_snapshot == built.persisted_snapshot
+        assert active.snapshot is None
+        assert active.recovery_status.complete is True
+        assert active.recovery_status.inventory_generation == built.inventory.generation
+        assert active.recovery_status.index_generation == built.index.index_generation
         assert len(_BlockingWatchController.instances) == 1
+        runtime.shutdown_all()
+    finally:
+        database.close()
+
+
+def test_ensure_ready_restores_persisted_generation_before_reconciling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "main.py").write_text("value = 1\n", encoding="utf-8")
+    database = _database(tmp_path)
+    try:
+        repository = RepositoryIntelligenceRepository(database)
+        built = RepositoryApplication(root, repository=repository).build()
+        runtime = _runtime(repository)
+        application = runtime.application_factory.for_workspace(root)
+        original_restore = application.restore_analysis_snapshot
+        restore_count = 0
+
+        def counted_restore() -> object:
+            nonlocal restore_count
+            restore_count += 1
+            return original_restore()
+
+        monkeypatch.setattr(application, "restore_analysis_snapshot", counted_restore)
+
+        active = runtime.activate_workspace(root)
+        assert active.snapshot is None
+
+        ready = runtime.ensure_ready(root)
+
+        assert ready is active
+        assert restore_count == 1
+        assert ready.snapshot is not None
+        assert ready.snapshot.inventory.generation == built.inventory.generation + 1
+        assert ready.reconciliation_required is False
         runtime.shutdown_all()
     finally:
         database.close()
@@ -371,7 +418,7 @@ def test_invalidation_coalesces_paths_without_replacing_active_generation(
         repository = RepositoryIntelligenceRepository(database)
         built = RepositoryApplication(root, repository=repository).build()
         runtime = _runtime(repository)
-        active = runtime.activate_workspace(root)
+        active = runtime.ensure_ready(root)
         original_snapshot = active.snapshot
         original_epoch = active.invalidation_epoch
 
@@ -387,7 +434,7 @@ def test_invalidation_coalesces_paths_without_replacing_active_generation(
         assert active.reconciliation_required is True
         assert active.snapshot is original_snapshot
         assert active.snapshot is not None
-        assert active.snapshot.inventory.generation == built.inventory.generation
+        assert active.snapshot.inventory.generation == built.inventory.generation + 1
         runtime.shutdown_all()
     finally:
         database.close()
@@ -464,7 +511,7 @@ def test_runtime_shutdown_stops_all_workspace_watchers(tmp_path: Path) -> None:
         database.close()
 
 
-def test_restart_restores_latest_complete_generation_and_marks_cold_start_stale(
+def test_restart_defers_latest_complete_generation_until_readiness_and_marks_cold_start_stale(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "workspace"
@@ -478,8 +525,9 @@ def test_restart_restores_latest_complete_generation_and_marks_cold_start_stale(
 
         clean_restart = _runtime(repository)
         clean_state = clean_restart.activate_workspace(root)
-        assert clean_state.snapshot is not None
-        assert clean_state.snapshot.inventory.generation == built.inventory.generation
+        assert clean_state.snapshot is None
+        assert clean_state.recovery_status.complete is True
+        assert clean_state.recovery_status.inventory_generation == built.inventory.generation
         assert clean_state.reconciliation_required is True
         assert clean_state.dirty_paths == frozenset()
         clean_restart.ensure_ready(root)
@@ -491,10 +539,9 @@ def test_restart_restores_latest_complete_generation_and_marks_cold_start_stale(
         source.write_text("value = 2\n", encoding="utf-8")
         changed_restart = _runtime(repository)
         changed_state = changed_restart.activate_workspace(root)
-        assert changed_state.snapshot is not None
-        assert (
-            changed_state.snapshot.inventory.generation
-            == built.inventory.generation + 1
+        assert changed_state.snapshot is None
+        assert changed_state.recovery_status.inventory_generation == (
+            built.inventory.generation + 1
         )
         assert changed_state.reconciliation_required is True
         changed_restart.shutdown_all()
@@ -517,10 +564,8 @@ def test_offline_new_file_does_not_produce_a_false_clean_guarantee(
         runtime = _runtime(repository)
         active = runtime.activate_workspace(root)
 
-        assert active.snapshot is not None
-        assert "new_while_offline.py" not in {
-            record.path for record in active.snapshot.inventory.files
-        }
+        assert active.snapshot is None
+        assert active.recovery_status.complete is True
         assert active.reconciliation_required is True
         runtime.shutdown_all()
     finally:

@@ -80,12 +80,12 @@ def test_non_git_directory_and_missing_repository_have_stable_errors(
     assert missing.value.code == "repository_not_found"
 
 
-def test_managed_root_is_a_runtime_owned_sibling_of_data_directory(
+def test_managed_root_is_a_runtime_owned_child_of_data_directory(
     tmp_path: Path, database: Database
 ) -> None:
     manager = WorktreeManager(database)
 
-    assert manager.managed_root == (tmp_path / "data-worktrees").resolve()
+    assert manager.managed_root == (tmp_path / "data" / "data-worktrees").resolve()
     with pytest.raises(WorktreeError) as error:
         WorktreeManager(database, managed_root=tmp_path / "data" / "nested")
     assert error.value.code == "managed_worktree_root_overlaps_data"
@@ -673,7 +673,7 @@ def test_recovery_reports_replaced_worktree_repository_as_invalid(
 
 
 def test_schema_is_current_and_has_project_worktree_tables(database: Database) -> None:
-    assert SCHEMA_VERSION == 3
+    assert SCHEMA_VERSION == 4
     tables = {
         row[0]
         for row in database.connection().execute(

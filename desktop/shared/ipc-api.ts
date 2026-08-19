@@ -7,6 +7,9 @@ import type {
   Session,
   SessionHandoffResult,
   SessionRestoreWorktreeResult,
+  Project,
+  ProjectListResult,
+  DeleteProjectResult,
   WorktreeSettings,
   ProjectGitContext,
   CreateBranchResult,
@@ -73,11 +76,14 @@ export interface EidosRuntimeAPI {
   openWorkspacePathInEditor(sessionId: string, path: string): Promise<void>;
 
   // Sessions
+  createProject(name: string | undefined, workspaceRoot: string): Promise<Project>;
+  listProjects(): Promise<ProjectListResult>;
+  deleteProject(projectId: string): Promise<DeleteProjectResult>;
   listSessions(): Promise<SessionListResult>;
   readSession(sessionId: string): Promise<SessionSnapshot>;
   listEvents(sessionId: string, afterEventId: number): Promise<EventListResult>;
   createSession(
-    workspaceRoot: string,
+    workspaceRoot: string | null,
     options?: {
       executionMode?: "local" | "worktree";
       baseRef?: string;
@@ -104,6 +110,16 @@ export interface EidosRuntimeAPI {
     scope: GitDiffScope,
     path?: string,
   ): Promise<SessionGitDiff>;
+  switchSessionGitBranch(
+    sessionId: string,
+    branch: string,
+    operationId: string,
+  ): Promise<SessionGitMutationResult>;
+  createSessionGitBranch(
+    sessionId: string,
+    branch: string,
+    operationId: string,
+  ): Promise<SessionGitMutationResult>;
   stageSessionGit(
     sessionId: string,
     paths: string[],

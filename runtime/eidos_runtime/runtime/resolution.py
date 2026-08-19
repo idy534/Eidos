@@ -304,6 +304,7 @@ def create_run_resolution_snapshot(
     workspace_identity: WorkspaceIdentitySnapshot,
     data_directory: Path | None,
     created_at: int,
+    projectless: bool = False,
 ) -> RunResolutionSnapshot:
     model_value = model_profile.model_dump(mode="json")
     model_hash = canonical_sha256(model_value)

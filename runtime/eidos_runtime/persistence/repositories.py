@@ -62,6 +62,7 @@ class TypedRuntimeRepository(Repository):
         project_id: str | None = None,
         operation_id: str | None = None,
         session_id: str | None = None,
+        projectless: bool = False,
     ) -> CommittedMutation[Session]:
         return self._sessions.create_session_committed(
             workspace_root,
@@ -70,6 +71,7 @@ class TypedRuntimeRepository(Repository):
             project_id=project_id,
             operation_id=operation_id,
             session_id=session_id,
+            projectless=projectless,
         )
 
     def list_sessions(
@@ -84,6 +86,9 @@ class TypedRuntimeRepository(Repository):
 
     def read_session(self, session_id: str) -> Session | None:
         return self._sessions.read_session(session_id)
+
+    def session_is_projectless(self, session_id: str) -> bool:
+        return self._sessions.session_is_projectless(session_id)
 
     def session_for_worktree(self, worktree_id: str) -> Session | None:
         return self._sessions.find_for_worktree(worktree_id)
@@ -120,6 +125,11 @@ class TypedRuntimeRepository(Repository):
         return self._sessions.delete_session_committed(
             session_id, operation_id=operation_id
         )
+
+    def list_empty_session_ids_for_project(
+        self, project_id: str
+    ) -> tuple[str, ...]:
+        return self._sessions.list_empty_session_ids_for_project(project_id)
 
     def assert_session_deletable(self, session_id: str) -> None:
         self._sessions.assert_session_deletable(session_id)

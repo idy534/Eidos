@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, act, waitFor } from "@testing-library/react";
+import { render, act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { App } from "../App.js";
-import type { EidosRuntimeAPI, RuntimeStatus } from "../contracts.js";
+import type { EidosRuntimeAPI, RuntimeStatus, Session, SessionSnapshot } from "../contracts.js";
 
 const mockReadyStatus: RuntimeStatus = {
   state: "ready",
@@ -19,6 +19,14 @@ const mockHealthOnlyStatus: RuntimeStatus = {
   runShell: true,
   modelConfigured: true,
   storageHealth: { state: "health_only", code: "READ_ONLY_STORAGE" },
+};
+const startupSession: Session = {
+  id: "startup-session",
+  title: "Startup session",
+  workspaceRoot: "/workspace/startup",
+  taskStatus: "new",
+  createdAt: 1,
+  updatedAt: 1,
 };
 const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
 
@@ -47,7 +55,9 @@ describe("App & Runtime Lifecycle behavior", () => {
       onShortcut: vi.fn().mockReturnValue(() => {}),
       onNotification: vi.fn().mockReturnValue(() => {}),
       onApprovalRequest: vi.fn().mockReturnValue(() => {}),
+      listProjects: vi.fn().mockResolvedValue({ items: [] }),
       listSessions: vi.fn().mockResolvedValue({ items: [] }),
+      deleteProject: vi.fn().mockResolvedValue({ deletedProjectId: "project-1" }),
       listModels: vi.fn().mockResolvedValue({
         defaultModelId: "deepseek-v4-flash",
         models: [{
@@ -127,6 +137,47 @@ describe("App & Runtime Lifecycle behavior", () => {
       const workbench = container.querySelector(".workspace");
       expect(workbench).toBeInTheDocument();
     });
+  });
+
+  it("keeps loaded sessions selectable before a session snapshot is selected", async () => {
+    setupMockRuntime({
+      listSessions: vi.fn().mockResolvedValue({ items: [startupSession] }),
+    });
+
+    render(<App />);
+
+    const sessionButton = await screen.findByRole("button", { name: startupSession.title });
+    expect(sessionButton).toBeEnabled();
+  });
+
+  it("hides Files for a projectless session", async () => {
+    const projectlessSession: Session = {
+      ...startupSession,
+      id: "projectless-session",
+      title: "Projectless conversation",
+      taskStatus: "in_progress",
+      projectless: true,
+      workspaceRoot: "/private/projectless-session",
+    };
+    const projectlessSnapshot: SessionSnapshot = {
+      session: projectlessSession,
+      runs: [],
+      items: [],
+      stepResolutions: [],
+      throughEventId: 0,
+    };
+    setupMockRuntime({
+      listSessions: vi.fn().mockResolvedValue({ items: [projectlessSession] }),
+      readSession: vi.fn().mockResolvedValue(projectlessSnapshot),
+      listEvents: vi.fn().mockResolvedValue({ items: [], throughEventId: 0, hasMore: false }),
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(projectlessSession.title) }));
+    await screen.findByRole("button", { name: "对话" });
+    expect(screen.queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("会话上下文")).not.toBeInTheDocument();
   });
 
   it("health-only state remains in ready application and presents read-only warning", async () => {

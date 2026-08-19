@@ -31,6 +31,7 @@ from eidos_runtime.application.extensions import (
     PluginImportFailure,
 )
 from eidos_runtime.application.models import ModelApplication
+from eidos_runtime.application.projects import ProjectApplication
 from eidos_runtime.application.runs import RunApplication, RunStartOutcome
 from eidos_runtime.application.repository import (
     RepositoryApplicationFactory,
@@ -440,6 +441,7 @@ class _DeferredGitPushAdapter:
 
 @dataclass(frozen=True)
 class _RuntimeApplications:
+    projects: ProjectApplication
     sessions: SessionApplication
     runs: RunApplication
     approvals: ApprovalApplication
@@ -693,6 +695,30 @@ class RuntimeServer:
             tuple[str, type[BaseModel], type[method_dtos.MethodResultDto], Any], ...
         ] = (
             (
+                "project/list",
+                method_dtos.ProjectListRequestDto,
+                method_dtos.ProjectListResponseDto,
+                lambda _id, request: self._applications_or_error().projects.list(
+                    request
+                ),
+            ),
+            (
+                "project/create",
+                method_dtos.ProjectCreateRequestDto,
+                method_dtos.ProjectCreateResponseDto,
+                lambda _id, request: self._applications_or_error().projects.create(
+                    request
+                ),
+            ),
+            (
+                "project/delete",
+                method_dtos.ProjectDeleteRequestDto,
+                method_dtos.ProjectDeleteResponseDto,
+                lambda _id, request: self._applications_or_error().projects.delete(
+                    request
+                ),
+            ),
+            (
                 "project/gitContext",
                 method_dtos.GitContextRequestDto,
                 method_dtos.GitContextResponseDto,
@@ -713,6 +739,22 @@ class RuntimeServer:
                 method_dtos.SessionCreateBranchRequestDto,
                 method_dtos.SessionCreateBranchResponseDto,
                 lambda _id, request: self._applications_or_error().sessions.create_branch(
+                    request
+                ),
+            ),
+            (
+                "session/gitSwitchBranch",
+                method_dtos.SessionGitSwitchBranchRequestDto,
+                method_dtos.SessionGitSwitchBranchResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_switch_branch(
+                    request
+                ),
+            ),
+            (
+                "session/gitCreateBranch",
+                method_dtos.SessionGitCreateBranchRequestDto,
+                method_dtos.SessionGitCreateBranchResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_create_branch(
                     request
                 ),
             ),
@@ -1230,6 +1272,12 @@ class RuntimeServer:
             repository_runtime=self.repository_runtime,
         )
         return _RuntimeApplications(
+            projects=ProjectApplication(
+                self.worktree_manager.repository,
+                lifecycle=session_lifecycle,
+                create_project=self.worktree_manager.create_project,
+                cleanup_empty_sessions=sessions.cleanup_empty_sessions_for_project,
+            ),
             sessions=sessions,
             runs=RunApplication(
                 store=self.store,

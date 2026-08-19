@@ -3,6 +3,7 @@ import type {
   Run,
   RuntimeNotification,
   RuntimeStatus,
+  Project,
   Session,
   SessionSnapshot,
 } from "./contracts.js";
@@ -11,6 +12,8 @@ import type {
 export interface ProjectSessionGroup {
   key: string;
   projectId?: string;
+  project?: Project;
+  projectless: boolean;
   workspaceRoot: string;
   displayName: string;
   gitAvailable: boolean;
@@ -56,21 +59,49 @@ export function taskStatusFromRun(run: Run): Session["taskStatus"] {
   return "canceled";
 }
 
-export function groupSessionsByProject(sessions: Session[]): ProjectSessionGroup[] {
+export function groupSessionsByProject(
+  sessions: Session[],
+  projects: Project[] = [],
+): ProjectSessionGroup[] {
   const grouped = new Map<string, Omit<ProjectSessionGroup, "createdAt" | "sessions"> & {
     sessions: Session[];
   }>();
+
+  for (const project of projects) {
+    grouped.set(project.id, {
+      key: project.id,
+      projectId: project.id,
+      project,
+      projectless: false,
+      workspaceRoot: project.workspaceRoot,
+      displayName: project.name?.trim() || basename(project.workspaceRoot),
+      gitAvailable: project.gitAvailable,
+      sessions: [],
+    });
+  }
+
   for (const session of sessions) {
     const project = session.project;
     const worktree = session.worktree;
+    const projectless = session.projectless === true;
     // The fallback is only for old event fixtures. Runtime session/list and
     // session/read always provide the explicit Project projection.
-    const key = project?.id ?? `workspace:${session.workspaceRoot}`;
-    const workspaceRoot = project?.workspaceRoot ?? session.workspaceRoot;
+    const key = projectless ? "projectless" : project?.id ?? `workspace:${session.workspaceRoot}`;
+    const workspaceRoot = project?.workspaceRoot ?? (projectless ? "" : session.workspaceRoot);
     const existing = grouped.get(key);
     if (existing) {
       existing.sessions.push(session);
     } else {
+      const sessionProject = projectless || project === undefined
+        ? undefined
+        : {
+            id: project.id,
+            ...(project.name ? { name: project.name } : {}),
+            workspaceRoot: project.workspaceRoot,
+            gitAvailable: project.gitAvailable,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+          };
       grouped.set(key, {
         key,
         ...(project?.id
@@ -78,20 +109,23 @@ export function groupSessionsByProject(sessions: Session[]): ProjectSessionGroup
           : worktree?.projectId
             ? { projectId: worktree.projectId }
             : {}),
+        ...(sessionProject ? { project: sessionProject } : {}),
+        projectless,
         workspaceRoot,
-        displayName: basename(workspaceRoot),
-        gitAvailable: project?.gitAvailable ?? worktree !== undefined,
+        displayName: projectless ? "最近" : project?.name?.trim() || basename(workspaceRoot),
+        gitAvailable: projectless ? false : project?.gitAvailable ?? worktree !== undefined,
         sessions: [session],
       });
     }
   }
   return [...grouped.values()].map((group) => ({
     ...group,
-    createdAt: Math.min(...group.sessions.map((session) => session.createdAt)),
+    createdAt: group.project?.createdAt
+      ?? Math.min(...group.sessions.map((session) => session.createdAt)),
     sessions: [...group.sessions].sort((left, right) => right.createdAt - left.createdAt),
   })).sort((left, right) => (
     right.createdAt - left.createdAt
-    || left.workspaceRoot.localeCompare(right.workspaceRoot)
+    || left.displayName.localeCompare(right.displayName)
   ));
 }
 
@@ -214,7 +248,7 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   RUNTIME_NOT_INITIALIZED: "Runtime 尚未就绪，请稍后重试。",
   PROTOCOL_VERSION_UNSUPPORTED: "桌面端与 Runtime 版本不兼容，请重启或更新 Eidos。",
   RUN_ALREADY_ACTIVE: "当前已有一个 Run 正在执行，请先等待完成或取消。",
-  RESOURCE_NOT_FOUND: "请求的 Session 或 Run 已不存在，请刷新后重试。",
+  RESOURCE_NOT_FOUND: "请求的 Session、Project 或 Run 已不存在，请刷新后重试。",
   INVALID_STATE: "当前状态不允许执行这个操作，请刷新后重试。",
   APPROVAL_NO_LONGER_PENDING: "这个审批已经失效，无需再次处理。",
   WORKSPACE_BOUNDARY_VIOLATION: "所选路径超出 Workspace 安全边界，操作已拒绝。",
@@ -242,6 +276,7 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   BRANCH_INVALID: "分支名无效，请输入合法的 Git 分支名。",
   WORKTREE_BRANCH_CREATE_FAILED: "分支创建失败，请查看 Runtime 日志。",
   WORKTREE_BRANCH_STATE_CHANGED: "Worktree 的分支状态发生变化，请恢复后重试。",
+  LOCAL_REQUIRED: "只有 Local 任务可以切换或创建本地分支。",
   CHECKPOINT_GIT_STATE_UNAVAILABLE: "Checkpoint 的 Git 状态不可用。",
   CHECKPOINT_FORK_WORKTREE_FAILED: "Checkpoint Fork 的 Managed Worktree 创建失败。",
   CHECKPOINT_REWIND_FAILED: "Checkpoint Rewind 无法恢复 Git 工作区状态。",
@@ -254,6 +289,9 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   GIT_WORKTREE_INVALID: "任务绑定的 Worktree 已失效，请停止在其中执行任务。",
   GIT_REVIEW_FAILED: "Git 变更读取失败，请查看 Runtime 日志。",
   GIT_BRANCH_REQUIRED: "请先把当前 Worktree 绑定到分支，再执行该 Git 操作。",
+  GIT_BRANCH_NOT_FOUND: "本地分支不存在，请刷新后重试。",
+  GIT_BRANCH_SWITCH_FAILED: "本地分支切换失败，请刷新后重试。",
+  GIT_BRANCH_CREATE_FAILED: "本地分支创建失败，请查看 Runtime 日志。",
   GIT_WORKFLOW_BUSY: "当前任务仍在运行。请等待或取消 Run 后再执行 Git 操作。",
   GIT_NOTHING_STAGED: "当前没有已 Stage 的改动可以提交。",
   GIT_IDENTITY_UNAVAILABLE: "Git commit identity 不可用。请配置 user.name 和 user.email。",
@@ -282,6 +320,9 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   WORKTREE_DIRTY: "任务仍有未提交或冲突的变更，不能删除。",
   WORKTREE_DELETE_FAILED: "任务的 Worktree 删除失败，请查看 Runtime 日志后重试。",
   SESSION_PERSISTENCE_FAILED: "任务状态写入失败。Worktree 已保留或可安全重试。",
+  PROJECT_HAS_SESSIONS: "项目下还有任务，请先删除任务后再删除项目。",
+  PROJECT_WORKTREE_RECOVERY_REQUIRED: "项目的 Managed Worktree 仍需恢复，暂时不能删除项目。",
+  PROJECT_PERSISTENCE_FAILED: "项目状态写入失败，请查看 Runtime 日志。",
   MODEL_NOT_AVAILABLE: "所选模型当前不可用，请重新选择。",
   INTERNAL_ERROR: "Runtime 遇到内部错误，请查看诊断日志。",
 };

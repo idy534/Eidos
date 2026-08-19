@@ -8,6 +8,7 @@ import type {
   GitRemoteStatus,
   ProjectGitContext,
   SessionGitCommitResult,
+  SessionGitMutationResult,
   SessionGitStatus,
 } from "../contracts.js";
 import { runtimeBusinessCode, userFacingError } from "../session-state.js";
@@ -21,6 +22,9 @@ interface GitWorkflowControlsProps {
   disabled: boolean;
   onRefresh(): void;
   onCreateBranch?: (() => void) | undefined;
+  switchBranch?: (
+    sessionId: string, branch: string, operationId: string,
+  ) => Promise<SessionGitMutationResult>;
   readRemoteStatus?: (sessionId: string) => Promise<GitRemoteStatus>;
   readProjectGitContext?: (workspaceRoot: string) => Promise<ProjectGitContext>;
   commit?: (
@@ -47,6 +51,9 @@ const defaults = {
   ),
   commit: (sessionId: string, message: string, operationId: string) => (
     window.eidosRuntime.commitSessionGit(sessionId, message, operationId)
+  ),
+  switchBranch: (sessionId: string, branch: string, operationId: string) => (
+    window.eidosRuntime.switchSessionGitBranch(sessionId, branch, operationId)
   ),
   fetch: (sessionId: string, operationId: string) => (
     window.eidosRuntime.fetchSessionGit(sessionId, operationId)
@@ -81,6 +88,7 @@ export function GitWorkflowControls({
   disabled,
   onRefresh,
   onCreateBranch,
+  switchBranch = defaults.switchBranch,
   readRemoteStatus = defaults.readRemoteStatus,
   readProjectGitContext = defaults.readProjectGitContext,
   commit = defaults.commit,
@@ -178,11 +186,37 @@ export function GitWorkflowControls({
 
   const controlsDisabled = disabled || busy !== undefined;
   const upstream = remote?.upstream;
+  const localSession = status.worktreeId === null;
+  const canCreateBranch = onCreateBranch && (localSession || status.branch === null);
 
   return (
     <section className="git-workflow-controls" aria-label="Git workflow">
       <div className="git-workflow-observation">
-        <strong>{status.branch ?? "Detached HEAD"}</strong>
+        {localSession && branches.length > 0 ? (
+          <label className="git-local-branch-control">
+            <span className="sr-only">当前本地分支</span>
+            <select
+              aria-label="当前本地分支"
+              value={status.branch ?? ""}
+              disabled={controlsDisabled || status.dirty}
+              onChange={(event) => {
+                const branch = event.target.value;
+                if (branch && branch !== status.branch) {
+                  void run(
+                    "switch-branch",
+                    `switch-branch:${branch}:${status.head}`,
+                    (operationId) => switchBranch(sessionId, branch, operationId),
+                  );
+                }
+              }}
+            >
+              {status.branch === null && <option value="">Detached HEAD</option>}
+              {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
+            </select>
+          </label>
+        ) : (
+          <strong>{status.branch ?? "Detached HEAD"}</strong>
+        )}
         {upstream ? <span>{upstream.remote}/{upstream.branch}</span> : <span>No upstream</span>}
         {remote?.ahead !== null && remote?.ahead !== undefined
           && remote.behind !== null && remote.behind !== undefined && (
@@ -190,14 +224,14 @@ export function GitWorkflowControls({
         )}
       </div>
 
-      {status.branch === null && onCreateBranch && (
+      {canCreateBranch && (
         <Button
           size="small"
           variant="primary"
-          disabled={controlsDisabled}
+          disabled={controlsDisabled || (localSession && status.dirty)}
           onClick={onCreateBranch}
         >
-          Create Branch Here
+          {localSession ? "Create Branch" : "Create Branch Here"}
         </Button>
       )}
 

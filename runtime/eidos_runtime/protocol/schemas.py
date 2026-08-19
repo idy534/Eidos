@@ -74,6 +74,15 @@ class SessionProjectDto(ClosedModel):
     git_available: bool = Field(alias="gitAvailable")
 
 
+class ProjectDto(ClosedModel):
+    id: StrictStr
+    name: StrictStr
+    workspace_root: StrictStr = Field(alias="workspaceRoot")
+    git_available: bool = Field(alias="gitAvailable")
+    created_at: StrictInt = Field(alias="createdAt", ge=0)
+    updated_at: StrictInt = Field(alias="updatedAt", ge=0)
+
+
 class SessionDto(ClosedModel):
     id: StrictStr
     workspace_root: StrictStr = Field(alias="workspaceRoot")
@@ -86,6 +95,7 @@ class SessionDto(ClosedModel):
     worktree_restore_available: bool = Field(
         default=False, alias="worktreeRestoreAvailable"
     )
+    projectless: bool = Field(default=False, alias="projectless")
     project: SessionProjectDto | None = None
     worktree: SessionWorktreeDto | None = None
     title: StrictStr | None = None

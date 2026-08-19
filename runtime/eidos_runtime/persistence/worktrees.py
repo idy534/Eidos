@@ -1,13 +1,24 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import os
 from pathlib import Path
 import sqlite3
 from typing import TYPE_CHECKING
 
-from eidos_runtime.db.database import Database, Repository
-from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
-from eidos_runtime.domain.project import Project, direct_project_id
+from eidos_runtime.db.database import CommittedMutation, Database, Repository
+from eidos_runtime.db.errors import (
+    ProjectHasSessionsError,
+    ProjectWorktreeRecoveryRequiredError,
+    ResourceNotFoundError,
+    StorageError,
+)
+from eidos_runtime.domain.project import (
+    DeletedProject,
+    Project,
+    default_project_name,
+    direct_project_id,
+)
 from eidos_runtime.domain.worktree import (
     BranchOwnership,
     Worktree,
@@ -37,6 +48,8 @@ class ProjectWorktreeRepository(Repository):
         self,
         workspace_root: Path | str,
         git_discovery: GitRepositoryDiscovery | None = None,
+        *,
+        name: str | None = None,
     ) -> Project:
         if git_discovery is None:
             canonical_workspace = _canonical_workspace_root(workspace_root)
@@ -51,8 +64,12 @@ class ProjectWorktreeRepository(Repository):
             git_common_dir = _canonical_workspace_root(git_discovery.git_common_dir)
             project_id = _project_id(git_common_dir)
         now = now_utc_millis()
+        project_name = (name or default_project_name(canonical_workspace)).strip()
+        if not project_name:
+            raise ValueError("project name must not be blank")
         candidate = Project(
             id=project_id,
+            name=project_name,
             workspace_root=canonical_workspace,
             git_repository_root=git_repository_root,
             git_common_dir=git_common_dir,
@@ -93,17 +110,26 @@ class ProjectWorktreeRepository(Repository):
                         ),
                     )
                     project = candidate.model_copy(update={"id": project.id})
+                if name is not None and project.name != project_name:
+                    connection.execute(
+                        "UPDATE projects SET name = ?, updated_at = ? WHERE id = ?",
+                        (project_name, now, project.id),
+                    )
+                    project = project.model_copy(
+                        update={"name": project_name, "updated_at": utc_datetime_from_millis(now)}
+                    )
                 return project
             try:
                 connection.execute(
                     """
                     INSERT INTO projects (
-                        id, workspace_root, git_repository_root, git_common_dir,
-                        created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                        id, name, workspace_root, git_repository_root,
+                        git_common_dir, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         candidate.id,
+                        candidate.name,
                         candidate.workspace_root,
                         candidate.git_repository_root,
                         candidate.git_common_dir,
@@ -128,6 +154,100 @@ class ProjectWorktreeRepository(Repository):
                 "SELECT * FROM projects ORDER BY created_at ASC, id ASC"
             ).fetchall()
         return tuple(project_from_row(row) for row in rows)
+
+    def delete_project(
+        self,
+        project_id: str,
+        *,
+        operation_id: str | None = None,
+    ) -> CommittedMutation[DeletedProject]:
+        def write(connection: sqlite3.Connection) -> CommittedMutation[DeletedProject]:
+            project = connection.execute(
+                "SELECT workspace_root FROM projects WHERE id = ?",
+                (project_id,),
+            ).fetchone()
+            if project is None:
+                raise ResourceNotFoundError("project not found")
+
+            session = connection.execute(
+                """
+                SELECT 1
+                FROM sessions s
+                WHERE s.workspace_root = ?
+                   OR EXISTS (
+                       SELECT 1
+                       FROM worktrees w
+                       WHERE w.project_id = ?
+                         AND (w.id = s.worktree_id OR w.id = s.associated_worktree_id)
+                   )
+                LIMIT 1
+                """,
+                (project["workspace_root"], project_id),
+            ).fetchone()
+            if session is not None:
+                raise ProjectHasSessionsError("project has sessions")
+
+            active_worktree = connection.execute(
+                """
+                SELECT 1 FROM worktrees
+                WHERE project_id = ? AND state <> 'deleted'
+                LIMIT 1
+                """,
+                (project_id,),
+            ).fetchone()
+            unfinished_lifecycle = connection.execute(
+                """
+                SELECT 1 FROM worktree_lifecycle_operations
+                WHERE project_id = ? AND state <> 'completed'
+                LIMIT 1
+                """,
+                (project_id,),
+            ).fetchone()
+            snapshots = connection.execute(
+                "SELECT 1 FROM worktree_snapshots WHERE project_id = ? LIMIT 1",
+                (project_id,),
+            ).fetchone()
+            handoff = connection.execute(
+                """
+                SELECT 1 FROM session_handoff_operations
+                WHERE project_id = ? LIMIT 1
+                """,
+                (project_id,),
+            ).fetchone()
+            if (
+                active_worktree is not None
+                or unfinished_lifecycle is not None
+                or snapshots is not None
+                or handoff is not None
+            ):
+                raise ProjectWorktreeRecoveryRequiredError(
+                    "project Worktree lifecycle requires recovery"
+                )
+
+            connection.execute(
+                "DELETE FROM worktree_lifecycle_operations WHERE project_id = ?",
+                (project_id,),
+            )
+            connection.execute(
+                "DELETE FROM worktrees WHERE project_id = ?",
+                (project_id,),
+            )
+            deleted = connection.execute(
+                "DELETE FROM projects WHERE id = ?",
+                (project_id,),
+            )
+            if deleted.rowcount != 1:
+                raise ResourceNotFoundError("project not found")
+            return CommittedMutation(DeletedProject(deleted_project_id=project_id), ())
+
+        return self._write_committed(
+            write,
+            operation_id=operation_id,
+            operation_scope="project/delete",
+            operation_request={"projectId": project_id},
+            serialize_value=_deleted_project_to_dict,
+            deserialize_value=_deleted_project_from_dict,
+        )
 
     def insert_worktree(self, worktree: Worktree) -> Worktree:
         with self.lock, self._connection() as connection:
@@ -353,6 +473,16 @@ def _project_id(git_common_dir: str) -> str:
     import hashlib
 
     return f"project_{hashlib.sha256(git_common_dir.encode('utf-8')).hexdigest()}"
+
+
+def _deleted_project_to_dict(value: DeletedProject) -> dict[str, object]:
+    return {"deletedProjectId": value.deleted_project_id}
+
+
+def _deleted_project_from_dict(value: object) -> DeletedProject:
+    if not isinstance(value, Mapping) or not isinstance(value.get("deletedProjectId"), str):
+        raise StorageError("project_delete_result_invalid")
+    return DeletedProject(deleted_project_id=value["deletedProjectId"])
 
 
 def _canonical_workspace_root(value: Path | str) -> str:

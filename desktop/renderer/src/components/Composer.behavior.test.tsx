@@ -93,6 +93,70 @@ describe("Composer DOM interaction & state behavior", () => {
     expect(screen.getByText("上下文 --")).toBeInTheDocument();
   });
 
+  it("renders project context above the input and defaults execution mode to Local", () => {
+    const onExecutionModeChange = vi.fn();
+    const onBranchChange = vi.fn();
+    const onLeaveProject = vi.fn();
+    render(
+      <Composer
+        {...defaultProps}
+        project={{ id: "project-a", workspaceRoot: "/workspace/star-hub", gitAvailable: true }}
+        executionMode={undefined}
+        branch="dev-830-xl"
+        branches={["main", "dev-830-xl"]}
+        onBranchChange={onBranchChange}
+        onExecutionModeChange={onExecutionModeChange}
+        onLeaveProject={onLeaveProject}
+      />,
+    );
+
+    expect(screen.getByText("star-hub")).toBeInTheDocument();
+    expect(screen.getByLabelText("本地分支")).toHaveValue("dev-830-xl");
+    expect(screen.getByLabelText("执行方式")).toHaveValue("local");
+    const leaveProjectButton = screen.getByRole("button", { name: "不在项目中工作" });
+    expect(leaveProjectButton).toHaveClass("composer-context-project-action");
+    expect(leaveProjectButton.querySelector(".composer-context-project-close")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("执行方式"), { target: { value: "worktree" } });
+    expect(onExecutionModeChange).toHaveBeenCalledWith("worktree");
+    fireEvent.change(screen.getByLabelText("本地分支"), { target: { value: "main" } });
+    expect(onBranchChange).toHaveBeenCalledWith("main");
+    fireEvent.click(leaveProjectButton);
+    expect(onLeaveProject).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides execution mode and branch for a non-Git project", () => {
+    render(
+      <Composer
+        {...defaultProps}
+        project={{ id: "project-a", workspaceRoot: "/workspace/plain", gitAvailable: false }}
+        executionMode="local"
+        branch="main"
+        onExecutionModeChange={vi.fn()}
+        onLeaveProject={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("plain")).toBeInTheDocument();
+    expect(screen.queryByLabelText("执行方式")).not.toBeInTheDocument();
+    expect(screen.queryByText("main")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "不在项目中工作" })).toBeInTheDocument();
+  });
+
+  it("offers project selection for a new projectless conversation", () => {
+    const onSelectProject = vi.fn();
+    render(
+      <Composer
+        {...defaultProps}
+        project={null}
+        onSelectProject={onSelectProject}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "选择项目" }));
+    expect(onSelectProject).toHaveBeenCalledTimes(1);
+  });
+
   it("empty local model configuration disables submit and guides to settings", () => {
     const onOpenModelSettings = vi.fn();
     render(

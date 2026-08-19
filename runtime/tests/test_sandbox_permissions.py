@@ -13,6 +13,7 @@ from eidos_runtime.sandbox.permissions import (
     FileSystemPermissionEntry,
     NetworkPermissions,
     SandboxPermissions,
+    base_permission_profile_for_workspace,
     materialize_effective_profile,
 )
 from eidos_runtime.sandbox.denial import (  # noqa: E402
@@ -189,6 +190,23 @@ class SandboxPermissionTests(unittest.TestCase):
             self.assertIn("PROTECTED_WRITE_0", compiled.policy)
             self.assertIn("RUNTIME_ROOT_0", compiled.policy)
             self.assertIn(str(outside.resolve()), compiled.parameters.values())
+
+    def test_dynamic_policy_keeps_data_protected_outside_managed_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory) / "data"
+            workspace = data / ".eidos-worktrees" / "wt_1"
+            workspace.mkdir(parents=True)
+            profile = materialize_effective_profile(
+                base_permission_profile_for_workspace(workspace, data)
+            )
+
+            compiled = SeatbeltPolicyCompiler().compile(profile)
+
+            self.assertIn("WORKSPACE_ROOT_0", compiled.parameters)
+            self.assertIn(
+                '(require-not (subpath (param "WORKSPACE_ROOT_0")))',
+                compiled.policy,
+            )
 
     def test_denial_detection_does_not_escalate_generic_permission_failure(self) -> None:
         ordinary = detect_sandbox_denial(

@@ -76,6 +76,39 @@ def test_session_application_owns_current_session_and_event_use_cases(
         store.close()
 
 
+def test_session_application_supports_projectless_conversations(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    repository_runtime = _RepositoryRuntimePort()
+    try:
+        application = SessionApplication(
+            store,
+            scan_text=lambda value: value,
+            repository_runtime=repository_runtime,
+        )
+
+        created = application.create(SessionCreateRequestDto())
+        session_id = str(created.root["id"])
+
+        assert created.root["executionMode"] == "local"
+        assert created.root["projectless"] is True
+        assert "project" not in created.root
+        workspace_root = Path(created.root["workspaceRoot"])
+        assert workspace_root.is_relative_to(store.data_directory)
+        assert workspace_root.parent == (
+            store.data_directory
+            / f".{store.data_directory.name}-projectless"
+        )
+        assert repository_runtime.activated == []
+        assert application.list(SessionListRequestDto()).root["items"] == [created.root]
+        assert application.read_snapshot(
+            SessionReadRequestDto(sessionId=session_id)
+        ).root["session"] == created.root
+    finally:
+        store.close()
+
+
 def test_session_application_preserves_semantic_invalid_params_and_sensitive_errors(
     tmp_path: Path,
 ) -> None:

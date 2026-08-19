@@ -12,6 +12,7 @@ from eidos_runtime.application.repository import (
     RepositoryApplication,
 )
 from eidos_runtime.application.runs import RunApplication
+from eidos_runtime.application.projects import ProjectApplication
 from eidos_runtime.application.sessions import SessionApplication
 from eidos_runtime.application.task_lifecycle import (
     LifecycleAction,
@@ -31,6 +32,7 @@ __all__ = [
     "LifecycleAction",
     "LifecycleResult",
     "RunApplication",
+    "ProjectApplication",
     "RepositoryAnalysisSnapshot",
     "RepositoryApplication",
     "RuntimeLifecyclePort",
