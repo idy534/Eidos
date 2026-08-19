@@ -55,7 +55,9 @@ describe("App & Runtime Lifecycle behavior", () => {
       onShortcut: vi.fn().mockReturnValue(() => {}),
       onNotification: vi.fn().mockReturnValue(() => {}),
       onApprovalRequest: vi.fn().mockReturnValue(() => {}),
+      listProjects: vi.fn().mockResolvedValue({ items: [] }),
       listSessions: vi.fn().mockResolvedValue({ items: [] }),
+      deleteProject: vi.fn().mockResolvedValue({ deletedProjectId: "project-1" }),
       listModels: vi.fn().mockResolvedValue({
         defaultModelId: "deepseek-v4-flash",
         models: [{

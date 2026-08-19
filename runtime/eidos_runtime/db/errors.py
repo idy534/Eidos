@@ -29,6 +29,14 @@ class ResourceNotFoundError(LookupError):
     pass
 
 
+class ProjectHasSessionsError(RuntimeError):
+    pass
+
+
+class ProjectWorktreeRecoveryRequiredError(RuntimeError):
+    pass
+
+
 class InvalidRunStateError(RuntimeError):
     pass
 

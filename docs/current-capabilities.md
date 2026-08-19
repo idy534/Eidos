@@ -8,7 +8,8 @@
 - Renderer、Preload 和 Main 之间使用 context-isolated typed IPC。
 - Main 可以启动、健康检查、通知和关闭 Python Runtime。
 - Desktop 可以选择 Workspace，读取 Runtime 提供的 Git context，并在 Session Composer 中选择 Local 或 Worktree execution。Git Worktree execution 可以选择 starting branch。Source dirty 且 starting branch 是 current branch 时，Desktop 默认勾选 `Include current changes`，但 Runtime 只接受显式的 `includeLocalChanges`。Non-Git Workspace 只启用 Local，Composer 不显示 execution mode 和 branch。Desktop 也可以创建不绑定 Project 的会话；这类会话默认使用 Local。
-- Desktop 可以列出、读取、重命名和删除 Session。
+- Desktop 可以列出、读取、重命名和删除 Session。Session 删除不会删除所属 Project。
+- Desktop 可以列出已创建的 Project。用户可以手动删除没有 Session 的 Project。Project 删除只删除 Eidos 的 Project、Worktree 元数据，不删除 Workspace 文件或 Git 仓库。
 - 点击“新建会话”或项目下的新增按钮时，Desktop 先创建空 Session。用户第一次提交输入时，Composer 才调用 `run/start` 创建 Run 和任务标题。没有标题且状态为 `new` 的空 Session 不显示在任务列表中。
 - 新建 Session 时，用户通过侧边栏、首页入口或 `new` 状态 Composer 选择 Project 或无 Project。Git 项目的空 Session 处于 `new` 状态时，Composer 输入框上方显示 Project/无 Project 上下文、execution mode 和 branch，并允许选择或移除 Project。非 Git 项目只显示 Project。用户第一次提交后，Composer 隐藏整条上下文栏，不再允许调整 Project 或 execution mode。Projectless Session 不显示 Files，也不支持查看文件树。
 - Desktop 可以在同一个 Session 中把执行工作区从 Local hand off 到 Managed Worktree，或 hand off 回 Local。Handoff 期间会禁用 Composer、Create Branch、Delete 和 Session 导航；完成后只刷新当前 Session 的 execution binding 和 Git review。
@@ -22,6 +23,7 @@
 ## Session / Run
 
 - Project 表示 filesystem workspace。Project 保存 `workspaceRoot`，并用 `gitAvailable` 表示可选 Git capability。
+- Project 与 Session 使用独立生命周期。Project 没有 Session 时仍保留在 Project 列表中。Project 删除需要用户显式操作；有 Session 或未完成 Worktree recovery 时，Runtime 会拒绝删除。
 - Non-Git directory 可以使用 `executionMode = local` 创建 Local Execution Session。Runtime 将 `worktreeId` 保持为 NULL，Run、Tool、Shell cwd、Project Rules 和 Repository Intelligence 使用 Project workspace root。
 - Git directory 可以使用 `executionMode = local` 创建不绑定 Worktree 的 Local Session，也可以使用 `executionMode = worktree` 创建 Managed Worktree Session。Worktree Session 的 Run、Tool、Shell cwd、Project Rules 和 Repository Intelligence 使用 Worktree root。
 - `session/create` 的协议默认 `executionMode` 是 `local`。Worktree 请求会先解析可选 `baseRef` 为 immutable `baseCommit`，并接受显式的 `includeLocalChanges`。缺省 `baseRef` 使用当前 branch；repository 处于 detached HEAD 时使用 `HEAD`。不存在的 ref 返回 `BASE_REF_NOT_FOUND`。

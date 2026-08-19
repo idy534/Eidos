@@ -28,6 +28,9 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "SENSITIVE_SCAN_FAILED",
   "INVALID_SESSION_TITLE",
   "SESSION_HAS_ACTIVE_RUN",
+  "PROJECT_HAS_SESSIONS",
+  "PROJECT_WORKTREE_RECOVERY_REQUIRED",
+  "PROJECT_PERSISTENCE_FAILED",
   "HANDOFF_NOT_SUPPORTED",
   "HANDOFF_SOURCE_CHANGED",
   "HANDOFF_TARGET_CHANGED",
@@ -153,6 +156,8 @@ import type {
   RuntimeHealth,
   RuntimeNotification,
   ProjectGitContext,
+  ProjectListResult,
+  DeleteProjectResult,
   CreateBranchResult,
   Session,
   SessionHandoffResult,
@@ -419,6 +424,19 @@ export class RuntimeClient {
   readProjectGitContext(workspaceRoot: string): Promise<ProjectGitContext> {
     return this.validatedRequest(
       "project/gitContext", { workspaceRoot }, isProjectGitContext,
+    );
+  }
+
+  listProjects(): Promise<ProjectListResult> {
+    return this.validatedRequest("project/list", {}, isProjectListResult);
+  }
+
+  deleteProject(
+    projectId: string,
+    operationId = randomUUID(),
+  ): Promise<DeleteProjectResult> {
+    return this.validatedRequest(
+      "project/delete", { projectId, operationId }, isDeletedProjectResult,
     );
   }
 
@@ -1311,6 +1329,27 @@ function isSessionProject(value: unknown): boolean {
   );
 }
 
+function isProject(value: unknown): value is ProjectListResult["items"][number] {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["id", "workspaceRoot", "gitAvailable", "createdAt", "updatedAt"])
+    && typeof value.id === "string"
+    && typeof value.workspaceRoot === "string"
+    && typeof value.gitAvailable === "boolean"
+    && isNonNegativeInteger(value.createdAt)
+    && isNonNegativeInteger(value.updatedAt)
+  );
+}
+
+function isProjectListResult(value: unknown): value is ProjectListResult {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["items"])
+    && Array.isArray(value.items)
+    && value.items.every(isProject)
+  );
+}
+
 function isSessionWorktree(value: unknown): boolean {
   return (
     isRecord(value)
@@ -1762,6 +1801,14 @@ function isDeletedSessionResult(value: unknown): value is { deletedSessionId: st
     isRecord(value)
     && hasOnlyKeys(value, ["deletedSessionId"])
     && typeof value.deletedSessionId === "string"
+  );
+}
+
+function isDeletedProjectResult(value: unknown): value is DeleteProjectResult {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["deletedProjectId"])
+    && typeof value.deletedProjectId === "string"
   );
 }
 

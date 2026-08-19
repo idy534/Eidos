@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import type {
   CreateBranchResult,
+  Project,
   Run,
   Session,
   SessionGitMutationResult,
@@ -42,6 +43,7 @@ export interface PendingOperations {
 
 export interface SessionControllerState {
   sessions: Session[];
+  projects: Project[];
   snapshot: SessionSnapshot | undefined;
   navigationSessionId: string | undefined;
   readCompletedSessions: ReadonlySet<string>;
@@ -50,6 +52,7 @@ export interface SessionControllerState {
 }
 
 export interface SessionControllerActions {
+  loadProjects: () => Promise<void>;
   loadSessions: () => Promise<void>;
   selectSession: (session: Session) => Promise<SessionSnapshot | undefined>;
   createSession: (
@@ -79,6 +82,7 @@ export interface SessionControllerActions {
   restoreWorktree: (sessionId: string) => Promise<SessionSnapshot | undefined>;
   renameSession: (sessionId: string, title: string) => Promise<void>;
   deleteSession: (session: Session) => Promise<{ confirmed: true } | { confirmed: false; error: string }>;
+  deleteProject: (project: Project) => Promise<{ confirmed: true } | { confirmed: false; error: string }>;
   setError: (error: string | undefined) => void;
   projectRun: (sessionId: string, run: Run) => void;
   /** Called when a session title notification arrives — updates sessions title and open snapshot */
@@ -99,6 +103,7 @@ interface SessionSelectionOperation {
 
 export function useSessionController(): [SessionControllerState, SessionControllerActions] {
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [snapshot, setSnapshot] = useState<SessionSnapshot | undefined>(undefined);
   const [navigationSessionId, setNavigationSessionId] = useState<string | undefined>(undefined);
   const [readCompletedSessions, setReadCompletedSessions] = useState<Set<string>>(loadReadCompletedSessions);
@@ -149,6 +154,16 @@ export function useSessionController(): [SessionControllerState, SessionControll
     try {
       const page = await window.eidosRuntime.listSessions();
       setSessions(page.items);
+    } catch (cause) {
+      setError(userFacingError(cause));
+    }
+  }, []);
+
+  const loadProjects = useCallback(async (): Promise<void> => {
+    setError(undefined);
+    try {
+      const result = await window.eidosRuntime.listProjects();
+      setProjects(result.items);
     } catch (cause) {
       setError(userFacingError(cause));
     }
@@ -243,6 +258,20 @@ export function useSessionController(): [SessionControllerState, SessionControll
       selectedSessionIdRef.current = session.id;
       setNavigationSessionId(session.id);
       setSessions((prev) => [session, ...prev]);
+      const project = session.project;
+      if (project && session.projectless !== true) {
+        setProjects((prev) => {
+          const existing = prev.find((item) => item.id === project.id);
+          const next: Project = {
+            ...project,
+            createdAt: existing?.createdAt ?? session.createdAt,
+            updatedAt: existing?.updatedAt ?? session.updatedAt,
+          };
+          return existing
+            ? prev.map((project) => project.id === next.id ? next : project)
+            : [...prev, next];
+        });
+      }
       const loaded = await loadAuthoritativeSnapshot(session.id);
       const accepted = snapshotReads.accept(token, loaded);
       if (accepted) {
@@ -418,6 +447,19 @@ export function useSessionController(): [SessionControllerState, SessionControll
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions, snapshot, selectSession]);
 
+  const deleteProject = useCallback(async (project: Project): Promise<{ confirmed: true } | { confirmed: false; error: string }> => {
+    setError(undefined);
+    try {
+      const deleted = await window.eidosRuntime.deleteProject(project.id);
+      setProjects((prev) => prev.filter((item) => item.id !== deleted.deletedProjectId));
+      return { confirmed: true };
+    } catch (cause) {
+      const errMsg = userFacingError(cause);
+      setError(errMsg);
+      return { confirmed: false, error: errMsg };
+    }
+  }, []);
+
   const projectRun = useCallback((sessionId: string, run: Run): void => {
     const taskStatus = taskStatusFromRun(run);
     setSessions((prev) => prev.map((s) => s.id === sessionId
@@ -478,6 +520,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
 
   const state: SessionControllerState = {
     sessions,
+    projects,
     snapshot,
     navigationSessionId,
     readCompletedSessions,
@@ -486,6 +529,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
   };
 
   const actions: SessionControllerActions = {
+    loadProjects,
     loadSessions,
     selectSession,
     createSession,
@@ -496,6 +540,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     restoreWorktree,
     renameSession,
     deleteSession,
+    deleteProject,
     setError,
     projectRun,
     handleTitleNotification,

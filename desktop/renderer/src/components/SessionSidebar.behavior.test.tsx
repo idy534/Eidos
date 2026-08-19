@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { Session, SessionGitStatus } from "../contracts.js";
@@ -55,6 +55,7 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     render(
       <SessionSidebar
         sessions={[managedSession]}
+        projects={[]}
         selectedId={managedSession.id}
         disabled={false}
         readCompletedSessions={new Set()}
@@ -65,6 +66,7 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
         onSelect={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
         onOpenSettings={vi.fn()}
       />,
     );
@@ -79,6 +81,7 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     render(
       <SessionSidebar
         sessions={[managedSession]}
+        projects={[]}
         selectedId={managedSession.id}
         disabled={false}
         readCompletedSessions={new Set()}
@@ -89,6 +92,7 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
         onSelect={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
         onOpenSettings={vi.fn()}
       />,
     );
@@ -112,6 +116,7 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     render(
       <SessionSidebar
         sessions={[directSession]}
+        projects={[]}
         selectedId={directSession.id}
         disabled={false}
         readCompletedSessions={new Set()}
@@ -122,6 +127,7 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
         onSelect={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
         onOpenSettings={vi.fn()}
       />,
     );
@@ -130,10 +136,49 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     expect(screen.queryByLabelText("有未提交改动")).not.toBeInTheDocument();
   });
 
+  it("shows an empty Project and allows deleting its metadata", async () => {
+    const user = userEvent.setup();
+    const project = {
+      id: "project-empty",
+      workspaceRoot: "/empty-project",
+      gitAvailable: false,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const onDeleteProject = vi.fn();
+    render(
+      <SessionSidebar
+        sessions={[]}
+        projects={[project]}
+        selectedId={undefined}
+        disabled={false}
+        readCompletedSessions={new Set()}
+        runtimePresentation={{ tone: "success", label: "Ready" }}
+        onCreate={vi.fn()}
+        onCreateInProject={vi.fn()}
+        onSelect={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteProject={onDeleteProject}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+
+    const region = screen.getByRole("region", { name: "empty-project" });
+    const projectToggle = within(region).getByRole("button", { name: "empty-project" });
+    fireEvent.contextMenu(projectToggle);
+
+    const deleteItem = await screen.findByRole("menuitem", { name: "删除项目" });
+    expect(deleteItem).toBeEnabled();
+    await user.click(deleteItem);
+    expect(onDeleteProject).toHaveBeenCalledWith(project);
+  });
+
   it("does not show an empty Session as a task in the sidebar", () => {
     render(
       <SessionSidebar
         sessions={[{ ...managedSession, id: "empty-session", taskStatus: "new", title: undefined }]}
+        projects={[]}
         selectedId="empty-session"
         disabled={false}
         readCompletedSessions={new Set()}
@@ -143,6 +188,7 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
         onSelect={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
         onOpenSettings={vi.fn()}
       />,
     );
@@ -164,6 +210,7 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     render(
       <SessionSidebar
         sessions={[projectlessSession]}
+        projects={[]}
         selectedId={projectlessSession.id}
         disabled={false}
         readCompletedSessions={new Set()}
@@ -173,6 +220,7 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
         onSelect={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
         onOpenSettings={vi.fn()}
       />,
     );
@@ -197,6 +245,7 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     render(
       <SessionSidebar
         sessions={[managedSession, projectlessSession]}
+        projects={[]}
         selectedId={managedSession.id}
         disabled={false}
         readCompletedSessions={new Set()}
@@ -206,6 +255,7 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
         onSelect={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
         onOpenSettings={vi.fn()}
       />,
     );

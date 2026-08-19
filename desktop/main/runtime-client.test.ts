@@ -120,6 +120,9 @@ test("preserves every workspace and lifecycle business code in the closed contra
     "WORKTREE_CREATE_FAILED",
     "WORKTREE_PERSISTENCE_FAILED",
     "WORKTREE_RECOVERY_REQUIRED",
+    "PROJECT_HAS_SESSIONS",
+    "PROJECT_WORKTREE_RECOVERY_REQUIRED",
+    "PROJECT_PERSISTENCE_FAILED",
     "WORKSPACE_IDENTITY_UNAVAILABLE",
     "WORKSPACE_BOUNDARY_VIOLATION",
     "WORKSPACE_SENSITIVE_PATH",
@@ -700,6 +703,8 @@ test("lists only configured models and keeps task model history during session m
     await client.initialize();
     const models = await client.listModels();
     const session = await client.createSession(workspaceRoot);
+    const projectId = session.project?.id;
+    assert.ok(projectId);
     const started = await client.startRun(
       session.id, "Read README.md", "deepseek-v4-pro",
     );
@@ -707,6 +712,8 @@ test("lists only configured models and keeps task model history during session m
     const listed = await client.listSessions();
     const renamed = await client.renameSession(session.id, "检查项目");
     const deleted = await client.deleteSession(session.id);
+    const retainedProjects = await client.listProjects();
+    const deletedProject = await client.deleteProject(projectId);
     await client.shutdown();
     assert.equal(await client.waitForExit(), 0);
 
@@ -716,6 +723,8 @@ test("lists only configured models and keeps task model history during session m
     assert.equal(listed.items[0]?.taskStatus, "completed");
     assert.equal(renamed.title, "检查项目");
     assert.deepEqual(deleted, { deletedSessionId: session.id });
+    assert.equal(retainedProjects.items[0]?.id, projectId);
+    assert.deepEqual(deletedProject, { deletedProjectId: projectId });
     assert.equal(await readFile(path.join(workspaceRoot, "README.md"), "utf8"), "# Keep me\n");
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });

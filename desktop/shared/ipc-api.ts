@@ -7,6 +7,8 @@ import type {
   Session,
   SessionHandoffResult,
   SessionRestoreWorktreeResult,
+  ProjectListResult,
+  DeleteProjectResult,
   WorktreeSettings,
   ProjectGitContext,
   CreateBranchResult,
@@ -73,6 +75,8 @@ export interface EidosRuntimeAPI {
   openWorkspacePathInEditor(sessionId: string, path: string): Promise<void>;
 
   // Sessions
+  listProjects(): Promise<ProjectListResult>;
+  deleteProject(projectId: string): Promise<DeleteProjectResult>;
   listSessions(): Promise<SessionListResult>;
   readSession(sessionId: string): Promise<SessionSnapshot>;
   listEvents(sessionId: string, afterEventId: number): Promise<EventListResult>;

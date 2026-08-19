@@ -47,6 +47,7 @@ describe("useSessionController real Hook behavior", () => {
 
   function setupMockRuntime(overrides: Partial<EidosRuntimeAPI> = {}) {
     const api: Partial<EidosRuntimeAPI> = {
+      listProjects: vi.fn().mockResolvedValue({ items: [] }),
       listSessions: vi.fn().mockResolvedValue({ items: [mockSession1, mockSession2] }),
       readSession: vi.fn().mockImplementation((id: string) => Promise.resolve(id === "session-1" ? mockSnapshot1 : mockSnapshot2)),
       listEvents: vi.fn().mockResolvedValue({ items: [], throughEventId: 0, hasMore: false }),
@@ -54,6 +55,7 @@ describe("useSessionController real Hook behavior", () => {
       createSession: vi.fn().mockResolvedValue(mockSession1),
       renameSession: vi.fn().mockImplementation((id, title) => Promise.resolve({ ...mockSession1, id, title })),
       deleteSession: vi.fn().mockResolvedValue({ deletedSessionId: "session-1" }),
+      deleteProject: vi.fn().mockResolvedValue({ deletedProjectId: "project-1" }),
       ...overrides,
     };
     (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;

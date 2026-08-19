@@ -37,6 +37,11 @@ export interface SessionProject {
   gitAvailable: boolean;
 }
 
+export interface Project extends SessionProject {
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Session {
   id: string;
   workspaceRoot: string;
@@ -77,6 +82,14 @@ export interface SessionListResult {
 
 export interface DeleteSessionResult {
   deletedSessionId: string;
+}
+
+export interface ProjectListResult {
+  items: Project[];
+}
+
+export interface DeleteProjectResult {
+  deletedProjectId: string;
 }
 
 export interface CreateBranchResult {

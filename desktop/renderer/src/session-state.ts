@@ -3,6 +3,7 @@ import type {
   Run,
   RuntimeNotification,
   RuntimeStatus,
+  Project,
   Session,
   SessionSnapshot,
 } from "./contracts.js";
@@ -11,6 +12,7 @@ import type {
 export interface ProjectSessionGroup {
   key: string;
   projectId?: string;
+  project?: Project;
   projectless: boolean;
   workspaceRoot: string;
   displayName: string;
@@ -57,10 +59,27 @@ export function taskStatusFromRun(run: Run): Session["taskStatus"] {
   return "canceled";
 }
 
-export function groupSessionsByProject(sessions: Session[]): ProjectSessionGroup[] {
+export function groupSessionsByProject(
+  sessions: Session[],
+  projects: Project[] = [],
+): ProjectSessionGroup[] {
   const grouped = new Map<string, Omit<ProjectSessionGroup, "createdAt" | "sessions"> & {
     sessions: Session[];
   }>();
+
+  for (const project of projects) {
+    grouped.set(project.id, {
+      key: project.id,
+      projectId: project.id,
+      project,
+      projectless: false,
+      workspaceRoot: project.workspaceRoot,
+      displayName: basename(project.workspaceRoot),
+      gitAvailable: project.gitAvailable,
+      sessions: [],
+    });
+  }
+
   for (const session of sessions) {
     const project = session.project;
     const worktree = session.worktree;
@@ -73,6 +92,15 @@ export function groupSessionsByProject(sessions: Session[]): ProjectSessionGroup
     if (existing) {
       existing.sessions.push(session);
     } else {
+      const sessionProject = projectless || project === undefined
+        ? undefined
+        : {
+            id: project.id,
+            workspaceRoot: project.workspaceRoot,
+            gitAvailable: project.gitAvailable,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+          };
       grouped.set(key, {
         key,
         ...(project?.id
@@ -80,6 +108,7 @@ export function groupSessionsByProject(sessions: Session[]): ProjectSessionGroup
           : worktree?.projectId
             ? { projectId: worktree.projectId }
             : {}),
+        ...(sessionProject ? { project: sessionProject } : {}),
         projectless,
         workspaceRoot,
         displayName: projectless ? "最近" : basename(workspaceRoot),
@@ -90,7 +119,8 @@ export function groupSessionsByProject(sessions: Session[]): ProjectSessionGroup
   }
   return [...grouped.values()].map((group) => ({
     ...group,
-    createdAt: Math.min(...group.sessions.map((session) => session.createdAt)),
+    createdAt: group.project?.createdAt
+      ?? Math.min(...group.sessions.map((session) => session.createdAt)),
     sessions: [...group.sessions].sort((left, right) => right.createdAt - left.createdAt),
   })).sort((left, right) => (
     right.createdAt - left.createdAt
@@ -217,7 +247,7 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   RUNTIME_NOT_INITIALIZED: "Runtime 尚未就绪，请稍后重试。",
   PROTOCOL_VERSION_UNSUPPORTED: "桌面端与 Runtime 版本不兼容，请重启或更新 Eidos。",
   RUN_ALREADY_ACTIVE: "当前已有一个 Run 正在执行，请先等待完成或取消。",
-  RESOURCE_NOT_FOUND: "请求的 Session 或 Run 已不存在，请刷新后重试。",
+  RESOURCE_NOT_FOUND: "请求的 Session、Project 或 Run 已不存在，请刷新后重试。",
   INVALID_STATE: "当前状态不允许执行这个操作，请刷新后重试。",
   APPROVAL_NO_LONGER_PENDING: "这个审批已经失效，无需再次处理。",
   WORKSPACE_BOUNDARY_VIOLATION: "所选路径超出 Workspace 安全边界，操作已拒绝。",
@@ -289,6 +319,9 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   WORKTREE_DIRTY: "任务仍有未提交或冲突的变更，不能删除。",
   WORKTREE_DELETE_FAILED: "任务的 Worktree 删除失败，请查看 Runtime 日志后重试。",
   SESSION_PERSISTENCE_FAILED: "任务状态写入失败。Worktree 已保留或可安全重试。",
+  PROJECT_HAS_SESSIONS: "项目下还有任务，请先删除任务后再删除项目。",
+  PROJECT_WORKTREE_RECOVERY_REQUIRED: "项目的 Managed Worktree 仍需恢复，暂时不能删除项目。",
+  PROJECT_PERSISTENCE_FAILED: "项目状态写入失败，请查看 Runtime 日志。",
   MODEL_NOT_AVAILABLE: "所选模型当前不可用，请重新选择。",
   INTERNAL_ERROR: "Runtime 遇到内部错误，请查看诊断日志。",
 };

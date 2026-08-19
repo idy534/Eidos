@@ -245,6 +245,10 @@ test("closed runtime business errors map to safe user-facing guidance", () => {
     userFacingError(new Error("provider secret details")),
     "操作失败，请查看 Runtime 日志。",
   );
+  assert.equal(
+    userFacingError(new Error("EIDOS_RUNTIME_ERROR:PROJECT_HAS_SESSIONS")),
+    "项目下还有任务，请先删除任务后再删除项目。",
+  );
 });
 
 test("projects keep creation order while tasks stay newest first", () => {
@@ -337,6 +341,22 @@ test("projectless sessions share the recent group", () => {
   assert.equal(groups[0]?.key, "projectless");
   assert.equal(groups[0]?.displayName, "最近");
   assert.equal(groups[0]?.projectId, undefined);
+});
+
+test("empty projects remain visible after their sessions are deleted", () => {
+  const groups = groupSessionsByProject([], [
+    {
+      id: "project-empty",
+      workspaceRoot: "/empty-project",
+      gitAvailable: false,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  ]);
+
+  assert.deepEqual(groups.map((group) => group.key), ["project-empty"]);
+  assert.deepEqual(groups[0]?.sessions, []);
+  assert.equal(groups[0]?.displayName, "empty-project");
 });
 
 test("task statuses use compact accessible indicators", () => {

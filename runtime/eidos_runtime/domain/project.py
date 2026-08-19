@@ -50,6 +50,12 @@ class Project(EidosFrozenStrictModel):
         return normalized
 
 
+class DeletedProject(EidosFrozenStrictModel):
+    """The durable result of removing one Project metadata record."""
+
+    deleted_project_id: str = Field(min_length=1)
+
+
 def direct_project_id(workspace_root: str) -> str:
     """Return the stable Project identity for a direct filesystem workspace."""
 
@@ -58,4 +64,4 @@ def direct_project_id(workspace_root: str) -> str:
     ).hexdigest()
 
 
-__all__ = ["Project", "direct_project_id"]
+__all__ = ["DeletedProject", "Project", "direct_project_id"]

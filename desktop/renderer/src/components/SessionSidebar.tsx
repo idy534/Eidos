@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import type { Session, SessionGitStatus } from "../contracts.js";
+import type { Project, Session, SessionGitStatus } from "../contracts.js";
 import type { RuntimePresentation } from "../session-state.js";
 import { groupSessionsByProject, taskStatusPresentation } from "../session-state.js";
 import { ContextMenu } from "./DropdownMenu.js";
@@ -11,6 +11,7 @@ import settingsIcon from "./settings.svg";
 
 interface Props {
   sessions: Session[];
+  projects: Project[];
   selectedId: string | undefined;
   disabled: boolean;
   readCompletedSessions: ReadonlySet<string>;
@@ -24,25 +25,36 @@ interface Props {
   onSelect: (session: Session) => void;
   onRename: (session: Session) => void;
   onDelete: (session: Session) => void;
+  onDeleteProject: (project: Project) => void;
   onOpenSettings: () => void;
 }
 
-interface ContextMenuState {
-  session: Session;
-  x: number;
-  y: number;
-  element?: HTMLElement | null;
-}
+type ContextMenuState =
+  | {
+      kind: "session";
+      session: Session;
+      x: number;
+      y: number;
+      element?: HTMLElement | null;
+    }
+  | {
+      kind: "project";
+      project: Project;
+      hasSessions: boolean;
+      x: number;
+      y: number;
+      element?: HTMLElement | null;
+    };
 
 export function SessionSidebar({
-  sessions, selectedId, disabled, readCompletedSessions,
+  sessions, projects: catalogProjects, selectedId, disabled, readCompletedSessions,
   runtimePresentation, isSelectingSessionId, gitStatusBySessionId = new Map(),
-  onCreate, onCreateInProject, onSelect, onRename, onDelete, onOpenSettings,
+  onCreate, onCreateInProject, onSelect, onRename, onDelete, onDeleteProject, onOpenSettings,
 }: Props) {
   const visibleSessions = sessions.filter(
     (session) => session.taskStatus !== "new" || Boolean(session.title?.trim()),
   );
-  const projects = groupSessionsByProject(visibleSessions);
+  const projects = groupSessionsByProject(visibleSessions, catalogProjects);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
   const [recentExpanded, setRecentExpanded] = useState(true);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | undefined>(undefined);
@@ -79,7 +91,7 @@ export function SessionSidebar({
       />
       <nav aria-label="项目与最近">
         <p className="nav-label">项目</p>
-        {visibleSessions.length === 0 ? (
+        {projects.length === 0 ? (
           <p className="nav-empty">还没有任务，点击上方按键创建</p>
         ) : (
           <ul className="workspace-list">
@@ -100,6 +112,7 @@ export function SessionSidebar({
                       <button
                         className="workspace-toggle"
                         aria-expanded={!collapsedProjects.has(project.key)}
+                        aria-haspopup={project.project ? "menu" : undefined}
                         onClick={() => setCollapsedProjects((current) => {
                           const next = new Set(current);
                           if (next.has(project.key)) {
@@ -109,6 +122,37 @@ export function SessionSidebar({
                           }
                           return next;
                         })}
+                        onContextMenu={(event) => {
+                          if (!project.project) return;
+                          event.preventDefault();
+                          const hasSessions = project.sessions.length > 0
+                            || sessions.some((session) => session.project?.id === project.project?.id);
+                          setContextMenu({
+                            kind: "project",
+                            project: project.project,
+                            hasSessions,
+                            x: event.clientX,
+                            y: event.clientY,
+                            element: event.currentTarget,
+                          });
+                        }}
+                        onKeyDown={(event) => {
+                          if (!project.project || !(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
+                            return;
+                          }
+                          event.preventDefault();
+                          const bounds = event.currentTarget.getBoundingClientRect();
+                          const hasSessions = project.sessions.length > 0
+                            || sessions.some((session) => session.project?.id === project.project?.id);
+                          setContextMenu({
+                            kind: "project",
+                            project: project.project,
+                            hasSessions,
+                            x: bounds.left,
+                            y: bounds.bottom,
+                            element: event.currentTarget,
+                          });
+                        }}
                       >
                         <FolderIcon open={!collapsedProjects.has(project.key)} />
                         <span className="workspace-name">{project.displayName}</span>
@@ -155,6 +199,7 @@ export function SessionSidebar({
                               onContextMenu={(event) => {
                                 event.preventDefault();
                                 setContextMenu({
+                                  kind: "session",
                                   session,
                                   x: event.clientX,
                                   y: event.clientY,
@@ -166,6 +211,7 @@ export function SessionSidebar({
                                   event.preventDefault();
                                   const bounds = event.currentTarget.getBoundingClientRect();
                                   setContextMenu({
+                                    kind: "session",
                                     session,
                                     x: bounds.left,
                                     y: bounds.bottom,
@@ -228,7 +274,7 @@ export function SessionSidebar({
         </button>
       </div>
 
-      {contextMenu && (
+      {contextMenu?.kind === "session" && (
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
@@ -252,6 +298,27 @@ export function SessionSidebar({
               onClick: () => {
                 setContextMenu(undefined);
                 onDelete(contextMenu.session);
+              },
+            },
+          ]}
+        />
+      )}
+      {contextMenu?.kind === "project" && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          label={`项目操作：${contextMenu.project.workspaceRoot}`}
+          restoreFocusElement={contextMenu.element}
+          onClose={() => setContextMenu(undefined)}
+          items={[
+            {
+              key: "delete-project",
+              label: "删除项目",
+              danger: true,
+              disabled: contextMenu.hasSessions,
+              onClick: () => {
+                setContextMenu(undefined);
+                onDeleteProject(contextMenu.project);
               },
             },
           ]}

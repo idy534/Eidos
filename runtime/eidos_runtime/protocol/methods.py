@@ -22,6 +22,7 @@ from eidos_runtime.protocol.schemas import (
     ItemDto,
     McpServerRecordDto,
     PluginRecordDto,
+    ProjectDto,
     RunDto,
     SessionDto,
     SessionWorktreeDto,
@@ -123,6 +124,14 @@ class GitContextRequestDto(MethodRequestDto):
     workspace_root: StrictStr = Field(
         alias="workspaceRoot", min_length=1, max_length=4096
     )
+
+
+class ProjectListRequestDto(MethodRequestDto):
+    pass
+
+
+class ProjectDeleteRequestDto(_OperationRequest):
+    project_id: StrictStr = Field(alias="projectId", min_length=1, max_length=256)
 
 
 class SessionListRequestDto(MethodRequestDto):
@@ -531,6 +540,14 @@ class SessionListResponseDto(MethodResultDto):
                 if item.execution_mode is not None:
                     item_value["executionMode"] = item.execution_mode
         return value
+
+
+class ProjectListResponseDto(MethodResultDto):
+    items: list[ProjectDto]
+
+
+class ProjectDeleteResponseDto(MethodResultDto):
+    deleted_project_id: StrictStr = Field(alias="deletedProjectId")
 
 
 class SessionReadResponseDto(MethodResultDto):

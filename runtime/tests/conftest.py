@@ -46,6 +46,7 @@ INTEGRATION_FILES = frozenset(
         "test_phase5c_resource_registry.py",
         "test_phase5c_tool_state_machine.py",
         "test_phase5c_workspace_index.py",
+        "test_project_lifecycle.py",
         "test_plugins.py",
         "test_repository_application_persistence.py",
         "test_repository_persistence.py",

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Run, Session } from "../contracts.js";
+import type { Project, Run, Session } from "../contracts.js";
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import { EidosMark } from "../components/EidosMark.js";
@@ -82,6 +82,9 @@ export function AppShell({ runtime }: AppShellProps) {
   const [sessionToDelete, setSessionToDelete] = useState<Session | undefined>(undefined);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | undefined>(undefined);
+  const [projectToDelete, setProjectToDelete] = useState<Project | undefined>(undefined);
+  const [projectDeleteBusy, setProjectDeleteBusy] = useState(false);
+  const [projectDeleteError, setProjectDeleteError] = useState<string | undefined>(undefined);
   const [createBranchSessionId, setCreateBranchSessionId] = useState<string | undefined>(undefined);
   const [createBranchMode, setCreateBranchMode] = useState<CreateBranchMode>("worktree");
   const [handoffSessionId, setHandoffSessionId] = useState<string | undefined>(undefined);
@@ -104,6 +107,7 @@ export function AppShell({ runtime }: AppShellProps) {
   useEffect(() => {
     if (runtimeStatus.state !== "ready" || runtimeStatus.storageHealth.state !== "ready") return;
     void Promise.allSettled([
+      sessionActions.loadProjects(),
       sessionActions.loadSessions(),
       modelActions.load(),
       approvalActions.loadPending(),
@@ -179,6 +183,8 @@ export function AppShell({ runtime }: AppShellProps) {
   const hasBlockingModal =
     Boolean(sessionToDelete) ||
     deleteBusy ||
+    Boolean(projectToDelete) ||
+    projectDeleteBusy ||
     Boolean(createBranchSessionId) ||
     Boolean(handoffSessionId) ||
     sessionState.pending.branchSessionId !== undefined ||
@@ -318,6 +324,24 @@ export function AppShell({ runtime }: AppShellProps) {
     }
   }
 
+  function requestDeleteProject(project: Project): void {
+    setProjectDeleteError(undefined);
+    setProjectToDelete(project);
+  }
+
+  async function confirmDeleteProject(): Promise<void> {
+    if (!projectToDelete) return;
+    setProjectDeleteBusy(true);
+    setProjectDeleteError(undefined);
+    const result = await sessionActions.deleteProject(projectToDelete);
+    setProjectDeleteBusy(false);
+    if (result.confirmed) {
+      setProjectToDelete(undefined);
+    } else {
+      setProjectDeleteError(result.error);
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Run submission and revision
   // -----------------------------------------------------------------------
@@ -386,6 +410,7 @@ export function AppShell({ runtime }: AppShellProps) {
     <main className="workbench">
       <SessionSidebar
         sessions={sessionState.sessions}
+        projects={sessionState.projects}
         selectedId={sessionState.navigationSessionId ?? snapshot?.session.id}
         disabled={sidebarDisabled}
         readCompletedSessions={sessionState.readCompletedSessions}
@@ -397,6 +422,7 @@ export function AppShell({ runtime }: AppShellProps) {
         onSelect={(session) => void handleSelectSession(session)}
         onRename={(session) => void beginRename(session)}
         onDelete={(session) => requestDeleteSession(session)}
+        onDeleteProject={(project) => requestDeleteProject(project)}
         onOpenSettings={() => {
           setSettingsOpen(true);
           setRenamingSessionId(undefined);
@@ -719,6 +745,19 @@ export function AppShell({ runtime }: AppShellProps) {
         getFallbackFocus={getDialogFallbackFocus}
         onConfirm={() => void confirmDelete()}
         onCancel={() => { setSessionToDelete(undefined); setDeleteError(undefined); }}
+      />
+      <ConfirmDialog
+        open={Boolean(projectToDelete)}
+        title={`删除项目"${projectToDelete?.workspaceRoot.split("/").filter(Boolean).at(-1) ?? projectToDelete?.workspaceRoot ?? "项目"}"？`}
+        description="只会删除 Eidos 中的项目记录，不会删除项目文件或 Git 仓库。"
+        confirmLabel="删除"
+        cancelLabel="取消"
+        isDestructive
+        busy={projectDeleteBusy}
+        error={projectDeleteError}
+        getFallbackFocus={getDialogFallbackFocus}
+        onConfirm={() => void confirmDeleteProject()}
+        onCancel={() => { setProjectToDelete(undefined); setProjectDeleteError(undefined); }}
       />
     </main>
   );

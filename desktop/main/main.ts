@@ -466,6 +466,13 @@ ipcMain.handle(IPC.WORKSPACE_SELECT, async () => {
   return result.canceled ? null : result.filePaths[0] ?? null;
 });
 
+ipcMain.handle(IPC.PROJECT_LIST, () => clientOrThrow().listProjects());
+ipcMain.handle(IPC.PROJECT_DELETE, (_event, projectId: unknown) => {
+  if (typeof projectId !== "string" || projectId.length === 0 || projectId.length > 256) {
+    throw new Error("Project 参数无效。");
+  }
+  return clientOrThrow().deleteProject(projectId);
+});
 ipcMain.handle(IPC.SESSION_LIST, () => clientOrThrow().listSessions());
 ipcMain.handle(IPC.SESSION_READ, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");

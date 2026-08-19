@@ -74,6 +74,14 @@ class SessionProjectDto(ClosedModel):
     git_available: bool = Field(alias="gitAvailable")
 
 
+class ProjectDto(ClosedModel):
+    id: StrictStr
+    workspace_root: StrictStr = Field(alias="workspaceRoot")
+    git_available: bool = Field(alias="gitAvailable")
+    created_at: StrictInt = Field(alias="createdAt", ge=0)
+    updated_at: StrictInt = Field(alias="updatedAt", ge=0)
+
+
 class SessionDto(ClosedModel):
     id: StrictStr
     workspace_root: StrictStr = Field(alias="workspaceRoot")
