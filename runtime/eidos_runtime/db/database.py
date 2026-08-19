@@ -26,6 +26,7 @@ from eidos_runtime.db.schema import (
     SCHEMA_VERSION,
     V1_TO_V2_MIGRATION_SQL,
     V2_TO_V3_MIGRATION_SQL,
+    V3_TO_V4_MIGRATION_SQL,
 )
 from eidos_runtime.runtime.fault_injection import hit_fault
 
@@ -116,6 +117,7 @@ class Database:
                 tables
                 and revision not in {
                     LEGACY_SCHEMA_VERSION,
+                    2,
                     PREVIOUS_SCHEMA_VERSION,
                     SCHEMA_VERSION,
                 }
@@ -134,12 +136,14 @@ class Database:
                     + SCHEMA_SQL
                     + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
                 )
-            elif revision in {LEGACY_SCHEMA_VERSION, PREVIOUS_SCHEMA_VERSION}:
+            elif revision in {LEGACY_SCHEMA_VERSION, 2, PREVIOUS_SCHEMA_VERSION}:
                 try:
-                    migrations = (
-                        (V1_TO_V2_MIGRATION_SQL if revision == LEGACY_SCHEMA_VERSION else "")
-                        + V2_TO_V3_MIGRATION_SQL
-                    )
+                    migrations = ""
+                    if revision == LEGACY_SCHEMA_VERSION:
+                        migrations += V1_TO_V2_MIGRATION_SQL
+                    if revision in {LEGACY_SCHEMA_VERSION, 2}:
+                        migrations += V2_TO_V3_MIGRATION_SQL
+                    migrations += V3_TO_V4_MIGRATION_SQL
                     connection.execute("PRAGMA foreign_keys = OFF")
                     connection.executescript(
                         "BEGIN IMMEDIATE;\n"

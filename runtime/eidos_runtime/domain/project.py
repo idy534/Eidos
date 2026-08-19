@@ -12,6 +12,7 @@ class Project(EidosFrozenStrictModel):
     """A filesystem workspace with an optional Git capability."""
 
     id: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=120)
     workspace_root: str = Field(min_length=1, max_length=4096)
     git_repository_root: str | None = Field(default=None, max_length=4096)
     git_common_dir: str | None = Field(default=None, max_length=4096)
@@ -64,4 +65,16 @@ def direct_project_id(workspace_root: str) -> str:
     ).hexdigest()
 
 
-__all__ = ["DeletedProject", "Project", "direct_project_id"]
+def default_project_name(workspace_root: str) -> str:
+    """Return the stable display fallback for an unnamed legacy Project."""
+
+    name = workspace_root.rstrip("/").rsplit("/", 1)[-1]
+    return name or workspace_root
+
+
+__all__ = [
+    "DeletedProject",
+    "Project",
+    "default_project_name",
+    "direct_project_id",
+]

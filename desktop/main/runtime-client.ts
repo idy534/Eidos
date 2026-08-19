@@ -156,6 +156,7 @@ import type {
   RuntimeHealth,
   RuntimeNotification,
   ProjectGitContext,
+  Project,
   ProjectListResult,
   DeleteProjectResult,
   CreateBranchResult,
@@ -429,6 +430,18 @@ export class RuntimeClient {
 
   listProjects(): Promise<ProjectListResult> {
     return this.validatedRequest("project/list", {}, isProjectListResult);
+  }
+
+  createProject(
+    name: string,
+    workspaceRoot: string,
+    operationId = randomUUID(),
+  ): Promise<Project> {
+    return this.validatedRequest(
+      "project/create",
+      { name, workspaceRoot, operationId },
+      isProject,
+    );
   }
 
   deleteProject(
@@ -1322,8 +1335,9 @@ function isWorktreeSettings(value: unknown): value is WorktreeSettings {
 function isSessionProject(value: unknown): boolean {
   return (
     isRecord(value)
-    && hasOnlyKeys(value, ["id", "workspaceRoot", "gitAvailable"])
+    && hasOnlyKeys(value, ["id", "name", "workspaceRoot", "gitAvailable"])
     && typeof value.id === "string"
+    && (value.name === undefined || typeof value.name === "string")
     && typeof value.workspaceRoot === "string"
     && typeof value.gitAvailable === "boolean"
   );
@@ -1332,8 +1346,9 @@ function isSessionProject(value: unknown): boolean {
 function isProject(value: unknown): value is ProjectListResult["items"][number] {
   return (
     isRecord(value)
-    && hasOnlyKeys(value, ["id", "workspaceRoot", "gitAvailable", "createdAt", "updatedAt"])
+    && hasOnlyKeys(value, ["id", "name", "workspaceRoot", "gitAvailable", "createdAt", "updatedAt"])
     && typeof value.id === "string"
+    && (value.name === undefined || typeof value.name === "string")
     && typeof value.workspaceRoot === "string"
     && typeof value.gitAvailable === "boolean"
     && isNonNegativeInteger(value.createdAt)

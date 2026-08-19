@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 3
-PREVIOUS_SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
+PREVIOUS_SCHEMA_VERSION = 3
 LEGACY_SCHEMA_VERSION = 1
 
 _RAW_BASE_SCHEMA_SQL = """
@@ -1009,6 +1009,7 @@ ON worktree_lifecycle_operations(session_id, scope);
 PROJECT_SCHEMA_SQL = """
 CREATE TABLE projects (
     id TEXT PRIMARY KEY,
+    name TEXT,
     workspace_root TEXT NOT NULL UNIQUE,
     git_repository_root TEXT,
     git_common_dir TEXT,
@@ -1258,6 +1259,12 @@ SCHEMA_SQL = (
 # Test/upgrade fixture for the immediately previous schema. Keep this derived
 # from the current baseline so unrelated tables cannot drift between fixtures.
 V2_SCHEMA_SQL = SCHEMA_SQL.replace(
+    "CREATE TABLE projects (\n"
+    "    id TEXT PRIMARY KEY,\n"
+    "    name TEXT,\n",
+    "CREATE TABLE projects (\n"
+    "    id TEXT PRIMARY KEY,\n",
+).replace(
     "CREATE TABLE repository_retrieval_snapshots (\n"
     "    id TEXT PRIMARY KEY,\n",
     "CREATE TABLE repository_retrieval_snapshots (\n"
@@ -1359,4 +1366,8 @@ INSERT INTO run_repository_retrievals (
 SELECT DISTINCT run_id, retrieval_snapshot_id, created_at
 FROM context_plans
 WHERE retrieval_snapshot_id IS NOT NULL;
+"""
+
+V3_TO_V4_MIGRATION_SQL = """
+ALTER TABLE projects ADD COLUMN name TEXT;
 """

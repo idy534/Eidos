@@ -33,7 +33,7 @@ from eidos_runtime.domain.session import (
     SessionProjection,
     SessionProjectionPage,
 )
-from eidos_runtime.domain.project import direct_project_id
+from eidos_runtime.domain.project import default_project_name, direct_project_id
 from eidos_runtime.persistence.mappers.session import (
     deleted_session_from_legacy_dict,
     deleted_session_to_legacy_dict,
@@ -214,12 +214,13 @@ class SessionRepository(Repository):
                 connection.execute(
                     """
                     INSERT OR IGNORE INTO projects (
-                        id, workspace_root, git_repository_root, git_common_dir,
-                        created_at, updated_at
-                    ) VALUES (?, ?, NULL, NULL, ?, ?)
+                        id, name, workspace_root, git_repository_root,
+                        git_common_dir, created_at, updated_at
+                    ) VALUES (?, ?, ?, NULL, NULL, ?, ?)
                     """,
                     (
                         direct_project_id(str(workspace)),
+                        default_project_name(str(workspace)),
                         str(workspace),
                         now,
                         now,
@@ -511,6 +512,34 @@ class SessionRepository(Repository):
         return self.delete_session_committed(
             session_id, operation_id=operation_id
         ).value
+
+    def list_empty_session_ids_for_project(self, project_id: str) -> tuple[str, ...]:
+        """Find legacy no-Run Sessions that are safe to remove during Project delete."""
+
+        with self.lock:
+            rows = self._connection().execute(
+                """
+                SELECT s.id
+                FROM sessions s
+                LEFT JOIN projects direct_p ON direct_p.workspace_root = s.workspace_root
+                WHERE COALESCE(TRIM(s.title), '') = ''
+                  AND NOT EXISTS (
+                      SELECT 1 FROM runs r WHERE r.session_id = s.id
+                  )
+                  AND (
+                      direct_p.id = ?
+                      OR EXISTS (
+                          SELECT 1
+                          FROM worktrees w
+                          WHERE w.project_id = ?
+                            AND (w.id = s.worktree_id OR w.id = s.associated_worktree_id)
+                      )
+                  )
+                ORDER BY s.creation_seq ASC
+                """,
+                (project_id, project_id),
+            ).fetchall()
+        return tuple(str(row["id"]) for row in rows)
 
     def assert_session_deletable(self, session_id: str) -> None:
         """Check the durable preconditions before an external Git removal."""

@@ -197,6 +197,8 @@ class TypedSessionRepositoryPort(Protocol):
         self, session_id: str, *, operation_id: str | None = None
     ) -> CommittedMutation[DeletedSession]: ...
 
+    def list_empty_session_ids_for_project(self, project_id: str) -> tuple[str, ...]: ...
+
     def assert_session_deletable(self, session_id: str) -> None: ...
 
     def has_active_run_for_workspace(self, workspace_root: str) -> bool: ...
@@ -2874,6 +2876,17 @@ class SessionApplication:
             SessionDeleteResponseDto,
             deleted_session_to_legacy_dict(mutation.value),
         )
+
+    def cleanup_empty_sessions_for_project(self, project_id: str) -> None:
+        """Remove pre-lazy-creation no-Run Sessions before deleting a Project."""
+
+        for session_id in self._repository.list_empty_session_ids_for_project(project_id):
+            self.delete(
+                SessionDeleteRequestDto(
+                    sessionId=session_id,
+                    operationId=str(uuid.uuid4()),
+                )
+            )
 
     def _record_delete_operation(
         self,

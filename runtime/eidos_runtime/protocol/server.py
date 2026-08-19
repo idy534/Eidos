@@ -703,6 +703,14 @@ class RuntimeServer:
                 ),
             ),
             (
+                "project/create",
+                method_dtos.ProjectCreateRequestDto,
+                method_dtos.ProjectCreateResponseDto,
+                lambda _id, request: self._applications_or_error().projects.create(
+                    request
+                ),
+            ),
+            (
                 "project/delete",
                 method_dtos.ProjectDeleteRequestDto,
                 method_dtos.ProjectDeleteResponseDto,
@@ -1267,6 +1275,8 @@ class RuntimeServer:
             projects=ProjectApplication(
                 self.worktree_manager.repository,
                 lifecycle=session_lifecycle,
+                create_project=self.worktree_manager.create_project,
+                cleanup_empty_sessions=sessions.cleanup_empty_sessions_for_project,
             ),
             sessions=sessions,
             runs=RunApplication(

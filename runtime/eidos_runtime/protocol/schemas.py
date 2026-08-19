@@ -76,6 +76,7 @@ class SessionProjectDto(ClosedModel):
 
 class ProjectDto(ClosedModel):
     id: StrictStr
+    name: StrictStr
     workspace_root: StrictStr = Field(alias="workspaceRoot")
     git_available: bool = Field(alias="gitAvailable")
     created_at: StrictInt = Field(alias="createdAt", ge=0)

@@ -13,7 +13,12 @@ from eidos_runtime.db.errors import (
     ResourceNotFoundError,
     StorageError,
 )
-from eidos_runtime.domain.project import DeletedProject, Project, direct_project_id
+from eidos_runtime.domain.project import (
+    DeletedProject,
+    Project,
+    default_project_name,
+    direct_project_id,
+)
 from eidos_runtime.domain.worktree import (
     BranchOwnership,
     Worktree,
@@ -43,6 +48,8 @@ class ProjectWorktreeRepository(Repository):
         self,
         workspace_root: Path | str,
         git_discovery: GitRepositoryDiscovery | None = None,
+        *,
+        name: str | None = None,
     ) -> Project:
         if git_discovery is None:
             canonical_workspace = _canonical_workspace_root(workspace_root)
@@ -57,8 +64,12 @@ class ProjectWorktreeRepository(Repository):
             git_common_dir = _canonical_workspace_root(git_discovery.git_common_dir)
             project_id = _project_id(git_common_dir)
         now = now_utc_millis()
+        project_name = (name or default_project_name(canonical_workspace)).strip()
+        if not project_name:
+            raise ValueError("project name must not be blank")
         candidate = Project(
             id=project_id,
+            name=project_name,
             workspace_root=canonical_workspace,
             git_repository_root=git_repository_root,
             git_common_dir=git_common_dir,
@@ -99,17 +110,26 @@ class ProjectWorktreeRepository(Repository):
                         ),
                     )
                     project = candidate.model_copy(update={"id": project.id})
+                if name is not None and project.name != project_name:
+                    connection.execute(
+                        "UPDATE projects SET name = ?, updated_at = ? WHERE id = ?",
+                        (project_name, now, project.id),
+                    )
+                    project = project.model_copy(
+                        update={"name": project_name, "updated_at": utc_datetime_from_millis(now)}
+                    )
                 return project
             try:
                 connection.execute(
                     """
                     INSERT INTO projects (
-                        id, workspace_root, git_repository_root, git_common_dir,
-                        created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                        id, name, workspace_root, git_repository_root,
+                        git_common_dir, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         candidate.id,
+                        candidate.name,
                         candidate.workspace_root,
                         candidate.git_repository_root,
                         candidate.git_common_dir,

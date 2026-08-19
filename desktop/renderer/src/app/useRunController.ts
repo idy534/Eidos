@@ -34,7 +34,7 @@ export interface RunControllerActions {
     isStorageReady: boolean;
     inputOverride?: string;
     onRunProjected?: (sessionId: string, run: Run) => void;
-  }) => Promise<void>;
+  }) => Promise<boolean>;
   reviseRun: (params: {
     snapshot: SessionSnapshot;
     sourceRunId: string;
@@ -118,7 +118,7 @@ export function useRunController(
     isStorageReady: boolean;
     inputOverride?: string;
     onRunProjected?: (sessionId: string, run: Run) => void;
-  }): Promise<void> => {
+  }): Promise<boolean> => {
     const sessionId = currentSnapshot.session.id;
     const sessionInput = inputOverride ?? inputs[sessionId] ?? "";
 
@@ -129,18 +129,18 @@ export function useRunController(
           [sessionId]: "另一个任务正在启动，请稍后重试。",
         }));
       }
-      return;
+      return false;
     }
 
-    if (!storageReady) return;
-    if (!sessionInput.trim()) return;
+    if (!storageReady) return false;
+    if (!sessionInput.trim()) return false;
 
     const currentActiveRun = findActiveRun(currentSnapshot.runs);
     const mode = deriveComposerMode(storageReady, currentActiveRun, false);
-    if (mode !== "idle") return;
+    if (mode !== "idle") return false;
 
     const freshActiveRun = findActiveRun(currentSnapshot.runs);
-    if (freshActiveRun) return;
+    if (freshActiveRun) return false;
 
     const token = Symbol("run-submission");
     const operation: SubmissionOperation = {
@@ -169,7 +169,9 @@ export function useRunController(
             return next;
           });
         }
+        return true;
       }
+      return false;
     } catch (cause) {
       if (submissionLockRef.current?.token === operation.token) {
         const errMsg = userFacingError(cause);
@@ -178,6 +180,7 @@ export function useRunController(
           [sessionId]: errMsg,
         }));
       }
+      return false;
     } finally {
       if (submissionLockRef.current?.token === operation.token) {
         submissionLockRef.current = undefined;

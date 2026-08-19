@@ -414,4 +414,50 @@ describe("useSessionController real Hook behavior", () => {
     expect(pA_retry).toEqual(mockSnapshot1);
     expect(result.current[0].snapshot).toEqual(mockSnapshot1);
   });
+
+  it("keeps a new Session local until the first Run materializes it", async () => {
+    const project = {
+      id: "project-eidos",
+      name: "Eidos",
+      workspaceRoot: "/workspace/eidos",
+      gitAvailable: true,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const createSession = vi.fn().mockResolvedValue(mockSession1);
+    setupMockRuntime({ createSession });
+
+    const { result } = renderHook(() => useSessionController());
+    act(() => result.current[1].startDraft(project));
+
+    expect(createSession).not.toHaveBeenCalled();
+    expect(result.current[0].sessions).toEqual([]);
+    expect(result.current[0].draft?.session.project?.id).toBe(project.id);
+
+    await act(async () => {
+      await result.current[1].materializeDraft();
+    });
+
+    expect(createSession).toHaveBeenCalledWith(project.workspaceRoot, { executionMode: "local" });
+    expect(result.current[0].snapshot).toEqual(mockSnapshot1);
+    expect(result.current[0].draft).toBeDefined();
+  });
+
+  it("restores the draft when a materialized Session has no Run", async () => {
+    const deleteSession = vi.fn().mockResolvedValue({ deletedSessionId: mockSession1.id });
+    setupMockRuntime({ deleteSession });
+
+    const { result } = renderHook(() => useSessionController());
+    act(() => result.current[1].startDraft());
+    const draft = result.current[0].draft!;
+
+    await act(async () => {
+      await result.current[1].rollbackMaterializedSession(mockSession1, draft);
+    });
+
+    expect(deleteSession).toHaveBeenCalledWith(mockSession1.id);
+    expect(result.current[0].snapshot).toBeUndefined();
+    expect(result.current[0].draft).toBe(draft);
+    expect(result.current[0].sessions).toEqual([]);
+  });
 });

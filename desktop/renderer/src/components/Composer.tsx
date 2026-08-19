@@ -138,7 +138,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
     || !input.trim();
 
   const hasProjectContext = showSessionContext && (project !== undefined || projectless);
-  const projectName = project ? basename(project.workspaceRoot) : undefined;
+  const projectName = project?.name?.trim() || (project ? basename(project.workspaceRoot) : undefined);
 
   return (
     <form

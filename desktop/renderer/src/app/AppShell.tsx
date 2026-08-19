@@ -10,6 +10,8 @@ import { PrimaryActionButton } from "../components/PrimaryActionButton.js";
 import { ConfirmDialog } from "../components/settings/ConfirmDialog.js";
 import { CreateBranchDialog } from "../components/CreateBranchDialog.js";
 import { HandoffDialog } from "../components/HandoffDialog.js";
+import { ProjectPicker } from "../components/ProjectPicker.js";
+import { CreateProjectDialog } from "../components/CreateProjectDialog.js";
 import { Composer } from "../components/Composer.js";
 import { GitChangesPanel } from "../components/GitChangesPanel.js";
 import { WorkspaceExplorer } from "../components/WorkspaceExplorer.js";
@@ -48,7 +50,8 @@ export function AppShell({ runtime }: AppShellProps) {
 
   // Domain controllers
   const [sessionState, sessionActions] = useSessionController();
-  const [runState, runActions] = useRunController(sessionState.snapshot, isStorageReady);
+  const activeSnapshot = sessionState.snapshot ?? sessionState.draft;
+  const [runState, runActions] = useRunController(activeSnapshot, isStorageReady);
   const [approvalState, approvalActions] = useApprovalController();
   const [modelState, modelActions] = useModelController();
   const [extensionState, extensionActions] = useExtensionController();
@@ -85,6 +88,11 @@ export function AppShell({ runtime }: AppShellProps) {
   const [projectToDelete, setProjectToDelete] = useState<Project | undefined>(undefined);
   const [projectDeleteBusy, setProjectDeleteBusy] = useState(false);
   const [projectDeleteError, setProjectDeleteError] = useState<string | undefined>(undefined);
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [createProjectFolder, setCreateProjectFolder] = useState<string | undefined>(undefined);
+  const [createProjectBusy, setCreateProjectBusy] = useState(false);
+  const [createProjectError, setCreateProjectError] = useState<string | undefined>(undefined);
   const [createBranchSessionId, setCreateBranchSessionId] = useState<string | undefined>(undefined);
   const [createBranchMode, setCreateBranchMode] = useState<CreateBranchMode>("worktree");
   const [handoffSessionId, setHandoffSessionId] = useState<string | undefined>(undefined);
@@ -187,6 +195,8 @@ export function AppShell({ runtime }: AppShellProps) {
     projectDeleteBusy ||
     Boolean(createBranchSessionId) ||
     Boolean(handoffSessionId) ||
+    projectPickerOpen ||
+    createProjectOpen ||
     sessionState.pending.branchSessionId !== undefined ||
     sessionState.pending.creatingBranchSessionId !== undefined ||
     sessionState.pending.handoffSessionId !== undefined ||
@@ -195,18 +205,18 @@ export function AppShell({ runtime }: AppShellProps) {
   useEffect(() => {
     const unsubNewTask = window.eidosRuntime.onShortcut(IPC.APP_NEW_TASK, () => {
       if (hasBlockingModal || settingsOpen) return;
-      void handleCreateSession(null);
+      handleCreateSession();
     });
     const unsubOpenWorkspace = window.eidosRuntime.onShortcut(IPC.APP_OPEN_WORKSPACE, () => {
       if (hasBlockingModal || settingsOpen) return;
-      void handleSelectProject();
+      setProjectPickerOpen(true);
     });
     return () => {
       unsubNewTask();
       unsubOpenWorkspace();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasBlockingModal, settingsOpen, sessionActions.createSession]);
+  }, [hasBlockingModal, settingsOpen]);
 
   // -----------------------------------------------------------------------
   // Extension refresh when settings open
@@ -224,19 +234,55 @@ export function AppShell({ runtime }: AppShellProps) {
     return sessionActions.selectSession(session);
   }
 
-  async function handleCreateSession(workspaceRoot: string | null) {
-    sessionActions.setError(undefined);
-    await sessionActions.createSession(workspaceRoot, { executionMode: "local" });
+  function handleCreateSession(project?: Project | null): void {
+    sessionActions.startDraft(project);
   }
 
   async function handleSelectProject(): Promise<void> {
-    sessionActions.setError(undefined);
+    setCreateProjectError(undefined);
+    setProjectPickerOpen(true);
+  }
+
+  function handleSelectProjectFromPicker(project: Project): void {
+    setProjectPickerOpen(false);
+    handleCreateSession(project);
+  }
+
+  function handleOpenCreateProject(): void {
+    setProjectPickerOpen(false);
+    setCreateProjectError(undefined);
+    setCreateProjectFolder(undefined);
+    setCreateProjectOpen(true);
+  }
+
+  async function handleSelectProjectFolder(): Promise<void> {
     try {
       const workspace = await window.eidosRuntime.selectWorkspace();
-      if (workspace) await handleCreateSession(workspace);
+      if (workspace) {
+        setCreateProjectFolder(workspace);
+        setCreateProjectError(undefined);
+      }
     } catch (cause) {
-      sessionActions.setError(userFacingError(cause));
+      setCreateProjectError(userFacingError(cause));
     }
+  }
+
+  async function handleCreateProject(name: string, workspaceRoot: string): Promise<void> {
+    setCreateProjectBusy(true);
+    setCreateProjectError(undefined);
+    const project = await sessionActions.createProject(name, workspaceRoot);
+    setCreateProjectBusy(false);
+    if (!project) {
+      setCreateProjectError(sessionState.error ?? "项目创建失败，请重试。");
+      return;
+    }
+    setCreateProjectOpen(false);
+    handleCreateSession(project);
+  }
+
+  function handleCreateInProject(workspaceRoot: string): void {
+    const project = sessionState.projects.find((item) => item.workspaceRoot === workspaceRoot);
+    handleCreateSession(project ?? null);
   }
 
   async function confirmCreateBranch(branch: string): Promise<void> {
@@ -271,8 +317,13 @@ export function AppShell({ runtime }: AppShellProps) {
   }
 
   function requestExecutionModeChange(target: "local" | "worktree"): void {
-    if (!snapshot || snapshot.session.executionMode === target) return;
-    setHandoffSessionId(snapshot.session.id);
+    const current = sessionState.snapshot ?? sessionState.draft;
+    if (!current || current.session.executionMode === target) return;
+    if (sessionState.draft && !sessionState.snapshot) {
+      sessionActions.updateDraftExecutionMode(target);
+      return;
+    }
+    setHandoffSessionId(current.session.id);
   }
 
   // -----------------------------------------------------------------------
@@ -346,7 +397,30 @@ export function AppShell({ runtime }: AppShellProps) {
   // Run submission and revision
   // -----------------------------------------------------------------------
   async function handleSubmit(): Promise<void> {
-    if (!sessionState.snapshot || !modelState.selectedModelId) return;
+    if (!modelState.selectedModelId) return;
+    const draftSnapshot = sessionState.draft;
+    if (draftSnapshot && !sessionState.snapshot) {
+      const draftInput = runState.input;
+      if (!draftInput.trim()) return;
+      const materialized = await sessionActions.materializeDraft();
+      if (!materialized) return;
+      const started = await runActions.submitInput({
+        snapshot: materialized,
+        selectedModelId: modelState.selectedModelId,
+        isStorageReady,
+        inputOverride: draftInput,
+        onRunProjected: sessionActions.projectRun,
+      });
+      if (started) {
+        runActions.setInputForSession(draftSnapshot.session.id, "");
+        sessionActions.discardDraft();
+      } else {
+        const rolledBack = await sessionActions.rollbackMaterializedSession(materialized.session, draftSnapshot);
+        if (!rolledBack) sessionActions.setError("Run 启动结果不明确，已保留 Session 供检查。");
+      }
+      return;
+    }
+    if (!sessionState.snapshot) return;
     await runActions.submitInput({
       snapshot: sessionState.snapshot,
       selectedModelId: modelState.selectedModelId,
@@ -387,17 +461,23 @@ export function AppShell({ runtime }: AppShellProps) {
   // -----------------------------------------------------------------------
   const { composerMode, activeRun, input } = runState;
   const { snapshot } = sessionState;
+  const currentSnapshot = snapshot ?? sessionState.draft;
+  const isDraft = Boolean(!snapshot && sessionState.draft);
   const { approvals, respondingApprovalIds, respondingKindByApprovalId, errorsByApprovalId } = approvalState;
-  const sessionWorktree = snapshot?.session.worktree;
-  const sessionIsLocal = snapshot?.session.executionMode === "local"
-    || (snapshot?.session.executionMode === undefined && sessionWorktree === undefined);
-  const sessionHasProject = Boolean(snapshot && snapshot.session.projectless !== true && snapshot.session.project);
-  const sessionHasGit = snapshot?.session.project?.gitAvailable === true;
+  const sessionWorktree = currentSnapshot?.session.worktree;
+  const sessionIsLocal = currentSnapshot?.session.executionMode === "local"
+    || (currentSnapshot?.session.executionMode === undefined && sessionWorktree === undefined);
+  const selectedProject = currentSnapshot?.session.project?.id
+    ? sessionState.projects.find((project) => project.id === currentSnapshot.session.project?.id)
+    : undefined;
+  const sessionProject = selectedProject ?? currentSnapshot?.session.project;
+  const sessionHasProject = Boolean(!isDraft && currentSnapshot && currentSnapshot.session.projectless !== true && sessionProject);
+  const sessionHasGit = !isDraft && sessionProject?.gitAvailable === true;
   const sessionBranch = gitReviewState.status?.branch ?? sessionWorktree?.branch ?? null;
   const handoffBusy = Boolean(snapshot && sessionState.pending.handoffSessionId === snapshot.session.id);
   const restoreBusy = Boolean(snapshot && sessionState.pending.restoringWorktreeSessionId === snapshot.session.id);
-  const worktreeRestoreRequired = snapshot?.session.executionMode === "worktree"
-    && snapshot.session.worktreeRestoreAvailable === true;
+  const worktreeRestoreRequired = currentSnapshot?.session.executionMode === "worktree"
+    && currentSnapshot.session.worktreeRestoreAvailable === true;
 
   const isRenamingThisSession = Boolean(snapshot && renamingSessionId === snapshot.session.id);
 
@@ -411,14 +491,14 @@ export function AppShell({ runtime }: AppShellProps) {
       <SessionSidebar
         sessions={sessionState.sessions}
         projects={sessionState.projects}
-        selectedId={sessionState.navigationSessionId ?? snapshot?.session.id}
+        selectedId={sessionState.navigationSessionId ?? currentSnapshot?.session.id}
         disabled={sidebarDisabled}
         readCompletedSessions={sessionState.readCompletedSessions}
         runtimePresentation={runtimePresentation}
         isSelectingSessionId={sessionState.pending.selectingSessionId}
         gitStatusBySessionId={gitReviewState.statusBySessionId}
-        onCreate={() => void handleCreateSession(null)}
-        onCreateInProject={(root) => void handleCreateSession(root)}
+        onCreate={() => handleCreateSession()}
+        onCreateInProject={handleCreateInProject}
         onSelect={(session) => void handleSelectSession(session)}
         onRename={(session) => void beginRename(session)}
         onDelete={(session) => requestDeleteSession(session)}
@@ -438,7 +518,7 @@ export function AppShell({ runtime }: AppShellProps) {
         {/* Domain error banner */}
         {topError && <p className="error-banner" role="alert">{topError}</p>}
 
-        {snapshot?.session.worktreeRestoreAvailable === true && (
+        {currentSnapshot?.session.worktreeRestoreAvailable === true && !isDraft && (
           <div className="worktree-restore-banner" role="status">
             <span>Worktree 已清理以释放磁盘空间</span>
             <Button
@@ -446,7 +526,7 @@ export function AppShell({ runtime }: AppShellProps) {
               size="small"
               disabled={restoreBusy}
               loading={restoreBusy}
-              onClick={() => void sessionActions.restoreWorktree(snapshot.session.id)}
+              onClick={() => void sessionActions.restoreWorktree(snapshot!.session.id)}
             >
               Restore Worktree
             </Button>
@@ -472,7 +552,7 @@ export function AppShell({ runtime }: AppShellProps) {
             onRemovePlugin={(id) => extensionActions.removePlugin(id)}
             onToggleMcp={(pId, sId, enabled) => extensionActions.setMcpEnabled(pId, sId, enabled)}
           />
-        ) : snapshot ? (
+        ) : currentSnapshot ? (
           <>
             <header className="workspace-header session-header">
               {isRenamingThisSession ? (
@@ -492,10 +572,10 @@ export function AppShell({ runtime }: AppShellProps) {
                     variant="primary"
                     size="small"
                     disabled={
-                      sessionState.pending.renamingSessionId === snapshot.session.id
+                      sessionState.pending.renamingSessionId === snapshot!.session.id
                       || !titleDraft.trim()
                     }
-                    loading={sessionState.pending.renamingSessionId === snapshot.session.id}
+                    loading={sessionState.pending.renamingSessionId === snapshot!.session.id}
                   >
                     保存
                   </Button>
@@ -510,25 +590,27 @@ export function AppShell({ runtime }: AppShellProps) {
                 </form>
               ) : (
                 <div className="session-title-group">
-                  <h1>{snapshot.session.title ?? "新会话"}</h1>
-                  <DropdownMenu
-                    trigger="•••"
-                    label="任务菜单"
-                    items={[
-                      {
-                        key: "rename",
-                        label: "编辑标题",
-                        onClick: () => void beginRename(snapshot.session),
-                      },
-                      {
-                        key: "delete",
-                        label: "删除任务",
-                        danger: true,
-                        disabled: Boolean(activeRun) || handoffBusy,
-                        onClick: () => requestDeleteSession(snapshot.session),
-                      },
-                    ]}
-                  />
+                  <h1>{currentSnapshot.session.title ?? "新会话"}</h1>
+                  {!isDraft && (
+                    <DropdownMenu
+                      trigger="•••"
+                      label="任务菜单"
+                      items={[
+                        {
+                          key: "rename",
+                          label: "编辑标题",
+                          onClick: () => void beginRename(currentSnapshot.session),
+                        },
+                        {
+                          key: "delete",
+                          label: "删除任务",
+                          danger: true,
+                          disabled: Boolean(activeRun) || handoffBusy,
+                          onClick: () => requestDeleteSession(currentSnapshot.session),
+                        },
+                      ]}
+                    />
+                  )}
                 </div>
               )}
               <div className="session-header-actions">
@@ -550,7 +632,7 @@ export function AppShell({ runtime }: AppShellProps) {
                       size="small"
                       disabled={Boolean(activeRun) || handoffBusy}
                       loading={handoffBusy}
-                      onClick={() => setHandoffSessionId(snapshot.session.id)}
+                      onClick={() => setHandoffSessionId(snapshot!.session.id)}
                     >
                       Hand off
                     </Button>
@@ -587,11 +669,11 @@ export function AppShell({ runtime }: AppShellProps) {
             </header>
 
             {contentView === "files" && sessionHasProject ? (
-              <WorkspaceExplorer sessionId={snapshot.session.id} />
+              <WorkspaceExplorer sessionId={currentSnapshot.session.id} />
             ) : contentView === "changes" && sessionHasGit ? (
               <GitChangesPanel
-                sessionId={snapshot.session.id}
-                workspaceRoot={snapshot.session.project?.workspaceRoot ?? snapshot.session.workspaceRoot}
+                sessionId={currentSnapshot.session.id}
+                workspaceRoot={currentSnapshot.session.project?.workspaceRoot ?? currentSnapshot.session.workspaceRoot}
                 scope={gitReviewState.scope}
                 status={gitReviewState.status}
                 loading={gitReviewState.loadingStatus}
@@ -604,12 +686,12 @@ export function AppShell({ runtime }: AppShellProps) {
                   Boolean(activeRun)
                   || runState.isSubmitting
                   || handoffBusy
-                  || sessionState.pending.branchSessionId === snapshot.session.id
-                  || sessionState.pending.creatingBranchSessionId === snapshot.session.id
+                  || sessionState.pending.branchSessionId === currentSnapshot.session.id
+                  || sessionState.pending.creatingBranchSessionId === currentSnapshot.session.id
                 }
                 onCreateBranch={
                   sessionIsLocal || (sessionWorktree?.state === "active" && sessionWorktree.branch === null)
-                    ? () => openCreateBranch(snapshot.session.id, sessionIsLocal ? "local" : "worktree")
+                    ? () => openCreateBranch(currentSnapshot.session.id, sessionIsLocal ? "local" : "worktree")
                     : undefined
                 }
               />
@@ -622,14 +704,14 @@ export function AppShell({ runtime }: AppShellProps) {
                 )}
 
                 <ExecutionFeed
-                  items={snapshot.items}
-                  runs={snapshot.runs}
+                  items={currentSnapshot.items}
+                  runs={currentSnapshot.runs}
                   models={modelState.list?.models ?? []}
                   responseActionState={responseActionState.responseState}
                   pendingFeedbackItemIds={responseActionState.pendingFeedbackItemIds}
                   revisionSubmitting={runState.isSubmitting}
-                  stepResolutions={snapshot.stepResolutions}
-                  approvals={approvals.filter((a) => a.sessionId === snapshot.session.id)}
+                  stepResolutions={currentSnapshot.stepResolutions}
+                  approvals={approvals.filter((a) => a.sessionId === currentSnapshot.session.id)}
                   respondingApprovalIds={respondingApprovalIds}
                   respondingKindByApprovalId={respondingKindByApprovalId}
                   expiredApprovalIds={approvalState.expiredApprovalIds}
@@ -640,7 +722,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   onApprove={(request) => void approvalActions.approve(request)}
                   onReject={(request) => void approvalActions.reject(request)}
                   onFeedback={(itemId, feedback) =>
-                    responseActionActions.setFeedback(snapshot.session.id, itemId, feedback)}
+                    responseActionActions.setFeedback(currentSnapshot.session.id, itemId, feedback)}
                   onRegenerate={(run) => reviseLatestRun(run)}
                   onEditResend={(run, editedInput) => reviseLatestRun(run, editedInput)}
                 />
@@ -655,25 +737,25 @@ export function AppShell({ runtime }: AppShellProps) {
                   contextUsage={contextUsageState.usage}
                   modelConfigured={Boolean(modelState.list?.models.length)}
                   modelLoading={modelState.loading}
-                  isSubmitting={runState.isSubmitting || handoffBusy || restoreBusy}
+                  isSubmitting={runState.isSubmitting || sessionState.pending.creatingSession === true || handoffBusy || restoreBusy}
                   submitKind={runState.submitKind}
                   cancelingRunId={runState.cancelingRunId}
                   onInputChange={runActions.setInput}
                   onSubmit={handleSubmit}
-                  onCancel={() => activeRun && snapshot && void runActions.cancelRun({ runId: activeRun.id, sessionId: snapshot.session.id })}
+                  onCancel={() => activeRun && !isDraft && snapshot && void runActions.cancelRun({ runId: activeRun.id, sessionId: snapshot.session.id })}
                   onModelChange={(id) => modelActions.selectModel(id)}
                   onOpenModelSettings={() => setSettingsOpen(true)}
-                  showSessionContext={snapshot.session.taskStatus === "new"}
-                  project={snapshot.session.project ?? null}
-                  projectless={snapshot.session.projectless === true}
-                  executionMode={snapshot.session.executionMode}
+                  showSessionContext={currentSnapshot.session.taskStatus === "new"}
+                  project={sessionProject ?? null}
+                  projectless={currentSnapshot.session.projectless === true}
+                  executionMode={currentSnapshot.session.executionMode}
                   branch={sessionBranch}
                   branches={sessionIsLocal ? gitReviewState.projectContext?.branches : undefined}
                   onBranchChange={sessionIsLocal ? (branch) => void switchLocalBranch(branch) : undefined}
-                  branchChanging={sessionState.pending.branchSessionId === snapshot.session.id}
+                  branchChanging={sessionState.pending.branchSessionId === currentSnapshot.session.id}
                   onSelectProject={() => void handleSelectProject()}
-                  onLeaveProject={() => void handleCreateSession(null)}
-                  onExecutionModeChange={sessionHasGit ? requestExecutionModeChange : undefined}
+                  onLeaveProject={() => handleCreateSession()}
+                  onExecutionModeChange={sessionProject?.gitAvailable === true ? requestExecutionModeChange : undefined}
                 />
               </>
             )}
@@ -692,12 +774,12 @@ export function AppShell({ runtime }: AppShellProps) {
                 subtitle="不选择项目也可以开始"
                 showArrow={true}
                 disabled={sessionState.pending.creatingSession || !isStorageReady}
-                onClick={() => void handleCreateSession(null)}
+                onClick={() => handleCreateSession()}
               />
               <PrimaryActionButton
                 size="large"
-                label="选择工作空间目录"
-                subtitle="打开一个本地项目开始使用 Eidos"
+                label="选择项目"
+                subtitle="选择一个项目开始使用 Eidos"
                 showArrow={true}
                 disabled={sessionState.pending.creatingSession || !isStorageReady}
                 onClick={() => void handleSelectProject()}
@@ -707,6 +789,29 @@ export function AppShell({ runtime }: AppShellProps) {
         )}
       </section>
 
+      <ProjectPicker
+        open={projectPickerOpen}
+        projects={sessionState.projects}
+        selectedProjectId={currentSnapshot?.session.project?.id}
+        getFallbackFocus={getDialogFallbackFocus}
+        onSelect={handleSelectProjectFromPicker}
+        onCreate={handleOpenCreateProject}
+        onClose={() => setProjectPickerOpen(false)}
+      />
+      <CreateProjectDialog
+        open={createProjectOpen}
+        sourceFolder={createProjectFolder}
+        busy={createProjectBusy}
+        error={createProjectError}
+        getFallbackFocus={getDialogFallbackFocus}
+        onCreate={(name, folder) => void handleCreateProject(name, folder)}
+        onSelectFolder={() => void handleSelectProjectFolder()}
+        onCancel={() => {
+          if (createProjectBusy) return;
+          setCreateProjectOpen(false);
+          setCreateProjectError(undefined);
+        }}
+      />
       <CreateBranchDialog
         open={Boolean(createBranchSessionId)}
         mode={createBranchMode}
@@ -722,7 +827,7 @@ export function AppShell({ runtime }: AppShellProps) {
       />
       <HandoffDialog
         open={Boolean(handoffSessionId)}
-        currentMode={snapshot?.session.executionMode ?? "local"}
+        currentMode={currentSnapshot?.session.executionMode ?? "local"}
         busy={handoffBusy}
         error={sessionState.error}
         getFallbackFocus={getDialogFallbackFocus}
@@ -748,7 +853,7 @@ export function AppShell({ runtime }: AppShellProps) {
       />
       <ConfirmDialog
         open={Boolean(projectToDelete)}
-        title={`删除项目"${projectToDelete?.workspaceRoot.split("/").filter(Boolean).at(-1) ?? projectToDelete?.workspaceRoot ?? "项目"}"？`}
+        title={`删除项目"${projectToDelete?.name ?? projectToDelete?.workspaceRoot.split("/").filter(Boolean).at(-1) ?? projectToDelete?.workspaceRoot ?? "项目"}"？`}
         description="只会删除 Eidos 中的项目记录，不会删除项目文件或 Git 仓库。"
         confirmLabel="删除"
         cancelLabel="取消"

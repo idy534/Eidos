@@ -467,6 +467,18 @@ ipcMain.handle(IPC.WORKSPACE_SELECT, async () => {
 });
 
 ipcMain.handle(IPC.PROJECT_LIST, () => clientOrThrow().listProjects());
+ipcMain.handle(IPC.PROJECT_CREATE, (_event, name: unknown, workspaceRoot: unknown) => {
+  if (
+    typeof name !== "string"
+    || name.trim().length === 0
+    || name.length > 120
+    || typeof workspaceRoot !== "string"
+    || workspaceRoot.trim().length === 0
+  ) {
+    throw new Error("Project 参数无效。");
+  }
+  return clientOrThrow().createProject(name, workspaceRoot);
+});
 ipcMain.handle(IPC.PROJECT_DELETE, (_event, projectId: unknown) => {
   if (typeof projectId !== "string" || projectId.length === 0 || projectId.length > 256) {
     throw new Error("Project 参数无效。");

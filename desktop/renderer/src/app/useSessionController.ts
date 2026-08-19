@@ -45,6 +45,7 @@ export interface SessionControllerState {
   sessions: Session[];
   projects: Project[];
   snapshot: SessionSnapshot | undefined;
+  draft: SessionSnapshot | undefined;
   navigationSessionId: string | undefined;
   readCompletedSessions: ReadonlySet<string>;
   pending: PendingOperations;
@@ -54,6 +55,12 @@ export interface SessionControllerState {
 export interface SessionControllerActions {
   loadProjects: () => Promise<void>;
   loadSessions: () => Promise<void>;
+  createProject: (name: string, workspaceRoot: string) => Promise<Project | undefined>;
+  startDraft: (project?: Project | null) => void;
+  updateDraftExecutionMode: (mode: "local" | "worktree") => void;
+  materializeDraft: () => Promise<SessionSnapshot | undefined>;
+  discardDraft: () => void;
+  rollbackMaterializedSession: (session: Session, draft: SessionSnapshot) => Promise<boolean>;
   selectSession: (session: Session) => Promise<SessionSnapshot | undefined>;
   createSession: (
     workspaceRoot?: string | null,
@@ -105,6 +112,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
   const [sessions, setSessions] = useState<Session[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [snapshot, setSnapshot] = useState<SessionSnapshot | undefined>(undefined);
+  const [draft, setDraft] = useState<SessionSnapshot | undefined>(undefined);
   const [navigationSessionId, setNavigationSessionId] = useState<string | undefined>(undefined);
   const [readCompletedSessions, setReadCompletedSessions] = useState<Set<string>>(loadReadCompletedSessions);
   const [pending, setPending] = useState<PendingOperations>({});
@@ -169,7 +177,56 @@ export function useSessionController(): [SessionControllerState, SessionControll
     }
   }, []);
 
+  const createProject = useCallback(async (
+    name: string,
+    workspaceRoot: string,
+  ): Promise<Project | undefined> => {
+    setError(undefined);
+    try {
+      const project = await window.eidosRuntime.createProject(name, workspaceRoot);
+      setProjects((prev) => [project, ...prev.filter((item) => item.id !== project.id)]);
+      return project;
+    } catch (cause) {
+      setError(userFacingError(cause));
+      return undefined;
+    }
+  }, []);
+
+  const startDraft = useCallback((project?: Project | null): void => {
+    const session: Session = {
+      id: `draft-${crypto.randomUUID()}`,
+      workspaceRoot: project?.workspaceRoot ?? "",
+      ...(project
+        ? {
+            project: {
+              id: project.id,
+              ...(project.name ? { name: project.name } : {}),
+              workspaceRoot: project.workspaceRoot,
+              gitAvailable: project.gitAvailable,
+            },
+          }
+        : { projectless: true }),
+      executionMode: "local",
+      taskStatus: "new",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    setError(undefined);
+    setDraft({ session, runs: [], items: [], stepResolutions: [] });
+    setSnapshot(undefined);
+    setNavigationSessionId(undefined);
+    selectedSessionIdRef.current = undefined;
+    snapshotReads.select("");
+  }, [snapshotReads]);
+
+  const updateDraftExecutionMode = useCallback((mode: "local" | "worktree"): void => {
+    setDraft((prev) => prev
+      ? { ...prev, session: { ...prev.session, executionMode: mode, updatedAt: Date.now() } }
+      : prev);
+  }, []);
+
   const selectSession = useCallback(async (session: Session): Promise<SessionSnapshot | undefined> => {
+    setDraft(undefined);
     setNavigationSessionId(session.id);
 
     if (activeSelectionRef.current?.sessionId === session.id) {
@@ -264,6 +321,11 @@ export function useSessionController(): [SessionControllerState, SessionControll
           const existing = prev.find((item) => item.id === project.id);
           const next: Project = {
             ...project,
+            ...(project.name
+              ? { name: project.name }
+              : existing?.name
+                ? { name: existing.name }
+                : {}),
             createdAt: existing?.createdAt ?? session.createdAt,
             updatedAt: existing?.updatedAt ?? session.updatedAt,
           };
@@ -288,6 +350,38 @@ export function useSessionController(): [SessionControllerState, SessionControll
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const materializeDraft = useCallback(async (): Promise<SessionSnapshot | undefined> => {
+    const currentDraft = draft;
+    if (!currentDraft) return undefined;
+    const projectRoot = currentDraft.session.project?.workspaceRoot ?? null;
+    return createSession(projectRoot, {
+      executionMode: currentDraft.session.executionMode ?? "local",
+    });
+  }, [createSession, draft]);
+
+  const discardDraft = useCallback((): void => {
+    setDraft(undefined);
+  }, []);
+
+  const rollbackMaterializedSession = useCallback(async (
+    session: Session,
+    draftSnapshot: SessionSnapshot,
+  ): Promise<boolean> => {
+    try {
+      const deleted = await window.eidosRuntime.deleteSession(session.id);
+      setSessions((prev) => prev.filter((item) => item.id !== deleted.deletedSessionId));
+      setSnapshot((prev) => prev?.session.id === deleted.deletedSessionId ? undefined : prev);
+      setDraft(draftSnapshot);
+      setNavigationSessionId(undefined);
+      selectedSessionIdRef.current = undefined;
+      snapshotReads.select("");
+      return true;
+    } catch (cause) {
+      setError(userFacingError(cause));
+      return false;
+    }
+  }, [snapshotReads]);
 
   const renameSession = useCallback(async (sessionId: string, title: string): Promise<void> => {
     setPending((prev) => ({ ...prev, renamingSessionId: sessionId }));
@@ -522,6 +616,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     sessions,
     projects,
     snapshot,
+    draft,
     navigationSessionId,
     readCompletedSessions,
     pending,
@@ -531,6 +626,12 @@ export function useSessionController(): [SessionControllerState, SessionControll
   const actions: SessionControllerActions = {
     loadProjects,
     loadSessions,
+    createProject,
+    startDraft,
+    updateDraftExecutionMode,
+    materializeDraft,
+    discardDraft,
+    rollbackMaterializedSession,
     selectSession,
     createSession,
     createSessionBranch,

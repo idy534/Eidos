@@ -130,6 +130,19 @@ class ProjectListRequestDto(MethodRequestDto):
     pass
 
 
+class ProjectCreateRequestDto(_OperationRequest):
+    name: StrictStr = Field(min_length=1, max_length=120)
+    workspace_root: StrictStr = Field(
+        alias="workspaceRoot", min_length=1, max_length=4096
+    )
+
+    @model_validator(mode="after")
+    def _validate_name(self) -> "ProjectCreateRequestDto":
+        if not self.name.strip():
+            raise ValueError("project name must not be blank")
+        return self
+
+
 class ProjectDeleteRequestDto(_OperationRequest):
     project_id: StrictStr = Field(alias="projectId", min_length=1, max_length=256)
 
@@ -544,6 +557,10 @@ class SessionListResponseDto(MethodResultDto):
 
 class ProjectListResponseDto(MethodResultDto):
     items: list[ProjectDto]
+
+
+class ProjectCreateResponseDto(MethodResultDto, ProjectDto):
+    pass
 
 
 class ProjectDeleteResponseDto(MethodResultDto):

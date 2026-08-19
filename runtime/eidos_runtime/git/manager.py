@@ -99,6 +99,11 @@ class WorktreeManager:
 
         return self.discovery.discover(repository_seed)
 
+    def create_project(self, workspace_root: str, name: str) -> Project:
+        """Validate a workspace and persist its explicit Project metadata."""
+
+        return self.resolve_project(workspace_root, project_name=name).project
+
     def current_branch(self, repository_root: Path) -> str | None:
         try:
             return self.git.current_branch(repository_root)
@@ -381,7 +386,12 @@ class WorktreeManager:
             changes=changes,
         )
 
-    def resolve_project(self, workspace_seed: Path | str) -> ProjectResolution:
+    def resolve_project(
+        self,
+        workspace_seed: Path | str,
+        *,
+        project_name: str | None = None,
+    ) -> ProjectResolution:
         """Resolve a filesystem workspace and its optional Git capability."""
 
         seed = Path(workspace_seed)
@@ -395,10 +405,12 @@ class WorktreeManager:
             raise WorktreeError("repository_not_found")
         discovery = self.discovery.resolve(workspace)
         if discovery is None:
-            project = self.repository.get_or_create_project(workspace)
+            project = self.repository.get_or_create_project(
+                workspace, name=project_name
+            )
             return ProjectResolution(project=project, git=None)
         project = self.repository.get_or_create_project(
-            discovery.repository_root, discovery
+            discovery.repository_root, discovery, name=project_name
         )
         return ProjectResolution(project=project, git=discovery)
 

@@ -33,11 +33,14 @@ export interface SessionWorktree {
 
 export interface SessionProject {
   id: string;
+  name?: string;
   workspaceRoot: string;
   gitAvailable: boolean;
 }
 
 export interface Project extends SessionProject {
+  /** Explicit display name chosen when the Project is created. */
+  name?: string;
   createdAt: number;
   updatedAt: number;
 }

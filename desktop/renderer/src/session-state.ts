@@ -74,7 +74,7 @@ export function groupSessionsByProject(
       project,
       projectless: false,
       workspaceRoot: project.workspaceRoot,
-      displayName: basename(project.workspaceRoot),
+      displayName: project.name?.trim() || basename(project.workspaceRoot),
       gitAvailable: project.gitAvailable,
       sessions: [],
     });
@@ -96,6 +96,7 @@ export function groupSessionsByProject(
         ? undefined
         : {
             id: project.id,
+            ...(project.name ? { name: project.name } : {}),
             workspaceRoot: project.workspaceRoot,
             gitAvailable: project.gitAvailable,
             createdAt: session.createdAt,
@@ -111,7 +112,7 @@ export function groupSessionsByProject(
         ...(sessionProject ? { project: sessionProject } : {}),
         projectless,
         workspaceRoot,
-        displayName: projectless ? "最近" : basename(workspaceRoot),
+        displayName: projectless ? "最近" : project?.name?.trim() || basename(workspaceRoot),
         gitAvailable: projectless ? false : project?.gitAvailable ?? worktree !== undefined,
         sessions: [session],
       });

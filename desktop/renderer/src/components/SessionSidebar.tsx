@@ -307,7 +307,7 @@ export function SessionSidebar({
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          label={`项目操作：${contextMenu.project.workspaceRoot}`}
+          label={`项目操作：${contextMenu.project.name ?? contextMenu.project.workspaceRoot}`}
           restoreFocusElement={contextMenu.element}
           onClose={() => setContextMenu(undefined)}
           items={[

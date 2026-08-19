@@ -126,6 +126,11 @@ class TypedRuntimeRepository(Repository):
             session_id, operation_id=operation_id
         )
 
+    def list_empty_session_ids_for_project(
+        self, project_id: str
+    ) -> tuple[str, ...]:
+        return self._sessions.list_empty_session_ids_for_project(project_id)
+
     def assert_session_deletable(self, session_id: str) -> None:
         self._sessions.assert_session_deletable(session_id)
 

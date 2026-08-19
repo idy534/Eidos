@@ -19,6 +19,7 @@ export const IPC = {
   WORKSPACE_OPEN_IN_EDITOR: "workspace:open-in-editor",
 
   // Session
+  PROJECT_CREATE: "project:create",
   PROJECT_LIST: "project:list",
   PROJECT_DELETE: "project:delete",
   SESSION_LIST: "session:list",
