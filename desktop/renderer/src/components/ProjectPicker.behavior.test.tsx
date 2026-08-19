@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { useState } from "react";
 
 import type { Project } from "../contracts.js";
 import { ProjectPicker } from "./ProjectPicker.js";
+
+const styles = readFileSync(path.resolve(process.cwd(), "desktop/renderer/src/styles.css"), "utf8");
 
 const projects: Project[] = [
   {
@@ -127,5 +131,17 @@ describe("ProjectPicker", () => {
     expect(trigger).toHaveFocus();
     expect(requestFrame).not.toHaveBeenCalled();
     requestFrame.mockRestore();
+  });
+
+  it("keeps the selected project light while hovered", () => {
+    expect(styles).toMatch(
+      /\.project-picker-item--selected:hover:not\(:disabled\)[^{]*\{[^}]*background: var\(--surface-selected\)/,
+    );
+  });
+
+  it("keeps inactive segmented controls neutral while hovered", () => {
+    expect(styles).toMatch(
+      /\.workspace-view-switch button:not\(\[aria-pressed="true"\]\):hover:not\(:disabled\),\s*\.git-scope-tab:not\(\[aria-selected="true"\]\):hover:not\(:disabled\)\s*\{[^}]*background: var\(--surface-hover\);[^}]*box-shadow: none;/,
+    );
   });
 });

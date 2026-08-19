@@ -61,7 +61,7 @@
   /* Settings Layout & Semantic Tokens */
   --surface-raised: #ffffff;
   --surface-hover: #f3f2eb;
-  --surface-selected: #e7e6dd;
+  --surface-selected: var(--accent-soft);
   --text-secondary: #585d55;
   --text-tertiary: #848a80;
   --status-success: #266e4a;
@@ -518,7 +518,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 }
 
 .session-list > .session-item > button.selected {
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--surface-selected);
   border-color: rgba(49, 95, 74, 0.22);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   color: var(--accent-hover);
@@ -732,10 +732,16 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   font-weight: 500;
 }
 
+.workspace-view-switch button:not([aria-pressed="true"]):hover:not(:disabled),
+.git-scope-tab:not([aria-selected="true"]):hover:not(:disabled) {
+  background: var(--surface-hover);
+  box-shadow: none;
+}
+
 .workspace-view-switch button[aria-pressed="true"],
 .git-scope-tab[aria-selected="true"] {
   color: var(--text);
-  background: var(--surface-raised);
+  background: var(--surface-selected);
   box-shadow: var(--apple-shadow-sm);
 }
 
@@ -803,7 +809,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 }
 
 .workspace-tree-row:hover { background: rgba(0, 0, 0, 0.035); }
-.workspace-tree-row.is-selected { background: rgba(73, 107, 84, 0.12); }
+.workspace-tree-row.is-selected { background: var(--surface-selected); }
 
 .workspace-tree-chevron {
   display: grid;
@@ -2171,9 +2177,11 @@ h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
   cursor: pointer;
 }
 
-.project-picker-item:hover,
+.project-picker-item:hover:not(:disabled),
+.project-picker-create:hover:not(:disabled) { background: rgba(242, 241, 244, 0.9); }
+
 .project-picker-item--selected,
-.project-picker-create:hover { background: rgba(242, 241, 244, 0.9); }
+.project-picker-item--selected:hover:not(:disabled) { background: var(--surface-selected); }
 
 .project-picker-item:focus-visible,
 .project-picker-create:focus-visible,
@@ -2269,7 +2277,12 @@ h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
 }
 
 .create-project-folder-button:hover:not(:disabled) { background: var(--surface-muted); border-color: var(--accent); }
-.create-project-folder-button--selected { justify-content: flex-start; min-height: 2.75rem; color: var(--accent); }
+.create-project-folder-button--selected {
+  justify-content: flex-start;
+  min-height: 2.75rem;
+  color: var(--accent);
+  background: var(--surface-selected);
+}
 .create-project-folder-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .create-project-folder-icon { width: 1.35rem; height: 1.35rem; flex: none; color: var(--muted); }
 .create-project-folder-button--selected .create-project-folder-icon { color: var(--accent); }
@@ -2356,7 +2369,7 @@ h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
 
 .create-session-mode-card.selected {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, white);
+  background: var(--surface-selected);
 }
 
 .create-session-mode-card.disabled {
