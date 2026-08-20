@@ -222,6 +222,9 @@ def test_typed_fake_backend_returns_domain_observations() -> None:
         patch="patch",
         changed_paths=("staged.txt",),
         truncated=False,
+        additions=1,
+        deletions=0,
+        stats_incomplete=False,
     )
 
     assert status.dirty

@@ -29,6 +29,8 @@ Non-Git Project 只能创建 Local Execution Session。Git Project 可以创建 
 
 Desktop Workspace Explorer 也只读取当前 Session execution root。`WorkspaceExplorerApplication` 先解析 Local root 或验证 Managed Worktree identity，再调用共享 `WorkspaceReader`。`WorkspaceReader` 与 Agent 文件工具共用 fd-relative、`O_NOFOLLOW`、敏感路径、hard discovery directory 和 root ignore 规则。`workspace/listDirectory` 只返回一层子项。`workspace/readFilePreview` 只返回有界 UTF-8 预览。Renderer 不直接读取 filesystem。
 
+Desktop 会让 Conversation 始终保持挂载。用户可以从顶部入口打开右侧 Workspace Dock。Dock 使用本地 Renderer 状态管理 Review、Terminal 和 Files 单例窗口。它支持窗口切换、关闭、侧栏显示和全工作区展开。Session 或 execution binding 变化时，Renderer 会关闭旧 Dock，并用新的 execution key 重新加载 Workspace 数据。
+
 ## 2. Process Architecture
 
 当前默认调用链如下：
@@ -70,9 +72,12 @@ Electron Main 负责以下职责：
 - 校验 JSON-RPC response、notification 和协议行大小；
 - 转发 Session、Run、Context Usage、Model、Extension 和 Approval 的 typed API；
 - 将 Runtime 主动发起的 Approval 请求投影到 Renderer；
+- 为用户直接操作的 Terminal 创建和回收 Main-owned PTY；
 - 在 Quit 时取消活动 Run，等待 Runtime 收敛，并在必要时报告关闭失败。
 
 Response Action 使用同一条 typed IPC 边界。Main 把 `responseAction/state`、`item/setFeedback` 和 `run/revise` 映射到 Runtime。
+
+Terminal 不经过 Python Runtime，也不是 Agent Shell Tool。Renderer 只通过 typed IPC 发送 Session id、输入和尺寸。Main 会重新读取 Session，并从 Local workspace 或 active Managed Worktree 得到权威 cwd。Main 使用 `/bin/zsh -l` 和受限环境创建 PTY。每个 PTY 绑定创建它的 WebContents。Main 会在窗口销毁、Session Handoff、Worktree Restore、Session Delete 和应用退出时终止对应 PTY。Projectless Session 会在 Renderer 和 Main 两层拒绝 Terminal。
 
 ## 4. Runtime Transport & Application Layer
 
@@ -294,11 +299,11 @@ WorktreeManager 保留 Eidos 的 Project、Worktree、Session、Run、operationI
 
 最终 Git 开发工作流使用单一且明确的权威边界。Dulwich 负责 repository discovery、refs 和 revision metadata。Native Git 负责 Working Tree、Index、diff、commit、remote、merge、rebase 和 snapshot patch semantics。共享 `WorkspaceReader` 负责 Desktop Workspace Explorer 的有界文件观察。Review 的 Accept/Unstage 结果以 Git Index 为事实。HTTPS 认证交给 Git Credential Helper，SSH 认证交给 OpenSSH 和受控 SSH Agent。Checkpoint 复用现有 Git snapshot artifact、checksum 和 hidden ref，不建立第二套文件快照格式。
 
-`session/gitStatus` 返回文件列表和兼容 count。`session/gitDiff` 接受可选的 workspace-relative `path`。这些 file API 使用 `GIT_LITERAL_PATHSPECS=1`，所以合法文件名中的 `:`、`*`、`?` 和 `[]` 不会变成 Git pathspec expression。`session/gitStage`、`session/gitUnstage`、`session/gitDiscard` 和 `session/gitCommit` 只在没有 active Run 时修改当前 execution root。四个 mutation 都接收 `operationId`。Runtime 先完成无副作用 preflight，再在现有 `operations` 表提交 `in_progress`。Git 在 SQLite transaction 外执行。Runtime 随后重新观察 Git，并在第二个短事务中保存 completed result。Completed retry 直接 replay。相同 id 和不同 request 返回 `OPERATION_ID_REUSED`。未完成 operation 返回 `OPERATION_IN_PROGRESS`，Runtime 不盲目重做 Git。Discard 只处理 structured status 已确认的 tracked unstaged 或 untracked file。它不会隐式 Unstage，也不会处理 conflict。Stage 和 Commit 是独立动作。Commit 只提交当前 Index 中的 staged changes。Detached managed Worktree 返回 `GIT_BRANCH_REQUIRED`，用户必须先调用 `session/createBranch`。Commit 后 `base_commit` 保持不变，所以 baseline diff 继续表示整个任务从创建基线开始的改动。
+`session/gitStatus` 返回文件列表和兼容 count。`session/gitDiff` 接受可选的 workspace-relative `path` 和 `compareRef`。显式 `compareRef` 会先解析为 commit。无效 ref 返回 `GIT_COMPARE_REF_INVALID`。Managed Worktree 的 baseline 使用创建时冻结的 `base_commit`，并返回保存的 `base_ref` 标签。Local Session 的 baseline 默认使用当前 upstream remote-tracking ref；本地没有可解析 upstream 时回退当前 HEAD。响应还返回 native Git `--numstat` 得到的 additions、deletions 和 `statsIncomplete`。二进制文件会把统计标为不完整。行数统计不依赖有界 unified patch 是否截断。这些 file API 使用 `GIT_LITERAL_PATHSPECS=1`，所以合法文件名中的 `:`、`*`、`?` 和 `[]` 不会变成 Git pathspec expression。`session/gitStage`、`session/gitUnstage`、`session/gitDiscard` 和 `session/gitCommit` 只在没有 active Run 时修改当前 execution root。四个 mutation 都接收 `operationId`。Runtime 先完成无副作用 preflight，再在现有 `operations` 表提交 `in_progress`。Git 在 SQLite transaction 外执行。Runtime 随后重新观察 Git，并在第二个短事务中保存 completed result。Completed retry 直接 replay。相同 id 和不同 request 返回 `OPERATION_ID_REUSED`。未完成 operation 返回 `OPERATION_IN_PROGRESS`，Runtime 不盲目重做 Git。Discard 只处理 structured status 已确认的 tracked unstaged 或 untracked file。它不会隐式 Unstage，也不会处理 conflict。Stage 和 Commit 是独立动作。Commit 只提交当前 Index 中的 staged changes。Detached managed Worktree 返回 `GIT_BRANCH_REQUIRED`，用户必须先调用 `session/createBranch`。Commit 后 Managed Worktree 的 `base_commit` 保持不变，所以它的 baseline diff 继续表示整个任务从创建基线开始的改动。
 
 Local Git Session 还提供 `session/gitSwitchBranch` 和 `session/gitCreateBranch`。Runtime 从当前 Project workspace 读取 local branches。Runtime 只允许 clean、没有进行中 Git operation、且整个 workspace 没有 active Run 时切换或创建分支。`gitCreateBranch` 从当前 HEAD 创建分支并立即切换到新分支。两个方法都使用现有 `operations` 表和 `operationId` replay。当前分支仍以 Git HEAD 为事实，不新增 Session 或 SQLite 分支字段。Local Session 共用真实 workspace，所以不同 Local Session 也共用这条 workspace 锁。分支变化完成后，Runtime 会使 RepositoryWorkspaceRuntime 失效，下一次读取会重新观察 branch 和 HEAD。
 
-Desktop Changes 视图不解析 Git status，也不把 repository-wide patch 拆成文件。Renderer 使用 structured status 建立文件分组。每次选择只调用 `session/gitDiff(path)`。`react-diff-view` 负责解析和显示 unified patch。Accept 和 Unstage 仍通过 Runtime 修改 Git Index。Discard 是明确确认后的单文件 Runtime mutation。Main 的 Open in Editor handler 从 Session 解析 execution root，再用 canonical path 和 regular-file 检查阻止相对路径与 symlink 越界。
+Desktop Review 不解析 Git status，也不把 repository-wide patch 拆成文件。Renderer 使用 structured status 和 baseline `changedFiles` 建立文件手风琴。全仓响应只用于列表、比较信息和总行数。文件展开时，Renderer 才调用 `session/gitDiff(path)`。展开全部会按顺序读取文件 Diff，避免同时发起无界请求。`react-diff-view` 负责解析和显示 unified patch。Stage、Unstage 和 Discard 仍通过 Runtime 修改 Git Index。Main 的 Open in Editor handler 从 Session 解析 execution root，再用 canonical path 和 regular-file 检查阻止相对路径与 symlink 越界。Commit、Push 和已有高级 Git 操作复用原 typed Runtime API，并放在同一个提交弹层中。
 
 `HardenedGitRunner` 通过 `GitExecutionProfile` 区分 `OBSERVE`、`LOCAL_MUTATION` 和 `REMOTE`。OBSERVE 隔离 user global config、credential helper、prompt、hooks、fsmonitor 和 executable filters。LOCAL_MUTATION 只在 native `git add` 需要 clean/process filter 时读取 user config，credential 与 prompt 仍禁用。REMOTE 使用 user HOME 和 global Git config，所以 Git 可以复用 `credential.helper`、`url.*.insteadOf` 和用户 SSH config。REMOTE 只 allowlist 当前用户拥有的 Unix `SSH_AUTH_SOCK`，并设置 `/usr/bin/ssh -o BatchMode=yes`。Runtime 不读取或保存 HTTPS secret，也不继承任意 `GIT_*`、`SSH_*` 或其他 process environment。Remote URL 不进入 Desktop DTO。
 

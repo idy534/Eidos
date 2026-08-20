@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell as electronShell } from "electron";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import * as nodePty from "node-pty";
 
 import { RuntimeClient } from "./runtime-client.js";
 import { resolveRuntimePaths } from "./runtime-paths.js";
@@ -10,6 +11,7 @@ import { dispatchAppCommand as dispatchCommand, ensureAppWindow as ensureWindow 
 import { QuitFlowController, type ActiveRunProjection, type QuitFlowDependencies } from "./quit-flow.js";
 import { shutdownRuntime } from "./runtime-shutdown.js";
 import { resolveWorkspaceFileForOpen } from "./workspace-open.js";
+import { TerminalManager } from "./terminal-manager.js";
 import type {
   ApprovalDecision,
   ApprovalRequest,
@@ -190,6 +192,11 @@ function clientOrThrow(): RuntimeClient {
   return runtimeClient;
 }
 
+const terminalManager = new TerminalManager({
+  readSession: (sessionId) => clientOrThrow().readSession(sessionId),
+  spawn: (file, args, options) => nodePty.spawn(file, args, options),
+});
+
 function isNonEmptyStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value)
@@ -276,6 +283,8 @@ function createWindow(): BrowserWindow {
   });
 
   window.once("ready-to-show", () => window.show());
+  const ownerId = window.webContents.id;
+  window.webContents.once("destroyed", () => terminalManager.closeOwner(ownerId));
   void window.loadFile(path.join(currentDirectory, "../renderer/index.html"));
   return window;
 }
@@ -521,11 +530,19 @@ ipcMain.handle(IPC.SESSION_HANDOFF, (_event, sessionId: unknown, target: unknown
   ) {
     throw new Error("Handoff 参数无效。");
   }
-  return clientOrThrow().handoffSession(sessionId, target);
+  terminalManager.closeSession(sessionId);
+  return clientOrThrow().handoffSession(sessionId, target).then((result) => {
+    terminalManager.closeSession(sessionId);
+    return result;
+  });
 });
 ipcMain.handle(IPC.SESSION_RESTORE_WORKTREE, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
-  return clientOrThrow().restoreSessionWorktree(sessionId);
+  terminalManager.closeSession(sessionId);
+  return clientOrThrow().restoreSessionWorktree(sessionId).then((result) => {
+    terminalManager.closeSession(sessionId);
+    return result;
+  });
 });
 ipcMain.handle(IPC.WORKTREE_SETTINGS_READ, () => clientOrThrow().readWorktreeSettings());
 ipcMain.handle(IPC.WORKTREE_SETTINGS_UPDATE, (_event, input: unknown) => {
@@ -554,7 +571,10 @@ ipcMain.handle(IPC.SESSION_RENAME, (_event, sessionId: unknown, title: unknown) 
 });
 ipcMain.handle(IPC.SESSION_DELETE, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
-  return clientOrThrow().deleteSession(sessionId);
+  return clientOrThrow().deleteSession(sessionId).then((result) => {
+    terminalManager.closeSession(sessionId);
+    return result;
+  });
 });
 ipcMain.handle(IPC.SESSION_GIT_STATUS, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
@@ -606,20 +626,54 @@ ipcMain.handle(IPC.WORKSPACE_OPEN_IN_EDITOR, async (
   const failure = await electronShell.openPath(canonicalTarget);
   if (failure) throw new Error("无法在编辑器中打开文件。");
 });
+ipcMain.handle(IPC.TERMINAL_CREATE, (event, sessionId: unknown) => {
+  if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
+  return terminalManager.create(event.sender, sessionId);
+});
+ipcMain.handle(IPC.TERMINAL_WRITE, (event, terminalId: unknown, data: unknown) => {
+  if (typeof terminalId !== "string" || typeof data !== "string") {
+    throw new Error("终端输入参数无效。");
+  }
+  terminalManager.write(event.sender, terminalId, data);
+});
+ipcMain.handle(IPC.TERMINAL_RESIZE, (
+  event,
+  terminalId: unknown,
+  columns: unknown,
+  rows: unknown,
+) => {
+  if (typeof terminalId !== "string" || typeof columns !== "number" || typeof rows !== "number") {
+    throw new Error("终端尺寸参数无效。");
+  }
+  terminalManager.resize(event.sender, terminalId, columns, rows);
+});
+ipcMain.handle(IPC.TERMINAL_CLOSE, (event, terminalId: unknown) => {
+  if (typeof terminalId !== "string") throw new Error("终端参数无效。");
+  terminalManager.close(event.sender, terminalId);
+});
 ipcMain.handle(IPC.SESSION_GIT_DIFF, (
   _event,
   sessionId: unknown,
   scope: unknown,
   path: unknown,
+  compareRef: unknown,
 ) => {
   if (
     typeof sessionId !== "string"
     || (scope !== "head" && scope !== "baseline")
     || (path !== undefined && typeof path !== "string")
+    || (compareRef !== undefined && (
+      typeof compareRef !== "string" || !compareRef.trim()
+    ))
   ) {
     throw new Error("Git Diff 参数无效。");
   }
-  return clientOrThrow().readSessionGitDiff(sessionId, scope, path as string | undefined);
+  return clientOrThrow().readSessionGitDiff(
+    sessionId,
+    scope,
+    path as string | undefined,
+    compareRef as string | undefined,
+  );
 });
 ipcMain.handle(IPC.SESSION_GIT_SWITCH_BRANCH, (
   _event,
@@ -1043,7 +1097,10 @@ app.on("before-quit", (event) => {
   quitFlowController.handleBeforeQuit(event);
 });
 
-app.on("will-quit", () => terminateRuntimeOnce());
+app.on("will-quit", () => {
+  terminalManager.closeAll();
+  terminateRuntimeOnce();
+});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

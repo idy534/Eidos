@@ -18,6 +18,14 @@ export const IPC = {
   WORKSPACE_READ_FILE_PREVIEW: "workspace:read-file-preview",
   WORKSPACE_OPEN_IN_EDITOR: "workspace:open-in-editor",
 
+  // User terminal
+  TERMINAL_CREATE: "terminal:create",
+  TERMINAL_WRITE: "terminal:write",
+  TERMINAL_RESIZE: "terminal:resize",
+  TERMINAL_CLOSE: "terminal:close",
+  TERMINAL_DATA_EVENT: "terminal:data",
+  TERMINAL_EXIT_EVENT: "terminal:exit",
+
   // Session
   PROJECT_CREATE: "project:create",
   PROJECT_LIST: "project:list",

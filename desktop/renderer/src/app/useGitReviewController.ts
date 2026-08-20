@@ -5,6 +5,7 @@ import type {
   ProjectGitContext,
   RuntimeNotification,
   Session,
+  SessionGitDiff,
   SessionGitStatus,
 } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
@@ -15,9 +16,11 @@ const COMPLETION_REFRESH_DELAY_MS = 120;
 export interface GitReviewState {
   scope: GitDiffScope;
   status: SessionGitStatus | undefined;
+  summary: SessionGitDiff | undefined;
   projectContext: ProjectGitContext | undefined;
   statusBySessionId: ReadonlyMap<string, SessionGitStatus>;
   loadingStatus: boolean;
+  loadingSummary: boolean;
   error: string | undefined;
 }
 
@@ -36,17 +39,20 @@ export function useGitReviewController({
   ready,
   session,
 }: GitReviewControllerOptions): readonly [GitReviewState, GitReviewActions] {
-  const [scope, setScope] = useState<GitDiffScope>("head");
+  const [scope, setScope] = useState<GitDiffScope>("baseline");
   const [status, setStatus] = useState<SessionGitStatus | undefined>(undefined);
+  const [summary, setSummary] = useState<SessionGitDiff | undefined>(undefined);
   const [projectContext, setProjectContext] = useState<ProjectGitContext | undefined>(undefined);
   const [statusBySessionId, setStatusBySessionId] = useState<ReadonlyMap<string, SessionGitStatus>>(
     () => new Map(),
   );
   const [loadingStatus, setLoadingStatus] = useState(false);
+  const [loadingSummary, setLoadingSummary] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
 
   const generationRef = useRef(0);
   const statusRequestRef = useRef(0);
+  const summaryRequestRef = useRef(0);
   const contextRequestRef = useRef(0);
   const selectedSessionIdRef = useRef<string | undefined>(undefined);
   const gitAvailableRef = useRef(false);
@@ -112,11 +118,42 @@ export function useGitReviewController({
     });
   }, []);
 
+  const loadSummary = useCallback((
+    sessionId: string,
+    generation: number,
+    nextScope: GitDiffScope,
+  ): void => {
+    const request = summaryRequestRef.current + 1;
+    summaryRequestRef.current = request;
+    setLoadingSummary(true);
+    void window.eidosRuntime.readSessionGitDiff(sessionId, nextScope).then((nextSummary) => {
+      if (
+        generationRef.current === generation
+        && summaryRequestRef.current === request
+        && selectedSessionIdRef.current === sessionId
+        && scopeRef.current === nextScope
+      ) setSummary(nextSummary);
+    }).catch((cause: unknown) => {
+      if (
+        generationRef.current === generation
+        && summaryRequestRef.current === request
+        && selectedSessionIdRef.current === sessionId
+      ) setError(userFacingError(cause));
+    }).finally(() => {
+      if (
+        generationRef.current === generation
+        && summaryRequestRef.current === request
+        && selectedSessionIdRef.current === sessionId
+      ) setLoadingSummary(false);
+    });
+  }, []);
+
   const refresh = useCallback((): void => {
     const sessionId = selectedSessionIdRef.current;
     if (!readyRef.current || !gitAvailableRef.current || !sessionId) return;
     const generation = generationRef.current;
     loadStatus(sessionId, generation);
+    loadSummary(sessionId, generation, scopeRef.current);
     const localSession = session?.executionMode === "local"
       || (session?.executionMode === undefined && session?.worktree === undefined);
     if (localSession && session?.project?.workspaceRoot) {
@@ -124,6 +161,7 @@ export function useGitReviewController({
     }
   }, [
     loadProjectContext,
+    loadSummary,
     loadStatus,
     session?.executionMode,
     session?.project?.workspaceRoot,
@@ -133,7 +171,12 @@ export function useGitReviewController({
   const selectScope = useCallback((nextScope: GitDiffScope): void => {
     scopeRef.current = nextScope;
     setScope(nextScope);
-  }, []);
+    const sessionId = selectedSessionIdRef.current;
+    if (readyRef.current && gitAvailableRef.current && sessionId) {
+      setSummary(undefined);
+      loadSummary(sessionId, generationRef.current, nextScope);
+    }
+  }, [loadSummary]);
 
   const handleNotification = useCallback((notification: RuntimeNotification): void => {
     const sessionId = selectedSessionIdRef.current;
@@ -160,11 +203,13 @@ export function useGitReviewController({
   useEffect(() => {
     generationRef.current += 1;
     const generation = generationRef.current;
-    scopeRef.current = "head";
-    setScope("head");
+    scopeRef.current = "baseline";
+    setScope("baseline");
     setStatus(undefined);
+    setSummary(undefined);
     setProjectContext(undefined);
     setLoadingStatus(false);
+    setLoadingSummary(false);
     setError(undefined);
     if (refreshTimerRef.current !== undefined) {
       window.clearTimeout(refreshTimerRef.current);
@@ -172,6 +217,7 @@ export function useGitReviewController({
     }
     if (!ready || session?.project?.gitAvailable !== true) return;
     loadStatus(session.id, generation);
+    loadSummary(session.id, generation, "baseline");
     const localSession = session.executionMode === "local"
       || (session.executionMode === undefined && session.worktree === undefined);
     if (localSession && session.project.workspaceRoot) {
@@ -179,6 +225,7 @@ export function useGitReviewController({
     }
   }, [
     loadProjectContext,
+    loadSummary,
     loadStatus,
     ready,
     session?.id,
@@ -198,9 +245,11 @@ export function useGitReviewController({
   return [{
     scope,
     status,
+    summary,
     projectContext,
     statusBySessionId,
     loadingStatus,
+    loadingSummary,
     error,
   }, {
     selectScope,

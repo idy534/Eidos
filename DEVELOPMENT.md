@@ -32,7 +32,7 @@ uv sync --locked
 
 `uv sync --locked` 使用提交的 `uv.lock` 创建仓库 `.venv`。源码开发的 Electron Main 默认使用 `.venv/bin/python`。修改 Runtime 生产依赖时，维护者必须同时更新 `pyproject.toml` 和 `uv.lock`。
 
-仓库不再使用 `pip install -r runtime/requirements.txt`。Electron 首次安装可能需要下载 Electron 官方二进制。
+仓库不再使用 `pip install -r runtime/requirements.txt`。Electron 首次安装可能需要下载 Electron 官方二进制。`pnpm install` 还会构建 `node-pty`，并通过受测的 postinstall 脚本检查 macOS spawn helper 的执行权限。
 
 ## 3. Run from source
 
@@ -116,6 +116,15 @@ pnpm check:python:full
 ```bash
 pnpm test:desktop
 pnpm build
+```
+
+修改 Terminal、Main 进程生命周期或原生 Desktop 依赖时，还需要运行：
+
+```bash
+pnpm test:packaging
+pnpm test:electron-smoke
+pnpm package:mac
+pnpm test:electron-packaged
 ```
 
 当前关键行为也可以直接运行 focused tests：

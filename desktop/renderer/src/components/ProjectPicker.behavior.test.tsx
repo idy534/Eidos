@@ -139,9 +139,9 @@ describe("ProjectPicker", () => {
     );
   });
 
-  it("keeps inactive segmented controls neutral while hovered", () => {
+  it("keeps inactive Git scope controls neutral while hovered", () => {
     expect(styles).toMatch(
-      /\.workspace-view-switch button:not\(\[aria-pressed="true"\]\):hover:not\(:disabled\),\s*\.git-scope-tab:not\(\[aria-selected="true"\]\):hover:not\(:disabled\)\s*\{[^}]*background: var\(--surface-hover\);[^}]*box-shadow: none;/,
+      /\.git-scope-tab:not\(\[aria-selected="true"\]\):hover:not\(:disabled\)\s*\{[^}]*background: var\(--surface-hover\);[^}]*box-shadow: none;/,
     );
   });
 });

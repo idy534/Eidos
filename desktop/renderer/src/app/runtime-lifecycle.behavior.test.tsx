@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { App } from "../App.js";
-import type { EidosRuntimeAPI, RuntimeStatus, Session, SessionSnapshot } from "../contracts.js";
+import type { EidosRuntimeAPI, Project, RuntimeStatus, Session, SessionSnapshot } from "../contracts.js";
 
 const mockReadyStatus: RuntimeStatus = {
   state: "ready",
@@ -175,9 +175,106 @@ describe("App & Runtime Lifecycle behavior", () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: new RegExp(projectlessSession.title) }));
-    await screen.findByRole("button", { name: "对话" });
+    await screen.findByRole("textbox", { name: "告诉 Eidos 要做什么" });
     expect(screen.queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "打开工作区工具" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("会话上下文")).not.toBeInTheDocument();
+  });
+
+  it("opens project tools while keeping the conversation mounted", async () => {
+    const project: Project = {
+      id: "project-git",
+      name: "worktree-test",
+      workspaceRoot: "/workspace/worktree-test",
+      gitAvailable: true,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const session: Session = {
+      ...startupSession,
+      id: "git-session",
+      title: "Review workspace",
+      taskStatus: "in_progress",
+      workspaceRoot: project.workspaceRoot,
+      executionMode: "local",
+      project,
+    };
+    const snapshot: SessionSnapshot = {
+      session,
+      runs: [],
+      items: [],
+      stepResolutions: [],
+      throughEventId: 0,
+    };
+    setupMockRuntime({
+      listProjects: vi.fn().mockResolvedValue({ items: [project] }),
+      listSessions: vi.fn().mockResolvedValue({ items: [session] }),
+      readSession: vi.fn().mockResolvedValue(snapshot),
+      listEvents: vi.fn().mockResolvedValue({ items: [], throughEventId: 0, hasMore: false }),
+      readSessionGitStatus: vi.fn().mockResolvedValue({
+        worktreeId: null,
+        branch: "feature/review",
+        head: "b".repeat(40),
+        baseRef: null,
+        baseCommit: null,
+        dirty: true,
+        stagedCount: 0,
+        unstagedCount: 1,
+        untrackedCount: 0,
+        conflictCount: 0,
+        stagedFiles: [],
+        unstagedFiles: ["README.md"],
+        untrackedFiles: [],
+        conflictFiles: [],
+        observedAt: 1,
+      }),
+      readSessionGitDiff: vi.fn().mockResolvedValue({
+        scope: "baseline",
+        compareRef: "origin/main",
+        baseCommit: "a".repeat(40),
+        head: "b".repeat(40),
+        dirty: true,
+        changedFiles: ["README.md"],
+        unifiedDiff: "diff --git a/README.md b/README.md\n",
+        diffHash: "summary-hash",
+        truncated: false,
+        additions: 1,
+        deletions: 0,
+        statsIncomplete: false,
+        observedAt: 1,
+      }),
+      readProjectGitContext: vi.fn().mockResolvedValue({
+        gitAvailable: true,
+        currentBranch: "feature/review",
+        head: "b".repeat(40),
+        branches: ["feature/review", "main"],
+        dirty: true,
+        changedFileCount: 1,
+      }),
+      listReviewComments: vi.fn().mockResolvedValue([]),
+      readSessionGitRemoteStatus: vi.fn().mockResolvedValue({
+        branch: "feature/review",
+        remotes: [{ name: "origin" }],
+        upstream: { remote: "origin", branch: "main" },
+        ahead: 1,
+        behind: 0,
+      }),
+    });
+
+    const { container } = render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(session.title!) }));
+
+    expect(await screen.findByRole("button", { name: "环境信息" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开工作区工具" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "对话" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "告诉 Eidos 要做什么" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "打开工作区工具" }));
+
+    expect(await screen.findByRole("complementary", { name: "工作区工具" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "审阅" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("textbox", { name: "告诉 Eidos 要做什么" })).toBeInTheDocument();
+    expect(container.querySelector(".workspace-main")).toBeInTheDocument();
   });
 
   it("health-only state remains in ready application and presents read-only warning", async () => {

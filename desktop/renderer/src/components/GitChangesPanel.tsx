@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Diff,
   Hunk,
@@ -19,7 +19,7 @@ import { Button } from "./Button.js";
 import { GitWorkflowControls } from "./GitWorkflowControls.js";
 
 
-type ReviewGroup = "staged" | "changes" | "untracked" | "conflicts";
+type ReviewGroup = "baseline" | "staged" | "changes" | "untracked" | "conflicts";
 
 interface FileSelection {
   group: ReviewGroup;
@@ -32,16 +32,24 @@ interface FileGroup {
   paths: readonly string[];
 }
 
+interface ReviewFileState {
+  diff?: SessionGitDiff;
+  comments: ReviewComment[];
+  loading: boolean;
+  error?: string;
+}
+
 interface GitChangesPanelProps {
   sessionId: string;
   workspaceRoot: string;
   scope: GitDiffScope;
   status: SessionGitStatus | undefined;
+  summary?: SessionGitDiff | undefined;
   loading: boolean;
   error: string | undefined;
   onScopeChange(scope: GitDiffScope): void;
   onRefresh(): void;
-  readDiff?: (sessionId: string, scope: GitDiffScope, path: string) => Promise<SessionGitDiff>;
+  readDiff?: (sessionId: string, scope: GitDiffScope, path?: string) => Promise<SessionGitDiff>;
   stage?: (sessionId: string, paths: string[], operationId: string) => Promise<unknown>;
   unstage?: (sessionId: string, paths: string[], operationId: string) => Promise<unknown>;
   discard?: (sessionId: string, path: string, operationId: string) => Promise<unknown>;
@@ -64,6 +72,7 @@ interface GitChangesPanelProps {
   onSendReviewFeedback?: (feedback: string) => Promise<void>;
   reviewFeedbackDisabled?: boolean;
   workflowDisabled?: boolean;
+  workflowOpenRequest?: number | undefined;
   onCreateBranch?: (() => void) | undefined;
 }
 
@@ -107,98 +116,141 @@ export function formatReviewFeedback(comments: readonly ReviewComment[]): string
   ].join("\n");
 }
 
-function sameSelection(left: FileSelection | undefined, right: FileSelection): boolean {
-  return left?.group === right.group && left.path === right.path;
+function selectionKey(selection: FileSelection): string {
+  return `${selection.group}:${selection.path}`;
 }
 
-export function GitChangesPanel({
-  sessionId,
-  workspaceRoot,
-  scope,
-  status,
-  loading,
-  error,
-  onScopeChange,
-  onRefresh,
-  readDiff = defaultReadDiff,
-  stage = defaultStage,
-  unstage = defaultUnstage,
-  discard = defaultDiscard,
-  openInEditor = defaultOpenInEditor,
-  listComments = defaultListComments,
-  createComment = defaultCreateComment,
-  deleteComment = defaultDeleteComment,
-  onSendReviewFeedback,
-  reviewFeedbackDisabled = false,
-  workflowDisabled = false,
-  onCreateBranch,
-}: GitChangesPanelProps) {
-  const groups = useMemo<readonly FileGroup[]>(() => [
-    { id: "staged", label: "Staged", paths: status?.stagedFiles ?? [] },
-    { id: "changes", label: "Changes", paths: status?.unstagedFiles ?? [] },
-    { id: "untracked", label: "Untracked", paths: status?.untrackedFiles ?? [] },
-    { id: "conflicts", label: "Conflicts", paths: status?.conflictFiles ?? [] },
-  ], [status]);
+function diffStats(diff: SessionGitDiff | undefined): { additions: number; deletions: number } {
+  return { additions: diff?.additions ?? 0, deletions: diff?.deletions ?? 0 };
+}
+
+export function GitChangesPanel(props: GitChangesPanelProps) {
+  const summaryControlled = Object.prototype.hasOwnProperty.call(props, "summary");
+  const {
+    sessionId,
+    workspaceRoot,
+    scope,
+    status,
+    summary,
+    loading,
+    error,
+    onScopeChange,
+    onRefresh,
+    readDiff = defaultReadDiff,
+    stage = defaultStage,
+    unstage = defaultUnstage,
+    discard = defaultDiscard,
+    openInEditor = defaultOpenInEditor,
+    listComments = defaultListComments,
+    createComment = defaultCreateComment,
+    deleteComment = defaultDeleteComment,
+    onSendReviewFeedback,
+    reviewFeedbackDisabled = false,
+    workflowDisabled = false,
+    workflowOpenRequest,
+    onCreateBranch,
+  } = props;
+  const [loadedSummary, setLoadedSummary] = useState<SessionGitDiff>();
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState<string>();
+  const effectiveSummary = summary ?? loadedSummary;
+
+  useEffect(() => {
+    let current = true;
+    setLoadedSummary(undefined);
+    setSummaryError(undefined);
+    if (summaryControlled) {
+      setSummaryLoading(false);
+      return () => { current = false; };
+    }
+    setSummaryLoading(true);
+    void readDiff(sessionId, scope).then((nextSummary) => {
+      if (current) setLoadedSummary(nextSummary);
+    }).catch((cause: unknown) => {
+      if (current) setSummaryError(userFacingError(cause));
+    }).finally(() => {
+      if (current) setSummaryLoading(false);
+    });
+    return () => { current = false; };
+  }, [readDiff, scope, sessionId, summary, summaryControlled]);
+
+  const groups = useMemo<readonly FileGroup[]>(() => scope === "baseline"
+    ? [{ id: "baseline", label: "整个任务", paths: effectiveSummary?.changedFiles ?? [] }]
+    : [
+        { id: "staged", label: "已暂存", paths: status?.stagedFiles ?? [] },
+        { id: "changes", label: "修改", paths: status?.unstagedFiles ?? [] },
+        { id: "untracked", label: "未跟踪", paths: status?.untrackedFiles ?? [] },
+        { id: "conflicts", label: "冲突", paths: status?.conflictFiles ?? [] },
+      ], [effectiveSummary?.changedFiles, scope, status]);
   const selections = useMemo(
     () => groups.flatMap((group) => group.paths.map((path) => ({ group: group.id, path }))),
     [groups],
   );
-  const [selection, setSelection] = useState<FileSelection | undefined>(undefined);
-  const [fileDiff, setFileDiff] = useState<SessionGitDiff | undefined>(undefined);
-  const [diffLoading, setDiffLoading] = useState(false);
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
+  const [fileStates, setFileStates] = useState<Record<string, ReviewFileState>>({});
   const [actionLoading, setActionLoading] = useState(false);
   const [localError, setLocalError] = useState<string | undefined>(undefined);
-  const [comments, setComments] = useState<ReviewComment[]>([]);
-  const [draftAnchor, setDraftAnchor] = useState<CommentAnchor | undefined>();
+  const [draft, setDraft] = useState<{ key: string; anchor: CommentAnchor }>();
   const [draftBody, setDraftBody] = useState("");
   const [commentLoading, setCommentLoading] = useState(false);
+  const requestVersion = useRef(0);
+  const loadingKeys = useRef(new Set<string>());
+  const loadedKeys = useRef(new Set<string>());
 
   useEffect(() => {
-    setSelection((current) => (
-      current && selections.some((candidate) => sameSelection(current, candidate))
-        ? current
-        : selections[0]
-    ));
-  }, [selections]);
-
-  useEffect(() => {
-    let current = true;
-    setFileDiff(undefined);
+    requestVersion.current += 1;
+    loadingKeys.current.clear();
+    loadedKeys.current.clear();
+    setExpandedKeys(new Set());
+    setFileStates({});
     setLocalError(undefined);
-    if (!selection) return () => { current = false; };
-    setDiffLoading(true);
-    void readDiff(sessionId, scope, selection.path).then((nextDiff) => {
-      if (current) setFileDiff(nextDiff);
-    }).catch((cause: unknown) => {
-      if (current) setLocalError(userFacingError(cause));
-    }).finally(() => {
-      if (current) setDiffLoading(false);
-    });
-    return () => { current = false; };
-  }, [readDiff, scope, selection, sessionId]);
-
-  useEffect(() => {
-    let current = true;
-    setComments([]);
-    setDraftAnchor(undefined);
+    setDraft(undefined);
     setDraftBody("");
-    if (!selection) return () => { current = false; };
-    void listComments(sessionId, selection.path, scope).then((nextComments) => {
-      if (current) setComments(nextComments);
-    }).catch((cause: unknown) => {
-      if (current) setLocalError(userFacingError(cause));
-    });
-    return () => { current = false; };
-  }, [listComments, scope, selection, sessionId]);
+  }, [scope, sessionId]);
 
-  const parsedFiles = useMemo(() => {
-    if (!fileDiff?.unifiedDiff) return [];
-    try {
-      return parseDiff(fileDiff.unifiedDiff);
-    } catch {
-      return [];
-    }
-  }, [fileDiff]);
+  const loadFile = useCallback((selection: FileSelection): Promise<void> => {
+    const key = selectionKey(selection);
+    if (loadingKeys.current.has(key) || loadedKeys.current.has(key)) return Promise.resolve();
+    const version = requestVersion.current;
+    loadingKeys.current.add(key);
+    setFileStates((current) => ({
+      ...current,
+      [key]: { comments: current[key]?.comments ?? [], loading: true },
+    }));
+    return Promise.allSettled([
+      readDiff(sessionId, scope, selection.path),
+      listComments(sessionId, selection.path, scope),
+    ]).then(([diffResult, commentsResult]) => {
+      if (requestVersion.current !== version) return;
+      if (diffResult.status === "fulfilled") loadedKeys.current.add(key);
+      const nextError = diffResult.status === "rejected"
+        ? userFacingError(diffResult.reason)
+        : commentsResult.status === "rejected"
+          ? userFacingError(commentsResult.reason)
+          : undefined;
+      setFileStates((current) => ({
+        ...current,
+        [key]: {
+          ...(diffResult.status === "fulfilled" ? { diff: diffResult.value } : {}),
+          comments: commentsResult.status === "fulfilled" ? commentsResult.value : [],
+          loading: false,
+          ...(nextError === undefined ? {} : { error: nextError }),
+        },
+      }));
+    }).finally(() => loadingKeys.current.delete(key));
+  }, [listComments, readDiff, scope, sessionId]);
+
+  const toggleFile = (selection: FileSelection): void => {
+    const key = selectionKey(selection);
+    const expanding = !expandedKeys.has(key);
+    setExpandedKeys((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+    if (expanding) void loadFile(selection);
+  };
 
   const runMutation = async (operation: () => Promise<unknown>): Promise<void> => {
     setActionLoading(true);
@@ -214,11 +266,11 @@ export function GitChangesPanel({
   };
 
   const operationId = (): string => crypto.randomUUID();
-  const selectedPath = selection?.path;
-  const staleComments = comments.filter((comment) => comment.status === "stale");
 
   const submitComment = async (): Promise<void> => {
-    if (!selection || !fileDiff || !draftAnchor || !draftBody.trim()) return;
+    const selection = selections.find((candidate) => selectionKey(candidate) === draft?.key);
+    const fileDiff = draft ? fileStates[draft.key]?.diff : undefined;
+    if (!selection || !fileDiff || !draft || !draftBody.trim()) return;
     setCommentLoading(true);
     setLocalError(undefined);
     try {
@@ -226,14 +278,20 @@ export function GitChangesPanel({
         commentId: crypto.randomUUID(),
         path: selection.path,
         scope,
-        side: draftAnchor.side,
-        line: draftAnchor.line,
+        side: draft.anchor.side,
+        line: draft.anchor.line,
         body: draftBody.trim(),
         baseHead: fileDiff.head,
         diffHash: fileDiff.diffHash,
       }, operationId());
-      setComments((current) => [...current, comment]);
-      setDraftAnchor(undefined);
+      setFileStates((current) => ({
+        ...current,
+        [draft.key]: {
+          ...current[draft.key]!,
+          comments: [...(current[draft.key]?.comments ?? []), comment],
+        },
+      }));
+      setDraft(undefined);
       setDraftBody("");
     } catch (cause: unknown) {
       setLocalError(userFacingError(cause));
@@ -242,12 +300,18 @@ export function GitChangesPanel({
     }
   };
 
-  const removeComment = async (commentId: string): Promise<void> => {
+  const removeComment = async (key: string, commentId: string): Promise<void> => {
     setCommentLoading(true);
     setLocalError(undefined);
     try {
       await deleteComment(sessionId, commentId, operationId());
-      setComments((current) => current.filter((comment) => comment.id !== commentId));
+      setFileStates((current) => ({
+        ...current,
+        [key]: {
+          ...current[key]!,
+          comments: (current[key]?.comments ?? []).filter((comment) => comment.id !== commentId),
+        },
+      }));
     } catch (cause: unknown) {
       setLocalError(userFacingError(cause));
     } finally {
@@ -271,6 +335,10 @@ export function GitChangesPanel({
     }
   };
 
+  const stats = diffStats(effectiveSummary);
+  const compareRef = effectiveSummary?.compareRef
+    ?? (scope === "baseline" ? status?.baseRef ?? effectiveSummary?.baseCommit?.slice(0, 7) : "HEAD");
+
   return (
     <section className="git-changes-panel" aria-label="Git Changes">
       {status && (
@@ -279,6 +347,7 @@ export function GitChangesPanel({
           workspaceRoot={workspaceRoot}
           status={status}
           disabled={workflowDisabled}
+          openRequest={workflowOpenRequest}
           onRefresh={onRefresh}
           onCreateBranch={onCreateBranch}
         />
@@ -304,200 +373,230 @@ export function GitChangesPanel({
             整个任务改动
           </button>
         </div>
-        <Button
-          variant="ghost"
-          size="small"
-          loading={loading}
-          aria-label="刷新 Git 变更"
-          onClick={onRefresh}
-        >
-          刷新
-        </Button>
-        {onSendReviewFeedback && (
+        <div className="git-review-toolbar-actions">
           <Button
-            variant="secondary"
+            variant="ghost"
             size="small"
-            disabled={commentLoading || reviewFeedbackDisabled}
-            onClick={() => void sendReviewFeedback()}
+            disabled={selections.length === 0}
+            onClick={() => {
+              setExpandedKeys(new Set(selections.map(selectionKey)));
+              void (async () => {
+                for (const selection of selections) await loadFile(selection);
+              })();
+            }}
           >
-            Send Review Feedback
+            展开全部差异
           </Button>
-        )}
+          <Button
+            variant="ghost"
+            size="small"
+            disabled={expandedKeys.size === 0}
+            onClick={() => setExpandedKeys(new Set())}
+          >
+            折叠全部差异
+          </Button>
+          <Button
+            variant="ghost"
+            size="small"
+            loading={loading || summaryLoading}
+            aria-label="刷新 Git 变更"
+            onClick={onRefresh}
+          >
+            刷新
+          </Button>
+          {onSendReviewFeedback && (
+            <Button
+              variant="secondary"
+              size="small"
+              disabled={commentLoading || reviewFeedbackDisabled}
+              onClick={() => void sendReviewFeedback()}
+            >
+              发送审阅意见
+            </Button>
+          )}
+        </div>
       </header>
 
       {status && (
         <div className="git-review-summary" aria-label="Git 状态">
-          <span className="git-review-branch">{status.branch}</span>
-          <code>{status.head.slice(0, 7)}</code>
-          <span>{status.dirty ? "有改动" : "干净"}</span>
-        </div>
-      )}
-      {(error || localError) && (
-        <p className="approval-error git-review-error" role="alert">{localError ?? error}</p>
-      )}
-
-      <div className="git-changes-body">
-        <aside className="git-file-list" aria-label="Changed Files">
-          {groups.map((group) => (
-            <section className="git-file-group" key={group.id} aria-label={group.label}>
-              <h2>{group.label} <span>{group.paths.length}</span></h2>
-              {group.paths.length > 0 && (
-                <ul>
-                  {group.paths.map((path) => (
-                    <li key={path}>
-                      <button
-                        type="button"
-                        className="git-file-button"
-                        aria-pressed={sameSelection(selection, { group: group.id, path })}
-                        onClick={() => setSelection({ group: group.id, path })}
-                      >
-                        {path}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-          ))}
-          {selections.length === 0 && <p>{loading ? "正在读取…" : "没有变更"}</p>}
-        </aside>
-
-        <div className="git-diff-view">
-          {selection && (
-            <header className="git-file-actions">
-              <code title={selection.path}>{selection.path}</code>
-              <div>
-                {selection.group === "staged" && (
-                  <Button
-                    size="small"
-                    variant="secondary"
-                    disabled={actionLoading}
-                    onClick={() => void runMutation(() => unstage(
-                      sessionId, [selection.path], operationId(),
-                    ))}
-                  >
-                    Unstage
-                  </Button>
-                )}
-                {(selection.group === "changes" || selection.group === "untracked") && (
-                  <>
-                    <Button
-                      size="small"
-                      variant="secondary"
-                      disabled={actionLoading}
-                      onClick={() => void runMutation(() => stage(
-                        sessionId, [selection.path], operationId(),
-                      ))}
-                    >
-                      Accept
-                    </Button>
-                    <Button
-                      size="small"
-                      variant="danger"
-                      disabled={actionLoading}
-                      onClick={() => {
-                        if (window.confirm(`Discard changes in ${selection.path}?`)) {
-                          void runMutation(() => discard(
-                            sessionId, selection.path, operationId(),
-                          ));
-                        }
-                      }}
-                    >
-                      Discard
-                    </Button>
-                  </>
-                )}
-                <Button
-                  size="small"
-                  variant="ghost"
-                  disabled={actionLoading}
-                  onClick={() => {
-                    setLocalError(undefined);
-                    void openInEditor(sessionId, selection.path).catch((cause: unknown) => {
-                      setLocalError(userFacingError(cause));
-                    });
-                  }}
-                >
-                  Open in Editor
-                </Button>
-              </div>
-            </header>
+          <span className="git-review-stat git-review-stat--addition">+{stats.additions}</span>
+          <span className="git-review-stat git-review-stat--deletion">-{stats.deletions}</span>
+          {effectiveSummary?.statsIncomplete === true && (
+            <span className="git-review-incomplete">统计不完整</span>
           )}
-          <div className="git-file-diff-scroll">
-            {fileDiff?.truncated && (
-              <p className="git-diff-truncated" role="status">Diff 已截断</p>
-            )}
-            {parsedFiles.map((file) => (
-              <Diff
-                key={`${file.oldPath}:${file.newPath}`}
-                viewType="unified"
-                diffType={file.type}
-                hunks={file.hunks}
-                gutterEvents={{
-                  onClick: ({ change, side }) => {
-                    const anchor = change && commentAnchor(change, side);
-                    if (anchor) setDraftAnchor(anchor);
-                  },
-                }}
-                widgets={commentWidgets(
-                  file.hunks.flatMap((hunk) => hunk.changes),
-                  comments,
-                  draftAnchor,
-                  <div className="review-comment-draft">
-                    <textarea
-                      aria-label="Review comment"
-                      value={draftBody}
-                      onChange={(event) => setDraftBody(event.target.value)}
-                      placeholder="Add review feedback…"
-                      maxLength={16_384}
-                    />
-                    <div>
-                      <Button
-                        size="small"
-                        variant="primary"
-                        loading={commentLoading}
-                        disabled={!draftBody.trim()}
-                        onClick={() => void submitComment()}
-                      >
-                        Add Comment
-                      </Button>
-                      <Button
-                        size="small"
-                        variant="ghost"
-                        onClick={() => {
-                          setDraftAnchor(undefined);
-                          setDraftBody("");
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>,
-                  (commentId) => void removeComment(commentId),
-                )}
-              >
-                {(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
-              </Diff>
-            ))}
-            {staleComments.length > 0 && (
-              <aside className="review-stale-comments" aria-label="Stale review comments">
-                <strong>Outdated comments</strong>
-                {staleComments.map((comment) => (
-                  <div key={comment.id}>
-                    <span>{comment.side} line {comment.line}</span>
-                    <p>{comment.body}</p>
-                    <button type="button" onClick={() => void removeComment(comment.id)}>Delete</button>
-                  </div>
-                ))}
-              </aside>
-            )}
-            {!parsedFiles.length && (
-              <p className="git-diff-empty">
-                {diffLoading ? "正在读取 Diff…" : selectedPath ? "该文件没有可显示的文本 Diff" : "请选择文件"}
-              </p>
-            )}
-          </div>
+          <span className="git-review-branch">{status.branch ?? "Detached HEAD"}</span>
+          <span aria-hidden="true">→</span>
+          <code>{compareRef ?? "未设置基线"}</code>
         </div>
+      )}
+      {(error || summaryError || localError) && (
+        <p className="approval-error git-review-error" role="alert">
+          {localError ?? summaryError ?? error}
+        </p>
+      )}
+
+      <div className="git-review-files" aria-label="所有修改文件">
+        {groups.map((group) => (
+          <section className="git-file-group" key={group.id} aria-label={group.label}>
+            <h2>{group.label} <span>{group.paths.length}</span></h2>
+            {group.paths.map((path) => {
+              const selection = { group: group.id, path } satisfies FileSelection;
+              const key = selectionKey(selection);
+              const expanded = expandedKeys.has(key);
+              const state = fileStates[key];
+              const fileStats = diffStats(state?.diff);
+              const parsedFiles = (() => {
+                if (!state?.diff?.unifiedDiff) return [];
+                try { return parseDiff(state.diff.unifiedDiff); } catch { return []; }
+              })();
+              const staleComments = (state?.comments ?? []).filter((comment) => (
+                comment.status === "stale"
+              ));
+              const draftAnchor = draft?.key === key ? draft.anchor : undefined;
+              return (
+                <article className="git-review-file" key={key}>
+                  <header className="git-review-file-header">
+                    <button
+                      type="button"
+                      className="git-file-button"
+                      aria-expanded={expanded}
+                      aria-controls={`git-review-diff-${encodeURIComponent(key)}`}
+                      onClick={() => toggleFile(selection)}
+                    >
+                      <span className="git-file-disclosure" aria-hidden="true">{expanded ? "⌄" : "›"}</span>
+                      <code>{path}</code>
+                      {state?.diff && (
+                        <span className="git-file-stats">
+                          <span>+{fileStats.additions}</span>
+                          <span>-{fileStats.deletions}</span>
+                          {state.diff.statsIncomplete && (
+                            <span>不完整</span>
+                          )}
+                        </span>
+                      )}
+                    </button>
+                    {expanded && (
+                      <div className="git-file-actions">
+                        {selection.group === "staged" && (
+                          <Button size="small" variant="secondary" disabled={actionLoading}
+                            onClick={() => void runMutation(() => unstage(
+                              sessionId, [path], operationId(),
+                            ))}>
+                            取消暂存
+                          </Button>
+                        )}
+                        {(selection.group === "changes" || selection.group === "untracked") && (
+                          <>
+                            <Button size="small" variant="secondary" disabled={actionLoading}
+                              onClick={() => void runMutation(() => stage(
+                                sessionId, [path], operationId(),
+                              ))}>
+                              暂存
+                            </Button>
+                            <Button size="small" variant="danger" disabled={actionLoading}
+                              onClick={() => {
+                                if (window.confirm(`丢弃 ${path} 中的改动？`)) {
+                                  void runMutation(() => discard(sessionId, path, operationId()));
+                                }
+                              }}>
+                              丢弃
+                            </Button>
+                          </>
+                        )}
+                        <Button size="small" variant="ghost" disabled={actionLoading}
+                          onClick={() => {
+                            setLocalError(undefined);
+                            void openInEditor(sessionId, path).catch((cause: unknown) => {
+                              setLocalError(userFacingError(cause));
+                            });
+                          }}>
+                          在编辑器中打开
+                        </Button>
+                      </div>
+                    )}
+                  </header>
+                  {expanded && (
+                    <div
+                      id={`git-review-diff-${encodeURIComponent(key)}`}
+                      className="git-file-diff-scroll"
+                    >
+                      {state?.error && <p className="approval-error" role="alert">{state.error}</p>}
+                      {state?.diff?.truncated && (
+                        <p className="git-diff-truncated" role="status">Diff 已截断</p>
+                      )}
+                      {parsedFiles.map((file) => (
+                        <Diff
+                          key={`${file.oldPath}:${file.newPath}`}
+                          viewType="unified"
+                          diffType={file.type}
+                          hunks={file.hunks}
+                          gutterEvents={{
+                            onClick: ({ change, side }) => {
+                              const anchor = change && commentAnchor(change, side);
+                              if (anchor) {
+                                setDraft({ key, anchor });
+                                setDraftBody("");
+                              }
+                            },
+                          }}
+                          widgets={commentWidgets(
+                            file.hunks.flatMap((hunk) => hunk.changes),
+                            state?.comments ?? [],
+                            draftAnchor,
+                            <div className="review-comment-draft">
+                              <textarea
+                                aria-label="审阅评论"
+                                value={draftBody}
+                                onChange={(event) => setDraftBody(event.target.value)}
+                                placeholder="添加审阅意见…"
+                                maxLength={16_384}
+                              />
+                              <div>
+                                <Button size="small" variant="primary" loading={commentLoading}
+                                  disabled={!draftBody.trim()} onClick={() => void submitComment()}>
+                                  添加评论
+                                </Button>
+                                <Button size="small" variant="ghost" onClick={() => {
+                                  setDraft(undefined);
+                                  setDraftBody("");
+                                }}>
+                                  取消
+                                </Button>
+                              </div>
+                            </div>,
+                            (commentId) => void removeComment(key, commentId),
+                          )}
+                        >
+                          {(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
+                        </Diff>
+                      ))}
+                      {staleComments.length > 0 && (
+                        <aside className="review-stale-comments" aria-label="过期审阅评论">
+                          <strong>过期评论</strong>
+                          {staleComments.map((comment) => (
+                            <div key={comment.id}>
+                              <span>{comment.side} 第 {comment.line} 行</span>
+                              <p>{comment.body}</p>
+                              <button type="button" onClick={() => void removeComment(key, comment.id)}>删除</button>
+                            </div>
+                          ))}
+                        </aside>
+                      )}
+                      {!parsedFiles.length && !state?.error && (
+                        <p className="git-diff-empty">
+                          {state?.loading ? "正在读取 Diff…" : "该文件没有可显示的文本 Diff"}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </section>
+        ))}
+        {selections.length === 0 && (
+          <p className="git-diff-empty">{loading || summaryLoading ? "正在读取…" : "没有变更"}</p>
+        )}
       </div>
     </section>
   );
@@ -535,7 +634,7 @@ function commentWidgets(
         {anchored.map((comment) => (
           <div className="review-comment" key={comment.id}>
             <p>{comment.body}</p>
-            <button type="button" onClick={() => onDelete(comment.id)}>Delete</button>
+            <button type="button" onClick={() => onDelete(comment.id)}>删除</button>
           </div>
         ))}
         {hasDraft ? draft : null}

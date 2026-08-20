@@ -60,6 +60,9 @@ class GitCliDiff:
     patch: bytes
     changed_paths: tuple[str, ...]
     truncated: bool
+    additions: int
+    deletions: int
+    stats_incomplete: bool
 
 
 class HardenedGitRunner:
@@ -772,10 +775,19 @@ class GitCli:
             output_limit_bytes=output_limit_bytes,
             path=path,
         )
+        additions, deletions, stats_incomplete = self._diff_stats(
+            cwd,
+            base_commit=base_commit,
+            include_untracked=include_untracked,
+            path=path,
+        )
         return GitCliDiff(
             patch=patch[0],
             changed_paths=changed_paths,
             truncated=patch[1],
+            additions=additions,
+            deletions=deletions,
+            stats_incomplete=stats_incomplete,
         )
 
     def apply_working_tree_patch(
@@ -975,6 +987,114 @@ class GitCli:
                 if path is None or relative == path
             )
         return tuple(sorted(paths))
+
+    def _diff_stats(
+        self,
+        cwd: Path,
+        *,
+        base_commit: str,
+        include_untracked: bool,
+        path: str | None = None,
+    ) -> tuple[int, int, bool]:
+        overrides = filter_config_overrides(self._runner, cwd)
+        result = self._runner.run(
+            (
+                "diff",
+                "--numstat",
+                "--no-renames",
+                "--no-ext-diff",
+                "--no-textconv",
+                "-z",
+                base_commit,
+                "--",
+                *((path,) if path is not None else ()),
+            ),
+            cwd=cwd,
+            operation="worktree-diff-stats",
+            config_overrides=overrides,
+            output_limit_bytes=DEFAULT_GIT_PATCH_BYTES,
+        )
+        additions, deletions, incomplete = _numstat_totals(result.stdout)
+        if not include_untracked:
+            return additions, deletions, incomplete
+        # ponytail: native Git needs one no-index call per untracked file; batch only
+        # if measured review latency justifies a more complex temporary-index path.
+        for relative in self.untracked_paths(cwd):
+            if path is not None and relative != path:
+                continue
+            untracked = self._runner.run(
+                (
+                    "diff",
+                    "--no-index",
+                    "--numstat",
+                    "--no-renames",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "-z",
+                    "--",
+                    "/dev/null",
+                    relative,
+                ),
+                cwd=cwd,
+                operation="worktree-diff-untracked-stats",
+                config_overrides=overrides,
+                output_limit_bytes=DEFAULT_GIT_PATCH_BYTES,
+                allow_returncodes=(1,),
+            )
+            untracked_additions, untracked_deletions, untracked_incomplete = (
+                _numstat_totals(untracked.stdout)
+            )
+            additions += untracked_additions
+            deletions += untracked_deletions
+            incomplete = incomplete or untracked_incomplete
+        return additions, deletions, incomplete
+
+
+def _numstat_totals(output: bytes) -> tuple[int, int, bool]:
+    if output and not output.endswith(b"\0"):
+        raise GitCommandFailedError(
+            "worktree-diff-stats",
+            returncode=None,
+            stderr="Git numstat output is incomplete",
+        )
+    additions = 0
+    deletions = 0
+    incomplete = False
+    records = output.split(b"\0")
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if not record:
+            continue
+        try:
+            added, deleted, path = record.split(b"\t", 2)
+        except ValueError as error:
+            raise GitCommandFailedError(
+                "worktree-diff-stats",
+                returncode=None,
+                stderr="Git numstat output is invalid",
+            ) from error
+        if not path:
+            if index + 1 >= len(records) or not records[index] or not records[index + 1]:
+                raise GitCommandFailedError(
+                    "worktree-diff-stats",
+                    returncode=None,
+                    stderr="Git numstat path output is invalid",
+                )
+            index += 2
+        if added == b"-" or deleted == b"-":
+            incomplete = True
+            continue
+        if not added.isdigit() or not deleted.isdigit():
+            raise GitCommandFailedError(
+                "worktree-diff-stats",
+                returncode=None,
+                stderr="Git numstat output is invalid",
+            )
+        additions += int(added)
+        deletions += int(deleted)
+    return additions, deletions, incomplete
 
 
 def filter_config_overrides(

@@ -171,6 +171,7 @@ export interface ProjectGitContext {
 
 export interface SessionGitDiff {
   scope: GitDiffScope;
+  compareRef: string | null;
   baseCommit: string | null;
   head: string;
   dirty: boolean;
@@ -178,6 +179,9 @@ export interface SessionGitDiff {
   unifiedDiff: string;
   diffHash: string;
   truncated: boolean;
+  additions: number;
+  deletions: number;
+  statsIncomplete: boolean;
   observedAt: number;
 }
 
@@ -228,6 +232,22 @@ export interface WorkspaceFilePreview {
   content?: string;
   language?: string;
   reason?: "binary" | "unsupported";
+}
+
+export interface TerminalSessionInfo {
+  terminalId: string;
+  sessionId: string;
+}
+
+export interface TerminalDataEvent {
+  terminalId: string;
+  data: string;
+}
+
+export interface TerminalExitEvent {
+  terminalId: string;
+  exitCode: number;
+  signal?: number;
 }
 
 export interface Run {

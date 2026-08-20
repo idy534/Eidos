@@ -203,13 +203,16 @@ def test_status_and_diff_distinguish_head_and_frozen_baseline(
 
     head_diff = manager.diff(worktree.id, scope=DiffScope.HEAD)
     baseline_diff = manager.diff(worktree.id, scope=DiffScope.BASELINE)
-    assert head_diff.base_commit == worktree.base_commit
+    assert head_diff.compare_ref is None
+    assert head_diff.base_commit == head_diff.head
     assert "after-commit" in head_diff.unified_diff
     assert "commit-a.txt" not in head_diff.unified_diff
     assert "worktree commit" not in head_diff.unified_diff
     assert "README.md" in head_diff.changed_files
     assert "commit-a.txt" not in head_diff.changed_files
     assert "after-commit" in baseline_diff.unified_diff
+    assert baseline_diff.compare_ref == worktree.base_ref
+    assert baseline_diff.base_commit == worktree.base_commit
     assert "commit-a.txt" in baseline_diff.unified_diff
     assert "README.md" in baseline_diff.changed_files
     assert "commit-a.txt" in baseline_diff.changed_files

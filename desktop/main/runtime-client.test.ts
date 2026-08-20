@@ -112,6 +112,7 @@ test("preserves every workspace and lifecycle business code in the closed contra
     "WORKTREE_REQUIRES_GIT",
     "BASE_REF_NOT_FOUND",
     "GIT_COMMAND_TIMEOUT",
+    "GIT_COMPARE_REF_INVALID",
     "GIT_REMOTE_OUTCOME_UNCERTAIN",
     "LOCAL_REQUIRED",
     "GIT_BRANCH_NOT_FOUND",
@@ -360,6 +361,10 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
     assert.equal(localStatus.untrackedCount, 1);
     const fileDiff = await client.readSessionGitDiff(local.id, "head", "WORKFLOW.txt");
     assert.deepEqual(fileDiff.changedFiles, ["WORKFLOW.txt"]);
+    assert.equal(fileDiff.compareRef, null);
+    assert.equal(fileDiff.additions, 1);
+    assert.equal(fileDiff.deletions, 0);
+    assert.equal(fileDiff.statsIncomplete, false);
     assert.match(fileDiff.unifiedDiff, /workflow/);
     const reviewComment = await client.createReviewComment(local.id, {
       commentId: randomUUID(),
@@ -489,10 +494,28 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
     assert.equal(secondStatus.dirty, false);
     assert.deepEqual(headDiff.changedFiles, ["ONLY_A.txt"]);
     assert.equal(headDiff.scope, "head");
+    assert.equal(headDiff.compareRef, null);
+    assert.equal(headDiff.additions, 1);
+    assert.equal(headDiff.deletions, 0);
+    assert.equal(headDiff.statsIncomplete, false);
     assert.equal(baselineDiff.scope, "baseline");
+    assert.equal(baselineDiff.compareRef, first.worktree.baseRef);
+    assert.equal(baselineDiff.additions, 2);
+    assert.equal(baselineDiff.deletions, 1);
+    assert.equal(baselineDiff.statsIncomplete, false);
     assert.ok(baselineDiff.changedFiles.includes("README.md"));
     assert.ok(baselineDiff.changedFiles.includes("ONLY_A.txt"));
     assert.match(headDiff.unifiedDiff, /ONLY_A\.txt/);
+
+    const explicitCompare = await client.readSessionGitDiff(
+      first.id,
+      "baseline",
+      undefined,
+      headDiff.head,
+    );
+    assert.equal(explicitCompare.compareRef, headDiff.head);
+    assert.equal(explicitCompare.baseCommit, headDiff.head);
+    assert.deepEqual(explicitCompare.changedFiles, ["ONLY_A.txt"]);
   } finally {
     await client.shutdown().catch(() => undefined);
     await client.waitForExit().catch(() => undefined);

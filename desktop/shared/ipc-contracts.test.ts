@@ -21,6 +21,12 @@ type TestConnectionIsNotExposed = "testModelProfile" extends keyof EidosRuntimeA
   ? true
   : false;
 const _assertTestConnectionIsNotExposed: TestConnectionIsNotExposed = false;
+const gitDiffArguments: Parameters<EidosRuntimeAPI["readSessionGitDiff"]> = [
+  "session-id",
+  "baseline",
+  undefined,
+  "origin/main",
+];
 
 void test("IPC channel object provides central authoritative channels", () => {
   assert.equal(IPC.RUNTIME_GET_STATUS, "runtime:get-status");
@@ -43,11 +49,18 @@ void test("IPC channel object provides central authoritative channels", () => {
   assert.equal(IPC.APPROVAL_RESPOND, "approval:respond");
   assert.equal(IPC.APP_NEW_TASK, "app:new-task");
   assert.equal(IPC.APP_OPEN_WORKSPACE, "app:open-workspace");
+  assert.equal(IPC.TERMINAL_CREATE, "terminal:create");
+  assert.equal(IPC.TERMINAL_WRITE, "terminal:write");
+  assert.equal(IPC.TERMINAL_RESIZE, "terminal:resize");
+  assert.equal(IPC.TERMINAL_CLOSE, "terminal:close");
+  assert.equal(IPC.TERMINAL_DATA_EVENT, "terminal:data");
+  assert.equal(IPC.TERMINAL_EXIT_EVENT, "terminal:exit");
   assert.equal("MODEL_PROFILE_TEST" in IPC, false);
 });
 
 void test("Shared constants keep only cross-boundary limits", () => {
   assert.equal(MAX_APPROVAL_FEEDBACK_BYTES, 2_000);
+  assert.equal(gitDiffArguments[3], "origin/main");
 });
 
 void test("ModelId and RuntimeStatus types are uniquely exported from domain contracts", () => {

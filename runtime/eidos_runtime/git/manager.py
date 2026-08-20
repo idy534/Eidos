@@ -1702,15 +1702,33 @@ class WorktreeManager:
         repository_root: Path,
         *,
         scope: DiffScope = DiffScope.HEAD,
+        compare_ref: str | None = None,
         path: str | None = None,
     ) -> GitDiffSnapshot:
         try:
             discovery = self.discovery.discover(repository_root)
             root = Path(discovery.repository_root)
             head = self.git.head(root)
+            selected_ref: str | None = None
+            base_commit = head
+            if compare_ref is not None:
+                base_commit = self._resolve_diff_compare(root, compare_ref)
+                selected_ref = compare_ref
+            elif scope is DiffScope.BASELINE:
+                remote = self.git.remote_status(root)
+                if remote.upstream is not None:
+                    upstream_ref = (
+                        f"{remote.upstream.remote}/{remote.upstream.branch}"
+                    )
+                    try:
+                        base_commit = self.git.resolve_revision(root, upstream_ref)
+                    except GitCommandFailedError:
+                        base_commit = head
+                    else:
+                        selected_ref = upstream_ref
             diff_observation = self.git.diff(
                 root,
-                base_commit=head,
+                base_commit=base_commit,
                 include_untracked=True,
                 path=path,
             )
@@ -1721,12 +1739,16 @@ class WorktreeManager:
             raise WorktreeError("git_observation_failed") from error
         return GitDiffSnapshot(
             scope=scope,
-            base_commit=head,
+            compare_ref=selected_ref,
+            base_commit=base_commit,
             head=head,
             dirty=status_observation.dirty,
             changed_files=diff_observation.changed_paths,
             unified_diff=diff_observation.patch,
             truncated=diff_observation.truncated,
+            additions=diff_observation.additions,
+            deletions=diff_observation.deletions,
+            stats_incomplete=diff_observation.stats_incomplete,
             observed_at=utc_now(),
         )
 
@@ -1735,6 +1757,7 @@ class WorktreeManager:
         worktree_id: str,
         *,
         scope: DiffScope = DiffScope.HEAD,
+        compare_ref: str | None = None,
         path: str | None = None,
     ) -> GitDiffSnapshot:
         worktree = self._read_worktree(worktree_id)
@@ -1749,10 +1772,15 @@ class WorktreeManager:
             raise WorktreeError(validation.code or "worktree_invalid")
         root = Path(worktree.worktree_root)
         try:
-            if scope is DiffScope.HEAD:
+            if compare_ref is not None:
+                base_commit = self._resolve_diff_compare(root, compare_ref)
+                selected_ref = compare_ref
+            elif scope is DiffScope.HEAD:
                 base_commit = validation.head
+                selected_ref = None
             elif scope is DiffScope.BASELINE:
                 base_commit = worktree.base_commit
+                selected_ref = worktree.base_ref
             else:
                 raise WorktreeError("worktree_invalid")
             diff_observation = self.git.diff(
@@ -1770,14 +1798,26 @@ class WorktreeManager:
             raise WorktreeError("git_observation_incomplete") from error
         return GitDiffSnapshot(
             scope=scope,
-            base_commit=worktree.base_commit,
+            compare_ref=selected_ref,
+            base_commit=base_commit,
             head=validation.head,
             dirty=status_observation.dirty,
             changed_files=diff_observation.changed_paths,
             unified_diff=diff_observation.patch,
             truncated=diff_observation.truncated,
+            additions=diff_observation.additions,
+            deletions=diff_observation.deletions,
+            stats_incomplete=diff_observation.stats_incomplete,
             observed_at=utc_now(),
         )
+
+    def _resolve_diff_compare(self, root: Path, compare_ref: str) -> str:
+        try:
+            return self.git.resolve_revision(root, compare_ref)
+        except GitCommandTimeoutError:
+            raise WorktreeError("git_command_timeout") from None
+        except (GitCommandFailedError, ValueError) as error:
+            raise WorktreeError("git_compare_ref_invalid") from error
 
     def _deleted_validation(
         self,

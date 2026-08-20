@@ -50,6 +50,7 @@ function renderControls(overrides: Partial<Parameters<typeof GitWorkflowControls
   const readRemoteStatus = vi.fn().mockResolvedValue(remote);
   const readProjectGitContext = vi.fn().mockResolvedValue(branches);
   const commit = vi.fn().mockResolvedValue({ head: "c".repeat(40) } as SessionGitCommitResult);
+  const stage = vi.fn().mockResolvedValue(undefined);
   const fetch = vi.fn().mockResolvedValue({ ...remote, remote: "origin", head: status.head });
   const pull = vi.fn().mockResolvedValue({ ...remote, remote: "origin", head: status.head, status });
   const push = vi.fn().mockResolvedValue({ ...remote, remote: "origin", head: status.head, status });
@@ -72,6 +73,7 @@ function renderControls(overrides: Partial<Parameters<typeof GitWorkflowControls
       readRemoteStatus={readRemoteStatus}
       readProjectGitContext={readProjectGitContext}
       commit={commit}
+      stage={stage}
       fetch={fetch}
       pull={pull}
       push={push}
@@ -85,12 +87,40 @@ function renderControls(overrides: Partial<Parameters<typeof GitWorkflowControls
   );
   return {
     result,
-    readRemoteStatus, readProjectGitContext, commit, fetch, pull, push,
+    readRemoteStatus, readProjectGitContext, commit, stage, fetch, pull, push,
     merge, mergeAbort, rebase, rebaseContinue, rebaseAbort, onRefresh,
   };
 }
 
+function openWorkflow() {
+  fireEvent.click(screen.getByText("提交或推送"));
+}
+
 describe("GitWorkflowControls", () => {
+  it("opens the commit and push popover from an external request", async () => {
+    const { result } = renderControls({ openRequest: 1 });
+
+    await waitFor(() => expect(result.container.querySelector(".git-workflow-popover"))
+      .toHaveAttribute("open"));
+  });
+
+  it("includes unstaged files before committing and can push the new commit", async () => {
+    const { stage, commit, push } = renderControls();
+    openWorkflow();
+    fireEvent.change(screen.getByRole("textbox", { name: "提交信息" }), {
+      target: { value: "Include all changes" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "提交并推送" }));
+
+    await waitFor(() => expect(stage).toHaveBeenCalledWith(
+      "session-a", ["src/index.ts"], expect.any(String),
+    ));
+    await waitFor(() => expect(commit).toHaveBeenCalledWith(
+      "session-a", "Include all changes", expect.any(String),
+    ));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("session-a", expect.any(String)));
+  });
+
   it("shows branch, upstream and ahead/behind observation", async () => {
     renderControls();
 
@@ -119,26 +149,30 @@ describe("GitWorkflowControls", () => {
   });
 
   it("commits only the already staged changes", async () => {
-    const { commit, onRefresh } = renderControls();
-    fireEvent.change(screen.getByRole("textbox", { name: "Commit message" }), {
+    const { commit, stage, onRefresh } = renderControls();
+    openWorkflow();
+    fireEvent.click(screen.getByRole("checkbox", { name: "包含未暂存的更改" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "提交信息" }), {
       target: { value: "Add review controls" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Commit" }));
+    fireEvent.click(screen.getByRole("button", { name: "提交" }));
 
     await waitFor(() => expect(commit).toHaveBeenCalledWith(
       "session-a", "Add review controls", expect.any(String),
     ));
+    expect(stage).not.toHaveBeenCalled();
     expect(onRefresh).toHaveBeenCalled();
   });
 
   it("runs fetch, pull and push through typed APIs", async () => {
     const { fetch, pull, push } = renderControls();
+    openWorkflow();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Fetch" }));
+    fireEvent.click(await screen.findByRole("button", { name: "获取" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("session-a", expect.any(String)));
-    fireEvent.click(screen.getByRole("button", { name: "Pull" }));
+    fireEvent.click(screen.getByRole("button", { name: "拉取" }));
     await waitFor(() => expect(pull).toHaveBeenCalledWith("session-a", expect.any(String)));
-    fireEvent.click(screen.getByRole("button", { name: "Push" }));
+    fireEvent.click(screen.getByRole("button", { name: "推送" }));
     await waitFor(() => expect(push).toHaveBeenCalledWith("session-a", expect.any(String)));
   });
 
@@ -147,10 +181,11 @@ describe("GitWorkflowControls", () => {
       .mockRejectedValueOnce(new Error("EIDOS_RUNTIME_ERROR:GIT_REMOTE_FAILED"))
       .mockResolvedValueOnce({ ...remote, remote: "origin", head: status.head });
     renderControls({ fetch });
+    openWorkflow();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Fetch" }));
+    fireEvent.click(await screen.findByRole("button", { name: "获取" }));
     await screen.findByRole("alert");
-    fireEvent.click(screen.getByRole("button", { name: "Fetch" }));
+    fireEvent.click(screen.getByRole("button", { name: "获取" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
 
     expect(fetch.mock.calls[1]![1]).not.toBe(fetch.mock.calls[0]![1]);
@@ -161,10 +196,11 @@ describe("GitWorkflowControls", () => {
       .mockRejectedValueOnce(new Error("EIDOS_RUNTIME_ERROR:OPERATION_IN_PROGRESS"))
       .mockRejectedValueOnce(new Error("EIDOS_RUNTIME_ERROR:OPERATION_IN_PROGRESS"));
     renderControls({ fetch });
+    openWorkflow();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Fetch" }));
+    fireEvent.click(await screen.findByRole("button", { name: "获取" }));
     await screen.findByRole("alert");
-    fireEvent.click(screen.getByRole("button", { name: "Fetch" }));
+    fireEvent.click(screen.getByRole("button", { name: "获取" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
 
     expect(fetch.mock.calls[1]![1]).toBe(fetch.mock.calls[0]![1]);
@@ -175,10 +211,11 @@ describe("GitWorkflowControls", () => {
       .mockRejectedValueOnce(new Error("EIDOS_RUNTIME_ERROR:GIT_REMOTE_OUTCOME_UNCERTAIN"))
       .mockResolvedValueOnce({ ...remote, remote: "origin", head: status.head });
     renderControls({ fetch });
+    openWorkflow();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Fetch" }));
+    fireEvent.click(await screen.findByRole("button", { name: "获取" }));
     await screen.findByRole("alert");
-    fireEvent.click(screen.getByRole("button", { name: "Fetch" }));
+    fireEvent.click(screen.getByRole("button", { name: "获取" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
 
     expect(fetch.mock.calls[1]![1]).not.toBe(fetch.mock.calls[0]![1]);
@@ -186,6 +223,8 @@ describe("GitWorkflowControls", () => {
 
   it("uses observed branches as merge and rebase targets", async () => {
     const { merge, rebase } = renderControls();
+    openWorkflow();
+    fireEvent.click(screen.getByText("高级 Git"));
     const selector = await screen.findByRole("combobox", { name: "Git target" });
     expect(selector).toHaveTextContent("main");
     expect(selector).toHaveTextContent("release");
@@ -214,6 +253,8 @@ describe("GitWorkflowControls", () => {
     const rebaseContinue = vi.fn().mockResolvedValue({ ...conflict, operationState: "none" });
     const rebaseAbort = vi.fn().mockResolvedValue({ ...conflict, operationState: "none" });
     renderControls({ rebase, rebaseContinue, rebaseAbort });
+    openWorkflow();
+    fireEvent.click(screen.getByText("高级 Git"));
 
     fireEvent.click(await screen.findByRole("button", { name: "Rebase" }));
     expect(await screen.findByText("conflict.txt")).toBeInTheDocument();
@@ -234,6 +275,8 @@ describe("GitWorkflowControls", () => {
     const merge = vi.fn().mockResolvedValue(mergeConflict);
     const mergeAbort = vi.fn().mockResolvedValue({ ...mergeConflict, operationState: "none" });
     const { result } = renderControls({ merge, mergeAbort });
+    openWorkflow();
+    fireEvent.click(screen.getByText("高级 Git"));
 
     fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
     fireEvent.click(await screen.findByRole("button", { name: "Abort Merge" }));
@@ -246,6 +289,8 @@ describe("GitWorkflowControls", () => {
     const rebase = vi.fn().mockResolvedValue(rebaseConflict);
     const rebaseAbort = vi.fn().mockResolvedValue({ ...rebaseConflict, operationState: "none" });
     renderControls({ rebase, rebaseAbort });
+    openWorkflow();
+    fireEvent.click(screen.getByText("高级 Git"));
     fireEvent.click(await screen.findByRole("button", { name: "Rebase" }));
     fireEvent.click(await screen.findByRole("button", { name: "Abort Rebase" }));
     await waitFor(() => expect(rebaseAbort).toHaveBeenCalledWith(
@@ -259,7 +304,8 @@ describe("GitWorkflowControls", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Create Branch Here" }));
     expect(onCreateBranch).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("button", { name: "Commit" })).toBeDisabled();
+    openWorkflow();
+    expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
   });
 
   it("offers branch creation for a clean Local session", async () => {
@@ -275,10 +321,12 @@ describe("GitWorkflowControls", () => {
 
   it("disables conflicting actions while an Agent Run is active", async () => {
     renderControls({ disabled: true });
+    openWorkflow();
+    fireEvent.click(screen.getByText("高级 Git"));
 
-    expect(await screen.findByRole("button", { name: "Fetch" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Pull" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Push" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "获取" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "拉取" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "推送" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Merge" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Rebase" })).toBeDisabled();
   });

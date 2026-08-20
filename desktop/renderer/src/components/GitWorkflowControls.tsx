@@ -21,6 +21,7 @@ interface GitWorkflowControlsProps {
   status: SessionGitStatus;
   disabled: boolean;
   onRefresh(): void;
+  openRequest?: number | undefined;
   onCreateBranch?: (() => void) | undefined;
   switchBranch?: (
     sessionId: string, branch: string, operationId: string,
@@ -30,6 +31,7 @@ interface GitWorkflowControlsProps {
   commit?: (
     sessionId: string, message: string, operationId: string,
   ) => Promise<SessionGitCommitResult>;
+  stage?: (sessionId: string, paths: string[], operationId: string) => Promise<unknown>;
   fetch?: (sessionId: string, operationId: string) => Promise<GitFetchResult>;
   pull?: (sessionId: string, operationId: string) => Promise<GitPullResult>;
   push?: (sessionId: string, operationId: string) => Promise<GitPushResult>;
@@ -51,6 +53,9 @@ const defaults = {
   ),
   commit: (sessionId: string, message: string, operationId: string) => (
     window.eidosRuntime.commitSessionGit(sessionId, message, operationId)
+  ),
+  stage: (sessionId: string, paths: string[], operationId: string) => (
+    window.eidosRuntime.stageSessionGit(sessionId, paths, operationId)
   ),
   switchBranch: (sessionId: string, branch: string, operationId: string) => (
     window.eidosRuntime.switchSessionGitBranch(sessionId, branch, operationId)
@@ -87,11 +92,13 @@ export function GitWorkflowControls({
   status,
   disabled,
   onRefresh,
+  openRequest,
   onCreateBranch,
   switchBranch = defaults.switchBranch,
   readRemoteStatus = defaults.readRemoteStatus,
   readProjectGitContext = defaults.readProjectGitContext,
   commit = defaults.commit,
+  stage = defaults.stage,
   fetch = defaults.fetch,
   pull = defaults.pull,
   push = defaults.push,
@@ -105,10 +112,18 @@ export function GitWorkflowControls({
   const [branches, setBranches] = useState<string[]>([]);
   const [target, setTarget] = useState("");
   const [message, setMessage] = useState("");
+  const [includeUnstaged, setIncludeUnstaged] = useState(true);
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
   const [operation, setOperation] = useState<GitMergeResult>();
   const operationIdsRef = useRef(new Map<string, string>());
+  const popoverRef = useRef<HTMLDetailsElement>(null);
+
+  useEffect(() => {
+    if (openRequest !== undefined && openRequest > 0 && popoverRef.current) {
+      popoverRef.current.open = true;
+    }
+  }, [openRequest]);
 
   const targets = useMemo(
     () => branches.filter((branch) => branch !== status.branch),
@@ -146,7 +161,7 @@ export function GitWorkflowControls({
     requestKey: string,
     action: (operationId: string) => Promise<Result>,
     observe?: (result: Result) => void,
-  ): Promise<void> => {
+  ): Promise<Result | null> => {
     setBusy(name);
     setError(undefined);
     try {
@@ -157,6 +172,7 @@ export function GitWorkflowControls({
       observe?.(result);
       onRefresh();
       await loadObservations();
+      return result;
     } catch (cause: unknown) {
       const code = runtimeBusinessCode(cause);
       if (
@@ -167,6 +183,7 @@ export function GitWorkflowControls({
         operationIdsRef.current.delete(requestKey);
       }
       setError(userFacingError(cause));
+      return null;
     } finally {
       setBusy(undefined);
     }
@@ -176,18 +193,47 @@ export function GitWorkflowControls({
     name: string,
     requestKey: string,
     action: (operationId: string) => Promise<Result>,
-  ): Promise<void> => run(name, requestKey, action, (result) => setRemote(result));
+  ): Promise<Result | null> => run(name, requestKey, action, (result) => setRemote(result));
 
   const runOperation = (
     name: string,
     requestKey: string,
     action: (operationId: string) => Promise<GitMergeResult>,
-  ): Promise<void> => run(name, requestKey, action, setOperation);
+  ): Promise<GitMergeResult | null> => run(name, requestKey, action, setOperation);
 
   const controlsDisabled = disabled || busy !== undefined;
   const upstream = remote?.upstream;
   const localSession = status.worktreeId === null;
   const canCreateBranch = onCreateBranch && (localSession || status.branch === null);
+  const unstagedPaths = [...status.unstagedFiles, ...status.untrackedFiles];
+  const canCommit = status.stagedCount > 0 || (includeUnstaged && unstagedPaths.length > 0);
+
+  const commitChanges = async (pushAfterCommit: boolean): Promise<void> => {
+    const commitMessage = message.trim();
+    if (!commitMessage || status.branch === null) return;
+    if (includeUnstaged && unstagedPaths.length > 0) {
+      const staged = await run(
+        "stage",
+        `stage:${unstagedPaths.join("\u0000")}:${status.head}`,
+        (operationId) => stage(sessionId, unstagedPaths, operationId),
+      );
+      if (staged === null) return;
+    }
+    const result = await run(
+      "commit",
+      `commit:${commitMessage}:${status.head}`,
+      (operationId) => commit(sessionId, commitMessage, operationId),
+    );
+    if (!result) return;
+    setMessage("");
+    if (pushAfterCommit) {
+      await runRemote(
+        "push",
+        `push:${status.branch}:${remote?.upstream?.remote ?? ""}:${remote?.upstream?.branch ?? ""}:${result.head}`,
+        (operationId) => push(sessionId, operationId),
+      );
+    }
+  };
 
   return (
     <section className="git-workflow-controls" aria-label="Git workflow">
@@ -235,112 +281,124 @@ export function GitWorkflowControls({
         </Button>
       )}
 
-      <form
-        className="git-commit-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          const commitMessage = message.trim();
-          if (!commitMessage) return;
-          void run("commit", `commit:${commitMessage}:${status.head}`, (operationId) => commit(
-            sessionId, commitMessage, operationId,
-          ), () => setMessage(""));
-        }}
-      >
-        <input
-          aria-label="Commit message"
-          value={message}
-          onChange={(event) => setMessage(event.target.value)}
-          placeholder="Commit message"
-          maxLength={16_384}
-        />
-        <Button
-          type="submit"
-          size="small"
-          variant="primary"
-          loading={busy === "commit"}
-          disabled={controlsDisabled || status.branch === null || status.stagedCount === 0 || !message.trim()}
-        >
-          Commit
-        </Button>
-      </form>
-
-      <div className="git-remote-actions">
-        <Button size="small" disabled={controlsDisabled} loading={busy === "fetch"}
-          onClick={() => void runRemote(
-            "fetch", `fetch:${remote?.upstream?.remote ?? ""}:${status.head}`,
-            (id) => fetch(sessionId, id),
-          )}>Fetch</Button>
-        <Button size="small" disabled={controlsDisabled || status.branch === null}
-          loading={busy === "pull"}
-          onClick={() => void runRemote(
-            "pull", `pull:${remote?.upstream?.remote ?? ""}:${remote?.upstream?.branch ?? ""}:${status.head}`,
-            (id) => pull(sessionId, id),
-          )}>Pull</Button>
-        <Button size="small" disabled={controlsDisabled || status.branch === null}
-          loading={busy === "push"}
-          onClick={() => void runRemote(
-            "push", `push:${status.branch ?? ""}:${remote?.upstream?.remote ?? ""}:${remote?.upstream?.branch ?? ""}:${status.head}`,
-            (id) => push(sessionId, id),
-          )}>Push</Button>
-      </div>
-
-      <details className="git-advanced-controls">
-        <summary>Advanced Git</summary>
-        <div>
-          <select
-            aria-label="Git target"
-            value={target}
-            disabled={controlsDisabled || status.branch === null || targets.length === 0}
-            onChange={(event) => setTarget(event.target.value)}
+      <details ref={popoverRef} className="git-workflow-popover">
+        <summary>提交或推送 <span aria-hidden="true">⌄</span></summary>
+        <div className="git-workflow-popover-content">
+          <form
+            className="git-commit-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void commitChanges(false);
+            }}
           >
-            {targets.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
-          </select>
-          <Button size="small" disabled={controlsDisabled || !target || status.branch === null}
-            loading={busy === "merge"}
-            onClick={() => void runOperation(
-              "merge", `merge:${target}:${status.head}`, (id) => merge(sessionId, target, id),
-            )}>
-            Merge
-          </Button>
-          <Button size="small" disabled={controlsDisabled || !target || status.branch === null}
-            loading={busy === "rebase"}
-            onClick={() => void runOperation(
-              "rebase", `rebase:${target}:${status.head}`, (id) => rebase(sessionId, target, id),
-            )}>
-            Rebase
-          </Button>
-        </div>
-      </details>
-
-      {operation?.operationState !== undefined && operation.operationState !== "none" && (
-        <aside className="git-operation-conflict" aria-label="Git conflict operation">
-          <strong>{operation.operationState === "merge" ? "Merge conflicts" : "Rebase conflicts"}</strong>
-          <ul>{operation.conflictFiles.map((path) => <li key={path}>{path}</li>)}</ul>
-          {operation.operationState === "merge" ? (
-            <Button size="small" variant="danger" disabled={controlsDisabled}
-              onClick={() => void runOperation(
-                "merge-abort", "merge-abort", (id) => mergeAbort(sessionId, id),
-              )}>
-              Abort Merge
-            </Button>
-          ) : (
-            <div>
-              <Button size="small" variant="primary" disabled={controlsDisabled}
-                onClick={() => void runOperation(
-                  "rebase-continue", "rebase-continue", (id) => rebaseContinue(sessionId, id),
-                )}>
-                Continue Rebase
+            <input
+              aria-label="提交信息"
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              placeholder="输入提交信息"
+              maxLength={16_384}
+            />
+            <label className="git-include-unstaged">
+              <input
+                type="checkbox"
+                checked={includeUnstaged}
+                onChange={(event) => setIncludeUnstaged(event.target.checked)}
+              />
+              包含未暂存的更改
+            </label>
+            <div className="git-commit-actions">
+              <Button type="submit" size="small" variant="primary"
+                loading={busy === "commit"}
+                disabled={controlsDisabled || status.branch === null || !canCommit || !message.trim()}>
+                提交
               </Button>
-              <Button size="small" variant="danger" disabled={controlsDisabled}
-                onClick={() => void runOperation(
-                  "rebase-abort", "rebase-abort", (id) => rebaseAbort(sessionId, id),
-                )}>
-                Abort Rebase
+              <Button type="button" size="small" variant="secondary"
+                disabled={controlsDisabled || status.branch === null || !canCommit || !message.trim()}
+                onClick={() => void commitChanges(true)}>
+                提交并推送
               </Button>
             </div>
+          </form>
+
+          <div className="git-remote-actions">
+            <Button size="small" disabled={controlsDisabled} loading={busy === "fetch"}
+              onClick={() => void runRemote(
+                "fetch", `fetch:${remote?.upstream?.remote ?? ""}:${status.head}`,
+                (id) => fetch(sessionId, id),
+              )}>获取</Button>
+            <Button size="small" disabled={controlsDisabled || status.branch === null}
+              loading={busy === "pull"}
+              onClick={() => void runRemote(
+                "pull", `pull:${remote?.upstream?.remote ?? ""}:${remote?.upstream?.branch ?? ""}:${status.head}`,
+                (id) => pull(sessionId, id),
+              )}>拉取</Button>
+            <Button size="small" disabled={controlsDisabled || status.branch === null}
+              loading={busy === "push"}
+              onClick={() => void runRemote(
+                "push", `push:${status.branch ?? ""}:${remote?.upstream?.remote ?? ""}:${remote?.upstream?.branch ?? ""}:${status.head}`,
+                (id) => push(sessionId, id),
+              )}>推送</Button>
+          </div>
+
+          <details className="git-advanced-controls">
+            <summary>高级 Git</summary>
+            <div>
+              <select
+                aria-label="Git target"
+                value={target}
+                disabled={controlsDisabled || status.branch === null || targets.length === 0}
+                onChange={(event) => setTarget(event.target.value)}
+              >
+                {targets.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
+              </select>
+              <Button size="small" disabled={controlsDisabled || !target || status.branch === null}
+                loading={busy === "merge"}
+                onClick={() => void runOperation(
+                  "merge", `merge:${target}:${status.head}`, (id) => merge(sessionId, target, id),
+                )}>
+                Merge
+              </Button>
+              <Button size="small" disabled={controlsDisabled || !target || status.branch === null}
+                loading={busy === "rebase"}
+                onClick={() => void runOperation(
+                  "rebase", `rebase:${target}:${status.head}`, (id) => rebase(sessionId, target, id),
+                )}>
+                Rebase
+              </Button>
+            </div>
+          </details>
+
+          {operation?.operationState !== undefined && operation.operationState !== "none" && (
+            <aside className="git-operation-conflict" aria-label="Git conflict operation">
+              <strong>{operation.operationState === "merge" ? "Merge conflicts" : "Rebase conflicts"}</strong>
+              <ul>{operation.conflictFiles.map((path) => <li key={path}>{path}</li>)}</ul>
+              {operation.operationState === "merge" ? (
+                <Button size="small" variant="danger" disabled={controlsDisabled}
+                  onClick={() => void runOperation(
+                    "merge-abort", "merge-abort", (id) => mergeAbort(sessionId, id),
+                  )}>
+                  Abort Merge
+                </Button>
+              ) : (
+                <div>
+                  <Button size="small" variant="primary" disabled={controlsDisabled}
+                    onClick={() => void runOperation(
+                      "rebase-continue", "rebase-continue", (id) => rebaseContinue(sessionId, id),
+                    )}>
+                    Continue Rebase
+                  </Button>
+                  <Button size="small" variant="danger" disabled={controlsDisabled}
+                    onClick={() => void runOperation(
+                      "rebase-abort", "rebase-abort", (id) => rebaseAbort(sessionId, id),
+                    )}>
+                    Abort Rebase
+                  </Button>
+                </div>
+              )}
+            </aside>
           )}
-        </aside>
-      )}
+        </div>
+      </details>
 
       {error && <p className="approval-error git-workflow-error" role="alert">{error}</p>}
     </section>

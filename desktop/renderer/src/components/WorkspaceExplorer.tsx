@@ -17,6 +17,9 @@ interface WorkspaceTreeNode extends WorkspaceDirectoryEntry {
 
 interface WorkspaceExplorerProps {
   sessionId: string;
+  executionKey?: string;
+  layout?: "side" | "expanded";
+  onSelectedFileChange?: (path?: string) => void;
   listDirectory?: (
     sessionId: string,
     path: string,
@@ -52,7 +55,7 @@ function toNodes(
   previous: WorkspaceTreeNode[] = [],
 ): WorkspaceTreeNode[] {
   const byId = new Map(previous.map((node) => [node.id, node]));
-  return entries.map((entry) => {
+  return entries.filter((entry) => entry.name !== ".git").map((entry) => {
     const existing = byId.get(entry.relativePath);
     return {
       ...entry,
@@ -95,6 +98,9 @@ function findNode(nodes: WorkspaceTreeNode[], id: string): WorkspaceTreeNode | u
 
 export function WorkspaceExplorer({
   sessionId,
+  executionKey = sessionId,
+  layout = "expanded",
+  onSelectedFileChange,
   listDirectory = defaultListDirectory,
   readPreview = defaultReadPreview,
   subscribeChanges = defaultSubscribeChanges,
@@ -105,7 +111,11 @@ export function WorkspaceExplorer({
   const [loadingPath, setLoadingPath] = useState<string>();
   const [preview, setPreview] = useState<WorkspaceFilePreview>();
   const [error, setError] = useState<string>();
+  const [treeHeight, setTreeHeight] = useState(320);
   const requestVersion = useRef(0);
+  const treeContainerRef = useRef<HTMLDivElement>(null);
+  const selectedFileCallbackRef = useRef(onSelectedFileChange);
+  selectedFileCallbackRef.current = onSelectedFileChange;
 
   useEffect(() => {
     const version = ++requestVersion.current;
@@ -127,7 +137,24 @@ export function WorkspaceExplorer({
       .finally(() => {
         if (requestVersion.current === version) setLoadingRoot(false);
       });
-  }, [sessionId, listDirectory]);
+  }, [executionKey, sessionId, listDirectory]);
+
+  useEffect(() => {
+    selectedFileCallbackRef.current?.(undefined);
+  }, [executionKey, sessionId]);
+
+  useEffect(() => {
+    const container = treeContainerRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return;
+    const resize = () => {
+      const height = Math.floor(container.getBoundingClientRect().height);
+      if (height > 0) setTreeHeight(height);
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [layout]);
 
   const loadDirectory = useCallback((path: string, force = false) => {
     const node = findNode(nodes, path);
@@ -138,8 +165,10 @@ export function WorkspaceExplorer({
     if (loadingPath === path) return;
     setLoadingPath(path);
     setError(undefined);
+    const version = requestVersion.current;
     void listDirectory(sessionId, path)
       .then((listing) => {
+        if (requestVersion.current !== version) return;
         if (path === ".") {
           setNodes((current) => toNodes(listing.entries, current));
           setRootTruncated(listing.truncated);
@@ -149,20 +178,34 @@ export function WorkspaceExplorer({
         if (listing.truncated) setError(`${path} 的目录内容已截断`);
       })
       .catch((cause: unknown) => {
+        if (requestVersion.current !== version) return;
         setError(cause instanceof Error ? cause.message : "Workspace 目录读取失败");
       })
-      .finally(() => setLoadingPath((current) => current === path ? undefined : current));
+      .finally(() => {
+        if (requestVersion.current === version) {
+          setLoadingPath((current) => current === path ? undefined : current);
+        }
+      });
   }, [listDirectory, loadingPath, nodes, sessionId]);
 
   const openFile = useCallback((path: string) => {
     setLoadingPath(path);
     setError(undefined);
+    selectedFileCallbackRef.current?.(path);
+    const version = requestVersion.current;
     void readPreview(sessionId, path)
-      .then(setPreview)
+      .then((nextPreview) => {
+        if (requestVersion.current === version) setPreview(nextPreview);
+      })
       .catch((cause: unknown) => {
+        if (requestVersion.current !== version) return;
         setError(cause instanceof Error ? cause.message : "文件预览读取失败");
       })
-      .finally(() => setLoadingPath((current) => current === path ? undefined : current));
+      .finally(() => {
+        if (requestVersion.current === version) {
+          setLoadingPath((current) => current === path ? undefined : current);
+        }
+      });
   }, [readPreview, sessionId]);
 
   useEffect(() => subscribeChanges(sessionId, (paths) => {
@@ -176,7 +219,7 @@ export function WorkspaceExplorer({
       }
     }
     if (preview && paths.includes(preview.path)) openFile(preview.path);
-  }), [loadDirectory, nodes, openFile, preview, sessionId, subscribeChanges]);
+  }), [executionKey, loadDirectory, nodes, openFile, preview, sessionId, subscribeChanges]);
 
   const renderNode = useCallback((props: NodeRendererProps<WorkspaceTreeNode>) => (
     <WorkspaceTreeRow
@@ -188,7 +231,10 @@ export function WorkspaceExplorer({
   ), [loadDirectory, loadingPath, openFile]);
 
   return (
-    <section className="workspace-explorer" aria-label="Workspace 文件浏览器">
+    <section
+      className={`workspace-explorer workspace-explorer--${layout}`}
+      aria-label="Workspace 文件浏览器"
+    >
       <aside className="workspace-tree-pane" aria-label="文件树">
         <div className="workspace-explorer-heading">
           <strong>Files</strong>
@@ -199,11 +245,11 @@ export function WorkspaceExplorer({
         {!loadingRoot && nodes.length === 0 ? (
           <p className="workspace-empty-state">Workspace 中没有可显示的文件</p>
         ) : (
-          <div className="workspace-tree-scroll">
+          <div className="workspace-tree-scroll" ref={treeContainerRef}>
             <Tree<WorkspaceTreeNode>
               data={nodes}
               width="100%"
-              height={720}
+              height={treeHeight}
               rowHeight={28}
               indent={16}
               overscanCount={8}
@@ -250,13 +296,14 @@ function WorkspaceTreeRow({
       ref={dragHandle}
       style={style}
       className={`workspace-tree-row${node.isSelected ? " is-selected" : ""}`}
-      onClick={() => node.select()}
+      onClick={() => {
+        node.select();
+        if (node.data.kind === "file") onOpenFile(node.id);
+      }}
       onDoubleClick={() => {
         if (node.data.kind === "directory") {
           onOpenDirectory(node.id);
           node.toggle();
-        } else {
-          onOpenFile(node.id);
         }
       }}
     >

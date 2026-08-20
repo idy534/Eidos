@@ -302,6 +302,9 @@ class DulwichGitBackend:
             patch=captured.patch.decode("utf-8", errors="replace"),
             changed_paths=captured.changed_paths,
             truncated=captured.truncated,
+            additions=captured.additions,
+            deletions=captured.deletions,
+            stats_incomplete=captured.stats_incomplete,
         )
 
     def stage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation:

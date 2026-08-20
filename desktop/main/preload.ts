@@ -50,6 +50,9 @@ import type {
   AppShortcut,
   WorkspaceDirectoryListing,
   WorkspaceFilePreview,
+  TerminalSessionInfo,
+  TerminalDataEvent,
+  TerminalExitEvent,
 } from "../shared/domain-contracts.js";
 import type {
   ItemFeedbackResult,
@@ -83,6 +86,28 @@ const api: EidosRuntimeAPI = {
     ipcRenderer.invoke(IPC.WORKSPACE_READ_FILE_PREVIEW, sessionId, path),
   openWorkspacePathInEditor: (sessionId: string, path: string): Promise<void> =>
     ipcRenderer.invoke(IPC.WORKSPACE_OPEN_IN_EDITOR, sessionId, path),
+
+  // User terminal
+  createTerminal: (sessionId: string): Promise<TerminalSessionInfo> =>
+    ipcRenderer.invoke(IPC.TERMINAL_CREATE, sessionId),
+  writeTerminal: (terminalId: string, data: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.TERMINAL_WRITE, terminalId, data),
+  resizeTerminal: (terminalId: string, columns: number, rows: number): Promise<void> =>
+    ipcRenderer.invoke(IPC.TERMINAL_RESIZE, terminalId, columns, rows),
+  closeTerminal: (terminalId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.TERMINAL_CLOSE, terminalId),
+  onTerminalData: (callback: (event: TerminalDataEvent) => void): Unsubscribe => {
+    const listener = (_event: Electron.IpcRendererEvent, terminalEvent: TerminalDataEvent) =>
+      callback(terminalEvent);
+    ipcRenderer.on(IPC.TERMINAL_DATA_EVENT, listener);
+    return () => ipcRenderer.removeListener(IPC.TERMINAL_DATA_EVENT, listener);
+  },
+  onTerminalExit: (callback: (event: TerminalExitEvent) => void): Unsubscribe => {
+    const listener = (_event: Electron.IpcRendererEvent, terminalEvent: TerminalExitEvent) =>
+      callback(terminalEvent);
+    ipcRenderer.on(IPC.TERMINAL_EXIT_EVENT, listener);
+    return () => ipcRenderer.removeListener(IPC.TERMINAL_EXIT_EVENT, listener);
+  },
 
   // Sessions
   createProject: (name: string | undefined, workspaceRoot: string): Promise<Project> =>
@@ -128,8 +153,9 @@ const api: EidosRuntimeAPI = {
     sessionId: string,
     scope: GitDiffScope,
     path?: string,
+    compareRef?: string,
   ): Promise<SessionGitDiff> =>
-    ipcRenderer.invoke(IPC.SESSION_GIT_DIFF, sessionId, scope, path),
+    ipcRenderer.invoke(IPC.SESSION_GIT_DIFF, sessionId, scope, path, compareRef),
   switchSessionGitBranch: (
     sessionId: string,
     branch: string,

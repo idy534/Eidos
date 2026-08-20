@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { constants as fsConstants } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -31,6 +33,10 @@ async function readPackagingFiles() {
 test("packaging commands and pinned electron-builder are declared", async () => {
   const { packageJson } = await readPackagingFiles();
   assert.equal(packageJson.devDependencies["electron-builder"], "26.15.3");
+  assert.equal(packageJson.dependencies["@xterm/xterm"], "6.0.0");
+  assert.equal(packageJson.dependencies["@xterm/addon-fit"], "0.11.0");
+  assert.equal(packageJson.dependencies["node-pty"], "1.1.0");
+  assert.equal(packageJson.scripts.postinstall, "node scripts/prepare-node-pty.mjs");
   assert.equal(packageJson.scripts["package:mac"], "bash scripts/package-macos.sh local");
   assert.equal(
     packageJson.scripts["package:mac:release"],
@@ -39,6 +45,20 @@ test("packaging commands and pinned electron-builder are declared", async () => 
   assert.equal(
     packageJson.scripts["test:electron-packaged"],
     "node scripts/packaged-electron-smoke.mjs",
+  );
+});
+
+
+test("installed node-pty keeps its macOS arm64 spawn helper executable", async (context) => {
+  if (process.platform !== "darwin" || process.arch !== "arm64") {
+    context.skip("node-pty packaging is currently macOS arm64 only");
+    return;
+  }
+  const require = createRequire(import.meta.url);
+  const packageRoot = path.dirname(require.resolve("node-pty/package.json"));
+  await access(
+    path.join(packageRoot, "prebuilds", "darwin-arm64", "spawn-helper"),
+    fsConstants.X_OK,
   );
 });
 
@@ -77,6 +97,7 @@ test("electron-builder keeps Runtime outside ASAR and targets only arm64 DMG", a
   assert.match(builderConfig, /^appId:\s+com\.idy\.eidos\s*$/m);
   assert.match(builderConfig, /^productName:\s+Eidos\s*$/m);
   assert.match(builderConfig, /^asar:\s+true\s*$/m);
+  assert.match(builderConfig, /^asarUnpack:\s*\n\s*- node_modules\/node-pty\/\*\*\/\*\s*$/m);
   assert.match(builderConfig, /^\s*- from: build\/macos-runtime\s*$/m);
   assert.match(builderConfig, /^\s*to: runtime\s*$/m);
   assert.match(builderConfig, /target:\s+dmg/);

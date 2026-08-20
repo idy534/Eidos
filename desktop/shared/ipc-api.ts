@@ -47,6 +47,9 @@ import type {
   AppShortcut,
   WorkspaceDirectoryListing,
   WorkspaceFilePreview,
+  TerminalSessionInfo,
+  TerminalDataEvent,
+  TerminalExitEvent,
 } from "./domain-contracts.js";
 import type {
   ItemFeedbackResult,
@@ -74,6 +77,14 @@ export interface EidosRuntimeAPI {
     path: string,
   ): Promise<WorkspaceFilePreview>;
   openWorkspacePathInEditor(sessionId: string, path: string): Promise<void>;
+
+  // User terminal
+  createTerminal(sessionId: string): Promise<TerminalSessionInfo>;
+  writeTerminal(terminalId: string, data: string): Promise<void>;
+  resizeTerminal(terminalId: string, columns: number, rows: number): Promise<void>;
+  closeTerminal(terminalId: string): Promise<void>;
+  onTerminalData(callback: (event: TerminalDataEvent) => void): Unsubscribe;
+  onTerminalExit(callback: (event: TerminalExitEvent) => void): Unsubscribe;
 
   // Sessions
   createProject(name: string | undefined, workspaceRoot: string): Promise<Project>;
@@ -109,6 +120,7 @@ export interface EidosRuntimeAPI {
     sessionId: string,
     scope: GitDiffScope,
     path?: string,
+    compareRef?: string,
   ): Promise<SessionGitDiff>;
   switchSessionGitBranch(
     sessionId: string,

@@ -69,9 +69,22 @@ async function verifyApplicationLayout(appPath) {
   const appRoot = path.join(runtimeRoot, "app");
   const pythonExecutable = path.join(pythonRoot, "bin", "python3");
   const asarPath = path.join(resourcesRoot, "app.asar");
+  const nodePtyRoot = path.join(
+    resourcesRoot,
+    "app.asar.unpacked",
+    "node_modules",
+    "node-pty",
+    "prebuilds",
+    "darwin-arm64",
+  );
 
   assert.equal((await stat(path.join(contentsRoot, "MacOS", "Eidos"))).isFile(), true);
   assert.equal((await stat(asarPath)).isFile(), true, "Electron application must be in app.asar");
+  assert.equal((await stat(path.join(nodePtyRoot, "pty.node"))).isFile(), true);
+  assert.ok(
+    (await stat(path.join(nodePtyRoot, "spawn-helper"))).mode & 0o111,
+    "node-pty spawn helper must be executable",
+  );
   assert.equal((await stat(pythonExecutable)).isFile(), true);
   assert.ok((await stat(pythonExecutable)).mode & 0o111, "bundled Python must be executable");
   assert.equal((await stat(path.join(appRoot, "eidos_runtime", "__main__.py"))).isFile(), true);

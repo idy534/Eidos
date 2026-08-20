@@ -42,6 +42,7 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "WORKTREE_REQUIRES_GIT",
   "BASE_REF_NOT_FOUND",
   "GIT_COMMAND_TIMEOUT",
+  "GIT_COMPARE_REF_INVALID",
   "WORKTREE_CREATE_FAILED",
   "WORKTREE_PERSISTENCE_FAILED",
   "WORKTREE_RECOVERY_REQUIRED",
@@ -519,9 +520,17 @@ export class RuntimeClient {
     sessionId: string,
     scope: GitDiffScope,
     path?: string,
+    compareRef?: string,
   ): Promise<SessionGitDiff> {
     return this.validatedRequest(
-      "session/gitDiff", { sessionId, scope, ...(path === undefined ? {} : { path }) }, isSessionGitDiff,
+      "session/gitDiff",
+      {
+        sessionId,
+        scope,
+        ...(path === undefined ? {} : { path }),
+        ...(compareRef === undefined ? {} : { compareRef }),
+      },
+      isSessionGitDiff,
     );
   }
 
@@ -1474,10 +1483,12 @@ function isSessionGitDiff(value: unknown): value is SessionGitDiff {
   return (
     isRecord(value)
     && hasOnlyKeys(value, [
-      "scope", "baseCommit", "head", "dirty", "changedFiles",
-      "unifiedDiff", "diffHash", "truncated", "observedAt",
+      "scope", "compareRef", "baseCommit", "head", "dirty", "changedFiles",
+      "unifiedDiff", "diffHash", "truncated", "additions", "deletions",
+      "statsIncomplete", "observedAt",
     ])
     && ["head", "baseline"].includes(String(value.scope))
+    && (value.compareRef === null || typeof value.compareRef === "string")
     && (value.baseCommit === null || typeof value.baseCommit === "string")
     && typeof value.head === "string"
     && typeof value.dirty === "boolean"
@@ -1486,6 +1497,9 @@ function isSessionGitDiff(value: unknown): value is SessionGitDiff {
     && typeof value.unifiedDiff === "string"
     && typeof value.diffHash === "string"
     && typeof value.truncated === "boolean"
+    && isNonNegativeInteger(value.additions)
+    && isNonNegativeInteger(value.deletions)
+    && typeof value.statsIncomplete === "boolean"
     && isNonNegativeInteger(value.observedAt)
   );
 }

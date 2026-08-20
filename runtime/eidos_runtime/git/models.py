@@ -50,6 +50,9 @@ class GitDiffObservation(EidosFrozenStrictModel):
     patch: str
     changed_paths: tuple[str, ...]
     truncated: bool
+    additions: int = Field(ge=0)
+    deletions: int = Field(ge=0)
+    stats_incomplete: bool
 
 
 class GitRemote(EidosFrozenStrictModel):

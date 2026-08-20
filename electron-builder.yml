@@ -1,6 +1,8 @@
 appId: com.idy.eidos
 productName: Eidos
 asar: true
+asarUnpack:
+  - node_modules/node-pty/**/*
 artifactName: Eidos-${version}-mac-${arch}.dmg
 
 directories:

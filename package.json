@@ -15,6 +15,7 @@
     "build:preload": "vite build --config vite.preload.config.ts",
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "tsc -p tsconfig.renderer.json --noEmit && vite build",
+    "postinstall": "node scripts/prepare-node-pty.mjs",
     "start": "pnpm build && electron .",
     "python:sync": "uv sync --locked",
     "test": "pnpm test:full",
@@ -36,7 +37,7 @@
     "test:contracts": "node --test scripts/check-desktop-contracts.test.mjs && node scripts/check-desktop-contracts.mjs",
     "test:renderer-state": "node scripts/check-renderer-test-discovery.mjs && node --test \"dist/renderer-test/**/*.test.js\"",
     "test:renderer-behavior": "vitest run --config vitest.renderer.config.ts",
-    "test:main:fast": "pnpm build:main && node --test dist/main/app-command-dispatch.test.js dist/main/log-redaction.test.js dist/main/quit-flow.test.js dist/main/runtime-paths.test.js dist/main/runtime-shutdown.test.js",
+    "test:main:fast": "pnpm build:main && node --test dist/main/app-command-dispatch.test.js dist/main/log-redaction.test.js dist/main/quit-flow.test.js dist/main/runtime-paths.test.js dist/main/runtime-shutdown.test.js dist/main/terminal-manager.test.js",
     "test:main": "pnpm build:main && node --test \"dist/main/*.test.js\"",
     "test:desktop": "pnpm build && pnpm test:contracts && pnpm test:renderer-state && pnpm test:renderer-behavior && pnpm test:main",
     "test:seatbelt-native": ".venv/bin/python scripts/test-seatbelt-native.py",
@@ -50,6 +51,9 @@
     "test:packaging": "node --test scripts/packaging-config.test.mjs scripts/package-macos.test.mjs scripts/test-affected.test.mjs"
   },
   "dependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "node-pty": "1.1.0",
     "react": "^19.2.0",
     "react-arborist": "3.16.0",
     "react-diff-view": "3.3.3",

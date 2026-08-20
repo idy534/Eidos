@@ -168,6 +168,9 @@ class SessionGitStatusRequestDto(_CanonicalIdRequest):
 class SessionGitDiffRequestDto(_CanonicalIdRequest):
     session_id: StrictStr = Field(alias="sessionId")
     scope: Literal["head", "baseline"] = "head"
+    compare_ref: StrictStr | None = Field(
+        default=None, alias="compareRef", min_length=1, max_length=4096
+    )
     path: StrictStr | None = Field(default=None, min_length=1, max_length=4096)
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
 
@@ -631,6 +634,7 @@ class GitContextResponseDto(MethodResultDto):
 
 class SessionGitDiffResponseDto(MethodResultDto):
     scope: Literal["head", "baseline"]
+    compare_ref: StrictStr | None = Field(default=None, alias="compareRef")
     base_commit: StrictStr | None = Field(default=None, alias="baseCommit")
     head: StrictStr
     dirty: bool
@@ -638,10 +642,14 @@ class SessionGitDiffResponseDto(MethodResultDto):
     unified_diff: StrictStr = Field(alias="unifiedDiff")
     diff_hash: StrictStr = Field(alias="diffHash", min_length=64, max_length=64)
     truncated: bool
+    additions: StrictInt = Field(ge=0)
+    deletions: StrictInt = Field(ge=0)
+    stats_incomplete: bool = Field(alias="statsIncomplete")
     observed_at: StrictInt = Field(alias="observedAt", ge=0)
 
     def to_json_value(self) -> dict[str, JsonValue]:
         value = super().to_json_value()
+        value["compareRef"] = self.compare_ref
         value["baseCommit"] = self.base_commit
         return value
 

@@ -35,12 +35,16 @@ class GitStatusSnapshot(EidosFrozenStrictModel):
 
 class GitDiffSnapshot(EidosFrozenStrictModel):
     scope: DiffScope
+    compare_ref: str | None
     base_commit: str | None
     head: str
     dirty: bool
     changed_files: tuple[str, ...]
     unified_diff: str
     truncated: bool
+    additions: int = Field(ge=0)
+    deletions: int = Field(ge=0)
+    stats_incomplete: bool
     observed_at: datetime
 
 

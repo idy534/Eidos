@@ -1263,7 +1263,10 @@ class SessionApplication:
             scope = DiffScope(request.scope)
             if session.worktree_id is not None:
                 diff = manager.diff(
-                    session.worktree_id, scope=scope, path=request.path
+                    session.worktree_id,
+                    scope=scope,
+                    compare_ref=request.compare_ref,
+                    path=request.path,
                 )
             else:
                 resolution = manager.resolve_project(session.workspace_root)
@@ -1272,6 +1275,7 @@ class SessionApplication:
                 diff = manager.local_diff(
                     Path(resolution.git.repository_root),
                     scope=scope,
+                    compare_ref=request.compare_ref,
                     path=request.path,
                 )
         except WorktreeError as error:
@@ -1280,6 +1284,7 @@ class SessionApplication:
             SessionGitDiffResponseDto,
             {
                 "scope": diff.scope.value,
+                "compareRef": diff.compare_ref,
                 "baseCommit": diff.base_commit,
                 "head": diff.head,
                 "dirty": diff.dirty,
@@ -1289,6 +1294,9 @@ class SessionApplication:
                     diff.unified_diff.encode("utf-8")
                 ).hexdigest(),
                 "truncated": diff.truncated,
+                "additions": diff.additions,
+                "deletions": diff.deletions,
+                "statsIncomplete": diff.stats_incomplete,
                 "observedAt": _timestamp_millis(diff.observed_at),
             },
         )
@@ -3077,6 +3085,8 @@ def _workspace_resolution_error_code(error: WorktreeError) -> str:
 def _git_review_error_code(error: WorktreeError) -> str:
     if error.code == "not_a_git_repository":
         return "GIT_NOT_REPOSITORY"
+    if error.code == "git_compare_ref_invalid":
+        return "GIT_COMPARE_REF_INVALID"
     if error.code in {
         "git_command_failed",
         "git_command_timeout",

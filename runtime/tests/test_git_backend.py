@@ -173,6 +173,37 @@ def test_diff_can_be_scoped_to_one_tracked_or_untracked_path(tmp_path: Path) -> 
     assert "a/tracked.txt" not in untracked.patch
 
 
+def test_diff_stats_remain_complete_when_patch_is_truncated(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    backend = DulwichGitBackend(diff_output_limit_bytes=64)
+    head = backend.head(repository)
+    (repository / "tracked.txt").write_text(
+        "".join(f"tracked {index}\n" for index in range(200)),
+        encoding="utf-8",
+    )
+    (repository / "untracked.txt").write_text("first\nsecond\n", encoding="utf-8")
+
+    diff = backend.diff(repository, base_commit=head)
+
+    assert diff.truncated is True
+    assert diff.additions == 202
+    assert diff.deletions == 1
+    assert diff.stats_incomplete is False
+
+
+def test_diff_marks_binary_line_stats_incomplete(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    backend = DulwichGitBackend()
+    head = backend.head(repository)
+    (repository / "binary.dat").write_bytes(b"\x00\x01\x02")
+
+    diff = backend.diff(repository, base_commit=head)
+
+    assert diff.additions == 0
+    assert diff.deletions == 0
+    assert diff.stats_incomplete is True
+
+
 def test_stage_and_unstage_use_path_scoped_native_git_semantics(tmp_path: Path) -> None:
     repository = _repository(tmp_path)
     backend = DulwichGitBackend()

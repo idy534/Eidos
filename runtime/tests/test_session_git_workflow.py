@@ -440,8 +440,98 @@ def test_baseline_diff_survives_a_new_commit(tmp_path: Path) -> None:
 
         assert head_diff["changedFiles"] == []
         assert baseline_diff["baseCommit"] == baseline
+        assert baseline_diff["compareRef"] == session["worktree"]["baseRef"]
+        assert baseline_diff["additions"] == 1
+        assert baseline_diff["deletions"] == 1
+        assert baseline_diff["statsIncomplete"] is False
         assert baseline_diff["changedFiles"] == ["tracked.txt"]
         assert "committed" in baseline_diff["unifiedDiff"]
+    finally:
+        store.close()
+
+
+def test_local_baseline_diff_uses_upstream_and_counts_committed_lines(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "-q", "--bare", str(remote))
+    _git(repository, "remote", "add", "origin", str(remote))
+    _git(repository, "push", "-qu", "origin", "main")
+    upstream_head = _git(repository, "rev-parse", "origin/main")
+    (repository / "committed.txt").write_text("first\nsecond\n", encoding="utf-8")
+    _git(repository, "add", "committed.txt")
+    _git(repository, "commit", "-qm", "local commit")
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = _create_session(application, repository, execution_mode="local")
+
+        diff = application.git_diff(
+            SessionGitDiffRequestDto(sessionId=session["id"], scope="baseline")
+        ).root
+
+        assert diff["compareRef"] == "origin/main"
+        assert diff["baseCommit"] == upstream_head
+        assert diff["changedFiles"] == ["committed.txt"]
+        assert diff["additions"] == 2
+        assert diff["deletions"] == 0
+        assert diff["statsIncomplete"] is False
+    finally:
+        store.close()
+
+
+def test_local_baseline_without_upstream_keeps_head_fallback(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    (repository / "tracked.txt").write_text("working tree\n", encoding="utf-8")
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = _create_session(application, repository, execution_mode="local")
+        head = _git(repository, "rev-parse", "HEAD")
+
+        diff = application.git_diff(
+            SessionGitDiffRequestDto(sessionId=session["id"], scope="baseline")
+        ).root
+
+        assert diff["compareRef"] is None
+        assert diff["baseCommit"] == head
+        assert diff["changedFiles"] == ["tracked.txt"]
+    finally:
+        store.close()
+
+
+def test_local_diff_accepts_a_resolved_compare_ref_and_rejects_an_unknown_one(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    compare_commit = _git(repository, "rev-parse", "HEAD")
+    (repository / "compared.txt").write_text("compared\n", encoding="utf-8")
+    _git(repository, "add", "compared.txt")
+    _git(repository, "commit", "-qm", "compared commit")
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = _create_session(application, repository, execution_mode="local")
+
+        diff = application.git_diff(
+            SessionGitDiffRequestDto(
+                sessionId=session["id"],
+                scope="baseline",
+                compareRef=compare_commit,
+            )
+        ).root
+
+        assert diff["compareRef"] == compare_commit
+        assert diff["baseCommit"] == compare_commit
+        assert diff["changedFiles"] == ["compared.txt"]
+        assert diff["additions"] == 1
+        with pytest.raises(ApplicationError) as invalid:
+            application.git_diff(
+                SessionGitDiffRequestDto(
+                    sessionId=session["id"],
+                    scope="baseline",
+                    compareRef="refs/heads/does-not-exist",
+                )
+            )
+        assert invalid.value.code == "GIT_COMPARE_REF_INVALID"
     finally:
         store.close()
 
