@@ -270,7 +270,7 @@ export function WorkspaceExplorer({
     const current = splitSizes[targetLayout];
     if (current !== undefined) return current;
     const rect = explorerRef.current?.getBoundingClientRect();
-    if (targetLayout === "side") return Math.round((rect?.height || 600) * 0.42);
+    if (targetLayout === "side") return Math.round((rect?.height || 600) * 0.34);
     return 18 * 16;
   }
 
@@ -354,6 +354,7 @@ export function WorkspaceExplorer({
     "--workspace-tree-size": `${splitSize}px`,
     "--workspace-tree-divider": `${splitSize}px`,
   } as CSSProperties;
+  const activePreview = activePreviewPath ? previews[activePreviewPath] : undefined;
 
   return (
     <section
@@ -363,13 +364,11 @@ export function WorkspaceExplorer({
       aria-label="Workspace 文件浏览器"
     >
       <aside className="workspace-tree-pane" aria-label="文件树">
-        <div className="workspace-explorer-heading">
-          <strong>Files</strong>
-          {loadingRoot && <span role="status">正在读取…</span>}
-        </div>
         {error && <p className="workspace-explorer-error" role="alert">{error}</p>}
         {rootTruncated && <p className="workspace-tree-note">目录内容已截断</p>}
-        {!loadingRoot && nodes.length === 0 ? (
+        {loadingRoot ? (
+          <p className="workspace-empty-state" role="status">正在读取…</p>
+        ) : nodes.length === 0 ? (
           <p className="workspace-empty-state">Workspace 中没有可显示的文件</p>
         ) : (
           <div className="workspace-tree-scroll" ref={treeContainerRef}>
@@ -410,33 +409,45 @@ export function WorkspaceExplorer({
       />
       <div className="workspace-preview-pane" aria-live="polite">
         {openPreviewPaths.length > 0 && (
-          <div className="workspace-preview-tabs" role="tablist" aria-label="打开的文件">
-            {openPreviewPaths.map((path) => (
-              <div className="workspace-preview-tab" key={path}>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activePreviewPath === path}
-                  onClick={() => setActivePreviewPath(path)}
-                >
-                  {path.split("/").pop() ?? path}
-                </button>
-                <button
-                  type="button"
-                  className="workspace-preview-tab-close"
-                  aria-label={`关闭 ${path.split("/").pop() ?? path}`}
-                  onClick={() => closePreview(path)}
-                >
-                  ×
-                </button>
+          <div className="workspace-preview-bar">
+            <div className="workspace-preview-tabs" role="tablist" aria-label="打开的文件">
+              {openPreviewPaths.map((path) => (
+                <div className="workspace-preview-tab" key={path}>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-label={path}
+                    aria-selected={activePreviewPath === path}
+                    title={path}
+                    onClick={() => setActivePreviewPath(path)}
+                  >
+                    {path.split("/").pop() ?? path}
+                  </button>
+                  <button
+                    type="button"
+                    className="workspace-preview-tab-close"
+                    aria-label={`关闭 ${path.split("/").pop() ?? path}`}
+                    onClick={() => closePreview(path)}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+            {activePreview && (
+              <div className="workspace-preview-meta">
+                <span className="workspace-preview-path" title={activePreview.path}>
+                  {activePreview.path}
+                </span>
+                <span>{formatBytes(activePreview.sizeBytes)}</span>
               </div>
-            ))}
+            )}
           </div>
         )}
-        {previewLoadingPath === activePreviewPath && !previews[activePreviewPath ?? ""] ? (
+        {previewLoadingPath === activePreviewPath && !activePreview ? (
           <p className="workspace-preview-placeholder" role="status">正在读取文件…</p>
-        ) : activePreviewPath && previews[activePreviewPath] ? (
-          <WorkspacePreview preview={previews[activePreviewPath]} />
+        ) : activePreview ? (
+          <WorkspacePreview preview={activePreview} />
         ) : (
           <p className="workspace-preview-placeholder">选择文件以查看预览</p>
         )}
@@ -476,6 +487,7 @@ function WorkspaceTreeRow({
       <button
         type="button"
         className="workspace-tree-chevron"
+        data-open={node.isOpen}
         aria-label={node.isOpen ? `收起 ${node.data.name}` : `展开 ${node.data.name}`}
         disabled={node.data.kind !== "directory"}
         onClick={(event) => {
@@ -486,10 +498,22 @@ function WorkspaceTreeRow({
           }
         }}
       >
-        {node.data.kind === "directory" ? (node.isOpen ? "⌄" : "›") : ""}
+        {node.data.kind === "directory" && (
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="m6 3.5 4.5 4.5L6 12.5" />
+          </svg>
+        )}
       </button>
       <span className="workspace-tree-icon" aria-hidden="true">
-        {node.data.kind === "directory" ? "▰" : "▤"}
+        {node.data.kind === "directory" ? (
+          <svg viewBox="0 0 20 20">
+            <path d="M2.5 5h5l1.5 2h8.5v9.5h-15zM2.5 7h15" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 20 20">
+            <path d="M5 2.5h7l3 3v12H5zM12 2.5v3h3" />
+          </svg>
+        )}
       </span>
       <span className="workspace-tree-name">{node.data.name}</span>
       {loading && <span className="workspace-tree-loading" aria-label="正在读取">…</span>}
@@ -500,10 +524,6 @@ function WorkspaceTreeRow({
 function WorkspacePreview({ preview }: { preview: WorkspaceFilePreview }) {
   return (
     <article className="workspace-preview">
-      <header className="workspace-preview-header">
-        <span title={preview.path}>{preview.path}</span>
-        <span>{formatBytes(preview.sizeBytes)}</span>
-      </header>
       {preview.truncated && <p className="workspace-preview-notice">预览已截断</p>}
       {preview.kind === "unavailable" ? (
         <div className="workspace-preview-unavailable">

@@ -28,6 +28,7 @@ describe("interactive color tokens", () => {
     expect(dockStyles).not.toMatch(/\.workspace-body--with-dock:not\(\.workspace-body--expanded\)\s*\.workspace-dock\s*\{[^}]*position: absolute;/s);
     expect(dockStyles).toMatch(/\.workspace-body__actions\s*\{[^}]*top: 0\.5rem;/s);
     expect(dockStyles).toMatch(/\.workspace-dock__add \.dropdown-trigger,\s*\.workspace-dock__actions \.icon-button\s*\{[^}]*width: 2\.25rem;[^}]*height: 2\.25rem;[^}]*min-height: 2\.25rem;/s);
+    expect(dockStyles).toMatch(/\.workspace-dock__add \.dropdown-trigger > span\[aria-hidden\]\s*\{[^}]*font-size: 1\.25rem;[^}]*line-height: 1;/s);
   });
 
   it("flows open dock controls in one fixed-size header group", () => {

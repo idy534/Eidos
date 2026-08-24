@@ -384,6 +384,11 @@ button.environment-popover__row:hover {
   box-shadow: none;
 }
 
+.workspace-dock__add .dropdown-trigger > span[aria-hidden] {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
 .workspace-dock__add .dropdown-trigger:hover,
 .workspace-dock__actions .icon-button:hover {
   color: var(--text);

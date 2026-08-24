@@ -29,7 +29,7 @@ Non-Git Project 只能创建 Local Execution Session。Git Project 可以创建 
 
 Desktop Workspace Explorer 也只读取当前 Session execution root。`WorkspaceExplorerApplication` 先解析 Local root 或验证 Managed Worktree identity，再调用共享 `WorkspaceReader`。`WorkspaceReader` 与 Agent 文件工具共用 fd-relative、`O_NOFOLLOW`、敏感路径、hard discovery directory 和 root ignore 规则。`workspace/listDirectory` 只返回一层子项。`workspace/readFilePreview` 只返回有界 UTF-8 预览。Renderer 不直接读取 filesystem。
 
-Desktop 会让 Conversation 始终保持挂载。用户可以从 Session header 右上角唯一的按钮打开或关闭右侧 Workspace Dock。Dock 使用本地 Renderer 状态管理 Review、Terminal 和 Files Tab。Review 和 Files 各只有一个工具 Tab，Terminal 可以同时打开多个 Tab。Files Tab 内可以同时预览多个文件。Dock 支持 Tab 切换、关闭、空状态选择工具、全侧栏展开和关闭。Dock 与 Conversation 之间的分隔条可以拖动调整宽度。Files 的文件树与预览区也有独立的可拖动分隔条。Dock 关闭时，Conversation 内容在可用宽度内居中。Session 或 execution binding 变化时，Renderer 会关闭旧 Dock，并用新的 execution key 重新加载 Workspace 数据。
+Desktop 会让 Conversation 始终保持挂载。用户可以从 Session header 右上角唯一的按钮打开或关闭右侧 Workspace Dock。Dock 使用本地 Renderer 状态管理 Review、Terminal 和 Files Tab。Review 和 Files 各只有一个工具 Tab，Terminal 可以同时打开多个 Tab。Files Tab 内可以同时预览多个文件。文件 Tab、当前路径和文件大小共享一条预览栏，侧栏布局默认给预览区更多空间。Dock 支持 Tab 切换、关闭、空状态选择工具、全侧栏展开和关闭。Dock 与 Conversation 之间的分隔条可以拖动调整宽度。Files 的文件树与预览区也有独立的可拖动分隔条。Dock 关闭时，Conversation 内容在可用宽度内居中。Session 或 execution binding 变化时，Renderer 会关闭旧 Dock，并用新的 execution key 重新加载 Workspace 数据。
 
 ## 2. Process Architecture
 
