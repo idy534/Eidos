@@ -724,7 +724,7 @@ export function AppShell({ runtime }: AppShellProps) {
               </button>
             )}
             <div className="environment-popover__row">
-              <span>{sessionIsLocal ? "本地工作区" : "受管工作树"}</span>
+              <span>{sessionIsLocal ? "本地" : "本地工作树"}</span>
               {sessionHasGit && (
                 <Button
                   variant="ghost"
@@ -733,7 +733,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   loading={handoffBusy}
                   onClick={() => setHandoffSessionId(snapshot!.session.id)}
                 >
-                  更改执行环境
+                  更改工作环境
                 </Button>
               )}
             </div>
@@ -795,7 +795,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
         {currentSnapshot?.session.worktreeRestoreAvailable === true && !isDraft && (
           <div className="worktree-restore-banner" role="status">
-            <span>受管工作树已清理，以释放磁盘空间</span>
+            <span>本地工作树已清理，以释放磁盘空间</span>
             <Button
               variant="secondary"
               size="small"

@@ -306,10 +306,10 @@ describe("App & Runtime Lifecycle behavior", () => {
     fireEvent.click(screen.getByRole("button", { name: "环境信息" }));
     const reopenedEnvironment = screen.getByRole("region", { name: "环境信息预览" });
     expect(within(reopenedEnvironment).queryByText("›")).not.toBeInTheDocument();
-    expect(within(reopenedEnvironment).getByText("本地工作区")).toBeInTheDocument();
-    fireEvent.click(within(reopenedEnvironment).getByRole("button", { name: "更改执行环境" }));
-    const environmentDialog = await screen.findByRole("dialog", { name: "更改执行环境" });
-    fireEvent.click(within(environmentDialog).getByRole("radio", { name: /本地工作区/ }));
+    expect(within(reopenedEnvironment).getByText("本地")).toBeInTheDocument();
+    fireEvent.click(within(reopenedEnvironment).getByRole("button", { name: "更改工作环境" }));
+    const environmentDialog = await screen.findByRole("dialog", { name: "更改工作环境" });
+    fireEvent.click(within(environmentDialog).getByRole("radio", { name: /^本地/ }));
     fireEvent.change(within(environmentDialog).getByRole("combobox", { name: "本地分支" }), {
       target: { value: "main" },
     });
@@ -319,7 +319,7 @@ describe("App & Runtime Lifecycle behavior", () => {
       "main",
       expect.any(String),
     ));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "更改执行环境" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "更改工作环境" })).not.toBeInTheDocument());
     fireEvent.click(within(reopenedEnvironment).getByRole("button", { name: "提交或推送" }));
     expect(await screen.findByRole("dialog", { name: "提交和推送" })).toBeInTheDocument();
   });

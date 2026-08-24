@@ -150,7 +150,7 @@ export function CreateSessionDialog({
                     onChange={() => setExecutionMode("local")}
                   />
                   <span>
-                    <strong>本地工作区</strong>
+                    <strong>本地</strong>
                     <small>直接在项目目录中执行</small>
                   </span>
                 </label>
@@ -166,7 +166,7 @@ export function CreateSessionDialog({
                     onChange={() => setExecutionMode("worktree")}
                   />
                   <span>
-                    <strong>受管工作树</strong>
+                    <strong>新建本地工作树</strong>
                     <small>{gitContext.gitAvailable ? "创建分离状态的独立工作树" : "需要 Git 项目"}</small>
                   </span>
                 </label>

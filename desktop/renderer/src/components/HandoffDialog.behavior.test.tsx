@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { HandoffDialog } from "./HandoffDialog.js";
 
-describe("HandoffDialog 执行环境配置", () => {
-  it("使用中文展示本地工作区和新建受管工作树", () => {
+describe("HandoffDialog 工作环境配置", () => {
+  it("使用中文展示本地和新建本地工作树", () => {
     render(
       <HandoffDialog
         open
@@ -17,9 +17,9 @@ describe("HandoffDialog 执行环境配置", () => {
       />,
     );
 
-    expect(screen.getByRole("dialog", { name: "更改执行环境" })).toBeInTheDocument();
-    expect(screen.getByText("本地工作区")).toBeInTheDocument();
-    expect(screen.getByText("新建受管工作树")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "更改工作环境" })).toBeInTheDocument();
+    expect(screen.getByText("本地")).toBeInTheDocument();
+    expect(screen.getByText("新建本地工作树")).toBeInTheDocument();
     expect(screen.getByText("从本地分支 main 创建独立工作树")).toBeInTheDocument();
     expect(screen.getByText("3 个文件的当前修改会一起迁移")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "创建并切换" })).toBeEnabled();
@@ -27,7 +27,7 @@ describe("HandoffDialog 执行环境配置", () => {
       .not.toBeInTheDocument();
   });
 
-  it("选择本地工作区后可以选择并切换本地分支", () => {
+  it("选择本地后可以选择并切换本地分支", () => {
     const onConfirm = vi.fn();
     render(
       <HandoffDialog
@@ -40,7 +40,7 @@ describe("HandoffDialog 执行环境配置", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("radio", { name: /本地工作区/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /^本地/ }));
     const branch = screen.getByRole("combobox", { name: "本地分支" });
     expect(screen.getByRole("button", { name: "当前环境" })).toBeDisabled();
 
@@ -63,7 +63,7 @@ describe("HandoffDialog 执行环境配置", () => {
       />,
     );
 
-    expect(screen.getByText("已有受管工作树")).toBeInTheDocument();
+    expect(screen.getByText("已有本地工作树")).toBeInTheDocument();
     expect(screen.getByText("返回这个会话原有的独立工作树")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "返回工作树" })).toBeEnabled();
   });
@@ -82,8 +82,8 @@ describe("HandoffDialog 执行环境配置", () => {
       />,
     );
 
-    expect(screen.getByText("当前工作树的 Git 状态会安全同步到本地工作区")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "切换到本地工作区" }));
+    expect(screen.getByText("当前工作树的 Git 状态会安全同步到本地")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "切换到本地" }));
     expect(onConfirm).toHaveBeenCalledWith("local", undefined);
   });
 });

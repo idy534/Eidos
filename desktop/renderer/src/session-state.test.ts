@@ -251,11 +251,11 @@ test("closed runtime business errors map to safe user-facing guidance", () => {
   );
   assert.equal(
     userFacingError(new Error("EIDOS_RUNTIME_ERROR:HANDOFF_LOCAL_CONFLICT")),
-    "当前工作树的修改无法安全同步到本地工作区。请先处理本地冲突。",
+    "当前工作树的修改无法安全同步到本地。请先处理本地冲突。",
   );
   assert.equal(
     userFacingError(new Error("EIDOS_RUNTIME_ERROR:HANDOFF_SOURCE_CHANGED")),
-    "当前执行环境已经发生变化。请刷新后重试。",
+    "当前工作环境已经发生变化。请刷新后重试。",
   );
 });
 

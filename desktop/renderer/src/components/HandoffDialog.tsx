@@ -91,7 +91,7 @@ export function HandoffDialog({
     && Boolean(selectedBranch)
     && selectedBranch !== currentBranch;
   const canConfirm = selectedTarget !== currentMode || branchChanged;
-  const worktreeTitle = associatedWorktreeId ? "已有受管工作树" : "新建受管工作树";
+  const worktreeTitle = associatedWorktreeId ? "已有本地工作树" : "新建本地工作树";
   const confirmLabel = busy
     ? "正在更改…"
     : !canConfirm
@@ -99,7 +99,7 @@ export function HandoffDialog({
       : selectedTarget === "local"
         ? currentMode === "local"
           ? `切换到 ${selectedBranch}`
-          : "切换到本地工作区"
+          : "切换到本地"
         : associatedWorktreeId
           ? "返回工作树"
           : "创建并切换";
@@ -116,9 +116,9 @@ export function HandoffDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="modal-header">
-          <h3 id="handoff-dialog-title">更改执行环境</h3>
+          <h3 id="handoff-dialog-title">更改工作环境</h3>
           <p className="modal-subtitle" id="handoff-dialog-description">
-            当前会话、历史对话和检查点都会保留。后续任务会在所选环境中执行。
+            当前会话、历史对话和检查点都会保留。后续任务会在所选工作环境中执行。
           </p>
         </div>
         <div className="modal-body handoff-dialog-body">
@@ -135,7 +135,7 @@ export function HandoffDialog({
                   onChange={() => setSelectedTarget("local")}
                 />
                 <span>
-                  <strong>本地工作区</strong>
+                  <strong>本地</strong>
                   <small>直接在项目目录和本地分支中执行</small>
                 </span>
                 {currentMode === "local" && <em>当前</em>}
@@ -175,7 +175,7 @@ export function HandoffDialog({
               </label>
             )}
             {selectedTarget === "local" && currentMode === "worktree" && (
-              <p>当前工作树的 Git 状态会安全同步到本地工作区</p>
+              <p>当前工作树的 Git 状态会安全同步到本地</p>
             )}
             {selectedTarget === "worktree" && associatedWorktreeId && (
               <p>返回这个会话原有的独立工作树</p>

@@ -177,8 +177,8 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
                       disabled={isSubmitting || composerMode !== "idle" || !onExecutionModeChange}
                       onChange={(event) => onExecutionModeChange?.(event.target.value as "local" | "worktree")}
                     >
-                      <option value="local">本地工作区</option>
-                      <option value="worktree">受管工作树</option>
+                      <option value="local">本地</option>
+                      <option value="worktree">新建本地工作树</option>
                     </select>
                   </label>
                   {onBranchChange && branches && branches.length > 0 ? (
