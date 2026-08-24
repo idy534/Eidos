@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.model.config import default_profile_snapshot  # noqa: E402
 from eidos_runtime.model.client import (  # noqa: E402
+    AssistantMessagePhase,
     ModelResponse,
     ScriptedModel,
 )
@@ -359,6 +360,53 @@ class FinalizationPersistenceTests(unittest.TestCase):
         self.assertEqual(attempts[0]["status"], "completed")
         self.assertEqual(attempts[0]["outputItemId"], outcome.item["id"])
         self.assertEqual(outcome.item["content"], "final answer")
+
+    def test_undeclared_finalization_response_is_repaired_before_persistence(
+        self,
+    ) -> None:
+        model = ScriptedModel([
+            ModelResponse(
+                text="I will provide the final answer next.",
+                phase=AssistantMessagePhase.UNKNOWN,
+            ),
+            ModelResponse(
+                text="bounded final answer\n<!-- eidos-final-response -->"
+            ),
+        ])
+
+        run, outcome, _instructions = self._finalize(model)
+
+        attempts = self.store.read_finalization_attempts(run["id"])
+        self.assertEqual(len(model.contexts), 2)
+        self.assertEqual(
+            model.contexts[1][-1],
+            {"type": "protocol_error", "code": "undeclared_final_response"},
+        )
+        self.assertEqual(attempts[0]["status"], "completed")
+        self.assertEqual(outcome.item["content"], "bounded final answer")
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        self.assertNotIn("I will provide", str(snapshot))
+
+    def test_repeated_undeclared_finalization_response_fails_without_item(
+        self,
+    ) -> None:
+        unknown = ModelResponse(
+            text="I will provide the final answer next.",
+            phase=AssistantMessagePhase.UNKNOWN,
+        )
+
+        run, outcome, _instructions = self._finalize(
+            ScriptedModel([unknown, unknown])
+        )
+
+        attempts = self.store.read_finalization_attempts(run["id"])
+        self.assertIsNone(outcome.item)
+        self.assertEqual(outcome.failure_reason, "finalization_protocol_error")
+        self.assertEqual(attempts[0]["status"], "model_failed")
+        self.assertEqual(
+            attempts[0]["errorCode"],
+            "finalization_protocol_error",
+        )
 
     def test_model_failure_is_explained_without_assistant_item(self) -> None:
         run, outcome, _instructions = self._finalize(_FailingFinalizationModel([]))

@@ -6,6 +6,7 @@ import time
 from typing import Callable
 
 from eidos_runtime.model.client import (
+    AssistantMessagePhase,
     ModelClient,
     ModelContextItem,
     ModelResponse,
@@ -13,6 +14,7 @@ from eidos_runtime.model.client import (
     ModelToolDefinition,
     ModelUsage,
 )
+from eidos_runtime.model.response_phase import normalize_chat_completion_text
 from eidos_runtime.sandbox.sensitive import (
     SensitiveScanError,
     SensitiveScanner,
@@ -25,6 +27,7 @@ from eidos_runtime.sandbox.sensitive import (
 class ModelStepResult:
     text: str
     tool_calls: tuple[ModelToolCall, ...]
+    phase: AssistantMessagePhase = AssistantMessagePhase.UNKNOWN
     usage: ModelUsage | None = None
     provider_name: str | None = None
     resolved_model_name: str | None = None
@@ -120,22 +123,44 @@ class ModelRunner:
         ended = self._monotonic()
         if not isinstance(response, ModelResponse):
             return ModelStepResult("", (), duration_ms=int((ended - started) * 1000))
+        normalized_text, detected_phase = normalize_chat_completion_text(
+            text,
+            has_tool_calls=bool(response.tool_calls),
+        )
+        phase = response.phase
+        if phase is AssistantMessagePhase.UNKNOWN:
+            phase = detected_phase
+        if (
+            phase is AssistantMessagePhase.UNKNOWN
+            and "phase" not in response.model_fields_set
+            and response.provider_name is None
+            and response.finish_reason is None
+            and normalized_text
+        ):
+            # ModelResponse also serves as the test-double boundary. A legacy
+            # fixture without provider metadata represents an already normalized
+            # final answer unless it explicitly sets phase=UNKNOWN.
+            phase = AssistantMessagePhase.FINAL_ANSWER
         # Tool-only responses intentionally keep TTFT unset; this is stable and
         # avoids deriving timing from provider-specific partial ToolCall events.
         return ModelStepResult(
-            text,
-            response.tool_calls,
-            response.usage,
-            response.provider_name,
-            response.resolved_model_name,
-            response.finish_reason,
-            response.provider_response_id,
-            response.response_state,
-            int((first_safe - started) * 1000) if first_safe is not None else None,
-            int((ended - started) * 1000),
-            response.transport_attempt_count,
-            response.transport_retry_count,
-            response.last_retry_reason,
-            response.last_backoff_seconds,
-            response.retry_after_applied,
+            text=normalized_text,
+            tool_calls=response.tool_calls,
+            phase=phase,
+            usage=response.usage,
+            provider_name=response.provider_name,
+            resolved_model_name=response.resolved_model_name,
+            finish_reason=response.finish_reason,
+            provider_response_id=response.provider_response_id,
+            response_state=response.response_state,
+            ttft_ms=(
+                int((first_safe - started) * 1000)
+                if first_safe is not None else None
+            ),
+            duration_ms=int((ended - started) * 1000),
+            transport_attempt_count=response.transport_attempt_count,
+            transport_retry_count=response.transport_retry_count,
+            last_retry_reason=response.last_retry_reason,
+            last_backoff_seconds=response.last_backoff_seconds,
+            retry_after_applied=response.retry_after_applied,
         )

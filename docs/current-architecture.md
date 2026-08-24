@@ -115,7 +115,9 @@ RuntimeEngine 下的主要职责是：
 
 Model Step、Segment Step 和 effective time 在当前实现中是 telemetry 和 operational segment 信息。健康 Run 不会因为固定 model-step、Run duration 或固定 repeated-call counter 自动终止。Segment 达到 operational quantum 时可以 rollover，但 rollover 不是 Run 终态。
 
-模型必须用 Runtime 私有的最终答复标记声明无 ToolCall 文本是终态。Runtime 会在持久化和展示前移除该标记。Provider 返回 `finish_reason=stop`、没有 ToolCall 且没有终态声明时，Runtime 不会把进度文字当作成功结果。Runtime 会在同一个 Step 内执行一次有界协议修复。重复失败会以 `MODEL_PROTOCOL_ERROR` 结束，未声明的文字不会进入 Conversation。
+Chat Completions Adapter 会把模型文本归一化为 `commentary`、`final_answer` 或 `unknown`。Runtime 私有的最终答复标记只属于 Adapter 兼容协议。Adapter 会在持久化和展示前移除该标记。RuntimeEngine 只读取结构化阶段。没有 ToolCall 的文本只有在阶段是 `final_answer` 时才能完成 Run。`commentary` 和 `unknown` 会在同一个 Step 内触发一次有界协议修复。重复失败会以 `MODEL_PROTOCOL_ERROR` 结束，未声明的文字不会进入 Conversation。
+
+RunFinalizer 使用同一套结构化阶段判断。Finalizer 会对 `commentary` 和 `unknown` 执行一次有界协议修复。两次响应都不满足终态契约时，Finalization Attempt 会记录 `finalization_protocol_error`，无效文本不会创建 Assistant Item。空响应、ToolCall 和 Provider 控制文本保留原有处理。Finalizer 的总 timeout 同时约束初次请求和协议修复请求。
 
 ## 6. Context & Instructions
 

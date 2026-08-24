@@ -12,6 +12,7 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.model.client import (  # noqa: E402
+    AssistantMessagePhase,
     ModelResponse,
     ModelToolCall,
     ScriptedModel,
@@ -148,8 +149,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         model = ScriptedModel([
             ModelResponse(
                 text="Let me read the current file before I answer.",
-                provider_name="deepseek",
-                finish_reason="stop",
+                phase=AssistantMessagePhase.COMMENTARY,
             ),
             ModelResponse(
                 text="I will read the file now.",
@@ -219,8 +219,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         run, _ = self.store.create_run(self.session["id"], "Inspect before answering")
         undeclared = ModelResponse(
             text="Let me inspect the workspace first.",
-            provider_name="deepseek",
-            finish_reason="stop",
+            phase=AssistantMessagePhase.UNKNOWN,
         )
         model = ScriptedModel([undeclared, undeclared])
 

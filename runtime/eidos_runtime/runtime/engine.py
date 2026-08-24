@@ -16,7 +16,7 @@ from eidos_runtime.db.storage import (
     InvalidRunStateError,
     SessionStore,
 )
-from eidos_runtime.model.client import ModelClient
+from eidos_runtime.model.client import AssistantMessagePhase, ModelClient
 from eidos_runtime.domain.long_task import LongTaskStatus, SafePoint
 from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalDecision
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
@@ -648,7 +648,7 @@ class RuntimeEngine:
                 if (
                     validation.status == "no_tools"
                     and sampled.text
-                    and not sampled.final_response_declared
+                    and sampled.phase is not AssistantMessagePhase.FINAL_ANSWER
                 ):
                     protocol_errors = self.store.record_protocol_error(run.run_id)
                     should_retry = protocol_errors < 2

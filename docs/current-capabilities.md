@@ -48,7 +48,7 @@
 - ModelConfigStore 支持内置 Catalog 中的五个 Model：`deepseek-v4-pro`、`deepseek-v4-flash`、`MiniMax-M3`、`kimi-k3` 和 `kimi-k2.7-code-highspeed`。
 - Model 配置保存在 `models.json`。默认位置是 `~/.eidos/models.json`。本地文件使用 owner-only 权限。
 - API Key 通过本地 Model 配置写请求链路传到 Runtime：Renderer typed IPC → Electron Main → `model/create` / `model/update` JSON-RPC request → ModelConfigStore。Key 不进入模型列表/读取响应、SQLite、Event/Feed 或正常日志。
-- Runtime 使用 OpenAI-compatible Chat Completions 和 SSE 流。
+- Runtime 使用 OpenAI-compatible Chat Completions 和 SSE 流。Model Adapter 会把 Assistant 文本归一化为 `commentary`、`final_answer` 或 `unknown`。普通采样和 Finalizer 使用同一套终态阶段契约。
 - Runtime 使用 Pydantic AI Model API 处理 Provider 构造、流式 Model Response、Usage 和 ToolCall 归一化。
 - 每个 Run 固化 Model Profile、Model capability declaration 和 Extension Snapshot。活动 Run 不会被后续 Model 配置编辑或删除改变。
 - Runtime 记录 Model Attempt、usage、response metadata、transport retry 诊断和稳定错误码。
