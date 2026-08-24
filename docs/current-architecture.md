@@ -115,6 +115,8 @@ RuntimeEngine 下的主要职责是：
 
 Model Step、Segment Step 和 effective time 在当前实现中是 telemetry 和 operational segment 信息。健康 Run 不会因为固定 model-step、Run duration 或固定 repeated-call counter 自动终止。Segment 达到 operational quantum 时可以 rollover，但 rollover 不是 Run 终态。
 
+模型必须用 Runtime 私有的最终答复标记声明无 ToolCall 文本是终态。Runtime 会在持久化和展示前移除该标记。Provider 返回 `finish_reason=stop`、没有 ToolCall 且没有终态声明时，Runtime 不会把进度文字当作成功结果。Runtime 会在同一个 Step 内执行一次有界协议修复。重复失败会以 `MODEL_PROTOCOL_ERROR` 结束，未声明的文字不会进入 Conversation。
+
 ## 6. Context & Instructions
 
 默认在线 Run 使用 `ContextBuilder` 从 SQLite 事实、当前 Run、Model Profile、Rule Snapshot、Selected Skill、历史 Item、Tool Result、Workspace State 和额外事实构建模型 Context。

@@ -21,10 +21,12 @@ from eidos_runtime.model.client import (  # noqa: E402
 )
 from eidos_runtime.model.prompts import (  # noqa: E402
     BASE_AGENT_INSTRUCTIONS,
+    FINAL_RESPONSE_MARKER,
     RUNTIME_POLICY_INSTRUCTIONS,
     SYSTEM_SAFETY_INSTRUCTIONS,
     TITLE_PROMPT,
     TITLE_SYSTEM_INSTRUCTIONS,
+    consume_final_response_marker,
 )
 
 
@@ -83,6 +85,7 @@ class ModelContractTests(unittest.TestCase):
         self.assertIn("not required in every response", BASE_AGENT_INSTRUCTIONS)
         self.assertIn("routine follow-up reads and searches", BASE_AGENT_INSTRUCTIONS)
         self.assertIn("Never return a tool-free message", BASE_AGENT_INSTRUCTIONS)
+        self.assertIn(FINAL_RESPONSE_MARKER, BASE_AGENT_INSTRUCTIONS)
         self.assertIn("do not request another approval", RUNTIME_POLICY_INSTRUCTIONS)
         self.assertIn("natural, concise task title", TITLE_SYSTEM_INSTRUCTIONS)
         self.assertIn("User query", TITLE_PROMPT)
@@ -99,6 +102,18 @@ class ModelContractTests(unittest.TestCase):
 
         self.assertEqual(response.text, "done")
         self.assertEqual(model.instructions_history, ["resolved instructions"])
+
+    def test_final_response_marker_is_exact_and_removed_from_user_text(self) -> None:
+        self.assertEqual(
+            consume_final_response_marker(
+                "Final answer.\n" + FINAL_RESPONSE_MARKER + "  \n"
+            ),
+            ("Final answer.", True),
+        )
+        self.assertEqual(
+            consume_final_response_marker("I will inspect the file next."),
+            ("I will inspect the file next.", False),
+        )
 
 
 if __name__ == "__main__":

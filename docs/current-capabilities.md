@@ -224,6 +224,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 当前支持 `console` 和 OTLP HTTP Trace exporter。`OTEL_SDK_DISABLED` 可以关闭 SDK，`OTEL_SERVICE_NAME` 可以覆盖服务名，`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 可以配置 OTLP Trace endpoint。
 - Runtime 创建 `eidos.run`、`eidos.model.attempt` 和 `eidos.tool.call` Span。
 - Model Attempt Trace 可以记录 Provider、resolved model、finish reason、TTFT、duration、transport retry、input/output token 和 cache token usage。
+- 无 ToolCall 的 Provider 终态文本使用 Runtime 私有标记声明。Runtime 会移除标记，并对缺失声明的 `stop` 响应执行一次有界协议修复，避免把“接下来会读取或修改”这类进度文字误记为成功终态。
 - Tool Trace 可以记录 Tool 名称、Call ID、终态、Workspace changed 和异常；Run Trace 可以记录 Run、Session、Model 和最终状态。
 - OpenTelemetry 只提供 Observability，不参与 SQLite 事实、Run 状态迁移、Approval 或 Reconciliation 决策。
 

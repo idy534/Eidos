@@ -645,6 +645,47 @@ class RuntimeEngine:
                         self._fail(run.run_id, "MODEL_PROTOCOL_ERROR")
                     return
 
+                if (
+                    validation.status == "no_tools"
+                    and sampled.text
+                    and not sampled.final_response_declared
+                ):
+                    protocol_errors = self.store.record_protocol_error(run.run_id)
+                    should_retry = protocol_errors < 2
+                    sampling.complete_attempt(
+                        step,
+                        sampled,
+                        status="failed",
+                        error_code="undeclared_final_response",
+                        retry=should_retry,
+                        retry_reason=(
+                            "protocol_repair"
+                            if should_retry
+                            else "protocol_repair_exhausted"
+                        ),
+                    )
+                    if should_retry:
+                        attempt_id = self.store.start_retry_model_attempt(run.run_id)
+                        step = _protocol_repair_step(
+                            step,
+                            attempt_id=attempt_id,
+                            code="undeclared_final_response",
+                        )
+                        self._capture_model_attempt_context(
+                            context_application,
+                            step,
+                            rule_snapshot,
+                            repository_context,
+                        )
+                        continue
+                    self.store.complete_current_step(
+                        run.run_id,
+                        "failed",
+                        reason="undeclared_final_response",
+                    )
+                    self._fail(run.run_id, "MODEL_PROTOCOL_ERROR")
+                    return
+
                 guard.observe_empty_response(False)
                 self.store.clear_protocol_errors(run.run_id)
                 sampling.complete_attempt(

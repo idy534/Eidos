@@ -67,6 +67,7 @@ class SamplingOutcome(_FrozenModel):
     text: str
     tool_calls: tuple[ModelToolCall, ...]
     assistant_item: dict[str, object] | None = None
+    final_response_declared: bool = True
     retry_count: int = 0
     usage: ModelUsage | None = None
     provider_name: str | None = None

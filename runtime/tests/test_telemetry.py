@@ -142,7 +142,7 @@ def test_run_model_and_tool_spans_share_the_run_trace(tmp_path: Path) -> None:
             transport_retry_count=2,
         ),
         ModelResponse(
-            text="done",
+            text="done\n<!-- eidos-final-response -->",
             provider_name="fixture-provider",
             resolved_model_name="fixture-model",
             finish_reason="stop",

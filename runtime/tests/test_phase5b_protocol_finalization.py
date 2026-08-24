@@ -349,13 +349,16 @@ class FinalizationPersistenceTests(unittest.TestCase):
 
     def test_successful_finalization_persists_completed_attempt(self) -> None:
         run, outcome, _instructions = self._finalize(
-            ScriptedModel([ModelResponse(text="final answer")])
+            ScriptedModel([ModelResponse(
+                text="final answer\n<!-- eidos-final-response -->"
+            )])
         )
 
         attempts = self.store.read_finalization_attempts(run["id"])
         self.assertEqual(len(attempts), 1)
         self.assertEqual(attempts[0]["status"], "completed")
         self.assertEqual(attempts[0]["outputItemId"], outcome.item["id"])
+        self.assertEqual(outcome.item["content"], "final answer")
 
     def test_model_failure_is_explained_without_assistant_item(self) -> None:
         run, outcome, _instructions = self._finalize(_FailingFinalizationModel([]))

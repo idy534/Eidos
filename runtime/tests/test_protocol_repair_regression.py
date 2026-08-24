@@ -138,6 +138,111 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             ["Recovered without persisting the invalid response."],
         )
 
+    def test_tool_free_progress_announcement_is_repaired_before_run_completion(
+        self,
+    ) -> None:
+        (self.workspace / "sample.py").write_text("value = 1\n", encoding="utf-8")
+        run, _ = self.store.create_run(
+            self.session["id"], "Read sample.py and report its current value"
+        )
+        model = ScriptedModel([
+            ModelResponse(
+                text="Let me read the current file before I answer.",
+                provider_name="deepseek",
+                finish_reason="stop",
+            ),
+            ModelResponse(
+                text="I will read the file now.",
+                tool_calls=(
+                    ModelToolCall("read-sample", "read_file", {"path": "sample.py"}),
+                ),
+            ),
+            ModelResponse(text="sample.py currently sets value to 1."),
+        ])
+
+        RuntimeLoop(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        completed = self.store.read_run(run["id"])
+        self.assertEqual(completed["status"], "succeeded")
+        self.assertEqual(completed["modelStepCount"], 2)
+        attempts = self.store.read_model_attempts(run["id"])
+        self.assertEqual(
+            [attempt["status"] for attempt in attempts],
+            ["failed", "completed", "completed"],
+        )
+        self.assertEqual(
+            attempts[0]["errorCode"],
+            "undeclared_final_response",
+        )
+        self.assertEqual(model.contexts[1][-1], {
+            "type": "protocol_error",
+            "code": "undeclared_final_response",
+        })
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        self.assertEqual(
+            [item["kind"] for item in snapshot["items"]],
+            ["user_message", "assistant_message", "tool_call", "assistant_message"],
+        )
+        self.assertEqual(
+            [
+                item.get("content")
+                for item in snapshot["items"]
+                if item["kind"] == "assistant_message"
+            ],
+            ["I will read the file now.", "sample.py currently sets value to 1."],
+        )
+
+    def test_declared_final_response_marker_is_not_persisted(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Answer directly")
+        model = ScriptedModel([ModelResponse(
+            text="This is the final answer.\n<!-- eidos-final-response -->",
+            provider_name="deepseek",
+            finish_reason="stop",
+        )])
+
+        RuntimeLoop(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        completed = self.store.read_run(run["id"])
+        self.assertEqual(completed["status"], "succeeded")
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        self.assertEqual(
+            [item.get("content") for item in snapshot["items"]],
+            ["Answer directly", "This is the final answer."],
+        )
+        self.assertNotIn("eidos-final-response", str(snapshot))
+
+    def test_repeated_undeclared_final_response_fails_the_run(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Inspect before answering")
+        undeclared = ModelResponse(
+            text="Let me inspect the workspace first.",
+            provider_name="deepseek",
+            finish_reason="stop",
+        )
+        model = ScriptedModel([undeclared, undeclared])
+
+        RuntimeLoop(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        failed = self.store.read_run(run["id"])
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(failed["errorCode"], "MODEL_PROTOCOL_ERROR")
+        attempts = self.store.read_model_attempts(run["id"])
+        self.assertEqual([attempt["status"] for attempt in attempts], ["failed", "failed"])
+        self.assertEqual(
+            [attempt["errorCode"] for attempt in attempts],
+            ["undeclared_final_response", "undeclared_final_response"],
+        )
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        self.assertEqual(
+            [item["kind"] for item in snapshot["items"]],
+            ["user_message"],
+        )
+
     def test_provider_control_text_without_structured_call_is_repaired(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Repair provider control output")
         model = ScriptedModel([

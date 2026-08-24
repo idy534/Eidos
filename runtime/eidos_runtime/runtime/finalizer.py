@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 from eidos_runtime.db.storage import InvalidRunStateError, SessionStore
 from eidos_runtime.model.client import ModelClient, ModelContextItem
 from eidos_runtime.model.instructions import InstructionResolver
+from eidos_runtime.model.prompts import consume_final_response_marker
 from eidos_runtime.model.prompts import ResolvedInstructions
 from eidos_runtime.runtime.assistant_stream import AssistantStreamWriter
 from eidos_runtime.runtime.contracts import RuntimeCancelled
@@ -162,7 +163,8 @@ class RunFinalizer:
             elif result.tool_calls or contains_provider_control_syntax(result.text):
                 failure_reason = "finalization_protocol_error"
             elif result.text:
-                writer.write(result.text)
+                final_text, _declared = consume_final_response_marker(result.text)
+                writer.write(final_text)
                 writer.flush()
         except SensitiveScanError:
             failure_reason = "finalization_sensitive_content_rejected"

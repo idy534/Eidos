@@ -88,7 +88,7 @@ class ModelPersistenceTests(unittest.TestCase):
     def test_successful_attempt_persists_usage_and_response_metadata(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "sample")
         model = ScriptedModel([ModelResponse(
-            text="done",
+            text="done\n<!-- eidos-final-response -->",
             usage=ModelUsage(input_tokens=12, output_tokens=3),
             provider_name="deepseek",
             resolved_model_name="deepseek-v4-flash",
