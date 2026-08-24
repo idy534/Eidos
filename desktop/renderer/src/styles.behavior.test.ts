@@ -43,4 +43,11 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.git-diff-unified \.diff-code-insert\s*\{[^}]*color: var\(--status-success\);/s);
     expect(styles).toMatch(/\.git-diff-unified \.diff-code-delete\s*\{[^}]*color: var\(--status-danger\);/s);
   });
+
+  it("adapts Git review controls to the dock width instead of the window width", () => {
+    expect(styles).toMatch(/\.git-changes-panel\s*\{[^}]*container-type: inline-size;[^}]*container-name: git-review;/s);
+    expect(styles).toMatch(/@container git-review \(max-width: 30rem\)\s*\{[\s\S]*\.git-changes-toolbar\s*\{[^}]*display: grid;/s);
+    expect(styles).toMatch(/@container git-review \(max-width: 30rem\)\s*\{[\s\S]*\.git-scope-tabs\s*\{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/s);
+    expect(styles).toMatch(/\.git-scope-tab\s*\{[^}]*white-space: nowrap;/s);
+  });
 });

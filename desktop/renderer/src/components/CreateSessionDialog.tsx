@@ -150,7 +150,7 @@ export function CreateSessionDialog({
                     onChange={() => setExecutionMode("local")}
                   />
                   <span>
-                    <strong>Local</strong>
+                    <strong>本地工作区</strong>
                     <small>直接在项目目录中执行</small>
                   </span>
                 </label>
@@ -166,8 +166,8 @@ export function CreateSessionDialog({
                     onChange={() => setExecutionMode("worktree")}
                   />
                   <span>
-                    <strong>Worktree</strong>
-                    <small>{gitContext.gitAvailable ? "创建 detached Worktree" : "需要 Git 项目"}</small>
+                    <strong>受管工作树</strong>
+                    <small>{gitContext.gitAvailable ? "创建分离状态的独立工作树" : "需要 Git 项目"}</small>
                   </span>
                 </label>
               </div>
@@ -175,7 +175,7 @@ export function CreateSessionDialog({
 
             {executionMode === "worktree" && gitContext.gitAvailable && (
               <label className="create-session-ref-field" htmlFor="create-session-base-ref">
-                <span>Starting Branch</span>
+                <span>起始分支</span>
                 <select
                   id="create-session-base-ref"
                   value={baseRef}
@@ -200,7 +200,7 @@ export function CreateSessionDialog({
                   onChange={(event) => setIncludeLocalChanges(event.target.checked)}
                 />
                 <span>
-                  <strong>Include current changes</strong>
+                  <strong>包含当前修改</strong>
                   <small>
                     {gitContext.changedFileCount > 0
                       ? `${gitContext.changedFileCount} 个文件有未提交修改`

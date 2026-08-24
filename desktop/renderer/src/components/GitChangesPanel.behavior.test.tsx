@@ -227,6 +227,17 @@ describe("GitChangesPanel", () => {
     expect(screen.getByRole("button", { name: "在编辑器中打开" })).toBeInTheDocument();
   });
 
+  it("shows one useful empty state without a zero-file group", () => {
+    renderPanel({
+      scope: "baseline",
+      summary: summaryDiff({ scope: "baseline", changedFiles: [], additions: 0, deletions: 0 }),
+    });
+
+    expect(screen.queryByRole("region", { name: "整个任务" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("当前范围没有变更");
+    expect(screen.getByRole("status")).toHaveTextContent("可以切换范围或刷新 Git 状态");
+  });
+
   it("stages, unstages, discards, and opens the exact selected path", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const { stage, unstage, discard, openInEditor, onRefresh } = renderPanel();

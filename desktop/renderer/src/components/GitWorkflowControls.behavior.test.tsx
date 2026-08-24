@@ -304,11 +304,11 @@ describe("GitWorkflowControls", () => {
     ));
   });
 
-  it("offers Create Branch Here for detached managed worktrees", async () => {
+  it("offers branch creation for detached managed worktrees", async () => {
     const onCreateBranch = vi.fn();
     renderControls({ status: { ...status, branch: null }, onCreateBranch });
 
-    fireEvent.click(await screen.findByRole("button", { name: "Create Branch Here" }));
+    fireEvent.click(await screen.findByRole("button", { name: "在此创建分支" }));
     expect(onCreateBranch).toHaveBeenCalledTimes(1);
     openWorkflow();
     expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
@@ -321,7 +321,9 @@ describe("GitWorkflowControls", () => {
       onCreateBranch,
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: "Create Branch" }));
+    const createBranch = await screen.findByRole("button", { name: "创建分支" });
+    expect(createBranch).toHaveClass("btn--secondary");
+    fireEvent.click(createBranch);
     expect(onCreateBranch).toHaveBeenCalledTimes(1);
   });
 

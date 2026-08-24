@@ -711,6 +711,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   box-shadow: none;
   font-size: var(--font-size-caption);
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .git-scope-tab:not([aria-selected="true"]):hover:not(:disabled) {
@@ -1046,6 +1047,8 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   min-height: 0;
   flex-direction: column;
   background: var(--surface);
+  container-type: inline-size;
+  container-name: git-review;
 }
 
 .git-workflow-controls {
@@ -1324,9 +1327,25 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   font-size: var(--font-size-caption);
 }
 
+.git-review-stats,
+.git-review-compare {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.git-review-compare {
+  flex: 1 1 auto;
+}
+
 .git-review-branch,
 .git-review-summary code {
+  min-width: 0;
+  overflow: hidden;
   font-family: var(--font-code);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .git-review-stat {
@@ -1367,6 +1386,27 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 .git-review-files h2 span {
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
+}
+
+.git-review-empty {
+  display: grid;
+  min-height: 14rem;
+  height: 100%;
+  place-content: center;
+  gap: 0.25rem;
+  padding: 2rem 1rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.git-review-empty strong {
+  color: var(--text);
+  font-size: var(--font-size-body);
+  font-weight: 600;
+}
+
+.git-review-empty span {
+  font-size: var(--font-size-caption);
 }
 
 .git-file-group + .git-file-group {
@@ -2647,32 +2687,49 @@ h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
   gap: 0.8rem;
 }
 
-.handoff-dialog-body fieldset {
-  border: 0;
-  margin: 0;
-  padding: 0;
-}
-
-.handoff-dialog-body legend {
-  color: var(--text);
-  font-size: 12.5px;
-  font-weight: 600;
-  margin-bottom: 10px;
-}
-
-.handoff-option {
-  align-items: center;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+.handoff-dialog-body {
   display: flex;
-  gap: 9px;
-  margin-top: 8px;
-  padding: 10px 12px;
+  flex-direction: column;
+  gap: 1rem;
 }
 
-.handoff-option small {
-  color: var(--muted);
+.handoff-dialog .create-session-mode-card {
+  position: relative;
+}
+
+.handoff-dialog .create-session-mode-card em {
   margin-left: auto;
+  border-radius: 999px;
+  padding: 0.12rem 0.45rem;
+  color: var(--accent);
+  background: var(--surface-selected);
+  font-size: 0.7rem;
+  font-style: normal;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.handoff-selection-details {
+  display: flex;
+  min-height: 4.6rem;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+  background: var(--surface-muted);
+}
+
+.handoff-selection-details p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.handoff-selection-details p + p {
+  color: var(--muted);
+  font-size: 0.74rem;
 }
 
 .create-session-fieldset {
@@ -3986,6 +4043,73 @@ button.composer-context-project--empty:hover:not(:disabled) {
   0% { background-position: 100% 50%; filter: blur(0); }
   50% { filter: blur(0.12px); }
   100% { background-position: -100% 50%; filter: blur(0); }
+}
+
+@container git-review (max-width: 30rem) {
+  .git-workflow-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem 0.5rem;
+    padding: 0.75rem 1rem;
+  }
+
+  .git-workflow-observation {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+    gap: 0.3rem 0.75rem;
+    margin-right: 0;
+  }
+
+  .git-workflow-observation > :first-child {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+
+  .git-local-branch-control select,
+  .git-workflow-controls > button {
+    width: 100%;
+  }
+
+  .git-changes-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.65rem;
+    padding: 0.75rem 1rem;
+  }
+
+  .git-scope-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .git-review-toolbar-actions {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+  }
+
+  .git-review-feedback {
+    margin-left: auto;
+  }
+
+  .git-review-summary {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.65rem 1rem;
+  }
+
+  .git-review-compare {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: 0.45rem;
+  }
+
+  .git-review-files {
+    padding-inline: 0.75rem;
+  }
 }
 
 @media (max-width: 760px) {

@@ -89,9 +89,9 @@ export function CreateBranchDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="modal-header">
-          <h3 id="create-branch-dialog-title">Create Branch</h3>
+          <h3 id="create-branch-dialog-title">创建分支</h3>
           <p className="modal-subtitle" id="create-branch-dialog-description">
-            {mode === "local" ? "基于当前本地分支创建并切换到新分支。" : "在当前 detached Worktree 上创建分支。"}
+            {mode === "local" ? "基于当前本地分支创建并切换到新分支。" : "在当前分离状态的工作树上创建分支。"}
           </p>
         </div>
         <form
@@ -102,7 +102,7 @@ export function CreateBranchDialog({
         >
           <div className="modal-body create-branch-dialog-body">
             <label className="create-session-ref-field" htmlFor="create-branch-name">
-              <span>Branch name</span>
+              <span>分支名称</span>
               <input
                 ref={inputRef}
                 id="create-branch-name"
@@ -118,10 +118,10 @@ export function CreateBranchDialog({
           </div>
           <div className="modal-footer">
             <Button ref={cancelButtonRef} variant="ghost" disabled={busy} onClick={onCancel}>
-              Cancel
+              取消
             </Button>
             <Button type="submit" variant="primary" loading={busy} disabled={!trimmed}>
-              Create
+              创建
             </Button>
           </div>
         </form>

@@ -182,6 +182,7 @@ describe("App & Runtime Lifecycle behavior", () => {
   });
 
   it("opens project tools while keeping the conversation mounted", async () => {
+    const switchSessionGitBranch = vi.fn().mockResolvedValue({ branch: "main" });
     const project: Project = {
       id: "project-git",
       name: "worktree-test",
@@ -253,6 +254,7 @@ describe("App & Runtime Lifecycle behavior", () => {
         changedFileCount: 1,
       }),
       listReviewComments: vi.fn().mockResolvedValue([]),
+      switchSessionGitBranch,
       readSessionGitRemoteStatus: vi.fn().mockResolvedValue({
         branch: "feature/review",
         remotes: [{ name: "origin" }],
@@ -304,6 +306,20 @@ describe("App & Runtime Lifecycle behavior", () => {
     fireEvent.click(screen.getByRole("button", { name: "环境信息" }));
     const reopenedEnvironment = screen.getByRole("region", { name: "环境信息预览" });
     expect(within(reopenedEnvironment).queryByText("›")).not.toBeInTheDocument();
+    expect(within(reopenedEnvironment).getByText("本地工作区")).toBeInTheDocument();
+    fireEvent.click(within(reopenedEnvironment).getByRole("button", { name: "更改执行环境" }));
+    const environmentDialog = await screen.findByRole("dialog", { name: "更改执行环境" });
+    fireEvent.click(within(environmentDialog).getByRole("radio", { name: /本地工作区/ }));
+    fireEvent.change(within(environmentDialog).getByRole("combobox", { name: "本地分支" }), {
+      target: { value: "main" },
+    });
+    fireEvent.click(within(environmentDialog).getByRole("button", { name: "切换到 main" }));
+    await waitFor(() => expect(switchSessionGitBranch).toHaveBeenCalledWith(
+      session.id,
+      "main",
+      expect.any(String),
+    ));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "更改执行环境" })).not.toBeInTheDocument());
     fireEvent.click(within(reopenedEnvironment).getByRole("button", { name: "提交或推送" }));
     expect(await screen.findByRole("dialog", { name: "提交和推送" })).toBeInTheDocument();
   });

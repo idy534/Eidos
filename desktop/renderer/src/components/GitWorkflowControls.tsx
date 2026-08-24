@@ -313,11 +313,11 @@ export function GitWorkflowControls({
       {canCreateBranch && (
         <Button
           size="small"
-          variant="primary"
+          variant={localSession ? "secondary" : "primary"}
           disabled={controlsDisabled || (localSession && status.dirty)}
           onClick={onCreateBranch}
         >
-          {localSession ? "Create Branch" : "Create Branch Here"}
+          {localSession ? "创建分支" : "在此创建分支"}
         </Button>
       )}
 

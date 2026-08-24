@@ -213,6 +213,10 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
         { id: "untracked", label: "未跟踪", paths: status?.untrackedFiles ?? [] },
         { id: "conflicts", label: "冲突", paths: status?.conflictFiles ?? [] },
       ], [effectiveSummary?.changedFiles, scope, status]);
+  const visibleGroups = useMemo(
+    () => groups.filter((group) => group.paths.length > 0),
+    [groups],
+  );
   const selections = useMemo(
     () => groups.flatMap((group) => group.paths.map((path) => ({ group: group.id, path }))),
     [groups],
@@ -394,7 +398,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
             className="git-scope-tab"
             onClick={() => onScopeChange("head")}
           >
-            未提交改动
+            未提交
           </button>
           <button
             type="button"
@@ -403,7 +407,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
             className="git-scope-tab"
             onClick={() => onScopeChange("baseline")}
           >
-            整个任务改动
+            整个任务
           </button>
         </div>
         <div className="git-review-toolbar-actions">
@@ -444,6 +448,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
             <Button
               variant="secondary"
               size="small"
+              className="git-review-feedback"
               disabled={commentLoading || reviewFeedbackDisabled}
               onClick={() => void sendReviewFeedback()}
             >
@@ -455,14 +460,21 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
 
       {status && (
         <div className="git-review-summary" aria-label="Git 状态">
-          <span className="git-review-stat git-review-stat--addition">+{stats.additions}</span>
-          <span className="git-review-stat git-review-stat--deletion">-{stats.deletions}</span>
-          {effectiveSummary?.statsIncomplete === true && (
-            <span className="git-review-incomplete">统计不完整</span>
-          )}
-          <span className="git-review-branch">{status.branch ?? "Detached HEAD"}</span>
-          <span aria-hidden="true">→</span>
-          <code>{compareRef ?? "未设置基线"}</code>
+          <div className="git-review-stats">
+            <span className="git-review-stat git-review-stat--addition">+{stats.additions}</span>
+            <span className="git-review-stat git-review-stat--deletion">-{stats.deletions}</span>
+            {effectiveSummary?.statsIncomplete === true && (
+              <span className="git-review-incomplete">统计不完整</span>
+            )}
+          </div>
+          <div
+            className="git-review-compare"
+            title={`${status.branch ?? "Detached HEAD"} → ${compareRef ?? "未设置基线"}`}
+          >
+            <span className="git-review-branch">{status.branch ?? "Detached HEAD"}</span>
+            <span aria-hidden="true">→</span>
+            <code>{compareRef ?? "未设置基线"}</code>
+          </div>
         </div>
       )}
       {(error || summaryError || localError) && (
@@ -472,7 +484,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
       )}
 
       <div className="git-review-files" aria-label="所有修改文件">
-        {groups.map((group) => (
+        {visibleGroups.map((group) => (
           <section className="git-file-group" key={group.id} aria-label={group.label}>
             <h2>{group.label} <span>{group.paths.length}</span></h2>
             {group.paths.map((path) => {
@@ -639,7 +651,14 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
           </section>
         ))}
         {selections.length === 0 && (
-          <p className="git-diff-empty">{loading || summaryLoading ? "正在读取…" : "没有变更"}</p>
+          loading || summaryLoading ? (
+            <p className="git-diff-empty" role="status">正在读取…</p>
+          ) : (
+            <div className="git-review-empty" role="status">
+              <strong>当前范围没有变更</strong>
+              <span>可以切换范围或刷新 Git 状态。</span>
+            </div>
+          )
         )}
       </div>
     </section>

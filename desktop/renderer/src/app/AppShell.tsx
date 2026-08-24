@@ -351,8 +351,18 @@ export function AppShell({ runtime }: AppShellProps) {
     if (result) gitReviewActions.refresh();
   }
 
-  async function confirmHandoff(target: "local" | "worktree"): Promise<void> {
+  async function confirmHandoff(target: "local" | "worktree", branch?: string): Promise<void> {
     if (!handoffSessionId) return;
+    const current = sessionState.snapshot;
+    if (target === "local" && current?.session.executionMode === "local") {
+      if (!branch || branch === sessionBranch) return;
+      const switched = await sessionActions.switchLocalBranch(handoffSessionId, branch);
+      if (switched) {
+        setHandoffSessionId(undefined);
+        gitReviewActions.refresh();
+      }
+      return;
+    }
     const loaded = await sessionActions.handoffSession(handoffSessionId, target);
     if (loaded) setHandoffSessionId(undefined);
   }
@@ -714,7 +724,7 @@ export function AppShell({ runtime }: AppShellProps) {
               </button>
             )}
             <div className="environment-popover__row">
-              <span>{sessionIsLocal ? "本地" : "Worktree"}</span>
+              <span>{sessionIsLocal ? "本地工作区" : "受管工作树"}</span>
               {sessionHasGit && (
                 <Button
                   variant="ghost"
@@ -723,13 +733,13 @@ export function AppShell({ runtime }: AppShellProps) {
                   loading={handoffBusy}
                   onClick={() => setHandoffSessionId(snapshot!.session.id)}
                 >
-                  Hand off
+                  更改执行环境
                 </Button>
               )}
             </div>
             {sessionHasGit && (
               <div className="environment-popover__row environment-popover__branch">
-                <span>{sessionBranch ?? `Detached @ ${(gitReviewState.status?.head ?? "").slice(0, 7)}`}</span>
+                <span>{sessionBranch ?? `分离状态 @ ${(gitReviewState.status?.head ?? "").slice(0, 7)}`}</span>
                 <span aria-hidden="true">→</span>
                 <span>{gitReviewState.summary?.compareRef ?? gitReviewState.status?.baseRef ?? "HEAD"}</span>
               </div>
@@ -785,7 +795,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
         {currentSnapshot?.session.worktreeRestoreAvailable === true && !isDraft && (
           <div className="worktree-restore-banner" role="status">
-            <span>Worktree 已清理以释放磁盘空间</span>
+            <span>受管工作树已清理，以释放磁盘空间</span>
             <Button
               variant="secondary"
               size="small"
@@ -793,7 +803,7 @@ export function AppShell({ runtime }: AppShellProps) {
               loading={restoreBusy}
               onClick={() => void sessionActions.restoreWorktree(snapshot!.session.id)}
             >
-              Restore Worktree
+              恢复工作树
             </Button>
           </div>
         )}
@@ -1115,10 +1125,14 @@ export function AppShell({ runtime }: AppShellProps) {
       <HandoffDialog
         open={Boolean(handoffSessionId)}
         currentMode={currentSnapshot?.session.executionMode ?? "local"}
+        currentBranch={sessionBranch}
+        branches={gitReviewState.projectContext?.branches ?? []}
+        associatedWorktreeId={currentSnapshot?.session.associatedWorktreeId}
+        changedFileCount={gitReviewState.projectContext?.changedFileCount ?? 0}
         busy={handoffBusy}
         error={sessionState.error}
         getFallbackFocus={getDialogFallbackFocus}
-        onConfirm={(target) => void confirmHandoff(target)}
+        onConfirm={(target, branch) => void confirmHandoff(target, branch)}
         onCancel={() => {
           if (handoffBusy) return;
           setHandoffSessionId(undefined);
