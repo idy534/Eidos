@@ -849,17 +849,50 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 .workspace-tree-chevron:focus-visible { outline: 2px solid var(--accent); }
 .workspace-tree-chevron svg,
 .workspace-tree-icon svg {
-  width: 0.9rem;
-  height: 0.9rem;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.5;
 }
-.workspace-tree-chevron svg { transition: transform 140ms var(--apple-spring); }
+.workspace-tree-chevron svg { width: 0.9rem; height: 0.9rem; transition: transform 140ms var(--apple-spring); }
+.workspace-tree-icon svg { width: 1.05rem; height: 1.05rem; }
 .workspace-tree-chevron[data-open="true"] svg { transform: rotate(90deg); }
 .workspace-tree-icon { display: grid; color: var(--muted); place-items: center; }
+.workspace-file-type-icon rect { fill: currentColor; }
+.workspace-file-type-icon text {
+  fill: var(--surface);
+  stroke: none;
+  font-family: var(--font-code);
+  font-size: 5.5px;
+  font-weight: 700;
+  letter-spacing: -0.25px;
+}
+.workspace-file-type-icon:is(
+  [data-file-icon="javascript"],
+  [data-file-icon="json"],
+  [data-file-icon="yaml"]
+) { color: var(--status-warning); }
+.workspace-file-type-icon:is(
+  [data-file-icon="typescript"],
+  [data-file-icon="go"],
+  [data-file-icon="css"],
+  [data-file-icon="image"],
+  [data-file-icon="table"]
+) { color: var(--status-info); }
+.workspace-file-type-icon:is(
+  [data-file-icon="python"],
+  [data-file-icon="markdown"],
+  [data-file-icon="shell"],
+  [data-file-icon="git"],
+  [data-file-icon="docker"]
+) { color: var(--accent); }
+.workspace-file-type-icon:is(
+  [data-file-icon="html"],
+  [data-file-icon="pdf"],
+  [data-file-icon="ruby"],
+  [data-file-icon="swift"]
+) { color: var(--status-danger); }
 .workspace-tree-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-tree-loading { margin-left: auto; color: var(--muted); }
 

@@ -87,6 +87,32 @@ describe("WorkspaceExplorer", () => {
     expect(container.querySelector(".workspace-preview-header")).not.toBeInTheDocument();
   });
 
+  it("shows distinct icons for common file formats and a generic fallback", async () => {
+    const listDirectory = vi.fn(async () => ({
+      path: ".",
+      entries: [
+        { name: "app.js", relativePath: "app.js", kind: "file" as const, sizeBytes: 8 },
+        { name: "main.go", relativePath: "main.go", kind: "file" as const, sizeBytes: 8 },
+        { name: "README.md", relativePath: "README.md", kind: "file" as const, sizeBytes: 8 },
+        { name: "tool.py", relativePath: "tool.py", kind: "file" as const, sizeBytes: 8 },
+        { name: "notes.txt", relativePath: "notes.txt", kind: "file" as const, sizeBytes: 8 },
+        { name: "unknown.custom", relativePath: "unknown.custom", kind: "file" as const, sizeBytes: 8 },
+      ],
+      truncated: false,
+    }));
+    const { container } = render(
+      <WorkspaceExplorer sessionId="session-a" listDirectory={listDirectory} />,
+    );
+
+    await screen.findByText("app.js");
+    expect(container.querySelector('[data-file-icon="javascript"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-file-icon="go"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-file-icon="markdown"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-file-icon="python"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-file-icon="text"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-file-icon="generic"]')).toBeInTheDocument();
+  });
+
   it("keeps multiple opened files as preview tabs", async () => {
     const listDirectory = vi.fn(async () => ({
       path: ".",
