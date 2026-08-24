@@ -66,6 +66,7 @@ const gitDiff: SessionGitDiff = {
   additions: 1,
   deletions: 0,
   statsIncomplete: false,
+  fileStats: [{ path: "README.md", additions: 1, deletions: 0, statsIncomplete: false }],
   observedAt: 1,
 };
 

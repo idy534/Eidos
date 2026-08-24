@@ -76,6 +76,14 @@ log "installing locked JavaScript and Python dependencies"
 pnpm install --frozen-lockfile
 uv sync --locked
 
+# electron-builder rebuilds node-pty with node-gyp. Keep that rebuild on the
+# same locked Python used by the source Runtime, even when the repo path has
+# spaces.
+export npm_config_python="${npm_config_python:-$ROOT_DIR/.venv/bin/python}"
+if [[ ! -x "$npm_config_python" ]]; then
+  fail "node-gyp Python is not executable: $npm_config_python"
+fi
+
 PACKAGE_SKIP_TESTS="${EIDOS_PACKAGE_SKIP_TESTS:-0}"
 if [[ "$PACKAGE_SKIP_TESTS" == "1" ]]; then
   log "WARNING: package validation skipped because EIDOS_PACKAGE_SKIP_TESTS=1"

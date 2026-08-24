@@ -632,6 +632,13 @@ class GitContextResponseDto(MethodResultDto):
         return value
 
 
+class SessionGitFileStatDto(ClosedModel):
+    path: StrictStr
+    additions: StrictInt = Field(ge=0)
+    deletions: StrictInt = Field(ge=0)
+    stats_incomplete: bool = Field(alias="statsIncomplete")
+
+
 class SessionGitDiffResponseDto(MethodResultDto):
     scope: Literal["head", "baseline"]
     compare_ref: StrictStr | None = Field(default=None, alias="compareRef")
@@ -645,6 +652,7 @@ class SessionGitDiffResponseDto(MethodResultDto):
     additions: StrictInt = Field(ge=0)
     deletions: StrictInt = Field(ge=0)
     stats_incomplete: bool = Field(alias="statsIncomplete")
+    file_stats: list[SessionGitFileStatDto] = Field(alias="fileStats")
     observed_at: StrictInt = Field(alias="observedAt", ge=0)
 
     def to_json_value(self) -> dict[str, JsonValue]:

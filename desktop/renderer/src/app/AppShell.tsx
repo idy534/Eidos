@@ -1,4 +1,9 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import type { Project, Run, Session } from "../contracts.js";
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
@@ -17,6 +22,8 @@ import { GitChangesPanel } from "../components/GitChangesPanel.js";
 import { WorkspaceExplorer } from "../components/WorkspaceExplorer.js";
 import {
   WorkspaceDock,
+  WorkspaceDockToggle,
+  type WorkspaceTab,
   type WorkspaceToolKind,
 } from "../components/WorkspaceDock.js";
 import type { RuntimeLifecycleState } from "./useRuntimeLifecycle.js";
@@ -37,6 +44,9 @@ interface AppShellProps {
 }
 
 type CreateBranchMode = "local" | "worktree";
+
+const DOCK_MIN_WIDTH = 22 * 16;
+const MAIN_MIN_WIDTH = 16 * 16;
 
 const TerminalPanel = lazy(() => import("../components/TerminalPanel.js").then((module) => ({
   default: module.TerminalPanel,
@@ -106,12 +116,21 @@ export function AppShell({ runtime }: AppShellProps) {
   const [handoffSessionId, setHandoffSessionId] = useState<string | undefined>(undefined);
   const [dockOpen, setDockOpen] = useState(false);
   const [dockExpanded, setDockExpanded] = useState(false);
-  const [openTools, setOpenTools] = useState<WorkspaceToolKind[]>([]);
-  const [activeTool, setActiveTool] = useState<WorkspaceToolKind>("review");
-  const [selectedFile, setSelectedFile] = useState<string | undefined>(undefined);
+  const [dockWidth, setDockWidth] = useState<number>();
+  const [environmentPopoverOpen, setEnvironmentPopoverOpen] = useState(false);
+  const [openTabs, setOpenTabs] = useState<WorkspaceTab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | undefined>(undefined);
   const [workflowOpenRequest, setWorkflowOpenRequest] = useState(0);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const workspaceRef = useRef<HTMLElement>(null);
+  const workspaceBodyRef = useRef<HTMLDivElement>(null);
+  const environmentPopoverRef = useRef<HTMLDetailsElement>(null);
+  const dockResizeRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startWidth: number;
+  } | undefined>(undefined);
+  const terminalSequenceRef = useRef(0);
   const modelSessionInitializedRef = useRef<string | undefined>(undefined);
   const getDialogFallbackFocus = useCallback((): HTMLElement | null => {
     const composer = composerRef.current;
@@ -157,8 +176,10 @@ export function AppShell({ runtime }: AppShellProps) {
   useEffect(() => {
     setDockOpen(false);
     setDockExpanded(false);
-    setOpenTools([]);
-    setSelectedFile(undefined);
+    setDockWidth(undefined);
+    setOpenTabs([]);
+    setActiveTabId(undefined);
+    terminalSequenceRef.current = 0;
   }, [
     sessionState.snapshot?.session.id,
     sessionState.snapshot?.session.executionMode,
@@ -512,10 +533,109 @@ export function AppShell({ runtime }: AppShellProps) {
       : ["terminal", "files"]
     : [];
 
+  useEffect(() => {
+    setEnvironmentPopoverOpen(false);
+
+    const closeOnPointerDown = (event: PointerEvent) => {
+      const details = environmentPopoverRef.current;
+      if (!details) return;
+      if (event.target instanceof Node && details.contains(event.target)) return;
+      details.open = false;
+      setEnvironmentPopoverOpen(false);
+    };
+    const closeOnKeyDown = (event: KeyboardEvent) => {
+      const details = environmentPopoverRef.current;
+      if (event.key === "Escape" && details) {
+        details.open = false;
+        setEnvironmentPopoverOpen(false);
+      }
+    };
+
+    window.addEventListener("pointerdown", closeOnPointerDown);
+    window.addEventListener("keydown", closeOnKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnPointerDown);
+      window.removeEventListener("keydown", closeOnKeyDown);
+    };
+  }, [executionKey, sessionHasProject]);
+
+  function getDockResizeBounds(): { min: number; max: number } {
+    const bodyWidth = workspaceBodyRef.current?.getBoundingClientRect().width || window.innerWidth;
+    const availableWidth = Math.max(MAIN_MIN_WIDTH, bodyWidth - MAIN_MIN_WIDTH);
+    const min = Math.min(DOCK_MIN_WIDTH, availableWidth);
+    const max = Math.max(min, Math.min(availableWidth, Math.round(bodyWidth * 0.62)));
+    return { min, max };
+  }
+
+  function clampDockWidth(width: number): number {
+    const { min, max } = getDockResizeBounds();
+    return Math.min(max, Math.max(min, Math.round(width)));
+  }
+
+  function getCurrentDockWidth(): number {
+    if (dockWidth !== undefined) return dockWidth;
+    const dock = workspaceBodyRef.current?.querySelector<HTMLElement>(".workspace-dock");
+    const measured = dock?.getBoundingClientRect().width ?? 0;
+    return clampDockWidth(measured || window.innerWidth * 0.42);
+  }
+
+  function adjustDockWidth(delta: number): void {
+    setDockWidth(clampDockWidth(getCurrentDockWidth() + delta));
+  }
+
+  function handleDockResizePointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
+    if (dockExpanded) return;
+    dockResizeRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: getCurrentDockWidth(),
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+  }
+
+  function handleDockResizePointerMove(event: ReactPointerEvent<HTMLDivElement>): void {
+    const drag = dockResizeRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    setDockWidth(clampDockWidth(drag.startWidth - (event.clientX - drag.startX)));
+  }
+
+  function finishDockResize(event: ReactPointerEvent<HTMLDivElement>): void {
+    if (dockResizeRef.current?.pointerId === event.pointerId) dockResizeRef.current = undefined;
+  }
+
+  function handleDockResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      adjustDockWidth(16);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      adjustDockWidth(-16);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setDockWidth(getDockResizeBounds().min);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setDockWidth(getDockResizeBounds().max);
+    }
+  }
+
   function openTool(tool: WorkspaceToolKind): void {
     if (!availableTools.includes(tool)) return;
-    setOpenTools((current) => current.includes(tool) ? current : [...current, tool]);
-    setActiveTool(tool);
+    if (environmentPopoverRef.current) environmentPopoverRef.current.open = false;
+    setEnvironmentPopoverOpen(false);
+    const existing = tool === "terminal"
+      ? undefined
+      : openTabs.find((tab) => tab.kind === tool);
+    const tab = existing ?? {
+      id: tool === "terminal" ? `terminal-${++terminalSequenceRef.current}` : tool,
+      kind: tool,
+      ...(tool === "terminal"
+        ? { title: `终端 ${terminalSequenceRef.current}` }
+        : {}),
+    } satisfies WorkspaceTab;
+    if (!existing) setOpenTabs((current) => [...current, tab]);
+    setActiveTabId(tab.id);
     setDockOpen(true);
   }
 
@@ -525,19 +645,15 @@ export function AppShell({ runtime }: AppShellProps) {
       setDockExpanded(false);
       return;
     }
-    const defaultTool: WorkspaceToolKind = sessionHasGit ? "review" : "files";
-    if (openTools.length === 0) setOpenTools([defaultTool]);
-    setActiveTool(openTools.includes(activeTool) ? activeTool : defaultTool);
     setDockOpen(true);
   }
 
-  function closeTool(tool: WorkspaceToolKind): void {
-    setOpenTools((current) => {
-      const next = current.filter((item) => item !== tool);
-      if (activeTool === tool && next[0]) setActiveTool(next[0]);
-      if (next.length === 0) {
-        setDockOpen(false);
-        setDockExpanded(false);
+  function closeTab(tabId: string): void {
+    setOpenTabs((current) => {
+      const index = current.findIndex((tab) => tab.id === tabId);
+      const next = current.filter((tab) => tab.id !== tabId);
+      if (activeTabId === tabId) {
+        setActiveTabId(next[Math.min(index, next.length - 1)]?.id);
       }
       return next;
     });
@@ -554,6 +670,84 @@ export function AppShell({ runtime }: AppShellProps) {
     sessionState.pending.creatingSession === true
     || handoffBusy
     || !isStorageReady;
+
+  const workspaceActions = sessionHasProject && availableTools.length > 0 ? (
+    <>
+      <div className="workspace-header-tools">
+        <details
+          ref={environmentPopoverRef}
+          className="environment-popover"
+          key={executionKey}
+          open={environmentPopoverOpen}
+        >
+          <summary
+            className="icon-button"
+            role="button"
+            aria-label="环境信息"
+            onClick={(event) => {
+              event.preventDefault();
+              setEnvironmentPopoverOpen((open) => !open);
+            }}
+          >
+            <svg viewBox="0 0 20 20" data-icon="environment" aria-hidden="true">
+              <circle cx="4.5" cy="5" r="1.5" />
+              <circle cx="4.5" cy="10" r="1.5" />
+              <circle cx="4.5" cy="15" r="1.5" />
+              <path d="M9 5h7M9 10h7M9 15h7" />
+            </svg>
+          </summary>
+          <section
+            className="environment-popover__panel"
+            aria-label="环境信息预览"
+            hidden={!environmentPopoverOpen}
+          >
+            <header>
+              <h2>环境信息</h2>
+            </header>
+            {sessionHasGit && (
+              <button type="button" className="environment-popover__row" onClick={() => openTool("review")}>
+                <span>变更</span>
+                <span className="git-line-summary" aria-label="修改行数">
+                  <ins>+{gitReviewState.summary?.additions ?? 0}</ins>
+                  <del>-{gitReviewState.summary?.deletions ?? 0}</del>
+                </span>
+              </button>
+            )}
+            <div className="environment-popover__row">
+              <span>{sessionIsLocal ? "本地" : "Worktree"}</span>
+              {sessionHasGit && (
+                <Button
+                  variant="ghost"
+                  size="small"
+                  disabled={Boolean(activeRun) || handoffBusy}
+                  loading={handoffBusy}
+                  onClick={() => setHandoffSessionId(snapshot!.session.id)}
+                >
+                  Hand off
+                </Button>
+              )}
+            </div>
+            {sessionHasGit && (
+              <div className="environment-popover__row environment-popover__branch">
+                <span>{sessionBranch ?? `Detached @ ${(gitReviewState.status?.head ?? "").slice(0, 7)}`}</span>
+                <span aria-hidden="true">→</span>
+                <span>{gitReviewState.summary?.compareRef ?? gitReviewState.status?.baseRef ?? "HEAD"}</span>
+              </div>
+            )}
+            {gitReviewState.summary?.statsIncomplete && (
+              <p className="environment-popover__note" role="status">二进制文件未计入行数</p>
+            )}
+            {sessionHasGit && (
+              <button type="button" className="environment-popover__row" onClick={openGitWorkflow}>
+                <span>提交或推送</span>
+              </button>
+            )}
+          </section>
+        </details>
+      </div>
+      <WorkspaceDockToggle open={dockOpen} onClick={toggleDock} />
+    </>
+  ) : null;
 
   return (
     <main className="workbench">
@@ -625,6 +819,14 @@ export function AppShell({ runtime }: AppShellProps) {
           />
         ) : currentSnapshot ? (
           <>
+            <div
+              ref={workspaceBodyRef}
+              className={`workspace-body${dockOpen ? " workspace-body--with-dock" : " workspace-body--session-centered"}${dockExpanded ? " workspace-body--expanded" : ""}`}
+              style={dockWidth === undefined ? undefined : {
+                "--workspace-dock-width": `${dockWidth}px`,
+              } as CSSProperties}
+            >
+            <div className={`workspace-main-column${dockExpanded ? " workspace-main-column--hidden" : ""}`}>
             <header className="workspace-header session-header">
               {isRenamingThisSession ? (
                 <form
@@ -684,84 +886,9 @@ export function AppShell({ runtime }: AppShellProps) {
                   )}
                 </div>
               )}
-              <div className="session-header-actions">
-                {sessionHasProject && (
-                  <div className="workspace-header-tools">
-                    <details className="environment-popover" key={executionKey}>
-                      <summary className="icon-button" role="button" aria-label="环境信息">
-                        <svg viewBox="0 0 20 20" aria-hidden="true">
-                          <circle cx="5" cy="5" r="2" />
-                          <circle cx="5" cy="10" r="2" />
-                          <circle cx="5" cy="15" r="2" />
-                          <path d="M9 5h7M9 10h7M9 15h7" />
-                        </svg>
-                      </summary>
-                      <section className="environment-popover__panel" aria-label="环境信息预览">
-                        <header>
-                          <h2>环境信息</h2>
-                        </header>
-                        {sessionHasGit && (
-                          <button type="button" className="environment-popover__row" onClick={() => openTool("review")}>
-                            <span>变更</span>
-                            <span className="git-line-summary" aria-label="修改行数">
-                              <ins>+{gitReviewState.summary?.additions ?? 0}</ins>
-                              <del>-{gitReviewState.summary?.deletions ?? 0}</del>
-                            </span>
-                          </button>
-                        )}
-                        <div className="environment-popover__row">
-                          <span>{sessionIsLocal ? "本地" : "Worktree"}</span>
-                          {sessionHasGit && (
-                            <Button
-                              variant="ghost"
-                              size="small"
-                              disabled={Boolean(activeRun) || handoffBusy}
-                              loading={handoffBusy}
-                              onClick={() => setHandoffSessionId(snapshot!.session.id)}
-                            >
-                              Hand off
-                            </Button>
-                          )}
-                        </div>
-                        {sessionHasGit && (
-                          <div className="environment-popover__row environment-popover__branch">
-                            <span>{sessionBranch ?? `Detached @ ${(gitReviewState.status?.head ?? "").slice(0, 7)}`}</span>
-                            <span aria-hidden="true">→</span>
-                            <span>{gitReviewState.summary?.compareRef ?? gitReviewState.status?.baseRef ?? "HEAD"}</span>
-                          </div>
-                        )}
-                        {gitReviewState.summary?.statsIncomplete && (
-                          <p className="environment-popover__note" role="status">二进制文件未计入行数</p>
-                        )}
-                        {sessionHasGit && (
-                          <button type="button" className="environment-popover__row" onClick={openGitWorkflow}>
-                            <span>提交或推送</span>
-                            <span aria-hidden="true">›</span>
-                          </button>
-                        )}
-                      </section>
-                    </details>
-                    <Button
-                      variant="ghost"
-                      size="small"
-                      className="workspace-tools-trigger"
-                      aria-label={dockOpen ? "关闭工作区工具" : "打开工作区工具"}
-                      aria-expanded={dockOpen}
-                      aria-controls="workspace-dock"
-                      onClick={toggleDock}
-                    >
-                      <svg viewBox="0 0 20 20" aria-hidden="true">
-                        <path d="M3 3.5h14v13H3zM12.5 3.5v13" />
-                      </svg>
-                    </Button>
-                  </div>
-                )}
-              </div>
             </header>
 
-            <div
-              className={`workspace-content${dockOpen ? " workspace-content--with-dock" : ""}${dockExpanded ? " workspace-content--expanded" : ""}`}
-            >
+            <div className="workspace-content">
               <div className="workspace-main">
                 {responseActionState.error && (
                   <p className="approval-error response-action-error" role="alert">
@@ -829,69 +956,94 @@ export function AppShell({ runtime }: AppShellProps) {
                 />
               </div>
 
-              {dockOpen && availableTools.length > 0 && (
-                <WorkspaceDock
-                  activeTool={activeTool}
-                  availableTools={availableTools}
-                  expanded={dockExpanded}
-                  openTools={openTools}
-                  filesTitle={selectedFile?.split("/").pop()}
-                  terminalTitle={sessionProject?.name}
-                  onAddTool={openTool}
-                  onClose={() => {
-                    setDockOpen(false);
-                    setDockExpanded(false);
-                  }}
-                  onCloseTool={closeTool}
-                  onSelectTool={setActiveTool}
-                  onToggleExpanded={() => setDockExpanded((expanded) => !expanded)}
-                  review={sessionHasGit ? (
-                    <GitChangesPanel
-                      sessionId={currentSnapshot.session.id}
-                      workspaceRoot={currentSnapshot.session.project?.workspaceRoot ?? currentSnapshot.session.workspaceRoot}
-                      scope={gitReviewState.scope}
-                      status={gitReviewState.status}
-                      summary={gitReviewState.summary}
-                      workflowOpenRequest={workflowOpenRequest}
-                      loading={gitReviewState.loadingStatus || gitReviewState.loadingSummary}
-                      error={gitReviewState.error}
-                      onScopeChange={gitReviewActions.selectScope}
-                      onRefresh={gitReviewActions.refresh}
-                      onSendReviewFeedback={handleReviewFeedback}
-                      reviewFeedbackDisabled={Boolean(activeRun) || runState.isSubmitting}
-                      workflowDisabled={
-                        Boolean(activeRun)
-                        || runState.isSubmitting
-                        || handoffBusy
-                        || sessionState.pending.branchSessionId === currentSnapshot.session.id
-                        || sessionState.pending.creatingBranchSessionId === currentSnapshot.session.id
-                      }
-                      onCreateBranch={
-                        sessionIsLocal || (sessionWorktree?.state === "active" && sessionWorktree.branch === null)
-                          ? () => openCreateBranch(currentSnapshot.session.id, sessionIsLocal ? "local" : "worktree")
-                          : undefined
-                      }
-                    />
-                  ) : null}
-                  terminal={(
-                    <Suspense fallback={<p className="terminal-panel__message" role="status">正在准备终端…</p>}>
-                      <TerminalPanel
-                        key={executionKey}
+            </div>
+            </div>
+
+            {!dockOpen && workspaceActions && (
+              <div className="workspace-body__actions">{workspaceActions}</div>
+            )}
+
+            {dockOpen && !dockExpanded && (
+              <div
+                className="workspace-dock-resize-handle"
+                role="separator"
+                aria-label="调整工作区宽度"
+                aria-orientation="vertical"
+                aria-valuemin={getDockResizeBounds().min}
+                aria-valuemax={getDockResizeBounds().max}
+                aria-valuenow={dockWidth ?? getCurrentDockWidth()}
+                tabIndex={0}
+                onPointerDown={handleDockResizePointerDown}
+                onPointerMove={handleDockResizePointerMove}
+                onPointerUp={finishDockResize}
+                onPointerCancel={finishDockResize}
+                onKeyDown={handleDockResizeKeyDown}
+              />
+            )}
+
+            {dockOpen && availableTools.length > 0 && (
+              <WorkspaceDock
+                actions={workspaceActions}
+                activeTabId={activeTabId}
+                availableTools={availableTools}
+                expanded={dockExpanded}
+                openTabs={openTabs}
+                onAddTool={openTool}
+                onCloseTab={closeTab}
+                onSelectTab={setActiveTabId}
+                onToggleExpanded={() => setDockExpanded((expanded) => !expanded)}
+                renderTab={(tab) => {
+                  if (tab.kind === "review") {
+                    return sessionHasGit ? (
+                      <GitChangesPanel
                         sessionId={currentSnapshot.session.id}
-                        active={activeTool === "terminal"}
+                        workspaceRoot={currentSnapshot.session.project?.workspaceRoot ?? currentSnapshot.session.workspaceRoot}
+                        scope={gitReviewState.scope}
+                        status={gitReviewState.status}
+                        summary={gitReviewState.summary}
+                        workflowOpenRequest={workflowOpenRequest}
+                        loading={gitReviewState.loadingStatus || gitReviewState.loadingSummary}
+                        error={gitReviewState.error}
+                        onScopeChange={gitReviewActions.selectScope}
+                        onRefresh={gitReviewActions.refresh}
+                        onSendReviewFeedback={handleReviewFeedback}
+                        reviewFeedbackDisabled={Boolean(activeRun) || runState.isSubmitting}
+                        workflowDisabled={
+                          Boolean(activeRun)
+                          || runState.isSubmitting
+                          || handoffBusy
+                          || sessionState.pending.branchSessionId === currentSnapshot.session.id
+                          || sessionState.pending.creatingBranchSessionId === currentSnapshot.session.id
+                        }
+                        onCreateBranch={
+                          sessionIsLocal || (sessionWorktree?.state === "active" && sessionWorktree.branch === null)
+                            ? () => openCreateBranch(currentSnapshot.session.id, sessionIsLocal ? "local" : "worktree")
+                            : undefined
+                        }
                       />
-                    </Suspense>
-                  )}
-                  files={sessionHasProject ? (
+                    ) : null;
+                  }
+                  if (tab.kind === "terminal") {
+                    return (
+                      <Suspense fallback={<p className="terminal-panel__message" role="status">正在准备终端…</p>}>
+                        <TerminalPanel
+                          key={tab.id}
+                          sessionId={currentSnapshot.session.id}
+                          active={activeTabId === tab.id}
+                        />
+                      </Suspense>
+                    );
+                  }
+                  return sessionHasProject ? (
                     <WorkspaceExplorer
                       sessionId={currentSnapshot.session.id}
                       executionKey={executionKey}
                       layout={dockExpanded ? "expanded" : "side"}
-                      onSelectedFileChange={setSelectedFile}
                     />
-                  ) : null}
-                />
-              )}
+                  ) : null;
+                }}
+              />
+            )}
             </div>
           </>
         ) : (

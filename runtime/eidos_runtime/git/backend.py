@@ -29,6 +29,7 @@ from eidos_runtime.git.errors import (
 )
 from eidos_runtime.git.models import (
     GitDiffObservation,
+    GitFileStat,
     GitRepositoryDiscovery,
     GitRemoteObservation,
     GitOperationState,
@@ -305,6 +306,15 @@ class DulwichGitBackend:
             additions=captured.additions,
             deletions=captured.deletions,
             stats_incomplete=captured.stats_incomplete,
+            file_stats=tuple(
+                GitFileStat(
+                    path=stat.path,
+                    additions=stat.additions,
+                    deletions=stat.deletions,
+                    stats_incomplete=stat.stats_incomplete,
+                )
+                for stat in captured.file_stats
+            ),
         )
 
     def stage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation:

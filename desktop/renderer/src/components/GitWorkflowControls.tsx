@@ -13,6 +13,7 @@ import type {
 } from "../contracts.js";
 import { runtimeBusinessCode, userFacingError } from "../session-state.js";
 import { Button } from "./Button.js";
+import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
 
 
 interface GitWorkflowControlsProps {
@@ -116,14 +117,53 @@ export function GitWorkflowControls({
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
   const [operation, setOperation] = useState<GitMergeResult>();
+  const [workflowOpen, setWorkflowOpen] = useState(false);
   const operationIdsRef = useRef(new Map<string, string>());
-  const popoverRef = useRef<HTMLDetailsElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const messageRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (openRequest !== undefined && openRequest > 0 && popoverRef.current) {
-      popoverRef.current.open = true;
-    }
+    if (openRequest !== undefined && openRequest > 0) setWorkflowOpen(true);
   }, [openRequest]);
+
+  useDialogFocusLifecycle({ open: workflowOpen, initialFocusRef: messageRef });
+
+  useEffect(() => {
+    if (!workflowOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && busy === undefined) {
+        event.preventDefault();
+        setWorkflowOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [busy, workflowOpen]);
+
+  useEffect(() => {
+    if (!workflowOpen) return;
+    const handleFocusTrap = (event: KeyboardEvent) => {
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusable = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(
+          "button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])",
+        ),
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handleFocusTrap);
+    return () => window.removeEventListener("keydown", handleFocusTrap);
+  }, [workflowOpen]);
 
   const targets = useMemo(
     () => branches.filter((branch) => branch !== status.branch),
@@ -281,9 +321,44 @@ export function GitWorkflowControls({
         </Button>
       )}
 
-      <details ref={popoverRef} className="git-workflow-popover">
-        <summary>提交或推送 <span aria-hidden="true">⌄</span></summary>
-        <div className="git-workflow-popover-content">
+      <button
+        type="button"
+        className="git-workflow-trigger"
+        aria-haspopup="dialog"
+        aria-expanded={workflowOpen}
+        onClick={() => setWorkflowOpen(true)}
+      >
+        <span>提交或推送</span>
+      </button>
+      {workflowOpen && (
+        <div
+          className="modal-backdrop git-workflow-modal-backdrop"
+          onClick={busy === undefined ? () => setWorkflowOpen(false) : undefined}
+        >
+          <div
+            ref={dialogRef}
+            className="modal-dialog modal-dialog--wide git-workflow-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="git-workflow-dialog-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-header git-workflow-dialog-header">
+              <div>
+                <h3 id="git-workflow-dialog-title">提交和推送</h3>
+                <p className="modal-subtitle">{status.branch ?? "Detached HEAD"}</p>
+              </div>
+              <button
+                type="button"
+                className="git-workflow-dialog-close"
+                aria-label="关闭提交和推送"
+                disabled={busy !== undefined}
+                onClick={() => setWorkflowOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="git-workflow-dialog-content">
           <form
             className="git-commit-form"
             onSubmit={(event) => {
@@ -292,6 +367,7 @@ export function GitWorkflowControls({
             }}
           >
             <input
+              ref={messageRef}
               aria-label="提交信息"
               value={message}
               onChange={(event) => setMessage(event.target.value)}
@@ -397,8 +473,10 @@ export function GitWorkflowControls({
               )}
             </aside>
           )}
+            </div>
+          </div>
         </div>
-      </details>
+      )}
 
       {error && <p className="approval-error git-workflow-error" role="alert">{error}</p>}
     </section>

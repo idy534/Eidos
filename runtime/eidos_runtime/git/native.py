@@ -56,6 +56,14 @@ class GitCliResult:
 
 
 @dataclass(frozen=True)
+class GitCliFileStat:
+    path: str
+    additions: int
+    deletions: int
+    stats_incomplete: bool
+
+
+@dataclass(frozen=True)
 class GitCliDiff:
     patch: bytes
     changed_paths: tuple[str, ...]
@@ -63,6 +71,7 @@ class GitCliDiff:
     additions: int
     deletions: int
     stats_incomplete: bool
+    file_stats: tuple[GitCliFileStat, ...]
 
 
 class HardenedGitRunner:
@@ -775,7 +784,7 @@ class GitCli:
             output_limit_bytes=output_limit_bytes,
             path=path,
         )
-        additions, deletions, stats_incomplete = self._diff_stats(
+        additions, deletions, stats_incomplete, file_stats = self._diff_stats(
             cwd,
             base_commit=base_commit,
             include_untracked=include_untracked,
@@ -788,6 +797,7 @@ class GitCli:
             additions=additions,
             deletions=deletions,
             stats_incomplete=stats_incomplete,
+            file_stats=file_stats,
         )
 
     def apply_working_tree_patch(
@@ -995,7 +1005,7 @@ class GitCli:
         base_commit: str,
         include_untracked: bool,
         path: str | None = None,
-    ) -> tuple[int, int, bool]:
+    ) -> tuple[int, int, bool, tuple[GitCliFileStat, ...]]:
         overrides = filter_config_overrides(self._runner, cwd)
         result = self._runner.run(
             (
@@ -1014,9 +1024,11 @@ class GitCli:
             config_overrides=overrides,
             output_limit_bytes=DEFAULT_GIT_PATCH_BYTES,
         )
-        additions, deletions, incomplete = _numstat_totals(result.stdout)
+        file_stats, incomplete = _numstat_file_stats(result.stdout)
+        additions = sum(stat.additions for stat in file_stats)
+        deletions = sum(stat.deletions for stat in file_stats)
         if not include_untracked:
-            return additions, deletions, incomplete
+            return additions, deletions, incomplete, file_stats
         # ponytail: native Git needs one no-index call per untracked file; batch only
         # if measured review latency justifies a more complex temporary-index path.
         for relative in self.untracked_paths(cwd):
@@ -1041,25 +1053,23 @@ class GitCli:
                 output_limit_bytes=DEFAULT_GIT_PATCH_BYTES,
                 allow_returncodes=(1,),
             )
-            untracked_additions, untracked_deletions, untracked_incomplete = (
-                _numstat_totals(untracked.stdout)
-            )
-            additions += untracked_additions
-            deletions += untracked_deletions
+            untracked_stats, untracked_incomplete = _numstat_file_stats(untracked.stdout)
+            additions += sum(stat.additions for stat in untracked_stats)
+            deletions += sum(stat.deletions for stat in untracked_stats)
+            file_stats += untracked_stats
             incomplete = incomplete or untracked_incomplete
-        return additions, deletions, incomplete
+        return additions, deletions, incomplete, tuple(sorted(file_stats, key=lambda stat: stat.path))
 
 
-def _numstat_totals(output: bytes) -> tuple[int, int, bool]:
+def _numstat_file_stats(output: bytes) -> tuple[tuple[GitCliFileStat, ...], bool]:
     if output and not output.endswith(b"\0"):
         raise GitCommandFailedError(
             "worktree-diff-stats",
             returncode=None,
             stderr="Git numstat output is incomplete",
         )
-    additions = 0
-    deletions = 0
     incomplete = False
+    file_stats: list[GitCliFileStat] = []
     records = output.split(b"\0")
     index = 0
     while index < len(records):
@@ -1082,9 +1092,16 @@ def _numstat_totals(output: bytes) -> tuple[int, int, bool]:
                     returncode=None,
                     stderr="Git numstat path output is invalid",
                 )
+            path = records[index + 1]
             index += 2
         if added == b"-" or deleted == b"-":
             incomplete = True
+            file_stats.append(GitCliFileStat(
+                path=os.fsdecode(path),
+                additions=0,
+                deletions=0,
+                stats_incomplete=True,
+            ))
             continue
         if not added.isdigit() or not deleted.isdigit():
             raise GitCommandFailedError(
@@ -1092,9 +1109,13 @@ def _numstat_totals(output: bytes) -> tuple[int, int, bool]:
                 returncode=None,
                 stderr="Git numstat output is invalid",
             )
-        additions += int(added)
-        deletions += int(deleted)
-    return additions, deletions, incomplete
+        file_stats.append(GitCliFileStat(
+            path=os.fsdecode(path),
+            additions=int(added),
+            deletions=int(deleted),
+            stats_incomplete=False,
+        ))
+    return tuple(file_stats), incomplete
 
 
 def filter_config_overrides(
@@ -1330,6 +1351,7 @@ def _close_process_pipes(process: subprocess.Popen[bytes]) -> None:
 __all__ = [
     "GitCli",
     "GitCliDiff",
+    "GitCliFileStat",
     "GitCliResult",
     "GitExecutionProfile",
     "GitEditorPolicy",

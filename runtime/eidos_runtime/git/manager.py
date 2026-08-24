@@ -1749,6 +1749,7 @@ class WorktreeManager:
             additions=diff_observation.additions,
             deletions=diff_observation.deletions,
             stats_incomplete=diff_observation.stats_incomplete,
+            file_stats=diff_observation.file_stats,
             observed_at=utc_now(),
         )
 
@@ -1808,6 +1809,7 @@ class WorktreeManager:
             additions=diff_observation.additions,
             deletions=diff_observation.deletions,
             stats_incomplete=diff_observation.stats_incomplete,
+            file_stats=diff_observation.file_stats,
             observed_at=utc_now(),
         )
 

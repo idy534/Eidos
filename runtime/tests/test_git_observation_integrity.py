@@ -13,7 +13,7 @@ from eidos_runtime.git.errors import (
     WorktreeError,
 )
 from eidos_runtime.git.manager import WorktreeManager
-from eidos_runtime.git.models import GitDiffObservation, GitStatusObservation
+from eidos_runtime.git.models import GitDiffObservation, GitFileStat, GitStatusObservation
 from eidos_runtime.git.status import DiffScope
 from git_backend_fakes import FakeGitBackend
 
@@ -225,6 +225,7 @@ def test_typed_fake_backend_returns_domain_observations() -> None:
         additions=1,
         deletions=0,
         stats_incomplete=False,
+        file_stats=(GitFileStat(path="staged.txt", additions=1, deletions=0, stats_incomplete=False),),
     )
 
     assert status.dirty

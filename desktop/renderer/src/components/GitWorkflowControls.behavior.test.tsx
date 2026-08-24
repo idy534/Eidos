@@ -97,11 +97,17 @@ function openWorkflow() {
 }
 
 describe("GitWorkflowControls", () => {
-  it("opens the commit and push popover from an external request", async () => {
-    const { result } = renderControls({ openRequest: 1 });
+  it("opens the workflow without a navigation arrow", () => {
+    renderControls();
 
-    await waitFor(() => expect(result.container.querySelector(".git-workflow-popover"))
-      .toHaveAttribute("open"));
+    expect(screen.getByRole("button", { name: "提交或推送" }).querySelector("svg"))
+      .not.toBeInTheDocument();
+  });
+
+  it("opens the centered commit and push dialog from an external request", async () => {
+    renderControls({ openRequest: 1 });
+
+    expect(await screen.findByRole("dialog", { name: "提交和推送" })).toBeInTheDocument();
   });
 
   it("includes unstaged files before committing and can push the new commit", async () => {

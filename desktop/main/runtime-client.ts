@@ -1485,7 +1485,7 @@ function isSessionGitDiff(value: unknown): value is SessionGitDiff {
     && hasOnlyKeys(value, [
       "scope", "compareRef", "baseCommit", "head", "dirty", "changedFiles",
       "unifiedDiff", "diffHash", "truncated", "additions", "deletions",
-      "statsIncomplete", "observedAt",
+      "statsIncomplete", "fileStats", "observedAt",
     ])
     && ["head", "baseline"].includes(String(value.scope))
     && (value.compareRef === null || typeof value.compareRef === "string")
@@ -1500,7 +1500,20 @@ function isSessionGitDiff(value: unknown): value is SessionGitDiff {
     && isNonNegativeInteger(value.additions)
     && isNonNegativeInteger(value.deletions)
     && typeof value.statsIncomplete === "boolean"
+    && Array.isArray(value.fileStats)
+    && value.fileStats.every(isSessionGitFileStat)
     && isNonNegativeInteger(value.observedAt)
+  );
+}
+
+function isSessionGitFileStat(value: unknown): boolean {
+  return (
+    isRecord(value)
+    && hasOnlyKeys(value, ["path", "additions", "deletions", "statsIncomplete"])
+    && typeof value.path === "string"
+    && isNonNegativeInteger(value.additions)
+    && isNonNegativeInteger(value.deletions)
+    && typeof value.statsIncomplete === "boolean"
   );
 }
 

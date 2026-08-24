@@ -32,7 +32,6 @@
   --muted: #6a6f67;
   --line: #d7d6cf;
   --accent: #315f4a;
-  --accent-hover: #244b39;
   --accent-soft: #dfe9e2;
   --accent-glow: rgba(49, 95, 74, 0.22);
   --danger: #913d34;
@@ -115,8 +114,9 @@ button {
 }
 
 button:hover:not(:disabled) {
-  background: var(--accent-hover);
-  box-shadow: 0 2px 8px var(--accent-glow);
+  color: var(--text);
+  background: var(--surface-selected);
+  box-shadow: var(--apple-shadow-sm);
 }
 
 button:active:not(:disabled) {
@@ -459,7 +459,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 }
 
 .folder-icon--open {
-  color: #244b39;
+  color: var(--accent);
 }
 
 .workspace-name {
@@ -521,7 +521,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   background: var(--surface-selected);
   border-color: rgba(49, 95, 74, 0.22);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-  color: var(--accent-hover);
+  color: var(--text);
   font-weight: 550;
 }
 
@@ -730,6 +730,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 }
 
 .workspace-explorer {
+  position: relative;
   display: grid;
   flex: 1 1 auto;
   min-height: 0;
@@ -737,7 +738,8 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 }
 
 .workspace-explorer--expanded {
-  grid-template-columns: minmax(0, 1fr) minmax(13rem, 24rem);
+  --workspace-tree-divider: 24rem;
+  grid-template-columns: minmax(0, 1fr) var(--workspace-tree-size, minmax(13rem, 24rem));
 }
 
 .workspace-explorer--expanded .workspace-tree-pane {
@@ -753,13 +755,47 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 }
 
 .workspace-explorer--side {
+  --workspace-tree-divider: 42%;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(11rem, 42%) minmax(0, 1fr);
+  grid-template-rows: var(--workspace-tree-size, minmax(11rem, 42%)) minmax(0, 1fr);
 }
 
 .workspace-explorer--side .workspace-tree-pane {
   border-right: 0;
   border-bottom: 1px solid var(--line);
+}
+
+.workspace-explorer__splitter {
+  position: absolute;
+  z-index: 4;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  touch-action: none;
+  user-select: none;
+}
+
+.workspace-explorer__splitter:hover,
+.workspace-explorer__splitter:focus-visible {
+  background: color-mix(in srgb, var(--accent-soft) 70%, transparent);
+  outline: none;
+}
+
+.workspace-explorer__splitter--side {
+  top: var(--workspace-tree-divider);
+  right: 0;
+  left: 0;
+  height: 0.5rem;
+  cursor: row-resize;
+  transform: translateY(-50%);
+}
+
+.workspace-explorer__splitter--expanded {
+  top: 0;
+  right: var(--workspace-tree-divider);
+  bottom: 0;
+  width: 0.5rem;
+  cursor: col-resize;
+  transform: translateX(50%);
 }
 
 .workspace-tree-pane {
@@ -851,8 +887,70 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   overflow: auto;
 }
 
+.workspace-preview-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  min-height: 2.5rem;
+  align-items: center;
+  gap: 0.25rem;
+  overflow-x: auto;
+  padding: 0.35rem 0.65rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  scrollbar-width: none;
+}
+
+.workspace-preview-tabs::-webkit-scrollbar { display: none; }
+
+.workspace-preview-tab {
+  display: flex;
+  flex: none;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+}
+
+.workspace-preview-tab:has([aria-selected="true"]) {
+  color: var(--text);
+  background: var(--surface-selected);
+}
+
+.workspace-preview-tab > [role="tab"] {
+  max-width: 12rem;
+  min-height: 1.85rem;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 0.3rem 0.55rem;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+  font: inherit;
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-preview-tab-close {
+  display: grid;
+  width: 1.45rem;
+  height: 1.45rem;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+
+.workspace-preview-tab-close:hover { background: rgba(0, 0, 0, 0.06); }
+
 .workspace-preview { min-height: 100%; }
 .workspace-preview-header { position: sticky; top: 0; z-index: 2; background: var(--surface); }
+.workspace-preview-tabs + .workspace-preview .workspace-preview-header { top: 2.5rem; }
 .workspace-preview-header span:first-child { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
 .workspace-preview-header span:last-child { flex: none; }
 
@@ -950,12 +1048,9 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   gap: 0.4rem;
 }
 
-.git-workflow-popover {
-  position: relative;
-}
-
-.git-workflow-popover > summary {
-  display: flex;
+.git-workflow-trigger {
+  display: inline-flex;
+  min-height: 2.35rem;
   align-items: center;
   gap: 0.45rem;
   border: 1px solid var(--line);
@@ -964,29 +1059,65 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   color: var(--text);
   background: var(--surface);
   box-shadow: var(--apple-shadow-sm);
+  font: inherit;
   font-size: var(--font-size-sidebar);
   font-weight: 600;
   cursor: pointer;
-  list-style: none;
 }
 
-.git-workflow-popover > summary::-webkit-details-marker { display: none; }
-.git-workflow-popover > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.git-workflow-trigger:hover,
+.git-workflow-trigger[aria-expanded="true"] {
+  background: var(--surface-selected);
+}
 
-.git-workflow-popover-content {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 0.55rem);
-  right: 0;
+.git-workflow-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.git-workflow-modal-backdrop { z-index: 1100; }
+
+.git-workflow-dialog {
+  display: flex;
+  max-height: min(42rem, calc(100vh - 3rem));
+  flex-direction: column;
+}
+
+.git-workflow-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem 0.9rem;
+}
+
+.git-workflow-dialog-header h3 { margin: 0; }
+
+.git-workflow-dialog-close {
   display: grid;
-  width: min(26rem, calc(100vw - 2rem));
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  box-shadow: none;
+  font-size: 1.25rem;
+}
+
+.git-workflow-dialog-close:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
+
+.git-workflow-dialog-content {
+  display: grid;
+  width: auto;
   gap: 0.75rem;
-  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
-  border-radius: var(--radius-lg);
-  padding: 1rem;
-  background: color-mix(in srgb, var(--surface-raised) 96%, transparent);
-  box-shadow: var(--apple-shadow-lg);
-  backdrop-filter: blur(18px) saturate(150%);
+  max-width: none;
+  overflow: auto;
+  padding: 0.25rem 1.5rem 1.5rem;
+  background: var(--surface);
 }
 
 .git-commit-form {
@@ -1094,6 +1225,37 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   gap: 0.35rem;
 }
 
+.git-review-toolbar-actions .git-icon-button {
+  width: 2.2rem;
+  height: 2.2rem;
+  min-width: 2.2rem;
+  min-height: 2.2rem;
+  border-radius: 0.75rem;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  box-shadow: none;
+}
+
+.git-review-toolbar-actions .git-icon-button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.git-review-toolbar-actions .git-icon-button .btn-icon,
+.git-review-toolbar-actions .git-icon-button svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.git-review-toolbar-actions .git-icon-button svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+}
+
 .git-scope-tabs {
   display: inline-flex;
   align-items: center;
@@ -1199,10 +1361,27 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 }
 
 .git-file-disclosure {
+  display: grid;
+  width: 1rem;
+  height: 1rem;
   flex: none;
-  width: 0.75rem;
+  place-items: center;
   color: var(--muted);
-  font-size: 1rem;
+}
+
+.git-file-disclosure-icon {
+  width: 0.85rem;
+  height: 0.85rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+  transition: transform 140ms var(--apple-spring);
+}
+
+.git-file-button[aria-expanded="true"] .git-file-disclosure-icon {
+  transform: rotate(90deg);
 }
 
 .git-file-stats {
@@ -1253,6 +1432,29 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   --diff-font-family: var(--font-code);
   --diff-selection-background-color: rgba(73, 111, 88, 0.18);
   font-size: var(--font-size-code);
+}
+
+.git-diff-unified col.diff-gutter-col:nth-of-type(1) {
+  width: 5ch;
+}
+
+.git-diff-unified col.diff-gutter-col:nth-of-type(2),
+.git-diff-unified .diff-line > .diff-gutter:nth-child(2) {
+  display: none;
+}
+
+.git-diff-unified .diff-gutter {
+  padding-inline: 0.5ch;
+}
+
+.git-diff-unified .diff-gutter-insert,
+.git-diff-unified .diff-code-insert {
+  color: var(--status-success);
+}
+
+.git-diff-unified .diff-gutter-delete,
+.git-diff-unified .diff-code-delete {
+  color: var(--status-danger);
 }
 
 .review-comment-widget {
@@ -1607,7 +1809,7 @@ h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
 }
 
 .settings-nav-item--active, .settings-nav-item--active:hover {
-  color: var(--accent-hover);
+  color: var(--text);
   background: var(--accent-soft);
   font-weight: 600;
   box-shadow: none;
@@ -1864,7 +2066,7 @@ h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
 
 .toggle-switch--checked {
   background: var(--accent);
-  border-color: var(--accent-hover);
+  border-color: var(--accent);
 }
 
 .toggle-thumb {
@@ -2627,8 +2829,9 @@ h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
 }
 
 .btn--primary:hover:not(:disabled) {
-  background: var(--accent-hover, #284f3e);
-  border-color: var(--accent-hover, #284f3e);
+  color: var(--primary-action-text);
+  background: var(--primary-action-bg-hover);
+  border-color: var(--primary-action-border-hover);
 }
 
 .btn--secondary {
@@ -3752,7 +3955,7 @@ button.composer-context-project--empty:hover:not(:disabled) {
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .git-workflow-popover-content {
+  .git-workflow-dialog-content {
     background: var(--surface-raised);
     backdrop-filter: none;
   }

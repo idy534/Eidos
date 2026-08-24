@@ -18,6 +18,7 @@ export type {
   ProjectGitContext,
   SessionWorktree,
   GitDiffScope,
+  SessionGitFileStat,
   SessionGitStatus,
   SessionGitMutationResult,
   SessionGitDiff,

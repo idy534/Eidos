@@ -1297,6 +1297,15 @@ class SessionApplication:
                 "additions": diff.additions,
                 "deletions": diff.deletions,
                 "statsIncomplete": diff.stats_incomplete,
+                "fileStats": [
+                    {
+                        "path": stat.path,
+                        "additions": stat.additions,
+                        "deletions": stat.deletions,
+                        "statsIncomplete": stat.stats_incomplete,
+                    }
+                    for stat in diff.file_stats
+                ],
                 "observedAt": _timestamp_millis(diff.observed_at),
             },
         )

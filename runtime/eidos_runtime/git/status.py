@@ -5,6 +5,7 @@ from enum import StrEnum
 
 from pydantic import Field
 
+from eidos_runtime.git.models import GitFileStat
 from eidos_runtime.models import EidosFrozenStrictModel
 
 
@@ -45,6 +46,7 @@ class GitDiffSnapshot(EidosFrozenStrictModel):
     additions: int = Field(ge=0)
     deletions: int = Field(ge=0)
     stats_incomplete: bool
+    file_stats: tuple[GitFileStat, ...]
     observed_at: datetime
 
 

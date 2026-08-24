@@ -33,6 +33,7 @@ uv sync --locked
 `uv sync --locked` 使用提交的 `uv.lock` 创建仓库 `.venv`。源码开发的 Electron Main 默认使用 `.venv/bin/python`。修改 Runtime 生产依赖时，维护者必须同时更新 `pyproject.toml` 和 `uv.lock`。
 
 仓库不再使用 `pip install -r runtime/requirements.txt`。Electron 首次安装可能需要下载 Electron 官方二进制。`pnpm install` 还会构建 `node-pty`，并通过受测的 postinstall 脚本检查 macOS spawn helper 的执行权限。
+`package:mac` 默认使用仓库 `.venv/bin/python` 运行 node-gyp。这个设置也覆盖了仓库路径包含空格的情况。需要自定义 Python 时，可以先设置可执行的 `npm_config_python`。
 
 ## 3. Run from source
 

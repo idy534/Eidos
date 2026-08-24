@@ -124,6 +124,37 @@ function diffStats(diff: SessionGitDiff | undefined): { additions: number; delet
   return { additions: diff?.additions ?? 0, deletions: diff?.deletions ?? 0 };
 }
 
+function ExpandIcon({ collapse }: { collapse: boolean }) {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      {collapse
+        ? <path d="M5 3v5m-2-2 2 2 2-2M5 17v-5m-2 2 2-2 2 2M10 5h7M10 10h7M10 15h7" />
+        : <path d="M5 8V3m-2 2 2-2 2 2M5 12v5m-2-2 2 2 2-2M10 5h7M10 10h7M10 15h7" />}
+    </svg>
+  );
+}
+
+function RefreshIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M16.5 8a6.5 6.5 0 0 0-11.1-2L4 7.5M3.5 4.5v3h3M3.5 12a6.5 6.5 0 0 0 11.1 2L16 12.5M16.5 15.5v-3h-3" />
+    </svg>
+  );
+}
+
+function FileDisclosureIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      className="git-file-disclosure-icon"
+      data-state={expanded ? "open" : "closed"}
+      aria-hidden="true"
+    >
+      <path d="m7 4 5 6-5 6" />
+    </svg>
+  );
+}
+
 export function GitChangesPanel(props: GitChangesPanelProps) {
   const summaryControlled = Object.prototype.hasOwnProperty.call(props, "summary");
   const {
@@ -336,6 +367,8 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
   };
 
   const stats = diffStats(effectiveSummary);
+  const allFilesExpanded = selections.length > 0
+    && selections.every((selection) => expandedKeys.has(selectionKey(selection)));
   const compareRef = effectiveSummary?.compareRef
     ?? (scope === "baseline" ? status?.baseRef ?? effectiveSummary?.baseCommit?.slice(0, 7) : "HEAD");
 
@@ -377,32 +410,35 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
           <Button
             variant="ghost"
             size="small"
+            className="git-icon-button"
+            icon={<ExpandIcon collapse={allFilesExpanded} />}
+            aria-label={allFilesExpanded ? "折叠全部差异" : "展开全部差异"}
+            title={allFilesExpanded ? "折叠全部差异" : "展开全部差异"}
             disabled={selections.length === 0}
             onClick={() => {
+              if (allFilesExpanded) {
+                setExpandedKeys(new Set());
+                return;
+              }
               setExpandedKeys(new Set(selections.map(selectionKey)));
               void (async () => {
                 for (const selection of selections) await loadFile(selection);
               })();
             }}
           >
-            展开全部差异
+            <span className="sr-only">{allFilesExpanded ? "折叠全部差异" : "展开全部差异"}</span>
           </Button>
           <Button
             variant="ghost"
             size="small"
-            disabled={expandedKeys.size === 0}
-            onClick={() => setExpandedKeys(new Set())}
-          >
-            折叠全部差异
-          </Button>
-          <Button
-            variant="ghost"
-            size="small"
+            className="git-icon-button"
+            icon={<RefreshIcon />}
             loading={loading || summaryLoading}
             aria-label="刷新 Git 变更"
+            title="刷新 Git 变更"
             onClick={onRefresh}
           >
-            刷新
+            <span className="sr-only">刷新 Git 变更</span>
           </Button>
           {onSendReviewFeedback && (
             <Button
@@ -444,7 +480,9 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
               const key = selectionKey(selection);
               const expanded = expandedKeys.has(key);
               const state = fileStates[key];
-              const fileStats = diffStats(state?.diff);
+              const summaryFileStats = effectiveSummary?.fileStats?.find((item) => item.path === path);
+              const fileStats = summaryFileStats ?? diffStats(state?.diff);
+              const hasFileStats = summaryFileStats !== undefined || state?.diff !== undefined;
               const parsedFiles = (() => {
                 if (!state?.diff?.unifiedDiff) return [];
                 try { return parseDiff(state.diff.unifiedDiff); } catch { return []; }
@@ -463,13 +501,13 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
                       aria-controls={`git-review-diff-${encodeURIComponent(key)}`}
                       onClick={() => toggleFile(selection)}
                     >
-                      <span className="git-file-disclosure" aria-hidden="true">{expanded ? "⌄" : "›"}</span>
+                      <span className="git-file-disclosure"><FileDisclosureIcon expanded={expanded} /></span>
                       <code>{path}</code>
-                      {state?.diff && (
+                      {hasFileStats && (
                         <span className="git-file-stats">
                           <span>+{fileStats.additions}</span>
                           <span>-{fileStats.deletions}</span>
-                          {state.diff.statsIncomplete && (
+                          {(summaryFileStats?.statsIncomplete || state?.diff?.statsIncomplete) && (
                             <span>不完整</span>
                           )}
                         </span>
@@ -527,9 +565,15 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
                       {parsedFiles.map((file) => (
                         <Diff
                           key={`${file.oldPath}:${file.newPath}`}
+                          className="git-diff-unified"
                           viewType="unified"
                           diffType={file.type}
                           hunks={file.hunks}
+                          gutterClassName="git-diff-line-numbers"
+                          renderGutter={({ change, side, renderDefault }) => {
+                            if (side === "new") return null;
+                            return change.type === "insert" ? change.lineNumber : renderDefault();
+                          }}
                           gutterEvents={{
                             onClick: ({ change, side }) => {
                               const anchor = change && commentAnchor(change, side);

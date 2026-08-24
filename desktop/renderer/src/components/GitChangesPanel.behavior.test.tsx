@@ -45,6 +45,7 @@ function fileDiff(path: string): SessionGitDiff {
     additions: 1,
     deletions: 1,
     statsIncomplete: false,
+    fileStats: [{ path, additions: 1, deletions: 1, statsIncomplete: false }],
     observedAt: 1,
   };
 }
@@ -58,6 +59,12 @@ function summaryDiff(overrides: Partial<SessionGitDiff> = {}): SessionGitDiff {
     diffHash: "e".repeat(64),
     additions: paths.length,
     deletions: paths.length,
+    fileStats: paths.map((path) => ({
+      path,
+      additions: 1,
+      deletions: 1,
+      statsIncomplete: false,
+    })),
     ...overrides,
   };
 }
@@ -125,6 +132,8 @@ describe("GitChangesPanel", () => {
     expect(screen.getByRole("button", { name: /README\.md/ })).toHaveAttribute(
       "aria-expanded", "false",
     );
+    expect(screen.getByRole("button", { name: /README\.md/ })).toHaveTextContent("+1");
+    expect(screen.getByRole("button", { name: /README\.md/ })).toHaveTextContent("-1");
     expect(readDiff).not.toHaveBeenCalled();
     expect(screen.getByText("+4")).toBeInTheDocument();
     expect(screen.getByText("-4")).toBeInTheDocument();
@@ -135,6 +144,8 @@ describe("GitChangesPanel", () => {
     ));
     expect(await screen.findByText("old")).toBeInTheDocument();
     expect(await screen.findByText("new")).toBeInTheDocument();
+    expect(document.querySelector(".git-diff-unified")).toBeInTheDocument();
+    expect(document.querySelector(".git-diff-unified .git-diff-line-numbers")).toBeInTheDocument();
   });
 
   it("loads one summary Diff when the controller has not supplied it", async () => {
@@ -165,6 +176,15 @@ describe("GitChangesPanel", () => {
     expect(screen.getByRole("button", { name: /README\.md/ })).toHaveAttribute(
       "aria-expanded", "false",
     );
+  });
+
+  it("uses compact rounded glyphs for diff controls and file disclosure", () => {
+    renderPanel();
+
+    expect(screen.getByRole("button", { name: "展开全部差异" }).querySelector("path"))
+      .toHaveAttribute("d", "M5 8V3m-2 2 2-2 2 2M5 12v5m-2-2 2 2 2-2M10 5h7M10 10h7M10 15h7");
+    expect(screen.getByRole("button", { name: /README\.md/ }).querySelector(".git-file-disclosure-icon"))
+      .toHaveAttribute("data-state", "closed");
   });
 
   it("loads expand-all file Diffs sequentially", async () => {

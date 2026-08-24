@@ -44,6 +44,13 @@ class GitStatusObservation(EidosFrozenStrictModel):
         )
 
 
+class GitFileStat(EidosFrozenStrictModel):
+    path: str
+    additions: int = Field(ge=0)
+    deletions: int = Field(ge=0)
+    stats_incomplete: bool
+
+
 class GitDiffObservation(EidosFrozenStrictModel):
     """Bounded read-only diff facts for one worktree against one commit."""
 
@@ -53,6 +60,7 @@ class GitDiffObservation(EidosFrozenStrictModel):
     additions: int = Field(ge=0)
     deletions: int = Field(ge=0)
     stats_incomplete: bool
+    file_stats: tuple[GitFileStat, ...]
 
 
 class GitRemote(EidosFrozenStrictModel):
@@ -117,6 +125,7 @@ class ProjectResolution(EidosFrozenStrictModel):
 
 __all__ = [
     "GitDiffObservation",
+    "GitFileStat",
     "GitRepositoryContext",
     "GitRepositoryDiscovery",
     "GitStatusObservation",

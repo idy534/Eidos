@@ -49,6 +49,16 @@ test("packaging commands and pinned electron-builder are declared", async () => 
 });
 
 
+test("packaging pins node-gyp to the locked Runtime Python", async () => {
+  const { packageScript } = await readPackagingFiles();
+  assert.match(
+    packageScript,
+    /export npm_config_python=\"\$\{npm_config_python:-\$ROOT_DIR\/\.venv\/bin\/python\}\"/,
+  );
+  assert.match(packageScript, /node-gyp Python is not executable/);
+});
+
+
 test("installed node-pty keeps its macOS arm64 spawn helper executable", async (context) => {
   if (process.platform !== "darwin" || process.arch !== "arm64") {
     context.skip("node-pty packaging is currently macOS arm64 only");

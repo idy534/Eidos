@@ -104,6 +104,13 @@ export interface CreateBranchResult {
 
 export type GitDiffScope = "head" | "baseline";
 
+export interface SessionGitFileStat {
+  path: string;
+  additions: number;
+  deletions: number;
+  statsIncomplete: boolean;
+}
+
 export interface SessionGitStatus {
   worktreeId: string | null;
   branch: string | null;
@@ -182,6 +189,7 @@ export interface SessionGitDiff {
   additions: number;
   deletions: number;
   statsIncomplete: boolean;
+  fileStats: SessionGitFileStat[];
   observedAt: number;
 }
 

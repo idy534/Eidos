@@ -51,6 +51,77 @@ describe("WorkspaceExplorer", () => {
     expect(readPreview).toHaveBeenCalledWith("session-a", "docs/README.md");
   });
 
+  it("uses one compact preview bar without redundant file headings", async () => {
+    const listDirectory = vi.fn(async () => ({
+      path: ".",
+      entries: [{
+        name: "sample.test.js",
+        relativePath: "tests/sample.test.js",
+        kind: "file" as const,
+        sizeBytes: 143,
+      }],
+      truncated: false,
+    }));
+    const readPreview = vi.fn(async () => ({
+      path: "tests/sample.test.js",
+      kind: "code" as const,
+      sizeBytes: 143,
+      truncated: false,
+      content: "const test = require(\"node:test\");",
+      language: "javascript",
+    }));
+    const { container } = render(
+      <WorkspaceExplorer
+        sessionId="session-a"
+        layout="side"
+        listDirectory={listDirectory}
+        readPreview={readPreview}
+      />,
+    );
+
+    fireEvent.click(await screen.findByText("sample.test.js"));
+    expect(await screen.findByRole("tab", { name: "tests/sample.test.js" })).toBeInTheDocument();
+    expect(screen.getByText("143 B")).toBeInTheDocument();
+    expect(screen.queryByText("Files")).not.toBeInTheDocument();
+    expect(container.querySelector(".workspace-preview-bar")).toBeInTheDocument();
+    expect(container.querySelector(".workspace-preview-header")).not.toBeInTheDocument();
+  });
+
+  it("keeps multiple opened files as preview tabs", async () => {
+    const listDirectory = vi.fn(async () => ({
+      path: ".",
+      entries: [
+        { name: "one.md", relativePath: "one.md", kind: "file" as const, sizeBytes: 8 },
+        { name: "two.md", relativePath: "two.md", kind: "file" as const, sizeBytes: 8 },
+      ],
+      truncated: false,
+    }));
+    const readPreview = vi.fn(async (_sessionId: string, path: string) => ({
+      path,
+      kind: "markdown" as const,
+      sizeBytes: 8,
+      truncated: false,
+      content: `# ${path}`,
+    }));
+
+    render(
+      <WorkspaceExplorer
+        sessionId="session-a"
+        listDirectory={listDirectory}
+        readPreview={readPreview}
+      />,
+    );
+
+    fireEvent.click(await screen.findByText("one.md"));
+    expect(await screen.findByRole("heading", { name: "one.md" })).toBeInTheDocument();
+    fireEvent.click(screen.getByText("two.md"));
+    expect(await screen.findByRole("heading", { name: "two.md" })).toBeInTheDocument();
+
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("tab", { name: "one.md" }));
+    expect(await screen.findByRole("heading", { name: "one.md" })).toBeInTheDocument();
+  });
+
   it("shows typed unavailable and truncated states", async () => {
     const listDirectory = vi.fn(async () => ({
       path: ".",
@@ -140,11 +211,23 @@ describe("WorkspaceExplorer", () => {
     );
     await screen.findByText("Workspace 中没有可显示的文件");
     expect(container.querySelector(".workspace-explorer")).toHaveClass("workspace-explorer--side");
+    const sideSplitter = screen.getByRole("separator", { name: "调整文件树大小" });
+    expect(sideSplitter).toHaveAttribute("aria-valuenow", "204");
+    fireEvent.pointerDown(sideSplitter, { clientY: 100, pointerId: 1 });
+    fireEvent.pointerMove(sideSplitter, { clientY: 120, pointerId: 1 });
+    fireEvent.pointerUp(sideSplitter, { clientY: 120, pointerId: 1 });
+    expect(container.querySelector(".workspace-explorer")?.getAttribute("style"))
+      .toContain("--workspace-tree-size");
 
     rerender(
       <WorkspaceExplorer sessionId="session-a" layout="expanded" listDirectory={listDirectory} />,
     );
     expect(container.querySelector(".workspace-explorer")).toHaveClass("workspace-explorer--expanded");
+    const expandedSplitter = screen.getByRole("separator", { name: "调整文件树大小" });
+    expect(expandedSplitter).toHaveAttribute("aria-orientation", "vertical");
+    fireEvent.keyDown(expandedSplitter, { key: "ArrowLeft" });
+    expect(container.querySelector(".workspace-explorer")?.getAttribute("style"))
+      .toContain("--workspace-tree-size");
   });
 
   it("refreshes only the affected loaded subtree after watcher invalidation", async () => {

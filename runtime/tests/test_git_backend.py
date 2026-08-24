@@ -189,6 +189,8 @@ def test_diff_stats_remain_complete_when_patch_is_truncated(tmp_path: Path) -> N
     assert diff.additions == 202
     assert diff.deletions == 1
     assert diff.stats_incomplete is False
+    assert {stat.path for stat in diff.file_stats} == {"tracked.txt", "untracked.txt"}
+    assert next(stat for stat in diff.file_stats if stat.path == "tracked.txt").additions == 200
 
 
 def test_diff_marks_binary_line_stats_incomplete(tmp_path: Path) -> None:
@@ -202,6 +204,9 @@ def test_diff_marks_binary_line_stats_incomplete(tmp_path: Path) -> None:
     assert diff.additions == 0
     assert diff.deletions == 0
     assert diff.stats_incomplete is True
+    assert len(diff.file_stats) == 1
+    assert diff.file_stats[0].path == "binary.dat"
+    assert diff.file_stats[0].stats_incomplete is True
 
 
 def test_stage_and_unstage_use_path_scoped_native_git_semantics(tmp_path: Path) -> None:
