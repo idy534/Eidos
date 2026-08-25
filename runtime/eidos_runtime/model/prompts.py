@@ -7,10 +7,6 @@ from typing import Literal, Self
 from pydantic import Field, model_validator
 
 from eidos_runtime.models import EidosFrozenStrictModel
-from eidos_runtime.model.response_phase import (
-    FINAL_RESPONSE_MARKER as FINAL_RESPONSE_MARKER,
-    consume_final_response_marker as consume_final_response_marker,
-)
 
 
 SYSTEM_SAFETY_INSTRUCTIONS = """You are Eidos, a local coding agent working in the user's workspace.
@@ -55,9 +51,7 @@ When finished, concisely summarize the result in the user's language, including 
 
 Final response contract
 
-Append `<!-- eidos-final-response -->` to the end of a tool-free final response. The runtime removes this private marker before showing or persisting the response.
-
-Do not append the marker to progress text, commentary, a message that announces a later action, or any response that includes a tool call."""
+When more work is needed, call the required tool in the same response as the progress announcement. When the work is complete, answer directly without a tool call."""
 
 
 RUNTIME_POLICY_INSTRUCTIONS = """Use only the tools currently advertised by the runtime.

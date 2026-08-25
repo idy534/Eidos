@@ -14,6 +14,7 @@
 - ModelConfigStore 只接受内置 DeepSeek、MiniMax、Kimi 和火山引擎 Catalog 中的十二个 Model ID。
 - 当前不支持 arbitrary custom provider、arbitrary base URL、arbitrary model ID、Responses API、连接测试或主动 capability probe。
 - 当前 wire API 固定为 OpenAI-compatible Chat Completions/SSE。
+- Chat Completions 没有原生的 Assistant `phase` 字段。Runtime 只能在 Adapter 边界根据 ToolCall、非空文本和 `finish_reason=stop` 证明 `final_answer`。无法证明的文本会进入一次有界协议修复，重复失败会返回 `MODEL_PROTOCOL_ERROR`。
 - Context Usage 的 estimated 值是有界 fallback，不是 tokenizer 精确值。它不能单独证明 Provider 已拒绝请求。
 
 ## Run 并发与资源模型
@@ -69,6 +70,7 @@
 ## Extension 与 MCP
 
 - Plugin 当前只支持本地受管 Plugin v1。当前没有远程 Plugin marketplace、OAuth 安装或任意运行时动态 import 用户 Plugin 的能力。
+- Skill Catalog 当前只投影 `SKILL.md` frontmatter 中的顶层 `name` 和 `description`。其他字段可以保留在原始 Skill 内容中，但不会进入 Catalog、协议或权限判断。
 - MCP 当前只支持 stdio Tools。当前没有 Streamable HTTP、远程 MCP transport、OAuth、Resources、Prompts、Sampling 或 Tasks。
 - MCP ready connection 是长生命周期 Service，但 startup、Tool call、Tool list、cancel 和 shutdown 都有各自的有界等待。已经开始的 Tool List Changed bookkeeping callback 可能在关闭时需要等待完成。
 

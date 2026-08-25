@@ -13,6 +13,7 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 from eidos_runtime.context.builder import ContextBuilder  # noqa: E402
 from eidos_runtime.db.storage import DATABASE_NAME, SessionStore  # noqa: E402
 from eidos_runtime.model.client import (  # noqa: E402
+    AssistantMessagePhase,
     ModelProfileSnapshot,
     ModelResponse,
     ModelUsage,
@@ -88,7 +89,8 @@ class ModelPersistenceTests(unittest.TestCase):
     def test_successful_attempt_persists_usage_and_response_metadata(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "sample")
         model = ScriptedModel([ModelResponse(
-            text="done\n<!-- eidos-final-response -->",
+            text="done",
+            phase=AssistantMessagePhase.FINAL_ANSWER,
             usage=ModelUsage(input_tokens=12, output_tokens=3),
             provider_name="deepseek",
             resolved_model_name="deepseek-v4-flash",

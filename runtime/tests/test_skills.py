@@ -21,6 +21,7 @@ from eidos_runtime.extensions.skills import (  # noqa: E402
     SkillReadError,
     _CodeloadRedirectHandler,
     _download_github_skill,
+    _frontmatter,
     deploy_system_skills,
 )
 
@@ -99,6 +100,111 @@ class SkillCatalogTests(unittest.TestCase):
 
         self.assertEqual(name, "grilling")
         self.assertEqual(files["scripts/check.py"], b"print('ok')\n")
+
+    def test_runtime_installer_ignores_unknown_frontmatter_fields(self) -> None:
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as bundle:
+            bundle.writestr(
+                "skills-main/skills/productivity/grilling/SKILL.md",
+                "---\n"
+                "name: grilling\n"
+                "description: Grill a plan.\n"
+                "license: Complete terms in LICENSE.txt\n"
+                "metadata:\n"
+                "  author: Example\n"
+                "  nested:\n"
+                "    name: ignored\n"
+                "    description: ignored\n"
+                "---\n"
+                "Body.\n",
+            )
+
+        class Response:
+            def __enter__(self):
+                self.data = io.BytesIO(archive.getvalue())
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def geturl(self) -> str:
+                return "https://codeload.github.com/mattpocock/skills/zip/main"
+
+            def read(self, size: int) -> bytes:
+                return self.data.read(size)
+
+        with patch("urllib.request.OpenerDirector.open", return_value=Response()):
+            name, files = _download_github_skill(
+                "https://github.com/mattpocock/skills/tree/main/skills/productivity/grilling",
+                threading.Event(),
+            )
+
+        self.assertEqual(name, "grilling")
+        self.assertIn(b"license: Complete terms", files["SKILL.md"])
+
+    def test_catalog_ignores_unknown_frontmatter_fields(self) -> None:
+        assert self.store.data_directory is not None
+        user = self.store.data_directory / "skills" / "metadata-skill"
+        user.mkdir(mode=0o700, parents=True)
+        (user / "SKILL.md").write_text(
+            "---\n"
+            "name: metadata-skill\n"
+            "description: Catalog-safe.\n"
+            "license: Complete terms in LICENSE.txt\n"
+            "metadata:\n"
+            "  name: ignored\n"
+            "  nested:\n"
+            "    description: ignored\n"
+            "---\n"
+            "Body.\n",
+            encoding="utf-8",
+        )
+
+        snapshot = self.skills.extension_snapshot()
+        entry = next(
+            item for item in self.skills.catalog(snapshot)
+            if item["qualifiedId"] == "user:metadata-skill"
+        )
+
+        self.assertEqual(entry["name"], "metadata-skill")
+        self.assertEqual(entry["description"], "Catalog-safe.")
+        self.assertNotIn("license", entry)
+        self.assertEqual(
+            set(entry),
+            {
+                "schemaVersion",
+                "qualifiedId",
+                "name",
+                "description",
+                "pluginId",
+                "pluginVersion",
+                "pluginHash",
+                "contentHash",
+            },
+        )
+
+    def test_frontmatter_keeps_supported_field_validation_strict(self) -> None:
+        invalid_documents = {
+            "duplicate_name": (
+                "---\nname: valid\nname: duplicate\n"
+                "description: Description.\n---\nBody.\n"
+            ),
+            "invalid_name": (
+                "---\nname: not valid\n"
+                "description: Description.\n---\nBody.\n"
+            ),
+            "missing_description": (
+                "---\nname: valid\nmetadata:\n"
+                "  description: nested only\n---\nBody.\n"
+            ),
+        }
+
+        for label, document in invalid_documents.items():
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(
+                    SkillReadError, "^skill_metadata_invalid$"
+                ):
+                    _frontmatter(document)
 
     def test_runtime_installer_rejects_non_github_url_before_network(self) -> None:
         with patch("urllib.request.OpenerDirector.open") as request:

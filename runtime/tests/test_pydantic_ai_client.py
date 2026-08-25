@@ -404,12 +404,12 @@ class PydanticAIModelClientTests(unittest.TestCase):
 
     def test_maps_chat_completion_text_to_structured_message_phase(self) -> None:
         final_response = map_model_response(PAIModelResponse(
-            parts=[TextPart("done\n<!-- eidos-final-response -->")],
+            parts=[TextPart("done")],
             provider_name="fixture-provider",
             finish_reason="stop",
         ))
-        unknown_response = map_model_response(PAIModelResponse(
-            parts=[TextPart("I will inspect the file next.")],
+        marker_response = map_model_response(PAIModelResponse(
+            parts=[TextPart("done\n<!-- eidos-final-response -->")],
             provider_name="fixture-provider",
             finish_reason="stop",
         ))
@@ -421,6 +421,14 @@ class PydanticAIModelClientTests(unittest.TestCase):
             provider_name="fixture-provider",
             finish_reason="tool_call",
         ))
+        incomplete_responses = [
+            map_model_response(PAIModelResponse(
+                parts=[TextPart("truncated")],
+                provider_name="fixture-provider",
+                finish_reason=finish_reason,
+            ))
+            for finish_reason in ("length", "content_filter", "provider_stop_unknown")
+        ]
 
         self.assertEqual(final_response.text, "done")
         self.assertIs(
@@ -428,13 +436,18 @@ class PydanticAIModelClientTests(unittest.TestCase):
             AssistantMessagePhase.FINAL_ANSWER,
         )
         self.assertIs(
-            unknown_response.phase,
-            AssistantMessagePhase.UNKNOWN,
+            marker_response.phase,
+            AssistantMessagePhase.FINAL_ANSWER,
         )
+        self.assertEqual(marker_response.text, "done\n<!-- eidos-final-response -->")
         self.assertIs(
             commentary_response.phase,
             AssistantMessagePhase.COMMENTARY,
         )
+        self.assertTrue(all(
+            response.phase is AssistantMessagePhase.UNKNOWN
+            for response in incomplete_responses
+        ))
 
     def test_error_mapping_is_stable_and_drops_raw_bodies(self) -> None:
         expected = {

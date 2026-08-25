@@ -351,7 +351,9 @@ class FinalizationPersistenceTests(unittest.TestCase):
     def test_successful_finalization_persists_completed_attempt(self) -> None:
         run, outcome, _instructions = self._finalize(
             ScriptedModel([ModelResponse(
-                text="final answer\n<!-- eidos-final-response -->"
+                text="final answer",
+                phase=AssistantMessagePhase.FINAL_ANSWER,
+                finish_reason="stop",
             )])
         )
 
@@ -370,7 +372,9 @@ class FinalizationPersistenceTests(unittest.TestCase):
                 phase=AssistantMessagePhase.UNKNOWN,
             ),
             ModelResponse(
-                text="bounded final answer\n<!-- eidos-final-response -->"
+                text="bounded final answer",
+                phase=AssistantMessagePhase.FINAL_ANSWER,
+                finish_reason="stop",
             ),
         ])
 
@@ -437,7 +441,11 @@ class FinalizationPersistenceTests(unittest.TestCase):
         (self.workspace / "EIDOS.md").write_text(
             "Preserve this project rule during finalization.", encoding="utf-8"
         )
-        model = ScriptedModel([ModelResponse(text="bounded final answer")])
+        model = ScriptedModel([ModelResponse(
+            text="bounded final answer",
+            phase=AssistantMessagePhase.FINAL_ANSWER,
+            finish_reason="stop",
+        )])
 
         _run, _outcome, base = self._finalize(model)
 

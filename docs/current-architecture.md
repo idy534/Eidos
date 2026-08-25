@@ -115,7 +115,7 @@ RuntimeEngine 下的主要职责是：
 
 Model Step、Segment Step 和 effective time 在当前实现中是 telemetry 和 operational segment 信息。健康 Run 不会因为固定 model-step、Run duration 或固定 repeated-call counter 自动终止。Segment 达到 operational quantum 时可以 rollover，但 rollover 不是 Run 终态。
 
-Chat Completions Adapter 会把模型文本归一化为 `commentary`、`final_answer` 或 `unknown`。Runtime 私有的最终答复标记只属于 Adapter 兼容协议。Adapter 会在持久化和展示前移除该标记。RuntimeEngine 只读取结构化阶段。没有 ToolCall 的文本只有在阶段是 `final_answer` 时才能完成 Run。`commentary` 和 `unknown` 会在同一个 Step 内触发一次有界协议修复。重复失败会以 `MODEL_PROTOCOL_ERROR` 结束，未声明的文字不会进入 Conversation。
+Chat Completions Adapter 根据结构化响应事实映射阶段：有 ToolCall 是 `commentary`；没有 ToolCall、存在非空文本且 `finish_reason` 是 `stop` 是 `final_answer`；其他结果是 `unknown`。Adapter 保留模型文本原样，不把正文后缀当作控制协议。RuntimeEngine 只读取结构化阶段。没有 ToolCall 的文本只有在阶段是 `final_answer` 时才能完成 Run。`commentary` 和 `unknown` 会在同一个 Step 内触发一次有界协议修复。重复失败会以 `MODEL_PROTOCOL_ERROR` 结束，未声明的文字不会进入 Conversation。
 
 RunFinalizer 使用同一套结构化阶段判断。Finalizer 会对 `commentary` 和 `unknown` 执行一次有界协议修复。两次响应都不满足终态契约时，Finalization Attempt 会记录 `finalization_protocol_error`，无效文本不会创建 Assistant Item。空响应、ToolCall 和 Provider 控制文本保留原有处理。Finalizer 的总 timeout 同时约束初次请求和协议修复请求。
 
@@ -341,7 +341,7 @@ Runtime 使用 typed Git observations，并在 observation failure、timeout 或
 
 PluginCatalog 只接收受控的本地 Plugin v1 包。Runtime 校验 manifest、文件数量、单文件和总大小、content hash，并把安装内容写入私有 extensions 目录。Plugin 可以声明 Skill 和 MCP Server。Plugin 的启用状态、版本、hash 和引用关系进入 SQLite。
 
-SkillCatalog 管理 bundled system skills、用户和 Plugin Skill。Turn 开始时，Catalog Snapshot 和 SelectedSkillSet 固化 qualified ID、source、version 和 content hash。Skill 主资源与受控 resource path 通过 bounded read 读取。
+SkillCatalog 管理 bundled system skills、用户和 Plugin Skill。它只提取并校验 `SKILL.md` frontmatter 中的顶层 `name` 和 `description`。其他 frontmatter 字段可以存在，但不会进入 Catalog、协议或权限判断。Turn 开始时，Catalog Snapshot 和 SelectedSkillSet 固化 qualified ID、source、version 和 content hash。Skill 主资源与受控 resource path 通过 bounded read 读取。
 
 MCP 当前使用官方 Python MCP SDK 的 stdio client。MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。Server Tool 会进入统一 Tool Registry，保留 MCP provenance，并按 external Tool 经过 Approval、Sandbox、timeout、结果校验和 reconciliation。MCP 进程使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。
 

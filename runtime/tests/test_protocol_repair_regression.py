@@ -41,6 +41,8 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         model = ScriptedModel([
             ModelResponse(
                 text="I will create the files.",
+                phase=AssistantMessagePhase.COMMENTARY,
+                finish_reason="tool_calls",
                 tool_calls=(
                     ModelToolCall(
                         "write-go-mod",
@@ -57,7 +59,10 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
                     ),
                 ),
             ),
-            ModelResponse(text="Created the Go project skeleton."),
+            ModelResponse(
+                text="Created the Go project skeleton.",
+                phase=AssistantMessagePhase.FINAL_ANSWER,
+            ),
         ])
         approvals: list[dict[str, object]] = []
 
@@ -106,7 +111,10 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
                     ),
                 ),
             ),
-            ModelResponse(text="Recovered without persisting the invalid response."),
+            ModelResponse(
+                text="Recovered without persisting the invalid response.",
+                phase=AssistantMessagePhase.FINAL_ANSWER,
+            ),
         ])
 
         RuntimeLoop(self.store, model, lambda _message: None).run(
@@ -139,7 +147,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             ["Recovered without persisting the invalid response."],
         )
 
-    def test_tool_free_progress_announcement_is_repaired_before_run_completion(
+    def test_tool_call_response_is_commentary_before_run_completion(
         self,
     ) -> None:
         (self.workspace / "sample.py").write_text("value = 1\n", encoding="utf-8")
@@ -148,16 +156,18 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         )
         model = ScriptedModel([
             ModelResponse(
-                text="Let me read the current file before I answer.",
-                phase=AssistantMessagePhase.COMMENTARY,
-            ),
-            ModelResponse(
                 text="I will read the file now.",
+                phase=AssistantMessagePhase.COMMENTARY,
+                finish_reason="tool_calls",
                 tool_calls=(
                     ModelToolCall("read-sample", "read_file", {"path": "sample.py"}),
                 ),
             ),
-            ModelResponse(text="sample.py currently sets value to 1."),
+            ModelResponse(
+                text="sample.py currently sets value to 1.",
+                phase=AssistantMessagePhase.FINAL_ANSWER,
+                finish_reason="stop",
+            ),
         ])
 
         RuntimeLoop(self.store, model, lambda _message: None).run(
@@ -170,16 +180,8 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         attempts = self.store.read_model_attempts(run["id"])
         self.assertEqual(
             [attempt["status"] for attempt in attempts],
-            ["failed", "completed", "completed"],
+            ["completed", "completed"],
         )
-        self.assertEqual(
-            attempts[0]["errorCode"],
-            "undeclared_final_response",
-        )
-        self.assertEqual(model.contexts[1][-1], {
-            "type": "protocol_error",
-            "code": "undeclared_final_response",
-        })
         snapshot = self.store.read_session_snapshot(self.session["id"])
         self.assertEqual(
             [item["kind"] for item in snapshot["items"]],
@@ -194,10 +196,12 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             ["I will read the file now.", "sample.py currently sets value to 1."],
         )
 
-    def test_declared_final_response_marker_is_not_persisted(self) -> None:
+    def test_final_response_marker_is_plain_text(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Answer directly")
+        text = "This is the final answer.\n<!-- eidos-final-response -->"
         model = ScriptedModel([ModelResponse(
-            text="This is the final answer.\n<!-- eidos-final-response -->",
+            text=text,
+            phase=AssistantMessagePhase.FINAL_ANSWER,
             provider_name="deepseek",
             finish_reason="stop",
         )])
@@ -211,9 +215,27 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         snapshot = self.store.read_session_snapshot(self.session["id"])
         self.assertEqual(
             [item.get("content") for item in snapshot["items"]],
-            ["Answer directly", "This is the final answer."],
+            ["Answer directly", text],
         )
-        self.assertNotIn("eidos-final-response", str(snapshot))
+        self.assertIn("eidos-final-response", str(snapshot))
+
+    def test_normal_stop_answer_completes_run_without_undeclared_response(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Answer directly")
+        model = ScriptedModel([ModelResponse(
+            text="This is the final answer.",
+            phase=AssistantMessagePhase.FINAL_ANSWER,
+            finish_reason="stop",
+        )])
+
+        RuntimeLoop(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        completed = self.store.read_run(run["id"])
+        self.assertEqual(completed["status"], "succeeded")
+        attempts = self.store.read_model_attempts(run["id"])
+        self.assertEqual(attempts[0]["status"], "completed")
+        self.assertIsNone(attempts[0]["errorCode"])
 
     def test_repeated_undeclared_final_response_fails_the_run(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Inspect before answering")
@@ -251,7 +273,10 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
                     "<|DSML|parameter name=\"path\">go.mod"
                 )
             ),
-            ModelResponse(text="Recovered from provider protocol output."),
+            ModelResponse(
+                text="Recovered from provider protocol output.",
+                phase=AssistantMessagePhase.FINAL_ANSWER,
+            ),
         ])
 
         RuntimeLoop(self.store, model, lambda _message: None).run(

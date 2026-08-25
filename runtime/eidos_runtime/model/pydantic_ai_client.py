@@ -54,7 +54,7 @@ from eidos_runtime.model.config import (
     ModelProfileSpec,
 )
 from eidos_runtime.model.prompts import TITLE_PROMPT, TITLE_SYSTEM_INSTRUCTIONS
-from eidos_runtime.model.response_phase import normalize_chat_completion_text
+from eidos_runtime.model.response_phase import resolve_chat_completion_phase
 from eidos_runtime.model_gateway.retry_transport import (
     RetryBackoffCanceled,
     RetryTracker,
@@ -480,9 +480,12 @@ def map_model_response(
                 provider_name=response.provider_name,
             ))
         calls.append(ModelToolCall(call_id, call.tool_name, arguments))
-    text, phase = normalize_chat_completion_text(
-        response.text or "",
+    text = response.text or ""
+    finish_reason = response.finish_reason or ("tool_call" if calls else "unknown")
+    phase = resolve_chat_completion_phase(
+        text=text,
         has_tool_calls=bool(calls),
+        finish_reason=finish_reason,
     )
     return ModelResponse(
         text=text,
@@ -491,7 +494,7 @@ def map_model_response(
         usage=_map_usage(response.usage),
         provider_name=response.provider_name,
         resolved_model_name=response.model_name,
-        finish_reason=response.finish_reason or ("tool_call" if calls else "unknown"),
+        finish_reason=finish_reason,
         provider_response_id=response.provider_response_id,
         response_state=response.state,
         transport_attempt_count=(

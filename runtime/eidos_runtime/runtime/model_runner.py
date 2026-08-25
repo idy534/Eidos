@@ -14,7 +14,6 @@ from eidos_runtime.model.client import (
     ModelToolDefinition,
     ModelUsage,
 )
-from eidos_runtime.model.response_phase import normalize_chat_completion_text
 from eidos_runtime.sandbox.sensitive import (
     SensitiveScanError,
     SensitiveScanner,
@@ -123,28 +122,23 @@ class ModelRunner:
         ended = self._monotonic()
         if not isinstance(response, ModelResponse):
             return ModelStepResult("", (), duration_ms=int((ended - started) * 1000))
-        normalized_text, detected_phase = normalize_chat_completion_text(
-            text,
-            has_tool_calls=bool(response.tool_calls),
-        )
         phase = response.phase
-        if phase is AssistantMessagePhase.UNKNOWN:
-            phase = detected_phase
         if (
             phase is AssistantMessagePhase.UNKNOWN
             and "phase" not in response.model_fields_set
             and response.provider_name is None
             and response.finish_reason is None
-            and normalized_text
+            and text
         ):
-            # ModelResponse also serves as the test-double boundary. A legacy
-            # fixture without provider metadata represents an already normalized
-            # final answer unless it explicitly sets phase=UNKNOWN.
+            # Provider adapters always populate the structured phase and
+            # finish reason. A provider-less ModelResponse is a test-double
+            # boundary that represents an already-normalized final answer
+            # unless it explicitly sets phase=UNKNOWN.
             phase = AssistantMessagePhase.FINAL_ANSWER
         # Tool-only responses intentionally keep TTFT unset; this is stable and
         # avoids deriving timing from provider-specific partial ToolCall events.
         return ModelStepResult(
-            text=normalized_text,
+            text=text,
             tool_calls=response.tool_calls,
             phase=phase,
             usage=response.usage,

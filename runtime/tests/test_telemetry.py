@@ -18,6 +18,7 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 
 from eidos_runtime import __version__
 from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.model.client import AssistantMessagePhase
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ModelUsage, ScriptedModel
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.engine import RuntimeEngine
@@ -142,7 +143,8 @@ def test_run_model_and_tool_spans_share_the_run_trace(tmp_path: Path) -> None:
             transport_retry_count=2,
         ),
         ModelResponse(
-            text="done\n<!-- eidos-final-response -->",
+            text="done",
+            phase=AssistantMessagePhase.FINAL_ANSWER,
             provider_name="fixture-provider",
             resolved_model_name="fixture-model",
             finish_reason="stop",
@@ -202,7 +204,7 @@ def test_parallel_tool_spans_inherit_the_run_context(tmp_path: Path) -> None:
             ModelToolCall("call-a", "read_file", {"path": "a.txt"}),
             ModelToolCall("call-b", "read_file", {"path": "b.txt"}),
         )),
-        ModelResponse(text="done"),
+        ModelResponse(text="done", phase=AssistantMessagePhase.FINAL_ANSWER),
     ])
     resources = ResourceRegistry()
     kernel = RuntimeAsyncKernel(resource_registry=resources)
@@ -267,7 +269,7 @@ def test_model_and_tool_errors_record_exceptions_without_changing_run_result(
     tool_run, _ = store.create_run(session["id"], "tool error")
     model = ScriptedModel([
         ModelResponse(tool_calls=(ModelToolCall("call", "read_file", {"path": "x"}),)),
-        ModelResponse(text="done"),
+        ModelResponse(text="done", phase=AssistantMessagePhase.FINAL_ANSWER),
     ])
     try:
         with patch.object(ReadOnlyToolHandler, "execute", side_effect=RuntimeError("tool failure")):
@@ -294,7 +296,7 @@ def test_trace_attributes_do_not_include_sensitive_runtime_content(tmp_path: Pat
     run, _ = store.create_run(session["id"], "user prompt")
     model = ScriptedModel([
         ModelResponse(tool_calls=(ModelToolCall("call", "read_file", {"path": "safe.txt"}),)),
-        ModelResponse(text="done"),
+        ModelResponse(text="done", phase=AssistantMessagePhase.FINAL_ANSWER),
     ])
     try:
         RuntimeEngine(store, model, lambda _message: None).run(

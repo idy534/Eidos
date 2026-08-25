@@ -1107,17 +1107,30 @@ def _frontmatter(content: str) -> tuple[str, str]:
     if not lines or lines[0] != "---":
         raise SkillReadError("skill_metadata_invalid")
     values: dict[str, str] = {}
+    ignoring_unknown_field = False
     for line in lines[1:]:
         if line == "---":
             break
+        if line.startswith((" ", "\t")):
+            if ignoring_unknown_field:
+                continue
+            raise SkillReadError("skill_metadata_invalid")
+        if not line:
+            if ignoring_unknown_field:
+                continue
+            raise SkillReadError("skill_metadata_invalid")
         if ":" not in line:
             raise SkillReadError("skill_metadata_invalid")
         key, value = line.split(":", 1)
         key = key.strip()
         value = value.strip().strip("\"'")
-        if key in values or key not in {"name", "description"}:
+        if key not in {"name", "description"}:
+            ignoring_unknown_field = True
+            continue
+        if key in values:
             raise SkillReadError("skill_metadata_invalid")
         values[key] = value
+        ignoring_unknown_field = False
     else:
         raise SkillReadError("skill_metadata_invalid")
     name = values.get("name", "")
