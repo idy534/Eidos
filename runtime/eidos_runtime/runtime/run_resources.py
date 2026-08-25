@@ -6,6 +6,12 @@ import re
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.mcp import McpManager
 from eidos_runtime.extensions.plugins import PluginCatalog
+from eidos_runtime.extensions.skill_access import (
+    SkillAccess,
+    SkillAccessError,
+    reset_current_skill_access,
+    set_current_skill_access,
+)
 from eidos_runtime.extensions.skills import (
     RetainedContextSection,
     SkillCatalog,
@@ -53,6 +59,8 @@ class RunResources:
         self.retained_context: tuple[RetainedContextSection, ...] = ()
         self.selected_skill_context: tuple[RetainedContextSection, ...] = ()
         self.skill_catalog_snapshot: SkillCatalogSnapshot | None = None
+        self.skill_access: SkillAccess | None = None
+        self._skill_access_context_token = None
         self._closed = False
 
     def __enter__(self) -> "RunResources":
@@ -72,6 +80,12 @@ class RunResources:
             self.skill_catalog_snapshot = self.skills.catalog_snapshot(
                 self.extension_snapshot
             )
+            self.skill_access = SkillAccess.from_snapshot(
+                self.skill_catalog_snapshot
+            )
+            self._skill_access_context_token = set_current_skill_access(
+                self.skill_access
+            )
             self._set_registry(external_entries)
             self._activate_mentions(self.user_input)
             self.retained_context = (
@@ -86,6 +100,9 @@ class RunResources:
                 if str(error) == "skill_reference_ambiguous"
                 else "SKILL_SNAPSHOT_INVALID"
             ) from None
+        except SkillAccessError as error:
+            self.close()
+            raise RunResourceError("SKILL_SNAPSHOT_INVALID") from error
         except Exception:
             self.close()
             raise
@@ -119,6 +136,9 @@ class RunResources:
         if self._closed:
             return
         self._closed = True
+        if self._skill_access_context_token is not None:
+            reset_current_skill_access(self._skill_access_context_token)
+            self._skill_access_context_token = None
         if self.mcp is not None:
             self.mcp.close()
         if self.tool_executor is not None:
@@ -179,3 +199,17 @@ class RunResources:
             if selected.selected_qualified_ids
             else ()
         )
+        if self.skill_access is not None:
+            for qualified_id in selected.selected_qualified_ids:
+                try:
+                    self.skill_access.activate_explicit(qualified_id)
+                except SkillAccessError:
+                    # Existing snapshots can expose logical locators. They
+                    # still support read-only context, but cannot grant a
+                    # filesystem root until a trusted locator is available.
+                    continue
+
+    def activate_skill_model_read(self, qualified_id: str):
+        if self.skill_access is None:
+            raise RuntimeError("run resources are not started")
+        return self.skill_access.activate_model_read(qualified_id)

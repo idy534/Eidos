@@ -10,6 +10,10 @@ from typing import Callable
 import anyio
 
 from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.extensions.skill_access import (
+    SkillAccess,
+    current_skill_access,
+)
 from eidos_runtime.extensions.skills import SkillCreation
 from eidos_runtime.model.client import ModelResponse, ModelToolCall
 from eidos_runtime.runtime.approval import (
@@ -103,6 +107,7 @@ class _HandlerDependencies:
     authorize_workspace_side_effect: Callable[..., None]
     resources: ResourceRegistry = field(default_factory=ResourceRegistry)
     base_permissions: BasePermissionProfile | None = None
+    skill_access: SkillAccess | None = None
 
 
 class ReadOnlyToolHandler:
@@ -242,13 +247,31 @@ class ShellToolHandler:
                 "failed",
                 "failed",
             )
+        skill_access = self.dependencies.skill_access
+        skill_invocation = (
+            skill_access.activate_implicit(command, cwd.path)
+            if skill_access is not None
+            else None
+        )
+        active_skill_roots = (
+            skill_access.active_roots() if skill_access is not None else ()
+        )
+        base_permissions = self.dependencies.base_permissions
+        if base_permissions is None:
+            raise RuntimeError("step permission profile is unavailable")
+        if active_skill_roots:
+            base_permissions = base_permissions.model_copy(update={
+                "active_skill_roots": tuple(
+                    str(root) for root in active_skill_roots
+                ),
+            })
         if (
             shell_input.sandboxPermissions
             is not SandboxPermissions.REQUIRE_ESCALATED
             and not is_seatbelt_ready()
         ):
             return HandlerOutcome(
-                sandbox_unavailable_result(),
+                sandbox_unavailable_result(skill_invocation=skill_invocation),
                 "failed",
                 "failed",
             )
@@ -316,6 +339,8 @@ class ShellToolHandler:
                     self.dependencies.resources,
                     str(item["id"]),
                     attempt,
+                    active_skill_roots=active_skill_roots,
+                    skill_invocation=skill_invocation,
                 )
             except PermissionError as error:
                 result = tool_error(
@@ -323,6 +348,12 @@ class ShellToolHandler:
                     "process_start_failed",
                     "Shell process could not be started",
                 )
+                if skill_invocation is not None:
+                    result_data = result.get("data")
+                    if not isinstance(result_data, dict):
+                        result_data = {}
+                        result["data"] = result_data
+                    result_data.update(skill_invocation.result_data())
                 denial = (
                     SandboxDenied(
                         category=SandboxDenialCategory.PROCESS,
@@ -492,8 +523,6 @@ class ShellToolHandler:
             )
 
         workspace = runtime.implementation.executor.workspace  # type: ignore[attr-defined]
-        if self.dependencies.base_permissions is None:
-            raise RuntimeError("step permission profile is unavailable")
         request = ShellOrchestrationRequest(shell_input, workspace, cwd)
         workspace_execution = PreparedToolExecution(
             approval_description={
@@ -529,7 +558,7 @@ class ShellToolHandler:
                 cwd=cwd.path,
                 timeout_seconds=timeout,
                 cancel=cancel,
-                base_permissions=self.dependencies.base_permissions,
+                base_permissions=base_permissions,
             ),
             approve=approve,
             authorize_without_approval=lambda: (
@@ -767,6 +796,7 @@ class ToolCallRuntime:
         base_permissions: BasePermissionProfile,
         async_kernel: RuntimeAsyncKernel | None = None,
         resource_registry: ResourceRegistry | None = None,
+        skill_access: SkillAccess | None = None,
     ) -> None:
         self.store = store
         self.dispatcher = dispatcher
@@ -774,6 +804,7 @@ class ToolCallRuntime:
         self.sensitive = sensitive
         self.state_machine = state_machine
         self.async_kernel = async_kernel
+        self.skill_access = skill_access or current_skill_access()
         self.concurrency = ToolConcurrencyGate()
         self.controller = ToolExecutionController(
             store,
@@ -796,6 +827,7 @@ class ToolCallRuntime:
             self.controller.authorize_workspace_side_effect,
             self.controller.resources,
             base_permissions,
+            self.skill_access,
         )
         self.read_runtime = ReadOnlyToolHandler(dependencies)
         self.workspace_runtime = FileChangeToolHandler(dependencies)

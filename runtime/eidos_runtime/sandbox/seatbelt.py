@@ -93,6 +93,7 @@ class SeatbeltProfile:
     git_common_dir: Path | None
     sensitive_path: Path
     effective_permissions: EffectivePermissionProfile | None = None
+    active_skill_roots: tuple[Path, ...] = ()
 
     @classmethod
     def create(
@@ -105,6 +106,7 @@ class SeatbeltProfile:
         git_worktree_dir: Path | None = None,
         git_common_dir: Path | None = None,
         effective_permissions: EffectivePermissionProfile | None = None,
+        active_skill_roots: Sequence[Path] = (),
     ) -> SeatbeltProfile:
         workspace = _existing_directory(workspace_root, "workspace root")
         home = _existing_directory(sandbox_home, "sandbox home")
@@ -159,6 +161,11 @@ class SeatbeltProfile:
         if sensitive_path.is_symlink():
             raise ValueError("sensitive path must not be a symlink")
 
+        verified_skill_roots = tuple(
+            _existing_directory(path, "active Skill root")
+            for path in active_skill_roots
+        )
+
         return cls(
             workspace_root=workspace,
             sandbox_home=home,
@@ -168,6 +175,7 @@ class SeatbeltProfile:
             git_common_dir=verified_common_dir,
             sensitive_path=sensitive,
             effective_permissions=effective_permissions,
+            active_skill_roots=verified_skill_roots,
         )
 
     def command(self, command: Sequence[str]) -> list[str]:
@@ -223,18 +231,28 @@ class SeatbeltProfile:
         return command
 
     def environment(self) -> dict[str, str]:
-        path_entries = [
+        path_entries: list[str] = []
+        for candidate in (
+            Path(sys.executable).parent,
+            runtime_python_executable().parent,
+            *(Path(prefix) / "bin" for prefix in runtime_python_roots()),
+        ):
+            if candidate.is_dir() and str(candidate) not in path_entries:
+                path_entries.append(str(candidate))
+        try:
+            bundled_tool = RipgrepBinaryResolver().resolve().parent
+            if bundled_tool.is_dir() and str(bundled_tool) not in path_entries:
+                path_entries.append(str(bundled_tool))
+        except SearchDriverError:
+            pass
+        path_entries.extend([
             "/opt/homebrew/bin",
             "/usr/local/bin",
             "/usr/bin",
             "/bin",
             "/usr/sbin",
             "/sbin",
-        ]
-        try:
-            path_entries.insert(0, str(RipgrepBinaryResolver().resolve().parent))
-        except SearchDriverError:
-            pass
+        ])
         return {
             "HOME": str(self.sandbox_home),
             "TMPDIR": str(self.sandbox_tmp),

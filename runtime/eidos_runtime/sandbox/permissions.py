@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 from typing import Literal
 
 from pydantic import Field, StrictStr, field_validator, model_validator
@@ -76,6 +77,7 @@ class MaterializedFileSystemPermissionEntry(ClosedModel):
         "permanent_deny",
         "hard_deny",
         "protected_write",
+        "active_skill",
     ]
 
 
@@ -96,6 +98,9 @@ class BasePermissionProfile(ClosedModel):
     protected_write_paths: tuple[StrictStr, ...] = Field(
         default=(), alias="protectedWritePaths"
     )
+    active_skill_roots: tuple[StrictStr, ...] = Field(
+        default=(), alias="activeSkillRoots"
+    )
 
     @classmethod
     def for_workspace(
@@ -106,6 +111,7 @@ class BasePermissionProfile(ClosedModel):
         protected_write_paths: tuple[Path, ...] = (),
         hard_confidentiality_paths: tuple[Path, ...] = (),
         runtime_roots: tuple[Path, ...] = (),
+        active_skill_roots: tuple[Path, ...] = (),
     ) -> "BasePermissionProfile":
         workspace = workspace_root.resolve(strict=True)
         protected = tuple(path.resolve(strict=False) for path in protected_paths)
@@ -144,6 +150,9 @@ class BasePermissionProfile(ClosedModel):
             ),
             protectedMetadataPaths=tuple(str(path) for path in protected),
             protectedWritePaths=tuple(str(path) for path in protected_write),
+            activeSkillRoots=tuple(
+                str(path.resolve(strict=True)) for path in active_skill_roots
+            ),
         )
 
 
@@ -175,6 +184,9 @@ class EffectivePermissionProfile(ClosedModel):
     )
     protected_write_paths: tuple[StrictStr, ...] = Field(
         alias="protectedWritePaths"
+    )
+    active_skill_roots: tuple[StrictStr, ...] = Field(
+        default=(), alias="activeSkillRoots"
     )
     profile_hash: StrictStr = Field(alias="profileHash")
 
@@ -208,6 +220,7 @@ class EffectivePermissionProfile(ClosedModel):
                 entry.resolved_path
                 for entry in (*self.permanent_denies, *self.hard_confidentiality_denies)
             ],
+            "activeSkillRoots": list(self.active_skill_roots),
             "networkEnabled": self.network_enabled,
         }
 
@@ -236,7 +249,18 @@ def materialize_effective_profile(
 ) -> EffectivePermissionProfile:
     protected = tuple(Path(path) for path in base.protected_metadata_paths)
     protected_write = tuple(Path(path) for path in base.protected_write_paths)
+    active_skill_roots = _canonical_active_skill_roots(base.active_skill_roots)
     entries = _materialize_entries(base.entries, "base")
+    entries += _materialize_entries(
+        tuple(
+            FileSystemPermissionEntry(
+                path=path,
+                access=FileSystemAccessMode.READ,
+            )
+            for path in active_skill_roots
+        ),
+        "active_skill",
+    )
     if additional is not None:
         for requested in additional.file_system:
             resolved = Path(requested.path).resolve(strict=True)
@@ -284,6 +308,7 @@ def materialize_effective_profile(
         "runtimeRoots": base.runtime_roots,
         "protectedMetadataPaths": base.protected_metadata_paths,
         "protectedWritePaths": base.protected_write_paths,
+        "activeSkillRoots": active_skill_roots,
     }
     profile_hash = hashlib.sha256(
         json.dumps(
@@ -302,6 +327,7 @@ def materialize_effective_profile(
         runtimeRoots=base.runtime_roots,
         protectedMetadataPaths=base.protected_metadata_paths,
         protectedWritePaths=base.protected_write_paths,
+        activeSkillRoots=active_skill_roots,
         profileHash=profile_hash,
     )
 
@@ -320,6 +346,7 @@ def _materialize_entries(
         "permanent_deny",
         "hard_deny",
         "protected_write",
+        "active_skill",
     ],
 ) -> tuple[MaterializedFileSystemPermissionEntry, ...]:
     result = []
@@ -361,3 +388,26 @@ def _deduplicate(
 
 def _paths_overlap(left: Path, right: Path) -> bool:
     return left == right or left in right.parents or right in left.parents
+
+
+def _canonical_active_skill_roots(
+    roots: tuple[str, ...],
+) -> tuple[str, ...]:
+    canonical: set[str] = set()
+    for value in roots:
+        path = Path(value)
+        if not path.is_absolute():
+            raise ValueError("active Skill root must be absolute")
+        try:
+            metadata = path.lstat()
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or stat.S_ISLNK(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+            ):
+                raise ValueError("active Skill root is unavailable")
+            resolved = path.resolve(strict=True)
+        except (OSError, RuntimeError):
+            raise ValueError("active Skill root is unavailable") from None
+        canonical.add(str(resolved))
+    return tuple(sorted(canonical, key=os.fsencode))

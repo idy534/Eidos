@@ -10,8 +10,9 @@ import subprocess
 import tempfile
 import threading
 import time
-from typing import Callable
+from typing import Callable, Sequence
 
+from eidos_runtime.extensions.skill_access import SkillAccessRecord
 from eidos_runtime.sandbox.seatbelt import (
     SeatbeltProfile,
     SeatbeltUnavailableError,
@@ -48,6 +49,8 @@ def run_shell(
     resource_registry: ResourceRegistry | None = None,
     owner_id: str = "shell",
     attempt: SandboxAttempt | None = None,
+    active_skill_roots: Sequence[Path] = (),
+    skill_invocation: SkillAccessRecord | None = None,
 ) -> dict[str, object]:
     started = time.monotonic()
     workspace_fd = -1
@@ -68,9 +71,11 @@ def run_shell(
             resource_registry,
             owner_id,
             attempt,
+            active_skill_roots,
+            skill_invocation,
         )
     except ValueError:
-        return {
+        result = {
             "schemaVersion": 1,
             "toolName": "run_shell",
             "outcome": "error",
@@ -86,8 +91,9 @@ def run_shell(
             },
             "sideEffectsMayExist": False,
         }
+        return _attach_skill_invocation(result, skill_invocation)
     except SeatbeltUnavailableError:
-        return sandbox_unavailable_result(started)
+        return sandbox_unavailable_result(started, skill_invocation=skill_invocation)
     finally:
         if cwd_fd >= 0:
             os.close(cwd_fd)
@@ -95,13 +101,17 @@ def run_shell(
             os.close(workspace_fd)
 
 
-def sandbox_unavailable_result(started: float | None = None) -> dict[str, object]:
+def sandbox_unavailable_result(
+    started: float | None = None,
+    *,
+    skill_invocation: SkillAccessRecord | None = None,
+) -> dict[str, object]:
     duration_ms = (
         0
         if started is None
         else max(0, int((time.monotonic() - started) * 1000))
     )
-    return {
+    result = {
         "schemaVersion": 1,
         "toolName": "run_shell",
         "outcome": "error",
@@ -117,6 +127,7 @@ def sandbox_unavailable_result(started: float | None = None) -> dict[str, object
         },
         "sideEffectsMayExist": False,
     }
+    return _attach_skill_invocation(result, skill_invocation)
 
 
 def _run_verified_shell(
@@ -130,6 +141,8 @@ def _run_verified_shell(
     resource_registry: ResourceRegistry | None,
     owner_id: str,
     attempt: SandboxAttempt | None,
+    active_skill_roots: Sequence[Path],
+    skill_invocation: SkillAccessRecord | None,
 ) -> dict[str, object]:
     with tempfile.TemporaryDirectory(prefix="eidos-shell-") as temporary:
         root = Path(temporary)
@@ -150,6 +163,7 @@ def _run_verified_shell(
                 and attempt.sandbox is SandboxType.MACOS_SEATBELT
                 else None
             ),
+            active_skill_roots=active_skill_roots,
         )
         _verify_directory_path(workspace)
         _verify_directory_path(cwd)
@@ -159,7 +173,7 @@ def _run_verified_shell(
             cwd=cwd,
             attempt=attempt,
         )
-        return run_shell_process(
+        result = run_shell_process(
             launch,
             timeout_seconds=timeout_seconds,
             cancel=cancel,
@@ -168,6 +182,7 @@ def _run_verified_shell(
             resource_registry=resource_registry,
             owner_id=owner_id,
         )
+        return _attach_skill_invocation(result, skill_invocation)
 
 
 def prepare_shell_launch(
@@ -355,6 +370,20 @@ def _process_group_exists(process_group: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _attach_skill_invocation(
+    result: dict[str, object],
+    invocation: SkillAccessRecord | None,
+) -> dict[str, object]:
+    if invocation is None:
+        return result
+    data = result.get("data")
+    if not isinstance(data, dict):
+        data = {}
+        result["data"] = data
+    data.update(invocation.result_data())
+    return result
 
 
 def _open_verified_directory(identity: WorkspaceIdentity) -> int:
