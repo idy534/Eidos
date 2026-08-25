@@ -153,7 +153,14 @@ class RuntimeProtocolTests(unittest.TestCase):
             output = io.StringIO()
             model = ScriptedModel([
                 ModelResponse(tool_calls=(ModelToolCall(
-                    "call-write", "write_file", {"path": "new.txt", "content": "candidate\n"},
+                    "call-shell",
+                    "run_shell",
+                    {
+                        "command": "printf approved-shell",
+                        "sandboxPermissions": "with_additional_permissions",
+                        "additionalPermissions": {"network": {"enabled": True}},
+                        "justification": "Test execution-slot approval handling",
+                    },
                 ),)),
                 ModelResponse(text="second completed"),
                 ModelResponse(text="first continued"),
@@ -161,7 +168,7 @@ class RuntimeProtocolTests(unittest.TestCase):
             server = RuntimeServer(output, Path(data_directory), model)
             with patch(
                 "eidos_runtime.protocol.server.run_seatbelt_self_test",
-                return_value=SeatbeltSelfTestResult(False, (), ("test",)),
+                return_value=SeatbeltSelfTestResult(True, ("test",), ()),
             ):
                 server.handle({
                     "jsonrpc": "2.0", "id": "client-init", "method": "initialize",
@@ -250,9 +257,16 @@ class RuntimeProtocolTests(unittest.TestCase):
                     ModelResponse(
                         tool_calls=(
                             ModelToolCall(
-                                "call-write",
-                                "write_file",
-                                {"path": "new.txt", "content": "candidate\n"},
+                                "call-shell",
+                                "run_shell",
+                                {
+                                    "command": "printf approved-shell",
+                                    "sandboxPermissions": "with_additional_permissions",
+                                    "additionalPermissions": {
+                                        "network": {"enabled": True},
+                                    },
+                                    "justification": "Test approval channel failure",
+                                },
                             ),
                         )
                     )
@@ -260,6 +274,7 @@ class RuntimeProtocolTests(unittest.TestCase):
             )
             server = RuntimeServer(output, Path(data_directory), model)
             server.store.initialize()
+            server.shell_available = True
             session = server.store.create_session(workspace)
             run, _ = server.store.create_run(session["id"], "create new.txt")
 

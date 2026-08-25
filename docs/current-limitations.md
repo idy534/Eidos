@@ -25,7 +25,7 @@
 
 ## Workspace 与工具
 
-- 内置文件工具只处理当前 Workspace 内受支持的普通 UTF-8 文件。当前没有通用二进制编辑、浏览器自动化或 Artifact 发布工具。
+- 内置文件工具只处理当前 Workspace 内受支持的普通 UTF-8 文件。工具会保留 macOS mode、扩展属性和 ACL，但不处理 hardlink、symlink、特殊文件、特殊 mode 或文件 flags。当前没有通用二进制编辑、浏览器自动化或 Artifact 发布工具。
 - Desktop Terminal 是用户直接操作的临时 PTY。它不属于 Agent Tool，不经过 Runtime Approval 或 Seatbelt，也不会写入 SQLite、Checkpoint、Conversation 或恢复状态。关闭 Terminal Tab、切换 Session execution binding、删除 Session、关闭窗口或退出应用都会终止对应 PTY。Review 和 Files 各只打开一个工具 Tab；Terminal 可以打开多个 Tab，Files 可以同时预览多个文件。
 - Projectless Conversation 不创建 Project，也不提供 Workspace Explorer、Git status、Git diff 或 Repository Intelligence。它使用系统私有锚点作为 workspace，并提供文件工具、Shell、Skill、MCP 和 Plugin 资源。Desktop 不显示 Files 和文件树。它只支持 Local execution。
 - Workspace Explorer 当前只预览有界 UTF-8 text/code 和 Markdown。二进制、图片、PDF、Office、archive 和 database 文件不做内嵌预览。Explorer 不提供编辑、搜索、文件拖放、重命名或删除。当前的拖动交互只用于调整文件树与预览区的宽高。

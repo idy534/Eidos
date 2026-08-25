@@ -59,7 +59,6 @@ def _snapshot_item(
             projected.pop("argumentsJson", None)
         else:
             projected["argumentsJson"] = display_arguments
-        projected.pop("approvalDiff", None)
         result = projected.get("resultJson")
         if isinstance(result, str):
             projected["resultJson"] = _truncate_snapshot_text(result)
@@ -327,7 +326,7 @@ def _item_from_row(
         if tool_row["approval_feedback"] is not None:
             tool_call["approvalFeedback"] = tool_row["approval_feedback"]
         if tool_row["approval_diff"] is not None:
-            tool_call["approvalDiff"] = tool_row["approval_diff"]
+            tool_call["changeDiff"] = tool_row["approval_diff"]
         if tool_row["base_sha256"] is not None:
             tool_call["baseSha256"] = tool_row["base_sha256"]
         if "provenance_json" in tool_row.keys() and tool_row["provenance_json"]:

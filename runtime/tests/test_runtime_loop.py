@@ -227,7 +227,7 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(persisted["status"], "interrupted")
         self.assertEqual(persisted["errorCode"], "RUNTIME_INTERRUPTED")
 
-    def test_approved_new_file_is_atomically_written_then_model_continues(self) -> None:
+    def test_workspace_new_file_is_atomically_written_without_approval(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Create notes.txt")
         model = ScriptedModel(
             [
@@ -255,12 +255,12 @@ class RuntimeLoopTests(unittest.TestCase):
         ).run(run["id"], threading.Event())
 
         self.assertEqual((self.workspace / "notes.txt").read_text(), "approved\n")
-        self.assertEqual(len(approvals), 1)
-        self.assertIn("+++ b/notes.txt", approvals[0]["diff"])
+        self.assertEqual(approvals, [])
         snapshot = self.store.read_session_snapshot(self.session["id"])
         file_item = next(item for item in snapshot["items"] if item["kind"] == "file_change")
         self.assertEqual(file_item["status"], "completed")
-        self.assertEqual(file_item["toolCall"]["approvalDecision"], "approve")
+        self.assertNotIn("approvalDecision", file_item["toolCall"])
+        self.assertIn("+++ b/notes.txt", file_item["toolCall"]["changeDiff"])
         self.assertEqual(
             json.loads(file_item["toolCall"]["argumentsJson"]),
             {"path": "notes.txt"},
@@ -273,9 +273,9 @@ class RuntimeLoopTests(unittest.TestCase):
         )
         completed_tool = completed_notification["params"]["item"]["toolCall"]
         self.assertNotIn("argumentsJson", completed_tool)
-        self.assertNotIn("approvalDiff", completed_tool)
+        self.assertIn("+++ b/notes.txt", completed_tool["changeDiff"])
 
-    def test_rejected_existing_file_change_has_zero_side_effects(self) -> None:
+    def test_workspace_file_change_does_not_request_rejection(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Change hello.txt")
         model = ScriptedModel(
             [
@@ -297,30 +297,23 @@ class RuntimeLoopTests(unittest.TestCase):
             ]
         )
 
+        approvals: list[object] = []
         RuntimeLoop(
             self.store,
             model,
             lambda _message: None,
-            lambda _request, _cancel: ApprovalDecision("reject"),
+            lambda request, _cancel: approvals.append(request)
+            or ApprovalDecision("reject"),
         ).run(run["id"], threading.Event())
 
-        self.assertEqual(
-            (self.workspace / "hello.txt").read_text(), "hello from workspace\n"
-        )
+        self.assertEqual(approvals, [])
+        self.assertEqual((self.workspace / "hello.txt").read_text(), "changed\n")
         snapshot = self.store.read_session_snapshot(self.session["id"])
         file_item = next(item for item in snapshot["items"] if item["kind"] == "file_change")
-        self.assertEqual(file_item["status"], "declined")
-        rejection = next(
-            item for item in model.contexts[-1]
-            if item.get("type") == "tool_result"
-            and item.get("name") == "write_file"
-        )
-        self.assertIn(
-            "Do not request another approval",
-            json.loads(str(rejection["result"]))["summary"],
-        )
+        self.assertEqual(file_item["status"], "completed")
+        self.assertNotIn("approvalDecision", file_item["toolCall"])
 
-    def test_approval_version_conflict_preserves_external_change(self) -> None:
+    def test_workspace_file_change_never_calls_approval_callback(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Change hello.txt")
         model = ScriptedModel(
             [
@@ -338,11 +331,14 @@ class RuntimeLoopTests(unittest.TestCase):
                         ),
                     )
                 ),
-                ModelResponse(text="The file changed while waiting."),
+                ModelResponse(text="The file was changed."),
             ]
         )
 
-        def mutate_then_approve(_request, _cancel):
+        approvals: list[object] = []
+
+        def mutate_if_called(request, _cancel):
+            approvals.append(request)
             (self.workspace / "hello.txt").write_text("external change\n")
             return ApprovalDecision("approve")
 
@@ -350,16 +346,13 @@ class RuntimeLoopTests(unittest.TestCase):
             self.store,
             model,
             lambda _message: None,
-            mutate_then_approve,
+            mutate_if_called,
         ).run(run["id"], threading.Event())
 
-        self.assertEqual((self.workspace / "hello.txt").read_text(), "external change\n")
-        snapshot = self.store.read_session_snapshot(self.session["id"])
-        file_item = next(item for item in snapshot["items"] if item["kind"] == "file_change")
-        result = json.loads(file_item["toolCall"]["resultJson"])
-        self.assertEqual(result["code"], "file_version_conflict")
+        self.assertEqual(approvals, [])
+        self.assertEqual((self.workspace / "hello.txt").read_text(), "model change\n")
 
-    def test_existing_file_write_without_read_evidence_never_requests_approval(self) -> None:
+    def test_existing_file_write_uses_internal_read_evidence(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Blind write")
         model = ScriptedModel(
             [
@@ -385,11 +378,9 @@ class RuntimeLoopTests(unittest.TestCase):
         ).run(run["id"], threading.Event())
 
         self.assertEqual(approvals, [])
-        self.assertEqual(
-            (self.workspace / "hello.txt").read_text(), "hello from workspace\n"
-        )
+        self.assertEqual((self.workspace / "hello.txt").read_text(), "blind\n")
 
-    def test_apply_patch_without_read_evidence_never_requests_approval(self) -> None:
+    def test_apply_patch_uses_patch_context_as_read_evidence(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Blind Patch")
         model = ScriptedModel(
             [
@@ -419,9 +410,7 @@ class RuntimeLoopTests(unittest.TestCase):
         ).run(run["id"], threading.Event())
 
         self.assertEqual(approvals, [])
-        self.assertEqual(
-            (self.workspace / "hello.txt").read_text(), "hello from workspace\n"
-        )
+        self.assertEqual((self.workspace / "hello.txt").read_text(), "blind\n")
 
     def test_invalid_or_mismatched_patch_never_requests_approval(self) -> None:
         patches = (
@@ -475,7 +464,7 @@ class RuntimeLoopTests(unittest.TestCase):
                     "hello from workspace\n",
                 )
 
-    def test_approved_shell_runs_in_sandbox_and_returns_output(self) -> None:
+    def test_default_shell_runs_in_sandbox_without_approval(self) -> None:
         if not is_seatbelt_ready():
             self.skipTest(
                 "Seatbelt Shell integration requires a currently usable sandbox-exec and static resources"
@@ -496,11 +485,13 @@ class RuntimeLoopTests(unittest.TestCase):
             ]
         )
 
+        approvals: list[object] = []
         RuntimeLoop(
             self.store,
             model,
             lambda _message: None,
-            lambda _request, _cancel: ApprovalDecision("approve"),
+            lambda request, _cancel: approvals.append(request)
+            or ApprovalDecision("approve"),
             shell_available=True,
         ).run(run["id"], threading.Event())
 
@@ -516,6 +507,7 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "success")
         self.assertEqual(result["data"]["stdout"], "shell-ok")
         self.assertEqual(result["data"]["stderr"], "")
+        self.assertEqual(approvals, [])
 
     def test_successful_first_shell_with_incomplete_manifest_continues_run(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Inspect a large repo")
@@ -722,7 +714,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
         self.assertFalse(sentinel.exists())
 
-    def test_dynamic_seatbelt_unavailable_after_approval_never_spawns(self) -> None:
+    def test_dynamic_seatbelt_unavailable_without_approval_never_spawns(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Run a command")
         sentinel = self.workspace / "must-not-exist"
         model = ScriptedModel(
@@ -775,7 +767,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
         result_json = command_item["toolCall"]["resultJson"]
         result = json.loads(result_json)
-        self.assertEqual(len(approvals), 1)
+        self.assertEqual(approvals, [])
         self.assertEqual(result["code"], "sandbox_unavailable")
         self.assertFalse(result["sideEffectsMayExist"])
         self.assertFalse(result["reconciliationRequired"])
@@ -793,7 +785,7 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertFalse(sentinel.exists())
         popen.assert_not_called()
 
-    def test_rejected_shell_has_zero_side_effects(self) -> None:
+    def test_rejected_shell_permission_expansion_has_zero_side_effects(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Reject a command")
         model = ScriptedModel(
             [
@@ -802,7 +794,14 @@ class RuntimeLoopTests(unittest.TestCase):
                         ModelToolCall(
                             "call-shell",
                             "run_shell",
-                            {"command": "touch rejected.txt"},
+                            {
+                                "command": "touch rejected.txt",
+                                "sandboxPermissions": "with_additional_permissions",
+                                "additionalPermissions": {
+                                    "network": {"enabled": True},
+                                },
+                                "justification": "Fixture requests network access",
+                            },
                         ),
                     )
                 ),
@@ -820,7 +819,7 @@ class RuntimeLoopTests(unittest.TestCase):
 
         self.assertFalse((self.workspace / "rejected.txt").exists())
 
-    def test_shell_workspace_rebind_after_approval_never_runs_in_replacement(self) -> None:
+    def test_shell_workspace_rebind_before_execution_never_runs_in_replacement(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Run safely")
         replacement = self.workspace.parent / "replacement"
         replacement.mkdir()
@@ -840,18 +839,29 @@ class RuntimeLoopTests(unittest.TestCase):
             ]
         )
 
-        def rebind_then_approve(_request, _cancel):
-            self.workspace.rename(moved)
-            replacement.rename(self.workspace)
-            return ApprovalDecision("approve")
+        original_prepare = ToolExecutor.prepare_shell
+        calls = 0
 
-        RuntimeLoop(
-            self.store,
-            model,
-            lambda _message: None,
-            rebind_then_approve,
-            shell_available=True,
-        ).run(run["id"], threading.Event())
+        def rebind_on_second_prepare(executor, value, cancel):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                self.workspace.rename(moved)
+                replacement.rename(self.workspace)
+            return original_prepare(executor, value, cancel)
+
+        with mock_patch(
+            "eidos_runtime.runtime.run_resources.ToolExecutor.prepare_shell",
+            side_effect=rebind_on_second_prepare,
+            autospec=True,
+        ):
+            RuntimeLoop(
+                self.store,
+                model,
+                lambda _message: None,
+                lambda _request, _cancel: ApprovalDecision("approve"),
+                shell_available=True,
+            ).run(run["id"], threading.Event())
 
         self.assertFalse((self.workspace / "escaped.txt").exists())
         snapshot = self.store.read_session_snapshot(self.session["id"])
@@ -861,7 +871,7 @@ class RuntimeLoopTests(unittest.TestCase):
         result = json.loads(command_item["toolCall"]["resultJson"])
         self.assertEqual(result["code"], "workspace_identity_changed")
 
-    def test_unrelated_sensitive_workspace_file_does_not_block_shell_approval(self) -> None:
+    def test_unrelated_sensitive_workspace_file_does_not_block_default_shell(self) -> None:
         (self.workspace / "private.pem").write_text("secret", encoding="utf-8")
         run, _ = self.store.create_run(self.session["id"], "Read secrets")
         approvals: list[dict[str, object]] = []
@@ -889,7 +899,7 @@ class RuntimeLoopTests(unittest.TestCase):
             shell_available=True,
         ).run(run["id"], threading.Event())
 
-        self.assertEqual(len(approvals), 1)
+        self.assertEqual(approvals, [])
         snapshot = self.store.read_session_snapshot(self.session["id"])
         command_item = next(
             item for item in snapshot["items"] if item["kind"] == "command_execution"
@@ -903,7 +913,7 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(len(model.contexts), 2)
         self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
 
-    def test_shell_write_with_hard_link_reaches_approval_and_reconciliation(self) -> None:
+    def test_default_shell_write_with_hard_link_reaches_reconciliation(self) -> None:
         external = self.workspace.parent / "external.txt"
         external.write_text("outside\n", encoding="utf-8")
         os.link(external, self.workspace / "linked.txt")
@@ -933,7 +943,7 @@ class RuntimeLoopTests(unittest.TestCase):
             shell_available=True,
         ).run(run["id"], threading.Event())
 
-        self.assertEqual(len(approvals), 1)
+        self.assertEqual(approvals, [])
         snapshot = self.store.read_session_snapshot(self.session["id"])
         command_item = next(
             item for item in snapshot["items"] if item["kind"] == "command_execution"
@@ -971,7 +981,7 @@ class RuntimeLoopTests(unittest.TestCase):
             shell_available=True,
         ).run(run["id"], threading.Event())
 
-        self.assertEqual(len(approvals), 1)
+        self.assertEqual(approvals, [])
         self.assertEqual(external.read_text(encoding="utf-8"), "outside\n")
         snapshot = self.store.read_session_snapshot(self.session["id"])
         command_item = next(
@@ -1402,7 +1412,7 @@ class ToolExecutorTests(unittest.TestCase):
         self.assertTrue(result["sideEffectsMayExist"])
         self.assertEqual((self.workspace / "durability.txt").read_text(), "committed\n")
 
-    def test_eof_newline_change_has_unambiguous_approval_diff(self) -> None:
+    def test_eof_newline_change_has_unambiguous_change_diff(self) -> None:
         target = self.workspace / "newline.txt"
         target.write_text("same", encoding="utf-8")
 
@@ -1416,7 +1426,7 @@ class ToolExecutorTests(unittest.TestCase):
         self.assertIn("Eidos EOF newline: before=absent, after=present", prepared.diff)
         self.assertNotIn("-same+same", prepared.diff)
 
-    def test_line_ending_only_change_has_unambiguous_approval_diff(self) -> None:
+    def test_line_ending_only_change_has_unambiguous_change_diff(self) -> None:
         target = self.workspace / "line-endings.txt"
         target.write_bytes(b"first\r\nsecond\r\n")
 
@@ -1445,7 +1455,7 @@ class ToolExecutorTests(unittest.TestCase):
         assert isinstance(prepared, dict)
         self.assertEqual(prepared["code"], "unsupported_text_content")
 
-    def test_hard_linked_file_metadata_fails_closed(self) -> None:
+    def test_hard_linked_file_fails_closed_with_specific_error(self) -> None:
         target = self.workspace / "hardlink.txt"
         alias = self.workspace / "hardlink-alias.txt"
         target.write_text("base\n", encoding="utf-8")
@@ -1459,10 +1469,10 @@ class ToolExecutorTests(unittest.TestCase):
 
         self.assertIsInstance(prepared, dict)
         assert isinstance(prepared, dict)
-        self.assertEqual(prepared["code"], "unsupported_file_metadata")
+        self.assertEqual(prepared["code"], "unsupported_workspace_hardlink")
 
     @unittest.skipUnless(sys.platform == "darwin", "requires macOS file metadata")
-    def test_extended_attribute_metadata_fails_closed(self) -> None:
+    def test_extended_attribute_is_preserved_by_atomic_update(self) -> None:
         target = self.workspace / "xattr.txt"
         target.write_text("base\n", encoding="utf-8")
         completed = subprocess.run(
@@ -1480,12 +1490,23 @@ class ToolExecutorTests(unittest.TestCase):
             threading.Event(),
         )
 
-        self.assertIsInstance(prepared, dict)
-        assert isinstance(prepared, dict)
-        self.assertEqual(prepared["code"], "unsupported_file_metadata")
+        assert not isinstance(prepared, dict)
+        result = self.executor.commit_file_change(
+            "write_file", prepared, threading.Event()
+        )
+
+        self.assertEqual(result["outcome"], "success")
+        read_back = subprocess.run(
+            ["/usr/bin/xattr", "-p", "com.eidos.test", str(target)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(read_back.returncode, 0)
+        self.assertEqual(read_back.stdout.rstrip("\n"), "value")
 
     @unittest.skipUnless(sys.platform == "darwin", "requires macOS file metadata")
-    def test_access_control_list_metadata_fails_closed(self) -> None:
+    def test_access_control_list_is_preserved_by_atomic_update(self) -> None:
         target = self.workspace / "acl.txt"
         target.write_text("base\n", encoding="utf-8")
         completed = subprocess.run(
@@ -1503,11 +1524,22 @@ class ToolExecutorTests(unittest.TestCase):
             threading.Event(),
         )
 
-        self.assertIsInstance(prepared, dict)
-        assert isinstance(prepared, dict)
-        self.assertEqual(prepared["code"], "unsupported_file_metadata")
+        assert not isinstance(prepared, dict)
+        result = self.executor.commit_file_change(
+            "write_file", prepared, threading.Event()
+        )
 
-    def test_atomic_swap_rolls_back_a_post_approval_external_edit(self) -> None:
+        self.assertEqual(result["outcome"], "success")
+        listing = subprocess.run(
+            ["/bin/ls", "-le", str(target)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(listing.returncode, 0)
+        self.assertIn("group:everyone deny write", listing.stdout)
+
+    def test_atomic_swap_rolls_back_a_precommit_external_edit(self) -> None:
         target = self.workspace / "cas.txt"
         target.write_text("base\n", encoding="utf-8")
         prepared = self.executor.prepare_file_change(

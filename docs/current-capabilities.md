@@ -143,7 +143,10 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Tool Registry 统一保存 ToolSpec、Schema、Execution Policy、Concurrency Policy、Projection Policy 和 provenance。
 - 内置只读 Tool 包括 `list_files`、`read_file`、`read_file_range` 和 `search_text`。
 - Workspace mutation Tool 包括 `write_file`、`apply_patch` 和 `delete_file`。
-- `apply_patch` 使用 bounded Unified Diff 解析，并要求单文件、Read Evidence、Base Hash、Approval 和版本复检。
+- `write_file`、`apply_patch` 和 `delete_file` 在当前 Workspace Permission 内直接执行，不逐次请求 Approval。
+- 文件工具在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。`apply_patch` 使用 bounded Unified Diff 解析，并要求单文件、Patch context 和版本复检。
+- 已应用的文件 Diff 会进入 ToolCall 持久事实，并在 Execution Feed 中展示。
+- macOS 原子替换会保留普通文件的 mode、扩展属性和 ACL。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
 - ToolCallRuntime 和 ToolExecutionController 会执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。
@@ -151,7 +154,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Shell
 
-- `run_shell` 需要 Approval。
+- `run_shell` 的默认 Workspace Seatbelt attempt 不需要 Approval。联网、附加路径和 unsandboxed attempt 需要 Approval。
 - 默认 Shell attempt 使用 macOS Seatbelt，使用明确 cwd、受控环境、超时、有界 stdout/stderr 和进程组终止。
 - Shell 不继承宿主 API Key、`HOME` 或任意敏感环境变量。
 - Shell launch boundary 验证 Workspace identity 和 cwd。post-execution observation 记录 Workspace diff、退出状态和 reconciliation 需要性。
@@ -160,8 +163,8 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Approval / Sandbox
 
-- File change Approval 展示完整 diff。磁盘在 Approval 前不发生写入。
-- File change Approval 后会重新验证版本并原子提交，再验证最终内容。
+- 普通 File change 使用 Workspace Permission。Runtime 会先保存完整 diff 和 Durable Intent，再重新验证版本并原子提交，最后验证内容和元数据。
+- 自动执行后的完整 diff 会显示在 Execution Feed。普通 File change 不创建假的 Approval 或用户 decision。
 - Command Execution Approval 展示 command、cwd、timeout、network 和 effective sandbox permissions。
 - MCP external Tool 使用同一 Approval、Sandbox、Tool Result 和 reconciliation 语义。
 - Seatbelt Policy、Workspace boundary、Eidos data/runtime protection、sensitive scanning 和 resource cleanup 失败时 fail closed。

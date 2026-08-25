@@ -52,9 +52,11 @@ class ShellOrchestrationRuntime:
 
     def approval_requirement(
         self,
-        _request: ShellOrchestrationRequest,
+        request: ShellOrchestrationRequest,
         _context: OrchestratorContext,
     ) -> ExecApprovalRequirement:
+        if request.input.sandboxPermissions is SandboxPermissions.USE_DEFAULT:
+            return ExecApprovalRequirement.SKIP
         return ExecApprovalRequirement.NEEDS_APPROVAL
 
     def escalation_allowed(

@@ -1720,6 +1720,28 @@ def _model_from_environment() -> ModelClient | None:
                 ModelResponse(text="Fake model completed after the approved command."),
             ]
         )
+    if fixture == "network-shell":
+        return ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "fake-network-shell-1",
+                            "run_shell",
+                            {
+                                "command": "printf approved-network-shell",
+                                "sandboxPermissions": "with_additional_permissions",
+                                "additionalPermissions": {
+                                    "network": {"enabled": True},
+                                },
+                                "justification": "Test process recovery during approval",
+                            },
+                        ),
+                    )
+                ),
+                ModelResponse(text="Fake model completed after network approval."),
+            ]
+        )
     if fixture != "1":
         return None
     return ScriptedModel(

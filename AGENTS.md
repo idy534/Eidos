@@ -205,12 +205,12 @@ RunSupervisor、ResourceRegistry、FIFO、Execution Slot 和 Shutdown Quiescence
 ## 14. Tool execution
 单 ToolCall 固定流程：
 ```text
-Validate → Prepare → Request Approval → Commit Durable Intent
+Validate → Prepare → Resolve Permission → Commit Durable Intent
 → Execute → Verify → Commit Result → Reconcile when uncertain
 ```
 不得绕过任何已存在阶段。
-文件写入必须在 Workspace 内，有 Read Evidence 和 Base Hash，展示完整 Diff，审批前零修改，审批后重新验证版本，原子写入，验证最终内容，并在事务内提交 ToolResult 与 Event。
-Shell 必须每次受控执行、默认禁网、不继承敏感环境变量、使用明确 cwd 和 timeout、有界输出、终止完整进程组、记录有效权限，并经过 Seatbelt 或明确扩权路径。
+文件写入必须在 Workspace 内。文件工具必须读取当前内容，生成 Base Hash 和完整 Diff，在 Durable Intent 后重新验证版本，原子写入，验证最终内容，并在事务内提交 ToolResult 与 Event。Workspace 内普通文件写入使用现有 Workspace Permission，不逐次审批。扩权和受保护路径不能复用这个授权。
+Shell 必须每次受控执行、默认禁网、不继承敏感环境变量、使用明确 cwd 和 timeout、有界输出、终止完整进程组并记录有效权限。默认 Workspace Seatbelt 不逐次审批。联网、附加路径和 unsandboxed 执行必须走明确扩权和 Approval。
 普通只读工具仅在完整批次满足 `parallel_safe` 时并行。
 写入、Shell、MCP 和外部副作用工具默认独占。
 副作用结果不确定时必须进入 Reconciliation，不得猜测成功或失败。

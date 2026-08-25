@@ -766,6 +766,12 @@ function ToolItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
       </summary>
       <div className="tool-body">
         <p>{safeToolSummary(toolCall.resultJson, item.status)}</p>
+        {item.kind === "file_change" && toolCall.changeDiff && (
+          <>
+            <p className="feed-label">已应用的变更</p>
+            <pre className="diff-view">{toolCall.changeDiff}</pre>
+          </>
+        )}
         {toolCall.provenance?.kind === "mcp" && (
           <p className="tool-provenance">
             Plugin {toolCall.provenance.pluginId} · Server {toolCall.provenance.serverId}

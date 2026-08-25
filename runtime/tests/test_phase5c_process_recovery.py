@@ -65,7 +65,7 @@ class RuntimeProcessRecoveryTests(unittest.TestCase):
             environment.update({
                 "PYTHONPATH": str(RUNTIME_ROOT),
                 "EIDOS_DATA_DIR": data,
-                "EIDOS_FAKE_MODEL": "write",
+                "EIDOS_FAKE_MODEL": "network-shell",
             })
             process = subprocess.Popen(
                 [sys.executable, "-m", "eidos_runtime"],
@@ -121,7 +121,7 @@ class RuntimeProcessRecoveryTests(unittest.TestCase):
                 )["result"]
                 send("client-run", "run/start", {
                     "sessionId": session["id"],
-                    "userInput": "write approved.txt",
+                    "userInput": "run a command with network access",
                     "modelId": "deepseek-v4-flash",
                 })
                 read_until(

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ctypes
 from dataclasses import dataclass
 import difflib
 import errno
@@ -11,7 +10,6 @@ import os
 from pathlib import Path
 import re
 import stat
-import sys
 import threading
 import time
 from typing import Iterator
@@ -21,6 +19,10 @@ import json
 from eidos_runtime.protocol.schemas import ToolResultDto
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 from eidos_runtime.db.storage import WorkspaceIdentity
+from eidos_runtime.sandbox.file_metadata import (
+    FileMetadataError,
+    copy_replace_metadata,
+)
 from eidos_runtime.sandbox.seatbelt import secure_workspace_move
 from eidos_runtime.sandbox.workspace_index import (
     WorkspaceIndex,
@@ -107,10 +109,6 @@ SHELL_SOURCE_SUFFIXES = {
     ".tsx",
 }
 MAX_PEM_SCAN_BYTES = 1024 * 1024
-DARWIN_ACL_TYPE_EXTENDED = 0x00000100
-DARWIN_REPLACE_SAFE_XATTRS = frozenset({b"com.apple.provenance"})
-
-
 class ToolCancelled(RuntimeError):
     pass
 
@@ -130,10 +128,10 @@ _BUILTIN_CONTRACTS = (
     ("read_file", "Read one bounded UTF-8 file. Large files return head/tail content; use read_file_range to continue.", "none", False, 5, "parallel", ReadFileInput, ReadFileResultData, "read_file"),
     ("read_file_range", "Read an inclusive bounded line range from one UTF-8 file. Continue from nextLine when present.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
     ("search_text", "Search a workspace-relative path (default '.') for a single-line query; supports maxResults, regex, and includeGlobs. Results are workspace-relative, bounded, and may be truncated.", "none", False, 5, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
-    ("write_file", "Create or replace one UTF-8 file after approval and verify the final hash. Modifies the workspace.", "workspace", True, 5, "single", WriteFileInput, WorkspaceResultData, "file_change"),
-    ("apply_patch", "Apply one strict unified diff to one previously read file after approval. Modifies the workspace.", "workspace", True, 5, "single", ApplyPatchInput, WorkspaceResultData, "file_change"),
-    ("delete_file", "Delete one previously read regular UTF-8 file after approval. Modifies the workspace.", "workspace", True, 5, "single", DeleteFileInput, WorkspaceResultData, "file_change"),
-    ("run_shell", "Run one shell command after approval. The default sandbox has no network access; for user-requested network access, set sandboxPermissions=with_additional_permissions, additionalPermissions.network.enabled=true, and provide justification instead of refusing without a tool call. Output and workspace changes are bounded and verified.", "shell", True, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
+    ("write_file", "Create or replace one UTF-8 file inside the workspace and verify the final hash. Modifies the workspace without approval.", "workspace", False, 5, "single", WriteFileInput, WorkspaceResultData, "file_change"),
+    ("apply_patch", "Apply one strict unified diff to one workspace file. Patch context, base hash, and final content are verified without approval.", "workspace", False, 5, "single", ApplyPatchInput, WorkspaceResultData, "file_change"),
+    ("delete_file", "Delete one regular UTF-8 file inside the workspace after base hash verification and without approval.", "workspace", False, 5, "single", DeleteFileInput, WorkspaceResultData, "file_change"),
+    ("run_shell", "Run one shell command in the default macOS workspace sandbox without approval. For requested network access, set sandboxPermissions=with_additional_permissions, additionalPermissions.network.enabled=true, and provide justification so Eidos can request approval. Additional path access and unsandboxed execution also require approval. Output and workspace changes are bounded and verified.", "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
 )
 TOOL_SPECS = tuple(ToolSpec.model_validate({
     "name": name,
@@ -500,7 +498,7 @@ class ToolExecutor:
                 else None
             )
             mode = existing[1] if existing is not None else 0o644
-            diff = _build_approval_diff(
+            diff = _build_change_diff(
                 base_text,
                 candidate_text,
                 (
@@ -538,13 +536,19 @@ class ToolExecutor:
         temporary_name: str | None = None
         preserve_temporary = False
         parent_fd = -1
+        source_fd = -1
         try:
             self._verify_root()
             _check_cancel(cancel)
             parts = _validate_relative_path(change.path)
             parent_fd = self._open_parent(parts)
-            self._verify_base_version(parent_fd, parts[-1], change.base_sha256, cancel)
+            source_fd = self._open_verified_base(
+                parent_fd, parts[-1], change.base_sha256, cancel
+            )
             if change.delete:
+                if source_fd >= 0:
+                    os.close(source_fd)
+                    source_fd = -1
                 os.unlink(parts[-1], dir_fd=parent_fd)
                 try:
                     os.fsync(parent_fd)
@@ -557,11 +561,18 @@ class ToolExecutor:
                     )
                 return _success(tool_name, "File deleted", {"path": change.path})
             temporary_name = f".eidos-{uuid.uuid4().hex}.tmp"
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
             if hasattr(os, "O_NOFOLLOW"):
                 flags |= os.O_NOFOLLOW
             descriptor = os.open(temporary_name, flags, change.mode, dir_fd=self.root_fd)
             try:
+                if source_fd >= 0:
+                    try:
+                        copy_replace_metadata(source_fd, descriptor)
+                    except FileMetadataError as error:
+                        raise WorkspacePathError(
+                            "file_metadata_preservation_failed"
+                        ) from error
                 offset = 0
                 while offset < len(change.content):
                     _check_cancel(cancel)
@@ -573,6 +584,9 @@ class ToolExecutor:
                 os.fsync(descriptor)
             finally:
                 os.close(descriptor)
+            if source_fd >= 0:
+                os.close(source_fd)
+                source_fd = -1
             _check_cancel(cancel)
             self._verify_base_version(parent_fd, parts[-1], change.base_sha256, cancel)
             workspace_path = Path(_fd_path(self.root_fd))
@@ -640,7 +654,7 @@ class ToolExecutor:
                     return _commit_error(
                         tool_name,
                         "file_version_conflict",
-                        "File changed after approval; the candidate was rolled back",
+                        "File changed before commit; the candidate was rolled back",
                         side_effects=False,
                     )
                 return _commit_error(
@@ -688,7 +702,7 @@ class ToolExecutor:
                 return _commit_error(
                     tool_name,
                     "file_version_conflict",
-                    "File changed after approval; the candidate was rolled back",
+                    "File changed before commit; the candidate was rolled back",
                     side_effects=False,
                 )
             if locals().get("final_move_started", False):
@@ -704,7 +718,7 @@ class ToolExecutor:
                 return _commit_error(
                     tool_name,
                     "file_version_conflict",
-                    "File changed after approval; the candidate was rolled back",
+                    "File changed before commit; the candidate was rolled back",
                     side_effects=False,
                 )
             if locals().get("final_move_started", False):
@@ -716,6 +730,8 @@ class ToolExecutor:
                 )
             return _error(tool_name, "file_write_failed", "File change was not committed")
         finally:
+            if source_fd >= 0:
+                os.close(source_fd)
             if temporary_name is not None and not preserve_temporary:
                 try:
                     os.unlink(temporary_name, dir_fd=self.root_fd)
@@ -990,14 +1006,14 @@ class ToolExecutor:
         try:
             metadata = os.fstat(descriptor)
             mode = stat.S_IMODE(metadata.st_mode)
-            if (
-                mode & 0o7000
-                or metadata.st_nlink != 1
-                or metadata.st_uid != os.getuid()
-                or getattr(metadata, "st_flags", 0) != 0
-                or _has_unsupported_file_metadata(descriptor)
-            ):
-                raise WorkspacePathError("unsupported_file_metadata")
+            if mode & 0o7000:
+                raise WorkspacePathError("unsupported_file_mode")
+            if metadata.st_nlink != 1:
+                raise WorkspacePathError("unsupported_workspace_hardlink")
+            if metadata.st_uid != os.getuid():
+                raise WorkspacePathError("unsupported_file_owner")
+            if getattr(metadata, "st_flags", 0) != 0:
+                raise WorkspacePathError("unsupported_file_flags")
             content, _stable = _read_regular_file(descriptor, cancel)
             return content, mode
         finally:
@@ -1022,18 +1038,37 @@ class ToolExecutor:
         expected_sha256: str | None,
         cancel: threading.Event,
     ) -> None:
+        descriptor = self._open_verified_base(
+            parent_fd, name, expected_sha256, cancel
+        )
+        if descriptor >= 0:
+            os.close(descriptor)
+
+    def _open_verified_base(
+        self,
+        parent_fd: int,
+        name: str,
+        expected_sha256: str | None,
+        cancel: threading.Event,
+    ) -> int:
         try:
             descriptor = self._open_file_at(parent_fd, name)
         except WorkspacePathError as error:
             if expected_sha256 is None and error.code == "file_unavailable":
-                return
+                return -1
             raise WorkspacePathError("file_version_conflict") from None
         try:
             content, _metadata = _read_regular_file(descriptor, cancel)
-        finally:
+        except Exception:
             os.close(descriptor)
-        if expected_sha256 is None or hashlib.sha256(content).hexdigest() != expected_sha256:
+            raise
+        if (
+            expected_sha256 is None
+            or hashlib.sha256(content).hexdigest() != expected_sha256
+        ):
+            os.close(descriptor)
             raise WorkspacePathError("file_version_conflict")
+        return descriptor
 
     def _open_file(self, value: str) -> tuple[int, str]:
         parts = _validate_relative_path(value)
@@ -1184,67 +1219,7 @@ def _validate_relative_path(value: str) -> tuple[str, ...]:
     return parts
 
 
-def _has_unsupported_file_metadata(descriptor: int) -> bool:
-    if sys.platform == "darwin":
-        return _darwin_has_unsupported_file_metadata(descriptor)
-
-    listxattr = getattr(os, "listxattr", None)
-    if listxattr is None:
-        return True
-    try:
-        return bool(listxattr(descriptor))
-    except (OSError, TypeError):
-        return True
-
-
-def _darwin_has_unsupported_file_metadata(descriptor: int) -> bool:
-    try:
-        libc = ctypes.CDLL(None, use_errno=True)
-        flistxattr = libc.flistxattr
-        acl_get_fd_np = libc.acl_get_fd_np
-        acl_free = libc.acl_free
-    except (AttributeError, OSError):
-        return True
-
-    flistxattr.argtypes = [
-        ctypes.c_int,
-        ctypes.c_void_p,
-        ctypes.c_size_t,
-        ctypes.c_int,
-    ]
-    flistxattr.restype = ctypes.c_ssize_t
-    acl_get_fd_np.argtypes = [ctypes.c_int, ctypes.c_int]
-    acl_get_fd_np.restype = ctypes.c_void_p
-    acl_free.argtypes = [ctypes.c_void_p]
-    acl_free.restype = ctypes.c_int
-
-    ctypes.set_errno(0)
-    required = flistxattr(descriptor, None, 0, 0)
-    if required < 0:
-        return True
-    if required:
-        names_buffer = ctypes.create_string_buffer(required)
-        ctypes.set_errno(0)
-        actual = flistxattr(descriptor, names_buffer, required, 0)
-        if actual < 0 or actual != required:
-            return True
-        names = frozenset(
-            name for name in names_buffer.raw[:actual].split(b"\0") if name
-        )
-        if names - DARWIN_REPLACE_SAFE_XATTRS:
-            return True
-
-    ctypes.set_errno(0)
-    acl = acl_get_fd_np(descriptor, DARWIN_ACL_TYPE_EXTENDED)
-    if acl:
-        acl_free(acl)
-        return True
-    return ctypes.get_errno() != errno.ENOENT
-
-
-
-
-def _build_approval_diff(
+def _build_change_diff(
     original: str,
     candidate: str,
     fromfile: str,

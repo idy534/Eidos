@@ -1057,17 +1057,29 @@ class SessionStore:
         item_id: str,
         *,
         preconditions: dict[str, object],
+        approval_required: bool = True,
     ) -> str:
         return self._repository(self._execution).begin_durable_intent(
             item_id,
             preconditions=preconditions,
+            approval_required=approval_required,
         )
 
     def side_effect_authorized(self, item_id: str) -> bool:
         return self._repository(self._execution).side_effect_authorized(item_id)
 
-    def has_read_evidence(self, run_id: str, path: str, sha256: str) -> bool:
-        return self._repository(self._execution).has_read_evidence(run_id, path, sha256)
+    def record_workspace_change(
+        self,
+        item_id: str,
+        *,
+        diff: str,
+        base_sha256: str | None,
+    ) -> None:
+        self._repository(self._execution).record_workspace_change(
+            item_id,
+            diff=diff,
+            base_sha256=base_sha256,
+        )
 
     def record_protocol_error(self, run_id: str) -> int:
         return self._repository(self._runs).record_protocol_error(run_id)

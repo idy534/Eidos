@@ -138,13 +138,20 @@ class EventDeliveryTests(unittest.TestCase):
         for decision in ("approve", "reject"):
             with self.subTest(decision=decision):
                 run, _ = self.store.create_run(
-                    self.session["id"], f"{decision} write"
+                    self.session["id"], f"{decision} network expansion"
                 )
                 model = ScriptedModel([
                     ModelResponse(tool_calls=(ModelToolCall(
                         f"call-{decision}",
-                        "write_file",
-                        {"path": f"{decision}.txt", "content": decision},
+                        "run_shell",
+                        {
+                            "command": "printf approval-recovery",
+                            "sandboxPermissions": "with_additional_permissions",
+                            "additionalPermissions": {
+                                "network": {"enabled": True},
+                            },
+                            "justification": "Test approval delivery recovery",
+                        },
                     ),)),
                     ModelResponse(text="done"),
                 ])
@@ -154,6 +161,7 @@ class EventDeliveryTests(unittest.TestCase):
                     model,
                     self._broken_notify,
                     lambda _params, _cancel: ApprovalDecision(decision),
+                    shell_available=True,
                 ).run(run["id"], threading.Event())
 
                 completed = self.store.read_run(run["id"])
