@@ -827,7 +827,7 @@ test("routes runtime notifications during a fake model read loop", async () => {
   }
 });
 
-test("routes a runtime approval request and commits only after approval", async () => {
+test("commits an ordinary workspace file change without approval", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
   const workspaceRoot = await createGitRepository("eidos-workspace-");
   const approvals: string[] = [];
@@ -872,12 +872,8 @@ test("routes a runtime approval request and commits only after approval", async 
     assert.equal(completed.method, "run/completed");
     assert.equal(await readFile(path.join(executionRoot, "approved.txt"), "utf8"), "approved\n");
     await assert.rejects(readFile(path.join(workspaceRoot, "approved.txt"), "utf8"));
-    assert.equal(approvals.length, 1);
-    assert.deepEqual(
-      approvalNotifications,
-      ["approval/requested", "approval/resolved"],
-    );
-    assert.match(approvals[0] ?? "", /\+\+\+ b\/approved\.txt/);
+    assert.deepEqual(approvals, []);
+    assert.deepEqual(approvalNotifications, []);
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
@@ -906,8 +902,12 @@ test("cancel while awaiting approval ignores a late approve response", async () 
       pythonExecutable: pythonExecutable,
       runtimeRoot: path.join(projectRoot, "runtime"),
       dataDirectory,
-      environment: { EIDOS_FAKE_MODEL: "write" },
-      onApprovalRequest: async () => {
+      environment: { EIDOS_FAKE_MODEL: "network-shell" },
+      onApprovalRequest: async (request) => {
+        assert.equal(request.kind, "command_execution");
+        if (request.kind === "command_execution") {
+          assert.equal(request.networkEnabled, true);
+        }
         approvalStarted?.();
         return delayedApproval;
       },
@@ -920,8 +920,11 @@ test("cancel while awaiting approval ignores a late approve response", async () 
 
     await client.initialize();
     const session = await client.createSession(workspaceRoot, { executionMode: "worktree" });
-    const executionRoot = await managedWorktreeRoot(workspaceRoot);
-    const run = await client.startRun(session.id, "Create approved.txt", "deepseek-v4-flash");
+    const run = await client.startRun(
+      session.id,
+      "Run a command with network access",
+      "deepseek-v4-flash",
+    );
     await withTimeout(approvalRequested, 5_000);
     await client.cancelRun(run.id);
     const completed = await withTimeout(runCompleted, 5_000);
@@ -934,8 +937,6 @@ test("cancel while awaiting approval ignores a late approve response", async () 
     assert.equal(completed.method, "run/completed");
     assert.equal(completed.params.run.status, "canceled");
     assert.equal(snapshot.runs[0]?.status, "canceled");
-    await assert.rejects(readFile(path.join(executionRoot, "approved.txt"), "utf8"));
-    await assert.rejects(readFile(path.join(workspaceRoot, "approved.txt"), "utf8"));
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
@@ -994,7 +995,7 @@ test("degraded Shell capability rejects execution without approval or workspace 
   }
 });
 
-test("routes shell approval and streams sandboxed command completion", async (context) => {
+test("runs a default sandboxed shell command without approval", async (context) => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
   const workspaceRoot = await createGitRepository("eidos-workspace-");
   const approvals: string[] = [];
@@ -1039,7 +1040,7 @@ test("routes shell approval and streams sandboxed command completion", async (co
     await client.shutdown();
     assert.equal(await client.waitForExit(), 0);
 
-    assert.deepEqual(approvals, ["printf desktop-shell-ok"]);
+    assert.deepEqual(approvals, []);
     const commandItem = snapshot.items.find((item) => item.kind === "command_execution");
     assert.ok(commandItem?.toolCall?.resultJson?.includes("desktop-shell-ok"));
   } finally {

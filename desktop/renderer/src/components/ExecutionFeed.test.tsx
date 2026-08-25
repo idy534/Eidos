@@ -290,6 +290,36 @@ test("does not describe a failed file write as edited", () => {
   assert.doesNotMatch(html, /已编辑 summary\.txt/);
 });
 
+test("shows the applied diff for an automatic workspace file change", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({
+        id: "automatic-write", ordinal: 1, kind: "file_change",
+        toolCall: {
+          id: "tool-write", itemId: "automatic-write", modelStepIndex: 1, batchOrder: 0,
+          providerCallId: "provider-write", toolName: "write_file",
+          status: "completed", startedAt: 1_000, completedAt: 2_000,
+          argumentsJson: JSON.stringify({ path: "summary.txt" }),
+          changeDiff: "--- a/summary.txt\n+++ b/summary.txt\n@@ -1 +1 @@\n-old\n+new\n",
+          resultJson: JSON.stringify({
+            outcome: "success", code: "ok", summary: "File change committed", data: {},
+          }),
+        },
+      })]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(html, /已应用的变更/);
+  assert.match(html, /\+\+\+ b\/summary\.txt/);
+  assert.doesNotMatch(html, /批准并写入/);
+});
+
 test("shows canonical shell failure code, summary, and stderr", () => {
   const html = renderToStaticMarkup(
     <ExecutionFeed

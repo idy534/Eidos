@@ -99,6 +99,8 @@ class _HandlerDependencies:
         tuple[ApprovalOutcome, VerifiedToolExecutionResult | None],
     ]
     authorize_side_effect: Callable[..., ApprovalOutcome]
+    execute_workspace_side_effect: Callable[..., VerifiedToolExecutionResult]
+    authorize_workspace_side_effect: Callable[..., None]
     resources: ResourceRegistry = field(default_factory=ResourceRegistry)
     base_permissions: BasePermissionProfile | None = None
 
@@ -144,18 +146,6 @@ class FileChangeToolHandler:
             return HandlerOutcome(
                 bounded_tool_result(call.name, prepared), "failed", "failed"
             )
-        if prepared.base_sha256 is not None and not self.dependencies.store.has_read_evidence(
-            run_id, prepared.path, prepared.base_sha256
-        ):
-            return HandlerOutcome(
-                tool_error(
-                    call.name,
-                    "read_evidence_required",
-                    "Read the current file before proposing a change",
-                ),
-                "failed",
-                "failed",
-            )
         if prepared.base_sha256 is not None and not prepared.diff:
             return HandlerOutcome(
                 tool_result(
@@ -173,35 +163,26 @@ class FileChangeToolHandler:
                 "summary": f"Modify {prepared.path}",
                 "diff": prepared.diff,
             },
-            approval_diff=prepared.diff,
             base_sha256=prepared.base_sha256,
-            transition_reason="file_approval",
+            transition_reason="workspace_file_authorized",
             intent_preconditions={
+                "authorization": "workspace",
                 "path": prepared.path,
                 "baseSha256": prepared.base_sha256,
             },
         )
-        approval, verified = self.dependencies.execute_side_effect(
-            run_id=run_id,
+        self.dependencies.store.record_workspace_change(
+            str(item["id"]),
+            diff=prepared.diff,
+            base_sha256=prepared.base_sha256,
+        )
+        verified = self.dependencies.execute_workspace_side_effect(
             item=item,
             prepared=prepared_execution,
-            cancel=cancel,
             execute=lambda: runtime.implementation.commit_file_change(  # type: ignore[attr-defined]
                 prepared, cancel
             ),
         )
-        if approval.decision == "reject":
-            return HandlerOutcome(
-                tool_result(
-                    call.name,
-                    "declined",
-                    "user_rejected",
-                    approval.feedback or APPROVAL_REJECTION_GUIDANCE,
-                    {"path": prepared.path},
-                ),
-                "declined",
-            )
-        assert verified is not None
         result = verified.result
         if result["outcome"] == "success" and result.get("code") != "no_changes":
             self.dependencies.store.clear_rejects(run_id)
@@ -305,7 +286,7 @@ class ShellToolHandler:
                     tool_error(
                         call.name,
                         error.code,
-                        "Shell workspace changed after approval",
+                        "Shell workspace changed before execution",
                     ),
                     None,
                 )
@@ -514,6 +495,26 @@ class ShellToolHandler:
         if self.dependencies.base_permissions is None:
             raise RuntimeError("step permission profile is unavailable")
         request = ShellOrchestrationRequest(shell_input, workspace, cwd)
+        workspace_execution = PreparedToolExecution(
+            approval_description={
+                "kind": "command_execution",
+                "summary": "Run shell command in the workspace sandbox",
+            },
+            transition_reason="workspace_shell_authorized",
+            intent_preconditions={
+                "authorization": "workspace_sandbox",
+                "command": command,
+                "cwd": cwd_value,
+                "timeoutSeconds": timeout,
+                "sandboxPermissions": shell_input.sandboxPermissions.value,
+                "additionalPermissions": None,
+                "workspaceIdentity": [
+                    workspace.device,
+                    workspace.inode,
+                    workspace.owner,
+                ],
+            },
+        )
         orchestration = ToolOrchestrator().run(
             ShellOrchestrationRuntime(execute_shell_attempt),
             request,
@@ -531,6 +532,12 @@ class ShellToolHandler:
                 base_permissions=self.dependencies.base_permissions,
             ),
             approve=approve,
+            authorize_without_approval=lambda: (
+                self.dependencies.authorize_workspace_side_effect(
+                    item=item,
+                    prepared=workspace_execution,
+                )
+            ),
             record_attempt=record_attempt,
         )
         result = orchestration.result
@@ -785,6 +792,8 @@ class ToolCallRuntime:
             shell_available,
             self.controller.execute_side_effect,
             self.controller.authorize_side_effect,
+            self.controller.execute_workspace_side_effect,
+            self.controller.authorize_workspace_side_effect,
             self.controller.resources,
             base_permissions,
         )

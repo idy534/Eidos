@@ -294,7 +294,7 @@ class ToolCallDto(ClosedModel):
     approval_status: Literal["pending", "resolved", "canceled"] | None = Field(default=None, alias="approvalStatus")
     approval_decision: Literal["approve", "reject"] | None = Field(default=None, alias="approvalDecision")
     approval_feedback: StrictStr | None = Field(default=None, alias="approvalFeedback")
-    approval_diff: StrictStr | None = Field(default=None, alias="approvalDiff")
+    change_diff: StrictStr | None = Field(default=None, alias="changeDiff")
     base_sha256: StrictStr | None = Field(default=None, alias="baseSha256")
     provenance: dict[str, JsonValue] | None = None
     tool_set_hash: StrictStr | None = Field(default=None, alias="toolSetHash")

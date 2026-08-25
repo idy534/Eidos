@@ -164,19 +164,21 @@ Tool Registry 保存 ToolSpec、输入和结果 Schema、Execution Policy、Conc
 Runtime 对每个 ToolCall 执行以下阶段：
 
 ```text
-Validate → Prepare → Approval when required → Durable Intent
+Validate → Prepare → Permission Decision → Durable Intent
 → Execute → Verify → canonical ToolResult → Event / Context projection
 ```
 
-ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。Workspace mutation 要求 Read Evidence、Base Hash、完整 Diff、Approval 后的版本复检和原子提交。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。
+ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。Workspace mutation 会在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。Workspace Permission 会直接授权普通文件变更。Runtime 会先提交 Durable Intent，再复检版本并原子提交。Runtime 会保留并展示已应用的完整 Diff。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。
+
+现有文件的原子替换会保留 mode、扩展属性和 ACL。Runtime 使用已验证的文件描述符和 macOS `fcopyfile` 复制这些元数据。Runtime 仍然拒绝 symlink、hardlink、特殊文件、owner 不匹配、特殊 mode 和文件 flags。
 
 只有同时满足 `parallel_safe`、无副作用、参数安全和共享 Kernel 条件的只读批次可以并发执行。写入、Shell、Eidos-state、MCP 和其他外部工具保持独占。并发结果最终按模型声明顺序提交。
 
 ## 9. Sandbox & Approval
 
-ApprovalCoordinator 把 Approval request、用户 decision、feedback、暂停状态和恢复状态写入 SQLite。Approval 不能修改 Tool 参数，也不能删除永久拒绝、Runtime 保护路径或 hard confidentiality deny。
+ApprovalCoordinator 把扩权 Approval request、用户 decision、feedback、暂停状态和恢复状态写入 SQLite。普通 Workspace 文件变更和默认 Workspace Seatbelt Shell 不创建 Approval。联网、附加路径、unsandboxed、MCP 和 Eidos-state 副作用继续使用 Approval。Approval 不能修改 Tool 参数，也不能删除永久拒绝、Runtime 保护路径或 hard confidentiality deny。
 
-默认 Shell attempt 使用 macOS Seatbelt。Seatbelt Policy 根据 Workspace、Runtime root、Eidos 数据目录、永久拒绝、附加权限和网络权限物化为 effective permission profile，并保存 profile hash。Shell 只有在受控审批后才启动。显式权限升级会创建新的 Approval attempt；Runtime 只有在 hard confidentiality deny 不存在并且 policy 允许时才允许 unsandboxed attempt。
+默认 Shell attempt 使用 macOS Seatbelt。Seatbelt Policy 根据 Workspace、Runtime root、Eidos 数据目录、永久拒绝、附加权限和网络权限物化为 effective permission profile，并保存 profile hash。默认 Workspace profile 在权限校验和 Durable Intent 后直接启动。显式权限升级会创建新的 Approval attempt；Runtime 只有在 hard confidentiality deny 不存在并且 policy 允许时才允许 unsandboxed attempt。
 
 Managed linked Worktree 会把 Worktree 的已验证 `git_dir` 和 Project 的已验证 `git_common_dir` 传入 Seatbelt。Seatbelt 只允许读取这两个 Git metadata root。它明确拒绝这些路径的写入。原始 repository working tree 不属于该 Thread 的 execution workspace。
 

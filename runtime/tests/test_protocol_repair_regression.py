@@ -71,7 +71,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         completed = self.store.read_run(run["id"])
         self.assertEqual(completed["status"], "succeeded")
         self.assertEqual(completed["modelStepCount"], 2)
-        self.assertEqual(len(approvals), 2)
+        self.assertEqual(approvals, [])
         self.assertEqual(
             (self.workspace / "go.mod").read_text(encoding="utf-8"),
             "module shipping-lab\n\ngo 1.26\n",

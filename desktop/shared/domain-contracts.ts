@@ -327,7 +327,7 @@ export interface ToolCall {
   approvalStatus?: "pending" | "resolved" | "canceled";
   approvalDecision?: "approve" | "reject";
   approvalFeedback?: string;
-  approvalDiff?: string;
+  changeDiff?: string;
   baseSha256?: string;
   provenance?: ToolProvenance;
   toolSetHash?: string;

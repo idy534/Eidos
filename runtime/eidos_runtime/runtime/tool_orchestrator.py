@@ -98,6 +98,7 @@ class ToolOrchestrator:
         context: OrchestratorContext,
         *,
         approve: Callable[[OrchestratorApprovalRequest], bool],
+        authorize_without_approval: Callable[[], None] | None = None,
         record_attempt: Callable[
             [SandboxAttempt, str, dict[str, object] | None], None
         ] | None = None,
@@ -160,6 +161,10 @@ class ToolOrchestrator:
                 0,
                 explicit_escalation,
             )
+        if requirement is ExecApprovalRequirement.SKIP:
+            if authorize_without_approval is None:
+                raise ValueError("workspace authorization callback is required")
+            authorize_without_approval()
         result, denial = self._run_attempt(
             runtime, request, first, context, record_attempt
         )

@@ -248,13 +248,54 @@ class ToolExecutionController:
         return getattr(self._execution_state, "phase", None)
 
     def begin_durable_intent(
-        self, item_id: str, preconditions: dict[str, object]
+        self,
+        item_id: str,
+        preconditions: dict[str, object],
+        *,
+        approval_required: bool = True,
     ) -> str:
         intent_id = self.store.begin_durable_intent(
-            item_id, preconditions=preconditions
+            item_id,
+            preconditions=preconditions,
+            approval_required=approval_required,
         )
         self._execution_state.intent_started = True
         return intent_id
+
+    def execute_workspace_side_effect(
+        self,
+        *,
+        item: dict[str, object],
+        prepared: PreparedToolExecution,
+        execute: Callable[[], dict[str, object]],
+        verify: Callable[[dict[str, object]], VerifiedToolExecutionResult] | None = None,
+    ) -> VerifiedToolExecutionResult:
+        self.authorize_workspace_side_effect(item=item, prepared=prepared)
+        self._execution_state.phase = ToolExecutionPhase.EXECUTING
+        raw = execute()
+        self._execution_state.phase = ToolExecutionPhase.VERIFYING
+        return (
+            verify(raw)
+            if verify is not None
+            else VerifiedToolExecutionResult(result=raw)
+        )
+
+    def authorize_workspace_side_effect(
+        self,
+        *,
+        item: dict[str, object],
+        prepared: PreparedToolExecution,
+    ) -> None:
+        if not self._execution_state.intent_started:
+            self.begin_durable_intent(
+                str(item["id"]),
+                prepared.intent_preconditions,
+                approval_required=False,
+            )
+            self._execution_state.authorized_effects += 1
+        self._execution_state.phase = ToolExecutionPhase.INTENT_COMMITTED
+        if not self.store.side_effect_authorized(str(item["id"])):
+            raise RuntimeError("tool execution contract violation")
 
     def execute_side_effect(
         self,

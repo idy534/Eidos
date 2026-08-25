@@ -75,6 +75,32 @@ class ToolOrchestratorTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def test_skipped_approval_authorizes_immediately_before_execution(self) -> None:
+        order: list[str] = []
+
+        class WorkspaceRuntime(_Runtime):
+            def approval_requirement(self, _request, _context):
+                return ExecApprovalRequirement.SKIP
+
+            def run(self, request, attempt, context):
+                order.append("execute")
+                return super().run(request, attempt, context)
+
+        runtime = WorkspaceRuntime([
+            ({"outcome": "success", "code": "ok"}, None)
+        ])
+
+        result = ToolOrchestrator().run(
+            runtime,
+            _Request(),
+            self.context,
+            approve=lambda _request: self.fail("approval must not be requested"),
+            authorize_without_approval=lambda: order.append("authorize"),
+        )
+
+        self.assertEqual(result.result["outcome"], "success")
+        self.assertEqual(order, ["authorize", "execute"])
+
     def test_plain_nonzero_failure_does_not_escalate(self) -> None:
         runtime = _Runtime([({"outcome": "error", "code": "nonzero_exit"}, None)])
         approvals = []

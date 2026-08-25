@@ -1427,25 +1427,36 @@ class ExecutionRepository(Repository):
         item_id: str,
         *,
         preconditions: dict[str, object],
+        approval_required: bool = True,
     ) -> str:
         intent_id = str(uuid.uuid4())
         nonce = str(uuid.uuid4())
         now = _now_ms()
         with self.lock, self._connection() as connection:
+            approval_join = (
+                "JOIN approvals ON approvals.item_id = items.id"
+                if approval_required
+                else ""
+            )
+            approval_condition = (
+                "AND approvals.status = 'approved'"
+                if approval_required
+                else ""
+            )
             row = connection.execute(
-                """
+                f"""
                 SELECT items.run_id, items.session_id, tool_calls.id AS tool_call_id,
                        tool_calls.arguments_json
                 FROM items JOIN tool_calls ON tool_calls.item_id = items.id
-                JOIN approvals ON approvals.item_id = items.id
+                {approval_join}
                 WHERE items.id = ? AND items.status = 'in_progress'
                   AND tool_calls.status = 'running'
-                  AND approvals.status = 'approved'
+                  {approval_condition}
                 """,
                 (item_id,),
             ).fetchone()
             if row is None:
-                raise InvalidRunStateError("approved intent is unavailable")
+                raise InvalidRunStateError("authorized intent is unavailable")
             connection.execute(
                 """
                 INSERT INTO durable_intents (
@@ -1479,13 +1490,11 @@ class ExecutionRepository(Repository):
                 SELECT 1
                 FROM items
                 JOIN tool_calls ON tool_calls.item_id = items.id
-                JOIN approvals ON approvals.item_id = items.id
                 JOIN durable_intents
                   ON durable_intents.tool_call_id = tool_calls.id
                 WHERE items.id = ?
                   AND items.status = 'in_progress'
                   AND tool_calls.status = 'running'
-                  AND approvals.status = 'approved'
                   AND durable_intents.status = 'running'
                 LIMIT 1
                 """,
@@ -1493,35 +1502,24 @@ class ExecutionRepository(Repository):
             ).fetchone()
         return row is not None
 
-    def has_read_evidence(
-        self, run_id: str, path: str, sha256: str
-    ) -> bool:
-        with self.lock:
-            rows = self._connection().execute(
+    def record_workspace_change(
+        self,
+        item_id: str,
+        *,
+        diff: str,
+        base_sha256: str | None,
+    ) -> None:
+        with self.lock, self._connection() as connection:
+            updated = connection.execute(
                 """
-                SELECT tool_calls.arguments_json, tool_calls.result_json
-                FROM tool_calls
-                JOIN items ON items.id = tool_calls.item_id
-                WHERE items.run_id = ? AND items.status = 'completed'
-                  AND tool_calls.tool_name = 'read_file'
-                  AND tool_calls.status = 'completed'
-                ORDER BY tool_calls.creation_seq DESC
+                UPDATE tool_calls
+                SET approval_diff = ?, base_sha256 = ?
+                WHERE item_id = ? AND status = 'running'
                 """,
-                (run_id,),
-            ).fetchall()
-        for row in rows:
-            try:
-                arguments = json.loads(row["arguments_json"])
-                result = json.loads(row["result_json"])
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if (
-                arguments == {"path": path}
-                and result.get("outcome") == "success"
-                and result.get("data", {}).get("sha256") == sha256
-            ):
-                return True
-        return False
+                (diff, base_sha256, item_id),
+            )
+            if updated.rowcount != 1:
+                raise InvalidRunStateError("workspace change is unavailable")
 
     def enqueue_input(self, run_id: str, content: str) -> str:
         if not content or len(content.encode("utf-8")) > 64 * 1024:

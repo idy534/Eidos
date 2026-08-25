@@ -275,6 +275,8 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             True,
             self.controller.execute_side_effect,
             self.controller.authorize_side_effect,
+            self.controller.execute_workspace_side_effect,
+            self.controller.authorize_workspace_side_effect,
             base_permissions=BasePermissionProfile.model_validate_json(
                 self.store.read_step_resolution_snapshots(
                     self.run["id"]

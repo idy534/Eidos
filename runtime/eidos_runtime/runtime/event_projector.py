@@ -143,7 +143,7 @@ class EventProjector:
             tool_call = {
                 key: value
                 for key, value in item["toolCall"].items()
-                if key not in {"argumentsJson", "approvalDiff"}
+                if key != "argumentsJson"
             }
             return {**item, "toolCall": tool_call}
         return item

@@ -1913,7 +1913,7 @@ function isToolCall(value: unknown): value is ToolCall {
       "approvalStatus",
       "approvalDecision",
       "approvalFeedback",
-      "approvalDiff",
+      "changeDiff",
       "baseSha256",
       "provenance",
       "toolSetHash",
@@ -1936,7 +1936,7 @@ function isToolCall(value: unknown): value is ToolCall {
     && (value.approvalStatus === undefined || ["pending", "resolved", "canceled"].includes(String(value.approvalStatus)))
     && (value.approvalDecision === undefined || ["approve", "reject"].includes(String(value.approvalDecision)))
     && (value.approvalFeedback === undefined || typeof value.approvalFeedback === "string")
-    && (value.approvalDiff === undefined || typeof value.approvalDiff === "string")
+    && (value.changeDiff === undefined || typeof value.changeDiff === "string")
     && (value.baseSha256 === undefined || typeof value.baseSha256 === "string")
     && (value.provenance === undefined || isToolProvenance(value.provenance))
     && (value.toolSetHash === undefined || typeof value.toolSetHash === "string")

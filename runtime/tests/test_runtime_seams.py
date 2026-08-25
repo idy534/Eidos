@@ -122,7 +122,7 @@ class RuntimeSeamTests(unittest.TestCase):
 
         self.assertEqual(result["outcome"], "success")
 
-    def test_tool_dispatcher_classifies_shell_as_approval_required(self) -> None:
+    def test_tool_dispatcher_classifies_default_shell_as_workspace_authorized(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             tools = ToolExecutor(Path(directory))
             try:
@@ -132,7 +132,7 @@ class RuntimeSeamTests(unittest.TestCase):
             finally:
                 tools.close()
 
-        self.assertEqual((plan.requires_approval, plan.is_shell), (True, True))
+        self.assertEqual((plan.requires_approval, plan.is_shell), (False, True))
 
     def test_approval_adapter_preserves_rejection_feedback(self) -> None:
         class Decision:
