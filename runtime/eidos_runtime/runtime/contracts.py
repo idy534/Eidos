@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from eidos_runtime.model.client import (
+    AssistantMessagePhase,
     ModelContextItem,
     ModelToolCall,
     ModelToolDefinition,
@@ -67,7 +68,7 @@ class SamplingOutcome(_FrozenModel):
     text: str
     tool_calls: tuple[ModelToolCall, ...]
     assistant_item: dict[str, object] | None = None
-    final_response_declared: bool = True
+    phase: AssistantMessagePhase = AssistantMessagePhase.UNKNOWN
     retry_count: int = 0
     usage: ModelUsage | None = None
     provider_name: str | None = None

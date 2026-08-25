@@ -6,6 +6,8 @@ from typing import Callable, Literal, Protocol, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from eidos_runtime.model.response_phase import AssistantMessagePhase
+
 
 ModelContextItem = dict[str, object]
 
@@ -49,6 +51,7 @@ class ModelUsage(_FrozenModel):
 class ModelResponse(_FrozenModel):
     text: str = ""
     tool_calls: tuple[ModelToolCall, ...] = ()
+    phase: AssistantMessagePhase = AssistantMessagePhase.UNKNOWN
     usage: ModelUsage | None = None
     provider_name: str | None = None
     resolved_model_name: str | None = None

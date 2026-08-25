@@ -34,6 +34,7 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.model.client import (  # noqa: E402
+    AssistantMessagePhase,
     ModelRequestError,
     ModelToolDefinition,
 )
@@ -400,6 +401,40 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertEqual(response.provider_name, "fixture-provider")
         self.assertEqual(response.provider_response_id, "response-1")
         self.assertEqual(response.response_state, "complete")
+
+    def test_maps_chat_completion_text_to_structured_message_phase(self) -> None:
+        final_response = map_model_response(PAIModelResponse(
+            parts=[TextPart("done\n<!-- eidos-final-response -->")],
+            provider_name="fixture-provider",
+            finish_reason="stop",
+        ))
+        unknown_response = map_model_response(PAIModelResponse(
+            parts=[TextPart("I will inspect the file next.")],
+            provider_name="fixture-provider",
+            finish_reason="stop",
+        ))
+        commentary_response = map_model_response(PAIModelResponse(
+            parts=[
+                TextPart("I will inspect the file now."),
+                ToolCallPart("read_file", {"path": "sample.py"}, "call-1"),
+            ],
+            provider_name="fixture-provider",
+            finish_reason="tool_call",
+        ))
+
+        self.assertEqual(final_response.text, "done")
+        self.assertIs(
+            final_response.phase,
+            AssistantMessagePhase.FINAL_ANSWER,
+        )
+        self.assertIs(
+            unknown_response.phase,
+            AssistantMessagePhase.UNKNOWN,
+        )
+        self.assertIs(
+            commentary_response.phase,
+            AssistantMessagePhase.COMMENTARY,
+        )
 
     def test_error_mapping_is_stable_and_drops_raw_bodies(self) -> None:
         expected = {

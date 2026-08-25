@@ -12,6 +12,7 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.model.client import (  # noqa: E402
+    AssistantMessagePhase,
     ModelProfileSnapshot,
     ModelRequestFailure,
     ModelResponse,
@@ -51,6 +52,7 @@ class ModelContractTests(unittest.TestCase):
 
     def test_response_and_failure_defaults_are_provider_neutral(self) -> None:
         self.assertEqual(ModelResponse(), ModelResponse(text="", tool_calls=()))
+        self.assertIs(ModelResponse().phase, AssistantMessagePhase.UNKNOWN)
         self.assertEqual(ModelUsage().model_dump(), {
             "input_tokens": None,
             "output_tokens": None,

@@ -8,7 +8,6 @@ from eidos_runtime.model.client import (
     ModelRequestError,
     ModelRequestFailure,
 )
-from eidos_runtime.model.prompts import consume_final_response_marker
 from eidos_runtime.model_gateway.retry import RetryDecision, RetryState, retry_decision
 from eidos_runtime.model_gateway.models import RetryPolicy
 from eidos_runtime.runtime.assistant_stream import AssistantStreamWriter
@@ -167,19 +166,11 @@ class SamplingRuntime:
             )
 
         self._check_cancel(cancel)
-        text, marker_found = consume_final_response_marker(result.text)
-        final_response_declaration_required = bool(
-            not result.tool_calls
-            and result.provider_name
-            and result.finish_reason == "stop"
-        )
         return SamplingOutcome(
-            text=text,
+            text=result.text,
             tool_calls=result.tool_calls,
             assistant_item=None,
-            final_response_declared=(
-                marker_found or not final_response_declaration_required
-            ),
+            phase=result.phase,
             retry_count=result.transport_retry_count,
             usage=result.usage,
             provider_name=result.provider_name,

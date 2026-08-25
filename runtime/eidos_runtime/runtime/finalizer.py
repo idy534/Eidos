@@ -7,14 +7,21 @@ import time
 from pydantic import BaseModel, ConfigDict
 
 from eidos_runtime.db.storage import InvalidRunStateError, SessionStore
-from eidos_runtime.model.client import ModelClient, ModelContextItem
+from eidos_runtime.model.client import (
+    AssistantMessagePhase,
+    ModelClient,
+    ModelContextItem,
+)
 from eidos_runtime.model.instructions import InstructionResolver
-from eidos_runtime.model.prompts import consume_final_response_marker
 from eidos_runtime.model.prompts import ResolvedInstructions
 from eidos_runtime.runtime.assistant_stream import AssistantStreamWriter
 from eidos_runtime.runtime.contracts import RuntimeCancelled
 from eidos_runtime.runtime.events import RuntimeEvents
-from eidos_runtime.runtime.model_runner import ModelRunner, ModelStreamInterrupted
+from eidos_runtime.runtime.model_runner import (
+    ModelRunner,
+    ModelStepResult,
+    ModelStreamInterrupted,
+)
 from eidos_runtime.runtime.provider_control import contains_provider_control_syntax
 from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
@@ -30,6 +37,7 @@ from eidos_runtime.sandbox.sensitive import (
 
 logger = logging.getLogger("eidos.runtime")
 FINALIZATION_SECONDS = 60
+FINALIZATION_PROTOCOL_ATTEMPTS = 2
 
 
 class _CombinedCancellation(threading.Event):
@@ -59,7 +67,7 @@ class FinalizationOutcome(BaseModel):
 
 
 class RunFinalizer:
-    """Runs one bounded, tool-less final response using step-less Item semantics."""
+    """Runs a bounded, tool-less final-response protocol."""
 
     def __init__(
         self,
@@ -145,27 +153,42 @@ class RunFinalizer:
             # Finalization is deliberately provisional until the whole provider
             # response is known. A tool-less request must never stream provider
             # control markup into persisted assistant content before validation.
-            result = ModelRunner(self.model, self.sensitive).run(
-                (*context, {
-                    "type": "finalization",
-                    "toolsAllowed": False,
-                    "stopReason": stop_reason,
-                }),
-                request_cancel,
-                lambda _delta: None,
-                instructions=resolved.text,
-                allow_tools=False,
-            )
-            if cancel.is_set():
-                raise RuntimeCancelled
-            if timed_out.is_set():
-                failure_reason = "finalization_timeout"
-            elif result.tool_calls or contains_provider_control_syntax(result.text):
+            base_context = (*context, {
+                "type": "finalization",
+                "toolsAllowed": False,
+                "stopReason": stop_reason,
+            })
+            request_context = base_context
+            runner = ModelRunner(self.model, self.sensitive)
+            for protocol_attempt in range(FINALIZATION_PROTOCOL_ATTEMPTS):
+                result = runner.run(
+                    request_context,
+                    request_cancel,
+                    lambda _delta: None,
+                    instructions=resolved.text,
+                    allow_tools=False,
+                )
+                if cancel.is_set():
+                    raise RuntimeCancelled
+                if timed_out.is_set():
+                    failure_reason = "finalization_timeout"
+                    break
+                protocol_error = _finalization_protocol_error(result)
+                if protocol_error is None:
+                    writer.write(result.text)
+                    writer.flush()
+                    break
+                if (
+                    protocol_error == "undeclared_final_response"
+                    and protocol_attempt == 0
+                ):
+                    request_context = (
+                        *base_context,
+                        {"type": "protocol_error", "code": protocol_error},
+                    )
+                    continue
                 failure_reason = "finalization_protocol_error"
-            elif result.text:
-                final_text, _declared = consume_final_response_marker(result.text)
-                writer.write(final_text)
-                writer.flush()
+                break
         except SensitiveScanError:
             failure_reason = "finalization_sensitive_content_rejected"
         except ModelStreamInterrupted as error:
@@ -243,3 +266,13 @@ def _attempt_status(failure_reason: str | None) -> str:
         "finalization_timeout": "timed_out",
         "finalization_sensitive_content_rejected": "sensitive_rejected",
     }.get(failure_reason, "model_failed")
+
+
+def _finalization_protocol_error(result: ModelStepResult) -> str | None:
+    if result.tool_calls or contains_provider_control_syntax(result.text):
+        return "invalid_response"
+    if not result.text:
+        return None
+    if result.phase is not AssistantMessagePhase.FINAL_ANSWER:
+        return "undeclared_final_response"
+    return None
