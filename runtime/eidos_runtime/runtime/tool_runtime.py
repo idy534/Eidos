@@ -12,7 +12,6 @@ import anyio
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.skill_access import (
     SkillAccess,
-    current_skill_access,
 )
 from eidos_runtime.extensions.skills import SkillCreation
 from eidos_runtime.model.client import ModelResponse, ModelToolCall
@@ -804,7 +803,7 @@ class ToolCallRuntime:
         self.sensitive = sensitive
         self.state_machine = state_machine
         self.async_kernel = async_kernel
-        self.skill_access = skill_access or current_skill_access()
+        self.skill_access = skill_access
         self.concurrency = ToolConcurrencyGate()
         self.controller = ToolExecutionController(
             store,

@@ -15,6 +15,33 @@ from eidos_runtime.extensions.skill_invocation import (  # noqa: E402
 
 
 class SkillInvocationTests(unittest.TestCase):
+    def test_every_supported_runner_and_script_extension_is_recognized(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-skill-invocation-") as directory:
+            cwd = Path(directory)
+            scripts = cwd / "scripts"
+            scripts.mkdir()
+            commands = {
+                "python scripts/run.py": "run.py",
+                "python3 scripts/run.py": "run.py",
+                "bash scripts/run.sh": "run.sh",
+                "sh scripts/run.sh": "run.sh",
+                "zsh scripts/run.sh": "run.sh",
+                "node scripts/run.js": "run.js",
+                "deno run scripts/run.ts": "run.ts",
+                "ruby scripts/run.rb": "run.rb",
+                "perl scripts/run.pl": "run.pl",
+                "pwsh scripts/run.ps1": "run.ps1",
+            }
+            for name in set(commands.values()):
+                (scripts / name).write_text("fixture\n", encoding="utf-8")
+
+            for command, name in commands.items():
+                with self.subTest(command=command):
+                    invocation = parse_skill_script_invocation(command, cwd)
+                    self.assertIsNotNone(invocation)
+                    assert invocation is not None
+                    self.assertEqual(invocation.script_path, (scripts / name).resolve())
+
     def test_best_effort_runner_parser_supports_supported_languages_and_options(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-skill-invocation-") as directory:
             cwd = Path(directory)

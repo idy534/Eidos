@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from enum import StrEnum
 import hashlib
@@ -37,35 +36,29 @@ class SkillAccessRecord:
     content_hash: str
     activation_kind: SkillActivationKind
     script_path: Path | None = None
+    source_kind: str = "user"
 
     def result_data(self) -> dict[str, object]:
+        metadata = {
+            "skillQualifiedId": self.qualified_id,
+            "invocationType": self.activation_kind.value,
+            "source": self.source,
+            "provenance": dict(self.provenance),
+        }
         return {
+            # Keep the legacy flat fields while adding one bounded canonical
+            # object for consumers that need the complete invocation fact.
             "qualifiedId": self.qualified_id,
             "invocationType": self.activation_kind.value,
             "source": self.source,
             "provenance": dict(self.provenance),
+            "skillQualifiedId": self.qualified_id,
+            "skillInvocation": metadata,
         }
 
 
 class SkillAccessError(ValueError):
     """Raised when a catalog Skill cannot be activated safely."""
-
-
-_CURRENT_SKILL_ACCESS: ContextVar[SkillAccess | None] = ContextVar(
-    "eidos_current_skill_access", default=None
-)
-
-
-def current_skill_access() -> SkillAccess | None:
-    return _CURRENT_SKILL_ACCESS.get()
-
-
-def set_current_skill_access(access: SkillAccess | None) -> Token[SkillAccess | None]:
-    return _CURRENT_SKILL_ACCESS.set(access)
-
-
-def reset_current_skill_access(token: Token[SkillAccess | None]) -> None:
-    _CURRENT_SKILL_ACCESS.reset(token)
 
 
 class SkillAccess:
@@ -93,7 +86,10 @@ class SkillAccess:
         self._lock = threading.RLock()
 
     @classmethod
-    def from_snapshot(cls, snapshot: object) -> SkillAccess:
+    def from_snapshot(
+        cls,
+        snapshot: object,
+    ) -> SkillAccess:
         entries = getattr(snapshot, "entries", None)
         if not isinstance(entries, tuple):
             raise SkillAccessError("Skill catalog snapshot is invalid")
@@ -156,6 +152,8 @@ class SkillAccess:
         with self._lock:
             matches: list[tuple[str, object, Path, str]] = []
             for qualified_id, entry in self._entries.items():
+                if getattr(entry, "allow_implicit_invocation", None) is False:
+                    continue
                 try:
                     root, content_hash = _trusted_skill_root(entry)
                 except SkillAccessError:
@@ -245,10 +243,12 @@ def _record_for_entry(
     script_path: Path | None = None,
 ) -> SkillAccessRecord:
     source = str(getattr(entry, "source_identity"))
+    source_kind = str(getattr(entry, "source_kind", "user"))
     provenance = MappingProxyType({
         "version": str(getattr(entry, "source_version")),
         "hash": str(getattr(entry, "source_hash")),
         "locator": str(getattr(entry, "main_resource_locator")),
+        "sourceKind": source_kind,
     })
     return SkillAccessRecord(
         qualified_id=str(getattr(entry, "qualified_id")),
@@ -258,6 +258,7 @@ def _record_for_entry(
         content_hash=content_hash,
         activation_kind=activation_kind,
         script_path=script_path,
+        source_kind=source_kind,
     )
 
 

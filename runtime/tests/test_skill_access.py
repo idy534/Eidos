@@ -99,6 +99,25 @@ class SkillAccessTests(unittest.TestCase):
             access.activate_implicit("python3 workspace-run.py", self.root)
         )
 
+    def test_implicit_activation_honors_skill_policy_but_explicit_activation_still_works(self) -> None:
+        snapshot = self._snapshot("review")
+        entry = snapshot.entries[0].model_copy(
+            update={"allow_implicit_invocation": False}
+        )
+        snapshot = snapshot.model_copy(update={"entries": (entry,)})
+        snapshot = snapshot.model_copy(update={"catalog_hash": snapshot.canonical_hash()})
+        access = SkillAccess.from_snapshot(snapshot)
+
+        self.assertIsNone(
+            access.activate_implicit(
+                "python3 scripts/run.py", self.root / "review"
+            )
+        )
+        self.assertEqual(
+            access.activate_explicit("user:review").activation_kind,
+            SkillActivationKind.EXPLICIT,
+        )
+
     def test_activation_snapshot_is_deterministic_and_thread_safe(self) -> None:
         access = SkillAccess.from_snapshot(self._snapshot("zeta", "alpha"))
         barrier = threading.Barrier(8)

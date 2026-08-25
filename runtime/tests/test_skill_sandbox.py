@@ -178,7 +178,14 @@ class SkillSeatbeltIntegrationTests(unittest.TestCase):
             data = root / "data"
             skill = data / "skills" / "review"
             outside = root / "outside"
-            for path in (workspace, skill / "scripts", skill / "assets", outside):
+            inactive_skill = data / "skills" / "inactive"
+            for path in (
+                workspace,
+                skill / "scripts",
+                skill / "assets",
+                inactive_skill,
+                outside,
+            ):
                 path.mkdir(parents=True)
             script = skill / "scripts" / "run.py"
             script.write_text(
@@ -195,6 +202,9 @@ class SkillSeatbeltIntegrationTests(unittest.TestCase):
             (workspace / ".git").mkdir()
             (workspace / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
             (outside / "secret.txt").write_text("outside", encoding="utf-8")
+            (inactive_skill / "secret.txt").write_text(
+                "inactive", encoding="utf-8"
+            )
             (root / "home").mkdir()
             (root / "tmp").mkdir()
 
@@ -235,6 +245,9 @@ class SkillSeatbeltIntegrationTests(unittest.TestCase):
             root_write = run_sandboxed(profile, ["/usr/bin/touch", str(skill / "blocked.txt")])
             workspace_write = run_sandboxed(profile, ["/usr/bin/touch", str(workspace / "out.txt")])
             external_read = run_sandboxed(profile, ["/bin/cat", str(outside / "secret.txt")])
+            inactive_read = run_sandboxed(
+                profile, ["/bin/cat", str(inactive_skill / "secret.txt")]
+            )
             env_read = run_sandboxed(profile, ["/bin/cat", str(workspace / ".env")])
             git_read = run_sandboxed(profile, ["/bin/cat", str(workspace / ".git" / "HEAD")])
             git_write = run_sandboxed(profile, ["/usr/bin/touch", str(workspace / ".git" / "blocked")])
@@ -244,6 +257,7 @@ class SkillSeatbeltIntegrationTests(unittest.TestCase):
             self.assertNotEqual(root_write.returncode, 0)
             self.assertEqual(workspace_write.returncode, 0, workspace_write.stderr)
             self.assertNotEqual(external_read.returncode, 0)
+            self.assertNotEqual(inactive_read.returncode, 0)
             self.assertNotEqual(env_read.returncode, 0)
             self.assertEqual(git_read.returncode, 0, git_read.stderr)
             self.assertNotEqual(git_write.returncode, 0)

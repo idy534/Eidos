@@ -22,30 +22,6 @@ class SkillManifestError(ValueError):
     """Raised when required SKILL.md metadata is malformed or incomplete."""
 
 
-class _UniqueSafeLoader(yaml.SafeLoader):
-    pass
-
-
-def _construct_unique_mapping(
-    loader: yaml.SafeLoader,
-    node: yaml.MappingNode,
-    deep: bool = False,
-) -> dict[object, object]:
-    mapping: dict[object, object] = {}
-    for key_node, value_node in node.value:
-        key = loader.construct_object(key_node, deep=deep)
-        if key in mapping:
-            raise yaml.YAMLError(f"duplicate key: {key!r}")
-        mapping[key] = loader.construct_object(value_node, deep=deep)
-    return mapping
-
-
-_UniqueSafeLoader.add_constructor(
-    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
-    _construct_unique_mapping,
-)
-
-
 @dataclass(frozen=True)
 class SkillManifest:
     name: str
@@ -191,7 +167,10 @@ def _load_yaml_with_repair(frontmatter: str) -> object:
 
 
 def _load_yaml(contents: str) -> object:
-    return yaml.load(contents, Loader=_UniqueSafeLoader)
+    # Codex and the common skills ecosystem use PyYAML's safe loader. It
+    # ignores unknown fields at the contract layer and keeps the parser's
+    # normal last-value behavior for duplicate mappings.
+    return yaml.safe_load(contents)
 
 
 def _repair_frontmatter_scalar_fields(frontmatter: str) -> str | None:

@@ -69,9 +69,10 @@ from eidos_runtime.runtime.resource_registry import (
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.tools.view_image import (
+    ViewImageAuthority,
     ViewImageError,
-    ViewImageRootAuthority,
     read_authorized_image,
+    resolve_view_image_authority,
 )
 
 
@@ -101,7 +102,7 @@ class PydanticAIModelClient:
         settings_extra_body: dict[str, object] | None = None,
         parallel_tool_calls: bool | None = True,
         reasoning_effort: str | None = None,
-        image_authority: ViewImageRootAuthority | None = None,
+        image_authority: ViewImageAuthority | None = None,
         async_kernel: RuntimeAsyncKernel,
     ) -> None:
         self._model = model
@@ -127,6 +128,14 @@ class PydanticAIModelClient:
         self._profile_snapshot = (
             profile_snapshot or profile_spec.snapshot(dict(model.profile))
         )
+
+    def set_image_authority_provider(
+        self, authority: ViewImageAuthority | None
+    ) -> None:
+        """Bind the current Run's dynamic image-root authority."""
+
+        with self._lock:
+            self._image_authority = authority
 
     @classmethod
     def deepseek(
@@ -377,7 +386,7 @@ def encode_context(
     context: tuple[ModelContextItem, ...],
     *,
     supports_images: bool = False,
-    image_authority: ViewImageRootAuthority | None = None,
+    image_authority: ViewImageAuthority | None = None,
 ) -> list[ModelMessage]:
     messages: list[ModelMessage] = []
     for item in context:
@@ -453,10 +462,11 @@ def encode_context(
 def _encode_view_image_result(
     result: str,
     *,
-    image_authority: ViewImageRootAuthority | None,
+    image_authority: ViewImageAuthority | None,
 ) -> str | list[object]:
     if image_authority is None:
         raise ValueError("view_image_projection_failed:missing_authority")
+    authority = resolve_view_image_authority(image_authority)
     try:
         decoded = json.loads(result)
     except json.JSONDecodeError as error:
@@ -482,7 +492,7 @@ def _encode_view_image_result(
     ):
         raise ValueError("view_image_projection_failed:invalid_metadata")
     try:
-        image = read_authorized_image(path, image_authority)
+        image = read_authorized_image(path, authority)
     except ViewImageError as error:
         raise ValueError(
             f"view_image_projection_failed:{error.code}"

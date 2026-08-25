@@ -17,6 +17,7 @@ from eidos_runtime.tools.contracts import project_tool_result
 from eidos_runtime.tools.registry import ToolRegistry
 from eidos_runtime.tools.view_image import (
     MAX_VIEW_IMAGE_BYTES,
+    MAX_VIEW_IMAGE_PIXELS,
     ViewImageRootAuthority,
     view_image_entry,
 )
@@ -41,7 +42,7 @@ def _png_bytes(rgba: tuple[int, int, int, int] = (20, 40, 60, 255)) -> bytes:
 
 
 _JPEG_BYTES = base64.b64decode(
-    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/AP/EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8Af//Z"
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGipc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD4Kooor6M+fP/Z"
 )
 
 
@@ -189,6 +190,33 @@ def test_view_image_rejects_oversized_files_before_reading_them(tmp_path: Path) 
     assert result["code"] == "image_too_large"
 
 
+def test_view_image_rejects_pixel_bomb_dimensions(tmp_path: Path) -> None:
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        body = kind + payload
+        return (
+            len(payload).to_bytes(4, "big")
+            + body
+            + (zlib.crc32(body) & 0xFFFFFFFF).to_bytes(4, "big")
+        )
+
+    dimension = int(MAX_VIEW_IMAGE_PIXELS ** 0.5) + 1
+    image = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", dimension.to_bytes(4, "big") + dimension.to_bytes(4, "big") + b"\x08\x06\x00\x00\x00")
+        + chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00\x00"))
+        + chunk(b"IEND", b"")
+    )
+    path = tmp_path / "pixel-bomb.png"
+    path.write_bytes(image)
+
+    result = _entry(_authority(tmp_path)).adapter.execute(
+        {"path": path.name}, threading.Event()
+    )
+
+    assert result["outcome"] == "error"
+    assert result["code"] == "image_too_large"
+
+
 def test_view_image_rejects_traversal_and_external_paths(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -280,6 +308,45 @@ def test_encode_context_projects_an_actual_binary_content_for_view_image(
     binary = next(value for value in part.content if isinstance(value, BinaryContent))
     assert binary.data == data
     assert binary.media_type == "image/png"
+
+
+def test_encode_context_resolves_dynamic_image_authority_at_projection_time(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    skill = tmp_path / "skill"
+    workspace.mkdir()
+    skill.mkdir()
+    path = skill / "image.png"
+    data = _png_bytes()
+    path.write_bytes(data)
+    canonical = _canonical_view_image_result(path, data)
+    active = False
+
+    def authority() -> ViewImageRootAuthority:
+        return ViewImageRootAuthority(
+            workspace,
+            (skill,) if active else (),
+        )
+
+    with pytest.raises(ValueError, match="view_image_projection_failed"):
+        encode_context(({
+            "type": "tool_result",
+            "callId": "image-1",
+            "name": "view_image",
+            "result": json.dumps(canonical),
+        },), supports_images=True, image_authority=authority)
+
+    active = True
+    messages = encode_context(({
+        "type": "tool_result",
+        "callId": "image-1",
+        "name": "view_image",
+        "result": json.dumps(canonical),
+    },), supports_images=True, image_authority=authority)
+    part = messages[0].parts[0]
+    assert isinstance(part, ToolReturnPart)
+    assert any(isinstance(value, BinaryContent) for value in part.content)
 
 
 def test_encode_context_fails_closed_when_view_image_hash_changes(tmp_path: Path) -> None:

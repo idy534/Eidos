@@ -20,6 +20,7 @@ from eidos_runtime.tools.workspace import (  # noqa: E402
     TOOL_SPECS,
     canonical_tool_result,
 )
+from eidos_runtime.tools.contracts import project_tool_result  # noqa: E402
 
 
 class ToolContractTests(unittest.TestCase):
@@ -62,6 +63,42 @@ class ToolContractTests(unittest.TestCase):
         })
 
         self.assertTrue(result["sideEffectsMayExist"])
+
+    def test_shell_skill_invocation_metadata_is_canonical_and_projected(self) -> None:
+        result = canonical_tool_result("run_shell", {
+            "outcome": "success",
+            "code": "ok",
+            "summary": "Command completed",
+            "data": {
+                "exitCode": 0,
+                "stdout": "",
+                "stderr": "",
+                "truncated": False,
+                "termination": "exit",
+                "workspaceChanged": False,
+                "skillInvocation": {
+                    "skillQualifiedId": "user:review",
+                    "invocationType": "implicit",
+                    "source": "eidos-user",
+                    "provenance": {
+                        "version": "local",
+                        "hash": "source-hash",
+                        "locator": "file:///tmp/review/SKILL.md",
+                    },
+                },
+            },
+            "sideEffectsMayExist": False,
+        })
+
+        self.assertEqual(
+            result["data"]["skillInvocation"]["skillQualifiedId"],
+            "user:review",
+        )
+        projection = project_tool_result("run_shell", result)
+        self.assertEqual(
+            projection.model_result["data"]["skillInvocation"]["invocationType"],
+            "implicit",
+        )
 
     def test_successful_shell_result_can_require_reconciliation(self) -> None:
         result = canonical_tool_result("run_shell", {

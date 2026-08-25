@@ -135,7 +135,7 @@ CLAUDE.md
 
 每层只选择一个候选。Resolver 使用共享的 32 KiB UTF-8 byte budget。Resolver 记录 shadowed candidate、读取或预算 warning、原始 content hash、实际包含字节数、directory level、Workspace root 和 effective cwd。Run 使用 immutable rule snapshot，Step Resolution 保存 resolved instruction hash 和 effective cwd。
 
-`InstructionResolver` 按 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 形成分层 instructions。Project Rules 和 Selected Skill 保留来源与 hash。它们不具备修改 Runtime Permission、Approval 或 Sandbox 的权限。
+`InstructionResolver` 按 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 形成分层 instructions。Skill Catalog 属于 developer capability context。真正加载的第三方 `SKILL.md` 属于较低权限的 user context。Project Rules 和 Selected Skill 保留来源与 hash。它们不具备修改 Runtime Permission、Approval 或 Sandbox 的权限。
 
 Context Budget 优先使用最近 Provider Usage 的 active input tokens。Provider Usage 不可用时，Runtime 使用标记为 `estimated` 的有界估算。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发 deterministic bounded compaction 或一次安全恢复。没有新的可压缩历史或 Context 投影没有进展时，Run 以 `context_still_over_budget` 停止。
 
@@ -355,15 +355,15 @@ Turn 开始时，Catalog Snapshot 固化可用 Skill。Selection 当前支持用
 
 Skill 使用 progressive disclosure。Catalog 只提供发现信息。`SKILL.md` 是选中后的主说明。`skill_read_resource` 只在说明需要时读取 `references/`、`scripts/` 或 `assets/` 下的相对路径。Resource path 必须是相对于包含该 Skill 的 `SKILL.md` 的目录，且不能包含绝对路径、`..`、symlink 或非 regular file。Skill 脚本不是新的 Runtime Tool；模型仍然使用已有的 `skill_read`、`skill_read_resource`、文件工具、`run_shell` 和其他已注册 Tool。
 
-`agents/eidos.yaml` 是可选的 Skill metadata 文件。Runtime 使用统一 YAML loader 读取其中的 interface、asset、tool dependency 和 policy metadata。文件有大小、owner、regular-file、路径和字段边界。无效的可选 metadata 会记录 warning 并忽略。`dependencies.tools` 和 `allow_implicit_invocation` 在当前分支只是 metadata，不会安装 Python、pip、npm、系统命令或其他运行时依赖，也不会改变 Eidos 的 Permission、Approval 或 Sandbox。
+`agents/eidos.yaml` 是可选的 Skill metadata 文件。Runtime 使用统一 YAML loader 读取其中的 interface、asset、tool dependency 和 policy metadata。文件有大小、owner、regular-file、路径和字段边界。无效的可选 metadata 会记录 warning 并忽略。`allow_implicit_invocation = false` 会禁止 Shell 识别自动激活该 Skill，但不会阻止显式选择或 `skill_read` 激活。`dependencies.tools` 不会安装 Python、pip、npm、系统命令或其他运行时依赖，也不会改变 Eidos 的 Permission、Approval 或 Sandbox。
 
 `run_shell` 会经过 `SkillAccess` 对受信任 Catalog entry 做隐式脚本识别。只有支持的 runner 调用已知 Skill root 下的相对 `scripts/` 文件时，Runtime 才记录 implicit activation，并把该 Skill root 加入本次 Shell 的权限物化。Workspace root 保持读写；active Skill root 只读，并额外允许脚本所需的 executable mapping。Seatbelt 明确拒绝 active Skill root 的写入。隐式识别只提供 activation 证据，不会授权任意 Workspace 外路径。
 
 Skill binary assets 会在安装和目录读取中按 bytes 保留。`skill_read_resource` 只返回有界 UTF-8 文本，因此 DOCX、PPTX、PDF、XLSX、PNG 等 binary resource 不会被当作文本注入 Context。支持图像输入的 Model 才会注册 `view_image`。`view_image` 从 Workspace root 或 active Skill root 读取受信任的 PNG/JPEG，并把经 hash 和 size 复核的 binary content 投影为 Pydantic AI 的 multimodal `BinaryContent`。其他 binary asset 仍由已有 Tool 或 Skill 脚本按其自身格式处理。
 
-当前分支的 MCP 依赖不是 Skill 安装器。Skill metadata 中的 dependency 声明只能作为检测和 warning 的输入，不能触发安装或启动。当前 loader 只 boundedly 解析这类 metadata；可选 metadata 无效时记录 warning 并忽略。Runtime 不负责 pip、npm、系统包或 MCP server 的安装。Plugin 声明的 MCP server 仍由独立的 Plugin/MCP 配置、consent、官方 Python MCP SDK stdio client、Tool Registry、Approval 和 Sandbox 链路管理。当前代码没有把 Skill metadata dependency 自动接入这条 MCP 生命周期。
+Skill MCP dependency 不是 Skill 安装器。RunResources 会收集 active Skill 的 `type: mcp` 声明，并与本 Run extension snapshot 中已配置且 available 的 Plugin MCP server 比较。Runtime 保存 installed、missing 或 unsupported 的结构化诊断。Runtime 也会把未满足项作为低权限 user context warning 提供给后续 Step。这个检查不会安装、启用或启动新的 MCP server。Plugin 声明的 MCP server 仍由独立的 Plugin/MCP 配置、consent、官方 Python MCP SDK stdio client、Tool Registry、Approval 和 Sandbox 链路管理。Runtime 不负责 pip、npm、系统包或 MCP server 的自动安装。
 
-`SkillCatalog` 管理 bundled system skills、用户和 Plugin Skill。Turn 开始时，Catalog Snapshot 和 SelectedSkillSet 固化 qualified ID、source、version 和 content hash。Skill 主资源与受控 resource path 通过 bounded read 读取。当前 checkout 还需要在 `SkillCatalog` 的 `skill://` locator 与 `SkillAccess` 所需的 trusted filesystem/file locator 之间补齐转换，才能把用户 Skill 的完整 RunResources→Shell→Sandbox 链路作为已验证能力；本次只记录该生产缺口，不修改生产代码。
+`SkillCatalog` 管理 bundled system skills、用户和 Plugin Skill。Turn 开始时，Catalog Snapshot 和 SelectedSkillSet 固化 qualified ID、source、version、source kind、content hash、canonical `file:` locator 和 implicit policy。`SkillAccess` 只从该可信 snapshot locator 激活 canonical root。模型不能通过传入任意 absolute path 扩大 Shell 权限。显式选择、成功的 `skill_read` 和已知 `scripts/` Shell invocation 都会沿 RunResources → ToolCallRuntime → Shell → Seatbelt 使用同一份 Run-scoped activation state。
 
 MCP 当前使用官方 Python MCP SDK 的 stdio client。MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。Server Tool 会进入统一 Tool Registry，保留 MCP provenance，并按 external Tool 经过 Approval、Sandbox、timeout、结果校验和 reconciliation。MCP 进程使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。
 

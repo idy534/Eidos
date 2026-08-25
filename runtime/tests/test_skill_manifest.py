@@ -107,6 +107,20 @@ class SkillManifestTests(unittest.TestCase):
                 "broken",
             )
 
+    def test_safe_load_keeps_unknown_fields_and_uses_last_duplicate_scalar(self) -> None:
+        manifest = parse_skill_manifest(
+            "---\n"
+            "name: valid\n"
+            "name: compatible\n"
+            "description: usable\n"
+            "unknown-field: ignored\n"
+            "---\n",
+            "broken",
+        )
+
+        self.assertEqual(manifest.name, "compatible")
+        self.assertEqual(manifest.description, "usable")
+
     def test_loads_optional_eidos_metadata_and_rejects_asset_escape(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-skill-manifest-") as directory:
             root = Path(directory)

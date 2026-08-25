@@ -185,10 +185,6 @@ class SkillCatalogTests(unittest.TestCase):
 
     def test_frontmatter_keeps_supported_field_validation_strict(self) -> None:
         invalid_documents = {
-            "duplicate_name": (
-                "---\nname: valid\nname: duplicate\n"
-                "description: Description.\n---\nBody.\n"
-            ),
             "invalid_name": (
                 "---\nname: ../escape\n"
                 "description: Description.\n---\nBody.\n"
@@ -228,6 +224,17 @@ class SkillCatalogTests(unittest.TestCase):
         self.assertEqual(catalog[0]["description"], "Review relevant files.")
         self.assertNotIn("Inspect before editing", json.dumps(catalog))
         self.assertEqual(len(catalog[0]["contentHash"]), 64)
+
+    def test_catalog_snapshot_locator_is_a_canonical_skill_file_uri(self) -> None:
+        snapshot = self.skills.catalog_snapshot(self.snapshot)
+        entry = next(
+            item for item in snapshot.entries if item.qualified_id == "demo:review"
+        )
+        expected = (
+            self.plugins.installed_root("demo") / "skills" / "review" / "SKILL.md"
+        ).resolve().as_uri()
+
+        self.assertEqual(entry.main_resource_locator, expected)
 
     def test_reads_skill_and_resource_with_source_labels(self) -> None:
         skill = self.skills.read_skill(self.snapshot, "demo:review")

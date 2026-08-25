@@ -3,13 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 import errno
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import stat
 import threading
-from typing import Final
-import zlib
+from typing import Callable, Final, TypeAlias
+import warnings
+
+from PIL import Image, UnidentifiedImageError
 
 from pydantic import ValidationError
 
@@ -26,13 +29,8 @@ from eidos_runtime.tools.registry import (
 
 
 MAX_VIEW_IMAGE_BYTES: Final = 10 * 1024 * 1024
+MAX_VIEW_IMAGE_PIXELS: Final = 40_000_000
 _READ_CHUNK_BYTES: Final = 1024 * 1024
-_PNG_SIGNATURE: Final = b"\x89PNG\r\n\x1a\n"
-_JPEG_SOI: Final = b"\xff\xd8"
-_JPEG_SOF_MARKERS: Final = frozenset({
-    0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
-    0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF,
-})
 
 
 class ViewImageError(ValueError):
@@ -60,15 +58,28 @@ class ViewImageRootAuthority:
         object.__setattr__(self, "workspace_root", canonical_workspace)
         object.__setattr__(self, "active_skill_roots", tuple(canonical_skills))
 
+    @classmethod
+    def from_skill_access(
+        cls, workspace_root: Path, skill_access: object
+    ) -> ViewImageRootAuthority:
+        records = getattr(skill_access, "records", None)
+        if not callable(records):
+            raise ValueError("skill access authority is unavailable")
+        roots = tuple(
+            Path(getattr(record, "canonical_root")) for record in records()
+        )
+        return cls(workspace_root, roots)
+
     @property
     def roots(self) -> tuple[Path, ...]:
         return (self.workspace_root, *self.active_skill_roots)
-
 
 # These aliases make the authority seam discoverable to callers that describe
 # the same object as image roots rather than a view-image authority.
 ImageRootAuthority = ViewImageRootAuthority
 ViewImageRoots = ViewImageRootAuthority
+ViewImageAuthorityProvider: TypeAlias = Callable[[], ViewImageRootAuthority]
+ViewImageAuthority: TypeAlias = ViewImageRootAuthority | ViewImageAuthorityProvider
 
 
 @dataclass(frozen=True)
@@ -81,7 +92,7 @@ class AuthorizedImage:
 
 
 class ViewImageTool:
-    def __init__(self, authority: ViewImageRootAuthority) -> None:
+    def __init__(self, authority: ViewImageAuthority) -> None:
         self.authority = authority
 
     def execute(
@@ -96,7 +107,9 @@ class ViewImageTool:
         except ValidationError:
             return _error("invalid_path", "Image path is invalid")
         try:
-            image = read_authorized_image(request.path, self.authority)
+            image = read_authorized_image(
+                request.path, resolve_view_image_authority(self.authority)
+            )
         except ViewImageError as error:
             summaries = {
                 "image_not_found": "Image file was not found",
@@ -124,7 +137,7 @@ class ViewImageTool:
 def view_image_entry(
     *,
     supports_images: bool,
-    authority: ViewImageRootAuthority,
+    authority: ViewImageAuthority,
 ) -> ToolRegistryEntry | None:
     """Build the built-in entry only for a model that accepts image inputs."""
 
@@ -169,7 +182,7 @@ def view_image_entry(
 def build_view_image_entry(
     *,
     supports_images: bool,
-    authority: ViewImageRootAuthority,
+    authority: ViewImageAuthority,
 ) -> ToolRegistryEntry | None:
     return view_image_entry(
         supports_images=supports_images,
@@ -200,6 +213,15 @@ def read_authorized_image(
             data=data,
         )
     raise ViewImageError("image_not_found")
+
+
+def resolve_view_image_authority(
+    authority: ViewImageAuthority,
+) -> ViewImageRootAuthority:
+    resolved = authority() if callable(authority) else authority
+    if not isinstance(resolved, ViewImageRootAuthority):
+        raise ValueError("image authority provider returned an invalid value")
+    return resolved
 
 
 def _canonical_root(root: Path) -> Path:
@@ -331,7 +353,10 @@ def _read_regular_file(
 
 def _validate_directory_fd(directory_fd: int) -> None:
     metadata = os.fstat(directory_fd)
-    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+    ):
         raise ViewImageError("unsafe_path")
 
 
@@ -348,148 +373,46 @@ def _read_exact(file_fd: int, size: int) -> bytes:
 
 
 def _detect_image_mime(data: bytes) -> str:
-    if data.startswith(_PNG_SIGNATURE):
-        _validate_png(data)
-        return "image/png"
-    if data.startswith(_JPEG_SOI):
-        _validate_jpeg(data)
-        return "image/jpeg"
-    raise ViewImageError("invalid_image")
+    image_format: str | None = None
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(data)) as image:
+                image_format = image.format
+                _validate_image_dimensions(image)
+                image.verify()
+            # verify() checks the container without decoding pixel data. Open
+            # the bytes again and load() so truncated streams and decoder
+            # failures are rejected before the result reaches the model.
+            with Image.open(io.BytesIO(data)) as image:
+                if image.format != image_format:
+                    raise ViewImageError("invalid_image")
+                _validate_image_dimensions(image)
+                image.load()
+    except ViewImageError:
+        raise
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning):
+        raise ViewImageError("image_too_large") from None
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError):
+        raise ViewImageError("invalid_image") from None
 
-
-def _validate_png(data: bytes) -> None:
-    if len(data) < len(_PNG_SIGNATURE) + 12:
+    mime_by_format = {"PNG": "image/png", "JPEG": "image/jpeg"}
+    mime = mime_by_format.get(image_format or "")
+    if mime is None:
         raise ViewImageError("invalid_image")
-    offset = len(_PNG_SIGNATURE)
-    saw_ihdr = False
-    saw_idat = False
-    saw_iend = False
-    while offset < len(data):
-        if offset + 12 > len(data):
-            raise ViewImageError("invalid_image")
-        length = int.from_bytes(data[offset:offset + 4], "big")
-        chunk_start = offset + 8
-        chunk_end = chunk_start + length
-        if chunk_end + 4 > len(data):
-            raise ViewImageError("invalid_image")
-        kind = data[offset + 4:offset + 8]
-        payload = data[chunk_start:chunk_end]
-        crc = int.from_bytes(data[chunk_end:chunk_end + 4], "big")
-        if not all(
-            65 <= value <= 90 or 97 <= value <= 122
-            for value in kind
-        ) or (
-            zlib.crc32(kind + payload) & 0xFFFFFFFF
-        ) != crc:
-            raise ViewImageError("invalid_image")
-        if not saw_ihdr:
-            if kind != b"IHDR" or len(payload) != 13:
-                raise ViewImageError("invalid_image")
-            width = int.from_bytes(payload[0:4], "big")
-            height = int.from_bytes(payload[4:8], "big")
-            bit_depth = payload[8]
-            color_type = payload[9]
-            valid_bit_depths = {
-                0: {1, 2, 4, 8, 16},
-                2: {8, 16},
-                3: {1, 2, 4, 8},
-                4: {8, 16},
-                6: {8, 16},
-            }
-            if (
-                not width
-                or not height
-                or bit_depth not in valid_bit_depths.get(color_type, set())
-                or payload[10] != 0
-                or payload[11] != 0
-                or payload[12] not in {0, 1}
-            ):
-                raise ViewImageError("invalid_image")
-            saw_ihdr = True
-        elif kind == b"IHDR":
-            raise ViewImageError("invalid_image")
-        if kind == b"IDAT":
-            saw_idat = True
-        if kind == b"IEND":
-            if payload or not saw_ihdr or not saw_idat:
-                raise ViewImageError("invalid_image")
-            saw_iend = True
-            offset = chunk_end + 4
-            break
-        offset = chunk_end + 4
-    if not saw_iend or offset != len(data):
-        raise ViewImageError("invalid_image")
+    return mime
 
 
-def _validate_jpeg(data: bytes) -> None:
-    if len(data) < 4 or not data.startswith(_JPEG_SOI):
-        raise ViewImageError("invalid_image")
-    offset = 2
-    saw_sof = False
-    saw_sos = False
-    saw_eoi = False
-    while offset < len(data):
-        if data[offset] != 0xFF:
-            raise ViewImageError("invalid_image")
-        while offset < len(data) and data[offset] == 0xFF:
-            offset += 1
-        if offset >= len(data):
-            raise ViewImageError("invalid_image")
-        marker = data[offset]
-        offset += 1
-        if marker == 0xD9:
-            saw_eoi = True
-            break
-        if marker == 0xDA:
-            offset = _read_jpeg_segment_end(data, offset)
-            saw_sos = True
-            offset, marker = _skip_jpeg_scan(data, offset)
-            if marker == 0xD9:
-                saw_eoi = True
-                offset += 2
-                break
-            continue
-        if marker in {0x01, *range(0xD0, 0xD8)}:
-            continue
-        segment_start = offset
-        offset = _read_jpeg_segment_end(data, segment_start)
-        if marker in _JPEG_SOF_MARKERS:
-            length = int.from_bytes(data[segment_start:segment_start + 2], "big")
-            payload = data[segment_start + 2:segment_start + length]
-            if len(payload) < 6 or not int.from_bytes(payload[1:3], "big") or not int.from_bytes(payload[3:5], "big"):
-                raise ViewImageError("invalid_image")
-            components = payload[5]
-            if not components or len(payload) != 6 + components * 3:
-                raise ViewImageError("invalid_image")
-            saw_sof = True
-    if not saw_sof or not saw_sos or not saw_eoi or offset != len(data):
-        raise ViewImageError("invalid_image")
-
-
-def _read_jpeg_segment_end(data: bytes, marker_offset: int) -> int:
-    if marker_offset + 2 > len(data):
-        raise ViewImageError("invalid_image")
-    length = int.from_bytes(data[marker_offset:marker_offset + 2], "big")
-    if length < 2 or marker_offset + length > len(data):
-        raise ViewImageError("invalid_image")
-    return marker_offset + length
-
-
-def _skip_jpeg_scan(data: bytes, offset: int) -> tuple[int, int]:
-    while offset < len(data):
-        if data[offset] != 0xFF:
-            offset += 1
-            continue
-        while offset < len(data) and data[offset] == 0xFF:
-            offset += 1
-        if offset >= len(data):
-            raise ViewImageError("invalid_image")
-        marker = data[offset]
-        if marker == 0:
-            offset += 1
-            continue
-        return offset - 1, marker
-    raise ViewImageError("invalid_image")
+def _validate_image_dimensions(image: Image.Image) -> None:
+    width, height = image.size
+    if (
+        not isinstance(width, int)
+        or not isinstance(height, int)
+        or width < 1
+        or height < 1
+        or width * height > MAX_VIEW_IMAGE_PIXELS
+    ):
+        raise ViewImageError("image_too_large")
 
 
 def _error(code: str, summary: str) -> dict[str, object]:

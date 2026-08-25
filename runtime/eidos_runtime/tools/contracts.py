@@ -481,6 +481,13 @@ class WorkspaceResultData(StrictToolModel):
     deleted: tuple[StrictStr, ...] | None = None
 
 
+class SkillInvocationMetadata(StrictToolModel):
+    skillQualifiedId: StrictStr
+    invocationType: Literal["implicit", "explicit", "model_read"]
+    source: StrictStr
+    provenance: dict[str, StrictStr]
+
+
 class RunShellResultData(WorkspaceResultData):
     ALLOW_SUCCESS_RECONCILIATION: ClassVar[bool] = True
     SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = (
@@ -510,6 +517,14 @@ class RunShellResultData(WorkspaceResultData):
         "unknown",
     ] | None = None
     effectivePermissionsSummary: dict[str, object] | None = None
+    skillInvocation: SkillInvocationMetadata | None = None
+    # These optional fields keep the pre-integration flat result shape
+    # readable for older consumers while the nested object is canonical.
+    qualifiedId: StrictStr | None = None
+    skillQualifiedId: StrictStr | None = None
+    invocationType: Literal["implicit", "explicit", "model_read"] | None = None
+    source: StrictStr | None = None
+    provenance: dict[str, StrictStr] | None = None
 
 
 class SkillReadResultData(StrictToolModel):
