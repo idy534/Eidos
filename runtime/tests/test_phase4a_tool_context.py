@@ -193,14 +193,9 @@ class Phase4ASkillContextTests(unittest.TestCase):
             index for index, value in enumerate(built.model_context)
             if value.get("sectionId") == "skill-catalog"
         ]
-        tool_index = next(
-            index for index, value in enumerate(built.model_context)
-            if value.get("type") == "tool_result"
-        )
-
-        self.assertEqual(catalog_indexes, [2])
-        self.assertLess(catalog_indexes[0], tool_index)
-        self.assertEqual(rendered.count("Skill Catalog"), 1)
+        self.assertEqual(catalog_indexes, [])
+        self.assertIn("Skill Catalog", built.instructions.system_text)
+        self.assertEqual(rendered.count("Skill Catalog"), 0)
         self.assertNotIn("x" * 100_000, rendered)
         self.assertIn("Use the checklist.", rendered)
         self.assertNotIn("Use the checklist.", built.instructions.system_text)
@@ -233,11 +228,12 @@ class Phase4ASkillContextTests(unittest.TestCase):
                 index for index, item in enumerate(context)
                 if item.get("sectionId") == "skill-catalog"
             ]
-            self.assertEqual(catalogs, [2])
+            self.assertEqual(catalogs, [])
             self.assertEqual(
                 sum("Skill Catalog" in str(item.get("content", "")) for item in context),
-                1,
+                0,
             )
+            self.assertEqual(instructions.count("Skill Catalog"), 1)
             self.assertIn("Use the checklist.", json.dumps(context))
             self.assertNotIn("Use the checklist.", instructions)
         second_tool_result = next(

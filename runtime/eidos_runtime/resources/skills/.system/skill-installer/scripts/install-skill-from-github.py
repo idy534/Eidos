@@ -18,16 +18,28 @@ import urllib.parse
 import uuid
 import zipfile
 
-from github_utils import github_request
+RUNTIME_ROOT = Path(__file__).resolve().parents[6]
+if str(RUNTIME_ROOT) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_ROOT))
+SCRIPT_ROOT = Path(__file__).resolve().parent
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
+
+from github_utils import github_request  # noqa: E402
+
+from eidos_runtime.extensions.skill_manifest import (  # noqa: E402
+    SkillManifestError,
+    parse_skill_manifest,
+)
 
 
 DEFAULT_REF = "main"
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_ARCHIVE_EXPANDED_BYTES = 256 * 1024 * 1024
+MAX_SKILL_BYTES = 128 * 1024
 MAX_SKILL_FILES = 512
-MAX_SKILL_FILE_BYTES = 256 * 1024
+MAX_SKILL_FILE_BYTES = 4 * 1024 * 1024
 MAX_SKILL_TOTAL_BYTES = 8 * 1024 * 1024
-SKILL_NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 REPOSITORY_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
 
 
@@ -52,6 +64,10 @@ class Source:
 
 class InstallError(Exception):
     pass
+
+
+class _SkillFiles(dict[str, bytes]):
+    executable_paths: frozenset[str] = frozenset()
 
 
 def _eidos_home() -> Path:
@@ -197,38 +213,23 @@ def _prepare(source: Source, method: str, temporary: Path) -> Path:
     raise InstallError("Unsupported method.")
 
 
-def _metadata(content: bytes) -> tuple[str, str]:
+def _metadata(content: bytes, default_name: str = "skill") -> tuple[str, str]:
     try:
-        lines = content.decode("utf-8").splitlines()
+        text = content.decode("utf-8")
     except UnicodeDecodeError:
         raise InstallError("SKILL.md must be UTF-8.") from None
-    if not lines or lines[0] != "---":
-        raise InstallError("SKILL.md frontmatter is missing.")
-    values: dict[str, str] = {}
-    for line in lines[1:]:
-        if line == "---":
-            break
-        if ":" not in line:
-            raise InstallError("SKILL.md frontmatter is invalid.")
-        key, value = line.split(":", 1)
-        key, value = key.strip(), value.strip().strip("\"'")
-        if key not in {"name", "description"} or key in values:
-            raise InstallError("SKILL.md accepts only name and description.")
-        values[key] = value
-    else:
-        raise InstallError("SKILL.md frontmatter is not closed.")
-    name, description = values.get("name", ""), values.get("description", "")
-    if not SKILL_NAME.fullmatch(name) or len(name) > 64 or not description:
-        raise InstallError("SKILL.md metadata is invalid.")
-    if len(description.encode("utf-8")) > 1024:
-        raise InstallError("Skill description is too large.")
-    return name, description
+    try:
+        manifest = parse_skill_manifest(text, default_name)
+    except SkillManifestError as error:
+        raise InstallError(str(error)) from None
+    return manifest.name, manifest.description
 
 
 def _read_skill(path: Path) -> tuple[str, dict[str, bytes]]:
     if path.is_symlink() or not path.is_dir():
         raise InstallError("Skill source must be a directory.")
-    files: dict[str, bytes] = {}
+    files = _SkillFiles()
+    executable_paths: set[str] = set()
     total = 0
     for directory, names, filenames in os.walk(path, followlinks=False):
         parent = Path(directory)
@@ -247,11 +248,16 @@ def _read_skill(path: Path) -> tuple[str, dict[str, bytes]]:
             data = candidate.read_bytes()
             files[relative] = data
             total += len(data)
+            if metadata.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
+                executable_paths.add(relative)
             if len(files) > MAX_SKILL_FILES or total > MAX_SKILL_TOTAL_BYTES:
                 raise InstallError("Skill is too large.")
     if "SKILL.md" not in files:
         raise InstallError("SKILL.md is missing.")
-    skill_name, _description = _metadata(files["SKILL.md"])
+    if len(files["SKILL.md"]) > MAX_SKILL_BYTES:
+        raise InstallError("SKILL.md is too large.")
+    skill_name, _description = _metadata(files["SKILL.md"], path.name)
+    files.executable_paths = frozenset(executable_paths)
     return skill_name, files
 
 
@@ -264,7 +270,13 @@ def _private_directory(path: Path) -> None:
     os.chmod(path, 0o700)
 
 
-def _install(destination: Path, files: dict[str, bytes]) -> None:
+def _install(
+    destination: Path,
+    files: dict[str, bytes],
+    executable_paths: frozenset[str] = frozenset(),
+) -> None:
+    if not executable_paths:
+        executable_paths = getattr(files, "executable_paths", frozenset())
     staging = destination.parent / f".install-{uuid.uuid4().hex}"
     staging.mkdir(mode=0o700)
     try:
@@ -272,10 +284,12 @@ def _install(destination: Path, files: dict[str, bytes]) -> None:
             target = staging.joinpath(*PurePosixPath(relative).parts)
             target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             os.chmod(target.parent, 0o700)
+            mode = 0o700 if relative in executable_paths else 0o600
             descriptor = os.open(
-                target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600
+                target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), mode
             )
             try:
+                os.fchmod(descriptor, mode)
                 offset = 0
                 while offset < len(data):
                     offset += os.write(descriptor, data[offset:])
@@ -315,7 +329,7 @@ def main(argv: list[str]) -> int:
         temporary = Path(tempfile.mkdtemp(prefix="install-", dir=_tmp_root()))
         try:
             repository = _prepare(source, args.method, temporary)
-            prepared: list[tuple[str, Path, dict[str, bytes]]] = []
+            prepared: list[tuple[str, Path, dict[str, bytes], frozenset[str]]] = []
             for source_path in source.paths:
                 metadata_name, files = _read_skill(repository.joinpath(*PurePosixPath(source_path).parts))
                 requested_name = args.name if len(source.paths) == 1 and args.name else metadata_name
@@ -324,9 +338,14 @@ def main(argv: list[str]) -> int:
                 destination = destination_root / metadata_name
                 if destination.exists() or (destination_root / ".system" / metadata_name).exists():
                     raise InstallError(f"Skill already exists: {metadata_name}")
-                prepared.append((metadata_name, destination, files))
-            for name, destination, files in prepared:
-                _install(destination, files)
+                prepared.append((
+                    metadata_name,
+                    destination,
+                    files,
+                    getattr(files, "executable_paths", frozenset()),
+                ))
+            for name, destination, files, executable_paths in prepared:
+                _install(destination, files, executable_paths)
                 print(f"Installed {name} to {destination}")
         finally:
             shutil.rmtree(temporary, ignore_errors=True)

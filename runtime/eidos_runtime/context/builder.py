@@ -62,8 +62,20 @@ class ContextBuilder:
     ) -> ContextBuild:
         facts = self.store.context_projection_facts(run_id)
         profile = self.store.read_model_profile(run_id)
+        catalog_context: RetainedContextSection | None = None
+        user_retained_context: list[RetainedContextSection] = []
+        for section in retained_context:
+            if section.role == "developer":
+                if catalog_context is not None or section.section_id != "skill-catalog":
+                    raise ValueError(
+                        "developer retained context must be the skill catalog"
+                    )
+                catalog_context = section
+            else:
+                user_retained_context.append(section)
         instructions = InstructionResolver().resolve(
             rule_snapshot=rule_resolution_snapshot,
+            skill_catalog_context=catalog_context,
             selected_skill_context=selected_skill_context,
             step_policy=step_policy,
         )
@@ -100,12 +112,13 @@ class ContextBuilder:
                 ),
             })
 
-        if any(section.role != "user" for section in retained_context):
+        if any(section.role != "user" for section in user_retained_context):
             raise ValueError(
-                "developer retained context must use an instruction layer"
+                "retained context must use the user role"
             )
         retained_by_id = {
             section.section_id: section for section in retained_context
+            if section.role == "user"
         }
         context.extend(
             retained_by_id[key].as_model_item()

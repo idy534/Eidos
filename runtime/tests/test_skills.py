@@ -190,7 +190,7 @@ class SkillCatalogTests(unittest.TestCase):
                 "description: Description.\n---\nBody.\n"
             ),
             "invalid_name": (
-                "---\nname: not valid\n"
+                "---\nname: ../escape\n"
                 "description: Description.\n---\nBody.\n"
             ),
             "missing_description": (
@@ -247,12 +247,18 @@ class SkillCatalogTests(unittest.TestCase):
         os.symlink("references/rules.md", root / "linked.md")
         with self.assertRaisesRegex(SkillReadError, "skill_path_invalid"):
             self.skills.read_resource(self.snapshot, "demo:review", "linked.md")
+        outside = root.parent.parent / "outside-resource"
+        outside.mkdir()
+        (outside / "secret.md").write_text("outside\n", encoding="utf-8")
+        os.symlink(outside, root / "linked-dir", target_is_directory=True)
+        with self.assertRaisesRegex(SkillReadError, "skill_path_invalid"):
+            self.skills.read_resource(self.snapshot, "demo:review", "linked-dir/secret.md")
 
         (root / "binary.bin").write_bytes(b"a\x00b")
-        with self.assertRaisesRegex(SkillReadError, "skill_content_unsupported"):
+        with self.assertRaisesRegex(SkillReadError, "skill_resource_not_text"):
             self.skills.read_resource(self.snapshot, "demo:review", "binary.bin")
         (root / "invalid.txt").write_bytes(b"\xff")
-        with self.assertRaisesRegex(SkillReadError, "skill_content_unsupported"):
+        with self.assertRaisesRegex(SkillReadError, "skill_resource_not_text"):
             self.skills.read_resource(self.snapshot, "demo:review", "invalid.txt")
 
     def test_deploys_system_skills_and_discovers_user_skills(self) -> None:
