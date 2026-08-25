@@ -33,6 +33,12 @@ from eidos_runtime.model_gateway.pydantic_factory import build_model, build_prov
             MoonshotAIProvider,
             "https://api.moonshot.cn/v1",
         ),
+        (
+            "volcengine",
+            "deepseek-v4-flash-ga-260731",
+            OpenAIProvider,
+            "https://ark.cn-beijing.volces.com/api/coding/v3",
+        ),
     ],
 )
 async def test_all_catalog_providers_use_openai_chat_completions(

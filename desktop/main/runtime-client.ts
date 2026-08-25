@@ -1216,7 +1216,11 @@ function isModelOption(value: unknown): value is ModelOption {
     && typeof value.supportsToolCall === "boolean"
     && typeof value.supportsImages === "boolean"
     && typeof value.supportsReasoning === "boolean"
-    && (value.reasoning === null || isModelReasoning(value.reasoning))
+    && (
+      value.reasoning === undefined
+      || value.reasoning === null
+      || isModelReasoning(value.reasoning)
+    )
   );
 }
 
@@ -1253,7 +1257,7 @@ function isModelPresetsResult(value: unknown): value is ModelPresetsResult {
     && value.providers.every((provider) => (
       isRecord(provider)
       && hasOnlyKeys(provider, ["id", "name", "models"])
-      && ["deepseek", "minimax", "kimi"].includes(String(provider.id))
+      && ["deepseek", "minimax", "kimi", "volcengine"].includes(String(provider.id))
       && typeof provider.name === "string"
       && Array.isArray(provider.models)
       && provider.models.every((model) => (

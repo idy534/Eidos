@@ -440,7 +440,7 @@ export interface ModelListResult {
 export interface ModelPresetModel extends Omit<ModelOption, "vendor" | "provider"> {}
 
 export interface ModelProviderPreset {
-  id: "deepseek" | "minimax" | "kimi";
+  id: "deepseek" | "minimax" | "kimi" | "volcengine";
   name: string;
   models: ModelPresetModel[];
 }

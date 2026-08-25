@@ -126,7 +126,7 @@ class CatalogModel(EidosFrozenStrictModel):
 
 
 class CatalogProvider(EidosFrozenStrictModel):
-    id: Literal["deepseek", "minimax", "kimi"]
+    id: Literal["deepseek", "minimax", "kimi", "volcengine"]
     name: str
     vendor: str
     models: tuple[CatalogModel, ...]
@@ -202,6 +202,83 @@ MODEL_PROVIDERS = (
                 supportsImages=False,
                 supportsReasoning=True,
                 reasoning=_REASONING,
+            ),
+        ),
+    ),
+    CatalogProvider(
+        id="volcengine",
+        name="火山引擎 / Volcengine",
+        vendor="Volcengine",
+        models=(
+            CatalogModel(
+                id="deepseek-v4-pro-ga-260813",
+                name="DeepSeek V4 Pro GA",
+                url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+                supportsToolCall=True,
+                supportsImages=False,
+                supportsReasoning=False,
+                contextWindowTokens=1_048_576,
+                maxOutputTokens=131_072,
+            ),
+            CatalogModel(
+                id="deepseek-v4-flash-ga-260731",
+                name="DeepSeek V4 Flash GA",
+                url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+                supportsToolCall=True,
+                supportsImages=False,
+                supportsReasoning=False,
+                contextWindowTokens=1_048_576,
+                maxOutputTokens=393_216,
+            ),
+            CatalogModel(
+                id="glm-5-2-260617",
+                name="GLM 5.2",
+                url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+                supportsToolCall=True,
+                supportsImages=False,
+                supportsReasoning=False,
+                contextWindowTokens=1_048_576,
+                maxOutputTokens=131_072,
+            ),
+            CatalogModel(
+                id="doubao-seed-evolving",
+                name="Doubao Seed Evolving",
+                url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+                supportsToolCall=True,
+                supportsImages=True,
+                supportsReasoning=False,
+                contextWindowTokens=1_048_576,
+                maxOutputTokens=262_144,
+            ),
+            CatalogModel(
+                id="doubao-seed-2-1-pro-260628",
+                name="Doubao Seed 2.1 Pro",
+                url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+                supportsToolCall=True,
+                supportsImages=True,
+                supportsReasoning=False,
+                contextWindowTokens=262_144,
+                maxOutputTokens=262_144,
+            ),
+            CatalogModel(
+                id="doubao-seed-2-1-turbo-260628",
+                name="Doubao Seed 2.1 Turbo",
+                url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+                supportsToolCall=True,
+                supportsImages=True,
+                supportsReasoning=False,
+                contextWindowTokens=262_144,
+                maxOutputTokens=262_144,
+            ),
+            CatalogModel(
+                id="doubao-seed-2-0-code-preview-260215",
+                name="Doubao Seed 2.0 Code",
+                url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+                supportsToolCall=True,
+                supportsImages=True,
+                supportsReasoning=False,
+                contextWindowTokens=262_144,
+                maxOutputTokens=131_072,
             ),
         ),
     ),

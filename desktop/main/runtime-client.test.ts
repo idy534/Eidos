@@ -243,6 +243,57 @@ test("spawns the Python runtime and completes initialize then shutdown", async (
   }
 });
 
+test("accepts Volcengine model presets and models without reasoning metadata", async () => {
+  const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-volcengine-model-runtime-"));
+  const packageRoot = path.join(runtimeRoot, "eidos_runtime");
+  await mkdir(packageRoot);
+  await writeFile(path.join(packageRoot, "__init__.py"), "", "utf8");
+  await writeFile(
+    path.join(packageRoot, "__main__.py"),
+    [
+      "import json, sys",
+      "model = {'id': 'deepseek-v4-flash-ga-260731', 'name': 'DeepSeek V4 Flash GA', 'vendor': 'Volcengine', 'provider': 'volcengine', 'url': 'https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions', 'supportsToolCall': True, 'supportsImages': False, 'supportsReasoning': False, 'reasoning': None}",
+      "preset_model = {key: value for key, value in model.items() if key not in ('vendor', 'provider')}",
+      "presets = {'providers': [{'id': 'volcengine', 'name': '火山引擎 / Volcengine', 'models': [preset_model]}]}",
+      "listed_model = dict(model)",
+      "del listed_model['reasoning']",
+      "def send(request, result):",
+      "    print(json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}, ensure_ascii=False), flush=True)",
+      "for line in sys.stdin:",
+      "    request = json.loads(line)",
+      "    if request['method'] == 'initialize':",
+      "        send(request, {'protocolVersion': 1, 'runtimeVersion': 'fixture', 'capabilities': {'runShell': False, 'modelConfigured': False}})",
+      "    elif request['method'] == 'model/presets':",
+      "        send(request, presets)",
+      "    elif request['method'] == 'model/list':",
+      "        send(request, {'models': [listed_model], 'defaultModelId': listed_model['id']})",
+      "    elif request['method'] == 'runtime/shutdown':",
+      "        send(request, {})",
+      "        break",
+    ].join("\n"),
+    "utf8",
+  );
+
+  let client: RuntimeClient | undefined;
+  try {
+    client = new RuntimeClient({ pythonExecutable, runtimeRoot });
+    await client.initialize();
+
+    const presets = await client.listModelPresets();
+    assert.equal(presets.providers[0]?.id, "volcengine");
+    const models = await client.listModels();
+    assert.equal(models.models[0]?.id, "deepseek-v4-flash-ga-260731");
+    assert.equal(models.models[0]?.reasoning, undefined);
+
+    await client.shutdown();
+    assert.equal(await client.waitForExit(), 0);
+  } finally {
+    client?.terminate();
+    if (client) await client.waitForExit();
+    await rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
 test("creates and reads a persisted session across runtime restarts", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
   const workspaceRoot = await createGitRepository("eidos-workspace-");

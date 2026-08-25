@@ -36,6 +36,13 @@ const presets: ModelPresetsResult = {
         reasoning: { defaultEffort: "high", supportedEfforts: ["high", "max"] },
       }],
     },
+    {
+      id: "volcengine", name: "火山引擎 / Volcengine", models: [{
+        id: "deepseek-v4-pro-ga-260813", name: "DeepSeek V4 Pro GA",
+        url: "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+        supportsToolCall: true, supportsImages: false, supportsReasoning: false,
+      }],
+    },
   ],
 };
 const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
@@ -112,5 +119,27 @@ describe("Model settings", () => {
     expect(updateModel).toHaveBeenCalledWith({
       id: "deepseek-v4-flash", provider: "deepseek", modelId: "deepseek-v4-flash",
     });
+  });
+
+  it("creates a Volcengine Coding Plan model from the catalog", async () => {
+    const user = userEvent.setup();
+    const createModel = vi.fn().mockResolvedValue(modelList.models[0]);
+    const onModelsChanged = vi.fn().mockResolvedValue(undefined);
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = {
+      listModelPresets: vi.fn().mockResolvedValue(presets),
+      createModel,
+    } as EidosRuntimeAPI;
+    render(<SettingsPage {...props({ modelList: { models: [], defaultModelId: null }, onModelsChanged })} />);
+
+    await user.click(await screen.findByRole("button", { name: "添加模型" }));
+    await user.selectOptions(screen.getByLabelText("提供商"), "volcengine");
+    expect(screen.getByRole("option", { name: "DeepSeek V4 Pro GA" })).toBeInTheDocument();
+    await user.type(screen.getByLabelText("API Key"), "volcengine-secret");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(createModel).toHaveBeenCalledWith({
+      provider: "volcengine", modelId: "deepseek-v4-pro-ga-260813", apiKey: "volcengine-secret",
+    });
+    expect(onModelsChanged).toHaveBeenCalledTimes(1);
   });
 });

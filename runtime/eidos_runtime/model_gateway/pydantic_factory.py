@@ -49,7 +49,7 @@ def build_provider(
         provider: OpenAICompatibleProvider = DeepSeekProvider(openai_client=client)
     elif provider_id == "kimi":
         provider = MoonshotAIProvider(openai_client=client)
-    elif provider_id == "minimax":
+    elif provider_id in {"minimax", "volcengine"}:
         provider = OpenAIProvider(openai_client=client)
     else:
         raise ValueError("unknown model provider")

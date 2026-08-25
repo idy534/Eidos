@@ -984,7 +984,7 @@ class PresetModelDto(ClosedModel):
 
 
 class ProviderPresetDto(ClosedModel):
-    id: Literal["deepseek", "minimax", "kimi"]
+    id: Literal["deepseek", "minimax", "kimi", "volcengine"]
     name: StrictStr
     models: list[PresetModelDto]
 

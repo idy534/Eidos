@@ -6,7 +6,12 @@ import stat
 
 import pytest
 
-from eidos_runtime.model.config import ModelConfigError, ModelConfigStore, model_presets
+from eidos_runtime.model.config import (
+    MODEL_CATALOG,
+    ModelConfigError,
+    ModelConfigStore,
+    model_presets,
+)
 
 
 def _store(tmp_path: Path) -> ModelConfigStore:
@@ -24,6 +29,7 @@ def test_model_presets_only_expose_the_supported_catalog() -> None:
         "deepseek",
         "minimax",
         "kimi",
+        "volcengine",
     ]
     assert [
         model["id"]
@@ -35,12 +41,52 @@ def test_model_presets_only_expose_the_supported_catalog() -> None:
         "MiniMax-M3",
         "kimi-k3",
         "kimi-k2.7-code-highspeed",
+        "deepseek-v4-pro-ga-260813",
+        "deepseek-v4-flash-ga-260731",
+        "glm-5-2-260617",
+        "doubao-seed-evolving",
+        "doubao-seed-2-1-pro-260628",
+        "doubao-seed-2-1-turbo-260628",
+        "doubao-seed-2-0-code-preview-260215",
     ]
     assert all(
         model["url"].endswith("/chat/completions")
         for provider in presets["providers"]
         for model in provider["models"]
     )
+
+
+def test_volcengine_coding_plan_catalog_uses_the_documented_endpoint_and_limits() -> None:
+    presets = model_presets()
+    provider = next(item for item in presets["providers"] if item["id"] == "volcengine")
+    assert provider["name"] == "火山引擎 / Volcengine"
+    assert [model["id"] for model in provider["models"]] == [
+        "deepseek-v4-pro-ga-260813",
+        "deepseek-v4-flash-ga-260731",
+        "glm-5-2-260617",
+        "doubao-seed-evolving",
+        "doubao-seed-2-1-pro-260628",
+        "doubao-seed-2-1-turbo-260628",
+        "doubao-seed-2-0-code-preview-260215",
+    ]
+    assert all(
+        model["url"] == "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions"
+        for model in provider["models"]
+    )
+
+    expected_limits = {
+        "deepseek-v4-pro-ga-260813": (1_048_576, 131_072),
+        "deepseek-v4-flash-ga-260731": (1_048_576, 393_216),
+        "glm-5-2-260617": (1_048_576, 131_072),
+        "doubao-seed-evolving": (1_048_576, 262_144),
+        "doubao-seed-2-1-pro-260628": (262_144, 262_144),
+        "doubao-seed-2-1-turbo-260628": (262_144, 262_144),
+        "doubao-seed-2-0-code-preview-260215": (262_144, 131_072),
+    }
+    for model_id, (context_window, max_output) in expected_limits.items():
+        profile = MODEL_CATALOG.profile(model_id)
+        assert profile.context_window_tokens == context_window
+        assert profile.max_output_tokens == max_output
 
 
 def test_missing_models_file_lists_an_empty_array(tmp_path: Path) -> None:

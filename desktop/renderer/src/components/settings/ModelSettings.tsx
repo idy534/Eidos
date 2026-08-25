@@ -30,6 +30,7 @@ const vendorNames: Record<string, string> = {
   DeepSeek: "深度求索",
   MiniMax: "MiniMax",
   Kimi: "月之暗面",
+  Volcengine: "火山引擎",
 };
 
 export function ModelSettings({

@@ -53,12 +53,21 @@ class ModelGatewayProtocolTests(unittest.TestCase):
                 },
                 "create-kimi",
             ))
+            server.handle(request(
+                "model/create",
+                {
+                    "provider": "volcengine",
+                    "modelId": "deepseek-v4-flash-ga-260731",
+                    "apiKey": "volcengine-secret-value",
+                },
+                "create-volcengine",
+            ))
             server.handle(request("model/list", {}, "list"))
 
             results = messages(output)
             self.assertEqual(
                 [provider["id"] for provider in results["presets"]["result"]["providers"]],
-                ["deepseek", "minimax", "kimi"],
+                ["deepseek", "minimax", "kimi", "volcengine"],
             )
             self.assertEqual(
                 [model["id"] for model in results["list"]["result"]["models"]],
@@ -66,6 +75,7 @@ class ModelGatewayProtocolTests(unittest.TestCase):
                     "deepseek-v4-flash",
                     "MiniMax-M3",
                     "kimi-k2.7-code-highspeed",
+                    "deepseek-v4-flash-ga-260731",
                 ],
             )
             self.assertNotIn(

@@ -11,7 +11,7 @@
 
 ## Model Provider
 
-- ModelConfigStore 只接受内置 DeepSeek、MiniMax 和 Kimi Catalog 中的五个 Model ID。
+- ModelConfigStore 只接受内置 DeepSeek、MiniMax、Kimi 和火山引擎 Catalog 中的十二个 Model ID。
 - 当前不支持 arbitrary custom provider、arbitrary base URL、arbitrary model ID、Responses API、连接测试或主动 capability probe。
 - 当前 wire API 固定为 OpenAI-compatible Chat Completions/SSE。
 - Context Usage 的 estimated 值是有界 fallback，不是 tokenizer 精确值。它不能单独证明 Provider 已拒绝请求。
