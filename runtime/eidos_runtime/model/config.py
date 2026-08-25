@@ -42,7 +42,7 @@ class ModelConfig(EidosFrozenStrictModel):
     url: str = Field(min_length=1, max_length=2048)
     api_key: str = Field(alias="apiKey", min_length=1, max_length=512)
     supports_tool_call: bool = Field(alias="supportsToolCall")
-    supports_images: bool = Field(alias="supportsImages")
+    supports_images: bool = Field(default=False, alias="supportsImages")
     supports_reasoning: bool = Field(alias="supportsReasoning")
     reasoning: ModelReasoningConfig | None = None
 
@@ -71,7 +71,7 @@ class ModelPublicConfig(EidosFrozenStrictModel):
     provider: str
     url: str
     supports_tool_call: bool = Field(alias="supportsToolCall")
-    supports_images: bool = Field(alias="supportsImages")
+    supports_images: bool = Field(default=False, alias="supportsImages")
     supports_reasoning: bool = Field(alias="supportsReasoning")
     reasoning: ModelReasoningConfig | None = None
 
@@ -83,6 +83,7 @@ class ModelProfileSpec(EidosFrozenStrictModel):
     context_window_tokens: int = Field(gt=0)
     max_output_tokens: int = Field(gt=0)
     request_timeout_seconds: float = Field(gt=0)
+    supports_images: bool = False
 
     def snapshot(self, config: ModelConfig | dict[str, object]) -> ModelProfileSnapshot:
         supports_tools = (
@@ -100,6 +101,14 @@ class ModelProfileSpec(EidosFrozenStrictModel):
             if isinstance(config, ModelConfig)
             else config.get("supports_json_schema_output") is True
         )
+        supports_images = (
+            config.supports_images
+            if isinstance(config, ModelConfig)
+            else config.get(
+                "supports_images",
+                config.get("supportsImages", self.supports_images),
+            ) is True
+        )
         return ModelProfileSnapshot(
             provider_id=self.provider_id,
             model_id=self.model_id,
@@ -110,6 +119,7 @@ class ModelProfileSpec(EidosFrozenStrictModel):
             supports_tools=supports_tools,
             supports_json_schema_output=supports_json_schema_output,
             supports_reasoning=supports_reasoning,
+            supports_images=supports_images,
         )
 
 
@@ -118,7 +128,7 @@ class CatalogModel(EidosFrozenStrictModel):
     name: str
     url: str
     supports_tool_call: bool
-    supports_images: bool
+    supports_images: bool = False
     supports_reasoning: bool
     reasoning: ModelReasoningConfig | None = None
     context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS
@@ -328,6 +338,7 @@ class ModelCatalog:
             context_window_tokens=model.context_window_tokens,
             max_output_tokens=model.max_output_tokens,
             request_timeout_seconds=DEFAULT_REQUEST_TIMEOUT_SECONDS,
+            supports_images=model.supports_images,
         )
 
     def public(self) -> dict[str, object]:

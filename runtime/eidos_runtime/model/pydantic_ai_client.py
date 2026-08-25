@@ -20,6 +20,7 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
 )
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest as PAIModelRequest,
     ModelResponse as PAIModelResponse,
@@ -67,6 +68,11 @@ from eidos_runtime.runtime.resource_registry import (
 )
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.fault_injection import hit_fault
+from eidos_runtime.tools.view_image import (
+    ViewImageError,
+    ViewImageRootAuthority,
+    read_authorized_image,
+)
 
 
 MAX_TOOL_CALL_ID_BYTES = 256
@@ -95,6 +101,7 @@ class PydanticAIModelClient:
         settings_extra_body: dict[str, object] | None = None,
         parallel_tool_calls: bool | None = True,
         reasoning_effort: str | None = None,
+        image_authority: ViewImageRootAuthority | None = None,
         async_kernel: RuntimeAsyncKernel,
     ) -> None:
         self._model = model
@@ -113,6 +120,7 @@ class PydanticAIModelClient:
         )
         self._parallel_tool_calls = parallel_tool_calls
         self._reasoning_effort = reasoning_effort
+        self._image_authority = image_authority
         self._async_kernel = async_kernel
         self._closed = False
         self._lock = threading.RLock()
@@ -267,7 +275,14 @@ class PydanticAIModelClient:
         with retry_scope:
             async with model_request_stream(
                 self._model,
-                _attach_instructions(encode_context(context), instructions),
+                _attach_instructions(
+                    encode_context(
+                        context,
+                        supports_images=self._profile_snapshot.supports_images,
+                        image_authority=self._image_authority,
+                    ),
+                    instructions,
+                ),
                 model_settings=settings,
                 model_request_parameters=parameters,
                 instrument=False,
@@ -358,7 +373,12 @@ async def _close_provider_client(provider_client: Any) -> None:
         await result
 
 
-def encode_context(context: tuple[ModelContextItem, ...]) -> list[ModelMessage]:
+def encode_context(
+    context: tuple[ModelContextItem, ...],
+    *,
+    supports_images: bool = False,
+    image_authority: ViewImageRootAuthority | None = None,
+) -> list[ModelMessage]:
     messages: list[ModelMessage] = []
     for item in context:
         item_type = item.get("type", item.get("role"))
@@ -383,8 +403,14 @@ def encode_context(context: tuple[ModelContextItem, ...]) -> list[ModelMessage]:
             name = item.get("name")
             result = item.get("result")
             if all(isinstance(value, str) for value in (call_id, name, result)):
+                content: object = result
+                if name == "view_image" and supports_images:
+                    content = _encode_view_image_result(
+                        result,
+                        image_authority=image_authority,
+                    )
                 messages.append(PAIModelRequest([
-                    ToolReturnPart(name, result, call_id)
+                    ToolReturnPart(name, content, call_id)
                 ]))
         elif item_type == "protocol_error":
             code = item.get("code")
@@ -422,6 +448,51 @@ def encode_context(context: tuple[ModelContextItem, ...]) -> list[ModelMessage]:
             raise ValueError(f"unsupported model context item type: {item_type!r}")
 
     return messages
+
+
+def _encode_view_image_result(
+    result: str,
+    *,
+    image_authority: ViewImageRootAuthority | None,
+) -> str | list[object]:
+    if image_authority is None:
+        raise ValueError("view_image_projection_failed:missing_authority")
+    try:
+        decoded = json.loads(result)
+    except json.JSONDecodeError as error:
+        raise ValueError("view_image_projection_failed:invalid_result") from error
+    if not isinstance(decoded, dict) or decoded.get("outcome") != "success":
+        return result
+    data = decoded.get("data")
+    if not isinstance(data, dict):
+        raise ValueError("view_image_projection_failed:invalid_metadata")
+    path = data.get("path")
+    mime = data.get("mime")
+    size = data.get("size")
+    sha256 = data.get("sha256")
+    if (
+        not isinstance(path, str)
+        or mime not in {"image/png", "image/jpeg"}
+        or not isinstance(size, int)
+        or isinstance(size, bool)
+        or size < 1
+        or not isinstance(sha256, str)
+        or len(sha256) != 64
+        or any(character not in "0123456789abcdef" for character in sha256)
+    ):
+        raise ValueError("view_image_projection_failed:invalid_metadata")
+    try:
+        image = read_authorized_image(path, image_authority)
+    except ViewImageError as error:
+        raise ValueError(
+            f"view_image_projection_failed:{error.code}"
+        ) from error
+    if image.mime != mime or image.size != size or image.sha256 != sha256:
+        raise ValueError("view_image_result_changed")
+    return [
+        json.dumps(decoded, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+        BinaryContent(data=image.data, media_type=image.mime),
+    ]
 
 
 def _attach_instructions(

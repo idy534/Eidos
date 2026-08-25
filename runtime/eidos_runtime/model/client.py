@@ -99,6 +99,7 @@ class ModelProfileSnapshot(_FrozenModel):
     supports_tools: bool
     supports_json_schema_output: bool
     supports_reasoning: bool
+    supports_images: bool = False
     retry_max_attempts: int = Field(default=6, ge=1, le=10)
     retry_initial_backoff_seconds: float = Field(default=0.2, ge=0, le=60)
     retry_max_backoff_seconds: float = Field(default=2.0, ge=0, le=300)
