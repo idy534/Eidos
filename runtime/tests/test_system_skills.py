@@ -143,16 +143,32 @@ class SystemSkillScriptTests(unittest.TestCase):
                 "---\nname: safe-skill\ndescription: Safe fixture.\n---\nBody.\n",
                 encoding="utf-8",
             )
+            (source / "scripts").mkdir()
+            (source / "scripts" / "run.py").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+            os.chmod(source / "scripts" / "run.py", 0o755)
+            (source / "bin").mkdir()
+            (source / "bin" / "native").write_bytes(b"native")
+            os.chmod(source / "bin" / "native", 0o4755)
             os.symlink("SKILL.md", source / "linked.md")
             with self.assertRaisesRegex(module.InstallError, "symbolic links"):
                 module._read_skill(source)
             (source / "linked.md").unlink()
+            original_document = (source / "SKILL.md").read_bytes()
+            (source / "SKILL.md").write_bytes(
+                b"---\nname: safe-skill\ndescription: Safe fixture.\n---\n"
+                + b"x" * (128 * 1024)
+            )
+            with self.assertRaisesRegex(module.InstallError, "too large"):
+                module._read_skill(source)
+            (source / "SKILL.md").write_bytes(original_document)
             name, files = module._read_skill(source)
             destination_root = root / "data" / "skills"
             module._private_directory(destination_root)
             destination = destination_root / name
             module._install(destination, files)
             self.assertEqual((destination / "SKILL.md").stat().st_mode & 0o777, 0o600)
+            self.assertEqual((destination / "scripts" / "run.py").stat().st_mode & 0o777, 0o700)
+            self.assertEqual((destination / "bin" / "native").stat().st_mode & 0o777, 0o700)
             self.assertFalse(any(path.name.startswith(".install-") for path in destination_root.iterdir()))
 
 

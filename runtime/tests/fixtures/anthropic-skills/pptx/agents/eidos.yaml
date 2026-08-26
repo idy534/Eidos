@@ -1,0 +1,15 @@
+interface:
+  display_name: PPTX
+  short_description: Slide deck support
+  icon_small: assets/preview.png
+dependencies:
+  tools:
+    - type: mcp
+      value: slide-preview
+      description: Optional preview service; detect and warn only.
+      transport: stdio
+      command: slide-preview
+policy:
+  allow_implicit_invocation: true
+  products:
+    - eidos

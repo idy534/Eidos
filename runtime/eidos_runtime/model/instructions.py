@@ -21,6 +21,7 @@ SYSTEM_SAFETY_AUTHORITY = 500
 RUNTIME_AUTHORITY = 400
 PROJECT_RULE_AUTHORITY = 200
 SELECTED_SKILL_AUTHORITY = 100
+SKILL_CATALOG_AUTHORITY = 300
 
 
 FINALIZATION_POLICY_INSTRUCTIONS = """Tool execution has stopped for the declared stop reason.
@@ -110,6 +111,7 @@ class InstructionResolver:
         self,
         *,
         rule_snapshot: RuleResolutionSnapshot | None = None,
+        skill_catalog_context: RetainedContextSection | None = None,
         selected_skill_context: tuple[RetainedContextSection, ...] = (),
         step_policy: StepPermissionPolicy | None = None,
     ) -> ResolvedInstructions:
@@ -143,6 +145,21 @@ class InstructionResolver:
                 role="developer",
                 source="eidos:runtime-permissions",
                 content=_build_runtime_permissions_content(step_policy),
+            ))
+        if skill_catalog_context is not None:
+            if (
+                skill_catalog_context.role != "developer"
+                or skill_catalog_context.section_id != "skill-catalog"
+                or skill_catalog_context.source != "skill-catalog"
+                or not skill_catalog_context.content
+            ):
+                raise ValueError("skill catalog instruction section is invalid")
+            layers.append(InstructionLayer.create(
+                id="skill-catalog",
+                authority=SKILL_CATALOG_AUTHORITY,
+                role="developer",
+                source="skill-catalog",
+                content=skill_catalog_context.content,
             ))
         # Project rules: user-context role (lower priority than user request in message order)
         if rule_snapshot is not None:

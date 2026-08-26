@@ -69,7 +69,7 @@ def _attempt_metadata(
             None,
             profile.get("wire_api"),
             profile.get("model_id"),
-            profile.get("request_timeout"),
+            profile.get("request_timeout_seconds"),
         )
     except (KeyError, TypeError, json.JSONDecodeError):
         raise StorageError("run_model_config_invalid") from None

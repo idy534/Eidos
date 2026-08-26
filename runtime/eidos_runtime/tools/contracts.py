@@ -90,6 +90,30 @@ class ReadFileInput(StrictToolModel):
         return _relative_path(value)
 
 
+class ViewImageInput(StrictToolModel):
+    path: StrictStr = Field(
+        min_length=1,
+        max_length=4_096,
+        description="Path to an image under the authorized workspace or active Skill roots.",
+    )
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        parts = value.split("/")
+        if value.startswith("/"):
+            parts = parts[1:]
+        if (
+            not value
+            or "\x00" in value
+            or "\\" in value
+            or value.endswith("/")
+            or any(part in {"", ".", ".."} for part in parts)
+        ):
+            raise ValueError("invalid_path")
+        return value
+
+
 class ReadFileRangeInput(ReadFileInput):
     startLine: StrictInt = Field(ge=1, description="First line, one-based.")
     endLine: StrictInt = Field(ge=1, description="Last requested line, inclusive.")
@@ -388,6 +412,16 @@ class ReadFileResultData(StrictToolModel):
     truncationReason: StrictStr | None = None
 
 
+class ViewImageResultData(StrictToolModel):
+    SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = (
+        "path", "mime", "size", "sha256",
+    )
+    path: StrictStr | None = None
+    mime: Literal["image/png", "image/jpeg"] | None = None
+    size: StrictInt | None = Field(default=None, ge=1)
+    sha256: StrictStr | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
 class ReadFileRangeResultData(StrictToolModel):
     SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = (
         "path", "content", "sizeBytes", "sha256", "startLine", "endLine",
@@ -447,6 +481,13 @@ class WorkspaceResultData(StrictToolModel):
     deleted: tuple[StrictStr, ...] | None = None
 
 
+class SkillInvocationMetadata(StrictToolModel):
+    skillQualifiedId: StrictStr
+    invocationType: Literal["implicit", "explicit", "model_read"]
+    source: StrictStr
+    provenance: dict[str, StrictStr]
+
+
 class RunShellResultData(WorkspaceResultData):
     ALLOW_SUCCESS_RECONCILIATION: ClassVar[bool] = True
     SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = (
@@ -476,6 +517,14 @@ class RunShellResultData(WorkspaceResultData):
         "unknown",
     ] | None = None
     effectivePermissionsSummary: dict[str, object] | None = None
+    skillInvocation: SkillInvocationMetadata | None = None
+    # These optional fields keep the pre-integration flat result shape
+    # readable for older consumers while the nested object is canonical.
+    qualifiedId: StrictStr | None = None
+    skillQualifiedId: StrictStr | None = None
+    invocationType: Literal["implicit", "explicit", "model_read"] | None = None
+    source: StrictStr | None = None
+    provenance: dict[str, StrictStr] | None = None
 
 
 class SkillReadResultData(StrictToolModel):
@@ -682,6 +731,7 @@ SKILL_READ_PROJECTOR = VersionedToolResultProjector("skill_read")
 SKILL_RESOURCE_PROJECTOR = VersionedToolResultProjector("skill_resource")
 SKILL_CHANGE_PROJECTOR = VersionedToolResultProjector("skill_change")
 TOOL_SEARCH_PROJECTOR = VersionedToolResultProjector("tool_search")
+VIEW_IMAGE_PROJECTOR = VersionedToolResultProjector("view_image")
 MCP_PROJECTOR = VersionedToolResultProjector("mcp")
 GENERIC_PROJECTOR = VersionedToolResultProjector("generic")
 
@@ -698,6 +748,7 @@ PROJECTORS: dict[str, VersionedToolResultProjector] = {
         SKILL_RESOURCE_PROJECTOR,
         SKILL_CHANGE_PROJECTOR,
         TOOL_SEARCH_PROJECTOR,
+        VIEW_IMAGE_PROJECTOR,
         MCP_PROJECTOR,
         GENERIC_PROJECTOR,
     )
@@ -729,6 +780,7 @@ def project_tool_result(
         "skill_create": "skill_change",
         "skill_install": "skill_change",
         "tool_search": "tool_search",
+        "view_image": "view_image",
     }.get(tool_name, "mcp" if tool_name.startswith("mcp__") else "generic")
     projector = PROJECTORS[policy_id]
     return _project_tool_result(

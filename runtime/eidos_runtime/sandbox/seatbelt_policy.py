@@ -39,6 +39,18 @@ class SeatbeltPolicyCompiler:
             parameters[key] = entry.resolved_path
             sections.append(_metadata_rule(key))
             sections.append(_allow_rule(entry, key))
+        skill_root_keys: tuple[str, ...] = ()
+        for index, root in enumerate(profile.active_skill_roots):
+            key = f"SKILL_ROOT_{index}"
+            parameters[key] = root
+            skill_root_keys += (key,)
+            sections.append(_metadata_rule(key))
+            sections.append(
+                "(allow file-read* file-test-existence "
+                f'(subpath (param "{key}")))\n'
+                f'(allow file-map-executable (subpath (param "{key}")))\n'
+                f'(deny file-write* (subpath (param "{key}")))'
+            )
         workspace_exceptions: dict[str, str] = {}
         for index, workspace_root in enumerate(profile.workspace_roots):
             workspace = Path(workspace_root).resolve(strict=False)
@@ -61,6 +73,18 @@ class SeatbeltPolicyCompiler:
                     entry,
                     key,
                     exception_key=workspace_exceptions.get(entry.resolved_path),
+                    exception_keys=(
+                        tuple(
+                            key
+                            for key, root in zip(
+                                skill_root_keys, profile.active_skill_roots
+                            )
+                            if Path(root) != Path(entry.resolved_path)
+                            and Path(root).is_relative_to(entry.resolved_path)
+                        )
+                        if entry.source == "permanent_deny"
+                        else ()
+                    ),
                 )
             )
         for index, path in enumerate(profile.protected_write_paths):
@@ -126,12 +150,19 @@ def _deny_rule(
     key: str,
     *,
     exception_key: str | None = None,
+    exception_keys: tuple[str, ...] = (),
 ) -> str:
     path_filter = _filter(entry, key)
-    if exception_key is not None:
+    keys = tuple(dict.fromkeys((*exception_keys, *(
+        (exception_key,) if exception_key is not None else ()
+    ))))
+    if keys:
+        exceptions = " ".join(
+            f'(require-not (subpath (param "{value}")))'
+            for value in keys
+        )
         path_filter = (
-            f'(require-all {path_filter} '
-            f'(require-not (subpath (param "{exception_key}"))))'
+            f'(require-all {path_filter} {exceptions})'
         )
     return (
         f"(deny file-read* file-write* file-map-executable "

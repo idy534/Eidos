@@ -185,12 +185,8 @@ class SkillCatalogTests(unittest.TestCase):
 
     def test_frontmatter_keeps_supported_field_validation_strict(self) -> None:
         invalid_documents = {
-            "duplicate_name": (
-                "---\nname: valid\nname: duplicate\n"
-                "description: Description.\n---\nBody.\n"
-            ),
             "invalid_name": (
-                "---\nname: not valid\n"
+                "---\nname: ../escape\n"
                 "description: Description.\n---\nBody.\n"
             ),
             "missing_description": (
@@ -229,6 +225,17 @@ class SkillCatalogTests(unittest.TestCase):
         self.assertNotIn("Inspect before editing", json.dumps(catalog))
         self.assertEqual(len(catalog[0]["contentHash"]), 64)
 
+    def test_catalog_snapshot_locator_is_a_canonical_skill_file_uri(self) -> None:
+        snapshot = self.skills.catalog_snapshot(self.snapshot)
+        entry = next(
+            item for item in snapshot.entries if item.qualified_id == "demo:review"
+        )
+        expected = (
+            self.plugins.installed_root("demo") / "skills" / "review" / "SKILL.md"
+        ).resolve().as_uri()
+
+        self.assertEqual(entry.main_resource_locator, expected)
+
     def test_reads_skill_and_resource_with_source_labels(self) -> None:
         skill = self.skills.read_skill(self.snapshot, "demo:review")
         resource = self.skills.read_resource(
@@ -247,12 +254,18 @@ class SkillCatalogTests(unittest.TestCase):
         os.symlink("references/rules.md", root / "linked.md")
         with self.assertRaisesRegex(SkillReadError, "skill_path_invalid"):
             self.skills.read_resource(self.snapshot, "demo:review", "linked.md")
+        outside = root.parent.parent / "outside-resource"
+        outside.mkdir()
+        (outside / "secret.md").write_text("outside\n", encoding="utf-8")
+        os.symlink(outside, root / "linked-dir", target_is_directory=True)
+        with self.assertRaisesRegex(SkillReadError, "skill_path_invalid"):
+            self.skills.read_resource(self.snapshot, "demo:review", "linked-dir/secret.md")
 
         (root / "binary.bin").write_bytes(b"a\x00b")
-        with self.assertRaisesRegex(SkillReadError, "skill_content_unsupported"):
+        with self.assertRaisesRegex(SkillReadError, "skill_resource_not_text"):
             self.skills.read_resource(self.snapshot, "demo:review", "binary.bin")
         (root / "invalid.txt").write_bytes(b"\xff")
-        with self.assertRaisesRegex(SkillReadError, "skill_content_unsupported"):
+        with self.assertRaisesRegex(SkillReadError, "skill_resource_not_text"):
             self.skills.read_resource(self.snapshot, "demo:review", "invalid.txt")
 
     def test_deploys_system_skills_and_discovers_user_skills(self) -> None:

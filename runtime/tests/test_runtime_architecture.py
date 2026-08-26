@@ -148,6 +148,38 @@ class RuntimeArchitectureTests(unittest.TestCase):
             self.assertEqual(tool_call["tool_set_hash"], snapshot["toolSetHash"])
             self.assertEqual(json.loads(tool_call["result_json"])["outcome"], "success")
 
+    def test_scripted_model_only_receives_view_image_for_image_capability(self) -> None:
+        from eidos_runtime.runtime.engine import RuntimeEngine
+
+        with self.runtime() as (store, session, _workspace):
+            image_profile = default_profile_snapshot(
+                "deepseek-v4-flash"
+            ).model_copy(update={"supports_images": True})
+            image_run, _ = store.create_run(
+                session["id"],
+                "inspect image",
+                model_profile=image_profile,
+            )
+            image_model = ScriptedModel([ModelResponse(text="done")])
+            RuntimeEngine(store, image_model, lambda _message: None).run(
+                image_run["id"], threading.Event()
+            )
+            self.assertIn(
+                "view_image",
+                {tool.name for tool in image_model.tool_definitions_history[0]},
+            )
+
+        with self.runtime() as (store, session, _workspace):
+            text_run, _ = store.create_run(session["id"], "inspect text")
+            text_model = ScriptedModel([ModelResponse(text="done")])
+            RuntimeEngine(store, text_model, lambda _message: None).run(
+                text_run["id"], threading.Event()
+            )
+            self.assertNotIn(
+                "view_image",
+                {tool.name for tool in text_model.tool_definitions_history[0]},
+            )
+
     def test_run_resources_closes_started_resources_when_startup_fails(self) -> None:
         from eidos_runtime.runtime.run_resources import RunResources
 
@@ -172,6 +204,82 @@ class RuntimeArchitectureTests(unittest.TestCase):
                         self.fail("resource startup unexpectedly succeeded")
             close_tool_executor.assert_called_once()
             close_mcp.assert_called_once()
+
+    def test_run_resources_gates_view_image_and_activates_skill_read_root(self) -> None:
+        from eidos_runtime.extensions.plugins import PluginCatalog
+        from eidos_runtime.extensions.skills import SkillCatalog
+        from eidos_runtime.runtime.run_resources import RunResources
+
+        with self.runtime() as (store, session, _workspace):
+            assert store.data_directory is not None
+            skill = store.data_directory / "skills" / "review"
+            skill.mkdir(mode=0o700, parents=True)
+            (skill / "SKILL.md").write_text(
+                "---\nname: review\ndescription: Review images.\n---\nBody.\n",
+                encoding="utf-8",
+            )
+            (skill / "SKILL.md").chmod(0o600)
+            (skill / "agents").mkdir(mode=0o700)
+            (skill / "agents" / "eidos.yaml").write_text(
+                "dependencies:\n"
+                "  tools:\n"
+                "    - type: mcp\n"
+                "      value: missing-documents\n"
+                "      transport: stdio\n",
+                encoding="utf-8",
+            )
+            (skill / "agents" / "eidos.yaml").chmod(0o600)
+            catalog = SkillCatalog(PluginCatalog(store))
+            extension_snapshot = catalog.extension_snapshot()
+            run, _ = store.create_run(
+                session["id"], "review", extension_snapshot=extension_snapshot
+            )
+
+            with RunResources(
+                store,
+                run["id"],
+                extension_snapshot,
+                supports_images=True,
+            ) as resources:
+                assert resources.registry is not None
+                self.assertIn("view_image", resources.registry.names)
+                self.assertEqual(resources.skill_access.active_roots(), ())
+                entry = resources.registry.get("skill_read")
+                assert entry is not None
+                result = entry.adapter.execute(
+                    {"qualifiedId": "user:review"}, threading.Event()
+                )
+                self.assertEqual(result["outcome"], "success")
+                self.assertEqual(
+                    resources.skill_access.active_roots(), (skill.resolve(),)
+                )
+                self.assertEqual(
+                    resources.image_authority().active_skill_roots,
+                    (skill.resolve(),),
+                )
+                self.assertEqual(
+                    tuple(
+                        (item.value, item.status)
+                        for item in resources.skill_dependency_diagnostics
+                    ),
+                    (("missing-documents", "missing"),),
+                )
+                warning = next(
+                    section
+                    for section in resources.retained_context
+                    if section.section_id == "skill-dependency-warning"
+                )
+                self.assertEqual(warning.role, "user")
+                self.assertIn("missing-documents", warning.content)
+
+            with RunResources(
+                store,
+                run["id"],
+                extension_snapshot,
+                supports_images=False,
+            ) as resources:
+                assert resources.registry is not None
+                self.assertNotIn("view_image", resources.registry.names)
 
     def test_projectless_run_uses_system_workspace_and_runtime_resources(self) -> None:
         from eidos_runtime.runtime.run_resources import RunResources

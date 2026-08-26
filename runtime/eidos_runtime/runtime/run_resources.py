@@ -6,6 +6,15 @@ import re
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.mcp import McpManager
 from eidos_runtime.extensions.plugins import PluginCatalog
+from eidos_runtime.extensions.skill_dependencies import (
+    SkillMcpDependencyDiagnostic,
+    diagnose_skill_mcp_dependencies,
+    render_skill_dependency_warning,
+)
+from eidos_runtime.extensions.skill_access import (
+    SkillAccess,
+    SkillAccessError,
+)
 from eidos_runtime.extensions.skills import (
     RetainedContextSection,
     SkillCatalog,
@@ -18,6 +27,7 @@ from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
 from eidos_runtime.tools.search import tool_search_entry
 from eidos_runtime.tools.runtime_workspace import ToolExecutor
+from eidos_runtime.tools.view_image import ViewImageRootAuthority, view_image_entry
 
 
 class RunResourceError(RuntimeError):
@@ -37,12 +47,14 @@ class RunResources:
         async_kernel: RuntimeAsyncKernel | None = None,
         mcp_sandbox: bool = True,
         resource_registry: ResourceRegistry | None = None,
+        supports_images: bool = False,
     ) -> None:
         self.store = store
         self.run_id = run_id
         self.extension_snapshot = extension_snapshot
         self.user_input = user_input
         self.mcp_sandbox = mcp_sandbox
+        self.supports_images = supports_images
         self.async_kernel = async_kernel
         self.resources = resource_registry or ResourceRegistry()
         self.tool_executor: ToolExecutor | None = None
@@ -53,6 +65,11 @@ class RunResources:
         self.retained_context: tuple[RetainedContextSection, ...] = ()
         self.selected_skill_context: tuple[RetainedContextSection, ...] = ()
         self.skill_catalog_snapshot: SkillCatalogSnapshot | None = None
+        self.skill_access: SkillAccess | None = None
+        self.skill_dependency_diagnostics: tuple[
+            SkillMcpDependencyDiagnostic, ...
+        ] = ()
+        self._external_entries: tuple[ToolRegistryEntry, ...] = ()
         self._closed = False
 
     def __enter__(self) -> "RunResources":
@@ -68,16 +85,21 @@ class RunResources:
                 sandbox=self.mcp_sandbox,
                 resource_registry=self.resources,
             )
-            external_entries = self.mcp.start()
+            self._external_entries = self.mcp.start()
             self.skill_catalog_snapshot = self.skills.catalog_snapshot(
                 self.extension_snapshot
             )
-            self._set_registry(external_entries)
+            self.skill_access = SkillAccess.from_snapshot(
+                self.skill_catalog_snapshot,
+            )
+            self._set_registry()
             self._activate_mentions(self.user_input)
             self.retained_context = (
                 self.skills.render_catalog(self.skill_catalog_snapshot),
             )
             self._select_skills(self.user_input, turn_id=self.run_id)
+            self._refresh_skill_dependency_diagnostics()
+            self._set_registry()
             return self
         except SkillReadError as error:
             self.close()
@@ -86,6 +108,9 @@ class RunResources:
                 if str(error) == "skill_reference_ambiguous"
                 else "SKILL_SNAPSHOT_INVALID"
             ) from None
+        except SkillAccessError as error:
+            self.close()
+            raise RunResourceError("SKILL_SNAPSHOT_INVALID") from error
         except Exception:
             self.close()
             raise
@@ -96,7 +121,7 @@ class RunResources:
         try:
             entries = self.mcp.refresh_if_changed()
             if entries is not None:
-                self._set_registry(entries)
+                self._external_entries = entries
             if new_inputs:
                 added = "\n".join(new_inputs)
                 self.user_input = added
@@ -108,6 +133,8 @@ class RunResources:
                         f"{hashlib.sha256(added.encode('utf-8')).hexdigest()}"
                     ),
                 )
+            self._refresh_skill_dependency_diagnostics()
+            self._set_registry()
         except SkillReadError as error:
             raise RunResourceError(
                 "SKILL_REFERENCE_AMBIGUOUS"
@@ -128,7 +155,7 @@ class RunResources:
         self.close()
 
     def _set_registry(
-        self, external_entries: tuple[ToolRegistryEntry, ...]
+        self, external_entries: tuple[ToolRegistryEntry, ...] | None = None
     ) -> None:
         if (
             self.tool_executor is None
@@ -136,12 +163,26 @@ class RunResources:
             or self.skill_catalog_snapshot is None
         ):
             raise RuntimeError("run resources are not started")
+        if external_entries is not None:
+            self._external_entries = external_entries
+        image_entry = (
+            view_image_entry(
+                supports_images=True,
+                authority=self.image_authority,
+            )
+            if self.supports_images
+            else None
+        )
         base = ToolRegistry.build(
             builtin_entries=(
                 *self.tool_executor.registry.entries,
-                *self.skills.tool_entries(self.skill_catalog_snapshot),
+                *self.skills.tool_entries(
+                    self.skill_catalog_snapshot,
+                    activate_model_read=self.activate_skill_model_read,
+                ),
+                *((image_entry,) if image_entry is not None else ()),
             ),
-            external_entries=external_entries,
+            external_entries=self._external_entries,
         )
         deferred = tuple(
             entry for entry in base.entries if entry.spec.visibility == "deferred"
@@ -178,4 +219,50 @@ class RunResources:
             self.skills.render_selected(self.skill_catalog_snapshot, selected)
             if selected.selected_qualified_ids
             else ()
+        )
+        if self.skill_access is not None:
+            for qualified_id in selected.selected_qualified_ids:
+                self.skill_access.activate_explicit(qualified_id)
+
+    def activate_skill_model_read(self, qualified_id: str):
+        if self.skill_access is None:
+            raise RuntimeError("run resources are not started")
+        record = self.skill_access.activate_model_read(qualified_id)
+        self._refresh_skill_dependency_diagnostics()
+        return record
+
+    def image_authority(self) -> ViewImageRootAuthority:
+        if self.skill_access is None:
+            raise RuntimeError("run resources are not started")
+        workspace = self.store.workspace_for_run(self.run_id)
+        return ViewImageRootAuthority.from_skill_access(
+            workspace.path,
+            self.skill_access,
+        )
+
+    def _refresh_skill_dependency_diagnostics(self) -> None:
+        if (
+            self.skills is None
+            or self.skill_catalog_snapshot is None
+            or self.skill_access is None
+        ):
+            return
+        self.skill_dependency_diagnostics = diagnose_skill_mcp_dependencies(
+            self.skills,
+            self.skill_catalog_snapshot,
+            tuple(record.qualified_id for record in self.skill_access.records()),
+            self.skills.plugins.list_mcp_servers(),
+            self.extension_snapshot,
+        )
+        warning = render_skill_dependency_warning(
+            self.skill_dependency_diagnostics
+        )
+        catalog_context = tuple(
+            section
+            for section in self.retained_context
+            if section.section_id == "skill-catalog"
+        )
+        self.retained_context = (
+            *catalog_context,
+            *((warning,) if warning is not None else ()),
         )

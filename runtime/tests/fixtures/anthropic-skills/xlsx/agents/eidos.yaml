@@ -1,0 +1,15 @@
+interface:
+  display_name: XLSX
+  short_description: Spreadsheet support
+  icon_small: assets/preview.png
+dependencies:
+  tools:
+    - type: mcp
+      value: spreadsheet-preview
+      description: Optional preview service; detect and warn only.
+      transport: stdio
+      command: spreadsheet-preview
+policy:
+  allow_implicit_invocation: true
+  products:
+    - eidos

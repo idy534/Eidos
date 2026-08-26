@@ -45,12 +45,12 @@
 
 ## Model
 
-- ModelConfigStore 支持内置 Catalog 中的十二个 Model，包括 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 的模型。
-- 火山引擎 Coding Plan 使用 `https://ark.cn-beijing.volces.com/api/coding/v3`，支持 `deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5-2-260617`、`doubao-seed-evolving`、`doubao-seed-2-1-pro-260628`、`doubao-seed-2-1-turbo-260628` 和 `doubao-seed-2-0-code-preview-260215`。
+- ModelConfigStore 支持内置 Catalog 中的十四个 Model，包括 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 的模型。
+- 火山引擎 Coding Plan 使用 `https://ark.cn-beijing.volces.com/api/coding/v3`，支持 `deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5-2-260617`、`glm-5.3`、`minimax-m3`、`doubao-seed-evolving`、`doubao-seed-2-1-pro-260628`、`doubao-seed-2-1-turbo-260628` 和 `doubao-seed-2-0-code-preview-260215`。
 - Model 配置保存在 `models.json`。默认位置是 `~/.eidos/models.json`。本地文件使用 owner-only 权限。
 - API Key 通过本地 Model 配置写请求链路传到 Runtime：Renderer typed IPC → Electron Main → `model/create` / `model/update` JSON-RPC request → ModelConfigStore。Key 不进入模型列表/读取响应、SQLite、Event/Feed 或正常日志。
 - Runtime 使用 OpenAI-compatible Chat Completions 和 SSE 流。Model Adapter 根据 ToolCall、非空文本和 `finish_reason` 等结构化事实映射 `commentary`、`final_answer` 或 `unknown`，并保留 Assistant 文本原样。普通采样和 Finalizer 使用同一套终态阶段契约。
-- Runtime 使用 Pydantic AI Model API 处理 Provider 构造、流式 Model Response、Usage 和 ToolCall 归一化。
+- Runtime 使用 Pydantic AI Model API 处理 Provider 构造、流式 Model Response、Usage 和 ToolCall 归一化。Runtime 的模型取消会打断流式上下文建立和首个 SSE chunk 等待，并把结果映射为 `sampling_canceled`。
 - 每个 Run 固化 Model Profile、Model capability declaration 和 Extension Snapshot。活动 Run 不会被后续 Model 配置编辑或删除改变。
 - Runtime 记录 Model Attempt、usage、response metadata、transport retry 诊断和稳定错误码。
 - Runtime 可以声明和保存 reasoning capability，但不会把 Provider reasoning 或 chain-of-thought 当作普通 Feed 内容展示。
@@ -81,7 +81,7 @@
 - Resolver 从 Workspace root 到 effective cwd 逐目录解析。
 - 每个目录只选一个最高优先级的非空候选。
 - Resolver 使用共享 32 KiB byte budget，并记录 shadowed candidates、warning、原始 hash、包含字节数、directory level 和 effective cwd。
-- InstructionResolver 将 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 组成有来源的 immutable instructions。
+- InstructionResolver 将 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 组成有来源的 immutable instructions。Skill Catalog 使用 developer capability context，实际加载的第三方 `SKILL.md` 使用 user context。
 - Step Resolution 保存 resolved instruction hash。Project Rules 不会改变 Runtime Permission、Approval 或 Sandbox 的真实执行约束。
 
 ## Repository Discovery
@@ -183,8 +183,14 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 - PluginCatalog 支持本地 Plugin v1 的导入、启用、禁用和移除。
 - Plugin manifest 可以声明 Skill 和 MCP Server。安装内容有文件数量、大小、路径、manifest、版本冲突和 content hash 校验。
-- SkillCatalog 支持 bundled system Skill、用户 Skill、Plugin Skill、Catalog Snapshot、SelectedSkillSet、主资源和受控 Resource 读取。Catalog 只使用 `SKILL.md` frontmatter 中的顶层 `name` 和 `description`，并忽略不支持的其他字段。
+- Skill 采用 `Discovery → Catalog Snapshot → Selection → SKILL.md → existing tools/run_shell → Sandbox` 边界。Discovery 读取 bundled system、用户和 Plugin Skill。Catalog 只使用 `SKILL.md` frontmatter 的顶层 `name` 和 `description`，并保留 source、version、source hash 和 content hash。`license`、`compatibility`、`metadata`、`allowed-tools` 等其他字段不会改变 Tool、Permission 或 Sandbox。
+- Selection 当前支持 qualified `@source:name` 和唯一的 `@name`/`$name` 引用。选中后 Runtime 才完整读取 `SKILL.md`。Skill 使用 progressive disclosure：`references/`、`scripts/` 和 `assets/` 只按说明通过相对路径读取，不能把完整 Skill tree 注入 Context。
+- `agents/eidos.yaml` 是可选 metadata。Runtime 使用统一 YAML parser 读取 interface、asset、dependency 和 policy metadata。无效可选 metadata 会 warning 并忽略。`allow_implicit_invocation = false` 会禁止 Shell 识别自动激活，但不影响显式选择和 `skill_read`。Skill 不管理 pip、npm、系统命令或其他运行时依赖。
+- Skill 脚本复用已有 `run_shell`。受信任的 Catalog Skill 下的相对 `scripts/` 调用可以产生 implicit activation，并把 active Skill root 放入权限快照。Workspace root 是读写；active Skill root 是只读并允许 executable mapping。Seatbelt 拒绝 active Skill root 写入。
+- Skill binary asset 在安装时按 bytes 保留。`skill_read_resource` 只返回有界 UTF-8 文本。支持图像输入的 Model 才能使用 `view_image`，它可以从 Workspace root 或 active Skill root 读取受信任 PNG/JPEG，并以 multimodal binary content 重新投影给模型。DOCX、PPTX、PDF、XLSX 等其他 binary asset 不会被当作文本读取。
 - Skill provenance、Plugin hash、Skill content hash 和 activation snapshot 进入 Run/Step 边界。
+- RunResources 会收集 active Skill 的 MCP dependency，并与本 Run extension snapshot 中 available 的 Plugin MCP server 比较，生成 installed、missing 或 unsupported 诊断。未满足项会进入低权限 user context warning。Runtime 不会静默安装、启用或启动 MCP server。Plugin MCP 仍使用独立的 server consent、官方 Python MCP SDK stdio client、Tool discovery、Tool call、Approval 和 Sandbox 链路。
+- `SkillCatalog` 为每个 filesystem Skill 固化 canonical `file:` locator、source kind、content hash 和 implicit policy。`SkillAccess` 只从该 snapshot 激活 root。显式选择、成功的 `skill_read` 和已知 Skill script invocation 共用 Run-scoped activation state，并通过 ToolCallRuntime 进入 Shell 和 Seatbelt。模型不能提交任意 absolute path 来扩大权限。
 - MCP 当前支持 stdio Tools。Server consent、`connector`/`workspace_read` permission profile、Tool discovery、Tool call、timeout、结果 schema 和 Tool List Changed bookkeeping 已接入。
 - MCP Connection 由唯一 RuntimeAsyncKernel 持有，不为每个连接创建专用 Event Loop。
 

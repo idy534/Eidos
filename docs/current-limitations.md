@@ -11,7 +11,7 @@
 
 ## Model Provider
 
-- ModelConfigStore 只接受内置 DeepSeek、MiniMax、Kimi 和火山引擎 Catalog 中的十二个 Model ID。
+- ModelConfigStore 只接受内置 DeepSeek、MiniMax、Kimi 和火山引擎 Catalog 中的十四个 Model ID。
 - 当前不支持 arbitrary custom provider、arbitrary base URL、arbitrary model ID、Responses API、连接测试或主动 capability probe。
 - 当前 wire API 固定为 OpenAI-compatible Chat Completions/SSE。
 - Chat Completions 没有原生的 Assistant `phase` 字段。Runtime 只能在 Adapter 边界根据 ToolCall、非空文本和 `finish_reason=stop` 证明 `final_answer`。无法证明的文本会进入一次有界协议修复，重复失败会返回 `MODEL_PROTOCOL_ERROR`。

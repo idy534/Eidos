@@ -111,6 +111,18 @@ class ModelPersistenceTests(unittest.TestCase):
         self.assertEqual(attempt["providerResponseId"], "response-1")
         self.assertIsNotNone(attempt["durationMs"])
 
+    def test_model_attempt_persists_frozen_request_timeout(self) -> None:
+        run, _ = self.store.create_run(
+            self.session["id"],
+            "request timeout",
+            model_profile=self.profile(),
+        )
+
+        self.store.increment_model_step(run["id"])
+
+        attempt = self.store.read_model_attempts(run["id"])[0]
+        self.assertEqual(attempt["requestTimeout"], 120.0)
+
     def test_recovery_keeps_completed_attempt_metadata(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "recover")
         self.store.increment_model_step(run["id"])

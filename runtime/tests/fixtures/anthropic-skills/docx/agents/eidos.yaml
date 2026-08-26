@@ -1,0 +1,15 @@
+interface:
+  display_name: DOCX
+  short_description: Word document support
+  icon_small: assets/preview.png
+dependencies:
+  tools:
+    - type: mcp
+      value: document-preview
+      description: Optional preview service; detect and warn only.
+      transport: stdio
+      command: document-preview
+policy:
+  allow_implicit_invocation: true
+  products:
+    - eidos
