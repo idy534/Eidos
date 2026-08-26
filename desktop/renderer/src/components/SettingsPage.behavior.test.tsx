@@ -37,11 +37,23 @@ const presets: ModelPresetsResult = {
       }],
     },
     {
-      id: "volcengine", name: "火山引擎 / Volcengine", models: [{
-        id: "deepseek-v4-pro-ga-260813", name: "DeepSeek V4 Pro GA",
-        url: "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
-        supportsToolCall: true, supportsImages: false, supportsReasoning: false,
-      }],
+      id: "volcengine", name: "火山引擎 / Volcengine", models: [
+        {
+          id: "deepseek-v4-pro-ga-260813", name: "DeepSeek V4 Pro GA",
+          url: "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+          supportsToolCall: true, supportsImages: false, supportsReasoning: false,
+        },
+        {
+          id: "glm-5.3", name: "GLM 5.3",
+          url: "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+          supportsToolCall: true, supportsImages: false, supportsReasoning: false,
+        },
+        {
+          id: "minimax-m3", name: "MiniMax M3",
+          url: "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+          supportsToolCall: true, supportsImages: true, supportsReasoning: false,
+        },
+      ],
     },
   ],
 };
@@ -134,6 +146,8 @@ describe("Model settings", () => {
     await user.click(await screen.findByRole("button", { name: "添加模型" }));
     await user.selectOptions(screen.getByLabelText("提供商"), "volcengine");
     expect(screen.getByRole("option", { name: "DeepSeek V4 Pro GA" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "GLM 5.3" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "MiniMax M3" })).toBeInTheDocument();
     await user.type(screen.getByLabelText("API Key"), "volcengine-secret");
     await user.click(screen.getByRole("button", { name: "保存" }));
 

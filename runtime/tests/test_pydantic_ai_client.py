@@ -48,7 +48,6 @@ from eidos_runtime.model.prompts import (  # noqa: E402
 )
 from eidos_runtime.model.pydantic_ai_client import (  # noqa: E402
     PydanticAIModelClient,
-    _cancel_when_requested,
     encode_context,
     map_model_error,
     map_model_response,
@@ -500,19 +499,6 @@ class PydanticAIModelClientTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.failure.code, "sampling_canceled")
 
-    def test_cancel_bridge_calls_public_stream_cancel(self) -> None:
-        class CancelableStream:
-            canceled = False
-
-            async def cancel(self) -> None:
-                self.canceled = True
-
-        stream = CancelableStream()
-        cancel = threading.Event()
-        cancel.set()
-        asyncio.run(_cancel_when_requested(cancel, stream))  # type: ignore[arg-type]
-        self.assertTrue(stream.canceled)
-
     def test_cancel_stops_an_idle_stream_without_waiting_for_an_event(self) -> None:
         class IdleStream:
             def __init__(self) -> None:
@@ -572,6 +558,67 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertIsInstance(result[0], ModelRequestError)
         self.assertEqual(result[0].failure.code, "sampling_canceled")
+
+    def test_cancel_interrupts_stream_initialization_before_first_chunk(self) -> None:
+        stream_started = threading.Event()
+        stream_closed = threading.Event()
+        release_stream = threading.Event()
+
+        async def delayed_stream(_messages, _info):
+            stream_started.set()
+            try:
+                while not release_stream.is_set():
+                    await asyncio.sleep(0.01)
+                yield "late"
+            finally:
+                stream_closed.set()
+
+        client = self.client(delayed_stream)
+        cancel = threading.Event()
+        completed = threading.Event()
+        result: list[BaseException] = []
+
+        def complete() -> None:
+            try:
+                client.complete(
+                    (),
+                    cancel,
+                    lambda _delta: None,
+                    instructions=TEST_INSTRUCTIONS,
+                )
+            except BaseException as error:
+                result.append(error)
+            finally:
+                completed.set()
+
+        worker = threading.Thread(target=complete)
+        worker.start()
+        completed_promptly = False
+        stream_closed_promptly = False
+        try:
+            self.assertTrue(stream_started.wait(timeout=1.0))
+            cancel.set()
+            completed_promptly = completed.wait(timeout=1.0)
+            stream_closed_promptly = stream_closed.wait(timeout=1.0)
+        finally:
+            release_stream.set()
+            worker.join(timeout=1.0)
+
+        self.assertTrue(completed_promptly)
+        self.assertTrue(stream_closed_promptly)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(result), 1)
+        self.assertIsInstance(result[0], ModelRequestError)
+        self.assertEqual(result[0].failure.code, "sampling_canceled")
+
+        cancel.clear()
+        response = client.complete(
+            (),
+            cancel,
+            lambda _delta: None,
+            instructions=TEST_INSTRUCTIONS,
+        )
+        self.assertEqual(response.text, "late")
 
     def test_client_remains_reusable_after_cancelled_call(self) -> None:
         client = self.client(_one_chunk)

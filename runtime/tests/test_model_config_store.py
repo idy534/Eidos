@@ -44,6 +44,8 @@ def test_model_presets_only_expose_the_supported_catalog() -> None:
         "deepseek-v4-pro-ga-260813",
         "deepseek-v4-flash-ga-260731",
         "glm-5-2-260617",
+        "glm-5.3",
+        "minimax-m3",
         "doubao-seed-evolving",
         "doubao-seed-2-1-pro-260628",
         "doubao-seed-2-1-turbo-260628",
@@ -64,6 +66,8 @@ def test_volcengine_coding_plan_catalog_uses_the_documented_endpoint_and_limits(
         "deepseek-v4-pro-ga-260813",
         "deepseek-v4-flash-ga-260731",
         "glm-5-2-260617",
+        "glm-5.3",
+        "minimax-m3",
         "doubao-seed-evolving",
         "doubao-seed-2-1-pro-260628",
         "doubao-seed-2-1-turbo-260628",
@@ -78,6 +82,8 @@ def test_volcengine_coding_plan_catalog_uses_the_documented_endpoint_and_limits(
         "deepseek-v4-pro-ga-260813": (1_048_576, 131_072),
         "deepseek-v4-flash-ga-260731": (1_048_576, 393_216),
         "glm-5-2-260617": (1_048_576, 131_072),
+        "glm-5.3": (1_048_576, 131_072),
+        "minimax-m3": (524_288, 131_072),
         "doubao-seed-evolving": (1_048_576, 262_144),
         "doubao-seed-2-1-pro-260628": (262_144, 262_144),
         "doubao-seed-2-1-turbo-260628": (262_144, 262_144),
@@ -87,6 +93,11 @@ def test_volcengine_coding_plan_catalog_uses_the_documented_endpoint_and_limits(
         profile = MODEL_CATALOG.profile(model_id)
         assert profile.context_window_tokens == context_window
         assert profile.max_output_tokens == max_output
+
+    glm = next(model for model in provider["models"] if model["id"] == "glm-5.3")
+    minimax = next(model for model in provider["models"] if model["id"] == "minimax-m3")
+    assert glm["supportsImages"] is False
+    assert minimax["supportsImages"] is True
 
 
 def test_missing_models_file_lists_an_empty_array(tmp_path: Path) -> None:

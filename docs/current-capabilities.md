@@ -45,12 +45,12 @@
 
 ## Model
 
-- ModelConfigStore 支持内置 Catalog 中的十二个 Model，包括 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 的模型。
-- 火山引擎 Coding Plan 使用 `https://ark.cn-beijing.volces.com/api/coding/v3`，支持 `deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5-2-260617`、`doubao-seed-evolving`、`doubao-seed-2-1-pro-260628`、`doubao-seed-2-1-turbo-260628` 和 `doubao-seed-2-0-code-preview-260215`。
+- ModelConfigStore 支持内置 Catalog 中的十四个 Model，包括 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 的模型。
+- 火山引擎 Coding Plan 使用 `https://ark.cn-beijing.volces.com/api/coding/v3`，支持 `deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5-2-260617`、`glm-5.3`、`minimax-m3`、`doubao-seed-evolving`、`doubao-seed-2-1-pro-260628`、`doubao-seed-2-1-turbo-260628` 和 `doubao-seed-2-0-code-preview-260215`。
 - Model 配置保存在 `models.json`。默认位置是 `~/.eidos/models.json`。本地文件使用 owner-only 权限。
 - API Key 通过本地 Model 配置写请求链路传到 Runtime：Renderer typed IPC → Electron Main → `model/create` / `model/update` JSON-RPC request → ModelConfigStore。Key 不进入模型列表/读取响应、SQLite、Event/Feed 或正常日志。
 - Runtime 使用 OpenAI-compatible Chat Completions 和 SSE 流。Model Adapter 根据 ToolCall、非空文本和 `finish_reason` 等结构化事实映射 `commentary`、`final_answer` 或 `unknown`，并保留 Assistant 文本原样。普通采样和 Finalizer 使用同一套终态阶段契约。
-- Runtime 使用 Pydantic AI Model API 处理 Provider 构造、流式 Model Response、Usage 和 ToolCall 归一化。
+- Runtime 使用 Pydantic AI Model API 处理 Provider 构造、流式 Model Response、Usage 和 ToolCall 归一化。Runtime 的模型取消会打断流式上下文建立和首个 SSE chunk 等待，并把结果映射为 `sampling_canceled`。
 - 每个 Run 固化 Model Profile、Model capability declaration 和 Extension Snapshot。活动 Run 不会被后续 Model 配置编辑或删除改变。
 - Runtime 记录 Model Attempt、usage、response metadata、transport retry 诊断和稳定错误码。
 - Runtime 可以声明和保存 reasoning capability，但不会把 Provider reasoning 或 chain-of-thought 当作普通 Feed 内容展示。

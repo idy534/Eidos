@@ -154,12 +154,13 @@ deepseek: deepseek-v4-pro, deepseek-v4-flash
 minimax:  MiniMax-M3
 kimi:    kimi-k3, kimi-k2.7-code-highspeed
 volcengine: deepseek-v4-pro-ga-260813, deepseek-v4-flash-ga-260731,
-            glm-5-2-260617, doubao-seed-evolving,
+            glm-5-2-260617, glm-5.3, minimax-m3,
+            doubao-seed-evolving,
             doubao-seed-2-1-pro-260628, doubao-seed-2-1-turbo-260628,
             doubao-seed-2-0-code-preview-260215
 ```
 
-ModelConfigStore 要求配置与内置 Catalog 严格匹配。当前 wire API 只有 OpenAI-compatible Chat Completions。Runtime 使用 Pydantic AI 的 Model API、Provider 和流式请求边界。Runtime 不提供 arbitrary custom provider、arbitrary base URL、arbitrary model ID 或 Responses API。
+ModelConfigStore 要求配置与内置 Catalog 严格匹配。当前 wire API 只有 OpenAI-compatible Chat Completions。Runtime 使用 Pydantic AI 的 Model API、Provider 和流式请求边界。模型请求取消覆盖流式上下文建立和首个 SSE chunk 等待阶段。流建立后，Runtime 通过 `StreamedResponse.cancel()` 取消已建立的流。两条路径都复用 RuntimeAsyncKernel 的同一 asyncio loop。Runtime 不提供 arbitrary custom provider、arbitrary base URL、arbitrary model ID 或 Responses API。
 
 每个 Run 固化 Model Profile 和 Extension Snapshot。Model Lease 使用该快照创建 Provider Client。Model Attempt 保存 usage、响应元数据、有限的 transport retry 诊断和稳定 Eidos 错误码。Model Client 不拥有 Runtime Event Loop；共享 RuntimeAsyncKernel 负责其异步 I/O。
 

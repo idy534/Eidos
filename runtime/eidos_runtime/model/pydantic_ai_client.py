@@ -282,40 +282,56 @@ class PydanticAIModelClient:
             else nullcontext()
         )
         with retry_scope:
-            async with model_request_stream(
-                self._model,
-                _attach_instructions(
-                    encode_context(
-                        context,
-                        supports_images=self._profile_snapshot.supports_images,
-                        image_authority=self._image_authority,
+            stream_ref: list[StreamedResponse | None] = [None]
+
+            async def consume_stream() -> ModelResponse:
+                async with model_request_stream(
+                    self._model,
+                    _attach_instructions(
+                        encode_context(
+                            context,
+                            supports_images=self._profile_snapshot.supports_images,
+                            image_authority=self._image_authority,
+                        ),
+                        instructions,
                     ),
-                    instructions,
-                ),
-                model_settings=settings,
-                model_request_parameters=parameters,
-                instrument=False,
-            ) as stream:
-                cancel_task = asyncio.create_task(_cancel_when_requested(cancel, stream))
-                try:
-                    async for event in stream:
-                        if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-                            if event.part.content:
-                                await anyio.to_thread.run_sync(
-                                    on_text_delta, event.part.content
-                                )
-                        elif isinstance(event, PartDeltaEvent) and isinstance(
-                            event.delta, TextPartDelta
-                        ):
-                            if event.delta.content_delta:
-                                await anyio.to_thread.run_sync(
-                                    on_text_delta, event.delta.content_delta
-                                )
-                    response = stream.get()
-                finally:
-                    cancel_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await cancel_task
+                    model_settings=settings,
+                    model_request_parameters=parameters,
+                    instrument=False,
+                ) as stream:
+                    stream_ref[0] = stream
+                    try:
+                        async for event in stream:
+                            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                                if event.part.content:
+                                    await anyio.to_thread.run_sync(
+                                        on_text_delta, event.part.content
+                                    )
+                            elif isinstance(event, PartDeltaEvent) and isinstance(
+                                event.delta, TextPartDelta
+                            ):
+                                if event.delta.content_delta:
+                                    await anyio.to_thread.run_sync(
+                                        on_text_delta, event.delta.content_delta
+                                    )
+                        return stream.get()
+                    finally:
+                        stream_ref[0] = None
+
+            request_task = asyncio.create_task(consume_stream())
+            cancel_task = asyncio.create_task(
+                _cancel_request_or_stream(cancel, request_task, stream_ref)
+            )
+            try:
+                response = await request_task
+            except asyncio.CancelledError:
+                if cancel.is_set():
+                    raise ModelRequestError(_cancelled_failure()) from None
+                raise
+            finally:
+                cancel_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await cancel_task
         if cancel.is_set():
             raise ModelRequestError(_cancelled_failure())
         return map_model_response(response, retry_tracker=retry_tracker)
@@ -693,13 +709,18 @@ def _stable_call_id(index: int, name: str, arguments: bytes) -> str:
     return f"pyd_ai_{digest[:32]}"
 
 
-async def _cancel_when_requested(
+async def _cancel_request_or_stream(
     cancel: threading.Event,
-    stream: StreamedResponse,
+    request_task: asyncio.Task[ModelResponse],
+    stream_ref: list[StreamedResponse | None],
 ) -> None:
     while not cancel.is_set():
         await asyncio.sleep(0.025)
     hit_fault("model_cancel_delay")
+    stream = stream_ref[0]
+    if stream is None:
+        request_task.cancel()
+        return
     await stream.cancel()
 
 
