@@ -20,7 +20,10 @@ from eidos_runtime.protocol.schemas import ToolResultDto
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 from eidos_runtime.db.storage import WorkspaceIdentity
 from eidos_runtime.sandbox.file_metadata import (
+    FileMetadataCloneUnavailable,
     FileMetadataError,
+    clone_file_with_metadata,
+    copy_file_acl,
     copy_replace_metadata,
 )
 from eidos_runtime.sandbox.seatbelt import secure_workspace_move
@@ -129,7 +132,7 @@ _BUILTIN_CONTRACTS = (
     ("read_file_range", "Read an inclusive bounded line range from one UTF-8 file. Continue from nextLine when present.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
     ("search_text", "Search a workspace-relative path (default '.') for a single-line query; supports maxResults, regex, and includeGlobs. Results are workspace-relative, bounded, and may be truncated.", "none", False, 5, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
     ("write_file", "Create or replace one UTF-8 file inside the workspace and verify the final hash. Modifies the workspace without approval.", "workspace", False, 5, "single", WriteFileInput, WorkspaceResultData, "file_change"),
-    ("apply_patch", "Apply one strict unified diff to one workspace file. Patch context, base hash, and final content are verified without approval.", "workspace", False, 5, "single", ApplyPatchInput, WorkspaceResultData, "file_change"),
+    ("apply_patch", "Apply one single-file patch using standard unified hunks or exact context-matched @@ hunks. Path, base hash, and final content are verified without approval.", "workspace", False, 5, "single", ApplyPatchInput, WorkspaceResultData, "file_change"),
     ("delete_file", "Delete one regular UTF-8 file inside the workspace after base hash verification and without approval.", "workspace", False, 5, "single", DeleteFileInput, WorkspaceResultData, "file_change"),
     ("run_shell", "Run one shell command in the default macOS workspace sandbox without approval. For requested network access, set sandboxPermissions=with_additional_permissions, additionalPermissions.network.enabled=true, and provide justification so Eidos can request approval. Additional path access and unsandboxed execution also require approval. Output and workspace changes are bounded and verified.", "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
 )
@@ -561,12 +564,43 @@ class ToolExecutor:
                     )
                 return _success(tool_name, "File deleted", {"path": change.path})
             temporary_name = f".eidos-{uuid.uuid4().hex}.tmp"
-            flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
-            if hasattr(os, "O_NOFOLLOW"):
-                flags |= os.O_NOFOLLOW
-            descriptor = os.open(temporary_name, flags, change.mode, dir_fd=self.root_fd)
+            cloned_metadata = False
+            if source_fd >= 0:
+                try:
+                    clone_file_with_metadata(
+                        source_fd,
+                        self.root_fd,
+                        temporary_name,
+                    )
+                    cloned_metadata = True
+                except FileMetadataCloneUnavailable:
+                    try:
+                        os.unlink(temporary_name, dir_fd=self.root_fd)
+                    except FileNotFoundError:
+                        pass
+                except FileMetadataError as error:
+                    raise WorkspacePathError(
+                        "file_metadata_preservation_failed"
+                    ) from error
+            if cloned_metadata:
+                descriptor = _open_cloned_file_for_write(
+                    self.root_fd,
+                    temporary_name,
+                )
+            else:
+                flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
+                if hasattr(os, "O_NOFOLLOW"):
+                    flags |= os.O_NOFOLLOW
+                descriptor = os.open(
+                    temporary_name,
+                    flags,
+                    change.mode,
+                    dir_fd=self.root_fd,
+                )
             try:
-                if source_fd >= 0:
+                if cloned_metadata:
+                    os.ftruncate(descriptor, 0)
+                if source_fd >= 0 and not cloned_metadata:
                     try:
                         copy_replace_metadata(source_fd, descriptor)
                     except FileMetadataError as error:
@@ -581,6 +615,13 @@ class ToolExecutor:
                         raise WorkspacePathError("file_write_failed")
                     offset += written
                 os.fchmod(descriptor, change.mode)
+                if source_fd >= 0 and cloned_metadata:
+                    try:
+                        copy_file_acl(source_fd, descriptor)
+                    except FileMetadataError as error:
+                        raise WorkspacePathError(
+                            "file_metadata_preservation_failed"
+                        ) from error
                 os.fsync(descriptor)
             finally:
                 os.close(descriptor)
@@ -1173,6 +1214,28 @@ def _read_regular_file(
     ) or len(content) != before.st_size:
         raise WorkspacePathError("workspace_changed")
     return content, after
+
+
+def _open_cloned_file_for_write(root_fd: int, name: str) -> int:
+    flags = os.O_RDWR | os.O_NONBLOCK
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        return os.open(name, flags, dir_fd=root_fd)
+    except PermissionError:
+        # A cloned regular file can retain a read-only mode. The temporary
+        # inode is not user-visible, so grant it a private write mode before
+        # reopening it for the candidate bytes. The final mode is restored by
+        # commit_file_change after the write completes.
+        read_flags = os.O_RDONLY | os.O_NONBLOCK
+        if hasattr(os, "O_NOFOLLOW"):
+            read_flags |= os.O_NOFOLLOW
+        descriptor = os.open(name, read_flags, dir_fd=root_fd)
+        try:
+            os.fchmod(descriptor, 0o600)
+        finally:
+            os.close(descriptor)
+        return os.open(name, flags, dir_fd=root_fd)
 
 
 def _stat_relative_path(root_fd: int, relative: str) -> os.stat_result:

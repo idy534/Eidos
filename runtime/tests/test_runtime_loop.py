@@ -1297,6 +1297,32 @@ class ToolExecutorTests(unittest.TestCase):
             (self.workspace / "src" / "app.py").read_text(), "print('updated')\n"
         )
 
+    def test_position_independent_patch_prepares_and_commits_expected_content(
+        self,
+    ) -> None:
+        patch = """--- a/src/app.py
++++ b/src/app.py
+@@
+-print('needle')
++print('updated')
+"""
+        prepared = self.executor.prepare_file_change(
+            "apply_patch",
+            {"path": "src/app.py", "patch": patch},
+            threading.Event(),
+        )
+        self.assertFalse(isinstance(prepared, dict), prepared)
+        assert not isinstance(prepared, dict)
+
+        result = self.executor.commit_file_change(
+            "apply_patch", prepared, threading.Event()
+        )
+
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(
+            (self.workspace / "src" / "app.py").read_text(), "print('updated')\n"
+        )
+
     def test_existing_symlink_is_not_treated_as_a_new_file(self) -> None:
         outside = self.workspace / "outside.txt"
         outside.write_text("outside\n", encoding="utf-8")
@@ -1504,6 +1530,112 @@ class ToolExecutorTests(unittest.TestCase):
         )
         self.assertEqual(read_back.returncode, 0)
         self.assertEqual(read_back.stdout.rstrip("\n"), "value")
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS file metadata")
+    def test_apple_provenance_attribute_is_preserved_by_atomic_update(self) -> None:
+        target = self.workspace / "provenance.txt"
+        target.write_text("base\n", encoding="utf-8")
+        completed = subprocess.run(
+            [
+                "/usr/bin/xattr",
+                "-w",
+                "com.apple.provenance",
+                "provenance-fixture",
+                str(target),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            self.skipTest(f"provenance fixture unavailable: {completed.stderr.strip()}")
+
+        before = subprocess.run(
+            ["/usr/bin/xattr", "-px", "com.apple.provenance", str(target)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if before.returncode != 0:
+            self.skipTest(f"provenance fixture unreadable: {before.stderr.strip()}")
+
+        prepared = self.executor.prepare_file_change(
+            "write_file",
+            {"path": "provenance.txt", "content": "change\n"},
+            threading.Event(),
+        )
+
+        assert not isinstance(prepared, dict)
+        result = self.executor.commit_file_change(
+            "write_file", prepared, threading.Event()
+        )
+
+        self.assertEqual(result["outcome"], "success")
+        after = subprocess.run(
+            ["/usr/bin/xattr", "-px", "com.apple.provenance", str(target)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(after.returncode, 0)
+        self.assertEqual(after.stdout, before.stdout)
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS file metadata")
+    def test_provenance_write_does_not_depend_on_legacy_metadata_copy(self) -> None:
+        target = self.workspace / "provenance-copy-fallback.txt"
+        target.write_text("base\n", encoding="utf-8")
+        completed = subprocess.run(
+            [
+                "/usr/bin/xattr",
+                "-wx",
+                "com.apple.provenance",
+                "01 02 00 D2 AA 07 DB 38 FD 20 76",
+                str(target),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            self.skipTest(f"provenance fixture unavailable: {completed.stderr.strip()}")
+
+        before = subprocess.run(
+            ["/usr/bin/xattr", "-px", "com.apple.provenance", str(target)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if before.returncode != 0:
+            self.skipTest(f"provenance fixture unreadable: {before.stderr.strip()}")
+
+        prepared = self.executor.prepare_file_change(
+            "write_file",
+            {"path": target.name, "content": "change\n"},
+            threading.Event(),
+        )
+        assert not isinstance(prepared, dict)
+
+        def reject_legacy_copy(source_fd: int, target_fd: int) -> None:
+            raise OSError("simulated provenance copy failure")
+
+        with mock_patch(
+            "eidos_runtime.tools.workspace.copy_replace_metadata",
+            side_effect=reject_legacy_copy,
+        ):
+            result = self.executor.commit_file_change(
+                "write_file", prepared, threading.Event()
+            )
+
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(target.read_text(encoding="utf-8"), "change\n")
+        after = subprocess.run(
+            ["/usr/bin/xattr", "-px", "com.apple.provenance", str(target)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(after.returncode, 0)
+        self.assertEqual(after.stdout, before.stdout)
 
     @unittest.skipUnless(sys.platform == "darwin", "requires macOS file metadata")
     def test_access_control_list_is_preserved_by_atomic_update(self) -> None:

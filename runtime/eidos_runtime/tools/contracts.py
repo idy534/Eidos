@@ -190,7 +190,12 @@ class WriteFileInput(ReadFileInput):
 
 
 class ApplyPatchInput(ReadFileInput):
-    patch: StrictStr = Field(description="Strict unified diff for exactly one file.")
+    patch: StrictStr = Field(
+        description=(
+            "Patch for exactly one file. Use standard unified hunks or exact "
+            "context-matched @@ hunks without line numbers."
+        )
+    )
 
     @field_validator("patch")
     @classmethod

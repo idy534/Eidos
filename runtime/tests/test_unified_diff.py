@@ -36,6 +36,168 @@ class UnifiedDiffTests(unittest.TestCase):
             "before\nnew\nafter\n",
         )
 
+    def test_applies_codex_style_position_independent_update_hunk(self) -> None:
+        self.assertEqual(
+            self.apply(
+                "before\nold\nafter\n",
+                "--- a/notes.txt\n+++ b/notes.txt\n@@\n-before\n-old\n+before\n+new\n",
+            ),
+            "before\nnew\nafter\n",
+        )
+
+    def test_applies_real_codex_style_multiline_replacement(self) -> None:
+        original = (
+            "致未来的我：\n\n"
+            "今天你开口说\"随便文档\"，又催\"快点\"，最后甩了句\"可以\"。\n"
+            "全程下来你没给文件名、没说写点啥、没说放哪个目录，\n"
+            "全靠我顺着你递的台阶往下跳，才给你整出这么个文件来。\n\n"
+            "此文件的内容，就是记录你这段话：\n"
+            "\"随便文档\" → \"快点\" → \"可以\"\n\n"
+            "——从头到尾，您连一个像样的需求都没提过。🗿\n"
+            "键盘侠诚不欺我：你不认真，就真的输了。\n"
+        )
+        patch = (
+            "--- a/快不起来了.txt\n+++ b/快不起来了.txt\n@@\n"
+            "-致未来的我：\n-\n"
+            "-今天你开口说\"随便文档\"，又催\"快点\"，最后甩了句\"可以\"。\n"
+            "-全程下来你没给文件名、没说写点啥、没说放哪个目录，\n"
+            "-全靠我顺着你递的台阶往下跳，才给你整出这么个文件来。\n-\n"
+            "-此文件的内容，就是记录你这段话：\n"
+            "-\"随便文档\" → \"快点\" → \"可以\"\n-\n"
+            "-——从头到尾，您连一个像样的需求都没提过。🗿\n"
+            "-键盘侠诚不欺我：你不认真，就真的输了。\n"
+            "+致未来打开这个文件的人：\n+\n"
+            "+你正在读一个\"梗\"。\n"
+            "+它不是文档，不是需求，也不是任务清单。\n+\n"
+            "+它只是我熬夜赶工时的精神状态：\n"
+            "+\"再改最后一版\"\n"
+            "+→ \"这次真的定了\"\n"
+            "+→ \"还是用回第一版吧\"\n+\n"
+            "+——甲方诚不欺我：你永远不知道最后一版是第几版。🫠\n"
+        )
+        self.assertEqual(
+            self.apply(original, patch, path="快不起来了.txt"),
+            "致未来打开这个文件的人：\n\n"
+            "你正在读一个\"梗\"。\n"
+            "它不是文档，不是需求，也不是任务清单。\n\n"
+            "它只是我熬夜赶工时的精神状态：\n"
+            "\"再改最后一版\"\n"
+            "→ \"这次真的定了\"\n"
+            "→ \"还是用回第一版吧\"\n\n"
+            "——甲方诚不欺我：你永远不知道最后一版是第几版。🫠\n",
+        )
+
+    def test_applies_codex_style_context_and_multiple_forward_hunks(self) -> None:
+        self.assertEqual(
+            self.apply(
+                "def first():\nold one\n\ndef second():\nold two\n",
+                "--- a/notes.txt\n+++ b/notes.txt\n"
+                "@@\n-def first():\n+def FIRST():\n"
+                "@@ def second():\n-old two\n+new two\n",
+            ),
+            "def FIRST():\nold one\n\ndef second():\nnew two\n",
+        )
+
+    def test_applies_codex_style_pure_addition_at_eof(self) -> None:
+        self.assertEqual(
+            self.apply(
+                "old\n",
+                "--- a/notes.txt\n+++ b/notes.txt\n@@\n+new\n",
+            ),
+            "old\nnew\n",
+        )
+
+    def test_applies_codex_style_context_only_addition_after_context(self) -> None:
+        self.assertEqual(
+            self.apply(
+                "before\nanchor\nafter\n",
+                "--- a/notes.txt\n+++ b/notes.txt\n@@ anchor\n+inserted\n",
+            ),
+            "before\nanchor\ninserted\nafter\n",
+        )
+
+    def test_preserves_order_for_multiple_codex_style_eof_insertions(self) -> None:
+        self.assertEqual(
+            self.apply(
+                "old\n",
+                "--- a/notes.txt\n+++ b/notes.txt\n@@\n+first\n"
+                "@@\n+second\n",
+            ),
+            "old\nfirst\nsecond\n",
+        )
+
+    def test_rejects_ambiguous_or_mismatched_codex_style_context(self) -> None:
+        self.assert_error(
+            "patch_context_mismatch",
+            "dup\nkeep\ndup\n",
+            "--- a/notes.txt\n+++ b/notes.txt\n@@\n-dup\n+changed\n",
+        )
+        self.assert_error(
+            "patch_context_mismatch",
+            "section\nold\nsection\nold\n",
+            "--- a/notes.txt\n+++ b/notes.txt\n@@ section\n-old\n+new\n",
+        )
+        self.assert_error(
+            "patch_context_mismatch",
+            "old\n",
+            "--- a/notes.txt\n+++ b/notes.txt\n@@ missing\n-old\n+new\n",
+        )
+
+    def test_rejects_out_of_order_codex_style_hunks(self) -> None:
+        self.assert_error(
+            "patch_context_mismatch",
+            "first\nsecond\n",
+            "--- a/notes.txt\n+++ b/notes.txt\n@@\n-second\n+SECOND\n"
+            "@@\n-first\n+FIRST\n",
+        )
+        self.assert_error(
+            "patch_context_mismatch",
+            "anchor\nold\n",
+            "--- a/notes.txt\n+++ b/notes.txt\n@@ anchor\n+inserted\n"
+            "@@\n-old\n+new\n",
+        )
+        self.assert_error(
+            "patch_context_mismatch",
+            "old\n",
+            "--- a/notes.txt\n+++ b/notes.txt\n@@\n+appended\n"
+            "@@\n-old\n+new\n",
+        )
+
+    def test_rejects_invalid_codex_style_structure(self) -> None:
+        self.assert_error(
+            "invalid_patch",
+            "old\n",
+            "--- a/other.txt\n+++ b/other.txt\n@@\n-old\n+new\n",
+        )
+        self.assert_error(
+            "invalid_patch",
+            "old\n",
+            "--- a/notes.txt\n+++ b/notes.txt\n@@\n-old\n+new\n"
+            "--- a/other.txt\n+++ b/other.txt\n@@\n-old\n+new\n",
+        )
+        self.assert_error(
+            "invalid_patch",
+            "old\n",
+            "--- a/notes.txt\n+++ b/notes.txt\n@@\n-old\nnot a change line\n+new\n",
+        )
+
+    def test_preserves_crlf_content_line_endings_in_codex_style_patch(self) -> None:
+        self.assertEqual(
+            self.apply(
+                "first\r\nold\r\nlast\r\n",
+                "--- a/notes.txt\n+++ b/notes.txt\n@@\n"
+                "-first\r\n-old\r\n+first\r\n+new\r\n",
+            ),
+            "first\r\nnew\r\nlast\r\n",
+        )
+
+    def test_rejects_crlf_codex_style_hunk_header(self) -> None:
+        self.assert_error(
+            "invalid_patch",
+            "old\n",
+            "--- a/notes.txt\n+++ b/notes.txt\n@@\r\n-old\n+new\n",
+        )
+
     def test_applies_multiple_ordered_hunks(self) -> None:
         self.assertEqual(
             self.apply(

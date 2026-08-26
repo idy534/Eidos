@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import errno
+import os
 import sys
 
 
@@ -10,9 +11,23 @@ COPYFILE_XATTR = 1 << 2
 DARWIN_ACL_TYPE_EXTENDED = 0x00000100
 MAX_XATTR_COUNT = 256
 MAX_XATTR_BYTES = 4 * 1024 * 1024
+CLONE_UNAVAILABLE_ERRNOS = frozenset(
+    value
+    for value in (
+        getattr(errno, "ENOSYS", None),
+        getattr(errno, "ENOTSUP", None),
+        getattr(errno, "EOPNOTSUPP", None),
+        getattr(errno, "EXDEV", None),
+    )
+    if value is not None
+)
 
 
 class FileMetadataError(RuntimeError):
+    pass
+
+
+class FileMetadataCloneUnavailable(FileMetadataError):
     pass
 
 
@@ -21,6 +36,113 @@ def copy_replace_metadata(source_fd: int, target_fd: int) -> None:
     if sys.platform != "darwin":
         return
     before = _darwin_metadata_signature(source_fd)
+    _fcopyfile(source_fd, target_fd, COPYFILE_ACL | COPYFILE_XATTR)
+    after = _darwin_metadata_signature(target_fd)
+    _require_source_xattrs(
+        dict(before[0]),
+        dict(after[0]),
+    )
+    if after[1] != before[1]:
+        raise FileMetadataError(
+            "copied file ACL did not match the source "
+            f"(source_present={before[1] is not None}, "
+            f"target_present={after[1] is not None})"
+        )
+
+
+def copy_file_acl(source_fd: int, target_fd: int) -> None:
+    """Copy and verify only the ACL after the candidate bytes are written."""
+    if sys.platform != "darwin":
+        return
+    source_xattrs = _darwin_xattrs(_darwin_libc(), source_fd)
+    source_acl = _darwin_acl_text(_darwin_libc(), source_fd)
+    _fcopyfile(source_fd, target_fd, COPYFILE_ACL)
+    _require_source_xattrs(
+        source_xattrs,
+        _darwin_xattrs(_darwin_libc(), target_fd),
+    )
+    target_acl = _darwin_acl_text(_darwin_libc(), target_fd)
+    if target_acl != source_acl:
+        raise FileMetadataError(
+            "copied file ACL did not match the source "
+            f"(source_present={source_acl is not None}, "
+            f"target_present={target_acl is not None})"
+        )
+
+
+def clone_file_with_metadata(
+    source_fd: int,
+    target_dir_fd: int,
+    target_name: str,
+) -> None:
+    """Clone source data and xattrs into a new fd-relative temporary file.
+
+    The clone intentionally leaves ACL application to ``copy_file_acl`` after
+    the candidate bytes are written. This keeps a source ACL that denies write
+    access from preventing the temporary file from being opened for writing.
+    """
+    if sys.platform != "darwin":
+        raise FileMetadataCloneUnavailable(
+            "fclonefileat is available only on Darwin"
+        )
+    libc = _darwin_libc()
+    try:
+        fclonefileat = libc.fclonefileat
+    except AttributeError as error:
+        raise FileMetadataCloneUnavailable(
+            "fclonefileat is unavailable"
+        ) from error
+    fclonefileat.argtypes = [
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint32,
+    ]
+    fclonefileat.restype = ctypes.c_int
+    ctypes.set_errno(0)
+    if fclonefileat(
+        source_fd,
+        target_dir_fd,
+        os.fsencode(target_name),
+        0,
+    ) != 0:
+        error_number = ctypes.get_errno()
+        message = f"fclonefileat failed with errno {error_number}"
+        if error_number in CLONE_UNAVAILABLE_ERRNOS:
+            raise FileMetadataCloneUnavailable(message)
+        raise FileMetadataError(message)
+
+    descriptor = -1
+    try:
+        flags = os.O_RDONLY | os.O_NONBLOCK
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(target_name, flags, dir_fd=target_dir_fd)
+        source_xattrs = _darwin_xattrs(libc, source_fd)
+        target_xattrs = _darwin_xattrs(libc, descriptor)
+        _require_source_xattrs(source_xattrs, target_xattrs)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _require_source_xattrs(
+    source_xattrs: dict[bytes, bytes],
+    target_xattrs: dict[bytes, bytes],
+) -> None:
+    missing = tuple(
+        name
+        for name, value in source_xattrs.items()
+        if target_xattrs.get(name) != value
+    )
+    if missing:
+        names = ", ".join(repr(name) for name in missing)
+        raise FileMetadataError(
+            f"file metadata did not preserve source xattrs: {names}"
+        )
+
+
+def _fcopyfile(source_fd: int, target_fd: int, flags: int) -> None:
     libc = _darwin_libc()
     fcopyfile = libc.fcopyfile
     fcopyfile.argtypes = [
@@ -31,18 +153,11 @@ def copy_replace_metadata(source_fd: int, target_fd: int) -> None:
     ]
     fcopyfile.restype = ctypes.c_int
     ctypes.set_errno(0)
-    if fcopyfile(
-        source_fd,
-        target_fd,
-        None,
-        COPYFILE_ACL | COPYFILE_XATTR,
-    ) != 0:
+    if fcopyfile(source_fd, target_fd, None, flags) != 0:
         raise FileMetadataError(
-            f"fcopyfile failed with errno {ctypes.get_errno()}"
+            f"fcopyfile failed with errno {ctypes.get_errno()} "
+            f"(flags={flags})"
         )
-    after = _darwin_metadata_signature(target_fd)
-    if after != before:
-        raise FileMetadataError("copied file metadata did not match the source")
 
 
 def _darwin_metadata_signature(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from io import StringIO
 from typing import Literal
 
@@ -10,6 +11,13 @@ class PatchApplyError(ValueError):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+@dataclass(frozen=True)
+class _PositionIndependentHunk:
+    context: str | None
+    old_lines: tuple[str, ...]
+    new_lines: tuple[str, ...]
 
 
 _UNSUPPORTED_PREFIXES = (
@@ -37,8 +45,11 @@ def apply_strict_single_file_patch(
     original: str,
     patch_text: str,
 ) -> str:
-    """Parse and apply Eidos's strict, exact-context single-file Patch form."""
+    """Apply one exact single-file standard or position-independent patch."""
     _reject_unsupported_patch_structure(patch_text)
+    position_independent_hunks = _parse_position_independent_patch(path, patch_text)
+    if position_independent_hunks is not None:
+        return _apply_position_independent_hunks(original, position_independent_hunks)
     try:
         patch_set = PatchSet(StringIO(patch_text), metadata_only=False)
     except Exception:
@@ -106,8 +117,196 @@ def _reject_unsupported_patch_structure(patch_text: str) -> None:
             raise PatchApplyError("invalid_patch")
         if bare.startswith("@@ ") and bare.endswith("\r"):
             raise PatchApplyError("invalid_patch")
-        if not bare.startswith(("--- ", "+++ ", "@@ ", " ", "+", "-")):
+        if bare != "@@" and not bare.startswith(
+            ("--- ", "+++ ", "@@ ", " ", "+", "-")
+        ):
             raise PatchApplyError("invalid_patch")
+
+
+def _parse_position_independent_patch(
+    path: str, patch_text: str
+) -> list[_PositionIndependentHunk] | None:
+    lines = patch_text.splitlines(keepends=True)
+    if not any(_is_position_independent_hunk_header(line) for line in lines):
+        return None
+    if len(lines) < 3:
+        raise PatchApplyError("invalid_patch")
+
+    source_path = _parse_position_independent_file_header(lines[0], "--- ")
+    target_path = _parse_position_independent_file_header(lines[1], "+++ ")
+    if source_path not in {path, f"a/{path}"} or target_path not in {
+        path,
+        f"b/{path}",
+    }:
+        raise PatchApplyError("invalid_patch")
+
+    hunks: list[_PositionIndependentHunk] = []
+    index = 2
+    while index < len(lines):
+        is_header, context = _position_independent_hunk_header(lines[index])
+        if not is_header:
+            raise PatchApplyError("invalid_patch")
+        index += 1
+        old_lines: list[str] = []
+        new_lines: list[str] = []
+        while index < len(lines):
+            next_is_header, _ = _position_independent_hunk_header(lines[index])
+            if next_is_header:
+                break
+            if (
+                lines[index].startswith("--- ")
+                and index + 1 < len(lines)
+                and lines[index + 1].startswith("+++ ")
+            ):
+                raise PatchApplyError("invalid_patch")
+            line = lines[index]
+            if not line or line[0] not in {" ", "+", "-"}:
+                raise PatchApplyError("invalid_patch")
+            value = line[1:]
+            if line[0] == "+":
+                new_lines.append(value)
+            elif line[0] == "-":
+                old_lines.append(value)
+            else:
+                old_lines.append(value)
+                new_lines.append(value)
+            index += 1
+        if not old_lines and not new_lines:
+            raise PatchApplyError("invalid_patch")
+        hunks.append(
+            _PositionIndependentHunk(
+                context=context,
+                old_lines=tuple(old_lines),
+                new_lines=tuple(new_lines),
+            )
+        )
+    return hunks
+
+
+def _parse_position_independent_file_header(line: str, prefix: str) -> str:
+    value = _strict_structure_line(line)
+    if value is None or not value.startswith(prefix) or not value[len(prefix) :]:
+        raise PatchApplyError("invalid_patch")
+    return value[len(prefix) :]
+
+
+def _strict_structure_line(line: str) -> str | None:
+    if line.endswith("\n"):
+        line = line[:-1]
+        if line.endswith("\r"):
+            return None
+    return line
+
+
+def _is_position_independent_hunk_header(line: str) -> bool:
+    is_header, _ = _position_independent_hunk_header(line)
+    return is_header
+
+
+def _position_independent_hunk_header(line: str) -> tuple[bool, str | None]:
+    value = _strict_structure_line(line)
+    if value == "@@":
+        return True, None
+    if value is None or not value.startswith("@@ ") or value.startswith("@@ -"):
+        return False, None
+    context = value[3:]
+    if not context:
+        raise PatchApplyError("invalid_patch")
+    return True, context
+
+
+def _apply_position_independent_hunks(
+    original: str, hunks: list[_PositionIndependentHunk]
+) -> str:
+    original_lines = original.splitlines(keepends=True)
+    replacements: list[tuple[int, int, tuple[str, ...]]] = []
+    source_cursor = 0
+    for hunk in hunks:
+        search_start = source_cursor
+        context_index: int | None = None
+        if hunk.context is not None:
+            context_matches = [
+                line_number
+                for line_number in range(source_cursor, len(original_lines))
+                if _line_without_ending(original_lines[line_number]) == hunk.context
+            ]
+            if len(context_matches) != 1:
+                raise PatchApplyError("patch_context_mismatch")
+            context_index = context_matches[0]
+            search_start = context_index + 1
+
+        if hunk.old_lines:
+            matches = _find_exact_line_sequence(
+                original_lines, hunk.old_lines, search_start
+            )
+            if len(matches) != 1:
+                raise PatchApplyError("patch_context_mismatch")
+            start = matches[0]
+            replacements.append((start, len(hunk.old_lines), hunk.new_lines))
+            source_cursor = start + len(hunk.old_lines)
+        else:
+            insertion_index = (
+                len(original_lines)
+                if context_index is None
+                else context_index + 1
+            )
+            replacements.append((insertion_index, 0, hunk.new_lines))
+            source_cursor = insertion_index
+
+    updated_lines = list(original_lines)
+    for start in sorted({replacement[0] for replacement in replacements}, reverse=True):
+        at_start = [replacement for replacement in replacements if replacement[0] == start]
+        if len(at_start) == 1:
+            _, old_length, new_lines = at_start[0]
+            updated_lines[start : start + old_length] = new_lines
+            continue
+        if any(replacement[1] for replacement in at_start):
+            raise PatchApplyError("patch_context_mismatch")
+        inserted_lines = tuple(
+            line for _, _, new_lines in at_start for line in new_lines
+        )
+        updated_lines[start:start] = inserted_lines
+    return "".join(updated_lines)
+
+
+def _line_without_ending(line: str) -> str:
+    if line.endswith("\n"):
+        line = line[:-1]
+        if line.endswith("\r"):
+            line = line[:-1]
+    return line
+
+
+def _find_exact_line_sequence(
+    source: list[str], pattern: tuple[str, ...], start: int
+) -> list[int]:
+    if not pattern or start > len(source) - len(pattern):
+        return []
+    source_offsets = [0]
+    for line in source:
+        source_offsets.append(source_offsets[-1] + len(line))
+    pattern_text = "".join(pattern)
+    if not pattern_text:
+        return []
+    source_text = "".join(source)
+    line_starts = {
+        source_offsets[index]: index
+        for index in range(start, len(source) - len(pattern) + 1)
+    }
+    line_boundaries = frozenset(source_offsets)
+    matches: list[int] = []
+    offset = source_text.find(pattern_text, source_offsets[start])
+    while offset >= 0:
+        line_index = line_starts.get(offset)
+        if (
+            line_index is not None
+            and offset + len(pattern_text) in line_boundaries
+        ):
+            matches.append(line_index)
+            if len(matches) > 1:
+                break
+        offset = source_text.find(pattern_text, offset + 1)
+    return matches
 
 
 def _validate_patched_file(path: str, patched_file: object) -> None:

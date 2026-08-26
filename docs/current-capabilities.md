@@ -145,9 +145,9 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 内置只读 Tool 包括 `list_files`、`read_file`、`read_file_range` 和 `search_text`。
 - Workspace mutation Tool 包括 `write_file`、`apply_patch` 和 `delete_file`。
 - `write_file`、`apply_patch` 和 `delete_file` 在当前 Workspace Permission 内直接执行，不逐次请求 Approval。
-- 文件工具在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。`apply_patch` 使用 bounded Unified Diff 解析，并要求单文件、Patch context 和版本复检。
+- 文件工具在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。`apply_patch` 支持标准 Unified Diff hunk，也支持 Codex 风格的单文件位置无关 `@@` update hunk。位置无关 hunk 只接受精确、唯一、顺序向前的 context 匹配。工具不支持这类 Patch 的 Add、Delete、Move 或多文件形式。工具仍要求显式单文件路径、Patch context 和版本复检。
 - 已应用的文件 Diff 会进入 ToolCall 持久事实，并在 Execution Feed 中展示。
-- macOS 原子替换会保留普通文件的 mode、扩展属性和 ACL。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
+- macOS 原子替换会先用 fd-relative `fclonefileat` 保留普通文件的扩展属性（包括 `com.apple.provenance`），再写入候选内容并单独应用、验证 ACL。clonefile 不可用时会安全回退到受校验的 `fcopyfile` 路径。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
 - ToolCallRuntime 和 ToolExecutionController 会执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。
