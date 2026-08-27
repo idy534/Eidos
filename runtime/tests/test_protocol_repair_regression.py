@@ -244,11 +244,11 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         self.assertEqual(attempts[0]["status"], "completed")
         self.assertIsNone(attempts[0]["errorCode"])
 
-    def test_repeated_undeclared_final_response_fails_the_run(self) -> None:
+    def test_unknown_final_response_completes_the_run(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Inspect before answering")
         undeclared = ModelResponse(
             text="Let me inspect the workspace first.",
-            phase=AssistantMessagePhase.UNKNOWN,
+            phase=None,
         )
         model = ScriptedModel([undeclared, undeclared])
 
@@ -256,19 +256,16 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             run["id"], threading.Event()
         )
 
-        failed = self.store.read_run(run["id"])
-        self.assertEqual(failed["status"], "failed")
-        self.assertEqual(failed["errorCode"], "MODEL_PROTOCOL_ERROR")
+        completed = self.store.read_run(run["id"])
+        self.assertEqual(completed["status"], "succeeded")
+        self.assertIsNone(completed.get("errorCode"))
         attempts = self.store.read_model_attempts(run["id"])
-        self.assertEqual([attempt["status"] for attempt in attempts], ["failed", "failed"])
-        self.assertEqual(
-            [attempt["errorCode"] for attempt in attempts],
-            ["undeclared_final_response", "undeclared_final_response"],
-        )
+        self.assertEqual([attempt["status"] for attempt in attempts], ["completed"])
+        self.assertIsNone(attempts[0]["errorCode"])
         snapshot = self.store.read_session_snapshot(self.session["id"])
         self.assertEqual(
             [item["kind"] for item in snapshot["items"]],
-            ["user_message"],
+            ["user_message", "assistant_message"],
         )
 
     def test_provider_control_text_without_structured_call_is_repaired(self) -> None:

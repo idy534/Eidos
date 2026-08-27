@@ -15,8 +15,10 @@ def resolve_chat_completion_phase(
     has_tool_calls: bool,
     finish_reason: str | None,
 ) -> AssistantMessagePhase:
+    # Chat Completions does not provide an assistant message phase. Keep the
+    # classification useful for tool-bearing responses, but leave all other
+    # responses unknown so the Runtime can decide completion from normalized
+    # follow-up state instead of inferring it from provider metadata.
     if has_tool_calls:
         return AssistantMessagePhase.COMMENTARY
-    if text and finish_reason == "stop":
-        return AssistantMessagePhase.FINAL_ANSWER
     return AssistantMessagePhase.UNKNOWN

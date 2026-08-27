@@ -26,7 +26,7 @@ from eidos_runtime.sandbox.sensitive import (
 class ModelStepResult:
     text: str
     tool_calls: tuple[ModelToolCall, ...]
-    phase: AssistantMessagePhase = AssistantMessagePhase.UNKNOWN
+    phase: AssistantMessagePhase | None = AssistantMessagePhase.UNKNOWN
     usage: ModelUsage | None = None
     provider_name: str | None = None
     resolved_model_name: str | None = None
@@ -122,25 +122,12 @@ class ModelRunner:
         ended = self._monotonic()
         if not isinstance(response, ModelResponse):
             return ModelStepResult("", (), duration_ms=int((ended - started) * 1000))
-        phase = response.phase
-        if (
-            phase is AssistantMessagePhase.UNKNOWN
-            and "phase" not in response.model_fields_set
-            and response.provider_name is None
-            and response.finish_reason is None
-            and text
-        ):
-            # Provider adapters always populate the structured phase and
-            # finish reason. A provider-less ModelResponse is a test-double
-            # boundary that represents an already-normalized final answer
-            # unless it explicitly sets phase=UNKNOWN.
-            phase = AssistantMessagePhase.FINAL_ANSWER
         # Tool-only responses intentionally keep TTFT unset; this is stable and
         # avoids deriving timing from provider-specific partial ToolCall events.
         return ModelStepResult(
             text=text,
             tool_calls=response.tool_calls,
-            phase=phase,
+            phase=response.phase,
             usage=response.usage,
             provider_name=response.provider_name,
             resolved_model_name=response.resolved_model_name,

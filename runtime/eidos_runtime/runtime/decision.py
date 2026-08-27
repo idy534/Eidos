@@ -41,7 +41,12 @@ class LoopDecisionEngine:
                 return LoopDecision(action=LoopAction.CONTINUE)
             if pending_user_input and tool_batch.status == "no_tools":
                 return LoopDecision(action=LoopAction.CONTINUE, reason="pending_input")
-            if tool_batch.status == "no_tools" and sampling is not None and sampling.assistant_item is not None:
+            if (
+                tool_batch.status == "no_tools"
+                and sampling is not None
+                and sampling.assistant_item is not None
+                and not sampling.needs_follow_up
+            ):
                 return LoopDecision(action=LoopAction.COMPLETE)
             if tool_batch.status in {"validation_failed", "no_tools"}:
                 reason = tool_batch.error_code or "empty_response"
@@ -54,4 +59,6 @@ class LoopDecisionEngine:
                 )
         if pending_user_input:
             return LoopDecision(action=LoopAction.CONTINUE, reason="pending_input")
+        if sampling is not None and sampling.needs_follow_up:
+            return LoopDecision(action=LoopAction.CONTINUE)
         return LoopDecision(action=LoopAction.CONTINUE)
