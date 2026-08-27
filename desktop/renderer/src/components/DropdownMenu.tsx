@@ -127,11 +127,20 @@ export function DropdownMenu({
     if (!open) return;
     const buttons = menuRef.current?.querySelectorAll<HTMLElement>("[role=menuitem]");
     if (buttons && buttons[focusedIndex]) {
-      buttons[focusedIndex].focus();
+      buttons[focusedIndex].focus({ preventScroll: true });
     }
   }, [focusedIndex, open]);
 
   function openWithIndex(initialIndex: number) {
+    if (triggerRef.current) {
+      const triggerRect = triggerRef.current.getBoundingClientRect();
+      setStyle({
+        position: "fixed",
+        top: `${triggerRect.bottom + 4}px`,
+        left: `${triggerRect.left}px`,
+        zIndex: 9999,
+      });
+    }
     setFocusedIndex(initialIndex);
     setOpen(true);
   }
@@ -332,7 +341,7 @@ export function ContextMenu({
   useEffect(() => {
     const buttons = menuRef.current?.querySelectorAll<HTMLElement>("[role=menuitem]");
     if (buttons && buttons[focusedIndex]) {
-      buttons[focusedIndex].focus();
+      buttons[focusedIndex].focus({ preventScroll: true });
     }
   }, [focusedIndex]);
 
