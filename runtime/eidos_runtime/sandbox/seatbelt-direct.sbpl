@@ -8,6 +8,11 @@
 (allow signal (target same-sandbox))
 (allow process-info* (target same-sandbox))
 
+; Codex workspace-write reads the host filesystem by default. Confidential Eidos
+; state is denied by the dynamic policy appended after this base policy.
+(allow file-read*)
+(allow file-map-executable)
+
 ; Minimal platform runtime required by system command-line tools.
 (allow file-read* file-test-existence
   (literal "/")
@@ -74,20 +79,20 @@
 (allow file-read-metadata file-test-existence
   (path-ancestors (param "WORKSPACE_ROOT"))
   (path-ancestors (param "SANDBOX_HOME"))
-  (path-ancestors (param "SANDBOX_TMP")))
+  (path-ancestors (param "SANDBOX_TMP"))
+  (path-ancestors (param "SYSTEM_TMP_ROOT")))
 
-; Workspace is readable and writable except for the sensitive carve-out.
+; Workspace is readable by the default file-read rule.
 (allow file-read* file-test-existence
-  (require-all
-    (subpath (param "WORKSPACE_ROOT"))
-    (require-not (literal (param "SENSITIVE_PATH")))
-    (require-not (subpath (param "SENSITIVE_PATH")))))
+  (subpath (param "WORKSPACE_ROOT")))
 (allow file-write*
   (require-all
     (subpath (param "WORKSPACE_ROOT"))
-    (require-not (literal (param "SENSITIVE_PATH")))
-    (require-not (subpath (param "SENSITIVE_PATH")))))
+    (require-not (literal (param "GIT_DIR")))
+    (require-not (subpath (param "GIT_DIR")))))
 
-(allow file-read* file-test-existence file-write*
-  (subpath (param "SANDBOX_HOME"))
-  (subpath (param "SANDBOX_TMP")))
+; HOME remains read-only. TMPDIR and the canonical system temp root are
+; writable for normal command scratch files.
+(allow file-write*
+  (subpath (param "SANDBOX_TMP"))
+  (subpath (param "SYSTEM_TMP_ROOT")))

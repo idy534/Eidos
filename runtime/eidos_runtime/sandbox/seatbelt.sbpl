@@ -8,6 +8,11 @@
 (allow signal (target same-sandbox))
 (allow process-info* (target same-sandbox))
 
+; Codex workspace-write reads the host filesystem by default. Confidential Eidos
+; state is denied by the dynamic policy appended after this base policy.
+(allow file-read*)
+(allow file-map-executable)
+
 ; Minimal platform runtime required by system command-line tools.
 (allow file-read* file-test-existence
   (literal "/")
@@ -78,14 +83,12 @@
   (path-ancestors (param "GIT_WORKTREE_DIR"))
   (path-ancestors (param "GIT_COMMON_DIR"))
   (path-ancestors (param "SANDBOX_HOME"))
-  (path-ancestors (param "SANDBOX_TMP")))
+  (path-ancestors (param "SANDBOX_TMP"))
+  (path-ancestors (param "SYSTEM_TMP_ROOT")))
 
-; Workspace is readable except for the sensitive carve-out.
+; Workspace is readable by the default file-read rule.
 (allow file-read* file-test-existence
-  (require-all
-    (subpath (param "WORKSPACE_ROOT"))
-    (require-not (literal (param "SENSITIVE_PATH")))
-    (require-not (subpath (param "SENSITIVE_PATH")))))
+  (subpath (param "WORKSPACE_ROOT")))
 
 ; Linked Worktrees keep their Git metadata in the verified common directory.
 ; The original repository working tree is not granted by this rule.
@@ -100,7 +103,7 @@
   (literal (param "GIT_COMMON_DIR"))
   (subpath (param "GIT_COMMON_DIR")))
 
-; Workspace is writable except for .git and the sensitive carve-out.
+; Workspace is writable except for Git metadata.
 (allow file-write*
   (require-all
     (subpath (param "WORKSPACE_ROOT"))
@@ -109,13 +112,12 @@
     (require-not (literal (param "GIT_WORKTREE_DIR")))
     (require-not (subpath (param "GIT_WORKTREE_DIR")))
     (require-not (literal (param "GIT_COMMON_DIR")))
-    (require-not (subpath (param "GIT_COMMON_DIR")))
-    (require-not (literal (param "SENSITIVE_PATH")))
-    (require-not (subpath (param "SENSITIVE_PATH")))))
+    (require-not (subpath (param "GIT_COMMON_DIR")))))
 
-; Runtime-owned disposable home and temp directories.
-(allow file-read* file-test-existence file-write*
-  (subpath (param "SANDBOX_HOME"))
-  (subpath (param "SANDBOX_TMP")))
+; HOME remains read-only. TMPDIR and the canonical system temp root are
+; writable for normal command scratch files.
+(allow file-write*
+  (subpath (param "SANDBOX_TMP"))
+  (subpath (param "SYSTEM_TMP_ROOT")))
 
 ; Network, loopback, bind, and Unix sockets remain denied by default.

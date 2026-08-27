@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import uuid
 from unittest.mock import patch
 
 
@@ -41,10 +42,6 @@ from eidos_runtime.workspace.search_driver import (  # noqa: E402
 
 class SeatbeltProfileTests(unittest.TestCase):
     def test_profile_path_includes_verified_bundled_ripgrep(self) -> None:
-        try:
-            binary = RipgrepBinaryResolver().resolve()
-        except SearchDriverError:
-            self.skipTest("bundled ripgrep is unavailable for this platform")
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             for directory in (root / "workspace", root / "home", root / "tmp"):
@@ -53,14 +50,17 @@ class SeatbeltProfileTests(unittest.TestCase):
                 workspace_root=root / "workspace",
                 sandbox_home=root / "home",
                 sandbox_tmp=root / "tmp",
-                sensitive_path=root / "workspace" / ".env",
             )
 
-            self.assertIn(str(binary.parent), profile.environment()["PATH"].split(os.pathsep))
+            self.assertFalse(hasattr(profile, "environment"))
 
     def test_bundled_ripgrep_runs_inside_the_shell_profile(self) -> None:
         if not is_seatbelt_usable():
             self.skipTest("macOS Seatbelt is unavailable")
+        try:
+            binary = RipgrepBinaryResolver().resolve()
+        except SearchDriverError:
+            self.skipTest("bundled ripgrep is unavailable for this platform")
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             workspace = root / "workspace"
@@ -79,12 +79,18 @@ class SeatbeltProfileTests(unittest.TestCase):
                 workspace_root=workspace,
                 sandbox_home=home,
                 sandbox_tmp=sandbox_tmp,
-                sensitive_path=workspace / ".env",
                 effective_permissions=permissions,
             )
 
             result = run_sandboxed(
-                profile, ["/bin/sh", "-c", "rg --version"], timeout_seconds=5
+                profile,
+                ["/bin/sh", "-c", "rg --version"],
+                timeout_seconds=5,
+                environment={
+                    "HOME": str(home),
+                    "TMPDIR": str(sandbox_tmp),
+                    "PATH": os.pathsep.join((str(binary.parent), "/usr/bin", "/bin")),
+                },
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -97,16 +103,13 @@ class SeatbeltProfileTests(unittest.TestCase):
             sandbox_home = root / "home"
             sandbox_tmp = root / "tmp"
             git_directory = workspace / ".git"
-            sensitive_path = workspace / ".env"
             for directory in (workspace, sandbox_home, sandbox_tmp, git_directory):
                 directory.mkdir(parents=True, exist_ok=True)
-            sensitive_path.write_text("secret", encoding="utf-8")
 
             profile = SeatbeltProfile.create(
                 workspace_root=workspace,
                 sandbox_home=sandbox_home,
                 sandbox_tmp=sandbox_tmp,
-                sensitive_path=sensitive_path,
             )
             if is_seatbelt_usable():
                 command = profile.command(["/usr/bin/true"])
@@ -117,31 +120,18 @@ class SeatbeltProfileTests(unittest.TestCase):
                 self.assertIn(f"-DGIT_DIR={git_directory.resolve()}", command)
                 self.assertIn(f"-DGIT_WORKTREE_DIR={git_directory.resolve()}", command)
                 self.assertIn(f"-DGIT_COMMON_DIR={git_directory.resolve()}", command)
-                self.assertIn(f"-DSENSITIVE_PATH={sensitive_path.resolve()}", command)
                 self.assertIn(f"-DSANDBOX_HOME={sandbox_home.resolve()}", command)
                 self.assertIn(f"-DSANDBOX_TMP={sandbox_tmp.resolve()}", command)
+                self.assertIn(
+                    f"-DSYSTEM_TMP_ROOT={Path('/tmp').resolve()}",
+                    command,
+                )
+                self.assertFalse(any("SENSITIVE_PATH" in item for item in command))
                 self.assertEqual(command[-2:], ["--", "/usr/bin/true"])
             else:
                 with self.assertRaises(SeatbeltUnavailableError):
                     profile.command(["/usr/bin/true"])
-            self.assertEqual(
-                set(profile.environment()),
-                {
-                    "HOME",
-                    "TMPDIR",
-                    "PATH",
-                    "LANG",
-                    "LC_ALL",
-                    "GIT_OPTIONAL_LOCKS",
-                    "PNPM_CONFIG_PM_ON_FAIL",
-                    "GIT_PAGER",
-                    "GIT_TERMINAL_PROMPT",
-                    "GIT_CONFIG_GLOBAL",
-                    "GIT_CONFIG_SYSTEM",
-                    "GIT_CONFIG_NOSYSTEM",
-                    "GIT_ASKPASS",
-                },
-            )
+            self.assertFalse(hasattr(profile, "environment"))
 
     def test_direct_profile_has_no_git_paths_or_definitions(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -156,7 +146,6 @@ class SeatbeltProfileTests(unittest.TestCase):
                 workspace_root=workspace,
                 sandbox_home=sandbox_home,
                 sandbox_tmp=sandbox_tmp,
-                sensitive_path=workspace / ".env",
             )
             self.assertIsNone(profile.git_directory)
             self.assertIsNone(profile.git_worktree_dir)
@@ -167,7 +156,10 @@ class SeatbeltProfileTests(unittest.TestCase):
             ):
                 command = profile.command(["/usr/bin/true"])
             self.assertTrue(command[2].endswith("seatbelt-direct.sbpl"))
-            self.assertFalse(any(argument.startswith("-DGIT_") for argument in command))
+            self.assertEqual(
+                [argument for argument in command if argument.startswith("-DGIT_")],
+                [f"-DGIT_DIR={(workspace / '.git').resolve()}"],
+            )
 
     def test_unavailable_seatbelt_fails_before_process_creation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -181,7 +173,6 @@ class SeatbeltProfileTests(unittest.TestCase):
                 workspace_root=workspace,
                 sandbox_home=sandbox_home,
                 sandbox_tmp=sandbox_tmp,
-                sensitive_path=workspace / ".env",
             )
 
             with (
@@ -213,7 +204,7 @@ class SeatbeltProfileTests(unittest.TestCase):
             self.assertEqual(target.read_text(encoding="utf-8"), "base\n")
             self.assertEqual(source.read_text(encoding="utf-8"), "candidate\n")
 
-    def test_profile_rejects_workspace_relative_sensitive_path(self) -> None:
+    def test_profile_does_not_require_a_sensitive_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             workspace = root / "workspace"
@@ -221,14 +212,15 @@ class SeatbeltProfileTests(unittest.TestCase):
             sandbox_tmp = root / "tmp"
             for directory in (workspace, sandbox_home, sandbox_tmp, workspace / ".git"):
                 directory.mkdir(parents=True, exist_ok=True)
+            (workspace / ".env").write_text("workspace secret", encoding="utf-8")
 
-            with self.assertRaisesRegex(ValueError, "sensitive path must be inside workspace"):
-                SeatbeltProfile.create(
-                    workspace_root=workspace,
-                    sandbox_home=sandbox_home,
-                    sandbox_tmp=sandbox_tmp,
-                    sensitive_path=root / "outside.env",
-                )
+            profile = SeatbeltProfile.create(
+                workspace_root=workspace,
+                sandbox_home=sandbox_home,
+                sandbox_tmp=sandbox_tmp,
+            )
+
+            self.assertEqual(profile.workspace_root, workspace.resolve())
 
     def test_profile_accepts_git_worktree_pointer_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -245,7 +237,6 @@ class SeatbeltProfileTests(unittest.TestCase):
                 workspace_root=workspace,
                 sandbox_home=sandbox_home,
                 sandbox_tmp=sandbox_tmp,
-                sensitive_path=workspace / ".env",
             )
 
             self.assertEqual(profile.git_directory, git_pointer.resolve())
@@ -276,7 +267,6 @@ class SeatbeltSmokeTests(unittest.TestCase):
             workspace_root=workspace,
             sandbox_home=home,
             sandbox_tmp=sandbox_tmp,
-            sensitive_path=workspace / ".env",
             effective_permissions=effective,
         )
 
@@ -286,9 +276,13 @@ class SeatbeltSmokeTests(unittest.TestCase):
         self.assertTrue(result.available, result.failures)
         self.assertEqual(result.failures, ())
         self.assertIn("workspace_write", result.passed_checks)
-        self.assertIn("external_read_denied", result.passed_checks)
+        self.assertIn("external_read_allowed", result.passed_checks)
+        self.assertIn("home_read_allowed", result.passed_checks)
+        self.assertIn("home_write_denied", result.passed_checks)
+        self.assertIn("sandbox_tmp_write", result.passed_checks)
+        self.assertIn("system_tmp_write", result.passed_checks)
         self.assertIn("git_write_denied", result.passed_checks)
-        self.assertIn("sensitive_read_denied", result.passed_checks)
+        self.assertIn("sensitive_read_allowed", result.passed_checks)
         self.assertIn("symlink_escape_denied", result.passed_checks)
         self.assertIn("loopback_denied", result.passed_checks)
         self.assertIn("timeout_enforced", result.passed_checks)
@@ -311,7 +305,6 @@ class SeatbeltSmokeTests(unittest.TestCase):
                 workspace_root=workspace,
                 sandbox_home=home,
                 sandbox_tmp=sandbox_tmp,
-                sensitive_path=workspace / ".env",
             )
 
             allowed = run_sandboxed(profile, ["/usr/bin/true"])
@@ -322,6 +315,164 @@ class SeatbeltSmokeTests(unittest.TestCase):
             self.assertEqual(allowed.returncode, 0, allowed.stderr)
             self.assertNotEqual(denied.returncode, 0)
             self.assertEqual(pointer.read_text(encoding="utf-8"), original)
+
+    def test_full_disk_read_keeps_eidos_data_denied(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-full-read-") as temporary:
+            root = Path(temporary)
+            data = root / "data"
+            workspace = data / ".eidos-worktrees" / "wt_1"
+            home = root / "home"
+            sandbox_tmp = root / "tmp"
+            outside = root / "outside"
+            for directory in (workspace, home, sandbox_tmp, outside):
+                directory.mkdir(parents=True)
+            (outside / "ordinary.txt").write_text("ordinary", encoding="utf-8")
+            (home / ".gitconfig").write_text(
+                "[user]\n\tname = Eidos Native Test\n", encoding="utf-8"
+            )
+            (data / "models.json").write_text("models", encoding="utf-8")
+            (data / "private-token").write_text("token", encoding="utf-8")
+            (workspace / ".env").write_text("workspace-env", encoding="utf-8")
+            (workspace / ".git").mkdir()
+            (workspace / ".git" / "HEAD").write_text("head", encoding="utf-8")
+            effective = materialize_effective_profile(
+                BasePermissionProfile.for_workspace(
+                    workspace_root=workspace,
+                    protected_paths=(data,),
+                )
+            )
+            profile = SeatbeltProfile.create(
+                workspace_root=workspace,
+                sandbox_home=home,
+                sandbox_tmp=sandbox_tmp,
+                effective_permissions=effective,
+            )
+            environment = {
+                "HOME": str(home),
+                "TMPDIR": str(sandbox_tmp),
+                "PATH": "/usr/bin:/bin",
+            }
+
+            def read(path: Path):
+                return run_sandboxed(
+                    profile,
+                    ["/bin/cat", str(path)],
+                    environment=environment,
+                )
+
+            self.assertEqual(read(outside / "ordinary.txt").stdout, "ordinary")
+            self.assertEqual(read(home / ".gitconfig").returncode, 0)
+            git_name = run_sandboxed(
+                profile,
+                [
+                    "/bin/sh",
+                    "-c",
+                    'cd "$HOME" && git config --global user.name',
+                    "eidos-git-config",
+                ],
+                environment=environment,
+            )
+            self.assertEqual(git_name.returncode, 0, git_name.stderr)
+            self.assertEqual(git_name.stdout.strip(), "Eidos Native Test")
+            self.assertEqual(read(workspace / ".env").stdout, "workspace-env")
+            self.assertEqual(read(workspace / ".git" / "HEAD").stdout, "head")
+            self.assertNotEqual(read(data / "models.json").returncode, 0)
+            self.assertNotEqual(read(data / "private-token").returncode, 0)
+
+    def test_workspace_and_temp_write_only_excludes_home_and_outside(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-write-policy-") as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            home = root / "home"
+            sandbox_tmp = root / "tmp"
+            outside = root / "outside"
+            for directory in (workspace, home, sandbox_tmp, outside):
+                directory.mkdir()
+            profile = SeatbeltProfile.create(
+                workspace_root=workspace,
+                sandbox_home=home,
+                sandbox_tmp=sandbox_tmp,
+            )
+            environment = {
+                "HOME": str(home),
+                "TMPDIR": str(sandbox_tmp),
+                "PATH": "/usr/bin:/bin",
+            }
+            system_tmp_file = (
+                Path("/tmp") / f"eidos-seatbelt-{os.getpid()}-{uuid.uuid4().hex}"
+            )
+            try:
+                workspace_file = workspace / "workspace.txt"
+                tmp_file = sandbox_tmp / "tmp.txt"
+                home_file = home / "home.txt"
+                outside_file = outside / "outside.txt"
+                self.assertEqual(
+                    run_sandboxed(
+                        profile,
+                        ["/usr/bin/touch", str(workspace_file)],
+                        environment=environment,
+                    ).returncode,
+                    0,
+                )
+                self.assertEqual(
+                    run_sandboxed(
+                        profile,
+                        ["/usr/bin/touch", str(tmp_file)],
+                        environment=environment,
+                    ).returncode,
+                    0,
+                )
+                self.assertEqual(
+                    run_sandboxed(
+                        profile,
+                        ["/usr/bin/touch", str(system_tmp_file)],
+                        environment=environment,
+                    ).returncode,
+                    0,
+                )
+                self.assertNotEqual(
+                    run_sandboxed(
+                        profile,
+                        ["/usr/bin/touch", str(home_file)],
+                        environment=environment,
+                    ).returncode,
+                    0,
+                )
+                self.assertNotEqual(
+                    run_sandboxed(
+                        profile,
+                        ["/usr/bin/touch", str(outside_file)],
+                        environment=environment,
+                    ).returncode,
+                    0,
+                )
+            finally:
+                system_tmp_file.unlink(missing_ok=True)
+
+    def test_non_git_workspace_cannot_create_git_metadata_directory(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-non-git-workspace-") as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            home = root / "home"
+            sandbox_tmp = root / "tmp"
+            for directory in (workspace, home, sandbox_tmp):
+                directory.mkdir()
+            profile = SeatbeltProfile.create(
+                workspace_root=workspace,
+                sandbox_home=home,
+                sandbox_tmp=sandbox_tmp,
+            )
+            git_directory = workspace / ".git"
+
+            create = run_sandboxed(profile, ["/bin/mkdir", str(git_directory)])
+            write = run_sandboxed(
+                profile,
+                ["/usr/bin/touch", str(git_directory / "config")],
+            )
+
+            self.assertNotEqual(create.returncode, 0, create.stderr)
+            self.assertNotEqual(write.returncode, 0, write.stderr)
+            self.assertFalse(git_directory.exists())
 
     def test_real_linked_worktree_git_reads_are_allowed_but_metadata_writes_are_denied(
         self,
@@ -373,10 +524,15 @@ class SeatbeltSmokeTests(unittest.TestCase):
                 workspace_root=worktree,
                 sandbox_home=home,
                 sandbox_tmp=sandbox_tmp,
-                sensitive_path=worktree / ".env",
                 git_worktree_dir=git_dir,
                 git_common_dir=git_common_dir,
             )
+            environment = {
+                "HOME": str(home),
+                "TMPDIR": str(sandbox_tmp),
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                "GIT_CONFIG_NOSYSTEM": "1",
+            }
 
             for command in (
                 ["status", "--porcelain=v2"],
@@ -385,7 +541,12 @@ class SeatbeltSmokeTests(unittest.TestCase):
                 ["rev-parse", "HEAD"],
                 ["branch", "--show-current"],
             ):
-                result = run_sandboxed(profile, [git, *command], timeout_seconds=5)
+                result = run_sandboxed(
+                    profile,
+                    [git, *command],
+                    timeout_seconds=5,
+                    environment=environment,
+                )
                 self.assertEqual(result.returncode, 0, (command, result.stderr))
 
             normal_write = worktree / "normal.txt"
@@ -405,7 +566,12 @@ class SeatbeltSmokeTests(unittest.TestCase):
                 ["checkout", "main"],
                 ["reset", "--hard", "HEAD"],
             ):
-                result = run_sandboxed(profile, [git, *command], timeout_seconds=5)
+                result = run_sandboxed(
+                    profile,
+                    [git, *command],
+                    timeout_seconds=5,
+                    environment=environment,
+                )
                 self.assertNotEqual(result.returncode, 0, (command, result.stdout))
 
             for path in (
@@ -430,9 +596,7 @@ class SeatbeltSmokeTests(unittest.TestCase):
             self.assertEqual(cleanup.returncode, 0, cleanup.stderr)
 
     def test_dynamic_profile_grants_only_approved_external_paths(self) -> None:
-        with tempfile.TemporaryDirectory(
-            prefix="eidos-dynamic-paths-", dir="/private/tmp"
-        ) as temporary:
+        with tempfile.TemporaryDirectory(prefix="eidos-dynamic-paths-") as temporary:
             root = Path(temporary)
             allowed = root / "allowed"
             sibling = root / "sibling"
@@ -445,7 +609,7 @@ class SeatbeltSmokeTests(unittest.TestCase):
             script.write_text("#!/bin/sh\nprintf executable-ok\n", encoding="utf-8")
             script.chmod(0o755)
 
-            denied = run_sandboxed(
+            default_read = run_sandboxed(
                 self.dynamic_profile(root),
                 ["/bin/cat", str(allowed / "read.txt")],
             )
@@ -478,7 +642,8 @@ class SeatbeltSmokeTests(unittest.TestCase):
             )
             execute = run_sandboxed(expanded, [str(script)])
 
-            self.assertNotEqual(denied.returncode, 0)
+            self.assertEqual(default_read.returncode, 0, default_read.stderr)
+            self.assertEqual(default_read.stdout, "approved")
             self.assertEqual(
                 read.stdout,
                 "approved",
@@ -542,7 +707,6 @@ class SeatbeltSmokeTests(unittest.TestCase):
                 workspace_root=workspace,
                 sandbox_home=home,
                 sandbox_tmp=sandbox_tmp,
-                sensitive_path=workspace / ".env",
                 effective_permissions=permissions,
             )
 
@@ -608,7 +772,6 @@ class SeatbeltSmokeTests(unittest.TestCase):
                 workspace_root=workspace,
                 sandbox_home=home,
                 sandbox_tmp=sandbox_tmp,
-                sensitive_path=workspace / ".env",
             )
 
             node = run_sandboxed(

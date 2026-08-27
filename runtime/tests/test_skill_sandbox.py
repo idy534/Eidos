@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 from pathlib import Path
 import sys
 import tempfile
@@ -64,7 +63,7 @@ class SkillSandboxUnitTests(unittest.TestCase):
                 compiled.policy,
             )
 
-    def test_shell_path_puts_current_runtime_before_system_and_bundled_tool(self) -> None:
+    def test_profile_does_not_inject_a_host_environment(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-skill-path-") as directory:
             root = Path(directory)
             for child in (root / "workspace", root / "home", root / "tmp"):
@@ -73,13 +72,8 @@ class SkillSandboxUnitTests(unittest.TestCase):
                 workspace_root=root / "workspace",
                 sandbox_home=root / "home",
                 sandbox_tmp=root / "tmp",
-                sensitive_path=root / "workspace" / ".env",
             )
-            path_entries = profile.environment()["PATH"].split(os.pathsep)
-
-            self.assertEqual(path_entries[0], str(Path(sys.executable).parent))
-            self.assertLess(path_entries.index("/opt/homebrew/bin"), path_entries.index("/usr/bin"))
-            self.assertEqual(path_entries[-1], "/sbin")
+            self.assertFalse(hasattr(profile, "environment"))
 
     def test_missing_host_command_is_reported_as_command_not_found(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-skill-shell-") as directory:
@@ -97,10 +91,6 @@ class SkillSandboxUnitTests(unittest.TestCase):
                 @staticmethod
                 def command(command):
                     return list(command)
-
-                @staticmethod
-                def environment():
-                    return {"PATH": "/usr/bin:/bin"}
 
             with patch(
                 "eidos_runtime.sandbox.shell.SeatbeltProfile.create",
@@ -142,10 +132,6 @@ class SkillSandboxUnitTests(unittest.TestCase):
                 @staticmethod
                 def command(command):
                     return list(command)
-
-                @staticmethod
-                def environment():
-                    return {"PATH": "/usr/bin:/bin"}
 
             with patch(
                 "eidos_runtime.sandbox.shell.SeatbeltProfile.create",
@@ -236,7 +222,6 @@ class SkillSeatbeltIntegrationTests(unittest.TestCase):
                 workspace_root=workspace,
                 sandbox_home=root / "home",
                 sandbox_tmp=root / "tmp",
-                sensitive_path=workspace / ".env",
                 effective_permissions=effective,
                 active_skill_roots=access.active_roots(),
             )
@@ -256,9 +241,11 @@ class SkillSeatbeltIntegrationTests(unittest.TestCase):
             self.assertEqual(asset.stdout, "asset")
             self.assertNotEqual(root_write.returncode, 0)
             self.assertEqual(workspace_write.returncode, 0, workspace_write.stderr)
-            self.assertNotEqual(external_read.returncode, 0)
+            self.assertEqual(external_read.returncode, 0, external_read.stderr)
+            self.assertEqual(external_read.stdout, "outside")
             self.assertNotEqual(inactive_read.returncode, 0)
-            self.assertNotEqual(env_read.returncode, 0)
+            self.assertEqual(env_read.returncode, 0, env_read.stderr)
+            self.assertEqual(env_read.stdout, "secret")
             self.assertEqual(git_read.returncode, 0, git_read.stderr)
             self.assertNotEqual(git_write.returncode, 0)
             self.assertFalse((skill / "blocked.txt").exists())

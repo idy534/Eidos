@@ -47,7 +47,7 @@ def _commit(repository: Path, path: str, content: str, message: str) -> str:
 def _remote_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     remote = tmp_path / "remote.git"
     remote.mkdir()
-    _git(remote, "init", "--bare", "-q")
+    _git(remote, "init", "--bare", "-q", "-b", "main")
     repo_a = tmp_path / "repo-a"
     repo_a.mkdir()
     _git(repo_a, "init", "-q", "-b", "main")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -7,12 +8,16 @@ import selectors
 import signal
 import stat
 import subprocess
-import tempfile
 import threading
 import time
-from typing import Callable, Sequence
 
 from eidos_runtime.extensions.skill_access import SkillAccessRecord
+from eidos_runtime.sandbox.host_shell import (
+    HOST_SHELL_RESOLVER,
+    SHELL_ENVIRONMENT_PROVIDER,
+    HostShell,
+    HostShellUnavailableError,
+)
 from eidos_runtime.sandbox.seatbelt import (
     SeatbeltProfile,
     SeatbeltUnavailableError,
@@ -24,11 +29,24 @@ from eidos_runtime.runtime.resource_registry import (
 )
 from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.sandbox.permissions import SandboxAttempt, SandboxType
+from eidos_runtime.workspace.search_driver import RipgrepBinaryResolver, SearchDriverError
 
 
 MAX_OUTPUT_BYTES = 256 * 1024
 TERMINATION_GRACE_SECONDS = 0.5
 POST_TERMINATION_DRAIN_SECONDS = 1.0
+_HOST_ALTERING_ENV_NAMES = frozenset(
+    (
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_ASKPASS",
+        "GIT_TERMINAL_PROMPT",
+        "GIT_OPTIONAL_LOCKS",
+        "GIT_PAGER",
+        "PNPM_CONFIG_PM_ON_FAIL",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -74,6 +92,10 @@ def run_shell(
             active_skill_roots,
             skill_invocation,
         )
+    except HostShellUnavailableError:
+        return process_start_failed_result(started, skill_invocation=skill_invocation)
+    except ShellProcessStartError:
+        return process_start_failed_result(started, skill_invocation=skill_invocation)
     except ValueError:
         result = {
             "schemaVersion": 1,
@@ -130,6 +152,101 @@ def sandbox_unavailable_result(
     return _attach_skill_invocation(result, skill_invocation)
 
 
+def process_start_failed_result(
+    started: float | None = None,
+    *,
+    skill_invocation: SkillAccessRecord | None = None,
+) -> dict[str, object]:
+    duration_ms = (
+        0
+        if started is None
+        else max(0, int((time.monotonic() - started) * 1000))
+    )
+    result = {
+        "schemaVersion": 1,
+        "toolName": "run_shell",
+        "outcome": "error",
+        "code": "process_start_failed",
+        "summary": "Command was not started because the host shell is unavailable",
+        "data": {
+            "exitCode": None,
+            "stdout": "",
+            "stderr": "",
+            "truncated": False,
+            "termination": "not_started",
+            "durationMs": duration_ms,
+        },
+        "sideEffectsMayExist": False,
+    }
+    return _attach_skill_invocation(result, skill_invocation)
+
+
+class ShellProcessStartError(RuntimeError):
+    """Raised for a shell environment or process startup failure."""
+
+
+def _effective_shell_environment(
+    snapshot_environment: Mapping[str, str],
+    shell: HostShell,
+) -> dict[str, str]:
+    environment = dict(snapshot_environment)
+    environment["SHELL"] = str(shell.executable)
+
+    home = _existing_environment_directory(environment.get("HOME"))
+    if home is None:
+        raise ShellProcessStartError
+    environment["HOME"] = str(home)
+
+    temporary = _existing_environment_directory(environment.get("TMPDIR"))
+    if temporary is None:
+        temporary = _canonical_environment_directory("/tmp")
+    if temporary is None:
+        raise ShellProcessStartError
+    environment["TMPDIR"] = str(temporary)
+
+    path_entries = environment.get("PATH", "").split(os.pathsep)
+    try:
+        bundled_parent = RipgrepBinaryResolver().resolve().parent.resolve(
+            strict=False
+        )
+    except SearchDriverError:
+        bundled_parent = None
+    if bundled_parent is not None:
+        bundled_parent_text = str(bundled_parent)
+        path_entries = [
+            entry for entry in path_entries if entry != bundled_parent_text
+        ]
+        path_entries.append(bundled_parent_text)
+    environment["PATH"] = os.pathsep.join(path_entries)
+    for name in _HOST_ALTERING_ENV_NAMES:
+        environment.pop(name, None)
+    return environment
+
+
+def _existing_environment_directory(value: object) -> Path | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        path = Path(value)
+        if not path.is_absolute():
+            return None
+        canonical = path.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return path if canonical.is_dir() else None
+
+
+def _canonical_environment_directory(value: str) -> Path | None:
+    try:
+        path = Path(value)
+        if not path.is_absolute():
+            return None
+        canonical = path.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return canonical if canonical.is_dir() else None
+
+
 def _run_verified_shell(
     workspace: WorkspaceIdentity,
     command: str,
@@ -144,45 +261,75 @@ def _run_verified_shell(
     active_skill_roots: Sequence[Path],
     skill_invocation: SkillAccessRecord | None,
 ) -> dict[str, object]:
-    with tempfile.TemporaryDirectory(prefix="eidos-shell-") as temporary:
-        root = Path(temporary)
-        home = root / "home"
-        temp = root / "tmp"
-        home.mkdir()
-        temp.mkdir()
-        profile = SeatbeltProfile.create(
-            workspace_root=workspace.path,
-            sandbox_home=home,
-            sandbox_tmp=temp,
-            sensitive_path=workspace.path / ".env",
-            git_worktree_dir=workspace.git_dir,
-            git_common_dir=workspace.git_common_dir,
-            effective_permissions=(
-                attempt.permissions
-                if attempt is not None
-                and attempt.sandbox is SandboxType.MACOS_SEATBELT
-                else None
-            ),
+    host_shell = HOST_SHELL_RESOLVER.resolve()
+    sandboxed = attempt is None or attempt.sandbox is SandboxType.MACOS_SEATBELT
+    if sandboxed:
+        fallback_environment = _effective_shell_environment(
+            SHELL_ENVIRONMENT_PROVIDER.fallback_environment(host_shell),
+            host_shell,
+        )
+        preflight_profile = _create_seatbelt_profile(
+            workspace=workspace,
+            environment=fallback_environment,
+            attempt=attempt,
             active_skill_roots=active_skill_roots,
         )
-        _verify_directory_path(workspace)
-        _verify_directory_path(cwd)
-        launch = prepare_shell_launch(
-            profile=profile,
-            command=command,
-            cwd=cwd,
-            attempt=attempt,
-        )
-        result = run_shell_process(
-            launch,
-            timeout_seconds=timeout_seconds,
-            cancel=cancel,
-            on_delta=on_delta,
-            started=started,
-            resource_registry=resource_registry,
-            owner_id=owner_id,
-        )
-        return _attach_skill_invocation(result, skill_invocation)
+        preflight_profile.command([str(host_shell.executable), "-c", ":"])
+    snapshot = SHELL_ENVIRONMENT_PROVIDER.get(
+        host_shell,
+        cwd.path,
+        command_wrapper=preflight_profile.command if sandboxed else None,
+    )
+    environment = _effective_shell_environment(snapshot.environment, host_shell)
+    profile = _create_seatbelt_profile(
+        workspace=workspace,
+        environment=environment,
+        attempt=attempt,
+        active_skill_roots=active_skill_roots,
+    )
+    _verify_directory_path(workspace)
+    _verify_directory_path(cwd)
+    launch = prepare_shell_launch(
+        profile=profile,
+        command=command,
+        cwd=cwd,
+        attempt=attempt,
+        shell=host_shell,
+        environment=environment,
+    )
+    result = run_shell_process(
+        launch,
+        timeout_seconds=timeout_seconds,
+        cancel=cancel,
+        on_delta=on_delta,
+        started=started,
+        resource_registry=resource_registry,
+        owner_id=owner_id,
+    )
+    return _attach_skill_invocation(result, skill_invocation)
+
+
+def _create_seatbelt_profile(
+    *,
+    workspace: WorkspaceIdentity,
+    environment: Mapping[str, str],
+    attempt: SandboxAttempt | None,
+    active_skill_roots: Sequence[Path],
+) -> SeatbeltProfile:
+    return SeatbeltProfile.create(
+        workspace_root=workspace.path,
+        sandbox_home=Path(environment["HOME"]),
+        sandbox_tmp=Path(environment["TMPDIR"]),
+        git_worktree_dir=workspace.git_dir,
+        git_common_dir=workspace.git_common_dir,
+        effective_permissions=(
+            attempt.permissions
+            if attempt is not None
+            and attempt.sandbox is SandboxType.MACOS_SEATBELT
+            else None
+        ),
+        active_skill_roots=active_skill_roots,
+    )
 
 
 def prepare_shell_launch(
@@ -191,17 +338,19 @@ def prepare_shell_launch(
     command: str,
     cwd: WorkspaceIdentity,
     attempt: SandboxAttempt | None,
+    shell: HostShell,
+    environment: Mapping[str, str],
 ) -> ShellLaunchSpec:
     sandboxed = attempt is None or attempt.sandbox is SandboxType.MACOS_SEATBELT
     argv = (
-        profile.command(["/bin/sh", "-c", command])
+        profile.command([str(shell.executable), "-c", command])
         if sandboxed
-        else ["/bin/sh", "-c", command]
+        else [str(shell.executable), "-c", command]
     )
     return ShellLaunchSpec(
         argv=tuple(argv),
         cwd=cwd.path,
-        environment=profile.environment(),
+        environment=dict(environment),
         sandboxed=sandboxed,
     )
 
@@ -216,15 +365,18 @@ def run_shell_process(
     resource_registry: ResourceRegistry | None,
     owner_id: str,
 ) -> dict[str, object]:
-    process = subprocess.Popen(
-        launch.argv,
-        cwd=launch.cwd,
-        env=launch.environment,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-    )
+    try:
+        process = subprocess.Popen(
+            launch.argv,
+            cwd=launch.cwd,
+            env=launch.environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+    except OSError as error:
+        raise ShellProcessStartError from error
     selector = selectors.DefaultSelector()
     assert process.stdout is not None and process.stderr is not None
     selector.register(process.stdout, selectors.EVENT_READ, "stdout")
