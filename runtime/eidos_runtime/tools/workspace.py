@@ -12,7 +12,7 @@ import re
 import stat
 import threading
 import time
-from typing import Iterator
+from typing import Iterator, Literal
 import uuid
 import json
 
@@ -41,6 +41,14 @@ from eidos_runtime.workspace.discovery_policy import (
     is_sensitive_directory as _is_sensitive_directory,
     is_sensitive_name as _is_sensitive_name,
 )
+from eidos_runtime.workspace.codex_patch import (
+    AddFile,
+    DeleteFile,
+    PatchError as CodexPatchError,
+    UpdateFile,
+    apply_update,
+    parse_patch,
+)
 from eidos_runtime.workspace.search_driver import (
     MAX_RG_PREVIEW_CHARACTERS,
     RipgrepFileEnumerator,
@@ -48,10 +56,6 @@ from eidos_runtime.workspace.search_driver import (
     SearchDriverError,
     WorkspaceSearchDriver,
     WorkspaceSearchRequest,
-)
-from eidos_runtime.workspace.unified_diff import (
-    PatchApplyError,
-    apply_strict_single_file_patch,
 )
 from eidos_runtime.workspace.reader import WorkspacePathError, WorkspaceReader
 from eidos_runtime.tools.registry import (
@@ -62,7 +66,7 @@ from eidos_runtime.tools.registry import (
 )
 from eidos_runtime.tools.contracts import (
     ApplyPatchInput,
-    DeleteFileInput,
+    ApplyPatchResultData,
     LIST_FILES_MAX_DEPTH,
     LIST_FILES_MAX_ENTRIES,
     ListFilesInput,
@@ -76,8 +80,6 @@ from eidos_runtime.tools.contracts import (
     SEARCH_TEXT_MAX_RESULTS,
     SearchTextInput,
     SearchTextResultData,
-    WorkspaceResultData,
-    WriteFileInput,
     result_model,
 )
 
@@ -124,6 +126,60 @@ class FileChange:
     mode: int
     diff: str
     delete: bool = False
+    kind: Literal["add", "update", "delete", "move"] = "update"
+    old_content: bytes | None = None
+    old_path: str | None = None
+    new_path: str | None = None
+    create_missing_parent: bool = False
+    destination_base_sha256: str | None = None
+    destination_mode: int = 0o644
+    destination_old_content: bytes | None = None
+
+
+@dataclass(frozen=True)
+class AppliedPatchChange:
+    path: str
+    kind: Literal["add", "update", "delete", "move"]
+    old_path: str | None = None
+    new_path: str | None = None
+    old_content: str | None = None
+    new_content: str | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        value: dict[str, object] = {
+            "path": self.path,
+            "kind": self.kind,
+        }
+        if self.old_path is not None:
+            value["oldPath"] = self.old_path
+        if self.new_path is not None:
+            value["newPath"] = self.new_path
+        return value
+
+
+@dataclass(frozen=True)
+class AppliedPatchDelta:
+    changes: tuple[AppliedPatchChange, ...] = ()
+
+    def append(self, change: AppliedPatchChange) -> "AppliedPatchDelta":
+        return AppliedPatchDelta((*self.changes, change))
+
+    def as_dicts(self) -> list[dict[str, object]]:
+        return [change.as_dict() for change in self.changes]
+
+
+@dataclass(frozen=True)
+class PreparedPatch:
+    changes: tuple[FileChange, ...]
+    diff: str
+
+    @property
+    def path(self) -> str:
+        return self.changes[0].path if self.changes else "."
+
+    @property
+    def base_sha256(self) -> str | None:
+        return self.changes[0].base_sha256 if len(self.changes) == 1 else None
 
 
 _BUILTIN_CONTRACTS = (
@@ -131,9 +187,7 @@ _BUILTIN_CONTRACTS = (
     ("read_file", "Read one bounded UTF-8 file. Large files return head/tail content; use read_file_range to continue.", "none", False, 5, "parallel", ReadFileInput, ReadFileResultData, "read_file"),
     ("read_file_range", "Read an inclusive bounded line range from one UTF-8 file. Continue from nextLine when present.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
     ("search_text", "Search a workspace-relative path (default '.') for a single-line query; supports maxResults, regex, and includeGlobs. Results are workspace-relative, bounded, and may be truncated.", "none", False, 5, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
-    ("write_file", "Create or replace one UTF-8 file inside the workspace and verify the final hash. Modifies the workspace without approval.", "workspace", False, 5, "single", WriteFileInput, WorkspaceResultData, "file_change"),
-    ("apply_patch", "Apply one single-file patch using standard unified hunks or exact context-matched @@ hunks. Path, base hash, and final content are verified without approval.", "workspace", False, 5, "single", ApplyPatchInput, WorkspaceResultData, "file_change"),
-    ("delete_file", "Delete one regular UTF-8 file inside the workspace after base hash verification and without approval.", "workspace", False, 5, "single", DeleteFileInput, WorkspaceResultData, "file_change"),
+    ("apply_patch", "Apply a workspace patch with Add, Update, Delete, and Move hunks. Paths, base hashes, and final contents are verified without approval.", "workspace", False, 5, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
     ("run_shell", "Run one shell command in the default macOS workspace sandbox without approval. For requested network access, set sandboxPermissions=with_additional_permissions, additionalPermissions.network.enabled=true, and provide justification so Eidos can request approval. Additional path access and unsandboxed execution also require approval. Output and workspace changes are bounded and verified.", "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
 )
 TOOL_SPECS = tuple(ToolSpec.model_validate({
@@ -184,7 +238,7 @@ class _BuiltinAdapter:
 
     def prepare_file_change(
         self, arguments: dict[str, object], cancel: threading.Event
-    ) -> FileChange | dict[str, object]:
+    ) -> FileChange | PreparedPatch | dict[str, object]:
         return self.executor._prepare_file_change(
             self.spec.name, self.operation, arguments, cancel
         )
@@ -194,14 +248,17 @@ class _BuiltinAdapter:
     ) -> dict[str, object]:
         return self.executor.commit_file_change(self.spec.name, change, cancel)
 
+    def commit_patch(
+        self, change: PreparedPatch, cancel: threading.Event
+    ) -> tuple[dict[str, object], AppliedPatchDelta]:
+        return self.executor.commit_patch(self.spec.name, change, cancel)
+
     def prepare_shell(self, cwd: str, cancel: threading.Event) -> WorkspaceIdentity:
         return self.executor.prepare_shell(cwd, cancel)
 
 
 def builtin_tool_registry(executor: ToolExecutor) -> ToolRegistry:
-    operations = (
-        "list", "read", "range", "search", "write", "patch", "delete", "shell"
-    )
+    operations = ("list", "read", "range", "search", "patch", "shell")
     entries: list[ToolRegistryEntry] = []
     for spec, operation, contract in zip(
         TOOL_SPECS, operations, _BUILTIN_CONTRACTS, strict=True
@@ -343,8 +400,11 @@ class ToolExecutor:
         tool_name: str,
         arguments: dict[str, object],
         cancel: threading.Event,
-    ) -> FileChange | dict[str, object]:
+    ) -> FileChange | PreparedPatch | dict[str, object]:
         entry = self.registry.get(tool_name)
+        if entry is None and tool_name in {"write_file", "delete_file"}:
+            operation = "write" if tool_name == "write_file" else "delete"
+            return self._prepare_file_change(tool_name, operation, arguments, cancel)
         validation = entry.validate_arguments(arguments) if entry else None
         prepare = getattr(entry.adapter, "prepare_file_change", None) if entry else None
         if (
@@ -450,9 +510,11 @@ class ToolExecutor:
         operation: str,
         arguments: dict[str, object],
         cancel: threading.Event,
-    ) -> FileChange | dict[str, object]:
+    ) -> FileChange | PreparedPatch | dict[str, object]:
         if operation not in {"write", "patch", "delete"}:
             return _error(tool_name, "tool_not_found", "Tool is not available")
+        if operation == "patch":
+            return self._prepare_codex_patch(tool_name, arguments, cancel)
         try:
             self._verify_root()
             _check_cancel(cancel)
@@ -469,23 +531,10 @@ class ToolExecutor:
                 if existing is None:
                     raise WorkspacePathError("file_unavailable")
                 candidate = b""
-            elif operation == "write":
+            else:
                 content = arguments["content"]
                 assert isinstance(content, str)
                 candidate = content.encode("utf-8")
-            else:
-                if existing is None:
-                    raise WorkspacePathError("file_unavailable")
-                patch_value = arguments["patch"]
-                assert isinstance(patch_value, str)
-                try:
-                    candidate = apply_strict_single_file_patch(
-                        path=normalized_path,
-                        original=existing[0].decode("utf-8", errors="strict"),
-                        patch_text=patch_value,
-                    ).encode("utf-8")
-                except PatchApplyError as error:
-                    raise WorkspacePathError(error.code) from None
             if len(candidate) > MAX_FILE_CHANGE_BYTES:
                 raise WorkspacePathError("file_too_large")
             base_content = existing[0] if existing is not None else b""
@@ -530,6 +579,182 @@ class ToolExecutor:
         except WorkspacePathError as error:
             return _error(tool_name, error.code, "File change could not be prepared")
 
+    def _prepare_codex_patch(
+        self,
+        tool_name: str,
+        arguments: dict[str, object],
+        cancel: threading.Event,
+    ) -> PreparedPatch | dict[str, object]:
+        """Parse a workspace patch and prepare each hunk against read evidence.
+
+        The parser only understands the Codex patch language. This method keeps
+        path validation, read evidence, diff generation, and commit metadata in
+        the existing Workspace executor.
+        """
+        try:
+            self._verify_root()
+            _check_cancel(cancel)
+            scanned_arguments = default_scanner().scan_json(arguments)
+            if scanned_arguments != arguments:
+                raise SensitiveScanError("sensitive tool arguments")
+            patch_value = arguments.get("patch")
+            if not isinstance(patch_value, str):
+                return _error(tool_name, "invalid_arguments", "Invalid arguments")
+            hunks = parse_patch(patch_value)
+            if not hunks:
+                return _error(
+                    tool_name,
+                    "patch_format_error",
+                    "Patch format error: patch contains no file hunks",
+                )
+            planned: dict[str, tuple[bytes, int] | None] = {}
+            prepared: list[FileChange] = []
+            diffs: list[str] = []
+            for hunk in hunks:
+                _check_cancel(cancel)
+                if isinstance(hunk, AddFile):
+                    kind = "add"
+                elif isinstance(hunk, DeleteFile):
+                    kind = "delete"
+                elif isinstance(hunk, UpdateFile):
+                    kind = "update"
+                else:
+                    raise CodexPatchError(
+                        "patch_format_error", "Patch format error: unknown file hunk"
+                    )
+                path_value = hunk.path
+                parts = _validate_relative_path(path_value)
+                path = "/".join(parts)
+                existing = planned.get(path, _MISSING)
+                if existing is _MISSING:
+                    existing = self._read_existing_for_change(
+                        path, cancel, allow_missing_parents=True
+                    )
+                    planned[path] = existing
+                if kind == "add":
+                    content_value = hunk.content
+                    candidate = content_value.encode("utf-8")
+                    _validate_patch_content(candidate)
+                    if len(candidate) > MAX_FILE_CHANGE_BYTES:
+                        raise WorkspacePathError("file_too_large")
+                    old_content = None if existing is None else existing[0]
+                    mode = 0o644 if existing is None else existing[1]
+                    change = _make_patch_change(
+                        path=path,
+                        candidate=candidate,
+                        existing=existing,
+                        mode=mode,
+                        kind="add",
+                        create_missing_parent=True,
+                    )
+                    planned[path] = (candidate, mode)
+                    prepared.append(change)
+                    diffs.append(_patch_diff(path, old_content, candidate))
+                    continue
+                if kind == "delete":
+                    if existing is None:
+                        raise WorkspacePathError("file_unavailable")
+                    _validate_patch_content(existing[0])
+                    change = _make_patch_change(
+                        path=path,
+                        candidate=b"",
+                        existing=existing,
+                        mode=existing[1],
+                        kind="delete",
+                        delete=True,
+                    )
+                    planned[path] = None
+                    prepared.append(change)
+                    diffs.append(_patch_diff(path, existing[0], b"", delete=True))
+                    continue
+                if kind != "update":
+                    raise CodexPatchError(
+                        "patch_format_error",
+                        f"Patch format error in hunk for {path}: unknown hunk kind '{kind}'",
+                    )
+                if existing is None:
+                    raise WorkspacePathError("file_unavailable")
+                original_text = existing[0].decode("utf-8", errors="strict")
+                candidate_text = apply_update(original_text, hunk)
+                candidate = candidate_text.encode("utf-8")
+                _validate_patch_content(candidate)
+                if len(candidate) > MAX_FILE_CHANGE_BYTES:
+                    raise WorkspacePathError("file_too_large")
+                move_value = hunk.move_to
+                if move_value is not None:
+                    if not isinstance(move_value, str):
+                        raise CodexPatchError(
+                            "patch_format_error",
+                            f"Patch format error in Update File hunk for {path}: move destination is invalid",
+                        )
+                    destination_parts = _validate_relative_path(move_value)
+                    destination = "/".join(destination_parts)
+                    destination_existing = planned.get(destination, _MISSING)
+                    if destination_existing is _MISSING:
+                        destination_existing = self._read_existing_for_change(
+                            destination, cancel, allow_missing_parents=True
+                        )
+                        planned[destination] = destination_existing
+                    change = _make_patch_change(
+                        path=path,
+                        candidate=candidate,
+                        existing=existing,
+                        mode=existing[1],
+                        kind="move",
+                        old_path=path,
+                        new_path=destination,
+                        create_missing_parent=True,
+                        destination=destination_existing,
+                        destination_mode=(
+                            existing[1]
+                            if destination_existing is None
+                            else destination_existing[1]
+                        ),
+                    )
+                    planned[path] = None
+                    planned[destination] = (candidate, existing[1])
+                    prepared.append(change)
+                    diffs.append(_patch_diff(path, existing[0], candidate, destination))
+                else:
+                    change = _make_patch_change(
+                        path=path,
+                        candidate=candidate,
+                        existing=existing,
+                        mode=existing[1],
+                        kind="update",
+                    )
+                    planned[path] = (candidate, existing[1])
+                    prepared.append(change)
+                    diffs.append(_patch_diff(path, existing[0], candidate))
+            diff = "".join(diffs)
+            if len(diff.encode("utf-8")) > MAX_DIFF_BYTES:
+                raise WorkspacePathError("diff_too_large")
+            return PreparedPatch(tuple(prepared), diff)
+        except SensitiveScanError:
+            return _error(
+                tool_name,
+                "sensitive_content_rejected",
+                "Sensitive arguments were rejected",
+            )
+        except UnicodeDecodeError:
+            return _error(tool_name, "invalid_utf8", "File is not valid UTF-8")
+        except ToolCancelled:
+            return _error(tool_name, "canceled", "Tool was canceled")
+        except CodexPatchError as error:
+            if error.code == "patch_format_error":
+                location = f" at line {error.line_number}" if error.line_number else ""
+                target = f" for {error.target_path}" if error.target_path else ""
+                summary = f"Patch format error{location}{target}: {error.message}"
+            else:
+                summary = error.message
+            return _error(tool_name, error.code, summary)
+        except WorkspacePathError as error:
+            return _error(
+                tool_name,
+                error.code,
+                f"File change could not be prepared: {error.code}",
+            )
+
     def commit_file_change(
         self,
         tool_name: str,
@@ -544,7 +769,9 @@ class ToolExecutor:
             self._verify_root()
             _check_cancel(cancel)
             parts = _validate_relative_path(change.path)
-            parent_fd = self._open_parent(parts)
+            parent_fd = self._open_parent(
+                parts, create_missing=change.create_missing_parent
+            )
             source_fd = self._open_verified_base(
                 parent_fd, parts[-1], change.base_sha256, cancel
             )
@@ -661,7 +888,9 @@ class ToolExecutor:
                     "Secure file commit did not change the target",
                     side_effects=False,
                 )
-            current_parent_fd = self._open_parent(parts)
+            current_parent_fd = self._open_parent(
+                parts, create_missing=change.create_missing_parent
+            )
             os.close(parent_fd)
             parent_fd = current_parent_fd
             try:
@@ -780,6 +1009,92 @@ class ToolExecutor:
                     pass
             if parent_fd >= 0:
                 os.close(parent_fd)
+
+    def commit_patch(
+        self,
+        tool_name: str,
+        prepared: PreparedPatch,
+        cancel: threading.Event,
+    ) -> tuple[dict[str, object], AppliedPatchDelta]:
+        """Commit patch changes in order through the existing file primitive."""
+        delta = AppliedPatchDelta()
+        for change in prepared.changes:
+            _check_cancel(cancel)
+            if change.kind != "move":
+                result = self.commit_file_change(tool_name, change, cancel)
+                if _file_change_committed(result):
+                    delta = delta.append(_delta_for_file_change(change))
+                if result.get("outcome") != "success":
+                    return _patch_failure_with_delta(result, delta), delta
+                continue
+
+            destination = change.new_path
+            source = change.old_path or change.path
+            if destination is None:
+                return _patch_failure_with_delta(
+                    _error(
+                        tool_name,
+                        "patch_format_error",
+                        f"Patch format error in move hunk for {source}: destination is missing",
+                    ),
+                    delta,
+                ), delta
+            destination_change = FileChange(
+                path=destination,
+                content=change.content,
+                base_sha256=change.destination_base_sha256,
+                mode=change.destination_mode,
+                diff=change.diff,
+                kind="add" if change.destination_base_sha256 is None else "update",
+                old_content=change.destination_old_content,
+                create_missing_parent=True,
+            )
+            destination_result = self.commit_file_change(
+                tool_name, destination_change, cancel
+            )
+            if destination_result.get("outcome") != "success":
+                return _patch_failure_with_delta(destination_result, delta), delta
+            source_change = FileChange(
+                path=source,
+                content=b"",
+                base_sha256=change.base_sha256,
+                mode=change.mode,
+                diff=change.diff,
+                delete=True,
+                kind="delete",
+                old_content=change.old_content,
+            )
+            source_result = self.commit_file_change(tool_name, source_change, cancel)
+            if source_result.get("outcome") != "success":
+                # The destination is already a real committed change. Keep it
+                # visible as an add/update because the move is incomplete.
+                delta = delta.append(_delta_for_file_change(destination_change))
+                return _patch_failure_with_delta(source_result, delta), delta
+            delta = delta.append(
+                AppliedPatchChange(
+                    path=source,
+                    kind="move",
+                    old_path=source,
+                    new_path=destination,
+                    old_content=_decode_patch_bytes(change.old_content),
+                    new_content=_decode_patch_bytes(change.content),
+                )
+            )
+
+        if not delta.changes:
+            return _success(
+                tool_name,
+                "Patch did not change any files",
+                {"path": prepared.path, "changes": []},
+            ), delta
+        summary = "Success. Updated the following files: " + ", ".join(
+            _delta_summary(change) for change in delta.changes
+        )
+        return _success(
+            tool_name,
+            summary,
+            {"path": prepared.path, "changes": delta.as_dicts()},
+        ), delta
 
     def _list_files(
         self, arguments: dict[str, object], cancel: threading.Event
@@ -1036,12 +1351,22 @@ class ToolExecutor:
             raise WorkspacePathError("sensitive_workspace_content")
 
     def _read_existing_for_change(
-        self, path: str, cancel: threading.Event
+        self,
+        path: str,
+        cancel: threading.Event,
+        *,
+        allow_missing_parents: bool = False,
     ) -> tuple[bytes, int] | None:
         try:
             descriptor, _normalized = self._open_file(path)
         except WorkspacePathError as error:
             if error.code == "file_unavailable":
+                return None
+            if (
+                allow_missing_parents
+                and error.code == "workspace_boundary_violation"
+                and _workspace_parent_is_missing(self.workspace.path, path)
+            ):
                 return None
             raise
         try:
@@ -1060,11 +1385,15 @@ class ToolExecutor:
         finally:
             os.close(descriptor)
 
-    def _open_parent(self, parts: tuple[str, ...]) -> int:
+    def _open_parent(
+        self, parts: tuple[str, ...], *, create_missing: bool = False
+    ) -> int:
         directory_fd = os.dup(self.root_fd)
         try:
             for part in parts[:-1]:
-                next_fd = self._open_directory(directory_fd, part)
+                next_fd = self._open_directory(
+                    directory_fd, part, create_missing=create_missing
+                )
                 os.close(directory_fd)
                 directory_fd = next_fd
             return directory_fd
@@ -1125,12 +1454,28 @@ class ToolExecutor:
         return descriptor, "/".join(parts)
 
     @staticmethod
-    def _open_directory(parent_fd: int, name: str) -> int:
+    def _open_directory(
+        parent_fd: int, name: str, *, create_missing: bool = False
+    ) -> int:
         flags = os.O_RDONLY | os.O_DIRECTORY
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         try:
             return os.open(name, flags, dir_fd=parent_fd)
+        except FileNotFoundError:
+            if not create_missing:
+                raise WorkspacePathError("workspace_boundary_violation") from None
+            try:
+                os.mkdir(name, 0o755, dir_fd=parent_fd)
+                os.fsync(parent_fd)
+            except FileExistsError:
+                pass
+            except OSError:
+                raise WorkspacePathError("workspace_boundary_violation") from None
+            try:
+                return os.open(name, flags, dir_fd=parent_fd)
+            except OSError:
+                raise WorkspacePathError("workspace_boundary_violation") from None
         except OSError:
             raise WorkspacePathError("workspace_boundary_violation") from None
 
@@ -1280,6 +1625,142 @@ def _validate_relative_path(value: str) -> tuple[str, ...]:
         code = "sensitive_path" if parts else "workspace_boundary_violation"
         raise WorkspacePathError(code)
     return parts
+
+
+_MISSING = object()
+
+
+def _make_patch_change(
+    *,
+    path: str,
+    candidate: bytes,
+    existing: tuple[bytes, int] | None,
+    mode: int,
+    kind: Literal["add", "update", "delete", "move"],
+    delete: bool = False,
+    old_path: str | None = None,
+    new_path: str | None = None,
+    create_missing_parent: bool = False,
+    destination: tuple[bytes, int] | None = None,
+    destination_mode: int = 0o644,
+) -> FileChange:
+    old_content = None if existing is None else existing[0]
+    base_sha256 = (
+        None if existing is None else hashlib.sha256(existing[0]).hexdigest()
+    )
+    destination_base_sha256 = (
+        None
+        if destination is None
+        else hashlib.sha256(destination[0]).hexdigest()
+    )
+    destination_old_content = None if destination is None else destination[0]
+    return FileChange(
+        path=path,
+        content=candidate,
+        base_sha256=base_sha256,
+        mode=mode,
+        diff=_patch_diff(
+            path, old_content, candidate, new_path, delete=delete
+        ),
+        delete=delete,
+        kind=kind,
+        old_content=old_content,
+        old_path=old_path,
+        new_path=new_path,
+        create_missing_parent=create_missing_parent,
+        destination_base_sha256=destination_base_sha256,
+        destination_mode=destination_mode,
+        destination_old_content=destination_old_content,
+    )
+
+
+def _patch_diff(
+    path: str,
+    old_content: bytes | None,
+    new_content: bytes,
+    move_path: str | None = None,
+    *,
+    delete: bool = False,
+) -> str:
+    old_text = _decode_patch_bytes(old_content) or ""
+    new_text = _decode_patch_bytes(new_content) or ""
+    fromfile = "/dev/null" if old_content is None else f"a/{path}"
+    tofile = "/dev/null" if delete else (
+        f"b/{move_path or path}"
+    )
+    diff = _build_change_diff(old_text, new_text, fromfile, tofile)
+    if not diff and old_content is None:
+        return f"--- /dev/null\n+++ b/{move_path or path}\n"
+    if move_path is not None and diff:
+        lines = diff.splitlines(keepends=True)
+        if len(lines) >= 2:
+            lines[1] = f"+++ b/{move_path}\n"
+            diff = "".join(lines)
+    return diff
+
+
+def _decode_patch_bytes(value: bytes | None) -> str | None:
+    if value is None:
+        return None
+    return value.decode("utf-8", errors="strict")
+
+
+def _validate_patch_content(content: bytes) -> None:
+    try:
+        text = content.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        raise WorkspacePathError("invalid_utf8") from None
+    if _has_unsupported_text_control(text):
+        raise WorkspacePathError("unsupported_text_content")
+
+
+def _file_change_committed(result: dict[str, object]) -> bool:
+    return result.get("outcome") == "success" and result.get("code") != "no_changes"
+
+
+def _delta_for_file_change(change: FileChange) -> AppliedPatchChange:
+    if change.kind == "delete":
+        new_content = None
+    else:
+        new_content = _decode_patch_bytes(change.content)
+    return AppliedPatchChange(
+        path=change.path,
+        kind=change.kind,
+        old_path=change.old_path,
+        new_path=change.new_path,
+        old_content=_decode_patch_bytes(change.old_content),
+        new_content=new_content,
+    )
+
+
+def _delta_summary(change: AppliedPatchChange) -> str:
+    if change.kind == "add":
+        return f"A {change.path}"
+    if change.kind == "delete":
+        return f"D {change.path}"
+    if change.kind == "move":
+        return f"M {change.old_path or change.path} -> {change.new_path or change.path}"
+    return f"M {change.path}"
+
+
+def _patch_failure_with_delta(
+    result: dict[str, object], delta: AppliedPatchDelta
+) -> dict[str, object]:
+    failed = dict(result)
+    data = failed.get("data")
+    merged = dict(data) if isinstance(data, dict) else {}
+    merged["changes"] = delta.as_dicts()
+    if delta.changes and "path" not in merged:
+        merged["path"] = delta.changes[-1].path
+    failed["data"] = merged
+    return failed
+
+
+def _workspace_parent_is_missing(root: Path, path: str) -> bool:
+    parts = tuple(part for part in path.split("/") if part)
+    if len(parts) <= 1:
+        return False
+    return not root.joinpath(*parts[:-1]).exists()
 
 
 def _build_change_diff(

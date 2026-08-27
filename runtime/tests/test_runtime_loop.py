@@ -234,9 +234,16 @@ class RuntimeLoopTests(unittest.TestCase):
                 ModelResponse(
                     tool_calls=(
                         ModelToolCall(
-                            "call-write",
-                            "write_file",
-                            {"path": "notes.txt", "content": "approved\n"},
+                            "call-patch",
+                            "apply_patch",
+                            {
+                                "patch": (
+                                    "*** Begin Patch\n"
+                                    "*** Add File: notes.txt\n"
+                                    "+approved\n"
+                                    "*** End Patch"
+                                )
+                            },
                         ),
                     )
                 ),
@@ -263,7 +270,7 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertIn("+++ b/notes.txt", file_item["toolCall"]["changeDiff"])
         self.assertEqual(
             json.loads(file_item["toolCall"]["argumentsJson"]),
-            {"path": "notes.txt"},
+            {},
         )
         completed_notification = next(
             notification
@@ -287,9 +294,18 @@ class RuntimeLoopTests(unittest.TestCase):
                 ModelResponse(
                     tool_calls=(
                         ModelToolCall(
-                            "call-write",
-                            "write_file",
-                            {"path": "hello.txt", "content": "changed\n"},
+                            "call-patch",
+                            "apply_patch",
+                            {
+                                "patch": (
+                                    "*** Begin Patch\n"
+                                    "*** Update File: hello.txt\n"
+                                    "@@\n"
+                                    "-hello from workspace\n"
+                                    "+changed\n"
+                                    "*** End Patch"
+                                )
+                            },
                         ),
                     )
                 ),
@@ -325,9 +341,18 @@ class RuntimeLoopTests(unittest.TestCase):
                 ModelResponse(
                     tool_calls=(
                         ModelToolCall(
-                            "call-write",
-                            "write_file",
-                            {"path": "hello.txt", "content": "model change\n"},
+                            "call-patch",
+                            "apply_patch",
+                            {
+                                "patch": (
+                                    "*** Begin Patch\n"
+                                    "*** Update File: hello.txt\n"
+                                    "@@\n"
+                                    "-hello from workspace\n"
+                                    "+model change\n"
+                                    "*** End Patch"
+                                )
+                            },
                         ),
                     )
                 ),
@@ -359,9 +384,18 @@ class RuntimeLoopTests(unittest.TestCase):
                 ModelResponse(
                     tool_calls=(
                         ModelToolCall(
-                            "call-write",
-                            "write_file",
-                            {"path": "hello.txt", "content": "blind\n"},
+                            "call-patch",
+                            "apply_patch",
+                            {
+                                "patch": (
+                                    "*** Begin Patch\n"
+                                    "*** Update File: hello.txt\n"
+                                    "@@\n"
+                                    "-hello from workspace\n"
+                                    "+blind\n"
+                                    "*** End Patch"
+                                )
+                            },
                         ),
                     )
                 ),
@@ -390,9 +424,14 @@ class RuntimeLoopTests(unittest.TestCase):
                             "call-patch",
                             "apply_patch",
                             {
-                                "path": "hello.txt",
-                                "patch": "--- a/hello.txt\n+++ b/hello.txt\n"
-                                "@@ -1 +1 @@\n-hello from workspace\n+blind\n",
+                                "patch": (
+                                    "*** Begin Patch\n"
+                                    "*** Update File: hello.txt\n"
+                                    "@@\n"
+                                    "-hello from workspace\n"
+                                    "+blind\n"
+                                    "*** End Patch"
+                                )
                             },
                         ),
                     )
@@ -414,8 +453,8 @@ class RuntimeLoopTests(unittest.TestCase):
 
     def test_invalid_or_mismatched_patch_never_requests_approval(self) -> None:
         patches = (
-            "--- a/hello.txt\n+++ b/hello.txt\n",
-            "--- a/hello.txt\n+++ b/hello.txt\n@@ -1 +1 @@\n-other\n+new\n",
+            "*** Begin Patch\n*** Update File: hello.txt\n*** End Patch",
+            "*** Begin Patch\n*** Update File: hello.txt\n@@\n-other\n+new\n*** End Patch",
         )
         for index, patch_text in enumerate(patches):
             with self.subTest(patch_text=patch_text):
@@ -434,7 +473,7 @@ class RuntimeLoopTests(unittest.TestCase):
                                 ModelToolCall(
                                     f"call-patch-{index}",
                                     "apply_patch",
-                                    {"path": "hello.txt", "patch": patch_text},
+                                    {"patch": patch_text},
                                 ),
                             )
                         ),
@@ -457,7 +496,7 @@ class RuntimeLoopTests(unittest.TestCase):
                     item for item in snapshot["items"] if item["kind"] == "file_change"
                 ][-1]
                 result = json.loads(file_item["toolCall"]["resultJson"])
-                expected = "invalid_patch" if index == 0 else "patch_context_mismatch"
+                expected = "patch_format_error" if index == 0 else "patch_context_mismatch"
                 self.assertEqual(result["code"], expected)
                 self.assertEqual(
                     (self.workspace / "hello.txt").read_text(),
@@ -1273,22 +1312,24 @@ class ToolExecutorTests(unittest.TestCase):
         finally:
             executor.close()
 
-    def test_strict_unified_patch_prepares_and_commits_expected_content(self) -> None:
-        patch = """--- a/src/app.py
-+++ b/src/app.py
-@@ -1 +1 @@
--print('needle')
-+print('updated')
-"""
+    def test_codex_patch_prepares_and_commits_expected_content(self) -> None:
+        patch = (
+            "*** Begin Patch\n"
+            "*** Update File: src/app.py\n"
+            "@@\n"
+            "-print('needle')\n"
+            "+print('updated')\n"
+            "*** End Patch"
+        )
         prepared = self.executor.prepare_file_change(
             "apply_patch",
-            {"path": "src/app.py", "patch": patch},
+            {"patch": patch},
             threading.Event(),
         )
         self.assertFalse(isinstance(prepared, dict), prepared)
         assert not isinstance(prepared, dict)
 
-        result = self.executor.commit_file_change(
+        result, _delta = self.executor.commit_patch(
             "apply_patch", prepared, threading.Event()
         )
 
@@ -1297,24 +1338,26 @@ class ToolExecutorTests(unittest.TestCase):
             (self.workspace / "src" / "app.py").read_text(), "print('updated')\n"
         )
 
-    def test_position_independent_patch_prepares_and_commits_expected_content(
+    def test_codex_patch_with_bare_context_prepares_and_commits_expected_content(
         self,
     ) -> None:
-        patch = """--- a/src/app.py
-+++ b/src/app.py
-@@
--print('needle')
-+print('updated')
-"""
+        patch = (
+            "*** Begin Patch\n"
+            "*** Update File: src/app.py\n"
+            "@@\n"
+            "-print('needle')\n"
+            "+print('updated')\n"
+            "*** End Patch"
+        )
         prepared = self.executor.prepare_file_change(
             "apply_patch",
-            {"path": "src/app.py", "patch": patch},
+            {"patch": patch},
             threading.Event(),
         )
         self.assertFalse(isinstance(prepared, dict), prepared)
         assert not isinstance(prepared, dict)
 
-        result = self.executor.commit_file_change(
+        result, _delta = self.executor.commit_patch(
             "apply_patch", prepared, threading.Event()
         )
 

@@ -205,14 +205,16 @@ class ToolExecutorDiscoveryScopeTests(unittest.TestCase):
         prepared = self.executor.prepare_file_change(
             "write_file", {"path": "ignored.txt", "content": "after\n"}, threading.Event()
         )
-        patch = """--- a/ignored.txt
-+++ b/ignored.txt
-@@ -1 +1 @@
--before
-+after
-"""
+        patch = (
+            "*** Begin Patch\n"
+            "*** Update File: ignored.txt\n"
+            "@@\n"
+            "-before\n"
+            "+after\n"
+            "*** End Patch"
+        )
         patched = self.executor.prepare_file_change(
-            "apply_patch", {"path": "ignored.txt", "patch": patch}, threading.Event()
+            "apply_patch", {"patch": patch}, threading.Event()
         )
         deleted = self.executor.prepare_file_change(
             "delete_file", {"path": "ignored.txt"}, threading.Event()

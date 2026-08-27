@@ -79,7 +79,12 @@ from eidos_runtime.sandbox.workspace_manifest import (
     attach_workspace_diff,
     diff_workspace_manifests,
 )
-from eidos_runtime.tools.workspace import ToolCancelled, WorkspacePathError
+from eidos_runtime.tools.workspace import (
+    AppliedPatchDelta,
+    PreparedPatch,
+    ToolCancelled,
+    WorkspacePathError,
+)
 from eidos_runtime.tools.contracts import RunShellInput
 from eidos_runtime.tools.registry import (
     AdapterToolRuntime,
@@ -149,6 +154,71 @@ class FileChangeToolHandler:
         if isinstance(prepared, dict):
             return HandlerOutcome(
                 bounded_tool_result(call.name, prepared), "failed", "failed"
+            )
+        if isinstance(prepared, PreparedPatch):
+            if prepared.base_sha256 is not None and not prepared.diff:
+                return HandlerOutcome(
+                    tool_result(
+                        call.name,
+                        "success",
+                        "no_changes",
+                        "Patch did not change any files",
+                        {"path": prepared.path, "changes": []},
+                    ),
+                    "completed",
+                )
+            paths = [change.path for change in prepared.changes]
+            committed_delta = AppliedPatchDelta()
+            prepared_execution = PreparedToolExecution(
+                approval_description={
+                    "kind": "file_change",
+                    "summary": f"Modify {len(paths)} files",
+                    "paths": paths,
+                    "diff": prepared.diff,
+                },
+                approval_diff=prepared.diff,
+                base_sha256=prepared.base_sha256,
+                transition_reason="workspace_file_authorized",
+                intent_preconditions={
+                    "authorization": "workspace",
+                    "paths": paths,
+                    "baseShas": [
+                        change.base_sha256 for change in prepared.changes
+                    ],
+                },
+            )
+            self.dependencies.store.record_workspace_change(
+                str(item["id"]),
+                diff=prepared.diff,
+                base_sha256=prepared.base_sha256,
+            )
+
+            def execute_patch() -> dict[str, object]:
+                nonlocal committed_delta
+                result, committed_delta = runtime.implementation.commit_patch(  # type: ignore[attr-defined]
+                    prepared, cancel
+                )
+                return result
+
+            verified = self.dependencies.execute_workspace_side_effect(
+                item=item,
+                prepared=prepared_execution,
+                execute=execute_patch,
+            )
+            result = verified.result
+            if result["outcome"] == "success":
+                self.dependencies.store.clear_rejects(run_id)
+            changed = bool(committed_delta.changes)
+            status = "completed" if result["outcome"] == "success" else "failed"
+            return HandlerOutcome(
+                result,
+                status,
+                status,
+                workspace_changed=changed,
+                diff_hash=(
+                    hashlib.sha256(prepared.diff.encode("utf-8")).hexdigest()
+                    if changed else None
+                ),
             )
         if prepared.base_sha256 is not None and not prepared.diff:
             return HandlerOutcome(

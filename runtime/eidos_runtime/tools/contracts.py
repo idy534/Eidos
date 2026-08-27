@@ -189,11 +189,11 @@ class WriteFileInput(ReadFileInput):
         return _utf8_limit(value, 256 * 1024, "content_too_large")
 
 
-class ApplyPatchInput(ReadFileInput):
+class ApplyPatchInput(StrictToolModel):
     patch: StrictStr = Field(
         description=(
-            "Patch for exactly one file. Use standard unified hunks or exact "
-            "context-matched @@ hunks without line numbers."
+            "Workspace patch. Use Begin/End Patch with Add, Update, Delete, "
+            "or Move hunks and context-matched @@ chunks."
         )
     )
 
@@ -484,6 +484,18 @@ class WorkspaceResultData(StrictToolModel):
     created: tuple[StrictStr, ...] | None = None
     modified: tuple[StrictStr, ...] | None = None
     deleted: tuple[StrictStr, ...] | None = None
+
+
+class AppliedPatchChangeData(StrictToolModel):
+    path: StrictStr
+    kind: Literal["add", "update", "delete", "move"]
+    oldPath: StrictStr | None = None
+    newPath: StrictStr | None = None
+
+
+class ApplyPatchResultData(WorkspaceResultData):
+    SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = ("changes",)
+    changes: tuple[AppliedPatchChangeData, ...] | None = None
 
 
 class SkillInvocationMetadata(StrictToolModel):

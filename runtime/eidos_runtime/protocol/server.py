@@ -1697,8 +1697,15 @@ def _model_from_environment() -> ModelClient | None:
                     tool_calls=(
                         ModelToolCall(
                             "fake-write-1",
-                            "write_file",
-                            {"path": "approved.txt", "content": "approved\n"},
+                            "apply_patch",
+                            {
+                                "patch": (
+                                    "*** Begin Patch\n"
+                                    "*** Add File: approved.txt\n"
+                                    "+approved\n"
+                                    "*** End Patch"
+                                )
+                            },
                         ),
                     )
                 ),

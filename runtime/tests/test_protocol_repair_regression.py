@@ -45,17 +45,24 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
                 finish_reason="tool_calls",
                 tool_calls=(
                     ModelToolCall(
-                        "write-go-mod",
-                        "write_file",
-                        {"path": "go.mod", "content": "module shipping-lab\n\ngo 1.26\n"},
+                        "patch-go-mod",
+                        "apply_patch",
+                        {"patch": "*** Begin Patch\n"
+                        "*** Add File: go.mod\n"
+                        "+module shipping-lab\n"
+                        "+\n"
+                        "+go 1.26\n"
+                        "*** End Patch"},
                     ),
                     ModelToolCall(
-                        "write-main",
-                        "write_file",
-                        {
-                            "path": "main.go",
-                            "content": "package main\n\nfunc main() {}\n",
-                        },
+                        "patch-main",
+                        "apply_patch",
+                        {"patch": "*** Begin Patch\n"
+                        "*** Add File: main.go\n"
+                        "+package main\n"
+                        "+\n"
+                        "+func main() {}\n"
+                        "*** End Patch"},
                     ),
                 ),
             ),
@@ -105,9 +112,9 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
                 text="I will write the file now.",
                 tool_calls=(
                     ModelToolCall(
-                        "bad-write",
-                        "write_file",
-                        {"path": "go.mod"},
+                        "bad-patch",
+                        "apply_patch",
+                        {},
                     ),
                 ),
             ),

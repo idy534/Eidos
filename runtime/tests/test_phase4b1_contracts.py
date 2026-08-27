@@ -50,7 +50,7 @@ class Phase4B1ContractTests(unittest.TestCase):
             (SearchTextInput, {"query": "a\nb"}),
             (SearchTextInput, {"query": "界" * 171}),
             (WriteFileInput, {"path": "a", "content": "界" * 87_382}),
-            (ApplyPatchInput, {"path": "a", "patch": "界" * 174_763}),
+            (ApplyPatchInput, {"patch": "界" * 174_763}),
             (RunShellInput, {"command": "界" * 5_462}),
         ):
             with self.subTest(model=model.__name__):

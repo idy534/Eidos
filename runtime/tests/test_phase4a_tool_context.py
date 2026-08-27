@@ -322,7 +322,7 @@ class Phase4ASkillContextTests(unittest.TestCase):
                         "matches": [], "scannedBytes": 0, "truncated": False,
                     },
                     "write_file": {"path": "a"},
-                    "apply_patch": {"path": "a"},
+                    "apply_patch": {"path": "a", "changes": []},
                     "delete_file": {"path": "a"},
                     "run_shell": {
                         "exitCode": 0, "stdout": "", "stderr": "",
@@ -597,8 +597,13 @@ class Phase4ASideEffectContractTests(unittest.TestCase):
                     ),
                     cancel=cancel,
                     execute=lambda: self._result(
-                        "write_file",
-                        {"path": "a.txt", "sha256": "a" * 64},
+                        "apply_patch",
+                        {
+                            "path": "a.txt",
+                            "changes": [
+                                {"path": "a.txt", "kind": "update"},
+                            ],
+                        },
                     ),
                 )
                 self.assertEqual(approval.decision, "approve")
@@ -622,9 +627,14 @@ class Phase4ASideEffectContractTests(unittest.TestCase):
         )
         handler.execute_side_effect = controller.execute_side_effect
         call = ModelToolCall(
-            "call-write",
-            "write_file",
-            {"path": "a.txt", "content": "hello"},
+            "call-patch",
+            "apply_patch",
+            {
+                "patch": "*** Begin Patch\n"
+                "*** Add File: a.txt\n"
+                "+hello\n"
+                "*** End Patch"
+            },
         )
         plan = self.dispatcher.plan(call)
         assert plan.descriptor is not None
@@ -636,7 +646,7 @@ class Phase4ASideEffectContractTests(unittest.TestCase):
         ):
             outcome = controller.execute(
                 run_id=self.run["id"],
-                item=self._item("write_file", call.arguments),
+                item=self._item("apply_patch", call.arguments),
                 call=call,
                 plan=plan,
                 cancel=threading.Event(),
