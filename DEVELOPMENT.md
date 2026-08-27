@@ -253,12 +253,66 @@ pnpm start
 
 ## 12. Shell manual test
 
-Shell 手工验收应使用可丢弃的 Workspace。当前 Shell 流程如下：
+Shell 手工验收应使用临时 Workspace。正常 Finder 启动时，Agent Shell 的 `HOME` 应与用户 Terminal 的真实 HOME 一致。测试者不要直接在真实 HOME 创建探针文件。默认 Workspace Shell 不需要 Approval，additional write、network 和 unsandboxed attempt 仍需要 Approval。
 
-1. Tool 先验证 Workspace identity 和 cwd，并创建 Approval request。
-2. Approval 卡展示 command、cwd、timeout、network 和 sandbox permissions。
-3. Approval 前不启动 Shell，也不修改 Workspace。
-4. 默认 attempt 通过 macOS Seatbelt 启动受控进程。Shell 使用最小环境、有界输出和进程组终止。
-5. 命令结束后，Runtime 进行 Workspace manifest observation，并记录 diff、退出状态和 reconciliation 状态。
+先启动应用，并把待测 Session 指向临时 Workspace。然后在 Agent Shell 中执行以下环境检查：
 
-Shell 启动不要求先完整扫描整个 Workspace。Workspace-wide observation 属于 post-execution evidence。`unknown` observation 不等于 Runtime 已经证明了不确定副作用；Runtime 明确报告的 execution uncertainty 仍必须进入 reconciliation。
+```bash
+echo "shell=$SHELL"
+echo "home=$HOME"
+echo "path=$PATH"
+command -v python3
+command -v node
+command -v npm
+command -v pnpm
+command -v uv
+command -v git
+command -v rg
+git config --global user.name
+```
+
+这些命令应使用 resolved host shell。`HOME`、Host tool 路径和 Git 用户配置应与用户 Terminal 尽量一致。`PATH` 应在末尾提供 bundled `rg`。Shell 不应从 `models.json` 注入 API Key，也不应强制禁用用户 Git 配置。
+
+然后执行文件系统安全验收：
+
+```bash
+outside_file="$(mktemp /tmp/eidos-shell-outside.XXXXXX)"
+printf 'outside-read\n' > "$outside_file"
+cat "$outside_file"
+rm -f "$outside_file"
+
+printf 'workspace-write\n' > ./eidos-shell-workspace-probe
+cat ./eidos-shell-workspace-probe
+rm -f ./eidos-shell-workspace-probe
+
+tmp_file="$TMPDIR/eidos-shell-tmp-$$"
+printf 'tmp-write\n' > "$tmp_file"
+cat "$tmp_file"
+rm -f "$tmp_file"
+
+system_tmp_file="/tmp/eidos-shell-system-tmp-$$"
+printf 'system-tmp-write\n' > "$system_tmp_file"
+cat "$system_tmp_file"
+rm -f "$system_tmp_file"
+```
+
+临时文件和 Workspace 文件应写入成功。`outside_file` 应证明 Workspace 外普通文件可读取。`pnpm test:seatbelt-native` 会使用隔离目录验证 HOME 写入被拒绝。如果测试者还要手工验证，测试者应先从 Terminal 在 HOME 下创建专用的可丢弃目录，并在测试后从 Terminal 清理。测试者不应直接对真实 HOME 根目录执行写入探针。
+
+```bash
+home_file="$HOME/eidos-shell-disposable-probe/.eidos-shell-home-write-$$"
+if printf 'must-be-denied\n' > "$home_file"; then
+  rm -f "$home_file"
+  echo "unexpected HOME write success"
+  exit 1
+else
+  echo "expected HOME write denial"
+fi
+```
+
+测试者还应使用已存在的 Eidos data 路径执行 `cat "<EIDOS_DATA_DIR>/models.json" >/dev/null`，并确认读取被拒绝。测试者应在可丢弃的 Git Workspace 中尝试写入 `.git/config`，或在可丢弃的 Non-Git Workspace 中尝试创建 `workspace/.git`，并确认 Git metadata 写入被拒绝。测试者不应修改真实项目的 Git metadata。
+
+网络默认应被拒绝。测试者可以在 Agent Shell 外启动已知的 localhost listener，再在默认 profile 中使用可用的本地客户端连接，并确认连接失败。测试者请求 additional network Approval 后，应在扩权 profile 中确认同一连接成功。additional write 和 unsandboxed 也必须先经过对应 Approval。Unsandboxed 仍受现有 hard confidentiality deny 约束。
+
+命令结束后，Runtime 会记录 Workspace manifest observation、diff、退出状态和 reconciliation 状态。Workspace-wide observation 不要求在 Shell 启动前完整扫描 Workspace。`unknown` observation 不等于 Runtime 已经证明了不确定副作用。Runtime 明确报告的 execution uncertainty 仍必须进入 reconciliation。
+
+PTY 和后台进程 follow-up：Agent `run_shell` 不提供 PTY、stdin、interactive session 或 persistent/background process manager。测试者应使用 Desktop Terminal 验证交互式 PTY。测试者还应验证 Agent Shell 会检测并清理 background child。

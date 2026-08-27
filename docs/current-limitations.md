@@ -40,6 +40,15 @@
 - `search_text` 没有 LSP、AST 查询和基于 Repo Intelligence 的默认搜索路径。它仍然使用受管 Ripgrep，结果、preview、单文件和查询大小都有界。
 - Shell post-execution observation 在扫描超时、敏感条目或不完整 Workspace manifest 时可能是 `unknown`。这类 observation 不能替代 Runtime 明确报告的执行 uncertainty。完整的 Workspace 状态与安全事实仍需要后置核验。
 
+## Agent Shell
+
+- Agent `run_shell` 不提供 PTY、stdin、interactive session 或 persistent/background process manager。
+- Runtime 会检测并清理 background child，但 Agent Shell 不能管理持久后台进程。
+- ShellEnvironmentSnapshot 不恢复 aliases、functions 或其他 shell state。
+- Shell cwd 仍然必须是 Workspace-relative 的有效路径。
+- Agent Shell 的 raw stdout/stderr 仍有 256 KiB 上限。它不提供无限输出流。
+- Desktop Terminal 是另一条 Main-owned PTY 路径。Agent Shell 的限制不会改变 Desktop Terminal 的现有说明。
+
 ## Repository Intelligence
 
 - Inventory、Repository generations、Tree-sitter Index、symbols/imports/references/chunks、Repository Map、SQLite FTS5、Retrieval Snapshot、ContextPlan 和 ContextSnapshot 已经有 typed infrastructure、persistence 和 focused tests。
