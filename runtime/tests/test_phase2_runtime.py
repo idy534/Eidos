@@ -279,12 +279,18 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         run, _ = self.store.create_run(self.session["id"], "write safely")
         model = ScriptedModel([
             ModelResponse(tool_calls=(ModelToolCall(
-                "sensitive-1", "write_file",
-                {"path": "a.txt", "content": "password=first"},
+                "sensitive-1", "apply_patch",
+                {"patch": "*** Begin Patch\n"
+                "*** Add File: a.txt\n"
+                "+password=first\n"
+                "*** End Patch"},
             ),)),
             ModelResponse(tool_calls=(ModelToolCall(
-                "sensitive-2", "write_file",
-                {"path": "b.txt", "content": "password=second"},
+                "sensitive-2", "apply_patch",
+                {"patch": "*** Begin Patch\n"
+                "*** Add File: b.txt\n"
+                "+password=second\n"
+                "*** End Patch"},
             ),)),
         ])
         RuntimeEngine(self.store, model, lambda _message: None).run(

@@ -74,7 +74,7 @@ def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
             "query", "path", "regex", "maxResults", "includeGlobs"
         ),
         "write_file": ("path",),
-        "apply_patch": ("path",),
+        "apply_patch": (),
         "delete_file": ("path",),
         "run_shell": ("command", "cwd", "timeoutSeconds"),
     }

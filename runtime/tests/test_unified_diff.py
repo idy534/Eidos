@@ -365,7 +365,7 @@ class UnifiedDiffTests(unittest.TestCase):
 
     def test_apply_patch_input_retains_its_existing_size_bound(self) -> None:
         with self.assertRaises(ValidationError):
-            ApplyPatchInput(path="notes.txt", patch="界" * 174_763)
+            ApplyPatchInput(patch="界" * 174_763)
 
 
 if __name__ == "__main__":

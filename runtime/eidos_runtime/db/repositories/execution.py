@@ -945,7 +945,7 @@ class ExecutionRepository(Repository):
         now = _now_ms()
         item_kind = (
             "file_change"
-            if tool_name in {"write_file", "apply_patch"}
+            if tool_name in {"write_file", "apply_patch", "delete_file"}
             else "command_execution"
             if tool_name == "run_shell"
             else "tool_call"

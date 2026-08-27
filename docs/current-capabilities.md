@@ -143,9 +143,9 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 - Tool Registry 统一保存 ToolSpec、Schema、Execution Policy、Concurrency Policy、Projection Policy 和 provenance。
 - 内置只读 Tool 包括 `list_files`、`read_file`、`read_file_range` 和 `search_text`。
-- Workspace mutation Tool 包括 `write_file`、`apply_patch` 和 `delete_file`。
-- `write_file`、`apply_patch` 和 `delete_file` 在当前 Workspace Permission 内直接执行，不逐次请求 Approval。
-- 文件工具在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。`apply_patch` 支持标准 Unified Diff hunk，也支持 Codex 风格的单文件位置无关 `@@` update hunk。位置无关 hunk 只接受精确、唯一、顺序向前的 context 匹配。工具不支持这类 Patch 的 Add、Delete、Move 或多文件形式。工具仍要求显式单文件路径、Patch context 和版本复检。
+- Workspace mutation Tool 只向模型暴露 `apply_patch`。`write_file` 和 `delete_file` 不在模型 Tool Registry 中。
+- `apply_patch` 使用 JSON Function 参数 `{ "patch": "*** Begin Patch\\n...\\n*** End Patch" }`，路径由 Patch DSL 表达。Tool 在当前 Workspace Permission 内直接执行，不逐次请求 Approval。
+- 文件工具在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。`apply_patch` 支持 Codex 风格的 Add、Update、Delete、Move、多文件、多 chunk、裸 `@@`、`@@ context` 和 `*** End of File`。Update 匹配按 Patch chunk 顺序向前查找。工具仍会复用版本复检、Workspace boundary、Seatbelt、原子替换和最终内容校验。
 - 已应用的文件 Diff 会进入 ToolCall 持久事实，并在 Execution Feed 中展示。
 - macOS 原子替换会先用 fd-relative `fclonefileat` 保留普通文件的扩展属性（包括 `com.apple.provenance`），再写入候选内容并单独应用、验证 ACL。clonefile 不可用时会安全回退到受校验的 `fcopyfile` 路径。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。

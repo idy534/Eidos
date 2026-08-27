@@ -1145,7 +1145,10 @@ class ContextPersistenceTests(unittest.TestCase):
             ModelResponse(tool_calls=(
                 ModelToolCall("read", "list_files", {}),
                 ModelToolCall(
-                    "write", "write_file", {"path": "a.txt", "content": "x"}
+                    "patch", "apply_patch", {"patch": "*** Begin Patch\n"
+                    "*** Add File: a.txt\n"
+                    "+x\n"
+                    "*** End Patch"}
                 ),
             )),
             ModelResponse(text="cannot mix tools"),

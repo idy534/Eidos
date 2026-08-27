@@ -93,7 +93,14 @@ class RuntimeSeamTests(unittest.TestCase):
             try:
                 result = ToolDispatcher(tools.registry).validate(ModelResponse(tool_calls=(
                     ModelToolCall("first", "read_file", {"path": "a.txt"}),
-                    ModelToolCall("second", "write_file", {"path": "a.txt", "content": "x"}),
+                    ModelToolCall(
+                        "second",
+                        "apply_patch",
+                        {"patch": "*** Begin Patch\n"
+                        "*** Add File: a.txt\n"
+                        "+x\n"
+                        "*** End Patch"},
+                    ),
                 )))
             finally:
                 tools.close()
@@ -101,7 +108,7 @@ class RuntimeSeamTests(unittest.TestCase):
         self.assertIsNone(result.error_code)
         self.assertEqual(
             [call.name for call in result.tool_calls],
-            ["read_file", "write_file"],
+            ["read_file", "apply_patch"],
         )
 
     def test_descriptor_runtime_executes_a_read_only_call(self) -> None:
