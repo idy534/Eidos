@@ -309,4 +309,17 @@ describe("DropdownMenu & ContextMenu DOM interaction behavior", () => {
     expect(enabled).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("DropdownMenu supports custom title and triggerAriaLabel", () => {
+    render(
+      <DropdownMenu
+        trigger={<span data-testid="icon">...</span>}
+        title="更多操作"
+        triggerAriaLabel="更多操作"
+        items={mockItems}
+      />,
+    );
+    const triggerBtn = screen.getByRole("button", { name: "更多操作" });
+    expect(triggerBtn).toHaveAttribute("title", "更多操作");
+  });
 });

@@ -33,6 +33,8 @@ interface DropdownMenuProps {
   /** Optional aria-label for the menu list */
   label?: string;
   className?: string;
+  title?: string;
+  triggerAriaLabel?: string;
 }
 
 /**
@@ -46,7 +48,14 @@ interface DropdownMenuProps {
  * - Escape: closes menu and restores trigger focus
  * - Tab: closes menu
  */
-export function DropdownMenu({ trigger, items, label, className = "" }: DropdownMenuProps) {
+export function DropdownMenu({
+  trigger,
+  items,
+  label,
+  className = "",
+  title,
+  triggerAriaLabel,
+}: DropdownMenuProps) {
   const [open, setOpen] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [style, setStyle] = useState<CSSProperties>({});
@@ -184,6 +193,8 @@ export function DropdownMenu({ trigger, items, label, className = "" }: Dropdown
         className="icon-button dropdown-trigger"
         aria-haspopup="menu"
         aria-expanded={open}
+        title={title}
+        aria-label={triggerAriaLabel}
         onClick={() => {
           if (open) {
             setOpen(false);

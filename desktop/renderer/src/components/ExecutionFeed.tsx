@@ -15,6 +15,7 @@ import { terminalRunPresentation } from "../session-state.js";
 import { Button } from "./Button.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
+import { DropdownMenu } from "./DropdownMenu.js";
 
 
 type FeedbackHandler = (
@@ -28,6 +29,7 @@ interface Props {
   items: Item[];
   runs: Run[];
   models?: ModelOption[];
+  workspaceRoot?: string;
   responseActionState?: ResponseActionState;
   pendingFeedbackItemIds?: ReadonlySet<string>;
   revisionSubmitting?: boolean;
@@ -75,6 +77,7 @@ export function ExecutionFeed({
   items,
   runs,
   models = [],
+  workspaceRoot = "",
   responseActionState = EMPTY_RESPONSE_ACTION_STATE,
   pendingFeedbackItemIds = EMPTY_PENDING_FEEDBACK,
   revisionSubmitting = false,
@@ -163,6 +166,7 @@ export function ExecutionFeed({
                   segment={segment}
                   run={run}
                   modelName={modelName}
+                  workspaceRoot={workspaceRoot}
                   isLast={index === segments.length - 1}
                   canReviseRun={canReviseRun}
                   feedbackByItemId={feedbackByItemId}
@@ -208,6 +212,7 @@ function RunSegment({
   segment,
   run,
   modelName,
+  workspaceRoot,
   isLast,
   canReviseRun,
   feedbackByItemId,
@@ -227,6 +232,7 @@ function RunSegment({
   segment: Segment;
   run: Run;
   modelName: string;
+  workspaceRoot?: string | undefined;
   isLast: boolean;
   canReviseRun: boolean;
   feedbackByItemId: ReadonlyMap<string, ResponseFeedbackValue>;
@@ -287,6 +293,7 @@ function RunSegment({
           item={item}
           run={run}
           modelName={modelName}
+          workspaceRoot={workspaceRoot}
           feedback={feedbackByItemId.get(item.id)}
           feedbackPending={pendingFeedbackItemIds.has(item.id)}
           canRegenerate={isLast && index === segment.response.length - 1 && canReviseRun}
@@ -456,6 +463,7 @@ function AssistantMessage({
   item,
   run,
   modelName,
+  workspaceRoot = "",
   feedback,
   feedbackPending,
   canRegenerate,
@@ -465,6 +473,7 @@ function AssistantMessage({
   item: Item;
   run: Run;
   modelName: string;
+  workspaceRoot?: string | undefined;
   feedback: ResponseFeedbackValue | undefined;
   feedbackPending: boolean;
   canRegenerate: boolean;
@@ -515,6 +524,14 @@ function AssistantMessage({
                 <RegenerateIcon />
               </ActionButton>
             )}
+            <MoreActionsDropdown
+              session={run.sessionId}
+              run={run.id}
+              item={item.id}
+              step={item.modelStepIndex ?? run.modelStepCount ?? 1}
+              model={run.modelId}
+              workspace={workspaceRoot}
+            />
           </div>
           <div className="response-meta">
             <span className="response-model" title={`本次回复模型：${modelName}`}>{modelName}</span>
@@ -523,6 +540,84 @@ function AssistantMessage({
         </div>
       )}
     </article>
+  );
+}
+
+function MoreHorizontalIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="15"
+      height="15"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="19" cy="12" r="1" />
+      <circle cx="5" cy="12" r="1" />
+    </svg>
+  );
+}
+
+function MoreActionsDropdown({
+  session,
+  run,
+  item,
+  step,
+  model,
+  workspace,
+}: {
+  session: string;
+  run: string;
+  item: string;
+  step: number;
+  model: string;
+  workspace: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyRequestId = async () => {
+    const payload = {
+      session,
+      run,
+      traceId: run,
+      item,
+      step,
+      model,
+      workspace,
+    };
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy request ID:", err);
+    }
+  };
+
+  return (
+    <DropdownMenu
+      className="response-more-dropdown"
+      trigger={<MoreHorizontalIcon />}
+      title={copied ? "已复制请求ID" : "更多操作"}
+      triggerAriaLabel="更多操作"
+      label="更多操作菜单"
+      items={[
+        {
+          key: "copy-request-id",
+          label: copied ? "已复制" : "复制请求ID",
+          onClick: () => {
+            void handleCopyRequestId();
+          },
+        },
+      ]}
+    />
   );
 }
 

@@ -66,16 +66,71 @@
   background: rgba(0, 0, 0, 0.065);
 }
 
+.response-more-dropdown {
+  position: relative;
+  display: inline-flex;
+}
+
+.response-more-dropdown .dropdown-trigger {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease, transform 120ms ease;
+}
+
+.response-more-dropdown .dropdown-trigger svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+  flex: none;
+  stroke: currentColor;
+}
+
+.response-more-dropdown .dropdown-trigger:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.055);
+  color: var(--text);
+  box-shadow: none;
+}
+
+.response-more-dropdown .dropdown-trigger:active:not(:disabled) {
+  transform: scale(0.94);
+  box-shadow: none;
+}
+
+.response-more-dropdown .dropdown-trigger:focus-visible {
+  outline: 2px solid var(--accent-glow);
+  outline-offset: 1px;
+}
+
+.response-more-dropdown .dropdown-trigger[aria-expanded="true"] {
+  background: rgba(0, 0, 0, 0.065);
+  color: var(--text);
+}
+
 /* User edit follows the existing copy-button behavior: hidden until the
  * message is hovered or keyboard focus enters the message actions. */
-.feed-item--user .response-action-button {
+.feed-item--user .response-action-button,
+.feed-item--user .response-more-dropdown .dropdown-trigger {
   opacity: 0;
   pointer-events: none;
 }
 
 .feed-item--user:hover .response-action-button,
 .feed-item--user:focus-within .response-action-button,
-.feed-item--user .response-action-button:focus-visible {
+.feed-item--user .response-action-button:focus-visible,
+.feed-item--user:hover .response-more-dropdown .dropdown-trigger,
+.feed-item--user:focus-within .response-more-dropdown .dropdown-trigger,
+.feed-item--user .response-more-dropdown .dropdown-trigger:focus-visible {
   opacity: 1;
   pointer-events: auto;
 }

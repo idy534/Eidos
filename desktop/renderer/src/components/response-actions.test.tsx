@@ -78,12 +78,14 @@ function render(
   );
 }
 
-test("latest completed exchange exposes edit, feedback, regenerate and model", () => {
+test("latest completed exchange exposes edit, feedback, regenerate, more actions and model", () => {
   const markup = render();
   assert.match(markup, /aria-label="编辑并重新发送"/);
   assert.match(markup, /aria-label="取消点赞"/);
   assert.match(markup, /aria-label="差评"/);
   assert.match(markup, /aria-label="重新回答"/);
+  assert.match(markup, /aria-label="更多操作"/);
+  assert.match(markup, /title="更多操作"/);
   assert.match(markup, /DeepSeek-V4 Flash/);
 });
 

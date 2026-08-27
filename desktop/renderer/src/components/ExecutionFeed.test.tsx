@@ -510,3 +510,25 @@ test("renders minimalist SVG icons for file operations, skills, and shell calls"
   assert.match(html, /已列出文件/);
   assert.match(html, /已运行 skill_read/);
 });
+
+test("renders more actions dropdown on assistant messages", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({ id: "user", ordinal: 1, kind: "user_message", content: "提问" }),
+        item({ id: "assistant", ordinal: 2, kind: "assistant_message", content: "回答" }),
+      ]}
+      runs={[run]}
+      workspaceRoot="/Users/test/workspace"
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(html, /class="dropdown-wrapper response-more-dropdown"/);
+  assert.match(html, /aria-label="更多操作"/);
+  assert.match(html, /title="更多操作"/);
+});

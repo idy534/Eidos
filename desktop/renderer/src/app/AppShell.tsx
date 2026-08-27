@@ -910,6 +910,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   items={currentSnapshot.items}
                   runs={currentSnapshot.runs}
                   models={modelState.list?.models ?? []}
+                  workspaceRoot={currentSnapshot.session.workspaceRoot}
                   responseActionState={responseActionState.responseState}
                   pendingFeedbackItemIds={responseActionState.pendingFeedbackItemIds}
                   revisionSubmitting={runState.isSubmitting}
