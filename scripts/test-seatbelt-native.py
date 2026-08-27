@@ -14,10 +14,14 @@ from eidos_runtime.sandbox.seatbelt import run_seatbelt_self_test  # noqa: E402
 TESTS = (
     "test_seatbelt.SeatbeltSmokeTests.test_workspace_write_profile_passes_fail_closed_self_test",
     "test_seatbelt.SeatbeltSmokeTests.test_git_worktree_pointer_is_supported_but_not_writable",
+    "test_seatbelt.SeatbeltSmokeTests.test_full_disk_read_keeps_eidos_data_denied",
+    "test_seatbelt.SeatbeltSmokeTests.test_workspace_and_temp_write_only_excludes_home_and_outside",
+    "test_seatbelt.SeatbeltSmokeTests.test_non_git_workspace_cannot_create_git_metadata_directory",
     "test_seatbelt.SeatbeltSmokeTests.test_dynamic_profile_grants_only_approved_external_paths",
     "test_seatbelt.SeatbeltSmokeTests.test_dynamic_profile_keeps_runtime_write_and_git_denies",
     "test_seatbelt.SeatbeltSmokeTests.test_managed_workspace_inside_data_keeps_data_state_denied",
     "test_seatbelt.SeatbeltSmokeTests.test_dynamic_network_grant_reaches_only_when_enabled",
+    "test_skill_sandbox.SkillSeatbeltIntegrationTests.test_active_skill_root_and_workspace_have_the_required_distinct_access",
     "test_shell.ShellProcessGroupTests",
 )
 

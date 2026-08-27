@@ -191,6 +191,32 @@ class SandboxPermissionTests(unittest.TestCase):
             self.assertIn("RUNTIME_ROOT_0", compiled.policy)
             self.assertIn(str(outside.resolve()), compiled.parameters.values())
 
+    def test_default_policy_allows_full_read_and_redundant_read_overlay(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            outside = root / "outside"
+            workspace.mkdir()
+            outside.mkdir()
+
+            profile = materialize_effective_profile(
+                BasePermissionProfile.for_workspace(workspace_root=workspace),
+                AdditionalPermissionProfile(
+                    file_system=(
+                        FileSystemPermissionEntry(
+                            path=str(outside),
+                            access=FileSystemAccessMode.READ,
+                        ),
+                    ),
+                ),
+            )
+
+            compiled = SeatbeltPolicyCompiler().compile(profile)
+
+            self.assertIn("(allow file-read*)", compiled.policy)
+            self.assertIn("(allow file-map-executable)", compiled.policy)
+            self.assertIn(str(outside.resolve()), compiled.parameters.values())
+
     def test_dynamic_policy_keeps_data_protected_outside_managed_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             data = Path(directory) / "data"

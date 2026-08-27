@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -9,11 +10,18 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Sequence
-
-from eidos_runtime.sandbox.permissions import EffectivePermissionProfile
+from eidos_runtime.sandbox.host_shell import (
+    HOST_SHELL_RESOLVER,
+    SHELL_ENVIRONMENT_PROVIDER,
+    HostShellUnavailableError,
+    sanitize_shell_environment,
+)
+from eidos_runtime.sandbox.permissions import (
+    BasePermissionProfile,
+    EffectivePermissionProfile,
+    materialize_effective_profile,
+)
 from eidos_runtime.sandbox.seatbelt_policy import SeatbeltPolicyCompiler
-from eidos_runtime.workspace.search_driver import RipgrepBinaryResolver, SearchDriverError
 
 
 SANDBOX_EXECUTABLE = "/usr/bin/sandbox-exec"
@@ -88,10 +96,10 @@ class SeatbeltProfile:
     workspace_root: Path
     sandbox_home: Path
     sandbox_tmp: Path
+    system_tmp_root: Path
     git_directory: Path | None
     git_worktree_dir: Path | None
     git_common_dir: Path | None
-    sensitive_path: Path
     effective_permissions: EffectivePermissionProfile | None = None
     active_skill_roots: tuple[Path, ...] = ()
 
@@ -102,7 +110,7 @@ class SeatbeltProfile:
         workspace_root: Path,
         sandbox_home: Path,
         sandbox_tmp: Path,
-        sensitive_path: Path,
+        system_tmp_root: Path | None = None,
         git_worktree_dir: Path | None = None,
         git_common_dir: Path | None = None,
         effective_permissions: EffectivePermissionProfile | None = None,
@@ -111,6 +119,9 @@ class SeatbeltProfile:
         workspace = _existing_directory(workspace_root, "workspace root")
         home = _existing_directory(sandbox_home, "sandbox home")
         temporary = _existing_directory(sandbox_tmp, "sandbox tmp")
+        system_temporary = _canonical_existing_directory(
+            system_tmp_root or Path("/tmp"), "system temp root"
+        )
         if (git_worktree_dir is None) != (git_common_dir is None):
             raise ValueError("Git worktree and common directories must be paired")
         git_marker = workspace / ".git"
@@ -155,12 +166,6 @@ class SeatbeltProfile:
                 require_directory=True,
             )
 
-        sensitive = sensitive_path.resolve()
-        if sensitive != workspace and workspace not in sensitive.parents:
-            raise ValueError("sensitive path must be inside workspace")
-        if sensitive_path.is_symlink():
-            raise ValueError("sensitive path must not be a symlink")
-
         verified_skill_roots = tuple(
             _existing_directory(path, "active Skill root")
             for path in active_skill_roots
@@ -170,10 +175,10 @@ class SeatbeltProfile:
             workspace_root=workspace,
             sandbox_home=home,
             sandbox_tmp=temporary,
+            system_tmp_root=system_temporary,
             git_directory=git_directory,
             git_worktree_dir=verified_worktree_dir,
             git_common_dir=verified_common_dir,
-            sensitive_path=sensitive,
             effective_permissions=effective_permissions,
             active_skill_roots=verified_skill_roots,
         )
@@ -204,13 +209,15 @@ class SeatbeltProfile:
                 f"-D{key}={value}"
                 for key, value in compiled.parameters.items()
             ]
+        git_definition = self.git_directory or (self.workspace_root / ".git")
         command = [
             SANDBOX_EXECUTABLE,
             *profile_arguments,
             f"-DWORKSPACE_ROOT={self.workspace_root}",
-            f"-DSENSITIVE_PATH={self.sensitive_path}",
+            f"-DGIT_DIR={git_definition}",
             f"-DSANDBOX_HOME={self.sandbox_home}",
             f"-DSANDBOX_TMP={self.sandbox_tmp}",
+            f"-DSYSTEM_TMP_ROOT={self.system_tmp_root}",
             f"-DFILE_COMMIT_HELPER={FILE_COMMIT_HELPER}",
             *python_runtime_policy_arguments(),
             *additional_definitions,
@@ -222,53 +229,12 @@ class SeatbeltProfile:
             and self.git_worktree_dir is not None
             and self.git_common_dir is not None
         ):
-            insertion = command.index(f"-DSENSITIVE_PATH={self.sensitive_path}")
+            insertion = command.index(f"-DGIT_DIR={git_definition}")
             command[insertion:insertion] = [
-                f"-DGIT_DIR={self.git_directory}",
                 f"-DGIT_WORKTREE_DIR={self.git_worktree_dir}",
                 f"-DGIT_COMMON_DIR={self.git_common_dir}",
             ]
         return command
-
-    def environment(self) -> dict[str, str]:
-        path_entries: list[str] = []
-        for candidate in (
-            Path(sys.executable).parent,
-            runtime_python_executable().parent,
-            *(Path(prefix) / "bin" for prefix in runtime_python_roots()),
-        ):
-            if candidate.is_dir() and str(candidate) not in path_entries:
-                path_entries.append(str(candidate))
-        try:
-            bundled_tool = RipgrepBinaryResolver().resolve().parent
-            if bundled_tool.is_dir() and str(bundled_tool) not in path_entries:
-                path_entries.append(str(bundled_tool))
-        except SearchDriverError:
-            pass
-        path_entries.extend([
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
-            "/usr/bin",
-            "/bin",
-            "/usr/sbin",
-            "/sbin",
-        ])
-        return {
-            "HOME": str(self.sandbox_home),
-            "TMPDIR": str(self.sandbox_tmp),
-            "PATH": os.pathsep.join(path_entries),
-            "LANG": "en_US.UTF-8",
-            "LC_ALL": "en_US.UTF-8",
-            "GIT_OPTIONAL_LOCKS": "0",
-            "PNPM_CONFIG_PM_ON_FAIL": "ignore",
-            "GIT_PAGER": "cat",
-            "GIT_TERMINAL_PROMPT": "0",
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_CONFIG_SYSTEM": "/dev/null",
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_ASKPASS": "/usr/bin/false",
-        }
-
 
 @dataclass(frozen=True)
 class SandboxCommandResult:
@@ -291,12 +257,18 @@ def run_sandboxed(
     command: Sequence[str],
     *,
     timeout_seconds: float = 2.0,
+    environment: Mapping[str, str] | None = None,
 ) -> SandboxCommandResult:
     started_at = time.monotonic()
+    process_environment = (
+        dict(environment)
+        if environment is not None
+        else _default_sandbox_environment()
+    )
     process = subprocess.Popen(
         profile.command(command),
         cwd=profile.workspace_root,
-        env=profile.environment(),
+        env=process_environment,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -324,6 +296,14 @@ def run_sandboxed(
         )
 
 
+def _default_sandbox_environment() -> dict[str, str]:
+    try:
+        shell = HOST_SHELL_RESOLVER.resolve()
+    except HostShellUnavailableError:
+        return sanitize_shell_environment(os.environ)
+    return SHELL_ENVIRONMENT_PROVIDER.fallback_environment(shell)
+
+
 def secure_workspace_move(
     workspace_root: Path,
     source: Path,
@@ -349,15 +329,21 @@ def secure_workspace_move(
         return "failed"
     git_marker = workspace / ".git"
     git_enabled = git_marker.exists() and not git_marker.is_symlink()
+    git_definition = (
+        git_marker.resolve(strict=False)
+        if git_enabled
+        else workspace / ".git"
+    )
     profile_path = PROFILE_PATH if git_enabled else DIRECT_PROFILE_PATH
     command = [
         SANDBOX_EXECUTABLE,
         "-f",
         str(profile_path),
         f"-DWORKSPACE_ROOT={workspace}",
-        f"-DSENSITIVE_PATH={workspace / '.env'}",
+        f"-DGIT_DIR={git_definition}",
         f"-DSANDBOX_HOME={workspace / '.eidos-sandbox-home-unavailable'}",
         f"-DSANDBOX_TMP={workspace / '.eidos-sandbox-tmp-unavailable'}",
+        f"-DSYSTEM_TMP_ROOT={Path('/tmp').resolve()}",
         f"-DFILE_COMMIT_HELPER={FILE_COMMIT_HELPER}",
         *python_runtime_policy_arguments(),
         "--",
@@ -369,11 +355,10 @@ def secure_workspace_move(
         expected_sha256 or "new",
     ]
     if git_enabled:
-        insertion = command.index(f"-DSENSITIVE_PATH={workspace / '.env'}")
+        insertion = command.index(f"-DGIT_DIR={git_definition}")
         command[insertion:insertion] = [
-            f"-DGIT_DIR={git_marker.resolve(strict=False)}",
-            f"-DGIT_WORKTREE_DIR={git_marker.resolve(strict=False)}",
-            f"-DGIT_COMMON_DIR={git_marker.resolve(strict=False)}",
+            f"-DGIT_WORKTREE_DIR={git_definition}",
+            f"-DGIT_COMMON_DIR={git_definition}",
         ]
     try:
         completed = subprocess.run(
@@ -420,7 +405,8 @@ def run_seatbelt_self_test() -> SeatbeltSelfTestResult:
     try:
         with tempfile.TemporaryDirectory(prefix="eidos-seatbelt-") as directory:
             root = Path(directory)
-            workspace = root / "workspace"
+            data = root / "data"
+            workspace = data / ".eidos-worktrees" / "self-test"
             sandbox_home = root / "sandbox-home"
             sandbox_tmp = root / "sandbox-tmp"
             outside = root / "outside"
@@ -428,18 +414,30 @@ def run_seatbelt_self_test() -> SeatbeltSelfTestResult:
             for path in (workspace, sandbox_home, sandbox_tmp, outside, git_directory):
                 path.mkdir(parents=True)
 
-            sensitive = workspace / ".env"
-            sensitive.write_text("self-test-secret", encoding="utf-8")
-            (git_directory / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+            (workspace / ".env").write_text("self-test-workspace-env", encoding="utf-8")
+            (git_directory / "HEAD").write_text(
+                "ref: refs/heads/main\n", encoding="utf-8"
+            )
+            (sandbox_home / ".gitconfig").write_text(
+                "[user]\n", encoding="utf-8"
+            )
+            (data / "models.json").write_text("models", encoding="utf-8")
+            (data / "private-token").write_text("token", encoding="utf-8")
             sentinel = outside / "sentinel.txt"
             sentinel.write_text("outside-sentinel", encoding="utf-8")
             (workspace / "escape").symlink_to(outside, target_is_directory=True)
 
+            permissions = materialize_effective_profile(
+                BasePermissionProfile.for_workspace(
+                    workspace_root=workspace,
+                    protected_paths=(data,),
+                )
+            )
             profile = SeatbeltProfile.create(
                 workspace_root=workspace,
                 sandbox_home=sandbox_home,
                 sandbox_tmp=sandbox_tmp,
-                sensitive_path=sensitive,
+                effective_permissions=permissions,
                 git_worktree_dir=git_directory,
                 git_common_dir=git_directory,
             )
@@ -447,22 +445,37 @@ def run_seatbelt_self_test() -> SeatbeltSelfTestResult:
             sandbox_home = profile.sandbox_home
             sandbox_tmp = profile.sandbox_tmp
             git_directory = profile.git_directory
-            sensitive = profile.sensitive_path
+            assert git_directory is not None
             outside = outside.resolve()
             sentinel = outside / "sentinel.txt"
 
             record("system_execute", _succeeded(profile, ["/usr/bin/true"]))
             workspace_file = workspace / "created.txt"
             record("workspace_write", _create_modify_delete(profile, workspace_file))
+            record(
+                "external_read_allowed",
+                _read_allowed(profile, sentinel, "outside-sentinel"),
+            )
+            record(
+                "home_read_allowed",
+                _read_allowed(profile, sandbox_home / ".gitconfig", "[user]\n"),
+            )
             home_file = sandbox_home / "home.txt"
-            record("sandbox_home_write", _create_modify_delete(profile, home_file))
+            record(
+                "home_write_denied",
+                not _succeeded(profile, ["/usr/bin/touch", str(home_file)])
+                and not home_file.exists(),
+            )
             tmp_file = sandbox_tmp / "tmp.txt"
             record("sandbox_tmp_write", _create_modify_delete(profile, tmp_file))
-
-            record(
-                "external_read_denied",
-                _read_denied(profile, sentinel, "outside-sentinel"),
+            system_tmp_file = Path("/tmp") / (
+                f"eidos-seatbelt-{os.getpid()}-{time.monotonic_ns()}"
             )
+            record(
+                "system_tmp_write",
+                _create_modify_delete(profile, system_tmp_file),
+            )
+
             outside_write = outside / "blocked.txt"
             record(
                 "external_write_denied",
@@ -470,12 +483,20 @@ def run_seatbelt_self_test() -> SeatbeltSelfTestResult:
                 and not outside_write.exists(),
             )
             record(
-                "sensitive_read_denied",
-                _read_denied(profile, sensitive, "self-test-secret"),
+                "data_models_read_denied",
+                _read_denied(profile, data / "models.json", "models"),
             )
             record(
-                "sensitive_write_denied",
-                not _succeeded(profile, ["/usr/bin/touch", str(sensitive)]),
+                "data_private_token_read_denied",
+                _read_denied(profile, data / "private-token", "token"),
+            )
+            record(
+                "sensitive_read_allowed",
+                _read_allowed(
+                    profile,
+                    workspace / ".env",
+                    "self-test-workspace-env",
+                ),
             )
             record("git_read_allowed", _succeeded(profile, ["/bin/cat", str(git_directory / "HEAD")]))
             git_write = git_directory / "blocked"
@@ -495,7 +516,13 @@ def run_seatbelt_self_test() -> SeatbeltSelfTestResult:
                 "child_inherits_policy",
                 not _succeeded(
                     profile,
-                    ["/bin/sh", "-c", '/usr/bin/touch "$1"', "eidos-self-test", str(child_write)],
+                    [
+                        "/bin/sh",
+                        "-c",
+                        '/usr/bin/touch "$1"',
+                        "eidos-self-test",
+                        str(child_write),
+                    ],
                 )
                 and not child_write.exists(),
             )
@@ -535,6 +562,7 @@ def run_seatbelt_self_test() -> SeatbeltSelfTestResult:
                 "timeout_enforced",
                 timeout_result.timed_out and timeout_result.duration_seconds < 2.0,
             )
+            system_tmp_file.unlink(missing_ok=True)
     except Exception:
         failures.append("self_test_error")
 
@@ -545,6 +573,18 @@ def _existing_directory(path: Path, label: str) -> Path:
     resolved = path.resolve()
     if path.is_symlink() or not resolved.is_dir():
         raise ValueError(f"{label} must be an existing non-symlink directory")
+    return resolved
+
+
+def _canonical_existing_directory(path: Path, label: str) -> Path:
+    if not path.is_absolute():
+        raise ValueError(f"{label} must be an absolute directory")
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise ValueError(f"{label} must be an existing directory") from error
+    if not resolved.is_dir():
+        raise ValueError(f"{label} must be an existing directory")
     return resolved
 
 
@@ -570,6 +610,11 @@ def _verified_git_directory(
 
 def _succeeded(profile: SeatbeltProfile, command: Sequence[str]) -> bool:
     return run_sandboxed(profile, command).returncode == 0
+
+
+def _read_allowed(profile: SeatbeltProfile, path: Path, expected: str) -> bool:
+    result = run_sandboxed(profile, ["/bin/cat", str(path)])
+    return result.returncode == 0 and result.stdout == expected
 
 
 def _read_denied(profile: SeatbeltProfile, path: Path, forbidden_content: str) -> bool:
