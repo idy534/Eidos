@@ -169,6 +169,7 @@ class SamplingRuntime:
         return SamplingOutcome(
             text=result.text,
             tool_calls=result.tool_calls,
+            needs_follow_up=bool(result.tool_calls),
             assistant_item=None,
             phase=result.phase,
             retry_count=result.transport_retry_count,

@@ -62,6 +62,15 @@ class ModelContractTests(unittest.TestCase):
         self.assertIsNone(failure.status_code)
         self.assertNotIn("body", ModelRequestFailure.model_fields)
 
+    def test_response_accepts_missing_message_phase(self) -> None:
+        response = ModelResponse(
+            text="progress",
+            phase=None,
+            finish_reason="stop",
+        )
+
+        self.assertIsNone(response.phase)
+
     def test_profile_snapshot_is_closed_and_versioned(self) -> None:
         profile = ModelProfileSnapshot(
             provider_id="deepseek",
@@ -88,6 +97,13 @@ class ModelContractTests(unittest.TestCase):
         self.assertNotIn("eidos-final-response", BASE_AGENT_INSTRUCTIONS)
         self.assertIn("same response", BASE_AGENT_INSTRUCTIONS)
         self.assertIn("without a tool call", BASE_AGENT_INSTRUCTIONS)
+        self.assertIn(
+            "When the task still requires tool execution, do not end the response "
+            "with plan or progress text alone; continue with the required ToolCall, "
+            "and return an assistant-only response only when no more tools are needed "
+            "or you must wait for user input.",
+            BASE_AGENT_INSTRUCTIONS,
+        )
         self.assertIn("do not request another approval", RUNTIME_POLICY_INSTRUCTIONS)
         self.assertIn("natural, concise task title", TITLE_SYSTEM_INSTRUCTIONS)
         self.assertIn("User query", TITLE_PROMPT)

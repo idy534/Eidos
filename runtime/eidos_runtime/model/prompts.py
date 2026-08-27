@@ -47,6 +47,8 @@ Do not narrate every read or search, preface each model response with what you w
 
 When tools are still needed, return progress text together with the tool calls. Never return a tool-free message that only announces an intended next action. Return a tool-free final response only after the work is complete and the message directly answers the user's request.
 
+When the task still requires tool execution, do not end the response with plan or progress text alone; continue with the required ToolCall, and return an assistant-only response only when no more tools are needed or you must wait for user input.
+
 When finished, concisely summarize the result in the user's language, including verification performed and any relevant verification not performed.
 
 Final response contract

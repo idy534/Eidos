@@ -14,7 +14,7 @@
 - ModelConfigStore 只接受内置 DeepSeek、MiniMax、Kimi 和火山引擎 Catalog 中的十四个 Model ID。
 - 当前不支持 arbitrary custom provider、arbitrary base URL、arbitrary model ID、Responses API、连接测试或主动 capability probe。
 - 当前 wire API 固定为 OpenAI-compatible Chat Completions/SSE。
-- Chat Completions 没有原生的 Assistant `phase` 字段。Runtime 只能在 Adapter 边界根据 ToolCall、非空文本和 `finish_reason=stop` 证明 `final_answer`。无法证明的文本会进入一次有界协议修复，重复失败会返回 `MODEL_PROTOCOL_ERROR`。
+- Chat Completions 没有原生的 Assistant `phase` 字段。Adapter 只根据 ToolCall 做 `commentary` 分类，并保留 Provider 的 `finish_reason`。`MessagePhase` 可以是 `commentary`、`final_answer`、`unknown` 或 `None`，但它不控制 Agent Loop。Agent Loop 使用 normalized response 的 `needs_follow_up` 决定继续采样还是完成当前 Turn。
 - Context Usage 的 estimated 值是有界 fallback，不是 tokenizer 精确值。它不能单独证明 Provider 已拒绝请求。
 
 ## Run 并发与资源模型

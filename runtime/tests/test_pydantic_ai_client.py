@@ -430,14 +430,8 @@ class PydanticAIModelClientTests(unittest.TestCase):
         ]
 
         self.assertEqual(final_response.text, "done")
-        self.assertIs(
-            final_response.phase,
-            AssistantMessagePhase.FINAL_ANSWER,
-        )
-        self.assertIs(
-            marker_response.phase,
-            AssistantMessagePhase.FINAL_ANSWER,
-        )
+        self.assertIs(final_response.phase, AssistantMessagePhase.UNKNOWN)
+        self.assertIs(marker_response.phase, AssistantMessagePhase.UNKNOWN)
         self.assertEqual(marker_response.text, "done\n<!-- eidos-final-response -->")
         self.assertIs(
             commentary_response.phase,

@@ -49,7 +49,7 @@
 - 火山引擎 Coding Plan 使用 `https://ark.cn-beijing.volces.com/api/coding/v3`，支持 `deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5-2-260617`、`glm-5.3`、`minimax-m3`、`doubao-seed-evolving`、`doubao-seed-2-1-pro-260628`、`doubao-seed-2-1-turbo-260628` 和 `doubao-seed-2-0-code-preview-260215`。
 - Model 配置保存在 `models.json`。默认位置是 `~/.eidos/models.json`。本地文件使用 owner-only 权限。
 - API Key 通过本地 Model 配置写请求链路传到 Runtime：Renderer typed IPC → Electron Main → `model/create` / `model/update` JSON-RPC request → ModelConfigStore。Key 不进入模型列表/读取响应、SQLite、Event/Feed 或正常日志。
-- Runtime 使用 OpenAI-compatible Chat Completions 和 SSE 流。Model Adapter 根据 ToolCall、非空文本和 `finish_reason` 等结构化事实映射 `commentary`、`final_answer` 或 `unknown`，并保留 Assistant 文本原样。普通采样和 Finalizer 使用同一套终态阶段契约。
+- Runtime 使用 OpenAI-compatible Chat Completions 和 SSE 流。Model Adapter 根据 ToolCall 将响应归类为 `commentary`，并保留 Assistant 文本、可选 MessagePhase 和 Provider `finish_reason`。MessagePhase 只用于展示和 Provider metadata。Agent Loop 使用 normalized response 的 `needs_follow_up` 决定继续采样还是完成当前 Turn。
 - Runtime 使用 Pydantic AI Model API 处理 Provider 构造、流式 Model Response、Usage 和 ToolCall 归一化。Runtime 的模型取消会打断流式上下文建立和首个 SSE chunk 等待，并把结果映射为 `sampling_canceled`。
 - 每个 Run 固化 Model Profile、Model capability declaration 和 Extension Snapshot。活动 Run 不会被后续 Model 配置编辑或删除改变。
 - Runtime 记录 Model Attempt、usage、response metadata、transport retry 诊断和稳定错误码。
@@ -57,7 +57,7 @@
 
 ## Agent Loop
 
-- `RuntimeEngine` 驱动 Context → Model Attempt → Response validation → Tool 或 Final Answer 的循环。
+- `RuntimeEngine` 驱动 Context → Model Attempt → normalized response → ToolCall / Tool Result / next Sampling 或 assistant-only completion 的循环。
 - Runtime 接受同一模型响应中的文本和有效 ToolCall。已校验的文本可以先作为普通 `assistant_message` 写入 Feed，Tool 执行完成后 Run 继续。
 - Provider context pressure、`context_exceeded`、projection overflow 和 compaction progress 会参与下一次决策。
 - Protocol validation failure 会被转换为受控的 protocol repair context。空响应有独立的重复响应处理。
@@ -237,7 +237,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 当前支持 `console` 和 OTLP HTTP Trace exporter。`OTEL_SDK_DISABLED` 可以关闭 SDK，`OTEL_SERVICE_NAME` 可以覆盖服务名，`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 可以配置 OTLP Trace endpoint。
 - Runtime 创建 `eidos.run`、`eidos.model.attempt` 和 `eidos.tool.call` Span。
 - Model Attempt Trace 可以记录 Provider、resolved model、finish reason、TTFT、duration、transport retry、input/output token 和 cache token usage。
-- 无 ToolCall 的 Provider 终态文本使用 Runtime 私有标记声明。Runtime 会移除标记，并对缺失声明的 `stop` 响应执行一次有界协议修复，避免把“接下来会读取或修改”这类进度文字误记为成功终态。
+- Agent Loop 在 normalized response 需要 follow-up 时继续采样。没有 ToolCall 且不需要继续时，assistant-only response 可以完成当前 Turn，即使 MessagePhase 是 `None` 或 `unknown`。
 - Tool Trace 可以记录 Tool 名称、Call ID、终态、Workspace changed 和异常；Run Trace 可以记录 Run、Session、Model 和最终状态。
 - OpenTelemetry 只提供 Observability，不参与 SQLite 事实、Run 状态迁移、Approval 或 Reconciliation 决策。
 

@@ -115,9 +115,9 @@ RuntimeEngine 下的主要职责是：
 
 Model Step、Segment Step 和 effective time 在当前实现中是 telemetry 和 operational segment 信息。健康 Run 不会因为固定 model-step、Run duration 或固定 repeated-call counter 自动终止。Segment 达到 operational quantum 时可以 rollover，但 rollover 不是 Run 终态。
 
-Chat Completions Adapter 根据结构化响应事实映射阶段：有 ToolCall 是 `commentary`；没有 ToolCall、存在非空文本且 `finish_reason` 是 `stop` 是 `final_answer`；其他结果是 `unknown`。Adapter 保留模型文本原样，不把正文后缀当作控制协议。RuntimeEngine 只读取结构化阶段。没有 ToolCall 的文本只有在阶段是 `final_answer` 时才能完成 Run。`commentary` 和 `unknown` 会在同一个 Step 内触发一次有界协议修复。重复失败会以 `MODEL_PROTOCOL_ERROR` 结束，未声明的文字不会进入 Conversation。
+Chat Completions Adapter 根据结构化响应事实把有 ToolCall 的响应归类为 `commentary`，并保留模型文本、可选 MessagePhase 和 Provider `finish_reason`。Chat Completions 没有原生的 Assistant phase，所以没有 phase 的响应使用 `unknown` 或 `None` 表示。RuntimeEngine 不读取 MessagePhase 或 `finish_reason=stop` 作为完成门控。每次 normalized sampling response 都得到 `needs_follow_up`：ToolCall 或待消费的当前 Turn 输入需要继续采样，assistant-only response 可以结束当前 Turn。可返回给模型的 Tool Result 和 Tool Error 都会进入 Context，再触发下一次 Sampling。
 
-RunFinalizer 使用同一套结构化阶段判断。Finalizer 会对 `commentary` 和 `unknown` 执行一次有界协议修复。两次响应都不满足终态契约时，Finalization Attempt 会记录 `finalization_protocol_error`，无效文本不会创建 Assistant Item。空响应、ToolCall 和 Provider 控制文本保留原有处理。Finalizer 的总 timeout 同时约束初次请求和协议修复请求。
+RunFinalizer 为 context pressure、loop guard 等需要提前停止的路径生成有界、无 Tool 的回答。它不改变普通 Agent Loop 的 `needs_follow_up` 判定。Finalization Attempt 仍然记录自己的 timeout、model failure 和 output item 状态。
 
 ## 6. Context & Instructions
 

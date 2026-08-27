@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict
 
 from eidos_runtime.db.storage import InvalidRunStateError, SessionStore
 from eidos_runtime.model.client import (
-    AssistantMessagePhase,
     ModelClient,
     ModelContextItem,
 )
@@ -37,7 +36,6 @@ from eidos_runtime.sandbox.sensitive import (
 
 logger = logging.getLogger("eidos.runtime")
 FINALIZATION_SECONDS = 60
-FINALIZATION_PROTOCOL_ATTEMPTS = 2
 
 
 class _CombinedCancellation(threading.Event):
@@ -158,37 +156,23 @@ class RunFinalizer:
                 "toolsAllowed": False,
                 "stopReason": stop_reason,
             })
-            request_context = base_context
             runner = ModelRunner(self.model, self.sensitive)
-            for protocol_attempt in range(FINALIZATION_PROTOCOL_ATTEMPTS):
-                result = runner.run(
-                    request_context,
-                    request_cancel,
-                    lambda _delta: None,
-                    instructions=resolved.text,
-                    allow_tools=False,
-                )
-                if cancel.is_set():
-                    raise RuntimeCancelled
-                if timed_out.is_set():
-                    failure_reason = "finalization_timeout"
-                    break
-                protocol_error = _finalization_protocol_error(result)
-                if protocol_error is None:
-                    writer.write(result.text)
-                    writer.flush()
-                    break
-                if (
-                    protocol_error == "undeclared_final_response"
-                    and protocol_attempt == 0
-                ):
-                    request_context = (
-                        *base_context,
-                        {"type": "protocol_error", "code": protocol_error},
-                    )
-                    continue
+            result = runner.run(
+                base_context,
+                request_cancel,
+                lambda _delta: None,
+                instructions=resolved.text,
+                allow_tools=False,
+            )
+            if cancel.is_set():
+                raise RuntimeCancelled
+            if timed_out.is_set():
+                failure_reason = "finalization_timeout"
+            elif _finalization_protocol_error(result) is None:
+                writer.write(result.text)
+                writer.flush()
+            else:
                 failure_reason = "finalization_protocol_error"
-                break
         except SensitiveScanError:
             failure_reason = "finalization_sensitive_content_rejected"
         except ModelStreamInterrupted as error:
@@ -271,8 +255,4 @@ def _attempt_status(failure_reason: str | None) -> str:
 def _finalization_protocol_error(result: ModelStepResult) -> str | None:
     if result.tool_calls or contains_provider_control_syntax(result.text):
         return "invalid_response"
-    if not result.text:
-        return None
-    if result.phase is not AssistantMessagePhase.FINAL_ANSWER:
-        return "undeclared_final_response"
     return None

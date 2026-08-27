@@ -67,8 +67,9 @@ class StepContext(_FrozenModel):
 class SamplingOutcome(_FrozenModel):
     text: str
     tool_calls: tuple[ModelToolCall, ...]
+    needs_follow_up: bool
     assistant_item: dict[str, object] | None = None
-    phase: AssistantMessagePhase = AssistantMessagePhase.UNKNOWN
+    phase: AssistantMessagePhase | None = AssistantMessagePhase.UNKNOWN
     retry_count: int = 0
     usage: ModelUsage | None = None
     provider_name: str | None = None
