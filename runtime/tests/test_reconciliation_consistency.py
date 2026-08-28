@@ -6,6 +6,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
@@ -15,8 +16,19 @@ from eidos_runtime.db.errors import (  # noqa: E402
     ReconciliationRequiredError,
 )
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
-from eidos_runtime.model.client import ScriptedModel, ModelResponse  # noqa: E402
+from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
+from eidos_runtime.extensions.skills import SkillCatalog  # noqa: E402
+from eidos_runtime.model.client import (  # noqa: E402
+    ModelResponse,
+    ModelToolCall,
+    ScriptedModel,
+)
+from eidos_runtime.runtime.approval import ApprovalDecision  # noqa: E402
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
+from eidos_runtime.runtime.resource_registry import ResourceRegistry  # noqa: E402
+from eidos_runtime.runtime.tool_orchestrator import OrchestratorResult  # noqa: E402
+from eidos_runtime.tools.workspace import WorkspacePathError  # noqa: E402
 
 
 class ReconciliationConsistencyTests(unittest.TestCase):
@@ -168,6 +180,477 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertEqual(persisted["status"], "interrupted")
         self.assertTrue(persisted["reconciliationRequired"])
         self.assertNotEqual(persisted["status"], "succeeded")
+
+    def test_workspace_shell_reconciliation_keeps_run_active_for_read_only_recovery(self) -> None:
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall(
+                "shell-attempt",
+                "run_shell",
+                {"command": "false", "timeoutSeconds": 5},
+            ),)),
+            ModelResponse(tool_calls=(ModelToolCall(
+                "observe-workspace",
+                "list_files",
+                {},
+            ),)),
+            ModelResponse(text="The workspace was inspected."),
+        ])
+        shell_result = {
+            "schemaVersion": 1,
+            "toolContractVersion": 1,
+            "toolName": "run_shell",
+            "outcome": "error",
+            "code": "nonzero_exit",
+            "summary": "Command exited with a non-zero status",
+            "data": {
+                "exitCode": 1,
+                "stdout": "",
+                "stderr": "",
+                "truncated": False,
+                "termination": "exit",
+                "durationMs": 1,
+            },
+            "sideEffectsMayExist": True,
+        }
+
+        with (
+            patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
+            patch("eidos_runtime.runtime.tool_runtime.run_shell", return_value=shell_result),
+            patch(
+                "eidos_runtime.tools.runtime_workspace.ToolExecutor.refresh_workspace_index",
+                side_effect=WorkspacePathError("WORKSPACE_INDEX_INCOMPLETE"),
+            ),
+        ):
+            RuntimeEngine(
+                self.store,
+                model,
+                lambda _message: None,
+                shell_available=True,
+            ).run(self.run["id"], threading.Event())
+
+        persisted = self.store.read_run(self.run["id"])
+        shell = self.store.connection.execute(
+            "SELECT result_json FROM tool_calls WHERE tool_name = ?",
+            ("run_shell",),
+        ).fetchone()
+        assert shell is not None
+        self.assertTrue(json.loads(shell["result_json"])["reconciliationRequired"])
+        shell_calls = self.store.connection.execute(
+            "SELECT COUNT(*) FROM tool_calls WHERE tool_name = ?",
+            ("run_shell",),
+        ).fetchone()[0]
+        self.assertEqual(shell_calls, 1)
+        self.assertEqual(persisted["status"], "succeeded")
+        self.assertEqual(len(model.contexts), 3)
+        self.assertEqual(
+            any(
+                item.get("type") == "tool_result"
+                and item.get("name") == "run_shell"
+                for item in model.contexts[1]
+            ),
+            True,
+        )
+        self.assertIn(
+            "list_files",
+            {definition.name for definition in model.tool_definitions_history[1]},
+        )
+        self.assertFalse(persisted.get("reconciliationRequired", False))
+        cleared = self.store.connection.execute(
+            "SELECT payload_json FROM events "
+            "WHERE run_id = ? AND event_type = 'reconciliation.cleared'",
+            (self.run["id"],),
+        ).fetchall()
+        self.assertEqual(len(cleared), 1)
+        self.assertEqual(
+            json.loads(cleared[0]["payload_json"])["reason"],
+            "read_only_observation",
+        )
+
+    def _assert_shell_refresh_error_stops_without_replay(
+        self, error_code: str
+    ) -> None:
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall(
+                "shell-attempt",
+                "run_shell",
+                {"command": "false", "timeoutSeconds": 5},
+            ),)),
+            ModelResponse(text="must not sample again"),
+        ])
+        shell_result = {
+            "schemaVersion": 1,
+            "toolContractVersion": 1,
+            "toolName": "run_shell",
+            "outcome": "error",
+            "code": "nonzero_exit",
+            "summary": "Command exited with a non-zero status",
+            "data": {
+                "exitCode": 1,
+                "stdout": "",
+                "stderr": "",
+                "truncated": False,
+                "termination": "exit",
+                "durationMs": 1,
+            },
+            "sideEffectsMayExist": True,
+        }
+
+        with (
+            patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
+            patch("eidos_runtime.runtime.tool_runtime.run_shell", return_value=shell_result),
+            patch(
+                "eidos_runtime.tools.runtime_workspace.ToolExecutor.refresh_workspace_index",
+                side_effect=WorkspacePathError(error_code),
+            ),
+        ):
+            RuntimeEngine(
+                self.store,
+                model,
+                lambda _message: None,
+                shell_available=True,
+            ).run(self.run["id"], threading.Event())
+
+        persisted = self.store.read_run(self.run["id"])
+        self.assertEqual(persisted["status"], "interrupted")
+        self.assertTrue(persisted["reconciliationRequired"])
+        self.assertEqual(len(model.contexts), 1)
+        shell_calls = self.store.connection.execute(
+            "SELECT COUNT(*) FROM tool_calls WHERE tool_name = ?",
+            ("run_shell",),
+        ).fetchone()[0]
+        self.assertEqual(shell_calls, 1)
+        row = self.store.connection.execute(
+            "SELECT result_json FROM tool_calls WHERE tool_name = ?",
+            ("run_shell",),
+        ).fetchone()
+        assert row is not None
+        self.assertTrue(json.loads(row["result_json"])["reconciliationRequired"])
+
+    def test_workspace_identity_refresh_error_stops_without_replay(self) -> None:
+        self._assert_shell_refresh_error_stops_without_replay(
+            "workspace_identity_changed"
+        )
+
+    def test_unsupported_workspace_hardlink_refresh_error_stops_without_replay(self) -> None:
+        self._assert_shell_refresh_error_stops_without_replay(
+            "unsupported_workspace_hardlink"
+        )
+
+    def test_unsupported_workspace_entry_refresh_error_stops_without_replay(self) -> None:
+        self._assert_shell_refresh_error_stops_without_replay(
+            "unsupported_workspace_entry"
+        )
+
+    def _assert_default_seatbelt_shell_stops_without_replay(
+        self, *, code: str, termination: str, exit_code: int | None
+    ) -> None:
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall(
+                "shell-attempt",
+                "run_shell",
+                {"command": "sleep 60", "timeoutSeconds": 1},
+            ),)),
+            ModelResponse(text="must not retry"),
+        ])
+        shell_result = {
+            "schemaVersion": 1,
+            "toolContractVersion": 1,
+            "toolName": "run_shell",
+            "outcome": "error",
+            "code": code,
+            "summary": f"Command ended with {termination}",
+            "data": {
+                "exitCode": exit_code,
+                "stdout": "",
+                "stderr": "",
+                "truncated": False,
+                "termination": termination,
+                "durationMs": 1,
+            },
+            "sideEffectsMayExist": True,
+            "reconciliationRequired": True,
+        }
+
+        with (
+            patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
+            patch("eidos_runtime.runtime.tool_runtime.run_shell", return_value=shell_result),
+        ):
+            RuntimeEngine(
+                self.store,
+                model,
+                lambda _message: None,
+                shell_available=True,
+            ).run(self.run["id"], threading.Event())
+
+        persisted = self.store.read_run(self.run["id"])
+        self.assertEqual(persisted["status"], "interrupted")
+        self.assertTrue(persisted["sideEffectsMayExist"])
+        self.assertTrue(persisted["reconciliationRequired"])
+        self.assertEqual(len(model.contexts), 1)
+        calls = self.store.connection.execute(
+            "SELECT COUNT(*) FROM tool_calls WHERE tool_name = ?",
+            ("run_shell",),
+        ).fetchone()[0]
+        self.assertEqual(calls, 1)
+        row = self.store.connection.execute(
+            "SELECT result_json FROM tool_calls WHERE tool_name = ?",
+            ("run_shell",),
+        ).fetchone()
+        assert row is not None
+        result = json.loads(row["result_json"])
+        self.assertEqual(result["code"], code)
+        self.assertEqual(result["data"]["termination"], termination)
+        self.assertTrue(result["data"]["sandboxed"])
+        self.assertEqual(result["data"]["sandboxPermissions"], "use_default")
+
+    def test_default_seatbelt_shell_timeout_stops_without_replay(self) -> None:
+        self._assert_default_seatbelt_shell_stops_without_replay(
+            code="timeout", termination="timeout", exit_code=None
+        )
+
+    def test_default_seatbelt_shell_background_process_stops_without_replay(self) -> None:
+        self._assert_default_seatbelt_shell_stops_without_replay(
+            code="background_process", termination="background_process", exit_code=0
+        )
+
+    def test_shell_reconciliation_without_trusted_sandbox_metadata_stops_run(self) -> None:
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall(
+                "shell-attempt",
+                "run_shell",
+                {"command": "false", "timeoutSeconds": 5},
+            ),)),
+            ModelResponse(text="must not retry"),
+        ])
+        incomplete_result = {
+            "schemaVersion": 1,
+            "toolContractVersion": 1,
+            "toolName": "run_shell",
+            "outcome": "error",
+            "code": "nonzero_exit",
+            "summary": "Command outcome is uncertain",
+            "data": {
+                "exitCode": 1,
+                "stdout": "",
+                "stderr": "",
+                "truncated": False,
+                "termination": "exit",
+                "durationMs": 1,
+                "workspaceChanged": False,
+            },
+            "sideEffectsMayExist": True,
+            "reconciliationRequired": True,
+        }
+
+        def return_incomplete_result(*_args: object, **kwargs: object) -> OrchestratorResult:
+            authorize = kwargs["authorize_without_approval"]
+            assert callable(authorize)
+            authorize()
+            return OrchestratorResult(
+                result=incomplete_result,
+                attempt_count=1,
+                escalated=False,
+            )
+
+        with (
+            patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
+            patch(
+                "eidos_runtime.runtime.tool_runtime.ToolOrchestrator.run",
+                side_effect=return_incomplete_result,
+            ),
+        ):
+            RuntimeEngine(
+                self.store,
+                model,
+                lambda _message: None,
+                shell_available=True,
+            ).run(self.run["id"], threading.Event())
+
+        persisted = self.store.read_run(self.run["id"])
+        self.assertEqual(persisted["status"], "interrupted")
+        self.assertTrue(persisted["reconciliationRequired"])
+        self.assertEqual(len(model.contexts), 1)
+        row = self.store.connection.execute(
+            "SELECT result_json FROM tool_calls WHERE tool_name = ?",
+            ("run_shell",),
+        ).fetchone()
+        assert row is not None
+        result = json.loads(row["result_json"])
+        self.assertTrue(result["reconciliationRequired"])
+        self.assertNotIn("sandboxed", result["data"])
+        self.assertNotIn("effectivePermissionsSummary", result["data"])
+
+    def _assert_permissioned_shell_stops_without_replay(
+        self, arguments: dict[str, object], expected_mode: str
+    ) -> None:
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall(
+                "permissioned-shell",
+                "run_shell",
+                arguments,
+            ),)),
+            ModelResponse(text="must not retry"),
+        ])
+        shell_result = {
+            "schemaVersion": 1,
+            "toolContractVersion": 1,
+            "toolName": "run_shell",
+            "outcome": "error",
+            "code": "nonzero_exit",
+            "summary": "Command failed after the permissioned attempt",
+            "data": {
+                "exitCode": 1,
+                "stdout": "",
+                "stderr": "",
+                "truncated": False,
+                "termination": "exit",
+                "durationMs": 1,
+            },
+            "sideEffectsMayExist": True,
+            "reconciliationRequired": True,
+        }
+        approvals: list[dict[str, object]] = []
+
+        with (
+            patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
+            patch("eidos_runtime.runtime.tool_runtime.run_shell", return_value=shell_result),
+        ):
+            RuntimeEngine(
+                self.store,
+                model,
+                lambda _message: None,
+                request_approval=(
+                    lambda params, _cancel: (
+                        approvals.append(params) or ApprovalDecision("approve")
+                    )
+                ),
+                shell_available=True,
+            ).run(self.run["id"], threading.Event())
+
+        persisted = self.store.read_run(self.run["id"])
+        self.assertEqual(persisted["status"], "interrupted")
+        self.assertTrue(persisted["reconciliationRequired"])
+        self.assertEqual(len(model.contexts), 1)
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(approvals[0]["sandboxPermissions"], expected_mode)
+        calls = self.store.connection.execute(
+            "SELECT COUNT(*) FROM tool_calls WHERE tool_name = ?",
+            ("run_shell",),
+        ).fetchone()[0]
+        self.assertEqual(calls, 1)
+
+    def test_escalated_shell_reconciliation_stops_without_replay(self) -> None:
+        self._assert_permissioned_shell_stops_without_replay(
+            {
+                "command": "false",
+                "timeoutSeconds": 5,
+                "sandboxPermissions": "require_escalated",
+                "justification": "The fixture needs an explicit unsandboxed attempt.",
+            },
+            "require_escalated",
+        )
+
+    def test_additional_permission_shell_reconciliation_stops_without_replay(self) -> None:
+        self._assert_permissioned_shell_stops_without_replay(
+            {
+                "command": "false",
+                "timeoutSeconds": 5,
+                "sandboxPermissions": "with_additional_permissions",
+                "additionalPermissions": {"network": {"enabled": True}},
+                "justification": "The fixture needs an explicit network permission.",
+            },
+            "with_additional_permissions",
+        )
+
+    def test_external_unknown_side_effect_remains_fail_closed_without_replay(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-external-reconciliation-") as directory:
+            root = Path(directory)
+            data = root / "data"
+            workspace = root / "workspace"
+            source = root / "plugin"
+            data.mkdir(mode=0o700)
+            workspace.mkdir()
+            source.mkdir()
+            (source / "server.py").write_bytes(
+                (Path(__file__).parent / "fixtures" / "mcp_fixture.py").read_bytes()
+            )
+            (source / "plugin.json").write_text(json.dumps({
+                "schemaVersion": 1,
+                "id": "demo",
+                "name": "Demo",
+                "version": "1.0.0",
+                "description": "Fixture",
+                "skills": [],
+                "mcpServers": [{
+                    "id": "fixture",
+                    "executable": sys.executable,
+                    "argv": ["server.py"],
+                    "envNames": [],
+                    "permissionProfile": "workspace_read",
+                    "startupTimeoutSeconds": 5,
+                    "toolTimeoutSeconds": 1,
+                    "enabled": True,
+                }],
+            }), encoding="utf-8")
+            store = SessionStore(data)
+            store.initialize()
+            plugins = PluginCatalog(store)
+            plugins.import_directory(source)
+            plugins.set_enabled("demo", True)
+            plugins.set_mcp_enabled("demo", "fixture", True)
+            session = store.create_session(str(workspace))
+            run, _ = store.create_run(
+                session["id"],
+                "Call the slow external tool",
+                extension_snapshot=SkillCatalog(plugins).extension_snapshot(),
+            )
+            model = ScriptedModel([
+                ModelResponse(tool_calls=(ModelToolCall(
+                    "search",
+                    "tool_search",
+                    {"query": "slow"},
+                ),)),
+                ModelResponse(tool_calls=(ModelToolCall(
+                    "slow",
+                    "mcp__fixture__slow",
+                    {},
+                ),)),
+                ModelResponse(text="must not retry"),
+            ])
+            resources = ResourceRegistry()
+            kernel = RuntimeAsyncKernel(resource_registry=resources)
+            kernel.start()
+            try:
+                RuntimeEngine(
+                    store,
+                    model,
+                    lambda _message: None,
+                    request_approval=(
+                        lambda _params, _cancel: ApprovalDecision("approve")
+                    ),
+                    async_kernel=kernel,
+                    mcp_sandbox=False,
+                    resource_registry=resources,
+                ).run(run["id"], threading.Event())
+            finally:
+                kernel.close()
+
+            persisted = store.read_run(run["id"])
+            self.assertEqual(persisted["status"], "interrupted")
+            self.assertTrue(persisted["sideEffectsMayExist"])
+            self.assertTrue(persisted["reconciliationRequired"])
+            self.assertEqual(len(model.contexts), 2)
+            calls = store.connection.execute(
+                "SELECT COUNT(*) FROM tool_calls WHERE tool_name = ?",
+                ("mcp__fixture__slow",),
+            ).fetchone()[0]
+            self.assertEqual(calls, 1)
+            result = json.loads(store.connection.execute(
+                "SELECT result_json FROM tool_calls WHERE tool_name = ?",
+                ("mcp__fixture__slow",),
+            ).fetchone()[0])
+            self.assertIn(result["code"], {"mcp_tool_timeout", "TOOL_TIMEOUT"})
+            store.close()
 
     def test_new_successful_read_clears_barrier_before_success_completion(self) -> None:
         uncertain = self.store.create_tool_item(

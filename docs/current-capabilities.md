@@ -62,9 +62,11 @@
 - Runtime 接受同一模型响应中的文本和有效 ToolCall。已校验的文本可以先作为普通 `assistant_message` 写入 Feed，Tool 执行完成后 Run 继续。
 - Provider context pressure、`context_exceeded`、projection overflow 和 compaction progress 会参与下一次决策。
 - Protocol validation failure 会被转换为受控的 protocol repair context。空响应有独立的重复响应处理。
+- 确定的 Tool Error 会作为 ToolResult 进入 Context，并触发下一次模型决策。模型可以修正参数或选择替代 Tool。一次失败不会单独终止 Run。
+- 默认 Workspace Seatbelt Shell 在进程确定退出但 Workspace 观察不完整时，可以在同一个 Run 内继续受限的只读 Workspace reconciliation。Runtime 不自动重放原 Shell。
 - Cancellation、Approval、Reconciliation 和 operational segment rollover 都在安全点处理。
 - LoopGuard 使用 ToolCall、Workspace version、reconciliation epoch、Context fact frontier 和 active error 的 semantic fingerprint。首次重复会注入恢复信息，恢复后再次回到同一状态才会以 `repeated_tool_call` 或 `no_progress` 停止。
-- Runtime 没有固定的模型步数、Run 时长或 repeated-call counter 生命周期规则。
+- Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。Runtime 没有固定的模型步数、Run 时长或 repeated-call counter 生命周期规则。
 
 ## Context
 
@@ -153,6 +155,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
 - ToolCallRuntime 和 ToolExecutionController 会执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。
+- 确定的 Tool Error 会持久化为 ToolResult，并回到模型循环。Runtime 不会自动重放有副作用的 Tool。未清除的 reconciliation barrier 会阻止成功终态。
 - 只有安全只读的 `parallel_safe` Tool 批次可以并发。副作用 Tool 保持独占，结果按模型声明顺序提交。
 
 ## Shell
@@ -215,6 +218,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Runtime 支持 cancel、pause、resume 和 restart verification 的 typed boundary。
 - Resume 前会检查 Workspace identity、规则、Repository/Context snapshot、permission snapshot、Git 和 side-effect reconciliation 字段。
 - Cancel、Tool timeout、Shell cleanup、MCP shutdown 和 Runtime shutdown 都有资源跟踪和有界等待。
+- Workspace-local 的 reconciliation 可以在当前 Run 内通过受限只读 Tool 继续。Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果不进入该路径，继续 fail closed。
 - 不确定副作用不会自动重放。需要核验的事实会进入 reconciliation。
 
 ## Checkpoint

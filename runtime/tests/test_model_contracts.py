@@ -108,6 +108,30 @@ class ModelContractTests(unittest.TestCase):
         self.assertIn("natural, concise task title", TITLE_SYSTEM_INSTRUCTIONS)
         self.assertIn("User query", TITLE_PROMPT)
 
+    def test_runtime_policy_requires_goal_driven_tool_failure_recovery(self) -> None:
+        policy = " ".join(RUNTIME_POLICY_INSTRUCTIONS.lower().split())
+
+        self.assertRegex(
+            policy,
+            r"(?:single|one)\s+(?:failed\s+)?tool(?:\s+call)?\s+failure.*"
+            r"(?:not|does not).*\b(?:task|run)\b",
+        )
+        self.assertRegex(
+            policy,
+            r"inspect\s+(?:the\s+)?(?:canonical\s+)?tool\s+result.*"
+            r"corrected.*tool.*alternative",
+        )
+        self.assertRegex(
+            policy,
+            r"reconciliation.*read[- ]only.*(?:first|before).*"
+            r"(?:not|never).*automatic(?:ally)?\s+replay.*side[- ]effect",
+        )
+        self.assertRegex(
+            policy,
+            r"(?:equivalent.*(?:without|unless).*new\s+(?:facts|evidence)|"
+            r"(?:without|unless).*new\s+(?:facts|evidence).*equivalent)",
+        )
+
     def test_scripted_model_records_explicit_instructions_for_each_call(self) -> None:
         model = ScriptedModel([ModelResponse(text="done")])
 

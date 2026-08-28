@@ -146,6 +146,7 @@ class HandlerOutcome:
     diff_hash: str | None = None
     item: dict[str, object] | None = None
     progress_fingerprint: str | None = None
+    allows_in_run_reconciliation: bool = False
 
 
 class ToolExecutionPhase(StrEnum):

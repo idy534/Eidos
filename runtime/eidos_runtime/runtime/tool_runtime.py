@@ -360,11 +360,13 @@ class ShellToolHandler:
         manifest_before = (
             runtime.implementation.executor.workspace_index.manifest()  # type: ignore[attr-defined]
         )
+        allows_in_run_reconciliation = False
 
         def execute_shell_attempt(
             attempt: SandboxAttempt,
         ) -> tuple[dict[str, object], SandboxDenied | None]:
-            nonlocal workspace_diff
+            nonlocal allows_in_run_reconciliation, workspace_diff
+            allows_in_run_reconciliation = False
             try:
                 approved_cwd = runtime.implementation.prepare_shell(  # type: ignore[attr-defined]
                     cwd_value, cancel
@@ -444,10 +446,9 @@ class ShellToolHandler:
                 manifest_after = (
                     runtime.implementation.executor.workspace_index.manifest()  # type: ignore[attr-defined]
                 )
-                if str(error) not in {
-                    "WORKSPACE_INDEX_INCOMPLETE",
-                    "sensitive_workspace_content",
-                }:
+                if error.code == "WORKSPACE_INDEX_INCOMPLETE":
+                    allows_in_run_reconciliation = True
+                elif error.code != "sensitive_workspace_content":
                     raw_result["reconciliationRequired"] = True
             workspace_diff = diff_workspace_manifests(
                 manifest_before, manifest_after
@@ -675,6 +676,7 @@ class ShellToolHandler:
                 if changed and workspace_diff is not None
                 else None
             ),
+            allows_in_run_reconciliation=allows_in_run_reconciliation,
         )
 
 
@@ -1060,7 +1062,19 @@ class ToolCallRuntime:
             }))
             if (
                 outcome.result.get("reconciliationRequired") is True
-                and (plan.is_external or plan.is_eidos_state or plan.is_shell)
+                and (
+                    plan.is_external
+                    or plan.is_eidos_state
+                    or (
+                        plan.is_shell
+                        and not (
+                            outcome.allows_in_run_reconciliation
+                            and _is_recoverable_shell_reconciliation(
+                                outcome.result
+                            )
+                        )
+                    )
+                )
             ):
                 self.store.complete_current_step(
                     step.run_id,
@@ -1265,6 +1279,44 @@ class ToolCallRuntime:
             "interrupted",
         }:
             raise RuntimeCancelled
+
+
+def _is_recoverable_shell_reconciliation(result: dict[str, object]) -> bool:
+    if result.get("outcome") != "error" or result.get("code") != "nonzero_exit":
+        return False
+    data = result.get("data")
+    if not isinstance(data, dict):
+        return False
+    exit_code = data.get("exitCode")
+    if (
+        not isinstance(exit_code, int)
+        or isinstance(exit_code, bool)
+        or exit_code == 0
+    ):
+        return False
+    if (
+        data.get("termination") != "exit"
+        or data.get("sandboxed") is not True
+        or data.get("escalated") is not False
+        or data.get("sandboxPermissions") != SandboxPermissions.USE_DEFAULT.value
+        or data.get("sandboxDenialCategory") is not None
+    ):
+        return False
+    permissions = data.get("effectivePermissionsSummary")
+    if not isinstance(permissions, dict):
+        return False
+    read = permissions.get("read")
+    write = permissions.get("write")
+    execute = permissions.get("execute")
+    return (
+        permissions.get("networkEnabled") is False
+        and isinstance(read, list)
+        and read == []
+        and isinstance(write, list)
+        and write == []
+        and isinstance(execute, list)
+        and execute == []
+    )
 
 
 def _result_fingerprint(tool_name: str, result: dict[str, object]) -> str:
