@@ -1,5 +1,6 @@
 import { AppShell } from "./app/AppShell.js";
 import { EidosMark } from "./components/EidosMark.js";
+import { Button } from "./components/Button.js";
 import { useRuntimeLifecycle } from "./app/useRuntimeLifecycle.js";
 import { deriveRuntimePresentation } from "./session-state.js";
 import type { RuntimeStatus } from "./contracts.js";
@@ -14,13 +15,27 @@ export function App() {
   const runtime = useRuntimeLifecycle();
 
   if (runtime.status.state !== "ready") {
-    return <RuntimeGate status={runtime.status} />;
+    return (
+      <RuntimeGate
+        status={runtime.status}
+        restarting={runtime.restarting}
+        onRestart={runtime.restartRuntime}
+      />
+    );
   }
 
   return <AppShell runtime={runtime} />;
 }
 
-function RuntimeGate({ status }: { status: RuntimeStatus }) {
+function RuntimeGate({
+  status,
+  restarting,
+  onRestart,
+}: {
+  status: RuntimeStatus;
+  restarting: boolean;
+  onRestart: () => Promise<void>;
+}) {
   const pres = deriveRuntimePresentation(status);
   return (
     <main className="runtime-gate" role={status.state === "error" ? "alert" : "status"}>
@@ -32,6 +47,17 @@ function RuntimeGate({ status }: { status: RuntimeStatus }) {
         {status.state !== "error" && (
           <div className="runtime-progress-bar">
             <div className="runtime-progress-pulse" />
+          </div>
+        )}
+        {status.state === "error" && (
+          <div className="runtime-gate-actions">
+            <Button
+              variant="primary"
+              loading={restarting}
+              onClick={() => void onRestart()}
+            >
+              {restarting ? "正在重新启动…" : "重新启动 Runtime"}
+            </Button>
           </div>
         )}
       </div>

@@ -51,6 +51,7 @@ describe("App & Runtime Lifecycle behavior", () => {
     const api: Partial<EidosRuntimeAPI> = {
       getStatus: getStatusSpy,
       getHealth: vi.fn().mockResolvedValue({ state: "ready" }),
+      restartRuntime: vi.fn().mockResolvedValue(mockReadyStatus),
       onStatus: onStatusSpy,
       onShortcut: vi.fn().mockReturnValue(() => {}),
       onNotification: vi.fn().mockReturnValue(() => {}),
@@ -127,6 +128,23 @@ describe("App & Runtime Lifecycle behavior", () => {
       expect(gate).toHaveAttribute("role", "alert");
       expect(gate).toHaveTextContent("启动失败");
     });
+  });
+
+  it("offers a Runtime restart action after an unexpected exit", async () => {
+    const restartRuntime = vi.fn().mockResolvedValue(mockReadyStatus);
+    setupMockRuntime({
+      getStatus: vi.fn().mockResolvedValue({ state: "error", message: "Runtime exited unexpectedly" }),
+      restartRuntime,
+    });
+
+    const { container } = render(<App />);
+
+    const restart = await screen.findByRole("button", { name: "重新启动 Runtime" });
+    fireEvent.click(restart);
+
+    await waitFor(() => expect(restartRuntime).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.queryByText("启动失败")).not.toBeInTheDocument());
+    expect(container.querySelector(".workbench")).toBeInTheDocument();
   });
 
   it("ready state renders AppShell workbench", async () => {

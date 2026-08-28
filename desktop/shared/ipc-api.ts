@@ -64,6 +64,7 @@ export interface EidosRuntimeAPI {
   // Runtime
   getStatus(): Promise<RuntimeStatus>;
   getHealth(): Promise<RuntimeHealth>;
+  restartRuntime(): Promise<RuntimeStatus>;
 
   // Workspace
   selectWorkspace(): Promise<string | null>;

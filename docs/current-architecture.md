@@ -70,6 +70,8 @@ Electron Main 负责以下职责：
 - 解析开发 Runtime 和打包 Runtime 的路径；
 - 启动、读取和关闭 Python Runtime 子进程；
 - 校验 JSON-RPC response、notification 和协议行大小；
+- 为 stdio RPC 请求记录超时状态。超时请求的迟到 response 会被安全丢弃，真正未知的 response id 仍然会触发协议错误；
+- 管理 Runtime 启动代次和 Runtime 重启。Runtime 进程意外退出时，Desktop 会发布启动错误，Renderer 可以通过 typed IPC 请求重新启动 Runtime；
 - 转发 Session、Run、Context Usage、Model、Extension 和 Approval 的 typed API；
 - 将 Runtime 主动发起的 Approval 请求投影到 Renderer；
 - 为用户直接操作的 Terminal 创建和回收 Main-owned PTY；

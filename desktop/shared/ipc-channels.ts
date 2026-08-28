@@ -9,6 +9,7 @@ export const IPC = {
   // Runtime
   RUNTIME_GET_STATUS: "runtime:get-status",
   RUNTIME_HEALTH: "runtime:health",
+  RUNTIME_RESTART: "runtime:restart",
   RUNTIME_STATUS_EVENT: "runtime:status",
   RUNTIME_NOTIFICATION_EVENT: "runtime:notification",
 

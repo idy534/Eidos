@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { RuntimeStatus } from "../contracts.js";
 import { deriveRuntimePresentation, type RuntimePresentation } from "../session-state.js";
 
@@ -7,6 +7,8 @@ export interface RuntimeLifecycleState {
   status: RuntimeStatus;
   presentation: RuntimePresentation;
   isStorageReady: boolean;
+  restarting: boolean;
+  restartRuntime(): Promise<void>;
 }
 
 /**
@@ -17,6 +19,7 @@ export interface RuntimeLifecycleState {
  */
 export function useRuntimeLifecycle(): RuntimeLifecycleState {
   const [status, setStatus] = useState<RuntimeStatus>({ state: "starting" });
+  const [restarting, setRestarting] = useState(false);
 
   useEffect(() => {
     // Initial fetch
@@ -30,9 +33,21 @@ export function useRuntimeLifecycle(): RuntimeLifecycleState {
     return unsubscribe;
   }, []);
 
+  const restartRuntime = useCallback(async (): Promise<void> => {
+    setRestarting(true);
+    try {
+      setStatus(await window.eidosRuntime.restartRuntime());
+    } catch (cause: unknown) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setStatus({ state: "error", message });
+    } finally {
+      setRestarting(false);
+    }
+  }, []);
+
   const presentation = deriveRuntimePresentation(status);
   const isStorageReady =
     status.state === "ready" && status.storageHealth.state === "ready";
 
-  return { status, presentation, isStorageReady };
+  return { status, presentation, isStorageReady, restarting, restartRuntime };
 }

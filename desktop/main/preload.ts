@@ -65,6 +65,7 @@ const api: EidosRuntimeAPI = {
   // Runtime status
   getStatus: (): Promise<RuntimeStatus> => ipcRenderer.invoke(IPC.RUNTIME_GET_STATUS),
   getHealth: (): Promise<RuntimeHealth> => ipcRenderer.invoke(IPC.RUNTIME_HEALTH),
+  restartRuntime: (): Promise<RuntimeStatus> => ipcRenderer.invoke(IPC.RUNTIME_RESTART),
   onStatus: (callback: (status: RuntimeStatus) => void): Unsubscribe => {
     const listener = (_event: Electron.IpcRendererEvent, status: RuntimeStatus) => callback(status);
     ipcRenderer.on(IPC.RUNTIME_STATUS_EVENT, listener);

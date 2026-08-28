@@ -196,6 +196,57 @@ describe("useGitReviewController", () => {
     expect(window.eidosRuntime.readSessionGitDiff).toHaveBeenCalledWith("session-a", "baseline");
   });
 
+  it("coalesces Git refreshes while the current diff request is still running", async () => {
+    vi.useFakeTimers();
+    const firstDiff = Promise.withResolvers<SessionGitDiff>();
+    vi.mocked(window.eidosRuntime.readSessionGitDiff).mockImplementation(() => firstDiff.promise);
+
+    const { result } = renderHook(() => useGitReviewController({
+      ready: true,
+      session: managedSession,
+    }));
+    await act(async () => { await Promise.resolve(); });
+
+    const completed: RuntimeNotification = {
+      method: "item/completed",
+      params: {
+        sessionId: "session-a",
+        runId: "run-a",
+        item: {
+          id: "item-command",
+          sessionId: "session-a",
+          runId: "run-a",
+          ordinal: 1,
+          kind: "command_execution",
+          status: "completed",
+          createdAt: 1,
+          completedAt: 2,
+        },
+      },
+    };
+
+    act(() => {
+      result.current[1].handleNotification(completed);
+      vi.advanceTimersByTime(150);
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(window.eidosRuntime.readSessionGitDiff).toHaveBeenCalledOnce();
+
+    act(() => {
+      result.current[1].handleNotification(completed);
+      vi.advanceTimersByTime(150);
+      result.current[1].handleNotification(completed);
+      vi.advanceTimersByTime(150);
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(window.eidosRuntime.readSessionGitDiff).toHaveBeenCalledOnce();
+
+    firstDiff.resolve(gitDiff);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(window.eidosRuntime.readSessionGitDiff).toHaveBeenCalledTimes(2);
+  });
+
   it("does not query Git for a Direct Workspace Session", async () => {
     renderHook(() => useGitReviewController({
       ready: true,

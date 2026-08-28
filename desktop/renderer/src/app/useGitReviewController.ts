@@ -35,6 +35,14 @@ interface GitReviewControllerOptions {
   session: Session | undefined;
 }
 
+interface GitRefreshRequest {
+  sessionId: string;
+  generation: number;
+  epoch: number;
+  scope: GitDiffScope;
+  workspaceRoot: string | undefined;
+}
+
 export function useGitReviewController({
   ready,
   session,
@@ -59,17 +67,20 @@ export function useGitReviewController({
   const readyRef = useRef(ready);
   const scopeRef = useRef<GitDiffScope>(scope);
   const refreshTimerRef = useRef<number | undefined>(undefined);
+  const refreshEpochRef = useRef(0);
+  const refreshRequestRef = useRef<GitRefreshRequest | undefined>(undefined);
+  const refreshPromiseRef = useRef<Promise<void> | undefined>(undefined);
 
   readyRef.current = ready;
   selectedSessionIdRef.current = session?.id;
   gitAvailableRef.current = session?.project?.gitAvailable === true;
 
-  const loadStatus = useCallback((sessionId: string, generation: number): void => {
+  const loadStatus = useCallback((sessionId: string, generation: number): Promise<void> => {
     const request = statusRequestRef.current + 1;
     statusRequestRef.current = request;
     setLoadingStatus(true);
     setError(undefined);
-    void window.eidosRuntime.readSessionGitStatus(sessionId).then((nextStatus) => {
+    return window.eidosRuntime.readSessionGitStatus(sessionId).then((nextStatus) => {
       if (
         generationRef.current !== generation
         || statusRequestRef.current !== request
@@ -100,10 +111,10 @@ export function useGitReviewController({
     sessionId: string,
     generation: number,
     workspaceRoot: string,
-  ): void => {
+  ): Promise<void> => {
     const request = contextRequestRef.current + 1;
     contextRequestRef.current = request;
-    void window.eidosRuntime.readProjectGitContext(workspaceRoot).then((context) => {
+    return window.eidosRuntime.readProjectGitContext(workspaceRoot).then((context) => {
       if (
         generationRef.current === generation
         && contextRequestRef.current === request
@@ -122,11 +133,11 @@ export function useGitReviewController({
     sessionId: string,
     generation: number,
     nextScope: GitDiffScope,
-  ): void => {
+  ): Promise<void> => {
     const request = summaryRequestRef.current + 1;
     summaryRequestRef.current = request;
     setLoadingSummary(true);
-    void window.eidosRuntime.readSessionGitDiff(sessionId, nextScope).then((nextSummary) => {
+    return window.eidosRuntime.readSessionGitDiff(sessionId, nextScope).then((nextSummary) => {
       if (
         generationRef.current === generation
         && summaryRequestRef.current === request
@@ -148,21 +159,57 @@ export function useGitReviewController({
     });
   }, []);
 
+  const runRefresh = useCallback(async (request: GitRefreshRequest): Promise<void> => {
+    if (
+      generationRef.current !== request.generation
+      || selectedSessionIdRef.current !== request.sessionId
+    ) return;
+    const operations: Promise<void>[] = [
+      loadStatus(request.sessionId, request.generation),
+      loadSummary(request.sessionId, request.generation, request.scope),
+    ];
+    if (request.workspaceRoot !== undefined) {
+      operations.push(
+        loadProjectContext(request.sessionId, request.generation, request.workspaceRoot),
+      );
+    }
+    await Promise.all(operations);
+  }, [loadProjectContext, loadStatus, loadSummary]);
+
   const refresh = useCallback((): void => {
     const sessionId = selectedSessionIdRef.current;
     if (!readyRef.current || !gitAvailableRef.current || !sessionId) return;
     const generation = generationRef.current;
-    loadStatus(sessionId, generation);
-    loadSummary(sessionId, generation, scopeRef.current);
     const localSession = session?.executionMode === "local"
       || (session?.executionMode === undefined && session?.worktree === undefined);
-    if (localSession && session?.project?.workspaceRoot) {
-      loadProjectContext(sessionId, generation, session.project.workspaceRoot);
-    }
+    refreshRequestRef.current = {
+      sessionId,
+      generation,
+      epoch: refreshEpochRef.current,
+      scope: scopeRef.current,
+      workspaceRoot: localSession ? session?.project?.workspaceRoot : undefined,
+    };
+    if (refreshPromiseRef.current) return;
+
+    const epoch = refreshEpochRef.current;
+    const refreshPromise = (async (): Promise<void> => {
+      while (refreshRequestRef.current?.epoch === epoch) {
+        const request = refreshRequestRef.current;
+        if (!request) return;
+        refreshRequestRef.current = undefined;
+        await runRefresh(request);
+      }
+    })();
+    refreshPromiseRef.current = refreshPromise;
+    const settleRefresh = (): void => {
+      if (refreshPromiseRef.current === refreshPromise) {
+        refreshPromiseRef.current = undefined;
+      }
+      if (refreshRequestRef.current?.epoch === epoch) refresh();
+    };
+    void refreshPromise.then(settleRefresh, settleRefresh);
   }, [
-    loadProjectContext,
-    loadSummary,
-    loadStatus,
+    runRefresh,
     session?.executionMode,
     session?.project?.workspaceRoot,
     session?.worktree?.worktreeId,
@@ -202,7 +249,9 @@ export function useGitReviewController({
 
   useEffect(() => {
     generationRef.current += 1;
-    const generation = generationRef.current;
+    refreshEpochRef.current += 1;
+    refreshRequestRef.current = undefined;
+    refreshPromiseRef.current = undefined;
     scopeRef.current = "baseline";
     setScope("baseline");
     setStatus(undefined);
@@ -216,18 +265,10 @@ export function useGitReviewController({
       refreshTimerRef.current = undefined;
     }
     if (!ready || session?.project?.gitAvailable !== true) return;
-    loadStatus(session.id, generation);
-    loadSummary(session.id, generation, "baseline");
-    const localSession = session.executionMode === "local"
-      || (session.executionMode === undefined && session.worktree === undefined);
-    if (localSession && session.project.workspaceRoot) {
-      loadProjectContext(session.id, generation, session.project.workspaceRoot);
-    }
+    refresh();
   }, [
-    loadProjectContext,
-    loadSummary,
-    loadStatus,
     ready,
+    refresh,
     session?.id,
     session?.project?.gitAvailable,
     session?.executionMode,
@@ -237,6 +278,7 @@ export function useGitReviewController({
 
   useEffect(() => () => {
     generationRef.current += 1;
+    refreshRequestRef.current = undefined;
     if (refreshTimerRef.current !== undefined) {
       window.clearTimeout(refreshTimerRef.current);
     }

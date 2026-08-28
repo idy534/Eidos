@@ -4033,6 +4033,12 @@ button.composer-context-project--empty:hover:not(:disabled) {
   animation: gate-pulse 1.4s ease-in-out infinite;
 }
 
+.runtime-gate-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 0.25rem;
+}
+
 @keyframes gate-pulse {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(280%); }

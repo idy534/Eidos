@@ -55,6 +55,8 @@ app.setName("Eidos");
 let runtimeStatus: RuntimeStatus = { state: "starting" };
 let runtimeClient: RuntimeClient | undefined;
 let runtimeTerminated = false;
+let runtimeStartGeneration = 0;
+let runtimeRestartPromise: Promise<RuntimeStatus> | undefined;
 
 function terminateRuntimeOnce(): void {
   if (runtimeTerminated) return;
@@ -399,6 +401,8 @@ function buildMenu(): void {
 // ---------------------------------------------------------------------------
 
 async function startRuntime(): Promise<void> {
+  const startGeneration = ++runtimeStartGeneration;
+  let client: RuntimeClient | undefined;
   try {
     const runtimePaths = resolveRuntimePaths({
       isPackaged: app.isPackaged,
@@ -406,7 +410,7 @@ async function startRuntime(): Promise<void> {
       resourcesPath: process.resourcesPath,
       environment: process.env,
     });
-    const client = new RuntimeClient({
+    client = new RuntimeClient({
       pythonExecutable: runtimePaths.pythonExecutable,
       runtimeRoot: runtimePaths.runtimeRoot,
       dataDirectory: process.env.EIDOS_DATA_DIR ?? path.join(app.getPath("home"), ".eidos"),
@@ -417,10 +421,20 @@ async function startRuntime(): Promise<void> {
         console.error(`[runtime] ${redactLogLine(line)}`);
       },
     });
+    if (startGeneration !== runtimeStartGeneration) {
+      client.terminate();
+      return;
+    }
     runtimeClient = client;
 
     void client.waitForExit().then((code) => {
-      if (!quitFlowController.getState().isQuitting && runtimeStatus.state !== "error") {
+      if (
+        runtimeStartGeneration === startGeneration
+        && runtimeClient === client
+        && !quitFlowController.getState().isQuitting
+        && runtimeStatus.state !== "error"
+      ) {
+        runtimeClient = undefined;
         log("error", "runtime", "Runtime exited unexpectedly", { code });
         publishStatus({
           state: "error",
@@ -431,6 +445,10 @@ async function startRuntime(): Promise<void> {
 
     const initialized = await client.initialize();
     const storageHealth = await client.health();
+    if (startGeneration !== runtimeStartGeneration || runtimeClient !== client) {
+      client.terminate();
+      return;
+    }
     log("info", "runtime", "Runtime initialized", {
       protocolVersion: initialized.protocolVersion,
       runtimeVersion: initialized.runtimeVersion,
@@ -448,6 +466,13 @@ async function startRuntime(): Promise<void> {
       app.quit();
     }
   } catch (error) {
+    if (startGeneration !== runtimeStartGeneration) {
+      client?.terminate();
+      return;
+    }
+    if (runtimeClient === client) runtimeClient = undefined;
+    client?.terminate();
+    if (runtimeStatus.state === "error") return;
     const rawMessage = error instanceof Error ? error.message : String(error);
     const safeMessage = redactLogLine(rawMessage);
     log("error", "runtime", "Runtime initialization failed", {
@@ -460,12 +485,51 @@ async function startRuntime(): Promise<void> {
   }
 }
 
+async function waitForRuntimeExit(client: RuntimeClient): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+  await new Promise<void>((resolve) => {
+    const settle = (): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      resolve();
+    };
+    timer = setTimeout(settle, 8_000);
+    void client.waitForExit().then(settle, settle);
+  });
+}
+
+function restartRuntime(): Promise<RuntimeStatus> {
+  if (runtimeRestartPromise) return runtimeRestartPromise;
+
+  const restart = (async (): Promise<RuntimeStatus> => {
+    const previous = runtimeClient;
+    runtimeClient = undefined;
+    runtimeStartGeneration += 1;
+    publishStatus({ state: "starting" });
+    if (previous) {
+      previous.terminate();
+      await waitForRuntimeExit(previous);
+    }
+    await startRuntime();
+    return runtimeStatus;
+  })();
+  runtimeRestartPromise = restart;
+  const clearRestartPromise = (): void => {
+    if (runtimeRestartPromise === restart) runtimeRestartPromise = undefined;
+  };
+  void restart.then(clearRestartPromise, clearRestartPromise);
+  return restart;
+}
+
 // ---------------------------------------------------------------------------
 // IPC Handlers
 // ---------------------------------------------------------------------------
 
 ipcMain.handle(IPC.RUNTIME_GET_STATUS, () => runtimeStatus);
 ipcMain.handle(IPC.RUNTIME_HEALTH, () => clientOrThrow().health());
+ipcMain.handle(IPC.RUNTIME_RESTART, () => restartRuntime());
 
 ipcMain.handle(IPC.WORKSPACE_SELECT, async () => {
   const result = await dialog.showOpenDialog({

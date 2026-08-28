@@ -1163,6 +1163,49 @@ test("terminates a runtime that writes non-protocol stdout", async () => {
   }
 });
 
+test("keeps the Runtime alive when a timed-out response arrives late", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-late-response-runtime-"));
+  const packageRoot = path.join(runtimeRoot, "eidos_runtime");
+  await mkdir(packageRoot);
+  await writeFile(path.join(packageRoot, "__init__.py"), "", "utf8");
+  await writeFile(
+    path.join(packageRoot, "__main__.py"),
+    [
+      "import json, sys, time",
+      "def send(request, result):",
+      "    print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}), flush=True)",
+      "first = json.loads(sys.stdin.readline())",
+      "time.sleep(0.05)",
+      "send(first, {'protocolVersion':1,'runtimeVersion':'fixture','capabilities':{'runShell':False,'modelConfigured':False}})",
+      "second = json.loads(sys.stdin.readline())",
+      "send(second, {'state':'ready'})",
+      "third = json.loads(sys.stdin.readline())",
+      "send(third, {})",
+    ].join("\n"),
+    "utf8",
+  );
+
+  let client: RuntimeClient | undefined;
+  try {
+    client = new RuntimeClient({
+      pythonExecutable,
+      runtimeRoot,
+    });
+    const initialize = client.initialize();
+    context.mock.timers.tick(30_000);
+    await assert.rejects(initialize, /Runtime request timed out: initialize/);
+
+    assert.deepEqual(await client.health(), { state: "ready" });
+    await client.shutdown();
+    assert.equal(await client.waitForExit(), 0);
+  } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
+    await rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
 test("uses the shared v1 vectors for requests, approvals, and notifications", async () => {
   const vectors = JSON.parse(await readFile(protocolV1Fixture, "utf8")) as {
     initialize: { request: object; response: object };

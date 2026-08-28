@@ -281,6 +281,7 @@ interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
+  timedOut: boolean;
 }
 
 interface RpcError {
@@ -890,13 +891,19 @@ export class RuntimeClient {
 
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        this.pending.delete(id);
+        const pending = this.pending.get(id);
+        if (!pending) return;
+        // Keep a tombstone until the Runtime replies. A timed-out request may
+        // still be executing because the stdio protocol has no cancellation
+        // frame for ordinary requests.
+        pending.timedOut = true;
         reject(new Error(`Runtime request timed out: ${method}`));
       }, 30_000);
       this.pending.set(id, {
         resolve: (value) => resolve(value as T),
         reject,
         timeout,
+        timedOut: false,
       });
       this.child.stdin.write(`${serialized}\n`, "utf8", (error) => {
         if (!error) {
@@ -1003,6 +1010,10 @@ export class RuntimeClient {
     }
     this.pending.delete(message.id);
     clearTimeout(pending.timeout);
+
+    if (pending.timedOut) {
+      return;
+    }
 
     if ("error" in message) {
       pending.reject(new RuntimeRequestError(message.error));
