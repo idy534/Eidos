@@ -16,6 +16,7 @@ from eidos_runtime.db.storage import (
     InvalidRunStateError,
     SessionStore,
 )
+from eidos_runtime.db.errors import ReconciliationRequiredError
 from eidos_runtime.model.client import ModelClient
 from eidos_runtime.domain.long_task import LongTaskStatus, SafePoint
 from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalDecision
@@ -270,6 +271,9 @@ class RuntimeEngine:
                 self._cancel(run_id)
             else:
                 raise RuntimeCancelled from None
+        except ReconciliationRequiredError:
+            self._interrupt_for_reconciliation(run_id)
+            return
         except InvalidRunStateError:
             logger.exception("Unexpected runtime state conflict")
             current = self.store.read_run(run_id)
@@ -992,6 +996,22 @@ class RuntimeEngine:
         mutation = self.store.fail_run_committed(run_id, error_code)
         items = {
             str(item["id"]): item for item in self.store.canceled_items_for_run(run_id)
+        }
+        self.events.publish(mutation, run=mutation.value, items=items)
+
+    def _interrupt_for_reconciliation(self, run_id: str) -> None:
+        """Keep an unresolved side effect from reaching a succeeded Run."""
+        self.state_machine.track(RuntimeState.FAILED, "reconciliation_required")
+        self._pause_effective_time(run_id)
+        current = self.store.read_run(run_id)
+        if current["status"] == "interrupted":
+            return
+        if current["status"] not in {"running", "waiting_approval"}:
+            return
+        mutation = self.store.interrupt_run_committed(run_id)
+        items = {
+            str(item["id"]): item
+            for item in self.store.canceled_items_for_run(run_id)
         }
         self.events.publish(mutation, run=mutation.value, items=items)
 

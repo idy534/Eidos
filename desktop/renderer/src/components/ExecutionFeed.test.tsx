@@ -352,6 +352,117 @@ test("shows canonical shell failure code, summary, and stderr", () => {
   assert.match(html, /index deadline exceeded/);
 });
 
+test("distinguishes a reconciliation gate from an executed shell failure", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({
+        id: "gated-shell", ordinal: 1, kind: "command_execution", status: "failed",
+        toolCall: {
+          id: "tool-gated-shell", itemId: "gated-shell", modelStepIndex: 1, batchOrder: 0,
+          providerCallId: "provider-gated-shell", toolName: "run_shell",
+          status: "failed", startedAt: 1_000, completedAt: 2_000,
+          argumentsJson: JSON.stringify({ command: "python3 build.py" }),
+          resultJson: JSON.stringify({
+            outcome: "error",
+            code: "TOOL_RECONCILIATION_REQUIRED",
+            summary: "A previous side effect must be reconciled",
+            data: {},
+          }),
+        },
+      })]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(html, /未执行，等待只读核验/);
+  assert.doesNotMatch(html, /失败 · TOOL_RECONCILIATION_REQUIRED/);
+  assert.match(html, /A previous side effect must be reconciled/);
+});
+
+test("shows shell termination and bounded-output diagnostics", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({
+        id: "truncated-shell", ordinal: 1, kind: "command_execution",
+        toolCall: {
+          id: "tool-truncated-shell", itemId: "truncated-shell", modelStepIndex: 1,
+          batchOrder: 0, providerCallId: "provider-truncated-shell", toolName: "run_shell",
+          status: "completed", startedAt: 1_000, completedAt: 2_000,
+          argumentsJson: JSON.stringify({ command: "python3 build.py" }),
+          resultJson: JSON.stringify({
+            outcome: "error", code: "nonzero_exit", summary: "Command failed",
+            data: {
+              exitCode: 2, stdout: "partial", stderr: "failed",
+              termination: "exit", truncated: true, truncationReason: "output_limit",
+            },
+          }),
+        },
+      })]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(html, /退出码 · 2/);
+  assert.match(html, /结束方式 · exit/);
+  assert.match(html, /输出已截断 · output_limit/);
+});
+
+test("distinguishes a reconciliation gate for a non-shell tool", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({
+        id: "gated-write", ordinal: 1, kind: "file_change", status: "failed",
+        toolCall: {
+          id: "tool-gated-write", itemId: "gated-write", modelStepIndex: 1, batchOrder: 0,
+          providerCallId: "provider-gated-write", toolName: "write_file",
+          status: "failed", startedAt: 1_000, completedAt: 2_000,
+          argumentsJson: JSON.stringify({ path: "output.txt" }),
+          resultJson: JSON.stringify({
+            outcome: "error", code: "TOOL_RECONCILIATION_REQUIRED",
+            summary: "A previous side effect must be reconciled", data: {},
+          }),
+        },
+      })]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(html, /未执行，等待只读核验/);
+  assert.doesNotMatch(html, /失败 output\.txt/);
+});
+
+test("does not show a succeeded run with a reconciliation barrier as complete", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({ id: "user", ordinal: 1, kind: "user_message", content: "检查" })]}
+      runs={[{ ...run, reconciliationRequired: true }]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(html, /完成状态待核验，尚未确认/);
+  assert.doesNotMatch(html, /已完成/);
+});
+
 test("shows the exact host and target for network approval", () => {
   const { completedAt: _completedAt, ...runWithoutCompletion } = run;
   const waitingRun: Run = {

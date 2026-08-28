@@ -15,6 +15,7 @@ from eidos_runtime.db.database import (
 )
 from eidos_runtime.db.errors import (
     InvalidRunStateError,
+    ReconciliationRequiredError,
     ResourceNotFoundError,
     StorageError,
 )
@@ -51,6 +52,37 @@ from eidos_runtime.runtime.state_machine import (
     ToolCallStatus,
     ensure_transition,
 )
+
+
+_RECONCILIATION_CODES = frozenset({
+    "file_commit_uncertain", "outcome_unknown", "nonzero_exit",
+    "shell_exit_nonzero", "timeout", "tool_timeout", "interrupted",
+    "background_process", "output_capture_failed",
+    "workspace_change_manifest_incomplete", "shell_resource_limit_exceeded",
+})
+
+
+def _result_reconciliation_required(result: dict[str, object]) -> bool:
+    """Return the durable reconciliation fact from a tool result.
+
+    Current canonical results carry this fact at the envelope top level. A
+    nested field is accepted only for historical compatibility. Legacy
+    results without either field keep the old conservative inference.
+    """
+    if "reconciliationRequired" in result:
+        value = result["reconciliationRequired"]
+        return value if isinstance(value, bool) else True
+    data = result.get("data")
+    if isinstance(data, dict) and "reconciliationRequired" in data:
+        value = data["reconciliationRequired"]
+        return value if isinstance(value, bool) else True
+    return (
+        result.get("code") in _RECONCILIATION_CODES
+        or (
+            result.get("sideEffectsMayExist") is True
+            and result.get("outcome") != "success"
+        )
+    )
 
 
 def _attempt_metadata(
@@ -860,6 +892,14 @@ class ExecutionRepository(Repository):
     ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
         with self.lock, self._connection() as connection:
             now = _now_ms()
+            run_state = connection.execute(
+                "SELECT reconciliation_required FROM runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+            if run_state is None:
+                raise ResourceNotFoundError("run not found")
+            if run_state["reconciliation_required"]:
+                raise ReconciliationRequiredError("reconciliation_required")
             item_update = connection.execute(
                 """
                 UPDATE items SET status = 'completed', completed_at = ?
@@ -1121,20 +1161,7 @@ class ExecutionRepository(Repository):
                 result = json.loads(result_json)
             except json.JSONDecodeError:
                 result = {}
-            reconciliation_codes = {
-                "file_commit_uncertain", "outcome_unknown", "nonzero_exit",
-                "shell_exit_nonzero", "timeout", "tool_timeout", "interrupted",
-                "background_process", "output_capture_failed",
-                "workspace_change_manifest_incomplete", "shell_resource_limit_exceeded",
-            }
-            reconciliation_required = (
-                result.get("reconciliationRequired") is True
-                or result.get("code") in reconciliation_codes
-                or (
-                    result.get("sideEffectsMayExist") is True
-                    and result.get("outcome") != "success"
-                )
-            )
+            reconciliation_required = _result_reconciliation_required(result)
             intent_status = "uncertain" if reconciliation_required else "completed"
             connection.execute(
                 """

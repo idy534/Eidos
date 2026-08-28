@@ -33,6 +33,7 @@ from eidos_runtime.workspace.search_driver import RipgrepBinaryResolver, SearchD
 
 
 MAX_OUTPUT_BYTES = 256 * 1024
+MAX_OUTPUT_METADATA_BYTES = 9_007_199_254_740_991
 TERMINATION_GRACE_SECONDS = 0.5
 POST_TERMINATION_DRAIN_SECONDS = 1.0
 _HOST_ALTERING_ENV_NAMES = frozenset(
@@ -55,6 +56,8 @@ class ShellLaunchSpec:
     cwd: Path
     environment: dict[str, str]
     sandboxed: bool
+    shell_kind: str | None = None
+    environment_source: str | None = None
 
 
 def run_shell(
@@ -110,9 +113,14 @@ def run_shell(
                 "truncated": False,
                 "termination": "not_started",
                 "durationMs": int((time.monotonic() - started) * 1000),
+                "originalBytes": 0,
+                "omittedBytes": 0,
             },
             "sideEffectsMayExist": False,
         }
+        result["summary"] = _summary_with_termination(
+            str(result["summary"]), "not_started"
+        )
         return _attach_skill_invocation(result, skill_invocation)
     except SeatbeltUnavailableError:
         return sandbox_unavailable_result(started, skill_invocation=skill_invocation)
@@ -138,7 +146,10 @@ def sandbox_unavailable_result(
         "toolName": "run_shell",
         "outcome": "error",
         "code": "sandbox_unavailable",
-        "summary": "Command was not started because the Shell sandbox is unavailable",
+        "summary": (
+            "Command was not started because the Shell sandbox is unavailable "
+            "(termination=not_started)"
+        ),
         "data": {
             "exitCode": None,
             "stdout": "",
@@ -146,6 +157,8 @@ def sandbox_unavailable_result(
             "truncated": False,
             "termination": "not_started",
             "durationMs": duration_ms,
+            "originalBytes": 0,
+            "omittedBytes": 0,
         },
         "sideEffectsMayExist": False,
     }
@@ -167,7 +180,10 @@ def process_start_failed_result(
         "toolName": "run_shell",
         "outcome": "error",
         "code": "process_start_failed",
-        "summary": "Command was not started because the host shell is unavailable",
+        "summary": (
+            "Command was not started because the host shell is unavailable "
+            "(termination=not_started)"
+        ),
         "data": {
             "exitCode": None,
             "stdout": "",
@@ -175,6 +191,8 @@ def process_start_failed_result(
             "truncated": False,
             "termination": "not_started",
             "durationMs": duration_ms,
+            "originalBytes": 0,
+            "omittedBytes": 0,
         },
         "sideEffectsMayExist": False,
     }
@@ -296,6 +314,7 @@ def _run_verified_shell(
         attempt=attempt,
         shell=host_shell,
         environment=environment,
+        environment_source=snapshot.source,
     )
     result = run_shell_process(
         launch,
@@ -340,6 +359,7 @@ def prepare_shell_launch(
     attempt: SandboxAttempt | None,
     shell: HostShell,
     environment: Mapping[str, str],
+    environment_source: str | None = None,
 ) -> ShellLaunchSpec:
     sandboxed = attempt is None or attempt.sandbox is SandboxType.MACOS_SEATBELT
     argv = (
@@ -352,6 +372,8 @@ def prepare_shell_launch(
         cwd=cwd.path,
         environment=dict(environment),
         sandboxed=sandboxed,
+        shell_kind=shell.kind,
+        environment_source=environment_source,
     )
 
 
@@ -383,6 +405,7 @@ def run_shell_process(
     selector.register(process.stderr, selectors.EVENT_READ, "stderr")
     outputs = {"stdout": bytearray(), "stderr": bytearray()}
     total = 0
+    observed_bytes = 0
     truncated = False
     termination = "exit"
     termination_started_at: float | None = None
@@ -419,6 +442,10 @@ def run_shell_process(
                 if not chunk:
                     selector.unregister(key.fileobj)
                     continue
+                observed_bytes = min(
+                    MAX_OUTPUT_METADATA_BYTES,
+                    observed_bytes + len(chunk),
+                )
                 remaining = max(0, MAX_OUTPUT_BYTES - total)
                 accepted = chunk[:remaining]
                 if accepted:
@@ -470,6 +497,23 @@ def run_shell_process(
         if termination != "exit"
         else "nonzero_exit"
     )
+    data: dict[str, object] = {
+        "exitCode": returncode,
+        "stdout": stdout,
+        "stderr": stderr,
+        "truncated": truncated,
+        "termination": termination,
+        "durationMs": int((time.monotonic() - started) * 1000),
+        "originalBytes": observed_bytes,
+        "omittedBytes": min(
+            MAX_OUTPUT_METADATA_BYTES,
+            max(0, observed_bytes - total),
+        ),
+        "shellKind": launch.shell_kind,
+        "environmentSource": launch.environment_source,
+    }
+    if truncated:
+        data["truncationReason"] = "output_limit"
     return {
         "schemaVersion": 1,
         "toolName": "run_shell",
@@ -478,18 +522,27 @@ def run_shell_process(
         "summary": (
             "Command completed"
             if outcome == "success"
-            else "Command did not succeed"
+            else _shell_failure_summary(code, returncode, termination)
         ),
-        "data": {
-            "exitCode": returncode,
-            "stdout": stdout,
-            "stderr": stderr,
-            "truncated": truncated,
-            "termination": termination,
-            "durationMs": int((time.monotonic() - started) * 1000),
-        },
+        "data": data,
         "sideEffectsMayExist": True,
     }
+
+
+def _shell_failure_summary(
+    code: str,
+    returncode: int,
+    termination: str,
+) -> str:
+    if code == "nonzero_exit":
+        return f"Command failed (exit code {returncode}; termination={termination})"
+    return f"Command did not succeed (termination={termination})"
+
+
+def _summary_with_termination(summary: str, termination: str) -> str:
+    if f"termination={termination}" in summary:
+        return summary
+    return f"{summary} (termination={termination})"
 
 
 def _terminate_group(process_group: int) -> None:

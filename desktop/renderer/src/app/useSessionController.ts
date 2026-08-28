@@ -95,7 +95,7 @@ export interface SessionControllerActions {
   /** Called when a session title notification arrives — updates sessions title and open snapshot */
   handleTitleNotification: (params: { sessionId: string; title: string }) => void;
   /** Called when a run notification arrives — updates sessions taskStatus */
-  handleRunNotification: (run: { id: string; sessionId: string; status: string; updatedAt: number }) => void;
+  handleRunNotification: (run: Pick<Run, "id" | "sessionId" | "status" | "updatedAt" | "reconciliationRequired">) => void;
   /** Called when a session completes — triggers authoritative snapshot refresh */
   refreshCompletedSession: (sessionId: string) => Promise<void>;
   setSnapshot: (updater: (prev: SessionSnapshot | undefined) => SessionSnapshot | undefined) => void;
@@ -573,21 +573,22 @@ export function useSessionController(): [SessionControllerState, SessionControll
     });
   }, []);
 
-  const handleRunNotification = useCallback((run: {
-    id: string;
-    sessionId: string;
-    status: string;
-    updatedAt: number;
-  }): void => {
-    const taskStatus = taskStatusFromRun({ status: run.status } as Parameters<typeof taskStatusFromRun>[0]);
+  const handleRunNotification = useCallback((run: Pick<Run, "id" | "sessionId" | "status" | "updatedAt" | "reconciliationRequired">): void => {
+    const taskStatus = taskStatusFromRun(run);
     setSessions((prev) => prev.map((s) => s.id === run.sessionId
       ? { ...s, taskStatus, updatedAt: run.updatedAt }
       : s));
     updateReadCompleted((prev) => {
       const next = new Set(prev);
-      if (run.status === "succeeded" && selectedSessionIdRef.current === run.sessionId) {
+      if (
+        run.status === "succeeded"
+        && run.reconciliationRequired !== true
+        && selectedSessionIdRef.current === run.sessionId
+      ) {
         next.add(run.sessionId);
-      } else if (["queued", "running", "waiting_approval", "finalizing", "succeeded"].includes(run.status)) {
+      } else if ([
+        "queued", "running", "waiting_approval", "finalizing", "succeeded",
+      ].includes(run.status)) {
         next.delete(run.sessionId);
       }
       return next;

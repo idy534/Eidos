@@ -265,6 +265,9 @@ class RunDto(ClosedModel):
     )
     stop_reason: StrictStr | None = Field(default=None, alias="stopReason")
     side_effects_may_exist: bool = Field(default=False, alias="sideEffectsMayExist")
+    reconciliation_required: bool = Field(
+        default=False, alias="reconciliationRequired"
+    )
     extension_snapshot: RunExtensionSnapshotDto | None = Field(
         default=None, alias="extensionSnapshot"
     )
@@ -331,6 +334,19 @@ class ToolSearchHitDto(ClosedModel):
     score: StrictInt
 
 
+class WorkspaceExecutableDto(ClosedModel):
+    name: StrictStr
+    path: StrictStr
+    version: StrictStr
+    sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class WorkspacePythonPackageDto(ClosedModel):
+    name: StrictStr
+    import_name: StrictStr = Field(alias="importName")
+    version: StrictStr
+
+
 class ToolResultDataDto(ClosedModel):
     path: StrictStr | None = None
     paths: list[StrictStr] | None = None
@@ -380,6 +396,12 @@ class ToolResultDataDto(ClosedModel):
     created: list[StrictStr] | None = None
     modified: list[StrictStr] | None = None
     deleted: list[StrictStr] | None = None
+    source: StrictStr | None = None
+    python_path: list[StrictStr] | None = Field(default=None, alias="pythonPath")
+    python_packages: list[WorkspacePythonPackageDto] | None = Field(
+        default=None, alias="pythonPackages"
+    )
+    executables: list[WorkspaceExecutableDto] | None = None
 
 
 class ToolResultDto(ClosedModel):

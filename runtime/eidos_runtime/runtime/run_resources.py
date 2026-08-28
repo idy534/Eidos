@@ -28,6 +28,7 @@ from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
 from eidos_runtime.tools.search import tool_search_entry
 from eidos_runtime.tools.runtime_workspace import ToolExecutor
 from eidos_runtime.tools.view_image import ViewImageRootAuthority, view_image_entry
+from eidos_runtime.tools.workspace_dependencies import workspace_dependencies_entry
 
 
 class RunResourceError(RuntimeError):
@@ -176,6 +177,7 @@ class RunResources:
         base = ToolRegistry.build(
             builtin_entries=(
                 *self.tool_executor.registry.entries,
+                workspace_dependencies_entry(),
                 *self.skills.tool_entries(
                     self.skill_catalog_snapshot,
                     activate_model_read=self.activate_skill_model_read,

@@ -359,6 +359,7 @@ class ShellLifecycleUnitTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "error")
         self.assertEqual(result["code"], "process_start_failed")
         self.assertEqual(result["data"]["termination"], "not_started")
+        self.assertIn("termination=not_started", result["summary"])
         self.assertNotIn("secret shell detail", str(result))
 
     def test_popen_start_error_returns_process_start_failed(self) -> None:
@@ -383,6 +384,7 @@ class ShellLifecycleUnitTests(unittest.TestCase):
 
         self.assertEqual(result["code"], "process_start_failed")
         self.assertEqual(result["data"]["termination"], "not_started")
+        self.assertIn("termination=not_started", result["summary"])
         self.assertNotIn("secret startup detail", str(result))
 
     def test_os_read_error_after_process_start_is_not_not_started(self) -> None:
@@ -437,6 +439,41 @@ class ShellLifecycleUnitTests(unittest.TestCase):
         result = self._run_shell("sleep 3 &", 1)
 
         self.assertEqual(result["code"], "background_process")
+        self.assertIn("termination=background_process", result["summary"])
+
+    def test_nonzero_shell_summary_mentions_exit_code(self) -> None:
+        result = self._run_shell("exit 7", 2)
+
+        self.assertEqual(result["code"], "nonzero_exit")
+        self.assertEqual(result["data"]["exitCode"], 7)
+        self.assertIn("exit code 7", result["summary"])
+
+    def test_shell_output_limit_reports_reason_and_bounded_byte_counts(self) -> None:
+        result = self._run_shell("/usr/bin/printf '%*s' 300000 ''", 2)
+        data = result["data"]
+
+        self.assertEqual(result["outcome"], "success")
+        self.assertTrue(data["truncated"])
+        self.assertEqual(data["truncationReason"], "output_limit")
+        self.assertEqual(data["originalBytes"], 300000)
+        self.assertEqual(data["omittedBytes"], 300000 - 256 * 1024)
+        self.assertLessEqual(data["originalBytes"], 9_007_199_254_740_991)
+        self.assertLessEqual(data["omittedBytes"], 9_007_199_254_740_991)
+
+    def test_shell_output_limit_preserves_exact_counts_above_512_kib(self) -> None:
+        result = self._run_shell("/usr/bin/printf '%*s' 600000 ''", 2)
+        data = result["data"]
+
+        self.assertTrue(data["truncated"])
+        self.assertEqual(data["truncationReason"], "output_limit")
+        self.assertEqual(data["originalBytes"], 600000)
+        self.assertEqual(data["omittedBytes"], 600000 - 256 * 1024)
+
+    def test_shell_result_reports_safe_shell_diagnostics(self) -> None:
+        result = self._run_shell("true", 2)
+
+        self.assertEqual(result["data"]["shellKind"], "sh")
+        self.assertEqual(result["data"]["environmentSource"], "captured")
 
     def test_closed_output_pipes_do_not_impose_an_artificial_one_second_timeout(self) -> None:
         result = self._run_shell("exec >/dev/null 2>&1; sleep 1.2", 3)
@@ -491,7 +528,9 @@ class ShellLifecycleUnitTests(unittest.TestCase):
         self.assertEqual("".join(deltas), "host-ok|unset")
         self.assertTrue(success["sideEffectsMayExist"])
         self.assertEqual(timeout["code"], "timeout")
+        self.assertIn("termination=timeout", timeout["summary"])
         self.assertEqual(canceled["code"], "canceled")
+        self.assertIn("termination=canceled", canceled["summary"])
         self.assertLess(timeout["data"]["durationMs"], 3_000)
 
     def test_shell_supports_workspace_paths_with_spaces(self) -> None:

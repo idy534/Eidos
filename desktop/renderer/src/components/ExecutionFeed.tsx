@@ -817,7 +817,14 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
   const exitCode = numberField(data, "exitCode");
   const code = stringField(result, "code");
   const summary = stringField(result, "summary");
-  const success = item.status === "completed" && (exitCode === undefined || exitCode === 0);
+  const gateRejected = isReconciliationGate(result);
+  const reconciliationRequired = result.reconciliationRequired === true;
+  const termination = stringField(data, "termination");
+  const truncated = booleanField(data, "truncated");
+  const truncationReason = stringField(data, "truncationReason");
+  const success = !gateRejected
+    && item.status === "completed"
+    && (exitCode === undefined || exitCode === 0);
   const [open, setOpen] = useState(item.status === "in_progress");
 
   useEffect(() => {
@@ -837,11 +844,22 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
         <pre className="shell-command"><span aria-hidden="true">$ </span>{command}</pre>
         {stdout && <pre className="shell-output">{stdout}</pre>}
         {stderr && <pre className="shell-output shell-output--error">{stderr}</pre>}
-        {!success && code && <p className="shell-error-code">失败 · {code}</p>}
+        {gateRejected && <p className="shell-error-code">未执行，等待只读核验</p>}
+        {!gateRejected && !success && code && <p className="shell-error-code">失败 · {code}</p>}
         {!success && summary && <p className="shell-error-summary">{summary}</p>}
+        {exitCode !== undefined && !gateRejected && <p className="shell-diagnostic">退出码 · {exitCode}</p>}
+        {termination && <p className="shell-diagnostic">结束方式 · {termination}</p>}
+        {truncated && (
+          <p className="shell-diagnostic">
+            输出已截断{truncationReason ? ` · ${truncationReason}` : ""}
+          </p>
+        )}
+        {reconciliationRequired && !gateRejected && (
+          <p className="shell-diagnostic">结果需要只读核验</p>
+        )}
         {!stdout && !stderr && (success || (!code && !summary)) && <p className="shell-empty">无输出</p>}
         <p className={`shell-status ${success ? "shell-status--success" : "shell-status--error"}`}>
-          {item.status === "in_progress" ? "运行中" : success ? "✓ 成功" : statusLabel(item.status)}
+          {item.status === "in_progress" ? "运行中" : gateRejected ? "未执行" : success ? "✓ 成功" : statusLabel(item.status)}
         </p>
       </div>
     </details>
@@ -888,14 +906,15 @@ function ProcessLabel({ run }: { run: Run }) {
 }
 
 function RunNotice({ run }: { run: Run }) {
-  if (run.status === "succeeded") return null;
+  if (run.status === "succeeded" && run.reconciliationRequired !== true) return null;
   const presentation = terminalRunPresentation(run);
   const active = presentation ?? activeRunPresentation(run);
   if (!active || ["queued", "running", "finalizing"].includes(run.status)) return null;
   return (
     <p className={`run-notice run-notice--${active.tone}`} role={active.tone === "error" ? "alert" : "status"}>
       {active.label}
-      {run.sideEffectsMayExist && "。副作用结果可能存在，下一步必须先只读核验"}
+      {run.reconciliationRequired === true
+        && "。副作用结果可能存在，下一步必须先只读核验"}
     </p>
   );
 }
@@ -957,9 +976,13 @@ function shellSummary(status: Item["status"], command: string): string {
 
 function toolSummary(toolCall: ToolCall, status: Item["status"]): string {
   const args = parseObject(toolCall.argumentsJson);
+  const result = parseObject(toolCall.resultJson);
   const path = stringField(args, "path") || stringField(args, "filePath");
   const query = stringField(args, "query") || stringField(args, "pattern");
   const running = status === "in_progress";
+  if (isReconciliationGate(result)) {
+    return `未执行，等待只读核验 ${path || query || toolCall.toolName}`;
+  }
   if (!running && status !== "completed") {
     return `${statusLabel(status)} ${path || query || toolCall.toolName}`;
   }
@@ -1077,7 +1100,14 @@ function statusLabel(status: Item["status"]): string {
 
 function safeToolSummary(value: string | undefined, status: Item["status"]): string {
   const parsed = parseObject(value);
+  if (isReconciliationGate(parsed)) return "未执行，等待只读核验";
   return stringField(parsed, "summary") || stringField(parsed, "code") || statusLabel(status);
+}
+
+function isReconciliationGate(result: Record<string, unknown>): boolean {
+  const code = stringField(result, "code");
+  return code === "TOOL_RECONCILIATION_REQUIRED"
+    || code.endsWith("_RECONCILIATION_REQUIRED");
 }
 
 function parseObject(value: string | undefined): Record<string, unknown> {
@@ -1107,6 +1137,10 @@ function stringArrayField(source: Record<string, unknown>, key: string): string[
   return Array.isArray(source[key])
     ? source[key].filter((value): value is string => typeof value === "string")
     : [];
+}
+
+function booleanField(source: Record<string, unknown>, key: string): boolean {
+  return source[key] === true;
 }
 
 function numberField(source: Record<string, unknown>, key: string): number | undefined {

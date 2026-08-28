@@ -6,6 +6,7 @@ import {
   applyNotification,
   groupSessionsByProject,
   SnapshotReadCoordinator,
+  taskStatusFromRun,
   taskStatusPresentation,
   terminalRunPresentation,
   userFacingError,
@@ -212,6 +213,26 @@ test("every terminal run state has a user-facing presentation", () => {
     },
   );
   assert.equal(terminalRunPresentation(run("running")), undefined);
+});
+
+test("does not present a succeeded run with an unresolved reconciliation barrier as complete", () => {
+  const unresolved = {
+    ...run("succeeded"),
+    reconciliationRequired: true,
+  };
+
+  assert.deepEqual(terminalRunPresentation(unresolved), {
+    label: "完成状态待核验，尚未确认",
+    tone: "warning",
+  });
+  assert.equal(taskStatusFromRun(unresolved), "failed");
+});
+
+test("maps a completed run notification with a reconciliation barrier to a failed session", () => {
+  assert.equal(
+    taskStatusFromRun({ status: "succeeded", reconciliationRequired: true }),
+    "failed",
+  );
 });
 
 test("closed runtime business errors map to safe user-facing guidance", () => {

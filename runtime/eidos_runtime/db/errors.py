@@ -41,6 +41,10 @@ class InvalidRunStateError(RuntimeError):
     pass
 
 
+class ReconciliationRequiredError(InvalidRunStateError):
+    """The Run cannot succeed until an uncertain side effect is observed."""
+
+
 class ContextLimitExceeded(RuntimeError):
     def __init__(self, reason: str) -> None:
         self.reason = reason

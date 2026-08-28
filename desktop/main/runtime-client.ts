@@ -1755,6 +1755,7 @@ function isRun(value: unknown): value is Run {
       "cancelFailureCode",
       "stopReason",
       "sideEffectsMayExist",
+      "reconciliationRequired",
       "extensionSnapshot",
       "activatedTools",
     ])
@@ -1803,6 +1804,7 @@ function isRun(value: unknown): value is Run {
     )
     && (value.stopReason === undefined || typeof value.stopReason === "string")
     && (value.sideEffectsMayExist === undefined || typeof value.sideEffectsMayExist === "boolean")
+    && (value.reconciliationRequired === undefined || typeof value.reconciliationRequired === "boolean")
     && (value.extensionSnapshot === undefined || isExtensionSnapshot(value.extensionSnapshot))
     && (value.activatedTools === undefined || (
       Array.isArray(value.activatedTools)

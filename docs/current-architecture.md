@@ -177,6 +177,10 @@ Validate → Prepare → Permission Decision → Durable Intent
 
 ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。Workspace mutation 会在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。Workspace Permission 会直接授权普通文件变更。Runtime 会先提交 Durable Intent，再复检版本并原子提交。Runtime 会保留并展示已应用的完整 Diff。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。
 
+Tool Result 的 `reconciliationRequired` 是本次执行是否建立 reconciliation barrier 的权威结果。`sideEffectsMayExist` 只保留历史证据。它不是完成条件。Runtime 只有在 Tool Result 缺少显式 reconciliation 判断时，才为旧结果使用保守兼容规则。未清除的 barrier 会阻止 Run 提交 `succeeded`。Runtime 不会自动重放有副作用的 Tool。
+
+内置 `workspace_dependencies` Tool 通过一个只读目录接口返回 Eidos 自带并经过校验的 Python、ripgrep、Python import roots 和受支持包版本。调用方使用这些路径执行已有 Workspace 任务。这个 Tool 不创建新的执行器，也不绕过 Shell、Approval 或 Seatbelt。实际命令仍然进入现有 `run_shell` 链路。
+
 现有文件的原子替换会保留 mode、扩展属性和 ACL。Runtime 使用已验证的文件描述符和 macOS `fcopyfile` 复制这些元数据。Runtime 仍然拒绝 symlink、hardlink、特殊文件、owner 不匹配、特殊 mode 和文件 flags。
 
 只有同时满足 `parallel_safe`、无副作用、参数安全和共享 Kernel 条件的只读批次可以并发执行。写入、Shell、Eidos-state、MCP 和其他外部工具保持独占。并发结果最终按模型声明顺序提交。

@@ -516,9 +516,17 @@ class RunShellResultData(WorkspaceResultData):
     stderr: StrictStr | None = None
     truncated: bool | None = None
     truncationReason: StrictStr | None = None
+    originalBytes: StrictInt | None = Field(
+        default=None, ge=0, le=9_007_199_254_740_991
+    )
+    omittedBytes: StrictInt | None = Field(
+        default=None, ge=0, le=9_007_199_254_740_991
+    )
     termination: StrictStr | None = None
     durationMs: StrictInt | None = Field(default=None, ge=0)
     attemptCount: StrictInt | None = Field(default=None, ge=0, le=2)
+    shellKind: Literal["zsh", "bash", "sh"] | None = None
+    environmentSource: Literal["captured", "fallback"] | None = None
     sandboxed: bool | None = None
     sandboxPermissions: SandboxPermissions | None = None
     escalated: bool | None = None

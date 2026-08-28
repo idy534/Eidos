@@ -301,6 +301,7 @@ class RuntimeArchitectureTests(unittest.TestCase):
                 names = {entry.spec.name for entry in resources.registry.entries}
                 self.assertIn("read_file", names)
                 self.assertIn("skill_read", names)
+                self.assertIn("workspace_dependencies", names)
                 self.assertIsNotNone(resources.tool_executor)
                 self.assertIsNotNone(resources.skills)
                 self.assertIsNotNone(resources.mcp)

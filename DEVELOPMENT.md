@@ -155,7 +155,7 @@ pnpm test:runtime:bundled
 pnpm test:runtime:bundled-seatbelt
 ```
 
-输出目录是 `build/macos-runtime/`。Bundle 使用 managed CPython `3.12.13`、locked production dependencies、Eidos Runtime、Seatbelt 资源和受管 Ripgrep。打包 Runtime 不依赖目标机的系统 Python、uv、仓库 `.venv` 或 Xcode Command Line Tools Python。
+输出目录是 `build/macos-runtime/`。Bundle 使用 managed CPython `3.12.13`、locked production dependencies、Eidos Runtime、Seatbelt 资源和受管 Ripgrep。locked production dependencies 包含 Workspace artifact 任务使用的 `python-docx`。打包 Runtime 不依赖目标机的系统 Python、uv、仓库 `.venv` 或 Xcode Command Line Tools Python。
 
 ## 7. DMG packaging
 

@@ -48,6 +48,21 @@ from eidos_runtime.telemetry.tracing import (
 logger = logging.getLogger("eidos.runtime")
 
 
+def _result_requires_reconciliation(result: dict[str, object]) -> bool:
+    """Read the canonical reconciliation fact from a tool result.
+
+    The envelope field is authoritative for current results. The nested field
+    remains accepted only while older persisted and extension results exist.
+    """
+    if "reconciliationRequired" in result:
+        return result["reconciliationRequired"] is True
+    data = result.get("data")
+    return (
+        isinstance(data, dict)
+        and data.get("reconciliationRequired") is True
+    )
+
+
 class ToolInfrastructureError(RuntimeError):
     pass
 
@@ -713,7 +728,7 @@ class ToolExecutionController:
                 else ToolExecutionPhase.CANCELED
                 if outcome.result.get("code") == "TOOL_CANCELED"
                 else ToolExecutionPhase.UNCERTAIN
-                if outcome.result.get("reconciliationRequired") is True
+                if _result_requires_reconciliation(outcome.result)
                 else ToolExecutionPhase.FAILED
             )
             if raise_after_commit:

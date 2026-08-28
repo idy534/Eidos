@@ -231,6 +231,8 @@ def _run_from_row(
         run["stopReason"] = row["stop_reason"]
     if "side_effects_may_exist" in row.keys():
         run["sideEffectsMayExist"] = bool(row["side_effects_may_exist"])
+    if "reconciliation_required" in row.keys():
+        run["reconciliationRequired"] = bool(row["reconciliation_required"])
     if (
         "extension_snapshot_json" in row.keys()
         and row["extension_snapshot_json"] is not None

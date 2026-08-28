@@ -46,14 +46,16 @@ export function taskStatusPresentation(
   }
 }
 
-export function taskStatusFromRun(run: Run): Session["taskStatus"] {
+export function taskStatusFromRun(
+  run: Pick<Run, "status" | "reconciliationRequired">
+): Session["taskStatus"] {
   if (["queued", "running", "waiting_approval", "finalizing"].includes(run.status)) {
     return "in_progress";
   }
-  if (run.status === "succeeded") {
+  if (run.status === "succeeded" && run.reconciliationRequired !== true) {
     return "completed";
   }
-  if (["failed", "stopped", "interrupted"].includes(run.status)) {
+  if (run.status === "succeeded" || ["failed", "stopped", "interrupted"].includes(run.status)) {
     return "failed";
   }
   return "canceled";
@@ -368,6 +370,9 @@ export function terminalRunPresentation(
 ): RunStatusPresentation | undefined {
   switch (run.status) {
     case "succeeded":
+      if (run.reconciliationRequired === true) {
+        return { label: "完成状态待核验，尚未确认", tone: "warning" };
+      }
       return { label: "已完成", tone: "success" };
     case "failed":
       return {

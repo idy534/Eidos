@@ -146,6 +146,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Workspace mutation Tool 只向模型暴露 `apply_patch`。`write_file` 和 `delete_file` 不在模型 Tool Registry 中。
 - `apply_patch` 使用 JSON Function 参数 `{ "patch": "*** Begin Patch\\n...\\n*** End Patch" }`，路径由 Patch DSL 表达。Tool 在当前 Workspace Permission 内直接执行，不逐次请求 Approval。
 - 文件工具在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。`apply_patch` 支持 Codex 风格的 Add、Update、Delete、Move、多文件、多 chunk、裸 `@@`、`@@ context` 和 `*** End of File`。Update 匹配按 Patch chunk 顺序向前查找。工具仍会复用版本复检、Workspace boundary、Seatbelt、原子替换和最终内容校验。
+- `workspace_dependencies` 返回 Eidos 自带并经过 owner、类型、可执行位和 SHA-256 校验的 Python 与 ripgrep。它也返回 Python import roots 和受支持包版本。当前 Runtime 随包提供 `python-docx`。模型不需要依赖用户全局 Python 或临时安装包。
 - 已应用的文件 Diff 会进入 ToolCall 持久事实，并在 Execution Feed 中展示。
 - macOS 原子替换会先用 fd-relative `fclonefileat` 保留普通文件的扩展属性（包括 `com.apple.provenance`），再写入候选内容并单独应用、验证 ACL。clonefile 不可用时会安全回退到受校验的 `fcopyfile` 路径。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
@@ -163,6 +164,8 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 默认 Seatbelt 允许全盘 read、普通 executable 和 dylib mapping。Workspace、snapshot `TMPDIR` 和 canonical `/tmp` 可写。真实 `HOME` 的其他位置、`.git` 和 linked metadata 只读。Eidos data 和 credential 仍由 permanent deny 保护。data 内 projectless 或 Worktree workspace 可读写。active Skill root 可读和执行但不可写。Workspace `.env` 可读，但输出仍经过 SensitiveScanner。默认 network denied。
 - `run_shell` 的默认 Workspace Seatbelt attempt 不需要 Approval。additional write、network 和 unsandboxed attempt 需要 Approval。升级不能移除 hard confidentiality deny。
 - Shell launch boundary 验证 Workspace identity 和 cwd。post-execution observation 记录 Workspace diff、退出状态和 reconciliation 需要性。
+- Tool Result 明确返回 `reconciliationRequired = false` 时，普通非零退出不会仅因为 `code = nonzero_exit` 建立 barrier。结果仍会保留退出码、终止原因和可能副作用证据。真正未知的执行结果仍会 fail closed。
+- 未清除的 reconciliation barrier 会阻止 Run 提交成功终态。Runtime 不会把 `sideEffectsMayExist` 当作清除条件，也不会自动重放有副作用的 Tool。
 - Workspace manifest observation 不完整时可以产生 `unknown` observation。已知成功退出不会仅因为观察不完整而被改成不确定副作用。
 
 ## Approval / Sandbox

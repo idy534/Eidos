@@ -292,6 +292,7 @@ export interface Run {
   cancelFailureCode?: string;
   stopReason?: string;
   sideEffectsMayExist?: boolean;
+  reconciliationRequired?: boolean;
   extensionSnapshot?: Record<string, unknown>;
   activatedTools?: string[];
 }

@@ -120,6 +120,60 @@ class ToolContractTests(unittest.TestCase):
 
         self.assertTrue(result["reconciliationRequired"])
 
+    def test_shell_diagnostics_are_canonical_and_projected(self) -> None:
+        result = canonical_tool_result("run_shell", {
+            "outcome": "error",
+            "code": "nonzero_exit",
+            "summary": "Command did not succeed (exit code 7)",
+            "data": {
+                "exitCode": 7,
+                "stdout": "",
+                "stderr": "",
+                "truncated": True,
+                "truncationReason": "output_limit",
+                "originalBytes": 300_000,
+                "omittedBytes": 37_856,
+                "termination": "exit",
+                "durationMs": 1,
+                "shellKind": "zsh",
+                "environmentSource": "captured",
+            },
+            "sideEffectsMayExist": True,
+            "reconciliationRequired": True,
+        })
+
+        projection = project_tool_result("run_shell", result)
+        for projected in (
+            result,
+            projection.model_result,
+            projection.ui_result,
+        ):
+            self.assertEqual(projected["data"]["truncationReason"], "output_limit")
+            self.assertEqual(projected["data"]["originalBytes"], 300_000)
+            self.assertEqual(projected["data"]["omittedBytes"], 37_856)
+            self.assertEqual(projected["data"]["shellKind"], "zsh")
+            self.assertEqual(projected["data"]["environmentSource"], "captured")
+
+    def test_shell_output_byte_counts_are_bounded_by_contract(self) -> None:
+        with self.assertRaises(ValidationError):
+            canonical_tool_result("run_shell", {
+                "outcome": "error",
+                "code": "nonzero_exit",
+                "summary": "Command did not succeed (exit code 7)",
+                "data": {
+                    "exitCode": 7,
+                    "stdout": "",
+                    "stderr": "",
+                    "truncated": True,
+                    "truncationReason": "output_limit",
+                    "originalBytes": 9_007_199_254_740_992,
+                    "omittedBytes": 0,
+                    "termination": "exit",
+                },
+                "sideEffectsMayExist": True,
+                "reconciliationRequired": True,
+            })
+
     def test_shell_permission_contract_is_closed_and_backwards_compatible(self) -> None:
         default = RunShellInput.model_validate({"command": "true"})
         expanded = RunShellInput.model_validate_json(json.dumps({
@@ -169,6 +223,10 @@ class ToolContractTests(unittest.TestCase):
 
         self.assertIn("with_additional_permissions", description)
         self.assertIn("additionalPermissions.network.enabled", description)
+        self.assertIn("timeoutSeconds", description)
+        self.assertIn("external timeout", description)
+        self.assertIn("pipefail", description)
+        self.assertIn("glob", description)
         self.assertNotIn("network-disabled", description)
 
     def test_discovery_contracts_describe_and_validate_scopes(self) -> None:
