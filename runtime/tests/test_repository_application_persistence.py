@@ -9,7 +9,7 @@ from eidos_runtime.application.repository import (
     RepositoryApplication,
     RepositoryApplicationFactory,
 )
-from eidos_runtime.db.database import Database
+from eidos_runtime.db.layout import RepositoryDatabase
 from eidos_runtime.persistence.repository_intelligence import (
     RepositoryIntelligenceRepository,
 )
@@ -36,7 +36,7 @@ def test_repository_application_persists_complete_build_and_restores_it_on_start
     source.write_text("def main() -> str:\n    return 'ok'\n", encoding="utf-8")
     data = tmp_path / "data"
     data.mkdir(mode=0o700)
-    database = Database(data)
+    database = RepositoryDatabase(data)
     database.initialize()
     try:
         repository = RepositoryIntelligenceRepository(database)
@@ -75,7 +75,7 @@ def test_repository_application_restore_uses_only_persisted_generation(
     manifest.write_text(
         '{"scripts":{"test":"vitest run"}}\n', encoding="utf-8"
     )
-    database = Database(tmp_path / "data")
+    database = RepositoryDatabase(tmp_path / "data")
     database.initialize()
     try:
         repository = RepositoryIntelligenceRepository(database)
@@ -133,7 +133,7 @@ def test_repository_application_restore_preserves_persisted_git_head(
     source.write_text("value = 1\n", encoding="utf-8")
     _git(root, "add", "main.py")
     _git(root, "commit", "-qm", "generation n")
-    database = Database(tmp_path / "data")
+    database = RepositoryDatabase(tmp_path / "data")
     database.initialize()
     try:
         repository = RepositoryIntelligenceRepository(database)
@@ -167,7 +167,7 @@ def test_manifest_change_after_inventory_does_not_replace_complete_generation(
     root.mkdir()
     manifest = root / "package.json"
     manifest.write_text('{"scripts":{"test":"vitest run"}}', encoding="utf-8")
-    database = Database(tmp_path / "data")
+    database = RepositoryDatabase(tmp_path / "data")
     database.initialize()
     try:
         repository = RepositoryIntelligenceRepository(database)
@@ -196,7 +196,7 @@ def test_git_change_before_commit_does_not_replace_complete_generation(
     root = tmp_path / "workspace"
     root.mkdir()
     (root / "main.py").write_text("value = 1\n", encoding="utf-8")
-    database = Database(tmp_path / "data")
+    database = RepositoryDatabase(tmp_path / "data")
     database.initialize()
     try:
         repository = RepositoryIntelligenceRepository(database)
@@ -230,7 +230,7 @@ def test_real_git_head_change_between_map_build_and_commit_is_rejected(
     source.write_text("value = 1\n", encoding="utf-8")
     _git(root, "add", "main.py")
     _git(root, "commit", "-qm", "generation n")
-    database = Database(tmp_path / "data")
+    database = RepositoryDatabase(tmp_path / "data")
     database.initialize()
     try:
         repository = RepositoryIntelligenceRepository(database)
@@ -262,7 +262,7 @@ def test_repository_application_factory_is_workspace_identity_scoped(
     second_root = tmp_path / "second"
     first_root.mkdir()
     second_root.mkdir()
-    database = Database(tmp_path / "factory-data")
+    database = RepositoryDatabase(tmp_path / "factory-data")
     database.initialize()
     try:
         repository = RepositoryIntelligenceRepository(database)

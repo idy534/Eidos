@@ -7,7 +7,8 @@ import pytest
 from pydantic import ValidationError
 
 from eidos_runtime.application.repository import RepositoryApplication
-from eidos_runtime.db.database import Database
+from eidos_runtime.db.layout import RepositoryDatabase
+from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.db.schema import (
     LEGACY_SCHEMA_VERSION,
     SCHEMA_VERSION,
@@ -30,12 +31,11 @@ from eidos_runtime.repo_intelligence.inventory import (
 from eidos_runtime.repo_intelligence.map import RepositoryMap, RepositoryMapBuilder
 
 
-def _database(tmp_path: Path) -> Database:
+def _database(tmp_path: Path) -> RepositoryDatabase:
     data_directory = tmp_path / "data"
     data_directory.mkdir(mode=0o700)
-    database = Database(data_directory)
+    database = RepositoryDatabase(data_directory)
     database.initialize()
-    assert database.health_state == "ready"
     return database
 
 
@@ -117,7 +117,7 @@ def test_repository_intelligence_complete_generation_roundtrips_across_database_
     finally:
         database.close()
 
-    reopened = Database(tmp_path / "data")
+    reopened = RepositoryDatabase(tmp_path / "data")
     reopened.initialize()
     try:
         repository = RepositoryIntelligenceRepository(reopened)
@@ -358,20 +358,21 @@ def test_v1_generation_without_map_migrates_as_non_restorable(
     raw.close()
     database_path.chmod(0o600)
 
-    migrated = Database(data)
+    migrated = SessionStore(data)
     migrated.initialize()
     try:
         assert migrated.health_state == "ready"
-        connection = migrated.connection()
+        connection = migrated.database.connection()
         assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-        row = connection.execute(
+        repository_connection = migrated.repository_database.connection()
+        row = repository_connection.execute(
             "SELECT complete, repository_map_json FROM repository_snapshots "
             "WHERE id = ?",
             ("legacy-complete-without-map",),
         ).fetchone()
-        assert tuple(row) == (1, None)
+        assert tuple(row) == (0, None)
 
-        repository = RepositoryIntelligenceRepository(migrated)
+        repository = migrated.repository_intelligence_repository()
         watermark = repository.read_generation_watermark(identity)
         assert watermark.max_inventory_generation == inventory.generation
         assert watermark.max_index_generation == index.index_generation

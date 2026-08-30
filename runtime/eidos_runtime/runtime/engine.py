@@ -587,6 +587,7 @@ class RuntimeEngine:
                         sampled,
                         status="failed",
                         error_code=reason,
+                        protocol_diagnostic=validation.protocol_diagnostic,
                         retry=should_retry,
                         retry_reason=(
                             "protocol_repair"

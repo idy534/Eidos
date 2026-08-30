@@ -21,6 +21,7 @@ from typing import TypeVar
 from pydantic import Field, ValidationError, model_validator
 
 from eidos_runtime.db.database import Database, Repository
+from eidos_runtime.db.layout import prune_repository_generations
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 from eidos_runtime.persistence.conversion import RowReader, RowValues
 from eidos_runtime.persistence.errors import PersistenceCorruptionError
@@ -214,7 +215,7 @@ class RepositoryIntelligenceRepository(Repository):
             complete=True,
         )
         return self._write(
-            lambda connection: self._persist_snapshot(connection, snapshot)
+            lambda connection: self._persist_and_prune(connection, snapshot)
         )
 
     def record_incomplete(
@@ -240,8 +241,17 @@ class RepositoryIntelligenceRepository(Repository):
             complete=False,
         )
         return self._write(
-            lambda connection: self._persist_snapshot(connection, snapshot)
+            lambda connection: self._persist_and_prune(connection, snapshot)
         )
+
+    def _persist_and_prune(
+        self,
+        connection: sqlite3.Connection,
+        snapshot: RepositoryIntelligenceSnapshot,
+    ) -> RepositoryIntelligenceSnapshot:
+        persisted = self._persist_snapshot(connection, snapshot)
+        prune_repository_generations(connection)
+        return persisted
 
     def read_latest_complete(
         self,

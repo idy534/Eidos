@@ -19,6 +19,10 @@ from eidos_runtime.telemetry.tracing import (
     finish_model_attempt,
     model_attempt_span,
 )
+from eidos_runtime.runtime.protocol_diagnostics import (
+    ProtocolDiagnostic,
+    response_text_metrics,
+)
 
 
 class SamplingError(RuntimeError):
@@ -84,7 +88,12 @@ class SamplingRuntime:
     def sample(
         self, step: StepContext, cancel: threading.Event
     ) -> SamplingOutcome:
-        with model_attempt_span(step.run_id, step.step_id, step.model_id) as span:
+        with model_attempt_span(
+            step.run_id,
+            step.step_id,
+            step.model_id,
+            step.model_profile.provider_id,
+        ) as span:
             outcome = self._sample(step, cancel)
             finish_model_attempt(span, outcome)
             return outcome
@@ -106,6 +115,10 @@ class SamplingRuntime:
             )
         except ModelStreamInterrupted as interrupted:
             had_progress = bool(provisional_text or interrupted.text)
+            partial_text = "".join((*provisional_text, interrupted.text))
+            response_text_bytes, response_text_sha256 = response_text_metrics(
+                partial_text
+            )
             error = _sampling_error(interrupted.cause, had_progress=had_progress)
             if isinstance(error, SensitiveScanError):
                 self.store.complete_current_model_attempt(
@@ -115,6 +128,11 @@ class SamplingRuntime:
                     ttft_ms=interrupted.ttft_ms,
                     duration_ms=interrupted.duration_ms,
                     had_progress=had_progress,
+                    response_text_bytes=response_text_bytes,
+                    response_text_sha256=response_text_sha256,
+                    protocol_diagnostic=ProtocolDiagnostic(
+                        stage="sensitive_scan", code="sensitive_scan_failed"
+                    ),
                     retry_decision={"retry": False, "reason": "sensitive_scan_failed"},
                 )
                 raise error
@@ -135,6 +153,14 @@ class SamplingRuntime:
                 ttft_ms=interrupted.ttft_ms,
                 duration_ms=interrupted.duration_ms,
                 had_progress=had_progress,
+                response_text_bytes=response_text_bytes,
+                response_text_sha256=response_text_sha256,
+                protocol_diagnostic=ProtocolDiagnostic(
+                    stage="model_transport",
+                    code=_diagnostic_code(
+                        failure.code if failure else type(error).__name__
+                    ),
+                ),
                 retry_decision=_retry_decision_payload(decision, failure),
             )
             raise error
@@ -145,6 +171,9 @@ class SamplingRuntime:
         )
         if invalid_completion:
             decision = RetryDecision(retry=False, reason="invalid_completion")
+            response_text_bytes, response_text_sha256 = response_text_metrics(
+                result.text
+            )
             self.store.complete_current_model_attempt(
                 step.run_id,
                 "failed",
@@ -157,6 +186,19 @@ class SamplingRuntime:
                 ttft_ms=result.ttft_ms,
                 duration_ms=result.duration_ms,
                 had_progress=bool(result.text),
+                response_state=result.response_state,
+                phase=result.phase.value if result.phase is not None else None,
+                tool_call_count=len(result.tool_calls),
+                response_text_bytes=response_text_bytes,
+                response_text_sha256=response_text_sha256,
+                protocol_diagnostic=ProtocolDiagnostic(
+                    stage="response_completion",
+                    code=_diagnostic_code(
+                        result.finish_reason
+                        or result.response_state
+                        or "incomplete_response"
+                    ),
+                ),
                 retry_decision=_retry_decision_payload_from_result(decision, result),
             )
             self._check_cancel(cancel)
@@ -192,7 +234,11 @@ class SamplingRuntime:
         error_code: str | None = None,
         retry: bool = False,
         retry_reason: str = "completed",
+        protocol_diagnostic: ProtocolDiagnostic | None = None,
     ) -> None:
+        response_text_bytes, response_text_sha256 = response_text_metrics(
+            sampled.text
+        )
         self.store.complete_current_model_attempt(
             step.run_id,
             status,
@@ -205,6 +251,12 @@ class SamplingRuntime:
             ttft_ms=sampled.ttft_ms,
             duration_ms=sampled.duration_ms,
             had_progress=bool(sampled.text),
+            response_state=sampled.response_state,
+            phase=sampled.phase.value if sampled.phase is not None else None,
+            tool_call_count=len(sampled.tool_calls),
+            response_text_bytes=response_text_bytes,
+            response_text_sha256=response_text_sha256,
+            protocol_diagnostic=protocol_diagnostic,
             retry_decision={
                 "retry": retry,
                 "reason": retry_reason,
@@ -258,6 +310,12 @@ class SamplingRuntime:
     def _check_cancel(cancel: threading.Event) -> None:
         if cancel.is_set():
             raise SamplingCancelled("sampling canceled")
+
+
+def _diagnostic_code(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        return "model_request_failed"
+    return value[:128]
 
 
 def _sampling_error(

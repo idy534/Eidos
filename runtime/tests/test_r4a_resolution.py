@@ -194,6 +194,13 @@ class ResolutionPersistenceTests(unittest.TestCase):
 
         run_snapshot = self.store.read_run_resolution_snapshot(run["id"])
         step = self.store.read_step_resolution_snapshots(run["id"])[0]
+        stored_step = self.store.connection.execute(
+            "SELECT snapshot_json FROM step_resolution_snapshots WHERE id = ?",
+            (step.id,),
+        ).fetchone()[0]
+        step_reference = json.loads(stored_step)["$eidosBlob"]
+        self.assertEqual(step_reference["kind"], "step-resolution")
+        self.assertLess(len(stored_step), 512)
         self.assertEqual(step.model_snapshot_hash, run_snapshot.model_profile_snapshot_hash)
         self.assertEqual(step.permission_profile_hash, run_snapshot.permission_profile_hash)
         self.assertEqual(step.sandbox_policy_hash, run_snapshot.sandbox_policy_hash)

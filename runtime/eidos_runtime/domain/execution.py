@@ -99,6 +99,7 @@ class ModelAttempt(EidosFrozenStrictModel):
     ordinal: int = Field(ge=0)
     status: ModelAttemptStatus
     provider_name: str | None = None
+    configured_provider_id: str | None = None
     resolved_model_name: str | None = None
     finish_reason: str | None = None
     provider_response_id: str | None = None
@@ -114,6 +115,17 @@ class ModelAttempt(EidosFrozenStrictModel):
     ttft_ms: int | None = Field(default=None, ge=0)
     duration_ms: int | None = Field(default=None, ge=0)
     had_progress: bool
+    response_state: str | None = None
+    phase: str | None = None
+    tool_call_count: int = Field(ge=0)
+    response_text_sha256: str | None = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    response_text_bytes: int = Field(ge=0)
+    protocol_diagnostics_json: str | None = None
     started_at: JsonSafeInt
     completed_at: JsonSafeInt | None = None
 

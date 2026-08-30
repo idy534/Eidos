@@ -28,6 +28,9 @@ from eidos_runtime.db.errors import (
     StorageError,
     WorkspaceBoundaryError,
 )
+from eidos_runtime.db.layout import AuxiliaryDatabase, PersistenceLayout
+from eidos_runtime.db.memories import MemoryStore
+from eidos_runtime.db.runtime_logs import RuntimeJsonlLogHandler
 from eidos_runtime.db.recovery import recover_runtime_facts
 from eidos_runtime.db.events import event_from_row
 from eidos_runtime.db.repositories import (
@@ -67,6 +70,7 @@ from eidos_runtime.context.plan import ContextSnapshot
 from eidos_runtime.runtime.long_task import LongTaskRepository
 from eidos_runtime.domain.long_task import LongTaskProgress
 from eidos_runtime.runtime.contracts import ProgressSignature
+from eidos_runtime.runtime.protocol_diagnostics import ProtocolDiagnostic
 from eidos_runtime.runtime.resolution import (
     RuleResolutionSnapshot,
     RunResolutionSnapshot,
@@ -87,6 +91,7 @@ def _legacy_session_mutation(
 class SessionStore:
     def __init__(self, data_directory: Path | None = None) -> None:
         self._database = Database(data_directory)
+        self._persistence_layout: PersistenceLayout | None = None
         self._sessions: SessionRepository | None = None
         self._runs: RunRepository | None = None
         self._execution: ExecutionRepository | None = None
@@ -110,9 +115,18 @@ class SessionStore:
         if self._database.health_state != "ready":
             return
         try:
+            assert self._database.data_directory is not None
+            self._persistence_layout = PersistenceLayout(
+                self._database.data_directory,
+                json_blobs=self._database.json_blobs,
+            )
+            self._persistence_layout.initialize(self._database)
             with self._database.transaction() as connection:
                 recover_runtime_facts(connection)
         except (OSError, sqlite3.Error, StorageError) as error:
+            if self._persistence_layout is not None:
+                self._persistence_layout.close()
+                self._persistence_layout = None
             self._database.mark_failed(error)
             return
         except Exception:
@@ -133,6 +147,38 @@ class SessionStore:
     def database(self) -> Database:
         """Expose the shared SQLite authority to Runtime-owned modules."""
         return self._database
+
+    @property
+    def repository_database(self) -> AuxiliaryDatabase:
+        if self._persistence_layout is None:
+            raise StorageError("storage is not initialized")
+        return self._persistence_layout.repository
+
+    def project_thread_history(self) -> int:
+        if (
+            self._persistence_layout is None
+            or self._persistence_layout.thread_history_store is None
+        ):
+            raise StorageError("storage is not initialized")
+        return self._persistence_layout.thread_history_store.catch_up(
+            self._database
+        )
+
+    def create_log_handler(self) -> RuntimeJsonlLogHandler:
+        if (
+            self._persistence_layout is None
+            or self._persistence_layout.runtime_logs is None
+        ):
+            raise StorageError("storage is not initialized")
+        return RuntimeJsonlLogHandler(self._persistence_layout.runtime_logs)
+
+    def memory_store(self) -> MemoryStore:
+        if (
+            self._persistence_layout is None
+            or self._persistence_layout.memory_store is None
+        ):
+            raise StorageError("storage is not initialized")
+        return self._persistence_layout.memory_store
 
     @property
     def connection(self) -> sqlite3.Connection | None:
@@ -160,6 +206,9 @@ class SessionStore:
         self._session_handoff_repository = None
         self._worktree_snapshot_repository = None
         self._worktree_settings_repository = None
+        if self._persistence_layout is not None:
+            self._persistence_layout.close()
+            self._persistence_layout = None
         self._database.close()
 
     def typed_runtime_repository(self) -> TypedRuntimeRepository:
@@ -185,7 +234,7 @@ class SessionStore:
         self._repository(self._sessions)
         if self._repository_intelligence_repository is None:
             self._repository_intelligence_repository = RepositoryIntelligenceRepository(
-                self._database
+                self.repository_database
             )
         return self._repository_intelligence_repository
 
@@ -438,12 +487,16 @@ class SessionStore:
         *,
         operation_id: str | None = None,
     ) -> dict[str, object]:
-        return deleted_session_to_legacy_dict(
-            self._repository(self._sessions).delete_session(
-                session_id,
-                operation_id=operation_id,
-            )
+        layout = self._persistence_layout
+        if layout is None or layout.thread_history_store is None:
+            raise StorageError("storage is not initialized")
+        deleted = self._repository(self._sessions).delete_session(
+            session_id,
+            operation_id=operation_id,
         )
+        layout.thread_history_store.delete_session(session_id)
+        layout.garbage_collect_blobs(self._database)
+        return deleted_session_to_legacy_dict(deleted)
 
     def create_run(
         self,
@@ -722,6 +775,12 @@ class SessionStore:
         ttft_ms: int | None = None,
         duration_ms: int | None = None,
         had_progress: bool = False,
+        response_state: str | None = None,
+        phase: str | None = None,
+        tool_call_count: int = 0,
+        response_text_sha256: str | None = None,
+        response_text_bytes: int = 0,
+        protocol_diagnostic: ProtocolDiagnostic | None = None,
         retry_decision: dict[str, object] | None = None,
     ) -> bool:
         return self._repository(self._execution).complete_current_model_attempt(
@@ -737,6 +796,12 @@ class SessionStore:
             ttft_ms=ttft_ms,
             duration_ms=duration_ms,
             had_progress=had_progress,
+            response_state=response_state,
+            phase=phase,
+            tool_call_count=tool_call_count,
+            response_text_sha256=response_text_sha256,
+            response_text_bytes=response_text_bytes,
+            protocol_diagnostic=protocol_diagnostic,
             retry_decision=retry_decision,
         )
 

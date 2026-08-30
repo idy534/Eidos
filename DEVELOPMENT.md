@@ -49,13 +49,13 @@ pnpm start
 EIDOS_PYTHON=/absolute/path/to/python3 pnpm start
 ```
 
-如果需要隔离 SQLite、模型配置和 Runtime-owned 数据，可以设置数据目录：
+如果需要隔离多库持久化、JSONL、Blob、模型配置和其他 Runtime-owned 数据，可以设置数据目录：
 
 ```bash
 EIDOS_DATA_DIR=/private/tmp/eidos-dev-data pnpm start
 ```
 
-Runtime stdout 只承载 JSON-RPC。Runtime 日志写入启动终端的 stderr。Renderer 不直接读取 Runtime stdout。
+Runtime stdout 只承载 JSON-RPC。Runtime 日志写入启动终端的 stderr，也写入数据目录内的有界 JSONL segment。Renderer 不直接读取 Runtime stdout。
 
 ## 4. Test
 
@@ -203,6 +203,8 @@ Release 模式拒绝 `EIDOS_PACKAGE_SKIP_TESTS=1`。本地模式只有在维护�
 ## 9. Isolated development data
 
 `EIDOS_DATA_DIR` 可以把 SQLite、Runtime lock、reserve file、Extension 数据和其他 Runtime-owned 数据放到独立目录。目录应当是明确的私有临时目录，不要把 Workspace 根目录作为数据目录。
+
+持久化布局包含 `state.sqlite`、`repository.sqlite`、`thread_history.sqlite`、`logs.sqlite`、`memories.sqlite`，以及 `blobs/`、`history/`、`logs/` 和 `memories/`。`state.sqlite` 是唯一业务状态权威。其他数据库保存 projection、可重建索引或文件 metadata。旧 `eidos.db` 会在启动时自动升级。迁移前应退出其他 Eidos Runtime，并保留整个数据目录的备份。
 
 Runtime 创建的 projectless 私有锚点和默认 Managed Worktree 根目录也位于 `EIDOS_DATA_DIR` 内。默认路径分别是 `~/.eidos/.eidos-projectless/<session_id>` 和 `~/.eidos/.eidos-worktrees/<worktree_id>`。
 

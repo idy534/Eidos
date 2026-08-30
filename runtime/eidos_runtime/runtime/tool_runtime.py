@@ -953,10 +953,13 @@ class ToolCallRuntime:
         result = self.dispatcher.validate(
             ModelResponse(text=sampling.text, tool_calls=sampling.tool_calls),
             step.tool_snapshot.available_names,
+            step.tool_snapshot.tool_set_hash,
         )
         if result.error_code is not None:
             return ToolBatchOutcome(
-                status="validation_failed", error_code=result.error_code
+                status="validation_failed",
+                error_code=result.error_code,
+                protocol_diagnostic=result.protocol_diagnostic,
             )
         if not result.tool_calls:
             return ToolBatchOutcome(status="no_tools")

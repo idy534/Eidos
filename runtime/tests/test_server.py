@@ -537,7 +537,7 @@ class RuntimeProtocolTests(unittest.TestCase):
                     "throughEventId": 1,
                 },
             )
-            self.assertEqual((Path(data_directory) / "eidos.db").stat().st_mode & 0o777, 0o600)
+            self.assertEqual((Path(data_directory) / "state.sqlite").stat().st_mode & 0o777, 0o600)
 
     def test_session_rejects_workspace_containing_runtime_data(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-overlap-") as root_directory:

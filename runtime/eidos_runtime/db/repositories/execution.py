@@ -36,6 +36,10 @@ from eidos_runtime.db.repositories.workspace import execution_workspace_for_sess
 from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.model.instructions import InstructionResolver
 from eidos_runtime.runtime.contracts import ProgressSignature
+from eidos_runtime.runtime.protocol_diagnostics import (
+    ProtocolDiagnostic,
+    serialize_protocol_diagnostic,
+)
 from eidos_runtime.runtime.resolution import (
     RuleResolutionSnapshot,
     RunResolutionSnapshot,
@@ -88,17 +92,20 @@ def _result_reconciliation_required(result: dict[str, object]) -> bool:
 def _attempt_metadata(
     connection: sqlite3.Connection,
     run_id: str,
-) -> tuple[str | None, str | None, str | None, float | None]:
+) -> tuple[
+    str | None, str | None, str | None, str | None, float | None
+]:
     row = connection.execute(
         "SELECT model_profile_json FROM runs WHERE id = ?",
         (run_id,),
     ).fetchone()
     if row is None:
-        return None, None, None, None
+        return None, None, None, None, None
     try:
         profile = json.loads(row["model_profile_json"])
         return (
             None,
+            profile.get("provider_id"),
             profile.get("wire_api"),
             profile.get("model_id"),
             profile.get("request_timeout_seconds"),
@@ -313,7 +320,10 @@ class ExecutionRepository(Repository):
                     resolution_snapshot.run_snapshot_id,
                     resolution_snapshot.rule_resolution_snapshot_id,
                     resolution_snapshot.snapshot_hash,
-                    canonical_json(resolution_snapshot.model_dump(mode="json")),
+                    self.database.json_blobs.put_json(
+                        "step-resolution",
+                        canonical_json(resolution_snapshot.model_dump(mode="json")),
+                    ),
                     resolution_snapshot.created_at,
                 ),
             )
@@ -336,9 +346,10 @@ class ExecutionRepository(Repository):
             connection.execute(
                 """
                 INSERT INTO model_attempts (
-                    id, step_id, ordinal, status, lease_id, wire_api,
-                    model_id, request_timeout, started_at
-                ) VALUES (?, ?, 1, 'running', ?, ?, ?, ?, ?)
+                    id, step_id, ordinal, status, lease_id,
+                    configured_provider_id, wire_api, model_id,
+                    request_timeout, started_at
+                ) VALUES (?, ?, 1, 'running', ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     attempt_id,
@@ -419,7 +430,11 @@ class ExecutionRepository(Repository):
             ).fetchall()
         try:
             return tuple(
-                StepResolutionSnapshot.model_validate_json(row["snapshot_json"])
+                StepResolutionSnapshot.model_validate_json(
+                    self.database.json_blobs.read_json(
+                        row["snapshot_json"], expected_kind="step-resolution"
+                    )
+                )
                 for row in rows
             )
         except (TypeError, ValueError):
@@ -623,6 +638,12 @@ class ExecutionRepository(Repository):
         ttft_ms: int | None = None,
         duration_ms: int | None = None,
         had_progress: bool = False,
+        response_state: str | None = None,
+        phase: str | None = None,
+        tool_call_count: int = 0,
+        response_text_sha256: str | None = None,
+        response_text_bytes: int = 0,
+        protocol_diagnostic: ProtocolDiagnostic | None = None,
         retry_decision: dict[str, object] | None = None,
     ) -> bool:
         if status not in {"completed", "failed", "canceled"}:
@@ -647,7 +668,9 @@ class ExecutionRepository(Repository):
                     resolved_model_name = ?, finish_reason = ?,
                     provider_response_id = ?, usage_json = ?, error_code = ?,
                     http_status = ?, ttft_ms = ?, duration_ms = ?, had_progress = ?,
-                    retry_decision_json = ?
+                    response_state = ?, phase = ?, tool_call_count = ?,
+                    response_text_sha256 = ?, response_text_bytes = ?,
+                    protocol_diagnostics_json = ?, retry_decision_json = ?
                 WHERE id = ? AND status = 'running'
                 """,
                 (
@@ -656,6 +679,15 @@ class ExecutionRepository(Repository):
                     usage.model_dump_json() if usage is not None else None,
                     error_code, http_status, ttft_ms, duration_ms,
                     int(had_progress),
+                    response_state,
+                    phase,
+                    tool_call_count,
+                    response_text_sha256,
+                    response_text_bytes,
+                    (
+                        serialize_protocol_diagnostic(protocol_diagnostic)
+                        if protocol_diagnostic is not None else None
+                    ),
                     (
                         json.dumps(
                             retry_decision,
@@ -706,9 +738,10 @@ class ExecutionRepository(Repository):
             connection.execute(
                 """
                 INSERT INTO model_attempts (
-                    id, step_id, ordinal, status, lease_id, wire_api,
-                    model_id, request_timeout, started_at
-                ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?)
+                    id, step_id, ordinal, status, lease_id,
+                    configured_provider_id, wire_api, model_id,
+                    request_timeout, started_at
+                ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     attempt_id,

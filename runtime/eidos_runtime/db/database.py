@@ -19,6 +19,10 @@ from eidos_runtime.db.errors import (
     OperationInProgressError,
     StorageError,
 )
+from eidos_runtime.db.layout import (
+    STATE_DATABASE_NAME,
+    migrate_legacy_state_database,
+)
 from eidos_runtime.db.schema import (
     LEGACY_SCHEMA_VERSION,
     PREVIOUS_SCHEMA_VERSION,
@@ -27,11 +31,13 @@ from eidos_runtime.db.schema import (
     V1_TO_V2_MIGRATION_SQL,
     V2_TO_V3_MIGRATION_SQL,
     V3_TO_V4_MIGRATION_SQL,
+    V4_TO_V5_MIGRATION_SQL,
 )
 from eidos_runtime.runtime.fault_injection import hit_fault
+from eidos_runtime.db.json_blobs import JsonBlobStore
 
 
-DATABASE_NAME = "eidos.db"
+DATABASE_NAME = STATE_DATABASE_NAME
 LOCK_NAME = "runtime.lock"
 RESERVE_NAME = "emergency.reserve"
 RESERVE_BYTES = 1024 * 1024
@@ -86,6 +92,7 @@ class Database:
         self._lock_descriptor: int | None = None
         self.health_state = "starting"
         self.health_code: str | None = None
+        self._json_blobs: JsonBlobStore | None = None
 
     def initialize(self) -> None:
         with self.lock:
@@ -105,6 +112,7 @@ class Database:
         self.data_directory = data_directory
         self._lock_descriptor = _acquire_state_lock(data_directory / LOCK_NAME)
         _prepare_reserve(data_directory / RESERVE_NAME)
+        migrate_legacy_state_database(data_directory)
         database_path = data_directory / DATABASE_NAME
         _prepare_private_database(database_path)
 
@@ -118,8 +126,10 @@ class Database:
                 and revision not in {
                     LEGACY_SCHEMA_VERSION,
                     2,
+                    3,
                     PREVIOUS_SCHEMA_VERSION,
                     SCHEMA_VERSION,
+                    4,
                 }
             ) or (
                 not tables and revision != 0
@@ -136,19 +146,21 @@ class Database:
                     + SCHEMA_SQL
                     + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
                 )
-            elif revision in {LEGACY_SCHEMA_VERSION, 2, PREVIOUS_SCHEMA_VERSION}:
+            elif revision in {LEGACY_SCHEMA_VERSION, 2, 3, 4}:
                 try:
                     migrations = ""
                     if revision == LEGACY_SCHEMA_VERSION:
                         migrations += V1_TO_V2_MIGRATION_SQL
                     if revision in {LEGACY_SCHEMA_VERSION, 2}:
                         migrations += V2_TO_V3_MIGRATION_SQL
-                    migrations += V3_TO_V4_MIGRATION_SQL
+                    if revision in {LEGACY_SCHEMA_VERSION, 2, 3}:
+                        migrations += V3_TO_V4_MIGRATION_SQL
+                    migrations += V4_TO_V5_MIGRATION_SQL
                     connection.execute("PRAGMA foreign_keys = OFF")
                     connection.executescript(
                         "BEGIN IMMEDIATE;\n"
                         + migrations
-                        + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
+                        + "\nPRAGMA user_version = 5;\nCOMMIT;"
                     )
                     connection.execute("PRAGMA foreign_keys = ON")
                 except sqlite3.Error as error:
@@ -175,6 +187,14 @@ class Database:
     def raw_connection(self) -> sqlite3.Connection | None:
         return self._connection
 
+    @property
+    def json_blobs(self) -> JsonBlobStore:
+        if self.data_directory is None or self._connection is None:
+            raise StorageError("storage is not initialized")
+        if self._json_blobs is None:
+            self._json_blobs = JsonBlobStore(self.data_directory)
+        return self._json_blobs
+
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         with self.lock, self.connection() as connection:
@@ -194,6 +214,7 @@ class Database:
         if self._connection is not None:
             self._connection.close()
             self._connection = None
+        self._json_blobs = None
         if self._lock_descriptor is not None:
             fcntl.flock(self._lock_descriptor, fcntl.LOCK_UN)
             os.close(self._lock_descriptor)

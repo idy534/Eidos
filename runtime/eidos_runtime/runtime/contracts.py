@@ -21,6 +21,7 @@ from eidos_runtime.runtime.resolution import (
     WorkspaceIdentitySnapshot,
 )
 from eidos_runtime.tools.registry import StepToolSnapshot
+from eidos_runtime.runtime.protocol_diagnostics import ProtocolDiagnostic
 
 
 class _FrozenModel(BaseModel):
@@ -92,6 +93,7 @@ class ToolBatchOutcome(_FrozenModel):
     ]
     tool_calls: tuple[ModelToolCall, ...] = ()
     error_code: str | None = None
+    protocol_diagnostic: ProtocolDiagnostic | None = None
     pause_reason: str | None = None
     feedback: tuple[ModelContextItem, ...] = ()
     error_fingerprints: tuple[str, ...] = ()

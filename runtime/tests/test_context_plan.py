@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import pytest
 from pydantic import ValidationError
@@ -10,6 +11,7 @@ from eidos_runtime.context.plan import ContextPlanner, ContextSnapshot
 from eidos_runtime.db.database import Database
 from eidos_runtime.model.client import ModelProfileSnapshot, ModelToolDefinition
 from eidos_runtime.persistence.context_snapshots import ContextSnapshotRepository
+from eidos_runtime.persistence.errors import PersistenceCorruptionError
 from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
 
 
@@ -144,5 +146,37 @@ def test_context_snapshot_without_repository_lineage_round_trips_sqlite(
             run_id="run", retrieval=None, snapshot=snapshot
         ) == snapshot
         assert repository.read_for_model_attempt("attempt-1") == snapshot
+        stored = database.connection().execute(
+            "SELECT snapshot_json FROM context_snapshots WHERE id = ?",
+            (snapshot.snapshot_id,),
+        ).fetchone()[0]
+        reference = json.loads(stored)["$eidosBlob"]
+        assert reference["kind"] == "context-snapshot"
+        assert reference["sha256"]
+        assert len(stored) < 512
+        assert (
+            database.data_directory / "blobs" / reference["relativePath"]
+        ).is_file()
     finally:
         database.close()
+
+    reopened = Database(tmp_path / "data")
+    reopened.initialize()
+    try:
+        repository = ContextSnapshotRepository(reopened)
+        assert repository.read(snapshot.snapshot_id) == snapshot
+        stored = reopened.connection().execute(
+            "SELECT snapshot_json FROM context_snapshots WHERE id = ?",
+            (snapshot.snapshot_id,),
+        ).fetchone()[0]
+        reference = json.loads(stored)["$eidosBlob"]
+        (
+            reopened.data_directory / "blobs" / reference["relativePath"]
+        ).unlink()
+        with pytest.raises(
+            PersistenceCorruptionError,
+            match="persistence_record_invalid",
+        ):
+            repository.read(snapshot.snapshot_id)
+    finally:
+        reopened.close()

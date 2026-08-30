@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 4
-PREVIOUS_SCHEMA_VERSION = 3
+SCHEMA_VERSION = 6
+PREVIOUS_SCHEMA_VERSION = 5
 LEGACY_SCHEMA_VERSION = 1
+
+MODEL_ATTEMPT_DIAGNOSTICS_COLUMNS = (
+    "    configured_provider_id TEXT,\n"
+    "    response_state TEXT,\n"
+    "    phase TEXT,\n"
+    "    tool_call_count INTEGER NOT NULL DEFAULT 0,\n"
+    "    response_text_sha256 TEXT,\n"
+    "    response_text_bytes INTEGER NOT NULL DEFAULT 0,\n"
+    "    protocol_diagnostics_json TEXT,\n"
+)
 
 _RAW_BASE_SCHEMA_SQL = """
 CREATE TABLE sessions (
@@ -291,6 +301,13 @@ CREATE TABLE model_attempts (
     ttft_ms INTEGER,
     duration_ms INTEGER,
     had_progress INTEGER NOT NULL DEFAULT 0,
+    configured_provider_id TEXT,
+    response_state TEXT,
+    phase TEXT,
+    tool_call_count INTEGER NOT NULL DEFAULT 0,
+    response_text_sha256 TEXT,
+    response_text_bytes INTEGER NOT NULL DEFAULT 0,
+    protocol_diagnostics_json TEXT,
     started_at INTEGER NOT NULL,
     completed_at INTEGER,
     UNIQUE(step_id, ordinal)
@@ -1241,6 +1258,24 @@ ON worktree_lifecycle_operations(session_id, scope);
 
 SCHEMA_SQL = (
     BASE_SCHEMA_SQL
+    + CONTEXT_SCHEMA_SQL
+    + RESPONSE_ACTIONS_SCHEMA_SQL
+    + REVIEW_COMMENTS_SCHEMA_SQL
+    + COMPACTION_QUALITY_SCHEMA_SQL
+    + PROJECT_SCHEMA_SQL
+    + WORKTREE_TABLES_SCHEMA_SQL
+    + SESSION_WORKTREE_SCHEMA_SQL
+    + WORKTREE_LIFECYCLE_SCHEMA_SQL
+    + SESSION_EXECUTION_SCHEMA_SQL
+    + WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL
+    + SESSION_HANDOFF_SCHEMA_SQL
+    + WORKTREE_RETENTION_SCHEMA_SQL
+)
+
+# Test/upgrade fixture for schema v5. Schema v5 still kept the rebuildable
+# repository index in the state database.
+V5_SCHEMA_SQL = (
+    BASE_SCHEMA_SQL
     + REPOSITORY_SCHEMA_SQL
     + CONTEXT_SCHEMA_SQL
     + RESPONSE_ACTIONS_SCHEMA_SQL
@@ -1256,9 +1291,15 @@ SCHEMA_SQL = (
     + WORKTREE_RETENTION_SCHEMA_SQL
 )
 
+# Test/upgrade fixture for schema v4. It omits the v5 Model Attempt
+# diagnostics columns.
+V4_SCHEMA_SQL = V5_SCHEMA_SQL.replace(
+    MODEL_ATTEMPT_DIAGNOSTICS_COLUMNS, ""
+)
+
 # Test/upgrade fixture for the immediately previous schema. Keep this derived
 # from the current baseline so unrelated tables cannot drift between fixtures.
-V2_SCHEMA_SQL = SCHEMA_SQL.replace(
+V2_SCHEMA_SQL = V4_SCHEMA_SQL.replace(
     "CREATE TABLE projects (\n"
     "    id TEXT PRIMARY KEY,\n"
     "    name TEXT,\n",
@@ -1370,4 +1411,28 @@ WHERE retrieval_snapshot_id IS NOT NULL;
 
 V3_TO_V4_MIGRATION_SQL = """
 ALTER TABLE projects ADD COLUMN name TEXT;
+"""
+
+V4_TO_V5_MIGRATION_SQL = """
+ALTER TABLE model_attempts ADD COLUMN configured_provider_id TEXT;
+ALTER TABLE model_attempts ADD COLUMN response_state TEXT;
+ALTER TABLE model_attempts ADD COLUMN phase TEXT;
+ALTER TABLE model_attempts ADD COLUMN tool_call_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE model_attempts ADD COLUMN response_text_sha256 TEXT;
+ALTER TABLE model_attempts ADD COLUMN response_text_bytes INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE model_attempts ADD COLUMN protocol_diagnostics_json TEXT;
+"""
+
+V5_TO_V6_MIGRATION_SQL = """
+DROP TABLE repository_fts;
+DROP TABLE repository_diagnostics;
+DROP TABLE repository_chunks;
+DROP TABLE repository_references;
+DROP TABLE repository_imports;
+DROP TABLE repository_symbols;
+DROP TABLE repository_parsed_files;
+DROP TABLE repository_index_generations;
+DROP TABLE repository_directories;
+DROP TABLE repository_files;
+DROP TABLE repository_snapshots;
 """

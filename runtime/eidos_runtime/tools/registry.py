@@ -7,7 +7,14 @@ import re
 import threading
 from typing import Literal, Protocol
 
-from pydantic import BaseModel, Field, StrictInt, StrictStr, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+    field_validator,
+)
 
 from eidos_runtime.protocol.schemas import ClosedModel, StepToolSnapshotDto
 from eidos_runtime.model.client import ModelToolDefinition
@@ -248,6 +255,7 @@ class ToolArgumentValidationResult(ClosedModel):
     normalized_arguments: dict[str, object] | None = None
     code: StrictStr | None = None
     path: StrictStr | None = None
+    reason_code: StrictStr | None = None
 
 
 @dataclass(frozen=True)
@@ -346,10 +354,23 @@ class ToolRegistryEntry:
                 normalized = validated
             else:
                 raise ValueError("missing_argument_contract")
-        except (TypeError, ValueError):
+        except ValidationError as error:
+            details = error.errors(include_url=False)
+            detail = details[0] if details else {}
             return ToolArgumentValidationResult(
                 valid=False,
                 code="TOOL_ARGUMENT_CONTRACT_VIOLATION",
+                path=_validation_path(detail.get("loc")),
+                reason_code=_validation_reason(detail.get("type")),
+            )
+        except (TypeError, ValueError) as error:
+            return ToolArgumentValidationResult(
+                valid=False,
+                code="TOOL_ARGUMENT_CONTRACT_VIOLATION",
+                path=_validation_path(getattr(error, "path", None)),
+                reason_code=_validation_reason(
+                    getattr(error, "code", None) or str(error)
+                ),
             )
         return ToolArgumentValidationResult(
             valid=True, normalized_arguments=normalized
@@ -655,6 +676,26 @@ def _hash_json(value: object) -> str:
         value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _validation_path(value: object) -> str | None:
+    if not isinstance(value, (list, tuple)) or not value:
+        return None
+    path = ""
+    for part in value:
+        if isinstance(part, int) and not isinstance(part, bool):
+            path += f"[{part}]"
+        elif isinstance(part, str) and part:
+            path = f"{path}.{part}" if path else part
+        else:
+            return None
+    return path[:256] if path else None
+
+
+def _validation_reason(value: object) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    return value[:128]
 
 
 def _valid_schema(schema: object, *, nested: bool = False) -> bool:

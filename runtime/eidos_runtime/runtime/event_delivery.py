@@ -153,6 +153,13 @@ class EventDelivery:
                         failures=tuple(failures),
                     )
             self.store.mark_outbox_delivered(event_id)
+            try:
+                self.store.project_thread_history()
+            except Exception as error:
+                logger.warning(
+                    "Thread history projection failed: %s",
+                    type(error).__name__,
+                )
             delivered += event_delivered
         return DeliveryResult(
             attempted=attempted,

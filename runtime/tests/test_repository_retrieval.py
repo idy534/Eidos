@@ -11,7 +11,7 @@ from eidos_runtime.repo_intelligence.retrieval import (
     RepositoryRetrievalQuery,
     RepositoryRetriever,
 )
-from eidos_runtime.db.database import Database
+from eidos_runtime.db.layout import RepositoryDatabase
 from eidos_runtime.persistence.repository_intelligence import (
     RepositoryIntelligenceRepository,
     RepositoryWorkspaceIdentity,
@@ -34,7 +34,7 @@ def test_hybrid_retrieval_is_deterministic_explainable_and_exact_symbols_rank_fi
     (root / "README.md").write_text("Authentication overview\n", encoding="utf-8")
     inventory = RepositoryInventoryBuilder(root).build()
     index = RepositoryIndexer(root).build(inventory)
-    database = Database(tmp_path / "data")
+    database = RepositoryDatabase(tmp_path / "data")
     database.initialize()
     repository = RepositoryIntelligenceRepository(database)
     repository_map = RepositoryMapBuilder(root).build(inventory)
@@ -93,7 +93,7 @@ def test_retrieval_rejects_mixed_or_incomplete_snapshots(tmp_path: Path) -> None
     source.write_text("def changed():\n    return 2\n", encoding="utf-8")
     changed_inventory = RepositoryInventoryBuilder(root).build()
 
-    database = Database(tmp_path / "data")
+    database = RepositoryDatabase(tmp_path / "data")
     database.initialize()
     repository = RepositoryIntelligenceRepository(database)
     repository_map = RepositoryMapBuilder(root).build(inventory)
@@ -118,7 +118,7 @@ def test_retrieval_does_not_materialize_the_full_fts_generation(
     )
     inventory = RepositoryInventoryBuilder(root).build()
     index = RepositoryIndexer(root).build(inventory)
-    database = Database(tmp_path / "data")
+    database = RepositoryDatabase(tmp_path / "data")
     database.initialize()
     repository = RepositoryIntelligenceRepository(database)
     repository.commit_complete(

@@ -694,7 +694,7 @@ class SeatbeltSmokeTests(unittest.TestCase):
             workspace.mkdir(parents=True)
             home.mkdir()
             sandbox_tmp.mkdir()
-            state = data / "eidos.db"
+            state = data / "state.sqlite"
             state.write_text("protected", encoding="utf-8")
             target = workspace / "created.txt"
             permissions = materialize_effective_profile(

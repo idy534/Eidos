@@ -17,6 +17,7 @@ from eidos_runtime.db.schema import (  # noqa: E402
     PREVIOUS_SCHEMA_VERSION,
     SCHEMA_SQL,
     SCHEMA_VERSION,
+    V4_SCHEMA_SQL,
     V2_SCHEMA_SQL,
 )
 from eidos_runtime.context.budget import estimate_context_budget  # noqa: E402
@@ -59,17 +60,6 @@ EXPECTED_TABLES = {
     "rule_resolution_snapshots",
     "run_resolution_snapshots",
     "step_resolution_snapshots",
-    "repository_snapshots",
-    "repository_files",
-    "repository_directories",
-    "repository_index_generations",
-    "repository_parsed_files",
-    "repository_symbols",
-    "repository_imports",
-    "repository_references",
-    "repository_chunks",
-    "repository_diagnostics",
-    "repository_fts",
     "repository_retrieval_snapshots",
     "run_repository_retrievals",
     "context_plans",
@@ -153,11 +143,13 @@ EXPECTED_COLUMNS = {
         "automatic_cleanup", "managed_worktree_limit", "updated_at"
     },
     "model_attempts": {
-        "lease_id", "wire_api", "model_id", "request_timeout",
+        "lease_id", "configured_provider_id", "wire_api", "model_id", "request_timeout",
         "retry_decision_json",
         "context_snapshot_id",
+        "response_state", "phase", "tool_call_count",
+        "response_text_sha256", "response_text_bytes",
+        "protocol_diagnostics_json",
     },
-    "repository_snapshots": {"repository_map_json"},
     "tool_attempts": {
         "tool_call_id", "ordinal", "sandbox_type", "sandbox_requested",
         "effective_permissions_json", "profile_hash", "escalation_reason",
@@ -240,15 +232,32 @@ def _seed_context_lineage(
         "(id, run_id, segment_id, ordinal, status, resolution_snapshot_id, created_at, completed_at) "
         "VALUES ('step-v2', 'run-v2', 'segment-v2', 1, 'completed', 'step-resolution-v2', 1, 1)"
     )
-    connection.execute(
-        """
-        INSERT INTO repository_retrieval_snapshots (
-            id, run_id, inventory_snapshot_id, index_snapshot_id,
-            snapshot_hash, snapshot_json, created_at
-        ) VALUES ('retrieval-v2', 'run-v2', 'inventory-v2', 'index-v2',
-                  'retrieval-hash-v2', '{}', 1)
-        """
-    )
+    retrieval_columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(repository_retrieval_snapshots)"
+        )
+    }
+    if "run_id" in retrieval_columns:
+        connection.execute(
+            """
+            INSERT INTO repository_retrieval_snapshots (
+                id, run_id, inventory_snapshot_id, index_snapshot_id,
+                snapshot_hash, snapshot_json, created_at
+            ) VALUES ('retrieval-v2', 'run-v2', 'inventory-v2', 'index-v2',
+                      'retrieval-hash-v2', '{}', 1)
+            """
+        )
+    else:
+        connection.execute(
+            """
+            INSERT INTO repository_retrieval_snapshots (
+                id, inventory_snapshot_id, index_snapshot_id,
+                snapshot_hash, snapshot_json, created_at
+            ) VALUES ('retrieval-v2', 'inventory-v2', 'index-v2',
+                      'retrieval-hash-v2', '{}', 1)
+            """
+        )
     connection.execute(
         """
         INSERT INTO context_plans (
@@ -418,10 +427,6 @@ class StorageSchemaTests(unittest.TestCase):
                 "one_running_finalization_attempt_per_run",
                 "one_running_async_operation_per_operation_id",
                 "one_pending_outbox_delivery_per_event",
-                "repository_snapshots_last_complete",
-                "repository_index_generations_snapshot",
-                "repository_symbols_name",
-                "repository_diagnostics_generation",
                 "checkpoints_run_boundary",
                 "run_revisions_source",
                 "review_comments_session_path",
@@ -484,8 +489,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 4)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 3)
+        self.assertEqual(SCHEMA_VERSION, 6)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 5)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
@@ -606,11 +611,16 @@ class StorageSchemaTests(unittest.TestCase):
             ).fetchone()[0],
             snapshot_id,
         )
+        stored_snapshot = connection.execute(
+            "SELECT snapshot_json FROM context_snapshots WHERE id = ?",
+            (snapshot_id,),
+        ).fetchone()[0]
         self.assertEqual(
-            connection.execute(
-                "SELECT snapshot_json FROM context_snapshots WHERE id = ?",
-                (snapshot_id,),
-            ).fetchone()[0],
+            json.loads(stored_snapshot)["$eidosBlob"]["kind"],
+            "context-snapshot",
+        )
+        self.assertEqual(
+            store.context_snapshot_repository().read(snapshot_id).model_dump_json(),
             snapshot_json,
         )
         self.assertEqual(
@@ -643,6 +653,38 @@ class StorageSchemaTests(unittest.TestCase):
         self.assertEqual(len(attempts), 1)
         self.assertIsNotNone(attempts[0]["contextSnapshotId"])
         _assert_context_foreign_keys(connection)
+        store.close()
+
+    def test_v4_to_v5_adds_model_attempt_diagnostics_without_losing_rows(self) -> None:
+        database = self.data / DATABASE_NAME
+        connection = sqlite3.connect(database)
+        connection.executescript(V4_SCHEMA_SQL)
+        _seed_context_lineage(connection, str(self.data.parent / "workspace"))
+        connection.execute("PRAGMA user_version = 4")
+        connection.commit()
+        connection.close()
+        os.chmod(database, 0o600)
+
+        store = SessionStore(self.data)
+        store.initialize()
+
+        self.assertEqual(store.health(), {"state": "ready"})
+        connection = store.connection
+        assert connection is not None
+        self.assertEqual(
+            connection.execute("PRAGMA user_version").fetchone()[0],
+            SCHEMA_VERSION,
+        )
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(model_attempts)")
+        }
+        self.assertTrue(EXPECTED_COLUMNS["model_attempts"].issubset(columns))
+        attempt = connection.execute(
+            "SELECT tool_call_count, response_text_bytes, protocol_diagnostics_json "
+            "FROM model_attempts WHERE id = 'attempt-v2'"
+        ).fetchone()
+        self.assertEqual(tuple(attempt), (0, 0, None))
         store.close()
 
     def test_v1_to_v2_to_v3_preserves_final_context_foreign_keys(self) -> None:

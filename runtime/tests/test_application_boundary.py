@@ -7,6 +7,7 @@ from eidos_runtime.application.repository import RepositoryApplication
 from eidos_runtime.application.runs import RunApplication
 from eidos_runtime.application.sessions import SessionApplication
 from eidos_runtime.db.database import Database
+from eidos_runtime.db.layout import RepositoryDatabase
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.run import Run
 from eidos_runtime.persistence.repository_intelligence import (
@@ -77,7 +78,7 @@ def test_repository_application_returns_an_immutable_complete_analysis(tmp_path:
     (root / "main.py").write_text("def main():\n    return 'ok'\n", encoding="utf-8")
     data = tmp_path / "data"
     data.mkdir(mode=0o700)
-    database = Database(data)
+    database = RepositoryDatabase(data)
     database.initialize()
     try:
         application = RepositoryApplication(

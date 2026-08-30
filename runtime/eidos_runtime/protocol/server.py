@@ -568,6 +568,7 @@ class RuntimeServer:
         self._frozen_model_configs_lock = threading.RLock()
         self.async_kernel: RuntimeAsyncKernel | None = None
         self.output_lock = threading.RLock()
+        self._storage_log_handler: logging.Handler | None = None
         self.shell_available = False
         self.sensitive: SensitiveScanner | None = None
         self.plugins: PluginCatalog | None = None
@@ -1347,6 +1348,7 @@ class RuntimeServer:
         try:
             self.store.initialize()
             if self.store.health_state == "ready":
+                self._attach_storage_logging()
                 self.worktree_manager = WorktreeManager(self.store.database)
                 self.worktree_manager.recover()
                 self.worktree_retention = WorktreeRetentionService(
@@ -1383,6 +1385,7 @@ class RuntimeServer:
             RuntimeError,
         ):
             self._close_async_kernel()
+            self._detach_storage_logging()
             logger.exception("Runtime storage initialization failed")
             self.send(business_error(request_id, "INTERNAL_ERROR"))
             return
@@ -1450,6 +1453,7 @@ class RuntimeServer:
             self.send(business_error(request_id, "RUNTIME_SHUTDOWN_TIMEOUT"))
             return
         self._clear_frozen_model_configs()
+        self._detach_storage_logging()
         self.store.close()
         self.send(response(request_id, {}))
         self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
@@ -1493,6 +1497,7 @@ class RuntimeServer:
             self.repository_runtime.shutdown_all()
             self._close_async_kernel()
             self._clear_frozen_model_configs()
+            self._detach_storage_logging()
             self.store.close()
             self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
             return
@@ -1515,8 +1520,24 @@ class RuntimeServer:
         ):
             raise
         self._clear_frozen_model_configs()
+        self._detach_storage_logging()
         self.store.close()
         self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
+
+    def _attach_storage_logging(self) -> None:
+        if self._storage_log_handler is not None:
+            return
+        handler = self.store.create_log_handler()
+        logging.getLogger().addHandler(handler)
+        self._storage_log_handler = handler
+
+    def _detach_storage_logging(self) -> None:
+        handler = self._storage_log_handler
+        if handler is None:
+            return
+        self._storage_log_handler = None
+        logging.getLogger().removeHandler(handler)
+        handler.close()
 
     def _close_workspace_explorer(self) -> None:
         if self._applications is not None:

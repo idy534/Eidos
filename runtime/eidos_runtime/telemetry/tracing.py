@@ -112,12 +112,15 @@ def model_attempt_span(
     run_id: str,
     step_id: str,
     model_id: str,
+    configured_provider_id: str | None = None,
 ) -> Iterator[Span]:
     attributes = {
         "eidos.run.id": run_id,
         "eidos.step.id": step_id,
         "eidos.model.id": model_id,
     }
+    if configured_provider_id is not None:
+        attributes["eidos.model.configured_provider"] = configured_provider_id
     with start_span("eidos.model.attempt", attributes=attributes) as span:
         try:
             yield span
@@ -154,6 +157,33 @@ def finish_model_attempt(span: Span, outcome: object) -> None:
         span,
         "eidos.model.finish_reason",
         getattr(outcome, "finish_reason", None),
+    )
+    set_span_attribute(
+        span,
+        "eidos.model.provider_response_id",
+        getattr(outcome, "provider_response_id", None),
+    )
+    set_span_attribute(
+        span,
+        "eidos.model.response_state",
+        getattr(outcome, "response_state", None),
+    )
+    phase = getattr(outcome, "phase", None)
+    set_span_attribute(
+        span,
+        "eidos.model.phase",
+        phase.value if hasattr(phase, "value") else phase,
+    )
+    set_span_attribute(
+        span,
+        "eidos.model.tool_call_count",
+        len(getattr(outcome, "tool_calls", ())),
+    )
+    text = getattr(outcome, "text", "")
+    set_span_attribute(
+        span,
+        "eidos.model.response_text_bytes",
+        len(text.encode("utf-8")) if isinstance(text, str) else 0,
     )
     set_span_attribute(span, "eidos.model.ttft_ms", getattr(outcome, "ttft_ms", None))
     set_span_attribute(

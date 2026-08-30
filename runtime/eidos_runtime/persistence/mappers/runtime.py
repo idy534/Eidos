@@ -226,6 +226,7 @@ def model_attempt_from_row(
         "ordinal": values.integer("ordinal"),
         "status": _enum(ModelAttemptStatus, values.text("status"), record="model_attempt", field="status"),
         "provider_name": values.optional_text("provider_name"),
+        "configured_provider_id": values.optional_text("configured_provider_id"),
         "resolved_model_name": values.optional_text("resolved_model_name"),
         "finish_reason": values.optional_text("finish_reason"),
         "provider_response_id": values.optional_text("provider_response_id"),
@@ -241,6 +242,14 @@ def model_attempt_from_row(
         "ttft_ms": values.optional_integer("ttft_ms"),
         "duration_ms": values.optional_integer("duration_ms"),
         "had_progress": values.boolean("had_progress"),
+        "response_state": values.optional_text("response_state"),
+        "phase": values.optional_text("phase"),
+        "tool_call_count": values.integer("tool_call_count"),
+        "response_text_sha256": values.optional_text("response_text_sha256"),
+        "response_text_bytes": values.integer("response_text_bytes"),
+        "protocol_diagnostics_json": values.optional_json_text(
+            "protocol_diagnostics_json"
+        ),
         "started_at": values.integer("started_at"),
         "completed_at": values.optional_integer("completed_at"),
     })

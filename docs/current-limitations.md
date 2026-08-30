@@ -54,7 +54,7 @@
 
 - Inventory、Repository generations、Tree-sitter Index、symbols/imports/references/chunks、Repository Map、SQLite FTS5、Retrieval Snapshot、ContextPlan 和 ContextSnapshot 已经有 typed infrastructure、persistence 和 focused tests。
 - Repository Generation readiness 已经进入 Runtime。Workspace 激活只 fast restore 和启动 watcher。`RuntimeEngine.run()` 会在第一个 Model Step 前执行一次 `ensure_ready()`。首次 build、cold-start reconciliation 和 watcher-invalidated 的下一个 Run 会执行 bounded Inventory scan。Clean Run 和同 Run 后续 Model Step 不会重复 scan。
-- v1 数据库中的旧 generation 没有 persisted RepositoryMap。v2 migration 不会用当前文件系统回填旧 Map，所以这些旧 generation 不属于 fully-restorable generation。Runtime 只读取它们的 generation watermark。首次新 build 会生成更高的 complete generation。
+- v1 数据库中的旧 generation 没有 persisted RepositoryMap。v6 拆库迁移会把它们标为 incomplete，不会用当前文件系统回填旧 Map。Runtime 只读取它们的 generation watermark。首次新 build 会生成更高的 complete generation。
 - Cold start 仍然不能只凭旧 Inventory 证明仓库 clean，所以第一个 Run 会 reconcile。当前实现使用一次 bounded full Inventory scan。它没有 partial directory index、filesystem journal、Base Index + Worktree Overlay 或增量 Map 算法。
 - Repository build 是增强能力。Canceled、incomplete、manifest verification failure 或 Git state change 不会替换旧 active generation。没有旧 complete generation 时，Snapshot 仍可为空，Agent 继续依赖 Workspace tools。
 - 当前默认 online Run 已经自动执行一次 grounded Repository Retrieval，并通过 ContextBuilder 注入 Repository overview 和 evidence。每个 ModelAttempt 也会绑定精确 ContextSnapshot。
@@ -73,7 +73,8 @@
 ## Compaction 与 Context
 
 - 默认 ContextCompactor 使用 deterministic bounded extraction 生成候选摘要。当前没有 model-assisted proposal。
-- 候选摘要必须通过 SQLite 事实验证，才能原子写入 verified record 和权威摘要。Tool provenance 从 summary 的 source Item IDs 对应到真实 ToolCall IDs，并支持 pre-turn 跨 Run 历史。当前 deterministic compactor 不吸收 Event 内容或 Retrieval evidence 正文，所以不会虚假附加这些 provenance。验证失败时，Runtime 保留上一份 verified summary。原始历史不会被删除。
+- 候选摘要必须通过 `state.sqlite` 事实验证，才能原子写入 verified record 和权威摘要。Tool provenance 从 summary 的 source Item IDs 对应到真实 ToolCall IDs，并支持 pre-turn 跨 Run 历史。当前 deterministic compactor 不吸收 Event 内容或 Retrieval evidence 正文，所以不会虚假附加这些 provenance。验证失败时，Runtime 保留上一份 verified summary。原始 Item 和 Tool 事实不会被删除。Thread history JSONL 当前是 Event projection，不是独立的全量 Conversation authority。
+- MemoryStore 已经提供独立 `memories.sqlite` 和 content-addressed Markdown 存储，但当前 ContextCompactor、用户长期记忆和跨 Session 检索尚未接入这个 Store。
 - Context Usage Desktop 只展示当前选中 Model 对应 Run 的有效 Context Usage。同一 Session、同一 Model 启动或切换到新 Run 时，如果新 Run 尚未产生 Usage，Renderer 会保留上一份可用 Usage，直到新快照到达；切换 Session/Model 或本来没有历史 Usage 时才显示无数据状态。
 - Provider 明确 `context_exceeded` 后，如果没有新的可压缩历史或 Context projection 没有进展，Runtime 会以 `context_still_over_budget` 停止。
 
@@ -86,7 +87,7 @@
 
 ## Observability / OpenTelemetry
 
-- 当前 OpenTelemetry 集成只配置 Traces。Runtime 没有建立 OTel Metrics 或 Logs pipeline，也没有把 Trace 作为 SQLite 业务事实或恢复依据。
+- 当前 OpenTelemetry 集成只配置 Traces。Runtime 的本地 JSONL 日志不等于 OTel Logs pipeline。Runtime 没有建立 OTel Metrics 或 Logs exporter，也没有把 Trace 或本地日志作为业务事实或恢复依据。
 - `OTEL_TRACES_EXPORTER` 默认是 `none`，因此默认不会把 Trace 导出到外部 Observability 后端。需要显式配置 `console` 或 `otlp` 才会导出。
 - 当前 Trace 主要覆盖 Run、Model Attempt 和 Tool Call。它不是完整的 Desktop 操作链、SQLite transaction、Repository Intelligence、Approval 或 Sandbox 内部阶段的全链路 tracing。
 

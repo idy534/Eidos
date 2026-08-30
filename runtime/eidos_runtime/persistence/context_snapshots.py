@@ -3,13 +3,28 @@ from __future__ import annotations
 from pydantic import ValidationError
 
 from eidos_runtime.context.plan import ContextSnapshot
-from eidos_runtime.db.database import Repository
+from eidos_runtime.db.database import Database, Repository
 from eidos_runtime.persistence.errors import PersistenceCorruptionError
+from eidos_runtime.db.json_blobs import (
+    JsonBlobCorruptionError,
+    JsonBlobStore,
+)
 from eidos_runtime.repo_intelligence.retrieval import RetrievalSnapshot
 
 
 class ContextSnapshotRepository(Repository):
     """Persist immutable retrieval, plan and exact model-request snapshots."""
+
+    def __init__(
+        self,
+        database: Database,
+        *,
+        blobs: JsonBlobStore | None = None,
+    ) -> None:
+        super().__init__(database)
+        if blobs is None:
+            blobs = database.json_blobs
+        self.blobs = blobs
 
     def persist(
         self,
@@ -30,7 +45,10 @@ class ContextSnapshotRepository(Repository):
             or plan.index_snapshot_id != retrieval.index_snapshot_id
         ):
             raise ValueError("context persistence snapshot lineage mismatch")
-        with self.lock, self._connection() as connection:
+        with self.lock, self.blobs.lock, self._connection() as connection:
+            stored_snapshot = self.blobs.put_json(
+                "context-snapshot", snapshot.model_dump_json()
+            )
             if retrieval is not None:
                 connection.execute(
                     """
@@ -80,7 +98,7 @@ class ContextSnapshotRepository(Repository):
                 (
                     snapshot.snapshot_id, run_id, snapshot.model_attempt_id,
                     snapshot.plan_id, snapshot.snapshot_hash,
-                    snapshot.model_dump_json(), snapshot.created_at_ms,
+                    stored_snapshot, snapshot.created_at_ms,
                 ),
             )
         return self.read(snapshot.snapshot_id)
@@ -94,8 +112,12 @@ class ContextSnapshotRepository(Repository):
         if row is None:
             raise LookupError("context snapshot not found")
         try:
-            return ContextSnapshot.model_validate_json(row["snapshot_json"])
-        except (TypeError, ValidationError, ValueError):
+            return ContextSnapshot.model_validate_json(
+                self.blobs.read_json(
+                    row["snapshot_json"], expected_kind="context-snapshot"
+                )
+            )
+        except (TypeError, ValidationError, ValueError, JsonBlobCorruptionError):
             raise PersistenceCorruptionError(
                 "persistence_record_invalid", record="context_snapshot"
             ) from None
@@ -112,8 +134,12 @@ class ContextSnapshotRepository(Repository):
         if row is None:
             return None
         try:
-            return ContextSnapshot.model_validate_json(row["snapshot_json"])
-        except (TypeError, ValidationError, ValueError):
+            return ContextSnapshot.model_validate_json(
+                self.blobs.read_json(
+                    row["snapshot_json"], expected_kind="context-snapshot"
+                )
+            )
+        except (TypeError, ValidationError, ValueError, JsonBlobCorruptionError):
             raise PersistenceCorruptionError(
                 "persistence_record_invalid", record="context_snapshot"
             ) from None
@@ -166,8 +192,12 @@ class ContextSnapshotRepository(Repository):
         if row is None:
             return None
         try:
-            return ContextSnapshot.model_validate_json(row["snapshot_json"])
-        except (TypeError, ValidationError, ValueError):
+            return ContextSnapshot.model_validate_json(
+                self.blobs.read_json(
+                    row["snapshot_json"], expected_kind="context-snapshot"
+                )
+            )
+        except (TypeError, ValidationError, ValueError, JsonBlobCorruptionError):
             raise PersistenceCorruptionError(
                 "persistence_record_invalid", record="context_snapshot"
             ) from None
@@ -188,8 +218,12 @@ class ContextSnapshotRepository(Repository):
         if row is None:
             return None
         try:
-            return ContextSnapshot.model_validate_json(row["snapshot_json"])
-        except (TypeError, ValidationError, ValueError):
+            return ContextSnapshot.model_validate_json(
+                self.blobs.read_json(
+                    row["snapshot_json"], expected_kind="context-snapshot"
+                )
+            )
+        except (TypeError, ValidationError, ValueError, JsonBlobCorruptionError):
             raise PersistenceCorruptionError(
                 "persistence_record_invalid", record="context_snapshot"
             ) from None

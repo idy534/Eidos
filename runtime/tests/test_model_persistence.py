@@ -107,8 +107,13 @@ class ModelPersistenceTests(unittest.TestCase):
         self.assertEqual(attempt["status"], "completed")
         self.assertEqual(attempt["usage"].input_tokens, 12)
         self.assertEqual(attempt["providerName"], "deepseek")
+        self.assertEqual(attempt["configuredProviderId"], "deepseek")
         self.assertEqual(attempt["finishReason"], "stop")
         self.assertEqual(attempt["providerResponseId"], "response-1")
+        self.assertEqual(attempt["responseState"], "complete")
+        self.assertEqual(attempt["phase"], "final_answer")
+        self.assertEqual(attempt["toolCallCount"], 0)
+        self.assertEqual(attempt["responseTextBytes"], 4)
         self.assertIsNotNone(attempt["durationMs"])
 
     def test_model_attempt_persists_frozen_request_timeout(self) -> None:

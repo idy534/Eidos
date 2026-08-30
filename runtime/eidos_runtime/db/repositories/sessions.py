@@ -912,7 +912,7 @@ class SessionRepository(Repository):
             selected_bytes += item_bytes
         selected_items.reverse()
         step_resolutions = [
-            _step_resolution_review(row)
+            _step_resolution_review(row, blobs=self.database.json_blobs)
             for row in reversed(resolution_rows)
         ]
         snapshot: dict[str, object] = {

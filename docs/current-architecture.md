@@ -125,7 +125,7 @@ RunFinalizer 为 context pressure、loop guard 等需要提前停止的路径生
 
 ## 6. Context & Instructions
 
-默认在线 Run 使用 `ContextBuilder` 从 SQLite 事实、当前 Run、Model Profile、Rule Snapshot、Selected Skill、历史 Item、Tool Result、Workspace State 和额外事实构建模型 Context。
+默认在线 Run 使用 `ContextBuilder` 从持久状态事实、当前 Run、Model Profile、Rule Snapshot、Selected Skill、历史 Item、Tool Result、Workspace State 和额外事实构建模型 Context。
 
 `ProjectRuleResolver` 从 Workspace root 到 effective cwd 逐层读取每个目录中优先级最高的非空候选文件。候选顺序是：
 
@@ -143,7 +143,7 @@ CLAUDE.md
 
 Context Budget 优先使用最近 Provider Usage 的 active input tokens。Provider Usage 不可用时，Runtime 使用标记为 `estimated` 的有界估算。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发 deterministic bounded compaction 或一次安全恢复。没有新的可压缩历史或 Context 投影没有进展时，Run 以 `context_still_over_budget` 停止。
 
-当前默认 compactor 先生成确定性的有界候选摘要。候选摘要不会直接成为模型事实。Runtime 会从 SQLite 重载 Item、Tool Result、Workspace change、Approval 和 reconciliation 事实，再执行 `ContextCompactionVerifier`。Tool provenance 由候选摘要的 source Item IDs 解析到真实 ToolCall IDs，所以 pre-turn compaction 可以准确引用以前 Run 的 Tool facts，也不会附加无关 ToolCall。只有验证通过的 `VerifiedCompactSummary` 才会在同一个事务中写入权威 `compact_summaries`、增加计数并产生一条 `context.compacted` Event。原始历史仍保存在 SQLite。验证失败会保留上一份 verified summary。
+当前默认 compactor 先生成确定性的有界候选摘要。候选摘要不会直接成为模型事实。Runtime 会从 `state.sqlite` 重载 Item、Tool Result、Workspace change、Approval 和 reconciliation 事实，再执行 `ContextCompactionVerifier`。Tool provenance 由候选摘要的 source Item IDs 解析到真实 ToolCall IDs，所以 pre-turn compaction 可以准确引用以前 Run 的 Tool facts，也不会附加无关 ToolCall。只有验证通过的 `VerifiedCompactSummary` 才会在同一个事务中写入权威 `compact_summaries`、增加计数并产生一条 `context.compacted` Event。原始 Item 和 Tool 事实仍保存在 `state.sqlite`。验证失败会保留上一份 verified summary。
 
 ## 7. Model Gateway
 
@@ -257,11 +257,15 @@ Workspace Explorer 复用 `RepositoryWatchController`。Watcher 事件只产生 
 
 ## 11. Persistence & Events
 
-SQLite 是业务事实唯一权威。Session、Run、Item、ToolCall、Approval、Tool Attempt、Execution Segment、Step、Model Attempt、Durable Intent、Event、Outbox、Async Operation、Extension Snapshot、Context、Repository Snapshot、Compaction 和 Checkpoint 都有持久化边界。
+`state.sqlite` 是可变业务状态的唯一权威。它保存 Session、Run、Item、ToolCall、Approval、Tool Attempt、Execution Segment、Step、Model Attempt、Durable Intent、Event、Outbox、Async Operation、Extension Snapshot、Context lineage、Compaction 和 Checkpoint。业务状态变化与 Event/Outbox 仍在同一个 `state.sqlite` transaction 中提交。
 
-当前 `SCHEMA_VERSION` 是 4。新数据库直接创建完整 schema。Runtime 会在一个事务中执行 v3→v4，也会按 v1→v2→v3→v4 顺序升级。v1→v2 为 Repository Generation 增加 nullable `repository_map_json`。v2→v3 先创建新表并复制数据，再删除旧 Context 表并把新表改为最终名称。迁移不会先 rename 旧表。`model_attempts.context_snapshot_id` 最终仍引用 `context_snapshots(id)`，已有 binding 和 JSON 保持不变，`foreign_key_check` 必须为空。v2→v3 同时把 ContextPlan Repository lineage 改为 nullable，并拆分 Retrieval artifact 与 Run binding。v3→v4 为 `projects` 增加可空的 `name` 列，旧 Project 读取时使用 Workspace basename 作为回退名称。迁移失败会回滚。未知 revision 和未来 revision fail closed。当前 schema 也包含 Project、Worktree、Session Handoff、retention/restore fields、Workspace Explorer 和 inline `review_comments`。
+Runtime 按职责使用多个独立存储。`repository.sqlite` 保存可重建的 Inventory、Index、Symbol、Reference、Chunk 和 FTS5 数据。它只保留每个 Workspace identity 的最新候选与最新完整 generation，并使用 incremental auto-vacuum 回收删除页。`thread_history.sqlite` 只索引按 Session 分段的 append-only Event JSONL。Runtime 先 fsync JSONL，再提交文件 offset；启动时会截断未提交尾部并继续投影。`logs.sqlite` 只索引本地日志 JSONL。日志按 8 MiB 分段，默认总量约 128 MiB，Runtime 优先删除最旧的 sealed segment。`memories.sqlite` 只保存 Memory metadata，正文使用 content-addressed Markdown 文件。当前 verified compaction 尚未自动写入 MemoryStore。
 
-业务状态变化与 Event/Outbox 在同一 SQLite transaction 中提交。Outbox 投递失败不会删除事实。Runtime 重启会从 SQLite、Outbox、Long Task 和 Resource 状态恢复或进入 reconciliation。
+完整 ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。`state.sqlite` 只保存版本、kind、相对路径、SHA-256 和大小。Runtime 对 owner、mode、路径、压缩数据、大小、JSON 和 checksum 执行 fail-closed 校验。Session 删除后，Runtime 会删除对应 history，并回收不再引用的 Blob。JSONL、Memory 和 Repository 数据都不能改变 `state.sqlite` 中的业务状态。
+
+当前 `SCHEMA_VERSION` 是 6。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
+
+Outbox 投递失败不会删除事实。Runtime 重启会从 `state.sqlite`、Outbox、Long Task 和 Resource 状态恢复或进入 reconciliation。其他数据库和文件不参与跨库业务 transaction。
 
 In-memory 对象只保存当前协调状态、缓存、活跃资源引用和诊断信息。它不是 Session、Run、Tool 或 Event 的第二个事实来源。
 
@@ -277,7 +281,7 @@ eidos.run
   └── eidos.tool.call
 ```
 
-Run Span 记录 Run、Session、Model 和终态。Model Attempt Span 记录 Provider、resolved model、finish reason、TTFT、duration、transport retry 和 input/output/cache token usage。Tool Call Span 记录 Tool 名称、Call ID、Tool status、Workspace changed 和异常状态。
+Run Span 记录 Run、Session、Model 和终态。Model Attempt Span 记录配置 Provider、响应 Provider、resolved model、Provider response ID、响应状态、阶段、finish reason、Tool 数量、响应文本大小、TTFT、duration、transport retry 和 input/output/cache token usage。SQLite 的 Model Attempt 还记录响应文本哈希和受限协议诊断 JSON。诊断 JSON 只包含错误路径、Tool 名称、Call ID、参数字段名和类型、参数哈希、契约指纹与 Tool Snapshot 哈希。它不保存原始响应或参数值。Tool Call Span 记录 Tool 名称、Call ID、Tool status、Workspace changed 和异常状态。
 
 `OTEL_TRACES_EXPORTER` 默认是 `none`。当前支持 `console` 和 `otlp`；console exporter 写 stderr，OTLP 使用 HTTP Trace exporter。`OTEL_SDK_DISABLED` 可以关闭 SDK，`OTEL_SERVICE_NAME` 可以覆盖默认的 `eidos-runtime`，`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 可以设置 OTLP Trace endpoint。
 

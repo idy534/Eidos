@@ -37,8 +37,9 @@ _VALUE_ERROR_CODES = {
 
 
 class JsonSchemaValidationError(ValueError):
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, path: str | None = None) -> None:
         self.code = code
+        self.path = path
         super().__init__(code)
 
 
@@ -94,7 +95,9 @@ class BoundedJsonSchema:
             self._validator.iter_errors(candidate), key=_validation_error_sort_key,
         )
         if errors:
-            raise JsonSchemaValidationError(_error_code(errors[0]))
+            raise JsonSchemaValidationError(
+                _error_code(errors[0]), _validation_path(errors[0].absolute_path)
+            )
         return candidate
 
 
@@ -292,6 +295,18 @@ def _path_sort_key(path: Iterable[object]) -> tuple[tuple[int, object], ...]:
 
 def _error_code(error: ValidationError) -> str:
     return _VALUE_ERROR_CODES.get(error.validator, "JSON_VALUE_INVALID")
+
+
+def _validation_path(value: Iterable[object]) -> str | None:
+    path = ""
+    for part in value:
+        if isinstance(part, int) and not isinstance(part, bool):
+            path += f"[{part}]"
+        elif isinstance(part, str) and part:
+            path = f"{path}.{part}" if path else part
+        else:
+            return None
+    return path or None
 
 
 def _count(depth: int, count: list[int], code: str) -> None:

@@ -206,10 +206,11 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Persistence
 
-- 当前 SQLite schema 是 v3。新数据库直接创建完整当前 schema。Runtime 支持 v2→v3 和事务内的 v1→v2→v3 顺序迁移。Context 表重建会保留 ModelAttempt binding，并核验最终 FK 和 `foreign_key_check`。其他旧 revision、未知 revision 和未来 revision 不会自动迁移。版本不匹配时，Runtime 保持数据库不变并进入 `health_only`。
-- SQLite 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context、Repository Snapshot、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。
-- 业务事实变化与 Event/Outbox 在同一 transaction 中提交。
-- SQLite 使用私有数据目录、WAL、busy timeout、完整性检查、单实例锁和 health-only 失败状态。
+- 当前 state schema 是 v6。新 `state.sqlite` 不包含可重建的 Repository Index 表。Runtime 支持 v1→v6 顺序迁移。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision会进入 `health_only`。
+- `state.sqlite` 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context lineage、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。业务事实变化与 Event/Outbox 在同一 transaction 中提交。
+- `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 索引有总量上限的日志 JSONL。`memories.sqlite` 索引 content-addressed Markdown。
+- ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。主库保存带 checksum 和大小的引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。
+- 每个 SQLite 数据库都使用私有目录、WAL、busy timeout 和完整性检查。`state.sqlite` 继续使用单实例锁和 health-only 失败状态。跨库数据只作为 projection、artifact 或可重建缓存，不建立第二个业务状态权威。
 
 ## Recovery
 

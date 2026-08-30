@@ -172,8 +172,10 @@ def test_run_model_and_tool_spans_share_the_run_trace(tmp_path: Path) -> None:
     assert model_attributes["eidos.run.id"] == run["id"]
     assert model_attributes["eidos.step.id"]
     assert model_attributes["eidos.model.provider"] == "fixture-provider"
+    assert model_attributes["eidos.model.configured_provider"] == "deepseek"
     assert model_attributes["eidos.model.resolved_name"] == "fixture-model"
     assert model_attributes["eidos.model.finish_reason"] == "tool_calls"
+    assert model_attributes["eidos.model.tool_call_count"] == 1
     assert model_attributes["gen_ai.usage.input_tokens"] == 11
     assert model_attributes["gen_ai.usage.output_tokens"] == 7
     assert model_attributes["eidos.model.transport_retry_count"] == 2

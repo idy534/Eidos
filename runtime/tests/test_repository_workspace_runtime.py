@@ -12,7 +12,7 @@ from eidos_runtime.application.repository import (
     RepositoryWorkspaceRuntime,
 )
 from eidos_runtime.application.sessions import SessionApplication
-from eidos_runtime.db.database import Database
+from eidos_runtime.db.layout import RepositoryDatabase
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
 from eidos_runtime.protocol.methods import SessionReadRequestDto
@@ -54,8 +54,8 @@ def _clear_watchers() -> None:
     _BlockingWatchController.instances.clear()
 
 
-def _database(tmp_path: Path) -> Database:
-    database = Database(tmp_path / "data")
+def _database(tmp_path: Path) -> RepositoryDatabase:
+    database = RepositoryDatabase(tmp_path / "data")
     database.initialize()
     return database
 

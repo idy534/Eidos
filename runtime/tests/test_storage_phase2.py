@@ -42,7 +42,7 @@ class PhaseTwoStorageTests(unittest.TestCase):
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertGreaterEqual(connection.execute("PRAGMA busy_timeout").fetchone()[0], 5000)
-        self.assertEqual(SCHEMA_REVISION, 4)
+        self.assertEqual(SCHEMA_REVISION, 6)
         self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], SCHEMA_REVISION)
         reserve = (self.data_directory / RESERVE_NAME).stat()
         self.assertEqual(reserve.st_size, RESERVE_BYTES)

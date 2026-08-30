@@ -14,6 +14,7 @@ from eidos_runtime.runtime.resolution import (
     RuleResolutionSnapshot,
     StepResolutionSnapshot,
 )
+from eidos_runtime.db.json_blobs import JsonBlobStore
 
 
 MAX_SNAPSHOT_TEXT_BYTES = 192 * 1024
@@ -119,8 +120,13 @@ def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
 
 def _step_resolution_review(
     row: sqlite3.Row,
+    *,
+    blobs: JsonBlobStore | None = None,
 ) -> dict[str, object]:
-    step = StepResolutionSnapshot.model_validate_json(row["step_snapshot_json"])
+    step_json = row["step_snapshot_json"]
+    if blobs is not None:
+        step_json = blobs.read_json(step_json, expected_kind="step-resolution")
+    step = StepResolutionSnapshot.model_validate_json(step_json)
     rules = RuleResolutionSnapshot.model_validate_json(row["rule_snapshot_json"])
     return StepResolutionReviewDto.model_validate({
         "id": step.id,
@@ -257,6 +263,7 @@ def _model_attempt_from_row(row: sqlite3.Row) -> dict[str, object]:
         "ordinal": row["ordinal"],
         "status": row["status"],
         "providerName": row["provider_name"],
+        "configuredProviderId": row["configured_provider_id"],
         "resolvedModelName": row["resolved_model_name"],
         "finishReason": row["finish_reason"],
         "providerResponseId": row["provider_response_id"],
@@ -275,6 +282,15 @@ def _model_attempt_from_row(row: sqlite3.Row) -> dict[str, object]:
         "ttftMs": row["ttft_ms"],
         "durationMs": row["duration_ms"],
         "hadProgress": bool(row["had_progress"]),
+        "responseState": row["response_state"],
+        "phase": row["phase"],
+        "toolCallCount": row["tool_call_count"],
+        "responseTextSha256": row["response_text_sha256"],
+        "responseTextBytes": row["response_text_bytes"],
+        "protocolDiagnostics": (
+            json.loads(row["protocol_diagnostics_json"])
+            if row["protocol_diagnostics_json"] is not None else None
+        ),
         "startedAt": row["started_at"],
         "completedAt": row["completed_at"],
     }

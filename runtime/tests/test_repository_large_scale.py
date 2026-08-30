@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from eidos_runtime.db.database import Database
+from eidos_runtime.db.layout import RepositoryDatabase
 from eidos_runtime.repo_intelligence.inventory import RepositoryInventoryBuilder
 from eidos_runtime.repo_intelligence.index import RepositoryIndexer
 from eidos_runtime.repo_intelligence.map import RepositoryMapBuilder
@@ -53,7 +53,7 @@ def test_retrieval_uses_bounded_candidates_for_twenty_thousand_documents(
         root, max_entries=20_100, max_scan_seconds=180.0
     ).build()
     indexed = RepositoryIndexer(root).build(inventory)
-    database = Database(tmp_path / "data")
+    database = RepositoryDatabase(tmp_path / "data")
     database.initialize()
     try:
         repository = RepositoryIntelligenceRepository(database)

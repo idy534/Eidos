@@ -8,15 +8,21 @@ from eidos_runtime.tools.registry import (
     StepToolBinding,
     StepToolSnapshot,
     ToolDescriptor,
+    ToolArgumentValidationResult,
     ToolRegistry,
 )
 from eidos_runtime.tools.contracts import ToolResultProjection
+from eidos_runtime.runtime.protocol_diagnostics import (
+    ProtocolDiagnostic,
+    argument_summary,
+)
 
 
 @dataclass(frozen=True)
 class ToolValidationResult:
     tool_calls: tuple[ModelToolCall, ...]
     error_code: str | None = None
+    protocol_diagnostic: ProtocolDiagnostic | None = None
 
 
 @dataclass(frozen=True)
@@ -89,22 +95,52 @@ class ToolDispatcher:
         self,
         response: ModelResponse,
         available_names: tuple[str, ...] | None = None,
+        tool_set_hash: str | None = None,
     ) -> ToolValidationResult:
         if not isinstance(response, ModelResponse):
-            return ToolValidationResult((), "invalid_response")
+            return ToolValidationResult(
+                (),
+                "invalid_response",
+                ProtocolDiagnostic(
+                    stage="response_validation", code="invalid_response"
+                ),
+            )
         if not response.text and not response.tool_calls:
             # Empty output is a runtime liveness condition rather than a malformed
             # ToolCall protocol. Keep it on the dedicated empty-response path.
             return ToolValidationResult(())
         if response.text and contains_provider_control_syntax(response.text):
-            return ToolValidationResult((), "provider_control_syntax")
+            return ToolValidationResult(
+                (),
+                "provider_control_syntax",
+                ProtocolDiagnostic(
+                    stage="response_validation", code="provider_control_syntax"
+                ),
+            )
         if len(response.tool_calls) > 16:
-            return ToolValidationResult((), "too_many_tool_calls")
+            return ToolValidationResult(
+                (),
+                "too_many_tool_calls",
+                ProtocolDiagnostic(
+                    stage="tool_validation",
+                    code="too_many_tool_calls",
+                    tool_call_count=min(len(response.tool_calls), 1024),
+                    tool_calls_truncated=len(response.tool_calls) > 1024,
+                ),
+            )
         provider_ids: set[str] = set()
         effective_calls: list[ModelToolCall] = []
         for call in response.tool_calls:
-            entry = self._registry.get(call.name) if isinstance(call, ModelToolCall) else None
-            if available_names is not None and isinstance(call, ModelToolCall) and call.name not in available_names:
+            registry_entry = (
+                self._registry.get(call.name)
+                if isinstance(call, ModelToolCall) else None
+            )
+            entry = registry_entry
+            if (
+                available_names is not None
+                and isinstance(call, ModelToolCall)
+                and call.name not in available_names
+            ):
                 entry = None
             contract = (
                 entry.validate_arguments(call.arguments)
@@ -126,14 +162,23 @@ class ToolDispatcher:
                 or effective is None
                 or not _valid_arguments(call.arguments)
             ):
+                error_code = (
+                    "TOOL_ARGUMENT_CONTRACT_VIOLATION"
+                    if entry is not None
+                    and (contract is None or not contract.valid)
+                    else "invalid_tool_call"
+                )
                 return ToolValidationResult(
                     (),
-                    (
-                        "TOOL_ARGUMENT_CONTRACT_VIOLATION"
-                        if entry is not None and (
-                            contract is None or not contract.valid
-                        )
-                        else "invalid_tool_call"
+                    error_code,
+                    _tool_validation_diagnostic(
+                        code=error_code,
+                        tool_call_index=len(effective_calls),
+                        tool_call_count=len(response.tool_calls),
+                        call=call,
+                        entry=entry,
+                        contract=contract,
+                        tool_set_hash=tool_set_hash,
                     ),
                 )
             provider_ids.add(call.provider_call_id)
@@ -253,3 +298,48 @@ def _valid_value(value: object) -> bool:
     if isinstance(value, dict):
         return _valid_arguments(value)
     return False
+
+
+def _tool_validation_diagnostic(
+    *,
+    code: str,
+    tool_call_index: int,
+    tool_call_count: int,
+    call: object,
+    entry: object,
+    contract: ToolArgumentValidationResult | None,
+    tool_set_hash: str | None,
+) -> ProtocolDiagnostic:
+    arguments = call.arguments if isinstance(call, ModelToolCall) else None
+    argument_bytes, arguments_sha256, keys, types, truncated = argument_summary(
+        arguments
+    )
+    tool_name = call.name if isinstance(call, ModelToolCall) else None
+    provider_call_id = (
+        call.provider_call_id if isinstance(call, ModelToolCall) else None
+    )
+    contract_fingerprint = getattr(entry, "contract_fingerprint", None)
+    return ProtocolDiagnostic(
+        stage="tool_validation",
+        code=code,
+        tool_call_count=tool_call_count,
+        tool_call_index=tool_call_index,
+        tool_name=_bounded_text(tool_name, 128),
+        provider_call_id=_bounded_text(provider_call_id, 256),
+        tool_declared=entry is not None,
+        tool_set_hash=tool_set_hash,
+        contract_fingerprint=contract_fingerprint,
+        validation_code=contract.reason_code if contract is not None else None,
+        validation_path=contract.path if contract is not None else None,
+        arguments_sha256=arguments_sha256,
+        argument_bytes=argument_bytes,
+        argument_keys=keys,
+        argument_types=types,
+        arguments_truncated=truncated,
+    )
+
+
+def _bounded_text(value: object, limit: int) -> str | None:
+    if not isinstance(value, str) or not 1 <= len(value) <= limit:
+        return None
+    return value

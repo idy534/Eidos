@@ -97,7 +97,7 @@ class SensitiveScannerTests(unittest.TestCase):
                 messages[-1]["error"]["data"]["code"],
                 "SENSITIVE_CONTENT_REJECTED",
             )
-            database = Path(data) / "eidos.db"
+            database = Path(data) / "state.sqlite"
             connection = sqlite3.connect(database)
             try:
                 self.assertEqual(connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0], 0)
