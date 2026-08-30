@@ -29,6 +29,7 @@ MEMORIES_DATABASE_NAME = "memories.sqlite"
 STATE_COMPACTION_MARKER_NAME = "state-compaction.pending"
 
 _AUXILIARY_SCHEMA_VERSION = 1
+LOGS_SCHEMA_VERSION = 2
 _MEMORIES_SCHEMA_VERSION = 2
 _REPOSITORY_TABLES = (
     "repository_snapshots",
@@ -98,6 +99,14 @@ CREATE TABLE log_segments (
 
 CREATE INDEX log_segments_time
 ON log_segments(last_timestamp DESC);
+"""
+
+LOGS_V1_TO_V2_MIGRATION_SQL = """
+ALTER TABLE log_segments RENAME COLUMN content_sha256 TO chain_sha256;
+"""
+
+LOGS_V1_CHAIN_TO_V2_MIGRATION_SQL = """
+SELECT 1;
 """
 
 MEMORIES_SCHEMA_SQL = """
@@ -204,7 +213,7 @@ class AuxiliaryDatabase:
                         + f"\nPRAGMA user_version = {self.schema_version};\nCOMMIT;"
                     )
                 elif revision != self.schema_version:
-                    migration = self.migrations.get(revision)
+                    migration = self._migration_for(connection, revision)
                     if migration is None:
                         raise StorageError("schema_revision_unsupported")
                     try:
@@ -228,6 +237,11 @@ class AuxiliaryDatabase:
             except Exception:
                 connection.close()
                 raise
+
+    def _migration_for(
+        self, _connection: sqlite3.Connection, revision: int
+    ) -> str | None:
+        return self.migrations.get(revision)
 
     def connection(self) -> sqlite3.Connection:
         if self._connection is None:
@@ -281,6 +295,33 @@ class RepositoryDatabase(AuxiliaryDatabase):
         super().initialize()
 
 
+class LogsDatabase(AuxiliaryDatabase):
+    """The bounded JSONL log index with its own schema revisions."""
+
+    def __init__(self, data_directory: Path) -> None:
+        super().__init__(
+            data_directory,
+            name=LOGS_DATABASE_NAME,
+            schema_sql=LOGS_SCHEMA_SQL,
+            schema_version=LOGS_SCHEMA_VERSION,
+            migrations={1: LOGS_V1_TO_V2_MIGRATION_SQL},
+        )
+
+    def _migration_for(
+        self, connection: sqlite3.Connection, revision: int
+    ) -> str | None:
+        migration = super()._migration_for(connection, revision)
+        if revision != 1:
+            return migration
+        columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(log_segments)")
+        }
+        if "chain_sha256" in columns and "content_sha256" not in columns:
+            return LOGS_V1_CHAIN_TO_V2_MIGRATION_SQL
+        return migration
+
+
 class PersistenceLayout:
     """Own all non-state databases and one-time vertical data extraction."""
 
@@ -295,11 +336,7 @@ class PersistenceLayout:
             name=THREAD_HISTORY_DATABASE_NAME,
             schema_sql=THREAD_HISTORY_SCHEMA_SQL,
         )
-        self.logs = AuxiliaryDatabase(
-            data_directory,
-            name=LOGS_DATABASE_NAME,
-            schema_sql=LOGS_SCHEMA_SQL,
-        )
+        self.logs = LogsDatabase(data_directory)
         self.memories = AuxiliaryDatabase(
             data_directory,
             name=MEMORIES_DATABASE_NAME,
@@ -752,6 +789,8 @@ __all__ = [
     "AuxiliaryDatabase",
     "LEGACY_STATE_DATABASE_NAME",
     "LOGS_DATABASE_NAME",
+    "LOGS_SCHEMA_VERSION",
+    "LogsDatabase",
     "MEMORIES_DATABASE_NAME",
     "PersistenceLayout",
     "REPOSITORY_DATABASE_NAME",

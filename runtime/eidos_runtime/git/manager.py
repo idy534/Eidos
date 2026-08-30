@@ -1310,6 +1310,8 @@ class WorktreeManager:
         )
         views: list[WorktreeView] = []
         for project in projects:
+            if not project.has_git:
+                continue
             entries = self._entries_for_observation(project)
             by_root = {entry.worktree_root: entry for entry in entries}
             for worktree in self.repository.list_worktrees(project.id):
@@ -1339,6 +1341,8 @@ class WorktreeManager:
         updated: list[Worktree] = []
         orphan_candidates: list[OrphanWorktreeCandidate] = []
         for project in self.repository.list_projects():
+            if not project.has_git:
+                continue
             try:
                 entries = self._entries_for_observation(project)
                 known = self.repository.list_worktrees(project.id)
@@ -1401,7 +1405,11 @@ class WorktreeManager:
 
     def cleanup(self) -> WorktreeCleanupReport:
         started = time.monotonic()
-        projects = self.repository.list_projects()
+        projects = tuple(
+            project
+            for project in self.repository.list_projects()
+            if project.has_git
+        )
         for project in projects:
             try:
                 self.git.worktree_prune(Path(project.workspace_root))

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 import subprocess
 from datetime import UTC, datetime
@@ -158,6 +159,128 @@ def test_failed_worktree_observation_does_not_mutate_lifecycle_state(
         manager.repository.read_worktree(worktree.id).state is WorktreeState.ACTIVE
         for worktree in worktrees
     )
+
+
+def test_recovery_skips_non_git_projects_without_warning_or_affecting_git_recovery(
+    tmp_path: Path,
+    database: Database,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    non_git_root = tmp_path / "plain-workspace"
+    non_git_root.mkdir()
+    backend = FakeGitBackend()
+    manager = WorktreeManager(
+        database,
+        managed_root=tmp_path / "managed",
+        git_backend=backend,
+    )
+    non_git_project = manager.create_project(str(non_git_root), name="plain")
+    known = manager.create(repository)
+    Path(known.worktree_root).rename(tmp_path / "moved-away")
+
+    observed_roots: list[Path] = []
+    original_worktree_list = manager.git.worktree_list
+
+    def recording_worktree_list(cwd: Path) -> tuple[object, ...]:
+        observed_roots.append(cwd.resolve())
+        return original_worktree_list(cwd)
+
+    monkeypatch.setattr(manager.git, "worktree_list", recording_worktree_list)
+
+    with caplog.at_level(logging.WARNING, logger=manager.logger.name):
+        report = manager.recover()
+
+    assert observed_roots == [repository.resolve()]
+    assert any(
+        item.id == known.id and item.state is WorktreeState.MISSING
+        for item in report.updated_worktrees
+    )
+    assert not any(
+        record.getMessage() == "worktree project recovery observation unavailable"
+        and getattr(record, "project_id", None) == non_git_project.id
+        and getattr(record, "error_code", None) == "git_observation_failed"
+        for record in caplog.records
+    )
+
+
+def test_list_skips_non_git_projects_and_keeps_git_worktree_views(
+    tmp_path: Path,
+    database: Database,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    non_git_root = tmp_path / "plain-workspace"
+    non_git_root.mkdir()
+    backend = FakeGitBackend()
+    manager = WorktreeManager(
+        database,
+        managed_root=tmp_path / "managed",
+        git_backend=backend,
+    )
+    non_git_project = manager.create_project(str(non_git_root), name="plain")
+    known = manager.create(repository)
+
+    observed_roots: list[Path] = []
+    original_worktree_list = manager.git.worktree_list
+
+    def recording_worktree_list(cwd: Path) -> tuple[object, ...]:
+        observed_roots.append(cwd.resolve())
+        return original_worktree_list(cwd)
+
+    monkeypatch.setattr(manager.git, "worktree_list", recording_worktree_list)
+
+    views = manager.list()
+
+    assert observed_roots == [repository.resolve()]
+    assert len(views) == 1
+    assert views[0].worktree.id == known.id
+    assert manager.list(project_id=non_git_project.id) == ()
+
+
+def test_cleanup_skips_non_git_projects_and_prunes_git_projects(
+    tmp_path: Path,
+    database: Database,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    non_git_root = tmp_path / "plain-workspace"
+    non_git_root.mkdir()
+    backend = FakeGitBackend()
+    manager = WorktreeManager(
+        database,
+        managed_root=tmp_path / "managed",
+        git_backend=backend,
+    )
+    non_git_project = manager.create_project(str(non_git_root), name="plain")
+    known = manager.create(repository)
+
+    observed_prune_roots: list[Path] = []
+    original_worktree_prune = manager.git.worktree_prune
+
+    def recording_worktree_prune(cwd: Path) -> None:
+        observed_prune_roots.append(cwd.resolve())
+        return original_worktree_prune(cwd)
+
+    observed_list_roots: list[Path] = []
+    original_worktree_list = manager.git.worktree_list
+
+    def recording_worktree_list(cwd: Path) -> tuple[object, ...]:
+        observed_list_roots.append(cwd.resolve())
+        return original_worktree_list(cwd)
+
+    monkeypatch.setattr(manager.git, "worktree_prune", recording_worktree_prune)
+    monkeypatch.setattr(manager.git, "worktree_list", recording_worktree_list)
+
+    report = manager.cleanup()
+
+    assert observed_prune_roots == [repository.resolve()]
+    assert observed_list_roots == [repository.resolve(), repository.resolve()]
+    assert report.pruned_project_ids == (known.project_id,)
+    assert report.marked_deleted == ()
+    assert manager.repository.read_worktree(known.id).state is WorktreeState.ACTIVE
+    assert non_git_project.id not in report.pruned_project_ids
 
 
 def test_timed_out_worktree_observation_does_not_mutate_lifecycle_state(

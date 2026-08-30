@@ -341,6 +341,160 @@ def test_runtime_logs_use_jsonl_with_logs_database_index(tmp_path: Path) -> None
     handler.close()
 
 
+def test_old_v1_logs_schema_allows_append_after_store_initialization(
+    tmp_path: Path,
+) -> None:
+    data = tmp_path / "data"
+    data.mkdir(mode=0o700)
+    logs_root = data / "logs"
+    segment_id = "0-123-" + ("a" * 32)
+    relative_path = f"1970-01-01/{segment_id}.jsonl"
+    segment_path = logs_root / relative_path
+    segment_path.parent.mkdir(mode=0o700, parents=True)
+    segment_path.write_bytes(b"legacy log\n")
+    segment_path.chmod(0o600)
+    logs_root.chmod(0o700)
+
+    logs_path = data / LOGS_DATABASE_NAME
+    connection = sqlite3.connect(logs_path)
+    connection.executescript(
+        """
+        CREATE TABLE log_segments (
+            id TEXT PRIMARY KEY,
+            relative_path TEXT NOT NULL UNIQUE,
+            first_timestamp INTEGER NOT NULL,
+            last_timestamp INTEGER NOT NULL,
+            record_count INTEGER NOT NULL,
+            stored_bytes INTEGER NOT NULL,
+            content_sha256 TEXT NOT NULL,
+            state TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX log_segments_time
+        ON log_segments(last_timestamp DESC);
+
+        PRAGMA user_version = 1;
+        """
+    )
+    legacy_digest = "d" * 64
+    connection.execute(
+        """
+        INSERT INTO log_segments (
+            id, relative_path, first_timestamp, last_timestamp,
+            record_count, stored_bytes, content_sha256, state,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            segment_id,
+            relative_path,
+            0,
+            0,
+            1,
+            len(b"legacy log\n"),
+            legacy_digest,
+            "sealed",
+            0,
+            0,
+        ),
+    )
+    connection.commit()
+    connection.close()
+    logs_path.chmod(0o600)
+
+    store = SessionStore(data)
+    store.initialize()
+    try:
+        assert store.health_state == "ready"
+        assert store._persistence_layout is not None
+        assert store._persistence_layout.runtime_logs is not None
+        assert store._persistence_layout.logs.connection().execute(
+            "PRAGMA user_version"
+        ).fetchone()[0] == 2
+        assert store._persistence_layout.repository.connection().execute(
+            "PRAGMA user_version"
+        ).fetchone()[0] == 1
+        assert store._persistence_layout.thread_history.connection().execute(
+            "PRAGMA user_version"
+        ).fetchone()[0] == 1
+        legacy = store._persistence_layout.logs.connection().execute(
+            "SELECT * FROM log_segments WHERE id = ?", (segment_id,)
+        ).fetchone()
+        assert legacy is not None
+        assert legacy["relative_path"] == relative_path
+        assert legacy["first_timestamp"] == 0
+        assert legacy["last_timestamp"] == 0
+        assert legacy["record_count"] == 1
+        assert legacy["stored_bytes"] == len(b"legacy log\n")
+        assert legacy["chain_sha256"] == legacy_digest
+        assert legacy["state"] == "sealed"
+        record = logging.getLogger(
+            "eidos.test.persistence-layout.legacy-logs"
+        ).makeRecord(
+            "eidos.test.persistence-layout.legacy-logs",
+            logging.INFO,
+            __file__,
+            1,
+            "legacy schema append",
+            (),
+            None,
+        )
+
+        store._persistence_layout.runtime_logs.append(record)
+
+        row = store._persistence_layout.logs.connection().execute(
+            "SELECT record_count, stored_bytes FROM log_segments"
+        ).fetchall()
+        assert len(row) == 2
+        assert sum(int(item["record_count"]) for item in row) == 2
+        assert sum(int(item["stored_bytes"]) for item in row) > 0
+    finally:
+        store.close()
+
+
+def test_new_v1_logs_schema_is_versioned_without_column_rename(
+    tmp_path: Path,
+) -> None:
+    data = tmp_path / "data"
+    data.mkdir(mode=0o700)
+    logs_path = data / LOGS_DATABASE_NAME
+    connection = sqlite3.connect(logs_path)
+    connection.executescript(LOGS_SCHEMA_SQL)
+    connection.execute("PRAGMA user_version = 1")
+    connection.commit()
+    connection.close()
+    logs_path.chmod(0o600)
+
+    store = SessionStore(data)
+    store.initialize()
+    try:
+        assert store.health_state == "ready"
+        assert store._persistence_layout is not None
+        assert store._persistence_layout.runtime_logs is not None
+        assert store._persistence_layout.logs.connection().execute(
+            "PRAGMA user_version"
+        ).fetchone()[0] == 2
+        record = logging.getLogger(
+            "eidos.test.persistence-layout.current-v1-logs"
+        ).makeRecord(
+            "eidos.test.persistence-layout.current-v1-logs",
+            logging.INFO,
+            __file__,
+            1,
+            "current v1 schema append",
+            (),
+            None,
+        )
+        store._persistence_layout.runtime_logs.append(record)
+        assert store._persistence_layout.logs.connection().execute(
+            "SELECT COUNT(*) FROM log_segments"
+        ).fetchone()[0] == 1
+    finally:
+        store.close()
+
+
 def test_runtime_logs_delete_oldest_sealed_segments_at_total_limit(
     tmp_path: Path,
 ) -> None:
