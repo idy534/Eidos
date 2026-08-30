@@ -75,15 +75,15 @@ test("release packaging rejects missing signing and notarization credentials", a
 });
 
 
-test("CI package reuse skips duplicate validation and Runtime bundle smoke", async () => {
+test("skip-tests packaging still rebuilds the Runtime bundle", async () => {
   const packageScript = await readFile(script, "utf8");
   assert.match(packageScript, /PACKAGE_SKIP_TESTS="\$\{EIDOS_PACKAGE_SKIP_TESTS:-0\}"/);
-  assert.match(packageScript, /reusing the Runtime bundle produced by prior validation/);
   assert.match(packageScript, /reusing the Electron application assets produced by prior validation/);
   assert.match(packageScript, /EIDOS_PACKAGE_SKIP_TESTS=1 is not allowed for release packaging/);
   assert.equal((packageScript.match(/^[ \t]*pnpm build[ \t]*$/gm) ?? []).length, 1);
+  assert.doesNotMatch(packageScript, /reusing the Runtime bundle produced by prior validation/);
   assert.match(
     packageScript,
-    /if \[\[ "\$PACKAGE_SKIP_TESTS" != "1" \]\]; then[\s\S]*pnpm test:runtime:bundled[\s\S]*pnpm test:runtime:bundled-seatbelt/,
+    /log "building the self-contained Runtime bundle"\npnpm build:runtime:mac\nif \[\[ "\$PACKAGE_SKIP_TESTS" != "1" \]\]; then[\s\S]*pnpm test:runtime:bundled[\s\S]*pnpm test:runtime:bundled-seatbelt/,
   );
 });

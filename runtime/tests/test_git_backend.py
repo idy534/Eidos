@@ -40,12 +40,6 @@ def _repository(tmp_path: Path) -> Path:
     return repository
 
 
-def test_eidos_forensics_snapshot_is_excluded_from_this_repository_git_review() -> None:
-    gitignore = Path(__file__).resolve().parents[2] / ".gitignore"
-
-    assert ".eidos-forensics/" in gitignore.read_text(encoding="utf-8").splitlines()
-
-
 def _repository_with_submodule(tmp_path: Path) -> tuple[Path, Path]:
     repository = _repository(tmp_path)
     source = tmp_path / "submodule-source"
