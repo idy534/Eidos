@@ -33,6 +33,7 @@ from eidos_runtime.runtime.resource_registry import (
     ResourceRegistryError,
     RuntimeResourceKind,
 )
+from eidos_runtime.runtime.reconciliation import ReconciliationDisposition
 from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
@@ -146,7 +147,9 @@ class HandlerOutcome:
     diff_hash: str | None = None
     item: dict[str, object] | None = None
     progress_fingerprint: str | None = None
-    allows_in_run_reconciliation: bool = False
+    reconciliation_disposition: ReconciliationDisposition = (
+        ReconciliationDisposition.CONTINUE
+    )
 
 
 class ToolExecutionPhase(StrEnum):

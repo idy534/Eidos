@@ -28,6 +28,7 @@ from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
 from eidos_runtime.runtime.resource_registry import ResourceRegistry  # noqa: E402
 from eidos_runtime.runtime.tool_orchestrator import OrchestratorResult  # noqa: E402
+from eidos_runtime.sandbox.workspace_manifest import WorkspaceManifest  # noqa: E402
 from eidos_runtime.tools.workspace import WorkspacePathError  # noqa: E402
 
 
@@ -264,6 +265,78 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertEqual(
             json.loads(cleared[0]["payload_json"])["reason"],
             "read_only_observation",
+        )
+
+    def test_first_shell_with_incomplete_baseline_allows_read_only_recovery(self) -> None:
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall(
+                "shell-attempt",
+                "run_shell",
+                {"command": "false", "timeoutSeconds": 5},
+            ),)),
+            ModelResponse(tool_calls=(ModelToolCall(
+                "observe-workspace",
+                "list_files",
+                {},
+            ),)),
+            ModelResponse(text="The failed command was inspected."),
+        ])
+        shell_result = {
+            "schemaVersion": 1,
+            "toolContractVersion": 1,
+            "toolName": "run_shell",
+            "outcome": "error",
+            "code": "nonzero_exit",
+            "summary": "Command exited with a non-zero status",
+            "data": {
+                "exitCode": 1,
+                "stdout": "",
+                "stderr": "",
+                "truncated": False,
+                "termination": "exit",
+                "durationMs": 1,
+            },
+            "sideEffectsMayExist": True,
+        }
+        incomplete_before = WorkspaceManifest((), False, True)
+        complete_after = WorkspaceManifest((), True, False)
+
+        with (
+            patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
+            patch("eidos_runtime.runtime.tool_runtime.run_shell", return_value=shell_result),
+            patch(
+                "eidos_runtime.sandbox.workspace_index.WorkspaceIndex.manifest",
+                return_value=incomplete_before,
+            ),
+            patch(
+                "eidos_runtime.tools.runtime_workspace.ToolExecutor.refresh_workspace_index",
+                return_value=complete_after,
+            ),
+        ):
+            RuntimeEngine(
+                self.store,
+                model,
+                lambda _message: None,
+                shell_available=True,
+            ).run(self.run["id"], threading.Event())
+
+        persisted = self.store.read_run(self.run["id"])
+        self.assertEqual(persisted["status"], "succeeded")
+        self.assertFalse(persisted.get("reconciliationRequired", False))
+        self.assertEqual(len(model.contexts), 3)
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT COUNT(*) FROM tool_calls WHERE tool_name = 'run_shell'",
+            ).fetchone()[0],
+            1,
+        )
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT COUNT(*) FROM events "
+                "WHERE run_id = ? AND event_type = 'reconciliation.cleared'",
+                (self.run["id"],),
+            ).fetchone()[0],
+            1,
         )
 
     def _assert_shell_refresh_error_stops_without_replay(

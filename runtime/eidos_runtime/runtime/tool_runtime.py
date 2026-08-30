@@ -38,6 +38,10 @@ from eidos_runtime.runtime.errors import (
 )
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
+from eidos_runtime.runtime.reconciliation import (
+    ReconciliationDisposition,
+    classify_shell_reconciliation,
+)
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
 from eidos_runtime.runtime.tool_execution import (
@@ -360,13 +364,15 @@ class ShellToolHandler:
         manifest_before = (
             runtime.implementation.executor.workspace_index.manifest()  # type: ignore[attr-defined]
         )
-        allows_in_run_reconciliation = False
+        manifest_after = manifest_before
+        refresh_error_code: str | None = None
 
         def execute_shell_attempt(
             attempt: SandboxAttempt,
         ) -> tuple[dict[str, object], SandboxDenied | None]:
-            nonlocal allows_in_run_reconciliation, workspace_diff
-            allows_in_run_reconciliation = False
+            nonlocal manifest_after, refresh_error_code, workspace_diff
+            manifest_after = manifest_before
+            refresh_error_code = None
             try:
                 approved_cwd = runtime.implementation.prepare_shell(  # type: ignore[attr-defined]
                     cwd_value, cancel
@@ -446,9 +452,11 @@ class ShellToolHandler:
                 manifest_after = (
                     runtime.implementation.executor.workspace_index.manifest()  # type: ignore[attr-defined]
                 )
-                if error.code == "WORKSPACE_INDEX_INCOMPLETE":
-                    allows_in_run_reconciliation = True
-                elif error.code != "sensitive_workspace_content":
+                refresh_error_code = error.code
+                if error.code not in {
+                    "WORKSPACE_INDEX_INCOMPLETE",
+                    "sensitive_workspace_content",
+                }:
                     raw_result["reconciliationRequired"] = True
             workspace_diff = diff_workspace_manifests(
                 manifest_before, manifest_after
@@ -666,6 +674,12 @@ class ShellToolHandler:
             self.dependencies.store.clear_rejects(run_id)
         status = "completed" if result["outcome"] == "success" else "failed"
         changed = workspace_diff.changed if workspace_diff is not None else False
+        reconciliation_disposition = classify_shell_reconciliation(
+            result,
+            manifest_before_complete=manifest_before.complete,
+            manifest_after_complete=manifest_after.complete,
+            refresh_error_code=refresh_error_code,
+        )
         return HandlerOutcome(
             result,
             status,
@@ -676,7 +690,7 @@ class ShellToolHandler:
                 if changed and workspace_diff is not None
                 else None
             ),
-            allows_in_run_reconciliation=allows_in_run_reconciliation,
+            reconciliation_disposition=reconciliation_disposition,
         )
 
 
@@ -1070,12 +1084,8 @@ class ToolCallRuntime:
                     or plan.is_eidos_state
                     or (
                         plan.is_shell
-                        and not (
-                            outcome.allows_in_run_reconciliation
-                            and _is_recoverable_shell_reconciliation(
-                                outcome.result
-                            )
-                        )
+                        and outcome.reconciliation_disposition
+                        is not ReconciliationDisposition.CONTINUE_READ_ONLY
                     )
                 )
             ):
@@ -1282,44 +1292,6 @@ class ToolCallRuntime:
             "interrupted",
         }:
             raise RuntimeCancelled
-
-
-def _is_recoverable_shell_reconciliation(result: dict[str, object]) -> bool:
-    if result.get("outcome") != "error" or result.get("code") != "nonzero_exit":
-        return False
-    data = result.get("data")
-    if not isinstance(data, dict):
-        return False
-    exit_code = data.get("exitCode")
-    if (
-        not isinstance(exit_code, int)
-        or isinstance(exit_code, bool)
-        or exit_code == 0
-    ):
-        return False
-    if (
-        data.get("termination") != "exit"
-        or data.get("sandboxed") is not True
-        or data.get("escalated") is not False
-        or data.get("sandboxPermissions") != SandboxPermissions.USE_DEFAULT.value
-        or data.get("sandboxDenialCategory") is not None
-    ):
-        return False
-    permissions = data.get("effectivePermissionsSummary")
-    if not isinstance(permissions, dict):
-        return False
-    read = permissions.get("read")
-    write = permissions.get("write")
-    execute = permissions.get("execute")
-    return (
-        permissions.get("networkEnabled") is False
-        and isinstance(read, list)
-        and read == []
-        and isinstance(write, list)
-        and write == []
-        and isinstance(execute, list)
-        and execute == []
-    )
 
 
 def _result_fingerprint(tool_name: str, result: dict[str, object]) -> str:

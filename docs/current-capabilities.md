@@ -63,7 +63,7 @@
 - Provider context pressure、`context_exceeded`、projection overflow 和 compaction progress 会参与下一次决策。
 - Protocol validation failure 会被转换为受控的 protocol repair context。空响应有独立的重复响应处理。
 - 确定的 Tool Error 会作为 ToolResult 进入 Context，并触发下一次模型决策。模型可以修正参数或选择替代 Tool。一次失败不会单独终止 Run。
-- 默认 Workspace Seatbelt Shell 在进程确定退出但 Workspace 观察不完整时，可以在同一个 Run 内继续受限的只读 Workspace reconciliation。Runtime 不自动重放原 Shell。
+- 默认 Workspace Seatbelt Shell 在进程确定退出但 Workspace 观察不完整时，可以在同一个 Run 内继续受限的只读 Workspace reconciliation。这个能力覆盖首次 Shell 执行前索引基线不完整、执行后索引完整的情况。Runtime 不自动重放原 Shell。
 - Cancellation、Approval、Reconciliation 和 operational segment rollover 都在安全点处理。
 - LoopGuard 使用 ToolCall、Workspace version、reconciliation epoch、Context fact frontier 和 active error 的 semantic fingerprint。首次重复会注入恢复信息，恢复后再次回到同一状态才会以 `repeated_tool_call` 或 `no_progress` 停止。
 - Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。Runtime 没有固定的模型步数、Run 时长或 repeated-call counter 生命周期规则。
