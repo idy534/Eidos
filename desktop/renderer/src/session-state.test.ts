@@ -280,7 +280,7 @@ test("closed runtime business errors map to safe user-facing guidance", () => {
   );
 });
 
-test("projects keep creation order while tasks stay newest first", () => {
+test("groups sort by most recent session activity, tasks stay newest first", () => {
   const groups = groupSessionsByProject([
     { ...session, id: "session-2", workspaceRoot: "/old", title: "第二期规划", createdAt: 10, updatedAt: 10 },
     {
@@ -294,8 +294,21 @@ test("projects keep creation order while tasks stay newest first", () => {
     { ...session, id: "session-1", workspaceRoot: "/old", title: "分析架构", createdAt: 1, updatedAt: 1 },
   ]);
 
+  // /new earliest session (createdAt=5) > /old earliest session (createdAt=1), so /new sorts first
   assert.deepEqual(groups.map((group) => group.workspaceRoot), ["/new", "/old"]);
+  assert.deepEqual(groups[0]?.sessions.map((item) => item.title), ["修复测试"]);
   assert.deepEqual(groups[1]?.sessions.map((item) => item.title), ["第二期规划", "分析架构"]);
+});
+
+test("projectless group is always pinned to the bottom", () => {
+  const groups = groupSessionsByProject([
+    { ...session, id: "p-session", workspaceRoot: "/project-ws", createdAt: 1, updatedAt: 1 },
+    { ...session, id: "recent-a", projectless: true, workspaceRoot: "/chat/a", createdAt: 999, updatedAt: 999 },
+  ]);
+
+  // Even if projectless sessions are very recent, the group stays last
+  assert.equal(groups.at(-1)?.key, "projectless");
+  assert.equal(groups.at(-1)?.displayName, "最近");
 });
 
 test("direct and managed threads group by explicit Project identity", () => {

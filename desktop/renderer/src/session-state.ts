@@ -125,10 +125,12 @@ export function groupSessionsByProject(
     createdAt: group.project?.createdAt
       ?? Math.min(...group.sessions.map((session) => session.createdAt)),
     sessions: [...group.sessions].sort((left, right) => right.createdAt - left.createdAt),
-  })).sort((left, right) => (
-    right.createdAt - left.createdAt
-    || left.displayName.localeCompare(right.displayName)
-  ));
+  })).sort((left, right) => {
+    // "最近"组始终固定在最底部
+    if (left.projectless) return 1;
+    if (right.projectless) return -1;
+    return right.createdAt - left.createdAt || left.displayName.localeCompare(right.displayName);
+  });
 }
 
 function basename(path: string): string {
