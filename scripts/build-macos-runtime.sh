@@ -101,6 +101,7 @@ required_resources=(
   "eidos_runtime/sandbox/mcp_connector.sbpl"
   "eidos_runtime/sandbox/mcp_workspace_read.sbpl"
   "eidos_runtime/extensions/mcp_launcher.py"
+  "eidos_runtime/workspace/apply_patch.lark"
   "eidos_runtime/resources/bin/ripgrep/manifest.json"
   "eidos_runtime/resources/bin/ripgrep/darwin-arm64/rg"
   "eidos_runtime/resources/skills/.system"
@@ -132,7 +133,7 @@ env -u EIDOS_PYTHON -u PYTHONHOME \
   PYTHONDONTWRITEBYTECODE=1 \
   PYTHONPATH="$APP_ROOT" \
   "$PYTHON_EXECUTABLE" -c \
-  'import anyio, eidos_runtime, httpx, mcp, openai, pydantic, pydantic_ai, pydantic_core, tree_sitter; print(eidos_runtime.__file__)'
+  'import anyio, eidos_runtime, httpx, lark, mcp, openai, pydantic, pydantic_ai, pydantic_core, tree_sitter; print(eidos_runtime.__file__)'
 
 node "$ROOT_DIR/scripts/bundled-runtime-smoke.mjs"
 

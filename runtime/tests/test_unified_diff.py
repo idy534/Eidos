@@ -4,11 +4,8 @@ import sys
 from pathlib import Path
 import unittest
 
-from pydantic import ValidationError
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eidos_runtime.tools.contracts import ApplyPatchInput  # noqa: E402
 from eidos_runtime.workspace.unified_diff import (  # noqa: E402
     PatchApplyError,
     apply_strict_single_file_patch,
@@ -362,11 +359,6 @@ class UnifiedDiffTests(unittest.TestCase):
             "--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-old\n+new\n"
             "unsupported trailing data\n",
         )
-
-    def test_apply_patch_input_retains_its_existing_size_bound(self) -> None:
-        with self.assertRaises(ValidationError):
-            ApplyPatchInput(patch="界" * 174_763)
-
 
 if __name__ == "__main__":
     unittest.main()

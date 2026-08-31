@@ -15,8 +15,10 @@ from pydantic import (
     ConfigDict,
     Field,
     RootModel,
+    StrictBool,
     StrictInt,
     StrictStr,
+    ValidationInfo,
     create_model,
     field_validator,
     model_validator,
@@ -191,18 +193,114 @@ class WriteFileInput(ReadFileInput):
         return _utf8_limit(value, 256 * 1024, "content_too_large")
 
 
-class ApplyPatchInput(StrictToolModel):
-    patch: StrictStr = Field(
-        description=(
-            "Workspace patch. Use Begin/End Patch with Add, Update, Delete, "
-            "or Move hunks and context-matched @@ chunks."
-        )
+MAX_APPLY_PATCH_PATH_BYTES = 512
+MAX_APPLY_PATCH_CONTENT_BYTES = 256 * 1024
+
+
+def _apply_patch_path(value: str) -> str:
+    """Validate syntax-safe patch paths before Workspace boundary checks.
+
+    This contract intentionally does not reject absolute or parent paths. The
+    Workspace layer owns those final boundary decisions after it has read the
+    current file identity and resolved the active root.
+    """
+    if not value or any(character in value for character in ("\x00", "\r", "\n")):
+        raise ValueError("invalid_patch_path")
+    return _utf8_limit(
+        value,
+        MAX_APPLY_PATCH_PATH_BYTES,
+        "patch_path_too_large",
     )
 
-    @field_validator("patch")
+
+def _apply_patch_line(value: str, field_name: str) -> str:
+    if any(character in value for character in ("\x00", "\r", "\n")):
+        raise ValueError(f"{field_name}_must_be_single_line")
+    return value
+
+
+class _ApplyPatchPathModel(StrictToolModel):
+    path: StrictStr
+
+    @field_validator("path")
     @classmethod
-    def validate_patch(cls, value: str) -> str:
-        return _utf8_limit(value, 512 * 1024, "patch_too_large")
+    def validate_path(cls, value: str) -> str:
+        return _apply_patch_path(value)
+
+
+class ApplyPatchAdd(_ApplyPatchPathModel):
+    type: Literal["add"]
+    content: StrictStr
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, value: str) -> str:
+        return _utf8_limit(
+            value,
+            MAX_APPLY_PATCH_CONTENT_BYTES,
+            "patch_content_too_large",
+        )
+
+
+class ApplyPatchDelete(_ApplyPatchPathModel):
+    type: Literal["delete"]
+
+
+class ApplyPatchUpdateChunk(StrictToolModel):
+    context: StrictStr | None = None
+    oldLines: tuple[StrictStr, ...] = ()
+    newLines: tuple[StrictStr, ...] = ()
+    endOfFile: StrictBool = False
+
+    @field_validator("context")
+    @classmethod
+    def validate_context(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _apply_patch_line(value, "context")
+
+    @field_validator("oldLines", "newLines")
+    @classmethod
+    def validate_lines(
+        cls, values: tuple[str, ...], info: ValidationInfo
+    ) -> tuple[str, ...]:
+        field_name = str(info.field_name)
+        return tuple(_apply_patch_line(value, field_name) for value in values)
+
+    @model_validator(mode="after")
+    def validate_changes(self) -> "ApplyPatchUpdateChunk":
+        if not self.oldLines and not self.newLines:
+            raise ValueError("empty_patch_update_chunk")
+        return self
+
+
+class ApplyPatchUpdate(_ApplyPatchPathModel):
+    type: Literal["update"]
+    moveTo: StrictStr | None = None
+    chunks: tuple[ApplyPatchUpdateChunk, ...] = ()
+
+    @field_validator("moveTo")
+    @classmethod
+    def validate_move_to(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _apply_patch_path(value)
+
+    @model_validator(mode="after")
+    def validate_update(self) -> "ApplyPatchUpdate":
+        if not self.chunks and self.moveTo is None:
+            raise ValueError("empty_patch_update")
+        return self
+
+
+ApplyPatchChange = Annotated[
+    ApplyPatchAdd | ApplyPatchDelete | ApplyPatchUpdate,
+    Field(discriminator="type"),
+]
+
+
+class ApplyPatchInput(StrictToolModel):
+    changes: tuple[ApplyPatchChange, ...] = Field(min_length=1)
 
 
 class DeleteFileInput(ReadFileInput):

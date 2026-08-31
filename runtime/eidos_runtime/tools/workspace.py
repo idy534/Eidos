@@ -16,6 +16,8 @@ from typing import Iterator, Literal
 import uuid
 import json
 
+from pydantic import ValidationError
+
 from eidos_runtime.protocol.schemas import ToolResultDto
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 from eidos_runtime.db.storage import WorkspaceIdentity
@@ -47,6 +49,7 @@ from eidos_runtime.workspace.codex_patch import (
     PatchError as CodexPatchError,
     UpdateFile,
     apply_update,
+    encode_patch,
     parse_patch,
 )
 from eidos_runtime.workspace.search_driver import (
@@ -187,7 +190,7 @@ _BUILTIN_CONTRACTS = (
     ("read_file", "Read one bounded UTF-8 file. Large files return head/tail content; use read_file_range to continue.", "none", False, 5, "parallel", ReadFileInput, ReadFileResultData, "read_file"),
     ("read_file_range", "Read an inclusive bounded line range from one UTF-8 file. Continue from nextLine when present.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
     ("search_text", "Search a workspace-relative path (default '.') for a single-line query; supports maxResults, regex, and includeGlobs. Results are workspace-relative, bounded, and may be truncated.", "none", False, 5, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
-    ("apply_patch", "Apply a workspace patch with Add, Update, Delete, and Move hunks. Paths, base hashes, and final contents are verified without approval.", "workspace", False, 5, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
+    ("apply_patch", "Apply structured Add, Update, Delete, and Move changes to workspace files. Paths, base hashes, and final contents are verified before commit.", "workspace", False, 5, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
     ("run_shell", "Run one shell command in the macOS workspace sandbox. Set timeoutSeconds for the command deadline; do not add an external timeout wrapper. For commands that need network access, such as installing dependencies or downloading sources, set networkAccess=request and provide justification. Eidos will request approval and keep macOS Seatbelt. Additional path access and unsandboxed execution also require approval. The legacy sandboxPermissions and additionalPermissions fields remain supported for compatibility. Do not assume GNU timeout, zsh glob behavior, or use tail/head as output boundaries; do not add pipefail unless the command requires it. Eidos bounds and verifies output and workspace changes without rewriting the command.", "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
 )
 TOOL_SPECS = tuple(ToolSpec.model_validate({
@@ -589,11 +592,11 @@ class ToolExecutor:
         arguments: dict[str, object],
         cancel: threading.Event,
     ) -> PreparedPatch | dict[str, object]:
-        """Parse a workspace patch and prepare each hunk against read evidence.
+        """Encode structured changes, then prepare each hunk against evidence.
 
-        The parser only understands the Codex patch language. This method keeps
-        path validation, read evidence, diff generation, and commit metadata in
-        the existing Workspace executor.
+        The encoder and parser own patch syntax. This method keeps path
+        validation, read evidence, diff generation, and commit metadata in the
+        existing Workspace executor.
         """
         try:
             self._verify_root()
@@ -601,9 +604,20 @@ class ToolExecutor:
             scanned_arguments = default_scanner().scan_json(arguments)
             if scanned_arguments != arguments:
                 raise SensitiveScanError("sensitive tool arguments")
-            patch_value = arguments.get("patch")
-            if not isinstance(patch_value, str):
-                return _error(tool_name, "invalid_arguments", "Invalid arguments")
+            try:
+                # ToolRegistry has already validated model JSON and normalized
+                # tuple fields to lists. ``strict=False`` only restores those
+                # JSON container shapes; StrictStr and literal fields remain
+                # strict, while this second validation keeps the Workspace
+                # boundary independent from its caller.
+                request = ApplyPatchInput.model_validate(arguments, strict=False)
+            except ValidationError:
+                return _error(
+                    tool_name,
+                    "TOOL_ARGUMENT_CONTRACT_VIOLATION",
+                    "Invalid structured apply_patch arguments",
+                )
+            patch_value = encode_patch(request)
             hunks = parse_patch(patch_value)
             if not hunks:
                 return _error(

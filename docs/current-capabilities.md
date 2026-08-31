@@ -147,8 +147,9 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Tool Registry 统一保存 ToolSpec、Schema、Execution Policy、Concurrency Policy、Projection Policy 和 provenance。
 - 内置只读 Tool 包括 `list_files`、`read_file`、`read_file_range` 和 `search_text`。
 - Workspace mutation Tool 只向模型暴露 `apply_patch`。`write_file` 和 `delete_file` 不在模型 Tool Registry 中。
-- `apply_patch` 使用 JSON Function 参数 `{ "patch": "*** Begin Patch\\n...\\n*** End Patch" }`，路径由 Patch DSL 表达。Tool 在当前 Workspace Permission 内直接执行，不逐次请求 Approval。
-- 文件工具在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。`apply_patch` 支持 Codex 风格的 Add、Update、Delete、Move、多文件、多 chunk、裸 `@@`、`@@ context` 和 `*** End of File`。Update 匹配按 Patch chunk 顺序向前查找。工具仍会复用版本复检、Workspace boundary、Seatbelt、原子替换和最终内容校验。
+- `apply_patch` 只向模型暴露结构化 JSON Function 参数 `{ "changes": [...] }`。每个 change 使用 `add`、`update` 或 `delete` 类型。`update` 可以继续使用 `moveTo` 和 `chunks`。模型提交 `{ "patch": "..." }` 或其他 raw Patch 字段会被拒绝。Tool 在当前 Workspace Permission 内直接执行，不逐次请求 Approval。
+- Runtime 的 `CodexPatchEncoder` 会把结构化 changes 确定性编码为 Codex Patch 文本。Runtime 自动生成 `*** Begin Patch`、`*** End Patch`、`+`、`-`、`@@` 和 `*** End of File`。Add 内容统一使用 LF 行尾语义。`apply_patch.lark` 以 `openai/codex` 的 grammar 为来源，Lark 负责语法解析。本地 grammar 将上游的 `add_line+` 改为 `add_line*`，因为 Codex Rust streaming parser 允许没有内容行的 Add File；显式的 `+` 仍表示一条空内容行。Lark 不能直接加载上游的零宽文本正则，所以本地 grammar 也对这些 token 做了兼容适配。Parser 可以接受 CRLF 和外层空白，但不会自动补齐 envelope、marker 或行前缀。
+- 文件工具在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。`apply_patch` 支持 Codex 风格的 Add、Update、Delete、Move、多文件、多 chunk、首个 Update 不带 `@@`、裸 `@@`、`@@ context` 和 `*** End of File`。Update 匹配按 Patch chunk 顺序向前查找。工具仍会复用版本复检、Workspace boundary、Seatbelt、原子替换和最终内容校验。
 - `workspace_dependencies` 返回 Eidos 自带并经过 owner、类型、可执行位和 SHA-256 校验的 Python 与 ripgrep。它也返回 Python import roots 和受支持包版本。当前 Runtime 随包提供 `python-docx`。模型不需要依赖用户全局 Python 或临时安装包。
 - 已应用的文件 Diff 会进入 ToolCall 持久事实，并在 Execution Feed 中展示。
 - macOS 原子替换会先用 fd-relative `fclonefileat` 保留普通文件的扩展属性（包括 `com.apple.provenance`），再写入候选内容并单独应用、验证 ACL。clonefile 不可用时会安全回退到受校验的 `fcopyfile` 路径。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
@@ -242,7 +243,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 ## Distribution
 
 - `pnpm build:runtime:mac` 可以构建 macOS arm64 的 self-contained Runtime Bundle。
-- Bundle 使用 managed CPython 3.12.13、锁定的 production dependencies、Runtime 资源和受管 Ripgrep。
+- Bundle 使用 managed CPython 3.12.13、锁定的 production dependencies、Runtime 资源、`eidos_runtime/workspace/apply_patch.lark` grammar 和受管 Ripgrep。Bundled smoke 会验证 Lark 从 Bundle 导入，并检查 grammar 文件存在。
 - Packaged Electron 使用 `Contents/Resources/runtime/`，不回退到系统 Python、PATH、`.venv` 或用户 `PYTHONHOME`。
 - `pnpm package:mac` 生成未签名的本地 arm64 DMG，并执行 packaged smoke。
 - `pnpm package:mac:release` 接入签名、hardened runtime、notarization、stapling 和 Gatekeeper 验证。Release 需要构建机提供 Apple credentials。

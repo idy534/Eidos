@@ -631,10 +631,11 @@ class Phase4ASideEffectContractTests(unittest.TestCase):
             "call-patch",
             "apply_patch",
             {
-                "patch": "*** Begin Patch\n"
-                "*** Add File: a.txt\n"
-                "+hello\n"
-                "*** End Patch"
+                "changes": [{
+                    "type": "add",
+                    "path": "a.txt",
+                    "content": "hello\n",
+                }]
             },
         )
         plan = self.dispatcher.plan(call)

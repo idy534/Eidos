@@ -260,12 +260,11 @@ class RuntimeLoopTests(unittest.TestCase):
                             "call-patch",
                             "apply_patch",
                             {
-                                "patch": (
-                                    "*** Begin Patch\n"
-                                    "*** Add File: notes.txt\n"
-                                    "+approved\n"
-                                    "*** End Patch"
-                                )
+                                "changes": [{
+                                    "type": "add",
+                                    "path": "notes.txt",
+                                    "content": "approved\n",
+                                }]
                             },
                         ),
                     )
@@ -320,14 +319,14 @@ class RuntimeLoopTests(unittest.TestCase):
                             "call-patch",
                             "apply_patch",
                             {
-                                "patch": (
-                                    "*** Begin Patch\n"
-                                    "*** Update File: hello.txt\n"
-                                    "@@\n"
-                                    "-hello from workspace\n"
-                                    "+changed\n"
-                                    "*** End Patch"
-                                )
+                                "changes": [{
+                                    "type": "update",
+                                    "path": "hello.txt",
+                                    "chunks": [{
+                                        "oldLines": ["hello from workspace"],
+                                        "newLines": ["changed"],
+                                    }],
+                                }]
                             },
                         ),
                     )
@@ -367,14 +366,14 @@ class RuntimeLoopTests(unittest.TestCase):
                             "call-patch",
                             "apply_patch",
                             {
-                                "patch": (
-                                    "*** Begin Patch\n"
-                                    "*** Update File: hello.txt\n"
-                                    "@@\n"
-                                    "-hello from workspace\n"
-                                    "+model change\n"
-                                    "*** End Patch"
-                                )
+                                "changes": [{
+                                    "type": "update",
+                                    "path": "hello.txt",
+                                    "chunks": [{
+                                        "oldLines": ["hello from workspace"],
+                                        "newLines": ["model change"],
+                                    }],
+                                }]
                             },
                         ),
                     )
@@ -410,14 +409,14 @@ class RuntimeLoopTests(unittest.TestCase):
                             "call-patch",
                             "apply_patch",
                             {
-                                "patch": (
-                                    "*** Begin Patch\n"
-                                    "*** Update File: hello.txt\n"
-                                    "@@\n"
-                                    "-hello from workspace\n"
-                                    "+blind\n"
-                                    "*** End Patch"
-                                )
+                                "changes": [{
+                                    "type": "update",
+                                    "path": "hello.txt",
+                                    "chunks": [{
+                                        "oldLines": ["hello from workspace"],
+                                        "newLines": ["blind"],
+                                    }],
+                                }]
                             },
                         ),
                     )
@@ -447,14 +446,14 @@ class RuntimeLoopTests(unittest.TestCase):
                             "call-patch",
                             "apply_patch",
                             {
-                                "patch": (
-                                    "*** Begin Patch\n"
-                                    "*** Update File: hello.txt\n"
-                                    "@@\n"
-                                    "-hello from workspace\n"
-                                    "+blind\n"
-                                    "*** End Patch"
-                                )
+                                "changes": [{
+                                    "type": "update",
+                                    "path": "hello.txt",
+                                    "chunks": [{
+                                        "oldLines": ["hello from workspace"],
+                                        "newLines": ["blind"],
+                                    }],
+                                }]
                             },
                         ),
                     )
@@ -475,12 +474,13 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual((self.workspace / "hello.txt").read_text(), "blind\n")
 
     def test_invalid_or_mismatched_patch_never_requests_approval(self) -> None:
-        patches = (
-            "*** Begin Patch\n*** Update File: hello.txt\n*** End Patch",
-            "*** Begin Patch\n*** Update File: hello.txt\n@@\n-other\n+new\n*** End Patch",
-        )
-        for index, patch_text in enumerate(patches):
-            with self.subTest(patch_text=patch_text):
+        changes = ({
+            "type": "update",
+            "path": "hello.txt",
+            "chunks": [{"oldLines": ["other"], "newLines": ["new"]}],
+        },)
+        for index, change in enumerate(changes):
+            with self.subTest(change=change):
                 run, _ = self.store.create_run(self.session["id"], "Invalid Patch")
                 model = ScriptedModel(
                     [
@@ -496,7 +496,7 @@ class RuntimeLoopTests(unittest.TestCase):
                                 ModelToolCall(
                                     f"call-patch-{index}",
                                     "apply_patch",
-                                    {"patch": patch_text},
+                                    {"changes": [change]},
                                 ),
                             )
                         ),
@@ -519,12 +519,87 @@ class RuntimeLoopTests(unittest.TestCase):
                     item for item in snapshot["items"] if item["kind"] == "file_change"
                 ][-1]
                 result = json.loads(file_item["toolCall"]["resultJson"])
-                expected = "patch_format_error" if index == 0 else "patch_context_mismatch"
-                self.assertEqual(result["code"], expected)
+                self.assertEqual(result["code"], "patch_context_mismatch")
                 self.assertEqual(
                     (self.workspace / "hello.txt").read_text(),
                     "hello from workspace\n",
                 )
+
+    def test_invalid_apply_patch_arguments_stop_before_approval_or_side_effects(self) -> None:
+        cases = (
+            (
+                "legacy_patch_field",
+                {"patch": "*** Begin Patch\n*** End Patch\n"},
+            ),
+            (
+                "empty_structured_update",
+                {
+                    "changes": [{
+                        "type": "update",
+                        "path": "hello.txt",
+                        "chunks": [{"oldLines": [], "newLines": []}],
+                    }],
+                },
+            ),
+        )
+        for case_name, arguments in cases:
+            with self.subTest(case=case_name):
+                run, _ = self.store.create_run(self.session["id"], "Reject invalid patch")
+                model = ScriptedModel([
+                    ModelResponse(
+                        tool_calls=(
+                            ModelToolCall(
+                                f"invalid-{case_name}",
+                                "apply_patch",
+                                arguments,
+                            ),
+                        ),
+                    ),
+                    ModelResponse(text="Recovered after invalid patch input."),
+                ])
+                approvals: list[object] = []
+
+                RuntimeLoop(
+                    self.store,
+                    model,
+                    lambda _message: None,
+                    lambda request, _cancel: approvals.append(request)
+                    or ApprovalDecision("approve"),
+                ).run(run["id"], threading.Event())
+
+                self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+                self.assertEqual(approvals, [])
+                self.assertEqual(
+                    (self.workspace / "hello.txt").read_text(),
+                    "hello from workspace\n",
+                )
+                snapshot = self.store.read_session_snapshot(self.session["id"])
+                run_items = [item for item in snapshot["items"] if item["runId"] == run["id"]]
+                self.assertEqual(
+                    [item["kind"] for item in run_items],
+                    ["user_message", "assistant_message"],
+                )
+                self.assertEqual(
+                    self.store.connection.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM tool_calls
+                        JOIN items ON items.id = tool_calls.item_id
+                        WHERE items.run_id = ?
+                        """,
+                        (run["id"],),
+                    ).fetchone()[0],
+                    0,
+                )
+                self.assertEqual(
+                    self.store.connection.execute(
+                        "SELECT COUNT(*) FROM approvals WHERE run_id = ?",
+                        (run["id"],),
+                    ).fetchone()[0],
+                    0,
+                )
+                attempts = self.store.read_model_attempts(run["id"])
+                self.assertEqual(attempts[0]["errorCode"], "TOOL_ARGUMENT_CONTRACT_VIOLATION")
 
     def test_default_shell_runs_in_sandbox_without_approval(self) -> None:
         if not is_seatbelt_ready():
@@ -1429,17 +1504,16 @@ class ToolExecutorTests(unittest.TestCase):
             executor.close()
 
     def test_codex_patch_prepares_and_commits_expected_content(self) -> None:
-        patch = (
-            "*** Begin Patch\n"
-            "*** Update File: src/app.py\n"
-            "@@\n"
-            "-print('needle')\n"
-            "+print('updated')\n"
-            "*** End Patch"
-        )
         prepared = self.executor.prepare_file_change(
             "apply_patch",
-            {"patch": patch},
+            {"changes": [{
+                "type": "update",
+                "path": "src/app.py",
+                "chunks": [{
+                    "oldLines": ["print('needle')"],
+                    "newLines": ["print('updated')"],
+                }],
+            }]},
             threading.Event(),
         )
         self.assertFalse(isinstance(prepared, dict), prepared)
@@ -1457,17 +1531,16 @@ class ToolExecutorTests(unittest.TestCase):
     def test_codex_patch_with_bare_context_prepares_and_commits_expected_content(
         self,
     ) -> None:
-        patch = (
-            "*** Begin Patch\n"
-            "*** Update File: src/app.py\n"
-            "@@\n"
-            "-print('needle')\n"
-            "+print('updated')\n"
-            "*** End Patch"
-        )
         prepared = self.executor.prepare_file_change(
             "apply_patch",
-            {"patch": patch},
+            {"changes": [{
+                "type": "update",
+                "path": "src/app.py",
+                "chunks": [{
+                    "oldLines": ["print('needle')"],
+                    "newLines": ["print('updated')"],
+                }],
+            }]},
             threading.Event(),
         )
         self.assertFalse(isinstance(prepared, dict), prepared)

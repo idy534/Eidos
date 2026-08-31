@@ -9,6 +9,14 @@ workspace mutation layer.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, NoReturn
+
+from lark import Lark, Token, Tree
+from lark.exceptions import LarkError, UnexpectedInput
+
+if TYPE_CHECKING:
+    from eidos_runtime.tools.contracts import ApplyPatchInput
 
 BEGIN_PATCH = "*** Begin Patch"
 END_PATCH = "*** End Patch"
@@ -17,6 +25,14 @@ UPDATE_FILE = "*** Update File:"
 DELETE_FILE = "*** Delete File:"
 MOVE_TO = "*** Move to:"
 END_OF_FILE = "*** End of File"
+MAX_PATCH_BYTES = 512 * 1024
+
+_PATCH_PARSER = Lark.open(
+    str(Path(__file__).with_name("apply_patch.lark")),
+    parser="lalr",
+    maybe_placeholders=False,
+    propagate_positions=True,
+)
 
 
 @dataclass
@@ -96,68 +112,466 @@ class UpdateFile:
 def parse_patch(text: str) -> list[AddFile | UpdateFile | DeleteFile]:
     """Parse a complete Codex patch into ordered file actions.
 
-    The parser accepts the structured Begin/End Patch format and keeps each
-    update chunk in source order. An update must contain explicit @@ or
-    @@ context headers, so malformed model output remains actionable.
+    The Lark grammar is the syntax authority. This function only normalizes
+    transport line endings, maps syntax failures to the product error type,
+    and converts the parse tree into the existing domain actions.
     """
 
-    lines = text.splitlines()
-    if not lines:
-        _format_error(
-            "Patch is empty; the first line must be '*** Begin Patch'",
-            1,
+    normalized = _normalize_patch_text(text)
+    _reject_control_characters(normalized)
+    try:
+        tree = _PATCH_PARSER.parse(normalized)
+    except UnexpectedInput as error:
+        _raise_lark_format_error(normalized, error)
+    except LarkError:
+        # Keep parser implementation details, including grammar internals and
+        # stack traces, out of the stable ToolResult surface.
+        _format_error("Patch format error", _line_count(normalized))
+    return _actions_from_tree(tree)
+
+
+def encode_patch(request: "ApplyPatchInput") -> str:
+    """Encode structured ApplyPatch input into canonical Codex patch text.
+
+    This encoder has no filesystem or matching responsibilities. It only
+    writes the syntax that :func:`parse_patch` consumes, using LF regardless of
+    the input content's line ending style.
+    """
+
+    changes = getattr(request, "changes", None)
+    if not changes:
+        raise PatchError(
+            "patch_format_error",
+            "Patch must contain at least one file change",
         )
 
-    for number, line in enumerate(lines, start=1):
-        if any(ord(character) < 32 and character not in {"\t"} for character in line):
+    lines = [BEGIN_PATCH]
+    for change in changes:
+        kind = getattr(change, "type", None)
+        path = _encoder_path(change, "path")
+        if kind == "add":
+            content = _encoder_text(change, "content")
+            lines.append(f"{ADD_FILE} {path}")
+            normalized_content = _normalize_line_endings(content)
+            content_lines = normalized_content.split("\n")
+            if content_lines[-1] == "":
+                content_lines.pop()
+            lines.extend(f"+{line}" for line in content_lines)
+            continue
+
+        if kind == "delete":
+            lines.append(f"{DELETE_FILE} {path}")
+            continue
+
+        if kind == "update":
+            move_to = getattr(change, "moveTo", None)
+            if move_to is not None:
+                move_to = _validate_encoder_line(move_to, "moveTo")
+                if not move_to:
+                    raise PatchError(
+                        "patch_format_error",
+                        "Update moveTo must be a non-empty path",
+                        target_path=path,
+                    )
+            chunks = tuple(getattr(change, "chunks", ()))
+            if not chunks and move_to is None:
+                raise PatchError(
+                    "patch_format_error",
+                    "Update change must contain chunks or moveTo",
+                    target_path=path,
+                )
+            lines.append(f"{UPDATE_FILE} {path}")
+            if move_to is not None:
+                lines.append(f"{MOVE_TO} {move_to}")
+            for index, chunk in enumerate(chunks):
+                context = getattr(chunk, "context", None)
+                if context is None or context == "":
+                    lines.append("@@")
+                else:
+                    lines.append(f"@@ {_validate_encoder_line(context, 'context')}")
+                old_lines = tuple(getattr(chunk, "oldLines", ()))
+                new_lines = tuple(getattr(chunk, "newLines", ()))
+                if not old_lines and not new_lines:
+                    raise PatchError(
+                        "patch_format_error",
+                        "Update chunk must contain oldLines or newLines",
+                        target_path=path,
+                    )
+                lines.extend(
+                    f"-{_validate_encoder_line(line, 'oldLines')}"
+                    for line in old_lines
+                )
+                lines.extend(
+                    f"+{_validate_encoder_line(line, 'newLines')}"
+                    for line in new_lines
+                )
+                if getattr(chunk, "endOfFile", False):
+                    if index != len(chunks) - 1:
+                        raise PatchError(
+                            "patch_format_error",
+                            "'*** End of File' must be on the final update chunk",
+                            target_path=path,
+                        )
+                    lines.append(END_OF_FILE)
+            continue
+
+        raise PatchError(
+            "patch_format_error",
+            "Unsupported ApplyPatch change type",
+            target_path=path,
+        )
+
+    lines.append(END_PATCH)
+    patch = "\n".join(lines)
+    if len(patch.encode("utf-8")) > MAX_PATCH_BYTES:
+        raise PatchError("patch_too_large", "Patch exceeds the 512 KiB limit")
+    return patch
+
+
+def _normalize_patch_text(text: str) -> str:
+    if not isinstance(text, str):
+        raise PatchError("patch_format_error", "Patch must be text")
+    normalized = _normalize_line_endings(text)
+    lines = normalized.split("\n")
+    # Codex trims the transport wrapper before parsing. Remove only blank
+    # wrapper lines here. A global ``strip`` would remove the leading space
+    # from a valid update context line such as `` *** End Patch``.
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    # Only the two boundary markers are wrapper syntax without payload. Keep
+    # all internal lines byte-for-byte after newline normalization so a path
+    # such as ``a `` is not silently changed to ``a``.
+    if lines and lines[0].strip() == BEGIN_PATCH:
+        lines[0] = BEGIN_PATCH
+    if lines and lines[-1].strip() == END_PATCH:
+        lines[-1] = END_PATCH
+    return "\n".join(lines)
+
+
+def _normalize_line_endings(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _reject_control_characters(text: str) -> None:
+    for line_number, line in enumerate(text.split("\n"), start=1):
+        if any(ord(character) < 32 and character != "\t" for character in line):
             _format_error(
                 "Patch contains an unsupported control character",
-                number,
+                line_number,
             )
 
-    if lines[0].strip() != BEGIN_PATCH:
+
+def _actions_from_tree(
+    tree: Tree,
+) -> list[AddFile | UpdateFile | DeleteFile]:
+    actions: list[AddFile | UpdateFile | DeleteFile] = []
+    for hunk in (
+        child
+        for child in tree.children
+        if isinstance(child, Tree) and child.data == "hunk"
+    ):
+        if not hunk.children or not isinstance(hunk.children[0], Tree):
+            _format_error("Patch contains an invalid file hunk", _node_line(hunk))
+        action_node = hunk.children[0]
+        if action_node.data == "add_hunk":
+            actions.append(_add_action_from_tree(action_node))
+        elif action_node.data == "delete_hunk":
+            actions.append(_delete_action_from_tree(action_node))
+        elif action_node.data == "update_hunk":
+            actions.append(_update_action_from_tree(action_node))
+        else:
+            _format_error("Patch contains an invalid file hunk", _node_line(hunk))
+    if not actions:
+        _format_error(
+            "Patch must contain at least one file hunk",
+            _line_count_from_tree(tree),
+        )
+    return actions
+
+
+def _add_action_from_tree(node: Tree) -> AddFile:
+    path = _tree_filename(node)
+    content = "".join(
+        f"{_tree_token(line, 'ADD_TEXT', default='')}\n"
+        for line in node.children
+        if isinstance(line, Tree) and line.data == "line"
+    )
+    return AddFile(path=path, content=content)
+
+
+def _delete_action_from_tree(node: Tree) -> DeleteFile:
+    return DeleteFile(path=_tree_filename(node))
+
+
+def _update_action_from_tree(node: Tree) -> UpdateFile:
+    path = _tree_filename(node)
+    move_node = next(
+        (
+            child
+            for child in node.children
+            if isinstance(child, Tree) and child.data == "change_move"
+        ),
+        None,
+    )
+    move_to = _tree_filename(move_node) if move_node is not None else None
+    change_node = next(
+        (
+            child
+            for child in node.children
+            if isinstance(child, Tree) and child.data == "change"
+        ),
+        None,
+    )
+    chunks = _chunks_from_tree(change_node, path) if change_node is not None else ()
+    if not chunks and move_to is None:
+        _format_error(
+            f"Update File hunk for path '{path}' is empty; provide an @@ change hunk",
+            _node_line(node) + 1,
+            path,
+        )
+    return UpdateFile(
+        path=path,
+        chunks=chunks,
+        move_to=move_to,
+        line_number=_node_line(node) + 1,
+    )
+
+
+def _chunks_from_tree(node: Tree, path: str) -> tuple[UpdateFileChunk, ...]:
+    chunks: list[UpdateFileChunk] = []
+    context: str | None = None
+    old_lines: list[str] = []
+    new_lines: list[str] = []
+    line_number: int | None = None
+    is_end_of_file = False
+
+    def finish_chunk() -> None:
+        nonlocal context, old_lines, new_lines, line_number, is_end_of_file
+        if line_number is None:
+            return
+        if not old_lines and not new_lines:
+            _format_error(
+                "Update hunk does not contain any change lines",
+                line_number,
+                path,
+            )
+        chunks.append(
+            UpdateFileChunk(
+                context=context,
+                old_lines=tuple(old_lines),
+                new_lines=tuple(new_lines),
+                is_end_of_file=is_end_of_file,
+                line_number=line_number,
+            )
+        )
+        context = None
+        old_lines = []
+        new_lines = []
+        line_number = None
+        is_end_of_file = False
+
+    for child in node.children:
+        if not isinstance(child, Tree):
+            continue
+        if child.data == "bare_context" or child.data == "context":
+            finish_chunk()
+            context = None if child.data == "bare_context" else _tree_token(child, "CONTEXT")
+            line_number = _node_line(child)
+            continue
+        if child.data == "changed_line":
+            if line_number is None:
+                line_number = _node_line(child)
+            prefix = _tree_token(child, "CHANGE_PREFIX")
+            value = _tree_token(child, "CHANGE_TEXT", default="")
+            if prefix == "+":
+                new_lines.append(value)
+            elif prefix == "-":
+                old_lines.append(value)
+            else:
+                old_lines.append(value)
+                new_lines.append(value)
+            continue
+        if child.data == "eof_line":
+            if line_number is None or (not old_lines and not new_lines):
+                _format_error(
+                    "'*** End of File' must follow an @@ hunk with change lines",
+                    _node_line(child),
+                    path,
+                )
+            if is_end_of_file:
+                _format_error(
+                    "An update hunk cannot contain more than one '*** End of File' marker",
+                    _node_line(child),
+                    path,
+                )
+            is_end_of_file = True
+            continue
+    finish_chunk()
+    return tuple(chunks)
+
+
+def _tree_filename(node: Tree | None) -> str:
+    if node is None:
+        _format_error("Patch file hunk is missing a path", 1)
+    filename = next(
+        (
+            child
+            for child in node.children
+            if isinstance(child, Tree) and child.data == "filename"
+        ),
+        None,
+    )
+    if filename is None:
+        _format_error("Patch file hunk is missing a path", _node_line(node))
+    return _tree_token(filename, "FILENAME")
+
+
+def _tree_token(node: Tree, token_type: str, *, default: str | None = None) -> str:
+    value = next(
+        (
+            str(child)
+            for child in node.children
+            if isinstance(child, Token) and child.type == token_type
+        ),
+        default,
+    )
+    if value is None:
+        if default is not None:
+            return default
+        _format_error("Patch parse tree is missing a required value", _node_line(node))
+    return value
+
+
+def _node_line(node: Tree) -> int:
+    return int(getattr(node.meta, "line", 1) or 1)
+
+
+def _line_count(tree: str) -> int:
+    return max(1, tree.count("\n") + 1)
+
+
+def _line_count_from_tree(tree: Tree) -> int:
+    return _node_line(tree)
+
+
+def _raise_lark_format_error(text: str, error: UnexpectedInput) -> NoReturn:
+    lines = text.split("\n")
+    line_number = int(getattr(error, "line", None) or len(lines) or 1)
+    first_line = lines[0].strip() if lines else ""
+    if first_line != BEGIN_PATCH:
         _format_error(
             "The first line of the patch must be '*** Begin Patch'",
             1,
         )
 
-    actions: list[AddFile | UpdateFile | DeleteFile] = []
-    index = 1
-    while index < len(lines):
-        stripped = lines[index].strip()
-        if stripped == END_PATCH:
-            for trailing_index in range(index + 1, len(lines)):
-                if lines[trailing_index].strip():
-                    _format_error(
-                        "Unexpected content after '*** End Patch'",
-                        trailing_index + 1,
-                    )
-            return actions
-
-        if _has_marker(stripped, ADD_FILE):
-            action, index = _parse_add_file(lines, index)
-            actions.append(action)
-            continue
-        if _has_marker(stripped, UPDATE_FILE):
-            action, index = _parse_update_file(lines, index)
-            actions.append(action)
-            continue
-        if _has_marker(stripped, DELETE_FILE):
-            action, index = _parse_delete_file(lines, index)
-            actions.append(action)
-            continue
-
+    token = getattr(error, "token", None)
+    if getattr(token, "type", None) == "$END":
         _format_error(
-            "Expected a file hunk header ('*** Add File: path', "
-            "'*** Update File: path', or '*** Delete File: path') "
-            "or '*** End Patch'",
-            index + 1,
+            "The last line of the patch must be '*** End Patch'",
+            line_number,
         )
 
-    _format_error(
-        "The last line of the patch must be '*** End Patch'",
-        len(lines) + 1,
+    end_line = next(
+        (
+            index
+            for index, line in enumerate(lines, start=1)
+            if line.strip() == END_PATCH
+        ),
+        None,
     )
+    if end_line is not None and line_number > end_line:
+        _format_error(
+            "Unexpected content after '*** End Patch'",
+            line_number,
+        )
+
+    if (
+        end_line is not None
+        and line_number == end_line
+        and not any(
+            line.strip().startswith(marker)
+            for line in lines[1 : end_line - 1]
+            for marker in (ADD_FILE, UPDATE_FILE, DELETE_FILE)
+        )
+    ):
+        _format_error("Patch must contain at least one file hunk", end_line)
+
+    target_path, marker = _target_before_line(lines, line_number)
+    if marker == ADD_FILE:
+        message = (
+            "Add File content must start with '+'; the next file hunk or "
+            "End Patch may follow after the content"
+        )
+    elif marker == UPDATE_FILE:
+        current_line = (
+            lines[line_number - 1].strip() if line_number <= len(lines) else ""
+        )
+        if current_line.startswith(MOVE_TO):
+            message = "Move to must appear immediately after Update File and only once"
+        elif current_line == END_OF_FILE:
+            if any(line.strip() == END_OF_FILE for line in lines[: line_number - 1]):
+                message = (
+                    "An update hunk cannot contain more than one "
+                    "'*** End of File' marker"
+                )
+            else:
+                message = "'*** End of File' must follow an @@ hunk with change lines"
+        else:
+            message = (
+                "Invalid update hunk line; every change line must start with ' ', '+' or '-'"
+            )
+    elif marker == DELETE_FILE:
+        message = "Delete File must not contain content"
+    else:
+        message = (
+            "Expected a file hunk header ('*** Add File: path', "
+            "'*** Update File: path', or '*** Delete File: path') "
+            "or '*** End Patch'"
+        )
+    _format_error(message, line_number, target_path)
+
+
+def _target_before_line(
+    lines: list[str], line_number: int
+) -> tuple[str | None, str | None]:
+    for line in reversed(lines[: max(0, line_number - 1)]):
+        stripped = line.strip()
+        for marker in (ADD_FILE, UPDATE_FILE, DELETE_FILE):
+            if stripped.startswith(marker):
+                path = stripped[len(marker) :].strip()
+                return (path or None), marker
+    return None, None
+
+
+def _encoder_path(change: object, field_name: str) -> str:
+    value = getattr(change, field_name, None)
+    if not isinstance(value, str):
+        raise PatchError("patch_format_error", f"{field_name} must be text")
+    value = _validate_encoder_line(value, field_name)
+    if not value:
+        raise PatchError("patch_format_error", f"{field_name} must be non-empty")
+    return value
+
+
+def _encoder_text(change: object, field_name: str) -> str:
+    value = getattr(change, field_name, None)
+    if not isinstance(value, str):
+        raise PatchError("patch_format_error", f"{field_name} must be text")
+    return value
+
+
+def _validate_encoder_line(value: object, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise PatchError("patch_format_error", f"{field_name} must be text")
+    if any(character in value for character in {"\x00", "\n", "\r"}):
+        raise PatchError(
+            "patch_format_error",
+            f"{field_name} must contain a single line",
+        )
+    return value
 
 
 def apply_update(original: str, action: UpdateFile) -> str:
@@ -230,191 +644,6 @@ def apply_update(original: str, action: UpdateFile) -> str:
     return newline.join(updated_lines) + (newline if had_final_newline else "")
 
 
-def _parse_add_file(lines: list[str], header_index: int) -> tuple[AddFile, int]:
-    header = lines[header_index].strip()
-    path = _path_from_marker(header, ADD_FILE, header_index + 1)
-    contents: list[str] = []
-    index = header_index + 1
-
-    while index < len(lines):
-        line = lines[index]
-        stripped = line.strip()
-        if _is_hunk_boundary(stripped):
-            break
-        if not line.startswith("+"):
-            _format_error(
-                "Add File content must start with '+'; "
-                "the next file hunk or End Patch may follow after the content",
-                index + 1,
-                path,
-            )
-        contents.append(line[1:])
-        index += 1
-
-    if not contents:
-        _format_error(
-            f"Add File hunk for path '{path}' is empty; provide at least one '+...' line",
-            header_index + 1,
-            path,
-        )
-    return AddFile(path=path, content="\n".join(contents) + "\n"), index
-
-
-def _parse_delete_file(lines: list[str], header_index: int) -> tuple[DeleteFile, int]:
-    header = lines[header_index].strip()
-    path = _path_from_marker(header, DELETE_FILE, header_index + 1)
-    index = header_index + 1
-    if index < len(lines) and not _is_hunk_boundary(lines[index].strip()):
-        _format_error(
-            "Delete File must not contain content; the next file hunk or End Patch "
-            "must follow",
-            index + 1,
-            path,
-        )
-    return DeleteFile(path=path), index
-
-
-def _parse_update_file(lines: list[str], header_index: int) -> tuple[UpdateFile, int]:
-    header = lines[header_index].strip()
-    path = _path_from_marker(header, UPDATE_FILE, header_index + 1)
-    action_line = header_index + 1
-    index = action_line
-    move_to: str | None = None
-    if index < len(lines) and _has_marker(lines[index].strip(), MOVE_TO):
-        move_to = _path_from_marker(lines[index].strip(), MOVE_TO, index + 1)
-        index += 1
-
-    chunks: list[UpdateFileChunk] = []
-    current_context: str | None = None
-    current_old: list[str] = []
-    current_new: list[str] = []
-    current_line: int | None = None
-    current_eof = False
-
-    def finish_chunk() -> None:
-        nonlocal current_context, current_old, current_new, current_line, current_eof
-        if current_line is None:
-            return
-        if not current_old and not current_new:
-            _format_error(
-                "Update hunk does not contain any change lines",
-                current_line,
-                path,
-            )
-        chunks.append(
-            UpdateFileChunk(
-                context=current_context,
-                old_lines=tuple(current_old),
-                new_lines=tuple(current_new),
-                is_end_of_file=current_eof,
-                line_number=current_line,
-            )
-        )
-        current_context = None
-        current_old = []
-        current_new = []
-        current_line = None
-        current_eof = False
-
-    while index < len(lines):
-        line = lines[index]
-        stripped = line.strip()
-
-        if stripped == END_PATCH or _is_file_hunk_header(stripped):
-            finish_chunk()
-            if not chunks and move_to is None:
-                _format_error(
-                    f"Update File hunk for path '{path}' is empty; "
-                    "provide an @@ change hunk",
-                    action_line,
-                    path,
-                )
-            return (
-                UpdateFile(
-                    path=path,
-                    chunks=tuple(chunks),
-                    move_to=move_to,
-                    line_number=action_line,
-                ),
-                index,
-            )
-
-        if _has_marker(stripped, MOVE_TO):
-            _format_error(
-                "Move to must appear immediately after Update File and only once",
-                index + 1,
-                path,
-            )
-
-        if stripped == END_OF_FILE:
-            if current_line is None:
-                _format_error(
-                    "'*** End of File' must follow an @@ hunk with change lines",
-                    index + 1,
-                    path,
-                )
-            if current_eof:
-                _format_error(
-                    "An update hunk cannot contain more than one '*** End of File' marker",
-                    index + 1,
-                    path,
-                )
-            current_eof = True
-            index += 1
-            continue
-
-        context = _context_from_header(stripped)
-        if context is not None or stripped == "@@":
-            finish_chunk()
-            current_context = context
-            current_line = index + 1
-            index += 1
-            continue
-
-        if current_eof and not line:
-            # Codex tolerates an empty separator after End of File.
-            index += 1
-            continue
-
-        if current_line is None:
-            _format_error(
-                "Update hunk lines must start with an '@@' or '@@ context' header",
-                index + 1,
-                path,
-            )
-        if line == "":
-            current_old.append("")
-            current_new.append("")
-        elif line.startswith(" "):
-            value = line[1:]
-            current_old.append(value)
-            current_new.append(value)
-        elif line.startswith("+"):
-            current_new.append(line[1:])
-        elif line.startswith("-"):
-            current_old.append(line[1:])
-        else:
-            _format_error(
-                "Invalid update hunk line; every change line must start with ' ', '+' or '-'",
-                index + 1,
-                path,
-            )
-        index += 1
-
-    finish_chunk()
-    if not chunks and move_to is None:
-        _format_error(
-            f"Update File hunk for path '{path}' is empty; provide an @@ change hunk",
-            action_line,
-            path,
-        )
-    _format_error(
-        "The last line of the patch must be '*** End Patch'",
-        len(lines) + 1,
-        path,
-    )
-
-
 def _split_content_lines(content: str) -> tuple[list[str], str, bool]:
     pieces = content.splitlines(keepends=True)
     if not pieces:
@@ -469,57 +698,17 @@ def _find_line_sequence(
     return None
 
 
-def _has_marker(line: str, marker: str) -> bool:
-    return (
-        line == marker
-        or line.startswith(marker + " ")
-        or line.startswith(marker + "\t")
-    )
-
-
-def _path_from_marker(line: str, marker: str, line_number: int) -> str:
-    if not _has_marker(line, marker):
-        _format_error(f"Expected '{marker} path'", line_number)
-    path = line[len(marker) :].strip()
-    if not path:
-        _format_error(f"'{marker} path' must include a non-empty path", line_number)
-    if any(character in path for character in {"\x00", "\n", "\r"}):
-        _format_error(
-            "Patch paths cannot contain control characters", line_number, path
-        )
-    return path
-
-
-def _context_from_header(line: str) -> str | None:
-    if line.startswith("@@ "):
-        context = line[3:]
-        if not context:
-            return None
-        return context
-    return None
-
-
-def _is_file_hunk_header(line: str) -> bool:
-    return any(
-        _has_marker(line, marker) for marker in (ADD_FILE, UPDATE_FILE, DELETE_FILE)
-    )
-
-
-def _is_hunk_boundary(line: str) -> bool:
-    return line == END_PATCH or _is_file_hunk_header(line)
-
-
 def _format_error(
     message: str,
     line_number: int,
     target_path: str | None = None,
-) -> None:
+) -> NoReturn:
     raise PatchError(
         "patch_format_error",
         message,
         line_number=line_number,
         target_path=target_path,
-    )
+    ) from None
 
 
 __all__ = [
@@ -529,5 +718,6 @@ __all__ = [
     "UpdateFile",
     "UpdateFileChunk",
     "apply_update",
+    "encode_patch",
     "parse_patch",
 ]

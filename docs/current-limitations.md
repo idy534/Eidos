@@ -26,7 +26,11 @@
 
 ## Workspace 与工具
 
-- 内置文件工具只处理当前 Workspace 内受支持的普通 UTF-8 文件。工具会通过 macOS clonefile 路径保留 mode、扩展属性（包括 `com.apple.provenance`）和 ACL；不支持 clonefile 的文件系统会使用受校验的安全回退。工具不处理 hardlink、symlink、特殊文件、特殊 mode 或文件 flags。`apply_patch` 已支持 Codex 风格的 Add、Update、Delete、Move 和多文件 Patch，但仍不提供通用二进制编辑、浏览器自动化或 Artifact 发布工具。
+- 内置文件工具只处理当前 Workspace 内受支持的普通 UTF-8 文件。工具会通过 macOS clonefile 路径保留 mode、扩展属性（包括 `com.apple.provenance`）和 ACL；不支持 clonefile 的文件系统会使用受校验的安全回退。工具不处理 hardlink、symlink、特殊文件、特殊 mode 或文件 flags。
+- `apply_patch` 只接受结构化 `{ "changes": [...] }` 输入。Runtime 使用 `CodexPatchEncoder` 生成 canonical Codex Patch，再由 Lark grammar 解析。模型提交旧的 raw `{ "patch": "..." }` 输入不会兼容。
+- Add 内容会统一规范化为 LF，并按 Codex 行语义补尾部 LF。Add File 可以没有内容行；显式的 `+` 表示一条空内容行。因此空字符串、单个换行和两个换行会保持不同的解析结果。Parser 接受 CRLF 和外层空白，但不会猜测缺失的 envelope、marker 或行前缀。
+- 本地 grammar 将上游 `add_line+` 改为 `add_line*`，以对齐 Codex Rust streaming parser 的空 Add 行为。Lark 对上游零宽文本正则的写法也使用了兼容 token。其他 Workspace 边界和文件安全限制不变。
+- `apply_patch` 支持 Add、Update、Delete、Move 和多文件 Patch，但不提供通用二进制编辑、浏览器自动化或 Artifact 发布工具。
 - `workspace_dependencies` 只公开 Eidos 明确随包提供的可执行文件和 Python 包。当前集合不是通用包管理器。Tool 不安装依赖，也不会使用用户全局 Python。未列出的库仍然不可假设存在。
 - Desktop Terminal 是用户直接操作的临时 PTY。它不属于 Agent Tool，不经过 Runtime Approval 或 Seatbelt，也不会写入 SQLite、Checkpoint、Conversation 或恢复状态。关闭 Terminal Tab、切换 Session execution binding、删除 Session、关闭窗口或退出应用都会终止对应 PTY。Review 和 Files 各只打开一个工具 Tab；Terminal 可以打开多个 Tab，Files 可以同时预览多个文件。
 - Projectless Conversation 不创建 Project，也不提供 Workspace Explorer、Git status、Git diff 或 Repository Intelligence。它使用系统私有锚点作为 workspace，并提供文件工具、Shell、Skill、MCP 和 Plugin 资源。Desktop 不显示 Files 和文件树。它只支持 Local execution。

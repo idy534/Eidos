@@ -1720,12 +1720,11 @@ def _model_from_environment() -> ModelClient | None:
                             "fake-write-1",
                             "apply_patch",
                             {
-                                "patch": (
-                                    "*** Begin Patch\n"
-                                    "*** Add File: approved.txt\n"
-                                    "+approved\n"
-                                    "*** End Patch"
-                                )
+                                "changes": [{
+                                    "type": "add",
+                                    "path": "approved.txt",
+                                    "content": "approved\n",
+                                }]
                             },
                         ),
                     )

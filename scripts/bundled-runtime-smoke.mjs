@@ -80,7 +80,10 @@ import threading
 import time
 
 import eidos_runtime
+import lark
+from eidos_runtime.tools.contracts import ApplyPatchInput
 from eidos_runtime.workspace.discovery_scope import WorkspaceDiscoveryScope
+from eidos_runtime.workspace.codex_patch import encode_patch, parse_patch
 from eidos_runtime.workspace.search_driver import (
     RipgrepBinaryResolver,
     RipgrepSearchDriver,
@@ -91,8 +94,9 @@ python_root = Path(sys.argv[1]).resolve()
 app_root = Path(sys.argv[2]).resolve()
 assert Path(sys.executable).resolve().is_relative_to(python_root)
 assert Path(eidos_runtime.__file__).resolve().is_relative_to(app_root)
-for module in ("anyio", "httpx", "mcp", "openai", "pydantic", "pydantic_ai", "pydantic_core", "tree_sitter"):
+for module in ("anyio", "httpx", "lark", "mcp", "openai", "pydantic", "pydantic_ai", "pydantic_core", "tree_sitter"):
     __import__(module)
+assert Path(lark.__file__).resolve().is_relative_to(app_root), lark.__file__
 
 required = (
     "eidos_runtime/__main__.py",
@@ -100,11 +104,61 @@ required = (
     "eidos_runtime/sandbox/file_commit_helper.py",
     "eidos_runtime/sandbox/sensitive_rules.json",
     "eidos_runtime/extensions/mcp_launcher.py",
+    "eidos_runtime/workspace/apply_patch.lark",
     "eidos_runtime/resources/bin/ripgrep/manifest.json",
     "eidos_runtime/resources/bin/ripgrep/darwin-arm64/rg",
 )
 for relative in required:
     assert (app_root / relative).is_file(), relative
+
+def encode_and_parse_add(path, content):
+    request = ApplyPatchInput.model_validate({
+        "changes": ({
+            "type": "add",
+            "path": path,
+            "content": content,
+        },),
+    })
+    canonical = encode_patch(request)
+    parsed = parse_patch(canonical)
+    assert len(parsed) == 1
+    assert parsed[0].path == path
+    assert parsed[0].content == content
+    return canonical
+
+canonical_patch = encode_and_parse_add(
+    "bundled-apply-patch.txt",
+    "one\n\ntwo\n",
+)
+assert canonical_patch == (
+    "*** Begin Patch\n"
+    "*** Add File: bundled-apply-patch.txt\n"
+    "+one\n"
+    "+\n"
+    "+two\n"
+    "*** End Patch"
+)
+empty_patch = encode_and_parse_add("bundled-empty.txt", "")
+assert empty_patch == (
+    "*** Begin Patch\n"
+    "*** Add File: bundled-empty.txt\n"
+    "*** End Patch"
+)
+single_newline_patch = encode_and_parse_add("bundled-single-newline.txt", "\n")
+assert single_newline_patch == (
+    "*** Begin Patch\n"
+    "*** Add File: bundled-single-newline.txt\n"
+    "+\n"
+    "*** End Patch"
+)
+double_newline_patch = encode_and_parse_add("bundled-double-newline.txt", "\n\n")
+assert double_newline_patch == (
+    "*** Begin Patch\n"
+    "*** Add File: bundled-double-newline.txt\n"
+    "+\n"
+    "+\n"
+    "*** End Patch"
+)
 
 manifest_path = app_root / "eidos_runtime/resources/bin/ripgrep/manifest.json"
 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

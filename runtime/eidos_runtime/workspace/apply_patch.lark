@@ -1,0 +1,33 @@
+// Source: openai/codex, codex-rs/core/assets/tools/apply_patch.lark
+// Keep this grammar aligned with the upstream Codex apply_patch language.
+start: begin_patch hunk+ end_patch
+begin_patch: "*** Begin Patch" LF
+end_patch: "*** End Patch" LF?
+
+hunk: add_hunk | delete_hunk | update_hunk
+// Codex's streaming parser permits an empty Add File hunk. A bare `+` still
+// represents one empty content line and is parsed by `add_line` below.
+add_hunk: "*** Add File: " filename LF add_line*
+delete_hunk: "*** Delete File: " filename LF
+update_hunk: "*** Update File: " filename LF change_move? change?
+
+// Lark rejects zero-width regex terminals. The upstream grammar spells these
+// as /(.*)/; the optional non-empty terminals below have the same line-level
+// language while also allowing an empty `+`/`-`/context line.
+filename: FILENAME
+add_line: "+" ADD_TEXT? LF -> line
+
+change_move: "*** Move to: " filename LF
+change: (change_context | change_line)+ eof_line?
+change_context: "@@" LF -> bare_context
+               | "@@ " CONTEXT LF -> context
+change_line: CHANGE_PREFIX CHANGE_TEXT? LF -> changed_line
+eof_line: "*** End of File" LF
+
+FILENAME: /[^\r\n]+/
+CONTEXT: /[^\r\n]+/
+CHANGE_PREFIX: "+" | "-" | " "
+ADD_TEXT: /[^\r\n]+/
+CHANGE_TEXT: /[^\r\n]+/
+
+%import common.LF

@@ -49,22 +49,20 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
                     ModelToolCall(
                         "patch-go-mod",
                         "apply_patch",
-                        {"patch": "*** Begin Patch\n"
-                        "*** Add File: go.mod\n"
-                        "+module shipping-lab\n"
-                        "+\n"
-                        "+go 1.26\n"
-                        "*** End Patch"},
+                        {"changes": [{
+                            "type": "add",
+                            "path": "go.mod",
+                            "content": "module shipping-lab\n\ngo 1.26\n",
+                        }]},
                     ),
                     ModelToolCall(
                         "patch-main",
                         "apply_patch",
-                        {"patch": "*** Begin Patch\n"
-                        "*** Add File: main.go\n"
-                        "+package main\n"
-                        "+\n"
-                        "+func main() {}\n"
-                        "*** End Patch"},
+                        {"changes": [{
+                            "type": "add",
+                            "path": "main.go",
+                            "content": "package main\n\nfunc main() {}\n",
+                        }]},
                     ),
                 ),
             ),
@@ -209,7 +207,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         self.assertEqual(diagnostic["argumentTypes"], {"unexpected": "string"})
         self.assertTrue(diagnostic["toolDeclared"])
         self.assertEqual(diagnostic["validationCode"], "missing")
-        self.assertEqual(diagnostic["validationPath"], "patch")
+        self.assertEqual(diagnostic["validationPath"], "changes")
         self.assertEqual(len(diagnostic["toolSetHash"]), 64)
         self.assertEqual(len(diagnostic["contractFingerprint"]), 64)
         self.assertEqual(len(diagnostic["argumentsSha256"]), 64)
