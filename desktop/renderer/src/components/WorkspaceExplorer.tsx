@@ -16,10 +16,16 @@ interface WorkspaceTreeNode extends WorkspaceDirectoryEntry {
   loaded?: boolean;
 }
 
+export interface WorkspaceFileOpenRequest {
+  path: string;
+  requestId: number;
+}
+
 interface WorkspaceExplorerProps {
   sessionId: string;
   executionKey?: string;
   layout?: "side" | "expanded";
+  openRequest?: WorkspaceFileOpenRequest | undefined;
   onSelectedFileChange?: (path?: string) => void;
   listDirectory?: (
     sessionId: string,
@@ -180,6 +186,7 @@ export function WorkspaceExplorer({
   sessionId,
   executionKey = sessionId,
   layout = "expanded",
+  openRequest,
   onSelectedFileChange,
   listDirectory = defaultListDirectory,
   readPreview = defaultReadPreview,
@@ -317,6 +324,16 @@ export function WorkspaceExplorer({
 
   loadDirectoryRef.current = loadDirectory;
   openFileRef.current = openFile;
+
+  const handledRequestIdRef = useRef<number | undefined>(undefined);
+
+  // Respond to programmatic file open requests from parent
+  useEffect(() => {
+    if (!openRequest) return;
+    if (handledRequestIdRef.current === openRequest.requestId) return;
+    handledRequestIdRef.current = openRequest.requestId;
+    openFileRef.current(openRequest.path);
+  }, [openRequest]);
 
   const closePreview = useCallback((path: string) => {
     const index = openPreviewPaths.indexOf(path);

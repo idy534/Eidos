@@ -48,6 +48,7 @@ interface Props {
   onFeedback?: FeedbackHandler;
   onRegenerate?: RegenerateHandler;
   onEditResend?: EditResendHandler;
+  onOpenFile?: ((path: string) => void) | undefined;
 }
 
 interface Segment {
@@ -96,6 +97,7 @@ export function ExecutionFeed({
   onFeedback = NOOP_FEEDBACK,
   onRegenerate = NOOP_REGENERATE,
   onEditResend = NOOP_EDIT_RESEND,
+  onOpenFile,
 }: Props) {
   const feedRef = useRef<HTMLElement>(null);
   const [atBottom, setAtBottom] = useState(true);
@@ -183,6 +185,7 @@ export function ExecutionFeed({
                   onFeedback={onFeedback}
                   onRegenerate={onRegenerate}
                   onEditResend={onEditResend}
+                  onOpenFile={onOpenFile}
                 />
               ))}
               <RunNotice run={run} />
@@ -229,6 +232,7 @@ function RunSegment({
   onFeedback,
   onRegenerate,
   onEditResend,
+  onOpenFile,
 }: {
   segment: Segment;
   run: Run;
@@ -249,6 +253,7 @@ function RunSegment({
   onFeedback: FeedbackHandler;
   onRegenerate: RegenerateHandler;
   onEditResend: EditResendHandler;
+  onOpenFile?: ((path: string) => void) | undefined;
 }) {
   const showThinking = isLast
     && ACTIVE_RUN_STATUSES.has(run.status)
@@ -282,6 +287,7 @@ function RunSegment({
               errorsByApprovalId={errorsByApprovalId}
               onApprove={onApprove}
               onReject={onReject}
+              onOpenFile={onOpenFile}
             />
           ))}
         </ProcessGroup>
@@ -695,6 +701,7 @@ function ProcessItem({
   errorsByApprovalId,
   onApprove,
   onReject,
+  onOpenFile,
 }: {
   item: Item;
   run: Run;
@@ -705,6 +712,7 @@ function ProcessItem({
   errorsByApprovalId?: Readonly<Record<string, string>> | undefined;
   onApprove: Props["onApprove"];
   onReject: Props["onReject"];
+  onOpenFile?: ((path: string) => void) | undefined;
 }) {
   if (item.kind === "assistant_message") {
     if (!item.content) return null;
@@ -775,7 +783,7 @@ function ProcessItem({
 
   return item.toolCall.toolName === "run_shell"
     ? <ShellItem item={item} toolCall={item.toolCall} />
-    : <ToolItem item={item} toolCall={item.toolCall} />;
+    : <ToolItem item={item} toolCall={item.toolCall} onOpenFile={onOpenFile} />;
 }
 
 function commandApprovalDetails(
@@ -920,11 +928,46 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
   );
 }
 
-function ToolItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
+function ToolItem({ item, toolCall, onOpenFile }: {
+  item: Item;
+  toolCall: ToolCall;
+  onOpenFile?: ((path: string) => void) | undefined;
+}) {
   const [open, setOpen] = useState(item.status === "in_progress");
   useEffect(() => {
     if (item.status !== "in_progress") setOpen(false);
   }, [item.status]);
+
+  const isReadFile = ["read_file", "read_file_range"].includes(toolCall.toolName);
+  const isDoneRead = isReadFile && item.status === "completed";
+
+  // Completed read_file: render as a static row — no arrow, no body, filename as clickable link
+  if (isDoneRead) {
+    const args = parseObject(toolCall.argumentsJson);
+    const filePath = stringField(args, "path") || stringField(args, "filePath");
+    const displayName = filePath ? pathBasename(filePath) : "文件";
+    return (
+      <div className="tool-item tool-item--read-done">
+        <span className="tool-icon" aria-hidden="true"><FileReadIcon /></span>
+        <span>
+          已读取{" "}
+          {filePath && onOpenFile ? (
+            <button
+              type="button"
+              className="tool-file-link"
+              title={filePath}
+              onClick={() => onOpenFile(filePath)}
+            >
+              {displayName}
+            </button>
+          ) : (
+            displayName
+          )}
+        </span>
+      </div>
+    );
+  }
+
   return (
     <details className="tool-item" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>
@@ -1223,4 +1266,8 @@ function useCurrentTime(live: boolean): number {
     return () => window.clearInterval(timer);
   }, [live]);
   return now;
+}
+
+function pathBasename(p: string): string {
+  return p.split(/[/\\]/).filter(Boolean).at(-1) ?? p;
 }

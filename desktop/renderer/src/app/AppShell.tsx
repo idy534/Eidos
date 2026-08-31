@@ -19,7 +19,10 @@ import { ProjectPicker } from "../components/ProjectPicker.js";
 import { CreateProjectDialog } from "../components/CreateProjectDialog.js";
 import { Composer } from "../components/Composer.js";
 import { GitChangesPanel } from "../components/GitChangesPanel.js";
-import { WorkspaceExplorer } from "../components/WorkspaceExplorer.js";
+import {
+  WorkspaceExplorer,
+  type WorkspaceFileOpenRequest,
+} from "../components/WorkspaceExplorer.js";
 import {
   WorkspaceDock,
   WorkspaceDockToggle,
@@ -121,6 +124,7 @@ export function AppShell({ runtime }: AppShellProps) {
   const [openTabs, setOpenTabs] = useState<WorkspaceTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | undefined>(undefined);
   const [workflowOpenRequest, setWorkflowOpenRequest] = useState(0);
+  const [explorerOpenRequest, setExplorerOpenRequest] = useState<WorkspaceFileOpenRequest | undefined>(undefined);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const workspaceRef = useRef<HTMLElement>(null);
   const workspaceBodyRef = useRef<HTMLDivElement>(null);
@@ -131,6 +135,7 @@ export function AppShell({ runtime }: AppShellProps) {
     startWidth: number;
   } | undefined>(undefined);
   const terminalSequenceRef = useRef(0);
+  const fileOpenSequenceRef = useRef(0);
   const modelSessionInitializedRef = useRef<string | undefined>(undefined);
   const getDialogFallbackFocus = useCallback((): HTMLElement | null => {
     const composer = composerRef.current;
@@ -649,6 +654,13 @@ export function AppShell({ runtime }: AppShellProps) {
     setDockOpen(true);
   }
 
+  function handleOpenFileInDock(path: string): void {
+    // Ensure the files panel is open and active
+    openTool("files");
+    // Dispatch file open request to WorkspaceExplorer declaratively
+    setExplorerOpenRequest({ path, requestId: ++fileOpenSequenceRef.current });
+  }
+
   function toggleDock(): void {
     if (dockOpen) {
       setDockOpen(false);
@@ -929,6 +941,7 @@ export function AppShell({ runtime }: AppShellProps) {
                     responseActionActions.setFeedback(currentSnapshot.session.id, itemId, feedback)}
                   onRegenerate={(run) => reviseLatestRun(run)}
                   onEditResend={(run, editedInput) => reviseLatestRun(run, editedInput)}
+                  onOpenFile={sessionHasProject ? handleOpenFileInDock : undefined}
                 />
 
                 <Composer
@@ -1050,6 +1063,7 @@ export function AppShell({ runtime }: AppShellProps) {
                       sessionId={currentSnapshot.session.id}
                       executionKey={executionKey}
                       layout={dockExpanded ? "expanded" : "side"}
+                      openRequest={explorerOpenRequest}
                     />
                   ) : null;
                 }}

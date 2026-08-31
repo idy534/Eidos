@@ -109,7 +109,7 @@ button {
   font-weight: 550;
   font-size: var(--font-size-sidebar);
   cursor: pointer;
-  transition: transform 100ms var(--apple-spring), background-color 150ms ease, box-shadow 150ms ease;
+  transition: background-color 120ms ease, box-shadow 120ms ease;
   user-select: none;
 }
 
@@ -120,7 +120,7 @@ button:hover:not(:disabled) {
 }
 
 button:active:not(:disabled) {
-  transform: scale(0.97);
+  background: var(--surface-selected);
   box-shadow: none;
 }
 
@@ -228,7 +228,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   letter-spacing: -0.01em;
   cursor: pointer;
   user-select: none;
-  transition: transform 100ms var(--apple-spring), background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+  transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .primary-action-btn:hover:not(:disabled) {
@@ -238,7 +238,6 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 }
 
 .primary-action-btn:active:not(:disabled) {
-  transform: translateY(1px);
   background: var(--primary-action-bg-active);
   box-shadow: none;
 }
@@ -3574,6 +3573,53 @@ input:focus, textarea:focus {
 .run-notice--warning { color: #6f5b38; }
 
 .tool-item { max-width: 48rem; margin: 0 0 0.45rem; color: #7a7f7a; }
+.tool-item--read-done {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 48rem;
+  margin: 0 0 0.45rem;
+  color: #7a7f7a;
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+}
+button.tool-file-link,
+.tool-file-link {
+  display: inline;
+  vertical-align: baseline;
+  border: none !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  font: inherit;
+  font-weight: inherit;
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+  color: inherit !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  text-decoration-color: transparent;
+  transition: color 120ms ease, text-decoration-color 120ms ease;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+button.tool-file-link:hover,
+button.tool-file-link:hover:not(:disabled),
+button.tool-file-link:active,
+button.tool-file-link:active:not(:disabled),
+button.tool-file-link:focus,
+.tool-file-link:hover {
+  color: var(--text) !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  text-decoration-color: currentColor;
+}
 .tool-item > summary {
   display: grid;
   grid-template-columns: 1.15rem minmax(0, max-content) auto;
@@ -3895,7 +3941,6 @@ button.composer-context-project--empty:hover:not(:disabled) {
 
 .composer-submit-btn:active:not(:disabled):not(.composer-submit-btn--empty) {
   background: var(--primary-action-bg-active) !important;
-  transform: scale(0.94);
 }
 
 .composer-submit-btn:disabled:not(.composer-cancel-btn),

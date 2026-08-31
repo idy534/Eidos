@@ -285,4 +285,51 @@ describe("WorkspaceExplorer", () => {
     await waitFor(() => expect(listDirectory.mock.calls.length).toBe(callsBefore + 1));
     expect(listDirectory).toHaveBeenLastCalledWith("session-a", "src");
   });
+
+  it("opens the requested file preview immediately when openRequest is provided", async () => {
+    const listDirectory = vi.fn(async () => ({
+      path: ".",
+      entries: [{ name: "sunset.js", relativePath: "sunset.js", kind: "file" as const, sizeBytes: 50 }],
+      truncated: false,
+    }));
+    const readPreview = vi.fn(async () => ({
+      path: "sunset.js",
+      kind: "code" as const,
+      sizeBytes: 50,
+      truncated: false,
+      content: "console.log('sunset');",
+      language: "javascript",
+    }));
+
+    const { rerender } = render(
+      <WorkspaceExplorer
+        sessionId="session-a"
+        listDirectory={listDirectory}
+        readPreview={readPreview}
+        openRequest={{ path: "sunset.js", requestId: 1 }}
+      />,
+    );
+
+    expect(await screen.findByText("console.log('sunset');")).toBeInTheDocument();
+    expect(readPreview).toHaveBeenCalledWith("session-a", "sunset.js");
+
+    const readPreview2 = vi.fn(async () => ({
+      path: "other.js",
+      kind: "code" as const,
+      sizeBytes: 20,
+      truncated: false,
+      content: "console.log('other');",
+      language: "javascript",
+    }));
+    rerender(
+      <WorkspaceExplorer
+        sessionId="session-a"
+        listDirectory={listDirectory}
+        readPreview={readPreview2}
+        openRequest={{ path: "other.js", requestId: 2 }}
+      />,
+    );
+    expect(await screen.findByText("console.log('other');")).toBeInTheDocument();
+    expect(readPreview2).toHaveBeenCalledWith("session-a", "other.js");
+  });
 });

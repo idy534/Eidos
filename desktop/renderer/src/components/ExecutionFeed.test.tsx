@@ -880,3 +880,86 @@ test("renders more actions dropdown on assistant messages", () => {
   assert.match(html, /aria-label="更多操作"/);
   assert.match(html, /title="更多操作"/);
 });
+
+test("renders completed read_file as a static row without details/arrow and with a clickable file link", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "read-tool-item",
+          ordinal: 1,
+          kind: "tool_call",
+          status: "completed",
+          toolCall: {
+            id: "tc-read",
+            itemId: "read-tool-item",
+            modelStepIndex: 1,
+            batchOrder: 0,
+            providerCallId: "p-read",
+            toolName: "read_file",
+            status: "completed",
+            startedAt: 1000,
+            completedAt: 1100,
+            argumentsJson: JSON.stringify({ path: "src/utils/generate_sunset.js" }),
+            resultJson: JSON.stringify({ outcome: "success", bytes: 1024 }),
+          },
+        }),
+      ]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+      onOpenFile={() => {}}
+    />,
+  );
+
+  // Must render the static row class
+  assert.match(html, /class="tool-item tool-item--read-done"/);
+  // Must NOT render a <details class="tool-item"> wrapper for the read tool
+  assert.doesNotMatch(html, /<details class="tool-item"[^>]*><summary>/);
+  // Must render the clickable button with short name and full path title (and plain prefix outside button)
+  assert.match(html, /class="tool-file-link"/);
+  assert.match(html, /title="src\/utils\/generate_sunset\.js"/);
+  assert.match(html, />已读取 <button[^>]*class="tool-file-link"[^>]*>generate_sunset\.js<\/button><\/span>/);
+});
+
+test("renders in-progress read_file as an expandable details element", () => {
+  const { completedAt: _completedAt, ...runWithoutCompletion } = run;
+  const activeRun = { ...runWithoutCompletion, status: "running" as const };
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "read-tool-active",
+          ordinal: 1,
+          kind: "tool_call",
+          status: "in_progress",
+          toolCall: {
+            id: "tc-read-active",
+            itemId: "read-tool-active",
+            modelStepIndex: 1,
+            batchOrder: 0,
+            providerCallId: "p-read-active",
+            toolName: "read_file",
+            status: "running",
+            startedAt: 1000,
+            argumentsJson: JSON.stringify({ path: "src/utils/generate_sunset.js" }),
+            resultJson: "{}",
+          },
+        }),
+      ]}
+      runs={[activeRun]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  // In-progress must use <details>
+  assert.match(html, /<details class="tool-item"/);
+  assert.match(html, /正在读取 src\/utils\/generate_sunset\.js/);
+});
