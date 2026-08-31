@@ -182,7 +182,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertTrue(persisted["reconciliationRequired"])
         self.assertNotEqual(persisted["status"], "succeeded")
 
-    def test_workspace_shell_reconciliation_keeps_run_active_for_read_only_recovery(self) -> None:
+    def test_incomplete_shell_observation_does_not_restrict_follow_up_tools(self) -> None:
         model = ScriptedModel([
             ModelResponse(tool_calls=(ModelToolCall(
                 "shell-attempt",
@@ -205,8 +205,8 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             "summary": "Command exited with a non-zero status",
             "data": {
                 "exitCode": 1,
-                "stdout": "",
-                "stderr": "",
+                "stdout": "command output\n",
+                "stderr": "command failed\n",
                 "truncated": False,
                 "termination": "exit",
                 "durationMs": 1,
@@ -231,11 +231,13 @@ class ReconciliationConsistencyTests(unittest.TestCase):
 
         persisted = self.store.read_run(self.run["id"])
         shell = self.store.connection.execute(
-            "SELECT result_json FROM tool_calls WHERE tool_name = ?",
+            "SELECT status, result_json FROM tool_calls WHERE tool_name = ?",
             ("run_shell",),
         ).fetchone()
         assert shell is not None
-        self.assertTrue(json.loads(shell["result_json"])["reconciliationRequired"])
+        self.assertEqual(shell["status"], "completed")
+        shell_result = json.loads(shell["result_json"])
+        self.assertFalse(shell_result["reconciliationRequired"])
         shell_calls = self.store.connection.execute(
             "SELECT COUNT(*) FROM tool_calls WHERE tool_name = ?",
             ("run_shell",),
@@ -243,6 +245,15 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertEqual(shell_calls, 1)
         self.assertEqual(persisted["status"], "succeeded")
         self.assertEqual(len(model.contexts), 3)
+        shell_context = next(
+            item
+            for item in model.contexts[1]
+            if item.get("type") == "tool_result" and item.get("name") == "run_shell"
+        )
+        context_result = json.loads(shell_context["result"])
+        self.assertEqual(context_result["data"]["exitCode"], 1)
+        self.assertEqual(context_result["data"]["stdout"], "command output\n")
+        self.assertEqual(context_result["data"]["stderr"], "command failed\n")
         self.assertEqual(
             any(
                 item.get("type") == "tool_result"
@@ -255,19 +266,19 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             "list_files",
             {definition.name for definition in model.tool_definitions_history[1]},
         )
+        self.assertIn(
+            "run_shell",
+            {definition.name for definition in model.tool_definitions_history[1]},
+        )
         self.assertFalse(persisted.get("reconciliationRequired", False))
         cleared = self.store.connection.execute(
             "SELECT payload_json FROM events "
             "WHERE run_id = ? AND event_type = 'reconciliation.cleared'",
             (self.run["id"],),
         ).fetchall()
-        self.assertEqual(len(cleared), 1)
-        self.assertEqual(
-            json.loads(cleared[0]["payload_json"])["reason"],
-            "read_only_observation",
-        )
+        self.assertEqual(len(cleared), 0)
 
-    def test_first_shell_with_incomplete_baseline_allows_read_only_recovery(self) -> None:
+    def test_first_shell_with_incomplete_baseline_does_not_enter_read_only_mode(self) -> None:
         model = ScriptedModel([
             ModelResponse(tool_calls=(ModelToolCall(
                 "shell-attempt",
@@ -324,6 +335,10 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertEqual(persisted["status"], "succeeded")
         self.assertFalse(persisted.get("reconciliationRequired", False))
         self.assertEqual(len(model.contexts), 3)
+        self.assertIn(
+            "run_shell",
+            {definition.name for definition in model.tool_definitions_history[1]},
+        )
         self.assertEqual(
             self.store.connection.execute(
                 "SELECT COUNT(*) FROM tool_calls WHERE tool_name = 'run_shell'",
@@ -336,8 +351,104 @@ class ReconciliationConsistencyTests(unittest.TestCase):
                 "WHERE run_id = ? AND event_type = 'reconciliation.cleared'",
                 (self.run["id"],),
             ).fetchone()[0],
-            1,
+            0,
         )
+
+    def test_nonzero_shell_does_not_stop_an_independent_shell_in_the_same_batch(
+        self,
+    ) -> None:
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(
+                ModelToolCall(
+                    "first-shell",
+                    "run_shell",
+                    {"command": "exit 1", "timeoutSeconds": 5},
+                ),
+                ModelToolCall(
+                    "second-shell",
+                    "run_shell",
+                    {"command": "printf second-shell", "timeoutSeconds": 5},
+                ),
+            )),
+            ModelResponse(text="Both shell results were returned."),
+        ])
+        shell_results = [
+            {
+                "schemaVersion": 1,
+                "toolContractVersion": 1,
+                "toolName": "run_shell",
+                "outcome": "error",
+                "code": "nonzero_exit",
+                "summary": "Command failed with exit code 1",
+                "data": {
+                    "exitCode": 1,
+                    "stdout": "first output\n",
+                    "stderr": "first failure\n",
+                    "truncated": False,
+                    "termination": "exit",
+                    "durationMs": 1,
+                },
+                "sideEffectsMayExist": True,
+            },
+            {
+                "schemaVersion": 1,
+                "toolContractVersion": 1,
+                "toolName": "run_shell",
+                "outcome": "success",
+                "code": "ok",
+                "summary": "Command completed",
+                "data": {
+                    "exitCode": 0,
+                    "stdout": "second-shell",
+                    "stderr": "",
+                    "truncated": False,
+                    "termination": "exit",
+                    "durationMs": 1,
+                },
+                "sideEffectsMayExist": True,
+            },
+        ]
+        invocations: list[str] = []
+
+        def fake_run_shell(*args: object, **_kwargs: object) -> dict[str, object]:
+            command = args[1]
+            assert isinstance(command, str)
+            invocations.append(command)
+            return shell_results[len(invocations) - 1]
+
+        with (
+            patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
+            patch("eidos_runtime.runtime.tool_runtime.run_shell", side_effect=fake_run_shell),
+            patch(
+                "eidos_runtime.tools.runtime_workspace.ToolExecutor.refresh_workspace_index",
+                side_effect=WorkspacePathError("WORKSPACE_INDEX_INCOMPLETE"),
+            ),
+        ):
+            RuntimeEngine(
+                self.store,
+                model,
+                lambda _message: None,
+                shell_available=True,
+            ).run(self.run["id"], threading.Event())
+
+        self.assertEqual(invocations, ["exit 1", "printf second-shell"])
+        self.assertEqual(self.store.read_run(self.run["id"])["status"], "succeeded")
+        rows = self.store.connection.execute(
+            """
+            SELECT tool_calls.status AS tool_status, items.status AS item_status,
+                   tool_calls.result_json
+            FROM tool_calls JOIN items ON items.id = tool_calls.item_id
+            WHERE items.run_id = ? AND tool_calls.tool_name = 'run_shell'
+            ORDER BY tool_calls.creation_seq
+            """,
+            (self.run["id"],),
+        ).fetchall()
+        self.assertEqual(
+            [(row["item_status"], row["tool_status"]) for row in rows],
+            [("failed", "completed"), ("completed", "completed")],
+        )
+        self.assertEqual(json.loads(rows[0]["result_json"])["code"], "nonzero_exit")
+        self.assertEqual(json.loads(rows[1]["result_json"])["code"], "ok")
 
     def _assert_shell_refresh_error_stops_without_replay(
         self, error_code: str

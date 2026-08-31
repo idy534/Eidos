@@ -28,6 +28,9 @@ from eidos_runtime.runtime.approval import (  # noqa: E402
 )
 from eidos_runtime.runtime.events import RuntimeEvents  # noqa: E402
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker  # noqa: E402
+from eidos_runtime.runtime.reconciliation import (  # noqa: E402
+    ReconciliationDisposition,
+)
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher  # noqa: E402
 from eidos_runtime.runtime.tool_execution import ToolExecutionController  # noqa: E402
 from eidos_runtime.runtime.tool_runtime import (  # noqa: E402
@@ -354,16 +357,167 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             )
 
     def test_success_without_file_change_does_not_increment_workspace_version(self) -> None:
-        self._execute({
+        outcome = self._execute({
             "outcome": "success",
             "code": "ok",
             "summary": "done",
             "data": {"exitCode": 0, "stdout": "", "stderr": ""},
             "sideEffectsMayExist": True,
         })
+        self.assertFalse(outcome.result["reconciliationRequired"])
+        self.assertEqual(outcome.item_status, "completed")
+        self.assertEqual(outcome.tool_status, "completed")
+        self.assertIs(
+            outcome.reconciliation_disposition,
+            ReconciliationDisposition.CONTINUE,
+        )
         self.assertEqual(
             self.store.context_projection_facts(self.run["id"]).workspace_version,
             0,
+        )
+
+    def test_known_shell_exit_codes_do_not_require_complete_observation(self) -> None:
+        incomplete_diff = diff_workspace_manifests(
+            WorkspaceManifest((), True, False),
+            WorkspaceManifest((), False, True),
+        )
+
+        for exit_code in (0, 1, 127):
+            with self.subTest(exit_code=exit_code):
+                outcome = "success" if exit_code == 0 else "error"
+                code = "ok" if exit_code == 0 else "nonzero_exit"
+                attached = attach_workspace_diff(
+                    {
+                        "outcome": outcome,
+                        "code": code,
+                        "summary": "Command completed",
+                        "data": {
+                            "exitCode": exit_code,
+                            "stdout": "",
+                            "stderr": "",
+                            "termination": "exit",
+                        },
+                        "sideEffectsMayExist": True,
+                    },
+                    incomplete_diff,
+                )
+
+                self.assertFalse(attached["reconciliationRequired"])
+
+    def test_nonzero_exit_marks_item_failed_but_tool_completed(self) -> None:
+        self.executor.refresh_workspace_index(threading.Event())
+
+        with patch.object(
+            self.executor,
+            "refresh_workspace_index",
+            side_effect=WorkspacePathError("WORKSPACE_INDEX_INCOMPLETE"),
+        ):
+            outcome = self._execute(
+                {
+                    "outcome": "error",
+                    "code": "nonzero_exit",
+                    "summary": "Command exited with code 7",
+                    "data": {
+                        "exitCode": 7,
+                        "stdout": "test output\n",
+                        "stderr": "test failure\n",
+                        "termination": "exit",
+                    },
+                    "sideEffectsMayExist": True,
+                    "reconciliationRequired": False,
+                },
+                arguments={
+                    "command": "exit 7",
+                    "cwd": ".",
+                    "timeoutSeconds": 120,
+                    "sandboxPermissions": "use_default",
+                    "additionalPermissions": None,
+                    "justification": None,
+                },
+            )
+
+        self.assertEqual(outcome.result["outcome"], "error")
+        self.assertEqual(outcome.result["code"], "nonzero_exit")
+        self.assertEqual(outcome.result["data"]["exitCode"], 7)
+        self.assertEqual(outcome.result["data"]["stdout"], "test output\n")
+        self.assertEqual(outcome.result["data"]["stderr"], "test failure\n")
+        self.assertFalse(outcome.result["reconciliationRequired"])
+        self.assertEqual(outcome.item_status, "failed")
+        self.assertEqual(outcome.tool_status, "completed")
+        self.assertIs(
+            outcome.reconciliation_disposition,
+            ReconciliationDisposition.CONTINUE,
+        )
+        assert outcome.item is not None
+        self.assertEqual(outcome.item["status"], "failed")
+        self.assertEqual(outcome.item["toolCall"]["status"], "completed")
+
+    def test_process_start_failure_keeps_tool_failed(self) -> None:
+        outcome = self._execute(
+            {
+                "outcome": "error",
+                "code": "process_start_failed",
+                "summary": "Shell process could not be started",
+                "data": {
+                    "exitCode": None,
+                    "stdout": "",
+                    "stderr": "",
+                    "termination": "not_started",
+                },
+                "sideEffectsMayExist": False,
+                "reconciliationRequired": False,
+            },
+        )
+
+        self.assertEqual(outcome.result["code"], "process_start_failed")
+        self.assertEqual(outcome.item_status, "failed")
+        self.assertEqual(outcome.tool_status, "failed")
+
+    def test_sandbox_unavailable_keeps_tool_failed(self) -> None:
+        outcome = self._execute(
+            {
+                "outcome": "error",
+                "code": "sandbox_unavailable",
+                "summary": "Shell sandbox is unavailable",
+                "data": {
+                    "exitCode": None,
+                    "stdout": "",
+                    "stderr": "",
+                    "termination": "not_started",
+                },
+                "sideEffectsMayExist": False,
+                "reconciliationRequired": False,
+            },
+        )
+
+        self.assertEqual(outcome.result["code"], "sandbox_unavailable")
+        self.assertEqual(outcome.item_status, "failed")
+        self.assertEqual(outcome.tool_status, "failed")
+
+    def test_explicit_reconciliation_keeps_tool_failed_and_interrupts(
+        self,
+    ) -> None:
+        outcome = self._execute(
+            {
+                "outcome": "error",
+                "code": "nonzero_exit",
+                "summary": "Command outcome is uncertain",
+                "data": {
+                    "exitCode": 7,
+                    "stdout": "",
+                    "stderr": "",
+                    "termination": "exit",
+                },
+                "sideEffectsMayExist": True,
+                "reconciliationRequired": True,
+            },
+        )
+
+        self.assertEqual(outcome.item_status, "failed")
+        self.assertEqual(outcome.tool_status, "failed")
+        self.assertIs(
+            outcome.reconciliation_disposition,
+            ReconciliationDisposition.INTERRUPT,
         )
 
     def test_shell_process_starts_when_post_launch_index_is_incomplete(self) -> None:

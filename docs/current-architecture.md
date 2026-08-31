@@ -187,7 +187,9 @@ ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与�
 
 Tool Result 的 `reconciliationRequired` 是本次执行是否建立 reconciliation barrier 的权威结果。`sideEffectsMayExist` 只保留历史证据。它不是完成条件。Runtime 只有在 Tool Result 缺少显式 reconciliation 判断时，才为旧结果使用保守兼容规则。未清除的 barrier 会阻止 Run 提交 `succeeded`。Runtime 不会自动重放有副作用的 Tool。
 
-默认 Workspace Seatbelt Shell 在进程已经确定退出、但 Workspace 观察不完整时，可以在同一个 Run 内继续执行只读 Workspace reconciliation。首次 Shell 的执行前索引基线不完整，但执行后索引完整时，也使用这条路径。该路径不会自动重放原 Shell。只读核验不能清除未知的外部副作用。Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。
+普通且确定的 Shell 退出会把 Item 按命令结果标记为 `completed` 或 `failed`。确定的 `nonzero_exit` 会把 Item 标记为 `failed`，但会把 ToolCall 标记为 `completed`。这样模型可以继续读取 `exitCode`、`stdout`、`stderr` 和 `termination`。Workspace observation 不完整只影响 observation metadata，不会把已退出的 Shell 变成只读 reconciliation。`reconciliationRequired = true`、timeout、background child 清理未完成和真正的 Shell 启动失败仍然把 ToolCall 标记为 `failed` 并保持 fail closed。
+
+只有执行最终状态未知时，Shell 才会建立 reconciliation barrier。Runtime 不会自动重放原 Shell。unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。
 
 内置 `workspace_dependencies` Tool 通过一个只读目录接口返回 Eidos 自带并经过校验的 Python、ripgrep、Python import roots 和受支持包版本。调用方使用这些路径执行已有 Workspace 任务。这个 Tool 不创建新的执行器，也不绕过 Shell、Approval 或 Seatbelt。实际命令仍然进入现有 `run_shell` 链路。
 

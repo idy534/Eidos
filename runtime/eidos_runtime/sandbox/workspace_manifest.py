@@ -177,10 +177,11 @@ def attach_workspace_diff(
         data.get("termination") == "not_started"
         and result.get("sideEffectsMayExist") is not True
     )
-    execution_succeeded = (
-        result.get("outcome") == "success"
-        and data.get("exitCode") == 0
-        and data.get("termination") == "exit"
+    exit_code = data.get("exitCode")
+    execution_known = (
+        data.get("termination") == "exit"
+        and isinstance(exit_code, int)
+        and not isinstance(exit_code, bool)
     )
     change_state = (
         "unchanged"
@@ -207,15 +208,20 @@ def attach_workspace_diff(
         result.get("sideEffectsMayExist") is True
         or change_state != "unchanged"
     )
-    execution_uncertain = (
-        result.get("reconciliationRequired") is True
-        and not process_not_started
-    )
-    attached["reconciliationRequired"] = (
-        execution_uncertain
-        or change_state == "unknown" and not execution_succeeded
-        or result.get("outcome") != "success" and diff.changed
-    )
+    explicit_reconciliation = result.get("reconciliationRequired")
+    if explicit_reconciliation is True:
+        reconciliation_required = True
+    elif explicit_reconciliation is False and execution_known:
+        reconciliation_required = False
+    else:
+        reconciliation_required = (
+            not execution_known
+            and (
+                change_state == "unknown"
+                or result.get("outcome") != "success" and diff.changed
+            )
+        )
+    attached["reconciliationRequired"] = reconciliation_required
     if process_not_started:
         attached["reconciliationRequired"] = False
         attached["sideEffectsMayExist"] = False

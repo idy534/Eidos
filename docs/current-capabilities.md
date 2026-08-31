@@ -63,7 +63,7 @@
 - Provider context pressure、`context_exceeded`、projection overflow 和 compaction progress 会参与下一次决策。
 - Protocol validation failure 会被转换为受控的 protocol repair context。工具参数错误会把工具名、字段和稳定校验码传给下一次模型请求，并说明调用在执行前已被拒绝。这个 context 不包含原始参数。空响应有独立的重复响应处理。
 - 确定的 Tool Error 会作为 ToolResult 进入 Context，并触发下一次模型决策。模型可以修正参数或选择替代 Tool。一次失败不会单独终止 Run。
-- 默认 Workspace Seatbelt Shell 在进程确定退出但 Workspace 观察不完整时，可以在同一个 Run 内继续受限的只读 Workspace reconciliation。这个能力覆盖首次 Shell 执行前索引基线不完整、执行后索引完整的情况。Runtime 不自动重放原 Shell。
+- 已明确 `termination = exit` 且有 `exitCode` 的 Shell 会把退出事实、stdout 和 stderr 返回给模型。非 0 退出会让 Item 为 `failed`，但会让 ToolCall 为 `completed`。Workspace manifest 或 index observation 不完整只会标记 observation metadata，不会建立只读 reconciliation barrier，也不会阻止后续 Shell 或其他 ToolCall。Runtime 不自动重放原 Shell。
 - Cancellation、Approval、Reconciliation 和 operational segment rollover 都在安全点处理。
 - LoopGuard 使用 ToolCall、Workspace version、reconciliation epoch、Context fact frontier 和 active error 的 semantic fingerprint。首次重复会注入恢复信息，恢复后再次回到同一状态才会以 `repeated_tool_call` 或 `no_progress` 停止。
 - Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。Runtime 没有固定的模型步数、Run 时长或 repeated-call counter 生命周期规则。
@@ -175,7 +175,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `run_shell` 的默认 Workspace Seatbelt attempt 不需要 Approval。模型可以用高层 `networkAccess=request` 表达命令的联网需求。Runtime 会在启动进程前把该 intent 规范化为 additional network permission，并请求 Approval。获批后的命令仍在 macOS Seatbelt 中运行。旧的 `sandboxPermissions` 和 `additionalPermissions` 输入继续兼容。additional write 和 unsandboxed attempt 仍需要 Approval。升级不能移除 hard confidentiality deny。
 - Runtime permission 投影会分别说明默认 Shell 网络状态和网络是否可通过 Approval 请求。创建项目、安装依赖和下载源码等任务不要求用户先明确说“联网”。默认 network denied 不再被投影成网络能力不存在。
 - Shell launch boundary 验证 Workspace identity 和 cwd。post-execution observation 记录 Workspace diff、退出状态和 reconciliation 需要性。
-- Tool Result 明确返回 `reconciliationRequired = false` 时，普通非零退出不会仅因为 `code = nonzero_exit` 建立 barrier。结果仍会保留退出码、终止原因和可能副作用证据。真正未知的执行结果仍会 fail closed。
+- Tool Result 明确返回 `reconciliationRequired = false` 时，普通非零退出不会仅因为 `code = nonzero_exit` 建立 barrier。此时 Item 状态是 `failed`，ToolCall 状态是 `completed`。结果仍会保留退出码、终止原因和可能副作用证据。真正未知的执行结果仍会 fail closed。
 - 默认 sandboxed attempt 出现明确的 network denial 时，Runtime 会保留首次 attempt 和 denial 证据，但不会把它升级成 unsandboxed retry。Runtime 也不会自动重放可能已经产生 Workspace 副作用的命令。
 - 未清除的 reconciliation barrier 会阻止 Run 提交成功终态。Runtime 不会把 `sideEffectsMayExist` 当作清除条件，也不会自动重放有副作用的 Tool。
 - Workspace manifest observation 不完整时可以产生 `unknown` observation。已知成功退出不会仅因为观察不完整而被改成不确定副作用。

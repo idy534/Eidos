@@ -682,7 +682,20 @@ class ShellToolHandler:
             )
         if result["outcome"] == "success":
             self.dependencies.store.clear_rejects(run_id)
-        status = "completed" if result["outcome"] == "success" else "failed"
+        item_status = (
+            "completed"
+            if result["outcome"] == "success"
+            else "failed"
+        )
+        tool_status = (
+            "completed"
+            if result["outcome"] == "success"
+            or (
+                result.get("code") == "nonzero_exit"
+                and result.get("reconciliationRequired") is not True
+            )
+            else "failed"
+        )
         changed = workspace_diff.changed if workspace_diff is not None else False
         reconciliation_disposition = classify_shell_reconciliation(
             result,
@@ -692,8 +705,8 @@ class ShellToolHandler:
         )
         return HandlerOutcome(
             result,
-            status,
-            status,
+            item_status,
+            tool_status,
             workspace_changed=changed,
             diff_hash=(
                 workspace_diff.diff_hash
