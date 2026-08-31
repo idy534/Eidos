@@ -814,6 +814,41 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   padding: 0.35rem 0.4rem;
 }
 
+.workspace-tree-scroll > div,
+.workspace-tree-scroll div[style*="overflow"] {
+  scrollbar-color: rgba(106, 111, 103, 0.28) transparent;
+  scrollbar-width: thin;
+}
+
+.workspace-tree-scroll > div::-webkit-scrollbar,
+.workspace-tree-scroll div[style*="overflow"]::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+  background: transparent;
+}
+
+.workspace-tree-scroll > div::-webkit-scrollbar-track,
+.workspace-tree-scroll > div::-webkit-scrollbar-corner,
+.workspace-tree-scroll div[style*="overflow"]::-webkit-scrollbar-track,
+.workspace-tree-scroll div[style*="overflow"]::-webkit-scrollbar-corner {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.workspace-tree-scroll > div::-webkit-scrollbar-thumb,
+.workspace-tree-scroll div[style*="overflow"]::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(106, 111, 103, 0.28);
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.workspace-tree-scroll > div::-webkit-scrollbar-thumb:hover,
+.workspace-tree-scroll div[style*="overflow"]::-webkit-scrollbar-thumb:hover {
+  background: rgba(106, 111, 103, 0.45);
+}
+
 .workspace-tree-row {
   display: flex;
   height: 100%;

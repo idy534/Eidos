@@ -256,7 +256,7 @@ export function WorkspaceExplorer({
     const container = treeContainerRef.current;
     if (!container || typeof ResizeObserver === "undefined") return;
     const resize = () => {
-      const height = Math.floor(container.getBoundingClientRect().height);
+      const height = container.clientHeight || Math.floor(container.getBoundingClientRect().height);
       if (height > 0) setTreeHeight(height);
     };
     resize();
