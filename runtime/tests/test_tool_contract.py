@@ -13,6 +13,7 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.tools.contracts import (  # noqa: E402
     ListFilesInput,
+    NetworkAccess,
     RunShellInput,
     SearchTextInput,
 )
@@ -176,6 +177,27 @@ class ToolContractTests(unittest.TestCase):
 
     def test_shell_permission_contract_is_closed_and_backwards_compatible(self) -> None:
         default = RunShellInput.model_validate({"command": "true"})
+        network_request = RunShellInput.model_validate_json(json.dumps({
+            "command": "npm install",
+            "networkAccess": "request",
+            "justification": "Install project dependencies",
+        }))
+        empty_permission_requests = (
+            RunShellInput.model_validate_json(json.dumps({
+                "command": "npm install",
+                "networkAccess": "request",
+                "additionalPermissions": {},
+                "justification": "Install project dependencies",
+            })),
+            RunShellInput.model_validate_json(json.dumps({
+                "command": "npm install",
+                "networkAccess": "request",
+                "additionalPermissions": {
+                    "network": {"enabled": None},
+                },
+                "justification": "Install project dependencies",
+            })),
+        )
         expanded = RunShellInput.model_validate_json(json.dumps({
             "command": "make",
             "sandboxPermissions": "with_additional_permissions",
@@ -192,6 +214,24 @@ class ToolContractTests(unittest.TestCase):
 
         self.assertEqual(default.sandboxPermissions.value, "use_default")
         self.assertIsNone(default.additionalPermissions)
+        self.assertIs(default.networkAccess, NetworkAccess.DEFAULT)
+        self.assertIs(network_request.networkAccess, NetworkAccess.REQUEST)
+        self.assertEqual(
+            network_request.effective_sandbox_permissions.value,
+            "with_additional_permissions",
+        )
+        self.assertIsNotNone(network_request.effective_additional_permissions)
+        assert network_request.effective_additional_permissions is not None
+        assert network_request.effective_additional_permissions.network is not None
+        self.assertTrue(network_request.effective_additional_permissions.network.enabled)
+        for empty_request in empty_permission_requests:
+            self.assertEqual(
+                empty_request.effective_sandbox_permissions,
+                network_request.effective_sandbox_permissions,
+            )
+            self.assertTrue(
+                empty_request.effective_additional_permissions is not None
+            )
         self.assertEqual(
             expanded.model_dump(mode="json", by_alias=True)[
                 "additionalPermissions"
@@ -216,13 +256,35 @@ class ToolContractTests(unittest.TestCase):
                 "unknownPermission": True,
             }))
 
+        with self.assertRaisesRegex(
+            ValidationError, "network_access_justification_required"
+        ):
+            RunShellInput.model_validate_json(json.dumps({
+                "command": "npm install",
+                "networkAccess": "request",
+            }))
+        with self.assertRaisesRegex(ValidationError, "network_access_conflict"):
+            RunShellInput.model_validate_json(json.dumps({
+                "command": "npm install",
+                "networkAccess": "request",
+                "sandboxPermissions": "with_additional_permissions",
+                "additionalPermissions": {"network": {"enabled": True}},
+                "justification": "Install project dependencies",
+            }))
+
+        normalized = network_request.model_dump(mode="json", by_alias=True)
+        reparsed = RunShellInput.model_validate_json(json.dumps(normalized))
+        self.assertEqual(reparsed, network_request)
+
     def test_shell_tool_tells_model_how_to_request_network_access(self) -> None:
         description = next(
             spec.description for spec in TOOL_SPECS if spec.name == "run_shell"
         )
 
-        self.assertIn("with_additional_permissions", description)
-        self.assertIn("additionalPermissions.network.enabled", description)
+        self.assertIn("networkAccess=request", description)
+        self.assertIn("justification", description)
+        self.assertIn("macOS Seatbelt", description)
+        self.assertIn("sandboxPermissions", description)
         self.assertIn("timeoutSeconds", description)
         self.assertIn("external timeout", description)
         self.assertIn("pipefail", description)

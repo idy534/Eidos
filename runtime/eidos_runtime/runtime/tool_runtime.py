@@ -293,8 +293,12 @@ class ShellToolHandler:
         shell_input = RunShellInput.model_validate_json(
             json.dumps(call.arguments, ensure_ascii=False)
         )
+        effective_sandbox_permissions = shell_input.effective_sandbox_permissions
+        effective_additional_permissions = (
+            shell_input.effective_additional_permissions
+        )
         if (
-            shell_input.sandboxPermissions
+            effective_sandbox_permissions
             is not SandboxPermissions.REQUIRE_ESCALATED
             and not self.dependencies.shell_available
         ):
@@ -339,7 +343,7 @@ class ShellToolHandler:
                 ),
             })
         if (
-            shell_input.sandboxPermissions
+            effective_sandbox_permissions
             is not SandboxPermissions.REQUIRE_ESCALATED
             and not is_seatbelt_ready()
         ):
@@ -549,12 +553,12 @@ class ShellToolHandler:
                     "command": command,
                     "cwd": cwd_value,
                     "timeoutSeconds": timeout,
-                    "sandboxPermissions": shell_input.sandboxPermissions.value,
+                    "sandboxPermissions": effective_sandbox_permissions.value,
                     "additionalPermissions": (
-                        shell_input.additionalPermissions.model_dump(
+                        effective_additional_permissions.model_dump(
                             mode="json", by_alias=True, exclude_none=True
                         )
-                        if shell_input.additionalPermissions is not None
+                        if effective_additional_permissions is not None
                         else None
                     ),
                     "workspaceIdentity": [
@@ -613,8 +617,14 @@ class ShellToolHandler:
                 "command": command,
                 "cwd": cwd_value,
                 "timeoutSeconds": timeout,
-                "sandboxPermissions": shell_input.sandboxPermissions.value,
-                "additionalPermissions": None,
+                "sandboxPermissions": effective_sandbox_permissions.value,
+                "additionalPermissions": (
+                    effective_additional_permissions.model_dump(
+                        mode="json", by_alias=True, exclude_none=True
+                    )
+                    if effective_additional_permissions is not None
+                    else None
+                ),
                 "workspaceIdentity": [
                     workspace.device,
                     workspace.inode,

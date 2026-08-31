@@ -188,7 +188,7 @@ _BUILTIN_CONTRACTS = (
     ("read_file_range", "Read an inclusive bounded line range from one UTF-8 file. Continue from nextLine when present.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
     ("search_text", "Search a workspace-relative path (default '.') for a single-line query; supports maxResults, regex, and includeGlobs. Results are workspace-relative, bounded, and may be truncated.", "none", False, 5, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
     ("apply_patch", "Apply a workspace patch with Add, Update, Delete, and Move hunks. Paths, base hashes, and final contents are verified without approval.", "workspace", False, 5, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
-    ("run_shell", "Run one shell command in the default macOS workspace sandbox without approval. Set timeoutSeconds for the command deadline; do not add an external timeout wrapper. For requested network access, set sandboxPermissions=with_additional_permissions, additionalPermissions.network.enabled=true, and provide justification so Eidos can request approval. Additional path access and unsandboxed execution also require approval. Do not assume GNU timeout, zsh glob behavior, or use tail/head as output boundaries; do not add pipefail unless the command requires it. Eidos bounds and verifies output and workspace changes without rewriting the command.", "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
+    ("run_shell", "Run one shell command in the macOS workspace sandbox. Set timeoutSeconds for the command deadline; do not add an external timeout wrapper. For commands that need network access, such as installing dependencies or downloading sources, set networkAccess=request and provide justification. Eidos will request approval and keep macOS Seatbelt. Additional path access and unsandboxed execution also require approval. The legacy sandboxPermissions and additionalPermissions fields remain supported for compatibility. Do not assume GNU timeout, zsh glob behavior, or use tail/head as output boundaries; do not add pipefail unless the command requires it. Eidos bounds and verifies output and workspace changes without rewriting the command.", "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
 )
 TOOL_SPECS = tuple(ToolSpec.model_validate({
     "name": name,
@@ -307,6 +307,10 @@ def canonical_tool_result(
         (contract[7] for contract in _BUILTIN_CONTRACTS if contract[0] == tool_name),
         None,
     )
+    if data_model is None and tool_name == "read_tool_output":
+        from eidos_runtime.tools.read_tool_output import ReadToolOutputResultData
+
+        data_model = ReadToolOutputResultData
     validated = (
         result_model(data_model).model_validate_json(json.dumps(
             normalized,

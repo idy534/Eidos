@@ -48,6 +48,9 @@
 - ShellEnvironmentSnapshot 不恢复 aliases、functions 或其他 shell state。
 - Shell cwd 仍然必须是 Workspace-relative 的有效路径。
 - Agent Shell 的 raw stdout/stderr 仍有 256 KiB 上限。它不提供无限输出流。
+- Agent Shell 会对 stdout 和 stderr 做 UTF-8 增量解码。Desktop Execution Feed 在运行中和终态保留两条流的接收顺序，并把 ANSI/OSC 控制序列按纯文本处理。旧 Item 缺少或为空的 `content` 时，Feed 使用结果中的 stdout/stderr 回退，并在结果存在时展示 `attemptCount`、`sandboxed` 和 `escalated` 事实。
+- 模型收到的 `run_shell` 输出每条 stdout/stderr 流最多 16 KiB，整个结果 JSON 最多 48 KiB。模型投影保留每条流的首尾，并用独立的 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 说明模型省略的 stdout/stderr UTF-8 字节。原始 `truncated` 和 `omittedBytes` 仍表示 Shell 原始输出限制，已丢失的原始字节不能恢复。
+- `read_tool_output` 只读取当前 Session 中已持久化的终态 `run_shell` 输出，过去 Run 可以读取。它要求 provider tool call ID，默认 stdout，也支持 stderr；运行中、跨 Session、缺失或歧义 ID 会拒绝。请求的 `maxBytes` 范围是 4 字节至 16 KiB，实际页可能更小。分页结果按 UTF-8 边界返回 `startByte`、`endByte` 和 `nextOffset`，调用方必须按 `nextOffset` 继续。该工具不会重新执行 Shell，也不会清除 reconciliation。
 - Desktop Terminal 是另一条 Main-owned PTY 路径。Agent Shell 的限制不会改变 Desktop Terminal 的现有说明。
 
 ## Repository Intelligence

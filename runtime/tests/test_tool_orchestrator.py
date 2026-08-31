@@ -162,7 +162,39 @@ class ToolOrchestratorTests(unittest.TestCase):
         self.assertEqual([request.attempt_ordinal for request in approvals], [0, 1])
         self.assertNotEqual(approvals[0].approval_key, approvals[1].approval_key)
 
-    def test_rejected_escalation_does_not_start_second_attempt(self) -> None:
+    def test_network_denial_does_not_escalate_or_request_unsandboxed_approval(
+        self,
+    ) -> None:
+        denied = SandboxDenied(
+            category=SandboxDenialCategory.NETWORK,
+            summary="Seatbelt denied network",
+        )
+        runtime = _Runtime([
+            ({"outcome": "error", "code": "sandbox_denied"}, denied),
+            ({"outcome": "success", "code": "ok"}, None),
+        ])
+        approvals = []
+
+        result = ToolOrchestrator().run(
+            runtime,
+            _Request(),
+            self.context,
+            approve=lambda request: approvals.append(request) or True,
+        )
+
+        self.assertEqual(result.attempt_count, 1)
+        self.assertFalse(result.escalated)
+        self.assertEqual(
+            [attempt.sandbox for attempt in runtime.attempts],
+            [SandboxType.MACOS_SEATBELT],
+        )
+        self.assertEqual([request.attempt_ordinal for request in approvals], [0])
+        self.assertEqual(
+            result.result["data"]["sandboxDenialCategory"],
+            SandboxDenialCategory.NETWORK.value,
+        )
+
+    def test_network_denial_does_not_convert_to_rejected_escalation(self) -> None:
         denied = SandboxDenied(
             category=SandboxDenialCategory.NETWORK,
             summary="Seatbelt denied network",
@@ -181,7 +213,8 @@ class ToolOrchestratorTests(unittest.TestCase):
 
         self.assertEqual(result.attempt_count, 1)
         self.assertEqual(len(runtime.attempts), 1)
-        self.assertEqual(result.result["code"], "user_rejected_escalation")
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(result.result["code"], "sandbox_denied")
 
     def test_explicit_escalation_starts_unsandboxed_after_approval(self) -> None:
         runtime = _Runtime([({"outcome": "success", "code": "ok"}, None)])
@@ -251,8 +284,8 @@ class ToolOrchestratorTests(unittest.TestCase):
 
     def test_cancellation_after_retry_approval_prevents_second_attempt(self) -> None:
         denied = SandboxDenied(
-            category=SandboxDenialCategory.NETWORK,
-            summary="Seatbelt denied network",
+            category=SandboxDenialCategory.FILESYSTEM_READ,
+            summary="Seatbelt denied file read",
         )
         runtime = _Runtime([
             ({"outcome": "error", "code": "sandbox_denied"}, denied),

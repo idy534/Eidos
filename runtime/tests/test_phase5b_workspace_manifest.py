@@ -301,14 +301,15 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         arguments=None,
         attempts=None,
     ):
-        effective_arguments = arguments or {
+        effective_arguments = dict(arguments or {
             "command": "fixture",
             "cwd": ".",
             "timeoutSeconds": 120,
             "sandboxPermissions": "use_default",
             "additionalPermissions": None,
             "justification": None,
-        }
+        })
+        effective_arguments.setdefault("networkAccess", "default")
         item = self.store.create_tool_item(
             self.run["id"], 1, 0, "shell-call", "run_shell",
             json.dumps(effective_arguments),

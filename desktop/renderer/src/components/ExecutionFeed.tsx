@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import stripAnsi from "strip-ansi";
 
 import type {
   ApprovalRequest,
@@ -267,7 +268,6 @@ function RunSegment({
       )}
       {segment.process.length > 0 && (
         <ProcessGroup
-          key={`${run.id}:${TERMINAL_RUN_STATUSES.has(run.status) ? "done" : "active"}`}
           run={run}
         >
           {segment.process.map((item) => (
@@ -807,6 +807,36 @@ function commandApprovalDetails(
   ].filter(Boolean).join("\n");
 }
 
+export interface ShellOutputSegment {
+  source: "stream" | "stdout" | "stderr";
+  content: string;
+}
+
+/**
+ * Choose the one output representation that the feed should render.
+ *
+ * New Shell items receive ordered, cumulative deltas in Item.content. The
+ * final result still carries separate stdout/stderr fields for compatibility,
+ * but rendering both after a stream would duplicate the output and lose its
+ * receive order. Empty and missing content are treated as legacy records, so
+ * their final streams remain visible.
+ */
+export function shellOutputSegments(
+  accumulatedContent: string | undefined,
+  stdout: string,
+  stderr: string,
+): ShellOutputSegment[] {
+  if (accumulatedContent) {
+    const content = stripAnsi(accumulatedContent);
+    return content ? [{ source: "stream", content }] : [];
+  }
+
+  return [
+    { source: "stdout" as const, content: stripAnsi(stdout) },
+    { source: "stderr" as const, content: stripAnsi(stderr) },
+  ].filter((segment) => Boolean(segment.content));
+}
+
 function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
   const args = parseObject(toolCall.argumentsJson);
   const result = parseObject(toolCall.resultJson);
@@ -822,14 +852,39 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
   const termination = stringField(data, "termination");
   const truncated = booleanField(data, "truncated");
   const truncationReason = stringField(data, "truncationReason");
+  const attemptCount = numberField(data, "attemptCount");
+  const sandboxed = optionalBooleanField(data, "sandboxed");
+  const escalated = optionalBooleanField(data, "escalated");
+  const outputSegments = shellOutputSegments(item.content, stdout, stderr);
+  const hasOutput = outputSegments.length > 0;
+  const pendingVerification = reconciliationRequired && !gateRejected;
+  const failed = result.outcome === "error"
+    || item.status === "failed"
+    || (exitCode !== undefined && exitCode !== 0);
   const success = !gateRejected
     && item.status === "completed"
+    && result.outcome !== "error"
+    && !pendingVerification
     && (exitCode === undefined || exitCode === 0);
+  const statusTone = item.status === "in_progress"
+    ? "neutral"
+    : pendingVerification
+      ? "warning"
+      : success
+        ? "success"
+        : "error";
+  const statusText = item.status === "in_progress"
+    ? "运行中"
+    : gateRejected
+      ? "未执行"
+      : pendingVerification
+        ? "待核验"
+        : success
+          ? "✓ 成功"
+          : failed
+            ? "失败"
+            : statusLabel(item.status);
   const [open, setOpen] = useState(item.status === "in_progress");
-
-  useEffect(() => {
-    if (item.status !== "in_progress") setOpen(false);
-  }, [item.status]);
 
   return (
     <details className="tool-item tool-item--shell" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
@@ -842,25 +897,37 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
       <div className="shell-result">
         <p className="shell-label">Shell</p>
         <pre className="shell-command"><span aria-hidden="true">$ </span>{command}</pre>
-        {stdout && <pre className="shell-output">{stdout}</pre>}
-        {stderr && <pre className="shell-output shell-output--error">{stderr}</pre>}
+        {outputSegments.map((segment, index) => (
+          <pre
+            className={`shell-output${segment.source === "stderr" ? " shell-output--error" : ""}`}
+            key={`${segment.source}-${index}`}
+          >
+            {segment.content}
+          </pre>
+        ))}
         {gateRejected && <p className="shell-error-code">未执行，等待只读核验</p>}
-        {!gateRejected && !success && code && <p className="shell-error-code">失败 · {code}</p>}
-        {!success && summary && <p className="shell-error-summary">{summary}</p>}
+        {!gateRejected && !pendingVerification && !success && code && <p className="shell-error-code">失败 · {code}</p>}
+        {!success && !pendingVerification && summary && <p className="shell-error-summary">{summary}</p>}
         {exitCode !== undefined && !gateRejected && <p className="shell-diagnostic">退出码 · {exitCode}</p>}
         {termination && <p className="shell-diagnostic">结束方式 · {termination}</p>}
+        {(attemptCount !== undefined || sandboxed !== undefined || escalated !== undefined) && (
+          <p className="shell-diagnostic shell-diagnostic--facts">
+            {attemptCount !== undefined && <span>执行次数 · {attemptCount}</span>}
+            {sandboxed !== undefined && <span>沙箱 · {sandboxed ? "是" : "否"}</span>}
+            {escalated !== undefined && <span>扩权 · {escalated ? "是" : "否"}</span>}
+          </p>
+        )}
         {truncated && (
           <p className="shell-diagnostic">
             输出已截断{truncationReason ? ` · ${truncationReason}` : ""}
           </p>
         )}
         {reconciliationRequired && !gateRejected && (
-          <p className="shell-diagnostic">结果需要只读核验</p>
+          <p className="shell-diagnostic shell-diagnostic--warning">结果需要只读核验</p>
         )}
-        {!stdout && !stderr && (success || (!code && !summary)) && <p className="shell-empty">无输出</p>}
-        <p className={`shell-status ${success ? "shell-status--success" : "shell-status--error"}`}>
-          {item.status === "in_progress" ? "运行中" : gateRejected ? "未执行" : success ? "✓ 成功" : statusLabel(item.status)}
-        </p>
+        {!hasOutput && item.status === "in_progress" && <p className="shell-empty">尚未输出</p>}
+        {!hasOutput && item.status !== "in_progress" && !pendingVerification && (success || (!code && !summary)) && <p className="shell-empty">无输出</p>}
+        <p className={`shell-status shell-status--${statusTone}`}>{statusText}</p>
       </div>
     </details>
   );
@@ -1141,6 +1208,13 @@ function stringArrayField(source: Record<string, unknown>, key: string): string[
 
 function booleanField(source: Record<string, unknown>, key: string): boolean {
   return source[key] === true;
+}
+
+function optionalBooleanField(
+  source: Record<string, unknown>,
+  key: string,
+): boolean | undefined {
+  return typeof source[key] === "boolean" ? source[key] : undefined;
 }
 
 function numberField(source: Record<string, unknown>, key: string): number | undefined {

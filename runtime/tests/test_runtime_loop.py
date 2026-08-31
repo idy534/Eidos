@@ -97,6 +97,29 @@ class RuntimeLoopTests(unittest.TestCase):
             ],
         )
 
+    def test_runtime_permissions_mark_direct_shell_as_network_requestable(self) -> None:
+        run, _user_item = self.store.create_run(
+            self.session["id"], "Check whether the shell can use the network"
+        )
+        model = ScriptedModel([ModelResponse(text="checked")])
+
+        RuntimeLoop(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        self.assertIn(
+            "run_shell",
+            {definition.name for definition in model.tool_definitions_history[0]},
+        )
+        self.assertIn(
+            "Network access may be requested through Approval",
+            model.instructions_history[0],
+        )
+        self.assertNotIn(
+            "Network access cannot be requested by the available runtime tools",
+            model.instructions_history[0],
+        )
+
     def test_multiple_read_tools_execute_in_declared_order(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Inspect workspace")
         model = ScriptedModel(
@@ -835,10 +858,7 @@ class RuntimeLoopTests(unittest.TestCase):
                             "run_shell",
                             {
                                 "command": "touch rejected.txt",
-                                "sandboxPermissions": "with_additional_permissions",
-                                "additionalPermissions": {
-                                    "network": {"enabled": True},
-                                },
+                                "networkAccess": "request",
                                 "justification": "Fixture requests network access",
                             },
                         ),
@@ -848,15 +868,111 @@ class RuntimeLoopTests(unittest.TestCase):
             ]
         )
 
+        approvals: list[dict[str, object]] = []
         RuntimeLoop(
             self.store,
             model,
             lambda _message: None,
-            lambda _request, _cancel: ApprovalDecision("reject"),
+            lambda request, _cancel: (
+                approvals.append(request) or ApprovalDecision("reject")
+            ),
             shell_available=True,
         ).run(run["id"], threading.Event())
 
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(approvals[0]["sandboxPermissions"], "with_additional_permissions")
+        self.assertTrue(approvals[0]["networkEnabled"])
+        self.assertEqual(
+            self.store.connection.execute(
+                """
+                SELECT COUNT(*) FROM tool_attempts
+                JOIN tool_calls ON tool_calls.id = tool_attempts.tool_call_id
+                JOIN items ON items.id = tool_calls.item_id
+                WHERE items.run_id = ?
+                """,
+                (run["id"],),
+            ).fetchone()[0],
+            0,
+        )
         self.assertFalse((self.workspace / "rejected.txt").exists())
+
+    def test_approved_shell_network_request_runs_once_in_seatbelt(self) -> None:
+        if not is_seatbelt_ready():
+            self.skipTest(
+                "Seatbelt Shell integration requires a currently usable sandbox-exec and static resources"
+            )
+        run, _ = self.store.create_run(
+            self.session["id"], "Run a command that requests network access"
+        )
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "call-shell",
+                            "run_shell",
+                            {
+                                "command": "printf network-request-approved",
+                                "networkAccess": "request",
+                                "justification": "The command may need network access",
+                                "timeoutSeconds": 5,
+                            },
+                        ),
+                    )
+                ),
+                ModelResponse(text="Command completed."),
+            ]
+        )
+        approvals: list[dict[str, object]] = []
+
+        RuntimeLoop(
+            self.store,
+            model,
+            lambda _message: None,
+            lambda request, _cancel: (
+                approvals.append(request) or ApprovalDecision("approve")
+            ),
+            shell_available=True,
+        ).run(run["id"], threading.Event())
+
+        self.assertEqual(len(approvals), 1)
+        self.assertTrue(approvals[0]["networkEnabled"])
+        attempts = self.store.connection.execute(
+            """
+            SELECT sandbox_type, effective_permissions_json
+            FROM tool_attempts
+            JOIN tool_calls ON tool_calls.id = tool_attempts.tool_call_id
+            JOIN items ON items.id = tool_calls.item_id
+            WHERE items.run_id = ?
+            ORDER BY tool_attempts.ordinal
+            """,
+            (run["id"],),
+        ).fetchall()
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0]["sandbox_type"], "macos_seatbelt")
+        self.assertTrue(
+            json.loads(attempts[0]["effective_permissions_json"])["networkEnabled"]
+        )
+        self.assertEqual(
+            self.store.connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM tool_attempts
+                JOIN tool_calls ON tool_calls.id = tool_attempts.tool_call_id
+                JOIN items ON items.id = tool_calls.item_id
+                WHERE items.run_id = ? AND tool_attempts.sandbox_type = 'none'
+                """,
+                (run["id"],),
+            ).fetchone()[0],
+            0,
+        )
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        command_item = next(
+            item for item in snapshot["items"] if item["kind"] == "command_execution"
+        )
+        result = json.loads(command_item["toolCall"]["resultJson"])
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(result["data"]["stdout"], "network-request-approved")
 
     def test_shell_workspace_rebind_before_execution_never_runs_in_replacement(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Run safely")

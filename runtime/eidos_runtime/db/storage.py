@@ -41,6 +41,7 @@ from eidos_runtime.db.repositories import (
     RunRepository,
     SessionRepository,
 )
+from eidos_runtime.db.repositories.execution import ToolOutputPage
 from eidos_runtime.db.repositories.context import RECENT_CONTEXT_STEPS
 from eidos_runtime.db.repositories.async_operations import (
     AsyncOperation,
@@ -655,6 +656,25 @@ class SessionStore:
 
     def read_item(self, item_id: str) -> dict[str, object]:
         return self._repository(self._execution).read_item(item_id)
+
+    def read_tool_output(
+        self,
+        run_id: str,
+        *,
+        tool_call_id: str,
+        stream: str,
+        offset_bytes: int,
+        max_bytes: int,
+        from_end: bool,
+    ) -> ToolOutputPage:
+        return self._repository(self._execution).read_tool_output(
+            run_id,
+            tool_call_id=tool_call_id,
+            stream=stream,
+            offset_bytes=offset_bytes,
+            max_bytes=max_bytes,
+            from_end=from_end,
+        )
 
     def read_session_snapshot(
         self,

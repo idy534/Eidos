@@ -12,6 +12,8 @@ import unittest
 from pathlib import Path
 
 from eidos_runtime.context.project_rules import ProjectRuleResolver
+from eidos_runtime.runtime.engine import _build_step_policy
+from eidos_runtime.sandbox.permissions import BasePermissionProfile
 from eidos_runtime.model.instructions import (
     PROJECT_RULE_AUTHORITY,
     RUNTIME_AUTHORITY,
@@ -263,6 +265,66 @@ class TestRuntimePermissionInjection(unittest.TestCase):
 
         self.assertIn("enabled", content_enabled)
         self.assertIn("disabled", content_disabled)
+
+    def test_disabled_network_explains_shell_approval_request(self):
+        policy = self._policy(
+            available_tools=("read_file", "run_shell"),
+            network_permission_requestable=True,
+        )
+        content = next(
+            layer
+            for layer in self._resolve_with_policy(policy).layers
+            if layer.id == "runtime-permissions"
+        ).content
+
+        self.assertIn("Default Shell network: disabled", content)
+        self.assertIn("Network access may be requested through Approval", content)
+        self.assertIn("Creating a project or installing dependencies", content)
+        self.assertIn(
+            "default Shell network being disabled does not mean network access is unavailable",
+            content,
+        )
+
+    def test_additional_permissions_do_not_imply_network_request(self):
+        policy = self._policy(
+            allow_additional_permissions=True,
+            network_permission_requestable=True,
+        )
+        content = next(
+            layer
+            for layer in self._resolve_with_policy(policy).layers
+            if layer.id == "runtime-permissions"
+        ).content
+
+        self.assertIn("Additional sandbox permissions may be requested", content)
+        self.assertNotIn("Network access may be requested through Approval", content)
+        self.assertNotIn("installing dependencies", content)
+
+    def test_engine_marks_network_requestable_only_when_shell_is_available(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile_json = BasePermissionProfile.for_workspace(
+                workspace_root=root,
+            ).model_dump_json(by_alias=True)
+            sandbox_json = '{"sandboxType":"macos_seatbelt"}'
+
+            shell_policy = _build_step_policy(
+                profile_json,
+                sandbox_json,
+                str(root),
+                ("read_file", "run_shell"),
+            )
+            read_only_policy = _build_step_policy(
+                profile_json,
+                sandbox_json,
+                str(root),
+                ("read_file",),
+            )
+
+        self.assertFalse(shell_policy.network_enabled)
+        self.assertTrue(shell_policy.network_permission_requestable)
+        self.assertFalse(read_only_policy.network_enabled)
+        self.assertFalse(read_only_policy.network_permission_requestable)
 
     def test_available_tools_reflected_in_layer(self):
         policy = self._policy(available_tools=("my_tool", "another_tool"))

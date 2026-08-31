@@ -23,8 +23,13 @@ from eidos_runtime.sandbox.host_shell import (  # noqa: E402
     ShellEnvironmentSnapshot,
     ShellEnvironmentSnapshotProvider,
 )
-from eidos_runtime.sandbox.shell import _terminate_group, run_shell  # noqa: E402
-from eidos_runtime.sandbox.shell import prepare_shell_launch  # noqa: E402
+from eidos_runtime.sandbox.shell import (  # noqa: E402
+    ShellLaunchSpec,
+    _terminate_group,
+    prepare_shell_launch,
+    run_shell,
+    run_shell_process,
+)
 from eidos_runtime.sandbox.seatbelt import (  # noqa: E402
     SeatbeltProfile,
     is_seatbelt_ready,
@@ -468,6 +473,113 @@ class ShellLifecycleUnitTests(unittest.TestCase):
         self.assertEqual(data["truncationReason"], "output_limit")
         self.assertEqual(data["originalBytes"], 600000)
         self.assertEqual(data["omittedBytes"], 600000 - 256 * 1024)
+
+    def test_streamed_output_preserves_utf8_split_across_stdout_and_stderr(self) -> None:
+        code = (
+            "import sys; "
+            "sys.stdout.buffer.write(b'\\xf0'); "
+            "sys.stdout.buffer.flush(); "
+            "sys.stderr.buffer.write(b'\\xe2'); "
+            "sys.stderr.buffer.flush(); "
+            "sys.stdout.buffer.write(b'\\x9f\\x98\\x80'); "
+            "sys.stdout.buffer.flush(); "
+            "sys.stderr.buffer.write(b'\\x82\\xac'); "
+            "sys.stderr.buffer.flush()"
+        )
+        launch = ShellLaunchSpec(
+            argv=(sys.executable, "-c", code),
+            cwd=self.workspace,
+            environment=os.environ.copy(),
+            sandboxed=False,
+        )
+        deltas: list[str] = []
+        real_os_read = os.read
+
+        def read_one_byte(file_descriptor: int, size: int) -> bytes:
+            return real_os_read(file_descriptor, min(size, 1))
+
+        with patch(
+            "eidos_runtime.sandbox.shell.os.read",
+            side_effect=read_one_byte,
+        ):
+            result = run_shell_process(
+                launch,
+                timeout_seconds=2,
+                cancel=threading.Event(),
+                on_delta=deltas.append,
+                started=time.monotonic(),
+                resource_registry=None,
+                owner_id="utf8-stream-test",
+            )
+
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(result["data"]["stdout"], "😀")
+        self.assertEqual(result["data"]["stderr"], "€")
+        streamed = "".join(deltas)
+        self.assertNotIn("\ufffd", streamed)
+        self.assertEqual(streamed.count("😀"), 1)
+        self.assertEqual(streamed.count("€"), 1)
+
+    def test_streamed_output_flushes_incomplete_utf8_after_output_truncation(self) -> None:
+        code = (
+            "import sys; "
+            f"sys.stdout.buffer.write(b'A' * {256 * 1024 - 1} + b'\\xf0\\x9f\\x98\\x80')"
+        )
+        launch = ShellLaunchSpec(
+            argv=(sys.executable, "-c", code),
+            cwd=self.workspace,
+            environment=os.environ.copy(),
+            sandboxed=False,
+        )
+        deltas: list[str] = []
+
+        result = run_shell_process(
+            launch,
+            timeout_seconds=2,
+            cancel=threading.Event(),
+            on_delta=deltas.append,
+            started=time.monotonic(),
+            resource_registry=None,
+            owner_id="utf8-truncation-test",
+        )
+
+        self.assertEqual(result["outcome"], "success")
+        data = result["data"]
+        self.assertTrue(data["truncated"])
+        self.assertEqual(data["originalBytes"], 256 * 1024 + 3)
+        self.assertEqual(data["omittedBytes"], 3)
+        streamed = "".join(deltas)
+        self.assertEqual(streamed, data["stdout"])
+        self.assertEqual(streamed.count("\ufffd"), 1)
+
+    def test_streamed_output_flushes_incomplete_utf8_after_forced_termination(self) -> None:
+        code = (
+            "import sys, time; "
+            "sys.stdout.buffer.write(b'\\xf0'); "
+            "sys.stdout.buffer.flush(); time.sleep(5)"
+        )
+        launch = ShellLaunchSpec(
+            argv=(sys.executable, "-c", code),
+            cwd=self.workspace,
+            environment=os.environ.copy(),
+            sandboxed=False,
+        )
+        deltas: list[str] = []
+
+        result = run_shell_process(
+            launch,
+            timeout_seconds=1,
+            cancel=threading.Event(),
+            on_delta=deltas.append,
+            started=time.monotonic(),
+            resource_registry=None,
+            owner_id="utf8-termination-test",
+        )
+
+        self.assertEqual(result["code"], "timeout")
+        streamed = "".join(deltas)
+        self.assertEqual(streamed, result["data"]["stdout"])
+        self.assertEqual(streamed.count("\ufffd"), 1)
 
     def test_shell_result_reports_safe_shell_diagnostics(self) -> None:
         result = self._run_shell("true", 2)

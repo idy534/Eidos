@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import os
@@ -404,6 +405,16 @@ def run_shell_process(
     selector.register(process.stdout, selectors.EVENT_READ, "stdout")
     selector.register(process.stderr, selectors.EVENT_READ, "stderr")
     outputs = {"stdout": bytearray(), "stderr": bytearray()}
+    decoders = {
+        stream: codecs.getincrementaldecoder("utf-8")(errors="replace")
+        for stream in outputs
+    }
+
+    def emit_decoded(stream: str, chunk: bytes, *, final: bool = False) -> None:
+        text = decoders[stream].decode(chunk, final=final)
+        if text:
+            on_delta(text)
+
     total = 0
     observed_bytes = 0
     truncated = False
@@ -440,6 +451,7 @@ def run_shell_process(
             for key, _mask in ready:
                 chunk = os.read(key.fileobj.fileno(), 64 * 1024)
                 if not chunk:
+                    emit_decoded(key.data, b"", final=True)
                     selector.unregister(key.fileobj)
                     continue
                 observed_bytes = min(
@@ -451,7 +463,7 @@ def run_shell_process(
                 if accepted:
                     outputs[key.data].extend(accepted)
                     total += len(accepted)
-                    on_delta(accepted.decode("utf-8", errors="replace"))
+                    emit_decoded(key.data, accepted)
                 if len(accepted) < len(chunk):
                     truncated = True
             if process.poll() is not None and termination == "exit":
@@ -486,6 +498,8 @@ def run_shell_process(
         process.stderr.close()
         if resource is not None:
             resource.close()
+    for stream in outputs:
+        emit_decoded(stream, b"", final=True)
     stdout = bytes(outputs["stdout"]).decode("utf-8", errors="replace")
     stderr = bytes(outputs["stderr"]).decode("utf-8", errors="replace")
     hit_fault("shell_modify_then_fail")

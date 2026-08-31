@@ -4,7 +4,12 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { Item, Run } from "../contracts.js";
-import { ExecutionFeed, isFeedAtBottom, formatItemTime } from "./ExecutionFeed.js";
+import {
+  ExecutionFeed,
+  formatItemTime,
+  isFeedAtBottom,
+  shellOutputSegments,
+} from "./ExecutionFeed.js";
 
 
 const run: Run = {
@@ -415,6 +420,238 @@ test("shows shell termination and bounded-output diagnostics", () => {
   assert.match(html, /退出码 · 2/);
   assert.match(html, /结束方式 · exit/);
   assert.match(html, /输出已截断 · output_limit/);
+});
+
+test("uses the accumulated stream content once and preserves its stdout/stderr order", () => {
+  const streamed = "stdout 1\nstderr 1\nstdout 2\n";
+  const segments = shellOutputSegments(
+    streamed,
+    "stdout 1\nstdout 2\n",
+    "stderr 1\n",
+  );
+  assert.deepEqual(segments, [{ source: "stream", content: streamed }]);
+
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({
+        id: "streamed-shell", ordinal: 1, kind: "command_execution", content: streamed,
+        toolCall: {
+          id: "tool-streamed-shell", itemId: "streamed-shell", modelStepIndex: 1,
+          batchOrder: 0, providerCallId: "provider-streamed-shell", toolName: "run_shell",
+          status: "completed", startedAt: 1_000, completedAt: 2_000,
+          argumentsJson: JSON.stringify({ command: "pnpm test:fast" }),
+          resultJson: JSON.stringify({
+            outcome: "success", code: "ok", summary: "Command completed",
+            data: {
+              stdout: "stdout 1\nstdout 2\n", stderr: "stderr 1\n", exitCode: 0,
+              attemptCount: 1, sandboxed: true, escalated: false,
+            },
+          }),
+        },
+      })]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.equal((html.match(/stdout 1/g) ?? []).length, 1);
+  assert.equal((html.match(/stderr 1/g) ?? []).length, 1);
+  assert.ok(html.indexOf("stdout 1") < html.indexOf("stderr 1"));
+  assert.ok(html.indexOf("stderr 1") < html.indexOf("stdout 2"));
+  assert.match(html, /执行次数 · 1/);
+  assert.match(html, /沙箱 · 是/);
+  assert.match(html, /扩权 · 否/);
+});
+
+test("shows the recorded facts for an escalated retry", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({
+        id: "retried-shell", ordinal: 1, kind: "command_execution", content: "retry output\n",
+        toolCall: {
+          id: "tool-retried-shell", itemId: "retried-shell", modelStepIndex: 1,
+          batchOrder: 0, providerCallId: "provider-retried-shell", toolName: "run_shell",
+          status: "completed", startedAt: 1_000, completedAt: 3_000,
+          argumentsJson: JSON.stringify({ command: "pnpm test:fast" }),
+          resultJson: JSON.stringify({
+            outcome: "success", code: "ok", summary: "Command completed after retry",
+            data: {
+              stdout: "retry output\n", stderr: "", exitCode: 0,
+              attemptCount: 2, sandboxed: false, escalated: true,
+            },
+          }),
+        },
+      })]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(html, /执行次数 · 2/);
+  assert.match(html, /沙箱 · 否/);
+  assert.match(html, /扩权 · 是/);
+  assert.match(html, /✓ 成功/);
+});
+
+test("falls back to legacy final streams only when accumulated content is absent", () => {
+  const stdout = "legacy stdout\n";
+  const stderr = "legacy stderr\n";
+  assert.deepEqual(shellOutputSegments(undefined, stdout, stderr), [
+    { source: "stdout", content: stdout },
+    { source: "stderr", content: stderr },
+  ]);
+  assert.deepEqual(shellOutputSegments("", stdout, stderr), [
+    { source: "stdout", content: stdout },
+    { source: "stderr", content: stderr },
+  ]);
+
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({
+        id: "legacy-shell", ordinal: 1, kind: "command_execution", content: "",
+        toolCall: {
+          id: "tool-legacy-shell", itemId: "legacy-shell", modelStepIndex: 1,
+          batchOrder: 0, providerCallId: "provider-legacy-shell", toolName: "run_shell",
+          status: "completed", startedAt: 1_000, completedAt: 2_000,
+          argumentsJson: JSON.stringify({ command: "legacy" }),
+          resultJson: JSON.stringify({
+            outcome: "success", code: "ok", summary: "Command completed",
+            data: { stdout, stderr, exitCode: 0 },
+          }),
+        },
+      })]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+  assert.match(html, /legacy stdout/);
+  assert.match(html, /legacy stderr/);
+  assert.equal((html.match(/legacy stdout/g) ?? []).length, 1);
+  assert.equal((html.match(/legacy stderr/g) ?? []).length, 1);
+});
+
+test("strips ANSI and OSC hyperlink controls from the accumulated output", () => {
+  const accumulated = "\u001b[31" + "mred\u001b[0m \u001b]8;;https://example.com\u0007link\u001b]8;;\u0007";
+  assert.deepEqual(shellOutputSegments(accumulated, "", ""), [
+    { source: "stream", content: "red link" },
+  ]);
+  assert.deepEqual(shellOutputSegments(undefined, "\u001b[32mlegacy\u001b[0m", ""), [
+    { source: "stdout", content: "legacy" },
+  ]);
+});
+
+test("distinguishes in-progress no output from completed no output", () => {
+  const { completedAt: _completedAt, ...runWithoutCompletion } = run;
+  const activeRun = { ...runWithoutCompletion, status: "running" as const };
+  const activeHtml = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({
+        id: "empty-active-shell", ordinal: 1, kind: "command_execution", status: "in_progress",
+        toolCall: {
+          id: "tool-empty-active-shell", itemId: "empty-active-shell", modelStepIndex: 1,
+          batchOrder: 0, providerCallId: "provider-empty-active-shell", toolName: "run_shell",
+          status: "running", startedAt: 1_000,
+          argumentsJson: JSON.stringify({ command: "slow-command" }),
+        },
+      })]}
+      runs={[activeRun]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+  assert.match(activeHtml, /尚未输出/);
+  assert.doesNotMatch(activeHtml, /无输出/);
+  assert.match(activeHtml, /shell-status shell-status--neutral/);
+  assert.doesNotMatch(activeHtml, /shell-status shell-status--error/);
+
+  const completedHtml = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({
+        id: "empty-completed-shell", ordinal: 1, kind: "command_execution",
+        toolCall: {
+          id: "tool-empty-completed-shell", itemId: "empty-completed-shell", modelStepIndex: 1,
+          batchOrder: 0, providerCallId: "provider-empty-completed-shell", toolName: "run_shell",
+          status: "completed", startedAt: 1_000, completedAt: 2_000,
+          argumentsJson: JSON.stringify({ command: "true" }),
+          resultJson: JSON.stringify({
+            outcome: "success", code: "ok", summary: "Command completed",
+            data: { stdout: "", stderr: "", exitCode: 0 },
+          }),
+        },
+      })]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+  assert.match(completedHtml, /无输出/);
+  assert.doesNotMatch(completedHtml, /尚未输出/);
+});
+
+test("does not show success for an error or a result that still needs reconciliation", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "error-shell", ordinal: 1, kind: "command_execution",
+          toolCall: {
+            id: "tool-error-shell", itemId: "error-shell", modelStepIndex: 1,
+            batchOrder: 0, providerCallId: "provider-error-shell", toolName: "run_shell",
+            status: "completed", startedAt: 1_000, completedAt: 2_000,
+            argumentsJson: JSON.stringify({ command: "error-but-zero" }),
+            resultJson: JSON.stringify({
+              outcome: "error", code: "sandbox_denied", summary: "Command failed",
+              data: { stdout: "", stderr: "denied", exitCode: 0 },
+            }),
+          },
+        }),
+        item({
+          id: "unconfirmed-shell", ordinal: 2, kind: "command_execution",
+          toolCall: {
+            id: "tool-unconfirmed-shell", itemId: "unconfirmed-shell", modelStepIndex: 1,
+            batchOrder: 1, providerCallId: "provider-unconfirmed-shell", toolName: "run_shell",
+            status: "completed", startedAt: 2_000, completedAt: 3_000,
+            argumentsJson: JSON.stringify({ command: "unknown-result" }),
+            resultJson: JSON.stringify({
+              outcome: "success", code: "ok", summary: "Command completed",
+              reconciliationRequired: true,
+              data: { stdout: "", stderr: "", exitCode: 0 },
+            }),
+          },
+        }),
+      ]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.doesNotMatch(html, /✓ 成功/);
+  assert.match(html, /失败 · sandbox_denied/);
+  assert.match(html, /结果需要只读核验/);
+  assert.doesNotMatch(html, /失败 · ok/);
+  assert.match(html, /shell-status shell-status--warning/);
 });
 
 test("distinguishes a reconciliation gate for a non-shell tool", () => {

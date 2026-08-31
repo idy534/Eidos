@@ -373,7 +373,7 @@ class RuntimeEngine:
                 run.resolution_snapshot.permission_profile_json,
                 run.resolution_snapshot.sandbox_policy_json,
                 run.resolution_snapshot.workspace_identity.path,
-                snapshot.activated_names,
+                snapshot.available_names,
             )
             built = context_builder.build(
                 run.run_id,
@@ -1143,6 +1143,10 @@ def _build_step_policy(
         sandbox_mode = "read-only"
 
     shell_available = "run_shell" in available_tools
+    allow_additional_permissions = shell_available
+    network_permission_requestable = bool(
+        shell_available and allow_additional_permissions
+    )
     allow_escalated = bool(
         shell_available
         and effective is not None
@@ -1154,7 +1158,8 @@ def _build_step_policy(
         workspace_root=workspace_root,
         writable_roots=writable_roots,
         network_enabled=network_enabled,
-        allow_additional_permissions=shell_available,
+        allow_additional_permissions=allow_additional_permissions,
+        network_permission_requestable=network_permission_requestable,
         allow_escalated_execution=allow_escalated,
         rejected_approval_ids=(),
         available_tools=available_tools,

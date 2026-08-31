@@ -50,6 +50,7 @@ class StepPermissionPolicy:
     writable_roots: tuple[str, ...] = field(default_factory=tuple)
     network_enabled: bool = False
     allow_additional_permissions: bool = True
+    network_permission_requestable: bool = False
     allow_escalated_execution: bool = False
     rejected_approval_ids: tuple[str, ...] = field(default_factory=tuple)
     available_tools: tuple[str, ...] = field(default_factory=tuple)
@@ -66,12 +67,34 @@ def _build_runtime_permissions_content(policy: StepPermissionPolicy) -> str:
         for root in policy.writable_roots:
             lines.append(f"- {root}")
 
-    lines.append(f"\nNetwork access: {'enabled' if policy.network_enabled else 'disabled'}")
+    lines.append(
+        f"\nDefault Shell network: {'enabled' if policy.network_enabled else 'disabled'}"
+    )
 
     approval_lines = []
     if policy.allow_additional_permissions:
         approval_lines.append(
-            "- Additional sandbox permissions may be requested."
+            "- Additional sandbox permissions may be requested when a tool explicitly supports them."
+        )
+    network_requestable = (
+        policy.network_permission_requestable
+        and policy.allow_additional_permissions
+        and "run_shell" in policy.available_tools
+    )
+    if policy.network_enabled:
+        approval_lines.append(
+            "- The default Shell already has network access."
+        )
+    elif network_requestable:
+        approval_lines.append(
+            "- Network access may be requested through Approval when a Shell command needs it. "
+            "Creating a project or installing dependencies may need network access. The user "
+            "does not need to explicitly request network access. The default Shell network "
+            "being disabled does not mean network access is unavailable."
+        )
+    else:
+        approval_lines.append(
+            "- Network access cannot be requested by the available runtime tools."
         )
     if policy.allow_escalated_execution:
         approval_lines.append(

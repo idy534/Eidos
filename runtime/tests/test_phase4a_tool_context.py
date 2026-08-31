@@ -436,7 +436,8 @@ class Phase4AToolContractTests(unittest.TestCase):
 
         self.assertIsInstance(first, ToolResultProjection)
         self.assertLess(len(json.dumps(first.model_result).encode()), 70_000)
-        self.assertTrue(first.model_result["data"]["truncated"])
+        self.assertNotIn("truncated", first.model_result["data"])
+        self.assertTrue(first.model_result["data"]["modelProjectionTruncated"])
         self.assertEqual(first.progress_fingerprint, second.progress_fingerprint)
 
     def test_dynamic_schema_validator_is_shared_bounded_and_closed(self) -> None:

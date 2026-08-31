@@ -313,7 +313,7 @@ fi
 
 测试者还应使用已存在的 Eidos data 路径执行 `cat "<EIDOS_DATA_DIR>/models.json" >/dev/null`，并确认读取被拒绝。测试者应在可丢弃的 Git Workspace 中尝试写入 `.git/config`，或在可丢弃的 Non-Git Workspace 中尝试创建 `workspace/.git`，并确认 Git metadata 写入被拒绝。测试者不应修改真实项目的 Git metadata。
 
-网络默认应被拒绝。测试者可以在 Agent Shell 外启动已知的 localhost listener，再在默认 profile 中使用可用的本地客户端连接，并确认连接失败。测试者请求 additional network Approval 后，应在扩权 profile 中确认同一连接成功。additional write 和 unsandboxed 也必须先经过对应 Approval。Unsandboxed 仍受现有 hard confidentiality deny 约束。
+网络默认应被拒绝。测试者可以在 Agent Shell 外启动已知的 localhost listener，再在默认 profile 中使用可用的本地客户端连接，并确认连接失败。测试者随后应让 Agent 使用 `networkAccess=request` 和非空 justification 执行同一连接。Desktop 应在进程启动前展示 network-enabled Approval。用户批准后，同一命令应在 expanded macOS Seatbelt profile 中成功，而不是转成 unsandboxed。测试者还应确认用户拒绝时没有 Tool attempt 或进程副作用。旧的 additional network 参数仍可用于兼容性验收。additional write 和 unsandboxed 也必须先经过对应 Approval。Unsandboxed 仍受现有 hard confidentiality deny 约束。明确的 network denial 不得触发 unsandboxed retry。
 
 命令结束后，Runtime 会记录 Workspace manifest observation、diff、退出状态和 reconciliation 状态。Workspace-wide observation 不要求在 Shell 启动前完整扫描 Workspace。`unknown` observation 不等于 Runtime 已经证明了不确定副作用。Runtime 明确报告的 execution uncertainty 仍必须进入 reconciliation。
 

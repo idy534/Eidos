@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import StrEnum
 import hashlib
 import json
 import math
@@ -23,6 +24,7 @@ from pydantic import (
 
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile,
+    NetworkPermissions,
     SandboxPermissions,
 )
 
@@ -207,10 +209,22 @@ class DeleteFileInput(ReadFileInput):
     pass
 
 
+class NetworkAccess(StrEnum):
+    DEFAULT = "default"
+    REQUEST = "request"
+
+
 class RunShellInput(StrictToolModel):
     command: StrictStr = Field(min_length=1, max_length=16 * 1024)
     cwd: StrictStr = "."
     timeoutSeconds: StrictInt = Field(default=120, ge=1, le=600)
+    networkAccess: NetworkAccess = Field(
+        default=NetworkAccess.DEFAULT,
+        description=(
+            "Network intent. Use 'request' when the command needs network "
+            "access; Eidos will request approval and keep macOS Seatbelt."
+        ),
+    )
     sandboxPermissions: SandboxPermissions = SandboxPermissions.USE_DEFAULT
     additionalPermissions: AdditionalPermissionProfile | None = None
     justification: StrictStr | None = Field(default=None, max_length=2_000)
@@ -227,6 +241,18 @@ class RunShellInput(StrictToolModel):
 
     @model_validator(mode="after")
     def validate_permissions(self):
+        if self.networkAccess is NetworkAccess.REQUEST:
+            if (
+                self.sandboxPermissions is not SandboxPermissions.USE_DEFAULT
+                or (
+                    self.additionalPermissions is not None
+                    and not self.additionalPermissions.is_empty
+                )
+            ):
+                raise ValueError("network_access_conflict")
+            if not self.justification:
+                raise ValueError("network_access_justification_required")
+            return self
         if self.additionalPermissions is None:
             if (
                 self.sandboxPermissions
@@ -241,6 +267,20 @@ class RunShellInput(StrictToolModel):
         ):
             raise ValueError("sandbox_override_justification_required")
         return self
+
+    @property
+    def effective_sandbox_permissions(self) -> SandboxPermissions:
+        if self.networkAccess is NetworkAccess.REQUEST:
+            return SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS
+        return self.sandboxPermissions
+
+    @property
+    def effective_additional_permissions(self) -> AdditionalPermissionProfile | None:
+        if self.networkAccess is NetworkAccess.REQUEST:
+            return AdditionalPermissionProfile(
+                network=NetworkPermissions(enabled=True)
+            )
+        return self.additionalPermissions
 
 
 class SkillReadInput(StrictToolModel):
@@ -782,10 +822,22 @@ PROJECTORS: dict[str, VersionedToolResultProjector] = {
 
 _MODEL_TOTAL_BYTES = 48 * 1024
 _MODEL_STRING_BYTES = 16 * 1024
+_MODEL_SHELL_STREAM_BYTES = 16 * 1024
+_MODEL_OUTPUT_MARKER = "\n[... model output omitted ...]\n"
 _MODEL_MAX_DEPTH = 8
 _MODEL_MAX_NODES = 1_000
 _MODEL_MAX_KEYS = 256
 _MODEL_MAX_LIST_ITEMS = 100
+_SHELL_MODEL_FACT_FIELDS = frozenset({
+    "exitCode", "termination", "truncated", "truncationReason",
+    "originalBytes", "omittedBytes", "attemptCount", "escalated", "sandboxed",
+    "modelProjectionTruncated", "modelProjectionContinuation",
+    "modelProjectionOmittedBytes",
+})
+_SHELL_RAW_FACT_FIELDS = frozenset(_SHELL_MODEL_FACT_FIELDS - {
+    "modelProjectionTruncated", "modelProjectionContinuation",
+    "modelProjectionOmittedBytes",
+})
 
 
 def project_tool_result(
@@ -821,40 +873,66 @@ def _project_tool_result(
 ) -> ToolResultProjection:
     data = canonical_result.get("data")
     safe_data = dict(data) if isinstance(data, dict) else {}
-    projected: dict[str, object] = {}
-    truncated = False
-    budget = _ProjectionBudget()
-    for key in sorted(safe_data):
-        if budget.keys >= _MODEL_MAX_KEYS:
-            truncated = True
-            break
-        budget.keys += 1
-        value = safe_data[key]
-        if key in {"durationMs"}:
-            continue
-        value, value_truncated = _bounded_projection_value(
-            value, budget, depth=1
+    if tool_name == "run_shell":
+        (
+            projected,
+            model_projection_truncated,
+            stream_omitted,
+            raw_streams,
+        ) = _project_shell_data(safe_data)
+        if model_projection_truncated:
+            _set_shell_projection_markers(projected, stream_omitted)
+        model_result = {
+            "toolName": _bounded_string(tool_name),
+            "outcome": canonical_result.get("outcome"),
+            "code": _bounded_string(str(canonical_result.get("code", ""))),
+            "summary": _bounded_string(str(canonical_result.get("summary", ""))),
+            "data": projected,
+            "sideEffectsMayExist": canonical_result.get("sideEffectsMayExist", False),
+            "reconciliationRequired": canonical_result.get(
+                "reconciliationRequired", False
+            ),
+        }
+        model_result = _fit_shell_serialized_budget(
+            model_result,
+            raw_streams=raw_streams,
+            stream_omitted=stream_omitted,
         )
-        truncated = truncated or value_truncated
-        projected[key] = value
-    if truncated:
-        projected["truncated"] = True
-        projected.setdefault(
-            "continuation",
-            _continuation(tool_name, projected),
-        )
-    model_result: dict[str, object] = {
-        "toolName": tool_name,
-        "outcome": canonical_result.get("outcome"),
-        "code": canonical_result.get("code"),
-        "summary": _bounded_string(str(canonical_result.get("summary", ""))),
-        "data": projected,
-        "sideEffectsMayExist": canonical_result.get("sideEffectsMayExist", False),
-        "reconciliationRequired": canonical_result.get(
-            "reconciliationRequired", False
-        ),
-    }
-    model_result = _fit_serialized_budget(model_result)
+    else:
+        projected = {}
+        truncated = False
+        budget = _ProjectionBudget()
+        for key in sorted(safe_data):
+            if budget.keys >= _MODEL_MAX_KEYS:
+                truncated = True
+                break
+            budget.keys += 1
+            value = safe_data[key]
+            if key in {"durationMs"}:
+                continue
+            value, value_truncated = _bounded_projection_value(
+                value, budget, depth=1
+            )
+            truncated = truncated or value_truncated
+            projected[key] = value
+        if truncated:
+            projected["truncated"] = True
+            projected.setdefault(
+                "continuation",
+                _continuation(tool_name, projected),
+            )
+        model_result = {
+            "toolName": tool_name,
+            "outcome": canonical_result.get("outcome"),
+            "code": canonical_result.get("code"),
+            "summary": _bounded_string(str(canonical_result.get("summary", ""))),
+            "data": projected,
+            "sideEffectsMayExist": canonical_result.get("sideEffectsMayExist", False),
+            "reconciliationRequired": canonical_result.get(
+                "reconciliationRequired", False
+            ),
+        }
+        model_result = _fit_serialized_budget(model_result)
     fingerprint = hashlib.sha256(
         _canonical_json(
             _semantic(canonical_result, set_fields=set_fields)
@@ -883,6 +961,182 @@ def _project_tool_result(
         )[:256],
         progress_fingerprint=fingerprint,
     )
+
+
+def _project_shell_data(
+    safe_data: dict[str, object],
+) -> tuple[dict[str, object], bool, dict[str, int], dict[str, str]]:
+    projected: dict[str, object] = {}
+    model_projection_truncated = False
+
+    for key in (
+        "exitCode", "termination", "truncated", "truncationReason",
+        "originalBytes", "omittedBytes", "attemptCount", "escalated", "sandboxed",
+    ):
+        if key not in safe_data:
+            continue
+        value, value_truncated = _bounded_shell_fact(safe_data[key])
+        projected[key] = value
+        model_projection_truncated = model_projection_truncated or value_truncated
+
+    stream_omitted: dict[str, int] = {}
+    raw_streams: dict[str, str] = {}
+    for key in ("stdout", "stderr"):
+        if key not in safe_data:
+            continue
+        raw_value = safe_data[key]
+        if isinstance(raw_value, str):
+            raw_streams[key] = raw_value
+        value, value_truncated, omitted = _bounded_shell_output(raw_value)
+        projected[key] = value
+        stream_omitted[key] = omitted
+        model_projection_truncated = model_projection_truncated or value_truncated
+
+    budget = _ProjectionBudget()
+    skipped = _SHELL_RAW_FACT_FIELDS | {"stdout", "stderr", "durationMs"}
+    for key in sorted(safe_data):
+        if key in skipped:
+            continue
+        if budget.keys >= _MODEL_MAX_KEYS:
+            model_projection_truncated = True
+            break
+        budget.keys += 1
+        value, value_truncated = _bounded_projection_value(
+            safe_data[key], budget, depth=1
+        )
+        projected[key] = value
+        model_projection_truncated = model_projection_truncated or value_truncated
+
+    return projected, model_projection_truncated, stream_omitted, raw_streams
+
+
+def _bounded_shell_fact(value: object) -> tuple[object, bool]:
+    if isinstance(value, str):
+        bounded = _bounded_string(value)
+        return bounded, bounded != value
+    return value, False
+
+
+def _set_shell_projection_markers(
+    data: dict[str, object], stream_omitted: dict[str, int]
+) -> None:
+    streams = tuple(key for key in ("stdout", "stderr") if stream_omitted.get(key, 0) > 0)
+    data["modelProjectionTruncated"] = True
+    data["modelProjectionContinuation"] = _shell_continuation(streams)
+    data["modelProjectionOmittedBytes"] = sum(stream_omitted.values())
+
+
+def _shell_continuation(streams: tuple[str, ...]) -> str:
+    selected = streams or ("stdout", "stderr")
+    requests = " and ".join(
+        "read_tool_output(callId=<current provider callId>, "
+        f"stream={stream}, fromEnd=true)"
+        for stream in selected
+    )
+    return (
+        f"Use {requests} to read the existing completed run_shell output. "
+        "Do not rerun the command. Bytes omitted by the raw output limit "
+        "cannot be recovered."
+    )
+
+
+def _bounded_shell_output(
+    value: object, *, max_bytes: int = _MODEL_SHELL_STREAM_BYTES
+) -> tuple[object, bool, int]:
+    if not isinstance(value, str):
+        return value, False, 0
+    encoded = value.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return value, False, 0
+    marker = _MODEL_OUTPUT_MARKER.encode("utf-8")
+    if max_bytes <= 0:
+        return "", True, len(encoded)
+    if len(marker) >= max_bytes:
+        accepted = marker[:max_bytes].decode("utf-8", errors="ignore").encode("utf-8")
+        return accepted.decode("utf-8"), True, len(encoded) - len(accepted)
+
+    available = max_bytes - len(marker)
+    head_limit = (available + 1) // 2
+    tail_limit = available - head_limit
+    head = encoded[:head_limit].decode("utf-8", errors="ignore").encode("utf-8")
+    tail = encoded[-tail_limit:].decode("utf-8", errors="ignore").encode("utf-8")
+    projected = head.decode("utf-8") + _MODEL_OUTPUT_MARKER + tail.decode("utf-8")
+    return projected, True, len(encoded) - len(head) - len(tail)
+
+
+def _fit_shell_serialized_budget(
+    value: dict[str, object],
+    *,
+    raw_streams: dict[str, str],
+    stream_omitted: dict[str, int],
+) -> dict[str, object]:
+    if len(_canonical_json(value).encode("utf-8")) <= _MODEL_TOTAL_BYTES:
+        return value
+
+    bounded = dict(value)
+    bounded["toolName"] = _bounded_string(str(bounded.get("toolName", "")))
+    bounded["code"] = _bounded_string(str(bounded.get("code", "")))
+    bounded["summary"] = _bounded_string(str(bounded.get("summary", "")))
+    data = dict(bounded.get("data") if isinstance(bounded.get("data"), dict) else {})
+    _set_shell_projection_markers(data, stream_omitted)
+
+    critical = _SHELL_MODEL_FACT_FIELDS | {"stdout", "stderr"}
+    while len(_canonical_json({**bounded, "data": data}).encode("utf-8")) > _MODEL_TOTAL_BYTES:
+        candidates = [key for key in data if key not in critical]
+        if not candidates:
+            break
+        key = max(
+            candidates,
+            key=lambda candidate: len(_canonical_json(data[candidate]).encode("utf-8")),
+        )
+        data.pop(key, None)
+
+    while len(_canonical_json({**bounded, "data": data}).encode("utf-8")) > _MODEL_TOTAL_BYTES:
+        summary = bounded.get("summary")
+        if not isinstance(summary, str) or not summary:
+            break
+        encoded = summary.encode("utf-8")
+        shortened = encoded[: max(0, len(encoded) // 2)].decode(
+            "utf-8", errors="ignore"
+        )
+        if shortened == summary:
+            shortened = summary[:-1]
+        bounded["summary"] = shortened
+
+    minimum = max(1_024, len(_MODEL_OUTPUT_MARKER.encode("utf-8")) + 2)
+    while len(_canonical_json({**bounded, "data": data}).encode("utf-8")) > _MODEL_TOTAL_BYTES:
+        candidates = [
+            key
+            for key in ("stdout", "stderr")
+            if isinstance(raw_streams.get(key), str)
+            and isinstance(data.get(key), str)
+            and len(str(data[key]).encode("utf-8")) > minimum
+        ]
+        if not candidates:
+            break
+        key = max(
+            candidates,
+            key=lambda candidate: len(
+                _canonical_json(data[candidate]).encode("utf-8")
+            ),
+        )
+        raw_value = raw_streams[key]
+        current = data[key]
+        assert isinstance(raw_value, str)
+        assert isinstance(current, str)
+        current_bytes = len(current.encode("utf-8"))
+        target_bytes = max(minimum, current_bytes - max(1, current_bytes // 4))
+        bounded_value, _truncated, omitted = _bounded_shell_output(
+            raw_value, max_bytes=target_bytes
+        )
+        if not isinstance(bounded_value, str) or bounded_value == current:
+            break
+        data[key] = bounded_value
+        stream_omitted[key] = omitted
+        _set_shell_projection_markers(data, stream_omitted)
+
+    bounded["data"] = data
+    return bounded
 
 
 def _continuation(tool_name: str, data: dict[str, object]) -> str:

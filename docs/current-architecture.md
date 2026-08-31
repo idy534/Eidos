@@ -193,7 +193,7 @@ Tool Result 的 `reconciliationRequired` 是本次执行是否建立 reconciliat
 
 ## 9. Sandbox & Approval
 
-ApprovalCoordinator 把扩权 Approval request、用户 decision、feedback、暂停状态和恢复状态写入 SQLite。普通 Workspace 文件变更和默认 Workspace Seatbelt Shell 不创建 Approval。联网、附加路径、unsandboxed、MCP 和 Eidos-state 副作用继续使用 Approval。Approval 不能修改 Tool 参数，也不能删除永久拒绝、Runtime 保护路径或 hard confidentiality deny。
+ApprovalCoordinator 把扩权 Approval request、用户 decision、feedback、暂停状态和恢复状态写入 SQLite。普通 Workspace 文件变更和默认 Workspace Seatbelt Shell 不创建 Approval。模型可以用 `networkAccess=request` 表达高层联网意图。Shell contract 会把该 intent 规范化为现有 additional network permission。Runtime 会在启动进程前请求 Approval，获批后仍使用 Seatbelt。旧的底层权限输入继续兼容。联网、附加路径、unsandboxed、MCP 和 Eidos-state 副作用继续使用 Approval。Approval 不能修改 Tool 参数，也不能删除永久拒绝、Runtime 保护路径或 hard confidentiality deny。
 
 默认 Shell attempt 使用 macOS Seatbelt。Seatbelt Policy 根据 Workspace、Runtime root、Eidos 数据目录、永久拒绝、附加权限和网络权限物化为 effective permission profile，并保存 profile hash。默认 Workspace profile 在权限校验和 Durable Intent 后直接启动。显式权限升级会创建新的 Approval attempt。Runtime 只有在 hard confidentiality deny 不存在并且 policy 允许时才允许 unsandboxed attempt。
 
@@ -207,13 +207,23 @@ ShellEnvironmentSnapshotProvider 使用 resolved shell 的 `-lc` 做一次 bound
 
 Shell 的 effective environment 保留真实 `HOME`、snapshot 的 Host `PATH`、真实 `TMPDIR`、`USER`、`LOGNAME`、`LANG` 和 `LC_*`。Runtime 只把 bundled `rg` 的目录去重后追加到 `PATH` 末尾。Provider 在启动 login shell 前移除继承的 `EIDOS_*` 和 packaged Runtime Python control environment。用户 profile 随后声明的普通开发环境仍会进入 snapshot。`run_shell` 不从 `models.json` 注入 API Key，也不强制禁用用户的 Git 配置。`HardenedGitRunner` 仍是独立的 Git 执行路径。
 
+Shell reader 为 stdout 和 stderr 分别保留 UTF-8 增量解码器。每次收到的字节只会生成已经可以解码的文本片段，结束时再 flush 未完成的解码状态。Shell handler 按接收顺序把安全片段追加到 Item content，并保留每个片段的顺序事实。
+
+Desktop `ExecutionFeed` 在 Shell 运行中和终态都渲染累计的 Item content。它在已有累计内容时不再追加结果中的最终 stdout/stderr，因此不会重复输出，也不会丢失 stdout/stderr 的接收顺序。旧 Item 缺少或为空的 `content` 时，Renderer 使用结果中的 stdout 和 stderr 作为兼容回退。
+
+Shell 输出在 Renderer 中使用成熟的 ANSI stripping 实现转为纯文本。ANSI 和 OSC 控制序列不会被解释，OSC 超链接也不会被激活。Shell Result 的 `attemptCount`、`sandboxed` 和 `escalated` 字段继续作为已有执行与权限事实，并在 Feed 中展示。
+
+`run_shell` 的模型结果投影对 stdout 和 stderr 各保留首尾，每条流最多 16 KiB，整个 JSON 最多 48 KiB。原始 `truncated` 和 `omittedBytes` 保持为原始 Shell 事实，不会被模型投影覆盖。模型投影使用独立的 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 字段，其中 omitted bytes 只计算模型省略的 stdout/stderr UTF-8 字节。
+
+`read_tool_output` 是只读的持久 Shell 输出分页工具。它使用前一次 `run_shell` 的 provider tool call ID，默认读取 stdout，也可以读取 stderr。Runtime 只从当前 Session 的持久化终态 `run_shell` 结果读取，所以过去 Run 可以读取，运行中结果、跨 Session 结果、缺失 ID 和歧义 ID 会拒绝。`offsetBytes`、`maxBytes`（请求范围 4 字节至 16 KiB）和 `fromEnd` 控制分页；Runtime 会在 UTF-8 边界返回实际 `startByte`、`endByte` 和 `nextOffset`，实际页可以小于请求值。该工具不会重新执行 Shell，也不会清除 reconciliation。Shell 原始输出上限已经丢失的字节无法恢复。
+
 ### Default filesystem
 
 默认 Seatbelt profile 允许全盘 file read、普通 executable 和 dylib 的 executable mapping。永久拒绝和 hard confidentiality deny 同时拒绝 file read、file map 和 file write。
 
 默认 profile 只允许 Workspace、snapshot `TMPDIR` 和 canonical system temp root `/tmp` 写入。macOS 的 `/tmp` 会规范化为 `/private/tmp`。真实 `HOME` 和其他位置默认只读。
 
-Seatbelt 永久拒绝 Eidos data 和 credential 路径的 read、write 和 map。data 内的 projectless 或 Worktree workspace 仍可读写。active Skill root 允许 read 和 execute，但拒绝 write。`.git`、linked Worktree metadata 和 Git common metadata 只读。Workspace `.env` 可以被进程读取，但输出仍经过 SensitiveScanner。默认 network 继续拒绝，只有 effective profile 启用 network 时才允许连接。
+Seatbelt 永久拒绝 Eidos data 和 credential 路径的 read、write 和 map。data 内的 projectless 或 Worktree workspace 仍可读写。active Skill root 允许 read 和 execute，但拒绝 write。`.git`、linked Worktree metadata 和 Git common metadata 只读。Workspace `.env` 可以被进程读取，但输出仍经过 SensitiveScanner。默认 network 继续拒绝，只有 effective profile 启用 network 时才允许连接。明确的 network denial 不会进入通用 unsandboxed retry。
 
 Managed linked Worktree 会把 Worktree 的已验证 `git_dir` 和 Project 的已验证 `git_common_dir` 传入 Seatbelt。Seatbelt 只允许读取这两个 Git metadata root。它明确拒绝这些路径的写入。原始 repository working tree 不属于该 Thread 的 execution workspace。
 

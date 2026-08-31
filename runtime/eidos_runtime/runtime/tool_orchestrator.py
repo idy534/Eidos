@@ -10,7 +10,7 @@ from typing import Callable, Protocol, TypeVar
 
 from pydantic import BaseModel
 
-from eidos_runtime.sandbox.denial import SandboxDenied
+from eidos_runtime.sandbox.denial import SandboxDenied, SandboxDenialCategory
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile,
     BasePermissionProfile,
@@ -171,6 +171,7 @@ class ToolOrchestrator:
         attempt_count = 1
         if (
             denial is None
+            or denial.category is SandboxDenialCategory.NETWORK
             or explicit_escalation
             or context.cancel.is_set()
             or not runtime.escalation_allowed(request, context)

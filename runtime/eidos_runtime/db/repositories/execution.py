@@ -4,7 +4,10 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+from typing import Literal
 import uuid
+
+from pydantic import Field
 
 from eidos_runtime.db.database import (
     CommittedMutation,
@@ -35,6 +38,7 @@ from eidos_runtime.db.transitions import (
 from eidos_runtime.db.repositories.workspace import execution_workspace_for_session
 from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.model.instructions import InstructionResolver
+from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.runtime.contracts import ProgressSignature
 from eidos_runtime.runtime.protocol_diagnostics import (
     ProtocolDiagnostic,
@@ -64,6 +68,10 @@ _RECONCILIATION_CODES = frozenset({
     "background_process", "output_capture_failed",
     "workspace_change_manifest_incomplete", "shell_resource_limit_exceeded",
 })
+
+
+def _is_utf8_continuation_byte(value: int) -> bool:
+    return (value & 0xC0) == 0x80
 
 
 def _result_reconciliation_required(result: dict[str, object]) -> bool:
@@ -114,7 +122,30 @@ def _attempt_metadata(
         raise StorageError("run_model_config_invalid") from None
 
 
+class ToolOutputPage(EidosFrozenStrictModel):
+    call_id: str
+    stream: Literal["stdout", "stderr"]
+    content: str
+    # The adapter scans this complete persisted stream before exposing the
+    # bounded page. This field stays inside the Runtime repository boundary.
+    source_content: str = Field(exclude=True, repr=False)
+    start_byte: int
+    end_byte: int
+    total_bytes: int
+    has_more_before: bool
+    has_more_after: bool
+    raw_truncated: bool | None
+    raw_omitted_bytes: int | None
+
+
+class ToolOutputReadError(LookupError):
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
 class ExecutionRepository(Repository):
+
     def read_item(self, item_id: str) -> dict[str, object]:
         with self.lock:
             row = self._connection().execute(
@@ -126,6 +157,109 @@ class ExecutionRepository(Repository):
                 "SELECT * FROM tool_calls WHERE item_id = ?", (item_id,)
             ).fetchone()
         return _item_from_row(row, tool_row)
+
+    def read_tool_output(
+        self,
+        run_id: str,
+        *,
+        tool_call_id: str,
+        stream: Literal["stdout", "stderr"],
+        offset_bytes: int,
+        max_bytes: int,
+        from_end: bool,
+    ) -> ToolOutputPage:
+        if stream not in {"stdout", "stderr"}:
+            raise ToolOutputReadError("invalid_output_stream")
+        if (
+            offset_bytes < 0
+            or max_bytes < 4
+            or max_bytes > 16 * 1024
+        ):
+            raise ToolOutputReadError("invalid_output_range")
+        with self.lock:
+            connection = self._connection()
+            run = connection.execute(
+                "SELECT session_id FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if run is None:
+                raise ToolOutputReadError("tool_output_not_available")
+            rows = connection.execute(
+                """
+                SELECT tool_calls.provider_call_id, tool_calls.result_json
+                FROM tool_calls
+                JOIN items ON items.id = tool_calls.item_id
+                WHERE items.session_id = ?
+                  AND tool_calls.provider_call_id = ?
+                  AND tool_calls.tool_name = 'run_shell'
+                  AND items.kind = 'command_execution'
+                  AND items.status IN ('completed', 'failed', 'canceled')
+                  AND tool_calls.status IN ('completed', 'failed', 'canceled')
+                  AND tool_calls.result_json IS NOT NULL
+                ORDER BY tool_calls.creation_seq ASC
+                LIMIT 2
+                """,
+                (run["session_id"], tool_call_id),
+            ).fetchall()
+        if not rows:
+            raise ToolOutputReadError("tool_output_not_available")
+        if len(rows) > 1:
+            raise ToolOutputReadError("ambiguous_tool_call")
+        try:
+            result = json.loads(rows[0]["result_json"])
+        except (TypeError, json.JSONDecodeError):
+            raise ToolOutputReadError("output_unavailable") from None
+        data = result.get("data") if isinstance(result, dict) else None
+        content = data.get(stream) if isinstance(data, dict) else None
+        if not isinstance(content, str):
+            raise ToolOutputReadError("output_unavailable")
+        raw_truncated = data.get("truncated") if isinstance(data, dict) else None
+        if raw_truncated is not None and not isinstance(raw_truncated, bool):
+            raise ToolOutputReadError("output_unavailable")
+        raw_omitted_bytes = data.get("omittedBytes") if isinstance(data, dict) else None
+        if raw_omitted_bytes is not None and (
+            isinstance(raw_omitted_bytes, bool)
+            or not isinstance(raw_omitted_bytes, int)
+            or raw_omitted_bytes < 0
+            or raw_omitted_bytes > 9_007_199_254_740_991
+        ):
+            raise ToolOutputReadError("output_unavailable")
+        encoded = content.encode("utf-8")
+        total_bytes = len(encoded)
+        if from_end:
+            start_byte = max(0, total_bytes - max_bytes)
+            while (
+                start_byte < total_bytes
+                and _is_utf8_continuation_byte(encoded[start_byte])
+            ):
+                start_byte += 1
+        else:
+            if offset_bytes > total_bytes or (
+                offset_bytes < total_bytes
+                and _is_utf8_continuation_byte(encoded[offset_bytes])
+            ):
+                raise ToolOutputReadError("invalid_output_offset")
+            start_byte = offset_bytes
+        end_byte = min(total_bytes, start_byte + max_bytes)
+        while (
+            end_byte > start_byte
+            and end_byte < total_bytes
+            and _is_utf8_continuation_byte(encoded[end_byte])
+        ):
+            end_byte -= 1
+        page = encoded[start_byte:end_byte].decode("utf-8")
+        return ToolOutputPage(
+            call_id=str(rows[0]["provider_call_id"]),
+            stream=stream,
+            content=page,
+            source_content=content,
+            start_byte=start_byte,
+            end_byte=end_byte,
+            total_bytes=total_bytes,
+            has_more_before=start_byte > 0,
+            has_more_after=end_byte < total_bytes,
+            raw_truncated=raw_truncated,
+            raw_omitted_bytes=raw_omitted_bytes,
+        )
 
     def get_user_item(self, run_id: str) -> dict[str, object]:
         with self.lock:

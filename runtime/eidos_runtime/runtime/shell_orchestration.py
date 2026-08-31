@@ -43,19 +43,22 @@ class ShellOrchestrationRuntime:
     def sandbox_permissions(
         self, request: ShellOrchestrationRequest
     ) -> SandboxPermissions:
-        return request.input.sandboxPermissions
+        return request.input.effective_sandbox_permissions
 
     def additional_permissions(
         self, request: ShellOrchestrationRequest
     ) -> AdditionalPermissionProfile | None:
-        return request.input.additionalPermissions
+        return request.input.effective_additional_permissions
 
     def approval_requirement(
         self,
         request: ShellOrchestrationRequest,
         _context: OrchestratorContext,
     ) -> ExecApprovalRequirement:
-        if request.input.sandboxPermissions is SandboxPermissions.USE_DEFAULT:
+        if (
+            request.input.effective_sandbox_permissions
+            is SandboxPermissions.USE_DEFAULT
+        ):
             return ExecApprovalRequirement.SKIP
         return ExecApprovalRequirement.NEEDS_APPROVAL
 

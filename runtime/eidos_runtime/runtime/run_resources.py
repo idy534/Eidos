@@ -25,6 +25,7 @@ from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
+from eidos_runtime.tools.read_tool_output import read_tool_output_entry
 from eidos_runtime.tools.search import tool_search_entry
 from eidos_runtime.tools.runtime_workspace import ToolExecutor
 from eidos_runtime.tools.view_image import ViewImageRootAuthority, view_image_entry
@@ -177,6 +178,7 @@ class RunResources:
         base = ToolRegistry.build(
             builtin_entries=(
                 *self.tool_executor.registry.entries,
+                read_tool_output_entry(self.store, self.run_id),
                 workspace_dependencies_entry(),
                 *self.skills.tool_entries(
                     self.skill_catalog_snapshot,
