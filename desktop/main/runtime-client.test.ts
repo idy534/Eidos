@@ -131,6 +131,7 @@ test("preserves every workspace and lifecycle business code in the closed contra
     "WORKSPACE_IDENTITY_CHANGED",
     "WORKSPACE_READ_TIMEOUT",
     "WORKSPACE_FILE_TOO_LARGE",
+    "WORKSPACE_FILE_NOT_FOUND",
     "WORKSPACE_SENSITIVE_CONTENT",
     "GIT_DISCARD_REQUIRES_UNSTAGED",
     "REVIEW_DIFF_CHANGED",

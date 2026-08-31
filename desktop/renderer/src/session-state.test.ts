@@ -251,6 +251,10 @@ test("closed runtime business errors map to safe user-facing guidance", () => {
     "任务目录的身份已经变化，Run 未启动。请刷新后重试。",
   );
   assert.equal(
+    userFacingError(new Error("EIDOS_RUNTIME_ERROR:WORKSPACE_FILE_NOT_FOUND")),
+    "文件不存在或已被移除。请从当前文件树重新选择。",
+  );
+  assert.equal(
     userFacingError(new Error("EIDOS_RUNTIME_ERROR:WORKTREE_DIRTY")),
     "任务仍有未提交或冲突的变更，不能删除。",
   );

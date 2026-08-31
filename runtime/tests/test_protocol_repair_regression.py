@@ -154,6 +154,46 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             ["Recovered without persisting the invalid response."],
         )
 
+    def test_protocol_repair_exposes_safe_validation_details(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Read a Skill resource")
+        invalid_path = "/Users/example/.eidos/skills/docx/scripts/office/soffice.py"
+        model = ScriptedModel([
+            ModelResponse(
+                text="I will read the Skill script.",
+                tool_calls=(
+                    ModelToolCall(
+                        "bad-read",
+                        "read_file",
+                        {"path": invalid_path},
+                    ),
+                ),
+            ),
+            ModelResponse(
+                text="Recovered with the correct resource boundary.",
+                phase=AssistantMessagePhase.FINAL_ANSWER,
+            ),
+        ])
+
+        RuntimeLoop(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        completed = self.store.read_run(run["id"])
+        self.assertEqual(completed["status"], "succeeded")
+        attempts = self.store.read_model_attempts(run["id"])
+        self.assertEqual([attempt["status"] for attempt in attempts], ["failed", "completed"])
+        repair = model.contexts[1][-1]
+        self.assertEqual(repair["type"], "protocol_error")
+        self.assertEqual(repair["toolName"], "read_file")
+        self.assertEqual(repair["validationPath"], "path")
+        self.assertEqual(repair["validationCode"], "invalid_relative_path")
+        self.assertNotIn(invalid_path, json.dumps(repair, ensure_ascii=False))
+        diagnostic = attempts[0]["protocolDiagnostics"]
+        assert isinstance(diagnostic, dict)
+        self.assertEqual(diagnostic["validationPath"], "path")
+        self.assertEqual(diagnostic["validationCode"], "invalid_relative_path")
+        self.assertNotIn(invalid_path, json.dumps(diagnostic, ensure_ascii=False))
+
     def test_protocol_failure_persists_safe_tool_diagnostics(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Record bad tool details")
         model = ScriptedModel([

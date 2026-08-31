@@ -51,7 +51,7 @@ describe("WorkspaceExplorer", () => {
     expect(readPreview).toHaveBeenCalledWith("session-a", "docs/README.md");
   });
 
-  it("uses one compact preview bar without redundant file headings", async () => {
+  it("uses one compact preview bar without redundant file headings or metadata", async () => {
     const listDirectory = vi.fn(async () => ({
       path: ".",
       entries: [{
@@ -81,7 +81,8 @@ describe("WorkspaceExplorer", () => {
 
     fireEvent.click(await screen.findByText("sample.test.js"));
     expect(await screen.findByRole("tab", { name: "tests/sample.test.js" })).toBeInTheDocument();
-    expect(screen.getByText("143 B")).toBeInTheDocument();
+    expect(screen.queryByText("tests/sample.test.js")).not.toBeInTheDocument();
+    expect(screen.queryByText("143 B")).not.toBeInTheDocument();
     expect(screen.queryByText("Files")).not.toBeInTheDocument();
     expect(container.querySelector(".workspace-preview-bar")).toBeInTheDocument();
     expect(container.querySelector(".workspace-preview-header")).not.toBeInTheDocument();
@@ -238,6 +239,8 @@ describe("WorkspaceExplorer", () => {
     await screen.findByText("Workspace 中没有可显示的文件");
     expect(container.querySelector(".workspace-explorer")).toHaveClass("workspace-explorer--side");
     const sideSplitter = screen.getByRole("separator", { name: "调整文件树大小" });
+    expect(sideSplitter).toHaveAttribute("aria-valuemin", "88");
+    expect(sideSplitter).toHaveAttribute("aria-valuemax", "512");
     expect(sideSplitter).toHaveAttribute("aria-valuenow", "204");
     fireEvent.pointerDown(sideSplitter, { clientY: 100, pointerId: 1 });
     fireEvent.pointerMove(sideSplitter, { clientY: 120, pointerId: 1 });
@@ -254,6 +257,78 @@ describe("WorkspaceExplorer", () => {
     fireEvent.keyDown(expandedSplitter, { key: "ArrowLeft" });
     expect(container.querySelector(".workspace-explorer")?.getAttribute("style"))
       .toContain("--workspace-tree-size");
+  });
+
+  it("measures the file tree after the async root listing mounts it", async () => {
+    const previousResizeObserver = globalThis.ResizeObserver;
+    const hadResizeObserver = "ResizeObserver" in globalThis;
+    const getBoundingClientRectSpy = vi.spyOn(
+      HTMLElement.prototype,
+      "getBoundingClientRect",
+    ).mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("workspace-tree-scroll")) {
+        return {
+          bottom: 144,
+          height: 144,
+          left: 0,
+          right: 320,
+          top: 0,
+          width: 320,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        } as DOMRect;
+      }
+      return new DOMRect();
+    });
+
+    class TestResizeObserver {
+      constructor(_callback: ResizeObserverCallback) {}
+
+      observe(_target: Element): void {}
+
+      disconnect(): void {}
+    }
+
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      configurable: true,
+      value: TestResizeObserver,
+    });
+
+    try {
+      const listDirectory = vi.fn(async () => ({
+        path: ".",
+        entries: [{
+          name: "README.md",
+          relativePath: "README.md",
+          kind: "file" as const,
+          sizeBytes: 8,
+        }],
+        truncated: false,
+      }));
+      const { container } = render(
+        <WorkspaceExplorer
+          sessionId="session-a"
+          layout="side"
+          listDirectory={listDirectory}
+        />,
+      );
+
+      await screen.findByText("README.md");
+      await waitFor(() => {
+        expect(container.querySelector('[role="tree"]')).toHaveStyle({ height: "144px" });
+      });
+    } finally {
+      getBoundingClientRectSpy.mockRestore();
+      if (hadResizeObserver) {
+        Object.defineProperty(globalThis, "ResizeObserver", {
+          configurable: true,
+          value: previousResizeObserver,
+        });
+      } else {
+        Reflect.deleteProperty(globalThis, "ResizeObserver");
+      }
+    }
   });
 
   it("refreshes only the affected loaded subtree after watcher invalidation", async () => {
@@ -289,7 +364,10 @@ describe("WorkspaceExplorer", () => {
   it("opens the requested file preview immediately when openRequest is provided", async () => {
     const listDirectory = vi.fn(async () => ({
       path: ".",
-      entries: [{ name: "sunset.js", relativePath: "sunset.js", kind: "file" as const, sizeBytes: 50 }],
+      entries: [
+        { name: "sunset.js", relativePath: "sunset.js", kind: "file" as const, sizeBytes: 50 },
+        { name: "other.js", relativePath: "other.js", kind: "file" as const, sizeBytes: 20 },
+      ],
       truncated: false,
     }));
     const readPreview = vi.fn(async () => ({
@@ -329,7 +407,79 @@ describe("WorkspaceExplorer", () => {
         openRequest={{ path: "other.js", requestId: 2 }}
       />,
     );
+    await waitFor(() => expect(readPreview2).toHaveBeenCalledWith("session-a", "other.js"));
     expect(await screen.findByText("console.log('other');")).toBeInTheDocument();
-    expect(readPreview2).toHaveBeenCalledWith("session-a", "other.js");
+  });
+
+  it("does not preview a stale requested path that is absent from the current workspace", async () => {
+    const listDirectory = vi.fn(async (_sessionId: string, path: string) => {
+      if (path === "old") {
+        throw new Error("EIDOS_RUNTIME_ERROR:WORKSPACE_BOUNDARY_VIOLATION");
+      }
+      return {
+        path,
+        entries: [{ name: "current.ts", relativePath: "current.ts", kind: "file" as const, sizeBytes: 12 }],
+        truncated: false,
+      };
+    });
+    const readPreview = vi.fn(async () => {
+      throw new Error("stale path must not be previewed");
+    });
+
+    render(
+      <WorkspaceExplorer
+        sessionId="session-a"
+        listDirectory={listDirectory}
+        readPreview={readPreview}
+        openRequest={{ path: "old/present.ts", requestId: 3 }}
+      />,
+    );
+
+    expect(await screen.findByText("文件不存在或已过期。请从当前文件树重新选择。"))
+      .toBeInTheDocument();
+    expect(readPreview).not.toHaveBeenCalled();
+  });
+
+  it("rejects an absolute requested path before requesting its preview", async () => {
+    const listDirectory = vi.fn(async () => ({ path: ".", entries: [], truncated: false }));
+    const readPreview = vi.fn(async () => {
+      throw new Error("absolute path must not be previewed");
+    });
+
+    render(
+      <WorkspaceExplorer
+        sessionId="session-a"
+        listDirectory={listDirectory}
+        readPreview={readPreview}
+        openRequest={{ path: "/Users/xielei/Documents/test1/code-test/package.json", requestId: 4 }}
+      />,
+    );
+
+    expect(await screen.findByText("文件路径无效。请从当前文件树重新选择。"))
+      .toBeInTheDocument();
+    expect(readPreview).not.toHaveBeenCalled();
+  });
+
+  it("shows safe guidance when a current file disappears before preview", async () => {
+    const listDirectory = vi.fn(async () => ({
+      path: ".",
+      entries: [{ name: "gone.ts", relativePath: "gone.ts", kind: "file" as const, sizeBytes: 12 }],
+      truncated: false,
+    }));
+    const readPreview = vi.fn(async () => {
+      throw new Error("EIDOS_RUNTIME_ERROR:WORKSPACE_FILE_NOT_FOUND");
+    });
+
+    render(
+      <WorkspaceExplorer
+        sessionId="session-a"
+        listDirectory={listDirectory}
+        readPreview={readPreview}
+      />,
+    );
+
+    fireEvent.click(await screen.findByText("gone.ts"));
+    expect(await screen.findByText("文件不存在或已被移除。请从当前文件树重新选择。"))
+      .toBeInTheDocument();
   });
 });

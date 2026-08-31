@@ -330,7 +330,11 @@ class WorkspaceReader:
         descriptor = os.dup(self.root_fd)
         try:
             for part in parts[:-1]:
-                next_fd = self._open_directory(descriptor, part)
+                next_fd = self._open_directory(
+                    descriptor,
+                    part,
+                    missing_code="file_unavailable",
+                )
                 os.close(descriptor)
                 descriptor = next_fd
         except Exception:
@@ -339,12 +343,19 @@ class WorkspaceReader:
         return descriptor
 
     @staticmethod
-    def _open_directory(parent_fd: int, name: str) -> int:
+    def _open_directory(
+        parent_fd: int,
+        name: str,
+        *,
+        missing_code: str = "workspace_boundary_violation",
+    ) -> int:
         flags = os.O_RDONLY | os.O_DIRECTORY
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         try:
             return os.open(name, flags, dir_fd=parent_fd)
+        except FileNotFoundError:
+            raise WorkspacePathError(missing_code) from None
         except OSError:
             raise WorkspacePathError("workspace_boundary_violation") from None
 
@@ -355,6 +366,8 @@ class WorkspaceReader:
             flags |= os.O_NOFOLLOW
         try:
             return os.open(name, flags, dir_fd=parent_fd)
+        except FileNotFoundError:
+            raise WorkspacePathError("file_unavailable") from None
         except OSError:
             raise WorkspacePathError("workspace_boundary_violation") from None
 

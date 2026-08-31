@@ -286,6 +286,25 @@ class PydanticAIModelClientTests(unittest.TestCase):
                 "content": "must use a declared instruction layer",
             },))
 
+    def test_encode_context_explains_safe_protocol_validation_details(self) -> None:
+        messages = encode_context(({
+            "type": "protocol_error",
+            "code": "TOOL_ARGUMENT_CONTRACT_VIOLATION",
+            "toolName": "read_file",
+            "validationPath": "path",
+            "validationCode": "invalid_relative_path",
+        },))
+
+        content = messages[0].parts[0].content
+        self.assertIn("read_file", content)
+        self.assertIn("path", content)
+        self.assertIn("invalid_relative_path", content)
+        self.assertIn("before execution", content)
+        self.assertIn("workspace-relative", content)
+        self.assertIn("skill_read_resource", content)
+        self.assertIn("qualifiedId", content)
+        self.assertIn("resourcePath", content)
+
     def test_complete_attaches_instructions_only_to_first_model_request(self) -> None:
         captured: dict[str, object] = {}
 

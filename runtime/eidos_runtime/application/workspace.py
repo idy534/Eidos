@@ -189,6 +189,7 @@ def _workspace_error_code(error: Exception) -> str:
         "workspace_identity_changed": "WORKSPACE_IDENTITY_CHANGED",
         "workspace_read_timeout": "WORKSPACE_READ_TIMEOUT",
         "file_too_large": "WORKSPACE_FILE_TOO_LARGE",
+        "file_unavailable": "WORKSPACE_FILE_NOT_FOUND",
         "invalid_directory_limit": "INVALID_PARAMS",
     }.get(str(code), "WORKSPACE_BOUNDARY_VIOLATION")
 

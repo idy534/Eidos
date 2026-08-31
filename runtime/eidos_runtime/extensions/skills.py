@@ -734,7 +734,9 @@ def _skill_entry(name: str, adapter: object) -> ToolRegistryEntry:
         spec=ToolSpec.model_validate({
             "name": name,
             "description": (
-                "Read a UTF-8 resource from an enabled local skill"
+                "Read a UTF-8 resource from an enabled local Skill. Pass its "
+                "qualifiedId and a resourcePath relative to that Skill; do "
+                "not pass an absolute path or a path containing '..'."
                 if is_resource else
                 "Read the instructions for an enabled local skill"
             ),

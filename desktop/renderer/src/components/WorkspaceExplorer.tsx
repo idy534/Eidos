@@ -7,6 +7,7 @@ import type {
   WorkspaceDirectoryListing,
   WorkspaceFilePreview,
 } from "../contracts.js";
+import { runtimeBusinessCode, userFacingError } from "../session-state.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 
 
@@ -116,9 +117,11 @@ const FILE_ICON_BY_NAME: Record<string, WorkspaceFileIconSpec> = {
   ".gitignore": { kind: "git", label: "GIT" },
 };
 
-const SIDE_SPLIT_MIN = 11 * 16;
+const SIDE_SPLIT_MIN = 5.5 * 16;
 const EXPANDED_SPLIT_MIN = 13 * 16;
 const EXPANDED_SPLIT_MAX = 24 * 16;
+const STALE_FILE_ERROR = "文件不存在或已过期。请从当前文件树重新选择。";
+const INVALID_FILE_PATH_ERROR = "文件路径无效。请从当前文件树重新选择。";
 
 const defaultListDirectory = (sessionId: string, path: string) =>
   window.eidosRuntime.listWorkspaceDirectory(sessionId, path);
@@ -182,6 +185,37 @@ function findNode(nodes: WorkspaceTreeNode[], id: string): WorkspaceTreeNode | u
   return undefined;
 }
 
+function isValidProgrammaticFilePath(value: string): boolean {
+  if (
+    !value
+    || value === "."
+    || value.length > 4096
+    || value.startsWith("/")
+    || /[\u0000-\u001f\u007f]/.test(value)
+  ) return false;
+  return !value.split("/").some((part) => part === "" || part === "." || part === "..");
+}
+
+function parentPath(value: string): string {
+  const slash = value.lastIndexOf("/");
+  return slash < 0 ? "." : value.slice(0, slash);
+}
+
+function programmaticOpenError(cause: unknown): string {
+  const code = runtimeBusinessCode(cause);
+  if (code === "WORKSPACE_BOUNDARY_VIOLATION" || code === "WORKSPACE_FILE_NOT_FOUND") {
+    return STALE_FILE_ERROR;
+  }
+  if (code) return userFacingError(cause);
+  return "无法确认文件是否存在。请刷新 Workspace 后重试。";
+}
+
+function previewReadError(cause: unknown): string {
+  return runtimeBusinessCode(cause)
+    ? userFacingError(cause)
+    : "文件预览读取失败";
+}
+
 export function WorkspaceExplorer({
   sessionId,
   executionKey = sessionId,
@@ -205,13 +239,14 @@ export function WorkspaceExplorer({
   const [splitSizes, setSplitSizes] = useState<Partial<Record<ExplorerLayout, number>>>({});
   const requestVersion = useRef(0);
   const explorerRef = useRef<HTMLElement>(null);
-  const treeContainerRef = useRef<HTMLDivElement>(null);
+  const treeResizeObserverRef = useRef<ResizeObserver | null>(null);
   const previewsRef = useRef(previews);
   const selectedFileCallbackRef = useRef(onSelectedFileChange);
   const nodesRef = useRef(nodes);
   const openPreviewPathsRef = useRef(openPreviewPaths);
   const loadDirectoryRef = useRef<(path: string, force?: boolean) => void>(() => undefined);
   const openFileRef = useRef<(path: string, refresh?: boolean) => void>(() => undefined);
+  const handledRequestIdRef = useRef<number | undefined>(undefined);
   const splitterDragRef = useRef<{
     pointerId: number;
     layout: ExplorerLayout;
@@ -252,8 +287,9 @@ export function WorkspaceExplorer({
     selectedFileCallbackRef.current?.(activePreviewPath);
   }, [activePreviewPath, executionKey, sessionId]);
 
-  useEffect(() => {
-    const container = treeContainerRef.current;
+  const setTreeContainerRef = useCallback((container: HTMLDivElement | null) => {
+    treeResizeObserverRef.current?.disconnect();
+    treeResizeObserverRef.current = null;
     if (!container || typeof ResizeObserver === "undefined") return;
     const resize = () => {
       const height = container.clientHeight || Math.floor(container.getBoundingClientRect().height);
@@ -262,8 +298,13 @@ export function WorkspaceExplorer({
     resize();
     const observer = new ResizeObserver(resize);
     observer.observe(container);
-    return () => observer.disconnect();
-  }, [layout]);
+    treeResizeObserverRef.current = observer;
+  }, []);
+
+  useEffect(() => () => {
+    treeResizeObserverRef.current?.disconnect();
+    treeResizeObserverRef.current = null;
+  }, []);
 
   const loadDirectory = useCallback((path: string, force = false) => {
     const node = findNode(nodes, path);
@@ -313,7 +354,7 @@ export function WorkspaceExplorer({
       })
       .catch((cause: unknown) => {
         if (requestVersion.current !== version) return;
-        setError(cause instanceof Error ? cause.message : "文件预览读取失败");
+        setError(previewReadError(cause));
       })
       .finally(() => {
         if (requestVersion.current === version) {
@@ -325,15 +366,45 @@ export function WorkspaceExplorer({
   loadDirectoryRef.current = loadDirectory;
   openFileRef.current = openFile;
 
-  const handledRequestIdRef = useRef<number | undefined>(undefined);
+  const openRequestedFile = useCallback(async (request: WorkspaceFileOpenRequest) => {
+    const version = requestVersion.current;
+    const isCurrentRequest = () => (
+      requestVersion.current === version
+      && handledRequestIdRef.current === request.requestId
+    );
+    if (!isValidProgrammaticFilePath(request.path)) {
+      if (isCurrentRequest()) setError(INVALID_FILE_PATH_ERROR);
+      return;
+    }
+
+    const currentNode = findNode(nodesRef.current, request.path);
+    if (currentNode?.kind === "file") {
+      if (isCurrentRequest()) openFile(request.path);
+      return;
+    }
+
+    try {
+      const listing = await listDirectory(sessionId, parentPath(request.path));
+      if (!isCurrentRequest()) return;
+      const entry = listing.entries.find((candidate) => candidate.relativePath === request.path);
+      if ((!entry || entry.kind !== "file") && !listing.truncated) {
+        setError(STALE_FILE_ERROR);
+        return;
+      }
+    } catch (cause: unknown) {
+      if (isCurrentRequest()) setError(programmaticOpenError(cause));
+      return;
+    }
+    if (isCurrentRequest()) openFile(request.path);
+  }, [listDirectory, openFile, sessionId]);
 
   // Respond to programmatic file open requests from parent
   useEffect(() => {
     if (!openRequest) return;
     if (handledRequestIdRef.current === openRequest.requestId) return;
     handledRequestIdRef.current = openRequest.requestId;
-    openFileRef.current(openRequest.path);
-  }, [openRequest]);
+    void openRequestedFile(openRequest);
+  }, [openRequest, openRequestedFile]);
 
   const closePreview = useCallback((path: string) => {
     const index = openPreviewPaths.indexOf(path);
@@ -349,8 +420,10 @@ export function WorkspaceExplorer({
     const width = rect?.width || Math.max(640, window.innerWidth);
     const height = rect?.height || 600;
     if (targetLayout === "side") {
-      const min = Math.min(SIDE_SPLIT_MIN, Math.max(176, height - SIDE_SPLIT_MIN));
-      return { min, max: Math.max(min, height - SIDE_SPLIT_MIN) };
+      return {
+        min: SIDE_SPLIT_MIN,
+        max: Math.max(SIDE_SPLIT_MIN, height - SIDE_SPLIT_MIN),
+      };
     }
     const min = Math.min(EXPANDED_SPLIT_MIN, Math.max(208, width - 20 * 16));
     return { min, max: Math.max(min, Math.min(EXPANDED_SPLIT_MAX, width - 20 * 16)) };
@@ -461,11 +534,12 @@ export function WorkspaceExplorer({
         ) : nodes.length === 0 ? (
           <p className="workspace-empty-state">Workspace 中没有可显示的文件</p>
         ) : (
-          <div className="workspace-tree-scroll" ref={treeContainerRef}>
+          <div className="workspace-tree-scroll" ref={setTreeContainerRef}>
             <Tree<WorkspaceTreeNode>
               data={nodes}
               width="100%"
               height={treeHeight}
+              className="workspace-tree-list"
               rowHeight={28}
               indent={16}
               overscanCount={8}
@@ -524,14 +598,6 @@ export function WorkspaceExplorer({
                 </div>
               ))}
             </div>
-            {activePreview && (
-              <div className="workspace-preview-meta">
-                <span className="workspace-preview-path" title={activePreview.path}>
-                  {activePreview.path}
-                </span>
-                <span>{formatBytes(activePreview.sizeBytes)}</span>
-              </div>
-            )}
           </div>
         )}
         {previewLoadingPath === activePreviewPath && !activePreview ? (
@@ -671,10 +737,4 @@ function ShikiPreview({ code, language }: { code: string; language?: string }) {
   }, [code, language]);
   if (!html) return <pre className="workspace-text-preview"><code>{code}</code></pre>;
   return <div className="workspace-code-preview" dangerouslySetInnerHTML={{ __html: html }} />;
-}
-
-function formatBytes(value: number): string {
-  if (value < 1_024) return `${value} B`;
-  if (value < 1_024 * 1_024) return `${(value / 1_024).toFixed(1)} KB`;
-  return `${(value / (1_024 * 1_024)).toFixed(1)} MB`;
 }

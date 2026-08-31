@@ -35,6 +35,7 @@ from eidos_runtime.runtime.loop_guard import (
     context_fact_frontier_hash,
     tool_call_fingerprint,
 )
+from eidos_runtime.runtime.protocol_diagnostics import ProtocolDiagnostic
 from eidos_runtime.runtime.run_resources import RunResourceError, RunResources
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.runtime.sampling import (
@@ -598,7 +599,10 @@ class RuntimeEngine:
                     if should_retry:
                         attempt_id = self.store.start_retry_model_attempt(run.run_id)
                         step = _protocol_repair_step(
-                            step, attempt_id=attempt_id, code=reason
+                            step,
+                            attempt_id=attempt_id,
+                            code=reason,
+                            diagnostic=validation.protocol_diagnostic,
                         )
                         self._capture_model_attempt_context(
                             context_application,
@@ -1044,10 +1048,25 @@ def _protocol_repair_step(
     *,
     attempt_id: str,
     code: str,
+    diagnostic: ProtocolDiagnostic | None = None,
 ) -> StepContext:
+    repair_context: dict[str, object] = {
+        "type": "protocol_error",
+        "code": code,
+    }
+    if diagnostic is not None:
+        for key, value in (
+            ("toolName", diagnostic.tool_name),
+            ("toolCallIndex", diagnostic.tool_call_index),
+            ("toolCallCount", diagnostic.tool_call_count),
+            ("validationPath", diagnostic.validation_path),
+            ("validationCode", diagnostic.validation_code),
+        ):
+            if value is not None:
+                repair_context[key] = value
     model_context = (
         *step.model_context,
-        {"type": "protocol_error", "code": code},
+        repair_context,
     )
     budget = estimate_model_request_budget(
         model_context,

@@ -361,7 +361,7 @@ class ToolRegistryEntry:
                 valid=False,
                 code="TOOL_ARGUMENT_CONTRACT_VIOLATION",
                 path=_validation_path(detail.get("loc")),
-                reason_code=_validation_reason(detail.get("type")),
+                reason_code=_validation_error_reason(detail),
             )
         except (TypeError, ValueError) as error:
             return ToolArgumentValidationResult(
@@ -696,6 +696,22 @@ def _validation_reason(value: object) -> str | None:
     if not isinstance(value, str) or not value:
         return None
     return value[:128]
+
+
+_VALIDATION_CODE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+
+
+def _validation_error_reason(detail: object) -> str | None:
+    if isinstance(detail, dict):
+        context = detail.get("ctx")
+        if isinstance(context, dict):
+            error = context.get("error")
+            if isinstance(error, ValueError):
+                candidate = str(error)
+                if _VALIDATION_CODE.fullmatch(candidate):
+                    return candidate
+        return _validation_reason(detail.get("type"))
+    return None
 
 
 def _valid_schema(schema: object, *, nested: bool = False) -> bool:

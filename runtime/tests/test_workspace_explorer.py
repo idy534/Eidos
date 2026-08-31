@@ -153,6 +153,50 @@ def test_text_markdown_and_binary_preview_are_typed_and_bounded(tmp_path: Path) 
         store.close()
 
 
+def test_preview_distinguishes_missing_file_from_boundary_violation(tmp_path: Path) -> None:
+    store, application, session_id, workspace = _application(tmp_path)
+    try:
+        (workspace / "present.txt").write_text("present\n", encoding="utf-8")
+
+        with pytest.raises(ApplicationError) as missing:
+            application.read_file_preview(
+                WorkspaceReadFilePreviewRequestDto(
+                    sessionId=session_id,
+                    path="old/present.txt",
+                )
+            )
+        assert missing.value.code == "WORKSPACE_FILE_NOT_FOUND"
+
+        with pytest.raises(ApplicationError) as missing_leaf:
+            application.read_file_preview(
+                WorkspaceReadFilePreviewRequestDto(
+                    sessionId=session_id,
+                    path="missing.txt",
+                )
+            )
+        assert missing_leaf.value.code == "WORKSPACE_FILE_NOT_FOUND"
+
+        with pytest.raises(ApplicationError) as boundary:
+            application.read_file_preview(
+                WorkspaceReadFilePreviewRequestDto(
+                    sessionId=session_id,
+                    path="../outside.txt",
+                )
+            )
+        assert boundary.value.code == "WORKSPACE_BOUNDARY_VIOLATION"
+
+        with pytest.raises(ApplicationError) as absolute:
+            application.read_file_preview(
+                WorkspaceReadFilePreviewRequestDto(
+                    sessionId=session_id,
+                    path=str(workspace / "present.txt"),
+                )
+            )
+        assert absolute.value.code == "WORKSPACE_BOUNDARY_VIOLATION"
+    finally:
+        store.close()
+
+
 def test_listing_starts_existing_watcher_and_emits_relative_invalidation(
     tmp_path: Path,
 ) -> None:

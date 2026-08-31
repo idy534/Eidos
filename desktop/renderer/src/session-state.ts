@@ -265,6 +265,7 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   GIT_WORKTREE_NOT_MANAGED: "这个项目没有可用的 Managed Worktree，无法读取 Git 变更。",
   REPOSITORY_NOT_FOUND: "所选工作空间不存在或不是目录。",
   WORKSPACE_IDENTITY_UNAVAILABLE: "工作空间身份无法确认，操作已停止。",
+  WORKSPACE_FILE_NOT_FOUND: "文件不存在或已被移除。请从当前文件树重新选择。",
   WORKTREE_CREATE_FAILED: "Managed Worktree 创建失败，请查看 Runtime 日志。",
   WORKTREE_PERSISTENCE_FAILED: "Managed Worktree 状态写入失败，请查看 Runtime 日志。",
   WORKTREE_RECOVERY_REQUIRED: "Managed Worktree 需要恢复，请查看 Runtime 日志。",

@@ -382,7 +382,11 @@ class RunShellInput(StrictToolModel):
 
 
 class SkillReadInput(StrictToolModel):
-    qualifiedId: StrictStr = Field(min_length=1, max_length=129)
+    qualifiedId: StrictStr = Field(
+        min_length=1,
+        max_length=129,
+        description="Qualified id of an enabled local Skill.",
+    )
 
     @field_validator("qualifiedId")
     @classmethod
@@ -393,7 +397,11 @@ class SkillReadInput(StrictToolModel):
 
 
 class SkillReadResourceInput(SkillReadInput):
-    resourcePath: StrictStr = Field(min_length=1, max_length=512)
+    resourcePath: StrictStr = Field(
+        min_length=1,
+        max_length=512,
+        description="Path relative to the selected Skill's directory.",
+    )
 
     @field_validator("resourcePath")
     @classmethod

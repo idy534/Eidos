@@ -440,10 +440,49 @@ def encode_context(
         elif item_type == "protocol_error":
             code = item.get("code")
             if isinstance(code, str):
-                messages.append(PAIModelRequest([UserPromptPart(
-                    f"Your previous response was invalid ({code}). "
-                    "Try again using the provided tool schemas."
-                )]))
+                details: dict[str, object] = {}
+                for key in (
+                    "toolName", "toolCallIndex", "toolCallCount",
+                    "validationPath", "validationCode",
+                ):
+                    value = item.get(key)
+                    if isinstance(value, str) and value:
+                        details[key] = value
+                    elif (
+                        isinstance(value, int)
+                        and not isinstance(value, bool)
+                        and value >= 0
+                    ):
+                        details[key] = value
+                feedback = f"Your previous response was invalid ({code})."
+                if details:
+                    feedback += (
+                        " The runtime rejected the previous model tool call "
+                        "before execution. Safe validation details: "
+                        + json.dumps(
+                            details,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        )
+                        + "."
+                    )
+                feedback += (
+                    " Correct the reported field using the currently "
+                    "advertised tool schemas; do not repeat the same invalid "
+                    "arguments."
+                )
+                if details.get("toolName") in {
+                    "list_files", "read_file", "read_file_range",
+                    "search_text", "skill_read_resource",
+                }:
+                    feedback += (
+                        " Workspace path fields accept workspace-relative "
+                        "paths only. For an enabled Skill resource, use "
+                        "skill_read_resource with qualifiedId and a relative "
+                        "resourcePath."
+                    )
+                messages.append(PAIModelRequest([UserPromptPart(feedback)]))
         elif item_type == "tool_error":
             code = item.get("code")
             if isinstance(code, str):
