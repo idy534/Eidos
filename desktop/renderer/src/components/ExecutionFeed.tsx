@@ -849,12 +849,8 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
   const summary = stringField(result, "summary");
   const gateRejected = isReconciliationGate(result);
   const reconciliationRequired = result.reconciliationRequired === true;
-  const termination = stringField(data, "termination");
   const truncated = booleanField(data, "truncated");
   const truncationReason = stringField(data, "truncationReason");
-  const attemptCount = numberField(data, "attemptCount");
-  const sandboxed = optionalBooleanField(data, "sandboxed");
-  const escalated = optionalBooleanField(data, "escalated");
   const outputSegments = shellOutputSegments(item.content, stdout, stderr);
   const hasOutput = outputSegments.length > 0;
   const pendingVerification = reconciliationRequired && !gateRejected;
@@ -908,15 +904,6 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
         {gateRejected && <p className="shell-error-code">未执行，等待只读核验</p>}
         {!gateRejected && !pendingVerification && !success && code && <p className="shell-error-code">失败 · {code}</p>}
         {!success && !pendingVerification && summary && <p className="shell-error-summary">{summary}</p>}
-        {exitCode !== undefined && !gateRejected && <p className="shell-diagnostic">退出码 · {exitCode}</p>}
-        {termination && <p className="shell-diagnostic">结束方式 · {termination}</p>}
-        {(attemptCount !== undefined || sandboxed !== undefined || escalated !== undefined) && (
-          <p className="shell-diagnostic shell-diagnostic--facts">
-            {attemptCount !== undefined && <span>执行次数 · {attemptCount}</span>}
-            {sandboxed !== undefined && <span>沙箱 · {sandboxed ? "是" : "否"}</span>}
-            {escalated !== undefined && <span>扩权 · {escalated ? "是" : "否"}</span>}
-          </p>
-        )}
         {truncated && (
           <p className="shell-diagnostic">
             输出已截断{truncationReason ? ` · ${truncationReason}` : ""}

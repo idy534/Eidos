@@ -3618,12 +3618,14 @@ input:focus, textarea:focus {
 .shell-label { margin: 0 0 0.6rem; font-size: var(--font-size-body); line-height: var(--line-height-body); }
 .shell-command, .shell-output {
   margin: 0 0 0.65rem;
-  overflow-x: auto;
+  overflow: auto;
   color: #555b56;
   font: var(--font-size-code)/var(--line-height-code) var(--font-code);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.shell-command { max-height: 5.5rem; }
+.shell-output { max-height: 14.5rem; }
 .shell-command span { color: #8d928e; }
 .shell-output--error { color: var(--danger); }
 .shell-error-code, .shell-error-summary { margin: 0; font-size: var(--font-size-body); line-height: var(--line-height-body); }

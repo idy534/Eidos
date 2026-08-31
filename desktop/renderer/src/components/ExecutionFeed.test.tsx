@@ -417,8 +417,8 @@ test("shows shell termination and bounded-output diagnostics", () => {
     />,
   );
 
-  assert.match(html, /退出码 · 2/);
-  assert.match(html, /结束方式 · exit/);
+  assert.doesNotMatch(html, /退出码/);
+  assert.doesNotMatch(html, /结束方式/);
   assert.match(html, /输出已截断 · output_limit/);
 });
 
@@ -462,9 +462,9 @@ test("uses the accumulated stream content once and preserves its stdout/stderr o
   assert.equal((html.match(/stderr 1/g) ?? []).length, 1);
   assert.ok(html.indexOf("stdout 1") < html.indexOf("stderr 1"));
   assert.ok(html.indexOf("stderr 1") < html.indexOf("stdout 2"));
-  assert.match(html, /执行次数 · 1/);
-  assert.match(html, /沙箱 · 是/);
-  assert.match(html, /扩权 · 否/);
+  assert.doesNotMatch(html, /执行次数/);
+  assert.doesNotMatch(html, /沙箱/);
+  assert.doesNotMatch(html, /扩权/);
 });
 
 test("shows the recorded facts for an escalated retry", () => {
@@ -495,9 +495,9 @@ test("shows the recorded facts for an escalated retry", () => {
     />,
   );
 
-  assert.match(html, /执行次数 · 2/);
-  assert.match(html, /沙箱 · 否/);
-  assert.match(html, /扩权 · 是/);
+  assert.doesNotMatch(html, /执行次数/);
+  assert.doesNotMatch(html, /沙箱/);
+  assert.doesNotMatch(html, /扩权/);
   assert.match(html, /✓ 成功/);
 });
 
