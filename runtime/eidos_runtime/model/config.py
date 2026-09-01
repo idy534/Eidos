@@ -79,11 +79,13 @@ class ModelPublicConfig(EidosFrozenStrictModel):
 class ModelProfileSpec(EidosFrozenStrictModel):
     provider_id: str
     model_id: str
-    wire_api: Literal["chat_completions"] = "chat_completions"
+    wire_api: Literal["chat_completions", "openai_responses"] = "chat_completions"
     context_window_tokens: int = Field(gt=0)
     max_output_tokens: int = Field(gt=0)
     request_timeout_seconds: float = Field(gt=0)
     supports_images: bool = False
+    supports_custom_tools: bool = False
+    supports_tool_grammar: bool = False
 
     def snapshot(self, config: ModelConfig | dict[str, object]) -> ModelProfileSnapshot:
         supports_tools = (
@@ -120,6 +122,8 @@ class ModelProfileSpec(EidosFrozenStrictModel):
             supports_json_schema_output=supports_json_schema_output,
             supports_reasoning=supports_reasoning,
             supports_images=supports_images,
+            supports_custom_tools=self.supports_custom_tools,
+            supports_tool_grammar=self.supports_tool_grammar,
         )
 
 
@@ -131,6 +135,9 @@ class CatalogModel(EidosFrozenStrictModel):
     supports_images: bool = False
     supports_reasoning: bool
     reasoning: ModelReasoningConfig | None = None
+    wire_api: Literal["chat_completions", "openai_responses"] = "chat_completions"
+    supports_custom_tools: bool = False
+    supports_tool_grammar: bool = False
     context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
 
@@ -330,7 +337,8 @@ class ModelCatalog:
         provider, model = self.lookup(provider_id, model_id)
         return ModelConfig.model_validate({
             **model.model_dump(mode="python", by_alias=True, exclude={
-                "context_window_tokens", "max_output_tokens"
+                "context_window_tokens", "max_output_tokens",
+                "wire_api", "supports_custom_tools", "supports_tool_grammar",
             }),
             "vendor": provider.vendor,
             "apiKey": api_key,
@@ -359,6 +367,9 @@ class ModelCatalog:
             max_output_tokens=model.max_output_tokens,
             request_timeout_seconds=DEFAULT_REQUEST_TIMEOUT_SECONDS,
             supports_images=model.supports_images,
+            wire_api=model.wire_api,
+            supports_custom_tools=model.supports_custom_tools,
+            supports_tool_grammar=model.supports_tool_grammar,
         )
 
     def public(self) -> dict[str, object]:
@@ -374,6 +385,9 @@ class ModelCatalog:
                             exclude={
                                 "context_window_tokens",
                                 "max_output_tokens",
+                                "wire_api",
+                                "supports_custom_tools",
+                                "supports_tool_grammar",
                             },
                         )
                         for model in provider.models

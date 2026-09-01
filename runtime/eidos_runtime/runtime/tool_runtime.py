@@ -14,7 +14,13 @@ from eidos_runtime.extensions.skill_access import (
     SkillAccess,
 )
 from eidos_runtime.extensions.skills import SkillCreation
-from eidos_runtime.model.client import ModelResponse, ModelToolCall
+from eidos_runtime.model.client import (
+    CustomToolPayload,
+    FunctionToolPayload,
+    ModelResponse,
+    ModelToolCall,
+    ToolPayload,
+)
 from eidos_runtime.runtime.approval import (
     APPROVAL_REJECTION_GUIDANCE,
     ApprovalCoordinator,
@@ -105,6 +111,58 @@ from eidos_runtime.tools.registry import (
     ShellToolRuntime,
     WorkspaceMutationRuntime,
 )
+
+
+def _tool_payload_value(call: ModelToolCall) -> dict[str, object] | str:
+    if isinstance(call.payload, FunctionToolPayload):
+        return call.payload.arguments
+    if isinstance(call.payload, CustomToolPayload):
+        return call.payload.input
+    raise ValueError("unsupported_tool_payload")
+
+
+def _scan_tool_payload(
+    scanner: SensitiveScanner, call: ModelToolCall
+) -> ToolPayload:
+    if isinstance(call.payload, FunctionToolPayload):
+        scanned = scanner.scan_json(call.payload.arguments)
+        if not isinstance(scanned, dict) or scanned != call.payload.arguments:
+            raise SensitiveScanError("sensitive tool arguments")
+        return FunctionToolPayload(arguments=scanned)
+    if isinstance(call.payload, CustomToolPayload):
+        scanned = scanner.scan_text(call.payload.input)
+        if scanned.text != call.payload.input:
+            raise SensitiveScanError("sensitive tool input")
+        return CustomToolPayload(input=call.payload.input)
+    raise SensitiveScanError("unsupported tool payload")
+
+
+def _serialize_tool_payload(payload: ToolPayload) -> str:
+    if isinstance(payload, FunctionToolPayload):
+        value: object = payload.arguments
+    elif isinstance(payload, CustomToolPayload):
+        value = {"kind": "custom", "input": payload.input}
+    else:
+        raise ValueError("unsupported_tool_payload")
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _payload_fingerprint_value(payload: ToolPayload) -> dict[str, object]:
+    if isinstance(payload, FunctionToolPayload):
+        return {"kind": "function", "arguments": payload.arguments}
+    if isinstance(payload, CustomToolPayload):
+        encoded = payload.input.encode("utf-8")
+        return {
+            "kind": "custom",
+            "inputSha256": hashlib.sha256(encoded).hexdigest(),
+            "inputBytes": len(encoded),
+        }
+    raise ValueError("unsupported_tool_payload")
 
 
 @dataclass(frozen=True)
@@ -211,7 +269,7 @@ class FileChangeToolHandler:
         runtime: WorkspaceMutationRuntime,
     ) -> HandlerOutcome:
         prepared = runtime.implementation.prepare_file_change(
-            call.arguments, cancel  # type: ignore[attr-defined]
+            _tool_payload_value(call), cancel  # type: ignore[attr-defined]
         )
         if isinstance(prepared, dict):
             return HandlerOutcome(
@@ -1212,9 +1270,7 @@ class ToolCallRuntime:
         for batch_order, call in enumerate(tool_calls):
             self._check_cancel(step.run_id, cancel)
             try:
-                arguments = self.sensitive.scan_json(call.arguments)
-                if arguments != call.arguments:
-                    raise SensitiveScanError("sensitive tool arguments")
+                payload = _scan_tool_payload(self.sensitive, call)
             except SensitiveScanError:
                 failures = self.store.record_sensitive_tool_input(step.run_id)
                 self.store.complete_current_step(
@@ -1234,7 +1290,6 @@ class ToolCallRuntime:
                         "code": "sensitive_tool_input_rejected",
                     },),
                 )
-            assert isinstance(arguments, dict)
             self.store.clear_sensitive_tool_inputs(step.run_id)
             mutation = self.store.create_tool_item_committed(
                 step.run_id,
@@ -1242,19 +1297,14 @@ class ToolCallRuntime:
                 batch_order,
                 call.provider_call_id,
                 call.name,
-                json.dumps(
-                    arguments,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ),
+                _serialize_tool_payload(payload),
                 provenance=self.dispatcher.provenance(call.name),
                 tool_set_hash=step.tool_snapshot.tool_set_hash,
             )
             item = mutation.value
             self.events.publish(mutation, item=item)
             effective_call = ModelToolCall(
-                call.provider_call_id, call.name, arguments
+                call.provider_call_id, call.name, payload
             )
             plan = self.dispatcher.plan(
                 effective_call, step.tool_snapshot.binding(call.name)
@@ -1285,7 +1335,7 @@ class ToolCallRuntime:
                 )
             context_facts.append(_hash_json({
                 "toolName": call.name,
-                "arguments": arguments,
+                "payload": _payload_fingerprint_value(payload),
                 "resultFingerprint": (
                     outcome.progress_fingerprint or _hash_json(outcome.result)
                 ),
@@ -1336,7 +1386,10 @@ class ToolCallRuntime:
         self, calls: tuple[ModelToolCall, ...]
     ) -> bool:
         try:
-            return all(self.sensitive.scan_json(call.arguments) == call.arguments for call in calls)
+            return all(
+                _scan_tool_payload(self.sensitive, call) == call.payload
+                for call in calls
+            )
         except SensitiveScanError:
             return False
 

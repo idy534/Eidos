@@ -35,9 +35,12 @@ def build_provider(
     config: ModelConfig,
     *,
     timeout: httpx.Timeout,
+    wire_api: str = "chat_completions",
 ) -> tuple[OpenAICompatibleProvider, AsyncOpenAI, RetryTransportClient]:
     provider_id = MODEL_CATALOG.provider_id_for(config.id)
-    retry_client = build_retrying_http_client(config, timeout=timeout)
+    retry_client = build_retrying_http_client(
+        config, timeout=timeout, wire_api=wire_api
+    )
     client = AsyncOpenAI(
         api_key=config.api_key,
         base_url=_client_base_url(config.url),
@@ -60,14 +63,18 @@ def build_model(config: ModelConfig, provider: OpenAICompatibleProvider) -> Mode
     return OpenAIChatModel(config.id, provider=provider)
 
 
-def build_pydantic_model(config: ModelConfig) -> BuiltPydanticModel:
+def build_pydantic_model(
+    config: ModelConfig, *, wire_api: str = "chat_completions"
+) -> BuiltPydanticModel:
     timeout = httpx.Timeout(
         connect=min(10.0, DEFAULT_REQUEST_TIMEOUT_SECONDS),
         read=DEFAULT_REQUEST_TIMEOUT_SECONDS,
         write=min(30.0, DEFAULT_REQUEST_TIMEOUT_SECONDS),
         pool=min(10.0, DEFAULT_REQUEST_TIMEOUT_SECONDS),
     )
-    provider, provider_client, retry_client = build_provider(config, timeout=timeout)
+    provider, provider_client, retry_client = build_provider(
+        config, timeout=timeout, wire_api=wire_api
+    )
     return BuiltPydanticModel(
         model=build_model(config, provider),
         provider_client=provider_client,
@@ -76,7 +83,7 @@ def build_pydantic_model(config: ModelConfig) -> BuiltPydanticModel:
 
 
 def _client_base_url(endpoint: str) -> str:
-    suffix = "/chat/completions"
-    if not endpoint.endswith(suffix):
-        raise ValueError("model URL must be a Chat Completions endpoint")
-    return endpoint[: -len(suffix)].rstrip("/")
+    for suffix in ("/chat/completions", "/responses"):
+        if endpoint.endswith(suffix):
+            return endpoint[: -len(suffix)].rstrip("/")
+    raise ValueError("model URL must be a Chat Completions or Responses endpoint")

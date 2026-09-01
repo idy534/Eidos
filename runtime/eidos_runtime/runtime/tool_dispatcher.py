@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 
-from eidos_runtime.model.client import ModelResponse, ModelToolCall, ModelToolDefinition
+from eidos_runtime.model.client import (
+    CustomToolPayload,
+    FunctionToolPayload,
+    ModelResponse,
+    ModelToolCall,
+    ModelToolDefinitionLike,
+)
 from eidos_runtime.runtime.provider_control import contains_provider_control_syntax
 from eidos_runtime.tools.registry import (
     StepToolBinding,
@@ -142,16 +149,33 @@ class ToolDispatcher:
                 and call.name not in available_names
             ):
                 entry = None
-            contract = (
-                entry.validate_arguments(call.arguments)
-                if entry is not None
-                else None
-            )
-            effective = (
-                contract.normalized_arguments
-                if contract is not None and contract.valid
-                else None
-            )
+            contract = None
+            effective_payload = None
+            if entry is not None and isinstance(call, ModelToolCall):
+                if (
+                    entry.spec.input_kind == "function"
+                    and isinstance(call.payload, FunctionToolPayload)
+                ):
+                    contract = entry.validate_arguments(call.payload.arguments)
+                    if contract.valid and contract.normalized_arguments is not None:
+                        effective_payload = FunctionToolPayload(
+                            arguments=contract.normalized_arguments
+                        )
+                elif (
+                    entry.spec.input_kind == "custom"
+                    and isinstance(call.payload, CustomToolPayload)
+                ):
+                    contract = entry.validate_custom_input(call.payload.input)
+                    if contract.valid and contract.normalized_input is not None:
+                        effective_payload = CustomToolPayload(
+                            input=contract.normalized_input
+                        )
+                else:
+                    contract = ToolArgumentValidationResult(
+                        valid=False,
+                        code="TOOL_ARGUMENT_CONTRACT_VIOLATION",
+                        reason_code="tool_input_kind_mismatch",
+                    )
             if (
                 not isinstance(call, ModelToolCall)
                 or not isinstance(call.provider_call_id, str)
@@ -159,8 +183,7 @@ class ToolDispatcher:
                 or call.provider_call_id in provider_ids
                 or not isinstance(call.name, str)
                 or entry is None
-                or effective is None
-                or not _valid_arguments(call.arguments)
+                or effective_payload is None
             ):
                 error_code = (
                     "TOOL_ARGUMENT_CONTRACT_VIOLATION"
@@ -183,7 +206,7 @@ class ToolDispatcher:
                 )
             provider_ids.add(call.provider_call_id)
             effective_calls.append(ModelToolCall(
-                call.provider_call_id, call.name, effective
+                call.provider_call_id, call.name, effective_payload
             ))
         # Batch policy controls runtime scheduling, not how many calls a model may
         # return in one response. Mixed or side-effecting batches are serialized by
@@ -192,7 +215,7 @@ class ToolDispatcher:
 
     def model_definitions(
         self, activated_names: tuple[str, ...] = ()
-    ) -> tuple[ModelToolDefinition, ...]:
+    ) -> tuple[ModelToolDefinitionLike, ...]:
         return self._registry.model_definitions(activated_names)
 
     def snapshot(
@@ -238,11 +261,34 @@ class ToolDispatcher:
         return ToolDispatchPlan(binding)
 
     def validate_execution(self, call: ModelToolCall, plan: ToolDispatchPlan) -> bool:
-        validation = (
-            plan.descriptor.validate_arguments(call.arguments)
-            if plan.descriptor is not None
-            else None
-        )
+        validation = None
+        if plan.descriptor is not None:
+            if (
+                plan.descriptor.spec.input_kind == "function"
+                and isinstance(call.payload, FunctionToolPayload)
+            ):
+                validation = plan.descriptor.validate_arguments(
+                    call.payload.arguments
+                )
+                normalized = (
+                    FunctionToolPayload(arguments=validation.normalized_arguments)
+                    if validation.valid and validation.normalized_arguments is not None
+                    else None
+                )
+            elif (
+                plan.descriptor.spec.input_kind == "custom"
+                and isinstance(call.payload, CustomToolPayload)
+            ):
+                validation = plan.descriptor.validate_custom_input(call.payload.input)
+                normalized = (
+                    CustomToolPayload(input=validation.normalized_input)
+                    if validation.valid and validation.normalized_input is not None
+                    else None
+                )
+            else:
+                normalized = None
+        else:
+            normalized = None
         return (
             plan.binding is not None
             and plan.descriptor is not None
@@ -251,7 +297,7 @@ class ToolDispatcher:
             == plan.descriptor.contract_fingerprint
             and validation is not None
             and validation.valid
-            and validation.normalized_arguments == call.arguments
+            and normalized == call.payload
         )
 
     def validate_result(
@@ -277,27 +323,12 @@ class ToolDispatcher:
     def is_parallel_read_batch(self, calls: tuple[ModelToolCall, ...]) -> bool:
         return len(calls) > 1 and all(
             (entry := self._registry.get(call.name)) is not None
+            and isinstance(call.payload, FunctionToolPayload)
             and entry.spec.batch_policy == "parallel"
             and entry.execution_policy is not None
             and entry.execution_policy.concurrency.mode == "parallel_safe"
             for call in calls
         )
-
-
-def _valid_arguments(value: object) -> bool:
-    if not isinstance(value, dict):
-        return False
-    return all(isinstance(key, str) and _valid_value(item) for key, item in value.items())
-
-
-def _valid_value(value: object) -> bool:
-    if value is None or isinstance(value, (str, bool, int, float)):
-        return True
-    if isinstance(value, list):
-        return all(_valid_value(item) for item in value)
-    if isinstance(value, dict):
-        return _valid_arguments(value)
-    return False
 
 
 def _tool_validation_diagnostic(
@@ -310,10 +341,40 @@ def _tool_validation_diagnostic(
     contract: ToolArgumentValidationResult | None,
     tool_set_hash: str | None,
 ) -> ProtocolDiagnostic:
-    arguments = call.arguments if isinstance(call, ModelToolCall) else None
-    argument_bytes, arguments_sha256, keys, types, truncated = argument_summary(
-        arguments
+    arguments = (
+        call.arguments
+        if isinstance(call, ModelToolCall)
+        and isinstance(call.payload, FunctionToolPayload)
+        else None
     )
+    custom_input = (
+        call.payload.input
+        if isinstance(call, ModelToolCall)
+        and isinstance(call.payload, CustomToolPayload)
+        else None
+    )
+    if custom_input is None:
+        argument_bytes, arguments_sha256, keys, types, truncated = argument_summary(
+            arguments
+        )
+        input_sha256 = None
+        input_bytes = None
+    else:
+        try:
+            encoded_input = custom_input.encode("utf-8")
+        except UnicodeEncodeError:
+            argument_bytes, arguments_sha256, keys, types, truncated = (
+                None, None, (), {}, True
+            )
+            input_sha256 = None
+            input_bytes = None
+        else:
+            input_size = len(encoded_input)
+            argument_bytes, arguments_sha256, keys, types, truncated = (
+                None, None, (), {}, input_size > 1_024 * 1024
+            )
+            input_sha256 = hashlib.sha256(encoded_input).hexdigest()
+            input_bytes = min(input_size, 1_024 * 1024)
     tool_name = call.name if isinstance(call, ModelToolCall) else None
     provider_call_id = (
         call.provider_call_id if isinstance(call, ModelToolCall) else None
@@ -336,6 +397,9 @@ def _tool_validation_diagnostic(
         argument_keys=keys,
         argument_types=types,
         arguments_truncated=truncated,
+        payload_kind=(call.payload.kind if isinstance(call, ModelToolCall) else None),
+        input_sha256=input_sha256,
+        input_bytes=input_bytes,
     )
 
 

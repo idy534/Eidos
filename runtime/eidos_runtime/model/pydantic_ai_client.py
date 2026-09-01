@@ -40,6 +40,11 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from eidos_runtime.model.client import (
+    CustomToolDefinition,
+    FunctionToolDefinition,
+    MAX_FUNCTION_ARGUMENT_BYTES,
+    MAX_TOOL_CALL_ID_BYTES as MODEL_TOOL_CALL_ID_BYTES,
+    MAX_TOOL_NAME_BYTES as MODEL_TOOL_NAME_BYTES,
     ModelClient,
     ModelContextItem,
     ModelProfileSnapshot,
@@ -47,7 +52,7 @@ from eidos_runtime.model.client import (
     ModelRequestFailure,
     ModelResponse,
     ModelToolCall,
-    ModelToolDefinition,
+    ModelToolDefinitionLike,
     ModelUsage,
 )
 from eidos_runtime.model.config import (
@@ -76,9 +81,9 @@ from eidos_runtime.tools.view_image import (
 )
 
 
-MAX_TOOL_CALL_ID_BYTES = 256
-MAX_TOOL_NAME_BYTES = 256
-MAX_TOOL_ARGUMENT_BYTES = 64 * 1024
+MAX_TOOL_CALL_ID_BYTES = MODEL_TOOL_CALL_ID_BYTES
+MAX_TOOL_NAME_BYTES = MODEL_TOOL_NAME_BYTES
+MAX_TOOL_ARGUMENT_BYTES = MAX_FUNCTION_ARGUMENT_BYTES
 USAGE_DETAIL_KEYS = frozenset({
     "accepted_prediction_tokens",
     "audio_tokens",
@@ -195,7 +200,7 @@ class PydanticAIModelClient:
         *,
         instructions: str,
         allow_tools: bool = True,
-        tool_definitions: tuple[ModelToolDefinition, ...] = (),
+        tool_definitions: tuple[ModelToolDefinitionLike, ...] = (),
     ) -> ModelResponse:
         with self._lock:
             if self._closed:
@@ -254,7 +259,7 @@ class PydanticAIModelClient:
         on_text_delta,
         instructions: str,
         allow_tools: bool,
-        tool_definitions: tuple[ModelToolDefinition, ...],
+        tool_definitions: tuple[ModelToolDefinitionLike, ...],
         retry_tracker: RetryTracker,
     ) -> ModelResponse:
         hit_fault("model_stream_block")
@@ -418,6 +423,8 @@ def encode_context(
         elif item_type == "tool_call":
             call_id = item.get("callId")
             name = item.get("name")
+            if item.get("payloadKind", "function") == "custom":
+                raise ValueError("custom_tool_history_requires_native_transport")
             arguments = item.get("arguments")
             if all(isinstance(value, str) for value in (call_id, name, arguments)):
                 messages.append(PAIModelResponse([
@@ -573,7 +580,11 @@ def _attach_instructions(
     return messages
 
 
-def encode_tool_definition(definition: ModelToolDefinition) -> ToolDefinition:
+def encode_tool_definition(definition: ModelToolDefinitionLike) -> ToolDefinition:
+    if isinstance(definition, CustomToolDefinition):
+        raise ValueError("custom_tools_require_native_transport")
+    if not isinstance(definition, FunctionToolDefinition):
+        raise ValueError("unsupported_model_tool_definition")
     return ToolDefinition(
         name=definition.name,
         description=definition.description,

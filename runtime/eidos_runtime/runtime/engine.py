@@ -246,6 +246,14 @@ class RuntimeEngine:
                 mcp_sandbox=self.mcp_sandbox,
                 resource_registry=self.resources,
                 supports_images=run_context.model_profile.supports_images,
+                supports_custom_tools=(
+                    run_context.model_profile.supports_custom_tools
+                    and run_context.model_profile.wire_api == "openai_responses"
+                ),
+                supports_tool_grammar=(
+                    run_context.model_profile.supports_tool_grammar
+                    and run_context.model_profile.wire_api == "openai_responses"
+                ),
                 events=self.events,
             ) as resources:
                 bind_image_authority = getattr(

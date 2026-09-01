@@ -7,7 +7,7 @@ from eidos_runtime.context.verified_compaction import (
     VerifiedCompactSummary,
 )
 from eidos_runtime.model.client import ModelProfileSnapshot
-from eidos_runtime.model.client import ModelContextItem, ModelToolDefinition
+from eidos_runtime.model.client import ModelContextItem, ModelToolDefinitionLike
 from eidos_runtime.context.budget import ContextBudget
 from eidos_runtime.repo_intelligence.retrieval import RetrievalSnapshot
 from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
@@ -88,7 +88,7 @@ class ContextApplication:
         plan: ContextPlan,
         model_context: tuple[ModelContextItem, ...] | None = None,
         instructions: str | None = None,
-        tool_definitions: tuple[ModelToolDefinition, ...] = (),
+        tool_definitions: tuple[ModelToolDefinitionLike, ...] = (),
     ) -> ContextSnapshot:
         if self.snapshots is None:
             raise RuntimeError("context snapshot persistence is not configured")
@@ -112,7 +112,7 @@ class ContextApplication:
         rule_snapshot: RuleResolutionSnapshot,
         model_context: tuple[ModelContextItem, ...],
         instructions: str,
-        tool_definitions: tuple[ModelToolDefinition, ...],
+        tool_definitions: tuple[ModelToolDefinitionLike, ...],
         token_budget: ContextBudget,
         inventory_snapshot_id: str | None = None,
         index_snapshot_id: str | None = None,

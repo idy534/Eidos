@@ -164,7 +164,7 @@ volcengine: deepseek-v4-pro-ga-260813, deepseek-v4-flash-ga-260731,
             doubao-seed-2-0-code-preview-260215
 ```
 
-ModelConfigStore 要求配置与内置 Catalog 严格匹配。当前 wire API 只有 OpenAI-compatible Chat Completions。Runtime 使用 Pydantic AI 的 Model API、Provider 和流式请求边界。模型请求取消覆盖流式上下文建立和首个 SSE chunk 等待阶段。流建立后，Runtime 通过 `StreamedResponse.cancel()` 取消已建立的流。两条路径都复用 RuntimeAsyncKernel 的同一 asyncio loop。Runtime 不提供 arbitrary custom provider、arbitrary base URL、arbitrary model ID 或 Responses API。
+ModelConfigStore 要求配置与内置 Catalog 严格匹配。当前内置 Model Catalog 使用 OpenAI-compatible Chat Completions。Runtime 另外保留一个按 ModelProfile wire API 路由的 OpenAI Responses native adapter。Responses profile 使用这个 adapter；只有 `supports_custom_tools=true` 且 `supports_tool_grammar=true` 的 profile 才会暴露 native Custom `apply_patch`，其他 Responses profile 仍发送 Function Tool。Chat Completions profile 继续使用 Pydantic AI 的 Function Tool API。模型请求取消覆盖流式上下文建立和首个 SSE chunk 等待阶段。流建立后，Runtime 通过 `StreamedResponse.cancel()` 或 Responses stream close 取消已建立的流。两条路径都复用 RuntimeAsyncKernel 的同一 asyncio loop。Runtime 不提供 arbitrary custom provider、arbitrary base URL、arbitrary model ID 或主动 capability probe。
 
 每个 Run 固化 Model Profile 和 Extension Snapshot。Model Lease 使用该快照创建 Provider Client。Model Attempt 保存 usage、响应元数据、有限的 transport retry 诊断和稳定 Eidos 错误码。Model Client 不拥有 Runtime Event Loop；共享 RuntimeAsyncKernel 负责其异步 I/O。
 
@@ -181,7 +181,7 @@ Validate → Prepare → Permission Decision → Durable Intent
 
 ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。Workspace mutation 会在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。Workspace Permission 会直接授权普通文件变更。Runtime 会先提交 Durable Intent，再复检版本并原子提交。Runtime 会保留并展示已应用的完整 Diff。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。
 
-`apply_patch` 的模型输入只有结构化 `ApplyPatchInput.changes`。`add`、`update`、`delete` 是可区分的 change 类型，`update` 还可以包含 `moveTo` 和有序 `chunks`。`CodexPatchEncoder` 不读取 Workspace，也不执行匹配或写入；它只把已校验的 changes 编码成 canonical Codex Patch 文本，并统一使用 LF。随后 `apply_patch.lark` 由 Lark 加载并把文本转换为 Eidos 的 Add、Update、Delete AST，现有 Workspace prepare、CAS、边界、原子提交和最终校验继续负责语义和安全事实。
+`apply_patch` 有 Function 和 Custom 两条模型输入路径。Function compatibility 路径接收结构化 `ApplyPatchInput.changes`。Custom 路径接收 native Custom Tool 的 raw Codex Patch。`add`、`update`、`delete` 是可区分的 change 类型，`update` 还可以包含 `moveTo` 和有序 `chunks`。只有 Function 路径使用 `CodexPatchEncoder`。Custom 路径把原文直接交给 `parse_patch`。Parser 不读取 Workspace，也不执行匹配或写入；它把文本转换为 Eidos 的 Add、Update、Delete AST。现有 Workspace prepare、CAS、边界、原子提交和最终校验继续负责语义和安全事实。
 
 `apply_patch.lark` 的语法来源是 `openai/codex` 的 `codex-rs/core/assets/tools/apply_patch.lark`。本地 grammar 将上游的 `add_line+` 改为 `add_line*`，因为 Codex Rust streaming parser 允许没有内容行的 Add File；显式的 `+` 仍表示一条空内容行。上游 grammar 中的部分空行正则不能直接交给 Lark，所以本地 grammar 也对这些 token 做了 Lark 兼容适配。Parser 可以规范化 CRLF 和外层空白，也支持首个 Update 片段不带 `@@`。Parser 不会猜测缺失的 `*** Begin Patch`、`*** End Patch` 或 `+`/`-` 前缀。raw `patch` 字段不属于模型契约。
 

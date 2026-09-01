@@ -4,7 +4,7 @@ import hashlib
 import json
 
 from eidos_runtime.context.facts import ContextFacts
-from eidos_runtime.model.client import ModelToolCall
+from eidos_runtime.model.client import CustomToolPayload, ModelToolCall
 from eidos_runtime.runtime.contracts import LoopStateFingerprint, ProgressSignature
 
 
@@ -175,12 +175,25 @@ def tool_call_fingerprint(
     calls: tuple[ModelToolCall, ...],
 ) -> str:
     return _hash([
-        {
-            "toolName": call.name,
-            "canonicalArguments": call.arguments,
-        }
+        _call_fingerprint_value(call)
         for call in calls
     ])
+
+
+def _call_fingerprint_value(call: ModelToolCall) -> dict[str, object]:
+    if isinstance(call.payload, CustomToolPayload):
+        encoded = call.payload.input.encode("utf-8")
+        return {
+            "toolName": call.name,
+            "payloadKind": "custom",
+            "inputSha256": hashlib.sha256(encoded).hexdigest(),
+            "inputBytes": len(encoded),
+        }
+    return {
+        "toolName": call.name,
+        "payloadKind": "function",
+        "canonicalArguments": call.arguments,
+    }
 
 
 def loop_state_fingerprint(

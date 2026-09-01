@@ -66,6 +66,13 @@ class ProtocolDiagnostic(EidosFrozenStrictModel):
         default_factory=dict, max_length=_MAX_ARGUMENT_KEYS
     )
     arguments_truncated: bool = False
+    payload_kind: Literal["function", "custom"] | None = None
+    input_sha256: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=_SHA256_PATTERN
+    )
+    input_bytes: int | None = Field(
+        default=None, ge=0, le=_MAX_ARGUMENT_BYTES
+    )
 
 
 def response_text_metrics(text: str) -> tuple[int, str | None]:

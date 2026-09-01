@@ -50,6 +50,7 @@ from eidos_runtime.workspace.codex_patch import (
     UpdateFile,
     apply_update,
     encode_patch,
+    patch_grammar,
     parse_patch,
 )
 from eidos_runtime.workspace.search_driver import (
@@ -67,6 +68,7 @@ from eidos_runtime.tools.registry import (
     ToolRegistryEntry,
     ToolSpec,
 )
+from eidos_runtime.model.client import CustomToolFormat
 from eidos_runtime.tools.contracts import (
     ApplyPatchInput,
     ApplyPatchResultData,
@@ -220,6 +222,31 @@ def model_tool_definitions() -> list[dict[str, object]]:
     }} for spec in TOOL_SPECS]
 
 
+def _tool_specs(
+    *, supports_custom_tools: bool, supports_tool_grammar: bool
+) -> tuple[ToolSpec, ...]:
+    if not (supports_custom_tools and supports_tool_grammar):
+        return TOOL_SPECS
+    patch_format = CustomToolFormat(
+        type="grammar", syntax="lark", definition=patch_grammar()
+    )
+    return tuple(
+        spec.model_copy(update={
+            "description": (
+                "Apply a Codex Patch to workspace files. This is a FREEFORM "
+                "tool, so do not wrap the patch in JSON. Input must be raw "
+                "Codex Patch text beginning with `*** Begin Patch` and ending "
+                "with `*** End Patch`. Paths, base hashes, and final contents "
+                "are verified before commit."
+            ),
+            "input_kind": "custom",
+            "input_schema": None,
+            "input_format": patch_format,
+        }) if spec.name == "apply_patch" else spec
+        for spec in TOOL_SPECS
+    )
+
+
 class _BuiltinAdapter:
     def __init__(
         self,
@@ -240,7 +267,7 @@ class _BuiltinAdapter:
         )
 
     def prepare_file_change(
-        self, arguments: dict[str, object], cancel: threading.Event
+        self, arguments: object, cancel: threading.Event
     ) -> FileChange | PreparedPatch | dict[str, object]:
         return self.executor._prepare_file_change(
             self.spec.name, self.operation, arguments, cancel
@@ -260,11 +287,20 @@ class _BuiltinAdapter:
         return self.executor.prepare_shell(cwd, cancel)
 
 
-def builtin_tool_registry(executor: ToolExecutor) -> ToolRegistry:
+def builtin_tool_registry(
+    executor: ToolExecutor,
+    *,
+    supports_custom_tools: bool = False,
+    supports_tool_grammar: bool = False,
+) -> ToolRegistry:
     operations = ("list", "read", "range", "search", "patch", "shell")
+    specs = _tool_specs(
+        supports_custom_tools=supports_custom_tools,
+        supports_tool_grammar=supports_tool_grammar,
+    )
     entries: list[ToolRegistryEntry] = []
     for spec, operation, contract in zip(
-        TOOL_SPECS, operations, _BUILTIN_CONTRACTS, strict=True
+        specs, operations, _BUILTIN_CONTRACTS, strict=True
     ):
         encoded = json.dumps(
             spec.model_dump(mode="json", by_alias=True),
@@ -281,7 +317,7 @@ def builtin_tool_registry(executor: ToolExecutor) -> ToolRegistry:
                 "contentHash": hashlib.sha256(encoded).hexdigest(),
             }),
             _BuiltinAdapter(executor, spec, operation),
-            contract[6],
+            None if spec.input_kind == "custom" else contract[6],
             contract[7],
         ))
     return ToolRegistry(tuple(entries))
@@ -346,6 +382,9 @@ class ToolExecutor:
         self,
         workspace: Path | WorkspaceIdentity,
         search_driver: WorkspaceSearchDriver | None = None,
+        *,
+        supports_custom_tools: bool = False,
+        supports_tool_grammar: bool = False,
     ) -> None:
         if isinstance(workspace, WorkspaceIdentity):
             identity = workspace
@@ -379,7 +418,13 @@ class ToolExecutor:
         self.reader = WorkspaceReader(identity)
         self.workspace_index = WorkspaceIndex(identity)
         self.search_driver = search_driver or RipgrepSearchDriver()
-        self.registry = builtin_tool_registry(self)
+        self.supports_custom_tools = supports_custom_tools
+        self.supports_tool_grammar = supports_tool_grammar
+        self.registry = builtin_tool_registry(
+            self,
+            supports_custom_tools=supports_custom_tools,
+            supports_tool_grammar=supports_tool_grammar,
+        )
 
     def __enter__(self) -> ToolExecutor:
         return self
@@ -413,23 +458,33 @@ class ToolExecutor:
     def prepare_file_change(
         self,
         tool_name: str,
-        arguments: dict[str, object],
+        arguments: object,
         cancel: threading.Event,
     ) -> FileChange | PreparedPatch | dict[str, object]:
         entry = self.registry.get(tool_name)
         if entry is None and tool_name in {"write_file", "delete_file"}:
             operation = "write" if tool_name == "write_file" else "delete"
             return self._prepare_file_change(tool_name, operation, arguments, cancel)
-        validation = entry.validate_arguments(arguments) if entry else None
         prepare = getattr(entry.adapter, "prepare_file_change", None) if entry else None
+        if entry is None:
+            return _error(tool_name, "invalid_arguments", "Invalid arguments")
+        if entry.spec.input_kind == "custom":
+            validation = entry.validate_custom_input(arguments)
+            normalized = validation.normalized_input
+        else:
+            validation = entry.validate_arguments(
+                arguments,
+                enforce_size=entry.spec.name != "apply_patch",
+            )
+            normalized = validation.normalized_arguments
         if (
             validation is None
             or not validation.valid
-            or validation.normalized_arguments is None
+            or normalized is None
             or prepare is None
         ):
             return _error(tool_name, "invalid_arguments", "Invalid arguments")
-        return prepare(validation.normalized_arguments, cancel)
+        return prepare(normalized, cancel)
 
     def shell_cwd(self, value: str) -> WorkspaceIdentity:
         self._verify_root()
@@ -523,7 +578,7 @@ class ToolExecutor:
         self,
         tool_name: str,
         operation: str,
-        arguments: dict[str, object],
+        arguments: object,
         cancel: threading.Event,
     ) -> FileChange | PreparedPatch | dict[str, object]:
         if operation not in {"write", "patch", "delete"}:
@@ -597,35 +652,42 @@ class ToolExecutor:
     def _prepare_codex_patch(
         self,
         tool_name: str,
-        arguments: dict[str, object],
+        arguments: object,
         cancel: threading.Event,
     ) -> PreparedPatch | dict[str, object]:
-        """Encode structured changes, then prepare each hunk against evidence.
+        """Prepare structured or raw changes against workspace evidence.
 
-        The encoder and parser own patch syntax. This method keeps path
-        validation, read evidence, diff generation, and commit metadata in the
-        existing Workspace executor.
+        The parser owns raw patch syntax. The encoder remains only for the
+        structured compatibility path. This method keeps path validation, read
+        evidence, diff generation, and commit metadata in the existing
+        Workspace executor.
         """
         try:
             self._verify_root()
             _check_cancel(cancel)
-            scanned_arguments = default_scanner().scan_json(arguments)
-            if scanned_arguments != arguments:
-                raise SensitiveScanError("sensitive tool arguments")
-            try:
-                # ToolRegistry has already validated model JSON and normalized
-                # tuple fields to lists. ``strict=False`` only restores those
-                # JSON container shapes; StrictStr and literal fields remain
-                # strict, while this second validation keeps the Workspace
-                # boundary independent from its caller.
-                request = ApplyPatchInput.model_validate(arguments, strict=False)
-            except ValidationError:
-                return _error(
-                    tool_name,
-                    "TOOL_ARGUMENT_CONTRACT_VIOLATION",
-                    "Invalid structured apply_patch arguments",
-                )
-            patch_value = encode_patch(request)
+            if isinstance(arguments, str):
+                scanned_input = default_scanner().scan_text(arguments)
+                if scanned_input.text != arguments:
+                    raise SensitiveScanError("sensitive tool input")
+                patch_value = arguments
+            else:
+                scanned_arguments = default_scanner().scan_json(arguments)
+                if scanned_arguments != arguments:
+                    raise SensitiveScanError("sensitive tool arguments")
+                try:
+                    # ToolRegistry has already validated model JSON and normalized
+                    # tuple fields to lists. ``strict=False`` only restores those
+                    # JSON container shapes; StrictStr and literal fields remain
+                    # strict, while this second validation keeps the Workspace
+                    # boundary independent from its caller.
+                    request = ApplyPatchInput.model_validate(arguments, strict=False)
+                except ValidationError:
+                    return _error(
+                        tool_name,
+                        "TOOL_ARGUMENT_CONTRACT_VIOLATION",
+                        "Invalid structured apply_patch arguments",
+                    )
+                patch_value = encode_patch(request)
             hunks = parse_patch(patch_value)
             if not hunks:
                 return _error(

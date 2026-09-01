@@ -181,6 +181,7 @@ import eidos_runtime
 import lark
 from eidos_runtime.infrastructure.runtime_dependencies import RuntimeDependencyCatalog
 from eidos_runtime.tools.contracts import ApplyPatchInput
+from eidos_runtime.tools.workspace import ToolExecutor
 from eidos_runtime.workspace.discovery_scope import WorkspaceDiscoveryScope
 from eidos_runtime.workspace.codex_patch import encode_patch, parse_patch
 from eidos_runtime.workspace.search_driver import (
@@ -268,6 +269,33 @@ assert double_newline_patch == (
     "+\n"
     "*** End Patch"
 )
+
+native_patch = (
+    "*** Begin Patch\n"
+    "*** Add File: bundled-native-custom.txt\n"
+    '+raw "quoted"\n'
+    "+界\n"
+    "*** End Patch"
+)
+with tempfile.TemporaryDirectory(prefix="eidos-bundled-native-patch-") as directory:
+    workspace = Path(directory)
+    with ToolExecutor(
+        workspace,
+        supports_custom_tools=True,
+        supports_tool_grammar=True,
+    ) as executor:
+        prepared = executor.prepare_file_change(
+            "apply_patch", native_patch, threading.Event()
+        )
+        assert not isinstance(prepared, dict)
+        result, delta = executor.commit_patch(
+            "apply_patch", prepared, threading.Event()
+        )
+    assert result["outcome"] == "success"
+    assert [change.kind for change in delta.changes] == ["add"]
+    assert (workspace / "bundled-native-custom.txt").read_text(encoding="utf-8") == (
+        'raw "quoted"\n界\n'
+    )
 
 manifest_path = app_root / "eidos_runtime/resources/bin/ripgrep/manifest.json"
 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -389,7 +417,7 @@ async function main() {
   assert.ok((pythonMetadata.mode & 0o111) !== 0);
   await verifyBundledImportsAndRipgrep();
   await verifyRuntimeProtocol();
-  console.log("Bundled Runtime imports, Ripgrep, JSON-RPC, health, SQLite, and shutdown passed.");
+  console.log("Bundled Runtime imports, patch paths, Ripgrep, JSON-RPC, health, SQLite, and shutdown passed.");
 }
 
 

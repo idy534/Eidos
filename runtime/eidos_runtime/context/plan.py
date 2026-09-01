@@ -10,7 +10,7 @@ from eidos_runtime.context.budget import ContextBudget
 from eidos_runtime.model.client import (
     ModelContextItem,
     ModelProfileSnapshot,
-    ModelToolDefinition,
+    ModelToolDefinitionLike,
 )
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 from eidos_runtime.repo_intelligence.retrieval import RepositoryEvidence
@@ -54,7 +54,7 @@ class ContextPlan(EidosFrozenStrictModel):
         *,
         model_context: tuple[ModelContextItem, ...],
         instructions: str,
-        tool_definitions: tuple[ModelToolDefinition, ...],
+        tool_definitions: tuple[ModelToolDefinitionLike, ...],
     ) -> ContextSnapshot:
         if not model_attempt_id:
             raise ValueError("model_attempt_id is required")
@@ -104,7 +104,7 @@ class ContextSnapshot(EidosFrozenStrictModel):
     plan: ContextPlan
     model_context: tuple[ModelContextItem, ...]
     instructions: str
-    tool_definitions: tuple[ModelToolDefinition, ...]
+    tool_definitions: tuple[ModelToolDefinitionLike, ...]
     inventory_snapshot_id: str | None
     index_snapshot_id: str | None
     repository_map_snapshot_id: str | None
@@ -150,7 +150,7 @@ class ContextPlanner:
         rule_snapshot: RuleResolutionSnapshot,
         model_context: tuple[ModelContextItem, ...],
         instructions: str,
-        tool_definitions: tuple[ModelToolDefinition, ...],
+        tool_definitions: tuple[ModelToolDefinitionLike, ...],
         token_budget: ContextBudget,
         inventory_snapshot_id: str | None = None,
         index_snapshot_id: str | None = None,
@@ -190,7 +190,7 @@ class ContextPlanner:
 def _request_payload(
     model_context: tuple[ModelContextItem, ...],
     instructions: str,
-    tool_definitions: tuple[ModelToolDefinition, ...],
+    tool_definitions: tuple[ModelToolDefinitionLike, ...],
 ) -> dict[str, object]:
     return {
         "model_context": model_context,

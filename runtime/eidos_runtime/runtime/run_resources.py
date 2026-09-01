@@ -56,6 +56,8 @@ class RunResources:
         mcp_sandbox: bool = True,
         resource_registry: ResourceRegistry | None = None,
         supports_images: bool = False,
+        supports_custom_tools: bool = False,
+        supports_tool_grammar: bool = False,
         runtime_dependency_catalog: RuntimeDependencyCatalog | None = None,
         events: RuntimeEvents | None = None,
     ) -> None:
@@ -65,6 +67,8 @@ class RunResources:
         self.user_input = user_input
         self.mcp_sandbox = mcp_sandbox
         self.supports_images = supports_images
+        self.supports_custom_tools = supports_custom_tools
+        self.supports_tool_grammar = supports_tool_grammar
         self.async_kernel = async_kernel
         self.resources = resource_registry or ResourceRegistry()
         self.tool_executor: ToolExecutor | None = None
@@ -88,7 +92,11 @@ class RunResources:
     def __enter__(self) -> "RunResources":
         try:
             workspace = self.store.workspace_for_run(self.run_id)
-            self.tool_executor = ToolExecutor(workspace)
+            self.tool_executor = ToolExecutor(
+                workspace,
+                supports_custom_tools=self.supports_custom_tools,
+                supports_tool_grammar=self.supports_tool_grammar,
+            )
             self.skills = SkillCatalog(PluginCatalog(self.store))
             self.mcp = McpManager(
                 self.skills.plugins,
