@@ -25,9 +25,10 @@ from eidos_runtime.db.layout import (
 )
 from eidos_runtime.db.schema import (
     LEGACY_SCHEMA_VERSION,
-    PREVIOUS_SCHEMA_VERSION,
     SCHEMA_SQL,
     SCHEMA_VERSION,
+    V5_SCHEMA_VERSION,
+    V6_SCHEMA_VERSION,
     V1_TO_V2_MIGRATION_SQL,
     V2_TO_V3_MIGRATION_SQL,
     V3_TO_V4_MIGRATION_SQL,
@@ -127,7 +128,8 @@ class Database:
                     LEGACY_SCHEMA_VERSION,
                     2,
                     3,
-                    PREVIOUS_SCHEMA_VERSION,
+                    V5_SCHEMA_VERSION,
+                    V6_SCHEMA_VERSION,
                     SCHEMA_VERSION,
                     4,
                 }

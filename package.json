@@ -30,7 +30,8 @@
     "test:release": "pnpm package:mac:release",
     "lint:python": "uv run --locked ruff check runtime/eidos_runtime runtime/tests scripts/test-seatbelt-native.py",
     "deps:python": "uv run --locked deptry runtime/eidos_runtime",
-    "audit:python": "scripts/audit-python.sh",
+    "audit:python": "scripts/audit-python.sh && pnpm audit:runtime-node",
+    "audit:runtime-node": "pnpm --dir resources/runtime-dependencies/node audit --prod --audit-level high",
     "check:python:static": "pnpm lint:python && pnpm deps:python && pnpm audit:python",
     "check:python": "pnpm check:python:static",
     "check:python:full": "pnpm check:python:static && pnpm test:runtime:full",
@@ -48,7 +49,7 @@
     "package:mac": "bash scripts/package-macos.sh local",
     "package:mac:release": "bash scripts/package-macos.sh release",
     "test:electron-packaged": "node scripts/packaged-electron-smoke.mjs",
-    "test:packaging": "node --test scripts/packaging-config.test.mjs scripts/package-macos.test.mjs scripts/test-affected.test.mjs"
+    "test:packaging": "node --test scripts/packaging-config.test.mjs scripts/package-macos.test.mjs scripts/macos-sign.test.mjs scripts/runtime-dependency-packaging.test.mjs scripts/test-affected.test.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",
@@ -70,6 +71,7 @@
     "@types/node": "^24.0.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "@electron/osx-sign": "1.3.3",
     "@vitejs/plugin-react": "^6.0.0",
     "electron": "^42.4.1",
     "electron-builder": "26.15.3",

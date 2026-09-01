@@ -23,7 +23,13 @@ from eidos_runtime.extensions.skills import (
 )
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
+from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
+from eidos_runtime.runtime.runtime_dependencies import (
+    RuntimeDependencyCatalog,
+    RuntimeDependencyCatalogError,
+    RuntimeDependencyCoordinator,
+)
 from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
 from eidos_runtime.tools.read_tool_output import read_tool_output_entry
 from eidos_runtime.tools.search import tool_search_entry
@@ -50,6 +56,8 @@ class RunResources:
         mcp_sandbox: bool = True,
         resource_registry: ResourceRegistry | None = None,
         supports_images: bool = False,
+        runtime_dependency_catalog: RuntimeDependencyCatalog | None = None,
+        events: RuntimeEvents | None = None,
     ) -> None:
         self.store = store
         self.run_id = run_id
@@ -68,6 +76,9 @@ class RunResources:
         self.selected_skill_context: tuple[RetainedContextSection, ...] = ()
         self.skill_catalog_snapshot: SkillCatalogSnapshot | None = None
         self.skill_access: SkillAccess | None = None
+        self.runtime_dependencies: RuntimeDependencyCoordinator | None = None
+        self.runtime_dependency_catalog = runtime_dependency_catalog
+        self.events = events
         self.skill_dependency_diagnostics: tuple[
             SkillMcpDependencyDiagnostic, ...
         ] = ()
@@ -93,6 +104,14 @@ class RunResources:
             )
             self.skill_access = SkillAccess.from_snapshot(
                 self.skill_catalog_snapshot,
+            )
+            self.runtime_dependencies = RuntimeDependencyCoordinator.for_run(
+                self.store,
+                self.run_id,
+                catalog=self.runtime_dependency_catalog,
+                skills=self.skills,
+                skill_snapshot=self.skill_catalog_snapshot,
+                events=self.events,
             )
             self._set_registry()
             self._activate_mentions(self.user_input)
@@ -179,7 +198,9 @@ class RunResources:
             builtin_entries=(
                 *self.tool_executor.registry.entries,
                 read_tool_output_entry(self.store, self.run_id),
-                workspace_dependencies_entry(),
+                workspace_dependencies_entry(
+                    metadata_provider=self._workspace_dependency_metadata,
+                ),
                 *self.skills.tool_entries(
                     self.skill_catalog_snapshot,
                     activate_model_read=self.activate_skill_model_read,
@@ -227,11 +248,13 @@ class RunResources:
         if self.skill_access is not None:
             for qualified_id in selected.selected_qualified_ids:
                 self.skill_access.activate_explicit(qualified_id)
+                self._bind_skill(qualified_id)
 
     def activate_skill_model_read(self, qualified_id: str):
         if self.skill_access is None:
             raise RuntimeError("run resources are not started")
         record = self.skill_access.activate_model_read(qualified_id)
+        self._bind_skill(qualified_id)
         self._refresh_skill_dependency_diagnostics()
         return record
 
@@ -261,6 +284,13 @@ class RunResources:
         warning = render_skill_dependency_warning(
             self.skill_dependency_diagnostics
         )
+        runtime_warning = (
+            self.runtime_dependencies.skill_dependency_warning(
+                tuple(record.qualified_id for record in self.skill_access.records())
+            )
+            if self.runtime_dependencies is not None
+            else None
+        )
         catalog_context = tuple(
             section
             for section in self.retained_context
@@ -269,4 +299,25 @@ class RunResources:
         self.retained_context = (
             *catalog_context,
             *((warning,) if warning is not None else ()),
+            *((runtime_warning,) if runtime_warning is not None else ()),
+        )
+
+    def _bind_skill(self, qualified_id: str) -> None:
+        if self.runtime_dependencies is None:
+            return
+        try:
+            self.runtime_dependencies.binding_for_skill(qualified_id)
+        except RuntimeDependencyCatalogError:
+            # An invalid or missing Skill declaration is model-visible when
+            # its script is attempted. It must not fail the whole Run.
+            return
+
+    def _workspace_dependency_metadata(self) -> dict[str, object]:
+        if self.runtime_dependencies is None or self.skill_access is None:
+            return {
+                "defaultDependencyBindingId": None,
+                "activeSkillDependencyBindings": [],
+            }
+        return self.runtime_dependencies.workspace_dependencies_metadata(
+            tuple(record.qualified_id for record in self.skill_access.records())
         )

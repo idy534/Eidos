@@ -17,6 +17,7 @@ from eidos_runtime.db.schema import (  # noqa: E402
     PREVIOUS_SCHEMA_VERSION,
     SCHEMA_SQL,
     SCHEMA_VERSION,
+    V5_SCHEMA_VERSION,
     V4_SCHEMA_SQL,
     V2_SCHEMA_SQL,
 )
@@ -76,6 +77,8 @@ EXPECTED_TABLES = {
     "session_handoff_operations",
     "runtime_settings",
     "worktree_snapshots",
+    "run_dependency_snapshots",
+    "run_dependency_bindings",
 }
 
 EXPECTED_COLUMNS = {
@@ -439,6 +442,8 @@ class StorageSchemaTests(unittest.TestCase):
                 "session_handoff_operations_state",
                 "session_handoff_operations_session",
                 "worktree_snapshots_latest",
+                "run_dependency_snapshots_hash",
+                "run_dependency_bindings_run",
             },
         )
         for table, expected in EXPECTED_COLUMNS.items():
@@ -489,8 +494,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 6)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 5)
+        self.assertEqual(SCHEMA_VERSION, 7)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 6)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
@@ -727,7 +732,7 @@ class StorageSchemaTests(unittest.TestCase):
         database = self.data / DATABASE_NAME
         connection = sqlite3.connect(database)
         connection.execute("CREATE TABLE legacy_marker (value TEXT)")
-        connection.execute(f"PRAGMA user_version = {PREVIOUS_SCHEMA_VERSION}")
+        connection.execute(f"PRAGMA user_version = {V5_SCHEMA_VERSION}")
         connection.commit()
         connection.close()
         os.chmod(database, 0o600)
@@ -742,7 +747,7 @@ class StorageSchemaTests(unittest.TestCase):
         check = sqlite3.connect(database)
         self.assertEqual(
             check.execute("PRAGMA user_version").fetchone()[0],
-            PREVIOUS_SCHEMA_VERSION,
+            V5_SCHEMA_VERSION,
         )
         self.assertIsNotNone(
             check.execute(

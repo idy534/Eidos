@@ -674,6 +674,14 @@ class SessionRepository(Repository):
                 (session_id,),
             )
             connection.execute(
+                f"DELETE FROM run_dependency_bindings WHERE run_id IN ({run_ids})",
+                (session_id,),
+            )
+            connection.execute(
+                f"DELETE FROM run_dependency_snapshots WHERE run_id IN ({run_ids})",
+                (session_id,),
+            )
+            connection.execute(
                 f"DELETE FROM run_repository_retrievals WHERE run_id IN ({run_ids})",
                 (session_id,),
             )

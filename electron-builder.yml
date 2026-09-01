@@ -32,6 +32,7 @@ mac:
   icon: packaging/icon.icns
   entitlements: packaging/entitlements.mac.plist
   entitlementsInherit: packaging/entitlements.mac.plist
+  sign: scripts/macos-sign.mjs
   hardenedRuntime: false
   notarize: false
 

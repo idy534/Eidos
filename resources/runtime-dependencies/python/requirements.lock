@@ -1,0 +1,5 @@
+# Bounded Skill dependency closure copied from the root uv.lock installation.
+# Hashes select the CPython 3.12 macOS arm64-compatible artifacts.
+python-docx==1.2.0 --hash=sha256:3fd478f3250fbbbfd3b94fe1e985955737c145627498896a8a6bf81f4baf66c7 # import-name=docx
+lxml==6.1.2 --hash=sha256:7d506bdba580ecb1a6ad2e2b5c49445e66d3e1f95894885739094393a1aad237 # import-name=lxml
+typing-extensions==4.16.0 --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 # import-name=typing_extensions

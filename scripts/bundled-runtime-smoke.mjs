@@ -1,16 +1,21 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const bundleRoot = path.join(root, "build", "macos-runtime");
 const pythonRoot = path.join(bundleRoot, "python");
 const appRoot = path.join(bundleRoot, "app");
+const nodeRoot = path.join(bundleRoot, "dependencies", "node");
+const nodeModulesRoot = path.join(nodeRoot, "node_modules");
+const nodeExecutable = path.join(nodeRoot, "bin", "node");
+const nodeLoader = path.join(nodeRoot, "runtime-loader.mjs");
+const pythonDependencyRoot = path.join(bundleRoot, "dependencies", "python");
 const pythonExecutable = path.join(pythonRoot, "bin", "python3");
 
 
@@ -25,6 +30,29 @@ function bundledEnvironment(dataDirectory) {
   };
   delete environment.EIDOS_PYTHON;
   delete environment.PYTHONHOME;
+  delete environment.NODE_OPTIONS;
+  return environment;
+}
+
+
+function bundledDependencyEnvironment(dataDirectory) {
+  return {
+    ...bundledEnvironment(dataDirectory),
+    // Match dependency-bound Shell semantics: the isolated package root wins,
+    // while the App root is present only so this smoke can inspect the catalog.
+    PYTHONPATH: [pythonDependencyRoot, appRoot].join(path.delimiter),
+  };
+}
+
+
+function bundledNodeEnvironment() {
+  const environment = {
+    ...process.env,
+    PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+    RUNTIME_NODE_MODULES: nodeModulesRoot,
+  };
+  delete environment.NODE_OPTIONS;
+  environment.NODE_OPTIONS = `--import=${pathToFileURL(nodeLoader).href}`;
   return environment;
 }
 
@@ -66,6 +94,76 @@ function waitForExit(child, exitPromise, timeoutMs) {
 }
 
 
+async function verifyBundledNodeDependencies() {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-bundled-node-"));
+  const conflictingPackageRoot = path.join(fixtureRoot, "node_modules", "docx");
+  const cjsScript = path.join(fixtureRoot, "require-docx.cjs");
+  const esmScript = path.join(fixtureRoot, "import-docx.mjs");
+  try {
+    await mkdir(conflictingPackageRoot, { recursive: true });
+    await writeFile(
+      path.join(conflictingPackageRoot, "package.json"),
+      JSON.stringify({
+        name: "docx",
+        version: "0.0.0-workspace-conflict",
+        exports: { require: "./index.cjs", import: "./index.mjs" },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      path.join(conflictingPackageRoot, "index.cjs"),
+      "throw new Error('workspace docx was resolved');\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(conflictingPackageRoot, "index.mjs"),
+      "throw new Error('workspace docx was resolved');\n",
+      "utf8",
+    );
+    await writeFile(
+      cjsScript,
+      String.raw`const path = require("node:path");
+const { Document, Packer } = require("docx");
+const resolved = require.resolve("docx");
+if (!resolved.startsWith(process.env.RUNTIME_NODE_MODULES)) throw new Error(resolved);
+if (typeof Document !== "function" || typeof Packer?.toBuffer !== "function") throw new Error("docx CJS exports are incomplete");
+process.stdout.write(JSON.stringify({ format: "cjs", resolved }));
+`,
+      "utf8",
+    );
+    await writeFile(
+      esmScript,
+      String.raw`import { createRequire } from "node:module";
+import { Document, Packer } from "docx";
+const require = createRequire(import.meta.url);
+const resolved = require.resolve("docx");
+if (!resolved.startsWith(process.env.RUNTIME_NODE_MODULES)) throw new Error(resolved);
+if (typeof Document !== "function" || typeof Packer?.toBuffer !== "function") throw new Error("docx ESM exports are incomplete");
+process.stdout.write(JSON.stringify({ format: "esm", resolved }));
+`,
+      "utf8",
+    );
+
+    const environment = bundledNodeEnvironment();
+    assert.ok(path.isAbsolute(environment.RUNTIME_NODE_MODULES));
+    assert.match(environment.NODE_OPTIONS, /--import=file:/);
+    if (root.includes(" ")) assert.match(environment.NODE_OPTIONS, /%20/);
+    for (const script of [cjsScript, esmScript]) {
+      const result = await spawnCapture(
+        nodeExecutable,
+        [script],
+        { cwd: fixtureRoot, env: environment },
+      );
+      assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+      const output = JSON.parse(result.stdout);
+      assert.ok(output.resolved.startsWith(nodeModulesRoot));
+    }
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+}
+
+
 async function verifyBundledImportsAndRipgrep() {
   const pythonCheck = String.raw`
 import hashlib
@@ -81,6 +179,7 @@ import time
 
 import eidos_runtime
 import lark
+from eidos_runtime.infrastructure.runtime_dependencies import RuntimeDependencyCatalog
 from eidos_runtime.tools.contracts import ApplyPatchInput
 from eidos_runtime.workspace.discovery_scope import WorkspaceDiscoveryScope
 from eidos_runtime.workspace.codex_patch import encode_patch, parse_patch
@@ -92,11 +191,21 @@ from eidos_runtime.workspace.search_driver import (
 
 python_root = Path(sys.argv[1]).resolve()
 app_root = Path(sys.argv[2]).resolve()
+dependency_root = Path(sys.argv[3]).resolve()
+bundle_root = Path(sys.argv[4]).resolve()
 assert Path(sys.executable).resolve().is_relative_to(python_root)
 assert Path(eidos_runtime.__file__).resolve().is_relative_to(app_root)
+snapshot = RuntimeDependencyCatalog.from_manifest(bundle_root / "runtime.json").snapshot()
+assert snapshot.python_path == (str(dependency_root),), snapshot.python_path
 for module in ("anyio", "httpx", "lark", "mcp", "openai", "pydantic", "pydantic_ai", "pydantic_core", "tree_sitter"):
     __import__(module)
 assert Path(lark.__file__).resolve().is_relative_to(app_root), lark.__file__
+import docx
+import lxml
+import typing_extensions
+assert Path(docx.__file__).resolve().is_relative_to(dependency_root), docx.__file__
+assert Path(lxml.__file__).resolve().is_relative_to(dependency_root), lxml.__file__
+assert Path(typing_extensions.__file__).resolve().is_relative_to(dependency_root), typing_extensions.__file__
 
 required = (
     "eidos_runtime/__main__.py",
@@ -196,8 +305,8 @@ print(json.dumps({"python": sys.executable, "runtime": eidos_runtime.__file__, "
 `;
   const result = await spawnCapture(
     pythonExecutable,
-    ["-c", pythonCheck, pythonRoot, appRoot],
-    { cwd: appRoot, env: bundledEnvironment(os.tmpdir()) },
+    ["-c", pythonCheck, pythonRoot, appRoot, pythonDependencyRoot, bundleRoot],
+    { cwd: os.tmpdir(), env: bundledDependencyEnvironment(os.tmpdir()) },
   );
   assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
   assert.match(result.stdout, /"python":/);
@@ -269,6 +378,13 @@ async function main() {
   assert.equal(process.arch, "arm64", "bundled Runtime supports macOS arm64 only");
   assert.ok(!pythonExecutable.includes(".venv"));
   assert.ok(!pythonExecutable.startsWith("/usr/bin/"));
+  const nodeMetadata = await stat(nodeExecutable);
+  assert.ok((nodeMetadata.mode & 0o111) !== 0);
+  assert.equal((await spawnCapture(nodeExecutable, ["--version"], {
+    cwd: appRoot,
+    env: bundledNodeEnvironment(),
+  })).code, 0);
+  await verifyBundledNodeDependencies();
   const pythonMetadata = await stat(pythonExecutable);
   assert.ok((pythonMetadata.mode & 0o111) !== 0);
   await verifyBundledImportsAndRipgrep();

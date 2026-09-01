@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import hashlib
+from importlib.metadata import PackageNotFoundError, distribution
 import json
 import os
 from pathlib import Path
 import stat
 import sys
+import sysconfig
 import threading
-from typing import Callable, ClassVar
+from collections.abc import Callable, Mapping
+from typing import ClassVar, Literal
 
-import docx
-from pydantic import Field, StrictStr
+from pydantic import Field, StrictStr, ValidationError
 
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.tools.contracts import StrictToolModel, result_model
@@ -71,6 +73,47 @@ class WorkspacePythonPackageData(StrictToolModel):
     version: StrictStr
 
 
+class WorkspaceDependencyDiagnosticData(StrictToolModel):
+    index: int = Field(ge=0)
+    requirement_type: Literal[
+        "python-package", "node-package", "executable"
+    ] = Field(alias="requirementType")
+    name: StrictStr
+    requested_version: StrictStr = Field(alias="requestedVersion")
+    required: bool
+    status: Literal["ready", "missing", "incompatible"]
+    reason: StrictStr = Field(max_length=512)
+    available_version: StrictStr | None = Field(
+        default=None, alias="availableVersion", max_length=128
+    )
+    resolved_path: StrictStr | None = Field(
+        default=None, alias="resolvedPath", max_length=4_096
+    )
+
+
+class WorkspaceDependencyBindingData(StrictToolModel):
+    skill_qualified_id: StrictStr = Field(
+        alias="skillQualifiedId", min_length=1, max_length=256
+    )
+    binding_id: StrictStr = Field(
+        alias="bindingId",
+        min_length=1,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$",
+    )
+    status: Literal["ready", "missing", "incompatible", "invalid"]
+    code: StrictStr | None = Field(default=None, max_length=128)
+    manifest_sha256: StrictStr | None = Field(
+        default=None, alias="manifestSha256", pattern=r"^[0-9a-f]{64}$"
+    )
+    requirements_sha256: StrictStr | None = Field(
+        default=None, alias="requirementsSha256", pattern=r"^[0-9a-f]{64}$"
+    )
+    diagnostics: list[WorkspaceDependencyDiagnosticData] = Field(
+        default_factory=list, max_length=32
+    )
+
+
 class WorkspaceDependenciesResultData(StrictToolModel):
     SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = (
         "source",
@@ -85,6 +128,33 @@ class WorkspaceDependenciesResultData(StrictToolModel):
     python_packages: list[WorkspacePythonPackageData] | None = Field(
         default=None,
         alias="pythonPackages",
+    )
+    default_dependency_binding_id: StrictStr | None = Field(
+        default=None,
+        alias="defaultDependencyBindingId",
+        min_length=1,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$",
+    )
+    active_skill_dependency_bindings: list[WorkspaceDependencyBindingData] = Field(
+        default_factory=list,
+        alias="activeSkillDependencyBindings",
+        max_length=32,
+    )
+    manifest_sha256: StrictStr | None = Field(
+        default=None,
+        alias="manifestSha256",
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    snapshot_sha256: StrictStr | None = Field(
+        default=None,
+        alias="snapshotSha256",
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    runtime_dependency_error: StrictStr | None = Field(
+        default=None,
+        alias="runtimeDependencyError",
+        max_length=128,
     )
 
 
@@ -116,9 +186,10 @@ class WorkspaceDependencyCatalog:
             ripgrep = RipgrepBinaryResolver().resolve()
         except SearchDriverError as error:
             raise WorkspaceDependencyError("dependency_unavailable:rg") from error
+        python_paths = _explicit_runtime_python_paths()
         return cls(
             python_executable=Path(sys.executable),
-            python_paths=tuple(Path(value) for value in sys.path if value),
+            python_paths=python_paths,
             ripgrep_executable=ripgrep,
             owner_uid=os.getuid(),
             python_version=(
@@ -126,13 +197,7 @@ class WorkspaceDependencyCatalog:
                 f"{sys.version_info.micro}"
             ),
             ripgrep_version=PINNED_RIPGREP_VERSION,
-            python_packages=(
-                WorkspacePythonPackage(
-                    name="python-docx",
-                    import_name="docx",
-                    version=docx.__version__,
-                ),
-            ),
+            python_packages=_runtime_python_packages(python_paths),
         )
 
     def snapshot(self) -> WorkspaceDependencySnapshot:
@@ -167,8 +232,10 @@ class WorkspaceDependenciesTool:
     def __init__(
         self,
         catalog_factory: Callable[[], WorkspaceDependencyCatalog] | None = None,
+        metadata_provider: Callable[[], Mapping[str, object]] | None = None,
     ) -> None:
         self._catalog_factory = catalog_factory or WorkspaceDependencyCatalog.from_runtime
+        self._metadata_provider = metadata_provider
 
     def execute(
         self, _arguments: dict[str, object], cancel: threading.Event
@@ -182,6 +249,27 @@ class WorkspaceDependenciesTool:
                 "workspace_dependencies_unavailable",
                 "Verified workspace dependencies are unavailable",
             )
+        data: dict[str, object] = {
+            "source": snapshot.source,
+            "executables": [
+                value.model_dump(mode="json") for value in snapshot.executables
+            ],
+            "pythonPath": list(snapshot.python_path),
+            "pythonPackages": [
+                value.model_dump(mode="json", by_alias=True)
+                for value in snapshot.python_packages
+            ],
+        }
+        if self._metadata_provider is not None:
+            try:
+                data.update(_bounded_binding_metadata(self._metadata_provider()))
+            except Exception:
+                # Legacy discovery remains available when a binding projection
+                # is unavailable.  A failed binding is never used for Shell.
+                data.update({
+                    "defaultDependencyBindingId": None,
+                    "activeSkillDependencyBindings": [],
+                })
         return {
             "schemaVersion": 1,
             "toolContractVersion": 1,
@@ -189,17 +277,7 @@ class WorkspaceDependenciesTool:
             "outcome": "success",
             "code": "ok",
             "summary": "Verified workspace dependencies are available",
-            "data": {
-                "source": snapshot.source,
-                "executables": [
-                    value.model_dump(mode="json") for value in snapshot.executables
-                ],
-                "pythonPath": list(snapshot.python_path),
-                "pythonPackages": [
-                    value.model_dump(mode="json", by_alias=True)
-                    for value in snapshot.python_packages
-                ],
-            },
+            "data": data,
             "sideEffectsMayExist": False,
             "reconciliationRequired": False,
         }
@@ -207,6 +285,7 @@ class WorkspaceDependenciesTool:
 
 def workspace_dependencies_entry(
     catalog_factory: Callable[[], WorkspaceDependencyCatalog] | None = None,
+    metadata_provider: Callable[[], Mapping[str, object]] | None = None,
 ) -> ToolRegistryEntry:
     input_schema = WorkspaceDependenciesInput.model_json_schema(by_alias=True)
     result_schema = result_model(WorkspaceDependenciesResultData).model_json_schema(
@@ -218,14 +297,17 @@ def workspace_dependencies_entry(
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
-    tool = WorkspaceDependenciesTool(catalog_factory)
+    tool = WorkspaceDependenciesTool(catalog_factory, metadata_provider)
     return ToolRegistryEntry(
         spec=ToolSpec.model_validate({
             "name": "workspace_dependencies",
             "description": (
                 "Return verified Eidos-owned executable paths and Python package roots "
-                "for workspace artifact tasks. Use these paths instead of assuming "
-                "python3, package managers, or other host tools are healthy."
+                "for workspace artifact tasks. If an active Skill has a runtime "
+                "declaration, select the matching activeSkillDependencyBindings entry "
+                "by skillQualifiedId; use defaultDependencyBindingId only for an "
+                "unbound command. Binding IDs select verified environments and do not "
+                "grant paths or environment values."
             ),
             "sideEffect": "none",
             "approvalRequired": False,
@@ -295,6 +377,122 @@ def _tool_error(code: str, summary: str) -> dict[str, object]:
     }
 
 
+def _explicit_runtime_python_paths() -> tuple[Path, ...]:
+    """Return application/interpreter roots without importing ambient PYTHONPATH."""
+
+    package_root = Path(__file__).resolve().parents[2]
+    configured = sysconfig.get_paths()
+    candidates = (
+        package_root / "python",
+        package_root / "lib" / "python",
+        package_root,
+        Path(configured.get("purelib", "")),
+        Path(configured.get("platlib", "")),
+    )
+    result: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if not candidate.is_absolute():
+            continue
+        canonical = candidate.resolve(strict=False)
+        if canonical in seen or not canonical.is_dir():
+            continue
+        seen.add(canonical)
+        result.append(canonical)
+        if len(result) >= _MAX_PYTHON_PATHS:
+            break
+    return tuple(result)
+
+
+def _runtime_python_packages(
+    roots: tuple[Path, ...],
+) -> tuple[WorkspacePythonPackage, ...]:
+    try:
+        package = distribution("python-docx")
+    except PackageNotFoundError:
+        return ()
+    location = Path(package.locate_file("")).resolve(strict=False)
+    if not any(_path_contained(location, root) for root in roots):
+        return ()
+    return (
+        WorkspacePythonPackage(
+            name="python-docx",
+            import_name="docx",
+            version=package.version,
+        ),
+    )
+
+
+def _path_contained(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _bounded_binding_metadata(
+    metadata: Mapping[str, object],
+) -> dict[str, object]:
+    """Keep only the bounded binding projection exposed by the builtin tool."""
+
+    if not isinstance(metadata, Mapping):
+        raise TypeError("runtime dependency metadata must be a mapping")
+    result: dict[str, object] = {
+        "defaultDependencyBindingId": None,
+        "activeSkillDependencyBindings": [],
+    }
+    default = metadata.get("defaultDependencyBindingId")
+    if default is not None:
+        try:
+            validated = WorkspaceDependenciesResultData.model_validate({
+                "defaultDependencyBindingId": default,
+            })
+        except ValidationError:
+            validated = None
+        if validated is not None:
+            result["defaultDependencyBindingId"] = (
+                validated.default_dependency_binding_id
+            )
+    for field_name, output_name in (
+        ("runtimeDependencyError", "runtimeDependencyError"),
+        ("manifestSha256", "manifestSha256"),
+        ("snapshotSha256", "snapshotSha256"),
+    ):
+        value = metadata.get(field_name)
+        if value is None:
+            continue
+        try:
+            validated = WorkspaceDependenciesResultData.model_validate({
+                field_name: value,
+            })
+        except ValidationError:
+            continue
+        result[output_name] = validated.model_dump(
+            mode="json",
+            by_alias=True,
+            exclude_none=False,
+        )[output_name]
+    active = metadata.get("activeSkillDependencyBindings")
+    if not isinstance(active, (tuple, list)):
+        return result
+    normalized_active: list[dict[str, object]] = []
+    for item in active[:32]:
+        if not isinstance(item, Mapping):
+            continue
+        try:
+            validated = WorkspaceDependencyBindingData.model_validate(item)
+        except ValidationError:
+            continue
+        normalized_active.append(validated.model_dump(
+            mode="json",
+            by_alias=True,
+            exclude_none=True,
+        ))
+    result["activeSkillDependencyBindings"] = normalized_active
+    return result
+
+
 __all__ = [
     "WorkspaceDependencyCatalog",
     "WorkspaceDependencyError",
@@ -302,6 +500,8 @@ __all__ = [
     "WorkspaceExecutable",
     "WorkspacePythonPackage",
     "WorkspaceDependenciesInput",
+    "WorkspaceDependencyBindingData",
+    "WorkspaceDependencyDiagnosticData",
     "WorkspaceDependenciesResultData",
     "workspace_dependencies_entry",
 ]

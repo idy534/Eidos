@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 from pathlib import Path
 import sys
 import tempfile
@@ -11,7 +12,10 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.extensions.skill_manifest import (  # noqa: E402
+    MAX_RUNTIME_DEPENDENCY_ERROR_CHARS,
     SkillManifestError,
+    RUNTIME_DEPENDENCY_ERROR_CODE,
+    RUNTIME_METADATA_ERROR_CODE,
     load_skill_agent_metadata,
     parse_skill_manifest,
 )
@@ -145,6 +149,14 @@ class SkillManifestTests(unittest.TestCase):
                 "policy:\n"
                 "  allow_implicit_invocation: false\n"
                 "  unknown: ignored\n"
+                "runtimeDependencies:\n"
+                "  schemaVersion: 1\n"
+                "  dependencies:\n"
+                "    - kind: python-package\n"
+                "      name: python-docx\n"
+                "      importName: docx\n"
+                "      version: '>=1.2,<2'\n"
+                "      required: true\n"
                 "unknown: ignored\n",
                 encoding="utf-8",
             )
@@ -163,6 +175,13 @@ class SkillManifestTests(unittest.TestCase):
         self.assertEqual(metadata.dependencies.tools[0].value, "example")
         assert metadata.policy is not None
         self.assertFalse(metadata.policy.allow_implicit_invocation)
+        assert metadata.runtime_dependencies is not None
+        self.assertEqual(metadata.runtime_dependencies.schema_version, 1)
+        self.assertEqual(
+            metadata.runtime_dependencies.dependencies[0].name,
+            "python-docx",
+        )
+        self.assertIsNone(metadata.runtime_dependency_error)
 
     def test_invalid_or_oversized_optional_metadata_fails_open(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-skill-manifest-") as directory:
@@ -173,12 +192,127 @@ class SkillManifestTests(unittest.TestCase):
             metadata_path.write_text("interface: [broken\n", encoding="utf-8")
             invalid = load_skill_agent_metadata(skill)
             self.assertIsNone(invalid.interface)
+            self.assertEqual(invalid.runtime_dependency_error, RUNTIME_METADATA_ERROR_CODE)
 
             metadata_path.write_text("x: " + "a" * (70 * 1024), encoding="utf-8")
             metadata = load_skill_agent_metadata(skill)
             self.assertIsNone(metadata.interface)
             self.assertIsNone(metadata.dependencies)
             self.assertIsNone(metadata.policy)
+            self.assertEqual(metadata.runtime_dependency_error, RUNTIME_METADATA_ERROR_CODE)
+
+    def test_invalid_runtime_dependencies_are_reported_without_erasing_legacy_metadata(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-skill-manifest-") as directory:
+            skill = Path(directory) / "skill"
+            metadata_path = skill / "agents" / "eidos.yaml"
+            metadata_path.parent.mkdir(parents=True)
+            metadata_path.write_text(
+                "interface:\n"
+                "  display_name: Example\n"
+                "dependencies:\n"
+                "  tools:\n"
+                "    - type: mcp\n"
+                "      value: documents\n"
+                "policy:\n"
+                "  allow_implicit_invocation: false\n"
+                "runtimeDependencies:\n"
+                "  schemaVersion: 1\n"
+                "  dependencies:\n"
+                "    - kind: python-package\n"
+                "      name: ../escape\n"
+                "      importName: docx\n"
+                "      version: '>=1.2,<2'\n"
+                "      required: true\n",
+                encoding="utf-8",
+            )
+
+            metadata = load_skill_agent_metadata(skill)
+
+        assert metadata.interface is not None
+        self.assertEqual(metadata.interface.display_name, "Example")
+        assert metadata.dependencies is not None
+        self.assertEqual(metadata.dependencies.tools[0].type, "mcp")
+        assert metadata.policy is not None
+        self.assertFalse(metadata.policy.allow_implicit_invocation)
+        self.assertIsNone(metadata.runtime_dependencies)
+        self.assertEqual(metadata.runtime_dependency_error, RUNTIME_DEPENDENCY_ERROR_CODE)
+        assert metadata.runtime_dependency_error is not None
+        self.assertLessEqual(
+            len(metadata.runtime_dependency_error),
+            MAX_RUNTIME_DEPENDENCY_ERROR_CHARS,
+        )
+
+    def test_legacy_metadata_without_runtime_dependencies_remains_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-skill-manifest-") as directory:
+            skill = Path(directory) / "skill"
+            metadata_path = skill / "agents" / "eidos.yaml"
+            metadata_path.parent.mkdir(parents=True)
+            metadata_path.write_text(
+                "dependencies:\n"
+                "  tools:\n"
+                "    - type: cli\n"
+                "      value: example\n",
+                encoding="utf-8",
+            )
+
+            metadata = load_skill_agent_metadata(skill)
+
+        assert metadata.dependencies is not None
+        self.assertEqual(metadata.dependencies.tools[0].value, "example")
+        self.assertIsNone(metadata.runtime_dependencies)
+        self.assertIsNone(metadata.runtime_dependency_error)
+
+    def test_invalid_metadata_logs_only_bounded_diagnostic_fields(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-skill-manifest-") as directory:
+            skill = Path(directory) / "skill"
+            metadata_path = skill / "agents" / "eidos.yaml"
+            metadata_path.parent.mkdir(parents=True)
+            metadata_path.write_text(
+                "runtimeDependencies:\n"
+                "  schemaVersion: 1\n"
+                "  dependencies:\n"
+                "    - kind: python-package\n"
+                "      name: ../escape\n"
+                "      importName: docx\n"
+                "      version: '>=1.2,<2'\n"
+                "      required: true\n"
+                "  untrusted: should-not-be-logged\n",
+                encoding="utf-8",
+            )
+
+            logger = logging.getLogger("eidos_runtime.extensions.skill_manifest")
+            with self.assertLogs(logger, level="WARNING") as captured:
+                metadata = load_skill_agent_metadata(skill)
+
+        self.assertEqual(metadata.runtime_dependency_error, RUNTIME_DEPENDENCY_ERROR_CODE)
+        log_text = "\n".join(captured.output)
+        self.assertIn("reason=runtime_dependencies_invalid", log_text)
+        self.assertIn("type=ValidationError", log_text)
+        self.assertNotIn("should-not-be-logged", log_text)
+        self.assertNotIn("input_value", log_text)
+
+    def test_malformed_yaml_logs_no_raw_metadata(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-skill-manifest-") as directory:
+            skill = Path(directory) / "skill"
+            metadata_path = skill / "agents" / "eidos.yaml"
+            metadata_path.parent.mkdir(parents=True)
+            metadata_path.write_text(
+                "interface: [broken\n"
+                "secret-marker: should-not-be-logged\n",
+                encoding="utf-8",
+            )
+
+            logger = logging.getLogger("eidos_runtime.extensions.skill_manifest")
+            with self.assertLogs(logger, level="WARNING") as captured:
+                metadata = load_skill_agent_metadata(skill)
+
+        self.assertEqual(metadata.runtime_dependency_error, RUNTIME_METADATA_ERROR_CODE)
+        log_text = "\n".join(captured.output)
+        self.assertIn("reason=runtime_metadata_invalid", log_text)
+        self.assertNotIn("should-not-be-logged", log_text)
+        self.assertNotIn("secret-marker", log_text)
 
     def test_optional_asset_root_symlink_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-skill-manifest-") as directory:

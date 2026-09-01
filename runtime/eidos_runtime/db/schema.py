@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 6
-PREVIOUS_SCHEMA_VERSION = 5
+SCHEMA_VERSION = 7
+V6_SCHEMA_VERSION = 6
+V5_SCHEMA_VERSION = 5
+PREVIOUS_SCHEMA_VERSION = V6_SCHEMA_VERSION
 LEGACY_SCHEMA_VERSION = 1
 
 MODEL_ATTEMPT_DIAGNOSTICS_COLUMNS = (
@@ -1256,7 +1258,7 @@ CREATE INDEX worktree_lifecycle_operations_session
 ON worktree_lifecycle_operations(session_id, scope);
 """
 
-SCHEMA_SQL = (
+V6_SCHEMA_SQL = (
     BASE_SCHEMA_SQL
     + CONTEXT_SCHEMA_SQL
     + RESPONSE_ACTIONS_SCHEMA_SQL
@@ -1271,6 +1273,44 @@ SCHEMA_SQL = (
     + SESSION_HANDOFF_SCHEMA_SQL
     + WORKTREE_RETENTION_SCHEMA_SQL
 )
+
+RUNTIME_DEPENDENCY_SCHEMA_SQL = """
+CREATE TABLE run_dependency_snapshots (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL UNIQUE REFERENCES runs(id) ON DELETE RESTRICT,
+    manifest_hash TEXT NOT NULL,
+    catalog_hash TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE(run_id, manifest_hash)
+);
+
+CREATE INDEX run_dependency_snapshots_hash
+ON run_dependency_snapshots(manifest_hash, catalog_hash);
+
+CREATE TABLE run_dependency_bindings (
+    creation_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    binding_id TEXT NOT NULL UNIQUE,
+    manifest_hash TEXT NOT NULL,
+    requirements_hash TEXT NOT NULL,
+    qualified_skill_id TEXT,
+    status TEXT NOT NULL CHECK (
+        status IN ('ready', 'missing', 'incompatible', 'invalid')
+    ),
+    diagnostics_json TEXT NOT NULL DEFAULT '[]',
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (run_id, manifest_hash)
+        REFERENCES run_dependency_snapshots(
+            run_id, manifest_hash
+        ) ON DELETE RESTRICT
+);
+
+CREATE INDEX run_dependency_bindings_run
+ON run_dependency_bindings(run_id, creation_seq);
+"""
+
+SCHEMA_SQL = V6_SCHEMA_SQL + RUNTIME_DEPENDENCY_SCHEMA_SQL
 
 # Test/upgrade fixture for schema v5. Schema v5 still kept the rebuildable
 # repository index in the state database.
@@ -1436,3 +1476,5 @@ DROP TABLE repository_directories;
 DROP TABLE repository_files;
 DROP TABLE repository_snapshots;
 """
+
+V6_TO_V7_MIGRATION_SQL = RUNTIME_DEPENDENCY_SCHEMA_SQL

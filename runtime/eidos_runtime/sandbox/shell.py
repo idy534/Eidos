@@ -13,6 +13,10 @@ import threading
 import time
 
 from eidos_runtime.extensions.skill_access import SkillAccessRecord
+from eidos_runtime.sandbox.dependency_environment import (
+    DependencyShellEnvironment,
+    apply_dependency_environment,
+)
 from eidos_runtime.sandbox.host_shell import (
     HOST_SHELL_RESOLVER,
     SHELL_ENVIRONMENT_PROVIDER,
@@ -73,6 +77,7 @@ def run_shell(
     attempt: SandboxAttempt | None = None,
     active_skill_roots: Sequence[Path] = (),
     skill_invocation: SkillAccessRecord | None = None,
+    dependency_environment: DependencyShellEnvironment | None = None,
 ) -> dict[str, object]:
     started = time.monotonic()
     workspace_fd = -1
@@ -95,6 +100,7 @@ def run_shell(
             attempt,
             active_skill_roots,
             skill_invocation,
+            dependency_environment,
         )
     except HostShellUnavailableError:
         return process_start_failed_result(started, skill_invocation=skill_invocation)
@@ -279,6 +285,7 @@ def _run_verified_shell(
     attempt: SandboxAttempt | None,
     active_skill_roots: Sequence[Path],
     skill_invocation: SkillAccessRecord | None,
+    dependency_environment: DependencyShellEnvironment | None,
 ) -> dict[str, object]:
     host_shell = HOST_SHELL_RESOLVER.resolve()
     sandboxed = attempt is None or attempt.sandbox is SandboxType.MACOS_SEATBELT
@@ -316,6 +323,7 @@ def _run_verified_shell(
         shell=host_shell,
         environment=environment,
         environment_source=snapshot.source,
+        dependency_environment=dependency_environment,
     )
     result = run_shell_process(
         launch,
@@ -361,6 +369,7 @@ def prepare_shell_launch(
     shell: HostShell,
     environment: Mapping[str, str],
     environment_source: str | None = None,
+    dependency_environment: DependencyShellEnvironment | None = None,
 ) -> ShellLaunchSpec:
     sandboxed = attempt is None or attempt.sandbox is SandboxType.MACOS_SEATBELT
     argv = (
@@ -371,7 +380,10 @@ def prepare_shell_launch(
     return ShellLaunchSpec(
         argv=tuple(argv),
         cwd=cwd.path,
-        environment=dict(environment),
+        environment=apply_dependency_environment(
+            environment,
+            dependency_environment,
+        ),
         sandboxed=sandboxed,
         shell_kind=shell.kind,
         environment_source=environment_source,

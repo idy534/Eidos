@@ -9,12 +9,17 @@ from typing import Callable
 
 import yaml
 
+from eidos_runtime.models.skill_runtime import RuntimeRequirements
+
 
 logger = logging.getLogger(__name__)
 
 MAX_SKILL_NAME_CHARS = 64
 MAX_METADATA_BYTES = 64 * 1024
 MAX_METADATA_STRING_CHARS = 1024
+MAX_RUNTIME_DEPENDENCY_ERROR_CHARS = 256
+RUNTIME_DEPENDENCY_ERROR_CODE = "runtime_dependencies_invalid"
+RUNTIME_METADATA_ERROR_CODE = "runtime_metadata_invalid"
 _SKILL_NAME = re.compile(r"^[^/\\\x00\r\n]{1,64}$")
 
 
@@ -66,6 +71,8 @@ class SkillAgentMetadata:
     interface: SkillInterfaceMetadata | None = None
     dependencies: SkillDependencies | None = None
     policy: SkillPolicy | None = None
+    runtime_dependencies: RuntimeRequirements | None = None
+    runtime_dependency_error: str | None = None
 
 
 def parse_skill_manifest(
@@ -135,8 +142,15 @@ def load_skill_agent_metadata(skill_root: Path) -> SkillAgentMetadata:
         ValueError,
         yaml.YAMLError,
     ) as error:
-        logger.warning("ignoring %s: invalid optional skill metadata: %s", metadata_path, error)
-        return SkillAgentMetadata()
+        logger.warning(
+            "ignoring optional skill metadata path=%s type=%s reason=%s",
+            metadata_path,
+            type(error).__name__,
+            RUNTIME_METADATA_ERROR_CODE,
+        )
+        return SkillAgentMetadata(
+            runtime_dependency_error=RUNTIME_METADATA_ERROR_CODE
+        )
 
 
 def _extract_frontmatter(contents: str) -> str:
@@ -279,7 +293,28 @@ def _parse_agent_metadata(value: dict[object, object], skill_root: Path) -> Skil
     interface = _parse_interface(value.get("interface"), skill_root)
     dependencies = _parse_dependencies(value.get("dependencies"))
     policy = _parse_policy(value.get("policy"))
-    return SkillAgentMetadata(interface=interface, dependencies=dependencies, policy=policy)
+    runtime_dependencies: RuntimeRequirements | None = None
+    runtime_dependency_error: str | None = None
+    if "runtimeDependencies" in value:
+        try:
+            runtime_dependencies = RuntimeRequirements.model_validate(
+                value["runtimeDependencies"]
+            )
+        except (TypeError, ValueError) as error:
+            runtime_dependency_error = RUNTIME_DEPENDENCY_ERROR_CODE
+            logger.warning(
+                "ignoring optional skill runtime dependencies path=%s type=%s reason=%s",
+                skill_root / "agents" / "eidos.yaml",
+                type(error).__name__,
+                RUNTIME_DEPENDENCY_ERROR_CODE,
+            )
+    return SkillAgentMetadata(
+        interface=interface,
+        dependencies=dependencies,
+        policy=policy,
+        runtime_dependencies=runtime_dependencies,
+        runtime_dependency_error=runtime_dependency_error,
+    )
 
 
 def _parse_interface(value: object, skill_root: Path) -> SkillInterfaceMetadata | None:
@@ -396,6 +431,9 @@ def _resolve_asset_path(value: object, skill_root: Path) -> Path | None:
 
 __all__ = [
     "MAX_METADATA_BYTES",
+    "MAX_RUNTIME_DEPENDENCY_ERROR_CHARS",
+    "RUNTIME_DEPENDENCY_ERROR_CODE",
+    "RUNTIME_METADATA_ERROR_CODE",
     "SkillAgentMetadata",
     "SkillDependencies",
     "SkillInterfaceMetadata",

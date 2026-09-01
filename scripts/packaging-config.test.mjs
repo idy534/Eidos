@@ -12,6 +12,12 @@ const packageJsonPath = path.join(root, "package.json");
 const builderConfigPath = path.join(root, "electron-builder.yml");
 const packageScriptPath = path.join(root, "scripts", "package-macos.sh");
 const runtimeBuilderPath = path.join(root, "scripts", "build-macos-runtime.sh");
+const runtimeDependencyTestPath = path.join(
+  root,
+  "scripts",
+  "runtime-dependency-packaging.test.mjs",
+);
+const macSignHookPath = path.join(root, "scripts", "macos-sign.mjs");
 
 
 async function readPackagingFiles() {
@@ -32,6 +38,7 @@ async function readPackagingFiles() {
 
 test("packaging commands and pinned electron-builder are declared", async () => {
   const { packageJson } = await readPackagingFiles();
+  assert.equal(packageJson.devDependencies["@electron/osx-sign"], "1.3.3");
   assert.equal(packageJson.devDependencies["electron-builder"], "26.15.3");
   assert.equal(packageJson.dependencies["@xterm/xterm"], "6.0.0");
   assert.equal(packageJson.dependencies["@xterm/addon-fit"], "0.11.0");
@@ -117,6 +124,7 @@ test("electron-builder keeps Runtime outside ASAR and targets only arm64 DMG", a
   assert.match(builderConfig, /dist\/renderer\/\*\*/);
   assert.match(builderConfig, /!dist\/renderer-test\/\*\*/);
   assert.doesNotMatch(builderConfig, /runtime\/eidos_runtime/);
+  assert.match(builderConfig, /^mac:[\s\S]*^  sign:\s+scripts\/macos-sign\.mjs\s*$/m);
 });
 
 
@@ -129,4 +137,19 @@ test("packaging scripts are executable shell entrypoints with a pinned Runtime P
   assert.match(packageScript, /invalid mode|unsupported mode/i);
   assert.match(packageScript, /CSC_LINK|Developer ID/);
   assert.match(runtimeBuilder, /DEFAULT_PYTHON_VERSION="3\.12\.13"/);
+});
+
+
+test("packaging suite includes the isolated runtime dependency contract tests", async () => {
+  const { packageJson } = await readPackagingFiles();
+  assert.match(
+    packageJson.scripts["test:packaging"],
+    /scripts\/runtime-dependency-packaging\.test\.mjs/,
+  );
+  await access(runtimeDependencyTestPath);
+  await access(macSignHookPath);
+  assert.match(
+    packageJson.scripts["test:packaging"],
+    /scripts\/macos-sign\.test\.mjs/,
+  );
 });

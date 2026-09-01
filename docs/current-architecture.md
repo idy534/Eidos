@@ -191,7 +191,11 @@ Tool Result 的 `reconciliationRequired` 是本次执行是否建立 reconciliat
 
 只有执行最终状态未知时，Shell 才会建立 reconciliation barrier。Runtime 不会自动重放原 Shell。unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。
 
-内置 `workspace_dependencies` Tool 通过一个只读目录接口返回 Eidos 自带并经过校验的 Python、ripgrep、Python import roots 和受支持包版本。调用方使用这些路径执行已有 Workspace 任务。这个 Tool 不创建新的执行器，也不绕过 Shell、Approval 或 Seatbelt。实际命令仍然进入现有 `run_shell` 链路。
+内置 `workspace_dependencies` Tool 通过一个只读目录接口返回 Eidos 自带并经过校验的 Python、ripgrep、Python import roots 和受支持包版本。它在成功结果的 `data` 中返回 `activeSkillDependencyBindings`，并可返回 `defaultDependencyBindingId`。调用方使用这些路径执行已有 Workspace 任务。这个 Tool 不创建新的执行器，也不绕过 Shell、Approval 或 Seatbelt。实际命令仍然进入现有 `run_shell` 链路。`run_shell` 输入的绑定字段是 `dependencyBindingId`。普通没有 binding 的 Shell 保持原有环境和执行路径。
+
+Bundled Runtime dependency 使用三层资源边界。Skill 内容层保存 `SKILL.md`、`agents/eidos.yaml`、脚本和其他 Skill 资源。产品依赖层保存 `resources/runtime-dependencies/` 中的 Python 与 Node 锁定输入，并把构建结果放入 Bundle 的 `dependencies/` 目录。Runtime manifest 层在 Bundle 根目录生成并校验 `runtime.json`，文件记录固定版本、相对路径和 SHA-256 inventory。Catalog 层读取并校验这个 manifest。Activation 层在 Run 中固定 manifest hash、Bundle snapshot hash 和 Skill requirements，并为每个 active Skill 生成 `dependencyBindingId`。Resource 层把已验证 binding 投影到现有 Shell environment 和 permission profile。它把 Bundle root 和依赖 root 设为受保护的只读路径。它把 Workspace 保持为唯一的工作目录。
+
+`runtime.json` 只描述随 App 发布的系统依赖。Python 依赖位于 Bundle 的 `dependencies/python`，Node 依赖位于 Bundle 的 `dependencies/node`。Skill 的 `agents/eidos.yaml` 只保存 typed declaration。Skill 目录不承载依赖包。Node loader 使用 Bundle 的 Node 和 `node_modules`，并为 CJS 与 ESM 保留各自的相对导入语义。普通没有 binding 的 Shell 仍走既有 `run_shell`、Host shell snapshot、Approval 和 Seatbelt 链路。
 
 现有文件的原子替换会保留 mode、扩展属性和 ACL。Runtime 使用已验证的文件描述符和 macOS `fcopyfile` 复制这些元数据。Runtime 仍然拒绝 symlink、hardlink、特殊文件、owner 不匹配、特殊 mode 和文件 flags。
 
@@ -279,7 +283,7 @@ Runtime 按职责使用多个独立存储。`repository.sqlite` 保存可重建�
 
 完整 ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。`state.sqlite` 只保存版本、kind、相对路径、SHA-256 和大小。Runtime 对 owner、mode、路径、压缩数据、大小、JSON 和 checksum 执行 fail-closed 校验。Session 删除后，Runtime 会删除对应 history，并回收不再引用的 Blob。JSONL、Memory 和 Repository 数据都不能改变 `state.sqlite` 中的业务状态。
 
-当前 `SCHEMA_VERSION` 是 6。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
+当前 `SCHEMA_VERSION` 是 7。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。前者固定每个 Run 的 manifest hash、catalog hash 和有界 snapshot JSON。后者固定该 Run 的 requirement hash、Skill 归属、状态和有界诊断。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
 
 Outbox 投递失败不会删除事实。Runtime 重启会从 `state.sqlite`、Outbox、Long Task 和 Resource 状态恢复或进入 reconciliation。其他数据库和文件不参与跨库业务 transaction。
 
@@ -404,9 +408,9 @@ Turn 开始时，Catalog Snapshot 固化可用 Skill。Selection 当前支持用
 
 Skill 使用 progressive disclosure。Catalog 只提供发现信息。`SKILL.md` 是选中后的主说明。`skill_read_resource` 只在说明需要时读取 `references/`、`scripts/` 或 `assets/` 下的相对路径。Resource path 必须是相对于包含该 Skill 的 `SKILL.md` 的目录，且不能包含绝对路径、`..`、symlink 或非 regular file。Skill 脚本不是新的 Runtime Tool；模型仍然使用已有的 `skill_read`、`skill_read_resource`、文件工具、`run_shell` 和其他已注册 Tool。
 
-`agents/eidos.yaml` 是可选的 Skill metadata 文件。Runtime 使用统一 YAML loader 读取其中的 interface、asset、tool dependency 和 policy metadata。文件有大小、owner、regular-file、路径和字段边界。无效的可选 metadata 会记录 warning 并忽略。`allow_implicit_invocation = false` 会禁止 Shell 识别自动激活该 Skill，但不会阻止显式选择或 `skill_read` 激活。`dependencies.tools` 不会安装 Python、pip、npm、系统命令或其他运行时依赖，也不会改变 Eidos 的 Permission、Approval 或 Sandbox。
+`agents/eidos.yaml` 是可选的 Skill metadata 文件。Runtime 使用统一 YAML loader 读取其中的 interface、asset、tool dependency、policy 和 `runtimeDependencies` metadata。`runtimeDependencies` 使用严格的 `RuntimeRequirements` discriminated union。它只接受有界的 Python package、Node package 和 executable 声明。文件有大小、owner、regular-file、路径和字段边界。无效的可选 runtime declaration 会保留固定 error code，不会清除旧的 interface、MCP dependency 或 policy metadata。无效的整个可选 YAML 会保留现有 display fallback，并报告固定 metadata error。`allow_implicit_invocation = false` 会禁止 Shell 识别自动激活该 Skill，但不会阻止显式选择或 `skill_read` 激活。`dependencies.tools` 不会安装 Python、pip、npm、系统命令或其他运行时依赖，也不会改变 Eidos 的 Permission、Approval 或 Sandbox。
 
-`run_shell` 会经过 `SkillAccess` 对受信任 Catalog entry 做隐式脚本识别。只有支持的 runner 调用已知 Skill root 下的相对 `scripts/` 文件时，Runtime 才记录 implicit activation，并把该 Skill root 加入本次 Shell 的权限物化。Workspace root 保持读写；active Skill root 只读，并额外允许脚本所需的 executable mapping。Seatbelt 明确拒绝 active Skill root 的写入。隐式识别只提供 activation 证据，不会授权任意 Workspace 外路径。
+`run_shell` 会经过 `SkillAccess` 对受信任 Catalog entry 做隐式脚本识别。只有支持的 runner 调用已知 Skill root 下的相对 `scripts/` 文件时，Runtime 才记录 implicit activation，并把该 Skill root 加入本次 Shell 的权限物化。Workspace root 保持读写；active Skill root 只读，并额外允许脚本所需的 executable mapping。Seatbelt 明确拒绝 active Skill root 的写入。带 runtime declaration 的 Skill consumer 必须从 `workspace_dependencies` 的 `activeSkillDependencyBindings` 中选择匹配 `skillQualifiedId` 且状态为 `ready` 的 binding，再把其 `dependencyBindingId` 传给 `run_shell`。模型不能使用顶层默认 binding 替代不匹配的 active Skill binding。无效或非 ready 声明不能按无依赖处理。隐式识别只提供 activation 证据，不会授权任意 Workspace 外路径。
 
 Skill binary assets 会在安装和目录读取中按 bytes 保留。`skill_read_resource` 只返回有界 UTF-8 文本，因此 DOCX、PPTX、PDF、XLSX、PNG 等 binary resource 不会被当作文本注入 Context。支持图像输入的 Model 才会注册 `view_image`。`view_image` 从 Workspace root 或 active Skill root 读取受信任的 PNG/JPEG，并把经 hash 和 size 复核的 binary content 投影为 Pydantic AI 的 multimodal `BinaryContent`。其他 binary asset 仍由已有 Tool 或 Skill 脚本按其自身格式处理。
 
@@ -420,9 +424,9 @@ MCP 当前使用官方 Python MCP SDK 的 stdio client。MCP Server 由 RuntimeA
 
 源码开发使用仓库 `.venv/bin/python`，Runtime root 是仓库 `runtime/`。打包开发路径从 `process.resourcesPath/runtime/` 解析 bundled Python 和 `runtime/app`，不回退到系统 Python、PATH、`.venv` 或用户 `PYTHONHOME`。
 
-`build-macos-runtime.sh` 生成 macOS arm64 的 self-contained Runtime Bundle。Bundle 包含 managed CPython 3.12.13、锁定的 production dependencies、Eidos Runtime、Seatbelt 资源、`apply_patch.lark` grammar 和受管 Ripgrep。构建阶段会检查 grammar 存在，并通过 bundled smoke 验证 Lark 从 Bundle 导入。Electron Builder 将 Bundle 放入 App resources，DMG 目标只配置 arm64。
+`build-macos-runtime.sh` 生成 macOS arm64 的 self-contained Runtime Bundle。Bundle 包含 managed CPython 3.12.13、锁定的 production dependencies、Eidos Runtime、Seatbelt 资源、`apply_patch.lark` grammar、受管 Ripgrep、Node CJS/ESM loader 和 Node package root。构建阶段会生成并校验 Bundle 根目录的 `runtime.json`，也会检查 grammar 和依赖资源存在，并通过 bundled smoke 验证 Bundle 内导入。Electron Builder 将 Bundle 放入 App resources，DMG 目标只配置 arm64。
 
-`package:mac` 生成未签名本地 DMG，并执行 packaged App、Runtime、SQLite、Seatbelt 和从 DMG 复制 App 的 smoke。`package:mac:release` 要求 Developer ID 和 Apple notarization credentials，随后执行 hardened runtime、签名、notarization、stapling、`codesign`、`spctl` 和 `stapler` 验证。
+`package:mac` 生成未签名本地 DMG，并执行 packaged App、Runtime、SQLite、Seatbelt 和从 DMG 复制 App 的 smoke。Release 流程必须先完成 Bundle 文件复制和 `runtime.json` 生成，再进行嵌套文件签名。签名后要刷新并重新校验 manifest hash，之后才做最终 `codesign`、notarization 和 stapling。`package:mac:release` 要求 Developer ID 和 Apple notarization credentials，随后执行 hardened runtime、签名、notarization、stapling、`codesign`、`spctl` 和 `stapler` 验证。没有对应 credentials 时，仓库不能验证真实签名结果。
 
 ## 16. Runtime Recovery
 

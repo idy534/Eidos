@@ -42,6 +42,11 @@ from eidos_runtime.runtime.reconciliation import (
     ReconciliationDisposition,
     classify_shell_reconciliation,
 )
+from eidos_runtime.runtime.runtime_dependencies import (
+    RuntimeDependencyCatalogError,
+    RuntimeDependencyCoordinator,
+)
+from eidos_runtime.models.runtime_dependencies import RuntimeDependencyBinding
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
 from eidos_runtime.runtime.tool_execution import (
@@ -89,7 +94,10 @@ from eidos_runtime.tools.workspace import (
     ToolCancelled,
     WorkspacePathError,
 )
-from eidos_runtime.tools.contracts import RunShellInput
+from eidos_runtime.tools.contracts import (
+    RunShellInput,
+    RuntimeDependencyBindingProvenance,
+)
 from eidos_runtime.tools.registry import (
     AdapterToolRuntime,
     EidosStateToolRuntime,
@@ -116,6 +124,56 @@ class _HandlerDependencies:
     resources: ResourceRegistry = field(default_factory=ResourceRegistry)
     base_permissions: BasePermissionProfile | None = None
     skill_access: SkillAccess | None = None
+    runtime_dependencies: RuntimeDependencyCoordinator | None = None
+
+
+class _BoundShellOrchestrationRuntime(ShellOrchestrationRuntime):
+    """Keep a dependency-bound Shell inside the verified sandbox."""
+
+    def escalation_allowed(
+        self,
+        _request: ShellOrchestrationRequest,
+        _context: OrchestratorContext,
+    ) -> bool:
+        return False
+
+
+def _dependency_binding_error_result(
+    tool_name: str,
+    code: str,
+    summary: str,
+) -> dict[str, object]:
+    return tool_result(
+        tool_name,
+        "error",
+        code,
+        summary,
+        {
+            "exitCode": None,
+            "stdout": "",
+            "stderr": "",
+            "truncated": False,
+            "termination": "not_started",
+            "workspaceChanged": False,
+        },
+    )
+
+
+def _attach_dependency_provenance(
+    result: dict[str, object],
+    provenance: RuntimeDependencyBindingProvenance,
+) -> dict[str, object]:
+    attached = dict(result)
+    data = dict(
+        attached.get("data") if isinstance(attached.get("data"), dict) else {}
+    )
+    data["dependencyBinding"] = provenance.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude_none=True,
+    )
+    attached["data"] = data
+    return attached
 
 
 class ReadOnlyToolHandler:
@@ -333,6 +391,72 @@ class ShellToolHandler:
         active_skill_roots = (
             skill_access.active_roots() if skill_access is not None else ()
         )
+        dependency_binding: RuntimeDependencyBinding | None = None
+        dependency_skill_id: str | None = None
+        dependency_environment = None
+        dependency_provenance: RuntimeDependencyBindingProvenance | None = None
+        dependency_binding_id = shell_input.dependencyBindingId
+        if dependency_binding_id is not None:
+            if (
+                effective_sandbox_permissions
+                is SandboxPermissions.REQUIRE_ESCALATED
+            ):
+                return HandlerOutcome(
+                    _dependency_binding_error_result(
+                        call.name,
+                        "dependency_binding_unsandboxed_forbidden",
+                        "A dependency-bound Shell cannot run unsandboxed",
+                    ),
+                    "failed",
+                    "failed",
+                )
+            coordinator = self.dependencies.runtime_dependencies
+            if coordinator is None:
+                return HandlerOutcome(
+                    _dependency_binding_error_result(
+                        call.name,
+                        "catalog_unavailable",
+                        "Runtime dependency bindings are unavailable",
+                    ),
+                    "failed",
+                    "failed",
+                )
+            try:
+                dependency_binding, dependency_skill_id = (
+                    coordinator.resolve_shell_binding(
+                        dependency_binding_id,
+                        active_skill_ids=(
+                            tuple(
+                                record.qualified_id
+                                for record in skill_access.records()
+                            )
+                            if skill_access is not None
+                            else ()
+                        ),
+                        implicit_skill_id=(
+                            skill_invocation.qualified_id
+                            if skill_invocation is not None
+                            else None
+                        ),
+                    )
+                )
+                dependency_environment = coordinator.shell_environment(
+                    dependency_binding
+                )
+                dependency_provenance = coordinator.binding_provenance(
+                    dependency_binding,
+                    qualified_skill_id=dependency_skill_id,
+                )
+            except RuntimeDependencyCatalogError as error:
+                return HandlerOutcome(
+                    _dependency_binding_error_result(
+                        call.name,
+                        error.code,
+                        "Runtime dependency binding is invalid",
+                    ),
+                    "failed",
+                    "failed",
+                )
         base_permissions = self.dependencies.base_permissions
         if base_permissions is None:
             raise RuntimeError("step permission profile is unavailable")
@@ -342,6 +466,24 @@ class ShellToolHandler:
                     str(root) for root in active_skill_roots
                 ),
             })
+        if dependency_binding is not None:
+            coordinator = self.dependencies.runtime_dependencies
+            assert coordinator is not None
+            try:
+                base_permissions = coordinator.permission_profile(
+                    base_permissions,
+                    dependency_binding,
+                )
+            except RuntimeDependencyCatalogError as error:
+                return HandlerOutcome(
+                    _dependency_binding_error_result(
+                        call.name,
+                        error.code,
+                        "Runtime dependency binding is invalid",
+                    ),
+                    "failed",
+                    "failed",
+                )
         if (
             effective_sandbox_permissions
             is not SandboxPermissions.REQUIRE_ESCALATED
@@ -374,6 +516,7 @@ class ShellToolHandler:
         def execute_shell_attempt(
             attempt: SandboxAttempt,
         ) -> tuple[dict[str, object], SandboxDenied | None]:
+            nonlocal dependency_binding, dependency_environment, dependency_provenance
             nonlocal manifest_after, refresh_error_code, workspace_diff
             manifest_after = manifest_before
             refresh_error_code = None
@@ -394,6 +537,35 @@ class ShellToolHandler:
                     ),
                     None,
                 )
+            if dependency_binding is not None:
+                coordinator = self.dependencies.runtime_dependencies
+                assert coordinator is not None
+                try:
+                    dependency_binding = coordinator.verify_binding(
+                        dependency_binding,
+                        context_id=(
+                            f"{run_id}:{dependency_skill_id}"
+                            if dependency_skill_id is not None
+                            else f"{run_id}:default"
+                        ),
+                        qualified_skill_id=dependency_skill_id,
+                    )
+                    dependency_environment = coordinator.shell_environment(
+                        dependency_binding
+                    )
+                    dependency_provenance = coordinator.binding_provenance(
+                        dependency_binding,
+                        qualified_skill_id=dependency_skill_id,
+                    )
+                except RuntimeDependencyCatalogError as error:
+                    return (
+                        _dependency_binding_error_result(
+                            call.name,
+                            error.code,
+                            "Runtime dependency binding changed before launch",
+                        ),
+                        None,
+                    )
             output_stream = StreamingSensitiveScanner(
                 self.dependencies.sensitive,
                 on_safe_text=stream_safe_output,
@@ -422,7 +594,13 @@ class ShellToolHandler:
                     attempt,
                     active_skill_roots=active_skill_roots,
                     skill_invocation=skill_invocation,
+                    dependency_environment=dependency_environment,
                 )
+                if dependency_provenance is not None:
+                    raw_result = _attach_dependency_provenance(
+                        raw_result,
+                        dependency_provenance,
+                    )
             except PermissionError as error:
                 result = tool_error(
                     call.name,
@@ -435,6 +613,11 @@ class ShellToolHandler:
                         result_data = {}
                         result["data"] = result_data
                     result_data.update(skill_invocation.result_data())
+                if dependency_provenance is not None:
+                    result = _attach_dependency_provenance(
+                        result,
+                        dependency_provenance,
+                    )
                 denial = (
                     SandboxDenied(
                         category=SandboxDenialCategory.PROCESS,
@@ -632,8 +815,13 @@ class ShellToolHandler:
                 ],
             },
         )
+        orchestration_runtime = (
+            _BoundShellOrchestrationRuntime(execute_shell_attempt)
+            if dependency_binding is not None
+            else ShellOrchestrationRuntime(execute_shell_attempt)
+        )
         orchestration = ToolOrchestrator().run(
-            ShellOrchestrationRuntime(execute_shell_attempt),
+            orchestration_runtime,
             request,
             OrchestratorContext(
                 tool_call_id=str(item["toolCall"]["id"]),  # type: ignore[index]
@@ -905,6 +1093,7 @@ class ToolCallRuntime:
         async_kernel: RuntimeAsyncKernel | None = None,
         resource_registry: ResourceRegistry | None = None,
         skill_access: SkillAccess | None = None,
+        runtime_dependencies: RuntimeDependencyCoordinator | None = None,
     ) -> None:
         self.store = store
         self.dispatcher = dispatcher
@@ -936,6 +1125,7 @@ class ToolCallRuntime:
             self.controller.resources,
             base_permissions,
             self.skill_access,
+            runtime_dependencies,
         )
         self.read_runtime = ReadOnlyToolHandler(dependencies)
         self.workspace_runtime = FileChangeToolHandler(dependencies)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from typing import Literal
 
 from pydantic import Field, ValidationError
 
@@ -57,6 +58,34 @@ class RunStatusChangedPayload(ClosedModel):
 
 class RunUpdatedPayload(ClosedModel):
     reason: str
+    binding_id: str | None = Field(
+        default=None,
+        alias="bindingId",
+        min_length=1,
+        max_length=256,
+    )
+    manifest_hash: str | None = Field(
+        default=None,
+        alias="manifestHash",
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    requirements_hash: str | None = Field(
+        default=None,
+        alias="requirementsHash",
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    catalog_hash: str | None = Field(
+        default=None,
+        alias="catalogHash",
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    status: Literal["ready", "missing", "incompatible", "invalid"] | None = None
+    qualified_skill_id: str | None = Field(
+        default=None,
+        alias="qualifiedSkillId",
+        min_length=1,
+        max_length=256,
+    )
 
 
 class EntityStatusChangedPayload(ClosedModel):

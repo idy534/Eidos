@@ -10,7 +10,13 @@ from typing import Callable, Iterator, Mapping, Protocol, TypeVar
 
 from eidos_runtime.db.errors import StorageError
 from eidos_runtime.db.schema import REPOSITORY_SCHEMA_SQL
-from eidos_runtime.db.schema import SCHEMA_VERSION, V5_TO_V6_MIGRATION_SQL
+from eidos_runtime.db.schema import (
+    SCHEMA_VERSION,
+    V5_SCHEMA_VERSION,
+    V5_TO_V6_MIGRATION_SQL,
+    V6_SCHEMA_VERSION,
+    V6_TO_V7_MIGRATION_SQL,
+)
 from eidos_runtime.db.thread_history import ThreadHistoryStore
 from eidos_runtime.db.runtime_logs import RuntimeLogStore
 from eidos_runtime.db.memories import MemoryStore
@@ -569,15 +575,18 @@ def _migrate_state_schema(state: StateDatabase) -> None:
     revision = int(state.connection().execute("PRAGMA user_version").fetchone()[0])
     if revision == SCHEMA_VERSION:
         return
-    if revision != 5:
+    if revision not in {V5_SCHEMA_VERSION, V6_SCHEMA_VERSION}:
         raise StorageError("schema_revision_unsupported")
+    migration = V6_TO_V7_MIGRATION_SQL
+    if revision == V5_SCHEMA_VERSION:
+        migration = V5_TO_V6_MIGRATION_SQL + migration
     try:
         with state.lock:
             connection = state.connection()
             connection.execute("PRAGMA foreign_keys = OFF")
             connection.executescript(
                 "BEGIN IMMEDIATE;\n"
-                + V5_TO_V6_MIGRATION_SQL
+                + migration
                 + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
             )
             connection.execute("PRAGMA foreign_keys = ON")

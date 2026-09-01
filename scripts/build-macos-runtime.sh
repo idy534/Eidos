@@ -8,10 +8,35 @@ PYTHON_VERSION="${EIDOS_PYTHON_VERSION:-$DEFAULT_PYTHON_VERSION}"
 BUILD_ROOT="$ROOT_DIR/build/macos-runtime"
 PYTHON_ROOT="$BUILD_ROOT/python"
 APP_ROOT="$BUILD_ROOT/app"
+NODE_ROOT="$BUILD_ROOT/dependencies/node"
+NODE_EXECUTABLE="$BUILD_ROOT/dependencies/node/bin/node"
+PYTHON_DEPENDENCY_ROOT="$BUILD_ROOT/dependencies/python"
 STAGING_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/eidos-runtime-build.XXXXXX")"
 
+fail() {
+  echo "Runtime bundle build error: $*" >&2
+  exit 1
+}
+
+safe_remove_tree() {
+  local target="$1"
+  case "$target" in
+    "$BUILD_ROOT"|"$STAGING_ROOT")
+      ;;
+    *)
+      fail "refusing to remove an uncontrolled build path: $target"
+      ;;
+  esac
+  if [[ -L "$target" ]]; then
+    fail "refusing to remove a symlinked build path: $target"
+  fi
+  rm -rf -- "$target"
+}
+
 cleanup() {
-  rm -rf -- "$STAGING_ROOT"
+  if [[ -n "${STAGING_ROOT:-}" && -e "$STAGING_ROOT" ]]; then
+    safe_remove_tree "$STAGING_ROOT"
+  fi
 }
 trap cleanup EXIT
 
@@ -34,8 +59,8 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-rm -rf -- "$BUILD_ROOT"
-mkdir -p "$PYTHON_ROOT" "$APP_ROOT"
+safe_remove_tree "$BUILD_ROOT"
+mkdir -p "$PYTHON_ROOT" "$APP_ROOT" "$BUILD_ROOT/dependencies"
 
 PYTHON_INSTALL_ROOT="$STAGING_ROOT/python"
 mkdir -p "$PYTHON_INSTALL_ROOT"
@@ -50,7 +75,7 @@ if [[ -z "$PYTHON_SOURCE" ]]; then
 fi
 rsync -a "$PYTHON_SOURCE/" "$PYTHON_ROOT/"
 
-PYTHON_EXECUTABLE="$PYTHON_ROOT/bin/python3"
+PYTHON_EXECUTABLE="$BUILD_ROOT/python/bin/python3"
 if [[ ! -x "$PYTHON_EXECUTABLE" ]]; then
   PYTHON_VERSIONED_EXECUTABLE=""
   for candidate in "$PYTHON_ROOT/bin"/python3.*; do
@@ -86,6 +111,20 @@ uv pip install \
   --link-mode copy \
   --requirements "$REQUIREMENTS_FILE"
 rm -f -- "$APP_ROOT/.lock"
+
+for forbidden_dependency in "$APP_ROOT/docx" "$APP_ROOT/lxml"; do
+  if [[ -e "$forbidden_dependency" || -L "$forbidden_dependency" ]]; then
+    fail "isolated dependency leaked into the main Runtime app: $forbidden_dependency"
+  fi
+done
+
+env -u NODE_OPTIONS bash "$ROOT_DIR/scripts/build-runtime-node.sh" "$NODE_ROOT"
+if [[ ! -x "$NODE_EXECUTABLE" ]]; then
+  fail "bundled Node executable is missing: $NODE_EXECUTABLE"
+fi
+env -u NODE_OPTIONS node "$ROOT_DIR/scripts/build-runtime-python.mjs" \
+  --python "$PYTHON_EXECUTABLE" \
+  --target "$PYTHON_DEPENDENCY_ROOT"
 
 rsync -a \
   --exclude '__pycache__/' \
@@ -131,10 +170,46 @@ fi
 
 env -u EIDOS_PYTHON -u PYTHONHOME \
   PYTHONDONTWRITEBYTECODE=1 \
-  PYTHONPATH="$APP_ROOT" \
+  PYTHONPATH="$APP_ROOT:$PYTHON_DEPENDENCY_ROOT" \
   "$PYTHON_EXECUTABLE" -c \
-  'import anyio, eidos_runtime, httpx, lark, mcp, openai, pydantic, pydantic_ai, pydantic_core, tree_sitter; print(eidos_runtime.__file__)'
+  'import anyio, docx, eidos_runtime, httpx, lark, lxml, mcp, openai, pydantic, pydantic_ai, pydantic_core, tree_sitter, typing_extensions; print(eidos_runtime.__file__, docx.__file__, lxml.__file__, typing_extensions.__file__)'
 
-node "$ROOT_DIR/scripts/bundled-runtime-smoke.mjs"
+BUNDLE_VERSION="$(node -p "JSON.parse(require('fs').readFileSync('$ROOT_DIR/package.json', 'utf8')).version")"
+NODE_VERSION="$(node -p "JSON.parse(require('fs').readFileSync('$ROOT_DIR/resources/runtime-dependencies/node/node-release.json', 'utf8')).version")"
+RIPGREP_VERSION="$(node -p "JSON.parse(require('fs').readFileSync('$APP_ROOT/eidos_runtime/resources/bin/ripgrep/manifest.json', 'utf8')).version")"
+env -u NODE_OPTIONS node "$ROOT_DIR/scripts/generate-runtime-manifest.mjs" \
+  --bundle-root "$BUILD_ROOT" \
+  --bundle-id "com.idy.eidos" \
+  --bundle-version "$BUNDLE_VERSION" \
+  --python-version "$PYTHON_VERSION" \
+  --node-version "$NODE_VERSION" \
+  --ripgrep-version "$RIPGREP_VERSION" \
+  --python-lock "$ROOT_DIR/resources/runtime-dependencies/python/requirements.lock" \
+  --python-path "dependencies/python" \
+  --node-modules "dependencies/node/node_modules" \
+  --node-loader "dependencies/node/runtime-loader.mjs"
+
+env -u NODE_OPTIONS node "$ROOT_DIR/scripts/generate-runtime-manifest.mjs" \
+  --verify \
+  --bundle-root "$BUILD_ROOT"
+
+env -u EIDOS_PYTHON -u PYTHONHOME -u NODE_OPTIONS \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONNOUSERSITE=1 \
+  PYTHONPATH="$APP_ROOT" \
+  "$PYTHON_EXECUTABLE" - "$BUILD_ROOT/runtime.json" <<'PY'
+from pathlib import Path
+import sys
+
+from eidos_runtime.infrastructure.runtime_dependencies import RuntimeDependencyCatalog
+
+manifest = Path(sys.argv[1]).resolve()
+snapshot = RuntimeDependencyCatalog.from_manifest(manifest).snapshot()
+expected_python_path = str((manifest.parent / "dependencies/python").resolve())
+assert snapshot.python_path == (expected_python_path,), snapshot.python_path
+print(f"Verified Runtime manifest with Eidos catalog: {manifest}")
+PY
+
+env -u NODE_OPTIONS node "$ROOT_DIR/scripts/bundled-runtime-smoke.mjs"
 
 echo "Built self-contained $SUPPORTED_PLATFORM Runtime bundle at $BUILD_ROOT"
