@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import copy
 from enum import StrEnum
 import hashlib
 import json
@@ -23,6 +24,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic.fields import PydanticUndefined
 
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile,
@@ -814,7 +816,10 @@ def result_model(data_model: type[BaseModel]) -> type[BaseModel]:
         required_fields: dict[str, tuple[object, object]] = {}
         for name in data_model.SUCCESS_REQUIRED:
             field = data_model.model_fields[name]
-            required_fields[name] = (_without_none(field.annotation), ...)
+            required_field = copy(field)
+            required_field.default = PydanticUndefined
+            required_field.default_factory = None
+            required_fields[name] = (_without_none(field.annotation), required_field)
         success_data_model = create_model(
             f"{data_model.__name__.removesuffix('Data')}SuccessData",
             __base__=data_model,

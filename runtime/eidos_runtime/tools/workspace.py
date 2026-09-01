@@ -16,7 +16,7 @@ from typing import Iterator, Literal
 import uuid
 import json
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from eidos_runtime.protocol.schemas import ToolResultDto
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
@@ -288,7 +288,10 @@ def builtin_tool_registry(executor: ToolExecutor) -> ToolRegistry:
 
 
 def canonical_tool_result(
-    tool_name: str, result: dict[str, object]
+    tool_name: str,
+    result: dict[str, object],
+    *,
+    data_model: type[BaseModel] | None = None,
 ) -> dict[str, object]:
     normalized = {
         "schemaVersion": 1,
@@ -306,14 +309,19 @@ def canonical_tool_result(
             else False,
         )),
     }
-    data_model = next(
-        (contract[7] for contract in _BUILTIN_CONTRACTS if contract[0] == tool_name),
-        None,
-    )
-    if data_model is None and tool_name == "read_tool_output":
-        from eidos_runtime.tools.read_tool_output import ReadToolOutputResultData
+    if data_model is None:
+        data_model = next(
+            (
+                contract[7]
+                for contract in _BUILTIN_CONTRACTS
+                if contract[0] == tool_name
+            ),
+            None,
+        )
+        if data_model is None and tool_name == "read_tool_output":
+            from eidos_runtime.tools.read_tool_output import ReadToolOutputResultData
 
-        data_model = ReadToolOutputResultData
+            data_model = ReadToolOutputResultData
     validated = (
         result_model(data_model).model_validate_json(json.dumps(
             normalized,

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+from pydantic import BaseModel
+
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
 from eidos_runtime.tools.workspace import canonical_tool_result
 
@@ -34,8 +36,13 @@ def tool_result(
     })
 
 
-def bounded_tool_result(tool_name: str, result: dict[str, object]) -> dict[str, object]:
-    result = canonical_tool_result(tool_name, result)
+def bounded_tool_result(
+    tool_name: str,
+    result: dict[str, object],
+    *,
+    data_model: type[BaseModel] | None = None,
+) -> dict[str, object]:
+    result = canonical_tool_result(tool_name, result, data_model=data_model)
     encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
     if len(encoded) <= 512 * 1024:
         return result
@@ -43,7 +50,11 @@ def bounded_tool_result(tool_name: str, result: dict[str, object]) -> dict[str, 
 
 
 def safe_tool_result(
-    scanner: SensitiveScanner, tool_name: str, result: dict[str, object]
+    scanner: SensitiveScanner,
+    tool_name: str,
+    result: dict[str, object],
+    *,
+    data_model: type[BaseModel] | None = None,
 ) -> dict[str, object]:
     try:
         scanned = scanner.scan_json(result)
@@ -52,4 +63,4 @@ def safe_tool_result(
     assert isinstance(scanned, dict)
     if scanned != result:
         return tool_error(tool_name, "sensitive_content_rejected", "Tool output was withheld")
-    return canonical_tool_result(tool_name, scanned)
+    return canonical_tool_result(tool_name, scanned, data_model=data_model)

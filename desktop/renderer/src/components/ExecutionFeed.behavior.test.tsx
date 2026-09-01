@@ -100,12 +100,10 @@ describe("ExecutionFeed shell output", () => {
     expect(screen.getByText("✓ 成功")).toBeInTheDocument();
   });
 
-  it("keeps a shell details group open when the user is reading as the run completes", () => {
+  it("starts a shell details group collapsed and preserves manual expansion", () => {
     const { container, rerender } = renderFeed(shellItem());
     const detailsBefore = container.querySelector("details.tool-item--shell");
     expect(detailsBefore).not.toBeNull();
-    expect(detailsBefore!.open).toBe(true);
-    fireEvent.click(detailsBefore!.querySelector("summary")!);
     expect(detailsBefore!.open).toBe(false);
     fireEvent.click(detailsBefore!.querySelector("summary")!);
     expect(detailsBefore!.open).toBe(true);
@@ -145,6 +143,8 @@ describe("ExecutionFeed shell output", () => {
     const { container, rerender } = renderFeed(shellItem());
     const detailsBefore = container.querySelector("details.tool-item--shell");
     expect(detailsBefore).not.toBeNull();
+    fireEvent.click(detailsBefore!.querySelector("summary")!);
+    expect(detailsBefore!.open).toBe(true);
     fireEvent.click(detailsBefore!.querySelector("summary")!);
     expect(detailsBefore!.open).toBe(false);
 

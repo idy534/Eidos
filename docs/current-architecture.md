@@ -219,7 +219,7 @@ Shell 的 effective environment 保留真实 `HOME`、snapshot 的 Host `PATH`�
 
 Shell reader 为 stdout 和 stderr 分别保留 UTF-8 增量解码器。每次收到的字节只会生成已经可以解码的文本片段，结束时再 flush 未完成的解码状态。Shell handler 按接收顺序把安全片段追加到 Item content，并保留每个片段的顺序事实。
 
-Desktop `ExecutionFeed` 在 Shell 运行中和终态都渲染累计的 Item content。它在已有累计内容时不再追加结果中的最终 stdout/stderr，因此不会重复输出，也不会丢失 stdout/stderr 的接收顺序。旧 Item 缺少或为空的 `content` 时，Renderer 使用结果中的 stdout 和 stderr 作为兼容回退。
+Desktop `ExecutionFeed` 的 Shell Item 默认折叠。用户展开后，Feed 在 Shell 运行中和终态都渲染累计的 Item content。它在已有累计内容时不再追加结果中的最终 stdout/stderr，因此不会重复输出，也不会丢失 stdout/stderr 的接收顺序。旧 Item 缺少或为空的 `content` 时，Renderer 使用结果中的 stdout 和 stderr 作为兼容回退。
 
 Shell 输出在 Renderer 中使用成熟的 ANSI stripping 实现转为纯文本。ANSI 和 OSC 控制序列不会被解释，OSC 超链接也不会被激活。Shell Result 的 `attemptCount`、`sandboxed` 和 `escalated` 字段继续作为已有执行与权限事实，并在 Feed 中展示。
 
@@ -402,7 +402,7 @@ Discovery → Catalog Snapshot → Selection
           → active Skill root → Seatbelt Sandbox
 ```
 
-Discovery 读取 bundled system、用户和 Plugin Skill 目录。`SkillCatalog` 使用共享的 `parse_skill_manifest` 校验 `SKILL.md` 的 frontmatter。Catalog 只保留顶层 `name`、`description`、qualified ID、source、version、source hash 和 content hash。`license`、`compatibility`、`metadata`、`allowed-tools` 等其他 frontmatter 字段可以存在，但不会变成 Catalog、Tool Schema、Permission 或 Sandbox 权威。
+Discovery 读取 bundled system、用户和 Plugin Skill 目录。系统 Skill 的私有目录读取会忽略 Finder 生成的 `.DS_Store` 文件，但仍拒绝其他不符合所有者、类型或权限要求的文件。`SkillCatalog` 使用共享的 `parse_skill_manifest` 校验 `SKILL.md` 的 frontmatter。Catalog 只保留顶层 `name`、`description`、qualified ID、source、version、source hash 和 content hash。`license`、`compatibility`、`metadata`、`allowed-tools` 等其他 frontmatter 字段可以存在，但不会变成 Catalog、Tool Schema、Permission 或 Sandbox 权威。
 
 Turn 开始时，Catalog Snapshot 固化可用 Skill。Selection 当前支持用户输入中的 qualified `@source:name` 和唯一的 `@name`/`$name` 引用。SelectedSkillSet 固化本 Turn 的选中 ID。选中后，Runtime 才完整读取对应的 `SKILL.md`。Catalog 不把完整 Skill tree 注入 Context。
 

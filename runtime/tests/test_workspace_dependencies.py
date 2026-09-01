@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
+import threading
 
 import pytest
 
+from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.model.client import ModelToolCall
+from eidos_runtime.runtime.events import RuntimeEvents
+from eidos_runtime.runtime.errors import bounded_tool_result, safe_tool_result
+from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
+from eidos_runtime.runtime.tool_execution import HandlerOutcome, ToolExecutionController
+from eidos_runtime.sandbox.sensitive import default_scanner
 from eidos_runtime.tools.registry import ToolRegistry
 from eidos_runtime.tools.workspace_dependencies import (
     WorkspaceDependencyCatalog,
@@ -109,7 +118,7 @@ def test_workspace_dependencies_tool_projects_verified_paths(tmp_path: Path) -> 
 
     registry = ToolRegistry((entry,))
     result = registry.get("workspace_dependencies").adapter.execute({}, __import__("threading").Event())
-    entry.result_data_model.model_validate(result["data"])
+    validated = entry.validate_result(result)
 
     assert result["outcome"] == "success"
     assert result["data"]["source"] == "eidos_runtime"
@@ -121,6 +130,126 @@ def test_workspace_dependencies_tool_projects_verified_paths(tmp_path: Path) -> 
     assert result["data"]["pythonPackages"] == [
         {"name": "python-docx", "importName": "docx", "version": "1.2.0"}
     ]
+    assert validated["data"]["pythonPath"] == result["data"]["pythonPath"]
+
+
+def test_workspace_dependencies_result_keeps_binding_metadata_during_finalization(
+    tmp_path: Path,
+) -> None:
+    python = _executable(tmp_path / "python3")
+    ripgrep = _executable(tmp_path / "rg")
+    catalog = WorkspaceDependencyCatalog(
+        python_executable=python,
+        python_paths=(),
+        ripgrep_executable=ripgrep,
+        owner_uid=os.getuid(),
+        python_version="3.12.13",
+        ripgrep_version="14.1.1",
+        python_packages=(),
+    )
+    entry = workspace_dependencies_entry(
+        lambda: catalog,
+        lambda: {
+            "defaultDependencyBindingId": "default-binding",
+            "activeSkillDependencyBindings": [],
+        },
+    )
+    result = entry.adapter.execute({}, __import__("threading").Event())
+
+    bounded = bounded_tool_result(
+        "workspace_dependencies",
+        result,
+        data_model=entry.result_data_model,
+    )
+    finalized = safe_tool_result(
+        default_scanner(),
+        "workspace_dependencies",
+        bounded,
+        data_model=entry.result_data_model,
+    )
+
+    assert finalized["data"]["defaultDependencyBindingId"] == "default-binding"
+    assert finalized["data"]["activeSkillDependencyBindings"] == []
+
+
+def test_workspace_dependencies_controller_commits_the_specific_result_model(
+    tmp_path: Path,
+) -> None:
+    data_root = tmp_path / "data"
+    workspace = tmp_path / "workspace"
+    data_root.mkdir(mode=0o700)
+    workspace.mkdir()
+    store = SessionStore(data_root)
+    store.initialize()
+    session = store.create_session(str(workspace))
+    run, _ = store.create_run(session["id"], "workspace dependencies")
+    store.increment_model_step(run["id"])
+
+    python = _executable(tmp_path / "python3")
+    ripgrep = _executable(tmp_path / "rg")
+    catalog = WorkspaceDependencyCatalog(
+        python_executable=python,
+        python_paths=(),
+        ripgrep_executable=ripgrep,
+        owner_uid=os.getuid(),
+        python_version="3.12.13",
+        ripgrep_version="14.1.1",
+        python_packages=(),
+    )
+    entry = workspace_dependencies_entry(
+        lambda: catalog,
+        lambda: {
+            "defaultDependencyBindingId": "default-binding",
+            "activeSkillDependencyBindings": [],
+        },
+    )
+    registry = ToolRegistry((entry,))
+    dispatcher = ToolDispatcher(registry)
+
+    class RuntimeContext:
+        def invoke_read(
+            self, runtime, run_id, item, call, cancel
+        ) -> HandlerOutcome:
+            prepared = runtime.prepare(self, call.arguments, cancel)
+            raw = runtime.execute(self, prepared, cancel)
+            verified = runtime.verify(self, prepared, raw, cancel)
+            return HandlerOutcome(verified.result, "completed")
+
+    item = store.create_tool_item(
+        run["id"],
+        1,
+        0,
+        "provider-call",
+        "workspace_dependencies",
+        "{}",
+    )
+    call = ModelToolCall("provider-call", "workspace_dependencies", {})
+    controller = ToolExecutionController(
+        store,
+        dispatcher,
+        RuntimeContext(),
+        RuntimeEvents(lambda _message: None),
+        default_scanner(),
+    )
+
+    try:
+        outcome = controller.execute(
+            run_id=run["id"],
+            item=item,
+            call=call,
+            plan=dispatcher.plan(call),
+            cancel=threading.Event(),
+            deadline=None,
+        )
+        persisted = store.read_item(str(outcome.item["id"]))
+        committed = json.loads(persisted["toolCall"]["resultJson"])
+    finally:
+        store.close()
+
+    assert outcome.tool_status == "completed"
+    assert committed["outcome"] == "success"
+    assert committed["data"]["defaultDependencyBindingId"] == "default-binding"
+    assert committed["data"]["activeSkillDependencyBindings"] == []
 
 
 def test_runtime_workspace_python_can_import_document_dependency() -> None:

@@ -305,6 +305,23 @@ class SkillCatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(SkillReadError, "skill_catalog_invalid"):
             self.skills.extension_snapshot()
 
+    def test_system_catalog_ignores_finder_metadata(self) -> None:
+        assert self.store.data_directory is not None
+        deploy_system_skills(self.store.data_directory)
+        metadata = (
+            self.store.data_directory / "skills" / ".system"
+            / "skill-creator" / ".DS_Store"
+        )
+        metadata.write_bytes(b"Finder metadata")
+        os.chmod(metadata, 0o644)
+
+        snapshot = self.skills.extension_snapshot()
+
+        self.assertIn(
+            "system:skill-creator",
+            {entry["qualifiedId"] for entry in self.skills.catalog(snapshot)},
+        )
+
     def test_local_skill_change_invalidates_existing_snapshot(self) -> None:
         assert self.store.data_directory is not None
         user = self.store.data_directory / "skills" / "changing"
