@@ -58,6 +58,25 @@ def _relative_path(value: str, *, allow_dot: bool = False) -> str:
     return value
 
 
+def _read_path(value: str, *, allow_dot: bool = False) -> str:
+    if (
+        not value
+        or "\x00" in value
+        or "\\" in value
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise ValueError("invalid_relative_path")
+    if allow_dot and value == ".":
+        return value
+    path = PurePosixPath(value)
+    parts = path.parts[1:] if path.is_absolute() else path.parts
+    if value.endswith("/") or any(part in {"", ".", ".."} for part in parts):
+        raise ValueError("invalid_relative_path")
+    if len(value.encode("utf-8")) > 512:
+        raise ValueError("path_too_large")
+    return value
+
+
 def _utf8_limit(value: str, limit: int, code: str) -> str:
     if len(value.encode("utf-8")) > limit:
         raise ValueError(code)
@@ -66,7 +85,8 @@ def _utf8_limit(value: str, limit: int, code: str) -> str:
 
 class ListFilesInput(StrictToolModel):
     path: StrictStr = Field(
-        default=".", description="Workspace-relative directory scope; defaults to '.'."
+        default=".",
+        description="Workspace-relative or authorized absolute directory scope; defaults to '.'.",
     )
     maxDepth: StrictInt = Field(
         default=LIST_FILES_MAX_DEPTH,
@@ -84,16 +104,18 @@ class ListFilesInput(StrictToolModel):
     @field_validator("path")
     @classmethod
     def validate_path(cls, value: str) -> str:
-        return _relative_path(value, allow_dot=True)
+        return _read_path(value, allow_dot=True)
 
 
 class ReadFileInput(StrictToolModel):
-    path: StrictStr = Field(description="Workspace-relative UTF-8 file path.")
+    path: StrictStr = Field(
+        description="Workspace-relative or authorized absolute UTF-8 file path."
+    )
 
     @field_validator("path")
     @classmethod
     def validate_path(cls, value: str) -> str:
-        return _relative_path(value)
+        return _read_path(value)
 
 
 class ViewImageInput(StrictToolModel):
@@ -138,7 +160,8 @@ class SearchTextInput(StrictToolModel):
         description="Single-line text to find; set regex=true to interpret it as a regular expression.",
     )
     path: StrictStr = Field(
-        default=".", description="Workspace-relative search scope; defaults to '.'."
+        default=".",
+        description="Workspace-relative or authorized absolute search scope; defaults to '.'.",
     )
     regex: bool = Field(
         default=False,
@@ -159,7 +182,7 @@ class SearchTextInput(StrictToolModel):
     @field_validator("path")
     @classmethod
     def validate_path(cls, value: str) -> str:
-        return _relative_path(value, allow_dot=True)
+        return _read_path(value, allow_dot=True)
 
     @field_validator("query")
     @classmethod
@@ -187,7 +210,13 @@ class SearchTextInput(StrictToolModel):
 
 
 class WriteFileInput(ReadFileInput):
+    path: StrictStr = Field(description="Workspace-relative UTF-8 file path.")
     content: StrictStr = Field(description="Complete replacement UTF-8 content.")
+
+    @field_validator("path")
+    @classmethod
+    def validate_workspace_path(cls, value: str) -> str:
+        return _relative_path(value)
 
     @field_validator("content")
     @classmethod
@@ -306,7 +335,12 @@ class ApplyPatchInput(StrictToolModel):
 
 
 class DeleteFileInput(ReadFileInput):
-    pass
+    path: StrictStr = Field(description="Workspace-relative UTF-8 file path.")
+
+    @field_validator("path")
+    @classmethod
+    def validate_workspace_path(cls, value: str) -> str:
+        return _relative_path(value)
 
 
 class NetworkAccess(StrEnum):

@@ -127,16 +127,107 @@ class ToolExecutorDiscoveryScopeTests(unittest.TestCase):
         self.assertEqual(limited["data"]["paths"], ["src/main.py"])
         self.assertTrue(limited["data"]["truncated"])
 
-    def test_discovery_paths_reject_absolute_and_parent_traversal(self) -> None:
+    def test_discovery_paths_resolve_workspace_absolute_and_reject_outside(self) -> None:
+        (self.workspace / "visible.txt").write_text("needle\n", encoding="utf-8")
+        workspace_path = str(self.workspace.resolve())
+
+        listed = self._list({"path": workspace_path})
+        searched = self._search("needle", path=workspace_path)
+
+        self.assertEqual(listed["outcome"], "success")
+        self.assertIn("visible.txt", listed["data"]["paths"])
+        self.assertEqual(searched["outcome"], "success")
+        self.assertEqual(
+            [match["path"] for match in searched["data"]["matches"]],
+            ["visible.txt"],
+        )
+
+        outside = str(self.workspace.parent / "not-authorized")
         for tool_name, arguments in (
-            ("list_files", {"path": "/tmp"}),
+            ("list_files", {"path": outside}),
+            ("search_text", {"query": "needle", "path": outside}),
+        ):
+            with self.subTest(tool_name=tool_name):
+                result = self.executor.execute(tool_name, arguments, threading.Event())
+                self.assertEqual(result["outcome"], "error")
+                self.assertEqual(result["code"], "path_outside_authorized_roots")
+
+        for tool_name, arguments in (
             ("list_files", {"path": "../outside"}),
-            ("search_text", {"query": "needle", "path": "/tmp"}),
             ("search_text", {"query": "needle", "path": "../outside"}),
         ):
-            result = self.executor.execute(tool_name, arguments, threading.Event())
-            self.assertEqual(result["outcome"], "error")
-            self.assertEqual(result["code"], "invalid_arguments")
+            with self.subTest(tool_name=tool_name):
+                result = self.executor.execute(tool_name, arguments, threading.Event())
+                self.assertEqual(result["outcome"], "error")
+                self.assertEqual(result["code"], "invalid_arguments")
+
+    def test_read_tools_resolve_workspace_absolute_paths(self) -> None:
+        source = self.workspace / "source.txt"
+        source.write_text("one\ntwo\nthree\n", encoding="utf-8")
+        absolute = str(source.resolve())
+
+        read = self.executor.execute(
+            "read_file", {"path": absolute}, threading.Event()
+        )
+        line_range = self.executor.execute(
+            "read_file_range",
+            {"path": absolute, "startLine": 2, "endLine": 2},
+            threading.Event(),
+        )
+
+        self.assertEqual(read["outcome"], "success")
+        self.assertEqual(read["data"]["path"], "source.txt")
+        self.assertEqual(line_range["outcome"], "success")
+        self.assertEqual(line_range["data"]["path"], "source.txt")
+        self.assertEqual(line_range["data"]["content"], "two\n")
+
+    def test_active_skill_absolute_paths_are_read_only_authorized(self) -> None:
+        skill_temporary = tempfile.TemporaryDirectory(prefix="eidos-active-skill-")
+        self.addCleanup(skill_temporary.cleanup)
+        skill = Path(skill_temporary.name)
+        (skill / "SKILL.md").write_text("skill needle\n", encoding="utf-8")
+        (skill / "scripts").mkdir()
+        (skill / "scripts" / "review.py").write_text(
+            "print('skill needle')\n", encoding="utf-8"
+        )
+        skill_root = skill.resolve()
+        self.executor.set_active_skill_roots(lambda: (skill_root,))
+
+        read = self.executor.execute(
+            "read_file", {"path": str(skill_root / "SKILL.md")}, threading.Event()
+        )
+        listed = self.executor.execute(
+            "list_files", {"path": str(skill_root)}, threading.Event()
+        )
+        searched = self.executor.execute(
+            "search_text",
+            {"query": "skill needle", "path": str(skill_root)},
+            threading.Event(),
+        )
+
+        self.assertEqual(read["outcome"], "success")
+        self.assertEqual(read["data"]["path"], "SKILL.md")
+        self.assertIn("SKILL.md", listed["data"]["paths"])
+        self.assertEqual(
+            {match["path"] for match in searched["data"]["matches"]},
+            {"SKILL.md", "scripts/review.py"},
+        )
+
+    def test_inactive_skill_absolute_path_is_an_ordinary_tool_error(self) -> None:
+        skill_temporary = tempfile.TemporaryDirectory(prefix="eidos-inactive-skill-")
+        self.addCleanup(skill_temporary.cleanup)
+        skill = Path(skill_temporary.name)
+        (skill / "SKILL.md").write_text("inactive\n", encoding="utf-8")
+
+        result = self.executor.execute(
+            "read_file", {"path": str(skill / "SKILL.md")}, threading.Event()
+        )
+
+        self.assertEqual(result["outcome"], "error")
+        self.assertEqual(result["code"], "path_outside_authorized_roots")
+        self.assertIn("authorized workspace", result["summary"])
+        self.assertFalse(result["sideEffectsMayExist"])
+        self.assertFalse(result["reconciliationRequired"])
 
     def test_list_and_search_apply_root_ignore_and_refresh_each_call(self) -> None:
         (self.workspace / "ignored.log").write_text("needle\n", encoding="utf-8")

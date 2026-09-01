@@ -28,7 +28,7 @@
 
 ### Workspace 与工具
 
-- 内置文件工具只处理当前 Workspace 内受支持的普通 UTF-8 文件。工具会通过 macOS clonefile 路径保留 mode、扩展属性（包括 `com.apple.provenance`）和 ACL；不支持 clonefile 的文件系统会使用受校验的安全回退。工具不处理 hardlink、symlink、特殊文件、特殊 mode 或文件 flags。
+- 内置只读文件工具可以处理当前 Workspace 和 active Skill root 内受支持的普通 UTF-8 文件；写入工具仍然只处理 Workspace 内的文件。绝对路径必须属于对应的授权根，active Skill root 只读。工具会通过 macOS clonefile 路径保留 mode、扩展属性（包括 `com.apple.provenance`）和 ACL；不支持 clonefile 的文件系统会使用受校验的安全回退。工具不处理 hardlink、symlink、特殊文件、特殊 mode 或文件 flags。
 - `apply_patch` 的输入取决于当前 Run 的 ModelProfile capability。`supports_custom_tools=true` 且 `supports_tool_grammar=true` 时，模型收到 native Custom / FREEFORM Tool，并直接提交 Codex Patch 原文。其他 Provider 继续接受结构化 `{ "changes": [...] }` Function 参数。Function compatibility 路径仍使用 `CodexPatchEncoder`，模型提交旧的 raw `{ "patch": "..." }` 输入不会兼容。
 - Custom Tool 的 input delta 已在 Responses adapter 内部完成原文重组，但当前没有 patch preview event 或 Desktop live diff。完整 ToolCall 结束后，Runtime 才会解析、校验和提交 Workspace 变更。
 - Add 内容会统一规范化为 LF，并按 Codex 行语义补尾部 LF。Add File 可以没有内容行；显式的 `+` 表示一条空内容行。因此空字符串、单个换行和两个换行会保持不同的解析结果。Parser 接受 CRLF 和外层空白，但不会猜测缺失的 envelope、marker 或行前缀。

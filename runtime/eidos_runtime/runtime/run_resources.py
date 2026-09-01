@@ -113,6 +113,9 @@ class RunResources:
             self.skill_access = SkillAccess.from_snapshot(
                 self.skill_catalog_snapshot,
             )
+            self.tool_executor.set_active_skill_roots(
+                self.skill_access.active_roots
+            )
             self.runtime_dependencies = RuntimeDependencyCoordinator.for_run(
                 self.store,
                 self.run_id,

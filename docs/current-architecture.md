@@ -181,6 +181,8 @@ Validate → Prepare → Permission Decision → Durable Intent
 
 ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。Workspace mutation 会在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。Workspace Permission 会直接授权普通文件变更。Runtime 会先提交 Durable Intent，再复检版本并原子提交。Runtime 会保留并展示已应用的完整 Diff。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。
 
+`list_files`、`read_file`、`read_file_range` 和 `search_text` 的 Contract 只校验参数类型、大小和明显非法语法。ToolExecutor 的只读 Path Authority 再把相对路径绑定到 Workspace，把 canonical absolute path 绑定到 Workspace 或当前 Run 的 active Skill root。active Skill root 只读。未授权的 absolute path 返回普通 Tool Error，不进入 Tool 参数契约错误或协议修复。写入 Tool 和 `run_shell` 继续使用 Workspace-relative 路径。
+
 `apply_patch` 有 Function 和 Custom 两条模型输入路径。Function compatibility 路径接收结构化 `ApplyPatchInput.changes`。Custom 路径接收 native Custom Tool 的 raw Codex Patch。`add`、`update`、`delete` 是可区分的 change 类型，`update` 还可以包含 `moveTo` 和有序 `chunks`。只有 Function 路径使用 `CodexPatchEncoder`。Custom 路径把原文直接交给 `parse_patch`。Parser 不读取 Workspace，也不执行匹配或写入；它把文本转换为 Eidos 的 Add、Update、Delete AST。现有 Workspace prepare、CAS、边界、原子提交和最终校验继续负责语义和安全事实。
 
 `apply_patch.lark` 的语法来源是 `openai/codex` 的 `codex-rs/core/assets/tools/apply_patch.lark`。本地 grammar 将上游的 `add_line+` 改为 `add_line*`，因为 Codex Rust streaming parser 允许没有内容行的 Add File；显式的 `+` 仍表示一条空内容行。上游 grammar 中的部分空行正则不能直接交给 Lark，所以本地 grammar 也对这些 token 做了 Lark 兼容适配。Parser 可以规范化 CRLF 和外层空白，也支持首个 Update 片段不带 `@@`。Parser 不会猜测缺失的 `*** Begin Patch`、`*** End Patch` 或 `+`/`-` 前缀。raw `patch` 字段不属于模型契约。
@@ -406,7 +408,7 @@ Discovery 读取 bundled system、用户和 Plugin Skill 目录。系统 Skill �
 
 Turn 开始时，Catalog Snapshot 固化可用 Skill。Selection 当前支持用户输入中的 qualified `@source:name` 和唯一的 `@name`/`$name` 引用。SelectedSkillSet 固化本 Turn 的选中 ID。选中后，Runtime 才完整读取对应的 `SKILL.md`。Catalog 不把完整 Skill tree 注入 Context。
 
-Skill 使用 progressive disclosure。Catalog 只提供发现信息。`SKILL.md` 是选中后的主说明。`skill_read_resource` 只在说明需要时读取 `references/`、`scripts/` 或 `assets/` 下的相对路径。Resource path 必须是相对于包含该 Skill 的 `SKILL.md` 的目录，且不能包含绝对路径、`..`、symlink 或非 regular file。Skill 脚本不是新的 Runtime Tool；模型仍然使用已有的 `skill_read`、`skill_read_resource`、文件工具、`run_shell` 和其他已注册 Tool。
+Skill 使用 progressive disclosure。Catalog 只提供发现信息。`SKILL.md` 是选中后的主说明。`skill_read_resource` 只在说明需要时读取 `references/`、`scripts/` 或 `assets/` 下的相对路径。Resource path 必须是相对于包含该 Skill 的 `SKILL.md` 的目录，且不能包含绝对路径、`..`、symlink 或非 regular file。选中的 active Skill root 也可以供四个只读文件 Tool 使用 canonical absolute path，但它不会因此获得写入权限。Skill 脚本不是新的 Runtime Tool；模型仍然使用已有的 `skill_read`、`skill_read_resource`、文件工具、`run_shell` 和其他已注册 Tool。
 
 `agents/eidos.yaml` 是可选的 Skill metadata 文件。Runtime 使用统一 YAML loader 读取其中的 interface、asset、tool dependency、policy 和 `runtimeDependencies` metadata。`runtimeDependencies` 使用严格的 `RuntimeRequirements` discriminated union。它只接受有界的 Python package、Node package 和 executable 声明。文件有大小、owner、regular-file、路径和字段边界。无效的可选 runtime declaration 会保留固定 error code，不会清除旧的 interface、MCP dependency 或 policy metadata。无效的整个可选 YAML 会保留现有 display fallback，并报告固定 metadata error。`allow_implicit_invocation = false` 会禁止 Shell 识别自动激活该 Skill，但不会阻止显式选择或 `skill_read` 激活。`dependencies.tools` 不会安装 Python、pip、npm、系统命令或其他运行时依赖，也不会改变 Eidos 的 Permission、Approval 或 Sandbox。
 

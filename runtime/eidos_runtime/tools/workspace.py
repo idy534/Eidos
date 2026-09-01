@@ -12,7 +12,8 @@ import re
 import stat
 import threading
 import time
-from typing import Iterator, Literal
+from contextlib import contextmanager
+from typing import Callable, Iterator, Literal
 import uuid
 import json
 
@@ -187,11 +188,19 @@ class PreparedPatch:
         return self.changes[0].base_sha256 if len(self.changes) == 1 else None
 
 
+@dataclass(frozen=True)
+class ResolvedAuthorizedPath:
+    root: Path
+    relative_path: str
+    authority: Literal["workspace", "active_skill"]
+    writable: bool
+
+
 _BUILTIN_CONTRACTS = (
-    ("list_files", "List bounded regular files under a workspace-relative path (default '.'); supports maxDepth and maxEntries. Results are workspace-relative and may be truncated.", "none", False, 5, "parallel", ListFilesInput, ListFilesResultData, "list_files"),
-    ("read_file", "Read one bounded UTF-8 file from the workspace. The path must be workspace-relative; do not pass an absolute Skill path. For an enabled Skill resource, use skill_read_resource. Large files return head/tail content; use read_file_range to continue.", "none", False, 5, "parallel", ReadFileInput, ReadFileResultData, "read_file"),
-    ("read_file_range", "Read an inclusive bounded line range from one UTF-8 file in the workspace. The path must be workspace-relative; use skill_read_resource for an enabled Skill resource. Continue from nextLine when present.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
-    ("search_text", "Search a workspace-relative path (default '.') for a single-line query; supports maxResults, regex, and includeGlobs. Results are workspace-relative, bounded, and may be truncated.", "none", False, 5, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
+    ("list_files", "List bounded regular files under a workspace-relative path or an absolute path inside the workspace or active Skill root (default '.'); supports maxDepth and maxEntries. Results are relative to the selected root and may be truncated.", "none", False, 5, "parallel", ListFilesInput, ListFilesResultData, "list_files"),
+    ("read_file", "Read one bounded UTF-8 file from the workspace or an active Skill root. The path may be workspace-relative or an authorized absolute path; active Skill roots are read-only. For other Skill resources, use skill_read_resource. Large files return head/tail content; use read_file_range to continue.", "none", False, 5, "parallel", ReadFileInput, ReadFileResultData, "read_file"),
+    ("read_file_range", "Read an inclusive bounded line range from one UTF-8 file in the workspace or an active Skill root. The path may be workspace-relative or an authorized absolute path; active Skill roots are read-only. For other Skill resources, use skill_read_resource. Continue from nextLine when present.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
+    ("search_text", "Search a workspace-relative path or an absolute path inside the workspace or active Skill root (default '.') for a single-line query; supports maxResults, regex, and includeGlobs. Results are relative to the selected root, bounded, and may be truncated.", "none", False, 5, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
     ("apply_patch", "Apply structured Add, Update, Delete, and Move changes to workspace files. Paths, base hashes, and final contents are verified before commit.", "workspace", False, 5, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
     ("run_shell", "Run one shell command in the macOS workspace sandbox. Set timeoutSeconds for the command deadline; do not add an external timeout wrapper. For commands that need network access, such as installing dependencies or downloading sources, set networkAccess=request and provide justification. Eidos will request approval and keep macOS Seatbelt. Additional path access and unsandboxed execution also require approval. The legacy sandboxPermissions and additionalPermissions fields remain supported for compatibility. Do not assume GNU timeout, zsh glob behavior, or use tail/head as output boundaries; do not add pipefail unless the command requires it. Eidos bounds and verifies output and workspace changes without rewriting the command.", "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
 )
@@ -418,6 +427,7 @@ class ToolExecutor:
         self.reader = WorkspaceReader(identity)
         self.workspace_index = WorkspaceIndex(identity)
         self.search_driver = search_driver or RipgrepSearchDriver()
+        self._active_skill_roots: Callable[[], tuple[Path, ...]] = lambda: ()
         self.supports_custom_tools = supports_custom_tools
         self.supports_tool_grammar = supports_tool_grammar
         self.registry = builtin_tool_registry(
@@ -437,6 +447,11 @@ class ToolExecutor:
         if self.root_fd >= 0:
             os.close(self.root_fd)
             self.root_fd = -1
+
+    def set_active_skill_roots(
+        self, roots: Callable[[], tuple[Path, ...]]
+    ) -> None:
+        self._active_skill_roots = roots
 
     def execute(
         self,
@@ -572,7 +587,12 @@ class ToolExecutor:
             code = "canceled" if error.code == "search_backend_canceled" else error.code
             return _error(tool_name, code, "Workspace search backend is unavailable")
         except WorkspacePathError as error:
-            return _error(tool_name, error.code, "Workspace path is unavailable")
+            summary = (
+                "Path is outside the authorized workspace or active Skill roots."
+                if error.code == "path_outside_authorized_roots"
+                else "Workspace path is unavailable"
+            )
+            return _error(tool_name, error.code, summary)
 
     def _prepare_file_change(
         self,
@@ -1193,54 +1213,60 @@ class ToolExecutor:
         assert isinstance(path_value, str)
         assert isinstance(max_depth, int) and not isinstance(max_depth, bool)
         assert isinstance(max_entries, int) and not isinstance(max_entries, bool)
-        scope = WorkspaceDiscoveryScope.load(self.root_fd)
-        deadline = time.monotonic() + TOOL_DEADLINE_SECONDS
-        base = "" if path_value == "." else path_value.rstrip("/")
-        base_depth = len(Path(base).parts) if base else 0
-        discovered, truncated = RipgrepFileEnumerator().enumerate(
-            self.workspace.path,
-            deadline=deadline,
-            max_entries=max_entries + 1,
-            cancel=cancel,
-            path=path_value,
-        )
-        entries: set[str] = set()
-        for relative in discovered:
-            _check_budget(cancel, deadline)
-            try:
-                metadata = _stat_relative_path(self.root_fd, relative)
-            except OSError:
-                continue
-            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-                continue
-            parts = Path(relative).parts
-            relative_depth = len(parts) - base_depth
-            if relative_depth < 1 or scope.is_ignored(relative, is_directory=False):
-                continue
-            for depth in range(1, min(relative_depth - 1, max_depth) + 1):
-                directory = "/".join(parts[: base_depth + depth])
-                if not scope.is_ignored(directory, is_directory=True):
-                    entries.add(directory + "/")
-            if relative_depth <= max_depth:
-                entries.add(relative)
-            if len(entries) >= max_entries:
-                truncated = True
-                break
-        paths = sorted(entries, key=os.fsencode)[:max_entries]
-        return _success(
-            "list_files",
-            "Listed files",
-            {"paths": paths, "truncated": truncated},
-        )
+        resolved = self._resolve_read_path(path_value)
+        with self._authorized_reader(resolved) as reader:
+            path_value = resolved.relative_path
+            scope = WorkspaceDiscoveryScope.load(reader.root_fd)
+            deadline = time.monotonic() + TOOL_DEADLINE_SECONDS
+            base = "" if path_value == "." else path_value.rstrip("/")
+            base_depth = len(Path(base).parts) if base else 0
+            discovered, truncated = RipgrepFileEnumerator().enumerate(
+                resolved.root,
+                deadline=deadline,
+                max_entries=max_entries + 1,
+                cancel=cancel,
+                path=path_value,
+            )
+            reader._verify_root()
+            entries: set[str] = set()
+            for relative in discovered:
+                _check_budget(cancel, deadline)
+                try:
+                    metadata = _stat_relative_path(reader.root_fd, relative)
+                except OSError:
+                    continue
+                if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+                    continue
+                parts = Path(relative).parts
+                relative_depth = len(parts) - base_depth
+                if relative_depth < 1 or scope.is_ignored(relative, is_directory=False):
+                    continue
+                for depth in range(1, min(relative_depth - 1, max_depth) + 1):
+                    directory = "/".join(parts[: base_depth + depth])
+                    if not scope.is_ignored(directory, is_directory=True):
+                        entries.add(directory + "/")
+                if relative_depth <= max_depth:
+                    entries.add(relative)
+                if len(entries) >= max_entries:
+                    truncated = True
+                    break
+            paths = sorted(entries, key=os.fsencode)[:max_entries]
+            return _success(
+                "list_files",
+                "Listed files",
+                {"paths": paths, "truncated": truncated},
+            )
 
     def _read_file(
         self, arguments: dict[str, object], cancel: threading.Event
     ) -> dict[str, object]:
         path_value = arguments["path"]
         assert isinstance(path_value, str)
-        content_bytes, metadata, normalized_path, _truncated = self.reader.read_file_bytes(
-            path_value, cancel=cancel, limit=MAX_READ_FILE_BYTES
-        )
+        resolved = self._resolve_read_path(path_value)
+        with self._authorized_reader(resolved) as reader:
+            content_bytes, metadata, normalized_path, _truncated = reader.read_file_bytes(
+                resolved.relative_path, cancel=cancel, limit=MAX_READ_FILE_BYTES
+            )
         try:
             content = content_bytes.decode("utf-8", errors="strict")
         except UnicodeDecodeError:
@@ -1309,24 +1335,27 @@ class ToolExecutor:
     def _read_stable_path(
         self, path_value: str, cancel: threading.Event, limit: int
     ) -> tuple[bytes, os.stat_result, str]:
+        resolved = self._resolve_read_path(path_value)
         last_error: WorkspacePathError | None = None
-        for _attempt in range(2):
-            descriptor, normalized_path = self._open_file(path_value)
-            try:
-                return (*_read_regular_file(descriptor, cancel, limit=limit), normalized_path)
-            except WorkspacePathError as error:
-                last_error = error
-                if error.code != "workspace_changed":
-                    raise
-            finally:
-                os.close(descriptor)
+        with self._authorized_reader(resolved) as reader:
+            for _attempt in range(2):
+                descriptor, normalized_path = self._open_file(
+                    resolved.relative_path, root_fd=reader.root_fd
+                )
+                try:
+                    return (*_read_regular_file(descriptor, cancel, limit=limit), normalized_path)
+                except WorkspacePathError as error:
+                    last_error = error
+                    if error.code != "workspace_changed":
+                        raise
+                finally:
+                    os.close(descriptor)
         assert last_error is not None
         raise last_error
 
     def _search_text(
         self, arguments: dict[str, object], cancel: threading.Event
     ) -> dict[str, object]:
-        scope = WorkspaceDiscoveryScope.load(self.root_fd)
         query = arguments["query"]
         path = arguments["path"]
         regex = arguments["regex"]
@@ -1337,39 +1366,65 @@ class ToolExecutor:
         assert isinstance(regex, bool)
         assert isinstance(include_globs, (list, tuple))
         assert isinstance(max_results, int) and not isinstance(max_results, bool)
-        result = self.search_driver.search(
-            WorkspaceSearchRequest(
-                query=query,
-                workspace_path=self.workspace.path,
-                deadline=time.monotonic() + TOOL_DEADLINE_SECONDS,
-                max_results=max_results,
-                max_preview_characters=MAX_RG_PREVIEW_CHARACTERS,
-                discovery_scope=scope,
-                path=path,
-                regex=regex,
-                include_globs=tuple(include_globs),
-            ),
-            cancel,
+        assert isinstance(path, str)
+        resolved = self._resolve_read_path(path)
+        with self._authorized_reader(resolved) as reader:
+            scope = WorkspaceDiscoveryScope.load(reader.root_fd)
+            result = self.search_driver.search(
+                WorkspaceSearchRequest(
+                    query=query,
+                    workspace_path=resolved.root,
+                    deadline=time.monotonic() + TOOL_DEADLINE_SECONDS,
+                    max_results=max_results,
+                    max_preview_characters=MAX_RG_PREVIEW_CHARACTERS,
+                    discovery_scope=scope,
+                    path=resolved.relative_path,
+                    regex=regex,
+                    include_globs=tuple(include_globs),
+                ),
+                cancel,
+            )
+            reader._verify_root()
+            if resolved.authority == "workspace":
+                self._verify_root()
+            return _success(
+                "search_text",
+                "Searched text",
+                {
+                    "matches": [
+                        {
+                            "path": match.path,
+                            "line": match.line,
+                            "column": match.column,
+                            "preview": match.preview,
+                        }
+                        for match in result.matches
+                    ],
+                    "scannedBytes": result.scanned_bytes,
+                    "truncated": result.truncated,
+                    "truncationReason": result.truncation_reason,
+                },
+            )
+
+    def _resolve_read_path(self, value: str) -> ResolvedAuthorizedPath:
+        return resolve_read_path(
+            value,
+            self.workspace.path,
+            tuple(self._active_skill_roots()),
         )
-        self._verify_root()
-        return _success(
-            "search_text",
-            "Searched text",
-            {
-                "matches": [
-                    {
-                        "path": match.path,
-                        "line": match.line,
-                        "column": match.column,
-                        "preview": match.preview,
-                    }
-                    for match in result.matches
-                ],
-                "scannedBytes": result.scanned_bytes,
-                "truncated": result.truncated,
-                "truncationReason": result.truncation_reason,
-            },
-        )
+
+    @contextmanager
+    def _authorized_reader(
+        self, resolved: ResolvedAuthorizedPath
+    ) -> Iterator[WorkspaceReader]:
+        if resolved.authority == "workspace":
+            yield self.reader
+            return
+        reader = WorkspaceReader(resolved.root)
+        try:
+            yield reader
+        finally:
+            reader.close()
 
     def _verify_root(self) -> None:
         if self.root_fd < 0:
@@ -1528,9 +1583,11 @@ class ToolExecutor:
             raise WorkspacePathError("file_version_conflict")
         return descriptor
 
-    def _open_file(self, value: str) -> tuple[int, str]:
+    def _open_file(
+        self, value: str, *, root_fd: int | None = None
+    ) -> tuple[int, str]:
         parts = _validate_relative_path(value)
-        directory_fd = os.dup(self.root_fd)
+        directory_fd = os.dup(self.root_fd if root_fd is None else root_fd)
         try:
             for part in parts[:-1]:
                 next_fd = self._open_directory(directory_fd, part)
@@ -1696,6 +1753,50 @@ def _stat_relative_path(root_fd: int, relative: str) -> os.stat_result:
     finally:
         for descriptor in reversed(opened):
             os.close(descriptor)
+
+
+def resolve_read_path(
+    value: str,
+    workspace_root: Path,
+    active_skill_roots: tuple[Path, ...],
+) -> ResolvedAuthorizedPath:
+    if (
+        not isinstance(value, str)
+        or not value
+        or "\x00" in value
+        or "\\" in value
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise WorkspacePathError("workspace_boundary_violation")
+    candidate = Path(value)
+    if ".." in candidate.parts:
+        raise WorkspacePathError("workspace_boundary_violation")
+    workspace_root = Path(workspace_root)
+    if not candidate.is_absolute():
+        return ResolvedAuthorizedPath(
+            workspace_root,
+            "." if value == "." else candidate.as_posix(),
+            "workspace",
+            True,
+        )
+
+    roots: list[tuple[Path, Literal["active_skill", "workspace"], bool]] = [
+        (Path(root), "active_skill", False)
+        for root in active_skill_roots
+    ]
+    roots.append((workspace_root, "workspace", True))
+    for root, authority, writable in sorted(
+        roots, key=lambda item: len(item[0].parts), reverse=True
+    ):
+        if candidate == root or root in candidate.parents:
+            relative = candidate.relative_to(root).as_posix()
+            return ResolvedAuthorizedPath(
+                root,
+                relative or ".",
+                authority,
+                writable,
+            )
+    raise WorkspacePathError("path_outside_authorized_roots")
 
 
 def _validate_relative_path(value: str) -> tuple[str, ...]:

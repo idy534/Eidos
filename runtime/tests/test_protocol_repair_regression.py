@@ -154,18 +154,26 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             ["Recovered without persisting the invalid response."],
         )
 
-    def test_protocol_repair_exposes_safe_validation_details(self) -> None:
-        run, _ = self.store.create_run(self.session["id"], "Read a Skill resource")
-        invalid_path = "/Users/example/.eidos/skills/docx/scripts/office/soffice.py"
+    def test_absolute_outside_path_is_a_tool_error_and_model_recovers(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Recover from an outside read")
+        invalid_path = "/not/authorized"
         model = ScriptedModel([
             ModelResponse(
-                text="I will read the Skill script.",
+                text="I will inspect the requested directory.",
+                phase=AssistantMessagePhase.COMMENTARY,
                 tool_calls=(
                     ModelToolCall(
-                        "bad-read",
-                        "read_file",
+                        "outside-list",
+                        "list_files",
                         {"path": invalid_path},
                     ),
+                ),
+            ),
+            ModelResponse(
+                text="I will inspect the workspace instead.",
+                phase=AssistantMessagePhase.COMMENTARY,
+                tool_calls=(
+                    ModelToolCall("workspace-list", "list_files", {"path": "."}),
                 ),
             ),
             ModelResponse(
@@ -180,19 +188,42 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
 
         completed = self.store.read_run(run["id"])
         self.assertEqual(completed["status"], "succeeded")
+        self.assertIsNone(completed.get("errorCode"))
+        self.assertEqual(completed["modelStepCount"], 3)
         attempts = self.store.read_model_attempts(run["id"])
-        self.assertEqual([attempt["status"] for attempt in attempts], ["failed", "completed"])
-        repair = model.contexts[1][-1]
-        self.assertEqual(repair["type"], "protocol_error")
-        self.assertEqual(repair["toolName"], "read_file")
-        self.assertEqual(repair["validationPath"], "path")
-        self.assertEqual(repair["validationCode"], "invalid_relative_path")
-        self.assertNotIn(invalid_path, json.dumps(repair, ensure_ascii=False))
-        diagnostic = attempts[0]["protocolDiagnostics"]
-        assert isinstance(diagnostic, dict)
-        self.assertEqual(diagnostic["validationPath"], "path")
-        self.assertEqual(diagnostic["validationCode"], "invalid_relative_path")
-        self.assertNotIn(invalid_path, json.dumps(diagnostic, ensure_ascii=False))
+        self.assertEqual(
+            [attempt["status"] for attempt in attempts],
+            ["completed", "completed", "completed"],
+        )
+        self.assertTrue(all(attempt["errorCode"] is None for attempt in attempts))
+        self.assertFalse(
+            any(
+                item.get("type") == "protocol_error"
+                for context in model.contexts
+                for item in context
+            )
+        )
+        assert self.store.connection is not None
+        outside_result = json.loads(self.store.connection.execute(
+            "SELECT result_json FROM tool_calls WHERE provider_call_id = ?",
+            ("outside-list",),
+        ).fetchone()[0])
+        self.assertEqual(outside_result["code"], "path_outside_authorized_roots")
+        self.assertIn("authorized workspace", outside_result["summary"])
+        self.assertFalse(outside_result["sideEffectsMayExist"])
+        self.assertFalse(outside_result["reconciliationRequired"])
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT COUNT(*) FROM durable_intents WHERE run_id = ?", (run["id"],)
+            ).fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT COUNT(*) FROM approvals WHERE run_id = ?", (run["id"],)
+            ).fetchone()[0],
+            0,
+        )
 
     def test_protocol_failure_persists_safe_tool_diagnostics(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Record bad tool details")
