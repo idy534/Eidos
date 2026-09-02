@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -98,4 +99,29 @@ def test_pre_turn_compaction_records_only_source_item_tool_provenance(
     assert verified is not None
     assert source_tool_id in verified.source_tool_call_ids
     assert unrelated_tool_id not in verified.source_tool_call_ids
+    store.close()
+
+
+def test_compaction_facts_preserve_explicit_custom_payload_kind(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    session = store.create_session(str(workspace))
+    run, _goal = store.create_run(session["id"], "apply the patch")
+    raw_patch = "*** Begin Patch\n*** End Patch"
+    item = store.create_tool_item(
+        run["id"], 0, 0, "custom-call", "apply_patch",
+        json.dumps({"kind": "custom", "input": raw_patch}),
+        payload_kind="custom",
+    )
+    store.complete_tool_item(item["id"], '{"outcome":"success"}')
+
+    facts = store.verified_compaction_repository().load_facts(
+        run["id"], required_item_ids=(item["id"],)
+    )
+
+    assert facts.items[0].payload_kind == "custom"
     store.close()
