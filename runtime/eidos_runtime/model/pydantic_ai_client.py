@@ -81,6 +81,9 @@ from eidos_runtime.tools.view_image import (
 )
 
 
+_MAX_HISTORICAL_TOOL_TEXT_CHARS = 8 * 1024
+
+
 MAX_TOOL_CALL_ID_BYTES = MODEL_TOOL_CALL_ID_BYTES
 MAX_TOOL_NAME_BYTES = MODEL_TOOL_NAME_BYTES
 MAX_TOOL_ARGUMENT_BYTES = MAX_FUNCTION_ARGUMENT_BYTES
@@ -424,26 +427,40 @@ def encode_context(
             call_id = item.get("callId")
             name = item.get("name")
             if item.get("payloadKind", "function") == "custom":
-                raise ValueError("custom_tool_history_requires_native_transport")
-            arguments = item.get("arguments")
-            if all(isinstance(value, str) for value in (call_id, name, arguments)):
-                messages.append(PAIModelResponse([
-                    ToolCallPart(name, arguments, call_id)
-                ]))
+                raw_input = item.get("input")
+                if all(isinstance(value, str) for value in (call_id, name, raw_input)):
+                    messages.append(PAIModelResponse([
+                        TextPart(_historical_custom_tool_call(
+                            name, call_id, raw_input
+                        ))
+                    ]))
+            else:
+                arguments = item.get("arguments")
+                if all(isinstance(value, str) for value in (call_id, name, arguments)):
+                    messages.append(PAIModelResponse([
+                        ToolCallPart(name, arguments, call_id)
+                    ]))
         elif item_type == "tool_result":
             call_id = item.get("callId")
             name = item.get("name")
             result = item.get("result")
             if all(isinstance(value, str) for value in (call_id, name, result)):
-                content: object = result
-                if name == "view_image" and supports_images:
-                    content = _encode_view_image_result(
-                        result,
-                        image_authority=image_authority,
-                    )
-                messages.append(PAIModelRequest([
-                    ToolReturnPart(name, content, call_id)
-                ]))
+                if item.get("payloadKind", "function") == "custom":
+                    messages.append(PAIModelRequest([
+                        UserPromptPart(_historical_custom_tool_result(
+                            name, call_id, result
+                        ))
+                    ]))
+                else:
+                    content: object = result
+                    if name == "view_image" and supports_images:
+                        content = _encode_view_image_result(
+                            result,
+                            image_authority=image_authority,
+                        )
+                    messages.append(PAIModelRequest([
+                        ToolReturnPart(name, content, call_id)
+                    ]))
         elif item_type == "protocol_error":
             code = item.get("code")
             if isinstance(code, str):
@@ -478,14 +495,16 @@ def encode_context(
                     " Correct the reported field using the currently "
                     "advertised tool schemas; do not repeat the same invalid "
                     "arguments."
-                )
+                    )
                 if details.get("toolName") in {
                     "list_files", "read_file", "read_file_range",
                     "search_text", "skill_read_resource",
                 }:
                     feedback += (
                         " Workspace path fields accept workspace-relative "
-                        "paths only. For an enabled Skill resource, use "
+                        "paths or authorized absolute paths. Active Skill "
+                        "absolute paths are read-only. For an enabled Skill "
+                        "resource, use "
                         "skill_read_resource with qualifiedId and a relative "
                         "resourcePath."
                     )
@@ -519,6 +538,40 @@ def encode_context(
             raise ValueError(f"unsupported model context item type: {item_type!r}")
 
     return messages
+
+
+def _historical_custom_tool_call(
+    name: str,
+    call_id: str,
+    raw_input: str,
+) -> str:
+    return (
+        "Historical custom tool call.\n"
+        f"Tool: {name}\n"
+        f"Call ID: {call_id}\n"
+        "Raw input:\n"
+        + _bound_historical_tool_text(raw_input)
+    )
+
+
+def _historical_custom_tool_result(
+    name: str,
+    call_id: str,
+    result: str,
+) -> str:
+    return (
+        "Historical custom tool result.\n"
+        f"Tool: {name}\n"
+        f"Call ID: {call_id}\n"
+        "Result:\n"
+        + _bound_historical_tool_text(result)
+    )
+
+
+def _bound_historical_tool_text(value: str) -> str:
+    if len(value) <= _MAX_HISTORICAL_TOOL_TEXT_CHARS:
+        return value
+    return value[:_MAX_HISTORICAL_TOOL_TEXT_CHARS] + "\n…[truncated]"
 
 
 def _encode_view_image_result(
