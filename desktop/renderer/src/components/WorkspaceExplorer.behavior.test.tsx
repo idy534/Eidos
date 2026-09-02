@@ -379,7 +379,7 @@ describe("WorkspaceExplorer", () => {
       language: "javascript",
     }));
 
-    const { rerender } = render(
+    const { rerender, container } = render(
       <WorkspaceExplorer
         sessionId="session-a"
         listDirectory={listDirectory}
@@ -388,7 +388,8 @@ describe("WorkspaceExplorer", () => {
       />,
     );
 
-    expect(await screen.findByText("console.log('sunset');")).toBeInTheDocument();
+    await waitFor(() => expect(container.querySelector(".workspace-code-preview"))
+      .toHaveTextContent("console.log('sunset');"));
     expect(readPreview).toHaveBeenCalledWith("session-a", "sunset.js");
 
     const readPreview2 = vi.fn(async () => ({
@@ -408,7 +409,8 @@ describe("WorkspaceExplorer", () => {
       />,
     );
     await waitFor(() => expect(readPreview2).toHaveBeenCalledWith("session-a", "other.js"));
-    expect(await screen.findByText("console.log('other');")).toBeInTheDocument();
+    await waitFor(() => expect(container.querySelector(".workspace-code-preview"))
+      .toHaveTextContent("console.log('other');"));
   });
 
   it("does not preview a stale requested path that is absent from the current workspace", async () => {
