@@ -719,6 +719,105 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result["data"]["stderr"], "")
         self.assertEqual(approvals, [])
 
+    def test_shell_accepts_workspace_absolute_cwd(self) -> None:
+        if not is_seatbelt_ready():
+            self.skipTest(
+                "Seatbelt Shell integration requires a currently usable sandbox-exec and static resources"
+            )
+        cwd = self.workspace / "nested"
+        cwd.mkdir()
+        run, _ = self.store.create_run(self.session["id"], "Run from an absolute cwd")
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "call-shell",
+                            "run_shell",
+                            {
+                                "command": "pwd",
+                                "cwd": str(cwd.resolve()),
+                                "timeoutSeconds": 5,
+                            },
+                        ),
+                    )
+                ),
+                ModelResponse(text="Command completed."),
+            ]
+        )
+        approvals: list[object] = []
+
+        RuntimeLoop(
+            self.store,
+            model,
+            lambda _message: None,
+            lambda request, _cancel: approvals.append(request)
+            or ApprovalDecision("approve"),
+            shell_available=True,
+        ).run(run["id"], threading.Event())
+
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        command_item = next(
+            item for item in snapshot["items"]
+            if item["runId"] == run["id"] and item["kind"] == "command_execution"
+        )
+        result = json.loads(command_item["toolCall"]["resultJson"])
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(result["data"]["stdout"].strip(), str(cwd.resolve()))
+        self.assertEqual(approvals, [])
+
+    def test_shell_absolute_cwd_outside_workspace_is_tool_error_before_intent(self) -> None:
+        outside = self.workspace.parent / "outside-shell-cwd"
+        run, _ = self.store.create_run(self.session["id"], "Reject an outside cwd")
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "call-shell",
+                            "run_shell",
+                            {
+                                "command": "pwd",
+                                "cwd": str(outside),
+                                "timeoutSeconds": 5,
+                            },
+                        ),
+                    )
+                ),
+                ModelResponse(text="I will use a workspace cwd."),
+            ]
+        )
+        approvals: list[object] = []
+
+        RuntimeLoop(
+            self.store,
+            model,
+            lambda _message: None,
+            lambda request, _cancel: approvals.append(request)
+            or ApprovalDecision("approve"),
+            shell_available=True,
+        ).run(run["id"], threading.Event())
+
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        self.assertEqual(approvals, [])
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        command_item = next(
+            item for item in snapshot["items"]
+            if item["runId"] == run["id"] and item["kind"] == "command_execution"
+        )
+        result = json.loads(command_item["toolCall"]["resultJson"])
+        self.assertEqual(result["outcome"], "error")
+        self.assertEqual(result["code"], "workspace_boundary_violation")
+        self.assertFalse(result["sideEffectsMayExist"])
+        self.assertFalse(result["reconciliationRequired"])
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT COUNT(*) FROM durable_intents WHERE run_id = ?",
+                (run["id"],),
+            ).fetchone()[0],
+            0,
+        )
+
     def test_successful_first_shell_with_incomplete_manifest_continues_run(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Inspect a large repo")
         command = 'ls . && echo "---" && ls codex-rs 2>/dev/null'
@@ -1556,6 +1655,22 @@ class ToolExecutorTests(unittest.TestCase):
         identity = self.executor.prepare_shell(".", threading.Event())
 
         self.assertEqual(identity.path, self.workspace.resolve())
+
+    def test_prepare_shell_accepts_workspace_absolute_cwd(self) -> None:
+        nested = self.workspace / "nested"
+        nested.mkdir()
+
+        identity = self.executor.prepare_shell(str(nested.resolve()), threading.Event())
+
+        self.assertEqual(identity.path, nested.resolve())
+
+    def test_prepare_shell_rejects_absolute_cwd_outside_workspace(self) -> None:
+        outside = self.workspace.parent / "outside-shell-cwd"
+
+        with self.assertRaises(WorkspacePathError) as raised:
+            self.executor.prepare_shell(str(outside), threading.Event())
+
+        self.assertEqual(raised.exception.code, "workspace_boundary_violation")
 
     def test_replacing_workspace_path_cannot_rebind_an_existing_executor(self) -> None:
         original = self.workspace / "original"

@@ -503,9 +503,14 @@ class ToolExecutor:
 
     def shell_cwd(self, value: str) -> WorkspaceIdentity:
         self._verify_root()
-        if value == ".":
+        relative = (
+            "."
+            if value == "."
+            else resolve_workspace_write_path(value, self.workspace.path)
+        )
+        if relative == ".":
             return self.workspace
-        parts = _validate_relative_path(value)
+        parts = _validate_relative_path(relative)
         descriptor = os.dup(self.root_fd)
         try:
             for part in parts:

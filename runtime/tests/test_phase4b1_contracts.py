@@ -62,7 +62,9 @@ class Phase4B1ContractTests(unittest.TestCase):
                 with self.assertRaises(ValidationError):
                     model.model_validate(value)
 
-    def test_read_path_contract_accepts_absolute_paths_but_writes_do_not(self) -> None:
+    def test_read_and_shell_path_contract_accepts_absolute_paths_but_writes_do_not(
+        self,
+    ) -> None:
         absolute = "/tmp/workspace/src/file.py"
         for model, value in (
             (ListFilesInput, {"path": absolute}),
@@ -74,6 +76,11 @@ class Phase4B1ContractTests(unittest.TestCase):
         ):
             with self.subTest(model=model.__name__):
                 self.assertEqual(model.model_validate(value).path, absolute)
+        shell = RunShellInput.model_validate({
+            "command": "pwd",
+            "cwd": absolute,
+        })
+        self.assertEqual(shell.cwd, absolute)
 
         with self.assertRaises(ValidationError):
             WriteFileInput.model_validate({"path": absolute, "content": "new"})

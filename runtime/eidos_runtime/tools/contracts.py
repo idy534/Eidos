@@ -350,7 +350,10 @@ class NetworkAccess(StrEnum):
 
 class RunShellInput(StrictToolModel):
     command: StrictStr = Field(min_length=1, max_length=16 * 1024)
-    cwd: StrictStr = "."
+    cwd: StrictStr = Field(
+        default=".",
+        description="Workspace-relative or Workspace canonical absolute directory path.",
+    )
     dependencyBindingId: StrictStr | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -382,7 +385,7 @@ class RunShellInput(StrictToolModel):
     @field_validator("cwd")
     @classmethod
     def validate_cwd(cls, value: str) -> str:
-        return _relative_path(value, allow_dot=True)
+        return _read_path(value, allow_dot=True)
 
     @model_validator(mode="after")
     def validate_permissions(self):

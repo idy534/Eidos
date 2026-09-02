@@ -52,7 +52,7 @@
 - Agent `run_shell` 不提供 PTY、stdin、interactive session 或 persistent/background process manager。
 - Runtime 会检测并清理 background child，但 Agent Shell 不能管理持久后台进程。
 - ShellEnvironmentSnapshot 不恢复 aliases、functions 或其他 shell state。
-- Shell cwd 仍然必须是 Workspace-relative 的有效路径。
+- Shell cwd 必须解析到 Workspace 内。调用方可以使用 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径。Workspace 外的 absolute cwd 会返回 Tool Error。
 - Agent Shell 的 raw stdout/stderr 仍有 256 KiB 上限。它不提供无限输出流。
 - Agent Shell 会对 stdout 和 stderr 做 UTF-8 增量解码。Desktop Execution Feed 在运行中和终态保留两条流的接收顺序，并把 ANSI/OSC 控制序列按纯文本处理。旧 Item 缺少或为空的 `content` 时，Feed 使用结果中的 stdout/stderr 回退，并在结果存在时展示 `attemptCount`、`sandboxed` 和 `escalated` 事实。
 - 模型收到的 `run_shell` 输出每条 stdout/stderr 流最多 16 KiB，整个结果 JSON 最多 48 KiB。模型投影保留每条流的首尾，并用独立的 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 说明模型省略的 stdout/stderr UTF-8 字节。原始 `truncated` 和 `omittedBytes` 仍表示 Shell 原始输出限制，已丢失的原始字节不能恢复。
