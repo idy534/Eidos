@@ -622,6 +622,58 @@ class RuntimeLoopTests(unittest.TestCase):
                 )
                 self.assertIsNone(attempts[0]["errorCode"])
 
+    def test_absolute_apply_patch_outside_is_tool_error_before_intent(self) -> None:
+        outside = self.workspace.parent / "outside-absolute-patch.txt"
+        run, _ = self.store.create_run(self.session["id"], "Reject an outside patch")
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(
+                ModelToolCall(
+                    "outside-patch",
+                    "apply_patch",
+                    {"changes": [{
+                        "type": "add",
+                        "path": str(outside),
+                        "content": "must not write\n",
+                    }]},
+                ),
+            )),
+            ModelResponse(text="I will keep the patch inside the workspace."),
+        ])
+        approvals: list[object] = []
+
+        RuntimeLoop(
+            self.store,
+            model,
+            lambda _message: None,
+            lambda request, _cancel: approvals.append(request)
+            or ApprovalDecision("approve"),
+        ).run(run["id"], threading.Event())
+
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        self.assertEqual(approvals, [])
+        self.assertFalse(outside.exists())
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        file_item = next(
+            item for item in snapshot["items"]
+            if item["runId"] == run["id"] and item["kind"] == "file_change"
+        )
+        result = json.loads(file_item["toolCall"]["resultJson"])
+        self.assertEqual(result["code"], "workspace_boundary_violation")
+        self.assertFalse(result["sideEffectsMayExist"])
+        self.assertFalse(result["reconciliationRequired"])
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT COUNT(*) FROM durable_intents WHERE run_id = ?",
+                (run["id"],),
+            ).fetchone()[0],
+            0,
+        )
+        attempts = self.store.read_model_attempts(run["id"])
+        self.assertEqual(
+            [attempt["status"] for attempt in attempts],
+            ["completed", "completed"],
+        )
+
     def test_default_shell_runs_in_sandbox_without_approval(self) -> None:
         if not is_seatbelt_ready():
             self.skipTest(

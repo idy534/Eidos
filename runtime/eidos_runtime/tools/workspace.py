@@ -731,8 +731,7 @@ class ToolExecutor:
                         "patch_format_error", "Patch format error: unknown file hunk"
                     )
                 path_value = hunk.path
-                parts = _validate_relative_path(path_value)
-                path = "/".join(parts)
+                path = resolve_workspace_write_path(path_value, self.workspace.path)
                 existing = planned.get(path, _MISSING)
                 if existing is _MISSING:
                     existing = self._read_existing_for_change(
@@ -795,8 +794,9 @@ class ToolExecutor:
                             "patch_format_error",
                             f"Patch format error in Update File hunk for {path}: move destination is invalid",
                         )
-                    destination_parts = _validate_relative_path(move_value)
-                    destination = "/".join(destination_parts)
+                    destination = resolve_workspace_write_path(
+                        move_value, self.workspace.path
+                    )
                     destination_existing = planned.get(destination, _MISSING)
                     if destination_existing is _MISSING:
                         destination_existing = self._read_existing_for_change(
@@ -1811,6 +1811,16 @@ def _project_read_path(
     if relative_path.endswith("/"):
         projected += "/"
     return projected
+
+
+def resolve_workspace_write_path(value: str, workspace_root: Path) -> str:
+    try:
+        resolved = resolve_read_path(value, workspace_root, ())
+    except WorkspacePathError as error:
+        if error.code == "path_outside_authorized_roots":
+            raise WorkspacePathError("workspace_boundary_violation") from None
+        raise
+    return "/".join(_validate_relative_path(resolved.relative_path))
 
 
 def _validate_relative_path(value: str) -> tuple[str, ...]:

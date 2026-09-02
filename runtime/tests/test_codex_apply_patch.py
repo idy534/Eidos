@@ -110,6 +110,122 @@ def test_add_file_creates_missing_parent_directories(tmp_path: Path) -> None:
     assert delta.changes[0].path == "src/core/types.ts"
 
 
+def test_function_apply_patch_accepts_workspace_absolute_path(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "main.py"
+    with _executor(tmp_path) as executor:
+        result, delta = _run_patch(
+            executor,
+            {"changes": [{
+                "type": "add",
+                "path": str(target),
+                "content": "print('ok')\n",
+            }]},
+        )
+
+    assert result["outcome"] == "success"
+    assert target.read_text() == "print('ok')\n"
+    assert delta.changes[0].path == "src/main.py"
+    assert result["data"]["changes"][0]["path"] == "src/main.py"
+
+
+def test_custom_apply_patch_accepts_workspace_absolute_move_paths(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.txt"
+    destination = tmp_path / "nested" / "destination.txt"
+    source.write_text("old\n")
+    patch = (
+        "*** Begin Patch\n"
+        f"*** Update File: {source}\n"
+        f"*** Move to: {destination}\n"
+        "@@\n"
+        "-old\n"
+        "+new\n"
+        "*** End Patch\n"
+    )
+    with ToolExecutor(
+        tmp_path,
+        supports_custom_tools=True,
+        supports_tool_grammar=True,
+    ) as executor:
+        prepared = executor.prepare_file_change(
+            "apply_patch", patch, threading.Event()
+        )
+        assert not isinstance(prepared, dict), prepared
+        result, delta = executor.commit_patch(
+            "apply_patch", prepared, threading.Event()
+        )
+
+    assert result["outcome"] == "success"
+    assert not source.exists()
+    assert destination.read_text() == "new\n"
+    assert delta.changes[0].old_path == "source.txt"
+    assert delta.changes[0].new_path == "nested/destination.txt"
+
+
+@pytest.mark.parametrize("custom", (False, True))
+def test_apply_patch_rejects_absolute_path_outside_workspace(
+    tmp_path: Path, custom: bool
+) -> None:
+    outside = tmp_path.parent / f"eidos-outside-{tmp_path.name}.txt"
+    if custom:
+        arguments: object = (
+            "*** Begin Patch\n"
+            f"*** Add File: {outside}\n"
+            "+outside\n"
+            "*** End Patch\n"
+        )
+        executor = ToolExecutor(
+            tmp_path,
+            supports_custom_tools=True,
+            supports_tool_grammar=True,
+        )
+    else:
+        arguments = {"changes": [{
+            "type": "add", "path": str(outside), "content": "outside\n"
+        }]}
+        executor = _executor(tmp_path)
+    with executor:
+        prepared = executor.prepare_file_change(
+            "apply_patch", arguments, threading.Event()
+        )
+
+    assert isinstance(prepared, dict)
+    assert prepared["outcome"] == "error"
+    assert prepared["code"] == "workspace_boundary_violation"
+    assert not outside.exists()
+
+
+def test_custom_apply_patch_rejects_absolute_move_destination_outside_workspace(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.txt"
+    outside = tmp_path.parent / f"eidos-outside-move-{tmp_path.name}.txt"
+    source.write_text("old\n")
+    patch = (
+        "*** Begin Patch\n"
+        f"*** Update File: {source}\n"
+        f"*** Move to: {outside}\n"
+        "@@\n"
+        "-old\n"
+        "+new\n"
+        "*** End Patch\n"
+    )
+    with ToolExecutor(
+        tmp_path,
+        supports_custom_tools=True,
+        supports_tool_grammar=True,
+    ) as executor:
+        prepared = executor.prepare_file_change(
+            "apply_patch", patch, threading.Event()
+        )
+
+    assert isinstance(prepared, dict)
+    assert prepared["code"] == "workspace_boundary_violation"
+    assert source.read_text() == "old\n"
+    assert not outside.exists()
+
+
 @pytest.mark.parametrize(
     ("content", "expected_bytes"),
     (("", b""), ("\n", b"\n"), ("\n\n", b"\n\n")),
