@@ -1027,6 +1027,22 @@ def test_responses_direct_noncompleted_status_is_not_executable() -> None:
         assert raised.value.failure.code == "protocol_error"
 
 
+def test_completed_responses_map_to_the_runtime_completion_state() -> None:
+    from eidos_runtime.model_gateway.native_custom import map_responses_response
+
+    response = map_responses_response(SimpleNamespace(
+        output=(),
+        output_text="done",
+        id="resp-1",
+        model="gpt-test",
+        status="completed",
+        usage=None,
+    ))
+
+    assert response.response_state == "complete"
+    assert response.finish_reason == "stop"
+
+
 def test_custom_tool_call_fingerprint_hashes_raw_utf8_input() -> None:
     first = ModelToolCall("c1", "apply_patch", CustomToolPayload(input="界"))
     second = ModelToolCall("c1", "apply_patch", CustomToolPayload(input="界\n"))

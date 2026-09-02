@@ -202,9 +202,7 @@ def map_responses_response(
                 call_id, name, FunctionToolPayload(arguments=parsed)
             ))
     text = _response_text(response)
-    finish_reason = _field(response, "status")
-    if not isinstance(finish_reason, str) or not finish_reason:
-        finish_reason = "tool_call" if calls else "unknown"
+    finish_reason = "tool_call" if calls else "stop"
     usage = _responses_usage(_field(response, "usage"))
     return ModelResponse(
         text=text,
@@ -219,7 +217,7 @@ def map_responses_response(
         resolved_model_name=_string_or_none(_field(response, "model")),
         finish_reason=finish_reason,
         provider_response_id=_string_or_none(_field(response, "id")),
-        response_state=_string_or_none(_field(response, "status")),
+        response_state="complete",
         transport_attempt_count=(
             retry_tracker.transport_attempt_count if retry_tracker else 0
         ),
@@ -397,10 +395,23 @@ class OpenAIResponsesModelClient:
     ) -> tuple[object, dict[str, str]]:
         custom_inputs: dict[str, str] = {}
         function_arguments: dict[str, str] = {}
-        items: list[object] = []
-        text_parts: list[str] = []
         final_response: object | None = None
         iterator = stream.__aiter__()  # type: ignore[attr-defined]
+        stream_closed = False
+
+        async def close_stream(*, suppress_errors: bool) -> None:
+            nonlocal stream_closed
+            if stream_closed:
+                return
+            stream_closed = True
+            try:
+                await _close_stream(stream)
+            except asyncio.CancelledError:
+                if not suppress_errors:
+                    raise
+            except Exception:
+                if not suppress_errors:
+                    raise
 
         async def wait_for_cancel() -> None:
             while not cancel.is_set():
@@ -417,12 +428,12 @@ class OpenAIResponsesModelClient:
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if cancel_task in done and cancel.is_set():
-                    close_task = asyncio.create_task(_close_stream(stream))
+                    close_task = asyncio.create_task(close_stream(suppress_errors=True))
+                    await asyncio.sleep(0)
                     next_task.cancel()
                     with suppress(asyncio.CancelledError, StopAsyncIteration):
                         await next_task
-                    with suppress(Exception, asyncio.CancelledError):
-                        await close_task
+                    await close_task
                     raise ModelRequestError(_cancelled_failure())
                 cancel_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -448,7 +459,6 @@ class OpenAIResponsesModelClient:
                 if event_type == "response.output_text.delta":
                     delta = _field(event, "delta")
                     if isinstance(delta, str) and delta:
-                        text_parts.append(delta)
                         await anyio.to_thread.run_sync(on_text_delta, delta)
                 elif event_type == "response.custom_tool_call_input.delta":
                     item_id = _field(event, "item_id")
@@ -478,9 +488,7 @@ class OpenAIResponsesModelClient:
                     if isinstance(item_id, str) and isinstance(arguments, str):
                         function_arguments[item_id] = arguments
                 elif event_type == "response.output_item.done":
-                    item = _field(event, "item")
-                    if item is not None:
-                        items.append(item)
+                    pass
                 elif event_type == "response.completed":
                     final_response = _field(event, "response")
                     if final_response is None:
@@ -491,7 +499,7 @@ class OpenAIResponsesModelClient:
                 }:
                     raise _protocol_error(_field(event, "provider_name"))
         finally:
-            await _close_stream(stream)
+            await close_stream(suppress_errors=cancel.is_set())
 
         if final_response is None:
             raise _protocol_error(None)
