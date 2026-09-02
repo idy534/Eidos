@@ -13,6 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.tools.contracts import (  # noqa: E402
     ApplyPatchInput,
+    DeleteFileInput,
+    ListFilesInput,
     ReadFileInput,
     ReadFileRangeInput,
     ReadFileRangeResultData,
@@ -44,7 +46,6 @@ class Phase4B1ContractTests(unittest.TestCase):
     def test_input_models_own_byte_range_newline_and_path_contracts(self) -> None:
         for model, value in (
             (ReadFileInput, {"path": "../secret"}),
-            (ReadFileInput, {"path": "/tmp/secret"}),
             (ReadFileRangeInput, {"path": "a", "startLine": 2, "endLine": 1}),
             (ReadFileRangeInput, {"path": "a", "startLine": 1, "endLine": 2001}),
             (SearchTextInput, {"query": "a\nb"}),
@@ -60,6 +61,31 @@ class Phase4B1ContractTests(unittest.TestCase):
             with self.subTest(model=model.__name__):
                 with self.assertRaises(ValidationError):
                     model.model_validate(value)
+
+    def test_read_and_shell_path_contract_accepts_absolute_paths_but_writes_do_not(
+        self,
+    ) -> None:
+        absolute = "/tmp/workspace/src/file.py"
+        for model, value in (
+            (ListFilesInput, {"path": absolute}),
+            (ReadFileInput, {"path": absolute}),
+            (ReadFileRangeInput, {
+                "path": absolute, "startLine": 1, "endLine": 2,
+            }),
+            (SearchTextInput, {"query": "needle", "path": absolute}),
+        ):
+            with self.subTest(model=model.__name__):
+                self.assertEqual(model.model_validate(value).path, absolute)
+        shell = RunShellInput.model_validate({
+            "command": "pwd",
+            "cwd": absolute,
+        })
+        self.assertEqual(shell.cwd, absolute)
+
+        with self.assertRaises(ValidationError):
+            WriteFileInput.model_validate({"path": absolute, "content": "new"})
+        with self.assertRaises(ValidationError):
+            DeleteFileInput.model_validate({"path": absolute})
 
     def test_success_result_semantics_are_structural(self) -> None:
         range_model = result_model(ReadFileRangeResultData)

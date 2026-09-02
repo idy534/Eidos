@@ -157,7 +157,7 @@ pnpm test:runtime:bundled-seatbelt
 
 输出目录是 `build/macos-runtime/`。Bundle 使用 managed CPython `3.12.13`、locked production dependencies、Eidos Runtime、Seatbelt 资源和受管 Ripgrep。locked production dependencies 包含 Workspace artifact 任务使用的 `python-docx` 和 `lark`。打包 Runtime 会复制 `eidos_runtime/workspace/apply_patch.lark`，并检查这个资源存在。打包 Runtime 不依赖目标机的系统 Python、uv、仓库 `.venv` 或 Xcode Command Line Tools Python。
 
-`pnpm test:runtime:bundled` 会在 Bundle 内导入 `lark`，检查 grammar 文件来自 Bundle，并用结构化 `ApplyPatchInput` 验证 `CodexPatchEncoder → Lark parser` 链路。这个 smoke 不执行真实 Provider 请求，也不代表 Provider schema 兼容性已经验证。
+`pnpm test:runtime:bundled` 会在 Bundle 内导入 `lark`，检查 grammar 文件来自 Bundle，并同时验证结构化 `ApplyPatchInput → CodexPatchEncoder → Lark parser` compatibility 链路和 raw Custom `Codex Patch → parse_patch → verified Workspace action` 链路。这个 smoke 不执行真实 Provider 请求，也不代表 Provider capability 或 wire schema 已经验证。Responses native wire contract 由 Runtime mocked provider tests 验证。
 
 Runtime dependency contract 使用 Bundle 根目录下的 `runtime.json`。文件固定使用 `schemaVersion: 1` 和 `target: darwin-arm64`。文件记录 Bundle ID、固定版本、可执行文件、Python 包、Node 包和相对路径。文件和可执行文件记录 SHA-256。Runtime 读取后会固定 manifest hash 和 Bundle snapshot hash。Run binding 还会固定 requirement hash 和 `dependencyBindingId`。
 

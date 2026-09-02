@@ -8,10 +8,12 @@ from eidos_runtime.model.config import (
     ModelConfig,
     ModelConfigStore,
 )
+from eidos_runtime.model.client import ModelClient
 from eidos_runtime.model.pydantic_ai_client import (
     ModelClientLease,
     PydanticAIModelClient,
 )
+from eidos_runtime.model_gateway.native_custom import OpenAIResponsesModelClient
 from eidos_runtime.model_gateway.pydantic_factory import build_pydantic_model
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
@@ -23,7 +25,7 @@ logger = logging.getLogger("eidos.runtime.model_gateway")
 class ModelGatewayLease(ModelClientLease):
     def __init__(
         self,
-        client: PydanticAIModelClient,
+        client: ModelClient,
         config: ModelConfig,
         *,
         resource_registry: ResourceRegistry | None,
@@ -63,18 +65,30 @@ class ModelGateway:
 
     def acquire_lease(self, config: ModelConfig) -> ModelGatewayLease:
         spec = MODEL_CATALOG.profile(config.id)
-        built = build_pydantic_model(config)
-        client = PydanticAIModelClient(
-            built.model,
-            spec,
-            openai_client=built.provider_client,
-            provider_client=built.provider_client,
-            retry_transport=built.retry_client,
-            profile_snapshot=spec.snapshot(config),
-            parallel_tool_calls=config.supports_tool_call,
-            reasoning_effort=None,
-            async_kernel=self.async_kernel,
-        )
+        built = build_pydantic_model(config, wire_api=spec.wire_api)
+        profile_snapshot = spec.snapshot(config)
+        if profile_snapshot.wire_api == "openai_responses":
+            client: ModelClient = OpenAIResponsesModelClient(
+                spec,
+                openai_client=built.provider_client,
+                retry_transport=built.retry_client,
+                profile_snapshot=profile_snapshot,
+                parallel_tool_calls=config.supports_tool_call,
+                reasoning_effort=None,
+                async_kernel=self.async_kernel,
+            )
+        else:
+            client = PydanticAIModelClient(
+                built.model,
+                spec,
+                openai_client=built.provider_client,
+                provider_client=built.provider_client,
+                retry_transport=built.retry_client,
+                profile_snapshot=profile_snapshot,
+                parallel_tool_calls=config.supports_tool_call,
+                reasoning_effort=None,
+                async_kernel=self.async_kernel,
+            )
         lease = ModelGatewayLease(
             client,
             config,

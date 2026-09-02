@@ -143,6 +143,7 @@ def tool_call_from_row(row: RowValues | Mapping[str, object]) -> ToolCall:
         "provider_call_id": values.text("provider_call_id"),
         "tool_name": values.text("tool_name"),
         "status": _enum(ToolCallStatus, values.text("status"), record="tool_call", field="status"),
+        "payload_kind": values.text("payload_kind"),
         "arguments_json": values.json_text("arguments_json"),
         "result_json": values.optional_json_text("result_json"),
         "model_result_json": values.optional_json_text("model_result_json"),

@@ -324,6 +324,7 @@ def _item_from_row(
             "providerCallId": tool_row["provider_call_id"],
             "toolName": tool_row["tool_name"],
             "status": tool_row["status"],
+            "payloadKind": tool_row["payload_kind"],
             "argumentsJson": tool_row["arguments_json"],
             "startedAt": tool_row["started_at"],
         }

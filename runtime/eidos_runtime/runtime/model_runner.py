@@ -11,7 +11,7 @@ from eidos_runtime.model.client import (
     ModelContextItem,
     ModelResponse,
     ModelToolCall,
-    ModelToolDefinition,
+    ModelToolDefinitionLike,
     ModelUsage,
 )
 from eidos_runtime.sandbox.sensitive import (
@@ -79,7 +79,7 @@ class ModelRunner:
         *,
         instructions: str,
         allow_tools: bool = True,
-        tool_definitions: tuple[ModelToolDefinition, ...] = (),
+        tool_definitions: tuple[ModelToolDefinitionLike, ...] = (),
     ) -> ModelStepResult:
         started = self._monotonic()
         first_safe: float | None = None

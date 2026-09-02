@@ -253,6 +253,43 @@ class RuntimeArchitectureTests(unittest.TestCase):
                 self.assertEqual(
                     resources.skill_access.active_roots(), (skill.resolve(),)
                 )
+                skill_root = skill.resolve()
+                read_entry = resources.registry.get("read_file")
+                list_entry = resources.registry.get("list_files")
+                search_entry = resources.registry.get("search_text")
+                assert read_entry is not None
+                assert list_entry is not None
+                assert search_entry is not None
+                read_result = read_entry.adapter.execute(
+                    {"path": str(skill_root / "SKILL.md")}, threading.Event()
+                )
+                list_result = list_entry.adapter.execute(
+                    {
+                        "path": str(skill_root),
+                        "maxDepth": 5,
+                        "maxEntries": 2_000,
+                    },
+                    threading.Event(),
+                )
+                search_result = search_entry.adapter.execute(
+                    {
+                        "query": "Body.",
+                        "path": str(skill_root),
+                        "regex": False,
+                        "includeGlobs": (),
+                        "maxResults": 100,
+                    },
+                    threading.Event(),
+                )
+                self.assertEqual(read_result["outcome"], "success")
+                self.assertEqual(
+                    read_result["data"]["path"], str(skill_root / "SKILL.md")
+                )
+                self.assertIn(str(skill_root / "SKILL.md"), list_result["data"]["paths"])
+                self.assertEqual(
+                    [match["path"] for match in search_result["data"]["matches"]],
+                    [str(skill_root / "SKILL.md")],
+                )
                 self.assertEqual(
                     resources.image_authority().active_skill_roots,
                     (skill.resolve(),),

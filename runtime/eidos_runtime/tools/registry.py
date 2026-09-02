@@ -14,10 +14,18 @@ from pydantic import (
     StrictStr,
     ValidationError,
     field_validator,
+    model_validator,
 )
 
 from eidos_runtime.protocol.schemas import ClosedModel, StepToolSnapshotDto
-from eidos_runtime.model.client import ModelToolDefinition
+from eidos_runtime.model.client import (
+    CustomToolDefinition,
+    CustomToolFormat,
+    FunctionToolDefinition,
+    MAX_CUSTOM_TOOL_INPUT_BYTES,
+    MAX_FUNCTION_ARGUMENT_BYTES,
+    ModelToolDefinitionLike,
+)
 from eidos_runtime.tools.contracts import (
     GENERIC_PROJECTOR,
     PROJECTORS,
@@ -34,7 +42,8 @@ _ALLOWED_SCHEMA_KEYS = {
 }
 MAX_ACTIVATED_TOOLS = 16
 MAX_ACTIVATED_SCHEMA_BYTES = 128 * 1024
-MAX_SINGLE_SCHEMA_BYTES = 32 * 1024
+MAX_SINGLE_DEFINITION_BYTES = 32 * 1024
+MAX_SINGLE_SCHEMA_BYTES = MAX_SINGLE_DEFINITION_BYTES
 
 
 class ToolSpec(ClosedModel):
@@ -49,12 +58,29 @@ class ToolSpec(ClosedModel):
         default="single", alias="batchPolicy"
     )
     visibility: Literal["direct", "deferred"] = "direct"
-    input_schema: dict[str, object] = Field(alias="inputSchema")
+    input_kind: Literal["function", "custom"] = Field(
+        default="function", alias="inputKind"
+    )
+    input_schema: dict[str, object] | None = Field(
+        default=None, alias="inputSchema"
+    )
+    input_format: CustomToolFormat | None = Field(
+        default=None, alias="inputFormat"
+    )
     result_schema: dict[str, object] = Field(alias="resultSchema")
     model_projection_policy: StrictStr = Field(
         default="generic", alias="modelProjectionPolicy"
     )
     contract_version: Literal[1] = Field(default=1, alias="contractVersion")
+
+    @model_validator(mode="after")
+    def validate_input_contract(self) -> ToolSpec:
+        if self.input_kind == "function":
+            if self.input_schema is None or self.input_format is not None:
+                raise ValueError("invalid_function_input_contract")
+        elif self.input_schema is not None:
+            raise ValueError("invalid_custom_input_contract")
+        return self
 
     @field_validator("name")
     @classmethod
@@ -110,7 +136,7 @@ class ToolExecutionPolicy(ClosedModel):
 
 @dataclass(frozen=True)
 class PreparedToolInvocation:
-    arguments: dict[str, object]
+    arguments: object
 
 
 @dataclass(frozen=True)
@@ -124,7 +150,7 @@ class ToolRuntime(Protocol):
     def prepare(
         self,
         context: object,
-        arguments: dict[str, object],
+        arguments: object,
         cancel: threading.Event,
     ) -> PreparedToolInvocation: ...
 
@@ -166,7 +192,7 @@ class AdapterToolRuntime:
     def prepare(
         self,
         _context: object,
-        arguments: dict[str, object],
+        arguments: object,
         _cancel: threading.Event,
     ) -> PreparedToolInvocation:
         return PreparedToolInvocation(arguments)
@@ -253,6 +279,7 @@ class EidosStateToolRuntime(AdapterToolRuntime):
 class ToolArgumentValidationResult(ClosedModel):
     valid: bool
     normalized_arguments: dict[str, object] | None = None
+    normalized_input: str | None = None
     code: StrictStr | None = None
     path: StrictStr | None = None
     reason_code: StrictStr | None = None
@@ -272,7 +299,11 @@ class ToolRegistryEntry:
     execution_policy: ToolExecutionPolicy | None = None
 
     def __post_init__(self) -> None:
-        if self.input_model is None and self.input_schema_validator is None:
+        if (
+            self.spec.input_kind == "function"
+            and self.input_model is None
+            and self.input_schema_validator is None
+        ):
             from eidos_runtime.tools.json_schema import BoundedJsonSchema
 
             try:
@@ -331,19 +362,31 @@ class ToolRegistryEntry:
         return result_model(self.result_data_model).model_json_schema(by_alias=True)
 
     def validate_arguments(
-        self, value: object
+        self, value: object, *, enforce_size: bool = True
     ) -> ToolArgumentValidationResult:
+        if self.spec.input_kind != "function":
+            return ToolArgumentValidationResult(
+                valid=False,
+                code="TOOL_ARGUMENT_CONTRACT_VIOLATION",
+                reason_code="custom_input_requires_raw_payload",
+            )
         try:
-            if self.input_model is not None:
-                encoded = json.dumps(
-                    value,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                    allow_nan=False,
+            encoded_value = json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+                allow_nan=False,
+            ).encode("utf-8")
+            if enforce_size and len(encoded_value) > MAX_FUNCTION_ARGUMENT_BYTES:
+                return ToolArgumentValidationResult(
+                    valid=False,
+                    code="TOOL_ARGUMENT_CONTRACT_VIOLATION",
+                    reason_code="function_arguments_too_large",
                 )
+            if self.input_model is not None:
                 normalized = self.input_model.model_validate_json(
-                    encoded
+                    encoded_value.decode("utf-8")
                 ).model_dump(mode="json", by_alias=True)
             elif self.input_schema_validator is not None:
                 validated = self.input_schema_validator.validate(
@@ -376,6 +419,51 @@ class ToolRegistryEntry:
             valid=True, normalized_arguments=normalized
         )
 
+    def validate_custom_input(
+        self, value: object
+    ) -> ToolArgumentValidationResult:
+        if self.spec.input_kind != "custom":
+            return ToolArgumentValidationResult(
+                valid=False,
+                code="TOOL_ARGUMENT_CONTRACT_VIOLATION",
+                reason_code="function_input_requires_arguments",
+            )
+        if not isinstance(value, str):
+            return ToolArgumentValidationResult(
+                valid=False,
+                code="TOOL_ARGUMENT_CONTRACT_VIOLATION",
+                reason_code="custom_input_not_string",
+            )
+        try:
+            input_bytes = len(value.encode("utf-8"))
+        except UnicodeEncodeError:
+            return ToolArgumentValidationResult(
+                valid=False,
+                code="TOOL_ARGUMENT_CONTRACT_VIOLATION",
+                reason_code="custom_input_invalid_utf8",
+            )
+        if input_bytes > MAX_CUSTOM_TOOL_INPUT_BYTES:
+            return ToolArgumentValidationResult(
+                valid=False,
+                code="TOOL_ARGUMENT_CONTRACT_VIOLATION",
+                reason_code="custom_input_too_large",
+            )
+        return ToolArgumentValidationResult(valid=True, normalized_input=value)
+
+    def model_definition(self) -> ModelToolDefinitionLike:
+        if self.spec.input_kind == "custom":
+            return CustomToolDefinition(
+                name=self.spec.name,
+                description=self.spec.description,
+                format=self.spec.input_format,
+            )
+        assert self.spec.input_schema is not None
+        return FunctionToolDefinition(
+            name=self.spec.name,
+            description=self.spec.description,
+            parameters_json_schema=self.spec.input_schema,
+        )
+
     @property
     def contract_fingerprint(self) -> str:
         assert self.projector is not None
@@ -387,7 +475,12 @@ class ToolRegistryEntry:
                 "name": self.spec.name,
                 "description": self.spec.description,
                 "visibility": self.spec.visibility,
+                "inputKind": self.spec.input_kind,
                 "inputSchema": self.spec.input_schema,
+                "inputFormat": (
+                    self.spec.input_format.model_dump(mode="json")
+                    if self.spec.input_format is not None else None
+                ),
             },
             "resultSchema": self.spec.result_schema,
             "dynamicOutputSchema": output_schema,
@@ -527,13 +620,9 @@ class ToolRegistry:
 
     def model_definitions(
         self, activated_names: tuple[str, ...] = ()
-    ) -> tuple[ModelToolDefinition, ...]:
+    ) -> tuple[ModelToolDefinitionLike, ...]:
         active = set(self._bounded_activated(activated_names))
-        return tuple(ModelToolDefinition(
-            name=entry.spec.name,
-            description=entry.spec.description,
-            parameters_json_schema=entry.spec.input_schema,
-        ) for entry in self._entries if (
+        return tuple(entry.model_definition() for entry in self._entries if (
             entry.spec.visibility == "direct" or entry.spec.name in active
         ))
 
@@ -595,13 +684,8 @@ class ToolRegistry:
             set(activated_names) & deferred, key=lambda value: value.encode("utf-8")
         ):
             entry = self._by_name[name]
-            size = len(json.dumps(
-                entry.spec.input_schema,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ).encode("utf-8"))
-            if size > MAX_SINGLE_SCHEMA_BYTES or total + size > MAX_ACTIVATED_SCHEMA_BYTES:
+            size = _definition_size(entry.model_definition())
+            if size > MAX_SINGLE_DEFINITION_BYTES or total + size > MAX_ACTIVATED_SCHEMA_BYTES:
                 continue
             accepted.append(name)
             total += size
@@ -618,24 +702,36 @@ def _validate_entry(entry: ToolRegistryEntry) -> None:
         raise ValueError("missing_tool_runtime")
     if entry.projector is None or entry.execution_policy is None:
         raise ValueError("missing_tool_contract")
-    if entry.input_model is not None and (
-        entry.spec.input_schema
-        != entry.input_model.model_json_schema(by_alias=True)
+    if entry.spec.input_kind == "function":
+        assert entry.spec.input_schema is not None
+        if entry.input_model is not None and (
+            entry.spec.input_schema
+            != entry.input_model.model_json_schema(by_alias=True)
+        ):
+            raise ValueError("input_schema_model_mismatch")
+        if (
+            entry.input_model is None
+            and entry.input_schema_validator is None
+            and not _valid_schema(entry.spec.input_schema)
+        ):
+            raise ValueError("invalid_tool_schema")
+    elif (
+        entry.input_model is not None
+        or entry.input_schema_validator is not None
+        or entry.spec.input_schema is not None
     ):
-        raise ValueError("input_schema_model_mismatch")
+        raise ValueError("invalid_custom_input_contract")
     if entry.result_data_model is not None and (
         entry.spec.result_schema != entry.result_model_json_schema()
     ):
         raise ValueError("result_schema_model_mismatch")
     if (
-        entry.input_model is None
-        and entry.input_schema_validator is None
-        and not _valid_schema(entry.spec.input_schema)
-    ) or (
         entry.result_data_model is None
         and not _valid_schema(entry.spec.result_schema)
     ):
         raise ValueError("invalid_tool_schema")
+    if _definition_size(entry.model_definition()) > MAX_SINGLE_DEFINITION_BYTES:
+        raise ValueError("tool_definition_too_large")
     if entry.provenance.kind == "mcp":
         if (
             not entry.provenance.plugin_id
@@ -676,6 +772,15 @@ def _hash_json(value: object) -> str:
         value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _definition_size(definition: ModelToolDefinitionLike) -> int:
+    return len(json.dumps(
+        definition.model_dump(mode="json", exclude_none=True),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8"))
 
 
 def _validation_path(value: object) -> str | None:

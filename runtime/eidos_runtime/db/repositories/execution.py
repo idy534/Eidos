@@ -1115,6 +1115,7 @@ class ExecutionRepository(Repository):
         tool_name: str,
         arguments_json: str,
         *,
+        payload_kind: Literal["function", "custom"] = "function",
         provenance: dict[str, object] | None = None,
         tool_set_hash: str | None = None,
     ) -> dict[str, object]:
@@ -1125,6 +1126,7 @@ class ExecutionRepository(Repository):
             provider_call_id,
             tool_name,
             arguments_json,
+            payload_kind=payload_kind,
             provenance=provenance,
             tool_set_hash=tool_set_hash,
         ).value
@@ -1138,6 +1140,7 @@ class ExecutionRepository(Repository):
         tool_name: str,
         arguments_json: str,
         *,
+        payload_kind: Literal["function", "custom"] = "function",
         provenance: dict[str, object] | None = None,
         tool_set_hash: str | None = None,
     ) -> CommittedMutation[dict[str, object]]:
@@ -1186,9 +1189,9 @@ class ExecutionRepository(Repository):
                 """
                 INSERT INTO tool_calls (
                     id, item_id, model_step_index, batch_order, provider_call_id,
-                    tool_name, status, arguments_json, provenance_json,
+                    tool_name, payload_kind, status, arguments_json, provenance_json,
                     tool_set_hash, started_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)
                 """,
                 (
                     tool_call_id,
@@ -1197,6 +1200,7 @@ class ExecutionRepository(Repository):
                     batch_order,
                     provider_call_id,
                     tool_name,
+                    payload_kind,
                     arguments_json,
                     provenance_json,
                     tool_set_hash,

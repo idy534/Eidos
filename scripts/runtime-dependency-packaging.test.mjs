@@ -144,7 +144,9 @@ test("bundled smoke keeps isolated Python packages ahead of the App runtime", as
 
 
 test("Python builder installs the audited lock into an atomic isolated target", async () => {
-  const fixture = await mkdtemp(path.join(root, "build", "macos-runtime", "python-builder-"));
+  const buildRoot = path.join(root, "build", "macos-runtime");
+  await mkdir(buildRoot, { recursive: true });
+  const fixture = await mkdtemp(path.join(buildRoot, "python-builder-"));
   const target = path.join(fixture, "dependencies", "python");
   const fakeBin = path.join(fixture, "bin");
   const fakeUv = path.join(fakeBin, "uv");

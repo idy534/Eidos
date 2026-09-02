@@ -1924,6 +1924,7 @@ function isToolCall(value: unknown): value is ToolCall {
       "providerCallId",
       "toolName",
       "status",
+      "payloadKind",
       "argumentsJson",
       "resultJson",
       "startedAt",
@@ -1947,6 +1948,7 @@ function isToolCall(value: unknown): value is ToolCall {
     && typeof value.providerCallId === "string"
     && typeof value.toolName === "string"
     && ["running", "completed", "failed", "canceled"].includes(String(value.status))
+    && (value.payloadKind === undefined || ["function", "custom"].includes(String(value.payloadKind)))
     && (value.argumentsJson === undefined || typeof value.argumentsJson === "string")
     && (value.resultJson === undefined || typeof value.resultJson === "string")
     && isNonNegativeInteger(value.startedAt)

@@ -292,6 +292,9 @@ class ToolCallDto(ClosedModel):
     batch_order: StrictInt = Field(alias="batchOrder")
     provider_call_id: StrictStr = Field(alias="providerCallId")
     status: Literal["running", "completed", "failed", "canceled"]
+    payload_kind: Literal["function", "custom"] | None = Field(
+        default=None, alias="payloadKind"
+    )
     arguments_json: StrictStr | None = Field(default=None, alias="argumentsJson")
     result_json: StrictStr | None = Field(default=None, alias="resultJson")
     approval_status: Literal["pending", "resolved", "canceled"] | None = Field(default=None, alias="approvalStatus")

@@ -50,8 +50,8 @@
 - 火山引擎 Coding Plan 使用 `https://ark.cn-beijing.volces.com/api/coding/v3`，支持 `deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5-2-260617`、`glm-5.3`、`minimax-m3`、`doubao-seed-evolving`、`doubao-seed-2-1-pro-260628`、`doubao-seed-2-1-turbo-260628` 和 `doubao-seed-2-0-code-preview-260215`。
 - Model 配置保存在 `models.json`。默认位置是 `~/.eidos/models.json`。本地文件使用 owner-only 权限。
 - API Key 通过本地 Model 配置写请求链路传到 Runtime：Renderer typed IPC → Electron Main → `model/create` / `model/update` JSON-RPC request → ModelConfigStore。Key 不进入模型列表/读取响应、SQLite、Event/Feed 或正常日志。
-- Runtime 使用 OpenAI-compatible Chat Completions 和 SSE 流。Model Adapter 根据 ToolCall 将响应归类为 `commentary`，并保留 Assistant 文本、可选 MessagePhase 和 Provider `finish_reason`。MessagePhase 只用于展示和 Provider metadata。Agent Loop 使用 normalized response 的 `needs_follow_up` 决定继续采样还是完成当前 Turn。
-- Runtime 使用 Pydantic AI Model API 处理 Provider 构造、流式 Model Response、Usage 和 ToolCall 归一化。Runtime 的模型取消会打断流式上下文建立和首个 SSE chunk 等待，并把结果映射为 `sampling_canceled`。
+- Runtime 同时支持 OpenAI-compatible Chat Completions 和 OpenAI Responses。Chat Completions 是兼容路径，不是废弃路径。Responses profile 只有在同时声明 `supports_custom_tools=true` 和 `supports_tool_grammar=true` 时才使用 native Custom `apply_patch`；其他 Responses profile 和所有 Chat Completions profile 使用 Function Tool。
+- Runtime 使用 Pydantic AI Model API 处理 Chat Completions 的 Provider 构造、流式 Model Response、Usage 和 ToolCall 归一化。Responses adapter 只有在收到 `response.completed` 后才返回可执行 response。`response.failed`、`response.incomplete`、`error` 和意外 EOF 都会失败。Runtime 的模型取消会关闭 Responses stream，取消等待中的 `anext` task，并把结果映射为 `sampling_canceled`。
 - 每个 Run 固化 Model Profile、Model capability declaration 和 Extension Snapshot。活动 Run 不会被后续 Model 配置编辑或删除改变。
 - Runtime 记录 Model Attempt、usage、response metadata、transport retry 诊断和稳定错误码。
 - Runtime 可以声明和保存 reasoning capability，但不会把 Provider reasoning 或 chain-of-thought 当作普通 Feed 内容展示。
@@ -61,7 +61,7 @@
 - `RuntimeEngine` 驱动 Context → Model Attempt → normalized response → ToolCall / Tool Result / next Sampling 或 assistant-only completion 的循环。
 - Runtime 接受同一模型响应中的文本和有效 ToolCall。已校验的文本可以先作为普通 `assistant_message` 写入 Feed，Tool 执行完成后 Run 继续。
 - Provider context pressure、`context_exceeded`、projection overflow 和 compaction progress 会参与下一次决策。
-- Protocol validation failure 会被转换为受控的 protocol repair context。工具参数错误会把工具名、字段和稳定校验码传给下一次模型请求，并说明调用在执行前已被拒绝。这个 context 不包含原始参数。空响应有独立的重复响应处理。
+- Protocol validation failure 会被转换为受控的 protocol repair context。对于已声明且载荷类型正确的 Tool，参数契约错误会在执行前持久化为 `invalid_arguments` Tool Error，并进入下一次模型 Context。这个结果只包含安全的错误码和摘要，不包含原始参数。空响应有独立的重复响应处理。
 - 确定的 Tool Error 会作为 ToolResult 进入 Context，并触发下一次模型决策。模型可以修正参数或选择替代 Tool。一次失败不会单独终止 Run。
 - 已明确 `termination = exit` 且有 `exitCode` 的 Shell 会把退出事实、stdout 和 stderr 返回给模型。非 0 退出会让 Item 为 `failed`，但会让 ToolCall 为 `completed`。Workspace manifest 或 index observation 不完整只会标记 observation metadata，不会建立只读 reconciliation barrier，也不会阻止后续 Shell 或其他 ToolCall。Runtime 不自动重放原 Shell。
 - Cancellation、Approval、Reconciliation 和 operational segment rollover 都在安全点处理。
@@ -89,7 +89,8 @@
 
 ## Repository Discovery
 
-- `list_files` 和 `search_text` 可以在 Workspace 内执行有界文件发现和文本搜索。
+- `list_files` 和 `search_text` 可以使用 Workspace-relative path，或使用 Workspace 与当前 active Skill root 内的 canonical absolute path，执行有界文件发现和文本搜索。`read_file` 和 `read_file_range` 也支持这两种只读路径形式。Workspace authority 的结果路径保持 Workspace-relative；active Skill authority 的结果路径返回 canonical absolute path，目录结果保留末尾 `/`，所以发现结果可以直接作为下一次只读 Tool 输入。active Skill root 不获得写入权限，未授权 absolute path 返回普通 Tool Error。
+- `apply_patch` 的 Function 和 Custom 输入都接受 Workspace-relative path 和 Workspace 内的 canonical absolute path。Runtime 会在统一的 Workspace write resolver 中把模型 absolute path 归一化为内部 relative path。Move 的 source 和 destination 必须都在 Workspace 内；Workspace 外的路径在 Durable Intent 前返回普通 Tool Error。active Skill root 和其他外部路径没有写入权限。
 - Workspace discovery 使用根目录 `.gitignore` 与 `.eidosignore`，并把发现规则和安全权限分开处理。
 - Desktop 提供按 Session execution root 浏览的 Workspace Explorer。Files 可以显示在右侧 Dock，也可以展开到整个工作区。文件树通过 `workspace/listDirectory` 延迟读取一层目录，并使用 `react-arborist` 虚拟化。文件树按常见扩展名显示类型图标，未知类型使用通用文件图标。侧栏布局默认给预览区更多空间，文件树与预览区之间的分隔条仍可以拖动。打开文件的 Tab、当前路径和文件大小显示在同一条紧凑预览栏中。用户单击文件后，UTF-8 text/code 和 Markdown 使用有界 `workspace/readFilePreview`。Markdown 复用现有 Renderer，代码由 Shiki 高亮。二进制、PDF、Office、archive 和 database 文件返回 typed unavailable preview。Session execution binding 变化后，Explorer 会清空旧预览，并丢弃旧请求的迟到结果。Conversation 中的历史文件打开请求会先核对当前 execution root 的目录项；目录项明确缺失的历史路径不会调用预览接口，目录列表截断时仍由 Runtime 做最终验证。
 - Workspace Explorer 与 Agent 文件工具共用 `WorkspaceReader` 的路径边界。外部文件变化复用 `RepositoryWatchController`，只刷新已加载的受影响目录。
@@ -145,10 +146,11 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 ## Tools
 
 - Tool Registry 统一保存 ToolSpec、Schema、Execution Policy、Concurrency Policy、Projection Policy 和 provenance。
-- 内置只读 Tool 包括 `list_files`、`read_file`、`read_file_range` 和 `search_text`。
+- 内置只读 Tool 包括 `list_files`、`read_file`、`read_file_range` 和 `search_text`。这些 Tool 接受 Workspace-relative path，或接受 Workspace 与当前 active Skill root 内的 canonical absolute path。
 - Workspace mutation Tool 只向模型暴露 `apply_patch`。`write_file` 和 `delete_file` 不在模型 Tool Registry 中。
-- `apply_patch` 只向模型暴露结构化 JSON Function 参数 `{ "changes": [...] }`。每个 change 使用 `add`、`update` 或 `delete` 类型。`update` 可以继续使用 `moveTo` 和 `chunks`。模型提交 `{ "patch": "..." }` 或其他 raw Patch 字段会被拒绝。Tool 在当前 Workspace Permission 内直接执行，不逐次请求 Approval。
-- Runtime 的 `CodexPatchEncoder` 会把结构化 changes 确定性编码为 Codex Patch 文本。Runtime 自动生成 `*** Begin Patch`、`*** End Patch`、`+`、`-`、`@@` 和 `*** End of File`。Add 内容统一使用 LF 行尾语义。`apply_patch.lark` 以 `openai/codex` 的 grammar 为来源，Lark 负责语法解析。本地 grammar 将上游的 `add_line+` 改为 `add_line*`，因为 Codex Rust streaming parser 允许没有内容行的 Add File；显式的 `+` 仍表示一条空内容行。Lark 不能直接加载上游的零宽文本正则，所以本地 grammar 也对这些 token 做了兼容适配。Parser 可以接受 CRLF 和外层空白，但不会自动补齐 envelope、marker 或行前缀。
+- `apply_patch` 支持两种模型输入。具备 `supports_custom_tools=true` 和 `supports_tool_grammar=true` 的 ModelProfile 会收到 native Custom / FREEFORM Tool。该路径直接接收 Codex Patch 原文，不使用 JSON wrapper。其他 ModelProfile 继续收到结构化 JSON Function 参数 `{ "changes": [...] }`。每个 change 使用 `add`、`update` 或 `delete` 类型。`update` 可以继续使用 `moveTo` 和 `chunks`。两条路径都在当前 Workspace Permission 内直接执行，不逐次请求 Approval。
+- Function 和 Custom 的 payload 类型来自 Provider protocol 和持久化的 `payload_kind` discriminator。Runtime 不根据 Function arguments 的 JSON 内容推断 Custom。两条路径在同一个 Patch AST、Workspace prepare、CAS、Durable Intent、atomic commit、final validation 和 canonical Tool Result pipeline 汇合。
+- Runtime 的 Custom 路径直接把 raw Patch 交给 `parse_patch`。Function compatibility 路径仍由 `CodexPatchEncoder` 把结构化 changes 确定性编码为 Codex Patch 文本。Runtime 自动生成 `*** Begin Patch`、`*** End Patch`、`+`、`-`、`@@` 和 `*** End of File`。Add 内容统一使用 LF 行尾语义。`apply_patch.lark` 以 `openai/codex` 的 grammar 为来源，Lark 负责语法解析。本地 grammar 将上游的 `add_line+` 改为 `add_line*`，因为 Codex Rust streaming parser 允许没有内容行的 Add File；显式的 `+` 仍表示一条空内容行。Lark 不能直接加载上游的零宽文本正则，所以本地 grammar 也对这些 token 做了兼容适配。Parser 可以接受 CRLF 和外层空白，但不会自动补齐 envelope、marker 或行前缀。
 - 文件工具在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。`apply_patch` 支持 Codex 风格的 Add、Update、Delete、Move、多文件、多 chunk、首个 Update 不带 `@@`、裸 `@@`、`@@ context` 和 `*** End of File`。Update 匹配按 Patch chunk 顺序向前查找。工具仍会复用版本复检、Workspace boundary、Seatbelt、原子替换和最终内容校验。
 - `workspace_dependencies` 返回 Eidos 自带并经过 owner、类型、可执行位和 SHA-256 校验的 Python 与 ripgrep。它也返回 Python import roots 和受支持包版本。当前 Runtime 随包提供 `python-docx`。成功结果的 `data` 可以返回 `defaultDependencyBindingId` 和 `activeSkillDependencyBindings`。模型不需要依赖用户全局 Python 或临时安装包。
 - 已应用的文件 Diff 会进入 ToolCall 持久事实，并在 Execution Feed 中展示。
@@ -174,7 +176,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 默认 Seatbelt 允许全盘 read、普通 executable 和 dylib mapping。Workspace、snapshot `TMPDIR` 和 canonical `/tmp` 可写。真实 `HOME` 的其他位置、`.git` 和 linked metadata 只读。Eidos data 和 credential 仍由 permanent deny 保护。data 内 projectless 或 Worktree workspace 可读写。active Skill root 可读和执行但不可写。Workspace `.env` 可读，但输出仍经过 SensitiveScanner。默认 network denied。
 - `run_shell` 的默认 Workspace Seatbelt attempt 不需要 Approval。模型可以用高层 `networkAccess=request` 表达命令的联网需求。Runtime 会在启动进程前把该 intent 规范化为 additional network permission，并请求 Approval。获批后的命令仍在 macOS Seatbelt 中运行。旧的 `sandboxPermissions` 和 `additionalPermissions` 输入继续兼容。additional write 和 unsandboxed attempt 仍需要 Approval。升级不能移除 hard confidentiality deny。
 - Runtime permission 投影会分别说明默认 Shell 网络状态和网络是否可通过 Approval 请求。创建项目、安装依赖和下载源码等任务不要求用户先明确说“联网”。默认 network denied 不再被投影成网络能力不存在。
-- Shell launch boundary 验证 Workspace identity 和 cwd。post-execution observation 记录 Workspace diff、退出状态和 reconciliation 需要性。
+- Shell launch boundary 验证 Workspace identity 和 cwd。`run_shell.cwd` 接受 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径，并在执行前归一化。Workspace 外的 absolute cwd 返回普通 Tool Error。post-execution observation 记录 Workspace diff、退出状态和 reconciliation 需要性。
 - Tool Result 明确返回 `reconciliationRequired = false` 时，普通非零退出不会仅因为 `code = nonzero_exit` 建立 barrier。此时 Item 状态是 `failed`，ToolCall 状态是 `completed`。结果仍会保留退出码、终止原因和可能副作用证据。真正未知的执行结果仍会 fail closed。
 - 默认 sandboxed attempt 出现明确的 network denial 时，Runtime 会保留首次 attempt 和 denial 证据，但不会把它升级成 unsandboxed retry。Runtime 也不会自动重放可能已经产生 Workspace 副作用的命令。
 - 未清除的 reconciliation barrier 会阻止 Run 提交成功终态。Runtime 不会把 `sideEffectsMayExist` 当作清除条件，也不会自动重放有副作用的 Tool。
@@ -208,7 +210,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Skill binary asset 在安装时按 bytes 保留。系统 Skill 私有目录读取会忽略 Finder 生成的 `.DS_Store` 文件。`skill_read_resource` 只返回有界 UTF-8 文本。支持图像输入的 Model 才能使用 `view_image`，它可以从 Workspace root 或 active Skill root 读取受信任 PNG/JPEG，并以 multimodal binary content 重新投影给模型。DOCX、PPTX、PDF、XLSX 等其他 binary asset 不会被当作文本读取。
 - Skill provenance、Plugin hash、Skill content hash 和 activation snapshot 进入 Run/Step 边界。Runtime dependency catalog 还会固定 `runtime.json` 的 manifest hash、Bundle snapshot hash 和 requirement hash。每个已声明 Skill dependency 的 binding 使用 `dependencyBindingId` 标识。Skill consumer 从匹配 `skillQualifiedId` 且状态为 `ready` 的 active binding 选择这个字段，不能使用顶层默认 binding。
 - RunResources 会收集 active Skill 的 MCP dependency，并与本 Run extension snapshot 中 available 的 Plugin MCP server 比较，生成 installed、missing 或 unsupported 诊断。未满足项会进入低权限 user context warning。Runtime 不会静默安装、启用或启动 MCP server。Plugin MCP 仍使用独立的 server consent、官方 Python MCP SDK stdio client、Tool discovery、Tool call、Approval 和 Sandbox 链路。
-- `SkillCatalog` 为每个 filesystem Skill 固化 canonical `file:` locator、source kind、content hash 和 implicit policy。`SkillAccess` 只从该 snapshot 激活 root。显式选择、成功的 `skill_read` 和已知 Skill script invocation 共用 Run-scoped activation state，并通过 ToolCallRuntime 进入 Shell 和 Seatbelt。模型不能提交任意 absolute path 来扩大权限。Skill consumer 应使用 Catalog 给出的 canonical absolute root 作为脚本路径，使用 Workspace-relative cwd，并从 active binding 集合选择对应 Skill 的 binding。它不能使用顶层默认 binding。
+- `SkillCatalog` 为每个 filesystem Skill 固化 canonical `file:` locator、source kind、content hash 和 implicit policy。`SkillAccess` 只从该 snapshot 激活 root。显式选择、成功的 `skill_read` 和已知 Skill script invocation 共用 Run-scoped activation state，并通过 ToolCallRuntime 进入 Shell 和 Seatbelt。模型只能把 Catalog 给出的 canonical absolute root 用于已激活 Skill 的只读文件 Tool；任意 absolute path 不能扩大读写或 Shell 权限。Skill consumer 应使用 Catalog 给出的 canonical absolute root 作为脚本路径，使用 Workspace-relative 或 Workspace 内 canonical absolute cwd，并从 active binding 集合选择对应 Skill 的 binding。它不能使用顶层默认 binding。
 - MCP 当前支持 stdio Tools。Server consent、`connector`/`workspace_read` permission profile、Tool discovery、Tool call、timeout、结果 schema 和 Tool List Changed bookkeeping 已接入。
 - MCP Connection 由唯一 RuntimeAsyncKernel 持有，不为每个连接创建专用 Event Loop。
 

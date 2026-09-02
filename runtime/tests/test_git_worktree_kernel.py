@@ -799,7 +799,7 @@ def test_recovery_reports_replaced_worktree_repository_as_invalid(
 
 
 def test_schema_is_current_and_has_project_worktree_tables(database: Database) -> None:
-    assert SCHEMA_VERSION == 7
+    assert SCHEMA_VERSION == 8
     tables = {
         row[0]
         for row in database.connection().execute(

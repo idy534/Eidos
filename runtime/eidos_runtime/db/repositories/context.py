@@ -25,6 +25,7 @@ COMPACTION_FACT_VALUE_MAX_CHARS = 8 * 1024
 CONTEXT_PROJECTION_HARD_MAX_BYTES = 8 * 1024 * 1024
 CONTEXT_PROJECTION_HARD_MAX_ITEMS = 2_000
 RECENT_CONTEXT_STEPS = 3
+CONTEXT_PROJECTION_FACT_OVERHEAD_BYTES = 320
 
 
 class ContextRepository(Repository):
@@ -144,12 +145,12 @@ class ContextRepository(Repository):
                   )
                   {excluded_sql}
             """
-            size_expression = """
+            size_expression = f"""
                 length(CAST(COALESCE(items.content, '') AS BLOB))
                 + length(CAST(COALESCE(tool_calls.arguments_json, '') AS BLOB))
                 + length(CAST(COALESCE(
                     tool_calls.model_result_json, tool_calls.result_json, ''
-                ) AS BLOB)) + 256
+                ) AS BLOB)) + {CONTEXT_PROJECTION_FACT_OVERHEAD_BYTES}
             """
             aggregate = connection.execute(
                 f"SELECT COUNT(*), COALESCE(SUM({size_expression}), 0) {base}",
@@ -248,6 +249,7 @@ class ContextRepository(Repository):
                     tool_rows = connection.execute(
                         f"""
                         SELECT item_id, provider_call_id, tool_name,
+                               payload_kind,
                                substr(arguments_json, 1, ?) AS arguments_json,
                                status,
                                substr(result_json, 1, ?) AS result_json,
@@ -312,6 +314,7 @@ class ContextRepository(Repository):
                 content=row["content"],
                 provider_call_id=str(tool["provider_call_id"]) if tool else None,
                 tool_name=str(tool["tool_name"]) if tool else None,
+                payload_kind=str(tool["payload_kind"]) if tool else None,
                 arguments_json=str(tool["arguments_json"]) if tool else None,
                 result_json=(
                     str(tool["result_json"])

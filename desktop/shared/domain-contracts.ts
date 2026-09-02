@@ -323,6 +323,7 @@ export interface ToolCall {
   providerCallId: string;
   toolName: string;
   status: "running" | "completed" | "failed" | "canceled";
+  payloadKind?: "function" | "custom";
   argumentsJson?: string;
   resultJson?: string;
   approvalStatus?: "pending" | "resolved" | "canceled";

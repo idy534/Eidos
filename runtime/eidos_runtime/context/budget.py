@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from eidos_runtime.model.client import (
     ModelContextItem,
-    ModelToolDefinition,
+    ModelToolDefinitionLike,
     ModelUsage,
 )
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
@@ -116,7 +116,7 @@ def estimate_model_request_budget(
     model_context: tuple[ModelContextItem, ...],
     *,
     instructions: str,
-    tool_definitions: tuple[ModelToolDefinition, ...],
+    tool_definitions: tuple[ModelToolDefinitionLike, ...],
     context_window_tokens: int,
     request_max_output_tokens: int,
     provider_usage: ModelUsage | None = None,

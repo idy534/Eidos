@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, NoReturn
 from lark import Lark, Token, Tree
 from lark.exceptions import LarkError, UnexpectedInput
 
+from eidos_runtime.model.client import MAX_CUSTOM_TOOL_INPUT_BYTES
+
 if TYPE_CHECKING:
     from eidos_runtime.tools.contracts import ApplyPatchInput
 
@@ -25,7 +27,7 @@ UPDATE_FILE = "*** Update File:"
 DELETE_FILE = "*** Delete File:"
 MOVE_TO = "*** Move to:"
 END_OF_FILE = "*** End of File"
-MAX_PATCH_BYTES = 512 * 1024
+MAX_PATCH_BYTES = MAX_CUSTOM_TOOL_INPUT_BYTES
 
 _PATCH_PARSER = Lark.open(
     str(Path(__file__).with_name("apply_patch.lark")),
@@ -117,6 +119,14 @@ def parse_patch(text: str) -> list[AddFile | UpdateFile | DeleteFile]:
     and converts the parse tree into the existing domain actions.
     """
 
+    if not isinstance(text, str):
+        raise PatchError("patch_format_error", "Patch must be text")
+    try:
+        input_bytes = len(text.encode("utf-8"))
+    except UnicodeEncodeError:
+        raise PatchError("invalid_utf8", "Patch must be valid UTF-8") from None
+    if input_bytes > MAX_PATCH_BYTES:
+        raise PatchError("patch_too_large", "Patch exceeds the 512 KiB limit")
     normalized = _normalize_patch_text(text)
     _reject_control_characters(normalized)
     try:
@@ -128,6 +138,12 @@ def parse_patch(text: str) -> list[AddFile | UpdateFile | DeleteFile]:
         # stack traces, out of the stable ToolResult surface.
         _format_error("Patch format error", _line_count(normalized))
     return _actions_from_tree(tree)
+
+
+def patch_grammar() -> str:
+    """Return the grammar used by both native custom tools and the parser."""
+
+    return Path(__file__).with_name("apply_patch.lark").read_text(encoding="utf-8")
 
 
 def encode_patch(request: "ApplyPatchInput") -> str:
@@ -719,5 +735,6 @@ __all__ = [
     "UpdateFileChunk",
     "apply_update",
     "encode_patch",
+    "patch_grammar",
     "parse_patch",
 ]

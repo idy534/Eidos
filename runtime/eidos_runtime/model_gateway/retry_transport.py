@@ -14,7 +14,7 @@ from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_
 from tenacity import RetryCallState, retry_if_exception, stop_after_attempt, wait_exponential
 
 from eidos_runtime.model.config import MODEL_CATALOG, ModelConfig
-from eidos_runtime.model_gateway.models import RetryPolicy, WireAPI
+from eidos_runtime.model_gateway.models import RetryPolicy
 from eidos_runtime.model_gateway.retry import (
     RetryState,
     is_retryable_transport_exception,
@@ -61,8 +61,10 @@ class RetryTransportClient:
         *,
         wrapped: httpx.AsyncBaseTransport | None = None,
         timeout: httpx.Timeout | None = None,
+        wire_api: str = "chat_completions",
     ) -> None:
         self._profile = profile
+        self._wire_api = wire_api
         self._policy = RetryPolicy()
         self._sleep_for_testing: Callable[[float], object] | None = None
         fallback = wait_exponential(
@@ -145,7 +147,7 @@ class RetryTransportClient:
             "http_status=%s selected_backoff_seconds=%s retry_after_applied=%s",
             MODEL_CATALOG.provider_id_for(self._profile.id),
             self._profile.id,
-            WireAPI.OPENAI_CHAT_COMPLETIONS.value,
+            self._wire_api,
             state.attempt_number,
             self._policy.max_attempts,
             decision.reason,
@@ -184,8 +186,11 @@ def build_retrying_http_client(
     *,
     wrapped: httpx.AsyncBaseTransport | None = None,
     timeout: httpx.Timeout | None = None,
+    wire_api: str = "chat_completions",
 ) -> RetryTransportClient:
-    return RetryTransportClient(profile, wrapped=wrapped, timeout=timeout)
+    return RetryTransportClient(
+        profile, wrapped=wrapped, timeout=timeout, wire_api=wire_api
+    )
 
 
 def _retryable_statuses() -> frozenset[int]:

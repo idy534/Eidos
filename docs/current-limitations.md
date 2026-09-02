@@ -14,8 +14,8 @@
 ### Model Provider
 
 - ModelConfigStore 只接受内置 DeepSeek、MiniMax、Kimi 和火山引擎 Catalog 中的十四个 Model ID。
-- 当前不支持 arbitrary custom provider、arbitrary base URL、arbitrary model ID、Responses API、连接测试或主动 capability probe。
-- 当前 wire API 固定为 OpenAI-compatible Chat Completions/SSE。
+- 当前不支持 arbitrary custom provider、arbitrary base URL、arbitrary model ID、连接测试或主动 capability probe。当前内置 Model Catalog 没有启用 Responses API 或 native Custom Tool capability。
+- 当前内置模型的 wire API 固定为 OpenAI-compatible Chat Completions/SSE。Runtime 已有按 ModelProfile capability 路由的 Responses native adapter，但没有未经验证地为内置模型打开该路径。
 - Chat Completions 没有原生的 Assistant `phase` 字段。Adapter 只根据 ToolCall 做 `commentary` 分类，并保留 Provider 的 `finish_reason`。`MessagePhase` 可以是 `commentary`、`final_answer`、`unknown` 或 `None`，但它不控制 Agent Loop。Agent Loop 使用 normalized response 的 `needs_follow_up` 决定继续采样还是完成当前 Turn。
 - Context Usage 的 estimated 值是有界 fallback，不是 tokenizer 精确值。它不能单独证明 Provider 已拒绝请求。
 
@@ -28,8 +28,9 @@
 
 ### Workspace 与工具
 
-- 内置文件工具只处理当前 Workspace 内受支持的普通 UTF-8 文件。工具会通过 macOS clonefile 路径保留 mode、扩展属性（包括 `com.apple.provenance`）和 ACL；不支持 clonefile 的文件系统会使用受校验的安全回退。工具不处理 hardlink、symlink、特殊文件、特殊 mode 或文件 flags。
-- `apply_patch` 只接受结构化 `{ "changes": [...] }` 输入。Runtime 使用 `CodexPatchEncoder` 生成 canonical Codex Patch，再由 Lark grammar 解析。模型提交旧的 raw `{ "patch": "..." }` 输入不会兼容。
+- 内置只读文件工具可以处理当前 Workspace 和 active Skill root 内受支持的普通 UTF-8 文件；写入工具仍然只处理 Workspace 内的文件。绝对路径必须属于对应的授权根，active Skill root 只读。工具会通过 macOS clonefile 路径保留 mode、扩展属性（包括 `com.apple.provenance`）和 ACL；不支持 clonefile 的文件系统会使用受校验的安全回退。工具不处理 hardlink、symlink、特殊文件、特殊 mode 或文件 flags。
+- `apply_patch` 的输入取决于当前 Run 的 ModelProfile capability。`supports_custom_tools=true` 且 `supports_tool_grammar=true` 时，模型收到 native Custom / FREEFORM Tool，并直接提交 Codex Patch 原文。其他 Provider 继续接受结构化 `{ "changes": [...] }` Function 参数。Function compatibility 路径仍使用 `CodexPatchEncoder`，模型提交旧的 raw `{ "patch": "..." }` 输入不会兼容。
+- Custom Tool 的 input delta 已在 Responses adapter 内部完成原文重组，但当前没有 patch preview event 或 Desktop live diff。完整 ToolCall 结束后，Runtime 才会解析、校验和提交 Workspace 变更。
 - Add 内容会统一规范化为 LF，并按 Codex 行语义补尾部 LF。Add File 可以没有内容行；显式的 `+` 表示一条空内容行。因此空字符串、单个换行和两个换行会保持不同的解析结果。Parser 接受 CRLF 和外层空白，但不会猜测缺失的 envelope、marker 或行前缀。
 - 本地 grammar 将上游 `add_line+` 改为 `add_line*`，以对齐 Codex Rust streaming parser 的空 Add 行为。Lark 对上游零宽文本正则的写法也使用了兼容 token。其他 Workspace 边界和文件安全限制不变。
 - `apply_patch` 支持 Add、Update、Delete、Move 和多文件 Patch，但不提供通用二进制编辑、浏览器自动化或 Artifact 发布工具。
@@ -51,7 +52,7 @@
 - Agent `run_shell` 不提供 PTY、stdin、interactive session 或 persistent/background process manager。
 - Runtime 会检测并清理 background child，但 Agent Shell 不能管理持久后台进程。
 - ShellEnvironmentSnapshot 不恢复 aliases、functions 或其他 shell state。
-- Shell cwd 仍然必须是 Workspace-relative 的有效路径。
+- Shell cwd 必须解析到 Workspace 内。调用方可以使用 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径。Workspace 外的 absolute cwd 会返回 Tool Error。
 - Agent Shell 的 raw stdout/stderr 仍有 256 KiB 上限。它不提供无限输出流。
 - Agent Shell 会对 stdout 和 stderr 做 UTF-8 增量解码。Desktop Execution Feed 在运行中和终态保留两条流的接收顺序，并把 ANSI/OSC 控制序列按纯文本处理。旧 Item 缺少或为空的 `content` 时，Feed 使用结果中的 stdout/stderr 回退，并在结果存在时展示 `attemptCount`、`sandboxed` 和 `escalated` 事实。
 - 模型收到的 `run_shell` 输出每条 stdout/stderr 流最多 16 KiB，整个结果 JSON 最多 48 KiB。模型投影保留每条流的首尾，并用独立的 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 说明模型省略的 stdout/stderr UTF-8 字节。原始 `truncated` 和 `omittedBytes` 仍表示 Shell 原始输出限制，已丢失的原始字节不能恢复。

@@ -142,7 +142,7 @@ class RuntimeProtocolTests(unittest.TestCase):
                 messages["client-delete"]["result"],
                 {"deletedSessionId": session["id"]},
             )
-            server.store.close()
+            server.close()
 
     def test_waiting_approval_releases_execution_slot_and_requeues_fifo(self) -> None:
         with (
@@ -295,7 +295,7 @@ class RuntimeProtocolTests(unittest.TestCase):
             replacement, _ = server.store.create_run(session["id"], "try again")
             self.assertEqual(replacement["status"], "running")
             server.store.cancel_run(replacement["id"])
-            server.store.close()
+            server.close()
 
     def test_shared_v1_vectors_match_runtime_envelopes(self) -> None:
         vectors = json.loads(PROTOCOL_V1_FIXTURE.read_text(encoding="utf-8"))
@@ -312,7 +312,7 @@ class RuntimeProtocolTests(unittest.TestCase):
                 ),
             ):
                 server.handle(vectors["initialize"]["request"])
-            server.store.close()
+            server.close()
 
         self.assertEqual(vectors["protocolVersion"], 1)
         self.assertEqual(
@@ -350,7 +350,7 @@ class RuntimeProtocolTests(unittest.TestCase):
                 self.assertLogs("eidos.runtime", level="INFO") as logs,
             ):
                 server.handle(request)
-            server.store.close()
+            server.close()
 
         self_test.assert_called_once_with()
         response = json.loads(output.getvalue())

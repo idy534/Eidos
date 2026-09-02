@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from eidos_runtime.model.client import (
     ModelContextItem,
     ModelProfileSnapshot,
-    ModelToolDefinition,
+    ModelToolDefinitionLike,
 )
 from eidos_runtime.model.prompts import ResolvedInstructions
 from eidos_runtime.sandbox.permissions import (
@@ -347,7 +347,7 @@ def create_step_resolution_snapshot(
     rule_snapshot: RuleResolutionSnapshot,
     tool_snapshot: dict[str, object],
     model_context: tuple[ModelContextItem, ...],
-    tool_definitions: tuple[ModelToolDefinition, ...],
+    tool_definitions: tuple[ModelToolDefinitionLike, ...],
     instructions: ResolvedInstructions,
     workspace_version: int,
     effective_cwd: str,

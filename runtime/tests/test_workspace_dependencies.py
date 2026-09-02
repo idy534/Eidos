@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import subprocess
 import threading
 
 import pytest
@@ -252,19 +251,8 @@ def test_workspace_dependencies_controller_commits_the_specific_result_model(
     assert committed["data"]["activeSkillDependencyBindings"] == []
 
 
-def test_runtime_workspace_python_can_import_document_dependency() -> None:
+def test_source_runtime_does_not_leak_isolated_document_dependency() -> None:
     snapshot = WorkspaceDependencyCatalog.from_runtime().snapshot()
-    python = next(value for value in snapshot.executables if value.name == "python3")
-    environment = dict(os.environ)
-    environment["PYTHONPATH"] = os.pathsep.join(snapshot.python_path)
-
-    completed = subprocess.run(
-        [python.path, "-c", "import docx; print(docx.__version__)"],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=10,
-        env=environment,
+    assert all(
+        package.name != "python-docx" for package in snapshot.python_packages
     )
-
-    assert completed.returncode == 0, completed.stderr

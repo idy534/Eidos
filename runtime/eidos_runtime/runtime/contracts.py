@@ -9,7 +9,7 @@ from eidos_runtime.model.client import (
     AssistantMessagePhase,
     ModelContextItem,
     ModelToolCall,
-    ModelToolDefinition,
+    ModelToolDefinitionLike,
     ModelUsage,
     ModelProfileSnapshot,
 )
@@ -55,7 +55,7 @@ class StepContext(_FrozenModel):
     model_context: tuple[ModelContextItem, ...]
     instructions: ResolvedInstructions
     tool_snapshot: StepToolSnapshot
-    tool_definitions: tuple[ModelToolDefinition, ...]
+    tool_definitions: tuple[ModelToolDefinitionLike, ...]
     workspace_identity: WorkspaceIdentitySnapshot
     reconciliation_epoch: int
     workspace_version: int = 0

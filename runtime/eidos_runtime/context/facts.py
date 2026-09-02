@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -15,6 +17,7 @@ class ContextItemFact(_Fact):
     content: str | None = None
     provider_call_id: str | None = None
     tool_name: str | None = None
+    payload_kind: Literal["function", "custom"] | None = None
     arguments_json: str | None = None
     result_json: str | None = None
     model_result_json: str | None = None

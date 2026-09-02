@@ -13,7 +13,7 @@ from eidos_runtime.context.budget import (
 from eidos_runtime.context.facts import ContextFacts
 from eidos_runtime.context.repository import RunRepositoryContext
 from eidos_runtime.db.storage import SessionStore
-from eidos_runtime.model.client import ModelContextItem, ModelToolDefinition
+from eidos_runtime.model.client import ModelContextItem, ModelToolDefinitionLike
 from eidos_runtime.model.instructions import InstructionResolver, StepPermissionPolicy
 from eidos_runtime.model.prompts import ResolvedInstructions
 from eidos_runtime.extensions.skills import RetainedContextSection
@@ -51,7 +51,7 @@ class ContextBuilder:
         self,
         run_id: str,
         *,
-        tool_definitions: tuple[ModelToolDefinition, ...] = (),
+        tool_definitions: tuple[ModelToolDefinitionLike, ...] = (),
         retained_context: tuple[RetainedContextSection, ...] = (),
         selected_skill_context: tuple[RetainedContextSection, ...] = (),
         extra_context: tuple[ModelContextItem, ...] = (),
@@ -151,6 +151,13 @@ class ContextBuilder:
             elif item.provider_call_id is not None:
                 result_json = item.model_result_json or item.result_json or "{}"
                 projected_result = result_json
+                payload_kind = item.payload_kind or "function"
+                custom_input = (
+                    _custom_payload_input(item.arguments_json)
+                    if payload_kind == "custom" else None
+                )
+                if payload_kind == "custom" and custom_input is None:
+                    raise ValueError("custom_tool_payload_invalid")
                 if item.tool_name in _CONTEXT_DEDUPE_READ_TOOLS:
                     dedupe_key = (
                         item.tool_name,
@@ -165,20 +172,38 @@ class ContextBuilder:
                         projected_result = _context_deduplicated_result(
                             duplicate_of, workspace_state
                         )
-                context.extend((
-                    {
-                        "type": "tool_call",
-                        "callId": item.provider_call_id,
-                        "name": item.tool_name or "",
-                        "arguments": item.arguments_json or "{}",
-                    },
-                    {
-                        "type": "tool_result",
-                        "callId": item.provider_call_id,
-                        "name": item.tool_name or "",
-                        "result": projected_result,
-                    },
-                ))
+                if payload_kind == "function":
+                    context.extend((
+                        {
+                            "type": "tool_call",
+                            "callId": item.provider_call_id,
+                            "name": item.tool_name or "",
+                            "arguments": item.arguments_json or "{}",
+                        },
+                        {
+                            "type": "tool_result",
+                            "callId": item.provider_call_id,
+                            "name": item.tool_name or "",
+                            "result": projected_result,
+                        },
+                    ))
+                else:
+                    context.extend((
+                        {
+                            "type": "tool_call",
+                            "callId": item.provider_call_id,
+                            "name": item.tool_name or "",
+                            "payloadKind": "custom",
+                            "input": custom_input,
+                        },
+                        {
+                            "type": "tool_result",
+                            "callId": item.provider_call_id,
+                            "name": item.tool_name or "",
+                            "payloadKind": "custom",
+                            "result": projected_result,
+                        },
+                    ))
                 if _tool_result_changes_workspace(result_json):
                     workspace_state += 1
         context.extend(extra_context)
@@ -239,6 +264,18 @@ def _canonical_json(value: str) -> str:
     return json.dumps(
         decoded, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     )
+
+
+def _custom_payload_input(arguments_json: str | None) -> str | None:
+    if not arguments_json:
+        return None
+    try:
+        value = json.loads(arguments_json)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(value, dict) and isinstance(value.get("input"), str):
+        return value["input"]
+    return None
 
 
 def _context_deduplicated_result(provider_call_id: str, workspace_state: int) -> str:

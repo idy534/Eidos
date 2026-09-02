@@ -326,12 +326,18 @@ class McpManagerTests(unittest.TestCase):
         starter = threading.Thread(target=start_connection)
         starter.start()
         pid_path = connection.runtime_root / "server.pid"
-        for _ in range(20):
-            if pid_path.exists():
+        process_group: int | None = None
+        for _ in range(50):
+            try:
+                raw_pid = pid_path.read_text(encoding="ascii")
+            except FileNotFoundError:
+                raw_pid = ""
+            if raw_pid.isdecimal():
+                process_group = int(raw_pid)
                 break
             time.sleep(0.02)
-        self.assertTrue(pid_path.exists())
-        process_group = int(pid_path.read_text(encoding="ascii"))
+        self.assertIsNotNone(process_group)
+        assert process_group is not None
         starter.join(timeout=2)
         self.assertFalse(starter.is_alive())
         self.assertEqual(len(failure), 1)

@@ -6,6 +6,7 @@ import json
 from eidos_runtime.context.facts import ContextFacts
 from eidos_runtime.model.client import ModelToolCall
 from eidos_runtime.runtime.contracts import LoopStateFingerprint, ProgressSignature
+from eidos_runtime.runtime.tool_fingerprints import tool_payload_fingerprint_value
 
 
 class LoopGuard:
@@ -175,12 +176,16 @@ def tool_call_fingerprint(
     calls: tuple[ModelToolCall, ...],
 ) -> str:
     return _hash([
-        {
-            "toolName": call.name,
-            "canonicalArguments": call.arguments,
-        }
+        _call_fingerprint_value(call)
         for call in calls
     ])
+
+
+def _call_fingerprint_value(call: ModelToolCall) -> dict[str, object]:
+    return {
+        "toolName": call.name,
+        "payload": tool_payload_fingerprint_value(call.payload),
+    }
 
 
 def loop_state_fingerprint(
