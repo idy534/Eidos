@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
+import asyncio
+from contextlib import nullcontext, suppress
 import inspect
 import json
-from types import SimpleNamespace
 import threading
 from typing import Callable
 
@@ -143,6 +143,8 @@ def map_responses_response(
     custom_inputs: dict[str, str] | None = None,
     retry_tracker: RetryTracker | None = None,
 ) -> ModelResponse:
+    if _field(response, "status") != "completed":
+        raise _protocol_error(_field(response, "provider_name"))
     custom_inputs = custom_inputs or {}
     calls: list[ModelToolCall] = []
     output = _field(response, "output", ())
@@ -343,6 +345,7 @@ class OpenAIResponsesModelClient:
             "instructions": instructions,
             "max_output_tokens": self._profile_spec.max_output_tokens,
             "stream": True,
+            "store": False,
         }
         if allow_tools:
             for definition in tool_definitions:
@@ -398,78 +401,115 @@ class OpenAIResponsesModelClient:
         text_parts: list[str] = []
         final_response: object | None = None
         iterator = stream.__aiter__()  # type: ignore[attr-defined]
-        while True:
+
+        async def wait_for_cancel() -> None:
+            while not cancel.is_set():
+                await asyncio.sleep(0.005)
+
+        async def next_event() -> object:
             if cancel.is_set():
-                await _close_stream(stream)
                 raise ModelRequestError(_cancelled_failure())
+            next_task = asyncio.create_task(iterator.__anext__())
+            cancel_task = asyncio.create_task(wait_for_cancel())
             try:
-                event = await iterator.__anext__()
-            except StopAsyncIteration:
-                break
-            event_type = _field(event, "type")
-            if event_type == "response.output_text.delta":
-                delta = _field(event, "delta")
-                if isinstance(delta, str) and delta:
-                    text_parts.append(delta)
-                    await anyio.to_thread.run_sync(on_text_delta, delta)
-            elif event_type == "response.custom_tool_call_input.delta":
-                item_id = _field(event, "item_id")
-                delta = _field(event, "delta")
-                if isinstance(item_id, str) and isinstance(delta, str):
-                    value = custom_inputs.get(item_id, "") + delta
-                    if not _valid_utf8_size(value, MAX_CUSTOM_TOOL_INPUT_BYTES):
-                        raise ValueError("custom_tool_input_too_large")
-                    custom_inputs[item_id] = value
-            elif event_type == "response.custom_tool_call_input.done":
-                item_id = _field(event, "item_id")
-                raw_input = _field(event, "input")
-                if isinstance(item_id, str) and isinstance(raw_input, str):
-                    if not _valid_utf8_size(raw_input, MAX_CUSTOM_TOOL_INPUT_BYTES):
-                        raise ValueError("custom_tool_input_too_large")
-                    custom_inputs[item_id] = raw_input
-            elif event_type == "response.function_call_arguments.delta":
-                item_id = _field(event, "item_id")
-                delta = _field(event, "delta")
-                if isinstance(item_id, str) and isinstance(delta, str):
-                    function_arguments[item_id] = (
-                        function_arguments.get(item_id, "") + delta
-                    )
-            elif event_type == "response.function_call_arguments.done":
-                item_id = _field(event, "item_id")
-                arguments = _field(event, "arguments")
-                if isinstance(item_id, str) and isinstance(arguments, str):
-                    function_arguments[item_id] = arguments
-            elif event_type == "response.output_item.done":
-                item = _field(event, "item")
-                if item is not None:
-                    items.append(item)
-            elif event_type == "response.completed":
-                final_response = _field(event, "response")
-        if final_response is not None:
-            return final_response, custom_inputs
-        for item in items:
-            item_id = _field(item, "id")
-            if not isinstance(item_id, str):
-                continue
-            if _field(item, "type") == "custom_tool_call":
-                raw_input = custom_inputs.get(item_id)
-                if raw_input is not None:
-                    _set_field(item, "input", raw_input)
-            elif _field(item, "type") == "function_call":
-                arguments = function_arguments.get(item_id)
-                if arguments is not None:
-                    _set_field(item, "arguments", arguments)
-        return (
-            SimpleNamespace(
-                output=tuple(items),
-                output_text="".join(text_parts),
-                id=None,
-                model=self._profile_spec.model_id,
-                status="completed",
-                usage=None,
-            ),
-            custom_inputs,
-        )
+                done, _pending = await asyncio.wait(
+                    (next_task, cancel_task),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if cancel_task in done and cancel.is_set():
+                    close_task = asyncio.create_task(_close_stream(stream))
+                    next_task.cancel()
+                    with suppress(asyncio.CancelledError, StopAsyncIteration):
+                        await next_task
+                    with suppress(Exception, asyncio.CancelledError):
+                        await close_task
+                    raise ModelRequestError(_cancelled_failure())
+                cancel_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await cancel_task
+                return next_task.result()
+            finally:
+                if not cancel_task.done():
+                    cancel_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await cancel_task
+                if not next_task.done():
+                    next_task.cancel()
+                    with suppress(asyncio.CancelledError, StopAsyncIteration):
+                        await next_task
+
+        try:
+            while True:
+                try:
+                    event = await next_event()
+                except StopAsyncIteration:
+                    raise _protocol_error(None) from None
+                event_type = _field(event, "type")
+                if event_type == "response.output_text.delta":
+                    delta = _field(event, "delta")
+                    if isinstance(delta, str) and delta:
+                        text_parts.append(delta)
+                        await anyio.to_thread.run_sync(on_text_delta, delta)
+                elif event_type == "response.custom_tool_call_input.delta":
+                    item_id = _field(event, "item_id")
+                    delta = _field(event, "delta")
+                    if isinstance(item_id, str) and isinstance(delta, str):
+                        value = custom_inputs.get(item_id, "") + delta
+                        if not _valid_utf8_size(value, MAX_CUSTOM_TOOL_INPUT_BYTES):
+                            raise ValueError("custom_tool_input_too_large")
+                        custom_inputs[item_id] = value
+                elif event_type == "response.custom_tool_call_input.done":
+                    item_id = _field(event, "item_id")
+                    raw_input = _field(event, "input")
+                    if isinstance(item_id, str) and isinstance(raw_input, str):
+                        if not _valid_utf8_size(raw_input, MAX_CUSTOM_TOOL_INPUT_BYTES):
+                            raise ValueError("custom_tool_input_too_large")
+                        custom_inputs[item_id] = raw_input
+                elif event_type == "response.function_call_arguments.delta":
+                    item_id = _field(event, "item_id")
+                    delta = _field(event, "delta")
+                    if isinstance(item_id, str) and isinstance(delta, str):
+                        function_arguments[item_id] = (
+                            function_arguments.get(item_id, "") + delta
+                        )
+                elif event_type == "response.function_call_arguments.done":
+                    item_id = _field(event, "item_id")
+                    arguments = _field(event, "arguments")
+                    if isinstance(item_id, str) and isinstance(arguments, str):
+                        function_arguments[item_id] = arguments
+                elif event_type == "response.output_item.done":
+                    item = _field(event, "item")
+                    if item is not None:
+                        items.append(item)
+                elif event_type == "response.completed":
+                    final_response = _field(event, "response")
+                    if final_response is None:
+                        raise _protocol_error(None)
+                    break
+                elif event_type in {
+                    "response.failed", "response.incomplete", "error"
+                }:
+                    raise _protocol_error(_field(event, "provider_name"))
+        finally:
+            await _close_stream(stream)
+
+        if final_response is None:
+            raise _protocol_error(None)
+        output = _field(final_response, "output", ())
+        if isinstance(output, (list, tuple)):
+            for item in output:
+                item_id = _field(item, "id")
+                if not isinstance(item_id, str):
+                    continue
+                if _field(item, "type") == "custom_tool_call":
+                    raw_input = custom_inputs.get(item_id)
+                    if raw_input is not None:
+                        _set_field(item, "input", raw_input)
+                elif _field(item, "type") == "function_call":
+                    arguments = function_arguments.get(item_id)
+                    if arguments is not None:
+                        _set_field(item, "arguments", arguments)
+        return final_response, custom_inputs
 
     def close(self) -> None:
         with self._lock:

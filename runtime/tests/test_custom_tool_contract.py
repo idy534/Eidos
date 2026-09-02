@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 import json
 import threading
@@ -421,6 +422,7 @@ def test_responses_wire_keeps_function_compatibility_without_custom_capability()
     sent_tools = client.responses.kwargs["tools"]
     assert isinstance(sent_tools, list)
     assert sent_tools[0]["type"] == "function"
+    assert client.responses.kwargs["store"] is False
 
 
 def test_pydantic_ai_boundary_does_not_downgrade_custom_definition() -> None:
@@ -648,6 +650,178 @@ def test_responses_stream_reassembles_custom_input_without_json_encoding() -> No
         usage=None,
     ))
     assert empty.tool_calls[0].payload == CustomToolPayload(input="")
+
+
+def test_responses_stream_requires_a_completed_terminal_event() -> None:
+    from eidos_runtime.model.client import ModelRequestError
+    from eidos_runtime.model_gateway.native_custom import (
+        OpenAIResponsesModelClient,
+    )
+
+    class FakeStream:
+        def __init__(self, events: tuple[object, ...]) -> None:
+            self.events = events
+            self.index = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.index >= len(self.events):
+                raise StopAsyncIteration
+            event = self.events[self.index]
+            self.index += 1
+            return event
+
+    client = OpenAIResponsesModelClient.__new__(OpenAIResponsesModelClient)
+    output_item_done = SimpleNamespace(
+        type="response.output_item.done", item=SimpleNamespace()
+    )
+    cases = (
+        (output_item_done, SimpleNamespace(type="response.failed")),
+        (output_item_done, SimpleNamespace(type="response.incomplete")),
+        (
+            SimpleNamespace(type="response.output_text.delta", delta="partial"),
+            SimpleNamespace(type="error"),
+        ),
+        (SimpleNamespace(type="response.output_item.done", item=SimpleNamespace()),),
+    )
+    for events in cases:
+        with pytest.raises(ModelRequestError) as raised:
+            asyncio.run(client._consume_stream(
+                FakeStream(events), threading.Event(), lambda _delta: None
+            ))
+        assert raised.value.failure.code == "protocol_error"
+
+
+def test_responses_stream_cancel_before_request_is_not_sent() -> None:
+    from eidos_runtime.model.client import ModelRequestError
+    from eidos_runtime.model_gateway.native_custom import OpenAIResponsesModelClient
+
+    class FakeResponses:
+        calls = 0
+
+        async def create(self, **_kwargs: object) -> object:
+            self.calls += 1
+            raise AssertionError("canceled request was sent")
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.responses = FakeResponses()
+
+    kernel = RuntimeAsyncKernel()
+    kernel.start()
+    client = FakeClient()
+    profile = ModelProfileSpec(
+        provider_id="openai",
+        model_id="gpt-test",
+        wire_api="openai_responses",
+        context_window_tokens=8_192,
+        max_output_tokens=512,
+        request_timeout_seconds=5.0,
+    )
+    snapshot = ModelProfileSnapshot(
+        provider_id="openai",
+        model_id="gpt-test",
+        wire_api="openai_responses",
+        context_window_tokens=8_192,
+        max_output_tokens=512,
+        request_timeout_seconds=5.0,
+        supports_tools=True,
+        supports_json_schema_output=False,
+        supports_reasoning=False,
+    )
+    model = OpenAIResponsesModelClient(
+        profile,
+        openai_client=client,
+        retry_transport=None,
+        profile_snapshot=snapshot,
+        async_kernel=kernel,
+    )
+    cancel = threading.Event()
+    cancel.set()
+    try:
+        with pytest.raises(ModelRequestError) as raised:
+            model.complete(
+                (), cancel, lambda _delta: None, instructions="instructions"
+            )
+    finally:
+        model.close()
+        kernel.close()
+    assert raised.value.failure.code == "sampling_canceled"
+    assert client.responses.calls == 0
+
+
+def test_responses_stream_cancel_closes_and_cleans_blocking_anext() -> None:
+    from eidos_runtime.model.client import ModelRequestError
+    from eidos_runtime.model_gateway.native_custom import OpenAIResponsesModelClient
+
+    async def run() -> None:
+        class BlockingStream:
+            def __init__(self, first: object | None = None) -> None:
+                self.first = first
+                self.calls = 0
+                self.closed = asyncio.Event()
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                self.calls += 1
+                if self.calls == 1 and self.first is not None:
+                    return self.first
+                await asyncio.Future()
+                raise AssertionError("unreachable")
+
+            async def aclose(self) -> None:
+                self.closed.set()
+
+        client = OpenAIResponsesModelClient.__new__(OpenAIResponsesModelClient)
+        for first in (
+            None,
+            SimpleNamespace(type="response.output_text.delta", delta="partial"),
+        ):
+            stream = BlockingStream(first)
+            cancel = threading.Event()
+            task = asyncio.create_task(client._consume_stream(
+                stream, cancel, lambda _delta: None
+            ))
+            await asyncio.sleep(0.02)
+            cancel.set()
+            with pytest.raises(ModelRequestError) as raised:
+                await asyncio.wait_for(task, timeout=1.0)
+            assert raised.value.failure.code == "sampling_canceled"
+            assert stream.closed.is_set()
+            assert task.done()
+            assert not any(
+                pending is not asyncio.current_task()
+                and not pending.done()
+                for pending in asyncio.all_tasks()
+            )
+
+    asyncio.run(run())
+
+
+def test_responses_direct_noncompleted_status_is_not_executable() -> None:
+    from eidos_runtime.model.client import ModelRequestError
+    from eidos_runtime.model_gateway.native_custom import map_responses_response
+
+    for status in ("failed", "incomplete"):
+        with pytest.raises(ModelRequestError) as raised:
+            map_responses_response(SimpleNamespace(
+                output=(SimpleNamespace(
+                    type="function_call",
+                    call_id="call-1",
+                    name="apply_patch",
+                    arguments="{}",
+                ),),
+                output_text="",
+                id="resp-1",
+                model="gpt-test",
+                status=status,
+                usage=None,
+            ))
+        assert raised.value.failure.code == "protocol_error"
 
 
 def test_custom_tool_call_fingerprint_hashes_raw_utf8_input() -> None:
