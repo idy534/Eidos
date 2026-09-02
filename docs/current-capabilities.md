@@ -61,7 +61,7 @@
 - `RuntimeEngine` 驱动 Context → Model Attempt → normalized response → ToolCall / Tool Result / next Sampling 或 assistant-only completion 的循环。
 - Runtime 接受同一模型响应中的文本和有效 ToolCall。已校验的文本可以先作为普通 `assistant_message` 写入 Feed，Tool 执行完成后 Run 继续。
 - Provider context pressure、`context_exceeded`、projection overflow 和 compaction progress 会参与下一次决策。
-- Protocol validation failure 会被转换为受控的 protocol repair context。工具参数错误会把工具名、字段和稳定校验码传给下一次模型请求，并说明调用在执行前已被拒绝。这个 context 不包含原始参数。空响应有独立的重复响应处理。
+- Protocol validation failure 会被转换为受控的 protocol repair context。对于已声明且载荷类型正确的 Tool，参数契约错误会在执行前持久化为 `invalid_arguments` Tool Error，并进入下一次模型 Context。这个结果只包含安全的错误码和摘要，不包含原始参数。空响应有独立的重复响应处理。
 - 确定的 Tool Error 会作为 ToolResult 进入 Context，并触发下一次模型决策。模型可以修正参数或选择替代 Tool。一次失败不会单独终止 Run。
 - 已明确 `termination = exit` 且有 `exitCode` 的 Shell 会把退出事实、stdout 和 stderr 返回给模型。非 0 退出会让 Item 为 `failed`，但会让 ToolCall 为 `completed`。Workspace manifest 或 index observation 不完整只会标记 observation metadata，不会建立只读 reconciliation barrier，也不会阻止后续 Shell 或其他 ToolCall。Runtime 不自动重放原 Shell。
 - Cancellation、Approval、Reconciliation 和 operational segment rollover 都在安全点处理。

@@ -15,6 +15,7 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.model.client import (  # noqa: E402
     AssistantMessagePhase,
+    CustomToolPayload,
     ModelResponse,
     ModelToolCall,
     ScriptedModel,
@@ -105,8 +106,8 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         )
         self.assertFalse(any("DSML" in str(value) for value in assistant_text))
 
-    def test_protocol_repair_retries_same_step_without_context_pollution(self) -> None:
-        run, _ = self.store.create_run(self.session["id"], "Repair a bad tool response")
+    def test_declared_invalid_arguments_are_tool_errors_and_model_recovers(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Repair invalid tool arguments")
         model = ScriptedModel([
             ModelResponse(
                 text="I will write the file now.",
@@ -114,12 +115,12 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
                     ModelToolCall(
                         "bad-patch",
                         "apply_patch",
-                        {},
+                        {"changes": []},
                     ),
                 ),
             ),
             ModelResponse(
-                text="Recovered without persisting the invalid response.",
+                text="Recovered after receiving the tool error.",
                 phase=AssistantMessagePhase.FINAL_ANSWER,
             ),
         ])
@@ -130,18 +131,39 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
 
         completed = self.store.read_run(run["id"])
         self.assertEqual(completed["status"], "succeeded")
-        self.assertEqual(completed["modelStepCount"], 1)
+        self.assertEqual(completed["modelStepCount"], 2)
         attempts = self.store.read_model_attempts(run["id"])
-        self.assertEqual([attempt["status"] for attempt in attempts], ["failed", "completed"])
-        self.assertEqual(
-            attempts[0]["errorCode"],
-            "TOOL_ARGUMENT_CONTRACT_VIOLATION",
-        )
+        self.assertEqual([attempt["status"] for attempt in attempts], ["completed", "completed"])
+        self.assertTrue(all(attempt["errorCode"] is None for attempt in attempts))
         self.assertEqual(len(model.contexts), 2)
-        self.assertEqual(model.contexts[1][-1]["type"], "protocol_error")
+        self.assertFalse(
+            any(
+                item.get("type") == "protocol_error"
+                for context in model.contexts
+                for item in context
+            )
+        )
+        self.assertTrue(any(item.get("type") == "tool_result" for item in model.contexts[1]))
+        assert self.store.connection is not None
+        result = json.loads(self.store.connection.execute(
+            "SELECT result_json FROM tool_calls WHERE provider_call_id = ?",
+            ("bad-patch",),
+        ).fetchone()[0])
+        self.assertEqual(result["outcome"], "error")
+        self.assertEqual(result["code"], "invalid_arguments")
+        self.assertFalse(result["sideEffectsMayExist"])
+        self.assertFalse(result["reconciliationRequired"])
         self.assertEqual(
-            model.contexts[1][-1]["code"],
-            "TOOL_ARGUMENT_CONTRACT_VIOLATION",
+            self.store.connection.execute(
+                "SELECT COUNT(*) FROM durable_intents WHERE run_id = ?", (run["id"],)
+            ).fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT COUNT(*) FROM approvals WHERE run_id = ?", (run["id"],)
+            ).fetchone()[0],
+            0,
         )
         snapshot = self.store.read_session_snapshot(self.session["id"])
         assistant_text = [
@@ -151,7 +173,52 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         ]
         self.assertEqual(
             assistant_text,
-            ["Recovered without persisting the invalid response."],
+            ["I will write the file now.", "Recovered after receiving the tool error."],
+        )
+
+    def test_valid_and_invalid_read_calls_keep_batch_order(self) -> None:
+        (self.workspace / "hello.txt").write_text("hello\n", encoding="utf-8")
+        run, _ = self.store.create_run(self.session["id"], "Read with one invalid argument")
+        model = ScriptedModel([
+            ModelResponse(
+                tool_calls=(
+                    ModelToolCall("valid-read", "read_file", {"path": "hello.txt"}),
+                    ModelToolCall("invalid-read", "read_file", {"path": 123}),
+                ),
+            ),
+            ModelResponse(
+                text="Recovered from the invalid read argument.",
+                phase=AssistantMessagePhase.FINAL_ANSWER,
+            ),
+        ])
+
+        RuntimeLoop(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        attempts = self.store.read_model_attempts(run["id"])
+        self.assertEqual([attempt["status"] for attempt in attempts], ["completed", "completed"])
+        assert self.store.connection is not None
+        rows = self.store.connection.execute(
+            """
+            SELECT provider_call_id, result_json
+            FROM tool_calls
+            JOIN items ON items.id = tool_calls.item_id
+            WHERE items.run_id = ?
+            ORDER BY tool_calls.batch_order
+            """,
+            (run["id"],),
+        ).fetchall()
+        self.assertEqual([row[0] for row in rows], ["valid-read", "invalid-read"])
+        self.assertEqual(json.loads(rows[0][1])["outcome"], "success")
+        self.assertEqual(json.loads(rows[1][1])["code"], "invalid_arguments")
+        self.assertFalse(
+            any(
+                item.get("type") == "protocol_error"
+                for context in model.contexts
+                for item in context
+            )
         )
 
     def test_absolute_outside_path_is_a_tool_error_and_model_recovers(self) -> None:
@@ -240,7 +307,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
                     ModelToolCall(
                         "bad-patch",
                         "apply_patch",
-                        {"unexpected": "sk-do-not-persist"},
+                        CustomToolPayload(input="sk-do-not-persist"),
                     ),
                 ),
             ),
@@ -274,14 +341,12 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         self.assertEqual(diagnostic["toolCallIndex"], 0)
         self.assertEqual(diagnostic["toolName"], "apply_patch")
         self.assertEqual(diagnostic["providerCallId"], "bad-patch")
-        self.assertEqual(diagnostic["argumentKeys"], ["unexpected"])
-        self.assertEqual(diagnostic["argumentTypes"], {"unexpected": "string"})
+        self.assertEqual(diagnostic["payloadKind"], "custom")
         self.assertTrue(diagnostic["toolDeclared"])
-        self.assertEqual(diagnostic["validationCode"], "missing")
-        self.assertEqual(diagnostic["validationPath"], "changes")
+        self.assertEqual(diagnostic["validationCode"], "tool_input_kind_mismatch")
         self.assertEqual(len(diagnostic["toolSetHash"]), 64)
         self.assertEqual(len(diagnostic["contractFingerprint"]), 64)
-        self.assertEqual(len(diagnostic["argumentsSha256"]), 64)
+        self.assertEqual(len(diagnostic["inputSha256"]), 64)
         encoded = json.dumps(diagnostic, ensure_ascii=False, sort_keys=True)
         self.assertNotIn("sk-do-not-persist", encoded)
         database_bytes = b"".join(

@@ -181,6 +181,8 @@ Validate → Prepare → Permission Decision → Durable Intent
 
 ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。Workspace mutation 会在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。Workspace Permission 会直接授权普通文件变更。Runtime 会先提交 Durable Intent，再复检版本并原子提交。Runtime 会保留并展示已应用的完整 Diff。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。
 
+已声明 Tool 的载荷类型正确但参数契约校验失败时，Runtime 会在 Prepare 前生成并提交 `invalid_arguments` Tool Error。该 ToolCall 仍然进入 SQLite、Event 和下一次 Model Context，但不会触发 Approval、Durable Intent 或 Tool Runtime。载荷类型错误、未声明 Tool、重复或无效 Call ID 等协议错误仍然进入 protocol repair。
+
 `list_files`、`read_file`、`read_file_range` 和 `search_text` 的 Contract 只校验参数类型、大小和明显非法语法。ToolExecutor 的只读 Path Authority 再把相对路径绑定到 Workspace，把 canonical absolute path 绑定到 Workspace 或当前 Run 的 active Skill root。结果投影也遵循这个 authority：Workspace 结果保持 Workspace-relative，active Skill 结果返回 canonical absolute path，目录结果保留末尾 `/`，因此只读 Tool 结果可以直接 round-trip 到下一次只读 Tool。active Skill root 只读。未授权的 absolute path 返回普通 Tool Error，不进入 Tool 参数契约错误或协议修复。写入 Tool 和 `run_shell` 继续使用 Workspace-relative 路径。
 
 `apply_patch` 有 Function 和 Custom 两条模型输入路径。Function compatibility 路径接收结构化 `ApplyPatchInput.changes`。Custom 路径接收 native Custom Tool 的 raw Codex Patch。`add`、`update`、`delete` 是可区分的 change 类型，`update` 还可以包含 `moveTo` 和有序 `chunks`。只有 Function 路径使用 `CodexPatchEncoder`。Custom 路径把原文直接交给 `parse_patch`。Parser 不读取 Workspace，也不执行匹配或写入；它把文本转换为 Eidos 的 Add、Update、Delete AST。现有 Workspace prepare、CAS、边界、原子提交和最终校验继续负责语义和安全事实。
@@ -273,7 +275,7 @@ v1 mapless generation 仍然不能恢复为 active Snapshot。Persistence 会单
 
 `RetrievalSnapshot` 是 immutable content-addressed artifact。SQLite 只保存一份 Retrieval JSON。`run_repository_retrievals` 保存 Run 对 artifact 的使用关系。ContextPlan 继续保存 attempt lineage，但 artifact identity 不承担 Run ownership。两个 Run 可以共享同一个 Retrieval Snapshot ID，并分别解析自己的 evidence lineage。
 
-`ContextBuilder` 是默认在线 Run 的唯一模型输入投影器。它把 Project Rules、Skills、SQLite history、verified compact summary、Repository overview 和 Retrieval evidence 放入一个结构化 `ModelContextItem` 序列。每个 ModelAttempt 在 Sampling 前持久化完整的 `ContextSnapshot`。Snapshot 原样保存 model context、resolved instructions、tool definitions、Model/Rule metadata 和可空 Repository lineage。Sampling 只读取已绑定的 Snapshot。Provider transport retry 复用同一个 Snapshot。协议修复会建立新的 ModelAttempt 和新的 Snapshot。工具参数校验失败时，repair context 只携带有界的工具名、字段、索引和稳定校验码，并明确说明调用在执行前被拒绝。它不会携带原始参数。
+`ContextBuilder` 是默认在线 Run 的唯一模型输入投影器。它把 Project Rules、Skills、SQLite history、verified compact summary、Repository overview 和 Retrieval evidence 放入一个结构化 `ModelContextItem` 序列。每个 ModelAttempt 在 Sampling 前持久化完整的 `ContextSnapshot`。Snapshot 原样保存 model context、resolved instructions、tool definitions、Model/Rule metadata 和可空 Repository lineage。Sampling 只读取已绑定的 Snapshot。Provider transport retry 复用同一个 Snapshot。协议修复会建立新的 ModelAttempt 和新的 Snapshot。已声明 Tool 的参数校验错误会通过持久化的 `invalid_arguments` Tool Result 进入下一次 Model Context。该结果只保留有界的错误码和摘要，不携带原始参数。真正的协议错误仍然使用 protocol repair context。
 
 Workspace Explorer 复用 `RepositoryWatchController`。Watcher 事件只产生 `workspace/changed` 缓存失效通知。Renderer 根据相对路径刷新已加载的父目录。Watcher 不提供路径安全事实，也不修改 Run snapshot。
 

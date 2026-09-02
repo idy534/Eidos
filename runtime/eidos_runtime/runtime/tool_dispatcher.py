@@ -149,33 +149,6 @@ class ToolDispatcher:
                 and call.name not in available_names
             ):
                 entry = None
-            contract = None
-            effective_payload = None
-            if entry is not None and isinstance(call, ModelToolCall):
-                if (
-                    entry.spec.input_kind == "function"
-                    and isinstance(call.payload, FunctionToolPayload)
-                ):
-                    contract = entry.validate_arguments(call.payload.arguments)
-                    if contract.valid and contract.normalized_arguments is not None:
-                        effective_payload = FunctionToolPayload(
-                            arguments=contract.normalized_arguments
-                        )
-                elif (
-                    entry.spec.input_kind == "custom"
-                    and isinstance(call.payload, CustomToolPayload)
-                ):
-                    contract = entry.validate_custom_input(call.payload.input)
-                    if contract.valid and contract.normalized_input is not None:
-                        effective_payload = CustomToolPayload(
-                            input=contract.normalized_input
-                        )
-                else:
-                    contract = ToolArgumentValidationResult(
-                        valid=False,
-                        code="TOOL_ARGUMENT_CONTRACT_VIOLATION",
-                        reason_code="tool_input_kind_mismatch",
-                    )
             if (
                 not isinstance(call, ModelToolCall)
                 or not isinstance(call.provider_call_id, str)
@@ -183,14 +156,48 @@ class ToolDispatcher:
                 or call.provider_call_id in provider_ids
                 or not isinstance(call.name, str)
                 or entry is None
-                or effective_payload is None
             ):
-                error_code = (
-                    "TOOL_ARGUMENT_CONTRACT_VIOLATION"
-                    if entry is not None
-                    and (contract is None or not contract.valid)
-                    else "invalid_tool_call"
+                return ToolValidationResult(
+                    (),
+                    "invalid_tool_call",
+                    _tool_validation_diagnostic(
+                        code="invalid_tool_call",
+                        tool_call_index=len(effective_calls),
+                        tool_call_count=len(response.tool_calls),
+                        call=call,
+                        entry=entry,
+                        contract=None,
+                        tool_set_hash=tool_set_hash,
+                    ),
                 )
+            contract = None
+            effective_payload = None
+            if entry.spec.input_kind == "function":
+                if isinstance(call.payload, FunctionToolPayload):
+                    contract = entry.validate_arguments(call.payload.arguments)
+                    effective_payload = (
+                        FunctionToolPayload(
+                            arguments=contract.normalized_arguments
+                        )
+                        if contract.valid
+                        and contract.normalized_arguments is not None
+                        else call.payload
+                    )
+            elif entry.spec.input_kind == "custom":
+                if isinstance(call.payload, CustomToolPayload):
+                    contract = entry.validate_custom_input(call.payload.input)
+                    effective_payload = (
+                        CustomToolPayload(input=contract.normalized_input)
+                        if contract.valid and contract.normalized_input is not None
+                        else call.payload
+                    )
+            if effective_payload is None:
+                contract = ToolArgumentValidationResult(
+                    valid=False,
+                    code="TOOL_ARGUMENT_CONTRACT_VIOLATION",
+                    reason_code="tool_input_kind_mismatch",
+                )
+                error_code = "TOOL_ARGUMENT_CONTRACT_VIOLATION"
                 return ToolValidationResult(
                     (),
                     error_code,
@@ -260,35 +267,49 @@ class ToolDispatcher:
             )
         return ToolDispatchPlan(binding)
 
+    def argument_validation(
+        self, call: ModelToolCall, plan: ToolDispatchPlan
+    ) -> ToolArgumentValidationResult | None:
+        if (
+            plan.binding is None
+            or plan.descriptor is None
+            or plan.binding.tool_name != call.name
+            or plan.binding.contract_fingerprint
+            != plan.descriptor.contract_fingerprint
+        ):
+            return None
+        if (
+            plan.descriptor.spec.input_kind == "function"
+            and isinstance(call.payload, FunctionToolPayload)
+        ):
+            return plan.descriptor.validate_arguments(call.payload.arguments)
+        if (
+            plan.descriptor.spec.input_kind == "custom"
+            and isinstance(call.payload, CustomToolPayload)
+        ):
+            return plan.descriptor.validate_custom_input(call.payload.input)
+        return None
+
     def validate_execution(self, call: ModelToolCall, plan: ToolDispatchPlan) -> bool:
-        validation = None
-        if plan.descriptor is not None:
+        validation = self.argument_validation(call, plan)
+        normalized = None
+        if validation is not None and plan.descriptor is not None:
             if (
                 plan.descriptor.spec.input_kind == "function"
-                and isinstance(call.payload, FunctionToolPayload)
+                and validation.valid
+                and validation.normalized_arguments is not None
             ):
-                validation = plan.descriptor.validate_arguments(
-                    call.payload.arguments
-                )
-                normalized = (
-                    FunctionToolPayload(arguments=validation.normalized_arguments)
-                    if validation.valid and validation.normalized_arguments is not None
-                    else None
+                normalized = FunctionToolPayload(
+                    arguments=validation.normalized_arguments
                 )
             elif (
                 plan.descriptor.spec.input_kind == "custom"
-                and isinstance(call.payload, CustomToolPayload)
+                and validation.valid
+                and validation.normalized_input is not None
             ):
-                validation = plan.descriptor.validate_custom_input(call.payload.input)
-                normalized = (
-                    CustomToolPayload(input=validation.normalized_input)
-                    if validation.valid and validation.normalized_input is not None
-                    else None
+                normalized = CustomToolPayload(
+                    input=validation.normalized_input
                 )
-            else:
-                normalized = None
-        else:
-            normalized = None
         return (
             plan.binding is not None
             and plan.descriptor is not None

@@ -210,10 +210,11 @@ def test_dispatcher_keeps_custom_input_raw_and_rejects_function_payload() -> Non
             "c3", "echo", CustomToolPayload(input="x" * (MAX_PATCH_BYTES + 1))
         ),),
     ))
-    assert oversized.error_code == "TOOL_ARGUMENT_CONTRACT_VIOLATION"
-    assert oversized.protocol_diagnostic is not None
-    assert oversized.protocol_diagnostic.input_bytes == MAX_PATCH_BYTES + 1
-    assert oversized.protocol_diagnostic.input_sha256 is not None
+    assert oversized.error_code is None
+    assert oversized.protocol_diagnostic is None
+    assert oversized.tool_calls[0].payload == CustomToolPayload(
+        input="x" * (MAX_PATCH_BYTES + 1)
+    )
     plan = dispatcher.plan(response.tool_calls[0])
     assert dispatcher.validate_execution(response.tool_calls[0], plan)
 

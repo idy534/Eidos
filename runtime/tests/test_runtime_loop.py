@@ -577,7 +577,7 @@ class RuntimeLoopTests(unittest.TestCase):
                 run_items = [item for item in snapshot["items"] if item["runId"] == run["id"]]
                 self.assertEqual(
                     [item["kind"] for item in run_items],
-                    ["user_message", "assistant_message"],
+                    ["user_message", "file_change", "assistant_message"],
                 )
                 self.assertEqual(
                     self.store.connection.execute(
@@ -589,8 +589,18 @@ class RuntimeLoopTests(unittest.TestCase):
                         """,
                         (run["id"],),
                     ).fetchone()[0],
-                    0,
+                    1,
                 )
+                result_json = self.store.connection.execute(
+                    """
+                    SELECT result_json
+                    FROM tool_calls
+                    JOIN items ON items.id = tool_calls.item_id
+                    WHERE items.run_id = ?
+                    """,
+                    (run["id"],),
+                ).fetchone()[0]
+                self.assertEqual(json.loads(result_json)["code"], "invalid_arguments")
                 self.assertEqual(
                     self.store.connection.execute(
                         "SELECT COUNT(*) FROM approvals WHERE run_id = ?",
@@ -598,8 +608,19 @@ class RuntimeLoopTests(unittest.TestCase):
                     ).fetchone()[0],
                     0,
                 )
+                self.assertEqual(
+                    self.store.connection.execute(
+                        "SELECT COUNT(*) FROM durable_intents WHERE run_id = ?",
+                        (run["id"],),
+                    ).fetchone()[0],
+                    0,
+                )
                 attempts = self.store.read_model_attempts(run["id"])
-                self.assertEqual(attempts[0]["errorCode"], "TOOL_ARGUMENT_CONTRACT_VIOLATION")
+                self.assertEqual(
+                    [attempt["status"] for attempt in attempts],
+                    ["completed", "completed"],
+                )
+                self.assertIsNone(attempts[0]["errorCode"])
 
     def test_default_shell_runs_in_sandbox_without_approval(self) -> None:
         if not is_seatbelt_ready():

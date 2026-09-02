@@ -459,15 +459,34 @@ class ToolExecutionController:
                     "failed",
                 )
             elif not self.dispatcher.validate_execution(call, plan):
-                outcome = HandlerOutcome(
-                    tool_error(
-                        call.name,
-                        "TOOL_EXECUTION_FAILED",
-                        "Tool call validation failed",
-                    ),
-                    "failed",
-                    "failed",
+                argument_validation = getattr(
+                    self.dispatcher, "argument_validation", None
                 )
+                validation = (
+                    argument_validation(call, plan)
+                    if callable(argument_validation)
+                    else None
+                )
+                if validation is not None and not validation.valid:
+                    outcome = HandlerOutcome(
+                        tool_error(
+                            call.name,
+                            "invalid_arguments",
+                            "Invalid tool arguments: "
+                            + (validation.reason_code or "invalid_arguments"),
+                        ),
+                        "completed",
+                    )
+                else:
+                    outcome = HandlerOutcome(
+                        tool_error(
+                            call.name,
+                            "TOOL_EXECUTION_FAILED",
+                            "Tool call validation failed",
+                        ),
+                        "failed",
+                        "failed",
+                    )
             else:
                 self._execution_state.phase = ToolExecutionPhase.PREPARING
                 if runtime is None:
