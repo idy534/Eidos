@@ -282,11 +282,13 @@ class RuntimeArchitectureTests(unittest.TestCase):
                     threading.Event(),
                 )
                 self.assertEqual(read_result["outcome"], "success")
-                self.assertEqual(read_result["data"]["path"], "SKILL.md")
-                self.assertIn("SKILL.md", list_result["data"]["paths"])
+                self.assertEqual(
+                    read_result["data"]["path"], str(skill_root / "SKILL.md")
+                )
+                self.assertIn(str(skill_root / "SKILL.md"), list_result["data"]["paths"])
                 self.assertEqual(
                     [match["path"] for match in search_result["data"]["matches"]],
-                    ["SKILL.md"],
+                    [str(skill_root / "SKILL.md")],
                 )
                 self.assertEqual(
                     resources.image_authority().active_skill_roots,

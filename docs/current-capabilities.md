@@ -89,7 +89,7 @@
 
 ## Repository Discovery
 
-- `list_files` 和 `search_text` 可以使用 Workspace-relative path，或使用 Workspace 与当前 active Skill root 内的 canonical absolute path，执行有界文件发现和文本搜索。`read_file` 和 `read_file_range` 也支持这两种只读路径形式。active Skill root 不获得写入权限，未授权 absolute path 返回普通 Tool Error。
+- `list_files` 和 `search_text` 可以使用 Workspace-relative path，或使用 Workspace 与当前 active Skill root 内的 canonical absolute path，执行有界文件发现和文本搜索。`read_file` 和 `read_file_range` 也支持这两种只读路径形式。Workspace authority 的结果路径保持 Workspace-relative；active Skill authority 的结果路径返回 canonical absolute path，目录结果保留末尾 `/`，所以发现结果可以直接作为下一次只读 Tool 输入。active Skill root 不获得写入权限，未授权 absolute path 返回普通 Tool Error。
 - Workspace discovery 使用根目录 `.gitignore` 与 `.eidosignore`，并把发现规则和安全权限分开处理。
 - Desktop 提供按 Session execution root 浏览的 Workspace Explorer。Files 可以显示在右侧 Dock，也可以展开到整个工作区。文件树通过 `workspace/listDirectory` 延迟读取一层目录，并使用 `react-arborist` 虚拟化。文件树按常见扩展名显示类型图标，未知类型使用通用文件图标。侧栏布局默认给预览区更多空间，文件树与预览区之间的分隔条仍可以拖动。打开文件的 Tab、当前路径和文件大小显示在同一条紧凑预览栏中。用户单击文件后，UTF-8 text/code 和 Markdown 使用有界 `workspace/readFilePreview`。Markdown 复用现有 Renderer，代码由 Shiki 高亮。二进制、PDF、Office、archive 和 database 文件返回 typed unavailable preview。Session execution binding 变化后，Explorer 会清空旧预览，并丢弃旧请求的迟到结果。Conversation 中的历史文件打开请求会先核对当前 execution root 的目录项；目录项明确缺失的历史路径不会调用预览接口，目录列表截断时仍由 Runtime 做最终验证。
 - Workspace Explorer 与 Agent 文件工具共用 `WorkspaceReader` 的路径边界。外部文件变化复用 `RepositoryWatchController`，只刷新已加载的受影响目录。

@@ -1254,7 +1254,10 @@ class ToolExecutor:
             return _success(
                 "list_files",
                 "Listed files",
-                {"paths": paths, "truncated": truncated},
+                {
+                    "paths": [_project_read_path(resolved, path) for path in paths],
+                    "truncated": truncated,
+                },
             )
 
     def _read_file(
@@ -1284,7 +1287,7 @@ class ToolExecutor:
             "read_file",
             "Read file",
             {
-                "path": normalized_path,
+                "path": _project_read_path(resolved, normalized_path),
                 "content": content,
                 "sizeBytes": metadata.st_size,
                 "sha256": hashlib.sha256(content_bytes).hexdigest(),
@@ -1300,8 +1303,9 @@ class ToolExecutor:
         start = arguments["startLine"]
         end = arguments["endLine"]
         assert isinstance(path_value, str) and isinstance(start, int) and isinstance(end, int)
+        resolved = self._resolve_read_path(path_value)
         content_bytes, metadata, normalized_path = self._read_stable_path(
-            path_value, cancel, MAX_READ_FILE_BYTES
+            resolved, cancel, MAX_READ_FILE_BYTES
         )
         try:
             content = content_bytes.decode("utf-8-sig", errors="strict")
@@ -1325,7 +1329,7 @@ class ToolExecutor:
         if next_line is None and end < len(lines):
             next_line = end + 1
         return _success("read_file_range", "Read file range", {
-            "path": normalized_path, "startLine": start,
+            "path": _project_read_path(resolved, normalized_path), "startLine": start,
             "endLine": start + len(selected) - 1 if selected else start - 1,
             "content": "".join(selected), "nextLine": next_line,
             "sizeBytes": metadata.st_size,
@@ -1333,9 +1337,8 @@ class ToolExecutor:
         })
 
     def _read_stable_path(
-        self, path_value: str, cancel: threading.Event, limit: int
+        self, resolved: ResolvedAuthorizedPath, cancel: threading.Event, limit: int
     ) -> tuple[bytes, os.stat_result, str]:
-        resolved = self._resolve_read_path(path_value)
         last_error: WorkspacePathError | None = None
         with self._authorized_reader(resolved) as reader:
             for _attempt in range(2):
@@ -1393,7 +1396,7 @@ class ToolExecutor:
                 {
                     "matches": [
                         {
-                            "path": match.path,
+                            "path": _project_read_path(resolved, match.path),
                             "line": match.line,
                             "column": match.column,
                             "preview": match.preview,
@@ -1797,6 +1800,17 @@ def resolve_read_path(
                 writable,
             )
     raise WorkspacePathError("path_outside_authorized_roots")
+
+
+def _project_read_path(
+    resolved: ResolvedAuthorizedPath, relative_path: str
+) -> str:
+    if resolved.authority == "workspace":
+        return relative_path
+    projected = (resolved.root / relative_path).as_posix()
+    if relative_path.endswith("/"):
+        projected += "/"
+    return projected
 
 
 def _validate_relative_path(value: str) -> tuple[str, ...]:

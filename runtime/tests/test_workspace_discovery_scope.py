@@ -206,12 +206,37 @@ class ToolExecutorDiscoveryScopeTests(unittest.TestCase):
         )
 
         self.assertEqual(read["outcome"], "success")
-        self.assertEqual(read["data"]["path"], "SKILL.md")
-        self.assertIn("SKILL.md", listed["data"]["paths"])
+        self.assertEqual(read["data"]["path"], str(skill_root / "SKILL.md"))
+        self.assertEqual(
+            set(listed["data"]["paths"]),
+            {
+                str(skill_root / "SKILL.md"),
+                str(skill_root / "scripts") + "/",
+                str(skill_root / "scripts" / "review.py"),
+            },
+        )
+        listed_read = self.executor.execute(
+            "read_file", {"path": listed["data"]["paths"][0]}, threading.Event()
+        )
+        self.assertEqual(listed_read["outcome"], "success")
+        self.assertEqual(
+            listed_read["data"]["path"], listed["data"]["paths"][0]
+        )
         self.assertEqual(
             {match["path"] for match in searched["data"]["matches"]},
-            {"SKILL.md", "scripts/review.py"},
+            {
+                str(skill_root / "SKILL.md"),
+                str(skill_root / "scripts" / "review.py"),
+            },
         )
+        review_path = str(skill_root / "scripts" / "review.py")
+        searched_range = self.executor.execute(
+            "read_file_range",
+            {"path": review_path, "startLine": 1, "endLine": 1},
+            threading.Event(),
+        )
+        self.assertEqual(searched_range["outcome"], "success")
+        self.assertEqual(searched_range["data"]["path"], review_path)
 
     def test_inactive_skill_absolute_path_is_an_ordinary_tool_error(self) -> None:
         skill_temporary = tempfile.TemporaryDirectory(prefix="eidos-inactive-skill-")
