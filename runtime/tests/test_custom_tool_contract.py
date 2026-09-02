@@ -141,6 +141,93 @@ def test_bare_dict_with_custom_shape_is_still_a_function_payload() -> None:
     assert call.arguments == {"kind": "custom", "input": "hello"}
 
 
+def test_function_payload_kind_round_trips_through_context_without_collision() -> None:
+    from pydantic_ai.messages import ModelResponse as PAIModelResponse, ToolCallPart
+
+    from eidos_runtime.model_gateway.native_custom import encode_responses_context
+    from eidos_runtime.model.pydantic_ai_client import (
+        encode_context,
+        map_model_response,
+    )
+
+    arguments = {"kind": "custom", "input": "hello"}
+    mapped = map_model_response(PAIModelResponse(
+        parts=[ToolCallPart(
+            "apply_patch",
+            json.dumps(arguments, ensure_ascii=False),
+            "call-function",
+        )],
+        finish_reason="tool_call",
+    ))
+    call = mapped.tool_calls[0]
+    assert call.payload_kind == "function"
+    arguments_json = json.dumps(
+        call.arguments, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    )
+
+    with tempfile.TemporaryDirectory(prefix="eidos-function-context-") as root:
+        root_path = Path(root)
+        data = root_path / "data"
+        workspace = root_path / "workspace"
+        data.mkdir(mode=0o700)
+        workspace.mkdir()
+        store = SessionStore(data)
+        store.initialize()
+        try:
+            session = store.create_session(str(workspace))
+            run, _ = store.create_run(
+                session["id"],
+                "edit",
+                model_id="test",
+                model_profile=ModelProfileSnapshot(
+                    provider_id="test",
+                    model_id="test",
+                    wire_api="chat_completions",
+                    context_window_tokens=8_192,
+                    max_output_tokens=512,
+                    request_timeout_seconds=5.0,
+                    supports_tools=True,
+                    supports_json_schema_output=False,
+                    supports_reasoning=False,
+                ),
+            )
+            mutation = store.create_tool_item_committed(
+                run["id"], 0, 0, call.provider_call_id, call.name,
+                arguments_json, payload_kind=call.payload_kind,
+            )
+            store.complete_tool_item(
+                mutation.value["id"], '{"outcome":"success","code":"ok"}'
+            )
+            persisted = store.read_item(mutation.value["id"])
+            context = ContextBuilder(store).build(
+                run["id"], projectless=True
+            ).model_context
+        finally:
+            store.close()
+
+    assert persisted["toolCall"]["payloadKind"] == "function"
+    context_call = next(item for item in context if item.get("type") == "tool_call")
+    context_result = next(item for item in context if item.get("type") == "tool_result")
+    assert context_call.get("payloadKind", "function") == "function"
+    assert context_call["arguments"] == arguments_json
+    assert encode_responses_context((context_call, context_result)) == [
+        {
+            "type": "function_call",
+            "call_id": "call-function",
+            "name": "apply_patch",
+            "arguments": arguments_json,
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call-function",
+            "output": '{"outcome":"success","code":"ok"}',
+        },
+    ]
+    chat_messages = encode_context((context_call, context_result))
+    assert isinstance(chat_messages[0], PAIModelResponse)
+    assert isinstance(chat_messages[0].parts[0], ToolCallPart)
+
+
 def test_tool_spec_enforces_function_and_custom_input_invariants() -> None:
     with pytest.raises(ValidationError):
         ToolSpec.model_validate({
@@ -282,6 +369,93 @@ def test_apply_patch_capability_routing_keeps_legacy_function_fallback(
         assert native_spec.spec.input_format.definition == patch_grammar()
 
 
+@pytest.mark.parametrize(
+    ("supports_custom_tools", "supports_tool_grammar"),
+    ((False, False), (True, False), (False, True), (True, True)),
+)
+def test_tool_capable_registry_always_advertises_apply_patch(
+    tmp_path: Path,
+    supports_custom_tools: bool,
+    supports_tool_grammar: bool,
+) -> None:
+    with ToolExecutor(
+        tmp_path,
+        supports_custom_tools=supports_custom_tools,
+        supports_tool_grammar=supports_tool_grammar,
+    ) as executor:
+        definitions = executor.registry.model_definitions()
+        apply_patch = executor.registry.get("apply_patch")
+
+    assert "apply_patch" in {definition.name for definition in definitions}
+    assert apply_patch is not None
+    expected_kind = (
+        "custom" if supports_custom_tools and supports_tool_grammar else "function"
+    )
+    assert apply_patch.spec.input_kind == expected_kind
+
+
+def test_structured_and_native_apply_patch_share_workspace_commit_semantics(
+    tmp_path: Path,
+) -> None:
+    from eidos_runtime.tools.contracts import ApplyPatchInput
+
+    structured_root = tmp_path / "structured"
+    custom_root = tmp_path / "custom"
+    structured_root.mkdir()
+    custom_root.mkdir()
+    structured_target = structured_root / "same.txt"
+    custom_target = custom_root / "same.txt"
+    structured_target.write_text("old\n", encoding="utf-8")
+    custom_target.write_text("old\n", encoding="utf-8")
+    request = ApplyPatchInput.model_validate({
+        "changes": [{
+            "type": "update",
+            "path": str(structured_target),
+            "chunks": [{"oldLines": ["old"], "newLines": ["new"]}],
+        }],
+    }, strict=False)
+    structured_arguments = request.model_dump(mode="json", by_alias=True)
+    raw_patch = (
+        "*** Begin Patch\n"
+        f"*** Update File: {custom_target}\n"
+        "@@\n"
+        "-old\n"
+        "+new\n"
+        "*** End Patch\n"
+    )
+
+    with ToolExecutor(structured_root) as structured:
+        structured_prepared = structured.prepare_file_change(
+            "apply_patch", structured_arguments, threading.Event()
+        )
+        assert not isinstance(structured_prepared, dict), structured_prepared
+        structured_result, structured_delta = structured.commit_patch(
+            "apply_patch", structured_prepared, threading.Event()
+        )
+    with ToolExecutor(
+        custom_root,
+        supports_custom_tools=True,
+        supports_tool_grammar=True,
+    ) as custom:
+        custom_prepared = custom.prepare_file_change(
+            "apply_patch", raw_patch, threading.Event()
+        )
+        assert not isinstance(custom_prepared, dict), custom_prepared
+        custom_result, custom_delta = custom.commit_patch(
+            "apply_patch", custom_prepared, threading.Event()
+        )
+
+    assert structured_target.read_text(encoding="utf-8") == "new\n"
+    assert custom_target.read_text(encoding="utf-8") == "new\n"
+    assert structured_prepared.path == custom_prepared.path == "same.txt"
+    assert structured_prepared.base_sha256 == custom_prepared.base_sha256
+    assert structured_prepared.diff == custom_prepared.diff
+    assert structured_delta.as_dicts() == custom_delta.as_dicts()
+    assert structured_result["outcome"] == custom_result["outcome"] == "success"
+    assert structured_result["code"] == custom_result["code"] == "ok"
+    assert structured_result["data"] == custom_result["data"]
+
+
 def test_responses_custom_wire_keeps_grammar_and_raw_input() -> None:
     from eidos_runtime.model_gateway.native_custom import (
         encode_responses_context,
@@ -404,7 +578,21 @@ def test_responses_wire_keeps_function_compatibility_without_custom_capability()
     )
     try:
         model.complete(
-            ({"type": "user", "content": "read"},),
+            (
+                {"type": "user", "content": "read"},
+                {
+                    "type": "tool_call",
+                    "callId": "history-fn",
+                    "name": "apply_patch",
+                    "arguments": '{"path":"old.txt"}',
+                },
+                {
+                    "type": "tool_result",
+                    "callId": "history-fn",
+                    "name": "apply_patch",
+                    "result": '{"outcome":"success","code":"ok"}',
+                },
+            ),
             threading.Event(),
             lambda _delta: None,
             instructions="instructions",
@@ -423,6 +611,21 @@ def test_responses_wire_keeps_function_compatibility_without_custom_capability()
     assert isinstance(sent_tools, list)
     assert sent_tools[0]["type"] == "function"
     assert client.responses.kwargs["store"] is False
+    sent_input = client.responses.kwargs["input"]
+    assert isinstance(sent_input, list)
+    assert sent_input[-2:] == [
+        {
+            "type": "function_call",
+            "call_id": "history-fn",
+            "name": "apply_patch",
+            "arguments": '{"path":"old.txt"}',
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "history-fn",
+            "output": '{"outcome":"success","code":"ok"}',
+        },
+    ]
 
 
 def test_pydantic_ai_boundary_does_not_downgrade_custom_definition() -> None:

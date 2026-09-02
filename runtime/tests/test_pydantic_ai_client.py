@@ -280,7 +280,7 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertIn('"stopReason":"repeated_tool_call"', messages[5].parts[0].content)
         self.assertNotIn("manual strategy", messages[5].parts[0].content)
 
-        custom_messages = encode_context((
+        custom_context = (
             {
                 "type": "tool_call",
                 "callId": "custom-1",
@@ -295,7 +295,8 @@ class PydanticAIModelClientTests(unittest.TestCase):
                 "payloadKind": "custom",
                 "result": '{"outcome":"success","code":"ok"}',
             },
-        ))
+        )
+        custom_messages = encode_context(custom_context)
         self.assertIsInstance(custom_messages[0], PAIModelResponse)
         self.assertIsInstance(custom_messages[0].parts[0], TextPart)
         self.assertIn("Historical custom tool call", custom_messages[0].parts[0].content)
@@ -305,6 +306,30 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertIsInstance(custom_messages[1].parts[0], UserPromptPart)
         self.assertIn("Historical custom tool result", custom_messages[1].parts[0].content)
         self.assertIn('"outcome":"success"', custom_messages[1].parts[0].content)
+
+        captured: dict[str, object] = {}
+
+        async def stream(messages, info):
+            captured["messages"] = messages
+            captured["tools"] = info.function_tools
+            yield "sent"
+
+        response = self.client(stream).complete(
+            custom_context,
+            threading.Event(),
+            lambda _delta: None,
+            instructions=TEST_INSTRUCTIONS,
+            tool_definitions=(ModelToolDefinition(
+                name="apply_patch",
+                description="Apply a structured patch.",
+                parameters_json_schema={"type": "object"},
+            ),),
+        )
+        self.assertEqual(response.text, "sent")
+        self.assertEqual(
+            [tool.name for tool in captured["tools"]],  # type: ignore[index]
+            ["apply_patch"],
+        )
 
         with self.assertRaisesRegex(ValueError, "unsupported model context item type"):
             encode_context(({

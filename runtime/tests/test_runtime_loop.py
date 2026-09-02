@@ -15,7 +15,13 @@ import sys
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
-from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
+from eidos_runtime.model.client import (  # noqa: E402
+    FunctionToolDefinition,
+    ModelProfileSnapshot,
+    ModelResponse,
+    ModelToolCall,
+    ScriptedModel,
+)
 from eidos_runtime.runtime.loop import ApprovalDecision, RuntimeLoop  # noqa: E402
 from eidos_runtime.db.storage import ActiveRunError, SessionStore  # noqa: E402
 from eidos_runtime.sandbox.seatbelt import (  # noqa: E402
@@ -96,6 +102,39 @@ class RuntimeLoopTests(unittest.TestCase):
                 "run/completed",
             ],
         )
+
+    def test_chat_completions_keeps_function_apply_patch_with_custom_flags_set(self) -> None:
+        profile = ModelProfileSnapshot(
+            provider_id="test",
+            model_id="test",
+            wire_api="chat_completions",
+            context_window_tokens=8_192,
+            max_output_tokens=512,
+            request_timeout_seconds=5.0,
+            supports_tools=True,
+            supports_json_schema_output=False,
+            supports_reasoning=False,
+            supports_custom_tools=True,
+            supports_tool_grammar=True,
+        )
+        run, _user_item = self.store.create_run(
+            self.session["id"],
+            "Inspect the workspace",
+            model_id="test",
+            model_profile=profile,
+        )
+        model = ScriptedModel([ModelResponse(text="done")])
+
+        RuntimeLoop(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        apply_patch = next(
+            definition
+            for definition in model.tool_definitions_history[0]
+            if definition.name == "apply_patch"
+        )
+        self.assertIsInstance(apply_patch, FunctionToolDefinition)
 
     def test_runtime_permissions_mark_direct_shell_as_network_requestable(self) -> None:
         run, _user_item = self.store.create_run(
