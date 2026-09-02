@@ -86,7 +86,6 @@ def argument_summary(
     value: object,
 ) -> tuple[
     int | None,
-    str | None,
     tuple[str, ...],
     dict[str, ArgumentType],
     bool,
@@ -102,16 +101,15 @@ def argument_summary(
             allow_nan=False,
         ).encode("utf-8")
     except (TypeError, ValueError):
-        return None, None, (), {}, True
+        return None, (), {}, True
 
     argument_bytes = (
         len(encoded) if len(encoded) <= _MAX_ARGUMENT_BYTES else None
     )
-    arguments_sha256 = hashlib.sha256(encoded).hexdigest()
     if not isinstance(value, dict) or not all(
         isinstance(key, str) for key in value
     ):
-        return argument_bytes, arguments_sha256, (), {}, True
+        return argument_bytes, (), {}, True
 
     ordered_keys = sorted(value)
     visible_keys = tuple(
@@ -123,7 +121,6 @@ def argument_summary(
     }
     return (
         argument_bytes,
-        arguments_sha256,
         visible_keys,
         argument_types,
         argument_bytes is None or len(ordered_keys) > _MAX_ARGUMENT_KEYS
@@ -160,7 +157,7 @@ def _json_type(value: object) -> ArgumentType:
 def _safe_argument_key(value: str) -> str:
     if len(value) <= _MAX_ARGUMENT_KEY_CHARS:
         return value
-    return "<key:" + hashlib.sha256(value.encode("utf-8")).hexdigest() + ">"
+    return "<truncated>"
 
 
 __all__ = [

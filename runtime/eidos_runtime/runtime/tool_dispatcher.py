@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 
 from eidos_runtime.model.client import (
     CustomToolPayload,
@@ -375,26 +374,19 @@ def _tool_validation_diagnostic(
         else None
     )
     if custom_input is None:
-        argument_bytes, arguments_sha256, keys, types, truncated = argument_summary(
-            arguments
-        )
-        input_sha256 = None
+        argument_bytes, keys, types, truncated = argument_summary(arguments)
         input_bytes = None
     else:
         try:
             encoded_input = custom_input.encode("utf-8")
         except UnicodeEncodeError:
-            argument_bytes, arguments_sha256, keys, types, truncated = (
-                None, None, (), {}, True
-            )
-            input_sha256 = None
+            argument_bytes, keys, types, truncated = None, (), {}, True
             input_bytes = None
         else:
             input_size = len(encoded_input)
-            argument_bytes, arguments_sha256, keys, types, truncated = (
-                None, None, (), {}, input_size > 1_024 * 1024
+            argument_bytes, keys, types, truncated = (
+                None, (), {}, input_size > 1_024 * 1024
             )
-            input_sha256 = hashlib.sha256(encoded_input).hexdigest()
             input_bytes = min(input_size, 1_024 * 1024)
     tool_name = call.name if isinstance(call, ModelToolCall) else None
     provider_call_id = (
@@ -413,13 +405,11 @@ def _tool_validation_diagnostic(
         contract_fingerprint=contract_fingerprint,
         validation_code=contract.reason_code if contract is not None else None,
         validation_path=contract.path if contract is not None else None,
-        arguments_sha256=arguments_sha256,
         argument_bytes=argument_bytes,
         argument_keys=keys,
         argument_types=types,
         arguments_truncated=truncated,
         payload_kind=(call.payload.kind if isinstance(call, ModelToolCall) else None),
-        input_sha256=input_sha256,
         input_bytes=input_bytes,
     )
 

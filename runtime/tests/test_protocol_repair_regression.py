@@ -21,6 +21,7 @@ from eidos_runtime.model.client import (  # noqa: E402
     ScriptedModel,
 )
 from eidos_runtime.runtime.loop import ApprovalDecision, RuntimeLoop  # noqa: E402
+from eidos_runtime.runtime.protocol_diagnostics import argument_summary  # noqa: E402
 
 
 class ProtocolRepairRegressionTests(unittest.TestCase):
@@ -346,7 +347,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         self.assertEqual(diagnostic["validationCode"], "tool_input_kind_mismatch")
         self.assertEqual(len(diagnostic["toolSetHash"]), 64)
         self.assertEqual(len(diagnostic["contractFingerprint"]), 64)
-        self.assertEqual(len(diagnostic["inputSha256"]), 64)
+        self.assertNotIn("inputSha256", diagnostic)
         encoded = json.dumps(diagnostic, ensure_ascii=False, sort_keys=True)
         self.assertNotIn("sk-do-not-persist", encoded)
         database_bytes = b"".join(
@@ -525,6 +526,20 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         self.assertEqual(failed["modelStepCount"], 1)
         attempts = self.store.read_model_attempts(run["id"])
         self.assertEqual([attempt["status"] for attempt in attempts], ["failed", "failed"])
+        diagnostic = attempts[0]["protocolDiagnostics"]
+        assert isinstance(diagnostic, dict)
+        self.assertNotIn("argumentsSha256", diagnostic)
+
+    def test_argument_summary_keeps_shape_without_parameter_digest(self) -> None:
+        argument_bytes, keys, types, truncated = argument_summary({
+            "a" * 257: "secret",
+            "visible": 1,
+        })
+
+        self.assertIsNotNone(argument_bytes)
+        self.assertEqual(keys, ("<truncated>", "visible"))
+        self.assertEqual(types, {"<truncated>": "string", "visible": "integer"})
+        self.assertFalse(truncated)
 
 
 if __name__ == "__main__":
