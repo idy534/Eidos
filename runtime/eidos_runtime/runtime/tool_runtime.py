@@ -63,6 +63,7 @@ from eidos_runtime.runtime.tool_execution import (
     ToolInfrastructureError,
     VerifiedToolExecutionResult,
 )
+from eidos_runtime.runtime.tool_fingerprints import tool_payload_fingerprint_value
 from eidos_runtime.runtime.shell_orchestration import (
     ShellOrchestrationRequest,
     ShellOrchestrationRuntime,
@@ -150,19 +151,6 @@ def _serialize_tool_payload(payload: ToolPayload) -> str:
         separators=(",", ":"),
         sort_keys=True,
     )
-
-
-def _payload_fingerprint_value(payload: ToolPayload) -> dict[str, object]:
-    if isinstance(payload, FunctionToolPayload):
-        return {"kind": "function", "arguments": payload.arguments}
-    if isinstance(payload, CustomToolPayload):
-        encoded = payload.input.encode("utf-8")
-        return {
-            "kind": "custom",
-            "inputSha256": hashlib.sha256(encoded).hexdigest(),
-            "inputBytes": len(encoded),
-        }
-    raise ValueError("unsupported_tool_payload")
 
 
 @dataclass(frozen=True)
@@ -1336,7 +1324,7 @@ class ToolCallRuntime:
                 )
             context_facts.append(_hash_json({
                 "toolName": call.name,
-                "payload": _payload_fingerprint_value(payload),
+                "payload": tool_payload_fingerprint_value(payload),
                 "resultFingerprint": (
                     outcome.progress_fingerprint or _hash_json(outcome.result)
                 ),
@@ -1536,7 +1524,7 @@ class ToolCallRuntime:
                 )
             context_facts.append(_hash_json({
                 "toolName": call.name,
-                "arguments": call.arguments,
+                "payload": tool_payload_fingerprint_value(call.payload),
                 "resultFingerprint": (
                     outcome.progress_fingerprint or _hash_json(outcome.result)
                 ),

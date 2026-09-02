@@ -286,6 +286,28 @@ def test_custom_registry_definition_fingerprint_and_budget_include_grammar() -> 
         ToolRegistry((oversized,))
 
 
+def test_custom_contract_fingerprint_input_has_grammar_without_redundant_digest() -> None:
+    entry = _custom_entry()
+    captured: dict[str, object] = {}
+
+    def capture(value: object) -> str:
+        assert isinstance(value, dict)
+        captured.update(value)
+        return "f" * 64
+
+    with patch("eidos_runtime.tools.registry._hash_json", side_effect=capture):
+        assert entry.contract_fingerprint == "f" * 64
+
+    model = captured["model"]
+    assert isinstance(model, dict)
+    assert "inputFormatSha256" not in model
+    assert model["inputFormat"] == {
+        "type": "grammar",
+        "syntax": "lark",
+        "definition": "start: /.+/",
+    }
+
+
 def test_dispatcher_keeps_custom_input_raw_and_rejects_function_payload() -> None:
     entry = _custom_entry()
     dispatcher = ToolDispatcher(ToolRegistry((entry,)))
@@ -1048,6 +1070,47 @@ def test_custom_tool_call_fingerprint_hashes_raw_utf8_input() -> None:
     second = ModelToolCall("c1", "apply_patch", CustomToolPayload(input="界\n"))
 
     assert tool_call_fingerprint((first,)) != tool_call_fingerprint((second,))
+
+
+def test_tool_payload_fingerprint_value_is_shared_by_loop_guard_and_runtime() -> None:
+    from eidos_runtime.runtime import tool_runtime as tool_runtime_module
+    from eidos_runtime.runtime.loop_guard import _call_fingerprint_value
+    from eidos_runtime.runtime.tool_fingerprints import (
+        tool_payload_fingerprint_value,
+    )
+
+    raw = "*** Begin Patch\n+界\n"
+    payload = CustomToolPayload(input=raw)
+    call = ModelToolCall("c1", "apply_patch", payload)
+    value = tool_payload_fingerprint_value(payload)
+
+    assert tool_runtime_module.tool_payload_fingerprint_value is (
+        tool_payload_fingerprint_value
+    )
+    assert value["kind"] == "custom"
+    assert value["inputBytes"] == len(raw.encode("utf-8"))
+    assert isinstance(value["inputSha256"], str)
+    assert _call_fingerprint_value(call) == {
+        "toolName": "apply_patch",
+        "payload": value,
+    }
+    assert tool_payload_fingerprint_value(
+        CustomToolPayload(input=raw + "x")
+    )["inputSha256"] != value["inputSha256"]
+
+
+def test_tool_payload_fingerprint_value_keeps_function_arguments_structured() -> None:
+    from eidos_runtime.runtime.tool_fingerprints import (
+        tool_payload_fingerprint_value,
+    )
+
+    arguments = {"path": "a.txt"}
+    assert tool_payload_fingerprint_value(
+        FunctionToolPayload(arguments=arguments)
+    ) == {
+        "kind": "function",
+        "arguments": arguments,
+    }
 
 
 def test_context_replay_preserves_custom_kind_call_id_and_raw_input() -> None:

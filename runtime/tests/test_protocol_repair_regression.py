@@ -541,6 +541,30 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         self.assertEqual(types, {"<truncated>": "string", "visible": "integer"})
         self.assertFalse(truncated)
 
+    def test_protocol_diagnostic_rejects_removed_custom_input_digest(self) -> None:
+        from pydantic import ValidationError
+
+        from eidos_runtime.runtime.protocol_diagnostics import (
+            ProtocolDiagnostic,
+            serialize_protocol_diagnostic,
+        )
+
+        diagnostic = ProtocolDiagnostic(
+            stage="tool_validation",
+            code="tool_input_kind_mismatch",
+            payload_kind="custom",
+            input_bytes=3,
+        )
+        serialized = json.loads(serialize_protocol_diagnostic(diagnostic))
+
+        self.assertNotIn("input_sha256", ProtocolDiagnostic.model_fields)
+        self.assertNotIn("inputSha256", serialized)
+        with self.assertRaises(ValidationError):
+            ProtocolDiagnostic.model_validate({
+                **serialized,
+                "inputSha256": "a" * 64,
+            })
+
 
 if __name__ == "__main__":
     unittest.main()

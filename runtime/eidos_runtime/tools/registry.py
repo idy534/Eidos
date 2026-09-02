@@ -481,12 +481,6 @@ class ToolRegistryEntry:
                     self.spec.input_format.model_dump(mode="json")
                     if self.spec.input_format is not None else None
                 ),
-                "inputFormatSha256": (
-                    hashlib.sha256(
-                        self.spec.input_format.definition.encode("utf-8")
-                    ).hexdigest()
-                    if self.spec.input_format is not None else None
-                ),
             },
             "resultSchema": self.spec.result_schema,
             "dynamicOutputSchema": output_schema,
