@@ -68,6 +68,7 @@ print(json.dumps({"python": sys.executable, "seatbelt": str(seatbelt.PROFILE_PAT
   };
   delete environment.EIDOS_PYTHON;
   delete environment.PYTHONHOME;
+  delete environment.NODE_OPTIONS;
   const result = await run(
     pythonExecutable,
     ["-c", pythonCheck, pythonRoot, appRoot],

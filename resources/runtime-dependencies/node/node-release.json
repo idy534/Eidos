@@ -1,0 +1,8 @@
+{
+  "version": "24.20.0",
+  "target": "darwin-arm64",
+  "archive": "node-v24.20.0-darwin-arm64.tar.xz",
+  "url": "https://nodejs.org/download/release/v24.20.0/node-v24.20.0-darwin-arm64.tar.xz",
+  "checksumsUrl": "https://nodejs.org/download/release/v24.20.0/SHASUMS256.txt",
+  "sha256": "b7bf7707070b950ba1ec5f1af3bb6de0f2b1962c5033973d94068ab021ef3014"
+}

@@ -59,6 +59,14 @@ class OperationInProgressError(RuntimeError):
     pass
 
 
+class RuntimeDependencySnapshotConflictError(StorageError):
+    pass
+
+
+class RuntimeDependencyBindingConflictError(StorageError):
+    pass
+
+
 class OperationFailedError(RuntimeError):
     def __init__(self, code: str, *, side_effects_may_exist: bool) -> None:
         self.code = code

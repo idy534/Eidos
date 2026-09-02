@@ -888,7 +888,7 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
           : failed
             ? "失败"
             : statusLabel(item.status);
-  const [open, setOpen] = useState(item.status === "in_progress");
+  const [open, setOpen] = useState(false);
 
   return (
     <details className="tool-item tool-item--shell" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>

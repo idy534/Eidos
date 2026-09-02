@@ -1336,6 +1336,8 @@ def _read_tree(
     for directory, names, filenames in os.walk(root, followlinks=False):
         directory_path = Path(directory)
         for name in [*names, *filenames]:
+            if private and name == ".DS_Store" and name in filenames:
+                continue
             candidate = directory_path / name
             try:
                 entry = candidate.lstat()

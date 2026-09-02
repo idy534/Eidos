@@ -614,10 +614,20 @@ class ToolExecutionController:
                         outcome.workspace_changed if effects_possible else False
                     ),
                 )
+            result_data_model = (
+                plan.descriptor.result_data_model
+                if plan.descriptor is not None
+                else None
+            )
             result = safe_tool_result(
                 self.sensitive,
                 call.name,
-                bounded_tool_result(call.name, outcome.result),
+                bounded_tool_result(
+                    call.name,
+                    outcome.result,
+                    data_model=result_data_model,
+                ),
+                data_model=result_data_model,
             )
             if result.get("code") == "sensitive_content_rejected":
                 if plan.side_effect != "none":

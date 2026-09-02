@@ -246,6 +246,7 @@ class RuntimeEngine:
                 mcp_sandbox=self.mcp_sandbox,
                 resource_registry=self.resources,
                 supports_images=run_context.model_profile.supports_images,
+                events=self.events,
             ) as resources:
                 bind_image_authority = getattr(
                     self.model, "set_image_authority_provider", None
@@ -511,6 +512,7 @@ class RuntimeEngine:
                 async_kernel=self.async_kernel,
                 resource_registry=self.resources,
                 skill_access=resources.skill_access,
+                runtime_dependencies=resources.runtime_dependencies,
             )
             self._resume_effective_time()
 

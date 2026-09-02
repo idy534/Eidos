@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import copy
 from enum import StrEnum
 import hashlib
 import json
@@ -23,6 +24,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic.fields import PydanticUndefined
 
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile,
@@ -315,6 +317,17 @@ class NetworkAccess(StrEnum):
 class RunShellInput(StrictToolModel):
     command: StrictStr = Field(min_length=1, max_length=16 * 1024)
     cwd: StrictStr = "."
+    dependencyBindingId: StrictStr | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        min_length=1,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$",
+        description=(
+            "Optional verified Eidos runtime binding identifier. This selects "
+            "an already-resolved environment; it does not grant paths or env values."
+        ),
+    )
     timeoutSeconds: StrictInt = Field(default=120, ge=1, le=600)
     networkAccess: NetworkAccess = Field(
         default=NetworkAccess.DEFAULT,
@@ -651,6 +664,26 @@ class SkillInvocationMetadata(StrictToolModel):
     provenance: dict[str, StrictStr]
 
 
+class RuntimeDependencyBindingProvenance(StrictToolModel):
+    bindingId: StrictStr = Field(
+        min_length=1,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$",
+    )
+    manifestSha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+    requirementsSha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+    snapshotSha256: StrictStr | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    source: StrictStr = Field(min_length=1, max_length=128)
+    skillQualifiedId: StrictStr | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+    )
+
+
 class RunShellResultData(WorkspaceResultData):
     ALLOW_SUCCESS_RECONCILIATION: ClassVar[bool] = True
     SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = (
@@ -689,6 +722,9 @@ class RunShellResultData(WorkspaceResultData):
     ] | None = None
     effectivePermissionsSummary: dict[str, object] | None = None
     skillInvocation: SkillInvocationMetadata | None = None
+    dependencyBinding: RuntimeDependencyBindingProvenance | None = Field(
+        default=None
+    )
     # These optional fields keep the pre-integration flat result shape
     # readable for older consumers while the nested object is canonical.
     qualifiedId: StrictStr | None = None
@@ -780,7 +816,10 @@ def result_model(data_model: type[BaseModel]) -> type[BaseModel]:
         required_fields: dict[str, tuple[object, object]] = {}
         for name in data_model.SUCCESS_REQUIRED:
             field = data_model.model_fields[name]
-            required_fields[name] = (_without_none(field.annotation), ...)
+            required_field = copy(field)
+            required_field.default = PydanticUndefined
+            required_field.default_factory = None
+            required_fields[name] = (_without_none(field.annotation), required_field)
         success_data_model = create_model(
             f"{data_model.__name__.removesuffix('Data')}SuccessData",
             __base__=data_model,

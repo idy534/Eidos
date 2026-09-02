@@ -150,7 +150,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `apply_patch` 只向模型暴露结构化 JSON Function 参数 `{ "changes": [...] }`。每个 change 使用 `add`、`update` 或 `delete` 类型。`update` 可以继续使用 `moveTo` 和 `chunks`。模型提交 `{ "patch": "..." }` 或其他 raw Patch 字段会被拒绝。Tool 在当前 Workspace Permission 内直接执行，不逐次请求 Approval。
 - Runtime 的 `CodexPatchEncoder` 会把结构化 changes 确定性编码为 Codex Patch 文本。Runtime 自动生成 `*** Begin Patch`、`*** End Patch`、`+`、`-`、`@@` 和 `*** End of File`。Add 内容统一使用 LF 行尾语义。`apply_patch.lark` 以 `openai/codex` 的 grammar 为来源，Lark 负责语法解析。本地 grammar 将上游的 `add_line+` 改为 `add_line*`，因为 Codex Rust streaming parser 允许没有内容行的 Add File；显式的 `+` 仍表示一条空内容行。Lark 不能直接加载上游的零宽文本正则，所以本地 grammar 也对这些 token 做了兼容适配。Parser 可以接受 CRLF 和外层空白，但不会自动补齐 envelope、marker 或行前缀。
 - 文件工具在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。`apply_patch` 支持 Codex 风格的 Add、Update、Delete、Move、多文件、多 chunk、首个 Update 不带 `@@`、裸 `@@`、`@@ context` 和 `*** End of File`。Update 匹配按 Patch chunk 顺序向前查找。工具仍会复用版本复检、Workspace boundary、Seatbelt、原子替换和最终内容校验。
-- `workspace_dependencies` 返回 Eidos 自带并经过 owner、类型、可执行位和 SHA-256 校验的 Python 与 ripgrep。它也返回 Python import roots 和受支持包版本。当前 Runtime 随包提供 `python-docx`。模型不需要依赖用户全局 Python 或临时安装包。
+- `workspace_dependencies` 返回 Eidos 自带并经过 owner、类型、可执行位和 SHA-256 校验的 Python 与 ripgrep。它也返回 Python import roots 和受支持包版本。当前 Runtime 随包提供 `python-docx`。成功结果的 `data` 可以返回 `defaultDependencyBindingId` 和 `activeSkillDependencyBindings`。模型不需要依赖用户全局 Python 或临时安装包。
 - 已应用的文件 Diff 会进入 ToolCall 持久事实，并在 Execution Feed 中展示。
 - macOS 原子替换会先用 fd-relative `fclonefileat` 保留普通文件的扩展属性（包括 `com.apple.provenance`），再写入候选内容并单独应用、验证 ACL。clonefile 不可用时会安全回退到受校验的 `fcopyfile` 路径。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
@@ -165,7 +165,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `ShellEnvironmentSnapshotProvider` 对每个 shell executable、canonical cwd 和 capture launch identity 做一次 `-lc` 环境捕获。默认 attempt 会在同一个 effective Seatbelt 边界内运行 trusted capture script。捕获使用 NUL 分隔格式，限制为 10 秒和 512 KiB。
 - 普通 `run_shell` 命令使用 resolved shell 的 `-c`。Snapshot 捕获失败时使用 sanitized parent environment，并记录有界的稳定 warning。Snapshot 不恢复 aliases、functions 或其他 shell state。
 - Shell stdout 和 stderr 使用 UTF-8 增量解码。Runtime 将解码后的片段按接收顺序累积到 Item content，Desktop Execution Feed 在运行中和终态都使用这份累计内容。这样可以保留 stdout 和 stderr 的接收顺序，也不会在终态重复追加最终流。
-- Desktop Shell Feed 将 Shell 输出按纯文本展示，并移除 ANSI 和 OSC 控制序列，不激活终端格式或链接。旧 Item 缺少或没有 `content` 时，Feed 回退到结果中的 stdout 和 stderr。
+- Desktop Shell Feed 默认折叠 Shell Item。用户展开后，Feed 将 Shell 输出按纯文本展示，并移除 ANSI 和 OSC 控制序列，不激活终端格式或链接。旧 Item 缺少或没有 `content` 时，Feed 回退到结果中的 stdout 和 stderr。
 - Shell Result 存在 `attemptCount`、`sandboxed` 或 `escalated` 时，Execution Feed 会展示这些已有执行和权限事实，包括扩权重试信息。
 - `run_shell` 的模型结果投影对 stdout 和 stderr 各保留首尾，每条流最多 16 KiB，整个 JSON 最多 48 KiB。原始 `truncated` 和 `omittedBytes` 事实不会被模型投影覆盖。模型投影另用 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 标记模型省略的 stdout/stderr UTF-8 字节和继续读取方式。
 - `read_tool_output` 是只读工具。它要求前一次 `run_shell` 的 provider tool call ID，默认读取 stdout，也可以读取 stderr。它只读取当前 Session 中已持久化的终态 Shell 结果，历史 Run 可以读取；运行中、跨 Session、缺失或歧义 ID 会拒绝。调用方可以用 `offsetBytes`、`maxBytes`（请求范围 4 字节至 16 KiB）或 `fromEnd` 分页读取。结果返回 UTF-8 边界对齐的实际 `startByte`、`endByte` 和 `nextOffset`，单页可能小于请求值，调用方必须按 `nextOffset` 继续。该工具不会重新执行 Shell 或清除 reconciliation；Shell 原始输出上限已经丢失的字节无法恢复。
@@ -201,14 +201,14 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 - PluginCatalog 支持本地 Plugin v1 的导入、启用、禁用和移除。
 - Plugin manifest 可以声明 Skill 和 MCP Server。安装内容有文件数量、大小、路径、manifest、版本冲突和 content hash 校验。
-- Skill 采用 `Discovery → Catalog Snapshot → Selection → SKILL.md → existing tools/run_shell → Sandbox` 边界。Discovery 读取 bundled system、用户和 Plugin Skill。Catalog 只使用 `SKILL.md` frontmatter 的顶层 `name` 和 `description`，并保留 source、version、source hash 和 content hash。`license`、`compatibility`、`metadata`、`allowed-tools` 等其他字段不会改变 Tool、Permission 或 Sandbox。
+- Skill 采用三层边界：Catalog 负责 Discovery 和 immutable Catalog Snapshot；Activation 负责 Selection、`SkillAccess` 和 Run-scoped activation；Resource 负责按需读取 `SKILL.md`、`references/`、`scripts/`、`assets/`，再进入现有 Tools 和 Sandbox。Skill 内容、产品依赖和 `runtime.json` 彼此分离。Discovery 读取 bundled system、用户和 Plugin Skill。Catalog 只使用 `SKILL.md` frontmatter 的顶层 `name` 和 `description`，并保留 source、version、source hash 和 content hash。`license`、`compatibility`、`metadata`、`allowed-tools` 等其他字段不会改变 Tool、Permission 或 Sandbox。
 - Selection 当前支持 qualified `@source:name` 和唯一的 `@name`/`$name` 引用。选中后 Runtime 才完整读取 `SKILL.md`。Skill 使用 progressive disclosure：`references/`、`scripts/` 和 `assets/` 只按说明通过相对路径读取，不能把完整 Skill tree 注入 Context。
-- `agents/eidos.yaml` 是可选 metadata。Runtime 使用统一 YAML parser 读取 interface、asset、dependency 和 policy metadata。无效可选 metadata 会 warning 并忽略。`allow_implicit_invocation = false` 会禁止 Shell 识别自动激活，但不影响显式选择和 `skill_read`。Skill 不管理 pip、npm、系统命令或其他运行时依赖。
-- Skill 脚本复用已有 `run_shell`。受信任的 Catalog Skill 下的相对 `scripts/` 调用可以产生 implicit activation，并把 active Skill root 放入权限快照。Workspace root 是读写；active Skill root 是只读并允许 executable mapping。Seatbelt 拒绝 active Skill root 写入。
-- Skill binary asset 在安装时按 bytes 保留。`skill_read_resource` 只返回有界 UTF-8 文本。支持图像输入的 Model 才能使用 `view_image`，它可以从 Workspace root 或 active Skill root 读取受信任 PNG/JPEG，并以 multimodal binary content 重新投影给模型。DOCX、PPTX、PDF、XLSX 等其他 binary asset 不会被当作文本读取。
-- Skill provenance、Plugin hash、Skill content hash 和 activation snapshot 进入 Run/Step 边界。
+- `agents/eidos.yaml` 是可选 metadata。Runtime 使用统一 YAML parser 读取 interface、asset、dependency、policy 和有界 `runtimeDependencies` metadata。Runtime 使用严格的 `RuntimeRequirements` discriminated union 保存 Python package、Node package 和 executable declaration。缺失 declaration 保持旧行为。无效 declaration 会保留固定 error code，并保留旧的 interface、MCP dependency 和 policy metadata。无效的整个可选 YAML 会保留 display fallback，并报告固定 metadata error。`allow_implicit_invocation = false` 会禁止 Shell 识别自动激活，但不影响显式选择和 `skill_read`。Skill 不管理 pip、npm、系统命令或其他运行时依赖。
+- Skill 脚本复用已有 `run_shell`。受信任的 Catalog Skill 下的相对 `scripts/` 调用可以产生 implicit activation，并把 active Skill root 放入权限快照。Workspace root 是读写；active Skill root 是只读并允许 executable mapping。Seatbelt 拒绝 active Skill root 写入。插件脚本的系统依赖不进入 Skill 目录。
+- Skill binary asset 在安装时按 bytes 保留。系统 Skill 私有目录读取会忽略 Finder 生成的 `.DS_Store` 文件。`skill_read_resource` 只返回有界 UTF-8 文本。支持图像输入的 Model 才能使用 `view_image`，它可以从 Workspace root 或 active Skill root 读取受信任 PNG/JPEG，并以 multimodal binary content 重新投影给模型。DOCX、PPTX、PDF、XLSX 等其他 binary asset 不会被当作文本读取。
+- Skill provenance、Plugin hash、Skill content hash 和 activation snapshot 进入 Run/Step 边界。Runtime dependency catalog 还会固定 `runtime.json` 的 manifest hash、Bundle snapshot hash 和 requirement hash。每个已声明 Skill dependency 的 binding 使用 `dependencyBindingId` 标识。Skill consumer 从匹配 `skillQualifiedId` 且状态为 `ready` 的 active binding 选择这个字段，不能使用顶层默认 binding。
 - RunResources 会收集 active Skill 的 MCP dependency，并与本 Run extension snapshot 中 available 的 Plugin MCP server 比较，生成 installed、missing 或 unsupported 诊断。未满足项会进入低权限 user context warning。Runtime 不会静默安装、启用或启动 MCP server。Plugin MCP 仍使用独立的 server consent、官方 Python MCP SDK stdio client、Tool discovery、Tool call、Approval 和 Sandbox 链路。
-- `SkillCatalog` 为每个 filesystem Skill 固化 canonical `file:` locator、source kind、content hash 和 implicit policy。`SkillAccess` 只从该 snapshot 激活 root。显式选择、成功的 `skill_read` 和已知 Skill script invocation 共用 Run-scoped activation state，并通过 ToolCallRuntime 进入 Shell 和 Seatbelt。模型不能提交任意 absolute path 来扩大权限。
+- `SkillCatalog` 为每个 filesystem Skill 固化 canonical `file:` locator、source kind、content hash 和 implicit policy。`SkillAccess` 只从该 snapshot 激活 root。显式选择、成功的 `skill_read` 和已知 Skill script invocation 共用 Run-scoped activation state，并通过 ToolCallRuntime 进入 Shell 和 Seatbelt。模型不能提交任意 absolute path 来扩大权限。Skill consumer 应使用 Catalog 给出的 canonical absolute root 作为脚本路径，使用 Workspace-relative cwd，并从 active binding 集合选择对应 Skill 的 binding。它不能使用顶层默认 binding。
 - MCP 当前支持 stdio Tools。Server consent、`connector`/`workspace_read` permission profile、Tool discovery、Tool call、timeout、结果 schema 和 Tool List Changed bookkeeping 已接入。
 - MCP Connection 由唯一 RuntimeAsyncKernel 持有，不为每个连接创建专用 Event Loop。
 
@@ -243,10 +243,10 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 ## Distribution
 
 - `pnpm build:runtime:mac` 可以构建 macOS arm64 的 self-contained Runtime Bundle。
-- Bundle 使用 managed CPython 3.12.13、锁定的 production dependencies、Runtime 资源、`eidos_runtime/workspace/apply_patch.lark` grammar 和受管 Ripgrep。Bundled smoke 会验证 Lark 从 Bundle 导入，并检查 grammar 文件存在。
+- Bundle 使用 managed CPython 3.12.13、锁定的 production dependencies、Runtime 资源、`eidos_runtime/workspace/apply_patch.lark` grammar 和受管 Ripgrep。Bundle 根目录的 `runtime.json` contract 固定 `schemaVersion: 1`、Bundle version、相对资源路径和 SHA-256 inventory。Node 资源的 contract 包含固定 Node 版本、`node_modules` 和 CJS/ESM loader。构建脚本会生成并校验这个 manifest，再把 Bundle 放入 App resources。
 - Packaged Electron 使用 `Contents/Resources/runtime/`，不回退到系统 Python、PATH、`.venv` 或用户 `PYTHONHOME`。
 - `pnpm package:mac` 生成未签名的本地 arm64 DMG，并执行 packaged smoke。
-- `pnpm package:mac:release` 接入签名、hardened runtime、notarization、stapling 和 Gatekeeper 验证。Release 需要构建机提供 Apple credentials。
+- `pnpm package:mac:release` 接入签名、hardened runtime、notarization、stapling 和 Gatekeeper 验证。正确时序是先完成 Bundle 文件和 manifest hash，再签名；签名改变嵌套文件后，需要 refresh 并重新校验 `runtime.json`，再做最终 Gatekeeper 检查。Release 需要构建机提供 Apple credentials。没有 credentials 时，仓库不能验证真实签名结果。
 
 ## Observability / OpenTelemetry
 
@@ -268,6 +268,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `pnpm test` 覆盖 Runtime、contracts、Renderer state、Main 和 Renderer behavior。
 - `pnpm check:python` 覆盖 Ruff、deptry、Runtime tests 和 Python dependency audit。
 - Seatbelt native、Electron startup/shutdown、bundled Runtime、packaged App 和 packaging config 都有独立测试入口。
+- Runtime dependency focused tests 入口包括 `runtime/tests/test_skill_runtime_requirements.py`、`runtime/tests/test_skill_manifest.py`、`runtime/tests/test_system_skills.py`、`runtime/tests/test_runtime_dependency_catalog.py`、`runtime/tests/test_dependency_shell_environment.py` 和 `runtime/tests/test_runtime_dependency_persistence.py`。Node CJS/ESM loader 与 manifest packaging 使用 `runtime/tests/test_dependency_runtime_loader.mjs` 和 `scripts/runtime-dependency-packaging.test.mjs`。这些入口的当前通过状态要以实际运行结果为准。
 - Repository、Project Rules、Context、LoopGuard、response actions、schema baseline、checkpoint、long task、MCP 和 telemetry 都有 focused test files。
 
 ## Implementation Anchors

@@ -39,6 +39,7 @@ from eidos_runtime.db.repositories import (
     ExecutionRepository,
     ExtensionRepository,
     RunRepository,
+    RuntimeDependencyRepository,
     SessionRepository,
 )
 from eidos_runtime.db.repositories.execution import ToolOutputPage
@@ -77,6 +78,10 @@ from eidos_runtime.runtime.resolution import (
     RunResolutionSnapshot,
     StepResolutionSnapshot,
 )
+from eidos_runtime.models.runtime_dependency_records import (
+    RuntimeDependencyBindingRecord,
+    RuntimeDependencySnapshotRecord,
+)
 
 
 SCHEMA_REVISION = SCHEMA_VERSION
@@ -99,6 +104,7 @@ class SessionStore:
         self._extensions: ExtensionRepository | None = None
         self._context: ContextRepository | None = None
         self._async_operations: AsyncOperationRepository | None = None
+        self._runtime_dependencies: RuntimeDependencyRepository | None = None
         self._typed_runtime_repository: TypedRuntimeRepository | None = None
         self._repository_intelligence_repository: (
             RepositoryIntelligenceRepository | None
@@ -139,6 +145,7 @@ class SessionStore:
         self._extensions = ExtensionRepository(self._database)
         self._context = ContextRepository(self._database)
         self._async_operations = AsyncOperationRepository(self._database)
+        self._runtime_dependencies = RuntimeDependencyRepository(self._database)
 
     @property
     def data_directory(self) -> Path | None:
@@ -207,6 +214,7 @@ class SessionStore:
         self._session_handoff_repository = None
         self._worktree_snapshot_repository = None
         self._worktree_settings_repository = None
+        self._runtime_dependencies = None
         if self._persistence_layout is not None:
             self._persistence_layout.close()
             self._persistence_layout = None
@@ -252,6 +260,35 @@ class SessionStore:
 
     def read_latest_context_snapshot(self, run_id: str) -> ContextSnapshot | None:
         return self.context_snapshot_repository().read_latest_for_run(run_id)
+
+    def runtime_dependency_repository(self) -> RuntimeDependencyRepository:
+        self._repository(self._sessions)
+        return self._repository(self._runtime_dependencies)
+
+    def persist_runtime_dependency_snapshot(
+        self, record: RuntimeDependencySnapshotRecord
+    ) -> CommittedMutation[RuntimeDependencySnapshotRecord]:
+        return self.runtime_dependency_repository().persist_snapshot(record)
+
+    def read_runtime_dependency_snapshot(
+        self, run_id: str
+    ) -> RuntimeDependencySnapshotRecord | None:
+        return self.runtime_dependency_repository().read_snapshot(run_id)
+
+    def persist_runtime_dependency_binding(
+        self, record: RuntimeDependencyBindingRecord
+    ) -> CommittedMutation[RuntimeDependencyBindingRecord]:
+        return self.runtime_dependency_repository().persist_binding(record)
+
+    def read_runtime_dependency_binding(
+        self, binding_id: str
+    ) -> RuntimeDependencyBindingRecord | None:
+        return self.runtime_dependency_repository().read_binding(binding_id)
+
+    def list_runtime_dependency_bindings(
+        self, run_id: str
+    ) -> tuple[RuntimeDependencyBindingRecord, ...]:
+        return self.runtime_dependency_repository().list_bindings(run_id)
 
     def verified_compaction_repository(self) -> VerifiedCompactionRepository:
         self._repository(self._sessions)
