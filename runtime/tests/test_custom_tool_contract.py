@@ -128,6 +128,18 @@ def test_function_and_custom_model_contracts_are_closed_and_frozen() -> None:
         _ = ModelToolCall("c1", "apply_patch", custom_payload).arguments
 
 
+def test_bare_dict_with_custom_shape_is_still_a_function_payload() -> None:
+    call = ModelToolCall(
+        "c1",
+        "apply_patch",
+        {"kind": "custom", "input": "hello"},
+    )
+
+    assert isinstance(call.payload, FunctionToolPayload)
+    assert call.payload_kind == "function"
+    assert call.arguments == {"kind": "custom", "input": "hello"}
+
+
 def test_tool_spec_enforces_function_and_custom_input_invariants() -> None:
     with pytest.raises(ValidationError):
         ToolSpec.model_validate({
@@ -681,6 +693,7 @@ def test_context_replay_preserves_custom_kind_call_id_and_raw_input() -> None:
                 "call-raw",
                 "apply_patch",
                 json.dumps({"kind": "custom", "input": raw}, ensure_ascii=False),
+                payload_kind="custom",
             )
             assert mutation.value["toolCall"]["payloadKind"] == "custom"
             store.complete_tool_item(

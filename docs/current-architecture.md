@@ -187,6 +187,8 @@ ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与�
 
 `apply_patch` 有 Function 和 Custom 两条模型输入路径。Function compatibility 路径接收结构化 `ApplyPatchInput.changes`。Custom 路径接收 native Custom Tool 的 raw Codex Patch。`add`、`update`、`delete` 是可区分的 change 类型，`update` 还可以包含 `moveTo` 和有序 `chunks`。只有 Function 路径使用 `CodexPatchEncoder`。Custom 路径把原文直接交给 `parse_patch`。Parser 不读取 Workspace，也不执行匹配或写入；它把文本转换为 Eidos 的 Add、Update、Delete AST。统一的 Workspace write resolver 把 Workspace canonical absolute path 归一化为内部 relative path，并同时处理 source 与 move destination。Workspace 外的路径在 Durable Intent 前返回 Tool Error。现有 Workspace prepare、CAS、边界、原子提交和最终校验继续负责语义和安全事实。
 
+`ModelToolCall` 的裸 `dict` 永远表示 Function payload。Custom payload 必须显式使用 `CustomToolPayload`。`tool_calls.payload_kind` 是 SQLite 中独立且受约束的类型 authority。ContextBuilder、DB mapper 和下一次 Provider projection 都读取这个字段，不再从 `arguments_json` 猜测类型。v7 到 v8 migration 只在迁移边界兼容旧的 native `apply_patch` envelope。
+
 `apply_patch.lark` 的语法来源是 `openai/codex` 的 `codex-rs/core/assets/tools/apply_patch.lark`。本地 grammar 将上游的 `add_line+` 改为 `add_line*`，因为 Codex Rust streaming parser 允许没有内容行的 Add File；显式的 `+` 仍表示一条空内容行。上游 grammar 中的部分空行正则不能直接交给 Lark，所以本地 grammar 也对这些 token 做了 Lark 兼容适配。Parser 可以规范化 CRLF 和外层空白，也支持首个 Update 片段不带 `@@`。Parser 不会猜测缺失的 `*** Begin Patch`、`*** End Patch` 或 `+`/`-` 前缀。raw `patch` 字段不属于模型契约。
 
 Tool Result 的 `reconciliationRequired` 是本次执行是否建立 reconciliation barrier 的权威结果。`sideEffectsMayExist` 只保留历史证据。它不是完成条件。Runtime 只有在 Tool Result 缺少显式 reconciliation 判断时，才为旧结果使用保守兼容规则。未清除的 barrier 会阻止 Run 提交 `succeeded`。Runtime 不会自动重放有副作用的 Tool。

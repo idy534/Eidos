@@ -17,6 +17,8 @@ from eidos_runtime.db.schema import (  # noqa: E402
     PREVIOUS_SCHEMA_VERSION,
     SCHEMA_SQL,
     SCHEMA_VERSION,
+    V7_SCHEMA_SQL,
+    V7_SCHEMA_VERSION,
     V5_SCHEMA_VERSION,
     V4_SCHEMA_SQL,
     V2_SCHEMA_SQL,
@@ -119,6 +121,7 @@ EXPECTED_COLUMNS = {
         "progress_signature_json",
     },
     "tool_calls": {
+        "payload_kind",
         "approval_status",
         "approval_decision",
         "approval_feedback",
@@ -494,8 +497,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 7)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 6)
+        self.assertEqual(SCHEMA_VERSION, 8)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, V7_SCHEMA_VERSION)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
@@ -690,6 +693,60 @@ class StorageSchemaTests(unittest.TestCase):
             "FROM model_attempts WHERE id = 'attempt-v2'"
         ).fetchone()
         self.assertEqual(tuple(attempt), (0, 0, None))
+        store.close()
+
+    def test_v7_to_v8_persists_payload_kind_and_backfills_only_legacy_custom(self) -> None:
+        database = self.data / DATABASE_NAME
+        connection = sqlite3.connect(database)
+        connection.executescript(V7_SCHEMA_SQL)
+        connection.executemany(
+            "INSERT INTO sessions (id, workspace_root, created_at, updated_at) "
+            "VALUES (?, '/workspace', 1, 1)",
+            [("session-payload",)],
+        )
+        connection.execute(
+            "INSERT INTO runs (id, session_id, user_input, model_profile_json, "
+            "status, created_at, updated_at) VALUES "
+            "('run-payload', 'session-payload', 'goal', '{}', 'succeeded', 1, 1)"
+        )
+        connection.executemany(
+            "INSERT INTO items (id, session_id, run_id, ordinal, kind, status, "
+            "created_at, completed_at) VALUES (?, 'session-payload', "
+            "'run-payload', ?, 'tool_call', 'completed', 1, 1)",
+            [("item-custom", 0), ("item-function", 1)],
+        )
+        connection.executemany(
+            "INSERT INTO tool_calls (id, item_id, model_step_index, batch_order, "
+            "provider_call_id, tool_name, status, arguments_json, started_at) "
+            "VALUES (?, ?, 0, 0, ?, ?, 'completed', ?, 1)",
+            [
+                (
+                    "tool-custom", "item-custom", "call-custom", "apply_patch",
+                    json.dumps({"kind": "custom", "input": "*** Begin Patch"}),
+                ),
+                (
+                    "tool-function", "item-function", "call-function", "read_file",
+                    json.dumps({"kind": "custom", "input": "hello"}),
+                ),
+            ],
+        )
+        connection.execute(f"PRAGMA user_version = {V7_SCHEMA_VERSION}")
+        connection.commit()
+        connection.close()
+        os.chmod(database, 0o600)
+
+        store = SessionStore(self.data)
+        store.initialize()
+
+        connection = store.connection
+        assert connection is not None
+        rows = connection.execute(
+            "SELECT tool_name, payload_kind FROM tool_calls ORDER BY creation_seq"
+        ).fetchall()
+        self.assertEqual([tuple(row) for row in rows], [
+            ("apply_patch", "custom"),
+            ("read_file", "function"),
+        ])
         store.close()
 
     def test_v1_to_v2_to_v3_preserves_final_context_foreign_keys(self) -> None:

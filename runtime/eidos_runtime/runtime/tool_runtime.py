@@ -1298,6 +1298,7 @@ class ToolCallRuntime:
                 call.provider_call_id,
                 call.name,
                 _serialize_tool_payload(payload),
+                payload_kind=call.payload_kind,
                 provenance=self.dispatcher.provenance(call.name),
                 tool_set_hash=step.tool_snapshot.tool_set_hash,
             )
@@ -1414,6 +1415,7 @@ class ToolCallRuntime:
                     separators=(",", ":"),
                     sort_keys=True,
                 ),
+                payload_kind=call.payload_kind,
                 provenance=self.dispatcher.provenance(call.name),
                 tool_set_hash=step.tool_snapshot.tool_set_hash,
             )

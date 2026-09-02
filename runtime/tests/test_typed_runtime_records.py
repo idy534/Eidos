@@ -80,6 +80,7 @@ def test_core_mappers_return_frozen_domain_records_and_preserve_nullable_facts()
         "provider_call_id": "call-1",
         "tool_name": "read_file",
         "status": "completed",
+        "payload_kind": "function",
         "arguments_json": '{"path":"README.md"}',
         "result_json": '{"outcome":"success"}',
         "model_result_json": '{"outcome":"success"}',

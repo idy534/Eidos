@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import sqlite3
 import threading
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 from eidos_runtime.context.facts import CompactSummary, ContextFacts
 from eidos_runtime.db.database import (
@@ -968,6 +968,7 @@ class SessionStore:
         tool_name: str,
         arguments_json: str,
         *,
+        payload_kind: Literal["function", "custom"] = "function",
         provenance: dict[str, object] | None = None,
         tool_set_hash: str | None = None,
     ) -> dict[str, object]:
@@ -978,6 +979,7 @@ class SessionStore:
             provider_call_id,
             tool_name,
             arguments_json,
+            payload_kind=payload_kind,
             provenance=provenance,
             tool_set_hash=tool_set_hash,
         )
@@ -991,6 +993,7 @@ class SessionStore:
         tool_name: str,
         arguments_json: str,
         *,
+        payload_kind: Literal["function", "custom"] = "function",
         provenance: dict[str, object] | None = None,
         tool_set_hash: str | None = None,
     ) -> CommittedMutation[dict[str, object]]:
@@ -1001,6 +1004,7 @@ class SessionStore:
             provider_call_id,
             tool_name,
             arguments_json,
+            payload_kind=payload_kind,
             provenance=provenance,
             tool_set_hash=tool_set_hash,
         )

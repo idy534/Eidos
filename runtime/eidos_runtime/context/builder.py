@@ -151,7 +151,13 @@ class ContextBuilder:
             elif item.provider_call_id is not None:
                 result_json = item.model_result_json or item.result_json or "{}"
                 projected_result = result_json
-                custom_input = _custom_payload_input(item.arguments_json)
+                payload_kind = item.payload_kind or "function"
+                custom_input = (
+                    _custom_payload_input(item.arguments_json)
+                    if payload_kind == "custom" else None
+                )
+                if payload_kind == "custom" and custom_input is None:
+                    raise ValueError("custom_tool_payload_invalid")
                 if item.tool_name in _CONTEXT_DEDUPE_READ_TOOLS:
                     dedupe_key = (
                         item.tool_name,
@@ -166,7 +172,7 @@ class ContextBuilder:
                         projected_result = _context_deduplicated_result(
                             duplicate_of, workspace_state
                         )
-                if custom_input is None:
+                if payload_kind == "function":
                     context.extend((
                         {
                             "type": "tool_call",
@@ -267,11 +273,7 @@ def _custom_payload_input(arguments_json: str | None) -> str | None:
         value = json.loads(arguments_json)
     except (TypeError, ValueError):
         return None
-    if (
-        isinstance(value, dict)
-        and value.get("kind") == "custom"
-        and isinstance(value.get("input"), str)
-    ):
+    if isinstance(value, dict) and isinstance(value.get("input"), str):
         return value["input"]
     return None
 

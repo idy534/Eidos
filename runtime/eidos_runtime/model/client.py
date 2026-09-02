@@ -87,12 +87,7 @@ class ModelToolCall(_FrozenModel):
         elif arguments is not None:
             raise TypeError("payload and arguments are mutually exclusive")
         elif isinstance(payload, dict):
-            if payload.get("kind") == "custom" and set(payload) <= {"kind", "input"}:
-                payload = CustomToolPayload.model_validate(payload)
-            elif payload.get("kind") == "function" and set(payload) <= {"kind", "arguments"}:
-                payload = FunctionToolPayload.model_validate(payload)
-            else:
-                payload = FunctionToolPayload(arguments=payload)
+            payload = FunctionToolPayload(arguments=payload)
         super().__init__(
             provider_call_id=provider_call_id,
             name=name,

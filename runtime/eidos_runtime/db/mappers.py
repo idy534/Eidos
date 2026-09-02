@@ -324,11 +324,10 @@ def _item_from_row(
             "providerCallId": tool_row["provider_call_id"],
             "toolName": tool_row["tool_name"],
             "status": tool_row["status"],
+            "payloadKind": tool_row["payload_kind"],
             "argumentsJson": tool_row["arguments_json"],
             "startedAt": tool_row["started_at"],
         }
-        if _payload_kind_from_arguments(tool_row["arguments_json"]) == "custom":
-            tool_call["payloadKind"] = "custom"
         public_result = (
             tool_row["ui_result_json"]
             if "ui_result_json" in tool_row.keys()
@@ -357,17 +356,6 @@ def _item_from_row(
             tool_call["toolSetHash"] = tool_row["tool_set_hash"]
         item["toolCall"] = tool_call
     return ItemDto.model_validate(item).to_json_value()
-
-
-def _payload_kind_from_arguments(value: object) -> str | None:
-    parsed = _load_json_object(value)
-    if (
-        parsed is not None
-        and parsed.get("kind") == "custom"
-        and isinstance(parsed.get("input"), str)
-    ):
-        return "custom"
-    return None
 
 
 def _json_bytes(value: object) -> int:

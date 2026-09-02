@@ -248,6 +248,7 @@ class ContextRepository(Repository):
                     tool_rows = connection.execute(
                         f"""
                         SELECT item_id, provider_call_id, tool_name,
+                               payload_kind,
                                substr(arguments_json, 1, ?) AS arguments_json,
                                status,
                                substr(result_json, 1, ?) AS result_json,
@@ -312,6 +313,7 @@ class ContextRepository(Repository):
                 content=row["content"],
                 provider_call_id=str(tool["provider_call_id"]) if tool else None,
                 tool_name=str(tool["tool_name"]) if tool else None,
+                payload_kind=str(tool["payload_kind"]) if tool else None,
                 arguments_json=str(tool["arguments_json"]) if tool else None,
                 result_json=(
                     str(tool["result_json"])

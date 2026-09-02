@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import Field
 
@@ -52,6 +53,7 @@ class ToolCall(EidosFrozenStrictModel):
     provider_call_id: str = Field(min_length=1)
     tool_name: str = Field(min_length=1)
     status: ToolCallStatus
+    payload_kind: Literal["function", "custom"]
     arguments_json: str
     result_json: str | None = None
     model_result_json: str | None = None

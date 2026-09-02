@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
+V7_SCHEMA_VERSION = 7
 V6_SCHEMA_VERSION = 6
 V5_SCHEMA_VERSION = 5
-PREVIOUS_SCHEMA_VERSION = V6_SCHEMA_VERSION
+PREVIOUS_SCHEMA_VERSION = V7_SCHEMA_VERSION
 LEGACY_SCHEMA_VERSION = 1
+
+TOOL_CALL_PAYLOAD_KIND_COLUMN = (
+    "    payload_kind TEXT NOT NULL DEFAULT 'function' CHECK (\n"
+    "        payload_kind IN ('function', 'custom')\n"
+    "    ),\n"
+)
 
 MODEL_ATTEMPT_DIAGNOSTICS_COLUMNS = (
     "    configured_provider_id TEXT,\n"
@@ -145,6 +152,9 @@ CREATE TABLE tool_calls (
     status TEXT NOT NULL CHECK (status IN (
         'running', 'completed', 'failed', 'canceled'
     )),
+    payload_kind TEXT NOT NULL DEFAULT 'function' CHECK (
+        payload_kind IN ('function', 'custom')
+    ),
     arguments_json TEXT NOT NULL,
     result_json TEXT,
     model_result_json TEXT,
@@ -1329,7 +1339,7 @@ V5_SCHEMA_SQL = (
     + WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL
     + SESSION_HANDOFF_SCHEMA_SQL
     + WORKTREE_RETENTION_SCHEMA_SQL
-)
+).replace(TOOL_CALL_PAYLOAD_KIND_COLUMN, "")
 
 # Test/upgrade fixture for schema v4. It omits the v5 Model Attempt
 # diagnostics columns.
@@ -1373,6 +1383,12 @@ V2_SCHEMA_SQL = V4_SCHEMA_SQL.replace(
     "    snapshot_hash TEXT NOT NULL,\n"
     "    plan_json TEXT NOT NULL,",
 )
+
+# Test/upgrade fixture for schema v7. It predates the explicit ToolCall
+# payload discriminator and is used only to exercise the v7 to v8 migration.
+V7_SCHEMA_SQL = SCHEMA_SQL.replace(TOOL_CALL_PAYLOAD_KIND_COLUMN, "")
+if V7_SCHEMA_SQL == SCHEMA_SQL:
+    raise RuntimeError("schema v7 fixture is missing the payload discriminator")
 
 V1_TO_V2_MIGRATION_SQL = """
 ALTER TABLE repository_snapshots
@@ -1478,3 +1494,20 @@ DROP TABLE repository_snapshots;
 """
 
 V6_TO_V7_MIGRATION_SQL = RUNTIME_DEPENDENCY_SCHEMA_SQL
+
+V7_TO_V8_MIGRATION_SQL = """
+ALTER TABLE tool_calls
+ADD COLUMN payload_kind TEXT NOT NULL DEFAULT 'function' CHECK (
+    payload_kind IN ('function', 'custom')
+);
+
+-- The old writer stored native apply_patch input in this envelope. This is a
+-- one-time compatibility backfill. Runtime reads payload_kind afterwards.
+UPDATE tool_calls
+SET payload_kind = 'custom'
+WHERE tool_name = 'apply_patch'
+  AND json_valid(arguments_json)
+  AND json_type(arguments_json, '$') = 'object'
+  AND json_extract(arguments_json, '$.kind') = 'custom'
+  AND json_type(arguments_json, '$.input') = 'text';
+"""
