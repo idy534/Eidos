@@ -590,7 +590,7 @@ test("completes Git fetch, pull, push, merge, and rebase through typed contracts
   await execFileAsync("git", ["push", "-qu", "origin", "main"], {
     cwd: repositoryRoot,
   });
-  await execFileAsync("git", ["clone", "-q", remoteRoot, peerRoot]);
+  await execFileAsync("git", ["clone", "-q", "--branch", "main", remoteRoot, peerRoot]);
   await execFileAsync("git", ["config", "user.name", "Eidos Tests"], { cwd: peerRoot });
   await execFileAsync("git", ["config", "user.email", "eidos-tests@example.com"], {
     cwd: peerRoot,
