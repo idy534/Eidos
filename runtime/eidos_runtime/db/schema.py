@@ -1268,7 +1268,7 @@ CREATE INDEX worktree_lifecycle_operations_session
 ON worktree_lifecycle_operations(session_id, scope);
 """
 
-V6_SCHEMA_SQL = (
+_CURRENT_STATE_SCHEMA_SQL = (
     BASE_SCHEMA_SQL
     + CONTEXT_SCHEMA_SQL
     + RESPONSE_ACTIONS_SCHEMA_SQL
@@ -1282,6 +1282,10 @@ V6_SCHEMA_SQL = (
     + WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL
     + SESSION_HANDOFF_SCHEMA_SQL
     + WORKTREE_RETENTION_SCHEMA_SQL
+)
+
+V6_SCHEMA_SQL = _CURRENT_STATE_SCHEMA_SQL.replace(
+    TOOL_CALL_PAYLOAD_KIND_COLUMN, ""
 )
 
 RUNTIME_DEPENDENCY_SCHEMA_SQL = """
@@ -1320,7 +1324,7 @@ CREATE INDEX run_dependency_bindings_run
 ON run_dependency_bindings(run_id, creation_seq);
 """
 
-SCHEMA_SQL = V6_SCHEMA_SQL + RUNTIME_DEPENDENCY_SCHEMA_SQL
+SCHEMA_SQL = _CURRENT_STATE_SCHEMA_SQL + RUNTIME_DEPENDENCY_SCHEMA_SQL
 
 # Test/upgrade fixture for schema v5. Schema v5 still kept the rebuildable
 # repository index in the state database.
@@ -1386,8 +1390,8 @@ V2_SCHEMA_SQL = V4_SCHEMA_SQL.replace(
 
 # Test/upgrade fixture for schema v7. It predates the explicit ToolCall
 # payload discriminator and is used only to exercise the v7 to v8 migration.
-V7_SCHEMA_SQL = SCHEMA_SQL.replace(TOOL_CALL_PAYLOAD_KIND_COLUMN, "")
-if V7_SCHEMA_SQL == SCHEMA_SQL:
+V7_SCHEMA_SQL = V6_SCHEMA_SQL + RUNTIME_DEPENDENCY_SCHEMA_SQL
+if TOOL_CALL_PAYLOAD_KIND_COLUMN in V7_SCHEMA_SQL:
     raise RuntimeError("schema v7 fixture is missing the payload discriminator")
 
 V1_TO_V2_MIGRATION_SQL = """

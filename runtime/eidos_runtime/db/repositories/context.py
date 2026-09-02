@@ -25,6 +25,7 @@ COMPACTION_FACT_VALUE_MAX_CHARS = 8 * 1024
 CONTEXT_PROJECTION_HARD_MAX_BYTES = 8 * 1024 * 1024
 CONTEXT_PROJECTION_HARD_MAX_ITEMS = 2_000
 RECENT_CONTEXT_STEPS = 3
+CONTEXT_PROJECTION_FACT_OVERHEAD_BYTES = 320
 
 
 class ContextRepository(Repository):
@@ -144,12 +145,12 @@ class ContextRepository(Repository):
                   )
                   {excluded_sql}
             """
-            size_expression = """
+            size_expression = f"""
                 length(CAST(COALESCE(items.content, '') AS BLOB))
                 + length(CAST(COALESCE(tool_calls.arguments_json, '') AS BLOB))
                 + length(CAST(COALESCE(
                     tool_calls.model_result_json, tool_calls.result_json, ''
-                ) AS BLOB)) + 256
+                ) AS BLOB)) + {CONTEXT_PROJECTION_FACT_OVERHEAD_BYTES}
             """
             aggregate = connection.execute(
                 f"SELECT COUNT(*), COALESCE(SUM({size_expression}), 0) {base}",
