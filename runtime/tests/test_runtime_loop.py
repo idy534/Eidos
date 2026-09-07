@@ -726,7 +726,7 @@ class RuntimeLoopTests(unittest.TestCase):
                         ModelToolCall(
                             "call-shell",
                             "run_shell",
-                            {"command": "printf shell-ok", "timeoutSeconds": 5},
+                            {"command": "printf shell-ok", "yieldTimeMs": 5000},
                         ),
                     )
                 ),
@@ -750,7 +750,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
         self.assertEqual(
             json.loads(command_item["toolCall"]["argumentsJson"]),
-            {"command": "printf shell-ok", "cwd": ".", "timeoutSeconds": 5},
+            {"command": "printf shell-ok", "cwd": ".", "yieldTimeMs": 5000},
         )
         result = json.loads(command_item["toolCall"]["resultJson"])
         self.assertEqual(result["outcome"], "success")
@@ -776,7 +776,7 @@ class RuntimeLoopTests(unittest.TestCase):
                             {
                                 "command": "pwd",
                                 "cwd": str(cwd.resolve()),
-                                "timeoutSeconds": 5,
+                                "yieldTimeMs": 5000,
                             },
                         ),
                     )
@@ -818,7 +818,7 @@ class RuntimeLoopTests(unittest.TestCase):
                             {
                                 "command": "pwd",
                                 "cwd": str(outside),
-                                "timeoutSeconds": 5,
+                                "yieldTimeMs": 5000,
                             },
                         ),
                     )
@@ -867,7 +867,7 @@ class RuntimeLoopTests(unittest.TestCase):
                         ModelToolCall(
                             "call-shell",
                             "run_shell",
-                            {"command": command, "timeoutSeconds": 5},
+                            {"command": command, "yieldTimeMs": 5000},
                         ),
                     )
                 ),
@@ -886,6 +886,7 @@ class RuntimeLoopTests(unittest.TestCase):
                 "stderr": "",
                 "truncated": False,
                 "termination": "exit",
+                "executionStatus": "exited",
                 "durationMs": 1,
             },
             "sideEffectsMayExist": True,
@@ -893,7 +894,7 @@ class RuntimeLoopTests(unittest.TestCase):
 
         with (
             mock_patch(
-                "eidos_runtime.runtime.tool_runtime.run_shell",
+                "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start",
                 return_value=shell_result,
             ),
             mock_patch.object(
@@ -973,7 +974,7 @@ class RuntimeLoopTests(unittest.TestCase):
                             "run_shell",
                             {
                                 "command": f"/usr/bin/touch {sentinel}",
-                                "timeoutSeconds": 5,
+                                "yieldTimeMs": 5000,
                             },
                         ),
                     )
@@ -1014,7 +1015,7 @@ class RuntimeLoopTests(unittest.TestCase):
                             "run_shell",
                             {
                                 "command": f"/usr/bin/touch {sentinel}",
-                                "timeoutSeconds": 5,
+                                "yieldTimeMs": 5000,
                             },
                         ),
                     )
@@ -1074,7 +1075,7 @@ class RuntimeLoopTests(unittest.TestCase):
                             "run_shell",
                             {
                                 "command": f"/usr/bin/touch {sentinel}",
-                                "timeoutSeconds": 5,
+                                "yieldTimeMs": 5000,
                             },
                         ),
                     )
@@ -1201,7 +1202,7 @@ class RuntimeLoopTests(unittest.TestCase):
                                 "command": "printf network-request-approved",
                                 "networkAccess": "request",
                                 "justification": "The command may need network access",
-                                "timeoutSeconds": 5,
+                                "yieldTimeMs": 5000,
                             },
                         ),
                     )
@@ -1272,7 +1273,7 @@ class RuntimeLoopTests(unittest.TestCase):
                         ModelToolCall(
                             "call-shell",
                             "run_shell",
-                            {"command": "touch escaped.txt", "timeoutSeconds": 5},
+                            {"command": "touch escaped.txt", "yieldTimeMs": 5000},
                         ),
                     )
                 ),
@@ -1323,7 +1324,7 @@ class RuntimeLoopTests(unittest.TestCase):
                         ModelToolCall(
                             "call-shell",
                             "run_shell",
-                            {"command": "cat private.pem", "timeoutSeconds": 5},
+                            {"command": "cat private.pem", "yieldTimeMs": 5000},
                         ),
                     )
                 ),
@@ -1367,7 +1368,7 @@ class RuntimeLoopTests(unittest.TestCase):
                         ModelToolCall(
                             "call-shell",
                             "run_shell",
-                            {"command": "printf changed > linked.txt", "timeoutSeconds": 5},
+                            {"command": "printf changed > linked.txt", "yieldTimeMs": 5000},
                         ),
                     )
                 ),
@@ -1405,7 +1406,7 @@ class RuntimeLoopTests(unittest.TestCase):
                         ModelToolCall(
                             "call-shell",
                             "run_shell",
-                            {"command": "ls -la", "timeoutSeconds": 5},
+                            {"command": "ls -la", "yieldTimeMs": 5000},
                         ),
                     )
                 ),

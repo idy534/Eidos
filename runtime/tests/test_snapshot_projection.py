@@ -54,7 +54,7 @@ def test_snapshot_does_not_project_write_content_or_shell_permissions() -> None:
         "argumentsJson": json.dumps({
             "command": "printf 'safe'",
             "cwd": ".",
-            "timeoutSeconds": 10,
+            "yieldTimeMs": 10_000,
             "additionalPermissions": {
                 "network": {"enabled": True},
             },
@@ -65,7 +65,7 @@ def test_snapshot_does_not_project_write_content_or_shell_permissions() -> None:
     assert shell_arguments == {
         "command": "printf 'safe'",
         "cwd": ".",
-        "timeoutSeconds": 10,
+        "yieldTimeMs": 10_000,
     }
 
 
@@ -79,4 +79,3 @@ def test_snapshot_glob_projection_is_bounded() -> None:
     }) or "null")
 
     assert len(projected["includeGlobs"]) <= 32
-

@@ -117,7 +117,7 @@ class ReadToolOutputRuntimeTests(unittest.TestCase):
         )
 
         with patch(
-            "eidos_runtime.runtime.tool_runtime.run_shell",
+            "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start",
             side_effect=AssertionError("read_tool_output must not run Shell"),
         ) as run_shell:
             RuntimeEngine(self.store, model, lambda _message: None).run(
@@ -177,7 +177,7 @@ class ReadToolOutputRuntimeTests(unittest.TestCase):
         )
 
         with patch(
-            "eidos_runtime.runtime.tool_runtime.run_shell",
+            "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start",
             side_effect=AssertionError("read_tool_output must not run Shell"),
         ) as run_shell:
             RuntimeEngine(self.store, model, lambda _message: None).run(

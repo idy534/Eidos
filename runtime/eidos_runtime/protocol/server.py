@@ -1740,7 +1740,7 @@ def _model_from_environment() -> ModelClient | None:
                         ModelToolCall(
                             "fake-shell-1",
                             "run_shell",
-                            {"command": "printf desktop-shell-ok", "timeoutSeconds": 5},
+                            {"command": "printf desktop-shell-ok", "yieldTimeMs": 5000},
                         ),
                     )
                 ),

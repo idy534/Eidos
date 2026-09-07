@@ -52,18 +52,18 @@ def test_network_denial_does_not_replay_shell_and_persists_raw_arguments(tmp_pat
     store.initialize()
     attempts = []
     approvals = []
-    def shell(*args, **kwargs):
-        attempt = args[8]
-        attempts.append(attempt.permissions.network_enabled)
-        enabled = attempt.permissions.network_enabled
+    def shell(_manager, launch, **_kwargs):
+        enabled = any("network-outbound" in argument for argument in launch.argv)
+        attempts.append(enabled)
         return {'schemaVersion': 1, 'toolName': 'run_shell',
                 'outcome': 'success' if enabled else 'error',
-                'code': 'ok' if enabled else 'nonzero_exit', 'summary': 'fixture',
+                'code': 'ok' if enabled else 'shell_exit_nonzero', 'summary': 'fixture',
                 'data': {'exitCode': 0 if enabled else 1, 'stdout': '',
                          'stderr': '' if enabled else 'connect: network operation not permitted',
-                         'truncated': False, 'termination': 'exit', 'workspaceChanged': False},
+                         'truncated': False, 'termination': 'exit',
+                         'executionStatus': 'exited', 'workspaceChanged': False},
                 'sideEffectsMayExist': False, 'reconciliationRequired': False}
-    monkeypatch.setattr('eidos_runtime.runtime.tool_runtime.run_shell', shell)
+    monkeypatch.setattr('eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start', shell)
     monkeypatch.setattr('eidos_runtime.runtime.tool_runtime.is_seatbelt_ready', lambda: True)
     try:
         session = store.create_session(str(workspace))
@@ -74,7 +74,7 @@ def test_network_denial_does_not_replay_shell_and_persists_raw_arguments(tmp_pat
             return ApprovalDecision(decision)
         model = ScriptedModel([
             ModelResponse(tool_calls=(ModelToolCall('s1', 'run_shell', {'command': 'npm install docx'}),)),
-            ModelResponse(tool_calls=(ModelToolCall('s2', 'run_shell', {'command': 'npm install docx', 'networkAccess': 'default', **({'timeoutSeconds': 121} if decision == 'reject' else {})}),)),
+            ModelResponse(tool_calls=(ModelToolCall('s2', 'run_shell', {'command': 'npm install docx', 'networkAccess': 'default', **({'yieldTimeMs': 30_000} if decision == 'reject' else {})}),)),
             ModelResponse(text='done'),
         ])
         RuntimeEngine(store, model, lambda message: None, request_approval=approve, shell_available=True).run(run['id'], threading.Event())
@@ -101,17 +101,18 @@ def test_pending_approval_recovers_without_replaying_completed_shell(tmp_path, m
     store = SessionStore(data)
     store.initialize()
     attempts = []
-    def shell(*args, **kwargs):
-        enabled = args[8].permissions.network_enabled
+    def shell(_manager, launch, **_kwargs):
+        enabled = any("network-outbound" in argument for argument in launch.argv)
         attempts.append(enabled)
         return {'schemaVersion': 1, 'toolName': 'run_shell',
                 'outcome': 'success' if enabled else 'error',
-                'code': 'ok' if enabled else 'nonzero_exit', 'summary': 'fixture',
+                'code': 'ok' if enabled else 'shell_exit_nonzero', 'summary': 'fixture',
                 'data': {'exitCode': 0 if enabled else 1, 'stdout': '',
                          'stderr': '' if enabled else 'connect: network operation not permitted',
-                         'truncated': False, 'termination': 'exit', 'workspaceChanged': False},
+                         'truncated': False, 'termination': 'exit',
+                         'executionStatus': 'exited', 'workspaceChanged': False},
                 'sideEffectsMayExist': False, 'reconciliationRequired': False}
-    monkeypatch.setattr('eidos_runtime.runtime.tool_runtime.run_shell', shell)
+    monkeypatch.setattr('eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start', shell)
     monkeypatch.setattr('eidos_runtime.runtime.tool_runtime.is_seatbelt_ready', lambda: True)
     try:
         session = store.create_session(str(workspace))

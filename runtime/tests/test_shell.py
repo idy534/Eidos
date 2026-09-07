@@ -41,6 +41,10 @@ from eidos_runtime.sandbox.permissions import (  # noqa: E402
     materialize_effective_profile,
 )
 from eidos_runtime.db.storage import WorkspaceIdentity  # noqa: E402
+from eidos_runtime.runtime.resource_registry import ResourceRegistry  # noqa: E402
+from eidos_runtime.runtime.shell_process_manager import (  # noqa: E402
+    ShellProcessManager,
+)
 
 
 class _PassthroughProfile:
@@ -751,6 +755,180 @@ class ShellProcessGroupTests(unittest.TestCase):
 
         self.assertEqual(result["outcome"], "success")
         self.assertGreaterEqual(result["data"]["durationMs"], 1_000)
+
+
+class ShellProcessManagerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary_directory = tempfile.TemporaryDirectory(
+            prefix="eidos-shell-manager-test-"
+        )
+        self.workspace = Path(self.temporary_directory.name) / "workspace"
+        self.workspace.mkdir()
+        self.resources = ResourceRegistry()
+        self.manager = ShellProcessManager(
+            self.resources,
+            owner_run_id="shell-manager-test-run",
+        )
+
+    def tearDown(self) -> None:
+        try:
+            self.manager.cleanup()
+        finally:
+            self.resources.ensure_empty()
+            self.temporary_directory.cleanup()
+
+    def _launch(self, argv: tuple[str, ...]) -> ShellLaunchSpec:
+        return ShellLaunchSpec(
+            argv=argv,
+            cwd=self.workspace,
+            environment={
+                "HOME": str(self.workspace),
+                "LANG": "C.UTF-8",
+                "PATH": "/usr/bin:/bin",
+            },
+            sandboxed=False,
+        )
+
+    def _shell_launch(self, command: str) -> ShellLaunchSpec:
+        return self._launch(("/bin/sh", "-c", command))
+
+    def _python_launch(self, code: str) -> ShellLaunchSpec:
+        return self._launch((sys.executable, "-c", code))
+
+    def test_short_command_exits_without_a_session(self) -> None:
+        result = self.manager.start(
+            self._shell_launch("printf short"),
+            yield_time_ms=1_000,
+        )
+        data = result["data"]
+
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(result["code"], "ok")
+        self.assertEqual(data["executionStatus"], "exited")
+        self.assertEqual(data["exitCode"], 0)
+        self.assertEqual(data["stdout"], "short")
+        self.assertNotIn("sessionId", data)
+        self.resources.ensure_empty()
+
+    def test_long_command_returns_running_then_write_stdin_poll_returns_done(self) -> None:
+        result = self.manager.start(
+            self._python_launch(
+                "import time; print('ready', flush=True); "
+                "time.sleep(1.0); print('done', flush=True)"
+            ),
+            yield_time_ms=250,
+        )
+        running_data = result["data"]
+        session_id = running_data["sessionId"]
+
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(result["code"], "shell_running")
+        self.assertTrue(result["sideEffectsMayExist"])
+        self.assertFalse(result["reconciliationRequired"])
+        self.assertEqual(running_data["executionStatus"], "running")
+        self.assertIsInstance(session_id, str)
+
+        completed = self.manager.write_stdin(
+            session_id,
+            "",
+            yield_time_ms=3_000,
+        )
+        completed_data = completed["data"]
+        self.assertEqual(completed["code"], "ok")
+        self.assertEqual(completed_data["executionStatus"], "exited")
+        self.assertEqual(completed_data["exitCode"], 0)
+        self.assertIn("done", completed_data["stdout"])
+        self.assertNotIn("sessionId", completed_data)
+
+    def test_silent_long_command_stays_running_with_a_session(self) -> None:
+        result = self.manager.start(
+            self._python_launch("import time; time.sleep(1.0)"),
+            yield_time_ms=250,
+        )
+        data = result["data"]
+
+        self.assertEqual(result["code"], "shell_running")
+        self.assertEqual(data["executionStatus"], "running")
+        self.assertIsInstance(data["sessionId"], str)
+        self.assertEqual(data["stdout"], "")
+        self.assertEqual(data["stderr"], "")
+
+    def test_nonzero_exit_is_not_reconciliation_required(self) -> None:
+        result = self.manager.start(
+            self._shell_launch("exit 7"),
+            yield_time_ms=1_000,
+        )
+        data = result["data"]
+
+        self.assertEqual(result["outcome"], "error")
+        self.assertEqual(result["code"], "shell_exit_nonzero")
+        self.assertFalse(result["reconciliationRequired"])
+        self.assertEqual(data["executionStatus"], "exited")
+        self.assertEqual(data["exitCode"], 7)
+        self.assertNotIn("sessionId", data)
+
+    def test_ctrl_c_exits_process_group_and_quiesces_resource_registry(self) -> None:
+        result = self.manager.start(
+            self._python_launch("import time; time.sleep(30)"),
+            yield_time_ms=250,
+        )
+        session_id = result["data"]["sessionId"]
+        self.assertEqual(result["code"], "shell_running")
+
+        interrupted = self.manager.write_stdin(
+            session_id,
+            "\x03",
+            yield_time_ms=3_000,
+        )
+        data = interrupted["data"]
+
+        self.assertEqual(data["executionStatus"], "exited")
+        self.assertNotEqual(data["exitCode"], 0)
+        self.resources.ensure_empty()
+        self.assertEqual(self.resources.active_resources(), ())
+
+    def test_output_limit_drains_to_exit_and_reports_exact_byte_counts(self) -> None:
+        original_bytes = 300_000
+        result = self.manager.start(
+            self._python_launch(
+                "import sys; "
+                f"sys.stdout.buffer.write(b'x' * {original_bytes}); "
+                "sys.stdout.buffer.flush()"
+            ),
+            yield_time_ms=5_000,
+        )
+        data = result["data"]
+        accepted_bytes = 256 * 1024
+
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(data["executionStatus"], "exited")
+        self.assertEqual(data["exitCode"], 0)
+        self.assertTrue(data["truncated"])
+        self.assertEqual(data["originalBytes"], original_bytes)
+        self.assertEqual(data["omittedBytes"], original_bytes - accepted_bytes)
+        self.assertEqual(len(data["stdout"].encode("utf-8")), accepted_bytes)
+        self.assertNotIn("sessionId", data)
+
+    def test_subsequent_poll_returns_only_new_output(self) -> None:
+        result = self.manager.start(
+            self._shell_launch("printf first; sleep 1.5; printf second"),
+            yield_time_ms=750,
+        )
+        running_data = result["data"]
+        session_id = running_data["sessionId"]
+
+        self.assertEqual(result["code"], "shell_running")
+        self.assertEqual(running_data["stdout"], "first")
+
+        completed = self.manager.write_stdin(
+            session_id,
+            "",
+            yield_time_ms=3_000,
+        )
+        completed_data = completed["data"]
+        self.assertEqual(completed_data["executionStatus"], "exited")
+        self.assertEqual(completed_data["stdout"], "second")
+        self.assertNotIn("first", completed_data["stdout"])
 
 
 if __name__ == "__main__":
