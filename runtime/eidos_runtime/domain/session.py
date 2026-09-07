@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -29,6 +30,7 @@ class Session(EidosFrozenStrictModel):
     worktree_id: str | None = Field(default=None, min_length=1)
     associated_worktree_id: str | None = Field(default=None, min_length=1)
     title: str | None = None
+    active_run_status: Literal["queued", "running", "waiting_approval", "finalizing"] | None = None
     task_status: SessionTaskStatus
     created_at: datetime
     updated_at: datetime

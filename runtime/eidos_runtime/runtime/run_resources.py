@@ -31,6 +31,7 @@ from eidos_runtime.runtime.runtime_dependencies import (
     RuntimeDependencyCoordinator,
 )
 from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
+from eidos_runtime.tools.request_permissions import request_permissions_entry
 from eidos_runtime.tools.read_tool_output import read_tool_output_entry
 from eidos_runtime.tools.search import tool_search_entry
 from eidos_runtime.tools.runtime_workspace import ToolExecutor
@@ -209,6 +210,7 @@ class RunResources:
             builtin_entries=(
                 *self.tool_executor.registry.entries,
                 read_tool_output_entry(self.store, self.run_id),
+                request_permissions_entry(),
                 workspace_dependencies_entry(
                     metadata_provider=self._workspace_dependency_metadata,
                 ),

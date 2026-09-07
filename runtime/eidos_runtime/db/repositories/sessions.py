@@ -78,6 +78,11 @@ SESSION_SELECT = """
                LIMIT 1
              ), 'new')
            END AS task_status,
+           (SELECT active.status FROM runs active
+            WHERE active.session_id = s.id
+              AND active.status IN ('queued', 'running', 'waiting_approval', 'finalizing')
+            ORDER BY CASE active.status WHEN 'waiting_approval' THEN 0 ELSE 1 END,
+                     active.creation_seq DESC LIMIT 1) AS active_run_status,
            COALESCE(p.id, direct_p.id) AS projection_project_id,
            COALESCE(p.workspace_root, direct_p.workspace_root)
                AS projection_workspace_root,

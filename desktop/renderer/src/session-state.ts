@@ -30,7 +30,9 @@ export interface TaskStatusPresentation {
 export function taskStatusPresentation(
   status: Session["taskStatus"],
   completedRead = false,
+  activeRunStatus?: Session["activeRunStatus"],
 ): TaskStatusPresentation | undefined {
+  if (activeRunStatus === "waiting_approval") return { label: "等待批准", tone: "progress", spinning: false };
   switch (status) {
     case "completed":
       return completedRead
@@ -465,7 +467,9 @@ export function deriveComposerMode(
  * Returns the most recent active run (last in array order).
  */
 export function findActiveRun(runs: Run[]): Run | undefined {
-  return [...runs].reverse().find((run) => ACTIVE_RUN_STATUSES.has(run.status));
+  const latest = [...runs].reverse();
+  return latest.find((run) => run.status === "waiting_approval")
+    ?? latest.find((run) => ACTIVE_RUN_STATUSES.has(run.status));
 }
 
 // ---------------------------------------------------------------------------

@@ -3704,6 +3704,14 @@ button.tool-file-link:focus,
 .diff-view { max-height: 22rem; margin: 0; overflow: auto; padding: 1rem; border-top: 1px solid #cbd6cd; border-bottom: 1px solid var(--line); color: #303630; background: #f7f8f5; font: var(--font-size-code)/var(--line-height-code) var(--font-code); white-space: pre; }
 .approval-actions { display: flex; justify-content: flex-end; gap: 0.5rem; padding: 0.75rem; }
 
+.approval-composer {
+  flex: none;
+  width: min(calc(100% - 3.5rem), 56rem);
+  max-width: none;
+  margin: 0 auto 1rem;
+}
+.approval-composer .diff-view { max-height: min(30vh, 22rem); }
+
 /* Composer Input Capsule */
 .composer {
   flex: none;

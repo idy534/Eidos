@@ -212,7 +212,8 @@ class ToolDispatcher:
                 )
             provider_ids.add(call.provider_call_id)
             effective_calls.append(ModelToolCall(
-                call.provider_call_id, call.name, effective_payload
+                call.provider_call_id, call.name, effective_payload,
+                raw_payload=call.raw_payload or call.payload,
             ))
         # Batch policy controls runtime scheduling, not how many calls a model may
         # return in one response. Mixed or side-effecting batches are serialized by

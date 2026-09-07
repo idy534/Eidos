@@ -425,3 +425,10 @@ test("task statuses use compact accessible indicators", () => {
   assert.equal(taskStatusPresentation("new"), undefined);
   assert.equal(taskStatusPresentation("canceled"), undefined);
 });
+
+test("waiting approval has a distinct non-spinning session status", () => {
+  assert.deepEqual(taskStatusPresentation("in_progress", false, "waiting_approval"), {
+    label: "等待批准", tone: "progress", spinning: false,
+  });
+  assert.equal(taskStatusPresentation("in_progress", false, "running")?.label, "进行中");
+});

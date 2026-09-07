@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
+V8_SCHEMA_VERSION = 8
 V7_SCHEMA_VERSION = 7
 V6_SCHEMA_VERSION = 6
 V5_SCHEMA_VERSION = 5
-PREVIOUS_SCHEMA_VERSION = V7_SCHEMA_VERSION
+PREVIOUS_SCHEMA_VERSION = V8_SCHEMA_VERSION
 LEGACY_SCHEMA_VERSION = 1
 
 TOOL_CALL_PAYLOAD_KIND_COLUMN = (
@@ -156,6 +157,7 @@ CREATE TABLE tool_calls (
         payload_kind IN ('function', 'custom')
     ),
     arguments_json TEXT NOT NULL,
+    raw_arguments_json TEXT,
     result_json TEXT,
     model_result_json TEXT,
     ui_result_json TEXT,
@@ -1284,7 +1286,9 @@ _CURRENT_STATE_SCHEMA_SQL = (
     + WORKTREE_RETENTION_SCHEMA_SQL
 )
 
-V6_SCHEMA_SQL = _CURRENT_STATE_SCHEMA_SQL.replace(
+V8_SCHEMA_SQL = _CURRENT_STATE_SCHEMA_SQL.replace("    raw_arguments_json TEXT,\n", "")
+
+V6_SCHEMA_SQL = V8_SCHEMA_SQL.replace(
     TOOL_CALL_PAYLOAD_KIND_COLUMN, ""
 )
 
@@ -1325,6 +1329,7 @@ ON run_dependency_bindings(run_id, creation_seq);
 """
 
 SCHEMA_SQL = _CURRENT_STATE_SCHEMA_SQL + RUNTIME_DEPENDENCY_SCHEMA_SQL
+V8_SCHEMA_SQL += RUNTIME_DEPENDENCY_SCHEMA_SQL
 
 # Test/upgrade fixture for schema v5. Schema v5 still kept the rebuildable
 # repository index in the state database.
@@ -1343,7 +1348,7 @@ V5_SCHEMA_SQL = (
     + WORKTREE_BRANCH_OWNERSHIP_SCHEMA_SQL
     + SESSION_HANDOFF_SCHEMA_SQL
     + WORKTREE_RETENTION_SCHEMA_SQL
-).replace(TOOL_CALL_PAYLOAD_KIND_COLUMN, "")
+).replace(TOOL_CALL_PAYLOAD_KIND_COLUMN, "").replace("    raw_arguments_json TEXT,\n", "")
 
 # Test/upgrade fixture for schema v4. It omits the v5 Model Attempt
 # diagnostics columns.
@@ -1515,3 +1520,5 @@ WHERE tool_name = 'apply_patch'
   AND json_extract(arguments_json, '$.kind') = 'custom'
   AND json_type(arguments_json, '$.input') = 'text';
 """
+
+V8_TO_V9_MIGRATION_SQL = "ALTER TABLE tool_calls ADD COLUMN raw_arguments_json TEXT;"

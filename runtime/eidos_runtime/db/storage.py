@@ -32,6 +32,7 @@ from eidos_runtime.db.layout import AuxiliaryDatabase, PersistenceLayout
 from eidos_runtime.db.memories import MemoryStore
 from eidos_runtime.db.runtime_logs import RuntimeJsonlLogHandler
 from eidos_runtime.db.recovery import recover_runtime_facts
+from eidos_runtime.sandbox.permissions import AdditionalPermissionProfile
 from eidos_runtime.db.events import event_from_row
 from eidos_runtime.db.repositories import (
     AsyncOperationRepository,
@@ -993,6 +994,7 @@ class SessionStore:
         tool_name: str,
         arguments_json: str,
         *,
+        raw_arguments_json: str | None = None,
         payload_kind: Literal["function", "custom"] = "function",
         provenance: dict[str, object] | None = None,
         tool_set_hash: str | None = None,
@@ -1004,6 +1006,7 @@ class SessionStore:
             provider_call_id,
             tool_name,
             arguments_json,
+            raw_arguments_json=raw_arguments_json,
             payload_kind=payload_kind,
             provenance=provenance,
             tool_set_hash=tool_set_hash,
@@ -1166,8 +1169,14 @@ class SessionStore:
     def clear_rejects(self, run_id: str) -> None:
         return self._repository(self._runs).clear_rejects(run_id)
 
-    def approval_prompt_blocked(self, run_id: str) -> bool:
-        return self._repository(self._runs).approval_prompt_blocked(run_id)
+    def waiting_approval_run_ids(self) -> tuple[str, ...]:
+        return self._repository(self._runs).waiting_approval_run_ids()
+
+    def run_permission_grants(self, run_id: str) -> AdditionalPermissionProfile:
+        return self._repository(self._runs).run_permission_grants(run_id)
+
+    def approval_prompt_blocked(self, run_id: str, fingerprint: str) -> bool:
+        return self._repository(self._runs).approval_prompt_blocked(run_id, fingerprint)
 
     def record_sensitive_tool_input(self, run_id: str) -> int:
         return self._repository(self._runs).record_sensitive_tool_input(run_id)

@@ -18,6 +18,8 @@ from eidos_runtime.db.schema import (
     V6_TO_V7_MIGRATION_SQL,
     V7_SCHEMA_VERSION,
     V7_TO_V8_MIGRATION_SQL,
+    V8_SCHEMA_VERSION,
+    V8_TO_V9_MIGRATION_SQL,
 )
 from eidos_runtime.db.thread_history import ThreadHistoryStore
 from eidos_runtime.db.runtime_logs import RuntimeLogStore
@@ -578,10 +580,10 @@ def _migrate_state_schema(state: StateDatabase) -> None:
     if revision == SCHEMA_VERSION:
         return
     if revision not in {
-        V5_SCHEMA_VERSION, V6_SCHEMA_VERSION, V7_SCHEMA_VERSION
+        V5_SCHEMA_VERSION, V6_SCHEMA_VERSION, V7_SCHEMA_VERSION, V8_SCHEMA_VERSION
     }:
         raise StorageError("schema_revision_unsupported")
-    migration = V7_TO_V8_MIGRATION_SQL
+    migration = (V7_TO_V8_MIGRATION_SQL if revision < V8_SCHEMA_VERSION else "") + V8_TO_V9_MIGRATION_SQL
     if revision == V5_SCHEMA_VERSION:
         migration = V5_TO_V6_MIGRATION_SQL + V6_TO_V7_MIGRATION_SQL + migration
     elif revision == V6_SCHEMA_VERSION:
@@ -598,6 +600,7 @@ def _migrate_state_schema(state: StateDatabase) -> None:
             connection.execute("PRAGMA foreign_keys = ON")
     except sqlite3.Error as error:
         try:
+            state.connection().rollback()
             state.connection().execute("PRAGMA foreign_keys = ON")
         except sqlite3.Error:
             pass

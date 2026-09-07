@@ -1397,6 +1397,8 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
       "sys.stdin.readline()",
       "send({'jsonrpc':'2.0','id':'server-net-1','method':'item/requestApproval','params':{'id':'forged-id','sessionId':'s1','runId':'r1','itemId':'i4','toolCallId':'tc4','summary':'net summary','kind':'network_access','toolName':'fetch','hosts':['api.example.com'],'target':'https://api.example.com','secretHeader':'Bearer ...'}})",
       "sys.stdin.readline()",
+      "send({'jsonrpc':'2.0','id':'server-permission-1','method':'item/requestApproval','params':{'sessionId':'s1','runId':'r1','itemId':'i5','toolCallId':'tc5','summary':'permissions','kind':'permission_request','grantScope':'run','permissions':{'network':{'enabled':True,'secret':'omit'},'fileSystem':[]},'command':'npm install','completedResult':{'secret':'omit'}}})",
+      "sys.stdin.readline()",
       "json.loads(sys.stdin.readline())",
       "send({'jsonrpc':'2.0','id':'client-2','result':None})",
     ].join("\n"),
@@ -1415,11 +1417,11 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     });
 
     await client.initialize();
-    for (let i = 0; i < 50 && receivedRequests.length < 4; i += 1) {
+    for (let i = 0; i < 50 && receivedRequests.length < 5; i += 1) {
       await new Promise((r) => setTimeout(r, 50));
     }
 
-    assert.equal(receivedRequests.length, 4);
+    assert.equal(receivedRequests.length, 5);
 
     // 1. file_change
     const req1 = receivedRequests[0]!;
@@ -1468,6 +1470,13 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     assert.deepEqual(Object.keys(req4).sort(), [
       "hosts", "id", "itemId", "kind", "runId", "sessionId", "summary", "target", "toolCallId", "toolName",
     ]);
+
+    const req5 = receivedRequests[4]!;
+    assert.equal(req5.kind, "permission_request");
+    assert.equal(req5.id, "server-permission-1");
+    assert.equal(req5.grantScope, "run");
+    assert.deepEqual(req5.permissions, { network: { enabled: true }, fileSystem: [] });
+    assert.equal(req5.completedResult, undefined);
 
     await client.shutdown();
     await client.waitForExit();

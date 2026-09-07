@@ -83,6 +83,7 @@ def session_from_row(row: RowValues | Mapping[str, object]) -> Session:
             associated_worktree_id=associated_worktree_id,
             title=title,
             task_status=task_status,
+            active_run_status=values.optional_text("active_run_status") if "active_run_status" in row.keys() else None,
             created_at=created_at,
             updated_at=updated_at,
         )
@@ -134,6 +135,7 @@ def session_from_legacy_dict(value: object) -> Session:
             reader.optional_text("title") if "title" in value else None
         ),
         "task_status": reader.text("taskStatus"),
+        "active_run_status": reader.optional_text("activeRunStatus") if "activeRunStatus" in value else None,
         "created_at": reader.value("createdAt"),
         "updated_at": reader.value("updatedAt"),
     })
@@ -203,6 +205,7 @@ def session_to_legacy_dict(session: Session) -> dict[str, object]:
         "id": session.id,
         "workspaceRoot": session.workspace_root,
         "taskStatus": session.task_status.value,
+        **({"activeRunStatus": session.active_run_status} if session.active_run_status else {}),
         "createdAt": utc_datetime_to_millis(session.created_at),
         "updatedAt": utc_datetime_to_millis(session.updated_at),
     }

@@ -387,9 +387,24 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertEqual(transport_calls, 1)
         self.assertEqual(self.store.read_run(run["id"])["status"], "running")
         self.assertIn(
-            "Do not request another approval",
+            "Do not repeat this rejected request",
             outcome.feedback or "",
         )
+
+    def test_network_rejection_does_not_block_file_approval(self) -> None:
+        run, item, coordinator, notifications = self._approval_fixture("reject")
+        coordinator.request(
+            run["id"], item, {"kind": "network_access"}, threading.Event(),
+            transition_reason="network",
+        )
+        second = self.store.create_tool_item(
+            run["id"], 2, 0, "different", "write_file", "{}"
+        )
+        outcome = coordinator.request(
+            run["id"], second, {"kind": "file_change"}, threading.Event(),
+            transition_reason="file",
+        )
+        self.assertEqual(outcome.item["toolCall"]["approvalStatus"], "pending")
 
     def test_approval_notification_failure_does_not_roll_back_resolution(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "approve")

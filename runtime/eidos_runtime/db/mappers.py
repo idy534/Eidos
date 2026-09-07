@@ -363,7 +363,7 @@ def _json_bytes(value: object) -> int:
         json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     )
 
-def _bounded_canonical_json(value: object, *, code: str) -> str:
+def _bounded_canonical_json(value: object, *, code: str, max_bytes: int = 256 * 1024) -> str:
     try:
         encoded = json.dumps(
             value, ensure_ascii=False, separators=(",", ":"), sort_keys=True,
@@ -371,7 +371,7 @@ def _bounded_canonical_json(value: object, *, code: str) -> str:
         ).encode("utf-8")
     except (TypeError, ValueError):
         raise ValueError(code) from None
-    if not isinstance(value, dict) or len(encoded) > 256 * 1024:
+    if not isinstance(value, dict) or len(encoded) > max_bytes:
         raise ValueError(code)
     return encoded.decode("utf-8")
 

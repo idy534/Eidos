@@ -66,6 +66,21 @@ class AdditionalPermissionProfile(ClosedModel):
             raise ValueError("additional_permissions do not match sandbox mode")
 
 
+def merge_permissions(
+    *profiles: AdditionalPermissionProfile | None,
+) -> AdditionalPermissionProfile:
+    entries = []
+    network = None
+    for profile in profiles:
+        if profile is None:
+            continue
+        for entry in profile.file_system:
+            if entry not in entries:
+                entries.append(entry)
+        if profile.network is not None and profile.network.enabled is not None:
+            network = profile.network
+    return AdditionalPermissionProfile(fileSystem=tuple(entries), network=network)
+
 class MaterializedFileSystemPermissionEntry(ClosedModel):
     requested_path: StrictStr = Field(alias="requestedPath")
     resolved_path: StrictStr = Field(alias="resolvedPath")

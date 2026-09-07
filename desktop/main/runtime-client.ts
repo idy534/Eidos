@@ -1293,7 +1293,7 @@ function isSession(value: unknown): value is Session {
     isRecord(value)
     && hasOnlyKeys(value, [
       "id", "workspaceRoot", "executionMode", "associatedWorktreeId",
-      "worktreeRestoreAvailable", "projectless", "project", "worktree", "title", "taskStatus",
+      "worktreeRestoreAvailable", "projectless", "project", "worktree", "title", "taskStatus", "activeRunStatus",
       "createdAt", "updatedAt",
     ])
     && typeof value.id === "string"
@@ -1305,6 +1305,7 @@ function isSession(value: unknown): value is Session {
     && (value.project === undefined || isSessionProject(value.project))
     && (value.worktree === undefined || isSessionWorktree(value.worktree))
     && (value.title === undefined || typeof value.title === "string")
+    && (value.activeRunStatus === undefined || ["queued", "running", "waiting_approval", "finalizing"].includes(String(value.activeRunStatus)))
     && ["new", "in_progress", "completed", "failed", "canceled"].includes(String(value.taskStatus))
     && isNonNegativeInteger(value.createdAt)
     && isNonNegativeInteger(value.updatedAt)
@@ -2197,6 +2198,39 @@ function approvalRequestFrom(
       permissionProfile: params.permissionProfile as "connector" | "workspace_read",
       timeoutSeconds: params.timeoutSeconds as number,
       envNames: [...(params.envNames as string[])],
+    };
+  }
+  if (params.kind === "permission_request") {
+    const permissions = params.permissions;
+    if (params.grantScope !== "run" || !isRecord(permissions)) return undefined;
+    const network = permissions.network;
+    const entries = permissions.fileSystem;
+    if (network !== undefined && (!isRecord(network) || typeof network.enabled !== "boolean")) return undefined;
+    if (entries !== undefined && (!Array.isArray(entries) || !entries.every((entry) =>
+      isRecord(entry) && typeof entry.path === "string" && entry.path.startsWith("/")
+      && ["read", "write", "execute"].includes(String(entry.access))
+      && typeof entry.recursive === "boolean"))) return undefined;
+    if ([params.reason, params.command, params.cwd].some((value) => value != null && typeof value !== "string")) return undefined;
+    return {
+      id: message.id,
+      sessionId: params.sessionId as string,
+      runId: params.runId as string,
+      itemId: params.itemId as string,
+      toolCallId: params.toolCallId as string,
+      kind: "permission_request",
+      summary: params.summary as string,
+      grantScope: "run",
+      permissions: {
+        network: isRecord(network) ? { enabled: network.enabled as boolean } : undefined,
+        fileSystem: Array.isArray(entries) ? entries.map((entry) => ({
+          path: entry.path as string,
+          access: entry.access as "read" | "write" | "execute",
+          recursive: entry.recursive as boolean,
+        })) : undefined,
+      },
+      reason: typeof params.reason === "string" ? params.reason : undefined,
+      command: typeof params.command === "string" ? params.command : undefined,
+      cwd: typeof params.cwd === "string" ? params.cwd : undefined,
     };
   }
   if (params.kind === "network_access") {

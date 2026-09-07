@@ -62,8 +62,29 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
         """,
         (now,),
     )
+    # Only a structured approval pause with no unknown execution can resume.
+    # A completed network-denied Shell carries its verified result in the
+    # approval transaction, so recovery returns that result without replay.
+    connection.execute("""
+        CREATE TEMP TABLE resumable_approval_runs AS
+        SELECT r.id FROM runs r JOIN approvals a ON a.run_id = r.id
+        WHERE r.status = 'waiting_approval' AND a.status = 'pending'
+          AND r.cancel_requested_at IS NULL AND r.reconciliation_required = 0
+          AND json_type(a.request_json, '$.permissionBlockFingerprint') = 'text'
+          AND NOT EXISTS (SELECT 1 FROM tool_attempts t
+              JOIN tool_calls c ON c.id = t.tool_call_id JOIN items i ON i.id = c.item_id
+              WHERE i.run_id = r.id AND t.status = 'running')
+          AND NOT EXISTS (SELECT 1 FROM durable_intents d WHERE d.run_id = r.id
+              AND d.status IN ('running', 'interrupted', 'uncertain')
+              AND NOT COALESCE((d.tool_call_id = a.tool_call_id
+                  AND json_extract(a.request_json, '$.kind') = 'permission_request'
+                  AND json_extract(a.request_json, '$.completedResult.reconciliationRequired') = 0
+                  AND json_extract(a.request_json, '$.completedResult.data.termination') = 'exit'
+                  AND json_type(a.request_json, '$.completedResult.data.exitCode') = 'integer'), 0))
+    """)
     connection.execute(
-        "UPDATE durable_intents SET status = 'interrupted' WHERE status = 'running'"
+        "UPDATE durable_intents SET status = 'interrupted' WHERE status = 'running' "
+        "AND run_id NOT IN (SELECT id FROM resumable_approval_runs)"
     )
     connection.execute(
         """
@@ -154,6 +175,7 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
         """
         SELECT id, status FROM runs
         WHERE status IN ('running', 'waiting_approval', 'finalizing')
+          AND id NOT IN (SELECT id FROM resumable_approval_runs)
         """
     ).fetchall()
     for row in active_runs:
@@ -171,6 +193,7 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
         SELECT approvals.id, approvals.run_id, runs.session_id
         FROM approvals JOIN runs ON runs.id = approvals.run_id
         WHERE approvals.status = 'pending'
+          AND approvals.run_id NOT IN (SELECT id FROM resumable_approval_runs)
         """
     ).fetchall()
     for approval in approvals:
@@ -196,6 +219,8 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
             run_id=approval["run_id"],
         )
     connection.execute(
-        "UPDATE tool_calls SET approval_status = 'canceled' WHERE approval_status = 'pending'"
+        "UPDATE tool_calls SET approval_status = 'canceled' WHERE approval_status = 'pending' "
+        "AND item_id NOT IN (SELECT id FROM items WHERE run_id IN (SELECT id FROM resumable_approval_runs))"
     )
+    connection.execute("DROP TABLE resumable_approval_runs")
     verify_runtime_invariants(connection)

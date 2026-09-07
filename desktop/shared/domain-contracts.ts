@@ -57,6 +57,7 @@ export interface Session {
   project?: SessionProject;
   worktree?: SessionWorktree;
   title?: string;
+  activeRunStatus?: "queued" | "running" | "waiting_approval" | "finalizing" | undefined;
   taskStatus: "new" | "in_progress" | "completed" | "failed" | "canceled";
   createdAt: number;
   updatedAt: number;
@@ -514,11 +515,24 @@ export interface NetworkApprovalRequest extends ApprovalRequestBase {
   target: string;
 }
 
+export interface PermissionApprovalRequest extends ApprovalRequestBase {
+  kind: "permission_request";
+  grantScope: "run";
+  permissions: {
+    network?: { enabled: boolean } | undefined;
+    fileSystem?: { path: string; access: "read" | "write" | "execute"; recursive: boolean }[] | undefined;
+  };
+  reason?: string | undefined;
+  command?: string | undefined;
+  cwd?: string | undefined;
+}
+
 export type ApprovalRequest =
   | FileApprovalRequest
   | CommandApprovalRequest
   | ExternalToolApprovalRequest
-  | NetworkApprovalRequest;
+  | NetworkApprovalRequest
+  | PermissionApprovalRequest;
 
 export interface PluginRecord {
   schemaVersion: 1;

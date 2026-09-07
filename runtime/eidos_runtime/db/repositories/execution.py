@@ -1140,6 +1140,7 @@ class ExecutionRepository(Repository):
         tool_name: str,
         arguments_json: str,
         *,
+        raw_arguments_json: str | None = None,
         payload_kind: Literal["function", "custom"] = "function",
         provenance: dict[str, object] | None = None,
         tool_set_hash: str | None = None,
@@ -1189,9 +1190,9 @@ class ExecutionRepository(Repository):
                 """
                 INSERT INTO tool_calls (
                     id, item_id, model_step_index, batch_order, provider_call_id,
-                    tool_name, payload_kind, status, arguments_json, provenance_json,
+                    tool_name, payload_kind, status, arguments_json, raw_arguments_json, provenance_json,
                     tool_set_hash, started_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
                 """,
                 (
                     tool_call_id,
@@ -1202,6 +1203,7 @@ class ExecutionRepository(Repository):
                     tool_name,
                     payload_kind,
                     arguments_json,
+                    raw_arguments_json,
                     provenance_json,
                     tool_set_hash,
                     now,
@@ -1448,7 +1450,7 @@ class ExecutionRepository(Repository):
         }:
             raise ValueError("invalid approval kind")
         request_json = _bounded_canonical_json(
-            request or {}, code="approval_request_invalid"
+            request or {}, code="approval_request_invalid", max_bytes=1024 * 1024
         )
         now = _now_ms()
         approval_id = str(uuid.uuid4())
