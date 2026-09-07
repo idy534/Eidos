@@ -155,6 +155,7 @@ def test_schema_v8_upgrade_keeps_original_arguments_unknown(tmp_path):
     with sqlite3.connect(database) as connection:
         connection.executescript(V8_SCHEMA_SQL)
         connection.execute('PRAGMA user_version = 8')
+    database.chmod(0o600)
     store = SessionStore(data)
     store.initialize()
     try:

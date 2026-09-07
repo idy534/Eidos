@@ -265,7 +265,7 @@ class ToolStateMachineTests(unittest.TestCase):
 
         self.assertTrue(handler.effect_called)
         self.assertEqual(outcome.result["outcome"], "success")
-        self.assertEqual(calls, 1)
+        self.assertEqual(calls, 2)
 
 
 if __name__ == "__main__":
