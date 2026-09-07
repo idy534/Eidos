@@ -354,6 +354,16 @@ class RunShellInput(StrictToolModel):
         default=".",
         description="Workspace-relative or Workspace canonical absolute directory path.",
     )
+    yieldTimeMs: StrictInt = Field(
+        default=10_000,
+        ge=250,
+        le=30_000,
+        description=(
+            "Maximum time to observe this command during the current ToolCall. "
+            "This does not limit the process lifetime. Use write_stdin to poll, "
+            "send input, or interrupt a still-running command."
+        ),
+    )
     dependencyBindingId: StrictStr | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -365,7 +375,6 @@ class RunShellInput(StrictToolModel):
             "an already-resolved environment; it does not grant paths or env values."
         ),
     )
-    timeoutSeconds: StrictInt = Field(default=120, ge=1, le=600)
     networkAccess: NetworkAccess = Field(
         default=NetworkAccess.DEFAULT,
         description=(
@@ -429,6 +438,22 @@ class RunShellInput(StrictToolModel):
                 network=NetworkPermissions(enabled=True)
             )
         return self.additionalPermissions
+
+
+class WriteStdinInput(StrictToolModel):
+    sessionId: StrictStr = Field(min_length=1, max_length=256)
+    chars: StrictStr = Field(default="", max_length=16 * 1024)
+    yieldTimeMs: StrictInt = Field(
+        default=10_000,
+        ge=250,
+        le=300_000,
+        description="Maximum time to wait for the Shell process during this ToolCall.",
+    )
+
+    @field_validator("chars")
+    @classmethod
+    def validate_chars(cls, value: str) -> str:
+        return _utf8_limit(value, 16 * 1024, "stdin_input_too_large")
 
 
 class SkillReadInput(StrictToolModel):
@@ -724,9 +749,11 @@ class RuntimeDependencyBindingProvenance(StrictToolModel):
 class RunShellResultData(WorkspaceResultData):
     ALLOW_SUCCESS_RECONCILIATION: ClassVar[bool] = True
     SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = (
-        "exitCode", "stdout", "stderr", "truncated", "termination",
+        "stdout", "stderr", "truncated", "termination",
         "workspaceChanged",
     )
+    sessionId: StrictStr | None = None
+    executionStatus: Literal["running", "exited"] | None = None
     exitCode: StrictInt | None = None
     stdout: StrictStr | None = None
     stderr: StrictStr | None = None
@@ -769,6 +796,10 @@ class RunShellResultData(WorkspaceResultData):
     invocationType: Literal["implicit", "explicit", "model_read"] | None = None
     source: StrictStr | None = None
     provenance: dict[str, StrictStr] | None = None
+
+
+class WriteStdinResultData(RunShellResultData):
+    pass
 
 
 class SkillReadResultData(StrictToolModel):
@@ -1011,7 +1042,7 @@ _MODEL_MAX_NODES = 1_000
 _MODEL_MAX_KEYS = 256
 _MODEL_MAX_LIST_ITEMS = 100
 _SHELL_MODEL_FACT_FIELDS = frozenset({
-    "exitCode", "termination", "truncated", "truncationReason",
+    "sessionId", "executionStatus", "exitCode", "termination", "truncated", "truncationReason",
     "originalBytes", "omittedBytes", "attemptCount", "escalated", "sandboxed",
     "modelProjectionTruncated", "modelProjectionContinuation",
     "modelProjectionOmittedBytes",
@@ -1034,6 +1065,7 @@ def project_tool_result(
         "apply_patch": "file_change",
         "delete_file": "file_change",
         "run_shell": "run_shell",
+        "write_stdin": "run_shell",
         "skill_read": "skill_read",
         "skill_read_resource": "skill_resource",
         "skill_create": "skill_change",
@@ -1055,7 +1087,7 @@ def _project_tool_result(
 ) -> ToolResultProjection:
     data = canonical_result.get("data")
     safe_data = dict(data) if isinstance(data, dict) else {}
-    if tool_name == "run_shell":
+    if tool_name in {"run_shell", "write_stdin"}:
         (
             projected,
             model_projection_truncated,
@@ -1152,7 +1184,7 @@ def _project_shell_data(
     model_projection_truncated = False
 
     for key in (
-        "exitCode", "termination", "truncated", "truncationReason",
+        "sessionId", "executionStatus", "exitCode", "termination", "truncated", "truncationReason",
         "originalBytes", "omittedBytes", "attemptCount", "escalated", "sandboxed",
     ):
         if key not in safe_data:

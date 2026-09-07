@@ -77,7 +77,8 @@ def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
         "write_file": ("path",),
         "apply_patch": (),
         "delete_file": ("path",),
-        "run_shell": ("command", "cwd", "timeoutSeconds"),
+        "run_shell": ("command", "cwd", "yieldTimeMs"),
+        "write_stdin": ("sessionId", "chars", "yieldTimeMs"),
     }
     fields = fields_by_tool.get(tool_call.get("toolName"))
     arguments = _load_json_object(tool_call.get("argumentsJson"))
@@ -102,7 +103,7 @@ def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
         elif field == "regex":
             if isinstance(value, bool):
                 projected[field] = value
-        elif field in {"maxDepth", "maxEntries", "startLine", "endLine", "maxResults", "timeoutSeconds"}:
+        elif field in {"maxDepth", "maxEntries", "startLine", "endLine", "maxResults", "yieldTimeMs"}:
             if isinstance(value, int) and not isinstance(value, bool):
                 projected[field] = value
         elif isinstance(value, str):

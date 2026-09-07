@@ -374,6 +374,7 @@ class RuntimeEngine:
                 base_permissions=BasePermissionProfile.model_validate_json(resolution.permission_profile_json),
                 async_kernel=self.async_kernel, resource_registry=self.resources,
                 skill_access=resources.skill_access, runtime_dependencies=resources.runtime_dependencies,
+                shell_process_manager=resources.shell_process_manager,
             )
             outcome = tools.controller.execute(
                 run_id=run.run_id, item=item, call=call, plan=plan,
@@ -557,6 +558,7 @@ class RuntimeEngine:
                 resource_registry=self.resources,
                 skill_access=resources.skill_access,
                 runtime_dependencies=resources.runtime_dependencies,
+                shell_process_manager=resources.shell_process_manager,
             )
             self._resume_effective_time()
 
