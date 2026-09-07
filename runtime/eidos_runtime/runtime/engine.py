@@ -17,7 +17,6 @@ from eidos_runtime.db.storage import (
     InvalidRunStateError,
     SessionStore,
 )
-from eidos_runtime.db.errors import ReconciliationRequiredError
 from eidos_runtime.model.client import ModelClient
 from eidos_runtime.domain.long_task import LongTaskStatus, SafePoint
 from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalDecision
@@ -80,6 +79,16 @@ EMPTY_EXTENSION_SNAPSHOT = {
     "plugins": [],
     "skillCatalogHash": "",
     "mcpConfigHash": "",
+}
+
+RECONCILIATION_CONTINUATION_CONTEXT = {
+    "type": "user",
+    "sectionId": "reconciliation-required",
+    "content": (
+        "Reconciliation is still required.\n"
+        "Only read-only verification tools are available.\n"
+        "Verify the current workspace state before completing the task."
+    ),
 }
 
 logger = logging.getLogger("eidos.runtime")
@@ -283,9 +292,6 @@ class RuntimeEngine:
                 self._cancel(run_id)
             else:
                 raise RuntimeCancelled from None
-        except ReconciliationRequiredError:
-            self._interrupt_for_reconciliation(run_id)
-            return
         except InvalidRunStateError:
             logger.exception("Unexpected runtime state conflict")
             current = self.store.read_run(run_id)
@@ -375,16 +381,25 @@ class RuntimeEngine:
                 async_kernel=self.async_kernel, resource_registry=self.resources,
                 skill_access=resources.skill_access, runtime_dependencies=resources.runtime_dependencies,
                 shell_process_manager=resources.shell_process_manager,
+                workspace_refresh=(
+                    resources.tool_executor.refresh_workspace_index
+                    if resources.tool_executor is not None else None
+                ),
             )
             outcome = tools.controller.execute(
                 run_id=run.run_id, item=item, call=call, plan=plan,
                 cancel=cancel, deadline=None,
             )
+            tools._refresh_reconciliation_after_result(
+                run_id=run.run_id,
+                call=call,
+                plan=plan,
+                outcome=outcome,
+                cancel=cancel,
+            )
             if self.store.read_run(run.run_id)["status"] == "waiting_approval":
                 raise InvalidRunStateError("pending action could not be restored")
             self.store.complete_current_step(run.run_id, "completed")
-            if outcome.result.get("reconciliationRequired") is True:
-                raise InvalidRunStateError("recovered action requires reconciliation")
 
         while True:
             self._check_cancel(run.run_id, cancel)
@@ -559,6 +574,10 @@ class RuntimeEngine:
                 skill_access=resources.skill_access,
                 runtime_dependencies=resources.runtime_dependencies,
                 shell_process_manager=resources.shell_process_manager,
+                workspace_refresh=(
+                    resources.tool_executor.refresh_workspace_index
+                    if resources.tool_executor is not None else None
+                ),
             )
             self._resume_effective_time()
 
@@ -778,6 +797,26 @@ class RuntimeEngine:
             if decision.action == LoopAction.COMPLETE:
                 assert sampled.assistant_item is not None
                 self.store.complete_current_step(run.run_id, "completed")
+                if self.store.side_effects_blocked(run.run_id):
+                    mutation = self.store.complete_assistant_item_committed(
+                        str(sampled.assistant_item["id"])
+                    )
+                    self.events.publish(mutation, item=mutation.value)
+                    effective_time = self._pause_effective_time(run.run_id)
+                    if effective_time is not None:
+                        self.events.publish(effective_time, run=effective_time.value)
+                    if not any(
+                        isinstance(item, dict)
+                        and item.get("sectionId") == "reconciliation-required"
+                        for item in run.model_context
+                    ):
+                        run = run.model_copy(update={
+                            "model_context": (
+                                *run.model_context,
+                                dict(RECONCILIATION_CONTINUATION_CONTEXT),
+                            )
+                        })
+                    continue
                 mutation = self.store.complete_assistant_and_run_committed(
                     str(sampled.assistant_item["id"]), run.run_id
                 )
@@ -1050,22 +1089,6 @@ class RuntimeEngine:
         mutation = self.store.fail_run_committed(run_id, error_code)
         items = {
             str(item["id"]): item for item in self.store.canceled_items_for_run(run_id)
-        }
-        self.events.publish(mutation, run=mutation.value, items=items)
-
-    def _interrupt_for_reconciliation(self, run_id: str) -> None:
-        """Keep an unresolved side effect from reaching a succeeded Run."""
-        self.state_machine.track(RuntimeState.FAILED, "reconciliation_required")
-        self._pause_effective_time(run_id)
-        current = self.store.read_run(run_id)
-        if current["status"] == "interrupted":
-            return
-        if current["status"] not in {"running", "waiting_approval"}:
-            return
-        mutation = self.store.interrupt_run_committed(run_id)
-        items = {
-            str(item["id"]): item
-            for item in self.store.canceled_items_for_run(run_id)
         }
         self.events.publish(mutation, run=mutation.value, items=items)
 

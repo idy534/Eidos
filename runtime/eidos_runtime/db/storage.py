@@ -811,6 +811,15 @@ class SessionStore:
             progress_signature=progress_signature,
         )
 
+    def clear_reconciliation_after_workspace_refresh_committed(
+        self, run_id: str, expected_epoch: int
+    ) -> CommittedMutation[dict[str, object]] | None:
+        return self._repository(
+            self._execution
+        ).clear_reconciliation_after_workspace_refresh_committed(
+            run_id, expected_epoch
+        )
+
     def recent_progress_signatures(
         self, run_id: str, limit: int = 8
     ) -> tuple[ProgressSignature, ...]:

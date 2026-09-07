@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import errno
 import hashlib
 import json
+import logging
 import threading
 from typing import Callable
 
@@ -54,7 +55,7 @@ from eidos_runtime.runtime.runtime_dependencies import (
 )
 from eidos_runtime.models.runtime_dependencies import RuntimeDependencyBinding
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
-from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
+from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
 from eidos_runtime.runtime.tool_execution import (
     HandlerOutcome,
     PreparedToolExecution,
@@ -129,6 +130,9 @@ from eidos_runtime.runtime.shell_process_manager import (
     ShellProcessManager,
     ShellProcessSessionNotFound,
 )
+
+
+logger = logging.getLogger("eidos.runtime")
 
 
 def _tool_payload_value(call: ModelToolCall) -> dict[str, object] | str:
@@ -917,9 +921,12 @@ class ShellToolHandler:
             workspace_diff = diff_workspace_manifests(
                 manifest_before, manifest_after
             )
+            raw_data = raw_result.get("data")
             if (
                 raw_result.get("outcome") == "success"
                 and attempt.sandbox is SandboxType.MACOS_SEATBELT
+                and isinstance(raw_data, dict)
+                and raw_data.get("executionStatus") == "exited"
             ):
                 raw_result["sideEffectsMayExist"] = False
             result = bounded_tool_result(
@@ -1379,6 +1386,7 @@ class ToolCallRuntime:
         async_kernel: RuntimeAsyncKernel | None = None,
         resource_registry: ResourceRegistry | None = None,
         shell_process_manager: ShellProcessManager | None = None,
+        workspace_refresh: Callable[[threading.Event], object] | None = None,
         skill_access: SkillAccess | None = None,
         runtime_dependencies: RuntimeDependencyCoordinator | None = None,
     ) -> None:
@@ -1389,6 +1397,7 @@ class ToolCallRuntime:
         self.state_machine = state_machine
         self.async_kernel = async_kernel
         self.skill_access = skill_access
+        self.workspace_refresh = workspace_refresh
         self.concurrency = ToolConcurrencyGate()
         self.controller = ToolExecutionController(
             store,
@@ -1422,6 +1431,60 @@ class ToolCallRuntime:
         self.shell_runtime = ShellToolHandler(dependencies)
         self.external_runtime = ExternalToolHandler(dependencies)
         self.eidos_state_runtime = EidosStateToolHandler(dependencies)
+
+    def _refresh_reconciliation_after_result(
+        self,
+        *,
+        run_id: str,
+        call: ModelToolCall,
+        plan: ToolDispatchPlan,
+        outcome: HandlerOutcome,
+        cancel: threading.Event,
+    ) -> None:
+        """Clear a matching barrier only after a complete workspace refresh."""
+        if self.workspace_refresh is None or not self.store.side_effects_blocked(run_id):
+            return
+        successful_read = (
+            plan.side_effect == "none"
+            and outcome.result.get("outcome") == "success"
+        )
+        explicit_reconciliation = (
+            outcome.result.get("reconciliationRequired") is True
+        )
+        if (
+            outcome.reconciliation_disposition
+            is not ReconciliationDisposition.CONTINUE_READ_ONLY
+            and not successful_read
+            and not explicit_reconciliation
+        ):
+            return
+        expected_epoch = self.store.context_projection_facts(
+            run_id
+        ).reconciliation_epoch
+        if cancel.is_set():
+            raise RuntimeCancelled
+        try:
+            manifest = self.workspace_refresh(cancel)
+        except (RuntimeCancelled, ToolCancelled):
+            raise
+        except Exception:
+            if cancel.is_set():
+                raise RuntimeCancelled
+            logger.warning(
+                "reconciliation_workspace_refresh_failed",
+                extra={"run_id": run_id, "tool_name": call.name},
+                exc_info=logger.isEnabledFor(logging.DEBUG),
+            )
+            return
+        if getattr(manifest, "complete", False) is not True:
+            return
+        if cancel.is_set():
+            raise RuntimeCancelled
+        mutation = self.store.clear_reconciliation_after_workspace_refresh_committed(
+            run_id, expected_epoch
+        )
+        if mutation is not None:
+            self.events.publish(mutation, run=mutation.value)
 
     def invoke_read(
         self, runtime: AdapterToolRuntime, run_id: str,
@@ -1476,6 +1539,12 @@ class ToolCallRuntime:
                 result, "failed", "completed",
                 workspace_changed=data.get("workspaceChanged") is True,
                 diff_hash=data.get("workspaceDiffHash"),
+                reconciliation_disposition=classify_shell_reconciliation(
+                    result,
+                    manifest_before_complete=True,
+                    manifest_after_complete=True,
+                    refresh_error_code=None,
+                ),
             )
         return self.shell_runtime.execute(run_id, item, call, cancel, runtime)
 
@@ -1595,6 +1664,13 @@ class ToolCallRuntime:
                     deadline=None,
                 )
             self._check_cancel(step.run_id, cancel)
+            self._refresh_reconciliation_after_result(
+                run_id=step.run_id,
+                call=effective_call,
+                plan=plan,
+                outcome=outcome,
+                cancel=cancel,
+            )
             if outcome.activations:
                 self.store.activate_tools(step.run_id, outcome.activations)
             if outcome.result.get("outcome") != "success":
@@ -1610,36 +1686,6 @@ class ToolCallRuntime:
                     outcome.progress_fingerprint or _hash_json(outcome.result)
                 ),
             }))
-            if (
-                outcome.result.get("reconciliationRequired") is True
-                and (
-                    plan.is_external
-                    or plan.is_eidos_state
-                    or (
-                        plan.is_shell
-                        and outcome.reconciliation_disposition
-                        is not ReconciliationDisposition.CONTINUE_READ_ONLY
-                    )
-                )
-            ):
-                self.store.complete_current_step(
-                    step.run_id,
-                    "failed",
-                    reason=str(outcome.result.get("code")),
-                )
-                pause_reason = (
-                    "external_tool_reconciliation_required"
-                    if plan.is_external
-                    else "shell_reconciliation_required"
-                    if plan.is_shell
-                    else "eidos_state_reconciliation_required"
-                )
-                mutation = self.store.interrupt_run_committed(step.run_id)
-                self.events.publish(mutation, run=mutation.value)
-                return ToolBatchOutcome(
-                    status="paused", pause_reason=pause_reason
-                )
-
         self.state_machine.track(RuntimeState.THINKING, "tool_batch_completed")
         facts = self.store.context_projection_facts(step.run_id)
         return ToolBatchOutcome(
@@ -1799,6 +1845,17 @@ class ToolCallRuntime:
         successes: list[str] = []
         context_facts: list[str] = []
         for (item, call), outcome in zip(pending, outcomes, strict=True):
+            self._check_cancel(step.run_id, cancel)
+            plan = self.dispatcher.plan(
+                call, step.tool_snapshot.binding(call.name)
+            )
+            self._refresh_reconciliation_after_result(
+                run_id=step.run_id,
+                call=call,
+                plan=plan,
+                outcome=outcome,
+                cancel=cancel,
+            )
             if outcome.activations:
                 self.store.activate_tools(step.run_id, outcome.activations)
             if outcome.result.get("outcome") != "success":
@@ -1814,7 +1871,6 @@ class ToolCallRuntime:
                     outcome.progress_fingerprint or _hash_json(outcome.result)
                 ),
             }))
-            self._check_cancel(step.run_id, cancel)
         self.state_machine.track(RuntimeState.THINKING, "tool_batch_completed")
         facts = self.store.context_projection_facts(step.run_id)
         return ToolBatchOutcome(
