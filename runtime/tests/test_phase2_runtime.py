@@ -146,7 +146,9 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
             "interrupted",
         )
 
-    def test_only_a_new_successful_read_step_clears_reconciliation_barrier(self) -> None:
+    def test_read_step_requires_explicit_workspace_refresh_to_clear_reconciliation(
+        self,
+    ) -> None:
         run, _ = self.store.create_run(self.session["id"], "verify")
         write = self.store.create_tool_item(
             run["id"], 0, 0, "write", "write_file", "{}",
@@ -160,6 +162,9 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
             item_status="failed", tool_status="failed",
         )
         self.assertTrue(self.store.side_effects_blocked(run["id"]))
+        pending_epoch = self.store.context_projection_facts(
+            run["id"]
+        ).reconciliation_epoch
         step_index = self.store.increment_model_step(run["id"])
         read = self.store.create_tool_item(
             run["id"], step_index, 0, "read", "read_file", "{}",
@@ -168,7 +173,25 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
             read["id"], json.dumps({"outcome": "success", "code": None})
         )
         self.store.complete_current_step(run["id"], "completed")
+        self.assertTrue(self.store.side_effects_blocked(run["id"]))
+        self.assertEqual(
+            self.store.context_projection_facts(
+                run["id"]
+            ).reconciliation_epoch,
+            pending_epoch,
+        )
+        mutation = self.store.clear_reconciliation_after_workspace_refresh_committed(
+            run["id"], pending_epoch
+        )
+        self.assertIsNotNone(mutation)
         self.assertFalse(self.store.side_effects_blocked(run["id"]))
+        self.assertEqual(
+            self.store.context_projection_facts(
+                run["id"]
+            ).reconciliation_epoch,
+            pending_epoch + 1,
+        )
+        self.assertTrue(self.store.read_run(run["id"])["sideEffectsMayExist"])
 
     def test_stream_failure_after_first_delta_never_replays_request(self) -> None:
         class InterruptedThenCompletedModel:
