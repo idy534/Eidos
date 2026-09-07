@@ -32,6 +32,7 @@ from eidos_runtime.db.transitions import (
     transition_segments,
 )
 from eidos_runtime.model.client import ModelProfileSnapshot
+from eidos_runtime.sandbox.permissions import AdditionalPermissionProfile
 from eidos_runtime.model.config import (
     DEFAULT_MODEL_ID,
     SUPPORTED_MODELS,
@@ -486,15 +487,39 @@ class RunRepository(Repository):
                 (run_id,),
             )
 
-    def approval_prompt_blocked(self, run_id: str) -> bool:
+    def waiting_approval_run_ids(self) -> tuple[str, ...]:
         with self.lock:
-            row = self._connection().execute(
-                "SELECT consecutive_rejects FROM runs WHERE id = ?",
-                (run_id,),
-            ).fetchone()
-        if row is None:
-            raise ResourceNotFoundError("run not found")
-        return int(row["consecutive_rejects"]) > 0
+            return tuple(row[0] for row in self._connection().execute(
+                "SELECT id FROM runs WHERE status = 'waiting_approval' ORDER BY creation_seq"
+            ))
+
+    def approval_prompt_blocked(self, run_id: str, fingerprint: str) -> bool:
+        with self.lock:
+            return self._connection().execute(
+                """SELECT 1 FROM approvals WHERE run_id = ? AND status = 'rejected'
+                   AND json_extract(request_json, '$.permissionBlockFingerprint') = ?
+                   LIMIT 1""", (run_id, fingerprint),
+            ).fetchone() is not None
+
+    def run_permission_grants(self, run_id: str) -> AdditionalPermissionProfile:
+        from eidos_runtime.sandbox.permissions import merge_permissions
+
+        granted = AdditionalPermissionProfile()
+        with self.lock:
+            rows = self._connection().execute(
+                """SELECT a.request_json FROM approvals a JOIN runs r ON r.id = a.run_id
+                   WHERE a.run_id = ? AND a.status = 'approved'
+                     AND r.status IN ('queued', 'running', 'waiting_approval', 'finalizing')
+                     AND json_extract(a.request_json, '$.grantScope') = 'run'
+                     AND json_extract(a.request_json, '$.kind') = 'permission_request'
+                   ORDER BY a.creation_seq""", (run_id,),
+            )
+            for row in rows:
+                profile = AdditionalPermissionProfile.model_validate_json(
+                    json.dumps(json.loads(row['request_json'])['permissions'])
+                )
+                granted = merge_permissions(granted, profile)
+        return granted
 
     def record_sensitive_tool_input(self, run_id: str) -> int:
         with self.lock, self._connection() as connection:

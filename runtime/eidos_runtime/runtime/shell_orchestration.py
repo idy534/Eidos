@@ -9,6 +9,7 @@ from eidos_runtime.runtime.tool_orchestrator import (
     OrchestratorContext,
 )
 from eidos_runtime.sandbox.denial import SandboxDenied
+from eidos_runtime.runtime.permission_policy import PermissionPolicyEvaluator, PermissionDisposition
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile,
     SandboxAttempt,
@@ -60,7 +61,15 @@ class ShellOrchestrationRuntime:
             is SandboxPermissions.USE_DEFAULT
         ):
             return ExecApprovalRequirement.SKIP
-        return ExecApprovalRequirement.NEEDS_APPROVAL
+        decision = PermissionPolicyEvaluator().evaluate(
+            _context.base_permissions, _context.granted_permissions, request.input.effective_additional_permissions,
+            unsandboxed=request.input.effective_sandbox_permissions is SandboxPermissions.REQUIRE_ESCALATED,
+        )
+        return {
+            PermissionDisposition.ALLOW: ExecApprovalRequirement.NEEDS_APPROVAL,
+            PermissionDisposition.ASK: ExecApprovalRequirement.NEEDS_APPROVAL,
+            PermissionDisposition.DENY: ExecApprovalRequirement.FORBIDDEN,
+        }[decision.disposition]
 
     def escalation_allowed(
         self,

@@ -99,6 +99,7 @@ class SessionDto(ClosedModel):
     project: SessionProjectDto | None = None
     worktree: SessionWorktreeDto | None = None
     title: StrictStr | None = None
+    active_run_status: Literal["queued", "running", "waiting_approval", "finalizing"] | None = Field(default=None, alias="activeRunStatus")
     task_status: Literal[
         "new", "in_progress", "completed", "failed", "canceled"
     ] = Field(alias="taskStatus")

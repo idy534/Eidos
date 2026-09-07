@@ -721,64 +721,11 @@ function ProcessItem({
   if (!item.toolCall) return null;
 
   if (approval) {
-    const isExpired = Boolean(expiredApprovalIds?.has(approval.id));
-    const localError = errorsByApprovalId?.[approval.id];
-    const isResponding = Boolean(respondingApprovalIds && respondingApprovalIds.has(approval.id));
-    const isApproving = isResponding && respondingKindByApprovalId?.[approval.id] === "approve";
-    const isRejecting = isResponding && respondingKindByApprovalId?.[approval.id] === "reject";
-    const canApprove = !isExpired && run.allowedActions?.includes("approve") && !isResponding;
-    const canReject = !isExpired && run.allowedActions?.includes("reject") && !isResponding;
-    const isUnsandboxed = approval.kind === "command_execution"
-      && approval.executionMode === "unsandboxed";
-
-    return (
-      <article
-        className={[
-          "approval-card",
-          isExpired ? "approval-card--expired" : "",
-          isUnsandboxed ? "approval-card--unsandboxed" : "",
-        ].filter(Boolean).join(" ")}
-        aria-labelledby={`approval-${approval.id}`}
-      >
-        <div className="approval-heading">
-          <div>
-            <p className="feed-label">{isExpired ? "已过期" : "需要你的批准"}</p>
-            <h3 id={`approval-${approval.id}`}>{approval.summary}</h3>
-          </div>
-          <span>{isExpired ? "已过期" : approval.kind === "file_change" ? "文件变更" : approval.kind === "external_tool" ? "MCP 工具" : approval.kind === "network_access" ? "网络访问" : "Shell 命令"}</span>
-        </div>
-        <pre className="diff-view">
-          {approval.kind === "file_change"
-            ? approval.diff
-            : approval.kind === "external_tool"
-              ? `${approval.toolName}\n\nPlugin: ${approval.provenance.pluginId ?? "unknown"}\nServer: ${approval.provenance.serverId ?? "unknown"}\nprofile: ${approval.permissionProfile}\ntimeout: ${approval.timeoutSeconds}s\nenv names: ${approval.envNames.join(", ") || "none"}\narguments: ${JSON.stringify(approval.arguments, null, 2)}`
-              : approval.kind === "network_access"
-                ? `tool: ${approval.toolName}\ntarget: ${approval.target}\napproved hosts: ${approval.hosts.join(", ")}`
-                : commandApprovalDetails(approval)}
-        </pre>
-        {localError && <p className="approval-error" role="alert">{localError}</p>}
-        <div className="approval-actions">
-          <Button
-            variant="ghost"
-            size="medium"
-            disabled={!canReject}
-            loading={isRejecting}
-            onClick={() => onReject(approval)}
-          >
-            拒绝
-          </Button>
-          <Button
-            variant="primary"
-            size="medium"
-            disabled={!canApprove}
-            loading={isApproving}
-            onClick={() => onApprove(approval)}
-          >
-            {approval.kind === "file_change" ? "批准并写入" : approval.kind === "external_tool" ? "批准调用" : approval.kind === "network_access" ? "批准联网" : "批准并运行"}
-          </Button>
-        </div>
-      </article>
-    );
+    return <p className="feed-label">需要批准 · {{ file_change: "文件变更", command_execution: "Shell 命令", network_access: "网络访问", external_tool: "MCP 工具", permission_request: "权限申请" }[approval.kind]} · {approval.summary}</p>;
+  }
+  if (item.toolCall.approvalDecision) {
+    return <div><p className="feed-label">{item.toolCall.approvalDecision === "approve" ? "已批准" : "已拒绝"} · {item.toolCall.toolName}</p>
+      <ToolItem item={item} toolCall={item.toolCall} onOpenFile={onOpenFile} /></div>;
   }
 
   return item.toolCall.toolName === "run_shell"
@@ -786,34 +733,6 @@ function ProcessItem({
     : <ToolItem item={item} toolCall={item.toolCall} onOpenFile={onOpenFile} />;
 }
 
-function commandApprovalDetails(
-  approval: Extract<ApprovalRequest, { kind: "command_execution" }>,
-): string {
-  const executionMode = approval.executionMode ?? "default_sandbox";
-  const mode = executionMode === "unsandboxed"
-    ? "Unsandboxed"
-    : executionMode === "expanded_sandbox"
-      ? "Expanded sandbox"
-      : "Default sandbox";
-  const warning = executionMode === "unsandboxed"
-    ? "\nWARNING: This command runs with the current macOS user's permissions and may access or modify files outside the workspace, connect to services, and alter host state.\n"
-    : "";
-  return [
-    `Execution mode: ${mode}`,
-    warning,
-    `$ ${approval.command}`,
-    `cwd: ${approval.cwd}`,
-    `network: ${approval.networkEnabled ? "enabled" : "disabled"}`,
-    `timeout: ${approval.timeoutSeconds}s`,
-    `additional read: ${(approval.additionalReadAccess ?? []).join(", ") || "none"}`,
-    `additional write: ${(approval.additionalWriteAccess ?? []).join(", ") || "none"}`,
-    `additional execute: ${(approval.additionalExecutableAccess ?? []).join(", ") || "none"}`,
-    `reason: ${approval.reason || "none"}`,
-    ...(approval.escalationReason
-      ? [`escalation reason: ${approval.escalationReason}`]
-      : []),
-  ].filter(Boolean).join("\n");
-}
 
 export interface ShellOutputSegment {
   source: "stream" | "stdout" | "stderr";

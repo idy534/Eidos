@@ -71,6 +71,7 @@ class ModelToolCall(_FrozenModel):
     provider_call_id: str
     name: str
     payload: ToolPayload
+    raw_payload: ToolPayload | None = Field(default=None, exclude=True)
 
     def __init__(
         self,
@@ -79,6 +80,7 @@ class ModelToolCall(_FrozenModel):
         payload: ToolPayload | dict[str, object] | None = None,
         *,
         arguments: dict[str, object] | None = None,
+        raw_payload: ToolPayload | None = None,
     ) -> None:
         if payload is None:
             if arguments is None:
@@ -92,6 +94,7 @@ class ModelToolCall(_FrozenModel):
             provider_call_id=provider_call_id,
             name=name,
             payload=payload,
+            raw_payload=raw_payload,
         )
 
     @property

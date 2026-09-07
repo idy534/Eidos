@@ -10,6 +10,7 @@ from typing import Callable, Protocol, TypeVar
 
 from pydantic import BaseModel
 
+from eidos_runtime.sandbox.permissions import merge_permissions
 from eidos_runtime.sandbox.denial import SandboxDenied, SandboxDenialCategory
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile,
@@ -41,6 +42,7 @@ class OrchestratorContext:
     cancel: threading.Event
     base_permissions: BasePermissionProfile
     environment_identity: str = "local"
+    granted_permissions: AdditionalPermissionProfile | None = None
 
 
 @dataclass(frozen=True)
@@ -112,9 +114,8 @@ class ToolOrchestrator:
             additional.validate_for(mode)
         effective = materialize_effective_profile(
             context.base_permissions,
-            additional
-            if mode is SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS
-            else None,
+            merge_permissions(context.granted_permissions, additional
+                              if mode is SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS else None),
         )
         workspace_roots = tuple(
             str(Path(root).resolve(strict=True))
@@ -126,12 +127,6 @@ class ToolOrchestrator:
         ):
             raise ValueError("runtime workspace roots exceed effective permissions")
         requirement = runtime.approval_requirement(request, context)
-        if requirement is ExecApprovalRequirement.FORBIDDEN:
-            return OrchestratorResult(
-                _error_result("approval_forbidden", "Execution is forbidden"),
-                0,
-                False,
-            )
         explicit_escalation = mode is SandboxPermissions.REQUIRE_ESCALATED
         if explicit_escalation and not unsandboxed_execution_allowed(effective):
             return OrchestratorResult(
@@ -139,6 +134,12 @@ class ToolOrchestrator:
                     "unsandboxed_execution_forbidden",
                     "Unsandboxed execution would discard a hard confidentiality deny",
                 ),
+                0,
+                False,
+            )
+        if requirement is ExecApprovalRequirement.FORBIDDEN:
+            return OrchestratorResult(
+                _error_result("approval_forbidden", "Execution is forbidden"),
                 0,
                 False,
             )

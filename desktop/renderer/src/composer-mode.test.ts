@@ -147,3 +147,7 @@ test("findActiveRun returns undefined for all terminal statuses", () => {
     assert.equal(activeRun, undefined, `Expected findActiveRun to return undefined for status "${status}"`);
   }
 });
+
+test("pending approval takes priority over a later queued run", () => {
+  assert.equal(findActiveRun([run("waiting_approval"), run("queued")])?.status, "waiting_approval");
+});

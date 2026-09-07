@@ -30,6 +30,7 @@ from eidos_runtime.db.schema import (
     V5_SCHEMA_VERSION,
     V6_SCHEMA_VERSION,
     V7_SCHEMA_VERSION,
+    V8_SCHEMA_VERSION,
     V1_TO_V2_MIGRATION_SQL,
     V2_TO_V3_MIGRATION_SQL,
     V3_TO_V4_MIGRATION_SQL,
@@ -132,6 +133,7 @@ class Database:
                     V5_SCHEMA_VERSION,
                     V6_SCHEMA_VERSION,
                     V7_SCHEMA_VERSION,
+                    V8_SCHEMA_VERSION,
                     SCHEMA_VERSION,
                     4,
                 }

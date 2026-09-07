@@ -193,6 +193,10 @@ class RunSupervisor:
                 or self._active_slot_run_id is not None
             ):
                 return None
+            for waiting_id in self.store.waiting_approval_run_ids():
+                if waiting_id not in self._handles:
+                    self._async_kernel_frozen = True
+                    return self._start_worker_locked(waiting_id)
             claimed = self.store.claim_next_run_committed()
             if claimed is None:
                 return None

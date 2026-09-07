@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 import threading
 from typing import Callable
 
@@ -14,8 +16,8 @@ from eidos_runtime.runtime.fault_injection import hit_fault
 
 
 APPROVAL_REJECTION_GUIDANCE = (
-    "User rejected an approval. Do not request another approval in this run; "
-    "try a non-approval alternative or provide a safe manual strategy and finish."
+    "User rejected this approval. Do not repeat this rejected request; "
+    "choose a different action or explain what remains blocked."
 )
 
 
@@ -110,23 +112,41 @@ class ApprovalCoordinator:
         attempt_ordinal: int = 0,
         approval_kind: str = "tool",
     ) -> ApprovalOutcome:
-        if self.store.approval_prompt_blocked(run_id):
+        fingerprint = hashlib.sha256(json.dumps({
+            "tool": item.get("toolCall", {}).get("toolName"),
+            "arguments": (None if description.get("kind") == "permission_request"
+                          else item.get("toolCall", {}).get("argumentsJson")),
+            "description": {key: value for key, value in description.items()
+                            if key not in {"reason", "summary"}},
+            "diff": diff,
+            "baseSha256": base_sha256,
+        }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        request = {**(request or description), "permissionBlockFingerprint": fingerprint}
+        if self.store.approval_prompt_blocked(run_id, fingerprint):
             return ApprovalOutcome(
                 decision="reject",
                 feedback=APPROVAL_REJECTION_GUIDANCE,
                 item=item,
             )
-        mutation = self.store.begin_approval_committed(
-            str(item["id"]),
-            diff,
-            base_sha256,
-            request=request,
-            attempt_ordinal=attempt_ordinal,
-            approval_kind=approval_kind,
-        )
-        pending_item = mutation.value
-        approval_run = self.store.read_run(run_id)
-        self.events.publish(mutation, run=approval_run, item=pending_item)
+        pending = self.store.typed_runtime_repository().read_pending_approval(run_id)
+        if pending is not None:
+            if pending.item_id != str(item["id"]) or json.loads(pending.request_json).get(
+                "permissionBlockFingerprint"
+            ) != fingerprint:
+                raise ApprovalTransportError("pending approval no longer matches prepared action")
+            pending_item = self.store.read_item(pending.item_id)
+        else:
+            mutation = self.store.begin_approval_committed(
+                str(item["id"]),
+                diff,
+                base_sha256,
+                request=request,
+                attempt_ordinal=attempt_ordinal,
+                approval_kind=approval_kind,
+            )
+            pending_item = mutation.value
+            approval_run = self.store.read_run(run_id)
+            self.events.publish(mutation, run=approval_run, item=pending_item)
         self.state_machine.track(RuntimeState.WAITING_APPROVAL, transition_reason)
         hit_fault("cancel_approval_race")
         self.pause_effective_time(run_id)

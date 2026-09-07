@@ -473,3 +473,19 @@ Worktree Session create、Session delete、managed Checkpoint Fork、Create Bran
 - `runtime/eidos_runtime/db/schema.py`
 - `runtime/eidos_runtime/db/storage.py`
 - `runtime/eidos_runtime/persistence/`
+
+## Approval R1：权限请求闭环
+
+`PermissionPolicyEvaluator` 只根据 Base、当前 Run Grant、动作请求和硬限制返回 `allow / ask / deny`。该组件不访问 SQLite、不创建 Approval，也不执行 Tool。权限类型继续使用 `AdditionalPermissionProfile`、`NetworkPermissions` 和现有文件权限条目。
+
+模型可以调用 `request_permissions` 申请网络和具体绝对路径权限。空请求会进入 Tool 参数校验错误。Runtime 会先规范化路径并检查保护边界。已有权限返回 `already_granted`；受保护权限返回 `permission_not_requestable`；可申请权限通过唯一的 `ApprovalCoordinator` 等待批准或拒绝。
+
+Run Grant 由当前 Run 中已批准的 `approvals.request_json` 派生。请求必须带有 `kind=permission_request` 和 `grantScope=run`。SQLite 对 Approval 的原子决策同时决定 Grant 是否存在，因此没有新的授权表和第二份状态。Run 终止后，Grant 不再生效。普通 Shell 把 Base、Run Grant 和单次动作请求一起物化为 `EffectivePermissionProfile`。Seatbelt 只消费该结果。显式 Shell 扩权仍只授权当前动作。
+
+已知网络 denial 会进入同一个权限请求流程。Runtime 会在 Approval 中保存已完成的 Shell 结果。用户批准后，当前调用返回 `permission_granted_retry_required`，模型可以再次调用普通 Shell。Runtime 不会自动重跑这个命令。拒绝返回 `user_rejected_network`。相同请求的拒绝按持久化 fingerprint 去重，不会阻止不同命令或不同类型的审批。LoopGuard 的状态包含权限状态，权限变化后允许模型重新执行相同动作。
+
+Runtime 重启可以恢复 R1 的结构化待批请求。恢复只接受没有不确定执行的暂停点。未执行的动作会重新准备并检查当前 Tool 契约和原审批 fingerprint。网络 denial 的恢复只交回保存的已知结果，不重放 Shell。缺少完整事实、契约变化、取消和不确定副作用继续 fail closed。恢复仍使用原 Approval、原 Run worker、ApprovalCoordinator、执行槽和 approve/reject RPC。
+
+数据库版本为 9。v8→v9 只为 `tool_calls` 增加可空 `raw_arguments_json`。新调用保存经过敏感内容检查的 Provider 原始参数，`arguments_json` 继续保存执行所用的规范化参数。旧行保持 NULL，Runtime 不会伪造历史原始参数。旧版本逐级迁移，失败会回滚。
+
+Desktop 的 `ComposerSlot` 在 `waiting_approval` 时用 `ApprovalComposer` 替换普通输入框。文件、Shell、网络、MCP 和权限申请共用批准、拒绝、响应中、失效和错误状态。Eidos State 的既有文件变更映射保持兼容。Feed 只显示审批历史。Session 的 `activeRunStatus` 从 Active Run 派生，不写入 Session 表；Sidebar 对等待审批显示“等待批准”。

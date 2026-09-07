@@ -557,7 +557,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
   const projectRun = useCallback((sessionId: string, run: Run): void => {
     const taskStatus = taskStatusFromRun(run);
     setSessions((prev) => prev.map((s) => s.id === sessionId
-      ? { ...s, taskStatus, updatedAt: run.updatedAt }
+      ? { ...s, taskStatus, activeRunStatus: activeStatus(run.status), updatedAt: run.updatedAt }
       : s));
     setSnapshot((prev) => {
       if (!prev || prev.session.id !== sessionId) return prev;
@@ -575,8 +575,9 @@ export function useSessionController(): [SessionControllerState, SessionControll
 
   const handleRunNotification = useCallback((run: Pick<Run, "id" | "sessionId" | "status" | "updatedAt" | "reconciliationRequired">): void => {
     const taskStatus = taskStatusFromRun(run);
+    void loadSessions();
     setSessions((prev) => prev.map((s) => s.id === run.sessionId
-      ? { ...s, taskStatus, updatedAt: run.updatedAt }
+      ? { ...s, taskStatus, activeRunStatus: activeStatus(run.status), updatedAt: run.updatedAt }
       : s));
     updateReadCompleted((prev) => {
       const next = new Set(prev);
@@ -593,7 +594,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
       }
       return next;
     });
-  }, []);
+  }, [loadSessions]);
 
   const refreshCompletedSession = useCallback(async (sessionId: string): Promise<void> => {
     const token = snapshotReads.refresh(sessionId);
@@ -653,4 +654,8 @@ export function useSessionController(): [SessionControllerState, SessionControll
   };
 
   return [state, actions];
+}
+
+function activeStatus(status: Run["status"]): Session["activeRunStatus"] {
+  return status === "queued" || status === "running" || status === "waiting_approval" || status === "finalizing" ? status : undefined;
 }

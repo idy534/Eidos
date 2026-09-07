@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { renderToStaticMarkup } from "react-dom/server";
 
+import { ApprovalComposer } from "./ApprovalComposer.js";
 import type { Item, Run } from "../contracts.js";
 import {
   ExecutionFeed,
@@ -700,7 +701,7 @@ test("does not show a succeeded run with a reconciliation barrier as complete", 
   assert.doesNotMatch(html, /已完成/);
 });
 
-test("shows the exact host and target for network approval", () => {
+test("shows pending approval history without decision buttons", () => {
   const { completedAt: _completedAt, ...runWithoutCompletion } = run;
   const waitingRun: Run = {
     ...runWithoutCompletion,
@@ -733,9 +734,9 @@ test("shows the exact host and target for network approval", () => {
   );
 
   assert.match(html, /网络访问/);
-  assert.match(html, /target: example\/skills@main:grilling/);
-  assert.match(html, /approved hosts: codeload.github.com:443/);
-  assert.match(html, /批准联网/);
+  assert.match(html, /Download a public GitHub skill/);
+  assert.match(html, /需要批准/);
+  assert.doesNotMatch(html, /批准联网|批准调用|批准并运行/);
 });
 
 test("distinguishes expanded and unsandboxed command approvals", () => {
@@ -765,15 +766,7 @@ test("distinguishes expanded and unsandboxed command approvals", () => {
   const renderApproval = (
     approval: Parameters<typeof ExecutionFeed>[0]["approvals"][number],
   ) => renderToStaticMarkup(
-    <ExecutionFeed
-      items={[commandItem]}
-      runs={[waitingRun]}
-      approvals={[approval]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
-    />,
+    <ApprovalComposer run={waitingRun} approval={approval} onApprove={() => {}} onReject={() => {}} />,
   );
 
   const expanded = renderApproval({

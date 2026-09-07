@@ -427,8 +427,8 @@ class ToolExecutionController:
             plan.descriptor.runtime
             if plan.descriptor is not None else None
         )
-        self._execution_state.intent_started = False
-        self._execution_state.authorized_effects = 0
+        self._execution_state.intent_started = self.store.side_effect_authorized(str(item["id"]))
+        self._execution_state.authorized_effects = int(self._execution_state.intent_started)
         self._execution_state.cleanup_attempted = False
         self._execution_state.phase = ToolExecutionPhase.VALIDATING
         resource = self.resources.register(

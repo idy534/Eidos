@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 from pathlib import Path
 import threading
 import time
@@ -52,7 +53,7 @@ from eidos_runtime.runtime.sampling import (
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.step_context import StepContextFactory
 from eidos_runtime.repo_intelligence.query import RepositoryTaskQueryBuilder
-from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
+from eidos_runtime.runtime.resolution import RuleResolutionSnapshot, canonical_sha256
 from eidos_runtime.runtime.tool_runtime import ToolCallRuntime
 from eidos_runtime.runtime.tool_execution import ToolInfrastructureError
 from eidos_runtime.telemetry.tracing import (
@@ -66,6 +67,7 @@ from eidos_runtime.sandbox.sensitive import (
 )
 from eidos_runtime.sandbox.permissions import (
     BasePermissionProfile,
+    AdditionalPermissionProfile,
     materialize_effective_profile,
     unsandboxed_execution_allowed,
 )
@@ -350,6 +352,39 @@ class RuntimeEngine:
             requeue=self.wait_for_execution_slot is not None,
         )
 
+        if self.store.read_run(run.run_id)["status"] == "waiting_approval":
+            pending = self.store.typed_runtime_repository().read_pending_approval(run.run_id)
+            if pending is None or resources.dispatcher is None:
+                raise InvalidRunStateError("pending approval is unavailable")
+            item = self.store.read_item(pending.item_id)
+            tool = item["toolCall"]
+            from eidos_runtime.model.client import ModelToolCall, CustomToolPayload
+
+            value = json.loads(tool["argumentsJson"])
+            call = ModelToolCall(tool["providerCallId"], tool["toolName"],
+                CustomToolPayload(input=value["input"]) if tool["payloadKind"] == "custom" else value)
+            resolution = self.store.read_step_resolution_snapshots(run.run_id)[-1]
+            expected = json.loads(resolution.tool_snapshot_json)["specHashes"].get(call.name)
+            plan = resources.dispatcher.plan(call, expected or "missing")
+            if plan.descriptor is None:
+                raise InvalidRunStateError("pending approval tool contract changed")
+            tools = ToolCallRuntime(
+                self.store, resources.dispatcher, approval, self.events, self.sensitive,
+                self.state_machine, shell_available=self.shell_available,
+                base_permissions=BasePermissionProfile.model_validate_json(resolution.permission_profile_json),
+                async_kernel=self.async_kernel, resource_registry=self.resources,
+                skill_access=resources.skill_access, runtime_dependencies=resources.runtime_dependencies,
+            )
+            outcome = tools.controller.execute(
+                run_id=run.run_id, item=item, call=call, plan=plan,
+                cancel=cancel, deadline=None,
+            )
+            if self.store.read_run(run.run_id)["status"] == "waiting_approval":
+                raise InvalidRunStateError("pending action could not be restored")
+            self.store.complete_current_step(run.run_id, "completed")
+            if outcome.result.get("reconciliationRequired") is True:
+                raise InvalidRunStateError("recovered action requires reconciliation")
+
         while True:
             self._check_cancel(run.run_id, cancel)
             self._pause_effective_time(run.run_id)
@@ -384,6 +419,7 @@ class RuntimeEngine:
                 run.resolution_snapshot.sandbox_policy_json,
                 run.resolution_snapshot.workspace_identity.path,
                 snapshot.available_names,
+                self.store.run_permission_grants(run.run_id),
             )
             built = context_builder.build(
                 run.run_id,
@@ -748,11 +784,12 @@ class RuntimeEngine:
                 self.state_machine.track(RuntimeState.COMPLETED, "run_succeeded")
                 return
 
+            permission_frontier = self.store.run_permission_grants(run.run_id).model_dump(mode="json")
             repeated = guard.observe_tool_calls(
                 validation.tool_calls,
                 step.workspace_version,
                 step.reconciliation_epoch,
-                context_fact_frontier_hash=context_fact_frontier_hash(built.facts),
+                context_fact_frontier_hash=canonical_sha256([context_fact_frontier_hash(built.facts), permission_frontier]),
                 active_error_fingerprints=built.facts.active_error_fingerprints,
             )
             if repeated == "recover_repeated_tool_call":
@@ -802,7 +839,7 @@ class RuntimeEngine:
                     validation.tool_calls,
                     outcome.workspace_version,
                     outcome.reconciliation_epoch,
-                    context_fact_frontier_hash=context_fact_frontier_hash(post_facts),
+                    context_fact_frontier_hash=canonical_sha256([context_fact_frontier_hash(post_facts), permission_frontier]),
                     active_error_fingerprints=outcome.error_fingerprints,
                 )
                 signature = guard.make_signature(
@@ -1134,6 +1171,7 @@ def _build_step_policy(
     sandbox_policy_json: str,
     workspace_root: str,
     available_tools: tuple[str, ...],
+    granted_permissions: AdditionalPermissionProfile | None = None,
 ) -> StepPermissionPolicy:
     """Project persisted permissions and the current tool set into prompt context."""
     import json
@@ -1143,7 +1181,7 @@ def _build_step_policy(
         base_permissions = BasePermissionProfile.model_validate_json(
             permission_profile_json
         )
-        effective = materialize_effective_profile(base_permissions)
+        effective = materialize_effective_profile(base_permissions, granted_permissions)
         network_enabled = effective.network_enabled
         writable_roots = tuple(
             entry.resolved_path

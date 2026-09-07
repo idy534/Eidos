@@ -180,6 +180,7 @@ export function SessionSidebar({
                         const status = taskStatusPresentation(
                           session.taskStatus,
                           readCompletedSessions.has(session.id),
+                          session.activeRunStatus,
                         );
                         const isSelected = session.id === selectedId;
                         const isLoading = session.id === isSelectingSessionId;

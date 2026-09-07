@@ -64,6 +64,9 @@ from eidos_runtime.runtime.tool_execution import (
     VerifiedToolExecutionResult,
 )
 from eidos_runtime.runtime.tool_fingerprints import tool_payload_fingerprint_value
+from eidos_runtime.runtime.permission_requests import PermissionRequests, network_permission_result
+from eidos_runtime.sandbox.permissions import AdditionalPermissionProfile, NetworkPermissions
+from eidos_runtime.tools.request_permissions import RequestPermissionsInput
 from eidos_runtime.runtime.shell_orchestration import (
     ShellOrchestrationRequest,
     ShellOrchestrationRuntime,
@@ -171,6 +174,7 @@ class _HandlerDependencies:
     base_permissions: BasePermissionProfile | None = None
     skill_access: SkillAccess | None = None
     runtime_dependencies: RuntimeDependencyCoordinator | None = None
+    permissions: PermissionRequests | None = None
 
 
 class _BoundShellOrchestrationRuntime(ShellOrchestrationRuntime):
@@ -506,6 +510,7 @@ class ShellToolHandler:
         base_permissions = self.dependencies.base_permissions
         if base_permissions is None:
             raise RuntimeError("step permission profile is unavailable")
+        grants = self.dependencies.store.run_permission_grants(run_id)
         if active_skill_roots:
             base_permissions = base_permissions.model_copy(update={
                 "active_skill_roots": tuple(
@@ -881,6 +886,7 @@ class ShellToolHandler:
                 timeout_seconds=timeout,
                 cancel=cancel,
                 base_permissions=base_permissions,
+                granted_permissions=grants,
             ),
             approve=approve,
             authorize_without_approval=lambda: (
@@ -892,6 +898,21 @@ class ShellToolHandler:
             record_attempt=record_attempt,
         )
         result = orchestration.result
+        if (
+            result.get("data", {}).get("sandboxDenialCategory") == "network"
+            and not cancel.is_set()
+            and result.get("reconciliationRequired") is not True
+            and self.dependencies.permissions is not None
+            and not (base_permissions.network_enabled or (grants.network and grants.network.enabled is True))
+        ):
+            code = self.dependencies.permissions.request(
+                run_id, item,
+                AdditionalPermissionProfile(network=NetworkPermissions(enabled=True)),
+                cancel, reason="The command was blocked by the network sandbox.",
+                command=command, cwd=str(cwd.path), denial_category="network",
+                completed_result=result,
+            )
+            result = network_permission_result(result, code)
         if workspace_diff is not None:
             result = attach_workspace_diff(result, workspace_diff)
         if result.get("code") in {"user_rejected", "user_rejected_escalation"}:
@@ -924,6 +945,7 @@ class ShellToolHandler:
         tool_status = (
             "completed"
             if result["outcome"] == "success"
+            or result.get("code") in {"permission_granted_retry_required", "user_rejected_network"}
             or (
                 result.get("code") == "nonzero_exit"
                 and result.get("reconciliationRequired") is not True
@@ -1158,6 +1180,7 @@ class ToolCallRuntime:
             approval=approval,
             resource_registry=resource_registry,
         )
+        self.permissions = PermissionRequests(store, approval, base_permissions)
         dependencies = _HandlerDependencies(
             store,
             dispatcher,
@@ -1172,6 +1195,7 @@ class ToolCallRuntime:
             base_permissions,
             self.skill_access,
             runtime_dependencies,
+            self.permissions,
         )
         self.read_runtime = ReadOnlyToolHandler(dependencies)
         self.workspace_runtime = FileChangeToolHandler(dependencies)
@@ -1195,11 +1219,44 @@ class ToolCallRuntime:
             run_id, item, call, cancel, runtime
         )
 
+    def invoke_permission(self, runtime, run_id, item, call, cancel):
+        request = RequestPermissionsInput.model_validate_json(json.dumps(call.arguments))
+        code = self.permissions.request(run_id, item, request.permissions, cancel,
+                                        reason=request.reason)
+        success = code in {"permission_granted", "already_granted"}
+        declined = code == "user_rejected"
+        return HandlerOutcome(tool_result(
+            call.name, "success" if success else "declined" if declined else "error",
+            code, {
+                "permission_granted": "Permissions granted for this run. Continue the task.",
+                "already_granted": "The requested permissions are already granted.",
+                "user_rejected": APPROVAL_REJECTION_GUIDANCE,
+                "permission_not_requestable": "These permissions cannot be requested.",
+            }[code],
+        ), "completed" if success else "declined" if declined else "failed", "completed")
+
     def invoke_shell(
         self, runtime: ShellToolRuntime, run_id: str,
         item: dict[str, object], call: ModelToolCall,
         cancel: threading.Event,
     ) -> HandlerOutcome:
+        pending = self.store.typed_runtime_repository().read_pending_approval(run_id)
+        saved = json.loads(pending.request_json) if pending is not None else {}
+        if pending is not None and pending.item_id == item["id"] and "completedResult" in saved:
+            result = saved["completedResult"]
+            code = self.permissions.request(
+                run_id, item, AdditionalPermissionProfile.model_validate_json(json.dumps(saved["permissions"])),
+                cancel, reason=saved.get("reason"), command=saved.get("command"),
+                cwd=saved.get("cwd"), denial_category=saved.get("denialCategory"),
+                completed_result=result,
+            )
+            result = network_permission_result(result, code)
+            data = result.get("data", {})
+            return HandlerOutcome(
+                result, "failed", "completed",
+                workspace_changed=data.get("workspaceChanged") is True,
+                diff_hash=data.get("workspaceDiffHash"),
+            )
         return self.shell_runtime.execute(run_id, item, call, cancel, runtime)
 
     def invoke_external(
@@ -1259,6 +1316,9 @@ class ToolCallRuntime:
             self._check_cancel(step.run_id, cancel)
             try:
                 payload = _scan_tool_payload(self.sensitive, call)
+                raw_payload = _scan_tool_payload(self.sensitive, ModelToolCall(
+                    call.provider_call_id, call.name, call.raw_payload or call.payload,
+                ))
             except SensitiveScanError:
                 failures = self.store.record_sensitive_tool_input(step.run_id)
                 self.store.complete_current_step(
@@ -1286,6 +1346,7 @@ class ToolCallRuntime:
                 call.provider_call_id,
                 call.name,
                 _serialize_tool_payload(payload),
+                raw_arguments_json=_serialize_tool_payload(raw_payload),
                 payload_kind=call.payload_kind,
                 provenance=self.dispatcher.provenance(call.name),
                 tool_set_hash=step.tool_snapshot.tool_set_hash,
@@ -1403,6 +1464,10 @@ class ToolCallRuntime:
                     separators=(",", ":"),
                     sort_keys=True,
                 ),
+                raw_arguments_json=_serialize_tool_payload(_scan_tool_payload(
+                    self.sensitive, ModelToolCall(call.provider_call_id, call.name,
+                                                 call.raw_payload or call.payload),
+                )),
                 payload_kind=call.payload_kind,
                 provenance=self.dispatcher.provenance(call.name),
                 tool_set_hash=step.tool_snapshot.tool_set_hash,

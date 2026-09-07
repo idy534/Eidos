@@ -17,6 +17,7 @@ import { CreateBranchDialog } from "../components/CreateBranchDialog.js";
 import { HandoffDialog } from "../components/HandoffDialog.js";
 import { ProjectPicker } from "../components/ProjectPicker.js";
 import { CreateProjectDialog } from "../components/CreateProjectDialog.js";
+import { ComposerSlot } from "../components/ComposerSlot.js";
 import { Composer } from "../components/Composer.js";
 import { GitChangesPanel } from "../components/GitChangesPanel.js";
 import {
@@ -944,6 +945,16 @@ export function AppShell({ runtime }: AppShellProps) {
                   onOpenFile={sessionHasProject ? handleOpenFileInDock : undefined}
                 />
 
+                <ComposerSlot
+                  run={activeRun}
+                  approval={approvals.find((a) => a.runId === activeRun?.id)}
+                  respondingApprovalIds={respondingApprovalIds}
+                  respondingKindByApprovalId={respondingKindByApprovalId}
+                  expiredApprovalIds={approvalState.expiredApprovalIds}
+                  errorsByApprovalId={errorsByApprovalId}
+                  onApprove={(request) => void approvalActions.approve(request)}
+                  onReject={(request) => void approvalActions.reject(request)}
+                >
                 <Composer
                   ref={composerRef}
                   composerMode={worktreeRestoreRequired ? "read_only" : composerMode}
@@ -978,6 +989,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   onLeaveProject={() => handleCreateSession()}
                   onExecutionModeChange={sessionProject?.gitAvailable === true ? requestExecutionModeChange : undefined}
                 />
+                </ComposerSlot>
               </div>
 
             </div>

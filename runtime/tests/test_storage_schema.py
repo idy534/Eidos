@@ -121,6 +121,7 @@ EXPECTED_COLUMNS = {
         "progress_signature_json",
     },
     "tool_calls": {
+        "raw_arguments_json",
         "payload_kind",
         "approval_status",
         "approval_decision",
@@ -497,7 +498,7 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 8)
+        self.assertEqual(SCHEMA_VERSION, 9)
         self.assertEqual(PREVIOUS_SCHEMA_VERSION, V7_SCHEMA_VERSION)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")

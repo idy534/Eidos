@@ -296,3 +296,12 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `runtime/eidos_runtime/persistence/worktree_snapshots.py`
 - `runtime/eidos_runtime/db/schema.py`
 - `runtime/eidos_runtime/persistence/`
+
+## Approval R1
+
+- 模型可以通过 `request_permissions` 申请当前 Run 的网络或具体路径权限。用户只作批准或拒绝决策。重复申请已有权限不会再次审批。
+- 普通 Shell 会继承 Run Grant。显式 `networkAccess=request`、`sandboxPermissions`、`additionalPermissions` 和 `justification` 保持兼容，显式动作审批不会建立 Run Grant。
+- 普通 Shell 遭遇可识别的网络 denial 后可以进入审批。批准后，模型收到 `permission_granted_retry_required`，再自行决定下一次调用。Runtime 不会自动重跑 Shell。拒绝只阻止同一审批请求的重复打扰。
+- R1 结构化待批请求可以在重启后恢复。Runtime 保留原审批，并重新核对 Tool 契约和待执行动作。网络 denial 的已完成结果可以恢复。不确定执行、契约变化和取消仍保持原有安全边界。
+- 所有审批共用底部 ApprovalComposer，等待时普通输入框不存在。Feed 只显示历史状态。Sidebar 会显示“等待批准”。
+- SQLite 同时保留原始 Tool 参数和规范化参数。旧数据的原始参数保持未知。

@@ -104,7 +104,7 @@ class ModelContractTests(unittest.TestCase):
             "or you must wait for user input.",
             BASE_AGENT_INSTRUCTIONS,
         )
-        self.assertIn("do not request another approval", RUNTIME_POLICY_INSTRUCTIONS)
+        self.assertIn("instead of repeating the rejected request", RUNTIME_POLICY_INSTRUCTIONS)
         self.assertIn("natural, concise task title", TITLE_SYSTEM_INSTRUCTIONS)
         self.assertIn("User query", TITLE_PROMPT)
 

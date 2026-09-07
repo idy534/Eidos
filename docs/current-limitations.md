@@ -127,3 +127,9 @@
 - `runtime/eidos_runtime/db/database.py`
 - `runtime/eidos_runtime/git/`
 - `runtime/eidos_runtime/persistence/worktrees.py`
+
+## Approval R1 的范围
+
+权限 Grant 只覆盖当前 Run，用户不能选择 Session 或全局范围。R1 不提供 Approve for me、Full Access、Network Proxy、域名授权、持久 allowlist 或自动审批。路径权限只使用具体路径，不支持 glob。
+
+旧审批或缺少完整执行事实的待批动作不会被猜测为可恢复。Runtime 会继续中断不确定执行，并保留 Reconciliation。用户批准权限不会自动重放之前失败的 Shell。
