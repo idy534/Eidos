@@ -242,7 +242,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
             1,
         )
         attempt = self.store.read_model_attempts(run["id"])[0]
-        self.assertEqual(attempt["retryDecision"]["reason"], "unsafe_stream_progress")
+        self.assertEqual(attempt["retryDecision"]["reason"], "non_retryable_error")
 
     def test_stream_failure_before_first_delta_does_not_replay_unknown_stream_state(self) -> None:
         class InitiallyUnavailableModel:
@@ -270,7 +270,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.assertEqual(self.store.read_run(run["id"])["status"], "failed")
         self.assertEqual(model.calls, 1)
         attempt = self.store.read_model_attempts(run["id"])[0]
-        self.assertEqual(attempt["retryDecision"]["reason"], "unsafe_stream_progress")
+        self.assertEqual(attempt["retryDecision"]["reason"], "non_retryable_error")
 
     def test_stream_failure_stops_after_one_unsafe_attempt(self) -> None:
         class AlwaysInterruptedModel:

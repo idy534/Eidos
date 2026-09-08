@@ -17,6 +17,8 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.model.client import (  # noqa: E402
+    ModelRequestError,
+    ModelRequestFailure,
     ModelResponse,
     ModelToolCall,
     ScriptedModel,
@@ -78,7 +80,7 @@ class RuntimeArchitectureTests(unittest.TestCase):
         }
         self.assertTrue(forbidden.isdisjoint(RuntimeEngine.__dict__))
 
-    def test_stream_progress_never_replays_the_model_request(self) -> None:
+    def test_stream_progress_retries_without_persisting_provisional_text(self) -> None:
         from eidos_runtime.runtime.engine import RuntimeEngine
 
         class InterruptedThenCompletedModel:
@@ -92,15 +94,20 @@ class RuntimeArchitectureTests(unittest.TestCase):
                 self.calls += 1
                 if self.calls == 1:
                     on_text_delta("safe progress")
-                    raise OSError("fixture")
+                    raise ModelRequestError(ModelRequestFailure(
+                        code="provider_unavailable",
+                        retryable=True,
+                        status_code=503,
+                    ))
                 on_text_delta("done")
                 return ModelResponse(text="done")
 
         with self.runtime() as (store, session, _workspace):
             run, _ = store.create_run(session["id"], "stream")
-            RuntimeEngine(
-                store, InterruptedThenCompletedModel(), lambda _message: None
-            ).run(run["id"], threading.Event())
+            model = InterruptedThenCompletedModel()
+            RuntimeEngine(store, model, lambda _message: None).run(
+                run["id"], threading.Event()
+            )
             assert store.connection is not None
             self.assertEqual(
                 store.connection.execute("SELECT COUNT(*) FROM steps").fetchone()[0],
@@ -110,10 +117,17 @@ class RuntimeArchitectureTests(unittest.TestCase):
                 store.connection.execute(
                     "SELECT COUNT(*) FROM model_attempts"
                 ).fetchone()[0],
-                1,
+                2,
             )
-            attempt = store.read_model_attempts(run["id"])[0]
-            self.assertEqual(attempt["retryDecision"]["reason"], "unsafe_stream_progress")
+            attempts = store.read_model_attempts(run["id"])
+            self.assertEqual(model.calls, 2)
+            self.assertEqual(attempts[0]["retryDecision"]["reason"], "transport_retry")
+            self.assertEqual(
+                [item.get("content") for item in store.read_session_snapshot(
+                    session["id"]
+                )["items"] if item["kind"] == "assistant_message"],
+                ["done"],
+            )
 
     def test_step_snapshot_drives_model_validation_and_execution(self) -> None:
         from eidos_runtime.runtime.engine import RuntimeEngine

@@ -1200,6 +1200,9 @@ class SessionStore:
     def side_effects_blocked(self, run_id: str) -> bool:
         return self._repository(self._runs).side_effects_blocked(run_id)
 
+    def reconciliation_intent_scopes(self, run_id: str) -> frozenset[str]:
+        return self._repository(self._execution).reconciliation_intent_scopes(run_id)
+
     def begin_durable_intent(
         self,
         item_id: str,

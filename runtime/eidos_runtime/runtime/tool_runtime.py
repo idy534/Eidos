@@ -46,7 +46,6 @@ from eidos_runtime.runtime.errors import (
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.runtime.reconciliation import (
-    ReconciliationDisposition,
     classify_shell_reconciliation,
 )
 from eidos_runtime.runtime.runtime_dependencies import (
@@ -131,6 +130,14 @@ from eidos_runtime.runtime.shell_process_manager import (
 
 
 logger = logging.getLogger("eidos.runtime")
+
+_WORKSPACE_READ_TOOLS = frozenset({
+    "list_files",
+    "read_file",
+    "read_file_range",
+    "search_text",
+})
+_REFRESHABLE_RECONCILIATION_SCOPES = frozenset({"workspace"})
 
 
 def _tool_payload_value(call: ModelToolCall) -> dict[str, object] | str:
@@ -1287,18 +1294,25 @@ class ToolCallRuntime:
         """Clear a matching barrier only after a complete workspace refresh."""
         if self.workspace_refresh is None or not self.store.side_effects_blocked(run_id):
             return
-        successful_read = (
-            plan.side_effect == "none"
+        successful_workspace_read = (
+            call.name in _WORKSPACE_READ_TOOLS
+            and plan.side_effect == "none"
             and outcome.result.get("outcome") == "success"
         )
-        explicit_reconciliation = (
-            outcome.result.get("reconciliationRequired") is True
-        )
+        if not successful_workspace_read:
+            return
+        try:
+            intent_scopes = self.store.reconciliation_intent_scopes(run_id)
+        except Exception:
+            logger.warning(
+                "reconciliation_intent_scope_lookup_failed",
+                extra={"run_id": run_id, "tool_name": call.name},
+                exc_info=logger.isEnabledFor(logging.DEBUG),
+            )
+            return
         if (
-            outcome.reconciliation_disposition
-            is not ReconciliationDisposition.CONTINUE_READ_ONLY
-            and not successful_read
-            and not explicit_reconciliation
+            not intent_scopes
+            or not intent_scopes.issubset(_REFRESHABLE_RECONCILIATION_SCOPES)
         ):
             return
         expected_epoch = self.store.context_projection_facts(

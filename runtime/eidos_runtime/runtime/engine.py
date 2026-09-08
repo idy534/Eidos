@@ -648,7 +648,6 @@ class RuntimeEngine:
                 except SamplingError as error:
                     if (
                         isinstance(error, SamplingRetryableError)
-                        and not error.had_progress
                         and error.retry_decision is not None
                         and error.retry_decision.retry
                     ):
@@ -659,6 +658,28 @@ class RuntimeEngine:
                             self.store.start_retry_model_attempt(
                                 run.run_id,
                                 context_snapshot_id=frozen.snapshot_id,
+                            )
+                            continue
+                    repair_code = _sampling_protocol_repair_code(error)
+                    if repair_code is not None:
+                        self._check_cancel(run.run_id, cancel)
+                        protocol_errors = self.store.record_protocol_error(
+                            run.run_id
+                        )
+                        if protocol_errors < 2:
+                            attempt_id = self.store.start_retry_model_attempt(
+                                run.run_id
+                            )
+                            step = _protocol_repair_step(
+                                step,
+                                attempt_id=attempt_id,
+                                code=repair_code,
+                            )
+                            self._capture_model_attempt_context(
+                                context_application,
+                                step,
+                                rule_snapshot,
+                                repository_context,
                             )
                             continue
                     self._handle_sampling_failure(run.run_id, error)
@@ -1171,6 +1192,14 @@ def _protocol_repair_step(
         "model_context": model_context,
         "context_budget": budget,
     })
+
+
+def _sampling_protocol_repair_code(error: SamplingError) -> str | None:
+    if not isinstance(error, SamplingProtocolError):
+        return None
+    if error.failure is not None:
+        return "protocol_error" if error.failure.code == "protocol_error" else None
+    return "length" if str(error) == "length" else None
 
 
 def _projection_state(built: ContextBuild) -> tuple[object, ...]:

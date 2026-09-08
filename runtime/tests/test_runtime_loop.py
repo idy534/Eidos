@@ -278,16 +278,16 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(persisted["status"], "canceled")
         self.assertFalse(any(item["kind"] == "assistant_message" for item in self.store.read_session_snapshot(self.session["id"])["items"]))
 
-    def test_initialize_marks_an_abandoned_run_interrupted_without_replay(self) -> None:
-        run, _user_item = self.store.create_run(self.session["id"], "Interrupted")
+    def test_initialize_requeues_safe_model_only_run_without_replay(self) -> None:
+        run, _user_item = self.store.create_run(self.session["id"], "Model only")
         self.store.close()
 
         self.store = SessionStore(self.data_directory)
         self.store.initialize()
 
         persisted = self.store.read_run(run["id"])
-        self.assertEqual(persisted["status"], "interrupted")
-        self.assertEqual(persisted["errorCode"], "RUNTIME_INTERRUPTED")
+        self.assertEqual(persisted["status"], "queued")
+        self.assertIsNone(persisted.get("errorCode"))
 
     def test_workspace_new_file_is_atomically_written_without_approval(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Create notes.txt")

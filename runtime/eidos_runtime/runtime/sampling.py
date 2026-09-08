@@ -366,8 +366,9 @@ def _terminal_retry_decision(
     max_attempts: int,
     attempt_number: int,
 ) -> RetryDecision:
-    if had_progress or (failure is None and isinstance(error, SamplingRetryableError)):
-        return RetryDecision(retry=False, reason="unsafe_stream_progress")
+    # ModelRunner only reports provisional text here.  The Engine has not
+    # committed an Assistant Item or ToolCall, so ``had_progress`` is a
+    # diagnostic fact and not a replay-safety barrier.
     decision = retry_decision(
         failure or error,
         RetryState(
@@ -375,7 +376,7 @@ def _terminal_retry_decision(
                 attempt_number,
                 (failure.transport_attempt_count if failure else 1) or 1,
             ),
-            visible_output_emitted=had_progress,
+            visible_output_emitted=False,
             canceled=canceled,
         ),
         RetryPolicy(max_attempts=max_attempts),

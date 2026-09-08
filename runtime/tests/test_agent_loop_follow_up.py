@@ -305,7 +305,7 @@ class AgentLoopFollowUpTests(unittest.TestCase):
         self.assertEqual(attempts[0]["finishReason"], "tool_calls")
         self.assertEqual(attempts[0]["status"], "completed")
 
-    def test_length_finish_reason_remains_an_error(self) -> None:
+    def test_length_finish_reason_gets_one_bounded_repair(self) -> None:
         run, model, snapshot = self._run(
             "Handle a truncated response",
             [
@@ -315,21 +315,31 @@ class AgentLoopFollowUpTests(unittest.TestCase):
                     finish_reason="length",
                     response_state="complete",
                 ),
+                ModelResponse(
+                    text="The response was completed concisely.",
+                    phase=AssistantMessagePhase.UNKNOWN,
+                    finish_reason="stop",
+                    response_state="complete",
+                ),
             ],
         )
 
-        self.assertEqual(len(model.contexts), 1)
-        self.assertEqual(snapshot["runs"][0]["status"], "failed")
-        self.assertEqual(snapshot["runs"][0]["errorCode"], "MODEL_PROTOCOL_ERROR")
+        self.assertEqual(len(model.contexts), 2)
+        self.assertEqual(snapshot["runs"][0]["status"], "succeeded")
         self.assertEqual(
-            [item["kind"] for item in snapshot["items"]], ["user_message"]
+            [item.get("content") for item in snapshot["items"]
+             if item["kind"] == "assistant_message"],
+            ["The response was completed concisely."],
         )
         attempts = self.store.read_model_attempts(run["id"])
-        self.assertEqual(len(attempts), 1)
+        self.assertEqual(len(attempts), 2)
         self.assertEqual(attempts[0]["status"], "failed")
         self.assertEqual(attempts[0]["finishReason"], "length")
         self.assertEqual(attempts[0]["errorCode"], "length")
-        self.assertEqual(attempts[0]["retryDecision"]["reason"], "invalid_completion")
+        self.assertEqual(attempts[1]["status"], "completed")
+        self.assertIn(
+            {"type": "protocol_error", "code": "length"}, model.contexts[1]
+        )
 
 
 if __name__ == "__main__":

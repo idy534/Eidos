@@ -67,6 +67,11 @@ _RECONCILIATION_CODES = frozenset({
     "background_process", "output_capture_failed",
     "workspace_change_manifest_incomplete", "shell_resource_limit_exceeded",
 })
+_RECONCILIATION_INTENT_STATUSES = ("running", "uncertain", "interrupted")
+_WORKSPACE_REFRESH_WORKSPACE_TOOLS = frozenset({
+    "apply_patch", "write_file", "delete_file",
+})
+_EIDOS_STATE_TOOLS = frozenset({"skill_create", "skill_install"})
 
 
 def _is_utf8_continuation_byte(value: int) -> bool:
@@ -104,6 +109,33 @@ def _result_reconciliation_required(
             and result.get("outcome") != "success"
         )
     )
+
+
+def _reconciliation_intent_scope(
+    tool_name: object, provenance_json: object
+) -> str:
+    """Classify an unresolved intent using persisted tool metadata.
+
+    Refresh can verify Workspace mutations. Other origins stay unknown or
+    external so a refresh cannot accidentally clear their barrier.
+    """
+    provenance_kind: str | None = None
+    if isinstance(provenance_json, str):
+        try:
+            provenance = json.loads(provenance_json)
+        except (TypeError, json.JSONDecodeError):
+            provenance = None
+        if isinstance(provenance, dict):
+            kind = provenance.get("kind")
+            if isinstance(kind, str):
+                provenance_kind = kind
+    if provenance_kind == "mcp":
+        return "external"
+    if tool_name in _WORKSPACE_REFRESH_WORKSPACE_TOOLS:
+        return "workspace"
+    if provenance_kind == "skill" or tool_name in _EIDOS_STATE_TOOLS:
+        return "eidos_state"
+    return "unknown"
 
 
 def _attempt_metadata(
@@ -733,6 +765,19 @@ class ExecutionRepository(Repository):
             )
             if changed.rowcount != 1:
                 return None
+            connection.execute(
+                """
+                UPDATE durable_intents
+                SET status = 'completed', reconciled_at = ?
+                WHERE run_id = ?
+                  AND status IN ('uncertain', 'interrupted')
+                  AND tool_call_id IN (
+                      SELECT id FROM tool_calls
+                      WHERE tool_name IN ('apply_patch', 'write_file', 'delete_file')
+                  )
+                """,
+                (now, run_id),
+            )
             updated = connection.execute(
                 "SELECT * FROM runs WHERE id = ?", (run_id,)
             ).fetchone()
@@ -749,6 +794,31 @@ class ExecutionRepository(Repository):
                 run_id=run_id,
             )
         return CommittedMutation(_run_from_row(updated), (event,))
+
+    def reconciliation_intent_scopes(self, run_id: str) -> frozenset[str]:
+        """Return origins for unresolved durable intents in a run.
+
+        The run-level barrier can outlive the tool result that opened it. The
+        durable intent and its persisted tool metadata are the only safe way
+        to decide whether a workspace refresh can verify that barrier.
+        """
+        with self.lock:
+            rows = self._connection().execute(
+                """
+                SELECT tool_calls.tool_name, tool_calls.provenance_json
+                FROM durable_intents
+                JOIN tool_calls ON tool_calls.id = durable_intents.tool_call_id
+                WHERE durable_intents.run_id = ?
+                  AND durable_intents.status IN (?, ?, ?)
+                """,
+                (run_id, *_RECONCILIATION_INTENT_STATUSES),
+            ).fetchall()
+        return frozenset(
+            _reconciliation_intent_scope(
+                row["tool_name"], row["provenance_json"]
+            )
+            for row in rows
+        )
 
     def recent_progress_signatures(
         self, run_id: str, limit: int = 8

@@ -117,7 +117,7 @@ RuntimeEngine 下的主要职责是：
 
 Model Step、Segment Step 和 effective time 在当前实现中是 telemetry 和 operational segment 信息。健康 Run 不会因为固定 model-step、Run duration 或固定 repeated-call counter 自动终止。LoopGuard 通过语义 fingerprint 判断是否收敛，不是固定步数限制。Segment 达到 operational quantum 时可以 rollover，但 rollover 不是 Run 终态。
 
-Chat Completions Adapter 根据结构化响应事实把有 ToolCall 的响应归类为 `commentary`，并保留模型文本、可选 MessagePhase 和 Provider `finish_reason`。Chat Completions 没有原生的 Assistant phase，所以没有 phase 的响应使用 `unknown` 或 `None` 表示。RuntimeEngine 不读取 MessagePhase 或 `finish_reason=stop` 作为完成门控。每次 normalized sampling response 都得到 `needs_follow_up`：ToolCall 或待消费的当前 Turn 输入需要继续采样，assistant-only response 可以结束当前 Turn。可返回给模型的 Tool Result 和 Tool Error 都会进入 Context，再触发下一次 Sampling。
+Chat Completions Adapter 根据结构化响应事实把有 ToolCall 的响应归类为 `commentary`，并保留模型文本、可选 MessagePhase 和 Provider `finish_reason`。Chat Completions 没有原生的 Assistant phase，所以没有 phase 的响应使用 `unknown` 或 `None` 表示。RuntimeEngine 不读取 MessagePhase 或 `finish_reason=stop` 作为完成门控。每次 normalized sampling response 都得到 `needs_follow_up`：ToolCall 或待消费的当前 Turn 输入需要继续采样，assistant-only response 可以结束当前 Turn。可返回给模型的 Tool Result 和 Tool Error 都会进入 Context，再触发下一次 Sampling。Sampling 收到的 provisional text 在完整响应通过校验前不会持久化。可重试的 transport failure 即使已经收到 provisional text，也会复用同一个 frozen ContextSnapshot 创建新的 Model Attempt。已收到的文本或 ToolCall 不会自动重放。normalization 的 `protocol_error` 和 `length` 都进入同一条已有的有界 protocol repair，连续错误合计最多触发一次。`content_filter`、cancel 和 authentication failure 不进入该 repair，直接终止当前模型流程。
 
 确定的 Tool Error 只表示本次尝试失败，不会单独把 Run 置为终态。Runtime 会把失败事实交给下一次模型决策。模型可以修正参数、选择替代 Tool，或者在没有安全路径时结束。等价重复且没有新事实时，LoopGuard 负责收敛。
 
@@ -191,11 +191,11 @@ ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与�
 
 `apply_patch.lark` 的语法来源是 `openai/codex` 的 `codex-rs/core/assets/tools/apply_patch.lark`。本地 grammar 将上游的 `add_line+` 改为 `add_line*`，因为 Codex Rust streaming parser 允许没有内容行的 Add File；显式的 `+` 仍表示一条空内容行。上游 grammar 中的部分空行正则不能直接交给 Lark，所以本地 grammar 也对这些 token 做了 Lark 兼容适配。Parser 可以规范化 CRLF 和外层空白，也支持首个 Update 片段不带 `@@`。Parser 不会猜测缺失的 `*** Begin Patch`、`*** End Patch` 或 `+`/`-` 前缀。raw `patch` 字段不属于模型契约。
 
-Tool Result 的 `reconciliationRequired` 是本次执行是否建立 reconciliation barrier 的权威结果。`sideEffectsMayExist` 只保留历史证据。它不是完成条件。Runtime 只有在 Tool Result 缺少显式 reconciliation 判断时，才为旧结果使用保守兼容规则。未清除的 barrier 会阻止 Run 提交 `succeeded`。Runtime 不会自动重放有副作用的 Tool。
+Tool Result 的 `reconciliationRequired` 是本次执行是否建立 reconciliation barrier 的权威结果。`sideEffectsMayExist` 只保留历史证据。它不是完成条件。Runtime 只有在 Tool Result 缺少显式 reconciliation 判断时，才为旧结果使用保守兼容规则。敏感扫描或结果超限导致 projection 重建时，Runtime 仍保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。未清除的 barrier 会阻止 Run 提交 `succeeded`。Runtime 不会自动重放有副作用的 Tool。
 
 Shell ToolCall 会在 Runtime 内部继续等待进程。Shell 输出会在等待期间追加到同一个 Item。命令退出后，`run_shell` 返回完整的 `executionStatus`、`exitCode`、`stdout`、`stderr` 和 `termination`。普通且确定的 Shell 退出会把 Item 按命令结果标记为 `completed` 或 `failed`。确定的 `shell_exit_nonzero` 会把 Item 标记为 `failed`，但会把 ToolCall 标记为 `completed`。Workspace observation 不完整只影响 observation metadata，不会把已退出的 Shell 变成只读 reconciliation。`reconciliationRequired = true`、timeout、background child 清理未完成和真正的 Shell 启动失败仍然把 ToolCall 标记为 `failed` 并保持 fail closed。
 
-只有执行最终状态未知时，Shell 才会建立 reconciliation barrier。Reconciliation 默认把 Run 置为 `CONTINUE_READ_ONLY`，而不是直接 interrupt。Barrier 只允许安全只读 Tool。其他副作用 Tool 会得到普通的 `reconciliation_required` Tool Error。完整 Workspace refresh 提交后才会清除 barrier。Runtime 不会自动重放原 Shell。unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。
+只有执行最终状态未知时，Shell 才会建立 reconciliation barrier。Reconciliation 默认把 Run 置为 `CONTINUE_READ_ONLY`，而不是直接 interrupt。Barrier 只允许安全只读 Tool。其他副作用 Tool 会得到普通的 `reconciliation_required` Tool Error。Workspace refresh 只会清除来源属于 Workspace mutation、且可以由该 refresh 核验的 barrier。Shell、MCP、external、Eidos-state 和 unknown barrier 不能由 Workspace refresh 清除。Runtime 不会自动重放原 Shell。unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。
 
 内置 `workspace_dependencies` Tool 通过一个只读目录接口返回 Eidos 自带并经过校验的 Python、ripgrep、Python import roots 和受支持包版本。它在成功结果的 `data` 中返回 `activeSkillDependencyBindings`，并可返回 `defaultDependencyBindingId`。校验哈希只保留在 Runtime 内部，不在 Tool result 中回显。这个 Tool 的 model projection 只保留 `code` 和 `data`；canonical result 和 UI result 继续保留 Runtime 状态字段。调用方使用这些路径执行已有 Workspace 任务。这个 Tool 不创建新的执行器，也不绕过 Shell、Approval 或 Seatbelt。实际命令仍然进入现有 `run_shell` 链路。`run_shell` 输入的绑定字段是 `dependencyBindingId`。普通没有 binding 的 Shell 保持原有环境和执行路径。
 
@@ -277,7 +277,7 @@ v1 mapless generation 仍然不能恢复为 active Snapshot。Persistence 会单
 
 `RetrievalSnapshot` 是 immutable content-addressed artifact。SQLite 只保存一份 Retrieval JSON。`run_repository_retrievals` 保存 Run 对 artifact 的使用关系。ContextPlan 继续保存 attempt lineage，但 artifact identity 不承担 Run ownership。两个 Run 可以共享同一个 Retrieval Snapshot ID，并分别解析自己的 evidence lineage。
 
-`ContextBuilder` 是默认在线 Run 的唯一模型输入投影器。它把 Project Rules、Skills、SQLite history、verified compact summary、Repository overview 和 Retrieval evidence 放入一个结构化 `ModelContextItem` 序列。每个 ModelAttempt 在 Sampling 前持久化完整的 `ContextSnapshot`。Snapshot 原样保存 model context、resolved instructions、tool definitions、Model/Rule metadata 和可空 Repository lineage。Sampling 只读取已绑定的 Snapshot。Provider transport retry 复用同一个 Snapshot。首个可见输出前的流连接中断会先完成旧 Attempt，再创建独立 Attempt 并复用同一个 Snapshot；已有文本或 ToolCall 进度不会自动重放。协议修复会建立新的 ModelAttempt 和新的 Snapshot。已声明 Tool 的参数校验错误会通过持久化的 `invalid_arguments` Tool Result 进入下一次 Model Context。该结果只保留有界的错误码和摘要，不携带原始参数。真正的协议错误仍然使用 protocol repair context。
+`ContextBuilder` 是默认在线 Run 的唯一模型输入投影器。它把 Project Rules、Skills、SQLite history、verified compact summary、Repository overview 和 Retrieval evidence 放入一个结构化 `ModelContextItem` 序列。每个 ModelAttempt 在 Sampling 前持久化完整的 `ContextSnapshot`。Snapshot 原样保存 model context、resolved instructions、tool definitions、Model/Rule metadata 和可空 Repository lineage。Sampling 只读取已绑定的 Snapshot。可重试的 transport failure 即使已经收到尚未持久化的 provisional text，也会先完成旧 Attempt，再创建独立 Attempt 并复用同一个 Snapshot。已有文本或 ToolCall 进度不会自动重放。协议修复会建立新的 ModelAttempt 和新的 Snapshot。已声明 Tool 的参数校验错误会通过持久化的 `invalid_arguments` Tool Result 进入下一次 Model Context。该结果只保留有界的错误码和摘要，不携带原始参数。真正的协议错误仍然使用 protocol repair context。
 
 Workspace Explorer 复用 `RepositoryWatchController`。Watcher 事件只产生 `workspace/changed` 缓存失效通知。Renderer 根据相对路径刷新已加载的父目录。Watcher 不提供路径安全事实，也不修改 Run snapshot。
 
@@ -436,11 +436,11 @@ MCP 当前使用官方 Python MCP SDK 的 stdio client。MCP Server 由 RuntimeA
 
 ## 16. Runtime Recovery
 
-Runtime 启动时会收敛未完成的 Run、ToolCall、Approval、Outbox 和资源状态。Cancellation 在 SQLite 中先记录 request，再通过 Run Worker、Model request、Tool process、Approval wait 和 Async Task 传播。迟到结果不能把已取消 Run 改回成功。
+Runtime 启动时会收敛未完成的 Run、ToolCall、Approval、Outbox 和资源状态。对于没有未完成 Tool 执行或不确定副作用的 active Run，只有在没有 cancel request、没有 reconciliation barrier、没有未决有副作用 Durable Intent，且没有 running ToolAttempt 时，Runtime 才会把 Run 和执行段重新排回队列。其他不确定执行仍然进入 `interrupted`。Pending Approval 仍按既有的结构化待批规则恢复。Cancellation 在 SQLite 中先记录 request，再通过 Run Worker、Model request、Tool process、Approval wait 和 Async Task 传播。取消终态只会被未清除的 reconciliation barrier 阻断；`sideEffectsMayExist` 只是历史证据。迟到结果不能把已取消 Run 改回成功。
 
 Long Task 控制事实写入 `operations` 的 `long_task/control` scope。`run/pause` 在模型、工具、Approval 和 Slot 安全点生效。`run/resume` 需要重新记录 Workspace identity、规则、Repository/Context snapshot、permission snapshot、Git 和 reconciliation 检查结果。未确认副作用不会自动重放。
 
-Workspace-local 的 reconciliation 可以在当前 Run 中通过受限只读 Tool 继续。未清除的 reconciliation barrier 仍然阻止成功终态。没有安全核验路径的 timeout、background child、unsandboxed、additional permission、MCP、external 和 Eidos-state 未知结果仍然 fail closed。
+Workspace-local 的 reconciliation 可以在当前 Run 中通过受限只读 Tool 继续。Workspace refresh 只能清除 Workspace mutation 的可核验 barrier，不能清除 Shell、MCP、external、Eidos-state 或 unknown barrier。未清除的 reconciliation barrier 仍然阻止成功终态。没有安全核验路径的 timeout、background child、unsandboxed、additional permission、MCP、external 和 Eidos-state 未知结果仍然 fail closed。
 
 Checkpoint create/list 和 rewind/fork action lineage 通过 typed RPC 暴露。Checkpoint 保存规则、Repository、Context、compaction、Workspace identity、Git、permission、Model snapshot 和 reconciliation 引用。Managed 和 Local Git Checkpoint 都复用 `worktree_snapshots` metadata、Git patch artifact、checksum 和 hidden ref，保存 HEAD、staged、unstaged 和 untracked 状态。Managed Fork 创建新的 detached managed Worktree，并恢复完整 Checkpoint Git 状态。Local Fork 仍使用同一个 Project 和同一个 `workspace_root` 创建新的 Local Session、Run 和 lineage，所以两个 Local Thread 共享真实目录。Managed 和 Local Rewind 会在原 checkout 中恢复完整 Checkpoint Git 状态；Local Rewind 只允许用户显式调用。Non-Git Local Workspace 仍不提供 filesystem snapshot、copy-on-write 或 rewind。
 

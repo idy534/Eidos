@@ -67,6 +67,20 @@ def _result_requires_reconciliation(result: dict[str, object]) -> bool:
     )
 
 
+def _explicit_reconciliation_required(
+    result: dict[str, object],
+) -> bool | None:
+    """Return an explicitly reported reconciliation fact, if present."""
+    if "reconciliationRequired" in result:
+        value = result["reconciliationRequired"]
+        return value if isinstance(value, bool) else None
+    data = result.get("data")
+    if isinstance(data, dict) and "reconciliationRequired" in data:
+        value = data["reconciliationRequired"]
+        return value if isinstance(value, bool) else None
+    return None
+
+
 def _invalid_arguments_summary(
     validation: ToolArgumentValidationResult,
 ) -> str:
@@ -654,6 +668,9 @@ class ToolExecutionController:
                         outcome.workspace_changed if effects_possible else False
                     ),
                 )
+            explicit_reconciliation = _explicit_reconciliation_required(
+                outcome.result
+            )
             result_data_model = (
                 plan.descriptor.result_data_model
                 if plan.descriptor is not None
@@ -670,14 +687,21 @@ class ToolExecutionController:
                 data_model=result_data_model,
             )
             if result.get("code") == "sensitive_content_rejected":
-                if plan.side_effect != "none":
+                effects_possible = (
+                    self._execution_state.authorized_effects > 0
+                    or outcome.result.get("sideEffectsMayExist") is True
+                )
+                if plan.side_effect != "none" or effects_possible:
                     result = tool_result(
                         call.name,
                         "error",
                         "sensitive_content_rejected",
                         "Tool output was withheld",
-                        side_effects_may_exist=True,
-                        reconciliation_required=True,
+                        side_effects_may_exist=effects_possible,
+                        reconciliation_required=(
+                            effects_possible
+                            and explicit_reconciliation is not False
+                        ),
                     )
                 outcome = replace(
                     outcome, item_status="failed", tool_status="failed"
@@ -693,7 +717,10 @@ class ToolExecutionController:
                     "TOOL_OUTPUT_TOO_LARGE",
                     "Tool result exceeded the safe size limit",
                     side_effects_may_exist=effects_possible,
-                    reconciliation_required=effects_possible,
+                    reconciliation_required=(
+                        effects_possible
+                        and explicit_reconciliation is not False
+                    ),
                 )
                 outcome = replace(outcome, item_status="failed", tool_status="failed")
             outcome = replace(outcome, result=result)

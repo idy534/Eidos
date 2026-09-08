@@ -311,7 +311,7 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             self.assertFalse(result["sideEffectsMayExist"])
             store.close()
 
-    def test_external_timeout_stays_active_until_read_only_verification(self) -> None:
+    def test_external_timeout_fails_closed_after_read_only_verification(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-p3-timeout-") as directory:
             root = Path(directory)
             data, workspace, source = root / "data", root / "workspace", root / "plugin"
@@ -375,10 +375,11 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
                 kernel.close()
 
             completed = store.read_run(run["id"])
-            self.assertNotEqual(completed["status"], "interrupted")
+            self.assertNotEqual(completed["status"], "succeeded")
             self.assertTrue(completed["sideEffectsMayExist"])
-            self.assertFalse(store.side_effects_blocked(run["id"]))
-            self.assertFalse(
+            self.assertTrue(store.side_effects_blocked(run["id"]))
+            self.assertTrue(completed["reconciliationRequired"])
+            self.assertTrue(
                 store.context_projection_facts(
                     run["id"]
                 ).reconciliation_required
@@ -387,7 +388,7 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
                 store.context_projection_facts(
                     run["id"]
                 ).reconciliation_epoch,
-                pending_epoch + 2,
+                pending_epoch + 1,
             )
             self.assertGreaterEqual(len(model.run_statuses), 3)
             self.assertEqual(model.run_statuses[2], "running")
@@ -405,6 +406,11 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             # first owns the canonical timeout result, and both outcomes are
             # uncertain and must pause the run without retrying the tool.
             self.assertIn(result["code"], {"mcp_tool_timeout", "TOOL_TIMEOUT"})
+            calls = store.connection.execute(
+                "SELECT COUNT(*) FROM tool_calls WHERE tool_name = ?",
+                ("mcp__fixture__slow",),
+            ).fetchone()[0]
+            self.assertEqual(calls, 1)
             store.close()
 
     def test_tool_search_activates_mcp_for_next_step_and_external_call_is_approved(self) -> None:

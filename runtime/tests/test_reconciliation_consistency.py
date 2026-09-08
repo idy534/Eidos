@@ -218,13 +218,25 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         )
 
     def test_engine_keeps_run_active_until_read_only_verification(self) -> None:
-        connection = self.store.connection
-        connection.execute(
-            "UPDATE runs SET reconciliation_required = 1, side_effects_may_exist = 1 "
-            "WHERE id = ?",
-            (self.run["id"],),
+        workspace_mutation = self.store.create_tool_item(
+            self.run["id"], 0, 0, "workspace-mutation", "apply_patch", "{}"
         )
-        connection.commit()
+        self.store.begin_durable_intent(
+            workspace_mutation["id"], preconditions={}, approval_required=False
+        )
+        self.store.complete_tool_item(
+            workspace_mutation["id"],
+            json.dumps({
+                "outcome": "error",
+                "code": "outcome_unknown",
+                "summary": "Workspace mutation outcome is unknown",
+                "data": {},
+                "sideEffectsMayExist": True,
+                "reconciliationRequired": True,
+            }),
+            item_status="failed",
+            tool_status="failed",
+        )
         pending_epoch = self.store.context_projection_facts(
             self.run["id"]
         ).reconciliation_epoch
@@ -634,7 +646,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             "unsupported_workspace_entry"
         )
 
-    def _assert_default_seatbelt_shell_keeps_run_active(
+    def _assert_default_seatbelt_shell_fails_closed_after_list_files(
         self, *, code: str, termination: str, exit_code: int | None
     ) -> None:
         model = _StatusRecordingModel(self.store, self.run["id"], [
@@ -690,10 +702,11 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ).run(self.run["id"], threading.Event())
 
         persisted = self.store.read_run(self.run["id"])
-        self.assertNotEqual(persisted["status"], "interrupted")
+        self.assertNotEqual(persisted["status"], "succeeded")
         self.assertTrue(persisted["sideEffectsMayExist"])
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
-        self.assertFalse(
+        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertTrue(persisted["reconciliationRequired"])
+        self.assertTrue(
             self.store.context_projection_facts(
                 self.run["id"]
             ).reconciliation_required
@@ -721,17 +734,21 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertTrue(result["data"]["sandboxed"])
         self.assertEqual(result["data"]["sandboxPermissions"], "use_default")
 
-    def test_default_seatbelt_shell_timeout_keeps_run_active(self) -> None:
-        self._assert_default_seatbelt_shell_keeps_run_active(
+    def test_default_seatbelt_shell_timeout_fails_closed_after_list_files(self) -> None:
+        self._assert_default_seatbelt_shell_fails_closed_after_list_files(
             code="timeout", termination="timeout", exit_code=None
         )
 
-    def test_default_seatbelt_shell_background_process_keeps_run_active(self) -> None:
-        self._assert_default_seatbelt_shell_keeps_run_active(
+    def test_default_seatbelt_shell_background_process_fails_closed_after_list_files(
+        self,
+    ) -> None:
+        self._assert_default_seatbelt_shell_fails_closed_after_list_files(
             code="background_process", termination="background_process", exit_code=0
         )
 
-    def test_shell_reconciliation_without_trusted_sandbox_metadata_keeps_run_active(self) -> None:
+    def test_shell_reconciliation_without_trusted_sandbox_metadata_fails_closed_after_list_files(
+        self,
+    ) -> None:
         model = _StatusRecordingModel(self.store, self.run["id"], [
             ModelResponse(tool_calls=(ModelToolCall(
                 "shell-attempt",
@@ -795,9 +812,10 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ).run(self.run["id"], threading.Event())
 
         persisted = self.store.read_run(self.run["id"])
-        self.assertNotEqual(persisted["status"], "interrupted")
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
-        self.assertFalse(
+        self.assertNotEqual(persisted["status"], "succeeded")
+        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertTrue(persisted["reconciliationRequired"])
+        self.assertTrue(
             self.store.context_projection_facts(
                 self.run["id"]
             ).reconciliation_required
@@ -819,7 +837,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertNotIn("sandboxed", result["data"])
         self.assertNotIn("effectivePermissionsSummary", result["data"])
 
-    def _assert_permissioned_shell_keeps_run_active(
+    def _assert_permissioned_shell_fails_closed_after_list_files(
         self, arguments: dict[str, object], expected_mode: str
     ) -> None:
         model = _StatusRecordingModel(self.store, self.run["id"], [
@@ -881,9 +899,10 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ).run(self.run["id"], threading.Event())
 
         persisted = self.store.read_run(self.run["id"])
-        self.assertNotEqual(persisted["status"], "interrupted")
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
-        self.assertFalse(
+        self.assertNotEqual(persisted["status"], "succeeded")
+        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertTrue(persisted["reconciliationRequired"])
+        self.assertTrue(
             self.store.context_projection_facts(
                 self.run["id"]
             ).reconciliation_required
@@ -903,8 +922,8 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(calls, 1)
 
-    def test_escalated_shell_reconciliation_keeps_run_active(self) -> None:
-        self._assert_permissioned_shell_keeps_run_active(
+    def test_escalated_shell_reconciliation_fails_closed_after_list_files(self) -> None:
+        self._assert_permissioned_shell_fails_closed_after_list_files(
             {
                 "command": "false",
                 "yieldTimeMs": 5000,
@@ -914,8 +933,10 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             "require_escalated",
         )
 
-    def test_additional_permission_shell_reconciliation_keeps_run_active(self) -> None:
-        self._assert_permissioned_shell_keeps_run_active(
+    def test_additional_permission_shell_reconciliation_fails_closed_after_list_files(
+        self,
+    ) -> None:
+        self._assert_permissioned_shell_fails_closed_after_list_files(
             {
                 "command": "false",
                 "yieldTimeMs": 5000,
@@ -1006,10 +1027,10 @@ class ReconciliationConsistencyTests(unittest.TestCase):
                 kernel.close()
 
             persisted = store.read_run(run["id"])
-            self.assertNotEqual(persisted["status"], "interrupted")
+            self.assertNotEqual(persisted["status"], "succeeded")
             self.assertTrue(persisted["sideEffectsMayExist"])
-            self.assertFalse(store.side_effects_blocked(run["id"]))
-            self.assertFalse(
+            self.assertTrue(store.side_effects_blocked(run["id"]))
+            self.assertTrue(
                 store.context_projection_facts(
                     run["id"]
                 ).reconciliation_required
@@ -1018,7 +1039,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
                 store.context_projection_facts(
                     run["id"]
                 ).reconciliation_epoch,
-                pending_epoch + 2,
+                pending_epoch + 1,
             )
             self.assertGreaterEqual(len(model.contexts), 3)
             self.assertEqual(model.run_statuses[2], "running")
@@ -1092,6 +1113,153 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             pending_epoch,
         )
 
+    def test_external_uncertain_intent_is_not_cleared_by_successful_read_refresh(
+        self,
+    ) -> None:
+        item = self.store.create_tool_item(
+            self.run["id"],
+            0,
+            0,
+            "external",
+            "mcp__fixture__slow",
+            "{}",
+            provenance={"kind": "mcp"},
+        )
+        self.store.begin_durable_intent(
+            item["id"], preconditions={}, approval_required=False
+        )
+        self.store.complete_tool_item(
+            item["id"],
+            json.dumps({
+                "outcome": "error",
+                "code": "external_outcome_unknown",
+                "summary": "External outcome is unknown",
+                "data": {},
+                "sideEffectsMayExist": True,
+                "reconciliationRequired": True,
+            }),
+            item_status="failed",
+            tool_status="failed",
+        )
+        pending_epoch = self.store.context_projection_facts(
+            self.run["id"]
+        ).reconciliation_epoch
+        runtime = ToolCallRuntime.__new__(ToolCallRuntime)
+        runtime.store = self.store
+        runtime.events = SimpleNamespace(
+            publish=lambda *_args, **_kwargs: None,
+        )
+        refresh_called = False
+
+        def refresh(_cancel: threading.Event) -> SimpleNamespace:
+            nonlocal refresh_called
+            refresh_called = True
+            return SimpleNamespace(complete=True)
+
+        runtime.workspace_refresh = refresh
+
+        runtime._refresh_reconciliation_after_result(
+            run_id=self.run["id"],
+            call=SimpleNamespace(name="read_file"),
+            plan=SimpleNamespace(side_effect="none"),
+            outcome=SimpleNamespace(
+                result={
+                    "outcome": "success",
+                    "reconciliationRequired": False,
+                },
+                reconciliation_disposition=ReconciliationDisposition.CONTINUE,
+            ),
+            cancel=threading.Event(),
+        )
+
+        self.assertFalse(refresh_called)
+        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertEqual(
+            self.store.context_projection_facts(
+                self.run["id"]
+            ).reconciliation_epoch,
+            pending_epoch,
+        )
+
+    def test_non_workspace_intent_scopes_are_not_cleared_by_read_refresh(self) -> None:
+        connection = self.store.connection
+        connection.execute(
+            "UPDATE runs SET reconciliation_required = 1, side_effects_may_exist = 1 "
+            "WHERE id = ?",
+            (self.run["id"],),
+        )
+        connection.commit()
+        runtime = ToolCallRuntime.__new__(ToolCallRuntime)
+        runtime.store = self.store
+        runtime.events = SimpleNamespace(
+            publish=lambda *_args, **_kwargs: None,
+        )
+        refresh_called = False
+
+        def refresh(_cancel: threading.Event) -> SimpleNamespace:
+            nonlocal refresh_called
+            refresh_called = True
+            return SimpleNamespace(complete=True)
+
+        runtime.workspace_refresh = refresh
+        plan = SimpleNamespace(side_effect="none")
+        outcome = SimpleNamespace(
+            result={"outcome": "success", "reconciliationRequired": False},
+            reconciliation_disposition=ReconciliationDisposition.CONTINUE,
+        )
+
+        for scope in ("external", "eidos_state", "shell", "unknown"):
+            with self.subTest(scope=scope):
+                refresh_called = False
+                with patch.object(
+                    self.store,
+                    "reconciliation_intent_scopes",
+                    return_value=frozenset({scope}),
+                ):
+                    runtime._refresh_reconciliation_after_result(
+                        run_id=self.run["id"],
+                        call=SimpleNamespace(name="read_file"),
+                        plan=plan,
+                        outcome=outcome,
+                        cancel=threading.Event(),
+                    )
+                self.assertFalse(refresh_called)
+                self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+
+    def test_workspace_intent_scope_allows_successful_workspace_read_refresh(self) -> None:
+        connection = self.store.connection
+        connection.execute(
+            "UPDATE runs SET reconciliation_required = 1, side_effects_may_exist = 1 "
+            "WHERE id = ?",
+            (self.run["id"],),
+        )
+        connection.commit()
+        runtime = ToolCallRuntime.__new__(ToolCallRuntime)
+        runtime.store = self.store
+        runtime.events = SimpleNamespace(
+            publish=lambda *_args, **_kwargs: None,
+        )
+        runtime.workspace_refresh = lambda _cancel: SimpleNamespace(complete=True)
+        with patch.object(
+            self.store,
+            "reconciliation_intent_scopes",
+            return_value=frozenset({"workspace"}),
+        ):
+            runtime._refresh_reconciliation_after_result(
+                run_id=self.run["id"],
+                call=SimpleNamespace(name="read_file"),
+                plan=SimpleNamespace(side_effect="none"),
+                outcome=SimpleNamespace(
+                    result={
+                        "outcome": "success",
+                        "reconciliationRequired": False,
+                    },
+                    reconciliation_disposition=ReconciliationDisposition.CONTINUE,
+                ),
+                cancel=threading.Event(),
+            )
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
+
     def test_new_successful_read_clears_barrier_before_success_completion(self) -> None:
         uncertain = self.store.create_tool_item(
             self.run["id"], 0, 0, "shell", "run_shell", "{}"
@@ -1153,3 +1321,147 @@ class ReconciliationConsistencyTests(unittest.TestCase):
 
         self.assertEqual(completed["status"], "succeeded")
         self.assertFalse(completed.get("reconciliationRequired", False))
+
+    def test_workspace_refresh_completes_mutation_intent_and_requeues_after_restart(
+        self,
+    ) -> None:
+        mutation = self.store.create_tool_item(
+            self.run["id"], 0, 0, "mutation", "apply_patch", "{}"
+        )
+        self.store.begin_durable_intent(
+            mutation["id"], preconditions={}, approval_required=False
+        )
+        self.store.complete_tool_item(
+            mutation["id"],
+            json.dumps({
+                "outcome": "error",
+                "code": "outcome_unknown",
+                "summary": "Workspace mutation outcome is unknown",
+                "data": {},
+                "sideEffectsMayExist": True,
+                "reconciliationRequired": True,
+            }),
+            item_status="failed",
+            tool_status="failed",
+        )
+        expected_epoch = self.store.context_projection_facts(
+            self.run["id"]
+        ).reconciliation_epoch
+        connection = self.store.connection
+        assert connection is not None
+        before = connection.execute(
+            "SELECT status, reconciled_at FROM durable_intents WHERE run_id = ?",
+            (self.run["id"],),
+        ).fetchone()
+        self.assertEqual(before["status"], "uncertain")
+        self.assertIsNotNone(before["reconciled_at"])
+
+        self.assertIsNone(
+            self.store.clear_reconciliation_after_workspace_refresh_committed(
+                self.run["id"], expected_epoch + 1
+            )
+        )
+        unchanged = connection.execute(
+            "SELECT status FROM durable_intents WHERE run_id = ?",
+            (self.run["id"],),
+        ).fetchone()
+        self.assertEqual(unchanged["status"], "uncertain")
+
+        mutation_result = (
+            self.store.clear_reconciliation_after_workspace_refresh_committed(
+                self.run["id"], expected_epoch
+            )
+        )
+
+        self.assertIsNotNone(mutation_result)
+        after = connection.execute(
+            "SELECT status, reconciled_at FROM durable_intents WHERE run_id = ?",
+            (self.run["id"],),
+        ).fetchone()
+        self.assertEqual(after["status"], "completed")
+        self.assertIsNotNone(after["reconciled_at"])
+
+        data_directory = self.store.data_directory
+        assert data_directory is not None
+        self.store.close()
+        self.store = SessionStore(data_directory)
+        self.store.initialize()
+
+        recovered = self.store.read_run(self.run["id"])
+        self.assertEqual(recovered["status"], "queued")
+        self.assertFalse(recovered.get("reconciliationRequired", False))
+
+    def test_workspace_refresh_does_not_complete_non_workspace_intents(self) -> None:
+        intent_statuses = {
+            "apply_patch": "uncertain",
+            "write_file": "interrupted",
+            "delete_file": "uncertain",
+            "run_shell": "interrupted",
+            "mcp__fixture__slow": "uncertain",
+            "skill_create": "interrupted",
+            "unknown_tool": "uncertain",
+        }
+        for batch_order, (tool_name, intent_status) in enumerate(
+            intent_statuses.items()
+        ):
+            item = self.store.create_tool_item(
+                self.run["id"], 0, batch_order, tool_name, tool_name, "{}",
+                provenance={"kind": "mcp"} if tool_name.startswith("mcp__") else None,
+            )
+            self.store.begin_durable_intent(
+                item["id"], preconditions={}, approval_required=False
+            )
+            self.store.complete_tool_item(
+                item["id"],
+                json.dumps({
+                    "outcome": "error",
+                    "code": "outcome_unknown",
+                    "summary": "Tool outcome is unknown",
+                    "data": {},
+                    "sideEffectsMayExist": True,
+                    "reconciliationRequired": True,
+                }),
+                item_status="failed",
+                tool_status="failed",
+            )
+            if intent_status == "interrupted":
+                connection = self.store.connection
+                assert connection is not None
+                connection.execute(
+                    "UPDATE durable_intents SET status = 'interrupted' "
+                    "WHERE tool_call_id = ?",
+                    (item["toolCall"]["id"],),
+                )
+                connection.commit()
+
+        expected_epoch = self.store.context_projection_facts(
+            self.run["id"]
+        ).reconciliation_epoch
+        mutation = self.store.clear_reconciliation_after_workspace_refresh_committed(
+            self.run["id"], expected_epoch
+        )
+        self.assertIsNotNone(mutation)
+
+        connection = self.store.connection
+        assert connection is not None
+        rows = connection.execute(
+            """
+            SELECT tool_calls.tool_name, durable_intents.status,
+                   durable_intents.reconciled_at
+            FROM durable_intents
+            JOIN tool_calls ON tool_calls.id = durable_intents.tool_call_id
+            WHERE durable_intents.run_id = ?
+            """,
+            (self.run["id"],),
+        ).fetchall()
+        actual = {
+            row["tool_name"]: (row["status"], row["reconciled_at"])
+            for row in rows
+        }
+        for tool_name, intent_status in intent_statuses.items():
+            status, reconciled_at = actual[tool_name]
+            if tool_name in {"apply_patch", "write_file", "delete_file"}:
+                self.assertEqual(status, "completed")
+                self.assertIsNotNone(reconciled_at)
+            else:
+                self.assertEqual(status, intent_status)

@@ -457,3 +457,100 @@ def settle_run_children(
         (run_id,),
     )
     return tuple(events)
+
+
+def requeue_run_children(
+    connection: sqlite3.Connection,
+    run_id: str,
+    now: int,
+    reason: str,
+) -> tuple[dict[str, object], ...]:
+    """Close only interrupted model facts before a Run returns to the queue."""
+    run = connection.execute(
+        "SELECT session_id FROM runs WHERE id = ?", (run_id,)
+    ).fetchone()
+    if run is None:
+        raise ResourceNotFoundError("run not found")
+    events: list[dict[str, object]] = []
+    assistant_items = connection.execute(
+        """
+        SELECT id FROM items
+        WHERE run_id = ? AND kind = 'assistant_message' AND status = 'in_progress'
+        """,
+        (run_id,),
+    ).fetchall()
+    for item in assistant_items:
+        connection.execute(
+            """
+            UPDATE items
+            SET status = 'failed', incomplete = 1, completed_at = ?
+            WHERE id = ? AND status = 'in_progress'
+            """,
+            (now, item["id"]),
+        )
+        events.append(append_event(
+            connection,
+            EventType.ITEM_COMPLETED,
+            now,
+            {"item_id": item["id"]},
+            session_id=run["session_id"],
+            run_id=run_id,
+        ))
+
+    model_attempts = connection.execute(
+        """
+        SELECT model_attempts.id
+        FROM model_attempts
+        JOIN steps ON steps.id = model_attempts.step_id
+        WHERE steps.run_id = ? AND model_attempts.status = 'running'
+        """,
+        (run_id,),
+    ).fetchall()
+    for attempt in model_attempts:
+        connection.execute(
+            """
+            UPDATE model_attempts
+            SET status = 'failed', completed_at = ?,
+                error_code = COALESCE(error_code, 'runtime_interrupted')
+            WHERE id = ? AND status = 'running'
+            """,
+            (now, attempt["id"]),
+        )
+
+    steps = connection.execute(
+        "SELECT id FROM steps WHERE run_id = ? AND status = 'running'",
+        (run_id,),
+    ).fetchall()
+    for step in steps:
+        ensure_transition(StepStatus.RUNNING, StepStatus.FAILED)
+        connection.execute(
+            """
+            UPDATE steps
+            SET status = 'failed', completed_at = ?
+            WHERE id = ? AND status = 'running'
+            """,
+            (now, step["id"]),
+        )
+        events.append(append_event(
+            connection,
+            EventType.STEP_STATUS_CHANGED,
+            now,
+            {
+                "entity_id": step["id"],
+                "previous": StepStatus.RUNNING.value,
+                "current": StepStatus.FAILED.value,
+                "reason": reason,
+            },
+            session_id=run["session_id"],
+            run_id=run_id,
+        ))
+
+    events.extend(transition_segments(
+        connection,
+        run_id,
+        frozenset({SegmentStatus.RUNNING}),
+        SegmentStatus.QUEUED,
+        now,
+        reason,
+    ))
+    return tuple(events)

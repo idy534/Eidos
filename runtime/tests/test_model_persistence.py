@@ -148,7 +148,7 @@ class ModelPersistenceTests(unittest.TestCase):
         self.assertEqual(attempt["usage"].input_tokens, 5)
         self.assertEqual(attempt["finishReason"], "stop")
 
-    def test_stream_progress_does_not_create_a_second_model_attempt(self) -> None:
+    def test_stream_progress_retries_without_persisting_provisional_text(self) -> None:
         class RetryThenSuccess:
             calls = 0
 
@@ -179,15 +179,68 @@ class ModelPersistenceTests(unittest.TestCase):
         )
 
         attempts = self.store.read_model_attempts(run["id"])
-        self.assertEqual(model.calls, 1)
+        self.assertEqual(model.calls, 2)
         self.assertEqual(self.store.read_run(run["id"])["modelStepCount"], 1)
-        self.assertEqual([item["status"] for item in attempts], ["failed"])
+        self.assertEqual(
+            [item["status"] for item in attempts], ["failed", "completed"]
+        )
         self.assertEqual(attempts[0]["errorCode"], "provider_unavailable")
         self.assertEqual(attempts[0]["httpStatus"], 503)
         self.assertTrue(attempts[0]["hadProgress"])
         self.assertIsNone(attempts[0]["usage"])
         self.assertEqual(
-            attempts[0]["retryDecision"]["reason"], "unsafe_stream_progress"
+            attempts[0]["retryDecision"]["reason"], "transport_retry"
+        )
+        self.assertEqual(
+            attempts[0]["contextSnapshotId"], attempts[1]["contextSnapshotId"]
+        )
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        self.assertEqual(
+            [item.get("content") for item in snapshot["items"]
+             if item["kind"] == "assistant_message"],
+            ["done"],
+        )
+
+    def test_normalization_protocol_error_repairs_after_provisional_text(self) -> None:
+        class NormalizationFailureThenSuccess:
+            calls = 0
+            contexts = []
+
+            def complete(self, context, _cancel, on_text_delta, **_options):
+                self.calls += 1
+                self.contexts.append(context)
+                if self.calls == 1:
+                    on_text_delta("partial response")
+                    raise ModelRequestError(ModelRequestFailure(
+                        code="protocol_error",
+                        retryable=False,
+                        provider_name="deepseek",
+                    ))
+                on_text_delta("done")
+                return ModelResponse(text="done", response_state="complete")
+
+        run, _ = self.store.create_run(self.session["id"], "repair normalization")
+        model = NormalizationFailureThenSuccess()
+        RuntimeEngine(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        self.assertEqual(model.calls, 2)
+        attempts = self.store.read_model_attempts(run["id"])
+        self.assertEqual(
+            [attempt["status"] for attempt in attempts], ["failed", "completed"]
+        )
+        self.assertEqual(attempts[0]["errorCode"], "protocol_error")
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        self.assertEqual(
+            [item.get("content") for item in snapshot["items"]
+             if item["kind"] == "assistant_message"],
+            ["done"],
+        )
+        self.assertIn(
+            {"type": "protocol_error", "code": "protocol_error"},
+            model.contexts[1],
         )
 
     def test_stream_failure_without_progress_retries_in_a_new_attempt(self) -> None:
@@ -269,24 +322,72 @@ class ModelPersistenceTests(unittest.TestCase):
         self.assertIsNotNone(latest)
         self.assertEqual(latest.input_tokens, 8)
 
-    def test_length_finish_fails_attempt_and_is_not_normal_completion(self) -> None:
+    def test_length_finish_gets_one_bounded_protocol_repair(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "length")
-        model = ScriptedModel([ModelResponse(
-            text="truncated",
-            finish_reason="length",
-            response_state="complete",
-        )])
+        model = ScriptedModel([
+            ModelResponse(
+                text="truncated",
+                finish_reason="length",
+                response_state="complete",
+            ),
+            ModelResponse(text="done", response_state="complete"),
+        ])
 
         RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
-        attempt = self.store.read_model_attempts(run["id"])[0]
-        self.assertEqual(attempt["status"], "failed")
-        self.assertEqual(attempt["finishReason"], "length")
-        self.assertEqual(attempt["errorCode"], "length")
-        self.assertEqual(attempt["retryDecision"]["reason"], "invalid_completion")
-        self.assertEqual(self.store.read_run(run["id"])["errorCode"], "MODEL_PROTOCOL_ERROR")
+        attempts = self.store.read_model_attempts(run["id"])
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        self.assertEqual(
+            [attempt["status"] for attempt in attempts], ["failed", "completed"]
+        )
+        self.assertEqual(attempts[0]["finishReason"], "length")
+        self.assertEqual(attempts[0]["errorCode"], "length")
+        self.assertIn(
+            {"type": "protocol_error", "code": "length"}, model.contexts[1]
+        )
+
+    def test_repeated_length_finish_stops_after_one_repair(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "length repeatedly")
+        model = ScriptedModel([
+            ModelResponse(text="first", finish_reason="length"),
+            ModelResponse(text="second", finish_reason="length"),
+            ModelResponse(text="third", finish_reason="length"),
+        ])
+
+        RuntimeEngine(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        self.assertEqual(
+            self.store.read_run(run["id"])["errorCode"], "MODEL_PROTOCOL_ERROR"
+        )
+        self.assertEqual(model._index, 2)
+        self.assertEqual(
+            [
+                attempt["status"]
+                for attempt in self.store.read_model_attempts(run["id"])
+            ],
+            ["failed", "failed"],
+        )
+
+    def test_content_filter_remains_terminal_without_repair(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "filtered")
+        model = ScriptedModel([
+            ModelResponse(text="filtered", finish_reason="content_filter"),
+            ModelResponse(text="should not run"),
+        ])
+
+        RuntimeEngine(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        self.assertEqual(
+            self.store.read_run(run["id"])["errorCode"], "MODEL_PROTOCOL_ERROR"
+        )
+        self.assertEqual(model._index, 1)
+        self.assertEqual(len(self.store.read_model_attempts(run["id"])), 1)
 
     def test_sensitive_text_split_across_deltas_never_enters_sqlite(self) -> None:
         secret = "sk-abcdefghijklmnop"
