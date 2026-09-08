@@ -38,7 +38,10 @@ from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
 from eidos_runtime.tools.contracts import GENERIC_PROJECTOR
-from eidos_runtime.tools.registry import ToolConcurrencyPolicy
+from eidos_runtime.tools.registry import (
+    ToolArgumentValidationResult,
+    ToolConcurrencyPolicy,
+)
 from eidos_runtime.telemetry.tracing import (
     finish_tool_call,
     record_current_exception,
@@ -70,6 +73,25 @@ def _is_reconciliation_read_only_poll(call: ModelToolCall) -> bool:
         return False
     arguments = call.arguments
     return "chars" not in arguments or arguments["chars"] == ""
+
+
+def _invalid_arguments_summary(
+    validation: ToolArgumentValidationResult,
+) -> str:
+    details = []
+    if validation.path is not None:
+        details.append(f"field={validation.path}")
+    if validation.reason_code is not None:
+        details.append(f"reason={validation.reason_code}")
+    if validation.maximum is not None:
+        details.append(f"maximum={validation.maximum}")
+    if validation.minimum is not None:
+        details.append(f"minimum={validation.minimum}")
+    if validation.actual is not None:
+        details.append(f"actual={validation.actual}")
+    return "Invalid tool arguments: " + ", ".join(
+        details or ["invalid_arguments"]
+    )
 
 
 class ToolInfrastructureError(RuntimeError):
@@ -481,8 +503,7 @@ class ToolExecutionController:
                         tool_error(
                             call.name,
                             "invalid_arguments",
-                            "Invalid tool arguments: "
-                            + (validation.reason_code or "invalid_arguments"),
+                            _invalid_arguments_summary(validation),
                         ),
                         "completed",
                     )

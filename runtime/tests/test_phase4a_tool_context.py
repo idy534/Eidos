@@ -584,6 +584,37 @@ class Phase4ASideEffectContractTests(unittest.TestCase):
         self.assertFalse(outcome.result["sideEffectsMayExist"])
         self.assertFalse(outcome.result["reconciliationRequired"])
 
+    def test_invalid_shell_arguments_report_bounded_validation_details(self) -> None:
+        controller = ToolExecutionController(
+            self.store,
+            self.dispatcher,
+            object(),
+            self.events,
+            default_scanner(),
+        )
+        call = ModelToolCall(
+            "call-shell",
+            "run_shell",
+            {"command": "secret-command", "yieldTimeMs": 60_000},
+        )
+
+        outcome = controller.execute(
+            run_id=self.run["id"],
+            item=self._item("run_shell", call.arguments),
+            call=call,
+            plan=self.dispatcher.plan(call),
+            cancel=threading.Event(),
+            deadline=None,
+        )
+
+        self.assertEqual(outcome.result["code"], "invalid_arguments")
+        summary = outcome.result["summary"]
+        self.assertIn("field=yieldTimeMs", summary)
+        self.assertIn("reason=less_than_equal", summary)
+        self.assertIn("maximum=30000", summary)
+        self.assertIn("actual=60000", summary)
+        self.assertNotIn("secret-command", summary)
+
     def test_projection_failure_after_authorized_change_preserves_uncertainty(self) -> None:
         class Handler:
             execute_side_effect = None
