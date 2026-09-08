@@ -83,8 +83,6 @@ from eidos_runtime.tools.contracts import (
     ReadFileResultData,
     RunShellInput,
     RunShellResultData,
-    WriteStdinInput,
-    WriteStdinResultData,
     SEARCH_TEXT_MAX_RESULTS,
     SearchTextInput,
     SearchTextResultData,
@@ -204,8 +202,7 @@ _BUILTIN_CONTRACTS = (
     ("read_file_range", "Read an inclusive bounded line range from one UTF-8 file in the workspace or an active Skill root. The path may be workspace-relative or an authorized absolute path; active Skill roots are read-only. For other Skill resources, use skill_read_resource. Continue from nextLine when present.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
     ("search_text", "Search a workspace-relative path or an absolute path inside the workspace or active Skill root (default '.') for a single-line query; supports maxResults, regex, and includeGlobs. Results are relative to the selected root, bounded, and may be truncated.", "none", False, 5, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
     ("apply_patch", "Apply structured Add, Update, Delete, and Move changes to workspace files. Paths, base hashes, and final contents are verified before commit.", "workspace", False, 5, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
-    ("run_shell", "Run one shell command in the macOS workspace sandbox. Set yieldTimeMs for the current observation window; it does not limit the process lifetime. If the command remains running, use write_stdin to poll, send input, or interrupt it. Use request_permissions for network access for the current run, or set networkAccess=request with justification for this command. Ordinary commands inherit approved run permissions. Eidos keeps macOS Seatbelt. Additional path access and unsandboxed execution also require approval. The legacy sandboxPermissions and additionalPermissions fields remain supported for compatibility. Do not assume GNU timeout, zsh glob behavior, or use tail/head as output boundaries; do not add pipefail unless the command requires it. Eidos bounds and verifies output and workspace changes without rewriting the command.", "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
-    ("write_stdin", "Poll a running run_shell command, write chars to its stdin, or send Ctrl-C with chars set to '\\u0003'. An empty chars value only waits for the current yieldTimeMs window. Session IDs are valid only within the current Run.", "shell", False, 600, "single", WriteStdinInput, WriteStdinResultData, "run_shell"),
+    ("run_shell", "Run one shell command in the macOS workspace sandbox. The Runtime waits for the process to exit and streams bounded output into this ToolCall. Use request_permissions for network access for the current run, or set networkAccess=request with justification for this command. Ordinary commands inherit approved run permissions. Eidos keeps macOS Seatbelt. Additional path access and unsandboxed execution also require approval. The legacy sandboxPermissions and additionalPermissions fields remain supported for compatibility. Do not assume GNU timeout, zsh glob behavior, or use tail/head as output boundaries; do not add pipefail unless the command requires it. Eidos bounds and verifies output and workspace changes without rewriting the command.", "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
 )
 TOOL_SPECS = tuple(ToolSpec.model_validate({
     "name": name,
@@ -305,7 +302,7 @@ def builtin_tool_registry(
     supports_custom_tools: bool = False,
     supports_tool_grammar: bool = False,
 ) -> ToolRegistry:
-    operations = ("list", "read", "range", "search", "patch", "shell", "shell")
+    operations = ("list", "read", "range", "search", "patch", "shell")
     specs = _tool_specs(
         supports_custom_tools=supports_custom_tools,
         supports_tool_grammar=supports_tool_grammar,

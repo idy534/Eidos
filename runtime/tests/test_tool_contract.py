@@ -20,6 +20,7 @@ from eidos_runtime.tools.contracts import (  # noqa: E402
 from eidos_runtime.tools.workspace import (  # noqa: E402
     TOOL_SPECS,
     canonical_tool_result,
+    model_tool_definitions,
 )
 from eidos_runtime.tools.contracts import project_tool_result  # noqa: E402
 
@@ -310,17 +311,15 @@ class ToolContractTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValidationError):
                 RunShellInput.model_validate({"command": "true", "yieldTimeMs": value})
 
-    def test_write_stdin_is_registered_with_bounded_poll_contract(self) -> None:
-        spec = next(spec for spec in TOOL_SPECS if spec.name == "write_stdin")
-        self.assertIsNotNone(spec.input_schema)
-        assert spec.input_schema is not None
-        properties = spec.input_schema["properties"]
-
-        self.assertIn("sessionId", spec.input_schema["required"])
-        self.assertEqual(properties["chars"]["default"], "")
-        self.assertEqual(properties["yieldTimeMs"]["default"], 10_000)
-        self.assertEqual(properties["yieldTimeMs"]["minimum"], 250)
-        self.assertEqual(properties["yieldTimeMs"]["maximum"], 300_000)
+    def test_write_stdin_is_not_model_visible(self) -> None:
+        self.assertNotIn("write_stdin", {spec.name for spec in TOOL_SPECS})
+        self.assertNotIn(
+            "write_stdin",
+            {
+                definition["function"]["name"]
+                for definition in model_tool_definitions()
+            },
+        )
 
     def test_shell_tool_tells_model_how_to_request_network_access(self) -> None:
         description = next(
@@ -331,8 +330,7 @@ class ToolContractTests(unittest.TestCase):
         self.assertIn("justification", description)
         self.assertIn("macOS Seatbelt", description)
         self.assertIn("sandboxPermissions", description)
-        self.assertIn("yieldTimeMs", description)
-        self.assertIn("write_stdin", description)
+        self.assertIn("waits for the process to exit", description)
         self.assertNotIn("timeoutSeconds", description)
         self.assertIn("pipefail", description)
         self.assertIn("glob", description)

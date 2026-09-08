@@ -108,53 +108,30 @@ class LoopRecoveryTests(unittest.TestCase):
         ]
         self.assertEqual(tool_names, ["read_file", "search_text"])
 
-    def test_repeated_empty_write_stdin_poll_reaches_the_shell_process(self) -> None:
+    def test_shell_wait_is_host_owned_and_commits_one_completed_item(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Wait for the command")
-        running = {
+        completed = {
             "schemaVersion": 1,
             "toolName": "run_shell",
             "outcome": "success",
-            "code": "shell_running",
-            "summary": "Command is still running",
-            "data": {
-                "sessionId": "session-1",
-                "executionStatus": "running",
-                "exitCode": None,
-                "stdout": "",
-                "stderr": "",
-                "truncated": False,
-                "termination": "running",
-                "durationMs": 1,
-                "workspaceChanged": False,
-            },
-            "sideEffectsMayExist": True,
-            "reconciliationRequired": False,
-        }
-        exited = {
-            **running,
-            "toolName": "write_stdin",
             "code": "ok",
             "summary": "Command completed",
             "data": {
-                **running["data"],
                 "executionStatus": "exited",
                 "exitCode": 0,
+                "stdout": "ready\n",
+                "stderr": "",
+                "truncated": False,
                 "termination": "exit",
+                "durationMs": 1,
+                "workspaceChanged": False,
             },
+            "sideEffectsMayExist": False,
+            "reconciliationRequired": False,
         }
         model = ScriptedModel([
             ModelResponse(tool_calls=(ModelToolCall(
                 "run-1", "run_shell", {"command": "printf ready"},
-            ),)),
-            ModelResponse(tool_calls=(ModelToolCall(
-                "poll-1", "write_stdin", {
-                    "sessionId": "session-1", "chars": "", "yieldTimeMs": 250,
-                },
-            ),)),
-            ModelResponse(tool_calls=(ModelToolCall(
-                "poll-2", "write_stdin", {
-                    "sessionId": "session-1", "yieldTimeMs": 250,
-                },
             ),)),
             ModelResponse(text="The command completed."),
         ])
@@ -166,12 +143,8 @@ class LoopRecoveryTests(unittest.TestCase):
             ),
             mock_patch(
                 "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start",
-                return_value=running,
-            ),
-            mock_patch(
-                "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.write_stdin",
-                side_effect=[running, exited],
-            ) as write_stdin,
+                return_value=completed,
+            ) as start,
         ):
             RuntimeLoop(
                 self.store,
@@ -181,18 +154,14 @@ class LoopRecoveryTests(unittest.TestCase):
             ).run(run["id"], threading.Event())
 
         self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
-        self.assertEqual(write_stdin.call_count, 2)
+        self.assertTrue(start.call_args.kwargs["wait_for_exit"])
         snapshot = self.store.read_session_snapshot(self.session["id"])
         shell_items = [
             item for item in snapshot["items"]
-            if item.get("toolCall", {}).get("toolName")
-            in {"run_shell", "write_stdin"}
+            if item.get("toolCall", {}).get("toolName") == "run_shell"
         ]
-        self.assertEqual(
-            [item["toolCall"]["toolName"] for item in shell_items],
-            ["run_shell", "write_stdin", "write_stdin"],
-        )
-        final_result = json.loads(shell_items[-1]["toolCall"]["resultJson"])
+        self.assertEqual(len(shell_items), 1)
+        final_result = json.loads(shell_items[0]["toolCall"]["resultJson"])
         self.assertEqual(final_result["data"]["executionStatus"], "exited")
 
 

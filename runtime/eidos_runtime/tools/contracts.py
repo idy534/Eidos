@@ -359,9 +359,8 @@ class RunShellInput(StrictToolModel):
         ge=250,
         le=30_000,
         description=(
-            "Maximum time to observe this command during the current ToolCall. "
-            "This does not limit the process lifetime. Use write_stdin to poll, "
-            "send input, or interrupt a still-running command."
+            "Maximum initial wait before Runtime-owned polling. The Runtime "
+            "waits for the process to exit and does not expose a polling tool."
         ),
     )
     dependencyBindingId: StrictStr | None = Field(

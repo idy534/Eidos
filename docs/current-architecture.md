@@ -179,7 +179,7 @@ Validate → Prepare → Permission Decision → Durable Intent
 → Execute → Verify → canonical ToolResult → Event / Context projection
 ```
 
-ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。Workspace mutation 会在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。Workspace Permission 会直接授权普通文件变更。Runtime 会先提交 Durable Intent，再复检版本并原子提交。Runtime 会保留并展示已应用的完整 Diff。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。Shell process lifetime 与 Tool wait lifetime 分离：`run_shell.yieldTimeMs` 只限制当前 ToolCall 的观察窗口，不设置命令完成 deadline。命令仍运行时，Shell process manager 会保留进程和有界 output drain，直到命令退出、Run 取消或 Run cleanup。
+ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。Workspace mutation 会在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。Workspace Permission 会直接授权普通文件变更。Runtime 会先提交 Durable Intent，再复检版本并原子提交。Runtime 会保留并展示已应用的完整 Diff。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。Shell process manager 在同一个 `run_shell` ToolCall 内保留进程和有界 output drain。它在工具宿主层继续轮询，直到命令退出、Run 取消或 Run cleanup。模型不会创建 Shell 轮询 ToolCall。
 
 已声明 Tool 的载荷类型正确但参数契约校验失败时，Runtime 会在 Prepare 前生成并提交 `invalid_arguments` Tool Error。该 ToolCall 仍然进入 SQLite、Event 和下一次 Model Context，但不会触发 Approval、Durable Intent 或 Tool Runtime。载荷类型错误、未声明 Tool、重复或无效 Call ID 等协议错误仍然进入 protocol repair。
 
@@ -193,9 +193,9 @@ ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与�
 
 Tool Result 的 `reconciliationRequired` 是本次执行是否建立 reconciliation barrier 的权威结果。`sideEffectsMayExist` 只保留历史证据。它不是完成条件。Runtime 只有在 Tool Result 缺少显式 reconciliation 判断时，才为旧结果使用保守兼容规则。未清除的 barrier 会阻止 Run 提交 `succeeded`。Runtime 不会自动重放有副作用的 Tool。
 
-Shell 的当前观察窗口结束时，如果命令仍在运行，`run_shell` 会返回 `shell_running`、`executionStatus = running`、`sessionId` 和当前增量输出。当前 ToolCall 可以完成，但 Shell process 会继续存在。模型可以在同一 Run 内用 `write_stdin` 继续等待、写入 stdin，或用 `\u0003` 发送 Ctrl-C。普通且确定的 Shell 退出会把 Item 按命令结果标记为 `completed` 或 `failed`。确定的 `shell_exit_nonzero` 会把 Item 标记为 `failed`，但会把 ToolCall 标记为 `completed`。这样模型可以继续读取 `exitCode`、`stdout`、`stderr` 和 `termination`。Workspace observation 不完整只影响 observation metadata，不会把已退出的 Shell 变成只读 reconciliation。`reconciliationRequired = true`、timeout、background child 清理未完成和真正的 Shell 启动失败仍然把 ToolCall 标记为 `failed` 并保持 fail closed。
+Shell ToolCall 会在 Runtime 内部继续等待进程。Shell 输出会在等待期间追加到同一个 Item。命令退出后，`run_shell` 返回完整的 `executionStatus`、`exitCode`、`stdout`、`stderr` 和 `termination`。普通且确定的 Shell 退出会把 Item 按命令结果标记为 `completed` 或 `failed`。确定的 `shell_exit_nonzero` 会把 Item 标记为 `failed`，但会把 ToolCall 标记为 `completed`。Workspace observation 不完整只影响 observation metadata，不会把已退出的 Shell 变成只读 reconciliation。`reconciliationRequired = true`、timeout、background child 清理未完成和真正的 Shell 启动失败仍然把 ToolCall 标记为 `failed` 并保持 fail closed。
 
-只有执行最终状态未知时，Shell 才会建立 reconciliation barrier。Reconciliation 默认把 Run 置为 `CONTINUE_READ_ONLY`，而不是直接 interrupt。Barrier 只允许安全只读 Tool 和空的 `write_stdin` poll；空的 Function poll 会先查询当前 Run 内真实 Shell session 状态，不会被执行前的 `repeated_tool_call` recovery 拦截。带普通输入、Ctrl-C、`run_shell` 和其他 ToolCall 仍使用通用重复调用保护。其他副作用 Tool 会得到普通的 `reconciliation_required` Tool Error。完整 Workspace refresh 提交后才会清除 barrier。Runtime 不会自动重放原 Shell。unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。
+只有执行最终状态未知时，Shell 才会建立 reconciliation barrier。Reconciliation 默认把 Run 置为 `CONTINUE_READ_ONLY`，而不是直接 interrupt。Barrier 只允许安全只读 Tool。其他副作用 Tool 会得到普通的 `reconciliation_required` Tool Error。完整 Workspace refresh 提交后才会清除 barrier。Runtime 不会自动重放原 Shell。unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。
 
 内置 `workspace_dependencies` Tool 通过一个只读目录接口返回 Eidos 自带并经过校验的 Python、ripgrep、Python import roots 和受支持包版本。它在成功结果的 `data` 中返回 `activeSkillDependencyBindings`，并可返回 `defaultDependencyBindingId`。校验哈希只保留在 Runtime 内部，不在 Tool result 中回显。这个 Tool 的 model projection 只保留 `code` 和 `data`；canonical result 和 UI result 继续保留 Runtime 状态字段。调用方使用这些路径执行已有 Workspace 任务。这个 Tool 不创建新的执行器，也不绕过 Shell、Approval 或 Seatbelt。实际命令仍然进入现有 `run_shell` 链路。`run_shell` 输入的绑定字段是 `dependencyBindingId`。普通没有 binding 的 Shell 保持原有环境和执行路径。
 
@@ -223,9 +223,9 @@ ShellEnvironmentSnapshotProvider 使用 resolved shell 的 `-lc` 做一次 bound
 
 Shell 的 effective environment 保留真实 `HOME`、snapshot 的 Host `PATH`、真实 `TMPDIR`、`USER`、`LOGNAME`、`LANG` 和 `LC_*`。Runtime 只把 bundled `rg` 的目录去重后追加到 `PATH` 末尾。Provider 在启动 login shell 前移除继承的 `EIDOS_*` 和 packaged Runtime Python control environment。用户 profile 随后声明的普通开发环境仍会进入 snapshot。`run_shell` 不从 `models.json` 注入 API Key，也不强制禁用用户的 Git 配置。`HardenedGitRunner` 仍是独立的 Git 执行路径。
 
-Shell reader 为 stdout 和 stderr 分别保留 UTF-8 增量解码器。每次收到的字节只会生成已经可以解码的文本片段，结束时再 flush 未完成的解码状态。Shell handler 按接收顺序把安全片段追加到 Item content，并保留每个片段的顺序事实。`write_stdin` 的 session ID 只在当前 Run 内有效。空的 `chars` 只等待当前观察窗口；普通输入写入 stdin；`chars = "\u0003"` 发送 Ctrl-C。
+Shell reader 为 stdout 和 stderr 分别保留 UTF-8 增量解码器。每次收到的字节只会生成已经可以解码的文本片段，结束时再 flush 未完成的解码状态。Shell handler 按接收顺序把安全片段追加到同一个 Item content，并保留每个片段的顺序事实。Runtime 在工具宿主层轮询进程，直到进程退出或被取消。模型不会看到进程 session，也不会创建额外的轮询 Item。
 
-Desktop `ExecutionFeed` 的 Shell Item 默认折叠。用户展开后，Feed 在 Shell 运行中和终态都渲染累计的 Item content。它在已有累计内容时不再追加结果中的最终 stdout/stderr，因此不会重复输出，也不会丢失 stdout/stderr 的接收顺序。旧 Item 缺少或为空的 `content` 时，Renderer 使用结果中的 stdout 和 stderr 作为兼容回退。
+Desktop `ExecutionFeed` 的 Shell Item 默认折叠。用户展开后，Feed 在 Shell 运行中和终态都渲染累计的 Item content。它在已有累计内容时不再追加结果中的最终 stdout/stderr，因此不会重复输出，也不会丢失 stdout/stderr 的接收顺序。旧 Item 缺少或为空的 `content` 时，Renderer 使用结果中的 stdout 和 stderr 作为兼容回退。待审批、已批准和已拒绝的 Shell 历史都使用这个 Shell Item，审批状态单独显示。
 
 Shell 输出在 Renderer 中使用成熟的 ANSI stripping 实现转为纯文本。ANSI 和 OSC 控制序列不会被解释，OSC 超链接也不会被激活。Shell Result 的 `attemptCount`、`sandboxed` 和 `escalated` 字段继续作为已有执行与权限事实，并在 Feed 中展示。
 

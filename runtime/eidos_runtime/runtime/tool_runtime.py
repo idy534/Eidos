@@ -117,7 +117,6 @@ from eidos_runtime.tools.workspace import (
 from eidos_runtime.tools.contracts import (
     RunShellInput,
     RuntimeDependencyBindingProvenance,
-    WriteStdinInput,
 )
 from eidos_runtime.tools.registry import (
     AdapterToolRuntime,
@@ -128,7 +127,6 @@ from eidos_runtime.tools.registry import (
 )
 from eidos_runtime.runtime.shell_process_manager import (
     ShellProcessManager,
-    ShellProcessSessionNotFound,
 )
 
 
@@ -409,163 +407,6 @@ class ShellToolHandler:
     def __init__(self, dependencies: _HandlerDependencies) -> None:
         self.dependencies = dependencies
 
-    def _execute_write_stdin(
-        self,
-        run_id: str,
-        item: dict[str, object],
-        call: ModelToolCall,
-        cancel: threading.Event,
-        runtime: ShellToolRuntime,
-    ) -> HandlerOutcome:
-        shell_input = WriteStdinInput.model_validate_json(
-            json.dumps(call.arguments, ensure_ascii=False)
-        )
-        manager = self.dependencies.shell_process_manager
-        if manager is None:
-            return HandlerOutcome(
-                tool_error(
-                    call.name,
-                    "shell_process_manager_unavailable",
-                    "Shell process manager is unavailable",
-                ),
-                "failed",
-                "failed",
-            )
-
-        executor = runtime.implementation.executor  # type: ignore[attr-defined]
-        manifest_before = executor.workspace_index.manifest()
-        delta_sequence = 0
-
-        def stream_safe_output(text: str) -> None:
-            nonlocal delta_sequence
-            if cancel.is_set():
-                return
-            delta_sequence += 1
-            mutation = self.dependencies.store.append_item_deltas_committed(
-                str(item["id"]), (text,), delta_sequence
-            )
-            self.dependencies.events.publish(mutation, item=mutation.value)
-
-        output_stream = StreamingSensitiveScanner(
-            self.dependencies.sensitive,
-            on_safe_text=stream_safe_output,
-        )
-        output_scan_failed = False
-
-        def execute_io() -> dict[str, object]:
-            nonlocal output_scan_failed
-            try:
-                result = manager.write_stdin(
-                    shell_input.sessionId,
-                    shell_input.chars,
-                    yield_time_ms=shell_input.yieldTimeMs,
-                )
-            except ShellProcessSessionNotFound:
-                return tool_error(
-                    call.name,
-                    "shell_session_not_found",
-                    "Shell session was not found in this Run",
-                )
-            data = result.get("data")
-            if not isinstance(data, dict):
-                return result
-            for stream in ("stdout", "stderr"):
-                text = data.get(stream)
-                if not isinstance(text, str):
-                    continue
-                try:
-                    output_stream.feed(text)
-                except SensitiveScanError:
-                    output_scan_failed = True
-            return result
-
-        operation = (
-            "interrupt"
-            if shell_input.chars == "\x03"
-            else "write"
-            if shell_input.chars
-            else "poll"
-        )
-        prepared = PreparedToolExecution(
-            approval_description={
-                "kind": "command_execution",
-                "summary": "Continue a managed Shell process",
-                "sessionId": shell_input.sessionId,
-                "operation": operation,
-            },
-            transition_reason="shell_session_io",
-            intent_preconditions={
-                "sessionId": shell_input.sessionId,
-                "operation": operation,
-            },
-        )
-        verified = self.dependencies.execute_workspace_side_effect(
-            item=item,
-            prepared=prepared,
-            execute=execute_io,
-        )
-        raw_result = verified.result
-
-        manifest_after = manifest_before
-        refresh_error_code: str | None = None
-        try:
-            manifest_after = executor.refresh_workspace_index(cancel)
-        except WorkspacePathError as error:
-            manifest_after = executor.workspace_index.manifest()
-            refresh_error_code = error.code
-            if error.code not in {
-                "WORKSPACE_INDEX_INCOMPLETE",
-                "sensitive_workspace_content",
-            }:
-                raw_result["reconciliationRequired"] = True
-        workspace_diff = diff_workspace_manifests(
-            manifest_before, manifest_after
-        )
-        result = bounded_tool_result(
-            call.name,
-            attach_workspace_diff(raw_result, workspace_diff),
-        )
-        try:
-            if output_scan_failed:
-                raise SensitiveScanError("shell output scan failed")
-            output_stream.finish()
-            result = safe_tool_result(
-                self.dependencies.sensitive, call.name, result
-            )
-        except SensitiveScanError:
-            result = tool_error(
-                call.name,
-                "sensitive_content_rejected",
-                "Shell output was withheld",
-            )
-
-        if result["outcome"] == "success":
-            self.dependencies.store.clear_rejects(run_id)
-        item_status = "completed" if result["outcome"] == "success" else "failed"
-        tool_status = (
-            "completed"
-            if result["outcome"] == "success"
-            or (
-                result.get("code") == "shell_exit_nonzero"
-                and result.get("reconciliationRequired") is not True
-            )
-            else "failed"
-        )
-        changed = workspace_diff.changed
-        return HandlerOutcome(
-            result,
-            item_status,
-            tool_status,
-            workspace_changed=changed,
-            diff_hash=workspace_diff.diff_hash if changed else None,
-            reconciliation_disposition=classify_shell_reconciliation(
-                result,
-                manifest_before_complete=manifest_before.complete,
-                manifest_after_complete=manifest_after.complete,
-                refresh_error_code=refresh_error_code,
-            ),
-        )
-
     def execute(
         self,
         run_id: str,
@@ -574,10 +415,6 @@ class ShellToolHandler:
         cancel: threading.Event,
         runtime: ShellToolRuntime,
     ) -> HandlerOutcome:
-        if call.name == "write_stdin":
-            return self._execute_write_stdin(
-                run_id, item, call, cancel, runtime
-            )
         shell_input = RunShellInput.model_validate_json(
             json.dumps(call.arguments, ensure_ascii=False)
         )
@@ -805,9 +642,11 @@ class ShellToolHandler:
                 on_safe_text=stream_safe_output,
             )
             output_scan_failed = False
+            streamed_output = False
 
             def scan_shell_output(text: str) -> None:
-                nonlocal output_scan_failed
+                nonlocal output_scan_failed, streamed_output
+                streamed_output = True
                 if output_scan_failed:
                     return
                 try:
@@ -830,13 +669,17 @@ class ShellToolHandler:
                 raw_result = shell_process_manager.start(
                     launch,
                     yield_time_ms=yield_time_ms,
+                    wait_for_exit=True,
+                    on_output=scan_shell_output,
+                    cancel=cancel,
                 )
-                result_data = raw_result.get("data")
-                if isinstance(result_data, dict):
-                    for stream in ("stdout", "stderr"):
-                        text = result_data.get(stream)
-                        if isinstance(text, str):
-                            scan_shell_output(text)
+                if not streamed_output:
+                    result_data = raw_result.get("data")
+                    if isinstance(result_data, dict):
+                        for stream in ("stdout", "stderr"):
+                            text = result_data.get(stream)
+                            if isinstance(text, str):
+                                scan_shell_output(text)
                 if dependency_provenance is not None:
                     raw_result = _attach_dependency_provenance(
                         raw_result,

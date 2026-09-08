@@ -739,6 +739,78 @@ test("shows pending approval history without decision buttons", () => {
   assert.doesNotMatch(html, /批准联网|批准调用|批准并运行/);
 });
 
+test("renders pending run_shell approval with the Shell details", () => {
+  const { completedAt: _completedAt, ...runWithoutCompletion } = run;
+  const waitingRun: Run = {
+    ...runWithoutCompletion,
+    status: "waiting_approval",
+    allowedActions: ["approve", "reject", "cancel"],
+  };
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({
+        id: "pending-shell", ordinal: 1, kind: "command_execution", status: "in_progress",
+        toolCall: {
+          id: "tool-pending-shell", itemId: "pending-shell", modelStepIndex: 1,
+          batchOrder: 0, providerCallId: "provider-pending-shell", toolName: "run_shell",
+          status: "running", startedAt: 1_000,
+          argumentsJson: JSON.stringify({ command: "curl https://example.com" }),
+        },
+      })]}
+      runs={[waitingRun]}
+      approvals={[{
+        id: "approval-shell", sessionId: "session-1", runId: run.id,
+        itemId: "pending-shell", toolCallId: "tool-pending-shell", kind: "command_execution",
+        summary: "Allow network access", command: "curl https://example.com", cwd: "/workspace",
+        networkEnabled: true, timeoutSeconds: 30,
+      }]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(html, /需要批准/);
+  assert.match(html, /tool-item--shell/);
+  assert.match(html, /class="shell-command"/);
+  assert.match(html, /curl https:\/\/example\.com/);
+});
+
+test("renders approved run_shell with the Shell details and output", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({
+        id: "approved-shell", ordinal: 1, kind: "command_execution",
+        toolCall: {
+          id: "tool-approved-shell", itemId: "approved-shell", modelStepIndex: 1,
+          batchOrder: 0, providerCallId: "provider-approved-shell", toolName: "run_shell",
+          status: "completed", startedAt: 1_000, completedAt: 2_000,
+          approvalStatus: "resolved", approvalDecision: "approve",
+          argumentsJson: JSON.stringify({ command: "curl https://example.com" }),
+          resultJson: JSON.stringify({
+            outcome: "success", code: "ok", summary: "Command completed",
+            data: { stdout: "200 OK\n", stderr: "", exitCode: 0 },
+          }),
+        },
+      })]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(html, /已批准 · run_shell/);
+  assert.match(html, /tool-item--shell/);
+  assert.match(html, /class="shell-command"/);
+  assert.match(html, /curl https:\/\/example\.com/);
+  assert.match(html, /200 OK/);
+  assert.doesNotMatch(html, /已运行 run_shell/);
+});
+
 test("distinguishes expanded and unsandboxed command approvals", () => {
   const { completedAt: _completedAt, ...runWithoutCompletion } = run;
   const waitingRun: Run = {
