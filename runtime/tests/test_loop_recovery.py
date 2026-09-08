@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch as mock_patch
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
@@ -105,6 +107,93 @@ class LoopRecoveryTests(unittest.TestCase):
             if item.get("toolCall")
         ]
         self.assertEqual(tool_names, ["read_file", "search_text"])
+
+    def test_repeated_empty_write_stdin_poll_reaches_the_shell_process(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Wait for the command")
+        running = {
+            "schemaVersion": 1,
+            "toolName": "run_shell",
+            "outcome": "success",
+            "code": "shell_running",
+            "summary": "Command is still running",
+            "data": {
+                "sessionId": "session-1",
+                "executionStatus": "running",
+                "exitCode": None,
+                "stdout": "",
+                "stderr": "",
+                "truncated": False,
+                "termination": "running",
+                "durationMs": 1,
+                "workspaceChanged": False,
+            },
+            "sideEffectsMayExist": True,
+            "reconciliationRequired": False,
+        }
+        exited = {
+            **running,
+            "toolName": "write_stdin",
+            "code": "ok",
+            "summary": "Command completed",
+            "data": {
+                **running["data"],
+                "executionStatus": "exited",
+                "exitCode": 0,
+                "termination": "exit",
+            },
+        }
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall(
+                "run-1", "run_shell", {"command": "printf ready"},
+            ),)),
+            ModelResponse(tool_calls=(ModelToolCall(
+                "poll-1", "write_stdin", {
+                    "sessionId": "session-1", "chars": "", "yieldTimeMs": 250,
+                },
+            ),)),
+            ModelResponse(tool_calls=(ModelToolCall(
+                "poll-2", "write_stdin", {
+                    "sessionId": "session-1", "yieldTimeMs": 250,
+                },
+            ),)),
+            ModelResponse(text="The command completed."),
+        ])
+
+        with (
+            mock_patch(
+                "eidos_runtime.runtime.tool_runtime.is_seatbelt_ready",
+                return_value=True,
+            ),
+            mock_patch(
+                "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start",
+                return_value=running,
+            ),
+            mock_patch(
+                "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.write_stdin",
+                side_effect=[running, exited],
+            ) as write_stdin,
+        ):
+            RuntimeLoop(
+                self.store,
+                model,
+                lambda _message: None,
+                shell_available=True,
+            ).run(run["id"], threading.Event())
+
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        self.assertEqual(write_stdin.call_count, 2)
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        shell_items = [
+            item for item in snapshot["items"]
+            if item.get("toolCall", {}).get("toolName")
+            in {"run_shell", "write_stdin"}
+        ]
+        self.assertEqual(
+            [item["toolCall"]["toolName"] for item in shell_items],
+            ["run_shell", "write_stdin", "write_stdin"],
+        )
+        final_result = json.loads(shell_items[-1]["toolCall"]["resultJson"])
+        self.assertEqual(final_result["data"]["executionStatus"], "exited")
 
 
 if __name__ == "__main__":

@@ -826,7 +826,15 @@ class RuntimeEngine:
                 return
 
             permission_frontier = self.store.run_permission_grants(run.run_id).model_dump(mode="json")
-            repeated = guard.observe_tool_calls(
+            # A blank poll observes a live process. Let execution report a new
+            # exit or session error before applying repeated-call recovery.
+            empty_write_stdin_poll = (
+                len(validation.tool_calls) == 1
+                and validation.tool_calls[0].name == "write_stdin"
+                and validation.tool_calls[0].payload_kind == "function"
+                and validation.tool_calls[0].arguments.get("chars", "") == ""
+            )
+            repeated = None if empty_write_stdin_poll else guard.observe_tool_calls(
                 validation.tool_calls,
                 step.workspace_version,
                 step.reconciliation_epoch,
