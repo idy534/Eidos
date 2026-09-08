@@ -5,7 +5,6 @@ from enum import StrEnum
 class ReconciliationDisposition(StrEnum):
     CONTINUE = "continue"
     CONTINUE_READ_ONLY = "continue_read_only"
-    INTERRUPT = "interrupt"
 
 
 def classify_shell_reconciliation(

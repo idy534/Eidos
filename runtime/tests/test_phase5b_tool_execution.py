@@ -366,6 +366,88 @@ class ToolExecutionControllerTests(unittest.TestCase):
         self.assertTrue(outcome.result["sideEffectsMayExist"])
         self.assertTrue(outcome.result["reconciliationRequired"])
 
+    def test_sensitive_output_preserves_explicit_clear_reconciliation_fact(self) -> None:
+        result = {
+            "schemaVersion": 1,
+            "toolContractVersion": 1,
+            "toolName": "read_file",
+            "outcome": "success",
+            "code": "ok",
+            "summary": "ok",
+            "data": {
+                "path": "a.txt",
+                "content": "sk-1234567890123456",
+                "sizeBytes": 19,
+                "sha256": "a" * 64,
+                "truncated": False,
+            },
+            "sideEffectsMayExist": True,
+            "reconciliationRequired": False,
+        }
+        item = self._item()
+        self.store.begin_durable_intent(
+            item["id"], preconditions={}, approval_required=False
+        )
+
+        outcome = self._controller({"file": _Handler(result)}).execute(
+            run_id=self.run["id"],
+            item=item,
+            call=self.call,
+            plan=_plan("file", 5, "workspace", False),
+            cancel=threading.Event(),
+            deadline=None,
+        )
+
+        self.assertEqual(outcome.result["code"], "sensitive_content_rejected")
+        self.assertTrue(outcome.result["sideEffectsMayExist"])
+        self.assertFalse(outcome.result["reconciliationRequired"])
+        persisted = json.loads(
+            self.store.read_item(item["id"])["toolCall"]["resultJson"]
+        )
+        self.assertNotIn("sk-1234567890123456", json.dumps(persisted))
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
+
+    def test_oversized_output_preserves_explicit_clear_reconciliation_fact(self) -> None:
+        result = {
+            "schemaVersion": 1,
+            "toolContractVersion": 1,
+            "toolName": "read_file",
+            "outcome": "success",
+            "code": "ok",
+            "summary": "y" * 300_000,
+            "data": {
+                "path": "a.txt",
+                "content": "x" * 300_000,
+                "sizeBytes": 300_000,
+                "sha256": "a" * 64,
+                "truncated": False,
+            },
+            "sideEffectsMayExist": True,
+            "reconciliationRequired": False,
+        }
+        item = self._item()
+        self.store.begin_durable_intent(
+            item["id"], preconditions={}, approval_required=False
+        )
+
+        outcome = self._controller({"file": _Handler(result)}).execute(
+            run_id=self.run["id"],
+            item=item,
+            call=self.call,
+            plan=_plan("file", 5, "workspace", False),
+            cancel=threading.Event(),
+            deadline=None,
+        )
+
+        self.assertEqual(outcome.result["code"], "TOOL_OUTPUT_TOO_LARGE")
+        self.assertTrue(outcome.result["sideEffectsMayExist"])
+        self.assertFalse(outcome.result["reconciliationRequired"])
+        persisted = json.loads(
+            self.store.read_item(item["id"])["toolCall"]["resultJson"]
+        )
+        self.assertNotIn("x" * 1_024, json.dumps(persisted))
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
+
     def test_pending_reconciliation_blocks_mutation_without_interrupting_run(self) -> None:
         self.store.connection.execute(
             "UPDATE runs SET reconciliation_required = 1, side_effects_may_exist = 1 "

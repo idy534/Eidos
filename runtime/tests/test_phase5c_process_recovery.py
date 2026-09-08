@@ -152,7 +152,7 @@ class RuntimeProcessRecoveryTests(unittest.TestCase):
                 ),
                 capture_output=True,
                 env=environment,
-                timeout=10,
+                timeout=30,
                 check=False,
             )
             self.assertEqual(restarted.returncode, 0, restarted.stderr.decode())

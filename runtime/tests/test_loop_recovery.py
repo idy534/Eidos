@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch as mock_patch
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
@@ -105,6 +107,62 @@ class LoopRecoveryTests(unittest.TestCase):
             if item.get("toolCall")
         ]
         self.assertEqual(tool_names, ["read_file", "search_text"])
+
+    def test_shell_wait_is_host_owned_and_commits_one_completed_item(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Wait for the command")
+        completed = {
+            "schemaVersion": 1,
+            "toolName": "run_shell",
+            "outcome": "success",
+            "code": "ok",
+            "summary": "Command completed",
+            "data": {
+                "executionStatus": "exited",
+                "exitCode": 0,
+                "stdout": "ready\n",
+                "stderr": "",
+                "truncated": False,
+                "termination": "exit",
+                "durationMs": 1,
+                "workspaceChanged": False,
+            },
+            "sideEffectsMayExist": False,
+            "reconciliationRequired": False,
+        }
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall(
+                "run-1", "run_shell", {"command": "printf ready"},
+            ),)),
+            ModelResponse(text="The command completed."),
+        ])
+
+        with (
+            mock_patch(
+                "eidos_runtime.runtime.tool_runtime.is_seatbelt_ready",
+                return_value=True,
+            ),
+            mock_patch(
+                "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start",
+                return_value=completed,
+            ) as start,
+        ):
+            RuntimeLoop(
+                self.store,
+                model,
+                lambda _message: None,
+                shell_available=True,
+            ).run(run["id"], threading.Event())
+
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        self.assertTrue(start.call_args.kwargs["wait_for_exit"])
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        shell_items = [
+            item for item in snapshot["items"]
+            if item.get("toolCall", {}).get("toolName") == "run_shell"
+        ]
+        self.assertEqual(len(shell_items), 1)
+        final_result = json.loads(shell_items[0]["toolCall"]["resultJson"])
+        self.assertEqual(final_result["data"]["executionStatus"], "exited")
 
 
 if __name__ == "__main__":

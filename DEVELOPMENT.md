@@ -159,7 +159,7 @@ pnpm test:runtime:bundled-seatbelt
 
 `pnpm test:runtime:bundled` 会在 Bundle 内导入 `lark`，检查 grammar 文件来自 Bundle，并同时验证结构化 `ApplyPatchInput → CodexPatchEncoder → Lark parser` compatibility 链路和 raw Custom `Codex Patch → parse_patch → verified Workspace action` 链路。这个 smoke 不执行真实 Provider 请求，也不代表 Provider capability 或 wire schema 已经验证。Responses native wire contract 由 Runtime mocked provider tests 验证。
 
-Runtime dependency contract 使用 Bundle 根目录下的 `runtime.json`。文件固定使用 `schemaVersion: 1` 和 `target: darwin-arm64`。文件记录 Bundle ID、固定版本、可执行文件、Python 包、Node 包和相对路径。文件和可执行文件记录 SHA-256。Runtime 读取后会固定 manifest hash 和 Bundle snapshot hash。Run binding 还会固定 requirement hash 和 `dependencyBindingId`。
+Runtime dependency contract 使用 Bundle 根目录下的 `runtime.json`。文件固定使用 `schemaVersion: 1` 和 `target: darwin-arm64`。文件记录 Bundle ID、固定版本、可执行文件、Python 包、Node 包和相对路径。文件和可执行文件记录 SHA-256。Runtime 初始化时会读取并完整校验一次 Bundle，之后把已校验的 Catalog 传给每个 Run。Runtime 仍会在 Shell 启动前重新校验绑定。Runtime 读取后会固定 manifest hash 和 Bundle snapshot hash。Run binding 还会固定 requirement hash 和 `dependencyBindingId`。
 
 资源分为三层。Skill 内容位于 `runtime/eidos_runtime/resources/skills/`，包括 `SKILL.md`、`agents/eidos.yaml`、脚本和其他资源。产品依赖位于 `resources/runtime-dependencies/`，构建后进入 Bundle 的 `dependencies/` 目录。Bundle 根目录的 `runtime.json` 是由构建脚本生成并校验的依赖清单。系统 Python、Node 和包文件不放进 Skill 目录。`agents/eidos.yaml` 只声明 typed requirements。Skill 不能安装包，也不能写入受保护的 Bundle 或 Skill root。默认 Agent Shell 仍然使用 Workspace cwd、默认禁网和现有 Approval/Sandbox 流程。没有 dependency binding 的普通 Shell 行为不变。
 

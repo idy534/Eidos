@@ -810,6 +810,46 @@ class ShellProcessManagerTests(unittest.TestCase):
         self.assertNotIn("sessionId", data)
         self.resources.ensure_empty()
 
+    def test_host_owned_wait_returns_complete_output_without_a_poll_tool_call(self) -> None:
+        deltas: list[str] = []
+        result = self.manager.start(
+            self._python_launch(
+                "import time; print('ready', flush=True); "
+                "time.sleep(0.4); print('done', flush=True)"
+            ),
+            yield_time_ms=250,
+            wait_for_exit=True,
+            on_output=deltas.append,
+        )
+
+        data = result["data"]
+        self.assertEqual(result["code"], "ok")
+        self.assertEqual(data["executionStatus"], "exited")
+        self.assertEqual(data["exitCode"], 0)
+        self.assertEqual(data["stdout"], "ready\ndone\n")
+        self.assertEqual("".join(deltas), "ready\ndone\n")
+        self.assertNotIn("sessionId", data)
+
+    def test_host_owned_wait_terminates_when_cancel_is_set(self) -> None:
+        cancel = threading.Event()
+        timer = threading.Timer(0.1, cancel.set)
+        timer.start()
+        try:
+            result = self.manager.start(
+                self._python_launch("import time; time.sleep(30)"),
+                yield_time_ms=30_000,
+                wait_for_exit=True,
+                cancel=cancel,
+            )
+        finally:
+            timer.join()
+
+        data = result["data"]
+        self.assertEqual(result["code"], "canceled")
+        self.assertEqual(data["executionStatus"], "exited")
+        self.assertEqual(data["termination"], "canceled")
+        self.assertNotIn("sessionId", data)
+
     def test_long_command_returns_running_then_write_stdin_poll_returns_done(self) -> None:
         result = self.manager.start(
             self._python_launch(

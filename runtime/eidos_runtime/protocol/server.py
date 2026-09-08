@@ -101,6 +101,11 @@ from eidos_runtime.runtime.async_kernel import (
     RuntimeAsyncKernel,
 )
 from eidos_runtime.runtime.fault_injection import hit_fault
+from eidos_runtime.runtime.runtime_dependencies import (
+    RuntimeDependencyCatalog,
+    RuntimeDependencyCatalogError,
+    discover_runtime_dependency_catalog,
+)
 from eidos_runtime.sandbox.sensitive import (
     SensitiveContentDenied,
     SensitiveScanError,
@@ -567,6 +572,7 @@ class RuntimeServer:
         self._frozen_model_configs: dict[str, ModelConfig] = {}
         self._frozen_model_configs_lock = threading.RLock()
         self.async_kernel: RuntimeAsyncKernel | None = None
+        self.runtime_dependency_catalog: RuntimeDependencyCatalog | None = None
         self.output_lock = threading.RLock()
         self._storage_log_handler: logging.Handler | None = None
         self.shell_available = False
@@ -1348,6 +1354,12 @@ class RuntimeServer:
         try:
             self.store.initialize()
             if self.store.health_state == "ready":
+                self.runtime_dependency_catalog = (
+                    discover_runtime_dependency_catalog()
+                )
+                self.supervisor.bind_runtime_dependency_catalog(
+                    self.runtime_dependency_catalog
+                )
                 self._attach_storage_logging()
                 self.worktree_manager = WorktreeManager(self.store.database)
                 self.worktree_manager.recover()
@@ -1380,6 +1392,7 @@ class RuntimeServer:
             StorageError,
             ModelConfigError,
             SensitiveScanError,
+            RuntimeDependencyCatalogError,
             SkillReadError,
             OSError,
             RuntimeError,

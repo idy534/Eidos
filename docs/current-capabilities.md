@@ -40,7 +40,7 @@
 - Runtime 可以创建、排队、执行、取消、暂停、恢复和查询 Run。
 - Run 使用持久 FIFO 和全局单 Execution Slot。多个非终态 Run 可以共存；等待 Approval 的 Run 会释放 Slot，让其他排队 Run 继续执行。
 - Run 状态、Item、Step、ToolCall、Approval 和终态写入 SQLite，并通过 Event/Outbox 投影到 Desktop。
-- 取消会传播到 Model、Tool、Shell、Approval 和 Async Task。已取消 Run 不会被迟到模型结果改成成功。
+- 取消会传播到 Model、Tool、Shell、Approval 和 Async Task。取消终态只会被未清除的 reconciliation barrier 阻断；`sideEffectsMayExist` 只是历史证据。已取消 Run 不会被迟到模型结果改成成功。
 - Model Step Count、Segment Step Count 和 effective time 可以作为持久 telemetry 读取。
 - 健康 Run 不受固定 model-step、Run duration 或 fixed repeated-call counter 限制。Segment rollover 不会把 Run 变成终态。
 
@@ -61,7 +61,7 @@
 - `RuntimeEngine` 驱动 Context → Model Attempt → normalized response → ToolCall / Tool Result / next Sampling 或 assistant-only completion 的循环。
 - Runtime 接受同一模型响应中的文本和有效 ToolCall。已校验的文本可以先作为普通 `assistant_message` 写入 Feed，Tool 执行完成后 Run 继续。
 - Provider context pressure、`context_exceeded`、projection overflow 和 compaction progress 会参与下一次决策。
-- Protocol validation failure 会被转换为受控的 protocol repair context。对于已声明且载荷类型正确的 Tool，参数契约错误会在执行前持久化为 `invalid_arguments` Tool Error，并进入下一次模型 Context。这个结果只包含安全的错误码和摘要，不包含原始参数。空响应有独立的重复响应处理。
+- Protocol validation failure 会被转换为受控的 protocol repair context。normalization 的 `protocol_error` 和 `length` 都进入同一条已有的有界 protocol repair，连续错误合计最多触发一次。对于已声明且载荷类型正确的 Tool，参数契约错误会在执行前持久化为 `invalid_arguments` Tool Error，并进入下一次模型 Context。这个结果只包含安全的错误码和摘要，不包含原始参数。`content_filter`、cancel 和 authentication failure 不进入该 repair，直接终止当前模型流程。空响应有独立的重复响应处理。
 - 确定的 Tool Error 会作为 ToolResult 进入 Context，并触发下一次模型决策。模型可以修正参数或选择替代 Tool。一次失败不会单独终止 Run。
 - 已明确 `termination = exit` 且有 `exitCode` 的 Shell 会把退出事实、stdout 和 stderr 返回给模型。非 0 退出会让 Item 为 `failed`，但会让 ToolCall 为 `completed`。Workspace manifest 或 index observation 不完整只会标记 observation metadata，不会建立只读 reconciliation barrier，也不会阻止后续 Shell 或其他 ToolCall。Runtime 不自动重放原 Shell。
 - Cancellation、Approval、Reconciliation 和 operational segment rollover 都在安全点处理。
@@ -76,7 +76,7 @@
 - ContextBuilder 对 Workspace state 未变化时完全相同的部分只读 Tool Result 做去重。
 - ContextCompactor 使用 deterministic bounded extraction 保存任务目标、约束、动作、证据、修改、失败尝试、决定、待处理 Approval、未解决问题和下一步。
 - Compaction Summary metadata 与主体一起持久化。原始历史不会被摘要替换。
-- 默认在线 Run 会在每个 ModelAttempt Sampling 前持久化并绑定精确 ContextSnapshot。该 Snapshot 原样保存结构化消息、resolved instructions 和 tools。协议修复使用新 Snapshot，Provider transport retry 复用原 Snapshot。
+- 默认在线 Run 会在每个 ModelAttempt Sampling 前持久化并绑定精确 ContextSnapshot。该 Snapshot 原样保存结构化消息、resolved instructions 和 tools。协议修复使用新 Snapshot，Provider transport retry 复用原 Snapshot。可重试的 transport failure 即使已经收到尚未持久化的 provisional text，也会先失败当前 Attempt，再创建独立 Attempt 并复用同一 Snapshot；已有文本或 ToolCall 进度不会自动重放。
 
 ## Project Rules
 
@@ -152,13 +152,13 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Function 和 Custom 的 payload 类型来自 Provider protocol 和持久化的 `payload_kind` discriminator。Runtime 不根据 Function arguments 的 JSON 内容推断 Custom。两条路径在同一个 Patch AST、Workspace prepare、CAS、Durable Intent、atomic commit、final validation 和 canonical Tool Result pipeline 汇合。
 - Runtime 的 Custom 路径直接把 raw Patch 交给 `parse_patch`。Function compatibility 路径仍由 `CodexPatchEncoder` 把结构化 changes 确定性编码为 Codex Patch 文本。Runtime 自动生成 `*** Begin Patch`、`*** End Patch`、`+`、`-`、`@@` 和 `*** End of File`。Add 内容统一使用 LF 行尾语义。`apply_patch.lark` 以 `openai/codex` 的 grammar 为来源，Lark 负责语法解析。本地 grammar 将上游的 `add_line+` 改为 `add_line*`，因为 Codex Rust streaming parser 允许没有内容行的 Add File；显式的 `+` 仍表示一条空内容行。Lark 不能直接加载上游的零宽文本正则，所以本地 grammar 也对这些 token 做了兼容适配。Parser 可以接受 CRLF 和外层空白，但不会自动补齐 envelope、marker 或行前缀。
 - 文件工具在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。`apply_patch` 支持 Codex 风格的 Add、Update、Delete、Move、多文件、多 chunk、首个 Update 不带 `@@`、裸 `@@`、`@@ context` 和 `*** End of File`。Update 匹配按 Patch chunk 顺序向前查找。工具仍会复用版本复检、Workspace boundary、Seatbelt、原子替换和最终内容校验。
-- `workspace_dependencies` 返回 Eidos 自带并经过 owner、类型、可执行位和 SHA-256 校验的 Python 与 ripgrep。它也返回 Python import roots 和受支持包版本。当前 Runtime 随包提供 `python-docx`。成功结果的 `data` 可以返回 `defaultDependencyBindingId` 和 `activeSkillDependencyBindings`。模型不需要依赖用户全局 Python 或临时安装包。
+- `workspace_dependencies` 返回 Eidos 自带并经过 owner、类型、可执行位和 SHA-256 校验的 Python 与 ripgrep，但不会在响应中回显校验哈希。它也返回 Python import roots 和受支持包版本。model projection 只保留 `code` 和 `data`，canonical result 仍保留 Runtime 状态字段。当前 Runtime 随包提供 `python-docx`。成功结果的 `data` 可以返回 `defaultDependencyBindingId` 和 `activeSkillDependencyBindings`。模型不需要依赖用户全局 Python 或临时安装包。
 - 已应用的文件 Diff 会进入 ToolCall 持久事实，并在 Execution Feed 中展示。
 - macOS 原子替换会先用 fd-relative `fclonefileat` 保留普通文件的扩展属性（包括 `com.apple.provenance`），再写入候选内容并单独应用、验证 ACL。clonefile 不可用时会安全回退到受校验的 `fcopyfile` 路径。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
 - ToolCallRuntime 和 ToolExecutionController 会执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。
-- 确定的 Tool Error 会持久化为 ToolResult，并回到模型循环。Runtime 不会自动重放有副作用的 Tool。未清除的 reconciliation barrier 会阻止成功终态。
+- 确定的 Tool Error 会持久化为 ToolResult，并回到模型循环。敏感或超大的结果在 projection 重建为错误时，会保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。Runtime 不会自动重放有副作用的 Tool。未清除的 reconciliation barrier 会阻止成功终态。
 - 普通 Tool Error 不会单独终止 Run。模型可以根据错误事实修正参数或选择替代 Tool。
 - 只有安全只读的 `parallel_safe` Tool 批次可以并发。副作用 Tool 保持独占，结果按模型声明顺序提交。
 
@@ -167,13 +167,13 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `HostShellResolver` 先使用账户 login shell，再使用 `SHELL`，最后使用 `/bin/zsh`、`/bin/bash`、`/bin/sh`。Resolver 只接受有效的绝对可执行 shell 路径。
 - `ShellEnvironmentSnapshotProvider` 对每个 shell executable、canonical cwd 和 capture launch identity 做一次 `-lc` 环境捕获。默认 attempt 会在同一个 effective Seatbelt 边界内运行 trusted capture script。捕获使用 NUL 分隔格式，限制为 10 秒和 512 KiB。
 - 普通 `run_shell` 命令使用 resolved shell 的 `-c`。Snapshot 捕获失败时使用 sanitized parent environment，并记录有界的稳定 warning。Snapshot 不恢复 aliases、functions 或其他 shell state。
-- Shell process lifetime 与 Tool wait lifetime 分离。`run_shell.yieldTimeMs` 只限定当前 ToolCall 的观察窗口，不设置命令完成 deadline。命令在窗口结束时仍运行，会返回 `shell_running`、`executionStatus = running`、`sessionId` 和当前增量输出。模型可以在同一 Run 内用 `write_stdin` 继续等待、写入 stdin，或用 `chars = "\u0003"` 发送 Ctrl-C；session ID 只在当前 Run 内有效。
+- Shell process lifetime 与 Tool wait lifetime 由 Runtime 管理。Runtime 在同一个 `run_shell` ToolCall 内轮询进程，直到命令退出或被取消。`run_shell.yieldTimeMs` 只限定首次等待窗口，Runtime 随后继续内部轮询。模型不会看到 `write_stdin`，也不会创建额外的 Shell 轮询 Item。
 - Shell stdout 和 stderr 使用 UTF-8 增量解码。Runtime 将解码后的片段按接收顺序累积到 Item content，Desktop Execution Feed 在运行中和终态都使用这份累计内容。这样可以保留 stdout 和 stderr 的接收顺序，也不会在终态重复追加最终流。
-- Desktop Shell Feed 默认折叠 Shell Item。用户展开后，Feed 将 Shell 输出按纯文本展示，并移除 ANSI 和 OSC 控制序列，不激活终端格式或链接。旧 Item 缺少或没有 `content` 时，Feed 回退到结果中的 stdout 和 stderr。
+- Desktop Shell Feed 默认折叠 Shell Item。用户展开后，Feed 将 Shell 输出按纯文本展示，并移除 ANSI 和 OSC 控制序列，不激活终端格式或链接。旧 Item 缺少或没有 `content` 时，Feed 回退到结果中的 stdout 和 stderr。待审批、已批准和已拒绝的 Shell 历史都使用这个 Shell Item，审批状态单独显示。
 - Shell Result 存在 `attemptCount`、`sandboxed` 或 `escalated` 时，Execution Feed 会展示这些已有执行和权限事实，包括扩权重试信息。
 - `run_shell` 的模型结果投影对 stdout 和 stderr 各保留首尾，每条流最多 16 KiB，整个 JSON 最多 48 KiB。原始 `truncated` 和 `omittedBytes` 事实不会被模型投影覆盖。模型投影另用 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 标记模型省略的 stdout/stderr UTF-8 字节和继续读取方式。
 - `read_tool_output` 是只读工具。它要求前一次 `run_shell` 的 provider tool call ID，默认读取 stdout，也可以读取 stderr。它只读取当前 Session 中已持久化的终态 Shell 结果，历史 Run 可以读取；运行中、跨 Session、缺失或歧义 ID 会拒绝。调用方可以用 `offsetBytes`、`maxBytes`（请求范围 4 字节至 16 KiB）或 `fromEnd` 分页读取。结果返回 UTF-8 边界对齐的实际 `startByte`、`endByte` 和 `nextOffset`，单页可能小于请求值，调用方必须按 `nextOffset` 继续。该工具不会重新执行 Shell 或清除 reconciliation；Shell 原始输出上限已经丢失的字节无法恢复。
-- 运行中的 Shell 使用同一 Run 内的 `write_stdin` 继续等待和读取增量输出。`read_tool_output` 仍只读取已持久化的终态结果。
+- Runtime 会在同一个 `run_shell` ToolCall 内完成等待和读取增量输出。`read_tool_output` 仍只读取已持久化的终态结果。
 - Shell effective environment 使用真实 `HOME`、snapshot 的 Host `PATH`、真实 `TMPDIR`、`USER`、`LOGNAME`、`LANG` 和 `LC_*`。Bundled `rg` 目录只追加在 `PATH` 末尾并去重。Provider 会在启动 login shell 前移除继承的 `EIDOS_*` 和 packaged Runtime Python control environment。用户 profile 随后声明的普通开发环境仍会进入 snapshot。Runtime 不会强制设置 `LC_ALL`。
 - `run_shell` 不从 `models.json` 注入 API Key，也不强制禁用用户 Git 配置。`HardenedGitRunner` 仍使用独立的 Git 执行路径。
 - 默认 Seatbelt 允许全盘 read、普通 executable 和 dylib mapping。Workspace、snapshot `TMPDIR` 和 canonical `/tmp` 可写。真实 `HOME` 的其他位置、`.git` 和 linked metadata 只读。Eidos data 和 credential 仍由 permanent deny 保护。data 内 projectless 或 Worktree workspace 可读写。active Skill root 可读和执行但不可写。Workspace `.env` 可读，但输出仍经过 SensitiveScanner。默认 network denied。
@@ -183,7 +183,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Tool Result 明确返回 `reconciliationRequired = false` 时，普通非零退出不会仅因为 `code = shell_exit_nonzero` 建立 barrier。此时 Item 状态是 `failed`，ToolCall 状态是 `completed`。结果仍会保留退出码、终止原因和可能副作用证据。真正未知的执行结果仍会 fail closed。
 - 默认 sandboxed attempt 出现明确的 network denial 时，Runtime 会保留首次 attempt 和 denial 证据，但不会把它升级成 unsandboxed retry。Runtime 也不会自动重放可能已经产生 Workspace 副作用的命令。
 - 未清除的 reconciliation barrier 会阻止 Run 提交成功终态。Runtime 不会把 `sideEffectsMayExist` 当作清除条件，也不会自动重放有副作用的 Tool。
-- Reconciliation 默认继续 `CONTINUE_READ_ONLY`，而不是 interrupt。Barrier 只允许安全只读 Tool 和空的 `write_stdin` poll；其他副作用 Tool 返回普通 `reconciliation_required` Tool Error。完整 Workspace refresh 提交后才会清除 barrier。
+- Reconciliation 默认继续 `CONTINUE_READ_ONLY`，而不是 interrupt。Barrier 只允许安全只读 Tool；其他副作用 Tool 返回普通 `reconciliation_required` Tool Error。Workspace refresh 只清除来源属于 Workspace mutation、且可以由该 refresh 核验的 barrier。Shell、MCP、external、Eidos-state 和 unknown barrier 不能由 Workspace refresh 清除。
 - Workspace manifest observation 不完整时可以产生 `unknown` observation。已知成功退出不会仅因为观察不完整而被改成不确定副作用。
 
 ## Approval / Sandbox
@@ -228,12 +228,12 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Recovery
 
-- Runtime 重启时会从 SQLite 收敛未完成 Run、ToolCall、Approval、Outbox、Long Task 和资源状态。
+- Runtime 重启时会从 SQLite 收敛未完成 Run、ToolCall、Approval、Outbox、Long Task 和资源状态。没有未完成 Tool 执行或不确定副作用的 active Run，只有在没有 cancel request、没有 reconciliation barrier、没有未决有副作用 Durable Intent，且没有 running ToolAttempt 时才会重新排回队列。带有不确定执行的 Run 仍然进入 `interrupted`。Pending Approval 仍按既有的结构化待批规则恢复。
 - Runtime 启动时会读取 Worktree lifecycle intent、Snapshot metadata、Snapshot artifact、hidden ref 和 Session Handoff operation，并在业务应用暴露前执行 bounded reconciliation。Worktree Session create、Session delete、Managed Checkpoint Fork、Branch attach、retention cleanup、Restore 和 Session Handoff 可以在 restart 后恢复或进入 cleanup required。Managed 和 Local Checkpoint Rewind 会保留 durable lifecycle；同一 `operationId` 在 Runtime restart 后可以继续收敛，且不会重复记录 Checkpoint action。
 - Runtime 支持 cancel、pause、resume 和 restart verification 的 typed boundary。
 - Resume 前会检查 Workspace identity、规则、Repository/Context snapshot、permission snapshot、Git 和 side-effect reconciliation 字段。
 - Cancel、Tool timeout、Shell cleanup、MCP shutdown 和 Runtime shutdown 都有资源跟踪和有界等待。
-- Workspace-local 的 reconciliation 默认在当前 Run 内以 `CONTINUE_READ_ONLY` 通过受限只读 Tool 继续。Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果不进入该路径，继续 fail closed。
+- Workspace-local 的 reconciliation 默认在当前 Run 内以 `CONTINUE_READ_ONLY` 通过受限只读 Tool 继续。Workspace refresh 只能清除 Workspace mutation 的可核验 barrier，不能清除 Shell、MCP、external、Eidos-state 或 unknown barrier。Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果不进入该路径，继续 fail closed。
 - 不确定副作用不会自动重放。需要核验的事实会进入 reconciliation。
 
 ## Checkpoint
@@ -249,7 +249,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 ## Distribution
 
 - `pnpm build:runtime:mac` 可以构建 macOS arm64 的 self-contained Runtime Bundle。
-- Bundle 使用 managed CPython 3.12.13、锁定的 production dependencies、Runtime 资源、`eidos_runtime/workspace/apply_patch.lark` grammar 和受管 Ripgrep。Bundle 根目录的 `runtime.json` contract 固定 `schemaVersion: 1`、Bundle version、相对资源路径和 SHA-256 inventory。Node 资源的 contract 包含固定 Node 版本、`node_modules` 和 CJS/ESM loader。构建脚本会生成并校验这个 manifest，再把 Bundle 放入 App resources。
+- Bundle 使用 managed CPython 3.12.13、锁定的 production dependencies、Runtime 资源、`eidos_runtime/workspace/apply_patch.lark` grammar 和受管 Ripgrep。Bundle 根目录的 `runtime.json` contract 固定 `schemaVersion: 1`、Bundle version、相对资源路径和 SHA-256 inventory。Node 资源的 contract 包含固定 Node 版本、`node_modules` 和 CJS/ESM loader。构建脚本会生成并校验这个 manifest，再把 Bundle 放入 App resources。Runtime 初始化时会完整校验一次 Bundle，并把已校验的 Catalog 传给 Run；`workspace_dependencies` 只读取这个 Catalog，Shell 启动前仍会重新校验绑定。
 - Packaged Electron 使用 `Contents/Resources/runtime/`，不回退到系统 Python、PATH、`.venv` 或用户 `PYTHONHOME`。
 - `pnpm package:mac` 生成未签名的本地 arm64 DMG，并执行 packaged smoke。
 - `pnpm package:mac:release` 接入签名、hardened runtime、notarization、stapling 和 Gatekeeper 验证。正确时序是先完成 Bundle 文件和 manifest hash，再签名；签名改变嵌套文件后，需要 refresh 并重新校验 `runtime.json`，再做最终 Gatekeeper 检查。Release 需要构建机提供 Apple credentials。没有 credentials 时，仓库不能验证真实签名结果。

@@ -208,8 +208,9 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
                 if self.calls == 1:
                     on_text_delta("safe progress")
                     raise OSError("fixture")
-                on_text_delta("done")
-                return ModelResponse(text="done")
+                return ModelResponse(tool_calls=(ModelToolCall(
+                    "replayed", "list_files", {}
+                ),))
 
         run, _ = self.store.create_run(self.session["id"], "stream")
         model = InterruptedThenCompletedModel()
@@ -231,13 +232,17 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         )
         connection = self.store.connection
         assert connection is not None
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0],
+            0,
+        )
         self.assertEqual(connection.execute("SELECT COUNT(*) FROM steps").fetchone()[0], 1)
         self.assertEqual(
             connection.execute("SELECT COUNT(*) FROM model_attempts").fetchone()[0],
             1,
         )
         attempt = self.store.read_model_attempts(run["id"])[0]
-        self.assertEqual(attempt["retryDecision"]["reason"], "unsafe_stream_progress")
+        self.assertEqual(attempt["retryDecision"]["reason"], "non_retryable_error")
 
     def test_stream_failure_before_first_delta_does_not_replay_unknown_stream_state(self) -> None:
         class InitiallyUnavailableModel:
@@ -265,7 +270,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.assertEqual(self.store.read_run(run["id"])["status"], "failed")
         self.assertEqual(model.calls, 1)
         attempt = self.store.read_model_attempts(run["id"])[0]
-        self.assertEqual(attempt["retryDecision"]["reason"], "unsafe_stream_progress")
+        self.assertEqual(attempt["retryDecision"]["reason"], "non_retryable_error")
 
     def test_stream_failure_stops_after_one_unsafe_attempt(self) -> None:
         class AlwaysInterruptedModel:

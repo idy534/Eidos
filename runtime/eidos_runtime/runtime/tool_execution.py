@@ -38,7 +38,10 @@ from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
 from eidos_runtime.tools.contracts import GENERIC_PROJECTOR
-from eidos_runtime.tools.registry import ToolConcurrencyPolicy
+from eidos_runtime.tools.registry import (
+    ToolArgumentValidationResult,
+    ToolConcurrencyPolicy,
+)
 from eidos_runtime.telemetry.tracing import (
     finish_tool_call,
     record_current_exception,
@@ -64,12 +67,37 @@ def _result_requires_reconciliation(result: dict[str, object]) -> bool:
     )
 
 
-def _is_reconciliation_read_only_poll(call: ModelToolCall) -> bool:
-    """Allow only an empty ``write_stdin`` call through the barrier."""
-    if call.name != "write_stdin" or call.payload_kind != "function":
-        return False
-    arguments = call.arguments
-    return "chars" not in arguments or arguments["chars"] == ""
+def _explicit_reconciliation_required(
+    result: dict[str, object],
+) -> bool | None:
+    """Return an explicitly reported reconciliation fact, if present."""
+    if "reconciliationRequired" in result:
+        value = result["reconciliationRequired"]
+        return value if isinstance(value, bool) else None
+    data = result.get("data")
+    if isinstance(data, dict) and "reconciliationRequired" in data:
+        value = data["reconciliationRequired"]
+        return value if isinstance(value, bool) else None
+    return None
+
+
+def _invalid_arguments_summary(
+    validation: ToolArgumentValidationResult,
+) -> str:
+    details = []
+    if validation.path is not None:
+        details.append(f"field={validation.path}")
+    if validation.reason_code is not None:
+        details.append(f"reason={validation.reason_code}")
+    if validation.maximum is not None:
+        details.append(f"maximum={validation.maximum}")
+    if validation.minimum is not None:
+        details.append(f"minimum={validation.minimum}")
+    if validation.actual is not None:
+        details.append(f"actual={validation.actual}")
+    return "Invalid tool arguments: " + ", ".join(
+        details or ["invalid_arguments"]
+    )
 
 
 class ToolInfrastructureError(RuntimeError):
@@ -456,7 +484,6 @@ class ToolExecutionController:
             elif (
                 plan.side_effect != "none"
                 and self.store.side_effects_blocked(run_id)
-                and not _is_reconciliation_read_only_poll(call)
             ):
                 outcome = HandlerOutcome(
                     tool_error(
@@ -481,8 +508,7 @@ class ToolExecutionController:
                         tool_error(
                             call.name,
                             "invalid_arguments",
-                            "Invalid tool arguments: "
-                            + (validation.reason_code or "invalid_arguments"),
+                            _invalid_arguments_summary(validation),
                         ),
                         "completed",
                     )
@@ -642,6 +668,9 @@ class ToolExecutionController:
                         outcome.workspace_changed if effects_possible else False
                     ),
                 )
+            explicit_reconciliation = _explicit_reconciliation_required(
+                outcome.result
+            )
             result_data_model = (
                 plan.descriptor.result_data_model
                 if plan.descriptor is not None
@@ -658,14 +687,21 @@ class ToolExecutionController:
                 data_model=result_data_model,
             )
             if result.get("code") == "sensitive_content_rejected":
-                if plan.side_effect != "none":
+                effects_possible = (
+                    self._execution_state.authorized_effects > 0
+                    or outcome.result.get("sideEffectsMayExist") is True
+                )
+                if plan.side_effect != "none" or effects_possible:
                     result = tool_result(
                         call.name,
                         "error",
                         "sensitive_content_rejected",
                         "Tool output was withheld",
-                        side_effects_may_exist=True,
-                        reconciliation_required=True,
+                        side_effects_may_exist=effects_possible,
+                        reconciliation_required=(
+                            effects_possible
+                            and explicit_reconciliation is not False
+                        ),
                     )
                 outcome = replace(
                     outcome, item_status="failed", tool_status="failed"
@@ -681,7 +717,10 @@ class ToolExecutionController:
                     "TOOL_OUTPUT_TOO_LARGE",
                     "Tool result exceeded the safe size limit",
                     side_effects_may_exist=effects_possible,
-                    reconciliation_required=effects_possible,
+                    reconciliation_required=(
+                        effects_possible
+                        and explicit_reconciliation is not False
+                    ),
                 )
                 outcome = replace(outcome, item_status="failed", tool_status="failed")
             outcome = replace(outcome, result=result)

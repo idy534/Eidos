@@ -140,6 +140,33 @@ class WorkspaceManifestTests(unittest.TestCase):
         self.assertEqual(attached["data"]["modified"], [])
         self.assertEqual(attached["data"]["deleted"], [])
 
+    def test_running_managed_shell_does_not_reconcile_incomplete_observation(self) -> None:
+        diff = diff_workspace_manifests(
+            WorkspaceManifest((), True, False),
+            WorkspaceManifest((), False, True),
+        )
+
+        attached = attach_workspace_diff(
+            {
+                "outcome": "success",
+                "code": "shell_running",
+                "summary": "Command is still running",
+                "data": {
+                    "executionStatus": "running",
+                    "sessionId": "shell-1",
+                    "termination": "running",
+                },
+                "sideEffectsMayExist": True,
+                "reconciliationRequired": False,
+            },
+            diff,
+        )
+
+        self.assertEqual(attached["data"]["workspaceChangeState"], "unknown")
+        self.assertTrue(attached["data"]["workspaceDiffIncomplete"])
+        self.assertTrue(attached["sideEffectsMayExist"])
+        self.assertFalse(attached["reconciliationRequired"])
+
     def test_explicit_execution_uncertainty_survives_successful_exit(self) -> None:
         diff = diff_workspace_manifests(
             WorkspaceManifest((), False, True),

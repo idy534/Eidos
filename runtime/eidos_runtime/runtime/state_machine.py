@@ -104,7 +104,7 @@ TRANSITIONS: dict[type[StrEnum], dict[StrEnum, frozenset[StrEnum]]] = {
         RunStatus.QUEUED: frozenset({RunStatus.RUNNING, RunStatus.CANCELED}),
         RunStatus.RUNNING: frozenset({
             RunStatus.WAITING_APPROVAL, RunStatus.FINALIZING, RunStatus.SUCCEEDED, RunStatus.FAILED,
-            RunStatus.CANCELED, RunStatus.INTERRUPTED,
+            RunStatus.CANCELED, RunStatus.INTERRUPTED, RunStatus.QUEUED,
         }),
         RunStatus.WAITING_APPROVAL: frozenset({
             RunStatus.RUNNING, RunStatus.QUEUED, RunStatus.FAILED,

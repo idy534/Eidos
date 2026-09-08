@@ -64,7 +64,6 @@ class WorkspaceExecutableData(StrictToolModel):
     name: StrictStr
     path: StrictStr
     version: StrictStr
-    sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class WorkspacePythonPackageData(StrictToolModel):
@@ -103,12 +102,6 @@ class WorkspaceDependencyBindingData(StrictToolModel):
     )
     status: Literal["ready", "missing", "incompatible", "invalid"]
     code: StrictStr | None = Field(default=None, max_length=128)
-    manifest_sha256: StrictStr | None = Field(
-        default=None, alias="manifestSha256", pattern=r"^[0-9a-f]{64}$"
-    )
-    requirements_sha256: StrictStr | None = Field(
-        default=None, alias="requirementsSha256", pattern=r"^[0-9a-f]{64}$"
-    )
     diagnostics: list[WorkspaceDependencyDiagnosticData] = Field(
         default_factory=list, max_length=32
     )
@@ -140,16 +133,6 @@ class WorkspaceDependenciesResultData(StrictToolModel):
         default_factory=list,
         alias="activeSkillDependencyBindings",
         max_length=32,
-    )
-    manifest_sha256: StrictStr | None = Field(
-        default=None,
-        alias="manifestSha256",
-        pattern=r"^[0-9a-f]{64}$",
-    )
-    snapshot_sha256: StrictStr | None = Field(
-        default=None,
-        alias="snapshotSha256",
-        pattern=r"^[0-9a-f]{64}$",
     )
     runtime_dependency_error: StrictStr | None = Field(
         default=None,
@@ -252,7 +235,12 @@ class WorkspaceDependenciesTool:
         data: dict[str, object] = {
             "source": snapshot.source,
             "executables": [
-                value.model_dump(mode="json") for value in snapshot.executables
+                {
+                    "name": value.name,
+                    "path": value.path,
+                    "version": value.version,
+                }
+                for value in snapshot.executables
             ],
             "pythonPath": list(snapshot.python_path),
             "pythonPackages": [
@@ -454,25 +442,20 @@ def _bounded_binding_metadata(
             result["defaultDependencyBindingId"] = (
                 validated.default_dependency_binding_id
             )
-    for field_name, output_name in (
-        ("runtimeDependencyError", "runtimeDependencyError"),
-        ("manifestSha256", "manifestSha256"),
-        ("snapshotSha256", "snapshotSha256"),
-    ):
-        value = metadata.get(field_name)
-        if value is None:
-            continue
+    value = metadata.get("runtimeDependencyError")
+    if value is not None:
         try:
             validated = WorkspaceDependenciesResultData.model_validate({
-                field_name: value,
+                "runtimeDependencyError": value,
             })
         except ValidationError:
-            continue
-        result[output_name] = validated.model_dump(
-            mode="json",
-            by_alias=True,
-            exclude_none=False,
-        )[output_name]
+            validated = None
+        if validated is not None:
+            result["runtimeDependencyError"] = validated.model_dump(
+                mode="json",
+                by_alias=True,
+                exclude_none=False,
+            )["runtimeDependencyError"]
     active = metadata.get("activeSkillDependencyBindings")
     if not isinstance(active, (tuple, list)):
         return result
@@ -481,7 +464,11 @@ def _bounded_binding_metadata(
         if not isinstance(item, Mapping):
             continue
         try:
-            validated = WorkspaceDependencyBindingData.model_validate(item)
+            validated = WorkspaceDependencyBindingData.model_validate({
+                key: value
+                for key, value in item.items()
+                if not isinstance(key, str) or not key.lower().endswith("sha256")
+            })
         except ValidationError:
             continue
         normalized_active.append(validated.model_dump(

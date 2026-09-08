@@ -189,7 +189,7 @@ class RuntimeRecoveryInvariantTests(unittest.TestCase):
         self.store = SessionStore(self.data)
         self.store.initialize()
 
-    def test_recovery_interrupts_running_segment(self) -> None:
+    def test_recovery_requeues_model_only_run(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "running")
         self.store.increment_model_step(run["id"])
         self.store.complete_current_step(run["id"], "completed")
@@ -197,13 +197,184 @@ class RuntimeRecoveryInvariantTests(unittest.TestCase):
         self._restart()
 
         assert self.store.connection is not None
-        self.assertEqual(self.store.read_run(run["id"])["status"], "interrupted")
+        self.assertEqual(self.store.read_run(run["id"])["status"], "queued")
+        self.assertIsNotNone(
+            self.store.connection.execute(
+                "SELECT enqueued_at FROM runs WHERE id = ?", (run["id"],)
+            ).fetchone()["enqueued_at"]
+        )
         self.assertEqual(
             self.store.connection.execute(
                 "SELECT status FROM execution_segments WHERE run_id = ?",
                 (run["id"],),
             ).fetchone()["status"],
+            "queued",
+        )
+        status_events = self.store.connection.execute(
+            """
+            SELECT event_type, payload_json
+            FROM events
+            WHERE run_id = ? AND event_type IN (
+                'run.status_changed', 'segment.status_changed'
+            )
+            ORDER BY id
+            """,
+            (run["id"],),
+        ).fetchall()
+        self.assertEqual(
+            [row["event_type"] for row in status_events[-2:]],
+            ["segment.status_changed", "run.status_changed"],
+        )
+        self.assertEqual(
+            json.loads(status_events[-1]["payload_json"])["current"],
+            "queued",
+        )
+        self.assertEqual(
+            [row["status"] for row in self.store.connection.execute(
+                """
+                SELECT outbox.status
+                FROM events
+                JOIN event_outbox AS outbox ON outbox.event_id = events.id
+                WHERE events.run_id = ? AND events.event_type IN (
+                    'run.status_changed', 'segment.status_changed'
+                )
+                ORDER BY events.id
+                """,
+                (run["id"],),
+            ).fetchall()][-2:],
+            ["pending", "pending"],
+        )
+
+    def test_recovery_requeues_active_model_attempt_without_tool(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "model")
+        self.store.increment_model_step(run["id"])
+        assistant = self.store.create_assistant_item(run["id"], 1)
+
+        self._restart()
+
+        assert self.store.connection is not None
+        self.assertEqual(self.store.read_run(run["id"])["status"], "queued")
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT status, error_code FROM model_attempts "
+                "WHERE step_id = (SELECT id FROM steps WHERE run_id = ?)",
+                (run["id"],),
+            ).fetchone()[0:2],
+            ("failed", "runtime_interrupted"),
+        )
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT status FROM steps WHERE run_id = ?", (run["id"],)
+            ).fetchone()["status"],
             "failed",
+        )
+        recovered_assistant = self.store.read_item(assistant["id"])
+        self.assertEqual(recovered_assistant["status"], "failed")
+        self.assertTrue(recovered_assistant["incomplete"])
+
+    def test_recovery_does_not_requeue_running_tool_call_without_attempt(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "tool")
+        self.store.increment_model_step(run["id"])
+        item = self.store.create_tool_item(
+            run["id"], 1, 0, "call", "run_shell", '{"command":"true"}'
+        )
+
+        self._restart()
+
+        assert self.store.connection is not None
+        self.assertEqual(self.store.read_run(run["id"])["status"], "interrupted")
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT status FROM tool_calls WHERE item_id = ?", (item["id"],)
+            ).fetchone()["status"],
+            "canceled",
+        )
+
+    def test_recovery_does_not_requeue_reconciliation_barrier(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "barrier")
+        connection = self.store.connection
+        assert connection is not None
+        connection.execute(
+            "UPDATE runs SET reconciliation_required = 1 WHERE id = ?",
+            (run["id"],),
+        )
+        connection.commit()
+
+        self._restart()
+
+        self.assertEqual(self.store.read_run(run["id"])["status"], "interrupted")
+
+    def test_recovery_does_not_requeue_finalization(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "finalize")
+        self.store.begin_finalization(run["id"])
+
+        self._restart()
+
+        self.assertEqual(self.store.read_run(run["id"])["status"], "interrupted")
+
+    def test_recovery_requeues_run_for_supervisor_claim(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "claim")
+        self.store.increment_model_step(run["id"])
+        self.store.complete_current_step(run["id"], "completed")
+        self._restart()
+
+        class _NoopEngine:
+            def __init__(self, *_args, **_kwargs) -> None:
+                pass
+
+            def run(self, _run_id: str, _cancel: threading.Event) -> None:
+                return
+
+        supervisor = RunSupervisor(
+            self.store,
+            lambda _model_id: ModelClientLease(object()),
+            lambda _message: None,
+            lambda value: value,
+            lambda: True,
+            lambda: False,
+            lambda: None,
+            engine_factory=_NoopEngine,
+        )
+        start = supervisor.prepare_next()
+        self.assertIsNotNone(start)
+        self.assertEqual(self.store.read_run(run["id"])["status"], "running")
+        RunSupervisor.release(start)
+        self.assertEqual(
+            supervisor.cancel_run(run["id"])["status"],
+            "canceled",
+        )
+
+    def test_recovery_reconciles_running_tool_attempt_without_intent(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "tool")
+        self.store.increment_model_step(run["id"])
+        item = self.store.create_tool_item(
+            run["id"], 1, 0, "call", "run_shell", '{"command":"true"}'
+        )
+        self.store.record_tool_attempt(
+            item["id"],
+            ordinal=0,
+            sandbox_type="macos_seatbelt",
+            sandbox_requested=True,
+            effective_permissions={"networkEnabled": False},
+            profile_hash=None,
+            escalation_reason=None,
+            status="running",
+        )
+
+        self._restart()
+
+        assert self.store.connection is not None
+        recovered = self.store.read_run(run["id"])
+        self.assertEqual(recovered["status"], "interrupted")
+        self.assertTrue(recovered["reconciliationRequired"])
+        self.assertTrue(recovered["sideEffectsMayExist"])
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT status, result_code FROM tool_attempts WHERE tool_call_id = "
+                "(SELECT id FROM tool_calls WHERE item_id = ?)",
+                (item["id"],),
+            ).fetchone()[0:2],
+            ("uncertain", "runtime_interrupted"),
         )
 
     def test_recovery_handles_cancel_requested_run(self) -> None:
@@ -252,6 +423,33 @@ class RuntimeRecoveryInvariantTests(unittest.TestCase):
             ).fetchone()["status"],
             "interrupted",
         )
+
+    def test_recovery_reconciles_uncertain_and_interrupted_intents(self) -> None:
+        for intent_status in ("uncertain", "interrupted"):
+            with self.subTest(intent_status=intent_status):
+                run, _ = self.store.create_run(
+                    self.session["id"], f"{intent_status}-intent"
+                )
+                self.store.increment_model_step(run["id"])
+                item = self.store.create_tool_item(
+                    run["id"], 1, 0, "call", "write_file", "{}"
+                )
+                self.store.begin_durable_intent(
+                    item["id"], preconditions={}, approval_required=False
+                )
+                connection = self.store.connection
+                assert connection is not None
+                connection.execute(
+                    "UPDATE durable_intents SET status = ? WHERE run_id = ?",
+                    (intent_status, run["id"]),
+                )
+                connection.commit()
+                self._restart()
+
+                recovered = self.store.read_run(run["id"])
+                self.assertEqual(recovered["status"], "interrupted")
+                self.assertTrue(recovered["reconciliationRequired"])
+                self.assertTrue(recovered["sideEffectsMayExist"])
 
     def test_recovery_finishes_with_valid_invariants(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "crash")
@@ -606,6 +804,26 @@ class ReliableCancelTests(unittest.TestCase):
         current = self.store.read_run(run["id"])
         self.assertEqual(current["status"], "interrupted")
         self.assertEqual(current["cancelFailureCode"], "RECONCILIATION_REQUIRED")
+
+    def test_cancel_ignores_cleared_side_effect_evidence(self) -> None:
+        run, supervisor = self._started()
+        connection = self.store.connection
+        assert connection is not None
+        connection.execute(
+            """
+            UPDATE runs
+            SET reconciliation_required = 0, side_effects_may_exist = 1
+            WHERE id = ?
+            """,
+            (run["id"],),
+        )
+        connection.commit()
+        _CancelAwareEngine.allow_exit.set()
+
+        canceled = supervisor.cancel_run(run["id"])
+
+        self.assertEqual(canceled["status"], "canceled")
+        self.assertIsNone(canceled.get("cancelFailureCode"))
 
 
 class ReliableShutdownTests(unittest.TestCase):

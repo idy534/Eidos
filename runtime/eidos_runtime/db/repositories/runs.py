@@ -947,7 +947,7 @@ class RunRepository(Repository):
             if current not in expected:
                 raise InvalidRunStateError("run cannot finish cancellation")
             now = _now_ms()
-            if row["reconciliation_required"] or row["side_effects_may_exist"]:
+            if row["reconciliation_required"]:
                 events = list(settle_run_children(
                     connection, run_id, RunStatus.INTERRUPTED, now
                 ))

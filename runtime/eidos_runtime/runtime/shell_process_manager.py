@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import codecs
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import os
 import selectors
@@ -88,6 +89,9 @@ class ShellProcessManager:
         launch: ShellLaunchSpec,
         *,
         yield_time_ms: int = 10_000,
+        wait_for_exit: bool = False,
+        on_output: Callable[[str], None] | None = None,
+        cancel: threading.Event | None = None,
     ) -> dict[str, object]:
         with self._lock:
             if self._closed:
@@ -135,7 +139,16 @@ class ShellProcessManager:
         )
         session.thread = thread
         thread.start()
-        return self._wait_and_snapshot(session, yield_time_ms, "run_shell")
+        snapshot = self._wait_and_snapshot(
+            session,
+            yield_time_ms,
+            "run_shell",
+            cancel=cancel if wait_for_exit else None,
+        )
+        if not wait_for_exit:
+            return snapshot
+        self._emit_output(snapshot, on_output)
+        return self._wait_until_exit(session, snapshot, on_output, cancel)
 
     def wait(
         self,
@@ -211,9 +224,19 @@ class ShellProcessManager:
         session: ShellProcessSession,
         yield_time_ms: int,
         tool_name: str,
+        *,
+        cancel: threading.Event | None = None,
     ) -> dict[str, object]:
         timeout = max(0.0, yield_time_ms / 1000.0)
-        session.done.wait(timeout)
+        if cancel is None:
+            session.done.wait(timeout)
+        else:
+            deadline = time.monotonic() + timeout
+            while not session.done.is_set() and not cancel.is_set():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                session.done.wait(min(0.1, remaining))
         with session.lock:
             stdout = session.stdout_text[session.stdout_cursor:]
             stderr = session.stderr_text[session.stderr_cursor:]
@@ -261,6 +284,48 @@ class ShellProcessManager:
                 "sideEffectsMayExist": True,
                 "reconciliationRequired": False,
             }
+
+    def _wait_until_exit(
+        self,
+        session: ShellProcessSession,
+        snapshot: dict[str, object],
+        on_output: Callable[[str], None] | None,
+        cancel: threading.Event | None,
+    ) -> dict[str, object]:
+        cancel_sent = False
+        while True:
+            data = snapshot.get("data")
+            if not isinstance(data, dict):
+                return snapshot
+            if data.get("executionStatus") != "running":
+                with session.lock:
+                    data["stdout"] = session.stdout_text
+                    data["stderr"] = session.stderr_text
+                return snapshot
+            if cancel is not None and cancel.is_set() and not cancel_sent:
+                self._terminate(session)
+                cancel_sent = True
+            snapshot = self._wait_and_snapshot(
+                session,
+                250,
+                "run_shell",
+                cancel=None if cancel_sent else cancel,
+            )
+            self._emit_output(snapshot, on_output)
+
+    @staticmethod
+    def _emit_output(
+        snapshot: dict[str, object], on_output: Callable[[str], None] | None
+    ) -> None:
+        if on_output is None:
+            return
+        data = snapshot.get("data")
+        if not isinstance(data, dict):
+            return
+        for stream in ("stdout", "stderr"):
+            text = data.get(stream)
+            if isinstance(text, str) and text:
+                on_output(text)
 
     def _write(self, session: ShellProcessSession, chars: str) -> None:
         payload = chars.encode("utf-8")

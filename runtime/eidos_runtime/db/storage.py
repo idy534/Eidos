@@ -872,8 +872,12 @@ class SessionStore:
             retry_decision=retry_decision,
         )
 
-    def start_retry_model_attempt(self, run_id: str) -> str:
-        return self._repository(self._execution).start_retry_model_attempt(run_id)
+    def start_retry_model_attempt(
+        self, run_id: str, *, context_snapshot_id: str | None = None
+    ) -> str:
+        return self._repository(self._execution).start_retry_model_attempt(
+            run_id, context_snapshot_id=context_snapshot_id
+        )
 
     def read_model_attempts(self, run_id: str) -> list[dict[str, object]]:
         return self._repository(self._execution).read_model_attempts(run_id)
@@ -1195,6 +1199,9 @@ class SessionStore:
 
     def side_effects_blocked(self, run_id: str) -> bool:
         return self._repository(self._runs).side_effects_blocked(run_id)
+
+    def reconciliation_intent_scopes(self, run_id: str) -> frozenset[str]:
+        return self._repository(self._execution).reconciliation_intent_scopes(run_id)
 
     def begin_durable_intent(
         self,

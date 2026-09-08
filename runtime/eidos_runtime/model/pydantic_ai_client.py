@@ -751,10 +751,22 @@ def map_model_error(error: BaseException) -> ModelRequestFailure:
             error.status_code == 400 and _looks_like_context_error(error.body)
         )
         return _http_failure(error.status_code, context_exceeded=context_exceeded)
-    if isinstance(error, (IncompleteToolCall, UnexpectedModelBehavior)):
+    if isinstance(error, UnexpectedModelBehavior | ModelAPIError):
+        if _looks_like_stream_transport_error(error):
+            return ModelRequestFailure(
+                code="provider_unavailable",
+                retryable=True,
+            )
+        return ModelRequestFailure(
+            code=(
+                "protocol_error"
+                if isinstance(error, UnexpectedModelBehavior)
+                else "invalid_request"
+            ),
+            retryable=False,
+        )
+    if isinstance(error, IncompleteToolCall):
         return ModelRequestFailure(code="protocol_error", retryable=False)
-    if isinstance(error, ModelAPIError):
-        return ModelRequestFailure(code="invalid_request", retryable=False)
     return ModelRequestFailure(code="protocol_error", retryable=False)
 
 
@@ -803,6 +815,40 @@ def _looks_like_context_error(body: object) -> bool:
         "maximum context",
         "too many tokens",
     ))
+
+
+def _looks_like_stream_transport_error(error: BaseException) -> bool:
+    if _has_transport_error_in_chain(error):
+        return True
+    text = str(error).lower()
+    return any(marker in text for marker in (
+        "peer closed connection",
+        "connection error",
+        "incompletecaptured stream",
+        "incomplete chunked read",
+        "connection reset",
+    ))
+
+
+def _has_transport_error_in_chain(error: BaseException) -> bool:
+    """Recognize transport failures after Pydantic AI wraps them.
+
+    Pydantic AI converts OpenAI ``APIConnectionError`` into ``ModelAPIError``
+    while retaining the original exception as ``__cause__``.  HTTPX exposes
+    stream disconnects as ``TransportError`` subclasses, so inspect that
+    typed chain before using the bounded provider-message fallback above.
+    """
+
+    current: BaseException | None = error
+    seen: set[int] = set()
+    for _ in range(8):
+        if current is None or id(current) in seen:
+            return False
+        seen.add(id(current))
+        if isinstance(current, (APIConnectionError, httpx.TransportError)):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _stable_call_id(index: int, name: str, arguments: bytes) -> str:

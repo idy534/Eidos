@@ -359,9 +359,8 @@ class RunShellInput(StrictToolModel):
         ge=250,
         le=30_000,
         description=(
-            "Maximum time to observe this command during the current ToolCall. "
-            "This does not limit the process lifetime. Use write_stdin to poll, "
-            "send input, or interrupt a still-running command."
+            "Maximum initial wait before Runtime-owned polling. The Runtime "
+            "waits for the process to exit and does not expose a polling tool."
         ),
     )
     dependencyBindingId: StrictStr | None = Field(
@@ -1135,17 +1134,24 @@ def _project_tool_result(
                 "continuation",
                 _continuation(tool_name, projected),
             )
-        model_result = {
-            "toolName": tool_name,
-            "outcome": canonical_result.get("outcome"),
-            "code": canonical_result.get("code"),
-            "summary": _bounded_string(str(canonical_result.get("summary", ""))),
-            "data": projected,
-            "sideEffectsMayExist": canonical_result.get("sideEffectsMayExist", False),
-            "reconciliationRequired": canonical_result.get(
-                "reconciliationRequired", False
-            ),
-        }
+        model_result = (
+            {
+                "code": _bounded_string(str(canonical_result.get("code", "unknown"))),
+                "data": projected,
+            }
+            if tool_name == "workspace_dependencies"
+            else {
+                "toolName": tool_name,
+                "outcome": canonical_result.get("outcome"),
+                "code": canonical_result.get("code"),
+                "summary": _bounded_string(str(canonical_result.get("summary", ""))),
+                "data": projected,
+                "sideEffectsMayExist": canonical_result.get("sideEffectsMayExist", False),
+                "reconciliationRequired": canonical_result.get(
+                    "reconciliationRequired", False
+                ),
+            }
+        )
         model_result = _fit_serialized_budget(model_result)
     fingerprint = hashlib.sha256(
         _canonical_json(

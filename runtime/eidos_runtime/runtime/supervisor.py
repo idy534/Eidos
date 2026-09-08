@@ -41,6 +41,7 @@ from eidos_runtime.runtime.resource_registry import (
 )
 from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.long_task import RestartVerifier, ResumeVerifier
+from eidos_runtime.runtime.runtime_dependencies import RuntimeDependencyCatalog
 from eidos_runtime.domain.long_task import (
     LongTaskProgress,
     LongTaskStatus,
@@ -135,6 +136,7 @@ class RunSupervisor:
         shutdown_timeout: float = 6.0,
         resource_registry: ResourceRegistry | None = None,
         repository_runtime: RepositoryWorkspaceRuntimePort | None = None,
+        runtime_dependency_catalog: RuntimeDependencyCatalog | None = None,
     ) -> None:
         self.store = store
         self.model_for = model_for
@@ -160,6 +162,7 @@ class RunSupervisor:
         self._async_kernel: RuntimeAsyncKernel | None = None
         self._async_kernel_frozen = False
         self.repository_runtime = repository_runtime
+        self._runtime_dependency_catalog = runtime_dependency_catalog
 
     def bind_async_kernel(self, kernel: RuntimeAsyncKernel) -> None:
         """Bind the process-owned kernel before the first Run is dispatched."""
@@ -178,6 +181,29 @@ class RunSupervisor:
     def async_kernel(self) -> RuntimeAsyncKernel | None:
         with self.lock:
             return self._async_kernel
+
+    def bind_runtime_dependency_catalog(
+        self, catalog: RuntimeDependencyCatalog | None
+    ) -> None:
+        """Bind the process-owned dependency catalog before the first Run."""
+        with self.lock:
+            if (
+                self.lifecycle is not RuntimeLifecycle.RUNNING
+                or self.control_state is not RuntimeControlState.RUNNING
+                or self._async_kernel_frozen
+            ):
+                raise RuntimeError("runtime dependency catalog binding is frozen")
+            if (
+                self._runtime_dependency_catalog is not None
+                and self._runtime_dependency_catalog is not catalog
+            ):
+                raise RuntimeError("runtime dependency catalog is already bound")
+            self._runtime_dependency_catalog = catalog
+
+    @property
+    def runtime_dependency_catalog(self) -> RuntimeDependencyCatalog | None:
+        with self.lock:
+            return self._runtime_dependency_catalog
 
     def prepare_next(self) -> WorkerStart | None:
         if (
@@ -846,6 +872,9 @@ class RunSupervisor:
             if self.engine_factory is RuntimeEngine:
                 engine_kwargs["async_kernel"] = self._async_kernel
                 engine_kwargs["repository_runtime"] = self.repository_runtime
+                engine_kwargs["runtime_dependency_catalog"] = (
+                    self._runtime_dependency_catalog
+                )
             engine = self.engine_factory(
                 self.store,
                 lease.client,

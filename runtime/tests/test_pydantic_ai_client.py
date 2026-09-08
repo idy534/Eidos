@@ -25,6 +25,7 @@ from pydantic_ai.providers.deepseek import DeepSeekProvider
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai.exceptions import (
     IncompleteToolCall,
+    ModelAPIError,
     ModelHTTPError,
     UnexpectedModelBehavior,
 )
@@ -552,6 +553,36 @@ class PydanticAIModelClientTests(unittest.TestCase):
         incomplete = map_model_error(IncompleteToolCall("partial", "raw-secret"))
         self.assertEqual(incomplete.code, "protocol_error")
         self.assertNotIn("raw-secret", incomplete.model_dump_json())
+
+    def test_connection_closed_stream_maps_to_stable_retryable_failure(self) -> None:
+        try:
+            raise httpx.RemoteProtocolError("opaque transport detail")
+        except httpx.RemoteProtocolError as cause:
+            try:
+                raise ModelAPIError("fixture", "opaque provider detail") from cause
+            except ModelAPIError as wrapped:
+                typed_failure = map_model_error(wrapped)
+        self.assertEqual(typed_failure.code, "provider_unavailable")
+        self.assertTrue(typed_failure.retryable)
+        self.assertNotIn("opaque transport detail", typed_failure.model_dump_json())
+
+        failures = [
+            ModelAPIError(
+                "fixture",
+                "peer closed connection while reading incompletecaptured stream",
+            ),
+            ModelAPIError("fixture", "Connection error."),
+            UnexpectedModelBehavior(
+                "peer closed connection while reading incompletecaptured stream",
+            ),
+        ]
+
+        for error in failures:
+            with self.subTest(error=type(error).__name__):
+                failure = map_model_error(error)
+                self.assertEqual(failure.code, "provider_unavailable")
+                self.assertTrue(failure.retryable)
+                self.assertNotIn("peer closed connection", failure.model_dump_json())
 
     def test_explicit_cancel_does_not_become_provider_error(self) -> None:
         cancel = threading.Event()

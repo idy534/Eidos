@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import math
 import re
 import threading
 from typing import Literal, Protocol
@@ -10,6 +11,7 @@ from typing import Literal, Protocol
 from pydantic import (
     BaseModel,
     Field,
+    StrictFloat,
     StrictInt,
     StrictStr,
     ValidationError,
@@ -283,6 +285,22 @@ class ToolArgumentValidationResult(ClosedModel):
     code: StrictStr | None = None
     path: StrictStr | None = None
     reason_code: StrictStr | None = None
+    maximum: StrictInt | StrictFloat | None = None
+    minimum: StrictInt | StrictFloat | None = None
+    actual: StrictInt | StrictFloat | None = None
+
+    @field_validator("maximum", "minimum", "actual")
+    @classmethod
+    def validate_diagnostic_number(
+        cls, value: int | float | None
+    ) -> int | float | None:
+        if value is None:
+            return None
+        if isinstance(value, int) and abs(value) > 9_007_199_254_740_991:
+            raise ValueError("diagnostic number exceeds JSON safe range")
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("diagnostic number must be finite")
+        return value
 
 
 @dataclass(frozen=True)
@@ -400,11 +418,15 @@ class ToolRegistryEntry:
         except ValidationError as error:
             details = error.errors(include_url=False)
             detail = details[0] if details else {}
+            maximum, minimum, actual = _validation_limits(detail)
             return ToolArgumentValidationResult(
                 valid=False,
                 code="TOOL_ARGUMENT_CONTRACT_VIOLATION",
                 path=_validation_path(detail.get("loc")),
                 reason_code=_validation_error_reason(detail),
+                maximum=maximum,
+                minimum=minimum,
+                actual=actual,
             )
         except (TypeError, ValueError) as error:
             return ToolArgumentValidationResult(
@@ -816,6 +838,52 @@ def _validation_error_reason(detail: object) -> str | None:
                 if _VALIDATION_CODE.fullmatch(candidate):
                     return candidate
         return _validation_reason(detail.get("type"))
+    return None
+
+
+def _validation_limits(
+    detail: object,
+) -> tuple[int | float | None, int | float | None, int | float | None]:
+    if not isinstance(detail, dict):
+        return None, None, None
+    context = detail.get("ctx")
+    context = context if isinstance(context, dict) else {}
+    maximum = _bounded_number(
+        context.get("le")
+        if context.get("le") is not None
+        else context.get("lt")
+    )
+    if maximum is None:
+        maximum = _bounded_number(context.get("max_length"))
+        if maximum is None:
+            maximum = _bounded_number(context.get("max_items"))
+    minimum = _bounded_number(
+        context.get("ge")
+        if context.get("ge") is not None
+        else context.get("gt")
+    )
+    if minimum is None:
+        minimum = _bounded_number(context.get("min_length"))
+        if minimum is None:
+            minimum = _bounded_number(context.get("min_items"))
+    actual = _bounded_number(detail.get("input"))
+    if actual is None and any(
+        key in context
+        for key in ("max_length", "min_length", "max_items", "min_items")
+    ):
+        input_value = detail.get("input")
+        if isinstance(input_value, (str, list, tuple, dict)):
+            actual = _bounded_number(len(input_value))
+    return maximum, minimum, actual
+
+
+def _bounded_number(value: object) -> int | float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if abs(value) <= 9_007_199_254_740_991 else None
+    if isinstance(value, float) and math.isfinite(value):
+        return value
     return None
 
 

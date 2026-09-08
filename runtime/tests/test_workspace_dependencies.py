@@ -132,6 +132,50 @@ def test_workspace_dependencies_tool_projects_verified_paths(tmp_path: Path) -> 
     assert validated["data"]["pythonPath"] == result["data"]["pythonPath"]
 
 
+def test_workspace_dependencies_tool_omits_checksum_metadata_from_response(
+    tmp_path: Path,
+) -> None:
+    python = _executable(tmp_path / "python3")
+    ripgrep = _executable(tmp_path / "rg")
+    catalog = WorkspaceDependencyCatalog(
+        python_executable=python,
+        python_paths=(),
+        ripgrep_executable=ripgrep,
+        owner_uid=os.getuid(),
+        python_version="3.12.13",
+        ripgrep_version="14.1.1",
+        python_packages=(),
+    )
+    entry = workspace_dependencies_entry(
+        lambda: catalog,
+        lambda: {
+            "defaultDependencyBindingId": "default-binding",
+            "manifestSha256": "a" * 64,
+            "snapshotSha256": "b" * 64,
+            "activeSkillDependencyBindings": [{
+                "skillQualifiedId": "system:plugin-creator",
+                "bindingId": "plugin-binding",
+                "status": "ready",
+                "manifestSha256": "c" * 64,
+                "requirementsSha256": "d" * 64,
+                "diagnostics": [],
+            }],
+        },
+    )
+
+    result = entry.adapter.execute({}, threading.Event())
+    validated = entry.validate_result(result)
+
+    assert "sha256" not in json.dumps(validated["data"]).lower()
+    assert validated["data"]["defaultDependencyBindingId"] == "default-binding"
+    assert validated["data"]["activeSkillDependencyBindings"] == [{
+        "skillQualifiedId": "system:plugin-creator",
+        "bindingId": "plugin-binding",
+        "status": "ready",
+        "diagnostics": [],
+    }]
+
+
 def test_workspace_dependencies_result_keeps_binding_metadata_during_finalization(
     tmp_path: Path,
 ) -> None:

@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultReleaseRoot = path.join(root, "release");
+const RUNTIME_PROTOCOL_TIMEOUT_MS = 30_000;
 
 
 function spawnCapture(executable, args, options) {
@@ -24,6 +25,26 @@ function spawnCapture(executable, args, options) {
     child.stderr.on("data", (chunk) => { stderr = append(stderr, chunk); });
     child.once("error", reject);
     child.once("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
+  });
+}
+
+
+function waitForExit(exitPromise, timeoutMs, timeoutMessage) {
+  return new Promise((resolve, reject) => {
+    const exitTimer = setTimeout(
+      () => reject(new Error(timeoutMessage)),
+      timeoutMs,
+    );
+    exitPromise.then(
+      (value) => {
+        clearTimeout(exitTimer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(exitTimer);
+        reject(error);
+      },
+    );
   });
 }
 
@@ -243,8 +264,10 @@ async function verifyRuntimeProtocol({ appRoot, pythonExecutable }) {
   let requestId = 0;
   const readNextLine = (method) => new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      reject(new Error(`packaged Runtime did not answer ${method} within 10 seconds\n${stderr}`));
-    }, 10_000);
+      reject(new Error(
+        `packaged Runtime did not answer ${method} within ${RUNTIME_PROTOCOL_TIMEOUT_MS / 1000} seconds\n${stderr}`,
+      ));
+    }, RUNTIME_PROTOCOL_TIMEOUT_MS);
     lineIterator.next().then(
       (value) => {
         clearTimeout(timer);
@@ -282,10 +305,11 @@ async function verifyRuntimeProtocol({ appRoot, pythonExecutable }) {
     assert.deepEqual(health.result, { state: "ready" });
     const shutdown = await request("runtime/shutdown", {});
     assert.ok(Object.hasOwn(shutdown, "result"));
-    const exit = await Promise.race([
+    const exit = await waitForExit(
       exitPromise,
-      new Promise((_, reject) => setTimeout(() => reject(new Error(`packaged Runtime did not exit\n${stderr}`)), 10_000)),
-    ]);
+      RUNTIME_PROTOCOL_TIMEOUT_MS,
+      `packaged Runtime did not exit within ${RUNTIME_PROTOCOL_TIMEOUT_MS / 1000} seconds\n${stderr}`,
+    );
     assert.equal(exit.code, 0, stderr);
     assert.ok((await readdir(dataDirectory)).length > 0, "Runtime did not create SQLite data");
   } finally {

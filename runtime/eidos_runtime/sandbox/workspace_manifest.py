@@ -183,6 +183,11 @@ def attach_workspace_diff(
         and isinstance(exit_code, int)
         and not isinstance(exit_code, bool)
     )
+    managed_running = (
+        data.get("executionStatus") == "running"
+        and isinstance(data.get("sessionId"), str)
+        and bool(data["sessionId"])
+    )
     change_state = (
         "unchanged"
         if process_not_started
@@ -211,7 +216,7 @@ def attach_workspace_diff(
     explicit_reconciliation = result.get("reconciliationRequired")
     if explicit_reconciliation is True:
         reconciliation_required = True
-    elif explicit_reconciliation is False and execution_known:
+    elif explicit_reconciliation is False and (execution_known or managed_running):
         reconciliation_required = False
     else:
         reconciliation_required = (
