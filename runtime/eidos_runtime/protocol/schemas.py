@@ -342,7 +342,6 @@ class WorkspaceExecutableDto(ClosedModel):
     name: StrictStr
     path: StrictStr
     version: StrictStr
-    sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class WorkspacePythonPackageDto(ClosedModel):

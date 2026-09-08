@@ -65,6 +65,24 @@ class ToolContractTests(unittest.TestCase):
 
         self.assertTrue(result["sideEffectsMayExist"])
 
+    def test_workspace_dependencies_model_projection_keeps_only_code_and_data(self) -> None:
+        result = canonical_tool_result("workspace_dependencies", {
+            "outcome": "success",
+            "code": "ok",
+            "summary": "Verified workspace dependencies are available",
+            "data": {"source": "eidos_runtime"},
+            "sideEffectsMayExist": False,
+        })
+
+        projection = project_tool_result("workspace_dependencies", result)
+
+        self.assertEqual(
+            projection.model_result,
+            {"code": "ok", "data": {"source": "eidos_runtime"}},
+        )
+        self.assertEqual(projection.canonical_result, result)
+        self.assertEqual(projection.ui_result["outcome"], "success")
+
     def test_shell_skill_invocation_metadata_is_canonical_and_projected(self) -> None:
         result = canonical_tool_result("run_shell", {
             "outcome": "success",

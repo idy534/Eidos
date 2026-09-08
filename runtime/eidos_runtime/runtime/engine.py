@@ -38,6 +38,7 @@ from eidos_runtime.runtime.loop_guard import (
 from eidos_runtime.runtime.protocol_diagnostics import ProtocolDiagnostic
 from eidos_runtime.runtime.run_resources import RunResourceError, RunResources
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
+from eidos_runtime.runtime.runtime_dependencies import RuntimeDependencyCatalog
 from eidos_runtime.runtime.sampling import (
     SamplingAuthenticationFailed,
     SamplingCancelled,
@@ -125,6 +126,7 @@ class RuntimeEngine:
         resource_registry: ResourceRegistry | None = None,
         events: RuntimeEvents | None = None,
         repository_runtime: RepositoryWorkspaceRuntimePort | None = None,
+        runtime_dependency_catalog: RuntimeDependencyCatalog | None = None,
     ) -> None:
         self.store = store
         self.model = model
@@ -141,6 +143,7 @@ class RuntimeEngine:
         self.state_machine = RuntimePhaseTracker()
         self.active_started: float | None = None
         self.repository_runtime = repository_runtime
+        self.runtime_dependency_catalog = runtime_dependency_catalog
 
     def run(self, run_id: str, cancel: threading.Event) -> None:
         repository_context = RunRepositoryContext()
@@ -266,6 +269,7 @@ class RuntimeEngine:
                     and run_context.model_profile.wire_api == "openai_responses"
                 ),
                 events=self.events,
+                runtime_dependency_catalog=self.runtime_dependency_catalog,
             ) as resources:
                 bind_image_authority = getattr(
                     self.model, "set_image_authority_provider", None

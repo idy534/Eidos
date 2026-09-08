@@ -152,7 +152,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Function 和 Custom 的 payload 类型来自 Provider protocol 和持久化的 `payload_kind` discriminator。Runtime 不根据 Function arguments 的 JSON 内容推断 Custom。两条路径在同一个 Patch AST、Workspace prepare、CAS、Durable Intent、atomic commit、final validation 和 canonical Tool Result pipeline 汇合。
 - Runtime 的 Custom 路径直接把 raw Patch 交给 `parse_patch`。Function compatibility 路径仍由 `CodexPatchEncoder` 把结构化 changes 确定性编码为 Codex Patch 文本。Runtime 自动生成 `*** Begin Patch`、`*** End Patch`、`+`、`-`、`@@` 和 `*** End of File`。Add 内容统一使用 LF 行尾语义。`apply_patch.lark` 以 `openai/codex` 的 grammar 为来源，Lark 负责语法解析。本地 grammar 将上游的 `add_line+` 改为 `add_line*`，因为 Codex Rust streaming parser 允许没有内容行的 Add File；显式的 `+` 仍表示一条空内容行。Lark 不能直接加载上游的零宽文本正则，所以本地 grammar 也对这些 token 做了兼容适配。Parser 可以接受 CRLF 和外层空白，但不会自动补齐 envelope、marker 或行前缀。
 - 文件工具在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。`apply_patch` 支持 Codex 风格的 Add、Update、Delete、Move、多文件、多 chunk、首个 Update 不带 `@@`、裸 `@@`、`@@ context` 和 `*** End of File`。Update 匹配按 Patch chunk 顺序向前查找。工具仍会复用版本复检、Workspace boundary、Seatbelt、原子替换和最终内容校验。
-- `workspace_dependencies` 返回 Eidos 自带并经过 owner、类型、可执行位和 SHA-256 校验的 Python 与 ripgrep。它也返回 Python import roots 和受支持包版本。当前 Runtime 随包提供 `python-docx`。成功结果的 `data` 可以返回 `defaultDependencyBindingId` 和 `activeSkillDependencyBindings`。模型不需要依赖用户全局 Python 或临时安装包。
+- `workspace_dependencies` 返回 Eidos 自带并经过 owner、类型、可执行位和 SHA-256 校验的 Python 与 ripgrep，但不会在响应中回显校验哈希。它也返回 Python import roots 和受支持包版本。model projection 只保留 `code` 和 `data`，canonical result 仍保留 Runtime 状态字段。当前 Runtime 随包提供 `python-docx`。成功结果的 `data` 可以返回 `defaultDependencyBindingId` 和 `activeSkillDependencyBindings`。模型不需要依赖用户全局 Python 或临时安装包。
 - 已应用的文件 Diff 会进入 ToolCall 持久事实，并在 Execution Feed 中展示。
 - macOS 原子替换会先用 fd-relative `fclonefileat` 保留普通文件的扩展属性（包括 `com.apple.provenance`），再写入候选内容并单独应用、验证 ACL。clonefile 不可用时会安全回退到受校验的 `fcopyfile` 路径。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
@@ -249,7 +249,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 ## Distribution
 
 - `pnpm build:runtime:mac` 可以构建 macOS arm64 的 self-contained Runtime Bundle。
-- Bundle 使用 managed CPython 3.12.13、锁定的 production dependencies、Runtime 资源、`eidos_runtime/workspace/apply_patch.lark` grammar 和受管 Ripgrep。Bundle 根目录的 `runtime.json` contract 固定 `schemaVersion: 1`、Bundle version、相对资源路径和 SHA-256 inventory。Node 资源的 contract 包含固定 Node 版本、`node_modules` 和 CJS/ESM loader。构建脚本会生成并校验这个 manifest，再把 Bundle 放入 App resources。
+- Bundle 使用 managed CPython 3.12.13、锁定的 production dependencies、Runtime 资源、`eidos_runtime/workspace/apply_patch.lark` grammar 和受管 Ripgrep。Bundle 根目录的 `runtime.json` contract 固定 `schemaVersion: 1`、Bundle version、相对资源路径和 SHA-256 inventory。Node 资源的 contract 包含固定 Node 版本、`node_modules` 和 CJS/ESM loader。构建脚本会生成并校验这个 manifest，再把 Bundle 放入 App resources。Runtime 初始化时会完整校验一次 Bundle，并把已校验的 Catalog 传给 Run；`workspace_dependencies` 只读取这个 Catalog，Shell 启动前仍会重新校验绑定。
 - Packaged Electron 使用 `Contents/Resources/runtime/`，不回退到系统 Python、PATH、`.venv` 或用户 `PYTHONHOME`。
 - `pnpm package:mac` 生成未签名的本地 arm64 DMG，并执行 packaged smoke。
 - `pnpm package:mac:release` 接入签名、hardened runtime、notarization、stapling 和 Gatekeeper 验证。正确时序是先完成 Bundle 文件和 manifest hash，再签名；签名改变嵌套文件后，需要 refresh 并重新校验 `runtime.json`，再做最终 Gatekeeper 检查。Release 需要构建机提供 Apple credentials。没有 credentials 时，仓库不能验证真实签名结果。

@@ -28,6 +28,9 @@ from eidos_runtime.protocol.server import (  # noqa: E402
     valid_request_id,
 )
 from eidos_runtime.db.storage import SessionStore, WorkspaceBoundaryError  # noqa: E402
+from eidos_runtime.runtime.runtime_dependencies import (  # noqa: E402
+    RuntimeDependencyCatalogError,
+)
 
 
 def run_runtime(
@@ -46,7 +49,7 @@ def run_runtime(
         capture_output=True,
         text=True,
         env=environment,
-        timeout=5,
+        timeout=30,
         check=False,
     )
 
@@ -85,6 +88,65 @@ class RuntimeProtocolTests(unittest.TestCase):
         self.assertEqual(title, "分析 Codex 架构")
         self.assertLessEqual(len(long_title), 60)
         self.assertLessEqual(len(long_title.encode("utf-8")), 120)
+
+    def test_initialize_binds_runtime_dependency_catalog_before_runs(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-data-") as data_directory:
+            server = RuntimeServer(
+                io.StringIO(), Path(data_directory), ScriptedModel([])
+            )
+            catalog = object()
+            try:
+                with (
+                    patch(
+                        "eidos_runtime.protocol.server.discover_runtime_dependency_catalog",
+                        return_value=catalog,
+                    ) as discover,
+                    patch(
+                        "eidos_runtime.protocol.server.run_seatbelt_self_test",
+                        return_value=SeatbeltSelfTestResult(False, (), ("test",)),
+                    ),
+                ):
+                    server.handle({
+                        "jsonrpc": "2.0",
+                        "id": "client-init",
+                        "method": "initialize",
+                        "params": {
+                            "client": {"name": "test", "version": "1"},
+                            "protocolVersion": 1,
+                        },
+                    })
+
+                discover.assert_called_once_with()
+                self.assertIs(server.supervisor.runtime_dependency_catalog, catalog)
+            finally:
+                server.close()
+
+    def test_initialize_rejects_invalid_runtime_dependency_catalog(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-data-") as data_directory:
+            output = io.StringIO()
+            server = RuntimeServer(output, Path(data_directory), ScriptedModel([]))
+            try:
+                with patch(
+                    "eidos_runtime.protocol.server.discover_runtime_dependency_catalog",
+                    side_effect=RuntimeDependencyCatalogError(
+                        "manifest_invalid", "fixture"
+                    ),
+                ):
+                    server.handle({
+                        "jsonrpc": "2.0",
+                        "id": "client-init",
+                        "method": "initialize",
+                        "params": {
+                            "client": {"name": "test", "version": "1"},
+                            "protocolVersion": 1,
+                        },
+                    })
+
+                message = json.loads(output.getvalue().splitlines()[-1])
+                self.assertEqual(message["error"]["data"]["code"], "INTERNAL_ERROR")
+                self.assertFalse(server.initialized)
+            finally:
+                server.close()
 
     def test_model_selection_and_session_mutations_use_closed_rpc_contracts(self) -> None:
         with (

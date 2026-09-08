@@ -56,13 +56,13 @@ class ClosedSchemaTests(unittest.TestCase):
                 "name": "python3",
                 "path": "/app/runtime/.venv/bin/python",
                 "version": "3.12.13",
-                "sha256": "a" * 64,
             }],
         })
         self.assertEqual(data.python_path, [
             "/app/runtime/.venv/lib/python3.12/site-packages",
         ])
         self.assertEqual(data.to_json_value()["executables"][0]["name"], "python3")
+        self.assertNotIn("sha256", data.to_json_value()["executables"][0])
 
 
 if __name__ == "__main__":

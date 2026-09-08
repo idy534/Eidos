@@ -1135,17 +1135,24 @@ def _project_tool_result(
                 "continuation",
                 _continuation(tool_name, projected),
             )
-        model_result = {
-            "toolName": tool_name,
-            "outcome": canonical_result.get("outcome"),
-            "code": canonical_result.get("code"),
-            "summary": _bounded_string(str(canonical_result.get("summary", ""))),
-            "data": projected,
-            "sideEffectsMayExist": canonical_result.get("sideEffectsMayExist", False),
-            "reconciliationRequired": canonical_result.get(
-                "reconciliationRequired", False
-            ),
-        }
+        model_result = (
+            {
+                "code": _bounded_string(str(canonical_result.get("code", "unknown"))),
+                "data": projected,
+            }
+            if tool_name == "workspace_dependencies"
+            else {
+                "toolName": tool_name,
+                "outcome": canonical_result.get("outcome"),
+                "code": canonical_result.get("code"),
+                "summary": _bounded_string(str(canonical_result.get("summary", ""))),
+                "data": projected,
+                "sideEffectsMayExist": canonical_result.get("sideEffectsMayExist", False),
+                "reconciliationRequired": canonical_result.get(
+                    "reconciliationRequired", False
+                ),
+            }
+        )
         model_result = _fit_serialized_budget(model_result)
     fingerprint = hashlib.sha256(
         _canonical_json(
