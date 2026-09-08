@@ -12,6 +12,7 @@ const packageJsonPath = path.join(root, "package.json");
 const builderConfigPath = path.join(root, "electron-builder.yml");
 const packageScriptPath = path.join(root, "scripts", "package-macos.sh");
 const runtimeBuilderPath = path.join(root, "scripts", "build-macos-runtime.sh");
+const packagedSmokePath = path.join(root, "scripts", "packaged-electron-smoke.mjs");
 const runtimeDependencyTestPath = path.join(
   root,
   "scripts",
@@ -152,4 +153,11 @@ test("packaging suite includes the isolated runtime dependency contract tests", 
     packageJson.scripts["test:packaging"],
     /scripts\/macos-sign\.test\.mjs/,
   );
+});
+
+
+test("packaged Runtime smoke allows cold startup and clears its exit timer", async () => {
+  const smoke = await readFile(packagedSmokePath, "utf8");
+  assert.match(smoke, /const RUNTIME_PROTOCOL_TIMEOUT_MS = 30_000;/);
+  assert.match(smoke, /clearTimeout\(exitTimer\)/);
 });
