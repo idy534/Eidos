@@ -642,6 +642,21 @@ class RuntimeEngine:
                     pending_provider_recovery = True
                     break
                 except SamplingError as error:
+                    if (
+                        isinstance(error, SamplingRetryableError)
+                        and not error.had_progress
+                        and error.retry_decision is not None
+                        and error.retry_decision.retry
+                    ):
+                        frozen = self.store.context_snapshot_repository().read_for_model_attempt(
+                            step.model_attempt_id
+                        )
+                        if frozen is not None:
+                            self.store.start_retry_model_attempt(
+                                run.run_id,
+                                context_snapshot_id=frozen.snapshot_id,
+                            )
+                            continue
                     self._handle_sampling_failure(run.run_id, error)
                     return
 

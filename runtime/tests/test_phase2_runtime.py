@@ -208,8 +208,9 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
                 if self.calls == 1:
                     on_text_delta("safe progress")
                     raise OSError("fixture")
-                on_text_delta("done")
-                return ModelResponse(text="done")
+                return ModelResponse(tool_calls=(ModelToolCall(
+                    "replayed", "list_files", {}
+                ),))
 
         run, _ = self.store.create_run(self.session["id"], "stream")
         model = InterruptedThenCompletedModel()
@@ -231,6 +232,10 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         )
         connection = self.store.connection
         assert connection is not None
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0],
+            0,
+        )
         self.assertEqual(connection.execute("SELECT COUNT(*) FROM steps").fetchone()[0], 1)
         self.assertEqual(
             connection.execute("SELECT COUNT(*) FROM model_attempts").fetchone()[0],

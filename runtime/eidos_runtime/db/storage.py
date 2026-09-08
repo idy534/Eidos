@@ -872,8 +872,12 @@ class SessionStore:
             retry_decision=retry_decision,
         )
 
-    def start_retry_model_attempt(self, run_id: str) -> str:
-        return self._repository(self._execution).start_retry_model_attempt(run_id)
+    def start_retry_model_attempt(
+        self, run_id: str, *, context_snapshot_id: str | None = None
+    ) -> str:
+        return self._repository(self._execution).start_retry_model_attempt(
+            run_id, context_snapshot_id=context_snapshot_id
+        )
 
     def read_model_attempts(self, run_id: str) -> list[dict[str, object]]:
         return self._repository(self._execution).read_model_attempts(run_id)

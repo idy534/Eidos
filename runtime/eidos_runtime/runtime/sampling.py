@@ -32,10 +32,12 @@ class SamplingError(RuntimeError):
         *,
         had_progress: bool = False,
         failure: ModelRequestFailure | None = None,
+        retry_decision: RetryDecision | None = None,
     ) -> None:
         super().__init__(message)
         self.had_progress = had_progress
         self.failure = failure
+        self.retry_decision = retry_decision
 
 
 class SamplingRetryableError(SamplingError):
@@ -143,6 +145,7 @@ class SamplingRuntime:
                 had_progress=had_progress,
                 canceled=isinstance(error, SamplingCancelled),
                 max_attempts=step.model_profile.retry_max_attempts,
+                attempt_number=_current_attempt_number(self.store, step),
             )
             self.store.complete_current_model_attempt(
                 step.run_id,
@@ -163,6 +166,7 @@ class SamplingRuntime:
                 ),
                 retry_decision=_retry_decision_payload(decision, failure),
             )
+            error.retry_decision = decision
             raise error
 
         invalid_completion = (
@@ -360,13 +364,17 @@ def _terminal_retry_decision(
     had_progress: bool,
     canceled: bool,
     max_attempts: int,
+    attempt_number: int,
 ) -> RetryDecision:
     if had_progress or (failure is None and isinstance(error, SamplingRetryableError)):
         return RetryDecision(retry=False, reason="unsafe_stream_progress")
     decision = retry_decision(
         failure or error,
         RetryState(
-            attempt_number=(failure.transport_attempt_count if failure else 1) or 1,
+            attempt_number=max(
+                attempt_number,
+                (failure.transport_attempt_count if failure else 1) or 1,
+            ),
             visible_output_emitted=had_progress,
             canceled=canceled,
         ),
@@ -374,11 +382,13 @@ def _terminal_retry_decision(
     )
     if decision.reason == "retry_budget_exhausted":
         return RetryDecision(retry=False, reason="transport_retries_exhausted")
-    if decision.retry:
-        # Sampling never owns a second transport request loop. If a failure reaches
-        # it after a ModelRunner interruption, replay is unsafe by definition.
-        return RetryDecision(retry=False, reason="unsafe_stream_progress")
     return decision
+
+
+def _current_attempt_number(store: SessionStore, step: StepContext) -> int:
+    attempts = store.read_model_attempts(step.run_id)
+    current = [attempt for attempt in attempts if attempt["stepId"] == step.step_id]
+    return max((int(attempt["ordinal"]) for attempt in current), default=1)
 
 
 def _retry_decision_payload(

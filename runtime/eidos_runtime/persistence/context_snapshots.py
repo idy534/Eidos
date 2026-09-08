@@ -127,9 +127,16 @@ class ContextSnapshotRepository(Repository):
     ) -> ContextSnapshot | None:
         with self.lock:
             row = self._connection().execute(
-                "SELECT snapshot_json FROM context_snapshots "
-                "WHERE model_attempt_id = ?",
-                (model_attempt_id,),
+                """
+                SELECT context_snapshots.snapshot_json
+                FROM context_snapshots
+                LEFT JOIN model_attempts
+                  ON model_attempts.context_snapshot_id = context_snapshots.id
+                WHERE context_snapshots.model_attempt_id = ?
+                   OR model_attempts.id = ?
+                LIMIT 1
+                """,
+                (model_attempt_id, model_attempt_id),
             ).fetchone()
         if row is None:
             return None

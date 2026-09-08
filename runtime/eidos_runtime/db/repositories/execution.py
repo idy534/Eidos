@@ -847,7 +847,9 @@ class ExecutionRepository(Repository):
             )
         return changed.rowcount == 1
 
-    def start_retry_model_attempt(self, run_id: str) -> str:
+    def start_retry_model_attempt(
+        self, run_id: str, *, context_snapshot_id: str | None = None
+    ) -> str:
         """Create the next Attempt immediately before its provider request."""
         now = _now_ms()
         with self.lock, self._connection() as connection:
@@ -872,6 +874,16 @@ class ExecutionRepository(Repository):
             ).fetchone()
             if running_attempt is not None:
                 raise InvalidRunStateError("model attempt cannot retry")
+            if context_snapshot_id is not None:
+                snapshot = connection.execute(
+                    """
+                    SELECT id FROM context_snapshots
+                    WHERE id = ? AND run_id = ?
+                    """,
+                    (context_snapshot_id, run_id),
+                ).fetchone()
+                if snapshot is None:
+                    raise InvalidRunStateError("model attempt context snapshot is invalid")
             last = connection.execute(
                 """
                 SELECT COALESCE(MAX(ordinal), 0) AS ordinal FROM model_attempts
@@ -883,15 +895,16 @@ class ExecutionRepository(Repository):
             connection.execute(
                 """
                 INSERT INTO model_attempts (
-                    id, step_id, ordinal, status, lease_id,
+                    id, step_id, ordinal, status, context_snapshot_id, lease_id,
                     configured_provider_id, wire_api, model_id,
                     request_timeout, started_at
-                ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     attempt_id,
                     step["id"],
                     int(last["ordinal"]) + 1,
+                    context_snapshot_id,
                     *_attempt_metadata(connection, run_id),
                     now,
                 ),

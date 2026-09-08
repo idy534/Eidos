@@ -190,6 +190,62 @@ class ModelPersistenceTests(unittest.TestCase):
             attempts[0]["retryDecision"]["reason"], "unsafe_stream_progress"
         )
 
+    def test_stream_failure_without_progress_retries_in_a_new_attempt(self) -> None:
+        class RetryThenSuccess:
+            calls = 0
+            contexts = []
+            running_snapshots = []
+
+            def complete(
+                self, context, _cancel, on_text_delta,
+                *, instructions,
+                allow_tools=True, tool_definitions=(),
+            ):
+                self.calls += 1
+                self.contexts.append(context)
+                if self.calls == 1:
+                    raise ModelRequestError(ModelRequestFailure(
+                        code="provider_unavailable",
+                        retryable=True,
+                        provider_name="deepseek",
+                    ))
+                self.running_snapshots.append(
+                    self.store.read_running_context_snapshot(self.run_id)
+                )
+                on_text_delta("done")
+                return ModelResponse(
+                    text="done",
+                    provider_name="deepseek",
+                    resolved_model_name="deepseek-v4-flash",
+                    finish_reason="stop",
+                    response_state="complete",
+                )
+
+        run, _ = self.store.create_run(self.session["id"], "retry stream")
+        model = RetryThenSuccess()
+        model.store = self.store
+        model.run_id = run["id"]
+        RuntimeEngine(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        attempts = self.store.read_model_attempts(run["id"])
+        self.assertEqual(model.calls, 2)
+        self.assertEqual([attempt["status"] for attempt in attempts], ["failed", "completed"])
+        self.assertEqual(attempts[0]["errorCode"], "provider_unavailable")
+        self.assertTrue(attempts[0]["retryDecision"]["retry"])
+        self.assertEqual(attempts[0]["retryDecision"]["reason"], "transport_retry")
+        self.assertEqual(
+            attempts[0]["contextSnapshotId"], attempts[1]["contextSnapshotId"]
+        )
+        self.assertEqual(model.contexts[0], model.contexts[1])
+        running_snapshot = model.running_snapshots[0]
+        self.assertIsNotNone(running_snapshot)
+        self.assertEqual(
+            running_snapshot.snapshot_id, attempts[1]["contextSnapshotId"]
+        )
+
     def test_each_attempt_persists_its_own_usage(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "attempt usage")
         self.store.increment_model_step(run["id"])
