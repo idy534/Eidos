@@ -65,7 +65,7 @@
 - 确定的 Tool Error 会作为 ToolResult 进入 Context，并触发下一次模型决策。模型可以修正参数或选择替代 Tool。一次失败不会单独终止 Run。
 - 已明确 `termination = exit` 且有 `exitCode` 的 Shell 会把退出事实、stdout 和 stderr 返回给模型。非 0 退出会让 Item 为 `failed`，但会让 ToolCall 为 `completed`。Workspace manifest 或 index observation 不完整只会标记 observation metadata，不会建立只读 reconciliation barrier，也不会阻止后续 Shell 或其他 ToolCall。Runtime 不自动重放原 Shell。
 - Cancellation、Approval、Reconciliation 和 operational segment rollover 都在安全点处理。
-- LoopGuard 使用 ToolCall、Workspace version、reconciliation epoch、Context fact frontier 和 active error 的 semantic fingerprint。首次重复会注入恢复信息，恢复后再次回到同一状态才会以 `repeated_tool_call` 或 `no_progress` 停止。
+- LoopGuard 使用 ToolCall、Workspace version、reconciliation epoch、Context fact frontier 和 active error 的 semantic fingerprint。它负责 semantic convergence，不是固定步数限制。首次重复会注入恢复信息，恢复后再次回到同一状态才会以 `repeated_tool_call` 或 `no_progress` 停止。
 - Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。Runtime 没有固定的模型步数、Run 时长或 repeated-call counter 生命周期规则。
 
 ## Context
@@ -159,6 +159,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
 - ToolCallRuntime 和 ToolExecutionController 会执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。
 - 确定的 Tool Error 会持久化为 ToolResult，并回到模型循环。Runtime 不会自动重放有副作用的 Tool。未清除的 reconciliation barrier 会阻止成功终态。
+- 普通 Tool Error 不会单独终止 Run。模型可以根据错误事实修正参数或选择替代 Tool。
 - 只有安全只读的 `parallel_safe` Tool 批次可以并发。副作用 Tool 保持独占，结果按模型声明顺序提交。
 
 ## Shell
@@ -166,20 +167,23 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `HostShellResolver` 先使用账户 login shell，再使用 `SHELL`，最后使用 `/bin/zsh`、`/bin/bash`、`/bin/sh`。Resolver 只接受有效的绝对可执行 shell 路径。
 - `ShellEnvironmentSnapshotProvider` 对每个 shell executable、canonical cwd 和 capture launch identity 做一次 `-lc` 环境捕获。默认 attempt 会在同一个 effective Seatbelt 边界内运行 trusted capture script。捕获使用 NUL 分隔格式，限制为 10 秒和 512 KiB。
 - 普通 `run_shell` 命令使用 resolved shell 的 `-c`。Snapshot 捕获失败时使用 sanitized parent environment，并记录有界的稳定 warning。Snapshot 不恢复 aliases、functions 或其他 shell state。
+- Shell process lifetime 与 Tool wait lifetime 分离。`run_shell.yieldTimeMs` 只限定当前 ToolCall 的观察窗口，不设置命令完成 deadline。命令在窗口结束时仍运行，会返回 `shell_running`、`executionStatus = running`、`sessionId` 和当前增量输出。模型可以在同一 Run 内用 `write_stdin` 继续等待、写入 stdin，或用 `chars = "\u0003"` 发送 Ctrl-C；session ID 只在当前 Run 内有效。
 - Shell stdout 和 stderr 使用 UTF-8 增量解码。Runtime 将解码后的片段按接收顺序累积到 Item content，Desktop Execution Feed 在运行中和终态都使用这份累计内容。这样可以保留 stdout 和 stderr 的接收顺序，也不会在终态重复追加最终流。
 - Desktop Shell Feed 默认折叠 Shell Item。用户展开后，Feed 将 Shell 输出按纯文本展示，并移除 ANSI 和 OSC 控制序列，不激活终端格式或链接。旧 Item 缺少或没有 `content` 时，Feed 回退到结果中的 stdout 和 stderr。
 - Shell Result 存在 `attemptCount`、`sandboxed` 或 `escalated` 时，Execution Feed 会展示这些已有执行和权限事实，包括扩权重试信息。
 - `run_shell` 的模型结果投影对 stdout 和 stderr 各保留首尾，每条流最多 16 KiB，整个 JSON 最多 48 KiB。原始 `truncated` 和 `omittedBytes` 事实不会被模型投影覆盖。模型投影另用 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 标记模型省略的 stdout/stderr UTF-8 字节和继续读取方式。
 - `read_tool_output` 是只读工具。它要求前一次 `run_shell` 的 provider tool call ID，默认读取 stdout，也可以读取 stderr。它只读取当前 Session 中已持久化的终态 Shell 结果，历史 Run 可以读取；运行中、跨 Session、缺失或歧义 ID 会拒绝。调用方可以用 `offsetBytes`、`maxBytes`（请求范围 4 字节至 16 KiB）或 `fromEnd` 分页读取。结果返回 UTF-8 边界对齐的实际 `startByte`、`endByte` 和 `nextOffset`，单页可能小于请求值，调用方必须按 `nextOffset` 继续。该工具不会重新执行 Shell 或清除 reconciliation；Shell 原始输出上限已经丢失的字节无法恢复。
+- 运行中的 Shell 使用同一 Run 内的 `write_stdin` 继续等待和读取增量输出。`read_tool_output` 仍只读取已持久化的终态结果。
 - Shell effective environment 使用真实 `HOME`、snapshot 的 Host `PATH`、真实 `TMPDIR`、`USER`、`LOGNAME`、`LANG` 和 `LC_*`。Bundled `rg` 目录只追加在 `PATH` 末尾并去重。Provider 会在启动 login shell 前移除继承的 `EIDOS_*` 和 packaged Runtime Python control environment。用户 profile 随后声明的普通开发环境仍会进入 snapshot。Runtime 不会强制设置 `LC_ALL`。
 - `run_shell` 不从 `models.json` 注入 API Key，也不强制禁用用户 Git 配置。`HardenedGitRunner` 仍使用独立的 Git 执行路径。
 - 默认 Seatbelt 允许全盘 read、普通 executable 和 dylib mapping。Workspace、snapshot `TMPDIR` 和 canonical `/tmp` 可写。真实 `HOME` 的其他位置、`.git` 和 linked metadata 只读。Eidos data 和 credential 仍由 permanent deny 保护。data 内 projectless 或 Worktree workspace 可读写。active Skill root 可读和执行但不可写。Workspace `.env` 可读，但输出仍经过 SensitiveScanner。默认 network denied。
 - `run_shell` 的默认 Workspace Seatbelt attempt 不需要 Approval。模型可以用高层 `networkAccess=request` 表达命令的联网需求。Runtime 会在启动进程前把该 intent 规范化为 additional network permission，并请求 Approval。获批后的命令仍在 macOS Seatbelt 中运行。旧的 `sandboxPermissions` 和 `additionalPermissions` 输入继续兼容。additional write 和 unsandboxed attempt 仍需要 Approval。升级不能移除 hard confidentiality deny。
 - Runtime permission 投影会分别说明默认 Shell 网络状态和网络是否可通过 Approval 请求。创建项目、安装依赖和下载源码等任务不要求用户先明确说“联网”。默认 network denied 不再被投影成网络能力不存在。
 - Shell launch boundary 验证 Workspace identity 和 cwd。`run_shell.cwd` 接受 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径，并在执行前归一化。Workspace 外的 absolute cwd 返回普通 Tool Error。post-execution observation 记录 Workspace diff、退出状态和 reconciliation 需要性。
-- Tool Result 明确返回 `reconciliationRequired = false` 时，普通非零退出不会仅因为 `code = nonzero_exit` 建立 barrier。此时 Item 状态是 `failed`，ToolCall 状态是 `completed`。结果仍会保留退出码、终止原因和可能副作用证据。真正未知的执行结果仍会 fail closed。
+- Tool Result 明确返回 `reconciliationRequired = false` 时，普通非零退出不会仅因为 `code = shell_exit_nonzero` 建立 barrier。此时 Item 状态是 `failed`，ToolCall 状态是 `completed`。结果仍会保留退出码、终止原因和可能副作用证据。真正未知的执行结果仍会 fail closed。
 - 默认 sandboxed attempt 出现明确的 network denial 时，Runtime 会保留首次 attempt 和 denial 证据，但不会把它升级成 unsandboxed retry。Runtime 也不会自动重放可能已经产生 Workspace 副作用的命令。
 - 未清除的 reconciliation barrier 会阻止 Run 提交成功终态。Runtime 不会把 `sideEffectsMayExist` 当作清除条件，也不会自动重放有副作用的 Tool。
+- Reconciliation 默认继续 `CONTINUE_READ_ONLY`，而不是 interrupt。Barrier 只允许安全只读 Tool 和空的 `write_stdin` poll；其他副作用 Tool 返回普通 `reconciliation_required` Tool Error。完整 Workspace refresh 提交后才会清除 barrier。
 - Workspace manifest observation 不完整时可以产生 `unknown` observation。已知成功退出不会仅因为观察不完整而被改成不确定副作用。
 
 ## Approval / Sandbox
@@ -229,7 +233,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Runtime 支持 cancel、pause、resume 和 restart verification 的 typed boundary。
 - Resume 前会检查 Workspace identity、规则、Repository/Context snapshot、permission snapshot、Git 和 side-effect reconciliation 字段。
 - Cancel、Tool timeout、Shell cleanup、MCP shutdown 和 Runtime shutdown 都有资源跟踪和有界等待。
-- Workspace-local 的 reconciliation 可以在当前 Run 内通过受限只读 Tool 继续。Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果不进入该路径，继续 fail closed。
+- Workspace-local 的 reconciliation 默认在当前 Run 内以 `CONTINUE_READ_ONLY` 通过受限只读 Tool 继续。Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果不进入该路径，继续 fail closed。
 - 不确定副作用不会自动重放。需要核验的事实会进入 reconciliation。
 
 ## Checkpoint

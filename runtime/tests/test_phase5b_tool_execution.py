@@ -366,6 +366,30 @@ class ToolExecutionControllerTests(unittest.TestCase):
         self.assertTrue(outcome.result["sideEffectsMayExist"])
         self.assertTrue(outcome.result["reconciliationRequired"])
 
+    def test_pending_reconciliation_blocks_mutation_without_interrupting_run(self) -> None:
+        self.store.connection.execute(
+            "UPDATE runs SET reconciliation_required = 1, side_effects_may_exist = 1 "
+            "WHERE id = ?",
+            (self.run["id"],),
+        )
+        self.store.connection.commit()
+        controller = self._controller({"file": _Handler()})
+
+        outcome = controller.execute(
+            run_id=self.run["id"],
+            item=self._item(),
+            call=self.call,
+            plan=_plan("file", 5, "workspace", False),
+            cancel=threading.Event(),
+            deadline=None,
+        )
+
+        self.assertIn(
+            outcome.result["code"],
+            {"reconciliation_required", "TOOL_RECONCILIATION_REQUIRED"},
+        )
+        self.assertEqual(self.store.read_run(self.run["id"])["status"], "running")
+
 
 if __name__ == "__main__":
     unittest.main()

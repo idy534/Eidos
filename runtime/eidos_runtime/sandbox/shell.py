@@ -287,6 +287,65 @@ def _run_verified_shell(
     skill_invocation: SkillAccessRecord | None,
     dependency_environment: DependencyShellEnvironment | None,
 ) -> dict[str, object]:
+    launch = _prepare_verified_shell_launch(
+        workspace,
+        command,
+        cwd,
+        attempt,
+        active_skill_roots,
+        dependency_environment,
+    )
+    result = run_shell_process(
+        launch,
+        timeout_seconds=timeout_seconds,
+        cancel=cancel,
+        on_delta=on_delta,
+        started=started,
+        resource_registry=resource_registry,
+        owner_id=owner_id,
+    )
+    return _attach_skill_invocation(result, skill_invocation)
+
+
+def prepare_shell_launch_for_execution(
+    workspace: WorkspaceIdentity,
+    command: str,
+    cwd: WorkspaceIdentity,
+    attempt: SandboxAttempt | None,
+    active_skill_roots: Sequence[Path] = (),
+    dependency_environment: DependencyShellEnvironment | None = None,
+) -> ShellLaunchSpec:
+    """Prepare a verified launch without owning the process lifetime."""
+    workspace_fd = -1
+    cwd_fd = -1
+    try:
+        workspace_fd = _open_verified_directory(workspace)
+        cwd_fd = _open_verified_directory(cwd)
+        if cwd.path != workspace.path and workspace.path not in cwd.path.parents:
+            raise ValueError("shell cwd is outside workspace")
+        return _prepare_verified_shell_launch(
+            workspace,
+            command,
+            cwd,
+            attempt,
+            active_skill_roots,
+            dependency_environment,
+        )
+    finally:
+        if cwd_fd >= 0:
+            os.close(cwd_fd)
+        if workspace_fd >= 0:
+            os.close(workspace_fd)
+
+
+def _prepare_verified_shell_launch(
+    workspace: WorkspaceIdentity,
+    command: str,
+    cwd: WorkspaceIdentity,
+    attempt: SandboxAttempt | None,
+    active_skill_roots: Sequence[Path],
+    dependency_environment: DependencyShellEnvironment | None,
+) -> ShellLaunchSpec:
     host_shell = HOST_SHELL_RESOLVER.resolve()
     sandboxed = attempt is None or attempt.sandbox is SandboxType.MACOS_SEATBELT
     if sandboxed:
@@ -325,16 +384,7 @@ def _run_verified_shell(
         environment_source=snapshot.source,
         dependency_environment=dependency_environment,
     )
-    result = run_shell_process(
-        launch,
-        timeout_seconds=timeout_seconds,
-        cancel=cancel,
-        on_delta=on_delta,
-        started=started,
-        resource_registry=resource_registry,
-        owner_id=owner_id,
-    )
-    return _attach_skill_invocation(result, skill_invocation)
+    return launch
 
 
 def _create_seatbelt_profile(

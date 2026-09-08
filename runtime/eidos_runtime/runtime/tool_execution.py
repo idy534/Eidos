@@ -64,6 +64,14 @@ def _result_requires_reconciliation(result: dict[str, object]) -> bool:
     )
 
 
+def _is_reconciliation_read_only_poll(call: ModelToolCall) -> bool:
+    """Allow only an empty ``write_stdin`` call through the barrier."""
+    if call.name != "write_stdin" or call.payload_kind != "function":
+        return False
+    arguments = call.arguments
+    return "chars" not in arguments or arguments["chars"] == ""
+
+
 class ToolInfrastructureError(RuntimeError):
     pass
 
@@ -448,11 +456,12 @@ class ToolExecutionController:
             elif (
                 plan.side_effect != "none"
                 and self.store.side_effects_blocked(run_id)
+                and not _is_reconciliation_read_only_poll(call)
             ):
                 outcome = HandlerOutcome(
                     tool_error(
                         call.name,
-                        "TOOL_RECONCILIATION_REQUIRED",
+                        "reconciliation_required",
                         "A previous side effect must be reconciled",
                     ),
                     "failed",

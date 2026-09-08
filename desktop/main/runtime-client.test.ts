@@ -220,9 +220,10 @@ test("packaged Runtime environment is isolated to the bundled app root", () => {
 test("spawns the Python runtime and completes initialize then shutdown", async () => {
   const stderrLines: string[] = [];
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
+  let client: RuntimeClient | undefined;
 
   try {
-    const client = new RuntimeClient({
+    client = new RuntimeClient({
       pythonExecutable: pythonExecutable,
       runtimeRoot: path.join(projectRoot, "runtime"),
       dataDirectory,
@@ -240,6 +241,8 @@ test("spawns the Python runtime and completes initialize then shutdown", async (
     assert.equal(await client.waitForExit(), 0);
     assert.ok(stderrLines.some((line) => line.includes("Runtime initialized")));
   } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
     await rm(dataDirectory, { recursive: true, force: true });
   }
 });
@@ -290,7 +293,7 @@ test("accepts Volcengine model presets and models without reasoning metadata", a
     assert.equal(await client.waitForExit(), 0);
   } finally {
     client?.terminate();
-    if (client) await client.waitForExit();
+    await client?.waitForExit().catch(() => undefined);
     await rm(runtimeRoot, { recursive: true, force: true });
   }
 });
@@ -298,9 +301,11 @@ test("accepts Volcengine model presets and models without reasoning metadata", a
 test("creates and reads a persisted session across runtime restarts", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
   const workspaceRoot = await createGitRepository("eidos-workspace-");
+  let firstClient: RuntimeClient | undefined;
+  let secondClient: RuntimeClient | undefined;
 
   try {
-    const firstClient = new RuntimeClient({
+    firstClient = new RuntimeClient({
       pythonExecutable: pythonExecutable,
       runtimeRoot: path.join(projectRoot, "runtime"),
       dataDirectory,
@@ -310,7 +315,7 @@ test("creates and reads a persisted session across runtime restarts", async () =
     await firstClient.shutdown();
     assert.equal(await firstClient.waitForExit(), 0);
 
-    const secondClient = new RuntimeClient({
+    secondClient = new RuntimeClient({
       pythonExecutable: pythonExecutable,
       runtimeRoot: path.join(projectRoot, "runtime"),
       dataDirectory,
@@ -326,6 +331,10 @@ test("creates and reads a persisted session across runtime restarts", async () =
       session: created, runs: [], items: [], stepResolutions: [], throughEventId: 1,
     });
   } finally {
+    firstClient?.terminate();
+    await firstClient?.waitForExit().catch(() => undefined);
+    secondClient?.terminate();
+    await secondClient?.waitForExit().catch(() => undefined);
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
@@ -335,13 +344,14 @@ test("creates and reads a persisted session across runtime restarts", async () =
 test("creates first-class Direct Workspace sessions without Git review state", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-direct-"));
-  const client = new RuntimeClient({
-    pythonExecutable,
-    runtimeRoot: path.join(projectRoot, "runtime"),
-    dataDirectory,
-  });
+  let client: RuntimeClient | undefined;
 
   try {
+    client = new RuntimeClient({
+      pythonExecutable,
+      runtimeRoot: path.join(projectRoot, "runtime"),
+      dataDirectory,
+    });
     await client.initialize();
     assert.deepEqual(await client.readProjectGitContext(workspaceRoot), {
       gitAvailable: false,
@@ -382,8 +392,8 @@ test("creates first-class Direct Workspace sessions without Git review state", a
       first.project?.id,
     ]);
   } finally {
-    await client.shutdown();
-    await client.waitForExit();
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
@@ -393,13 +403,14 @@ test("creates first-class Direct Workspace sessions without Git review state", a
 test("projects managed Worktrees and keeps Git review isolated per session", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
   const repositoryRoot = await createGitRepository("eidos-git-review-");
-  const client = new RuntimeClient({
-    pythonExecutable,
-    runtimeRoot: path.join(projectRoot, "runtime"),
-    dataDirectory,
-  });
+  let client: RuntimeClient | undefined;
 
   try {
+    client = new RuntimeClient({
+      pythonExecutable,
+      runtimeRoot: path.join(projectRoot, "runtime"),
+      dataDirectory,
+    });
     await client.initialize();
     const gitContext = await client.readProjectGitContext(repositoryRoot);
     assert.equal(gitContext.gitAvailable, true);
@@ -569,8 +580,8 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
     assert.equal(explicitCompare.baseCommit, headDiff.head);
     assert.deepEqual(explicitCompare.changedFiles, ["ONLY_A.txt"]);
   } finally {
-    await client.shutdown().catch(() => undefined);
-    await client.waitForExit().catch(() => undefined);
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(repositoryRoot, { recursive: true, force: true });
@@ -599,13 +610,14 @@ test("completes Git fetch, pull, push, merge, and rebase through typed contracts
   await execFileAsync("git", ["add", "REMOTE.txt"], { cwd: peerRoot });
   await execFileAsync("git", ["commit", "-qm", "remote commit"], { cwd: peerRoot });
   await execFileAsync("git", ["push", "-q", "origin", "main"], { cwd: peerRoot });
-  const client = new RuntimeClient({
-    pythonExecutable,
-    runtimeRoot: path.join(projectRoot, "runtime"),
-    dataDirectory,
-  });
+  let client: RuntimeClient | undefined;
 
   try {
+    client = new RuntimeClient({
+      pythonExecutable,
+      runtimeRoot: path.join(projectRoot, "runtime"),
+      dataDirectory,
+    });
     await client.initialize();
     const session = await client.createSession(repositoryRoot, { executionMode: "local" });
     const before = await client.readSessionGitRemoteStatus(session.id);
@@ -683,8 +695,8 @@ test("completes Git fetch, pull, push, merge, and rebase through typed contracts
       cwd: repositoryRoot,
     })).stdout.trim());
   } finally {
-    await client.shutdown();
-    await client.waitForExit();
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(repositoryRoot, { recursive: true, force: true });
@@ -722,8 +734,9 @@ test("imports and manages closed Plugin Skill and MCP records", async () => {
     }],
   }), "utf8");
 
+  let client: RuntimeClient | undefined;
   try {
-    const client = new RuntimeClient({
+    client = new RuntimeClient({
       pythonExecutable,
       runtimeRoot: path.join(projectRoot, "runtime"),
       dataDirectory,
@@ -746,6 +759,8 @@ test("imports and manages closed Plugin Skill and MCP records", async () => {
     await client.shutdown();
     assert.equal(await client.waitForExit(), 0);
   } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(pluginRoot, { recursive: true, force: true });
   }
@@ -758,12 +773,13 @@ test("lists only configured models and keeps task model history during session m
   await execFileAsync("git", ["add", "README.md"], { cwd: workspaceRoot });
   await execFileAsync("git", ["commit", "-qm", "fixture"], { cwd: workspaceRoot });
 
+  let client: RuntimeClient | undefined;
   try {
     let completeRun: ((notification: RuntimeNotification) => void) | undefined;
     const runCompleted = new Promise<RuntimeNotification>((resolve) => {
       completeRun = resolve;
     });
-    const client = new RuntimeClient({
+    client = new RuntimeClient({
       pythonExecutable,
       runtimeRoot: path.join(projectRoot, "runtime"),
       dataDirectory,
@@ -802,6 +818,8 @@ test("lists only configured models and keeps task model history during session m
     assert.deepEqual(deletedProject, { deletedProjectId: projectId });
     assert.equal(await readFile(path.join(workspaceRoot, "README.md"), "utf8"), "# Keep me\n");
   } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
@@ -812,13 +830,14 @@ test("routes runtime notifications during a fake model read loop", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
   const workspaceRoot = await createGitRepository("eidos-workspace-");
   const notifications: RuntimeNotification[] = [];
+  let client: RuntimeClient | undefined;
 
   try {
     let completeRun: ((notification: RuntimeNotification) => void) | undefined;
     const runCompleted = new Promise<RuntimeNotification>((resolve) => {
       completeRun = resolve;
     });
-    const client = new RuntimeClient({
+    client = new RuntimeClient({
       pythonExecutable: pythonExecutable,
       runtimeRoot: path.join(projectRoot, "runtime"),
       dataDirectory,
@@ -873,6 +892,8 @@ test("routes runtime notifications during a fake model read loop", async () => {
       ["user_message", "tool_call", "assistant_message"],
     );
   } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
@@ -884,13 +905,14 @@ test("commits an ordinary workspace file change without approval", async () => {
   const workspaceRoot = await createGitRepository("eidos-workspace-");
   const approvals: string[] = [];
   const approvalNotifications: string[] = [];
+  let client: RuntimeClient | undefined;
 
   try {
     let completeRun: ((notification: RuntimeNotification) => void) | undefined;
     const runCompleted = new Promise<RuntimeNotification>((resolve) => {
       completeRun = resolve;
     });
-    const client = new RuntimeClient({
+    client = new RuntimeClient({
       pythonExecutable: pythonExecutable,
       runtimeRoot: path.join(projectRoot, "runtime"),
       dataDirectory,
@@ -927,6 +949,8 @@ test("commits an ordinary workspace file change without approval", async () => {
     assert.deepEqual(approvals, []);
     assert.deepEqual(approvalNotifications, []);
   } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
@@ -936,6 +960,7 @@ test("commits an ordinary workspace file change without approval", async () => {
 test("cancel while awaiting approval ignores a late approve response", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
   const workspaceRoot = await createGitRepository("eidos-workspace-");
+  let client: RuntimeClient | undefined;
 
   try {
     let resolveApproval: ((decision: { decision: "approve" }) => void) | undefined;
@@ -950,7 +975,7 @@ test("cancel while awaiting approval ignores a late approve response", async () 
     const runCompleted = new Promise<RuntimeNotification>((resolve) => {
       completeRun = resolve;
     });
-    const client = new RuntimeClient({
+    client = new RuntimeClient({
       pythonExecutable: pythonExecutable,
       runtimeRoot: path.join(projectRoot, "runtime"),
       dataDirectory,
@@ -990,6 +1015,8 @@ test("cancel while awaiting approval ignores a late approve response", async () 
     assert.equal(completed.params.run.status, "canceled");
     assert.equal(snapshot.runs[0]?.status, "canceled");
   } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
@@ -1018,9 +1045,10 @@ test("degraded Shell capability rejects execution without approval or workspace 
     "utf8",
   );
 
+  let client: RuntimeClient | undefined;
   try {
     const approvals: unknown[] = [];
-    const client = new RuntimeClient({
+    client = new RuntimeClient({
       pythonExecutable,
       runtimeRoot,
       onApprovalRequest: async (request) => {
@@ -1042,6 +1070,8 @@ test("degraded Shell capability rejects execution without approval or workspace 
     await client.shutdown();
     assert.equal(await client.waitForExit(), 0);
   } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
     await rm(runtimeRoot, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
   }
@@ -1097,6 +1127,7 @@ test("runs a default sandboxed shell command without approval", async (context) 
     assert.ok(commandItem?.toolCall?.resultJson?.includes("desktop-shell-ok"));
   } finally {
     client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
     await rm(dataDirectory, { recursive: true, force: true });
     await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
@@ -1148,8 +1179,9 @@ test("terminates a runtime that writes non-protocol stdout", async () => {
     "utf8",
   );
 
+  let client: RuntimeClient | undefined;
   try {
-    const client = new RuntimeClient({
+    client = new RuntimeClient({
       pythonExecutable: pythonExecutable,
       runtimeRoot,
     });
@@ -1160,6 +1192,8 @@ test("terminates a runtime that writes non-protocol stdout", async () => {
     );
     await client.waitForExit();
   } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
     await rm(runtimeRoot, { recursive: true, force: true });
   }
 });
@@ -1240,6 +1274,7 @@ test("uses the shared v1 vectors for requests, approvals, and notifications", as
     "utf8",
   );
 
+  let client: RuntimeClient | undefined;
   try {
     const notifications: RuntimeNotification[] = [];
     let approvalSeen: (() => void) | undefined;
@@ -1250,7 +1285,7 @@ test("uses the shared v1 vectors for requests, approvals, and notifications", as
     const runCompleted = new Promise<void>((resolve) => {
       runFinished = resolve;
     });
-    const client = new RuntimeClient({
+    client = new RuntimeClient({
       pythonExecutable: pythonExecutable,
       runtimeRoot,
       onApprovalRequest: async () => {
@@ -1278,6 +1313,8 @@ test("uses the shared v1 vectors for requests, approvals, and notifications", as
       ],
     );
   } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
     await rm(runtimeRoot, { recursive: true, force: true });
   }
 });
@@ -1301,8 +1338,9 @@ test("rejects an oversized unterminated frame before waiting for a newline", asy
     "utf8",
   );
 
+  let client: RuntimeClient | undefined;
   try {
-    const client = new RuntimeClient({
+    client = new RuntimeClient({
       pythonExecutable: pythonExecutable,
       runtimeRoot,
     });
@@ -1312,6 +1350,8 @@ test("rejects an oversized unterminated frame before waiting for a newline", asy
     );
     await client.waitForExit();
   } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
     await rm(runtimeRoot, { recursive: true, force: true });
   }
 });
@@ -1344,13 +1384,14 @@ test("drains a bounded notification burst even when its consumer is slow", async
     "utf8",
   );
 
+  let client: RuntimeClient | undefined;
   try {
     let deltaCount = 0;
     let finish: (() => void) | undefined;
     const completed = new Promise<void>((resolve) => {
       finish = resolve;
     });
-    const client = new RuntimeClient({
+    client = new RuntimeClient({
       pythonExecutable: pythonExecutable,
       runtimeRoot,
       onNotification: (notification) => {
@@ -1372,6 +1413,8 @@ test("drains a bounded notification burst even when its consumer is slow", async
     await client.shutdown();
     assert.equal(await client.waitForExit(), 0);
   } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
     await rm(runtimeRoot, { recursive: true, force: true });
   }
 });
@@ -1406,8 +1449,9 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
   );
 
   const receivedRequests: Array<Record<string, unknown>> = [];
+  let client: RuntimeClient | undefined;
   try {
-    const client = new RuntimeClient({
+    client = new RuntimeClient({
       pythonExecutable: pythonExecutable,
       runtimeRoot,
       onApprovalRequest: async (req) => {
@@ -1481,6 +1525,8 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     await client.shutdown();
     await client.waitForExit();
   } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
     await rm(runtimeRoot, { recursive: true, force: true });
   }
 });
@@ -1504,9 +1550,10 @@ test("rejects ordinary ToolCall unknown provenance at the Runtime Client boundar
     "utf8",
   );
 
+  let client: RuntimeClient | undefined;
   try {
     const notifications: RuntimeNotification[] = [];
-    const client = new RuntimeClient({
+    client = new RuntimeClient({
       pythonExecutable,
       runtimeRoot,
       onNotification: (notification) => notifications.push(notification),
@@ -1523,6 +1570,8 @@ test("rejects ordinary ToolCall unknown provenance at the Runtime Client boundar
     assert.notEqual(await client.waitForExit(), 0);
     await assert.rejects(client.health(), /Runtime (client is closed|process is not available)/);
   } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
     await rm(runtimeRoot, { recursive: true, force: true });
   }
 });

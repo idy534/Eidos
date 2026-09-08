@@ -37,8 +37,14 @@ from eidos_runtime.runtime.tool_runtime import (  # noqa: E402
     ShellToolHandler,
     _HandlerDependencies,
 )
+from eidos_runtime.runtime.shell_process_manager import (  # noqa: E402
+    ShellProcessManager,
+)
 from eidos_runtime.sandbox.permissions import BasePermissionProfile  # noqa: E402
-from eidos_runtime.sandbox.sensitive import default_scanner  # noqa: E402
+from eidos_runtime.sandbox.sensitive import (  # noqa: E402
+    StreamingSensitiveScanner,
+    default_scanner,
+)
 from eidos_runtime.tools.workspace import (  # noqa: E402
     ToolExecutor,
     WorkspacePathError,
@@ -238,6 +244,9 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         self.run, _ = self.store.create_run(session["id"], "shell")
         self.store.increment_model_step(self.run["id"])
         self.executor = ToolExecutor(self.workspace)
+        self.shell_process_manager = ShellProcessManager(
+            owner_run_id=self.run["id"]
+        )
         self.dispatcher = ToolDispatcher(self.executor.registry)
         self.events = RuntimeEvents(lambda _message: None)
         state = RuntimePhaseTracker()
@@ -280,6 +289,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             self.controller.authorize_side_effect,
             self.controller.execute_workspace_side_effect,
             self.controller.authorize_workspace_side_effect,
+            shell_process_manager=self.shell_process_manager,
             base_permissions=BasePermissionProfile.model_validate_json(
                 self.store.read_step_resolution_snapshots(
                     self.run["id"]
@@ -289,6 +299,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         runtime_context.handler = ShellToolHandler(dependencies)
 
     def tearDown(self) -> None:
+        self.shell_process_manager.close()
         self.executor.close()
         self.store.close()
         self.temporary.cleanup()
@@ -307,7 +318,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         effective_arguments = dict(arguments or {
             "command": "fixture",
             "cwd": ".",
-            "timeoutSeconds": 120,
+            "yieldTimeMs": 30_000,
             "sandboxPermissions": "use_default",
             "additionalPermissions": None,
             "justification": None,
@@ -321,21 +332,17 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             "shell-call", "run_shell", effective_arguments,
         )
 
-        def fake_shell(*args, **_kwargs):
+        def fake_shell(launch, **_kwargs):
             if attempts is not None:
-                attempts.append(args[8])
+                attempts.append(launch)
             if mutate is not None:
                 mutate()
-            on_delta = args[5]
-            for index, delta in enumerate(output):
-                on_delta(delta)
-                if observe is not None:
-                    observe()
-                if cancel is not None and index == 0:
-                    cancel.set()
             normalized = dict(result)
             data = dict(result.get("data", {}))
+            if output:
+                data["stdout"] = "".join(output)
             data.setdefault("truncated", False)
+            data.setdefault("executionStatus", "exited")
             data.setdefault(
                 "termination",
                 "exit" if result.get("outcome") == "success" else "fixture",
@@ -343,9 +350,31 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             normalized["data"] = data
             return normalized
 
-        with patch(
-            "eidos_runtime.runtime.tool_runtime.run_shell",
-            side_effect=fake_shell,
+        class FixtureStreamingSensitiveScanner(StreamingSensitiveScanner):
+            fixture_output_fed = False
+
+            def feed(self, chunk: str) -> None:
+                if output and not self.fixture_output_fed:
+                    self.fixture_output_fed = True
+                    chunks = output
+                else:
+                    chunks = (chunk,)
+                for index, part in enumerate(chunks):
+                    super().feed(part)
+                    if observe is not None and part:
+                        observe()
+                    if cancel is not None and index == 0 and part:
+                        cancel.set()
+
+        with (
+            patch(
+                "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start",
+                side_effect=fake_shell,
+            ),
+            patch(
+                "eidos_runtime.runtime.tool_runtime.StreamingSensitiveScanner",
+                new=FixtureStreamingSensitiveScanner,
+            ),
         ):
             return self.controller.execute(
                 run_id=self.run["id"],
@@ -385,7 +414,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         for exit_code in (0, 1, 127):
             with self.subTest(exit_code=exit_code):
                 outcome = "success" if exit_code == 0 else "error"
-                code = "ok" if exit_code == 0 else "nonzero_exit"
+                code = "ok" if exit_code == 0 else "shell_exit_nonzero"
                 attached = attach_workspace_diff(
                     {
                         "outcome": outcome,
@@ -415,7 +444,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             outcome = self._execute(
                 {
                     "outcome": "error",
-                    "code": "nonzero_exit",
+                    "code": "shell_exit_nonzero",
                     "summary": "Command exited with code 7",
                     "data": {
                         "exitCode": 7,
@@ -429,7 +458,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
                 arguments={
                     "command": "exit 7",
                     "cwd": ".",
-                    "timeoutSeconds": 120,
+                    "yieldTimeMs": 30_000,
                     "sandboxPermissions": "use_default",
                     "additionalPermissions": None,
                     "justification": None,
@@ -437,7 +466,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             )
 
         self.assertEqual(outcome.result["outcome"], "error")
-        self.assertEqual(outcome.result["code"], "nonzero_exit")
+        self.assertEqual(outcome.result["code"], "shell_exit_nonzero")
         self.assertEqual(outcome.result["data"]["exitCode"], 7)
         self.assertEqual(outcome.result["data"]["stdout"], "test output\n")
         self.assertEqual(outcome.result["data"]["stderr"], "test failure\n")
@@ -494,13 +523,13 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         self.assertEqual(outcome.item_status, "failed")
         self.assertEqual(outcome.tool_status, "failed")
 
-    def test_explicit_reconciliation_keeps_tool_failed_and_interrupts(
+    def test_explicit_reconciliation_keeps_tool_failed_and_allows_read_only_recovery(
         self,
     ) -> None:
         outcome = self._execute(
             {
                 "outcome": "error",
-                "code": "nonzero_exit",
+                "code": "shell_exit_nonzero",
                 "summary": "Command outcome is uncertain",
                 "data": {
                     "exitCode": 7,
@@ -517,7 +546,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         self.assertEqual(outcome.tool_status, "failed")
         self.assertIs(
             outcome.reconciliation_disposition,
-            ReconciliationDisposition.INTERRUPT,
+            ReconciliationDisposition.CONTINUE_READ_ONLY,
         )
 
     def test_shell_process_starts_when_post_launch_index_is_incomplete(self) -> None:
@@ -540,7 +569,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
                 arguments={
                     "command": "ls -la",
                     "cwd": ".",
-                    "timeoutSeconds": 120,
+                    "yieldTimeMs": 30_000,
                     "sandboxPermissions": "use_default",
                     "additionalPermissions": None,
                     "justification": None,
@@ -605,7 +634,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
                         "find . -maxdepth 2 -type f"
                     ),
                     "cwd": ".",
-                    "timeoutSeconds": 120,
+                    "yieldTimeMs": 30_000,
                     "sandboxPermissions": "use_default",
                     "additionalPermissions": None,
                     "justification": None,
@@ -620,7 +649,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         outcome = self._execute(
             {
                 "outcome": "error",
-                "code": "nonzero_exit",
+                "code": "shell_exit_nonzero",
                 "summary": "failed",
                 "data": {"exitCode": 1, "stdout": "", "stderr": ""},
                 "sideEffectsMayExist": True,
@@ -745,7 +774,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             arguments={
                 "command": "fixture",
                 "cwd": ".",
-                "timeoutSeconds": 120,
+                "yieldTimeMs": 30_000,
                 "sandboxPermissions": "require_escalated",
                 "additionalPermissions": None,
                 "justification": "Native access is required",
@@ -754,7 +783,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         )
 
         self.assertEqual(outcome.result["code"], "sensitive_content_rejected")
-        self.assertEqual(attempts[0].sandbox.value, "none")
+        self.assertFalse(attempts[0].sandboxed)
         self.assertTrue(outcome.result["sideEffectsMayExist"])
 
     def test_shell_delta_order_is_monotonic(self) -> None:

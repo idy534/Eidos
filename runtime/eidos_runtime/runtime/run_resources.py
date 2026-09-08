@@ -30,6 +30,7 @@ from eidos_runtime.runtime.runtime_dependencies import (
     RuntimeDependencyCatalogError,
     RuntimeDependencyCoordinator,
 )
+from eidos_runtime.runtime.shell_process_manager import ShellProcessManager
 from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
 from eidos_runtime.tools.request_permissions import request_permissions_entry
 from eidos_runtime.tools.read_tool_output import read_tool_output_entry
@@ -72,6 +73,10 @@ class RunResources:
         self.supports_tool_grammar = supports_tool_grammar
         self.async_kernel = async_kernel
         self.resources = resource_registry or ResourceRegistry()
+        self.shell_process_manager = ShellProcessManager(
+            self.resources,
+            owner_run_id=run_id,
+        )
         self.tool_executor: ToolExecutor | None = None
         self.skills: SkillCatalog | None = None
         self.mcp: McpManager | None = None
@@ -179,10 +184,15 @@ class RunResources:
         if self._closed:
             return
         self._closed = True
-        if self.mcp is not None:
-            self.mcp.close()
-        if self.tool_executor is not None:
-            self.tool_executor.close()
+        try:
+            self.shell_process_manager.close()
+        finally:
+            try:
+                if self.mcp is not None:
+                    self.mcp.close()
+            finally:
+                if self.tool_executor is not None:
+                    self.tool_executor.close()
 
     def __exit__(self, *_error: object) -> None:
         self.close()

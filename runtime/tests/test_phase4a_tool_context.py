@@ -329,6 +329,11 @@ class Phase4ASkillContextTests(unittest.TestCase):
                         "truncated": False, "termination": "exit",
                         "workspaceChanged": False,
                     },
+                    "write_stdin": {
+                        "exitCode": 0, "stdout": "", "stderr": "",
+                        "truncated": False, "termination": "exit",
+                        "workspaceChanged": False,
+                    },
                     "skill_read": {
                         "qualifiedId": "demo:review", "content": "",
                         "contentHash": "a" * 64, "pluginId": "demo",

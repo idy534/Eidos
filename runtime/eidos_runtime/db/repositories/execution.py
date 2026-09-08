@@ -26,7 +26,6 @@ from eidos_runtime.db.events import append_event
 from eidos_runtime.db.mappers import (
     _bounded_canonical_json,
     _item_from_row,
-    _load_json_object,
     _model_attempt_from_row,
     _run_from_row,
 )
@@ -63,8 +62,8 @@ from eidos_runtime.runtime.state_machine import (
 
 
 _RECONCILIATION_CODES = frozenset({
-    "file_commit_uncertain", "outcome_unknown", "nonzero_exit",
-    "shell_exit_nonzero", "timeout", "tool_timeout", "interrupted",
+    "file_commit_uncertain", "outcome_unknown", "timeout", "tool_timeout",
+    "interrupted",
     "background_process", "output_capture_failed",
     "workspace_change_manifest_incomplete", "shell_resource_limit_exceeded",
 })
@@ -74,7 +73,9 @@ def _is_utf8_continuation_byte(value: int) -> bool:
     return (value & 0xC0) == 0x80
 
 
-def _result_reconciliation_required(result: dict[str, object]) -> bool:
+def _result_reconciliation_required(
+    result: dict[str, object], *, tool_name: str | None = None
+) -> bool:
     """Return the durable reconciliation fact from a tool result.
 
     Current canonical results carry this fact at the envelope top level. A
@@ -88,6 +89,14 @@ def _result_reconciliation_required(result: dict[str, object]) -> bool:
     if isinstance(data, dict) and "reconciliationRequired" in data:
         value = data["reconciliationRequired"]
         return value if isinstance(value, bool) else True
+    if tool_name == "run_shell" and isinstance(data, dict):
+        exit_code = data.get("exitCode")
+        if (
+            data.get("termination") == "exit"
+            and isinstance(exit_code, int)
+            and not isinstance(exit_code, bool)
+        ):
+            return False
     return (
         result.get("code") in _RECONCILIATION_CODES
         or (
@@ -692,52 +701,54 @@ class ExecutionRepository(Repository):
                 },
                 session_id=run["session_id"], run_id=run_id,
             )
-            if status_value == "completed":
-                run_state = connection.execute(
-                    "SELECT * FROM runs WHERE id = ?", (run_id,)
-                ).fetchone()
-                if (
-                    run_state["reconciliation_required"]
-                    and step["observed_reconciliation_epoch"]
-                    == run_state["reconciliation_epoch"]
-                ):
-                    observations = connection.execute(
-                        """
-                        SELECT tool_calls.result_json
-                        FROM tool_calls JOIN items ON items.id = tool_calls.item_id
-                        WHERE items.run_id = ?
-                          AND items.model_step_index = ?
-                          AND tool_calls.tool_name IN (
-                            'list_files', 'read_file', 'read_file_range', 'search_text'
-                          )
-                          AND tool_calls.status = 'completed'
-                        """,
-                        (run_id, run_state["model_step_count"]),
-                    ).fetchall()
-                    observed = any(
-                        isinstance(result, dict) and result.get("outcome") == "success"
-                        for row in observations
-                        for result in [_load_json_object(row["result_json"])]
-                    )
 
-                    if observed:
-                        cleared = connection.execute(
-                            """
-                            UPDATE runs SET reconciliation_required = 0, updated_at = ?
-                            WHERE id = ? AND reconciliation_required = 1
-                              AND reconciliation_epoch = ?
-                            """,
-                            (now, run_id, step["observed_reconciliation_epoch"]),
-                        )
-                        if cleared.rowcount == 1:
-                            append_event(
-                                connection, EventType.RECONCILIATION_CLEARED, now,
-                                {
-                                    "epoch": step["observed_reconciliation_epoch"],
-                                    "reason": "read_only_observation",
-                                },
-                                session_id=run["session_id"], run_id=run_id,
-                            )
+    def clear_reconciliation_after_workspace_refresh_committed(
+        self, run_id: str, expected_epoch: int
+    ) -> CommittedMutation[dict[str, object]] | None:
+        """Clear a matching reconciliation barrier after verified refresh."""
+        if isinstance(expected_epoch, bool) or expected_epoch < 0:
+            raise ValueError("invalid reconciliation epoch")
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            current = connection.execute(
+                "SELECT * FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if current is None:
+                raise ResourceNotFoundError("run not found")
+            if (
+                not current["reconciliation_required"]
+                or current["reconciliation_epoch"] != expected_epoch
+            ):
+                return None
+            changed = connection.execute(
+                """
+                UPDATE runs
+                SET reconciliation_required = 0,
+                    reconciliation_epoch = reconciliation_epoch + 1,
+                    updated_at = ?
+                WHERE id = ? AND reconciliation_required = 1
+                  AND reconciliation_epoch = ?
+                """,
+                (now, run_id, expected_epoch),
+            )
+            if changed.rowcount != 1:
+                return None
+            updated = connection.execute(
+                "SELECT * FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            assert updated is not None
+            event = append_event(
+                connection,
+                EventType.RECONCILIATION_CLEARED,
+                now,
+                {
+                    "epoch": updated["reconciliation_epoch"],
+                    "reason": "workspace_refresh",
+                },
+                session_id=current["session_id"],
+                run_id=run_id,
+            )
+        return CommittedMutation(_run_from_row(updated), (event,))
 
     def recent_progress_signatures(
         self, run_id: str, limit: int = 8
@@ -1334,7 +1345,9 @@ class ExecutionRepository(Repository):
                 result = json.loads(result_json)
             except json.JSONDecodeError:
                 result = {}
-            reconciliation_required = _result_reconciliation_required(result)
+            reconciliation_required = _result_reconciliation_required(
+                result, tool_name=fact["tool_name"]
+            )
             intent_status = "uncertain" if reconciliation_required else "completed"
             connection.execute(
                 """

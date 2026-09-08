@@ -34,6 +34,7 @@ from eidos_runtime.runtime.tool_runtime import (
     ShellToolHandler,
     _HandlerDependencies,
 )
+from eidos_runtime.runtime.shell_process_manager import ShellProcessManager
 from eidos_runtime.sandbox.permissions import BasePermissionProfile
 from eidos_runtime.sandbox.sensitive import default_scanner
 from eidos_runtime.tools.contracts import (
@@ -187,6 +188,7 @@ def _make_shell_controller(
     store.increment_model_step(run_id)
     workspace = tmp_path / "workspace"
     executor = ToolExecutor(workspace)
+    shell_process_manager = ShellProcessManager(owner_run_id=run_id)
     dispatcher = ToolDispatcher(executor.registry)
     events = RuntimeEvents(lambda _message: None)
     state = RuntimePhaseTracker()
@@ -229,13 +231,22 @@ def _make_shell_controller(
         controller.authorize_side_effect,
         controller.execute_workspace_side_effect,
         controller.authorize_workspace_side_effect,
+        shell_process_manager=shell_process_manager,
         base_permissions=BasePermissionProfile.for_workspace(
             workspace_root=workspace
         ),
         runtime_dependencies=coordinator,
     )
     context.handler = ShellToolHandler(dependencies)
-    return store, run_id, executor, controller, dispatcher, binding
+    return (
+        store,
+        run_id,
+        executor,
+        shell_process_manager,
+        controller,
+        dispatcher,
+        binding,
+    )
 
 
 def _shell_arguments(binding_id: str, **overrides: object) -> dict[str, object]:
@@ -243,7 +254,7 @@ def _shell_arguments(binding_id: str, **overrides: object) -> dict[str, object]:
         "command": "fixture",
         "cwd": ".",
         "dependencyBindingId": binding_id,
-        "timeoutSeconds": 120,
+        "yieldTimeMs": 30_000,
         "networkAccess": "default",
         "sandboxPermissions": "use_default",
         "additionalPermissions": None,
@@ -271,7 +282,7 @@ def _execute_shell(
     )
     call = ModelToolCall("shell-call", "run_shell", arguments)
     with patch(
-        "eidos_runtime.runtime.tool_runtime.run_shell",
+        "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start",
         side_effect=fake_shell,
     ):
         return controller.execute(
@@ -392,16 +403,16 @@ def test_bound_shell_passes_verified_environment_and_result_provenance(
 ) -> None:
     _bundle, manifest = _make_bundle(tmp_path)
     catalog = RuntimeDependencyCatalog.from_manifest(manifest)
-    store, run_id, executor, controller, dispatcher, binding = (
+    store, run_id, executor, shell_process_manager, controller, dispatcher, binding = (
         _make_shell_controller(tmp_path, catalog)
     )
     captured: dict[str, object] = {}
 
-    def fake_shell(*args: object, **kwargs: object) -> dict[str, object]:
-        captured["dependency_environment"] = kwargs["dependency_environment"]
-        callback = args[5]
-        assert callable(callback)
-        callback("ready\n")
+    def fake_shell(
+        launch: object,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        captured["launch"] = launch
         return {
             "outcome": "success",
             "code": "ok",
@@ -412,6 +423,7 @@ def test_bound_shell_passes_verified_environment_and_result_provenance(
                 "stderr": "",
                 "truncated": False,
                 "termination": "exit",
+                "executionStatus": "exited",
             },
             "sideEffectsMayExist": True,
         }
@@ -436,15 +448,18 @@ def test_bound_shell_passes_verified_environment_and_result_provenance(
                 _shell_arguments(binding.binding_id),
                 fake_shell,
             )
-        environment = captured["dependency_environment"]
-        assert environment is not None
-        assert environment.binding_id == binding.binding_id
+        launch = captured["launch"]
+        assert launch is not None
+        assert launch.environment.get("PYTHONPATH") == ":".join(
+            binding.python_path
+        )
         assert outcome.result["data"]["dependencyBinding"]["bindingId"] == (
             binding.binding_id
         )
         assert outcome.result["reconciliationRequired"] is False
         assert verify_binding.call_count == 2
     finally:
+        shell_process_manager.close()
         executor.close()
         store.close()
 
@@ -454,7 +469,7 @@ def test_invalid_bound_shell_is_not_started_and_never_reconciles(
 ) -> None:
     _bundle, manifest = _make_bundle(tmp_path)
     catalog = RuntimeDependencyCatalog.from_manifest(manifest)
-    store, run_id, executor, controller, dispatcher, _binding = (
+    store, run_id, executor, shell_process_manager, controller, dispatcher, _binding = (
         _make_shell_controller(tmp_path, catalog)
     )
     calls: list[object] = []
@@ -481,6 +496,7 @@ def test_invalid_bound_shell_is_not_started_and_never_reconciles(
         assert outcome.result["reconciliationRequired"] is False
         assert outcome.result["sideEffectsMayExist"] is False
     finally:
+        shell_process_manager.close()
         executor.close()
         store.close()
 
@@ -490,7 +506,7 @@ def test_bound_shell_rejects_unsandboxed_execution_without_starting(
 ) -> None:
     _bundle, manifest = _make_bundle(tmp_path)
     catalog = RuntimeDependencyCatalog.from_manifest(manifest)
-    store, run_id, executor, controller, dispatcher, binding = (
+    store, run_id, executor, shell_process_manager, controller, dispatcher, binding = (
         _make_shell_controller(tmp_path, catalog)
     )
     calls: list[object] = []
@@ -518,6 +534,7 @@ def test_bound_shell_rejects_unsandboxed_execution_without_starting(
         assert outcome.result["data"]["termination"] == "not_started", outcome.result
         assert outcome.result["reconciliationRequired"] is False
     finally:
+        shell_process_manager.close()
         executor.close()
         store.close()
 
@@ -531,7 +548,7 @@ def test_bound_shell_reverifies_after_approval_before_spawn(tmp_path: Path) -> N
         loader.write_text("export const changed = true;\n", encoding="utf-8")
         return ApprovalDecision("approve")
 
-    store, run_id, executor, controller, dispatcher, binding = _make_shell_controller(
+    store, run_id, executor, shell_process_manager, controller, dispatcher, binding = _make_shell_controller(
         tmp_path,
         catalog,
         approval_request=approve,
@@ -576,6 +593,7 @@ def test_bound_shell_reverifies_after_approval_before_spawn(tmp_path: Path) -> N
             "binding_snapshot_changed",
         }
     finally:
+        shell_process_manager.close()
         executor.close()
         store.close()
 

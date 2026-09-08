@@ -276,6 +276,34 @@ class ToolContractTests(unittest.TestCase):
         reparsed = RunShellInput.model_validate_json(json.dumps(normalized))
         self.assertEqual(reparsed, network_request)
 
+    def test_run_shell_uses_a_bounded_yield_window(self) -> None:
+        schema = RunShellInput.model_json_schema(by_alias=True)
+        properties = schema["properties"]
+
+        self.assertNotIn("timeoutSeconds", properties)
+        self.assertIn("yieldTimeMs", properties)
+        self.assertEqual(
+            RunShellInput.model_validate({"command": "true"}).yieldTimeMs,
+            10_000,
+        )
+        self.assertEqual(properties["yieldTimeMs"]["minimum"], 250)
+        self.assertEqual(properties["yieldTimeMs"]["maximum"], 30_000)
+        for value in (249, 30_001):
+            with self.subTest(value=value), self.assertRaises(ValidationError):
+                RunShellInput.model_validate({"command": "true", "yieldTimeMs": value})
+
+    def test_write_stdin_is_registered_with_bounded_poll_contract(self) -> None:
+        spec = next(spec for spec in TOOL_SPECS if spec.name == "write_stdin")
+        self.assertIsNotNone(spec.input_schema)
+        assert spec.input_schema is not None
+        properties = spec.input_schema["properties"]
+
+        self.assertIn("sessionId", spec.input_schema["required"])
+        self.assertEqual(properties["chars"]["default"], "")
+        self.assertEqual(properties["yieldTimeMs"]["default"], 10_000)
+        self.assertEqual(properties["yieldTimeMs"]["minimum"], 250)
+        self.assertEqual(properties["yieldTimeMs"]["maximum"], 300_000)
+
     def test_shell_tool_tells_model_how_to_request_network_access(self) -> None:
         description = next(
             spec.description for spec in TOOL_SPECS if spec.name == "run_shell"
@@ -285,8 +313,9 @@ class ToolContractTests(unittest.TestCase):
         self.assertIn("justification", description)
         self.assertIn("macOS Seatbelt", description)
         self.assertIn("sandboxPermissions", description)
-        self.assertIn("timeoutSeconds", description)
-        self.assertIn("external timeout", description)
+        self.assertIn("yieldTimeMs", description)
+        self.assertIn("write_stdin", description)
+        self.assertNotIn("timeoutSeconds", description)
         self.assertIn("pipefail", description)
         self.assertIn("glob", description)
         self.assertNotIn("network-disabled", description)

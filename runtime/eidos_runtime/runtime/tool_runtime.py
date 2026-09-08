@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import errno
 import hashlib
 import json
+import logging
 import threading
 from typing import Callable
 
@@ -54,7 +55,7 @@ from eidos_runtime.runtime.runtime_dependencies import (
 )
 from eidos_runtime.models.runtime_dependencies import RuntimeDependencyBinding
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
-from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
+from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
 from eidos_runtime.runtime.tool_execution import (
     HandlerOutcome,
     PreparedToolExecution,
@@ -92,8 +93,17 @@ from eidos_runtime.sandbox.sensitive import (
     SensitiveScanner,
     StreamingSensitiveScanner,
 )
-from eidos_runtime.sandbox.seatbelt import is_seatbelt_ready
-from eidos_runtime.sandbox.shell import run_shell, sandbox_unavailable_result
+from eidos_runtime.sandbox.host_shell import HostShellUnavailableError
+from eidos_runtime.sandbox.seatbelt import (
+    SeatbeltUnavailableError,
+    is_seatbelt_ready,
+)
+from eidos_runtime.sandbox.shell import (
+    ShellProcessStartError,
+    prepare_shell_launch_for_execution,
+    process_start_failed_result,
+    sandbox_unavailable_result,
+)
 from eidos_runtime.sandbox.workspace_manifest import (
     attach_workspace_diff,
     diff_workspace_manifests,
@@ -107,6 +117,7 @@ from eidos_runtime.tools.workspace import (
 from eidos_runtime.tools.contracts import (
     RunShellInput,
     RuntimeDependencyBindingProvenance,
+    WriteStdinInput,
 )
 from eidos_runtime.tools.registry import (
     AdapterToolRuntime,
@@ -115,6 +126,13 @@ from eidos_runtime.tools.registry import (
     ShellToolRuntime,
     WorkspaceMutationRuntime,
 )
+from eidos_runtime.runtime.shell_process_manager import (
+    ShellProcessManager,
+    ShellProcessSessionNotFound,
+)
+
+
+logger = logging.getLogger("eidos.runtime")
 
 
 def _tool_payload_value(call: ModelToolCall) -> dict[str, object] | str:
@@ -171,6 +189,7 @@ class _HandlerDependencies:
     execute_workspace_side_effect: Callable[..., VerifiedToolExecutionResult]
     authorize_workspace_side_effect: Callable[..., None]
     resources: ResourceRegistry = field(default_factory=ResourceRegistry)
+    shell_process_manager: ShellProcessManager | None = None
     base_permissions: BasePermissionProfile | None = None
     skill_access: SkillAccess | None = None
     runtime_dependencies: RuntimeDependencyCoordinator | None = None
@@ -390,6 +409,163 @@ class ShellToolHandler:
     def __init__(self, dependencies: _HandlerDependencies) -> None:
         self.dependencies = dependencies
 
+    def _execute_write_stdin(
+        self,
+        run_id: str,
+        item: dict[str, object],
+        call: ModelToolCall,
+        cancel: threading.Event,
+        runtime: ShellToolRuntime,
+    ) -> HandlerOutcome:
+        shell_input = WriteStdinInput.model_validate_json(
+            json.dumps(call.arguments, ensure_ascii=False)
+        )
+        manager = self.dependencies.shell_process_manager
+        if manager is None:
+            return HandlerOutcome(
+                tool_error(
+                    call.name,
+                    "shell_process_manager_unavailable",
+                    "Shell process manager is unavailable",
+                ),
+                "failed",
+                "failed",
+            )
+
+        executor = runtime.implementation.executor  # type: ignore[attr-defined]
+        manifest_before = executor.workspace_index.manifest()
+        delta_sequence = 0
+
+        def stream_safe_output(text: str) -> None:
+            nonlocal delta_sequence
+            if cancel.is_set():
+                return
+            delta_sequence += 1
+            mutation = self.dependencies.store.append_item_deltas_committed(
+                str(item["id"]), (text,), delta_sequence
+            )
+            self.dependencies.events.publish(mutation, item=mutation.value)
+
+        output_stream = StreamingSensitiveScanner(
+            self.dependencies.sensitive,
+            on_safe_text=stream_safe_output,
+        )
+        output_scan_failed = False
+
+        def execute_io() -> dict[str, object]:
+            nonlocal output_scan_failed
+            try:
+                result = manager.write_stdin(
+                    shell_input.sessionId,
+                    shell_input.chars,
+                    yield_time_ms=shell_input.yieldTimeMs,
+                )
+            except ShellProcessSessionNotFound:
+                return tool_error(
+                    call.name,
+                    "shell_session_not_found",
+                    "Shell session was not found in this Run",
+                )
+            data = result.get("data")
+            if not isinstance(data, dict):
+                return result
+            for stream in ("stdout", "stderr"):
+                text = data.get(stream)
+                if not isinstance(text, str):
+                    continue
+                try:
+                    output_stream.feed(text)
+                except SensitiveScanError:
+                    output_scan_failed = True
+            return result
+
+        operation = (
+            "interrupt"
+            if shell_input.chars == "\x03"
+            else "write"
+            if shell_input.chars
+            else "poll"
+        )
+        prepared = PreparedToolExecution(
+            approval_description={
+                "kind": "command_execution",
+                "summary": "Continue a managed Shell process",
+                "sessionId": shell_input.sessionId,
+                "operation": operation,
+            },
+            transition_reason="shell_session_io",
+            intent_preconditions={
+                "sessionId": shell_input.sessionId,
+                "operation": operation,
+            },
+        )
+        verified = self.dependencies.execute_workspace_side_effect(
+            item=item,
+            prepared=prepared,
+            execute=execute_io,
+        )
+        raw_result = verified.result
+
+        manifest_after = manifest_before
+        refresh_error_code: str | None = None
+        try:
+            manifest_after = executor.refresh_workspace_index(cancel)
+        except WorkspacePathError as error:
+            manifest_after = executor.workspace_index.manifest()
+            refresh_error_code = error.code
+            if error.code not in {
+                "WORKSPACE_INDEX_INCOMPLETE",
+                "sensitive_workspace_content",
+            }:
+                raw_result["reconciliationRequired"] = True
+        workspace_diff = diff_workspace_manifests(
+            manifest_before, manifest_after
+        )
+        result = bounded_tool_result(
+            call.name,
+            attach_workspace_diff(raw_result, workspace_diff),
+        )
+        try:
+            if output_scan_failed:
+                raise SensitiveScanError("shell output scan failed")
+            output_stream.finish()
+            result = safe_tool_result(
+                self.dependencies.sensitive, call.name, result
+            )
+        except SensitiveScanError:
+            result = tool_error(
+                call.name,
+                "sensitive_content_rejected",
+                "Shell output was withheld",
+            )
+
+        if result["outcome"] == "success":
+            self.dependencies.store.clear_rejects(run_id)
+        item_status = "completed" if result["outcome"] == "success" else "failed"
+        tool_status = (
+            "completed"
+            if result["outcome"] == "success"
+            or (
+                result.get("code") == "shell_exit_nonzero"
+                and result.get("reconciliationRequired") is not True
+            )
+            else "failed"
+        )
+        changed = workspace_diff.changed
+        return HandlerOutcome(
+            result,
+            item_status,
+            tool_status,
+            workspace_changed=changed,
+            diff_hash=workspace_diff.diff_hash if changed else None,
+            reconciliation_disposition=classify_shell_reconciliation(
+                result,
+                manifest_before_complete=manifest_before.complete,
+                manifest_after_complete=manifest_after.complete,
+                refresh_error_code=refresh_error_code,
+            ),
+        )
+
     def execute(
         self,
         run_id: str,
@@ -398,6 +574,10 @@ class ShellToolHandler:
         cancel: threading.Event,
         runtime: ShellToolRuntime,
     ) -> HandlerOutcome:
+        if call.name == "write_stdin":
+            return self._execute_write_stdin(
+                run_id, item, call, cancel, runtime
+            )
         shell_input = RunShellInput.model_validate_json(
             json.dumps(call.arguments, ensure_ascii=False)
         )
@@ -419,7 +599,10 @@ class ShellToolHandler:
             )
         command = shell_input.command
         cwd_value = shell_input.cwd
-        timeout = shell_input.timeoutSeconds
+        yield_time_ms = shell_input.yieldTimeMs
+        # This remains the ToolExecutionController watchdog. It does not limit
+        # the lifetime of a managed Shell process.
+        timeout = 600
         try:
             cwd = runtime.implementation.prepare_shell(  # type: ignore[attr-defined]
                 cwd_value, cancel
@@ -633,25 +816,64 @@ class ShellToolHandler:
                     output_scan_failed = True
 
             try:
-                raw_result = run_shell(
+                shell_process_manager = self.dependencies.shell_process_manager
+                if shell_process_manager is None:
+                    raise RuntimeError("shell process manager is unavailable")
+                launch = prepare_shell_launch_for_execution(
                     runtime.implementation.executor.workspace,  # type: ignore[attr-defined]
                     command,
                     approved_cwd,
-                    timeout,
-                    cancel,
-                    scan_shell_output,
-                    self.dependencies.resources,
-                    str(item["id"]),
                     attempt,
                     active_skill_roots=active_skill_roots,
-                    skill_invocation=skill_invocation,
                     dependency_environment=dependency_environment,
                 )
+                raw_result = shell_process_manager.start(
+                    launch,
+                    yield_time_ms=yield_time_ms,
+                )
+                result_data = raw_result.get("data")
+                if isinstance(result_data, dict):
+                    for stream in ("stdout", "stderr"):
+                        text = result_data.get(stream)
+                        if isinstance(text, str):
+                            scan_shell_output(text)
                 if dependency_provenance is not None:
                     raw_result = _attach_dependency_provenance(
                         raw_result,
                         dependency_provenance,
                     )
+            except (HostShellUnavailableError, ShellProcessStartError):
+                result = process_start_failed_result(
+                    skill_invocation=skill_invocation,
+                )
+                if dependency_provenance is not None:
+                    result = _attach_dependency_provenance(
+                        result,
+                        dependency_provenance,
+                    )
+                return result, None
+            except SeatbeltUnavailableError:
+                result = sandbox_unavailable_result(
+                    skill_invocation=skill_invocation,
+                )
+                if dependency_provenance is not None:
+                    result = _attach_dependency_provenance(
+                        result,
+                        dependency_provenance,
+                    )
+                return result, None
+            except RuntimeError as error:
+                if str(error) != "shell_process_start_failed":
+                    raise
+                result = process_start_failed_result(
+                    skill_invocation=skill_invocation,
+                )
+                if dependency_provenance is not None:
+                    result = _attach_dependency_provenance(
+                        result,
+                        dependency_provenance,
+                    )
+                return result, None
             except PermissionError as error:
                 result = tool_error(
                     call.name,
@@ -699,9 +921,12 @@ class ShellToolHandler:
             workspace_diff = diff_workspace_manifests(
                 manifest_before, manifest_after
             )
+            raw_data = raw_result.get("data")
             if (
                 raw_result.get("outcome") == "success"
                 and attempt.sandbox is SandboxType.MACOS_SEATBELT
+                and isinstance(raw_data, dict)
+                and raw_data.get("executionStatus") == "exited"
             ):
                 raw_result["sideEffectsMayExist"] = False
             result = bounded_tool_result(
@@ -947,7 +1172,7 @@ class ShellToolHandler:
             if result["outcome"] == "success"
             or result.get("code") in {"permission_granted_retry_required", "user_rejected_network"}
             or (
-                result.get("code") == "nonzero_exit"
+                result.get("code") == "shell_exit_nonzero"
                 and result.get("reconciliationRequired") is not True
             )
             else "failed"
@@ -1160,6 +1385,8 @@ class ToolCallRuntime:
         base_permissions: BasePermissionProfile,
         async_kernel: RuntimeAsyncKernel | None = None,
         resource_registry: ResourceRegistry | None = None,
+        shell_process_manager: ShellProcessManager | None = None,
+        workspace_refresh: Callable[[threading.Event], object] | None = None,
         skill_access: SkillAccess | None = None,
         runtime_dependencies: RuntimeDependencyCoordinator | None = None,
     ) -> None:
@@ -1170,6 +1397,7 @@ class ToolCallRuntime:
         self.state_machine = state_machine
         self.async_kernel = async_kernel
         self.skill_access = skill_access
+        self.workspace_refresh = workspace_refresh
         self.concurrency = ToolConcurrencyGate()
         self.controller = ToolExecutionController(
             store,
@@ -1191,17 +1419,72 @@ class ToolCallRuntime:
             self.controller.authorize_side_effect,
             self.controller.execute_workspace_side_effect,
             self.controller.authorize_workspace_side_effect,
-            self.controller.resources,
-            base_permissions,
-            self.skill_access,
-            runtime_dependencies,
-            self.permissions,
+            resources=self.controller.resources,
+            shell_process_manager=shell_process_manager,
+            base_permissions=base_permissions,
+            skill_access=self.skill_access,
+            runtime_dependencies=runtime_dependencies,
+            permissions=self.permissions,
         )
         self.read_runtime = ReadOnlyToolHandler(dependencies)
         self.workspace_runtime = FileChangeToolHandler(dependencies)
         self.shell_runtime = ShellToolHandler(dependencies)
         self.external_runtime = ExternalToolHandler(dependencies)
         self.eidos_state_runtime = EidosStateToolHandler(dependencies)
+
+    def _refresh_reconciliation_after_result(
+        self,
+        *,
+        run_id: str,
+        call: ModelToolCall,
+        plan: ToolDispatchPlan,
+        outcome: HandlerOutcome,
+        cancel: threading.Event,
+    ) -> None:
+        """Clear a matching barrier only after a complete workspace refresh."""
+        if self.workspace_refresh is None or not self.store.side_effects_blocked(run_id):
+            return
+        successful_read = (
+            plan.side_effect == "none"
+            and outcome.result.get("outcome") == "success"
+        )
+        explicit_reconciliation = (
+            outcome.result.get("reconciliationRequired") is True
+        )
+        if (
+            outcome.reconciliation_disposition
+            is not ReconciliationDisposition.CONTINUE_READ_ONLY
+            and not successful_read
+            and not explicit_reconciliation
+        ):
+            return
+        expected_epoch = self.store.context_projection_facts(
+            run_id
+        ).reconciliation_epoch
+        if cancel.is_set():
+            raise RuntimeCancelled
+        try:
+            manifest = self.workspace_refresh(cancel)
+        except (RuntimeCancelled, ToolCancelled):
+            raise
+        except Exception:
+            if cancel.is_set():
+                raise RuntimeCancelled
+            logger.warning(
+                "reconciliation_workspace_refresh_failed",
+                extra={"run_id": run_id, "tool_name": call.name},
+                exc_info=logger.isEnabledFor(logging.DEBUG),
+            )
+            return
+        if getattr(manifest, "complete", False) is not True:
+            return
+        if cancel.is_set():
+            raise RuntimeCancelled
+        mutation = self.store.clear_reconciliation_after_workspace_refresh_committed(
+            run_id, expected_epoch
+        )
+        if mutation is not None:
+            self.events.publish(mutation, run=mutation.value)
 
     def invoke_read(
         self, runtime: AdapterToolRuntime, run_id: str,
@@ -1256,6 +1539,12 @@ class ToolCallRuntime:
                 result, "failed", "completed",
                 workspace_changed=data.get("workspaceChanged") is True,
                 diff_hash=data.get("workspaceDiffHash"),
+                reconciliation_disposition=classify_shell_reconciliation(
+                    result,
+                    manifest_before_complete=True,
+                    manifest_after_complete=True,
+                    refresh_error_code=None,
+                ),
             )
         return self.shell_runtime.execute(run_id, item, call, cancel, runtime)
 
@@ -1375,6 +1664,13 @@ class ToolCallRuntime:
                     deadline=None,
                 )
             self._check_cancel(step.run_id, cancel)
+            self._refresh_reconciliation_after_result(
+                run_id=step.run_id,
+                call=effective_call,
+                plan=plan,
+                outcome=outcome,
+                cancel=cancel,
+            )
             if outcome.activations:
                 self.store.activate_tools(step.run_id, outcome.activations)
             if outcome.result.get("outcome") != "success":
@@ -1390,36 +1686,6 @@ class ToolCallRuntime:
                     outcome.progress_fingerprint or _hash_json(outcome.result)
                 ),
             }))
-            if (
-                outcome.result.get("reconciliationRequired") is True
-                and (
-                    plan.is_external
-                    or plan.is_eidos_state
-                    or (
-                        plan.is_shell
-                        and outcome.reconciliation_disposition
-                        is not ReconciliationDisposition.CONTINUE_READ_ONLY
-                    )
-                )
-            ):
-                self.store.complete_current_step(
-                    step.run_id,
-                    "failed",
-                    reason=str(outcome.result.get("code")),
-                )
-                pause_reason = (
-                    "external_tool_reconciliation_required"
-                    if plan.is_external
-                    else "shell_reconciliation_required"
-                    if plan.is_shell
-                    else "eidos_state_reconciliation_required"
-                )
-                mutation = self.store.interrupt_run_committed(step.run_id)
-                self.events.publish(mutation, run=mutation.value)
-                return ToolBatchOutcome(
-                    status="paused", pause_reason=pause_reason
-                )
-
         self.state_machine.track(RuntimeState.THINKING, "tool_batch_completed")
         facts = self.store.context_projection_facts(step.run_id)
         return ToolBatchOutcome(
@@ -1579,6 +1845,17 @@ class ToolCallRuntime:
         successes: list[str] = []
         context_facts: list[str] = []
         for (item, call), outcome in zip(pending, outcomes, strict=True):
+            self._check_cancel(step.run_id, cancel)
+            plan = self.dispatcher.plan(
+                call, step.tool_snapshot.binding(call.name)
+            )
+            self._refresh_reconciliation_after_result(
+                run_id=step.run_id,
+                call=call,
+                plan=plan,
+                outcome=outcome,
+                cancel=cancel,
+            )
             if outcome.activations:
                 self.store.activate_tools(step.run_id, outcome.activations)
             if outcome.result.get("outcome") != "success":
@@ -1594,7 +1871,6 @@ class ToolCallRuntime:
                     outcome.progress_fingerprint or _hash_json(outcome.result)
                 ),
             }))
-            self._check_cancel(step.run_id, cancel)
         self.state_machine.track(RuntimeState.THINKING, "tool_batch_completed")
         facts = self.store.context_projection_facts(step.run_id)
         return ToolBatchOutcome(

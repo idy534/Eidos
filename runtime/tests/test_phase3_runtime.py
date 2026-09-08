@@ -21,6 +21,18 @@ from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 from eidos_runtime.runtime.resource_registry import ResourceRegistry  # noqa: E402
 
 
+class _StatusRecordingModel(ScriptedModel):
+    def __init__(self, store: SessionStore, run_id: str, responses) -> None:
+        super().__init__(responses)
+        self.store = store
+        self.run_id = run_id
+        self.run_statuses: list[str] = []
+
+    def complete(self, *args, **kwargs):
+        self.run_statuses.append(self.store.read_run(self.run_id)["status"])
+        return super().complete(*args, **kwargs)
+
+
 class PhaseThreeRuntimeTests(unittest.TestCase):
     def test_skill_create_requires_approval_and_is_available_to_a_new_run(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-p3-skill-create-") as directory:
@@ -299,7 +311,7 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             self.assertFalse(result["sideEffectsMayExist"])
             store.close()
 
-    def test_external_timeout_pauses_for_reconciliation_without_model_retry(self) -> None:
+    def test_external_timeout_stays_active_until_read_only_verification(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-p3-timeout-") as directory:
             root = Path(directory)
             data, workspace, source = root / "data", root / "workspace", root / "plugin"
@@ -331,15 +343,21 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
                 session["id"], "Call slow",
                 extension_snapshot=SkillCatalog(plugins).extension_snapshot(),
             )
-            model = ScriptedModel([
+            model = _StatusRecordingModel(store, run["id"], [
                 ModelResponse(tool_calls=(ModelToolCall(
                     "search", "tool_search", {"query": "slow"}
                 ),)),
                 ModelResponse(tool_calls=(ModelToolCall(
                     "slow", "mcp__fixture__slow", {}
                 ),)),
-                ModelResponse(text="must not retry"),
+                ModelResponse(tool_calls=(ModelToolCall(
+                    "observe-workspace", "list_files", {}
+                ),)),
+                ModelResponse(text="verified answer"),
             ])
+            pending_epoch = store.context_projection_facts(
+                run["id"]
+            ).reconciliation_epoch
             resources = ResourceRegistry()
             kernel = RuntimeAsyncKernel(resource_registry=resources)
             kernel.start()
@@ -356,10 +374,28 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             finally:
                 kernel.close()
 
-            interrupted = store.read_run(run["id"])
-            self.assertEqual(interrupted["status"], "interrupted")
-            self.assertTrue(interrupted["sideEffectsMayExist"])
-            self.assertEqual(len(model.contexts), 2)
+            completed = store.read_run(run["id"])
+            self.assertNotEqual(completed["status"], "interrupted")
+            self.assertTrue(completed["sideEffectsMayExist"])
+            self.assertFalse(store.side_effects_blocked(run["id"]))
+            self.assertFalse(
+                store.context_projection_facts(
+                    run["id"]
+                ).reconciliation_required
+            )
+            self.assertEqual(
+                store.context_projection_facts(
+                    run["id"]
+                ).reconciliation_epoch,
+                pending_epoch + 2,
+            )
+            self.assertGreaterEqual(len(model.run_statuses), 3)
+            self.assertEqual(model.run_statuses[2], "running")
+            read_only_tools = {
+                definition.name for definition in model.tool_definitions_history[2]
+            }
+            self.assertIn("run_shell", read_only_tools)
+            self.assertIn("apply_patch", read_only_tools)
             result = json.loads(store.connection.execute(
                 "SELECT result_json FROM tool_calls WHERE tool_name = ?",
                 ("mcp__fixture__slow",),

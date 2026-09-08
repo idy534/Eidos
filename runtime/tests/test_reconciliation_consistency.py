@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -27,9 +28,28 @@ from eidos_runtime.runtime.approval import ApprovalDecision  # noqa: E402
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
 from eidos_runtime.runtime.resource_registry import ResourceRegistry  # noqa: E402
+from eidos_runtime.runtime.reconciliation import (  # noqa: E402
+    ReconciliationDisposition,
+    classify_shell_reconciliation,
+)
 from eidos_runtime.runtime.tool_orchestrator import OrchestratorResult  # noqa: E402
-from eidos_runtime.sandbox.workspace_manifest import WorkspaceManifest  # noqa: E402
+from eidos_runtime.runtime.tool_runtime import ToolCallRuntime  # noqa: E402
+from eidos_runtime.sandbox.workspace_manifest import (  # noqa: E402
+    WorkspaceManifest,
+)
 from eidos_runtime.tools.workspace import WorkspacePathError  # noqa: E402
+
+
+class _StatusRecordingModel(ScriptedModel):
+    def __init__(self, store: SessionStore, run_id: str, responses) -> None:
+        super().__init__(responses)
+        self.store = store
+        self.run_id = run_id
+        self.run_statuses: list[str] = []
+
+    def complete(self, *args, **kwargs):
+        self.run_statuses.append(self.store.read_run(self.run_id)["status"])
+        return super().complete(*args, **kwargs)
 
 
 class ReconciliationConsistencyTests(unittest.TestCase):
@@ -68,7 +88,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
                 "reconciliationRequired": False,
             }),
             item_status="failed",
-            tool_status="failed",
+            tool_status="completed",
         )
 
         self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
@@ -101,7 +121,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
 
         self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
 
-    def test_missing_reconciliation_field_keeps_conservative_barrier(self) -> None:
+    def test_known_shell_exit_without_explicit_flag_does_not_open_barrier(self) -> None:
         item = self.store.create_tool_item(
             self.run["id"], 0, 0, "shell", "run_shell", "{}"
         )
@@ -110,16 +130,51 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             item["id"],
             json.dumps({
                 "outcome": "error",
-                "code": "nonzero_exit",
+                "code": "shell_exit_nonzero",
                 "summary": "Command failed",
+                "data": {"exitCode": 7, "termination": "exit"},
+                "sideEffectsMayExist": True,
+            }),
+            item_status="failed",
+            tool_status="completed",
+        )
+
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
+
+    def test_explicit_reconciliation_enters_read_only_mode(self) -> None:
+        item = self.store.create_tool_item(
+            self.run["id"], 0, 0, "shell", "run_shell", "{}"
+        )
+        self.store.complete_tool_item(
+            item["id"],
+            json.dumps({
+                "outcome": "error",
+                "code": "outcome_unknown",
+                "summary": "Command outcome is unknown",
                 "data": {},
                 "sideEffectsMayExist": True,
+                "reconciliationRequired": True,
             }),
             item_status="failed",
             tool_status="failed",
         )
 
-        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        disposition = classify_shell_reconciliation(
+            {
+                "outcome": "error",
+                "code": "outcome_unknown",
+                "reconciliationRequired": True,
+            },
+            manifest_before_complete=True,
+            manifest_after_complete=True,
+            refresh_error_code=None,
+        )
+
+        self.assertEqual(self.store.read_run(self.run["id"])["status"], "running")
+        self.assertIs(
+            disposition,
+            ReconciliationDisposition.CONTINUE_READ_ONLY,
+        )
 
     def test_reconciliation_barrier_rolls_back_success_completion(self) -> None:
         step_index = self.store.increment_model_step(self.run["id"])
@@ -162,7 +217,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             event_count,
         )
 
-    def test_engine_interrupts_instead_of_succeeding_behind_barrier(self) -> None:
+    def test_engine_keeps_run_active_until_read_only_verification(self) -> None:
         connection = self.store.connection
         connection.execute(
             "UPDATE runs SET reconciliation_required = 1, side_effects_may_exist = 1 "
@@ -170,24 +225,56 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             (self.run["id"],),
         )
         connection.commit()
+        pending_epoch = self.store.context_projection_facts(
+            self.run["id"]
+        ).reconciliation_epoch
 
-        RuntimeEngine(
-            self.store,
-            ScriptedModel([ModelResponse(text="answer")]),
-            lambda _message: None,
-        ).run(self.run["id"], threading.Event())
+        model = ScriptedModel([
+            ModelResponse(text="answer"),
+            ModelResponse(tool_calls=(ModelToolCall(
+                "observe-workspace", "list_files", {}
+            ),)),
+            ModelResponse(text="verified answer"),
+        ])
+        with patch(
+            "eidos_runtime.tools.runtime_workspace.ToolExecutor.refresh_workspace_index",
+            return_value=WorkspaceManifest((), True, False),
+        ) as refresh:
+            RuntimeEngine(
+                self.store,
+                model,
+                lambda _message: None,
+            ).run(self.run["id"], threading.Event())
 
         persisted = self.store.read_run(self.run["id"])
-        self.assertEqual(persisted["status"], "interrupted")
-        self.assertTrue(persisted["reconciliationRequired"])
-        self.assertNotEqual(persisted["status"], "succeeded")
+        self.assertEqual(persisted["status"], "succeeded")
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
+        self.assertFalse(
+            self.store.context_projection_facts(
+                self.run["id"]
+            ).reconciliation_required
+        )
+        self.assertGreaterEqual(persisted["modelStepCount"], 3)
+        self.assertEqual(
+            self.store.context_projection_facts(
+                self.run["id"]
+            ).reconciliation_epoch,
+            pending_epoch + 1,
+        )
+        self.assertGreaterEqual(refresh.call_count, 1)
+        self.assertTrue(any(
+            "Reconciliation is still required."
+            in context_item.get("content", "")
+            for context_item in model.contexts[1]
+            if context_item.get("type") == "user"
+        ))
 
-    def test_incomplete_shell_observation_does_not_restrict_follow_up_tools(self) -> None:
+    def test_shell_exit_nonzero_does_not_restrict_follow_up_tools(self) -> None:
         model = ScriptedModel([
             ModelResponse(tool_calls=(ModelToolCall(
                 "shell-attempt",
                 "run_shell",
-                {"command": "false", "timeoutSeconds": 5},
+                {"command": "false", "yieldTimeMs": 5000},
             ),)),
             ModelResponse(tool_calls=(ModelToolCall(
                 "observe-workspace",
@@ -201,7 +288,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             "toolContractVersion": 1,
             "toolName": "run_shell",
             "outcome": "error",
-            "code": "nonzero_exit",
+            "code": "shell_exit_nonzero",
             "summary": "Command exited with a non-zero status",
             "data": {
                 "exitCode": 1,
@@ -216,7 +303,10 @@ class ReconciliationConsistencyTests(unittest.TestCase):
 
         with (
             patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
-            patch("eidos_runtime.runtime.tool_runtime.run_shell", return_value=shell_result),
+            patch(
+                "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start",
+                return_value=shell_result,
+            ),
             patch(
                 "eidos_runtime.tools.runtime_workspace.ToolExecutor.refresh_workspace_index",
                 side_effect=WorkspacePathError("WORKSPACE_INDEX_INCOMPLETE"),
@@ -283,7 +373,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ModelResponse(tool_calls=(ModelToolCall(
                 "shell-attempt",
                 "run_shell",
-                {"command": "false", "timeoutSeconds": 5},
+                {"command": "false", "yieldTimeMs": 5000},
             ),)),
             ModelResponse(tool_calls=(ModelToolCall(
                 "observe-workspace",
@@ -297,7 +387,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             "toolContractVersion": 1,
             "toolName": "run_shell",
             "outcome": "error",
-            "code": "nonzero_exit",
+            "code": "shell_exit_nonzero",
             "summary": "Command exited with a non-zero status",
             "data": {
                 "exitCode": 1,
@@ -314,7 +404,10 @@ class ReconciliationConsistencyTests(unittest.TestCase):
 
         with (
             patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
-            patch("eidos_runtime.runtime.tool_runtime.run_shell", return_value=shell_result),
+            patch(
+                "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start",
+                return_value=shell_result,
+            ),
             patch(
                 "eidos_runtime.sandbox.workspace_index.WorkspaceIndex.manifest",
                 return_value=incomplete_before,
@@ -354,7 +447,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             0,
         )
 
-    def test_nonzero_shell_does_not_stop_an_independent_shell_in_the_same_batch(
+    def test_shell_exit_nonzero_does_not_stop_an_independent_shell_in_the_same_batch(
         self,
     ) -> None:
         model = ScriptedModel([
@@ -362,12 +455,12 @@ class ReconciliationConsistencyTests(unittest.TestCase):
                 ModelToolCall(
                     "first-shell",
                     "run_shell",
-                    {"command": "exit 1", "timeoutSeconds": 5},
+                    {"command": "exit 1", "yieldTimeMs": 5000},
                 ),
                 ModelToolCall(
                     "second-shell",
                     "run_shell",
-                    {"command": "printf second-shell", "timeoutSeconds": 5},
+                    {"command": "printf second-shell", "yieldTimeMs": 5000},
                 ),
             )),
             ModelResponse(text="Both shell results were returned."),
@@ -378,7 +471,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
                 "toolContractVersion": 1,
                 "toolName": "run_shell",
                 "outcome": "error",
-                "code": "nonzero_exit",
+                "code": "shell_exit_nonzero",
                 "summary": "Command failed with exit code 1",
                 "data": {
                     "exitCode": 1,
@@ -410,15 +503,19 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         ]
         invocations: list[str] = []
 
-        def fake_run_shell(*args: object, **_kwargs: object) -> dict[str, object]:
-            command = args[1]
+        def fake_start(launch: object, **_kwargs: object) -> dict[str, object]:
+            argv = getattr(launch, "argv")
+            command = argv[-1]
             assert isinstance(command, str)
             invocations.append(command)
             return shell_results[len(invocations) - 1]
 
         with (
             patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
-            patch("eidos_runtime.runtime.tool_runtime.run_shell", side_effect=fake_run_shell),
+            patch(
+                "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start",
+                side_effect=fake_start,
+            ),
             patch(
                 "eidos_runtime.tools.runtime_workspace.ToolExecutor.refresh_workspace_index",
                 side_effect=WorkspacePathError("WORKSPACE_INDEX_INCOMPLETE"),
@@ -447,26 +544,29 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             [(row["item_status"], row["tool_status"]) for row in rows],
             [("failed", "completed"), ("completed", "completed")],
         )
-        self.assertEqual(json.loads(rows[0]["result_json"])["code"], "nonzero_exit")
+        self.assertEqual(json.loads(rows[0]["result_json"])["code"], "shell_exit_nonzero")
         self.assertEqual(json.loads(rows[1]["result_json"])["code"], "ok")
 
-    def _assert_shell_refresh_error_stops_without_replay(
+    def _assert_shell_refresh_error_keeps_run_active(
         self, error_code: str
     ) -> None:
-        model = ScriptedModel([
+        model = _StatusRecordingModel(self.store, self.run["id"], [
             ModelResponse(tool_calls=(ModelToolCall(
                 "shell-attempt",
                 "run_shell",
-                {"command": "false", "timeoutSeconds": 5},
+                {"command": "false", "yieldTimeMs": 5000},
             ),)),
-            ModelResponse(text="must not sample again"),
+            ModelResponse(tool_calls=(ModelToolCall(
+                "observe-workspace", "list_files", {}
+            ),)),
+            ModelResponse(text="must not complete before verification"),
         ])
         shell_result = {
             "schemaVersion": 1,
             "toolContractVersion": 1,
             "toolName": "run_shell",
             "outcome": "error",
-            "code": "nonzero_exit",
+            "code": "shell_exit_nonzero",
             "summary": "Command exited with a non-zero status",
             "data": {
                 "exitCode": 1,
@@ -481,7 +581,10 @@ class ReconciliationConsistencyTests(unittest.TestCase):
 
         with (
             patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
-            patch("eidos_runtime.runtime.tool_runtime.run_shell", return_value=shell_result),
+            patch(
+                "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start",
+                return_value=shell_result,
+            ),
             patch(
                 "eidos_runtime.tools.runtime_workspace.ToolExecutor.refresh_workspace_index",
                 side_effect=WorkspacePathError(error_code),
@@ -495,9 +598,15 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ).run(self.run["id"], threading.Event())
 
         persisted = self.store.read_run(self.run["id"])
-        self.assertEqual(persisted["status"], "interrupted")
-        self.assertTrue(persisted["reconciliationRequired"])
-        self.assertEqual(len(model.contexts), 1)
+        self.assertNotEqual(persisted["status"], "interrupted")
+        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertGreaterEqual(len(model.run_statuses), 2)
+        self.assertEqual(model.run_statuses[1], "running")
+        read_only_tools = {
+            definition.name for definition in model.tool_definitions_history[1]
+        }
+        self.assertIn("run_shell", read_only_tools)
+        self.assertIn("apply_patch", read_only_tools)
         shell_calls = self.store.connection.execute(
             "SELECT COUNT(*) FROM tool_calls WHERE tool_name = ?",
             ("run_shell",),
@@ -510,31 +619,34 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         assert row is not None
         self.assertTrue(json.loads(row["result_json"])["reconciliationRequired"])
 
-    def test_workspace_identity_refresh_error_stops_without_replay(self) -> None:
-        self._assert_shell_refresh_error_stops_without_replay(
+    def test_workspace_identity_refresh_error_keeps_run_active(self) -> None:
+        self._assert_shell_refresh_error_keeps_run_active(
             "workspace_identity_changed"
         )
 
-    def test_unsupported_workspace_hardlink_refresh_error_stops_without_replay(self) -> None:
-        self._assert_shell_refresh_error_stops_without_replay(
+    def test_unsupported_workspace_hardlink_refresh_error_keeps_run_active(self) -> None:
+        self._assert_shell_refresh_error_keeps_run_active(
             "unsupported_workspace_hardlink"
         )
 
-    def test_unsupported_workspace_entry_refresh_error_stops_without_replay(self) -> None:
-        self._assert_shell_refresh_error_stops_without_replay(
+    def test_unsupported_workspace_entry_refresh_error_keeps_run_active(self) -> None:
+        self._assert_shell_refresh_error_keeps_run_active(
             "unsupported_workspace_entry"
         )
 
-    def _assert_default_seatbelt_shell_stops_without_replay(
+    def _assert_default_seatbelt_shell_keeps_run_active(
         self, *, code: str, termination: str, exit_code: int | None
     ) -> None:
-        model = ScriptedModel([
+        model = _StatusRecordingModel(self.store, self.run["id"], [
             ModelResponse(tool_calls=(ModelToolCall(
                 "shell-attempt",
                 "run_shell",
-                {"command": "sleep 60", "timeoutSeconds": 1},
+                {"command": "sleep 60", "yieldTimeMs": 1000},
             ),)),
-            ModelResponse(text="must not retry"),
+            ModelResponse(tool_calls=(ModelToolCall(
+                "observe-workspace", "list_files", {}
+            ),)),
+            ModelResponse(text="must not complete before verification"),
         ])
         shell_result = {
             "schemaVersion": 1,
@@ -557,7 +669,18 @@ class ReconciliationConsistencyTests(unittest.TestCase):
 
         with (
             patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
-            patch("eidos_runtime.runtime.tool_runtime.run_shell", return_value=shell_result),
+            patch(
+                "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start",
+                return_value=shell_result,
+            ),
+            patch(
+                "eidos_runtime.tools.runtime_workspace.ToolExecutor.refresh_workspace_index",
+                side_effect=[
+                    WorkspacePathError("WORKSPACE_INDEX_INCOMPLETE"),
+                    WorkspacePathError("WORKSPACE_INDEX_INCOMPLETE"),
+                    WorkspaceManifest((), True, False),
+                ],
+            ),
         ):
             RuntimeEngine(
                 self.store,
@@ -567,10 +690,21 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ).run(self.run["id"], threading.Event())
 
         persisted = self.store.read_run(self.run["id"])
-        self.assertEqual(persisted["status"], "interrupted")
+        self.assertNotEqual(persisted["status"], "interrupted")
         self.assertTrue(persisted["sideEffectsMayExist"])
-        self.assertTrue(persisted["reconciliationRequired"])
-        self.assertEqual(len(model.contexts), 1)
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
+        self.assertFalse(
+            self.store.context_projection_facts(
+                self.run["id"]
+            ).reconciliation_required
+        )
+        self.assertGreaterEqual(len(model.run_statuses), 2)
+        self.assertEqual(model.run_statuses[1], "running")
+        read_only_tools = {
+            definition.name for definition in model.tool_definitions_history[1]
+        }
+        self.assertIn("run_shell", read_only_tools)
+        self.assertIn("apply_patch", read_only_tools)
         calls = self.store.connection.execute(
             "SELECT COUNT(*) FROM tool_calls WHERE tool_name = ?",
             ("run_shell",),
@@ -587,31 +721,34 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertTrue(result["data"]["sandboxed"])
         self.assertEqual(result["data"]["sandboxPermissions"], "use_default")
 
-    def test_default_seatbelt_shell_timeout_stops_without_replay(self) -> None:
-        self._assert_default_seatbelt_shell_stops_without_replay(
+    def test_default_seatbelt_shell_timeout_keeps_run_active(self) -> None:
+        self._assert_default_seatbelt_shell_keeps_run_active(
             code="timeout", termination="timeout", exit_code=None
         )
 
-    def test_default_seatbelt_shell_background_process_stops_without_replay(self) -> None:
-        self._assert_default_seatbelt_shell_stops_without_replay(
+    def test_default_seatbelt_shell_background_process_keeps_run_active(self) -> None:
+        self._assert_default_seatbelt_shell_keeps_run_active(
             code="background_process", termination="background_process", exit_code=0
         )
 
-    def test_shell_reconciliation_without_trusted_sandbox_metadata_stops_run(self) -> None:
-        model = ScriptedModel([
+    def test_shell_reconciliation_without_trusted_sandbox_metadata_keeps_run_active(self) -> None:
+        model = _StatusRecordingModel(self.store, self.run["id"], [
             ModelResponse(tool_calls=(ModelToolCall(
                 "shell-attempt",
                 "run_shell",
-                {"command": "false", "timeoutSeconds": 5},
+                {"command": "false", "yieldTimeMs": 5000},
             ),)),
-            ModelResponse(text="must not retry"),
+            ModelResponse(tool_calls=(ModelToolCall(
+                "observe-workspace", "list_files", {}
+            ),)),
+            ModelResponse(text="must not complete before verification"),
         ])
         incomplete_result = {
             "schemaVersion": 1,
             "toolContractVersion": 1,
             "toolName": "run_shell",
             "outcome": "error",
-            "code": "nonzero_exit",
+            "code": "shell_exit_nonzero",
             "summary": "Command outcome is uncertain",
             "data": {
                 "exitCode": 1,
@@ -642,6 +779,13 @@ class ReconciliationConsistencyTests(unittest.TestCase):
                 "eidos_runtime.runtime.tool_runtime.ToolOrchestrator.run",
                 side_effect=return_incomplete_result,
             ),
+            patch(
+                "eidos_runtime.tools.runtime_workspace.ToolExecutor.refresh_workspace_index",
+                side_effect=[
+                    WorkspacePathError("WORKSPACE_INDEX_INCOMPLETE"),
+                    WorkspaceManifest((), True, False),
+                ],
+            ),
         ):
             RuntimeEngine(
                 self.store,
@@ -651,9 +795,20 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ).run(self.run["id"], threading.Event())
 
         persisted = self.store.read_run(self.run["id"])
-        self.assertEqual(persisted["status"], "interrupted")
-        self.assertTrue(persisted["reconciliationRequired"])
-        self.assertEqual(len(model.contexts), 1)
+        self.assertNotEqual(persisted["status"], "interrupted")
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
+        self.assertFalse(
+            self.store.context_projection_facts(
+                self.run["id"]
+            ).reconciliation_required
+        )
+        self.assertGreaterEqual(len(model.run_statuses), 2)
+        self.assertEqual(model.run_statuses[1], "running")
+        read_only_tools = {
+            definition.name for definition in model.tool_definitions_history[1]
+        }
+        self.assertIn("run_shell", read_only_tools)
+        self.assertIn("apply_patch", read_only_tools)
         row = self.store.connection.execute(
             "SELECT result_json FROM tool_calls WHERE tool_name = ?",
             ("run_shell",),
@@ -664,23 +819,26 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertNotIn("sandboxed", result["data"])
         self.assertNotIn("effectivePermissionsSummary", result["data"])
 
-    def _assert_permissioned_shell_stops_without_replay(
+    def _assert_permissioned_shell_keeps_run_active(
         self, arguments: dict[str, object], expected_mode: str
     ) -> None:
-        model = ScriptedModel([
+        model = _StatusRecordingModel(self.store, self.run["id"], [
             ModelResponse(tool_calls=(ModelToolCall(
                 "permissioned-shell",
                 "run_shell",
                 arguments,
             ),)),
-            ModelResponse(text="must not retry"),
+            ModelResponse(tool_calls=(ModelToolCall(
+                "observe-workspace", "list_files", {}
+            ),)),
+            ModelResponse(text="must not complete before verification"),
         ])
         shell_result = {
             "schemaVersion": 1,
             "toolContractVersion": 1,
             "toolName": "run_shell",
             "outcome": "error",
-            "code": "nonzero_exit",
+            "code": "shell_exit_nonzero",
             "summary": "Command failed after the permissioned attempt",
             "data": {
                 "exitCode": 1,
@@ -697,7 +855,18 @@ class ReconciliationConsistencyTests(unittest.TestCase):
 
         with (
             patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
-            patch("eidos_runtime.runtime.tool_runtime.run_shell", return_value=shell_result),
+            patch(
+                "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start",
+                return_value=shell_result,
+            ),
+            patch(
+                "eidos_runtime.tools.runtime_workspace.ToolExecutor.refresh_workspace_index",
+                side_effect=[
+                    WorkspacePathError("WORKSPACE_INDEX_INCOMPLETE"),
+                    WorkspacePathError("WORKSPACE_INDEX_INCOMPLETE"),
+                    WorkspaceManifest((), True, False),
+                ],
+            ),
         ):
             RuntimeEngine(
                 self.store,
@@ -712,9 +881,20 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ).run(self.run["id"], threading.Event())
 
         persisted = self.store.read_run(self.run["id"])
-        self.assertEqual(persisted["status"], "interrupted")
-        self.assertTrue(persisted["reconciliationRequired"])
-        self.assertEqual(len(model.contexts), 1)
+        self.assertNotEqual(persisted["status"], "interrupted")
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
+        self.assertFalse(
+            self.store.context_projection_facts(
+                self.run["id"]
+            ).reconciliation_required
+        )
+        self.assertGreaterEqual(len(model.run_statuses), 2)
+        self.assertEqual(model.run_statuses[1], "running")
+        read_only_tools = {
+            definition.name for definition in model.tool_definitions_history[1]
+        }
+        self.assertIn("run_shell", read_only_tools)
+        self.assertIn("apply_patch", read_only_tools)
         self.assertEqual(len(approvals), 1)
         self.assertEqual(approvals[0]["sandboxPermissions"], expected_mode)
         calls = self.store.connection.execute(
@@ -723,22 +903,22 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(calls, 1)
 
-    def test_escalated_shell_reconciliation_stops_without_replay(self) -> None:
-        self._assert_permissioned_shell_stops_without_replay(
+    def test_escalated_shell_reconciliation_keeps_run_active(self) -> None:
+        self._assert_permissioned_shell_keeps_run_active(
             {
                 "command": "false",
-                "timeoutSeconds": 5,
+                "yieldTimeMs": 5000,
                 "sandboxPermissions": "require_escalated",
                 "justification": "The fixture needs an explicit unsandboxed attempt.",
             },
             "require_escalated",
         )
 
-    def test_additional_permission_shell_reconciliation_stops_without_replay(self) -> None:
-        self._assert_permissioned_shell_stops_without_replay(
+    def test_additional_permission_shell_reconciliation_keeps_run_active(self) -> None:
+        self._assert_permissioned_shell_keeps_run_active(
             {
                 "command": "false",
-                "timeoutSeconds": 5,
+                "yieldTimeMs": 5000,
                 "sandboxPermissions": "with_additional_permissions",
                 "additionalPermissions": {"network": {"enabled": True}},
                 "justification": "The fixture needs an explicit network permission.",
@@ -788,7 +968,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
                 "Call the slow external tool",
                 extension_snapshot=SkillCatalog(plugins).extension_snapshot(),
             )
-            model = ScriptedModel([
+            model = _StatusRecordingModel(store, run["id"], [
                 ModelResponse(tool_calls=(ModelToolCall(
                     "search",
                     "tool_search",
@@ -799,8 +979,14 @@ class ReconciliationConsistencyTests(unittest.TestCase):
                     "mcp__fixture__slow",
                     {},
                 ),)),
-                ModelResponse(text="must not retry"),
+                ModelResponse(tool_calls=(ModelToolCall(
+                    "observe-workspace", "list_files", {}
+                ),)),
+                ModelResponse(text="verified answer"),
             ])
+            pending_epoch = store.context_projection_facts(
+                run["id"]
+            ).reconciliation_epoch
             resources = ResourceRegistry()
             kernel = RuntimeAsyncKernel(resource_registry=resources)
             kernel.start()
@@ -820,10 +1006,27 @@ class ReconciliationConsistencyTests(unittest.TestCase):
                 kernel.close()
 
             persisted = store.read_run(run["id"])
-            self.assertEqual(persisted["status"], "interrupted")
+            self.assertNotEqual(persisted["status"], "interrupted")
             self.assertTrue(persisted["sideEffectsMayExist"])
-            self.assertTrue(persisted["reconciliationRequired"])
-            self.assertEqual(len(model.contexts), 2)
+            self.assertFalse(store.side_effects_blocked(run["id"]))
+            self.assertFalse(
+                store.context_projection_facts(
+                    run["id"]
+                ).reconciliation_required
+            )
+            self.assertEqual(
+                store.context_projection_facts(
+                    run["id"]
+                ).reconciliation_epoch,
+                pending_epoch + 2,
+            )
+            self.assertGreaterEqual(len(model.contexts), 3)
+            self.assertEqual(model.run_statuses[2], "running")
+            read_only_tools = {
+                definition.name for definition in model.tool_definitions_history[2]
+            }
+            self.assertIn("run_shell", read_only_tools)
+            self.assertIn("apply_patch", read_only_tools)
             calls = store.connection.execute(
                 "SELECT COUNT(*) FROM tool_calls WHERE tool_name = ?",
                 ("mcp__fixture__slow",),
@@ -835,6 +1038,59 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ).fetchone()[0])
             self.assertIn(result["code"], {"mcp_tool_timeout", "TOOL_TIMEOUT"})
             store.close()
+
+    def test_external_uncertain_refresh_failure_keeps_barrier(self) -> None:
+        item = self.store.create_tool_item(
+            self.run["id"], 0, 0, "external", "external_tool", "{}"
+        )
+        self.store.complete_tool_item(
+            item["id"],
+            json.dumps({
+                "outcome": "error",
+                "code": "external_outcome_unknown",
+                "summary": "External outcome is unknown",
+                "data": {},
+                "sideEffectsMayExist": True,
+                "reconciliationRequired": True,
+            }),
+            item_status="failed",
+            tool_status="failed",
+        )
+        pending_epoch = self.store.context_projection_facts(
+            self.run["id"]
+        ).reconciliation_epoch
+        runtime = ToolCallRuntime.__new__(ToolCallRuntime)
+        runtime.store = self.store
+        runtime.events = SimpleNamespace(
+            publish=lambda *_args, **_kwargs: None,
+        )
+
+        def fail_refresh(_cancel: threading.Event) -> WorkspaceManifest:
+            raise WorkspacePathError("workspace_identity_changed")
+
+        runtime.workspace_refresh = fail_refresh
+
+        runtime._refresh_reconciliation_after_result(
+            run_id=self.run["id"],
+            call=SimpleNamespace(name="external_tool"),
+            plan=SimpleNamespace(side_effect="external"),
+            outcome=SimpleNamespace(
+                result={
+                    "outcome": "error",
+                    "reconciliationRequired": True,
+                },
+                reconciliation_disposition=ReconciliationDisposition.CONTINUE,
+            ),
+            cancel=threading.Event(),
+        )
+
+        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertEqual(
+            self.store.context_projection_facts(
+                self.run["id"]
+            ).reconciliation_epoch,
+            pending_epoch,
+        )
 
     def test_new_successful_read_clears_barrier_before_success_completion(self) -> None:
         uncertain = self.store.create_tool_item(
@@ -854,6 +1110,9 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             tool_status="failed",
         )
         self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        pending_epoch = self.store.context_projection_facts(
+            self.run["id"]
+        ).reconciliation_epoch
 
         read_step = self.store.increment_model_step(self.run["id"])
         read = self.store.create_tool_item(
@@ -871,7 +1130,19 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             }),
         )
         self.store.complete_current_step(self.run["id"], "completed")
+        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        mutation = self.store.clear_reconciliation_after_workspace_refresh_committed(
+            self.run["id"], pending_epoch
+        )
+        self.assertIsNotNone(mutation)
         self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
+        self.assertEqual(
+            self.store.context_projection_facts(
+                self.run["id"]
+            ).reconciliation_epoch,
+            pending_epoch + 1,
+        )
+        self.assertTrue(self.store.read_run(self.run["id"])["sideEffectsMayExist"])
 
         final_step = self.store.increment_model_step(self.run["id"])
         assistant = self.store.create_assistant_item(self.run["id"], final_step)
