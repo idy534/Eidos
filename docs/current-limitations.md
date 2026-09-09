@@ -79,7 +79,7 @@
 - Worktree Session create、Session delete、managed Checkpoint Fork、managed Checkpoint Rewind、Create Branch Here、retention cleanup 和 Restore 使用 durable lifecycle intent。Session Handoff 使用 durable operation、strict HandoffPlan 和 startup recovery。Create Branch Here 使用 attach 时冻结的 `expected_head`，不使用创建时的 `base_commit` 判断当前 branch HEAD。Runtime 仍会拒绝 dirty Worktree delete，并保留无法证明安全的目录和 legacy attached branch。Retention 只处理 managed Worktree，不处理 adopted Worktree、Permanent Worktree 或按 bytes 的 disk quota。User Branch handoff 给 Local 后只释放 Eidos Worktree metadata，不删除 Git ref；Session delete 仍会保留这个普通用户 branch。Local Session delete 不删除用户 workspace。当前仍不提供 Permanent Worktree、Pinned Chat、Archive Chat、multi-Session shared Worktree、dependency cache Snapshot 或 Pull Request UI。
 - Linked Worktree 的 Git metadata read 已在真实 macOS Seatbelt 中验证。Git metadata write、原始 repository working-tree access 和不匹配的 Worktree recovery 会被拒绝。Desktop dirty indicator 只使用 `project/gitContext` 和当前 Session status，不做所有 Thread 的持续轮询。Non-Git Local Workspace Checkpoint 仍不保存或恢复 filesystem state。
 - Parallel Agent / subagent 尚未实现。本次不为未来 subagent 预设并发上限。cross-worktree Repository Intelligence sharing 尚未实现。
-- Runtime 不会恢复内存中的 Model request、Process 或 ToolCall。可能有副作用且执行状态未知的操作必须先进入 reconciliation，Runtime 不会自动重放。已明确 `termination=exit` 且有 `exitCode` 的 Shell 即使 Workspace observation 不完整，也不会因此进入只读模式或阻止后续 ToolCall。取消终态只受未清除的 reconciliation barrier 阻断；`sideEffectsMayExist` 不会单独阻断取消。Workspace refresh 只能清除 Workspace mutation 的可核验 barrier，不能清除 Shell、MCP、external、Eidos-state 或 unknown barrier。Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果仍然 fail closed。
+- Runtime 不会恢复内存中的 Model request、Process 或 ToolCall。可能有副作用且执行状态未知的操作必须先进入 reconciliation，Runtime 不会自动重放。已明确 `termination=exit` 且有 `exitCode` 的 Shell 即使 Workspace observation 不完整，也不会因此进入只读模式或阻止后续 ToolCall。取消已停止的 Run 正常返回。未清除的 reconciliation barrier 保留在 `interrupted` 终态中；`sideEffectsMayExist` 不会单独阻断取消。Workspace refresh 只能清除 Workspace mutation 的可核验 barrier，不能清除 Shell、MCP、external、Eidos-state 或 unknown barrier。Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果仍然 fail closed。
 
 ### Compaction 与 Context
 
@@ -135,3 +135,11 @@
 权限 Grant 只覆盖当前 Run，用户不能选择 Session 或全局范围。R1 不提供 Approve for me、Full Access、Network Proxy、域名授权、持久 allowlist 或自动审批。路径权限只使用具体路径，不支持 glob。
 
 旧审批或缺少完整执行事实的待批动作不会被猜测为可恢复。Runtime 会继续中断不确定执行，并保留 Reconciliation。用户批准权限不会自动重放之前失败的 Shell。
+
+## Run 收尾与 Shell 执行期限
+
+- 模型提交最终答复时，Runtime 在同一事务提交答复和 Run 终态。未清除的 reconciliation 会使 Run 进入 `interrupted`，不会再强制模型继续只读核验，也不会清除未知 Durable Intent 或放行新副作用。
+- 取消后 Worker 已退出时，RPC 返回 `canceled` 或 `interrupted`。系统记录取消完成时间；副作用未知不再作为取消失败。无 Worker 的 queued Run 如果已带有未确认副作用，也进入 `interrupted`。重复取消已中断 Run 返回原终态。Worker 仍存活时继续报告 `RUN_CANCEL_TIMEOUT`。
+- 新 Run 的 `run_shell` 使用 ToolSpec 中的 3600 秒执行预算。预算包括内部轮询和同一次 ToolCall 的所有 attempt，Approval 等待不计入预算。`yieldTimeMs` 只控制首次等待窗口。已固定的历史 Tool Snapshot 保留原预算。
+- 控制器把已有 Shell 结果转成超时或取消结果时，会保留已有输出和终止信息，并继续执行结果校验、输出限额和敏感扫描。进程清理和未知副作用仍按原规则处理。此修改不恢复旧结果中已经缺失的 stdout/stderr。
+- Runtime context 使用 `recentToolErrorFingerprints` 表示最近工具错误。空列表不代表对账完成。LoopGuard 不把 assistant 文本变化或最近错误列表中的错误消失单独当作新进展。

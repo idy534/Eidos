@@ -342,6 +342,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         observe=None,
         arguments=None,
         attempts=None,
+        deadline=None,
     ):
         effective_arguments = dict(arguments or {
             "command": "fixture",
@@ -410,7 +411,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
                 call=call,
                 plan=self.dispatcher.plan(call),
                 cancel=cancel or threading.Event(),
-                deadline=None,
+                deadline=deadline,
             )
 
     def test_success_without_file_change_does_not_increment_workspace_version(self) -> None:
@@ -836,7 +837,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
 
     def test_shell_cancel_stops_future_deltas(self) -> None:
         cancel = threading.Event()
-        self._execute(
+        outcome = self._execute(
             {
                 "outcome": "error", "code": "canceled", "summary": "canceled",
                 "data": {"exitCode": None, "stdout": "one\ntwo\n", "stderr": ""},
@@ -854,6 +855,67 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             """
         ).fetchone()
         self.assertEqual(item["content"], "one\n")
+        self.assertEqual(outcome.result["code"], "canceled")
+
+    def test_shell_timeout_preserves_bounded_output_and_termination(self) -> None:
+        stdout = "partial stdout\n"
+        stderr = "partial stderr\n"
+        clock = [100.0]
+        self.controller.monotonic = lambda: clock[0]
+
+        def advance_past_deadline() -> None:
+            clock[0] = 101.0
+
+        outcome = self._execute(
+            {
+                "outcome": "error",
+                "code": "shell_exit_nonzero",
+                "summary": "Command timed out",
+                "data": {
+                    "exitCode": None,
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "termination": "timeout",
+                },
+                "sideEffectsMayExist": True,
+            },
+            deadline=100.5,
+            mutate=advance_past_deadline,
+        )
+
+        self.assertEqual(outcome.result["code"], "TOOL_TIMEOUT")
+        self.assertTrue(outcome.result["reconciliationRequired"])
+        data = outcome.result["data"]
+        self.assertEqual(data["stdout"], stdout)
+        self.assertEqual(data["stderr"], stderr)
+        self.assertEqual(data["termination"], "timeout")
+        self.assertLessEqual(len(data["stdout"].encode()), 256 * 1024)
+        self.assertLessEqual(len(data["stderr"].encode()), 256 * 1024)
+
+    def test_shell_cancel_preserves_output_after_controller_conversion(self) -> None:
+        cancel = threading.Event()
+        outcome = self._execute(
+            {
+                "outcome": "error",
+                "code": "shell_exit_nonzero",
+                "summary": "Command was canceled",
+                "data": {
+                    "exitCode": None,
+                    "stdout": "partial stdout\n",
+                    "stderr": "partial stderr\n",
+                    "termination": "canceled",
+                },
+                "sideEffectsMayExist": True,
+            },
+            output=("partial stdout\n",),
+            cancel=cancel,
+        )
+
+        self.assertEqual(outcome.result["code"], "TOOL_CANCELED")
+        self.assertTrue(outcome.result["reconciliationRequired"])
+        self.assertEqual(outcome.result["data"]["stdout"], "partial stdout\n")
+        self.assertEqual(outcome.result["data"]["stderr"], "partial stderr\n")
+        self.assertEqual(outcome.result["data"]["termination"], "canceled")
 
     def test_shell_final_result_matches_streamed_output(self) -> None:
         outcome = self._execute(

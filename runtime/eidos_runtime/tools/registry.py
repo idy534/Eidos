@@ -55,7 +55,7 @@ class ToolSpec(ClosedModel):
         alias="sideEffect"
     )
     approval_required: bool = Field(alias="approvalRequired")
-    timeout_seconds: StrictInt = Field(alias="timeoutSeconds", ge=1, le=600)
+    timeout_seconds: StrictInt = Field(alias="timeoutSeconds", ge=1, le=3600)
     batch_policy: Literal["parallel", "single"] = Field(
         default="single", alias="batchPolicy"
     )
@@ -131,7 +131,7 @@ class ToolExecutionPolicy(ClosedModel):
         "none", "workspace", "eidos_state", "shell", "external"
     ]
     approval_required: bool
-    timeout_seconds: StrictInt = Field(ge=1, le=600)
+    timeout_seconds: StrictInt = Field(ge=1, le=3600)
     cancellation: ToolCancellationPolicy
     concurrency: ToolConcurrencyPolicy
 

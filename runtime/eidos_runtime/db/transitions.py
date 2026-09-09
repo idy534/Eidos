@@ -59,6 +59,8 @@ def transition_run(
         })
     elif target_status is RunStatus.INTERRUPTED:
         updates.update({"error_code": "RUNTIME_INTERRUPTED", "completed_at": now})
+        if row["cancel_requested_at"] is not None:
+            updates.update({"cancel_completed_at": now, "cancel_failure_code": None})
     elif target_status is RunStatus.SUCCEEDED:
         updates["completed_at"] = now
     assignments = ", ".join(f"{column} = ?" for column in updates)

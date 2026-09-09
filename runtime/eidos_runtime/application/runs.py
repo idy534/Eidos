@@ -459,6 +459,7 @@ class RunApplication:
             "waiting_approval",
             "finalizing",
             "canceled",
+            "interrupted",
         }:
             raise ApplicationError("INVALID_STATE", "run cannot be canceled")
         try:
@@ -475,7 +476,7 @@ class RunApplication:
                 current = store.read_run(request.run_id)
             except ResourceNotFoundError as error:
                 raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
-            if current.get("status") != "canceled":
+            if current.get("status") not in {"canceled", "interrupted"}:
                 raise ApplicationError("INVALID_STATE", "run cannot be canceled")
         except RunCancelTimeout as error:
             raise ApplicationError("RUN_CANCEL_TIMEOUT", str(error)) from error

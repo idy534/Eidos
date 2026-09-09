@@ -40,7 +40,7 @@
 - Runtime 可以创建、排队、执行、取消、暂停、恢复和查询 Run。
 - Run 按 Session 分别使用持久 FIFO。同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run。不同 Session 的 Run 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。普通 Run 没有并发上限。等待 Approval 的 Run 不占用跨 Run 的副作用门。
 - Run 状态、Item、Step、ToolCall、Approval 和终态写入 SQLite，并通过 Event/Outbox 投影到 Desktop。
-- 取消会传播到 Model、Tool、Shell、Approval 和 Async Task。取消终态只会被未清除的 reconciliation barrier 阻断；`sideEffectsMayExist` 只是历史证据。已取消 Run 不会被迟到模型结果改成成功。
+- 取消会传播到 Model、Tool、Shell、Approval 和 Async Task。取消会停止执行。未清除的 reconciliation barrier 会使 Run 返回 `interrupted`，并保留副作用事实；Worker 已退出时，取消 RPC 正常返回。`sideEffectsMayExist` 只是历史证据。已取消 Run 不会被迟到模型结果改成成功。
 - Model Step Count、Segment Step Count 和 effective time 可以作为持久 telemetry 读取。
 - 健康 Run 不受固定 model-step、Run duration 或 fixed repeated-call counter 限制。Segment rollover 不会把 Run 变成终态。
 
@@ -309,3 +309,11 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - R1 结构化待批请求可以在重启后恢复。Runtime 保留原审批，并重新核对 Tool 契约和待执行动作。网络 denial 的已完成结果可以恢复。不确定执行、契约变化和取消仍保持原有安全边界。
 - 所有审批共用底部 ApprovalComposer，等待时普通输入框不存在。Feed 只显示历史状态。Sidebar 会显示“等待批准”。
 - SQLite 同时保留原始 Tool 参数和规范化参数。旧数据的原始参数保持未知。
+
+## Run 收尾与 Shell 执行期限
+
+- 模型提交最终答复时，Runtime 在同一事务提交答复和 Run 终态。未清除的 reconciliation 会使 Run 进入 `interrupted`，不会再强制模型继续只读核验，也不会清除未知 Durable Intent 或放行新副作用。
+- 取消后 Worker 已退出时，RPC 返回 `canceled` 或 `interrupted`。系统记录取消完成时间；副作用未知不再作为取消失败。无 Worker 的 queued Run 如果已带有未确认副作用，也进入 `interrupted`。重复取消已中断 Run 返回原终态。Worker 仍存活时继续报告 `RUN_CANCEL_TIMEOUT`。
+- 新 Run 的 `run_shell` 使用 ToolSpec 中的 3600 秒执行预算。预算包括内部轮询和同一次 ToolCall 的所有 attempt，Approval 等待不计入预算。`yieldTimeMs` 只控制首次等待窗口。已固定的历史 Tool Snapshot 保留原预算。
+- 控制器把已有 Shell 结果转成超时或取消结果时，会保留已有输出和终止信息，并继续执行结果校验、输出限额和敏感扫描。进程清理和未知副作用仍按原规则处理。此修改不恢复旧结果中已经缺失的 stdout/stderr。
+- Runtime context 使用 `recentToolErrorFingerprints` 表示最近工具错误。空列表不代表对账完成。LoopGuard 不把 assistant 文本变化或最近错误列表中的错误消失单独当作新进展。

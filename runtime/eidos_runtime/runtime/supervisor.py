@@ -264,8 +264,7 @@ class RunSupervisor:
             handle = self._handles.get(run_id)
             if handle is None:
                 result = self.store.cancel_run(run_id, operation_id=operation_id)
-                if task_repository.read(run_id) is not None:
-                    task_repository.mark_canceled(run_id)
+                self._settle_long_task(run_id, canceled=True)
                 return result
             mutation = self.store.request_cancel_committed(run_id)
             handle.state = RunWorkerState.CANCEL_REQUESTED
@@ -287,9 +286,7 @@ class RunSupervisor:
                 {"runId": run_id},
                 current,
             )
-        if current.get("cancelFailureCode") == "RECONCILIATION_REQUIRED":
-            raise RunReconciliationRequired("RECONCILIATION_REQUIRED")
-        if current["status"] != "canceled":
+        if current["status"] not in {"canceled", "interrupted"}:
             raise InvalidRunStateError("run cancellation did not complete")
         return current
 
@@ -964,14 +961,16 @@ class RunSupervisor:
             return
         try:
             run = self.store.read_run(run_id)
-            if canceled and progress.status is LongTaskStatus.CANCEL_REQUESTED:
+            if run["status"] == "interrupted":
+                repository.mark_interrupted(run_id)
+            elif canceled and progress.status is LongTaskStatus.CANCEL_REQUESTED:
                 repository.mark_canceled(run_id)
             elif (
                 run["status"] == "succeeded"
                 and progress.status is LongTaskStatus.RUNNING
             ):
                 repository.mark_completed(run_id)
-            elif run["status"] in {"failed", "interrupted"}:
+            elif run["status"] == "failed":
                 repository.mark_interrupted(run_id)
         except Exception:
             logger.exception("Long task settlement failed")

@@ -85,16 +85,6 @@ EMPTY_EXTENSION_SNAPSHOT = {
     "mcpConfigHash": "",
 }
 
-RECONCILIATION_CONTINUATION_CONTEXT = {
-    "type": "user",
-    "sectionId": "reconciliation-required",
-    "content": (
-        "Reconciliation is still required.\n"
-        "Only read-only verification tools are available.\n"
-        "Verify the current workspace state before completing the task."
-    ),
-}
-
 logger = logging.getLogger("eidos.runtime")
 
 if TYPE_CHECKING:
@@ -842,32 +832,12 @@ class RuntimeEngine:
             if decision.action == LoopAction.COMPLETE:
                 assert sampled.assistant_item is not None
                 self.store.complete_current_step(run.run_id, "completed")
-                if self.store.side_effects_blocked(run.run_id):
-                    mutation = self.store.complete_assistant_item_committed(
-                        str(sampled.assistant_item["id"])
-                    )
-                    self.events.publish(mutation, item=mutation.value)
-                    effective_time = self._pause_effective_time(run.run_id)
-                    if effective_time is not None:
-                        self.events.publish(effective_time, run=effective_time.value)
-                    if not any(
-                        isinstance(item, dict)
-                        and item.get("sectionId") == "reconciliation-required"
-                        for item in run.model_context
-                    ):
-                        run = run.model_copy(update={
-                            "model_context": (
-                                *run.model_context,
-                                dict(RECONCILIATION_CONTINUATION_CONTEXT),
-                            )
-                        })
-                    continue
                 mutation = self.store.complete_assistant_and_run_committed(
                     str(sampled.assistant_item["id"]), run.run_id
                 )
                 item, completed = mutation.value
                 self.events.publish(mutation, item=item, run=completed)
-                self.state_machine.track(RuntimeState.COMPLETED, "run_succeeded")
+                self.state_machine.track(RuntimeState.COMPLETED, str(completed["status"]))
                 return
 
             permission_frontier = self.store.run_permission_grants(run.run_id).model_dump(mode="json")

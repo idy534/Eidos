@@ -436,7 +436,7 @@ MCP 当前使用官方 Python MCP SDK 的 stdio client。MCP Server 由 RuntimeA
 
 ## 16. Runtime Recovery
 
-Runtime 启动时会收敛未完成的 Run、ToolCall、Approval、Outbox 和资源状态。对于没有未完成 Tool 执行或不确定副作用的 active Run，只有在没有 cancel request、没有 reconciliation barrier、没有未决有副作用 Durable Intent，且没有 running ToolAttempt 时，Runtime 才会把 Run 和执行段重新排回队列。其他不确定执行仍然进入 `interrupted`。Pending Approval 仍按既有的结构化待批规则恢复。Cancellation 在 SQLite 中先记录 request，再通过 Run Worker、Model request、Tool process、Approval wait 和 Async Task 传播。取消终态只会被未清除的 reconciliation barrier 阻断；`sideEffectsMayExist` 只是历史证据。迟到结果不能把已取消 Run 改回成功。
+Runtime 启动时会收敛未完成的 Run、ToolCall、Approval、Outbox 和资源状态。对于没有未完成 Tool 执行或不确定副作用的 active Run，只有在没有 cancel request、没有 reconciliation barrier、没有未决有副作用 Durable Intent，且没有 running ToolAttempt 时，Runtime 才会把 Run 和执行段重新排回队列。其他不确定执行仍然进入 `interrupted`。Pending Approval 仍按既有的结构化待批规则恢复。Cancellation 在 SQLite 中先记录 request，再通过 Run Worker、Model request、Tool process、Approval wait 和 Async Task 传播。取消会停止执行。未清除的 reconciliation barrier 会使 Run 返回 `interrupted`，并保留副作用事实；Worker 已退出时，取消 RPC 正常返回。`sideEffectsMayExist` 只是历史证据。迟到结果不能把已取消 Run 改回成功。
 
 Long Task 控制事实写入 `operations` 的 `long_task/control` scope。`run/pause` 在模型、工具和 Approval 安全点生效。`run/resume` 需要重新记录 Workspace identity、规则、Repository/Context snapshot、permission snapshot、Git 和 reconciliation 检查结果。未确认副作用不会自动重放。
 
@@ -489,3 +489,11 @@ Runtime 重启可以恢复 R1 的结构化待批请求。恢复只接受没有�
 数据库版本为 10。v8→v9 只为 `tool_calls` 增加可空 `raw_arguments_json`。新调用保存经过敏感内容检查的 Provider 原始参数，`arguments_json` 继续保存执行所用的规范化参数。旧行保持 NULL，Runtime 不会伪造历史原始参数。v9→v10 将全局 `running`/`finalizing` 唯一索引改为按 `session_id` 的唯一索引；迁移不改写旧的 `waiting_approval` 重叠记录，恢复 admission 按 Session 串行处理。旧版本逐级迁移，失败会回滚。
 
 Desktop 的 `ComposerSlot` 在 `waiting_approval` 时用 `ApprovalComposer` 替换普通输入框。文件、Shell、网络、MCP 和权限申请共用批准、拒绝、响应中、失效和错误状态。Eidos State 的既有文件变更映射保持兼容。Feed 只显示审批历史。Session 的 `activeRunStatus` 从 Active Run 派生，不写入 Session 表；Sidebar 对等待审批显示“等待批准”。
+
+## Run 收尾与 Shell 执行期限
+
+- 模型提交最终答复时，Runtime 在同一事务提交答复和 Run 终态。未清除的 reconciliation 会使 Run 进入 `interrupted`，不会再强制模型继续只读核验，也不会清除未知 Durable Intent 或放行新副作用。
+- 取消后 Worker 已退出时，RPC 返回 `canceled` 或 `interrupted`。系统记录取消完成时间；副作用未知不再作为取消失败。无 Worker 的 queued Run 如果已带有未确认副作用，也进入 `interrupted`。重复取消已中断 Run 返回原终态。Worker 仍存活时继续报告 `RUN_CANCEL_TIMEOUT`。
+- 新 Run 的 `run_shell` 使用 ToolSpec 中的 3600 秒执行预算。预算包括内部轮询和同一次 ToolCall 的所有 attempt，Approval 等待不计入预算。`yieldTimeMs` 只控制首次等待窗口。已固定的历史 Tool Snapshot 保留原预算。
+- 控制器把已有 Shell 结果转成超时或取消结果时，会保留已有输出和终止信息，并继续执行结果校验、输出限额和敏感扫描。进程清理和未知副作用仍按原规则处理。此修改不恢复旧结果中已经缺失的 stdout/stderr。
+- Runtime context 使用 `recentToolErrorFingerprints` 表示最近工具错误。空列表不代表对账完成。LoopGuard 不把 assistant 文本变化或最近错误列表中的错误消失单独当作新进展。

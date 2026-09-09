@@ -13,9 +13,6 @@ from unittest.mock import patch
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
-from eidos_runtime.db.errors import (  # noqa: E402
-    ReconciliationRequiredError,
-)
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
 from eidos_runtime.extensions.skills import SkillCatalog  # noqa: E402
@@ -176,8 +173,27 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ReconciliationDisposition.CONTINUE_READ_ONLY,
         )
 
-    def test_reconciliation_barrier_rolls_back_success_completion(self) -> None:
+    def test_reconciliation_barrier_commits_interrupted_completion_atomically(self) -> None:
         step_index = self.store.increment_model_step(self.run["id"])
+        intent_item = self.store.create_tool_item(
+            self.run["id"], step_index, 0, "uncertain", "apply_patch", "{}"
+        )
+        self.store.begin_durable_intent(
+            intent_item["id"], preconditions={}, approval_required=False
+        )
+        self.store.complete_tool_item(
+            intent_item["id"],
+            json.dumps({
+                "outcome": "error",
+                "code": "outcome_unknown",
+                "summary": "Mutation outcome is unknown",
+                "data": {},
+                "sideEffectsMayExist": True,
+                "reconciliationRequired": True,
+            }),
+            item_status="failed",
+            tool_status="failed",
+        )
         assistant = self.store.create_assistant_item(self.run["id"], step_index)
         connection = self.store.connection
         connection.execute(
@@ -191,17 +207,56 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             (self.run["id"],),
         ).fetchone()[0]
 
-        with self.assertRaisesRegex(
-            ReconciliationRequiredError, "reconciliation_required"
+        mutation = self.store.complete_assistant_and_run_committed(
+            assistant["id"], self.run["id"]
+        )
+
+        self.assertEqual(mutation.value[1]["status"], "interrupted")
+        self.assertEqual(self.store.read_run(self.run["id"])["status"], "interrupted")
+        self.assertEqual(self.store.read_item(assistant["id"])["status"], "completed")
+        self.assertEqual(
+            connection.execute(
+                "SELECT status FROM execution_segments WHERE run_id = ?",
+                (self.run["id"],),
+            ).fetchone()[0],
+            "failed",
+        )
+        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertEqual(
+            connection.execute(
+                "SELECT status FROM durable_intents WHERE tool_call_id = ?",
+                (intent_item["toolCall"]["id"],),
+            ).fetchone()[0],
+            "uncertain",
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE run_id = ?",
+                (self.run["id"],),
+            ).fetchone()[0],
+            event_count + 3,
+        )
+
+    def test_complete_assistant_and_run_rolls_back_on_transition_failure(self) -> None:
+        step_index = self.store.increment_model_step(self.run["id"])
+        assistant = self.store.create_assistant_item(self.run["id"], step_index)
+        connection = self.store.connection
+        event_count = connection.execute(
+            "SELECT COUNT(*) FROM events WHERE run_id = ?",
+            (self.run["id"],),
+        ).fetchone()[0]
+
+        with patch(
+            "eidos_runtime.db.repositories.execution.transition_run",
+            side_effect=RuntimeError("injected transition failure"),
         ):
-            self.store.complete_assistant_and_run_committed(
-                assistant["id"], self.run["id"]
-            )
+            with self.assertRaisesRegex(RuntimeError, "injected transition failure"):
+                self.store.complete_assistant_and_run_committed(
+                    assistant["id"], self.run["id"]
+                )
 
         self.assertEqual(self.store.read_run(self.run["id"])["status"], "running")
-        self.assertEqual(
-            self.store.read_item(assistant["id"])["status"], "in_progress"
-        )
+        self.assertEqual(self.store.read_item(assistant["id"])["status"], "in_progress")
         self.assertEqual(
             connection.execute(
                 "SELECT status FROM execution_segments WHERE run_id = ?",
@@ -217,7 +272,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             event_count,
         )
 
-    def test_engine_keeps_run_active_until_read_only_verification(self) -> None:
+    def test_engine_final_text_commits_interrupted_run_without_resampling(self) -> None:
         workspace_mutation = self.store.create_tool_item(
             self.run["id"], 0, 0, "workspace-mutation", "apply_patch", "{}"
         )
@@ -243,43 +298,40 @@ class ReconciliationConsistencyTests(unittest.TestCase):
 
         model = ScriptedModel([
             ModelResponse(text="answer"),
-            ModelResponse(tool_calls=(ModelToolCall(
-                "observe-workspace", "list_files", {}
-            ),)),
-            ModelResponse(text="verified answer"),
+            ModelResponse(text="must not be sampled"),
         ])
-        with patch(
-            "eidos_runtime.tools.runtime_workspace.ToolExecutor.refresh_workspace_index",
-            return_value=WorkspaceManifest((), True, False),
-        ) as refresh:
-            RuntimeEngine(
-                self.store,
-                model,
-                lambda _message: None,
-            ).run(self.run["id"], threading.Event())
+        RuntimeEngine(
+            self.store,
+            model,
+            lambda _message: None,
+        ).run(self.run["id"], threading.Event())
 
         persisted = self.store.read_run(self.run["id"])
-        self.assertEqual(persisted["status"], "succeeded")
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
-        self.assertFalse(
-            self.store.context_projection_facts(
-                self.run["id"]
-            ).reconciliation_required
-        )
-        self.assertGreaterEqual(persisted["modelStepCount"], 3)
+        self.assertEqual(persisted["status"], "interrupted")
+        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertEqual(persisted["modelStepCount"], 1)
         self.assertEqual(
             self.store.context_projection_facts(
                 self.run["id"]
             ).reconciliation_epoch,
-            pending_epoch + 1,
+            pending_epoch,
         )
-        self.assertGreaterEqual(refresh.call_count, 1)
-        self.assertTrue(any(
-            "Reconciliation is still required."
-            in context_item.get("content", "")
-            for context_item in model.contexts[1]
-            if context_item.get("type") == "user"
-        ))
+        self.assertEqual(len(model.contexts), 1)
+        self.assertEqual(model._index, 1)
+        snapshot = self.store.read_session_snapshot(str(self.run["sessionId"]))
+        assistant = [
+            item for item in snapshot["items"]
+            if item["kind"] == "assistant_message"
+        ][-1]
+        self.assertEqual(assistant["content"], "answer")
+        self.assertEqual(assistant["status"], "completed")
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT status FROM durable_intents WHERE run_id = ?",
+                (self.run["id"],),
+            ).fetchone()[0],
+            "uncertain",
+        )
 
     def test_shell_exit_nonzero_does_not_restrict_follow_up_tools(self) -> None:
         model = ScriptedModel([
@@ -559,7 +611,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertEqual(json.loads(rows[0]["result_json"])["code"], "shell_exit_nonzero")
         self.assertEqual(json.loads(rows[1]["result_json"])["code"], "ok")
 
-    def _assert_shell_refresh_error_keeps_run_active(
+    def _assert_shell_refresh_error_interrupts_after_final_text(
         self, error_code: str
     ) -> None:
         model = _StatusRecordingModel(self.store, self.run["id"], [
@@ -610,7 +662,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ).run(self.run["id"], threading.Event())
 
         persisted = self.store.read_run(self.run["id"])
-        self.assertNotEqual(persisted["status"], "interrupted")
+        self.assertEqual(persisted["status"], "interrupted")
         self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
         self.assertGreaterEqual(len(model.run_statuses), 2)
         self.assertEqual(model.run_statuses[1], "running")
@@ -631,18 +683,18 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         assert row is not None
         self.assertTrue(json.loads(row["result_json"])["reconciliationRequired"])
 
-    def test_workspace_identity_refresh_error_keeps_run_active(self) -> None:
-        self._assert_shell_refresh_error_keeps_run_active(
+    def test_workspace_identity_refresh_error_interrupts_after_final_text(self) -> None:
+        self._assert_shell_refresh_error_interrupts_after_final_text(
             "workspace_identity_changed"
         )
 
-    def test_unsupported_workspace_hardlink_refresh_error_keeps_run_active(self) -> None:
-        self._assert_shell_refresh_error_keeps_run_active(
+    def test_unsupported_workspace_hardlink_refresh_error_interrupts_after_final_text(self) -> None:
+        self._assert_shell_refresh_error_interrupts_after_final_text(
             "unsupported_workspace_hardlink"
         )
 
-    def test_unsupported_workspace_entry_refresh_error_keeps_run_active(self) -> None:
-        self._assert_shell_refresh_error_keeps_run_active(
+    def test_unsupported_workspace_entry_refresh_error_interrupts_after_final_text(self) -> None:
+        self._assert_shell_refresh_error_interrupts_after_final_text(
             "unsupported_workspace_entry"
         )
 
@@ -916,6 +968,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertIn("apply_patch", read_only_tools)
         self.assertEqual(len(approvals), 1)
         self.assertEqual(approvals[0]["sandboxPermissions"], expected_mode)
+        self.assertEqual(approvals[0]["timeoutSeconds"], 3_600)
         calls = self.store.connection.execute(
             "SELECT COUNT(*) FROM tool_calls WHERE tool_name = ?",
             ("run_shell",),

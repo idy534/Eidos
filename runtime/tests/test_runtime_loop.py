@@ -1500,7 +1500,9 @@ class RuntimeLoopTests(unittest.TestCase):
 
         completed = self.store.read_run(run["id"])
         self.assertEqual(calls, 2)
-        self.assertEqual(completed["status"], "canceled")
+        self.assertEqual(completed["status"], "interrupted")
+        self.assertIsNotNone(completed["cancelCompletedAt"])
+        self.assertIsNone(completed.get("cancelFailureCode"))
 
 
 class ToolExecutorTests(unittest.TestCase):

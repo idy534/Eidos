@@ -40,7 +40,14 @@ class ReadToolOutputRuntimeTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def _persist_terminal_shell_output(
-        self, *, provider_call_id: str, stdout: str, stderr: str = ""
+        self,
+        *,
+        provider_call_id: str,
+        stdout: str,
+        stderr: str = "",
+        outcome: str = "success",
+        code: str = "ok",
+        termination: str = "exit",
     ) -> None:
         historical_run, _ = self.store.create_run(
             self.session["id"], "Produce shell output"
@@ -57,8 +64,8 @@ class ReadToolOutputRuntimeTests(unittest.TestCase):
             "schemaVersion": 1,
             "toolContractVersion": 1,
             "toolName": "run_shell",
-            "outcome": "success",
-            "code": "ok",
+            "outcome": outcome,
+            "code": code,
             "summary": "Command completed",
             "data": {
                 "exitCode": 0,
@@ -66,7 +73,7 @@ class ReadToolOutputRuntimeTests(unittest.TestCase):
                 "stderr": stderr,
                 "truncated": False,
                 "omittedBytes": 0,
-                "termination": "exit",
+                "termination": termination,
                 "workspaceChanged": False,
             },
             "sideEffectsMayExist": False,
@@ -75,8 +82,8 @@ class ReadToolOutputRuntimeTests(unittest.TestCase):
         self.store.complete_tool_item(
             item["id"],
             json.dumps(result, ensure_ascii=False, separators=(",", ":")),
-            item_status="completed",
-            tool_status="completed",
+            item_status="completed" if outcome == "success" else "failed",
+            tool_status="completed" if outcome == "success" else "failed",
         )
         self.store.fail_run(historical_run["id"], "fixture_complete")
 
@@ -201,6 +208,39 @@ class ReadToolOutputRuntimeTests(unittest.TestCase):
         visible = json.loads(visible_results[0]["result"])
         self.assertEqual(visible["outcome"], "error")
         self.assertEqual(visible["code"], "tool_output_not_available")
+
+    def test_engine_reads_output_from_interrupted_shell_result(self) -> None:
+        self._persist_terminal_shell_output(
+            provider_call_id="timed-out-shell",
+            stdout="partial stdout",
+            stderr="partial stderr",
+            outcome="error",
+            code="TOOL_TIMEOUT",
+            termination="timeout",
+        )
+        run, _ = self.store.create_run(self.session["id"], "Read interrupted output")
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall(
+                "read-interrupted",
+                "read_tool_output",
+                {
+                    "callId": "timed-out-shell",
+                    "stream": "stderr",
+                    "maxBytes": 32,
+                },
+            ),)),
+            ModelResponse(text="The partial output is available."),
+        ])
+
+        RuntimeEngine(self.store, model, lambda _message: None).run(
+            run["id"], threading.Event()
+        )
+
+        read_item = self._current_read_item(self.session["id"])
+        committed = json.loads(read_item["toolCall"]["resultJson"])
+        self.assertEqual(committed["outcome"], "success")
+        self.assertEqual(committed["data"]["content"], "partial stderr")
+        self.assertEqual(committed["data"]["stream"], "stderr")
 
 
 if __name__ == "__main__":

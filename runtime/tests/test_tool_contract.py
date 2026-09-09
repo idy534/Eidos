@@ -23,6 +23,7 @@ from eidos_runtime.tools.workspace import (  # noqa: E402
     model_tool_definitions,
 )
 from eidos_runtime.tools.contracts import project_tool_result  # noqa: E402
+from eidos_runtime.tools.registry import ToolSpec  # noqa: E402
 
 
 class ToolContractTests(unittest.TestCase):
@@ -310,6 +311,18 @@ class ToolContractTests(unittest.TestCase):
         for value in (249, 30_001):
             with self.subTest(value=value), self.assertRaises(ValidationError):
                 RunShellInput.model_validate({"command": "true", "yieldTimeMs": value})
+
+    def test_run_shell_uses_3600_budget_and_legacy_specs_remain_valid(self) -> None:
+        run_shell = next(spec for spec in TOOL_SPECS if spec.name == "run_shell")
+
+        self.assertEqual(run_shell.timeout_seconds, 3_600)
+        self.assertEqual(
+            ToolSpec.model_validate(
+                run_shell.model_dump(mode="json", by_alias=True)
+                | {"timeoutSeconds": 600}
+            ).timeout_seconds,
+            600,
+        )
 
     def test_write_stdin_is_not_model_visible(self) -> None:
         self.assertNotIn("write_stdin", {spec.name for spec in TOOL_SPECS})

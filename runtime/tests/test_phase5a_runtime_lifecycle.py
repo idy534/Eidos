@@ -20,7 +20,6 @@ from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.model.pydantic_ai_client import ModelClientLease  # noqa: E402
 from eidos_runtime.runtime.supervisor import (  # noqa: E402
     RunCancelTimeout,
-    RunReconciliationRequired,
     RunSupervisor,
     RunWorkerState,
     RuntimeShutdownTimeout,
@@ -833,10 +832,16 @@ class ReliableCancelTests(unittest.TestCase):
         current = self.store.read_run(run["id"])
         self.assertNotEqual(current["status"], "canceled")
         self.assertEqual(current["cancelFailureCode"], "RUN_CANCEL_TIMEOUT")
+        self.assertIsNone(current.get("cancelCompletedAt"))
+        with self.assertRaises(RunCancelTimeout):
+            supervisor.cancel_run(run["id"])
+        still_alive = self.store.read_run(run["id"])
+        self.assertEqual(still_alive["cancelFailureCode"], "RUN_CANCEL_TIMEOUT")
+        self.assertIsNone(still_alive.get("cancelCompletedAt"))
         _StuckEngine.release.set()
         supervisor.wait(1)
 
-    def test_cancel_with_uncertain_side_effect_requires_reconciliation(self) -> None:
+    def test_cancel_with_uncertain_side_effect_returns_interrupted_and_replays(self) -> None:
         run, supervisor = self._started()
         connection = self.store.connection
         assert connection is not None
@@ -851,12 +856,59 @@ class ReliableCancelTests(unittest.TestCase):
         connection.commit()
         _CancelAwareEngine.allow_exit.set()
 
-        with self.assertRaises(RunReconciliationRequired):
-            supervisor.cancel_run(run["id"])
+        operation_id = "cancel-uncertain-1"
+        interrupted = supervisor.cancel_run(run["id"], operation_id=operation_id)
 
         current = self.store.read_run(run["id"])
         self.assertEqual(current["status"], "interrupted")
-        self.assertEqual(current["cancelFailureCode"], "RECONCILIATION_REQUIRED")
+        self.assertEqual(interrupted, current)
+        self.assertIsNotNone(current["cancelCompletedAt"])
+        self.assertIsNone(current.get("cancelFailureCode"))
+        self.assertTrue(current["reconciliationRequired"])
+        replay = supervisor.cancel_run(run["id"], operation_id=operation_id)
+        self.assertEqual(replay, interrupted)
+
+    def test_cancel_without_active_handle_preserves_uncertainty(self) -> None:
+        run, _ = self.store.enqueue_run(self.session["id"], "cancel queued")
+        claimed = self.store.claim_next_run()
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["id"], run["id"])
+        connection = self.store.connection
+        assert connection is not None
+        connection.execute(
+            "UPDATE runs SET reconciliation_required = 1, side_effects_may_exist = 1 "
+            "WHERE id = ?",
+            (run["id"],),
+        )
+        connection.commit()
+
+        interrupted = self._supervisor(_CancelAwareEngine).cancel_run(run["id"])
+
+        self.assertEqual(interrupted["status"], "interrupted")
+        self.assertIsNotNone(interrupted["cancelCompletedAt"])
+        self.assertIsNone(interrupted.get("cancelFailureCode"))
+        self.assertTrue(interrupted["reconciliationRequired"])
+
+    def test_cancel_queued_without_active_handle_preserves_uncertainty(self) -> None:
+        run, _ = self.store.enqueue_run(self.session["id"], "cancel queued")
+        connection = self.store.connection
+        assert connection is not None
+        connection.execute(
+            "UPDATE runs SET reconciliation_required = 1, side_effects_may_exist = 1 "
+            "WHERE id = ?",
+            (run["id"],),
+        )
+        connection.commit()
+
+        interrupted = self._supervisor(_CancelAwareEngine).cancel_run(
+            run["id"], operation_id="cancel-queued-uncertain-1"
+        )
+
+        self.assertEqual(interrupted["status"], "interrupted")
+        self.assertIsNotNone(interrupted["cancelCompletedAt"])
+        self.assertIsNone(interrupted.get("cancelFailureCode"))
+        self.assertTrue(interrupted["reconciliationRequired"])
 
     def test_cancel_ignores_cleared_side_effect_evidence(self) -> None:
         run, supervisor = self._started()
