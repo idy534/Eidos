@@ -378,4 +378,149 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     expect(recentToggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("闲聊")).toBeVisible();
   });
+
+  it("defaults to showing 6 sessions and shows '展开全部' button when project session count > 6, then collapses and resets", async () => {
+    const user = userEvent.setup();
+    const sessions: Session[] = Array.from({ length: 8 }, (_, index) => ({
+      ...managedSession,
+      id: `session-${index + 1}`,
+      title: `任务 ${index + 1}`,
+      createdAt: 1000 + index,
+    }));
+
+    render(
+      <SessionSidebar
+        sessions={sessions}
+        projects={[]}
+        selectedId={sessions[0].id}
+        disabled={false}
+        readCompletedSessions={new Set()}
+        runtimePresentation={{ tone: "success", label: "Ready" }}
+        onCreate={vi.fn()}
+        onCreateInProject={vi.fn()}
+        onSelect={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+
+    // sessions are sorted descending by createdAt: 任务 8, 任务 7, 任务 6, 任务 5, 任务 4, 任务 3
+    expect(screen.getByText("任务 8")).toBeInTheDocument();
+    expect(screen.getByText("任务 7")).toBeInTheDocument();
+    expect(screen.getByText("任务 6")).toBeInTheDocument();
+    expect(screen.getByText("任务 5")).toBeInTheDocument();
+    expect(screen.getByText("任务 4")).toBeInTheDocument();
+    expect(screen.getByText("任务 3")).toBeInTheDocument();
+    expect(screen.queryByText("任务 2")).not.toBeInTheDocument();
+    expect(screen.queryByText("任务 1")).not.toBeInTheDocument();
+
+    const expandAllButton = screen.getByRole("button", { name: "展开全部" });
+    expect(expandAllButton).toBeInTheDocument();
+
+    // Click "展开全部"
+    await user.click(expandAllButton);
+
+    // All sessions should be displayed, button disappears
+    expect(screen.getByText("任务 2")).toBeInTheDocument();
+    expect(screen.getByText("任务 1")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "展开全部" })).not.toBeInTheDocument();
+
+    // Collapse the project
+    const projectToggle = screen.getByRole("button", { name: "repository" });
+    await user.click(projectToggle);
+
+    // Re-open the project
+    await user.click(projectToggle);
+
+    // Should reset to showing top 6 and "展开全部" button reappears
+    expect(screen.getByText("任务 8")).toBeInTheDocument();
+    expect(screen.getByText("任务 3")).toBeInTheDocument();
+    expect(screen.queryByText("任务 2")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "展开全部" })).toBeInTheDocument();
+  });
+
+  it("does not show '展开全部' button when project has 6 or fewer sessions", () => {
+    const sessions: Session[] = Array.from({ length: 6 }, (_, index) => ({
+      ...managedSession,
+      id: `session-${index + 1}`,
+      title: `任务 ${index + 1}`,
+      createdAt: 1000 + index,
+    }));
+
+    render(
+      <SessionSidebar
+        sessions={sessions}
+        projects={[]}
+        selectedId={sessions[0].id}
+        disabled={false}
+        readCompletedSessions={new Set()}
+        runtimePresentation={{ tone: "success", label: "Ready" }}
+        onCreate={vi.fn()}
+        onCreateInProject={vi.fn()}
+        onSelect={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+
+    for (let i = 1; i <= 6; i++) {
+      expect(screen.getByText(`任务 ${i}`)).toBeInTheDocument();
+    }
+    expect(screen.queryByRole("button", { name: "展开全部" })).not.toBeInTheDocument();
+  });
+
+  it("supports '展开全部' and collapse-reset on projectless ('最近') sessions", async () => {
+    const user = userEvent.setup();
+    const sessions: Session[] = Array.from({ length: 8 }, (_, index) => ({
+      ...managedSession,
+      id: `recent-session-${index + 1}`,
+      projectless: true,
+      project: undefined,
+      worktree: undefined,
+      workspaceRoot: "/private/chat-workspaces/session",
+      title: `最近任务 ${index + 1}`,
+      createdAt: 1000 + index,
+    }));
+
+    render(
+      <SessionSidebar
+        sessions={sessions}
+        projects={[]}
+        selectedId={sessions[0].id}
+        disabled={false}
+        readCompletedSessions={new Set()}
+        runtimePresentation={{ tone: "success", label: "Ready" }}
+        onCreate={vi.fn()}
+        onCreateInProject={vi.fn()}
+        onSelect={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("最近任务 8")).toBeInTheDocument();
+    expect(screen.getByText("最近任务 3")).toBeInTheDocument();
+    expect(screen.queryByText("最近任务 2")).not.toBeInTheDocument();
+    expect(screen.queryByText("最近任务 1")).not.toBeInTheDocument();
+
+    const expandAllButton = screen.getByRole("button", { name: "展开全部" });
+    await user.click(expandAllButton);
+
+    expect(screen.getByText("最近任务 1")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "展开全部" })).not.toBeInTheDocument();
+
+    const recentToggle = screen.getByRole("button", { name: "最近" });
+    await user.click(recentToggle);
+    await user.click(recentToggle);
+
+    expect(screen.getByText("最近任务 8")).toBeInTheDocument();
+    expect(screen.queryByText("最近任务 2")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "展开全部" })).toBeInTheDocument();
+  });
 });

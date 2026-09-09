@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import type { Project, Session, SessionGitStatus } from "../contracts.js";
-import type { RuntimePresentation } from "../session-state.js";
+import type { ProjectSessionGroup, RuntimePresentation } from "../session-state.js";
 import { groupSessionsByProject, taskStatusPresentation } from "../session-state.js";
 import { ContextMenu } from "./DropdownMenu.js";
 import { EidosMark } from "./EidosMark.js";
@@ -183,90 +183,26 @@ export function SessionSidebar({
                       style={{ visibility: isExpanded ? "visible" : "hidden" }}
                     >
                       <div className="workspace-collapse-inner">
-                        {project.sessions.length === 0 ? (
-                          <p className="session-empty">暂无会话</p>
-                        ) : (
-                          <ul className="session-list">
-                      {project.sessions.map((session) => {
-                        const status = taskStatusPresentation(
-                          session.taskStatus,
-                          readCompletedSessions.has(session.id),
-                          session.activeRunStatus,
-                        );
-                        const isSelected = session.id === selectedId;
-                        const isLoading = session.id === isSelectingSessionId;
-                        const gitStatus = gitStatusBySessionId.get(session.id);
-                        return (
-                          <li className="session-item" key={session.id}>
-                            <button
-                              className={isSelected ? "selected" : ""}
-                              aria-current={isSelected ? "page" : undefined}
-                              aria-busy={isLoading}
-                              aria-haspopup="menu"
-                              disabled={disabled}
-                              onClick={() => {
-                                setContextMenu(undefined);
-                                onSelect(session);
-                              }}
-                              onContextMenu={(event) => {
-                                event.preventDefault();
-                                setContextMenu({
-                                  kind: "session",
-                                  session,
-                                  x: event.clientX,
-                                  y: event.clientY,
-                                  element: event.currentTarget,
-                                });
-                              }}
-                              onKeyDown={(event) => {
-                                if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
-                                  event.preventDefault();
-                                  const bounds = event.currentTarget.getBoundingClientRect();
-                                  setContextMenu({
-                                    kind: "session",
-                                    session,
-                                    x: bounds.left,
-                                    y: bounds.bottom,
-                                    element: event.currentTarget,
-                                  });
-                                }
-                              }}
-                            >
-                              <span className="session-labels">
-                                <span className="session-title">{session.title ?? "新任务"}</span>
-                                {project.gitAvailable && session.worktree && (
-                                  <span className="session-branch">
-                                    {session.worktree.branch ?? "Detached HEAD"}
-                                  </span>
-                                )}
-                              </span>
-                              {(isLoading || (project.gitAvailable && gitStatus?.dirty) || status) && (
-                                <span className="session-indicators">
-                                  {isLoading && (
-                                    <span className="session-loading-dot" aria-label="加载中" />
-                                  )}
-                                  {project.gitAvailable && gitStatus?.dirty && !isLoading && (
-                                    <span
-                                      className="git-dirty-indicator"
-                                      aria-label="有未提交改动"
-                                      title="有未提交改动"
-                                    />
-                                  )}
-                                  {status && !isLoading && (
-                                    <span
-                                      className={`task-indicator task-indicator--${status.tone}${status.spinning ? " task-indicator--spinning" : ""}`}
-                                      title={status.label}
-                                      aria-label={status.label}
-                                    />
-                                  )}
-                                </span>
-                              )}
-                            </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                        )}
+                        <ProjectSessionList
+                          project={project}
+                          isExpanded={isExpanded}
+                          selectedId={selectedId}
+                          disabled={disabled}
+                          readCompletedSessions={readCompletedSessions}
+                          isSelectingSessionId={isSelectingSessionId}
+                          gitStatusBySessionId={gitStatusBySessionId}
+                          onSelect={onSelect}
+                          onDismissContextMenu={() => setContextMenu(undefined)}
+                          onOpenSessionContextMenu={(session, coords, element) => {
+                            setContextMenu({
+                              kind: "session",
+                              session,
+                              x: coords.x,
+                              y: coords.y,
+                              element,
+                            });
+                          }}
+                        />
                       </div>
                     </div>
                   </section>
@@ -348,6 +284,147 @@ export function SessionSidebar({
         />
       )}
     </aside>
+  );
+}
+
+export const DEFAULT_VISIBLE_SESSION_COUNT = 6;
+
+interface ProjectSessionListProps {
+  project: ProjectSessionGroup;
+  isExpanded: boolean;
+  selectedId: string | undefined;
+  disabled: boolean;
+  readCompletedSessions: ReadonlySet<string>;
+  isSelectingSessionId?: string | undefined;
+  gitStatusBySessionId: ReadonlyMap<string, SessionGitStatus>;
+  onSelect: (session: Session) => void;
+  onDismissContextMenu: () => void;
+  onOpenSessionContextMenu: (
+    session: Session,
+    coords: { x: number; y: number },
+    element: HTMLElement,
+  ) => void;
+}
+
+function ProjectSessionList({
+  project,
+  isExpanded,
+  selectedId,
+  disabled,
+  readCompletedSessions,
+  isSelectingSessionId,
+  gitStatusBySessionId,
+  onSelect,
+  onDismissContextMenu,
+  onOpenSessionContextMenu,
+}: ProjectSessionListProps) {
+  const [showAll, setShowAll] = useState(false);
+  const [prevExpanded, setPrevExpanded] = useState(isExpanded);
+
+  if (prevExpanded !== isExpanded) {
+    setPrevExpanded(isExpanded);
+    if (!isExpanded) {
+      setShowAll(false);
+    }
+  }
+
+  if (project.sessions.length === 0) {
+    return <p className="session-empty">暂无会话</p>;
+  }
+
+  const hasMore = project.sessions.length > DEFAULT_VISIBLE_SESSION_COUNT;
+  const visibleSessions = hasMore && !showAll
+    ? project.sessions.slice(0, DEFAULT_VISIBLE_SESSION_COUNT)
+    : project.sessions;
+
+  return (
+    <>
+      <ul className="session-list">
+        {visibleSessions.map((session) => {
+          const status = taskStatusPresentation(
+            session.taskStatus,
+            readCompletedSessions.has(session.id),
+            session.activeRunStatus,
+          );
+          const isSelected = session.id === selectedId;
+          const isLoading = session.id === isSelectingSessionId;
+          const gitStatus = gitStatusBySessionId.get(session.id);
+          return (
+            <li className="session-item" key={session.id}>
+              <button
+                className={isSelected ? "selected" : ""}
+                aria-current={isSelected ? "page" : undefined}
+                aria-busy={isLoading}
+                aria-haspopup="menu"
+                disabled={disabled}
+                onClick={() => {
+                  onDismissContextMenu();
+                  onSelect(session);
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  onOpenSessionContextMenu(
+                    session,
+                    { x: event.clientX, y: event.clientY },
+                    event.currentTarget,
+                  );
+                }}
+                onKeyDown={(event) => {
+                  if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
+                    event.preventDefault();
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    onOpenSessionContextMenu(
+                      session,
+                      { x: bounds.left, y: bounds.bottom },
+                      event.currentTarget,
+                    );
+                  }
+                }}
+              >
+                <span className="session-labels">
+                  <span className="session-title">{session.title ?? "新任务"}</span>
+                  {project.gitAvailable && session.worktree && (
+                    <span className="session-branch">
+                      {session.worktree.branch ?? "Detached HEAD"}
+                    </span>
+                  )}
+                </span>
+                {(isLoading || (project.gitAvailable && gitStatus?.dirty) || status) && (
+                  <span className="session-indicators">
+                    {isLoading && (
+                      <span className="session-loading-dot" aria-label="加载中" />
+                    )}
+                    {project.gitAvailable && gitStatus?.dirty && !isLoading && (
+                      <span
+                        className="git-dirty-indicator"
+                        aria-label="有未提交改动"
+                        title="有未提交改动"
+                      />
+                    )}
+                    {status && !isLoading && (
+                      <span
+                        className={`task-indicator task-indicator--${status.tone}${status.spinning ? " task-indicator--spinning" : ""}`}
+                        title={status.label}
+                        aria-label={status.label}
+                      />
+                    )}
+                  </span>
+                )}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {hasMore && !showAll && (
+        <button
+          type="button"
+          className="session-expand-all"
+          onClick={() => setShowAll(true)}
+        >
+          展开全部
+        </button>
+      )}
+    </>
   );
 }
 
