@@ -22,9 +22,9 @@
 
 ### Run 并发与资源模型
 
-- 普通 Run 没有并发上限。Runtime 按 Session 分别维护持久 FIFO，同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run；不同 Session 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。等待 Approval 的 Run 不占用跨 Run 的副作用门。
+- 普通 Run 没有并发上限。Runtime 按 Session 分别维护持久 FIFO，同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run；不同 Session 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。每个 Run 有独立的 `ToolConcurrencyGate` 和 `ShellProcessManager`，所以不同 Session 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。一个 Run 的长 Shell 仍会阻止这个 Run 启动新的副作用，但 `write_stdin` 可以继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
 - 当前每个活动 Run 使用一个 Worker Thread。模型异步 I/O、MCP、Managed Task 和安全只读批次由唯一 RuntimeAsyncKernel 管理。当前没有把整个 RuntimeEngine/RunSupervisor 改成原生 async 的实现。
-- Workspace 写入、Shell、MCP、external 和 Eidos-state 的实际副作用窗口跨 Run 全局独占。安全只读的 `parallel_safe` 批次保留自身的有界并行。
+- Workspace 写入、Shell、MCP、external 和 Eidos-state 的实际副作用窗口只在各自 Run 内独占。不同 Session 的 Run 可以并行，即使共享同一个 Workspace。安全只读的 `parallel_safe` 批次保留自身的有界并行。同一个 Workspace 的并发修改可能让 Workspace observation 或 diff 包含其他 Session 的变化。
 - 当前没有用户可配置的统一 Run 成本、模型步数或有效时长上限。现有 step、segment 和 effective time 字段主要用于 telemetry 和 operational lifecycle。
 
 ### Workspace 与工具
@@ -51,7 +51,7 @@
 
 ### Agent Shell
 
-- Agent Shell 支持同一 Run 内的管道 stdin 和分段等待，但不提供 PTY，也不跨 Run 或 Runtime 重启恢复进程。
+- Agent Shell 按 Run 独立管理，支持同一 Run 内的管道 stdin 和分段等待，但不提供 PTY，也不跨 Run 或 Runtime 重启恢复进程。不同 Session 的 Shell 可以并行，即使共享同一个 Workspace；同一 Run 的长 Shell 会阻止该 Run 启动新的副作用。
 - Runtime 会检测并清理 background child，但 Agent Shell 不能管理持久后台进程。
 - ShellEnvironmentSnapshot 不恢复 aliases、functions 或其他 shell state。
 - Shell cwd 必须解析到 Workspace 内。调用方可以使用 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径。Workspace 外的 absolute cwd 会返回 Tool Error。

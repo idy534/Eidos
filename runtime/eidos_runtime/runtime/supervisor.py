@@ -50,7 +50,6 @@ from eidos_runtime.domain.long_task import (
 )
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
-from eidos_runtime.runtime.tool_execution import ToolConcurrencyGate
 
 
 logger = logging.getLogger("eidos.runtime")
@@ -152,7 +151,6 @@ class RunSupervisor:
         self.lock = threading.RLock()
         self._handles: dict[str, RunHandle] = {}
         self._managed_tasks: dict[str, ManagedTask] = {}
-        self.tool_concurrency_gate = ToolConcurrencyGate()
         self.approval_lock = threading.RLock()
         self.pending_approvals: dict[str, PendingApproval] = {}
         self.lifecycle = RuntimeLifecycle.RUNNING
@@ -856,7 +854,6 @@ class RunSupervisor:
                 "sensitive": self.sensitive(),
                 "resource_registry": self.resources,
                 "events": self.events,
-                "tool_concurrency_gate": self.tool_concurrency_gate,
             }
             if self.engine_factory is RuntimeEngine:
                 engine_kwargs["async_kernel"] = self._async_kernel

@@ -134,12 +134,7 @@ export function ExecutionFeed({
   }
 
   const runsById = new Map(runs.map((run) => [run.id, run]));
-  const visibleItems = items.filter((item) => {
-    if (item.toolCall?.toolName !== "write_stdin") return true;
-    const data = objectField(parseObject(item.toolCall.resultJson), "data");
-    return item.status === "failed" && !stringField(data, "executionStatus");
-  });
-  const itemGroups = groupItemsByRun(visibleItems).filter(({ runId }) => !supersededRunIds.has(runId));
+  const itemGroups = groupItemsByRun(items).filter(({ runId }) => !supersededRunIds.has(runId));
 
   return (
     <div className="feed-shell">
@@ -260,9 +255,15 @@ function RunSegment({
   onEditResend: EditResendHandler;
   onOpenFile?: ((path: string) => void) | undefined;
 }) {
+  // Hidden observations still determine which assistant messages are progress.
+  const visibleProcess = segment.process.filter((item) => {
+    if (item.toolCall?.toolName !== "write_stdin") return true;
+    const data = objectField(parseObject(item.toolCall.resultJson), "data");
+    return item.status === "failed" && !stringField(data, "executionStatus");
+  });
   const showThinking = isLast
     && ACTIVE_RUN_STATUSES.has(run.status)
-    && segment.process.length === 0
+    && visibleProcess.length === 0
     && segment.response.length === 0;
 
   return (
@@ -276,11 +277,11 @@ function RunSegment({
           onEditResend={onEditResend}
         />
       )}
-      {segment.process.length > 0 && (
+      {visibleProcess.length > 0 && (
         <ProcessGroup
           run={run}
         >
-          {segment.process.map((item) => (
+          {visibleProcess.map((item) => (
             <ProcessItem
               key={item.id}
               item={item}
@@ -308,6 +309,7 @@ function RunSegment({
           feedback={feedbackByItemId.get(item.id)}
           feedbackPending={pendingFeedbackItemIds.has(item.id)}
           canRegenerate={isLast && index === segment.response.length - 1 && canReviseRun}
+          isFinal={isLast && index === segment.response.length - 1 && TERMINAL_RUN_STATUSES.has(run.status)}
           onFeedback={onFeedback}
           onRegenerate={onRegenerate}
         />
@@ -478,6 +480,7 @@ function AssistantMessage({
   feedback,
   feedbackPending,
   canRegenerate,
+  isFinal,
   onFeedback,
   onRegenerate,
 }: {
@@ -488,6 +491,7 @@ function AssistantMessage({
   feedback: ResponseFeedbackValue | undefined;
   feedbackPending: boolean;
   canRegenerate: boolean;
+  isFinal: boolean;
   onFeedback: FeedbackHandler;
   onRegenerate: RegenerateHandler;
 }) {
@@ -510,7 +514,7 @@ function AssistantMessage({
   return (
     <article className="feed-item feed-item--assistant" ref={contentRef}>
       <MarkdownContent content={item.content || ""} />
-      {item.content && (
+      {isFinal && item.content && (
         <div className="feed-item-footer response-footer">
           <div className="response-actions-left">
             <CopyButton content={item.content} />

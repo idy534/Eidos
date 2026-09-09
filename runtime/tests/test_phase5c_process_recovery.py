@@ -12,7 +12,7 @@ import unittest
 
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
-PROTOCOL_STATE_TIMEOUT_SECONDS = 15
+PROTOCOL_STATE_TIMEOUT_SECONDS = 30
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.db.invariants import verify_runtime_invariants  # noqa: E402

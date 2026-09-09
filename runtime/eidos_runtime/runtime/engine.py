@@ -120,7 +120,6 @@ class RuntimeEngine:
         events: RuntimeEvents | None = None,
         repository_runtime: RepositoryWorkspaceRuntimePort | None = None,
         runtime_dependency_catalog: RuntimeDependencyCatalog | None = None,
-        tool_concurrency_gate: ToolConcurrencyGate | None = None,
     ) -> None:
         self.store = store
         self.model = model
@@ -137,7 +136,7 @@ class RuntimeEngine:
         self.active_started: float | None = None
         self.repository_runtime = repository_runtime
         self.runtime_dependency_catalog = runtime_dependency_catalog
-        self.tool_concurrency_gate = tool_concurrency_gate or ToolConcurrencyGate()
+        self.tool_concurrency_gate = ToolConcurrencyGate()
 
     def run(self, run_id: str, cancel: threading.Event) -> None:
         repository_context = RunRepositoryContext()

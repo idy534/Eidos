@@ -108,7 +108,7 @@ class LoopRecoveryTests(unittest.TestCase):
         ]
         self.assertEqual(tool_names, ["read_file", "search_text"])
 
-    def test_shell_wait_is_host_owned_and_commits_one_completed_item(self) -> None:
+    def test_shell_commits_one_completed_item(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Wait for the command")
         completed = {
             "schemaVersion": 1,
@@ -154,7 +154,7 @@ class LoopRecoveryTests(unittest.TestCase):
             ).run(run["id"], threading.Event())
 
         self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
-        self.assertTrue(start.call_args.kwargs["wait_for_exit"])
+        self.assertFalse(start.call_args.kwargs["wait_for_exit"])
         snapshot = self.store.read_session_snapshot(self.session["id"])
         shell_items = [
             item for item in snapshot["items"]
