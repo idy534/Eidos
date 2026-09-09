@@ -280,6 +280,62 @@ class EventAndOperationTests(unittest.TestCase):
         self.store.fail_run(first["id"], "fixture")
         self.assertEqual(self.store.claim_next_run()["id"], third["id"])
 
+    def test_claim_skips_active_session_but_claims_another_session(self) -> None:
+        first_session = self.store.create_session(str(self.workspace))
+        second_workspace = Path(self.temporary_directory.name) / "workspace-2"
+        second_workspace.mkdir()
+        second_session = self.store.create_session(str(second_workspace))
+
+        active, _ = self.store.create_run(first_session["id"], "active")
+        blocked, _ = self.store.enqueue_run(first_session["id"], "blocked")
+        eligible, _ = self.store.enqueue_run(second_session["id"], "eligible")
+
+        claimed = self.store.claim_next_run()
+
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed["id"], eligible["id"])
+        self.assertEqual(self.store.read_run(blocked["id"])["status"], "queued")
+        self.assertEqual(self.store.read_run(active["id"])["status"], "running")
+
+    def test_claim_treats_waiting_approval_as_session_occupancy(self) -> None:
+        first_session = self.store.create_session(str(self.workspace))
+        second_workspace = Path(self.temporary_directory.name) / "workspace-2"
+        second_workspace.mkdir()
+        second_session = self.store.create_session(str(second_workspace))
+
+        waiting, _ = self.store.create_run(first_session["id"], "waiting")
+        self.store.increment_model_step(waiting["id"])
+        item = self.store.create_tool_item(
+            waiting["id"], 1, 0, "call", "write_file", "{}"
+        )
+        self.store.begin_approval(
+            item["id"], "diff", None,
+            request={"permissionBlockFingerprint": "legacy"},
+        )
+        blocked, _ = self.store.enqueue_run(first_session["id"], "blocked")
+        eligible, _ = self.store.enqueue_run(second_session["id"], "eligible")
+
+        claimed = self.store.claim_next_run()
+
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed["id"], eligible["id"])
+        self.assertEqual(self.store.read_run(blocked["id"])["status"], "queued")
+        self.assertEqual(
+            self.store.read_run(waiting["id"])["status"], "waiting_approval"
+        )
+
+    def test_active_runs_in_different_sessions_can_coexist(self) -> None:
+        first_session = self.store.create_session(str(self.workspace))
+        second_workspace = Path(self.temporary_directory.name) / "workspace-2"
+        second_workspace.mkdir()
+        second_session = self.store.create_session(str(second_workspace))
+
+        first, _ = self.store.create_run(first_session["id"], "first")
+        second, _ = self.store.create_run(second_session["id"], "second")
+
+        self.assertEqual(first["status"], "running")
+        self.assertEqual(second["status"], "running")
+
 
 if __name__ == "__main__":
     unittest.main()

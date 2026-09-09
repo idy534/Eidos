@@ -206,7 +206,7 @@ class RuntimeProtocolTests(unittest.TestCase):
             )
             server.close()
 
-    def test_waiting_approval_releases_execution_slot_and_requeues_fifo(self) -> None:
+    def test_waiting_approval_is_serial_per_session_and_allows_other_sessions(self) -> None:
         with (
             tempfile.TemporaryDirectory(prefix="eidos-data-") as data_directory,
             tempfile.TemporaryDirectory(prefix="eidos-workspace-a-") as workspace_a,
@@ -226,6 +226,7 @@ class RuntimeProtocolTests(unittest.TestCase):
                 ),)),
                 ModelResponse(text="second completed"),
                 ModelResponse(text="first continued"),
+                ModelResponse(text="same session continued"),
             ])
             server = RuntimeServer(output, Path(data_directory), model)
             with patch(
@@ -239,39 +240,123 @@ class RuntimeProtocolTests(unittest.TestCase):
             first_session = server.store.create_session(workspace_a)
             second_session = server.store.create_session(workspace_b)
             snapshot = SkillCatalog(server.plugins).extension_snapshot()
+            approval_id = ""
             first, _ = server.store.enqueue_run(
                 first_session["id"], "write a file", extension_snapshot=snapshot
+            )
+            same_session, _ = server.store.enqueue_run(
+                first_session["id"], "continue later", extension_snapshot=snapshot
             )
             second, _ = server.store.enqueue_run(
                 second_session["id"], "answer now", extension_snapshot=snapshot
             )
-            server.supervisor.schedule_next()
+            try:
+                first_start = server.supervisor.prepare_next()
+                self.assertIsNotNone(first_start)
+                server.supervisor.release(first_start)
 
-            approval_id = ""
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline:
-                messages = [json.loads(line) for line in output.getvalue().splitlines()]
-                approval = next((message for message in messages if message.get("method") == "item/requestApproval"), None)
-                if approval is not None:
-                    approval_id = approval["id"]
-                    break
-                time.sleep(0.01)
-            self.assertTrue(approval_id)
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    messages = [
+                        json.loads(line) for line in output.getvalue().splitlines()
+                    ]
+                    approval = next(
+                        (
+                            message
+                            for message in messages
+                            if message.get("method") == "item/requestApproval"
+                        ),
+                        None,
+                    )
+                    if approval is not None:
+                        approval_id = str(approval["id"])
+                        break
+                    time.sleep(0.01)
+                self.assertTrue(approval_id)
 
-            while time.monotonic() < deadline and server.store.read_run(second["id"])["status"] != "succeeded":
-                time.sleep(0.01)
-            self.assertEqual(server.store.read_run(second["id"])["status"], "succeeded")
-            self.assertEqual(server.store.read_run(first["id"])["status"], "waiting_approval")
+                while (
+                    time.monotonic() < deadline
+                    and server.store.read_run(second["id"])["status"]
+                    != "succeeded"
+                ):
+                    time.sleep(0.01)
+                self.assertEqual(
+                    server.store.read_run(second["id"])["status"], "succeeded"
+                )
+                self.assertEqual(
+                    server.store.read_run(first["id"])["status"],
+                    "waiting_approval",
+                )
+                self.assertEqual(
+                    server.store.read_run(same_session["id"])["status"], "queued"
+                )
 
-            server.handle({
-                "jsonrpc": "2.0", "id": approval_id,
-                "result": {"decision": "reject", "feedback": "use another approach"},
-            })
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline and server.store.read_run(first["id"])["status"] != "succeeded":
-                time.sleep(0.01)
-            self.assertEqual(server.store.read_run(first["id"])["status"], "succeeded")
-            server.close()
+                server.handle({
+                    "jsonrpc": "2.0", "id": approval_id,
+                    "result": {
+                        "decision": "reject",
+                        "feedback": "use another approach",
+                    },
+                })
+                deadline = time.monotonic() + 5
+                while (
+                    time.monotonic() < deadline
+                    and server.store.read_run(first["id"])["status"]
+                    != "succeeded"
+                ):
+                    time.sleep(0.01)
+                self.assertEqual(
+                    server.store.read_run(first["id"])["status"], "succeeded"
+                )
+
+                while (
+                    time.monotonic() < deadline
+                    and server.store.read_run(same_session["id"])["status"]
+                    != "succeeded"
+                ):
+                    time.sleep(0.01)
+                self.assertEqual(
+                    server.store.read_run(same_session["id"])["status"],
+                    "succeeded",
+                )
+
+                first_status_events = [
+                    event
+                    for event in server.store.list_events(
+                        first_session["id"], after_event_id=0, limit=500
+                    )["items"]
+                    if (
+                        event.get("runId") == first["id"]
+                        and event["eventType"] == "run.status_changed"
+                    )
+                ]
+                self.assertIn(
+                    {
+                        "previous": "waiting_approval",
+                        "current": "running",
+                        "reason": "approval_resolved",
+                    },
+                    [event["payload"] for event in first_status_events],
+                )
+                self.assertNotIn(
+                    {
+                        "previous": "waiting_approval",
+                        "current": "queued",
+                        "reason": "approval_resolved",
+                    },
+                    [event["payload"] for event in first_status_events],
+                )
+            finally:
+                if approval_id:
+                    server.handle({
+                        "jsonrpc": "2.0", "id": approval_id,
+                        "result": {"decision": "reject"},
+                    })
+                try:
+                    server.supervisor.shutdown()
+                finally:
+                    server.supervisor.wait(5)
+                    server.close()
 
     def test_oversized_request_id_is_rejected_without_stopping_runtime(self) -> None:
         oversized_id = "client-" + "x" * 122

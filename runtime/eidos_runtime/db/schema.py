@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
+V9_SCHEMA_VERSION = 9
 V8_SCHEMA_VERSION = 8
 V7_SCHEMA_VERSION = 7
 V6_SCHEMA_VERSION = 6
 V5_SCHEMA_VERSION = 5
-PREVIOUS_SCHEMA_VERSION = V8_SCHEMA_VERSION
+PREVIOUS_SCHEMA_VERSION = V9_SCHEMA_VERSION
 LEGACY_SCHEMA_VERSION = 1
 
 TOOL_CALL_PAYLOAD_KIND_COLUMN = (
@@ -23,6 +24,17 @@ MODEL_ATTEMPT_DIAGNOSTICS_COLUMNS = (
     "    response_text_sha256 TEXT,\n"
     "    response_text_bytes INTEGER NOT NULL DEFAULT 0,\n"
     "    protocol_diagnostics_json TEXT,\n"
+)
+
+_CURRENT_ACTIVE_RUN_INDEX_SQL = (
+    "CREATE UNIQUE INDEX one_active_run_per_session\n"
+    "ON runs(session_id)\n"
+    "WHERE status IN ('running', 'finalizing');\n"
+)
+_LEGACY_ACTIVE_RUN_INDEX_SQL = (
+    "CREATE UNIQUE INDEX one_active_run\n"
+    "ON runs ((1))\n"
+    "WHERE status IN ('running', 'finalizing');\n"
 )
 
 _RAW_BASE_SCHEMA_SQL = """
@@ -75,8 +87,8 @@ CREATE TABLE runs (
     completed_at INTEGER
 );
 
-CREATE UNIQUE INDEX one_active_run
-ON runs ((1))
+CREATE UNIQUE INDEX one_active_run_per_session
+ON runs(session_id)
 WHERE status IN ('running', 'finalizing');
 
 CREATE TABLE model_profiles (
@@ -1286,11 +1298,12 @@ _CURRENT_STATE_SCHEMA_SQL = (
     + WORKTREE_RETENTION_SCHEMA_SQL
 )
 
-V8_SCHEMA_SQL = _CURRENT_STATE_SCHEMA_SQL.replace("    raw_arguments_json TEXT,\n", "")
-
-V6_SCHEMA_SQL = V8_SCHEMA_SQL.replace(
-    TOOL_CALL_PAYLOAD_KIND_COLUMN, ""
+_V9_STATE_SCHEMA_SQL = _CURRENT_STATE_SCHEMA_SQL.replace(
+    _CURRENT_ACTIVE_RUN_INDEX_SQL,
+    _LEGACY_ACTIVE_RUN_INDEX_SQL,
 )
+if _V9_STATE_SCHEMA_SQL == _CURRENT_STATE_SCHEMA_SQL:
+    raise RuntimeError("schema v9 fixture is missing the legacy active-run index")
 
 RUNTIME_DEPENDENCY_SCHEMA_SQL = """
 CREATE TABLE run_dependency_snapshots (
@@ -1328,13 +1341,23 @@ CREATE INDEX run_dependency_bindings_run
 ON run_dependency_bindings(run_id, creation_seq);
 """
 
+V9_SCHEMA_SQL = _V9_STATE_SCHEMA_SQL + RUNTIME_DEPENDENCY_SCHEMA_SQL
+
+V8_SCHEMA_SQL = V9_SCHEMA_SQL.replace("    raw_arguments_json TEXT,\n", "")
+
+V6_SCHEMA_SQL = _V9_STATE_SCHEMA_SQL.replace(
+    "    raw_arguments_json TEXT,\n", ""
+).replace(TOOL_CALL_PAYLOAD_KIND_COLUMN, "")
+
 SCHEMA_SQL = _CURRENT_STATE_SCHEMA_SQL + RUNTIME_DEPENDENCY_SCHEMA_SQL
-V8_SCHEMA_SQL += RUNTIME_DEPENDENCY_SCHEMA_SQL
 
 # Test/upgrade fixture for schema v5. Schema v5 still kept the rebuildable
 # repository index in the state database.
 V5_SCHEMA_SQL = (
-    BASE_SCHEMA_SQL
+    BASE_SCHEMA_SQL.replace(
+        _CURRENT_ACTIVE_RUN_INDEX_SQL,
+        _LEGACY_ACTIVE_RUN_INDEX_SQL,
+    )
     + REPOSITORY_SCHEMA_SQL
     + CONTEXT_SCHEMA_SQL
     + RESPONSE_ACTIONS_SCHEMA_SQL
@@ -1521,4 +1544,17 @@ WHERE tool_name = 'apply_patch'
   AND json_type(arguments_json, '$.input') = 'text';
 """
 
-V8_TO_V9_MIGRATION_SQL = "ALTER TABLE tool_calls ADD COLUMN raw_arguments_json TEXT;"
+V9_TO_V10_MIGRATION_SQL = """
+DROP INDEX IF EXISTS one_active_run;
+DROP INDEX IF EXISTS one_active_run_per_session;
+CREATE UNIQUE INDEX one_active_run_per_session
+ON runs(session_id)
+WHERE status IN ('running', 'finalizing');
+"""
+
+# PersistenceLayout applies the historical migrations in one transaction and
+# writes the current schema version only after the batch completes.
+V8_TO_V9_MIGRATION_SQL = (
+    "ALTER TABLE tool_calls ADD COLUMN raw_arguments_json TEXT;\n"
+    + V9_TO_V10_MIGRATION_SQL
+)

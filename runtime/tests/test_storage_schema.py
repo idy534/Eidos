@@ -17,7 +17,8 @@ from eidos_runtime.db.schema import (  # noqa: E402
     PREVIOUS_SCHEMA_VERSION,
     SCHEMA_SQL,
     SCHEMA_VERSION,
-    V8_SCHEMA_VERSION,
+    V9_SCHEMA_SQL,
+    V9_SCHEMA_VERSION,
     V7_SCHEMA_SQL,
     V7_SCHEMA_VERSION,
     V5_SCHEMA_VERSION,
@@ -34,6 +35,7 @@ from eidos_runtime.model.client import (  # noqa: E402
 from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
 from eidos_runtime.runtime.resolution import RuleResolutionSnapshot  # noqa: E402
 from eidos_runtime.db.storage import DATABASE_NAME, SessionStore  # noqa: E402
+from eidos_runtime.db.database import Database  # noqa: E402
 from eidos_runtime.runtime.state_machine import (  # noqa: E402
     RunStatus,
     RuntimeState,
@@ -424,7 +426,7 @@ class StorageSchemaTests(unittest.TestCase):
         self.assertEqual(
             indexes,
             {
-                "one_active_run",
+                "one_active_run_per_session",
                 "one_pending_approval_per_item",
                 "one_pending_approval_per_run",
                 "one_running_tool_attempt_per_tool_call",
@@ -499,11 +501,110 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 9)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, V8_SCHEMA_VERSION)
+        self.assertEqual(SCHEMA_VERSION, 10)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, V9_SCHEMA_VERSION)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        store.close()
+
+    def test_v9_run_index_migrates_with_overlapping_waiting_runs(self) -> None:
+        database = self.data / DATABASE_NAME
+        connection = sqlite3.connect(database)
+        connection.executescript(V9_SCHEMA_SQL)
+        connection.execute(
+            "INSERT INTO sessions (id, workspace_root, created_at, updated_at) "
+            "VALUES ('session-v9', '/workspace', 1, 1)"
+        )
+        connection.execute(
+            "INSERT INTO runs (id, session_id, user_input, model_profile_json, "
+            "status, created_at, updated_at) VALUES "
+            "('run-v9', 'session-v9', 'legacy', '{}', 'waiting_approval', 1, 1)"
+        )
+        connection.execute(
+            "INSERT INTO runs (id, session_id, user_input, model_profile_json, "
+            "status, created_at, updated_at) VALUES "
+            "('run-v9-second', 'session-v9', 'legacy second', '{}', "
+            "'waiting_approval', 2, 2)"
+        )
+        connection.execute(
+            "UPDATE runs SET extension_snapshot_json = ? WHERE id = 'run-v9'",
+            (json.dumps({
+                "schemaVersion": 1,
+                "extensionContractVersion": 1,
+                "plugins": [],
+                "skillCatalogHash": "",
+                "mcpConfigHash": "",
+            }),),
+        )
+        connection.execute(f"PRAGMA user_version = {V9_SCHEMA_VERSION}")
+        connection.commit()
+        connection.close()
+        os.chmod(database, 0o600)
+
+        store = Database(self.data)
+        store.initialize()
+
+        self.assertEqual(store.health(), {"state": "ready"})
+        connection = store.connection()
+        assert connection is not None
+        self.assertEqual(
+            connection.execute("PRAGMA user_version").fetchone()[0],
+            SCHEMA_VERSION,
+        )
+        indexes = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'index' AND sql IS NOT NULL"
+            )
+        }
+        self.assertNotIn("one_active_run", indexes)
+        self.assertIn("one_active_run_per_session", indexes)
+        index_sql = connection.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type = 'index' AND name = 'one_active_run_per_session'"
+        ).fetchone()[0]
+        self.assertNotIn("waiting_approval", index_sql)
+        self.assertEqual(
+            [
+                row[0]
+                for row in connection.execute(
+                    "SELECT status FROM runs WHERE session_id = 'session-v9' "
+                    "ORDER BY creation_seq"
+                )
+            ],
+            ["waiting_approval", "waiting_approval"],
+        )
+        store.close()
+
+    def test_session_active_run_index_excludes_waiting_approval(self) -> None:
+        store = SessionStore(self.data)
+        store.initialize()
+        workspace = self.data.parent / "workspace"
+        workspace.mkdir()
+        session = store.create_session(str(workspace))
+        connection = store.connection
+        assert connection is not None
+        connection.execute(
+            "INSERT INTO runs (id, session_id, user_input, model_profile_json, "
+            "status, created_at, updated_at) VALUES "
+            "('run-waiting-1', ?, 'first', '{}', 'waiting_approval', 1, 1)",
+            (session["id"],),
+        )
+        connection.execute(
+            "INSERT INTO runs (id, session_id, user_input, model_profile_json, "
+            "status, created_at, updated_at) VALUES "
+            "('run-waiting-2', ?, 'second', '{}', 'waiting_approval', 1, 1)",
+            (session["id"],),
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT COUNT(*) FROM runs WHERE session_id = ?",
+                (session["id"],),
+            ).fetchone()[0],
+            2,
+        )
         store.close()
 
     def test_existing_v22_database_is_rejected_without_mutation(self) -> None:

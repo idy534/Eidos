@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import threading
-from typing import Callable
+from typing import Callable, cast
 
 import anyio
 
@@ -193,6 +193,7 @@ class _HandlerDependencies:
     authorize_side_effect: Callable[..., ApprovalOutcome]
     execute_workspace_side_effect: Callable[..., VerifiedToolExecutionResult]
     authorize_workspace_side_effect: Callable[..., None]
+    run_exclusive_side_effect: Callable[..., object]
     resources: ResourceRegistry = field(default_factory=ResourceRegistry)
     shell_process_manager: ShellProcessManager | None = None
     base_permissions: BasePermissionProfile | None = None
@@ -339,6 +340,7 @@ class FileChangeToolHandler:
             verified = self.dependencies.execute_workspace_side_effect(
                 item=item,
                 prepared=prepared_execution,
+                cancel=cancel,
                 execute=execute_patch,
             )
             result = verified.result
@@ -389,6 +391,7 @@ class FileChangeToolHandler:
         verified = self.dependencies.execute_workspace_side_effect(
             item=item,
             prepared=prepared_execution,
+            cancel=cancel,
             execute=lambda: runtime.implementation.commit_file_change(  # type: ignore[attr-defined]
                 prepared, cancel
             ),
@@ -812,6 +815,17 @@ class ShellToolHandler:
             )
             return result, denial
 
+        def gated_execute_shell_attempt(
+            attempt: SandboxAttempt,
+        ) -> tuple[dict[str, object], SandboxDenied | None]:
+            return cast(
+                tuple[dict[str, object], SandboxDenied | None],
+                self.dependencies.run_exclusive_side_effect(
+                    cancel=cancel,
+                    execute=lambda: execute_shell_attempt(attempt),
+                ),
+            )
+
         def approve(request: OrchestratorApprovalRequest) -> bool:
             summary = request.effective_permissions
             mode = (
@@ -942,9 +956,9 @@ class ShellToolHandler:
             },
         )
         orchestration_runtime = (
-            _BoundShellOrchestrationRuntime(execute_shell_attempt)
+            _BoundShellOrchestrationRuntime(gated_execute_shell_attempt)
             if dependency_binding is not None
-            else ShellOrchestrationRuntime(execute_shell_attempt)
+            else ShellOrchestrationRuntime(gated_execute_shell_attempt)
         )
         orchestration = ToolOrchestrator().run(
             orchestration_runtime,
@@ -1239,6 +1253,7 @@ class ToolCallRuntime:
         workspace_refresh: Callable[[threading.Event], object] | None = None,
         skill_access: SkillAccess | None = None,
         runtime_dependencies: RuntimeDependencyCoordinator | None = None,
+        concurrency: ToolConcurrencyGate | None = None,
     ) -> None:
         self.store = store
         self.dispatcher = dispatcher
@@ -1248,7 +1263,8 @@ class ToolCallRuntime:
         self.async_kernel = async_kernel
         self.skill_access = skill_access
         self.workspace_refresh = workspace_refresh
-        self.concurrency = ToolConcurrencyGate()
+        self.concurrency = concurrency or ToolConcurrencyGate()
+        self.parallel_read_concurrency = ToolConcurrencyGate()
         self.controller = ToolExecutionController(
             store,
             dispatcher,
@@ -1257,6 +1273,7 @@ class ToolCallRuntime:
             sensitive,
             approval=approval,
             resource_registry=resource_registry,
+            concurrency=self.concurrency,
         )
         self.permissions = PermissionRequests(store, approval, base_permissions)
         dependencies = _HandlerDependencies(
@@ -1269,6 +1286,7 @@ class ToolCallRuntime:
             self.controller.authorize_side_effect,
             self.controller.execute_workspace_side_effect,
             self.controller.authorize_workspace_side_effect,
+            run_exclusive_side_effect=self.controller.run_exclusive_side_effect,
             resources=self.controller.resources,
             shell_process_manager=shell_process_manager,
             base_permissions=base_permissions,
@@ -1509,17 +1527,14 @@ class ToolCallRuntime:
                 plan.descriptor is not None
                 and plan.descriptor.execution_policy is not None
             )
-            with self.concurrency.acquire(
-                plan.descriptor.execution_policy.concurrency, cancel
-            ):
-                outcome = self.controller.execute(
-                    run_id=step.run_id,
-                    item=item,
-                    call=effective_call,
-                    plan=plan,
-                    cancel=cancel,
-                    deadline=None,
-                )
+            outcome = self.controller.execute(
+                run_id=step.run_id,
+                item=item,
+                call=effective_call,
+                plan=plan,
+                cancel=cancel,
+                deadline=None,
+            )
             self._check_cancel(step.run_id, cancel)
             self._refresh_reconciliation_after_result(
                 run_id=step.run_id,
@@ -1627,7 +1642,7 @@ class ToolCallRuntime:
                     plan.descriptor is not None
                     and plan.descriptor.execution_policy is not None
                 )
-                with self.concurrency.acquire(
+                with self.parallel_read_concurrency.acquire(
                     plan.descriptor.execution_policy.concurrency,
                     controlled_cancel,
                 ):

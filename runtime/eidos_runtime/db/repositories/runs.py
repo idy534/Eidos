@@ -336,13 +336,18 @@ class RunRepository(Repository):
             now = _now_ms()
             row = connection.execute(
                 """
-                SELECT id FROM runs
-                WHERE status = 'queued'
-                  AND cancel_requested_at IS NULL
+                SELECT queued.id FROM runs AS queued
+                WHERE queued.status = 'queued'
+                  AND queued.cancel_requested_at IS NULL
                   AND NOT EXISTS (
-                    SELECT 1 FROM runs WHERE status IN ('running', 'finalizing')
+                    SELECT 1 FROM runs AS active
+                    WHERE active.session_id = queued.session_id
+                      AND active.status IN (
+                          'running', 'waiting_approval', 'finalizing'
+                      )
                   )
-                ORDER BY enqueued_at ASC, creation_seq ASC LIMIT 1
+                ORDER BY queued.enqueued_at ASC, queued.creation_seq ASC
+                LIMIT 1
                 """
             ).fetchone()
             if row is None:
@@ -490,7 +495,23 @@ class RunRepository(Repository):
     def waiting_approval_run_ids(self) -> tuple[str, ...]:
         with self.lock:
             return tuple(row[0] for row in self._connection().execute(
-                "SELECT id FROM runs WHERE status = 'waiting_approval' ORDER BY creation_seq"
+                """
+                SELECT waiting.id
+                FROM runs AS waiting
+                WHERE waiting.status = 'waiting_approval'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM runs AS active
+                      WHERE active.session_id = waiting.session_id
+                        AND active.status IN ('running', 'finalizing')
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM runs AS earlier
+                      WHERE earlier.session_id = waiting.session_id
+                        AND earlier.status = 'waiting_approval'
+                        AND earlier.creation_seq < waiting.creation_seq
+                  )
+                ORDER BY waiting.creation_seq
+                """
             ))
 
     def approval_prompt_blocked(self, run_id: str, fingerprint: str) -> bool:
