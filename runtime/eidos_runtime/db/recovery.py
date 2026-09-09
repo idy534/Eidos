@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 
 from eidos_runtime.db.database import now_ms as _now_ms
 from eidos_runtime.db.events import append_event
@@ -123,6 +124,32 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
         "UPDATE durable_intents SET status = 'interrupted' WHERE status = 'running' "
         "AND run_id NOT IN (SELECT id FROM resumable_approval_runs)"
     )
+    abandoned_shells = connection.execute(
+        """SELECT t.id, t.item_id, t.result_json, i.run_id, i.session_id
+           FROM tool_calls t JOIN items i ON i.id = t.item_id
+           WHERE t.tool_name = 'run_shell'
+             AND json_extract(t.result_json, '$.data.executionStatus') = 'running'"""
+    ).fetchall()
+    for shell in abandoned_shells:
+        result = json.loads(shell["result_json"])
+        result.update(outcome="error", code="runtime_interrupted",
+                      summary="Runtime restarted; command outcome is unknown",
+                      sideEffectsMayExist=True, reconciliationRequired=True)
+        result["data"].pop("executionStatus", None)
+        result["data"].update(exitCode=None, termination="unknown", truncated=True,
+                               truncationReason="runtime_restart")
+        encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+        connection.execute(
+            "UPDATE tool_calls SET result_json = ?, ui_result_json = ? WHERE id = ?",
+            (encoded, encoded, shell["id"]),
+        )
+        connection.execute("UPDATE items SET status = 'failed', completed_at = ? WHERE id = ?", (now, shell["item_id"]))
+        connection.execute(
+            "UPDATE tool_attempts SET status = 'uncertain', result_code = 'runtime_interrupted', completed_at = ? WHERE tool_call_id = ? AND result_code = 'shell_running'",
+            (now, shell["id"]),
+        )
+        append_event(connection, EventType.ITEM_COMPLETED, now, {"item_id": shell["item_id"]},
+                     session_id=shell["session_id"], run_id=shell["run_id"])
     connection.execute(
         """
         UPDATE tool_attempts

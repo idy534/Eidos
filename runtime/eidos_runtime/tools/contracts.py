@@ -359,8 +359,8 @@ class RunShellInput(StrictToolModel):
         ge=250,
         le=30_000,
         description=(
-            "Maximum initial wait before Runtime-owned polling. The Runtime "
-            "waits for the process to exit and does not expose a polling tool."
+            "Maximum initial wait. A running result includes sessionId for write_stdin; "
+            "this window does not limit the process lifetime."
         ),
     )
     dependencyBindingId: StrictStr | None = Field(
@@ -443,9 +443,9 @@ class WriteStdinInput(StrictToolModel):
     sessionId: StrictStr = Field(min_length=1, max_length=256)
     chars: StrictStr = Field(default="", max_length=16 * 1024)
     yieldTimeMs: StrictInt = Field(
-        default=10_000,
+        default=30_000,
         ge=250,
-        le=300_000,
+        le=60_000,
         description="Maximum time to wait for the Shell process during this ToolCall.",
     )
 
@@ -1249,13 +1249,13 @@ def _set_shell_projection_markers(
 def _shell_continuation(streams: tuple[str, ...]) -> str:
     selected = streams or ("stdout", "stderr")
     requests = " and ".join(
-        "read_tool_output(callId=<current provider callId>, "
+        "read_tool_output(callId=<original run_shell provider callId>, "
         f"stream={stream}, fromEnd=true)"
         for stream in selected
     )
     return (
         f"Use {requests} to read the existing completed run_shell output. "
-        "Do not rerun the command. Bytes omitted by the raw output limit "
+        "If the command is still running, use write_stdin with its sessionId first. Do not rerun the command. Bytes omitted by the raw output limit "
         "cannot be recovered."
     )
 

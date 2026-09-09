@@ -64,6 +64,7 @@ from eidos_runtime.workspace.search_driver import (
 )
 from eidos_runtime.workspace.reader import WorkspacePathError, WorkspaceReader
 from eidos_runtime.tools.registry import (
+    ShellToolRuntime,
     ToolProvenance,
     ToolRegistry,
     ToolRegistryEntry,
@@ -83,6 +84,8 @@ from eidos_runtime.tools.contracts import (
     ReadFileResultData,
     RunShellInput,
     RunShellResultData,
+    WriteStdinInput,
+    WriteStdinResultData,
     SEARCH_TEXT_MAX_RESULTS,
     SearchTextInput,
     SearchTextResultData,
@@ -202,7 +205,8 @@ _BUILTIN_CONTRACTS = (
     ("read_file_range", "Read an inclusive bounded line range from one UTF-8 file in the workspace or an active Skill root. The path may be workspace-relative or an authorized absolute path; active Skill roots are read-only. For other Skill resources, use skill_read_resource. Continue from nextLine when present.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
     ("search_text", "Search a workspace-relative path or an absolute path inside the workspace or active Skill root (default '.') for a single-line query; supports maxResults, regex, and includeGlobs. Results are relative to the selected root, bounded, and may be truncated.", "none", False, 5, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
     ("apply_patch", "Apply structured Add, Update, Delete, and Move changes to workspace files. Paths, base hashes, and final contents are verified before commit.", "workspace", False, 5, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
-    ("run_shell", "Run one shell command in the macOS workspace sandbox. The Runtime waits for the process to exit, with a 3600-second execution budget excluding approval waits, and streams bounded output into this ToolCall. Use request_permissions for network access for the current run, or set networkAccess=request with justification for this command. Ordinary commands inherit approved run permissions. Eidos keeps macOS Seatbelt. Additional path access and unsandboxed execution also require approval. The legacy sandboxPermissions and additionalPermissions fields remain supported for compatibility. Do not assume GNU timeout, zsh glob behavior, or use tail/head as output boundaries; do not add pipefail unless the command requires it. Eidos bounds and verifies output and workspace changes without rewriting the command.", "shell", False, 3600, "single", RunShellInput, RunShellResultData, "run_shell"),
+    ("run_shell", "Run one shell command in the macOS workspace sandbox. The Runtime returns after yieldTimeMs with either an exit result or shell_running and sessionId. For a running command, use write_stdin with empty chars to wait and read progress, or chars=\\u0003 to interrupt. Choose whether to keep waiting from the output and user intent. The command has no default lifetime deadline. Finish or stop the command before a final answer; another side effect cannot start while it runs. Use request_permissions for network access for the current run, or set networkAccess=request with justification for this command. Ordinary commands inherit approved run permissions. Eidos keeps macOS Seatbelt. Additional path access and unsandboxed execution also require approval. The legacy sandboxPermissions and additionalPermissions fields remain supported for compatibility. Do not assume GNU timeout, zsh glob behavior, or use tail/head as output boundaries; do not add pipefail unless the command requires it. Eidos bounds and verifies output and workspace changes without rewriting the command.", "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
+    ("write_stdin", "Continue an existing Shell session in this Run. Empty chars waits and reads new output; chars=\\u0003 interrupts the command. Other chars send stdin under the original command permissions. yieldTimeMs bounds this wait, not the command lifetime. Repeated waiting is valid while the process is running. Stop waiting after executionStatus=exited.", "none", False, 600, "single", WriteStdinInput, WriteStdinResultData, "run_shell"),
 )
 TOOL_SPECS = tuple(ToolSpec.model_validate({
     "name": name,
@@ -302,7 +306,7 @@ def builtin_tool_registry(
     supports_custom_tools: bool = False,
     supports_tool_grammar: bool = False,
 ) -> ToolRegistry:
-    operations = ("list", "read", "range", "search", "patch", "shell")
+    operations = ("list", "read", "range", "search", "patch", "shell", "shell")
     specs = _tool_specs(
         supports_custom_tools=supports_custom_tools,
         supports_tool_grammar=supports_tool_grammar,
@@ -317,17 +321,20 @@ def builtin_tool_registry(
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
+        provenance = ToolProvenance.model_validate({
+            "kind": "builtin",
+            "sourceId": "eidos",
+            "sourceVersion": "1",
+            "contentHash": hashlib.sha256(encoded).hexdigest(),
+        })
+        adapter = _BuiltinAdapter(executor, spec, operation)
         entries.append(ToolRegistryEntry(
             spec,
-            ToolProvenance.model_validate({
-                "kind": "builtin",
-                "sourceId": "eidos",
-                "sourceVersion": "1",
-                "contentHash": hashlib.sha256(encoded).hexdigest(),
-            }),
-            _BuiltinAdapter(executor, spec, operation),
+            provenance,
+            adapter,
             None if spec.input_kind == "custom" else contract[6],
             contract[7],
+            runtime=ShellToolRuntime(adapter, spec, provenance) if operation == "shell" else None,
         ))
     return ToolRegistry(tuple(entries))
 

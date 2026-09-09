@@ -1028,3 +1028,22 @@ test("renders in-progress read_file as an expandable details element", () => {
   assert.match(html, /<details class="tool-item"/);
   assert.match(html, /正在读取 src\/utils\/generate_sunset\.js/);
 });
+
+test("keeps a managed command running and hides normal Shell followups", () => {
+  const command = item({ id: "managed", ordinal: 1, kind: "command_execution", content: "progress\n", toolCall: {
+    id: "managed-tool", itemId: "managed", modelStepIndex: 1, batchOrder: 0,
+    providerCallId: "start", toolName: "run_shell", status: "completed", startedAt: 1_000,
+    argumentsJson: JSON.stringify({ command: "pnpm test" }),
+    resultJson: JSON.stringify({ outcome: "success", code: "shell_running", data: { executionStatus: "running", sessionId: "shell-1" } }),
+  } });
+  const followup = item({ id: "followup", ordinal: 2, kind: "tool_call", toolCall: {
+    id: "followup-tool", itemId: "followup", modelStepIndex: 2, batchOrder: 0,
+    providerCallId: "poll", toolName: "write_stdin", status: "completed", startedAt: 2_000,
+    argumentsJson: JSON.stringify({ sessionId: "shell-1" }), resultJson: JSON.stringify({ code: "shell_running" }),
+  } });
+  const html = renderToStaticMarkup(<ExecutionFeed items={[command, followup]} runs={[{ ...run, status: "running" }]} approvals={[]} respondingApprovalIds={new Set()} onApprove={() => {}} onReject={() => {}} />);
+  assert.match(html, /正在运行 pnpm test/);
+  assert.match(html, /progress/);
+  assert.doesNotMatch(html, /write_stdin|✓ 成功|失败 · shell_running/);
+  assert.equal((html.match(/tool-item--shell/g) ?? []).length, 1);
+});

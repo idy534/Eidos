@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Callable
 
 from pydantic import BaseModel, ConfigDict
 
@@ -77,6 +78,7 @@ class RunFinalizer:
         *,
         timeout_seconds: float = FINALIZATION_SECONDS,
         resource_registry: ResourceRegistry | None = None,
+        before_finalize: Callable[[], None] | None = None,
     ) -> None:
         self.store = store
         self.model = model
@@ -85,6 +87,7 @@ class RunFinalizer:
         self.state_machine = state_machine
         self.timeout_seconds = timeout_seconds
         self.resources = resource_registry or ResourceRegistry()
+        self.before_finalize = before_finalize
 
     def finalize(
         self,
@@ -95,6 +98,8 @@ class RunFinalizer:
         *,
         instructions: ResolvedInstructions | None = None,
     ) -> FinalizationOutcome:
+        if self.before_finalize is not None:
+            self.before_finalize()
         resource = self.resources.register(
             RuntimeResourceKind.FINALIZATION,
             owner_id=run_id,

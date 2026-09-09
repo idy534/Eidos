@@ -37,6 +37,7 @@ from eidos_runtime.runtime.loop_guard import (
 )
 from eidos_runtime.runtime.protocol_diagnostics import ProtocolDiagnostic
 from eidos_runtime.runtime.run_resources import RunResourceError, RunResources
+from eidos_runtime.runtime.shell_process_manager import ShellSessionFinalizationError
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.runtime.runtime_dependencies import RuntimeDependencyCatalog
 from eidos_runtime.runtime.sampling import (
@@ -296,7 +297,7 @@ class RuntimeEngine:
                 self._cancel(run_id)
             elif current["status"] != "interrupted":
                 self._fail(run_id, "RUNTIME_STATE_CONFLICT")
-        except ToolInfrastructureError:
+        except (ToolInfrastructureError, ShellSessionFinalizationError):
             logger.exception("Tool infrastructure failed")
             current = self.store.read_run(run_id)
             if current["status"] in {
@@ -342,6 +343,7 @@ class RuntimeEngine:
             self.sensitive,
             self.state_machine,
             resource_registry=self.resources,
+            before_finalize=resources.shell_process_manager.cleanup,
         )
         approval = ApprovalCoordinator(
             self.store,
@@ -831,9 +833,11 @@ class RuntimeEngine:
                 return
             if decision.action == LoopAction.COMPLETE:
                 assert sampled.assistant_item is not None
+                shell_stopped = resources.shell_process_manager.has_running()
+                resources.shell_process_manager.cleanup()
                 self.store.complete_current_step(run.run_id, "completed")
                 mutation = self.store.complete_assistant_and_run_committed(
-                    str(sampled.assistant_item["id"]), run.run_id
+                    str(sampled.assistant_item["id"]), run.run_id, shell_stopped=shell_stopped,
                 )
                 item, completed = mutation.value
                 self.events.publish(mutation, item=item, run=completed)
@@ -841,7 +845,17 @@ class RuntimeEngine:
                 return
 
             permission_frontier = self.store.run_permission_grants(run.run_id).model_dump(mode="json")
-            repeated = guard.observe_tool_calls(
+            managed_poll = (
+                len(validation.tool_calls) == 1
+                and validation.tool_calls[0].name == "write_stdin"
+                and validation.tool_calls[0].arguments.get("chars", "") == ""
+                and resources.shell_process_manager.is_running(str(validation.tool_calls[0].arguments.get("sessionId", "")))
+                and dispatcher.validate_execution(
+                    validation.tool_calls[0],
+                    dispatcher.plan(validation.tool_calls[0], step.tool_snapshot.binding("write_stdin") or "missing"),
+                )
+            )
+            repeated = None if managed_poll else guard.observe_tool_calls(
                 validation.tool_calls,
                 step.workspace_version,
                 step.reconciliation_epoch,
@@ -913,7 +927,7 @@ class RuntimeEngine:
                     ),
                     loop_state_fingerprint=loop_state,
                 )
-                guard_reason = guard.observe_progress(signature)
+                guard_reason = None if managed_poll and not outcome.error_fingerprints else guard.observe_progress(signature)
                 if guard_reason == "recover_no_progress":
                     recovery_state = guard.mark_recovery_attempted()
                     signature = signature.model_copy(update={

@@ -11,6 +11,7 @@ import subprocess
 import threading
 import time
 import uuid
+import logging
 
 from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
@@ -25,10 +26,15 @@ from eidos_runtime.sandbox.shell import (
     _process_group_exists,
     _terminate_group,
 )
+from eidos_runtime.sandbox.sensitive import SensitiveScanner, StreamingSensitiveScanner, SensitiveScanError
 
 
 class ShellProcessSessionNotFound(KeyError):
     """Raised when a ToolCall names a session outside its Run."""
+
+
+class ShellSessionFinalizationError(RuntimeError):
+    """The process stopped but its final result could not be committed."""
 
 
 @dataclass
@@ -56,6 +62,15 @@ class ShellProcessSession:
     stop: threading.Event = field(default_factory=threading.Event)
     lock: threading.RLock = field(default_factory=threading.RLock)
     write_lock: threading.Lock = field(default_factory=threading.Lock)
+    scanners: dict[str, StreamingSensitiveScanner] = field(default_factory=dict)
+    on_output: Callable[[str], None] | None = None
+    on_exit: Callable[[dict[str, object]], dict[str, object]] | None = None
+    terminal_result: dict[str, object] | None = None
+    committed: bool = False
+    finalized: bool = False
+    observer_lock: threading.RLock = field(default_factory=threading.RLock)
+    release: Callable[[], None] | None = None
+    finalization_error: Exception | None = None
 
     @property
     def resource_id(self) -> str | None:
@@ -92,6 +107,7 @@ class ShellProcessManager:
         wait_for_exit: bool = False,
         on_output: Callable[[str], None] | None = None,
         cancel: threading.Event | None = None,
+        sensitive: SensitiveScanner | None = None,
     ) -> dict[str, object]:
         with self._lock:
             if self._closed:
@@ -117,6 +133,13 @@ class ShellProcessManager:
             launch=launch,
             started_at=time.monotonic(),
         )
+        if sensitive is not None:
+            session.on_output = on_output
+            for name in ("stdout", "stderr"):
+                session.scanners[name] = StreamingSensitiveScanner(
+                    sensitive,
+                    on_safe_text=lambda text, stream=name: self._append_safe(session, stream, text),
+                )
         resource = self.resources.register(
             RuntimeResourceKind.SHELL_PROCESS,
             owner_id=self.owner_run_id,
@@ -143,8 +166,12 @@ class ShellProcessManager:
             session,
             yield_time_ms,
             "run_shell",
-            cancel=cancel if wait_for_exit else None,
+            cancel=cancel,
         )
+        if cancel is not None and cancel.is_set():
+            self._terminate(session)
+            session.done.wait(2)
+            snapshot = self._wait_and_snapshot(session, 0, "run_shell", cumulative=True)
         if not wait_for_exit:
             return snapshot
         self._emit_output(snapshot, on_output)
@@ -169,6 +196,7 @@ class ShellProcessManager:
         chars: str = "",
         *,
         yield_time_ms: int = 10_000,
+        cancel: threading.Event | None = None,
     ) -> dict[str, object]:
         session = self._session(session_id)
         if chars == "\x03":
@@ -179,8 +207,70 @@ class ShellProcessManager:
                     except (ProcessLookupError, PermissionError):
                         pass
         elif chars:
-            self._write(session, chars)
-        return self._wait_and_snapshot(session, yield_time_ms, "write_stdin")
+            self._write(session, chars, cancel=cancel)
+        if chars == "\x03":
+            if not session.done.wait(min(yield_time_ms / 1000, 1.0)):
+                self._terminate(session)
+                if not session.done.wait(2):
+                    session.drain_error = "process_termination_failed"
+            yield_time_ms = 0
+        result = self._wait_and_snapshot(session, yield_time_ms, "write_stdin", cancel=cancel)
+        self._finalize(session)
+        if session.finalization_error is not None:
+            raise ShellSessionFinalizationError("shell_result_commit_failed") from session.finalization_error
+        if session.terminal_result is not None:
+            data = result["data"]
+            result = {**session.terminal_result, "toolName": "write_stdin", "data": {**session.terminal_result["data"], "stdout": data["stdout"], "stderr": data["stderr"]}}
+        return result
+
+    def require_session(self, session_id: str) -> None:
+        self._session(session_id)
+
+    def retain(self, session_id: str, release: Callable[[], None]) -> None:
+        self._session(session_id).release = release
+
+    def observe_exit(self, session_id: str, callback: Callable[[dict[str, object]], dict[str, object]]) -> None:
+        session = self._session(session_id)
+        with session.observer_lock:
+            session.on_exit = callback
+
+    def commit(self, session_id: str) -> None:
+        session = self._session(session_id)
+        with session.observer_lock:
+            session.committed = True
+        self._finalize(session)
+        if session.finalization_error is not None:
+            raise ShellSessionFinalizationError("shell_result_commit_failed") from session.finalization_error
+
+    def is_running(self, session_id: str) -> bool:
+        try:
+            session = self._session(session_id)
+        except ShellProcessSessionNotFound:
+            return False
+        return session.execution_status == "running"
+
+    def has_running(self) -> bool:
+        with self._lock:
+            return any(session.execution_status == "running" for session in self._sessions.values())
+
+    def _finalize(self, session: ShellProcessSession) -> None:
+        with session.observer_lock:
+            if not session.committed or session.finalized or session.on_exit is None or not session.done.is_set():
+                return
+            try:
+                session.terminal_result = session.on_exit(self._wait_and_snapshot(session, 0, "run_shell", cumulative=True))
+                session.finalized = True
+                session.finalization_error = None
+                self._release(session)
+            except Exception as error:
+                session.finalization_error = error
+                logging.getLogger("eidos.runtime").exception("Shell result commit failed")
+
+    @staticmethod
+    def _release(session: ShellProcessSession) -> None:
+        if session.release is not None:
+            release, session.release = session.release, None
+            release()
 
     def interrupt(
         self,
@@ -205,10 +295,18 @@ class ShellProcessManager:
                 thread.join(timeout=2.0)
             self._close_pipes(session)
             resource = session.resource
-            if resource is not None and resource.diagnostics().state.value != "closed":
+            quiescent = session.done.is_set() and not _process_group_exists(session.process_group_id)
+            if resource is not None and quiescent and resource.diagnostics().state.value != "closed":
                 resource.close()
+            self._finalize(session)
+            if quiescent:
+                self._release(session)
+            else:
+                session.finalization_error = ShellSessionFinalizationError("shell_process_still_running")
         with self._lock:
-            self._sessions.clear()
+            self._sessions = {session.session_id: session for session in sessions if session.finalization_error is not None}
+        if any(session.finalization_error is not None for session in sessions):
+            raise ShellSessionFinalizationError("shell_result_commit_failed")
 
     close = cleanup
 
@@ -226,6 +324,7 @@ class ShellProcessManager:
         tool_name: str,
         *,
         cancel: threading.Event | None = None,
+        cumulative: bool = False,
     ) -> dict[str, object]:
         timeout = max(0.0, yield_time_ms / 1000.0)
         if cancel is None:
@@ -238,10 +337,11 @@ class ShellProcessManager:
                     break
                 session.done.wait(min(0.1, remaining))
         with session.lock:
-            stdout = session.stdout_text[session.stdout_cursor:]
-            stderr = session.stderr_text[session.stderr_cursor:]
-            session.stdout_cursor = len(session.stdout_text)
-            session.stderr_cursor = len(session.stderr_text)
+            stdout = session.stdout_text[0 if cumulative else session.stdout_cursor:]
+            stderr = session.stderr_text[0 if cumulative else session.stderr_cursor:]
+            if not cumulative:
+                session.stdout_cursor = len(session.stdout_text)
+                session.stderr_cursor = len(session.stderr_text)
             running = session.execution_status == "running"
             data: dict[str, object] = {
                 "executionStatus": "running" if running else "exited",
@@ -255,9 +355,10 @@ class ShellProcessManager:
                 ),
                 "originalBytes": session.original_bytes,
                 "omittedBytes": session.omitted_bytes,
+                "sessionId": session.session_id,
+                "workspaceChanged": False,
+                "workspaceChangeState": "unknown",
             }
-            if running:
-                data["sessionId"] = session.session_id
             if session.launch.shell_kind is not None:
                 data["shellKind"] = session.launch.shell_kind
             if session.launch.environment_source is not None:
@@ -266,9 +367,9 @@ class ShellProcessManager:
                 "schemaVersion": 1,
                 "toolName": tool_name,
                 "outcome": "success"
-                if running or (session.exit_code == 0 and session.termination == "exit")
+                if session.drain_error is None and (running or (session.exit_code == 0 and session.termination == "exit"))
                 else "error",
-                "code": "shell_running"
+                "code": "output_capture_failed" if session.drain_error is not None else "shell_running"
                 if running
                 else "ok"
                 if session.exit_code == 0 and session.termination == "exit"
@@ -282,7 +383,7 @@ class ShellProcessManager:
                 else f"Command did not succeed (termination={session.termination})",
                 "data": data,
                 "sideEffectsMayExist": True,
-                "reconciliationRequired": False,
+                "reconciliationRequired": session.drain_error is not None or (not running and session.exit_code is None),
             }
 
     def _wait_until_exit(
@@ -327,7 +428,10 @@ class ShellProcessManager:
             if isinstance(text, str) and text:
                 on_output(text)
 
-    def _write(self, session: ShellProcessSession, chars: str) -> None:
+    def _write(
+        self, session: ShellProcessSession, chars: str,
+        *, cancel: threading.Event | None = None,
+    ) -> None:
         payload = chars.encode("utf-8")
         if not payload:
             return
@@ -340,6 +444,8 @@ class ShellProcessManager:
             deadline = time.monotonic() + 30.0
             os.set_blocking(descriptor, False)
             while offset < len(payload):
+                if cancel is not None and cancel.is_set():
+                    raise RuntimeError("shell_stdin_canceled")
                 try:
                     written = os.write(descriptor, payload[offset:])
                 except BlockingIOError:
@@ -438,6 +544,11 @@ class ShellProcessManager:
                 self._append_decoded(
                     session, stream, decoder.decode(b"", final=True)
                 )
+            for scanner in session.scanners.values():
+                try:
+                    scanner.finish()
+                except SensitiveScanError:
+                    session.drain_error = "sensitive_content_rejected"
             selector.close()
             self._close_pipes(session)
             with session.lock:
@@ -453,6 +564,7 @@ class ShellProcessManager:
                 except Exception:
                     pass
             session.done.set()
+            self._finalize(session)
 
     @staticmethod
     def _capture(
@@ -482,11 +594,28 @@ class ShellProcessManager:
     ) -> None:
         if not text:
             return
+        scanner = session.scanners.get(stream)
+        if scanner is not None:
+            try:
+                scanner.feed(text)
+            except SensitiveScanError:
+                session.drain_error = "sensitive_content_rejected"
+            return
+        ShellProcessManager._append_safe(session, stream, text)
+
+    @staticmethod
+    def _append_safe(session: ShellProcessSession, stream: str, text: str) -> None:
         with session.lock:
             if stream == "stdout":
                 session.stdout_text += text
             else:
                 session.stderr_text += text
+        if session.on_output is not None:
+            try:
+                session.on_output(text)
+            except Exception:
+                session.drain_error = "output_persistence_failed"
+                logging.getLogger("eidos.runtime").exception("Shell output persistence failed")
 
     @staticmethod
     def _close_pipes(session: ShellProcessSession) -> None:

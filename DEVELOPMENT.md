@@ -334,6 +334,11 @@ fi
 
 命令结束后，Runtime 会记录 Workspace manifest observation、diff、退出状态和 reconciliation 状态。Workspace-wide observation 不要求在 Shell 启动前完整扫描 Workspace。`unknown` observation 不等于 Runtime 已经证明了不确定副作用。Runtime 明确报告的 execution uncertainty 仍必须进入 reconciliation。
 
-PTY 和后台进程 follow-up：Agent `run_shell` 不提供 PTY、stdin、interactive session 或 persistent/background process manager。测试者应使用 Desktop Terminal 验证交互式 PTY。测试者还应验证 Agent Shell 会检测并清理 background child。
+PTY 和后台进程 follow-up：Agent Shell 支持同一 Run 内的管道 stdin 和分段等待，但不提供 PTY，也不跨 Run 或 Runtime 重启恢复进程。测试者应使用 Desktop Terminal 验证交互式 PTY。测试者还应验证 Agent Shell 会检测并清理 background child。
 
-Agent `run_shell` 的执行预算来自 ToolSpec，新 Run 使用 3600 秒。Runtime 在同一 ToolCall 内持续轮询，`yieldTimeMs` 不是命令总期限。Approval 等待会暂停预算，多个 attempt 共用预算。长测试仍可由用户取消；超时会触发进程清理，并保留已取得且通过安全校验的输出。测试者应同时验证超时后模型可以提交报告并结束 Run，未确认的副作用仍在 `interrupted` 终态中可见。
+新 Run 的 Shell 不再设置默认进程总期限。`run_shell` 首次等待默认 10 秒，范围 250 毫秒至 30 秒；模型随后使用 `write_stdin` 等待，默认 30 秒，范围 250 毫秒至 60 秒。等待窗口到期只返回 `shell_running` 和 `sessionId`，不会结束进程或触发 reconciliation。ToolSpec 的 600 秒 watchdog 只限制单次启动、审批重试或跟进调用，审批等待不计入预算。历史 3600 秒 ToolSpec 仍可读取，但新工具不会用它限制进程寿命。
+
+
+### Shell 分段等待验收
+
+测试者应先得到本次修改的测试授权，再运行验证。测试者应覆盖短命令、超过首次窗口的静默命令、持续输出、空输入轮询、stdin、Ctrl-C 及忽略中断的进程组清理。测试者应检查命令运行期间的排他副作用限制、只读工具可用、有效轮询不会触发 LoopGuard，以及退出结果在模型没有继续轮询时也会持久化。测试者应检查原命令卡片持续更新且没有 `write_stdin` 名称或正常轮询卡片。测试者还应覆盖审批重试、跨 Run session 拒绝、跨输出片段敏感扫描、取消竞争、存储失败和 Runtime 重启后的不确定 Intent。

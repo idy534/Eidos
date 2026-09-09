@@ -713,6 +713,47 @@ class RuntimeLoopTests(unittest.TestCase):
             ["completed", "completed"],
         )
 
+    def test_managed_shell_polls_without_repeating_the_command(self) -> None:
+        if not is_seatbelt_ready():
+            self.skipTest("Seatbelt Shell integration requires a usable sandbox")
+        run, _ = self.store.create_run(self.session["id"], "Wait for the command")
+        store = self.store
+        session_id = self.session["id"]
+
+        class PollingModel(ScriptedModel):
+            def complete(model, *args, **kwargs):
+                if model._index:
+                    snapshot = store.read_session_snapshot(session_id)
+                    original = next(item for item in snapshot["items"] if item.get("toolCall", {}).get("providerCallId") == "start-command")
+                    result = json.loads(original["toolCall"]["resultJson"])
+                    if result["data"]["executionStatus"] == "exited":
+                        response = ModelResponse(text="Command finished.")
+                    elif model._index == 1:
+                        response = ModelResponse(tool_calls=(ModelToolCall("read-during-command", "read_file", {"path": "hello.txt"}),))
+                    elif model._index == 2:
+                        response = ModelResponse(tool_calls=(ModelToolCall("conflicting-command", "run_shell", {"command": "touch must-not-exist"}),))
+                    else:
+                        if model._index > 30:
+                            raise AssertionError("Managed command never finished")
+                        response = ModelResponse(tool_calls=(ModelToolCall(f"poll-{model._index}", "write_stdin", {"sessionId": result["data"]["sessionId"], "yieldTimeMs": 250}),))
+                    model.responses = (*model.responses, response)
+                return super().complete(*args, **kwargs)
+
+        model = PollingModel([ModelResponse(tool_calls=(ModelToolCall(
+            "start-command", "run_shell", {"command": "printf 'ready\\n'; sleep 3; printf 'done\\n'", "yieldTimeMs": 250},
+        ),))])
+        RuntimeLoop(self.store, model, lambda _message: None, shell_available=True).run(run["id"], threading.Event())
+        snapshot = self.store.read_session_snapshot(session_id)
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        self.assertFalse((self.workspace / "must-not-exist").exists())
+        original = next(item for item in snapshot["items"] if item.get("toolCall", {}).get("providerCallId") == "start-command")
+        result = json.loads(original["toolCall"]["resultJson"])
+        self.assertEqual(result["data"]["stdout"], "ready\ndone\n")
+        self.assertEqual(result["data"]["executionStatus"], "exited")
+        polls = [item for item in snapshot["items"] if item.get("toolCall", {}).get("toolName") == "write_stdin"]
+        self.assertGreaterEqual(len(polls), 3)
+        self.assertEqual(self.store.connection.execute("SELECT COUNT(*) FROM durable_intents WHERE run_id = ? AND status != 'completed'", (run["id"],)).fetchone()[0], 0)
+
     def test_default_shell_runs_in_sandbox_without_approval(self) -> None:
         if not is_seatbelt_ready():
             self.skipTest(

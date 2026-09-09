@@ -90,7 +90,6 @@ from eidos_runtime.sandbox.permissions import (
 from eidos_runtime.sandbox.sensitive import (
     SensitiveScanError,
     SensitiveScanner,
-    StreamingSensitiveScanner,
 )
 from eidos_runtime.sandbox.host_shell import HostShellUnavailableError
 from eidos_runtime.sandbox.seatbelt import (
@@ -115,6 +114,7 @@ from eidos_runtime.tools.workspace import (
 )
 from eidos_runtime.tools.contracts import (
     RunShellInput,
+    WriteStdinInput,
     RuntimeDependencyBindingProvenance,
 )
 from eidos_runtime.tools.registry import (
@@ -126,6 +126,8 @@ from eidos_runtime.tools.registry import (
 )
 from eidos_runtime.runtime.shell_process_manager import (
     ShellProcessManager,
+    ShellProcessSessionNotFound,
+    ShellSessionFinalizationError,
 )
 
 
@@ -200,6 +202,7 @@ class _HandlerDependencies:
     skill_access: SkillAccess | None = None
     runtime_dependencies: RuntimeDependencyCoordinator | None = None
     permissions: PermissionRequests | None = None
+    concurrency: ToolConcurrencyGate | None = None
 
 
 class _BoundShellOrchestrationRuntime(ShellOrchestrationRuntime):
@@ -417,6 +420,41 @@ class ShellToolHandler:
     def __init__(self, dependencies: _HandlerDependencies) -> None:
         self.dependencies = dependencies
 
+    def _write_stdin(
+        self, run_id: str, item: dict[str, object], call: ModelToolCall,
+        cancel: threading.Event,
+    ) -> HandlerOutcome:
+        arguments = WriteStdinInput.model_validate(call.arguments)
+        manager = self.dependencies.shell_process_manager
+        if manager is None:
+            raise RuntimeError("shell process manager is unavailable")
+        # The existing process retains its permission and exclusive window.
+        # Empty reads create no new side effect; input gets its own intent.
+        try:
+            manager.require_session(arguments.sessionId)
+        except ShellProcessSessionNotFound:
+            return HandlerOutcome(tool_error(call.name, "shell_session_not_found", "Shell session is unavailable in this Run"), "failed", "failed")
+        if arguments.chars:
+            if arguments.chars != "\x03" and self.dependencies.store.side_effects_blocked(run_id):
+                return HandlerOutcome(tool_error(call.name, "reconciliation_required", "A previous side effect must be reconciled before sending input"), "failed", "failed")
+            self.dependencies.authorize_workspace_side_effect(
+                item=item,
+                prepared=PreparedToolExecution(
+                    approval_description={"kind": "command_input", "summary": "Send input to the existing command"},
+                    transition_reason="shell_session_input",
+                    intent_preconditions={"sessionId": arguments.sessionId, "operation": "interrupt" if arguments.chars == "\x03" else "write"},
+                ),
+            )
+        try:
+            result = manager.write_stdin(arguments.sessionId, arguments.chars, yield_time_ms=arguments.yieldTimeMs, cancel=cancel)
+        except ShellSessionFinalizationError:
+            result = tool_result(call.name, "error", "shell_result_commit_failed", "Command exit could not be persisted", side_effects_may_exist=True, reconciliation_required=True)
+        except RuntimeError as error:
+            result = tool_result(call.name, "error", "shell_stdin_failed", "Shell input or observation failed", side_effects_may_exist=bool(arguments.chars), reconciliation_required=bool(arguments.chars))
+            logger.warning("Shell session operation failed: %s", type(error).__name__)
+        result = safe_tool_result(self.dependencies.sensitive, call.name, bounded_tool_result(call.name, result))
+        return HandlerOutcome(result, "completed" if result.get("outcome") == "success" else "failed", "completed")
+
     def execute(
         self,
         run_id: str,
@@ -425,6 +463,8 @@ class ShellToolHandler:
         cancel: threading.Event,
         runtime: ShellToolRuntime,
     ) -> HandlerOutcome:
+        if call.name == "write_stdin":
+            return self._write_stdin(run_id, item, call, cancel)
         shell_input = RunShellInput.model_validate_json(
             json.dumps(call.arguments, ensure_ascii=False)
         )
@@ -447,7 +487,7 @@ class ShellToolHandler:
         command = shell_input.command
         cwd_value = shell_input.cwd
         yield_time_ms = shell_input.yieldTimeMs
-        # One execution budget covers all attempts; approval waits pause it.
+        # This watchdog bounds one observation, not the managed process lifetime.
         timeout = runtime.spec.timeout_seconds
         try:
             cwd = runtime.implementation.prepare_shell(  # type: ignore[attr-defined]
@@ -579,8 +619,6 @@ class ShellToolHandler:
 
         def stream_safe_output(text: str) -> None:
             nonlocal delta_sequence
-            if cancel.is_set():
-                return
             delta_sequence += 1
             mutation = self.dependencies.store.append_item_deltas_committed(
                 str(item["id"]), (text,), delta_sequence
@@ -646,23 +684,6 @@ class ShellToolHandler:
                         ),
                         None,
                     )
-            output_stream = StreamingSensitiveScanner(
-                self.dependencies.sensitive,
-                on_safe_text=stream_safe_output,
-            )
-            output_scan_failed = False
-            streamed_output = False
-
-            def scan_shell_output(text: str) -> None:
-                nonlocal output_scan_failed, streamed_output
-                streamed_output = True
-                if output_scan_failed:
-                    return
-                try:
-                    output_stream.feed(text)
-                except SensitiveScanError:
-                    output_scan_failed = True
-
             try:
                 shell_process_manager = self.dependencies.shell_process_manager
                 if shell_process_manager is None:
@@ -678,17 +699,11 @@ class ShellToolHandler:
                 raw_result = shell_process_manager.start(
                     launch,
                     yield_time_ms=yield_time_ms,
-                    wait_for_exit=True,
-                    on_output=scan_shell_output,
+                    wait_for_exit=False,
+                    on_output=stream_safe_output,
+                    sensitive=self.dependencies.sensitive,
                     cancel=cancel,
                 )
-                if not streamed_output:
-                    result_data = raw_result.get("data")
-                    if isinstance(result_data, dict):
-                        for stream in ("stdout", "stderr"):
-                            text = result_data.get(stream)
-                            if isinstance(text, str):
-                                scan_shell_output(text)
                 if dependency_provenance is not None:
                     raw_result = _attach_dependency_provenance(
                         raw_result,
@@ -754,6 +769,8 @@ class ShellToolHandler:
                     else None
                 )
                 return result, denial
+            if raw_result.get("data", {}).get("executionStatus") == "running":
+                return bounded_tool_result(call.name, raw_result), None
             try:
                 manifest_after = (
                     runtime.implementation.executor.refresh_workspace_index(  # type: ignore[attr-defined]
@@ -785,9 +802,6 @@ class ShellToolHandler:
                 call.name, attach_workspace_diff(raw_result, workspace_diff)
             )
             try:
-                if output_scan_failed:
-                    raise SensitiveScanError("shell output scan failed")
-                output_stream.finish()
                 result = safe_tool_result(
                     self.dependencies.sensitive, call.name, result
                 )
@@ -817,11 +831,24 @@ class ShellToolHandler:
         def gated_execute_shell_attempt(
             attempt: SandboxAttempt,
         ) -> tuple[dict[str, object], SandboxDenied | None]:
+            def execute_managed() -> tuple[dict[str, object], SandboxDenied | None]:
+                result, denial = execute_shell_attempt(attempt)
+                data = result.get("data", {})
+                if data.get("executionStatus") == "running":
+                    assert self.dependencies.concurrency is not None
+                    session_id = str(data["sessionId"])
+                    gate = self.dependencies.concurrency
+                    gate.retain_shell(session_id)
+                    manager = self.dependencies.shell_process_manager
+                    assert manager is not None
+                    manager.retain(session_id, lambda: gate.release_shell(session_id))
+                return result, denial
+
             return cast(
                 tuple[dict[str, object], SandboxDenied | None],
                 self.dependencies.run_exclusive_side_effect(
                     cancel=cancel,
-                    execute=lambda: execute_shell_attempt(attempt),
+                    execute=execute_managed,
                 ),
             )
 
@@ -986,6 +1013,50 @@ class ShellToolHandler:
             record_attempt=record_attempt,
         )
         result = orchestration.result
+        if result.get("data", {}).get("executionStatus") == "running":
+            manager = self.dependencies.shell_process_manager
+            gate = self.dependencies.concurrency
+            assert manager is not None and gate is not None
+            session_id = str(result["data"]["sessionId"])
+            initial_result = result
+
+            def complete_command(terminal: dict[str, object]) -> dict[str, object]:
+                terminal = {**initial_result, **terminal, "data": {**initial_result["data"], **terminal["data"]}}
+                changed = False
+                diff_hash = None
+                try:
+                    after = runtime.implementation.executor.refresh_workspace_index(threading.Event())  # type: ignore[attr-defined]
+                    diff = diff_workspace_manifests(manifest_before, after)
+                    terminal = attach_workspace_diff(terminal, diff)
+                    changed, diff_hash = diff.changed, diff.diff_hash
+                except WorkspacePathError as error:
+                    if error.code not in {"WORKSPACE_INDEX_INCOMPLETE", "sensitive_workspace_content"}:
+                        terminal["reconciliationRequired"] = True
+                exit_data = terminal["data"]
+                terminal = safe_tool_result(
+                    self.dependencies.sensitive, "run_shell",
+                    bounded_tool_result("run_shell", terminal),
+                )
+                if terminal.get("data", {}).get("executionStatus") != "exited":
+                    terminal = tool_result(
+                        "run_shell", "error", str(terminal.get("code", "output_capture_failed")),
+                        "Shell output was withheld",
+                        {"sessionId": session_id, "executionStatus": "exited",
+                         "exitCode": exit_data.get("exitCode"), "termination": exit_data.get("termination"),
+                         "stdout": "", "stderr": "", "truncated": True, "workspaceChanged": changed},
+                        side_effects_may_exist=True, reconciliation_required=True,
+                    )
+                terminal = self.dependencies.dispatcher.validate_result("run_shell", terminal)
+                projection = self.dependencies.dispatcher.project_result("run_shell", terminal)
+                mutation = self.dependencies.store.complete_shell_session_committed(
+                    str(item["id"]), session_id, json.dumps(terminal, ensure_ascii=False),
+                    json.dumps(projection.ui_result, ensure_ascii=False),
+                    workspace_changed=changed, diff_hash=diff_hash,
+                )
+                self.dependencies.events.publish(mutation, item=mutation.value)
+                return terminal
+
+            manager.observe_exit(session_id, complete_command)
         if (
             result.get("data", {}).get("sandboxDenialCategory") == "network"
             and not cancel.is_set()
@@ -1262,6 +1333,7 @@ class ToolCallRuntime:
         self.async_kernel = async_kernel
         self.skill_access = skill_access
         self.workspace_refresh = workspace_refresh
+        self.shell_process_manager = shell_process_manager
         self.concurrency = concurrency or ToolConcurrencyGate()
         self.parallel_read_concurrency = ToolConcurrencyGate()
         self.controller = ToolExecutionController(
@@ -1292,6 +1364,7 @@ class ToolCallRuntime:
             skill_access=self.skill_access,
             runtime_dependencies=runtime_dependencies,
             permissions=self.permissions,
+            concurrency=self.concurrency,
         )
         self.read_runtime = ReadOnlyToolHandler(dependencies)
         self.workspace_runtime = FileChangeToolHandler(dependencies)

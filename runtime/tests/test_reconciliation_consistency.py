@@ -173,6 +173,43 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ReconciliationDisposition.CONTINUE_READ_ONLY,
         )
 
+    def test_managed_shell_commits_exit_without_rewriting_model_observation(self) -> None:
+        index = self.store.increment_model_step(self.run["id"])
+        item = self.store.create_tool_item(self.run["id"], index, 0, "shell-call", "run_shell", "{}")
+        self.store.begin_durable_intent(item["id"], preconditions={}, approval_required=False)
+        running = {"outcome": "success", "code": "shell_running", "data": {"sessionId": "managed", "executionStatus": "running", "stdout": "first\n", "stderr": ""}, "reconciliationRequired": False}
+        self.store.complete_tool_item(item["id"], json.dumps(running))
+        row = self.store.connection.execute("SELECT status FROM durable_intents WHERE tool_call_id = ?", (item["toolCall"]["id"],)).fetchone()
+        self.assertEqual(row[0], "running")
+        self.store.append_item_deltas_committed(item["id"], ("last\n",), 1)
+        terminal = {**running, "code": "ok", "data": {**running["data"], "executionStatus": "exited", "exitCode": 0, "stdout": "first\nlast\n"}}
+        self.store.complete_shell_session_committed(item["id"], "managed", json.dumps(terminal), json.dumps(terminal))
+        row = self.store.connection.execute("SELECT result_json, model_result_json FROM tool_calls WHERE item_id = ?", (item["id"],)).fetchone()
+        self.assertEqual(json.loads(row[0])["data"]["executionStatus"], "exited")
+        self.assertEqual(json.loads(row[1])["data"]["executionStatus"], "running")
+        self.assertEqual(self.store.connection.execute("SELECT status FROM durable_intents WHERE tool_call_id = ?", (item["toolCall"]["id"],)).fetchone()[0], "completed")
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
+
+    def test_restart_marks_managed_shell_unknown_without_requeue(self) -> None:
+        index = self.store.increment_model_step(self.run["id"])
+        item = self.store.create_tool_item(self.run["id"], index, 0, "shell-call", "run_shell", "{}")
+        self.store.begin_durable_intent(item["id"], preconditions={}, approval_required=False)
+        running = {"outcome": "success", "code": "shell_running", "data": {"sessionId": "managed", "executionStatus": "running", "stdout": "partial", "stderr": ""}, "reconciliationRequired": False}
+        self.store.complete_tool_item(item["id"], json.dumps(running))
+        directory = self.store.data_directory
+        self.store.close()
+        self.store = SessionStore(directory)
+        self.store.initialize()
+        recovered = self.store.read_run(self.run["id"])
+        self.assertEqual(recovered["status"], "interrupted")
+        self.assertTrue(recovered["reconciliationRequired"])
+        original = self.store.read_item(item["id"])
+        result = json.loads(original["toolCall"]["resultJson"])
+        self.assertEqual(original["status"], "failed")
+        self.assertEqual(result["data"]["termination"], "unknown")
+        self.assertNotIn("executionStatus", result["data"])
+        self.assertEqual(result["data"]["stdout"], "partial")
+
     def test_reconciliation_barrier_commits_interrupted_completion_atomically(self) -> None:
         step_index = self.store.increment_model_step(self.run["id"])
         intent_item = self.store.create_tool_item(
@@ -968,7 +1005,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertIn("apply_patch", read_only_tools)
         self.assertEqual(len(approvals), 1)
         self.assertEqual(approvals[0]["sandboxPermissions"], expected_mode)
-        self.assertEqual(approvals[0]["timeoutSeconds"], 3_600)
+        self.assertEqual(approvals[0]["timeoutSeconds"], 600)
         calls = self.store.connection.execute(
             "SELECT COUNT(*) FROM tool_calls WHERE tool_name = ?",
             ("run_shell",),
