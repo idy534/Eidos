@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { Project, Session, SessionGitStatus } from "../contracts.js";
 import type { ProjectSessionGroup, RuntimePresentation } from "../session-state.js";
@@ -8,6 +8,28 @@ import { EidosMark } from "./EidosMark.js";
 import { PrimaryActionButton } from "./PrimaryActionButton.js";
 import settingsIcon from "./settings.svg";
 
+export const COLLAPSED_PROJECTS_KEY = "eidos.sidebarCollapsedProjects";
+
+export function loadCollapsedProjects(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_PROJECTS_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return new Set(
+      Array.isArray(parsed) ? parsed.filter((key): key is string => typeof key === "string") : [],
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+export function saveCollapsedProjects(collapsed: ReadonlySet<string>): void {
+  try {
+    window.localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...collapsed]));
+  } catch {
+    // localStorage failure is non-critical
+  }
+}
 
 interface Props {
   sessions: Session[];
@@ -56,9 +78,42 @@ export function SessionSidebar({
     (session) => session.taskStatus !== "new" || Boolean(session.title?.trim()),
   );
   const projects = groupSessionsByProject(visibleSessions, catalogProjects);
-  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
-  const [recentExpanded, setRecentExpanded] = useState(true);
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(loadCollapsedProjects);
+  const prevSelectedIdRef = useRef<string | undefined>(selectedId);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | undefined>(undefined);
+
+  const toggleProject = (projectKey: string) => {
+    setCollapsedProjects((current) => {
+      const next = new Set(current);
+      if (next.has(projectKey)) {
+        next.delete(projectKey);
+      } else {
+        next.add(projectKey);
+      }
+      saveCollapsedProjects(next);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (selectedId && selectedId !== prevSelectedIdRef.current) {
+      prevSelectedIdRef.current = selectedId;
+      const activeProject = projects.find((project) =>
+        project.sessions.some((session) => session.id === selectedId),
+      );
+      if (activeProject && collapsedProjects.has(activeProject.key)) {
+        setCollapsedProjects((current) => {
+          if (!current.has(activeProject.key)) return current;
+          const next = new Set(current);
+          next.delete(activeProject.key);
+          saveCollapsedProjects(next);
+          return next;
+        });
+      }
+    } else {
+      prevSelectedIdRef.current = selectedId;
+    }
+  }, [selectedId, projects, collapsedProjects]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -97,7 +152,7 @@ export function SessionSidebar({
         ) : (
           <ul className="workspace-list">
             {projects.map((project) => {
-              const isExpanded = project.projectless ? recentExpanded : !collapsedProjects.has(project.key);
+              const isExpanded = !collapsedProjects.has(project.key);
               return (
                 <li key={project.key}>
                   <section className={`workspace-group${project.projectless ? " workspace-group--recent" : ""}`} aria-label={project.displayName}>
@@ -106,7 +161,7 @@ export function SessionSidebar({
                         <button
                           className="workspace-toggle workspace-toggle--recent"
                           aria-expanded={isExpanded}
-                          onClick={() => setRecentExpanded((current) => !current)}
+                          onClick={() => toggleProject(project.key)}
                         >
                           <span className="workspace-name">{project.displayName}</span>
                           <ChevronIcon open={isExpanded} />
@@ -116,15 +171,7 @@ export function SessionSidebar({
                           className="workspace-toggle"
                           aria-expanded={isExpanded}
                           aria-haspopup={project.project ? "menu" : undefined}
-                          onClick={() => setCollapsedProjects((current) => {
-                            const next = new Set(current);
-                            if (next.has(project.key)) {
-                              next.delete(project.key);
-                            } else {
-                              next.add(project.key);
-                            }
-                            return next;
-                          })}
+                          onClick={() => toggleProject(project.key)}
                           onContextMenu={(event) => {
                             if (!project.project) return;
                             event.preventDefault();
@@ -170,6 +217,7 @@ export function SessionSidebar({
                             setCollapsedProjects((current) => {
                               const next = new Set(current);
                               next.delete(project.key);
+                              saveCollapsedProjects(next);
                               return next;
                             });
                             onCreateInProject(project.workspaceRoot);

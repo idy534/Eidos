@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -49,6 +49,10 @@ const dirtyStatus: SessionGitStatus = {
 };
 
 describe("SessionSidebar Project and managed Thread behavior", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
   it("creates another Thread from the Project repository root", async () => {
     const user = userEvent.setup();
     const onCreateInProject = vi.fn();
@@ -522,5 +526,140 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     expect(screen.getByText("最近任务 8")).toBeInTheDocument();
     expect(screen.queryByText("最近任务 2")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "展开全部" })).toBeInTheDocument();
+  });
+
+  it("remembers collapsed and expanded project state in localStorage across remounts", async () => {
+    const user = userEvent.setup();
+    const props = {
+      sessions: [managedSession],
+      projects: [],
+      selectedId: undefined,
+      disabled: false,
+      readCompletedSessions: new Set<string>(),
+      runtimePresentation: { tone: "success", label: "Ready" } as const,
+      onCreate: vi.fn(),
+      onCreateInProject: vi.fn(),
+      onSelect: vi.fn(),
+      onRename: vi.fn(),
+      onDelete: vi.fn(),
+      onDeleteProject: vi.fn(),
+      onOpenSettings: vi.fn(),
+    };
+
+    const { unmount } = render(<SessionSidebar {...props} />);
+
+    const projectToggle = screen.getByRole("button", { name: "repository" });
+    expect(projectToggle).toHaveAttribute("aria-expanded", "true");
+
+    // Click to collapse
+    await user.click(projectToggle);
+    expect(projectToggle).toHaveAttribute("aria-expanded", "false");
+
+    // Unmount and remount SessionSidebar
+    unmount();
+    const { unmount: unmount2 } = render(<SessionSidebar {...props} />);
+
+    const projectToggleAfterRemount = screen.getByRole("button", { name: "repository" });
+    expect(projectToggleAfterRemount).toHaveAttribute("aria-expanded", "false");
+
+    // Click to expand again
+    await user.click(projectToggleAfterRemount);
+    expect(projectToggleAfterRemount).toHaveAttribute("aria-expanded", "true");
+
+    // Remount again to verify it stays expanded
+    unmount2();
+    render(<SessionSidebar {...props} />);
+    const projectToggleFinal = screen.getByRole("button", { name: "repository" });
+    expect(projectToggleFinal).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("remembers collapsed '最近' group state in localStorage across remounts", async () => {
+    const user = userEvent.setup();
+    const recentSession: Session = {
+      id: "recent-1",
+      workspaceRoot: "/recent",
+      projectless: true,
+      title: "闲聊任务",
+      createdAt: 10,
+    };
+    const props = {
+      sessions: [recentSession],
+      projects: [],
+      selectedId: undefined,
+      disabled: false,
+      readCompletedSessions: new Set<string>(),
+      runtimePresentation: { tone: "success", label: "Ready" } as const,
+      onCreate: vi.fn(),
+      onCreateInProject: vi.fn(),
+      onSelect: vi.fn(),
+      onRename: vi.fn(),
+      onDelete: vi.fn(),
+      onDeleteProject: vi.fn(),
+      onOpenSettings: vi.fn(),
+    };
+
+    const { unmount } = render(<SessionSidebar {...props} />);
+
+    const recentToggle = screen.getByRole("button", { name: "最近" });
+    expect(recentToggle).toHaveAttribute("aria-expanded", "true");
+
+    // Collapse "最近"
+    await user.click(recentToggle);
+    expect(recentToggle).toHaveAttribute("aria-expanded", "false");
+
+    // Unmount and remount
+    unmount();
+    render(<SessionSidebar {...props} />);
+    const recentToggleAfterRemount = screen.getByRole("button", { name: "最近" });
+    expect(recentToggleAfterRemount).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("auto-reveals a collapsed project when switching to a session inside it, but allows manual collapse while active", async () => {
+    const user = userEvent.setup();
+    const otherSession: Session = {
+      id: "session-other",
+      workspaceRoot: "/other",
+      projectless: true,
+      title: "Other Thread",
+      createdAt: 1,
+    };
+    const props = {
+      sessions: [managedSession, otherSession],
+      projects: [],
+      selectedId: "session-other",
+      disabled: false,
+      readCompletedSessions: new Set<string>(),
+      runtimePresentation: { tone: "success", label: "Ready" } as const,
+      onCreate: vi.fn(),
+      onCreateInProject: vi.fn(),
+      onSelect: vi.fn(),
+      onRename: vi.fn(),
+      onDelete: vi.fn(),
+      onDeleteProject: vi.fn(),
+      onOpenSettings: vi.fn(),
+    };
+
+    const { rerender } = render(<SessionSidebar {...props} />);
+
+    const projectToggle = screen.getByRole("button", { name: "repository" });
+    expect(projectToggle).toHaveAttribute("aria-expanded", "true");
+
+    // Collapse the repository project
+    await user.click(projectToggle);
+    expect(projectToggle).toHaveAttribute("aria-expanded", "false");
+
+    // Switch selectedId to the managedSession inside repository project
+    rerender(<SessionSidebar {...props} selectedId={managedSession.id} />);
+
+    // It should auto-reveal (expand) the repository project!
+    expect(projectToggle).toHaveAttribute("aria-expanded", "true");
+
+    // Now while active on managedSession, user manually collapses repository project
+    await user.click(projectToggle);
+    expect(projectToggle).toHaveAttribute("aria-expanded", "false");
+
+    // Re-rendering with the same selectedId should NOT force re-expansion
+    rerender(<SessionSidebar {...props} selectedId={managedSession.id} />);
+    expect(projectToggle).toHaveAttribute("aria-expanded", "false");
   });
 });
