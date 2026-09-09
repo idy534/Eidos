@@ -7,7 +7,7 @@ import logging
 import sqlite3
 import threading
 import time
-from typing import Callable
+from typing import Callable, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
@@ -50,6 +50,8 @@ from eidos_runtime.telemetry.tracing import (
 
 
 logger = logging.getLogger("eidos.runtime")
+
+_T = TypeVar("_T")
 
 
 def _result_requires_reconciliation(result: dict[str, object]) -> bool:
@@ -147,6 +149,11 @@ class ToolConcurrencyGate:
     def active_permits(self) -> int:
         with self._condition:
             return self._active
+
+
+_EXCLUSIVE_SIDE_EFFECT_POLICY = ToolConcurrencyPolicy(
+    mode="exclusive", max_concurrency=1
+)
 
 
 class _ToolPermit:
@@ -287,6 +294,7 @@ class ToolExecutionController:
         approval: ApprovalCoordinator | None = None,
         monotonic=time.monotonic,
         resource_registry: ResourceRegistry | None = None,
+        concurrency: ToolConcurrencyGate | None = None,
     ) -> None:
         self.store = store
         self.dispatcher = dispatcher
@@ -296,6 +304,7 @@ class ToolExecutionController:
         self.approval = approval
         self.monotonic = monotonic
         self.resources = resource_registry or ResourceRegistry()
+        self.concurrency = concurrency or ToolConcurrencyGate()
         self._execution_state = threading.local()
 
     @property
@@ -322,10 +331,33 @@ class ToolExecutionController:
         *,
         item: dict[str, object],
         prepared: PreparedToolExecution,
+        cancel: threading.Event | None = None,
         execute: Callable[[], dict[str, object]],
         verify: Callable[[dict[str, object]], VerifiedToolExecutionResult] | None = None,
     ) -> VerifiedToolExecutionResult:
         self.authorize_workspace_side_effect(item=item, prepared=prepared)
+        return self.run_exclusive_side_effect(
+            cancel=cancel,
+            execute=lambda: self._execute_authorized_side_effect(execute, verify),
+        )
+
+    def run_exclusive_side_effect(
+        self,
+        cancel: threading.Event | None,
+        execute: Callable[[], _T],
+    ) -> _T:
+        """Run only the committed side-effect window under the shared gate."""
+        with self.concurrency.acquire(
+            _EXCLUSIVE_SIDE_EFFECT_POLICY,
+            cancel or threading.Event(),
+        ):
+            return execute()
+
+    def _execute_authorized_side_effect(
+        self,
+        execute: Callable[[], dict[str, object]],
+        verify: Callable[[dict[str, object]], VerifiedToolExecutionResult] | None,
+    ) -> VerifiedToolExecutionResult:
         self._execution_state.phase = ToolExecutionPhase.EXECUTING
         raw = execute()
         self._execution_state.phase = ToolExecutionPhase.VERIFYING
@@ -372,12 +404,11 @@ class ToolExecutionController:
         )
         if approval.decision != "approve":
             return approval, None
-        self._execution_state.phase = ToolExecutionPhase.EXECUTING
-        raw = execute()
-        self._execution_state.phase = ToolExecutionPhase.VERIFYING
         return approval, (
-            verify(raw) if verify is not None
-            else VerifiedToolExecutionResult(result=raw)
+            self.run_exclusive_side_effect(
+                cancel,
+                lambda: self._execute_authorized_side_effect(execute, verify),
+            )
         )
 
     def authorize_side_effect(

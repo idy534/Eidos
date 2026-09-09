@@ -16,6 +16,7 @@ from eidos_runtime.model.client import ModelToolCall  # noqa: E402
 from eidos_runtime.runtime.approval import (  # noqa: E402
     ApprovalCoordinator,
     ApprovalDecision,
+    ApprovalOutcome,
 )
 from eidos_runtime.runtime.events import RuntimeEvents  # noqa: E402
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker  # noqa: E402
@@ -23,8 +24,12 @@ from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan  # noqa: E402
 from eidos_runtime.runtime.tool_execution import (  # noqa: E402
     HandlerOutcome,
     PreparedToolExecution,
+    ToolConcurrencyGate,
     ToolExecutionController,
+    VerifiedToolExecutionResult,
 )
+from eidos_runtime.runtime.tool_runtime import ToolCallRuntime  # noqa: E402
+from eidos_runtime.sandbox.permissions import BasePermissionProfile  # noqa: E402
 from eidos_runtime.sandbox.sensitive import default_scanner  # noqa: E402
 from eidos_runtime.tools.contracts import (  # noqa: E402
     ReadFileResultData,
@@ -35,6 +40,7 @@ from eidos_runtime.tools.contracts import (  # noqa: E402
 from eidos_runtime.tools.registry import (  # noqa: E402
     StepToolBinding,
     ToolProvenance,
+    ToolConcurrencyPolicy,
     ToolRegistryEntry,
     ToolSpec,
 )
@@ -253,6 +259,135 @@ class ToolExecutionControllerTests(unittest.TestCase):
 
         self.assertEqual(outcome.result["outcome"], "success")
         self.assertEqual(handler.calls, 1)
+
+    def test_shared_gate_serializes_side_effect_windows(self) -> None:
+        gate = ToolConcurrencyGate()
+        controller = ToolExecutionController(
+            self.store,
+            _Dispatcher(),
+            _HandlerRuntimeContext({}),
+            RuntimeEvents(lambda _message: None),
+            default_scanner(),
+            concurrency=gate,
+        )
+        first_entered = threading.Event()
+        release_first = threading.Event()
+        second_entered = threading.Event()
+
+        def first() -> None:
+            first_entered.set()
+            release_first.wait(1)
+
+        def second() -> None:
+            second_entered.set()
+
+        first_thread = threading.Thread(
+            target=lambda: controller.run_exclusive_side_effect(
+                threading.Event(), first
+            )
+        )
+        second_thread = threading.Thread(
+            target=lambda: controller.run_exclusive_side_effect(
+                threading.Event(), second
+            )
+        )
+        first_thread.start()
+        self.assertTrue(first_entered.wait(1))
+        second_thread.start()
+        time.sleep(0.03)
+        self.assertFalse(second_entered.is_set())
+        release_first.set()
+        first_thread.join(1)
+        second_thread.join(1)
+        self.assertTrue(second_entered.is_set())
+        self.assertEqual(gate.active_permits, 0)
+
+    def test_shared_gate_is_not_held_during_approval(self) -> None:
+        gate = ToolConcurrencyGate()
+        approval_started = threading.Event()
+        release_approval = threading.Event()
+
+        def approve(_request, _cancel):
+            approval_started.set()
+            release_approval.wait(1)
+            return ApprovalDecision("approve")
+
+        approval = ApprovalCoordinator(
+            self.store,
+            approve,
+            RuntimeEvents(lambda _message: None),
+            RuntimePhaseTracker(),
+            lambda _run_id: None,
+            lambda: None,
+            lambda _run_id, _cancel: None,
+            lambda _run_id, _cancel: None,
+            requeue=False,
+        )
+        controller = ToolExecutionController(
+            self.store,
+            _Dispatcher(),
+            _HandlerRuntimeContext({}),
+            RuntimeEvents(lambda _message: None),
+            default_scanner(),
+            approval=approval,
+            concurrency=gate,
+        )
+        item = self._item()
+        completed: list[
+            tuple[ApprovalOutcome, VerifiedToolExecutionResult | None]
+        ] = []
+
+        def run() -> None:
+            controller._execution_state.intent_started = False
+            controller._execution_state.authorized_effects = 0
+            completed.append(controller.execute_side_effect(
+                run_id=self.run["id"],
+                item=item,
+                prepared=PreparedToolExecution(
+                    approval_description={"kind": "file_change"},
+                    intent_preconditions={"path": "a.txt"},
+                    transition_reason="file_approval",
+                ),
+                cancel=threading.Event(),
+                execute=lambda: {"outcome": "success"},
+            ))
+
+        thread = threading.Thread(target=run)
+        thread.start()
+        self.assertTrue(approval_started.wait(1))
+        self.assertEqual(gate.active_permits, 0)
+        release_approval.set()
+        thread.join(1)
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(completed[0][0].decision, "approve")
+        self.assertIsNotNone(completed[0][1])
+
+    def test_parallel_read_gate_is_independent_from_shared_side_effect_gate(self) -> None:
+        shared_gate = ToolConcurrencyGate()
+        runtime = ToolCallRuntime(
+            self.store,
+            _Dispatcher(),
+            None,
+            RuntimeEvents(lambda _message: None),
+            default_scanner(),
+            RuntimePhaseTracker(),
+            shell_available=False,
+            base_permissions=BasePermissionProfile.for_workspace(
+                workspace_root=Path(self.temporary.name) / "workspace"
+            ),
+            concurrency=shared_gate,
+        )
+
+        with shared_gate.acquire(
+            ToolConcurrencyPolicy(mode="exclusive", max_concurrency=1),
+            threading.Event(),
+        ):
+            with runtime.parallel_read_concurrency.acquire(
+                ToolConcurrencyPolicy(mode="parallel_safe", max_concurrency=2),
+                threading.Event(),
+            ):
+                self.assertIs(runtime.concurrency, shared_gate)
+                self.assertIsNot(runtime.parallel_read_concurrency, shared_gate)
 
     def test_each_execution_policy_binds_a_per_tool_runtime(self) -> None:
         side_effects = {

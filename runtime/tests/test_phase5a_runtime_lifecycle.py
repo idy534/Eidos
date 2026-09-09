@@ -460,6 +460,36 @@ class RuntimeRecoveryInvariantTests(unittest.TestCase):
         assert self.store.connection is not None
         verify_runtime_invariants(self.store.connection)
 
+    def test_recovery_exposes_waiting_approval_runs_serially_per_session(self) -> None:
+        def create_waiting_run(label: str) -> dict[str, object]:
+            run, _ = self.store.create_run(self.session["id"], label)
+            self.store.increment_model_step(run["id"])
+            item = self.store.create_tool_item(
+                run["id"], 1, 0, f"call-{label}", "write_file", "{}"
+            )
+            self.store.begin_approval(
+                item["id"],
+                label,
+                None,
+                request={"permissionBlockFingerprint": label},
+            )
+            return run
+
+        first = create_waiting_run("first")
+        second = create_waiting_run("second")
+
+        self._restart()
+
+        self.assertEqual(
+            self.store.waiting_approval_run_ids(),
+            (first["id"],),
+        )
+        self.store.cancel_waiting_approval_committed(first["id"])
+        self.assertEqual(
+            self.store.waiting_approval_run_ids(),
+            (second["id"],),
+        )
+
 
 class _BlockingEngine:
     entered = threading.Event()
@@ -482,6 +512,21 @@ class _ApprovalWaitingEngine:
     def run(self, run_id: str, cancel: threading.Event) -> None:
         self.entered.set()
         self.request_approval({"runId": run_id}, cancel)
+
+
+class _ApprovalResumeEngine:
+    entered = threading.Event()
+    resumed = threading.Event()
+    release = threading.Event()
+
+    def __init__(self, _store, _model, _notify, request_approval, *_args, **_kwargs):
+        self.request_approval = request_approval
+
+    def run(self, run_id: str, cancel: threading.Event) -> None:
+        self.entered.set()
+        self.request_approval({"runId": run_id}, cancel)
+        self.resumed.set()
+        self.release.wait(2)
 
 
 class _CancelAwareEngine:
@@ -533,9 +578,13 @@ class RunHandleTests(unittest.TestCase):
         _BlockingEngine.entered = threading.Event()
         _BlockingEngine.release = threading.Event()
         _ApprovalWaitingEngine.entered = threading.Event()
+        _ApprovalResumeEngine.entered = threading.Event()
+        _ApprovalResumeEngine.resumed = threading.Event()
+        _ApprovalResumeEngine.release = threading.Event()
 
     def tearDown(self) -> None:
         _BlockingEngine.release.set()
+        _ApprovalResumeEngine.release.set()
         self.store.close()
         self.temporary.cleanup()
 
@@ -568,6 +617,20 @@ class RunHandleTests(unittest.TestCase):
         _BlockingEngine.release.set()
         supervisor.wait(1)
 
+    def test_different_sessions_can_run_concurrently(self) -> None:
+        second_workspace = Path(self.temporary.name) / "workspace-second"
+        second_workspace.mkdir()
+        second_session = self.store.create_session(str(second_workspace))
+        first, _ = self.store.enqueue_run(self.session["id"], "first")
+        second, _ = self.store.enqueue_run(second_session["id"], "second")
+        supervisor = self._supervisor(_BlockingEngine)
+
+        supervisor.schedule_next()
+        self.assertTrue(_BlockingEngine.entered.wait(1))
+        self.assertEqual(set(supervisor._handles), {first["id"], second["id"]})
+        _BlockingEngine.release.set()
+        supervisor.wait(1)
+
     def test_waiting_approval_worker_remains_active(self) -> None:
         run, _ = self.store.enqueue_run(self.session["id"], "approve")
         supervisor = self._supervisor(_ApprovalWaitingEngine)
@@ -581,18 +644,31 @@ class RunHandleTests(unittest.TestCase):
         supervisor.request_cancel(run["id"])
         supervisor.wait(1)
 
-    def test_waiting_slot_worker_remains_active(self) -> None:
-        run, _ = self.store.enqueue_run(self.session["id"], "slot")
-        supervisor = self._supervisor(_BlockingEngine)
-        start = supervisor.prepare_next()
-        assert start is not None
-        handle = supervisor._handles[run["id"]]
-        handle.state = RunWorkerState.WAITING_SLOT
+    def test_approval_resume_restores_running_state(self) -> None:
+        run, _ = self.store.enqueue_run(self.session["id"], "approve-resume")
+        supervisor = self._supervisor(_ApprovalResumeEngine)
+        supervisor.schedule_next()
+        self.assertTrue(_ApprovalResumeEngine.entered.wait(1))
+        self.assertTrue(_wait_until(
+            lambda: supervisor.handle_state(run["id"])
+            is RunWorkerState.WAITING_APPROVAL
+        ))
 
-        self.assertTrue(supervisor.has_active_workers())
+        with supervisor.approval_lock:
+            request_id = next(iter(supervisor.pending_approvals))
+        self.assertTrue(
+            supervisor.submit_approval_response(
+                request_id=request_id,
+                decision="approve",
+                feedback=None,
+            )
+        )
+        self.assertTrue(_ApprovalResumeEngine.resumed.wait(1))
+        self.assertEqual(
+            supervisor.handle_state(run["id"]), RunWorkerState.RUNNING
+        )
 
-        supervisor.release(start)
-        _BlockingEngine.release.set()
+        _ApprovalResumeEngine.release.set()
         supervisor.wait(1)
 
     def test_handle_removed_only_after_worker_exit(self) -> None:
@@ -747,29 +823,6 @@ class ReliableCancelTests(unittest.TestCase):
         canceled = supervisor.cancel_run(run["id"])
 
         self.assertEqual(canceled["status"], "canceled")
-
-    def test_cancel_releases_waiting_worker(self) -> None:
-        run, supervisor = self._started()
-        connection = self.store.connection
-        assert connection is not None
-        connection.execute(
-            "UPDATE execution_segments SET status = 'queued' WHERE run_id = ?",
-            (run["id"],),
-        )
-        connection.execute(
-            "UPDATE runs SET status = 'queued' WHERE id = ?",
-            (run["id"],),
-        )
-        connection.commit()
-        with supervisor.lock:
-            supervisor._handles[run["id"]].state = RunWorkerState.WAITING_SLOT
-            supervisor._active_slot_run_id = None
-        _CancelAwareEngine.allow_exit.set()
-
-        canceled = supervisor.cancel_run(run["id"])
-
-        self.assertEqual(canceled["status"], "canceled")
-        self.assertNotIn(run["id"], supervisor._handles)
 
     def test_cancel_timeout_does_not_report_canceled(self) -> None:
         run, supervisor = self._started(_StuckEngine)

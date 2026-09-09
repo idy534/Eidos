@@ -55,7 +55,10 @@ from eidos_runtime.runtime.step_context import StepContextFactory
 from eidos_runtime.repo_intelligence.query import RepositoryTaskQueryBuilder
 from eidos_runtime.runtime.resolution import RuleResolutionSnapshot, canonical_sha256
 from eidos_runtime.runtime.tool_runtime import ToolCallRuntime
-from eidos_runtime.runtime.tool_execution import ToolInfrastructureError
+from eidos_runtime.runtime.tool_execution import (
+    ToolConcurrencyGate,
+    ToolInfrastructureError,
+)
 from eidos_runtime.telemetry.tracing import (
     finish_run,
     run_span,
@@ -119,7 +122,6 @@ class RuntimeEngine:
         shell_available: bool = False,
         monotonic: Callable[[], float] = time.monotonic,
         sensitive: SensitiveScanner | None = None,
-        wait_for_execution_slot: Callable[[str, threading.Event], bool] | None = None,
         mcp_sandbox: bool = True,
         terminalize_cancel: bool = True,
         async_kernel: RuntimeAsyncKernel | None = None,
@@ -127,6 +129,7 @@ class RuntimeEngine:
         events: RuntimeEvents | None = None,
         repository_runtime: RepositoryWorkspaceRuntimePort | None = None,
         runtime_dependency_catalog: RuntimeDependencyCatalog | None = None,
+        tool_concurrency_gate: ToolConcurrencyGate | None = None,
     ) -> None:
         self.store = store
         self.model = model
@@ -135,7 +138,6 @@ class RuntimeEngine:
         self.shell_available = shell_available
         self.monotonic = monotonic
         self.sensitive = sensitive or default_scanner()
-        self.wait_for_execution_slot = wait_for_execution_slot
         self.mcp_sandbox = mcp_sandbox
         self.terminalize_cancel = terminalize_cancel
         self.async_kernel = async_kernel
@@ -144,6 +146,7 @@ class RuntimeEngine:
         self.active_started: float | None = None
         self.repository_runtime = repository_runtime
         self.runtime_dependency_catalog = runtime_dependency_catalog
+        self.tool_concurrency_gate = tool_concurrency_gate or ToolConcurrencyGate()
 
     def run(self, run_id: str, cancel: threading.Event) -> None:
         repository_context = RunRepositoryContext()
@@ -357,9 +360,9 @@ class RuntimeEngine:
             self.state_machine,
             self._pause_effective_time,
             self._resume_effective_time,
-            self._resume_after_approval,
+            lambda _run_id, _cancel: None,
             self._check_cancel,
-            requeue=self.wait_for_execution_slot is not None,
+            requeue=False,
         )
 
         if self.store.read_run(run.run_id)["status"] == "waiting_approval":
@@ -383,6 +386,7 @@ class RuntimeEngine:
                 self.state_machine, shell_available=self.shell_available,
                 base_permissions=BasePermissionProfile.model_validate_json(resolution.permission_profile_json),
                 async_kernel=self.async_kernel, resource_registry=self.resources,
+                concurrency=self.tool_concurrency_gate,
                 skill_access=resources.skill_access, runtime_dependencies=resources.runtime_dependencies,
                 shell_process_manager=resources.shell_process_manager,
                 workspace_refresh=(
@@ -575,6 +579,7 @@ class RuntimeEngine:
                 ),
                 async_kernel=self.async_kernel,
                 resource_registry=self.resources,
+                concurrency=self.tool_concurrency_gate,
                 skill_access=resources.skill_access,
                 runtime_dependencies=resources.runtime_dependencies,
                 shell_process_manager=resources.shell_process_manager,
@@ -1097,18 +1102,6 @@ class RuntimeEngine:
                 context_plan_id=snapshot.plan_id,
                 context_snapshot_id=snapshot.snapshot_id,
             )
-
-    def _resume_after_approval(self, run_id: str, cancel: threading.Event) -> None:
-        current = self.store.read_run(run_id)
-        if current["status"] != "queued":
-            return
-        if self.wait_for_execution_slot is not None:
-            if not self.wait_for_execution_slot(run_id, cancel):
-                raise RuntimeCancelled
-            return
-        claimed = self.store.claim_next_run()
-        if claimed is None or claimed["id"] != run_id:
-            raise InvalidRunStateError("run could not reacquire execution slot")
 
     def _resume_effective_time(self) -> None:
         self.active_started = self.monotonic()

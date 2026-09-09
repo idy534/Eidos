@@ -231,6 +231,7 @@ def _make_shell_controller(
         controller.authorize_side_effect,
         controller.execute_workspace_side_effect,
         controller.authorize_workspace_side_effect,
+        run_exclusive_side_effect=controller.run_exclusive_side_effect,
         shell_process_manager=shell_process_manager,
         base_permissions=BasePermissionProfile.for_workspace(
             workspace_root=workspace

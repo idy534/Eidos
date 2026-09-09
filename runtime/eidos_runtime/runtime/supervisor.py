@@ -50,6 +50,7 @@ from eidos_runtime.domain.long_task import (
 )
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
+from eidos_runtime.runtime.tool_execution import ToolConcurrencyGate
 
 
 logger = logging.getLogger("eidos.runtime")
@@ -71,7 +72,6 @@ class RunWorkerState(StrEnum):
     STARTING = "starting"
     RUNNING = "running"
     WAITING_APPROVAL = "waiting_approval"
-    WAITING_SLOT = "waiting_slot"
     CANCEL_REQUESTED = "cancel_requested"
     CANCELING = "canceling"
     FINISHED = "finished"
@@ -88,7 +88,6 @@ class RunHandle:
     run_id: str
     thread: threading.Thread
     cancellation: threading.Event
-    resume: threading.Event
     state: RunWorkerState
     model_lease: ModelClientLease | None = None
     resource: RuntimeResource | None = None
@@ -153,7 +152,7 @@ class RunSupervisor:
         self.lock = threading.RLock()
         self._handles: dict[str, RunHandle] = {}
         self._managed_tasks: dict[str, ManagedTask] = {}
-        self._active_slot_run_id: str | None = None
+        self.tool_concurrency_gate = ToolConcurrencyGate()
         self.approval_lock = threading.RLock()
         self.pending_approvals: dict[str, PendingApproval] = {}
         self.lifecycle = RuntimeLifecycle.RUNNING
@@ -216,7 +215,6 @@ class RunSupervisor:
             if (
                 self.lifecycle is not RuntimeLifecycle.RUNNING
                 or self.control_state is not RuntimeControlState.RUNNING
-                or self._active_slot_run_id is not None
             ):
                 return None
             for waiting_id in self.store.waiting_approval_run_ids():
@@ -228,22 +226,13 @@ class RunSupervisor:
                 return None
             run_id = str(claimed.value["id"])
             self._async_kernel_frozen = True
-            handle = self._handles.get(run_id)
-            if handle is not None:
-                if handle.state not in {
-                    RunWorkerState.WAITING_APPROVAL,
-                    RunWorkerState.WAITING_SLOT,
-                }:
-                    raise RuntimeError("run already has a worker")
-                self._active_slot_run_id = run_id
-                handle.state = RunWorkerState.RUNNING
-                handle.resume.set()
-                return None
             return self._start_worker_locked(run_id)
 
     def schedule_next(self) -> None:
-        start = self.prepare_next()
-        if start is not None:
+        while True:
+            start = self.prepare_next()
+            if start is None:
+                return
             start.gate.set()
 
     @staticmethod
@@ -281,7 +270,6 @@ class RunSupervisor:
             mutation = self.store.request_cancel_committed(run_id)
             handle.state = RunWorkerState.CANCEL_REQUESTED
             handle.cancellation.set()
-            handle.resume.set()
         self.events.publish(mutation, run=mutation.value)
         self._release_approval_waits(run_id)
         handle.thread.join(timeout=self.cancel_timeout)
@@ -431,7 +419,6 @@ class RunSupervisor:
                 return False
             handle.state = RunWorkerState.CANCEL_REQUESTED
             handle.cancellation.set()
-            handle.resume.set()
         self._release_approval_waits(run_id)
         return True
 
@@ -459,6 +446,16 @@ class RunSupervisor:
                     return ApprovalDecision("reject")
             return pending.decision or ApprovalDecision("reject")
         finally:
+            with self.lock:
+                handle = self._handles.get(run_id)
+                if (
+                    handle is not None
+                    and handle.thread is threading.current_thread()
+                    and handle.state is RunWorkerState.WAITING_APPROVAL
+                    and not cancel.is_set()
+                    and self.lifecycle is RuntimeLifecycle.RUNNING
+                ):
+                    handle.state = RunWorkerState.RUNNING
             with self.approval_lock:
                 self.pending_approvals.pop(request_id, None)
 
@@ -806,7 +803,6 @@ class RunSupervisor:
         if run_id in self._handles:
             raise RuntimeError("run already has a worker")
         cancellation = threading.Event()
-        resume = threading.Event()
         gate = threading.Event()
         worker = threading.Thread(
             target=self._run_worker,
@@ -822,11 +818,9 @@ class RunSupervisor:
             run_id=run_id,
             thread=worker,
             cancellation=cancellation,
-            resume=resume,
             state=RunWorkerState.STARTING,
             resource=resource,
         )
-        self._active_slot_run_id = run_id
         worker.start()
         resource.start()
         return WorkerStart(run_id, gate)
@@ -844,11 +838,9 @@ class RunSupervisor:
                     run_id,
                     threading.current_thread(),
                     cancellation,
-                    threading.Event(),
                     RunWorkerState.STARTING,
                 )
                 self._handles[run_id] = handle
-                self._active_slot_run_id = run_id
         start_gate.wait()
         try:
             self.store.read_run(run_id)
@@ -865,9 +857,9 @@ class RunSupervisor:
                 self._initialize_long_task(run_id)
             engine_kwargs: dict[str, object] = {
                 "sensitive": self.sensitive(),
-                "wait_for_execution_slot": self._wait_for_execution_slot,
                 "resource_registry": self.resources,
                 "events": self.events,
+                "tool_concurrency_gate": self.tool_concurrency_gate,
             }
             if self.engine_factory is RuntimeEngine:
                 engine_kwargs["async_kernel"] = self._async_kernel
@@ -919,8 +911,6 @@ class RunSupervisor:
             should_schedule = False
             with self.lock:
                 handle.state = RunWorkerState.FINISHED
-                if self._active_slot_run_id == run_id:
-                    self._active_slot_run_id = None
                 self._handles.pop(run_id, None)
                 should_schedule = self.lifecycle is RuntimeLifecycle.RUNNING
             if handle.resource is not None:
@@ -952,31 +942,10 @@ class RunSupervisor:
             if (
                 handle is None
                 or handle.thread is not threading.current_thread()
-                or self._active_slot_run_id != run_id
             ):
                 return
             handle.state = RunWorkerState.WAITING_APPROVAL
-            self._active_slot_run_id = None
         self.schedule_next()
-
-    def _wait_for_execution_slot(
-        self, run_id: str, cancellation: threading.Event
-    ) -> bool:
-        self._record_safe_point(run_id, SafePoint.WAITING_SLOT)
-        with self.lock:
-            handle = self._handles.get(run_id)
-            if handle is None:
-                return False
-            if self._active_slot_run_id == run_id:
-                handle.state = RunWorkerState.RUNNING
-                return True
-            handle.state = RunWorkerState.WAITING_SLOT
-            handle.resume.clear()
-        self.schedule_next()
-        while not handle.resume.wait(0.1):
-            if cancellation.is_set() or self.lifecycle is not RuntimeLifecycle.RUNNING:
-                return False
-        return not cancellation.is_set()
 
     def _record_safe_point(self, run_id: str, safe_point: SafePoint) -> None:
         repository = self.store.long_task_repository()

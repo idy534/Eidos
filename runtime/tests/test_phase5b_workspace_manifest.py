@@ -316,6 +316,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             self.controller.authorize_side_effect,
             self.controller.execute_workspace_side_effect,
             self.controller.authorize_workspace_side_effect,
+            run_exclusive_side_effect=self.controller.run_exclusive_side_effect,
             shell_process_manager=self.shell_process_manager,
             base_permissions=BasePermissionProfile.model_validate_json(
                 self.store.read_step_resolution_snapshots(

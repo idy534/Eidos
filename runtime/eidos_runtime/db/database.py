@@ -31,10 +31,12 @@ from eidos_runtime.db.schema import (
     V6_SCHEMA_VERSION,
     V7_SCHEMA_VERSION,
     V8_SCHEMA_VERSION,
+    V9_SCHEMA_VERSION,
     V1_TO_V2_MIGRATION_SQL,
     V2_TO_V3_MIGRATION_SQL,
     V3_TO_V4_MIGRATION_SQL,
     V4_TO_V5_MIGRATION_SQL,
+    V9_TO_V10_MIGRATION_SQL,
 )
 from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.db.json_blobs import JsonBlobStore
@@ -134,6 +136,7 @@ class Database:
                     V6_SCHEMA_VERSION,
                     V7_SCHEMA_VERSION,
                     V8_SCHEMA_VERSION,
+                    V9_SCHEMA_VERSION,
                     SCHEMA_VERSION,
                     4,
                 }
@@ -175,6 +178,19 @@ class Database:
                     except sqlite3.Error:
                         pass
                     connection.execute("PRAGMA foreign_keys = ON")
+                    raise StorageError("schema_migration_failed") from error
+            elif revision == V9_SCHEMA_VERSION:
+                try:
+                    connection.executescript(
+                        "BEGIN IMMEDIATE;\n"
+                        + V9_TO_V10_MIGRATION_SQL
+                        + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
+                    )
+                except sqlite3.Error as error:
+                    try:
+                        connection.execute("ROLLBACK")
+                    except sqlite3.Error:
+                        pass
                     raise StorageError("schema_migration_failed") from error
             _verify_integrity(connection)
             self._connection = connection
