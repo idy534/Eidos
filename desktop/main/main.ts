@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell as electronShell } from "electron";
 import { fileURLToPath } from "node:url";
+import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import * as nodePty from "node-pty";
 
@@ -689,6 +690,18 @@ ipcMain.handle(IPC.WORKSPACE_OPEN_IN_EDITOR, async (
   const canonicalTarget = await resolveWorkspaceFileForOpen(root, relativePath);
   const failure = await electronShell.openPath(canonicalTarget);
   if (failure) throw new Error("无法在编辑器中打开文件。");
+});
+ipcMain.handle(IPC.WORKSPACE_SHOW_IN_FINDER, async (_event, targetPath: unknown) => {
+  if (typeof targetPath !== "string" || !targetPath.trim()) {
+    throw new Error("路径参数无效。");
+  }
+  try {
+    const canonicalTarget = await realpath(targetPath);
+    await stat(canonicalTarget);
+    electronShell.showItemInFolder(canonicalTarget);
+  } catch {
+    throw new Error("无法在 Finder 中显示该路径。");
+  }
 });
 ipcMain.handle(IPC.TERMINAL_CREATE, (event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");

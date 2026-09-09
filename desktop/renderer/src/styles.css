@@ -478,10 +478,59 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   font-size: 0.95rem;
   font-weight: 400;
   color: var(--muted);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.workspace-title-row:hover .workspace-add,
+.workspace-title-row:focus-within .workspace-add,
+.workspace-add:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .workspace-add:hover:not(:disabled) {
   color: var(--text);
+}
+
+.workspace-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 220ms var(--apple-spring);
+}
+
+.workspace-collapse--expanded {
+  grid-template-rows: 1fr;
+}
+
+.workspace-collapse-inner {
+  min-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 180ms ease, transform 220ms var(--apple-spring);
+}
+
+.workspace-collapse--expanded > .workspace-collapse-inner {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-collapse,
+  .workspace-collapse-inner {
+    transition: none !important;
+  }
+}
+
+.session-empty {
+  margin: 0.35rem 0 0.35rem 1.85rem;
+  padding: 0.25rem 0;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  user-select: none;
 }
 
 .session-list {

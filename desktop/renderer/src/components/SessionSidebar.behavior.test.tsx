@@ -174,6 +174,91 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     expect(onDeleteProject).toHaveBeenCalledWith(project);
   });
 
+  it("shows Reveal in Finder option in project context menu and triggers onShowInFinder", async () => {
+    const user = userEvent.setup();
+    const project = {
+      id: "project-finder",
+      workspaceRoot: "/finder-project",
+      gitAvailable: false,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const onShowInFinder = vi.fn();
+    render(
+      <SessionSidebar
+        sessions={[]}
+        projects={[project]}
+        selectedId={undefined}
+        disabled={false}
+        readCompletedSessions={new Set()}
+        runtimePresentation={{ tone: "success", label: "Ready" }}
+        onCreate={vi.fn()}
+        onCreateInProject={vi.fn()}
+        onSelect={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
+        onShowInFinder={onShowInFinder}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+
+    const region = screen.getByRole("region", { name: "finder-project" });
+    const projectToggle = within(region).getByRole("button", { name: "finder-project" });
+    fireEvent.contextMenu(projectToggle);
+
+    const finderItem = await screen.findByRole("menuitem", { name: "在 Finder 中显示" });
+    expect(finderItem).toBeEnabled();
+    await user.click(finderItem);
+    expect(onShowInFinder).toHaveBeenCalledWith(project);
+  });
+
+  it("shows '暂无会话' placeholder when an empty project is expanded, and hides it when collapsed", async () => {
+    const user = userEvent.setup();
+    const project = {
+      id: "project-empty-sessions",
+      workspaceRoot: "/empty-sessions-project",
+      gitAvailable: false,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    render(
+      <SessionSidebar
+        sessions={[]}
+        projects={[project]}
+        selectedId={undefined}
+        disabled={false}
+        readCompletedSessions={new Set()}
+        runtimePresentation={{ tone: "success", label: "Ready" }}
+        onCreate={vi.fn()}
+        onCreateInProject={vi.fn()}
+        onSelect={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+
+    const region = screen.getByRole("region", { name: "empty-sessions-project" });
+    const projectToggle = within(region).getByRole("button", { name: "empty-sessions-project" });
+
+    // Initially expanded
+    expect(projectToggle).toHaveAttribute("aria-expanded", "true");
+    const emptyNotice = screen.getByText("暂无会话");
+    expect(emptyNotice).toBeVisible();
+
+    // Collapse
+    await user.click(projectToggle);
+    expect(projectToggle).toHaveAttribute("aria-expanded", "false");
+    expect(emptyNotice).not.toBeVisible();
+
+    // Re-expand
+    await user.click(projectToggle);
+    expect(projectToggle).toHaveAttribute("aria-expanded", "true");
+    expect(emptyNotice).toBeVisible();
+  });
+
   it("does not show an empty Session as a task in the sidebar", () => {
     render(
       <SessionSidebar
@@ -271,11 +356,11 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     await user.click(projectToggle);
     expect(projectToggle).toHaveAttribute("aria-expanded", "false");
     expect(projectToggle.querySelector(".folder-icon--open")).not.toBeInTheDocument();
-    expect(screen.queryByText("Managed Thread")).not.toBeInTheDocument();
+    expect(screen.getByText("Managed Thread")).not.toBeVisible();
 
     await user.click(projectToggle);
     expect(projectToggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("Managed Thread")).toBeInTheDocument();
+    expect(screen.getByText("Managed Thread")).toBeVisible();
 
     const recentRegion = screen.getByRole("region", { name: "最近" });
     const recentToggle = within(recentRegion).getByRole("button", { name: "最近" });
@@ -287,10 +372,10 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     await user.click(recentToggle);
     expect(recentToggle).toHaveAttribute("aria-expanded", "false");
     expect(recentToggle.querySelector(".sidebar-chevron")).not.toHaveClass("sidebar-chevron--open");
-    expect(screen.queryByText("闲聊")).not.toBeInTheDocument();
+    expect(screen.getByText("闲聊")).not.toBeVisible();
 
     await user.click(recentToggle);
     expect(recentToggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("闲聊")).toBeInTheDocument();
+    expect(screen.getByText("闲聊")).toBeVisible();
   });
 });

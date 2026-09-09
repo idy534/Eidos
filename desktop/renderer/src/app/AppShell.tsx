@@ -789,6 +789,9 @@ export function AppShell({ runtime }: AppShellProps) {
         onRename={(session) => void beginRename(session)}
         onDelete={(session) => requestDeleteSession(session)}
         onDeleteProject={(project) => requestDeleteProject(project)}
+        onShowInFinder={(project) => {
+          void window.eidosRuntime.showItemInFolder(project.workspaceRoot).catch(() => undefined);
+        }}
         onOpenSettings={() => {
           setSettingsOpen(true);
           setDockOpen(false);

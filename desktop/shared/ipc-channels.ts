@@ -18,6 +18,7 @@ export const IPC = {
   WORKSPACE_LIST_DIRECTORY: "workspace:list-directory",
   WORKSPACE_READ_FILE_PREVIEW: "workspace:read-file-preview",
   WORKSPACE_OPEN_IN_EDITOR: "workspace:open-in-editor",
+  WORKSPACE_SHOW_IN_FINDER: "workspace:show-in-finder",
 
   // User terminal
   TERMINAL_CREATE: "terminal:create",

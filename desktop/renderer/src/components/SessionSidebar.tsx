@@ -26,6 +26,7 @@ interface Props {
   onRename: (session: Session) => void;
   onDelete: (session: Session) => void;
   onDeleteProject: (project: Project) => void;
+  onShowInFinder?: (project: Project) => void;
   onOpenSettings: () => void;
 }
 
@@ -49,7 +50,7 @@ type ContextMenuState =
 export function SessionSidebar({
   sessions, projects: catalogProjects, selectedId, disabled, readCompletedSessions,
   runtimePresentation, isSelectingSessionId, gitStatusBySessionId = new Map(),
-  onCreate, onCreateInProject, onSelect, onRename, onDelete, onDeleteProject, onOpenSettings,
+  onCreate, onCreateInProject, onSelect, onRename, onDelete, onDeleteProject, onShowInFinder, onOpenSettings,
 }: Props) {
   const visibleSessions = sessions.filter(
     (session) => session.taskStatus !== "new" || Boolean(session.title?.trim()),
@@ -95,87 +96,97 @@ export function SessionSidebar({
           <p className="nav-empty">还没有任务，点击上方按键创建</p>
         ) : (
           <ul className="workspace-list">
-            {projects.map((project) => (
-              <li key={project.key}>
-                <section className={`workspace-group${project.projectless ? " workspace-group--recent" : ""}`} aria-label={project.displayName}>
-                  <div className="workspace-title-row" title={project.workspaceRoot}>
-                    {project.projectless ? (
-                      <button
-                        className="workspace-toggle workspace-toggle--recent"
-                        aria-expanded={recentExpanded}
-                        onClick={() => setRecentExpanded((current) => !current)}
-                      >
-                        <span className="workspace-name">{project.displayName}</span>
-                        <ChevronIcon open={recentExpanded} />
-                      </button>
-                    ) : (
-                      <button
-                        className="workspace-toggle"
-                        aria-expanded={!collapsedProjects.has(project.key)}
-                        aria-haspopup={project.project ? "menu" : undefined}
-                        onClick={() => setCollapsedProjects((current) => {
-                          const next = new Set(current);
-                          if (next.has(project.key)) {
-                            next.delete(project.key);
-                          } else {
-                            next.add(project.key);
-                          }
-                          return next;
-                        })}
-                        onContextMenu={(event) => {
-                          if (!project.project) return;
-                          event.preventDefault();
-                          const hasSessions = project.sessions.length > 0
-                            || sessions.some((session) => session.project?.id === project.project?.id);
-                          setContextMenu({
-                            kind: "project",
-                            project: project.project,
-                            hasSessions,
-                            x: event.clientX,
-                            y: event.clientY,
-                            element: event.currentTarget,
-                          });
-                        }}
-                        onKeyDown={(event) => {
-                          if (!project.project || !(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
-                            return;
-                          }
-                          event.preventDefault();
-                          const bounds = event.currentTarget.getBoundingClientRect();
-                          const hasSessions = project.sessions.length > 0
-                            || sessions.some((session) => session.project?.id === project.project?.id);
-                          setContextMenu({
-                            kind: "project",
-                            project: project.project,
-                            hasSessions,
-                            x: bounds.left,
-                            y: bounds.bottom,
-                            element: event.currentTarget,
-                          });
-                        }}
-                      >
-                        <FolderIcon open={!collapsedProjects.has(project.key)} />
-                        <span className="workspace-name">{project.displayName}</span>
-                      </button>
-                    )}
-                    {!project.projectless && (
-                      <button
-                        className="workspace-add"
-                        aria-label={`在 ${project.displayName} 中新建会话`}
-                        disabled={disabled}
-                        onClick={() => {
-                          setCollapsedProjects((current) => {
+            {projects.map((project) => {
+              const isExpanded = project.projectless ? recentExpanded : !collapsedProjects.has(project.key);
+              return (
+                <li key={project.key}>
+                  <section className={`workspace-group${project.projectless ? " workspace-group--recent" : ""}`} aria-label={project.displayName}>
+                    <div className="workspace-title-row" title={project.workspaceRoot}>
+                      {project.projectless ? (
+                        <button
+                          className="workspace-toggle workspace-toggle--recent"
+                          aria-expanded={isExpanded}
+                          onClick={() => setRecentExpanded((current) => !current)}
+                        >
+                          <span className="workspace-name">{project.displayName}</span>
+                          <ChevronIcon open={isExpanded} />
+                        </button>
+                      ) : (
+                        <button
+                          className="workspace-toggle"
+                          aria-expanded={isExpanded}
+                          aria-haspopup={project.project ? "menu" : undefined}
+                          onClick={() => setCollapsedProjects((current) => {
                             const next = new Set(current);
-                            next.delete(project.key);
+                            if (next.has(project.key)) {
+                              next.delete(project.key);
+                            } else {
+                              next.add(project.key);
+                            }
                             return next;
-                          });
-                          onCreateInProject(project.workspaceRoot);
-                        }}
-                      >＋</button>
-                    )}
-                  </div>
-                  {(project.projectless ? recentExpanded : !collapsedProjects.has(project.key)) && (
-                    <ul className="session-list">
+                          })}
+                          onContextMenu={(event) => {
+                            if (!project.project) return;
+                            event.preventDefault();
+                            const hasSessions = project.sessions.length > 0
+                              || sessions.some((session) => session.project?.id === project.project?.id);
+                            setContextMenu({
+                              kind: "project",
+                              project: project.project,
+                              hasSessions,
+                              x: event.clientX,
+                              y: event.clientY,
+                              element: event.currentTarget,
+                            });
+                          }}
+                          onKeyDown={(event) => {
+                            if (!project.project || !(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
+                              return;
+                            }
+                            event.preventDefault();
+                            const bounds = event.currentTarget.getBoundingClientRect();
+                            const hasSessions = project.sessions.length > 0
+                              || sessions.some((session) => session.project?.id === project.project?.id);
+                            setContextMenu({
+                              kind: "project",
+                              project: project.project,
+                              hasSessions,
+                              x: bounds.left,
+                              y: bounds.bottom,
+                              element: event.currentTarget,
+                            });
+                          }}
+                        >
+                          <FolderIcon open={isExpanded} />
+                          <span className="workspace-name">{project.displayName}</span>
+                        </button>
+                      )}
+                      {!project.projectless && (
+                        <button
+                          className="workspace-add"
+                          aria-label={`在 ${project.displayName} 中新建会话`}
+                          disabled={disabled}
+                          onClick={() => {
+                            setCollapsedProjects((current) => {
+                              const next = new Set(current);
+                              next.delete(project.key);
+                              return next;
+                            });
+                            onCreateInProject(project.workspaceRoot);
+                          }}
+                        >＋</button>
+                      )}
+                    </div>
+                    <div
+                      className={`workspace-collapse ${isExpanded ? "workspace-collapse--expanded" : ""}`}
+                      aria-hidden={!isExpanded}
+                      style={{ visibility: isExpanded ? "visible" : "hidden" }}
+                    >
+                      <div className="workspace-collapse-inner">
+                        {project.sessions.length === 0 ? (
+                          <p className="session-empty">暂无会话</p>
+                        ) : (
+                          <ul className="session-list">
                       {project.sessions.map((session) => {
                         const status = taskStatusPresentation(
                           session.taskStatus,
@@ -255,10 +266,13 @@ export function SessionSidebar({
                         );
                       })}
                     </ul>
-                  )}
-                </section>
-              </li>
-            ))}
+                        )}
+                      </div>
+                    </div>
+                  </section>
+                </li>
+              );
+            })}
           </ul>
         )}
       </nav>
@@ -312,6 +326,14 @@ export function SessionSidebar({
           restoreFocusElement={contextMenu.element}
           onClose={() => setContextMenu(undefined)}
           items={[
+            {
+              key: "show-in-finder",
+              label: "在 Finder 中显示",
+              onClick: () => {
+                setContextMenu(undefined);
+                onShowInFinder?.(contextMenu.project);
+              },
+            },
             {
               key: "delete-project",
               label: "删除项目",
